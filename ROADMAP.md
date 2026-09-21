@@ -4,6 +4,9 @@
 >
 > Tohle je živý dokument. Každá fáze má měřitelná kritéria hotovosti a každá
 > etapa končí rozhodovací branou, kde se projekt může otočit nebo zastavit.
+>
+> Související: [ARCHITECTURE.md](ARCHITECTURE.md) — datový model, cook engine
+> a to, co z toho už ověřuje prototyp v `src/`.
 
 ---
 
@@ -41,6 +44,7 @@ datovým modelem pokryje většinu produkčních procedurálních úloh.
 
 Tato pravidla platí ve všech fázích. Porušení kteréhokoliv z nich je důvod
 k zamítnutí PR — ne proto, že jsou posvátná, ale protože se **nedají dodělat zpětně**.
+Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty).
 
 1. **Copy-on-write na úrovni jednotlivých atributových polí.**
    Node, který mění `P`, sdílí všechna ostatní pole přes refcount. Nikdy nekopíruje celou geometrii.
@@ -117,6 +121,9 @@ Bez toho se nepokračuje.
 - Node měnící jediný atribut alokuje **O(1)** nových polí, ne O(počet atributů)
 - Benchmark tohle ověřuje automaticky v CI
 
+> **Prototyp:** splněno v malém — 50 uzlů nad 2 M bodů alokuje 50 polí místo 250
+> (`bench/bench_main.cpp`, blok 1). Zbývá ověřit na 20 M bodů a zapojit do CI.
+
 ### M2 · Cook engine
 
 - Model nodu a parametru, DAG s validací cyklů
@@ -131,6 +138,9 @@ Bez toho se nepokračuje.
 - Řetěz 100 nodů; změna parametru na nodu 50 přepočítá právě 50 nodů — ověřeno testem
 - Cook je volatelný ze dvou vláken současně nad stejnou scénou bez race (TSan čistý)
 - Cache respektuje rozpočet a nepřeteče ani při cooku 1000 snímků
+
+> **Prototyp:** splněno. Editace uprostřed 100-uzlového řetězce stojí 48 % času
+> studeného cooku, recook beze změny 0.025 ms, testy čisté pod TSan.
 
 ### M3 · Prvních 10 nodů + I/O
 
@@ -170,9 +180,16 @@ poskládat hotové kostky.
 - Chybové hlášky s pozicí ve zdroji — TD tráví v tomhle editoru hodiny denně
 
 **Hotovo, když:**
-- `@P.y += noise(@P * 3)` na 10 M bodech: **< 150 ms** na 16 jádrech
-- Nejméně **50×** rychlejší než referenční interpret téhož AST
+- Aritmeticky vázaný snippet na 10 M bodech: **< 120 ms na 4 jádrech**
+- Nejméně **8×** rychlejší než interpret prototypu na aritmeticky vázaném
+  snippetu, měřeno blokem 3 v `bench/bench_main.cpp`
 - Kompilační cache — druhý cook stejného snippetu nekompiluje znovu
+
+> **Kritérium revidováno 2026-09-21 podle měření prototypu.** Původní znění
+> („< 150 ms na 10 M bodech na 16 jádrech" a „50× proti interpretu") stálo na
+> odhadu, že interpret zvládne řádově 1 Mbod/s. Skutečnost je **38 Mbodů/s**,
+> takže původní absolutní cíl by splnil i interpret a původní násobek byl
+> nedosažitelný. Přesně kvůli tomuhle se prototyp staví před plánem, ne po něm.
 
 ### M6 · Geometrické operace
 
