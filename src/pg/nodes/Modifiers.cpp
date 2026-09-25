@@ -206,6 +206,7 @@ void registerBuiltinNodes() {
         registerGeneratorNodes();
         registerModifierNodes();
         registerWrangleNodes();
+        registerShapeNodes();
         return true;
     }();
     (void)once;

@@ -33,6 +33,9 @@ add_library(pgcore
   src/pg/nodes/Modifiers.cpp
   src/pg/nodes/Expression.cpp
   src/pg/nodes/Wrangle.cpp
+  src/pg/nodes/ShapeNodes.cpp
+  src/pg/grammar/Shape.cpp
+  src/pg/grammar/Grammar.cpp
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
@@ -63,6 +66,7 @@ add_executable(pgtests
   tests/test_cache.cpp
   tests/test_determinism.cpp
   tests/test_expression.cpp
+  tests/test_shape_grammar.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore)
 add_test(NAME pgtests COMMAND pgtests)
@@ -73,3 +77,6 @@ target_link_libraries(pgbench PRIVATE pgcore)
 
 add_executable(pgdemo cli/demo_main.cpp)
 target_link_libraries(pgdemo PRIVATE pgcore)
+
+add_executable(pgbuilding cli/building_main.cpp)
+target_link_libraries(pgbuilding PRIVATE pgcore)
