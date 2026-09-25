@@ -202,6 +202,11 @@ Nové nody: `copy to points` · `for-each` (compile block) · `resample` · `pol
 **Hotovo, když:** demo „procedurální budova" — parametrizovaná scéna, která z několika
 sliderů generuje geometrii — běží reprodukovatelně z CLI.
 
+> **Prototyp:** v malém existuje — `pgbuilding` staví blok 32 budov shape gramatikou
+> ([docs/shape-grammar.md](docs/shape-grammar.md)), reprodukovatelně z CLI, a změna
+> jednoho pravidla přepočítá 5 z 25 uzlů. Tvary jsou ale jen kvádry (scope), ne
+> obecné polygony — `polyextrude` ani booleany to nenahrazuje.
+
 ### M7 · Determinismus a regresní síť
 
 - Deterministické paralelní redukce (žádný naivní `parallel_reduce` nad floaty)

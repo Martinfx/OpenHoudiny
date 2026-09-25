@@ -5,6 +5,8 @@ node-based, nedestruktivní, headless-first.
 
 - **[ROADMAP.md](ROADMAP.md)** — fáze, milníky, rozhodovací brány, rizika
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — datový model, cook engine, invarianty
+- **[docs/shape-grammar.md](docs/shape-grammar.md)** — shape gramatiky: budovy z pravidel,
+  jako text i jako graf uzlů; pojmy, předpoklady a cvičení
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -45,14 +47,20 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON && cmake --build build-tsan && 
 ## Spuštění
 
 ```bash
-./build/pgtests            # 50 testů proti invariantům
+./build/pgtests            # 76 testů proti invariantům
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
+./build/pgbuilding city.obj
 ```
 
 `pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,
 cookne ho, vypíše tabulku atributů ve stylu geometry spreadsheetu a zapíše OBJ,
 který jde otevřít v Blenderu nebo kdekoliv jinde.
+
+`pgbuilding` nechá z mřížky pozemků vyrůst blok 32 budov pomocí shape gramatiky.
+Stejnou gramatiku spustí jednou jako text a jednou jako řetězec uzlů a ověří, že
+výsledky jsou bitově stejné. Pak vypíše derivační strom a zapíše OBJ s materiálem
+podle symbolu. Vysvětlení je v [docs/shape-grammar.md](docs/shape-grammar.md).
 
 ## Příklad snippetu jazyka
 
@@ -69,8 +77,8 @@ snippet čte `@Time`.
 ## Stav
 
 Hotovo a otestováno: COW geometrie, cook engine, časová závislost, LRU cache,
-deterministický paralelismus, per-element jazyk, 10 typů uzlů, 50 testů
-(čisté pod ASan, UBSan i ThreadSanitizerem).
+deterministický paralelismus, per-element jazyk, shape gramatika (text i uzly),
+19 typů uzlů, 76 testů (čisté pod ASan, UBSan i ThreadSanitizerem).
 
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
 serializace scény, Python vazby, GUI, simulace. Podrobně v

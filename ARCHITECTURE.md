@@ -319,9 +319,14 @@ src/pg/nodes/    Generators grid, line, pointcloud
                             attribcreate, groupbox, blast
                  Expression per-element jazyk
                  Wrangle    uzel pointwrangle
-tests/           50 testů proti invariantům
+                 ShapeNodes axiom, lot, extrude, roof, split, comp,
+                            shapemesh, shapegrammar
+src/pg/grammar/  Shape      scope, operace, přepisovací průchod, mesh
+                 Grammar    textová gramatika ve stylu CGA, derivace
+tests/           76 testů proti invariantům
 bench/           měření tvrzení, o která se architektura opírá
-cli/             headless demo, export OBJ
+cli/             headless dema: pgdemo, pgbuilding (export OBJ)
+docs/            shape-grammar.md — průvodce shape gramatikami
 ```
 
 Jmenný prostor `pg` je placeholder — jméno je výstup fáze 0 roadmapy.
@@ -343,8 +348,9 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Detekce cyklů při zapojování |
 | ✅ | Deterministický `parallelFor` / `parallelReduce`, thread pool |
 | ✅ | Per-element jazyk: parser, typová inference, vazba na sloty |
-| ✅ | 10 typů uzlů, obsahový hash, export OBJ, headless CLI |
-| ✅ | 50 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
+| ✅ | 19 typů uzlů, obsahový hash, export OBJ, headless CLI |
+| ✅ | Shape gramatika: tvary jako body (I3), text i graf uzlů dávají stejný hash — [průvodce](docs/shape-grammar.md) |
+| ✅ | 76 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 
