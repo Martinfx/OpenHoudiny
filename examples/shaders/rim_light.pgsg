@@ -1,0 +1,19 @@
+pgshadergraph 1
+# A dark lit base plus a Fresnel rim in a colour the application can change.
+node 1 color 1 40 40
+  param rgb 0.08 0.1 0.22
+node 2 lambert 1 300 40
+node 3 fresnel 1 40 240
+  in power 2.5
+node 4 color_parameter 1 40 420
+  param name rim
+  param default 0.35 0.85 1.0
+node 5 multiply 1 320 320
+node 6 add 1 560 140
+node 7 surface_output 1 780 140
+link 1.color -> 2.color
+link 3.result -> 5.a
+link 4.color -> 5.b
+link 2.result -> 6.a
+link 5.result -> 6.b
+link 6.result -> 7.color

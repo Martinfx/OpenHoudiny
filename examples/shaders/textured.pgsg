@@ -1,0 +1,9 @@
+pgshadergraph 1
+# A texture the application binds as u_albedo, lit by Lambert.
+node 1 texture 1 40 60
+  param name albedo
+node 2 lambert 1 340 60
+  in ambient 0.25
+node 3 surface_output 1 620 60
+link 1.rgb -> 2.color
+link 2.result -> 3.color

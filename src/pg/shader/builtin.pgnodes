@@ -1,0 +1,313 @@
+# OpenHoudiny shader graph -- the built-in node library.
+#
+# Every node the editor offers is defined here, in the same format a user
+# library uses (see src/pg/shader/NodeLibrary.h). The C++ code knows nothing
+# about any of these nodes; copy a block into your own .pgnodes file, change it,
+# and load it with `pgshader --library` or the editor's Library menu.
+#
+# Templates are written in the neutral dialect -- GLSL syntax. Each target
+# translates identifiers (vec3 -> float3, mix -> lerp, ...) into its language;
+# where that is not enough, `impl <target> <output> = ...` gives a template of
+# its own (see `texture`).
+
+# --- Input -------------------------------------------------------------------
+
+node uv
+    label UV
+    category Input
+    description Texture coordinates of the mesh.
+    out uv vec2 = $uv
+
+node position
+    label Position
+    category Input
+    description World-space position of the surface.
+    out position vec3 = $position
+
+node normal
+    label Normal
+    category Input
+    description World-space unit normal of the surface.
+    out normal vec3 = $normal
+
+node view_direction
+    label View Direction
+    category Input
+    description Unit vector from the surface towards the camera.
+    out view vec3 = $view
+
+node light_direction
+    label Light Direction
+    category Input
+    description Unit vector from the surface towards the light.
+    out light vec3 = $light
+
+node time
+    label Time
+    category Input
+    description Seconds since the start -- animates whatever it feeds.
+    out time float = $time
+
+node constant
+    label Constant
+    category Input
+    description A number baked into the shader.
+    param value float = 1.0
+    out result float = {value}
+
+node color
+    label Color
+    category Input
+    description A colour baked into the shader.
+    param rgb vec3 = 0.8 0.3 0.2 color
+    out color vec3 = {rgb}
+
+node float_parameter
+    label Float Parameter
+    category Input
+    description A uniform u_<name> that the application can change without recompiling.
+    param name string = amount
+    param default float = 0.5
+    uniform u_{name} float = {default}
+    out value float = u_{name}
+
+node color_parameter
+    label Color Parameter
+    category Input
+    description A colour uniform u_<name> that the application can change without recompiling.
+    param name string = tint
+    param default vec3 = 1.0 0.5 0.2 color
+    uniform u_{name} vec3 = {default}
+    out color vec3 = u_{name}
+
+# --- Math --------------------------------------------------------------------
+#
+# `any` ports take the widest type connected to them: add a vec3 and a float
+# and you get a vec3.
+
+node add
+    label Add
+    category Math
+    in a any = 0.0
+    in b any = 0.0
+    out result any = {a} + {b}
+
+node subtract
+    label Subtract
+    category Math
+    in a any = 0.0
+    in b any = 0.0
+    out result any = {a} - {b}
+
+node multiply
+    label Multiply
+    category Math
+    in a any = 1.0
+    in b any = 1.0
+    out result any = {a} * {b}
+
+node divide
+    label Divide
+    category Math
+    in a any = 1.0
+    in b any = 1.0
+    out result any = {a} / {b}
+
+node mix
+    label Mix
+    category Math
+    description Blends a and b: t = 0 gives a, t = 1 gives b.
+    in a any = 0.0
+    in b any = 1.0
+    in t float = 0.5
+    out result any = mix({a}, {b}, {t})
+
+node one_minus
+    label One Minus
+    category Math
+    in x any = 0.0
+    out result any = 1.0 - {x}
+
+node power
+    label Power
+    category Math
+    in base any = 1.0
+    in exponent any = 2.0
+    out result any = pow({base}, {exponent})
+
+node sine
+    label Sine
+    category Math
+    in x any = 0.0
+    out result any = sin({x})
+
+node fract
+    label Fraction
+    category Math
+    description The part after the decimal point: repeats every 1.
+    in x any = 0.0
+    out result any = fract({x})
+
+node saturate
+    label Saturate
+    category Math
+    description Clamps to [0, 1].
+    in x any = 0.0
+    out result any = clamp({x}, 0.0, 1.0)
+
+node smoothstep
+    label Smoothstep
+    category Math
+    description 0 below edge0, 1 above edge1, a smooth curve between.
+    in edge0 float = 0.0
+    in edge1 float = 1.0
+    in x any = 0.5
+    out result any = smoothstep({edge0}, {edge1}, {x})
+
+# --- Vector ------------------------------------------------------------------
+
+node dot
+    label Dot Product
+    category Vector
+    in a vec3 = 0 0 1
+    in b vec3 = 0 0 1
+    out result float = dot({a}, {b})
+
+node normalize
+    label Normalize
+    category Vector
+    in v vec3 = 0 0 1
+    out result vec3 = normalize({v})
+
+node length
+    label Length
+    category Vector
+    in v any = 0.0
+    out result float = length({v})
+
+node combine
+    label Combine XYZ
+    category Vector
+    in x float = 0.0
+    in y float = 0.0
+    in z float = 0.0
+    out vector vec3 = vec3({x}, {y}, {z})
+
+node split
+    label Split XYZ
+    category Vector
+    in vector vec3 = 0 0 0
+    out x float = {vector}.x
+    out y float = {vector}.y
+    out z float = {vector}.z
+
+# --- Texture -----------------------------------------------------------------
+
+node texture
+    label Texture
+    category Texture
+    description Samples the 2D texture the application binds as u_<name>.
+    param name string = albedo
+    uniform u_{name} sampler2D
+    in uv vec2 = $uv
+    out rgba vec4 = texture(u_{name}, {uv})
+    impl hlsl rgba = u_{name}.Sample(u_{name}_sampler, {uv})
+    out rgb vec3 = {rgba}.rgb
+    out alpha float = {rgba}.a
+
+# --- Pattern -----------------------------------------------------------------
+
+node checker
+    label Checker
+    category Pattern
+    in uv vec2 = $uv
+    in scale float = 8.0
+    in color1 vec3 = 0.15 0.15 0.15 color
+    in color2 vec3 = 0.85 0.85 0.85 color
+    uses pg_checker
+    out color vec3 = mix({color1}, {color2}, pg_checker({uv} * {scale}))
+    out mask float = pg_checker({uv} * {scale})
+
+node noise
+    label Noise
+    category Pattern
+    description Smooth value noise between 0 and 1.
+    in uv vec2 = $uv
+    in scale float = 4.0
+    uses pg_noise
+    out value float = pg_noise({uv} * {scale})
+
+# --- Lighting ----------------------------------------------------------------
+
+node lambert
+    label Lambert
+    category Lighting
+    description Diffuse light from one directional light, plus ambient.
+    in color vec3 = 0.8 0.8 0.8 color
+    in normal vec3 = $normal
+    in light vec3 = $light
+    in ambient float = 0.15
+    out result vec3 = {color} * ({ambient} + (1.0 - {ambient}) * max(dot(normalize({normal}), normalize({light})), 0.0))
+
+node blinn_phong
+    label Blinn-Phong Specular
+    category Lighting
+    description The highlight of a shiny surface; higher shininess, smaller spot.
+    in normal vec3 = $normal
+    in light vec3 = $light
+    in view vec3 = $view
+    in shininess float = 32.0
+    out specular float = pow(max(dot(normalize({normal}), normalize({light} + {view})), 0.0), {shininess})
+
+node fresnel
+    label Fresnel
+    category Lighting
+    description Rises towards 1 where the surface turns away from the camera.
+    in normal vec3 = $normal
+    in view vec3 = $view
+    in power float = 5.0
+    out result float = pow(1.0 - clamp(dot(normalize({normal}), normalize({view})), 0.0, 1.0), {power})
+
+# --- Output ------------------------------------------------------------------
+
+node surface_output
+    label Surface Output
+    category Output
+    description The result: the colour of each pixel, and an optional world-space offset of each vertex.
+    kind output
+    in color vec4 = 0.8 0.8 0.8 1.0 color stage fragment
+    in offset vec3 = 0 0 0 stage vertex
+
+# --- Helper functions --------------------------------------------------------
+#
+# Emitted once, in each stage that uses them, before the code that calls them.
+
+function pg_checker
+float pg_checker(vec2 p) {
+    vec2 c = floor(p);
+    float s = c.x + c.y;
+    return s - 2.0 * floor(s * 0.5);
+}
+end
+
+function pg_hash
+float pg_hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+end
+
+function pg_noise
+uses pg_hash
+float pg_noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    float a = pg_hash(i);
+    float b = pg_hash(i + vec2(1.0, 0.0));
+    float c = pg_hash(i + vec2(0.0, 1.0));
+    float d = pg_hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+end

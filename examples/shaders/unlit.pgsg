@@ -1,0 +1,7 @@
+pgshadergraph 1
+# The smallest useful graph: one colour uniform straight to the output.
+node 1 color_parameter 1 40 80
+  param name tint
+  param default 1.0 0.45 0.15
+node 2 surface_output 1 340 80
+link 1.color -> 2.color
