@@ -25,6 +25,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace pg {
@@ -65,13 +66,13 @@ public:
 
     template <class T>
     std::span<const T> read() const {
-        assert(type_ == AttrTypeOf<T>::value && "attribute type mismatch");
+        assert(holds<T>() && "attribute type mismatch");
         return std::span<const T>(reinterpret_cast<const T*>(rawRead()), count_);
     }
 
     template <class T>
     std::span<T> write() {
-        assert(type_ == AttrTypeOf<T>::value && "attribute type mismatch");
+        assert(holds<T>() && "attribute type mismatch");
         return std::span<T>(reinterpret_cast<T*>(rawWrite()), count_);
     }
 
@@ -102,6 +103,14 @@ public:
     size_t memoryUsage() const;
 
 private:
+    /// True if T is the element type. String arrays store int32 indices into
+    /// their table, so int32_t is their element type too.
+    template <class T>
+    bool holds() const {
+        return type_ == AttrTypeOf<T>::value ||
+               (std::is_same_v<T, int32_t> && type_ == AttrType::String);
+    }
+
     struct Buffer {
         std::vector<std::byte> bytes;
         Buffer() = default;
