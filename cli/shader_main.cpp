@@ -4,16 +4,18 @@
 //
 //   pgshader list   [--markdown] [--library FILE]...
 //   pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...
-//   pgshader check  [GRAPH.pgsg...] [--nodes] [--glslang PATH] [--spirv-val PATH]
-//                   [--library FILE]...
+//   pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]
+//                   [--spirv-val PATH] [--library FILE]...
 //   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane] [--size N]
 //                   [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...
 //
 // `check` is the proof that the generated code is valid: it compiles every
 // graph -- and with --nodes every output of every node in the library, in the
 // fragment and in the vertex stage -- for every target with glslangValidator,
-// and runs spirv-val on the SPIR-V. `render` draws a preview with OpenGL
-// through EGL, with no window; it exists only when EGL was found at build time.
+// and runs spirv-val on the SPIR-V. --nodes-from checks only the nodes one
+// library file defines: what the author of a library wants to know.
+// `render` draws a preview with OpenGL through EGL, with no window; it exists
+// only when EGL was found at build time.
 //
 #include "pg/shader/Generator.h"
 
@@ -45,6 +47,7 @@ struct Options {
     std::string target = "all";
     std::string outDir = ".";
     bool nodes = false;
+    std::string nodesFrom;  ///< only the nodes defined in this library file
     bool markdown = false;
     std::string glslang = "glslangValidator";
     std::string spirvVal;
@@ -58,8 +61,8 @@ int usage() {
                  "usage:\n"
                  "  pgshader list   [--markdown] [--library FILE]...\n"
                  "  pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"
-                 "  pgshader check  [GRAPH.pgsg...] [--nodes] [--glslang PATH] [--spirv-val PATH]\n"
-                 "                  [--library FILE]...\n"
+                 "  pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]\n"
+                 "                  [--spirv-val PATH] [--library FILE]...\n"
                  "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane] [--size N]\n"
                  "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n");
     return 2;
@@ -80,6 +83,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--target") { if (!next(o.target)) return false; }
         else if (a == "-o") { if (!next(o.outDir)) return false; }
         else if (a == "--nodes") o.nodes = true;
+        else if (a == "--nodes-from") { if (!next(o.nodesFrom)) return false; o.nodes = true; }
         else if (a == "--markdown") o.markdown = true;
         else if (a == "--glslang") { if (!next(o.glslang)) return false; }
         else if (a == "--spirv-val") { if (!next(o.spirvVal)) return false; }
@@ -163,11 +167,23 @@ std::string portList(const NodeDef& d, bool inputs) {
 
 int list(const Options& o, const NodeLibrary& lib) {
     if (o.markdown) {
+        // Library text is plain text: in a table cell '|' ends the cell and
+        // '<name>' would be taken for an HTML tag.
+        auto cell = [](const std::string& text) {
+            std::string out;
+            for (char c : text) {
+                if (c == '<') out += "&lt;";
+                else if (c == '>') out += "&gt;";
+                else if (c == '|') out += "\\|";
+                else out += c;
+            }
+            return out;
+        };
         std::printf("| Node | Category | Inputs | Outputs | What it does |\n|---|---|---|---|---|\n");
         for (const NodeDef* d : lib.nodes()) {
-            std::printf("| **%s** `%s` | %s | %s | %s | %s |\n", d->label.c_str(), d->name.c_str(),
-                        d->category.c_str(), portList(*d, true).c_str(), portList(*d, false).c_str(),
-                        d->description.c_str());
+            std::printf("| **%s** `%s` | %s | %s | %s | %s |\n", cell(d->label).c_str(), d->name.c_str(),
+                        cell(d->category).c_str(), cell(portList(*d, true)).c_str(),
+                        cell(portList(*d, false)).c_str(), cell(d->description).c_str());
         }
         return 0;
     }
@@ -208,7 +224,7 @@ int gen(const Options& o, const NodeLibrary& lib) {
                 continue;
             }
             for (const auto& f : s.files) {
-                const fs::path out = fs::path(o.outDir) / (stemOf(path) + "." + t->name() + f.extension);
+                const fs::path out = fs::path(o.outDir) / outputFileName(stemOf(path), t->name(), f);
                 std::ofstream(out) << f.text;
                 std::printf("wrote %s\n", out.string().c_str());
             }
@@ -261,7 +277,7 @@ std::vector<Job> jobsFor(const Options& o, const std::string& label, const Gener
 /// One small graph per output of every node, wired into the output node --
 /// once for the fragment stage and once for the vertex stage; nodes with
 /// `any` inputs also once with vec3 values in them.
-std::vector<std::pair<std::string, ShaderGraph>> nodeGraphs(const NodeLibrary& lib) {
+std::vector<std::pair<std::string, ShaderGraph>> nodeGraphs(const NodeLibrary& lib, const std::string& from) {
     const NodeDef* output = nullptr;
     for (const NodeDef* d : lib.nodes()) {
         if (d->isOutput) output = d;
@@ -270,6 +286,7 @@ std::vector<std::pair<std::string, ShaderGraph>> nodeGraphs(const NodeLibrary& l
     if (!output) return graphs;
     for (const NodeDef* d : lib.nodes()) {
         if (d->isOutput) continue;
+        if (!from.empty() && d->origin.rfind(from + ":", 0) != 0) continue;  // origin is "file:line"
         const bool hasAny = std::any_of(d->inputs.begin(), d->inputs.end(),
                                         [](const PortDef& p) { return p.type == Type::Any; });
         for (const auto& out : d->outputs) {
@@ -301,7 +318,13 @@ int check(const Options& o, const NodeLibrary& lib) {
         graphs.emplace_back(stemOf(path), std::move(g));
     }
     if (o.nodes) {
-        for (auto& ng : nodeGraphs(lib)) graphs.push_back(std::move(ng));
+        auto ng = nodeGraphs(lib, o.nodesFrom);
+        if (ng.empty() && !o.nodesFrom.empty()) {
+            std::fprintf(stderr, "pgshader: no nodes from '%s' -- load it with --library, spelled the same\n",
+                         o.nodesFrom.c_str());
+            return 1;
+        }
+        for (auto& g : ng) graphs.push_back(std::move(g));
     }
     if (graphs.empty()) return usage();
 

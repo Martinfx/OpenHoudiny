@@ -41,4 +41,8 @@ struct GeneratedShader {
 
 GeneratedShader generate(const ShaderGraph& graph, const NodeLibrary& library, const Target& target);
 
+/// The name to save a generated file under: "marble.vulkan.frag", or just
+/// "marble.hlsl" when the extension already names the target.
+std::string outputFileName(const std::string& stem, const std::string& target, const ShaderFile& file);
+
 }  // namespace pg::shader

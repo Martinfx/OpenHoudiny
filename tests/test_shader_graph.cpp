@@ -492,3 +492,8 @@ TEST(a_new_target_plugs_in_as_one_class) {
     CHECK(contains(text, "color := vec4(n2_result, 1.0)"));
     CHECK_EQ(s.entryPoint(Stage::Fragment), "all");
 }
+
+TEST(generated_files_are_named_after_the_graph_and_the_target) {
+    CHECK_EQ(outputFileName("marble", "vulkan", ShaderFile{".frag", "", {}}), "marble.vulkan.frag");
+    CHECK_EQ(outputFileName("marble", "hlsl", ShaderFile{".hlsl", "", {}}), "marble.hlsl");
+}

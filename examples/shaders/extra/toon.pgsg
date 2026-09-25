@@ -1,0 +1,33 @@
+pgshadergraph 1
+# Needs the user library next to it -- the nodes stripes and toon come from there:
+#   pgshadered --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
+# Two-colour stripes, cel-shaded in three bands, with a crisp rim light.
+node 1 stripes 1 20 40
+  in count 4.0
+  in direction 0.35 1.0 0.2
+node 2 color 1 20 250
+  param rgb 0.95 0.42 0.18
+node 3 color 1 20 360
+  param rgb 0.98 0.9 0.72
+node 4 mix 1 200 200
+node 5 toon 1 370 100
+  in bands 3.0
+  in shade 0.26 0.12 0.32
+node 6 fresnel 1 200 440
+  in power 3.0
+node 7 smoothstep 1 370 440
+  in edge0 0.55
+  in edge1 0.6
+node 8 multiply 1 540 440
+  in b 0.45
+node 9 add 1 560 180
+node 10 surface_output 1 730 180
+link 1.mask -> 4.t
+link 2.color -> 4.a
+link 3.color -> 4.b
+link 4.result -> 5.color
+link 5.result -> 9.a
+link 6.result -> 7.x
+link 7.result -> 8.a
+link 8.result -> 9.b
+link 9.result -> 10.color

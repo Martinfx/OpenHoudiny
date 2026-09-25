@@ -135,7 +135,7 @@ private:
         s.def = lib_.find(n->type);
         if (!s.def) {
             s.failed = true;
-            error(id, "unknown node type '" + n->type + "'");
+            error(id, "unknown node type '" + n->type + "' -- is the library that defines it loaded?");
         } else if (n->version > s.def->version) {
             s.failed = true;
             error(id, "'" + s.def->label + "' was saved by a newer version of its definition (" +
@@ -454,6 +454,11 @@ std::string GeneratedShader::entryPoint(Stage stage) const {
 
 GeneratedShader generate(const ShaderGraph& graph, const NodeLibrary& library, const Target& target) {
     return Compiler(graph, library, target).run();
+}
+
+std::string outputFileName(const std::string& stem, const std::string& target, const ShaderFile& file) {
+    if (file.extension == "." + target) return stem + file.extension;
+    return stem + "." + target + file.extension;
 }
 
 }  // namespace pg::shader

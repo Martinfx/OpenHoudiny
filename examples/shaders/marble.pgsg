@@ -2,34 +2,34 @@ pgshadergraph 1
 # Marble: noise of the position (a vec3 into a vec2 input -- converted for you),
 # bent through a sine into veins, sharpened with a power, mixed between two
 # colours, then lit. Using the position instead of the UVs avoids a seam.
-node 1 position 1 40 120
-node 2 noise 1 240 40
+node 1 position 1 20 100
+node 2 noise 1 190 20
   in scale 3.0
-node 3 multiply 1 440 40
+node 3 multiply 1 360 20
   in b 9.0
-node 4 split 1 240 240
-node 5 multiply 1 440 240
+node 4 split 1 190 170
+node 5 multiply 1 360 190
   in b 4.0
-node 6 add 1 640 120
-node 7 sine 1 820 120
-node 8 multiply 1 1000 120
+node 6 add 1 530 100
+node 7 sine 1 700 100
+node 8 multiply 1 870 100
   in b 0.5
-node 9 add 1 1180 120
+node 9 add 1 20 400
   in b 0.5
-node 10 power 1 1360 120
+node 10 power 1 190 400
   in exponent 0.35
-node 11 color 1 1180 300
+node 11 color 1 20 560
   param rgb 0.18 0.16 0.15
-node 12 color 1 1180 440
+node 12 color 1 20 670
   param rgb 0.94 0.92 0.88
-node 13 mix 1 1560 300
-node 14 lambert 1 1760 300
-node 15 blinn_phong 1 1760 520
+node 13 mix 1 360 480
+node 14 lambert 1 530 480
+node 15 blinn_phong 1 320 700
   in shininess 64.0
-node 16 multiply 1 1980 520
+node 16 multiply 1 530 700
   in b 0.4
-node 17 add 1 2160 380
-node 18 surface_output 1 2360 380
+node 17 add 1 700 560
+node 18 surface_output 1 870 560
 link 1.position -> 2.uv
 link 2.value -> 3.a
 link 1.position -> 4.vector

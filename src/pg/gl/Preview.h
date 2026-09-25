@@ -46,6 +46,8 @@ public:
     void setUniforms(const std::vector<shader::UniformInfo>& uniforms);
     /// Overrides one numeric uniform -- what a slider in the editor does.
     void setUniformValue(const std::string& name, const shader::Value& value);
+    /// Drops every override: all uniforms back at their defaults.
+    void resetUniformValues() { overrides_.clear(); }
 
     void setMesh(MeshKind kind);
     MeshKind mesh() const { return meshKind_; }

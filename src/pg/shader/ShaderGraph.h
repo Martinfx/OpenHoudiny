@@ -86,7 +86,9 @@ public:
     /// the generator reports them -- so a graph survives a missing library.
     static bool load(const std::string& text, ShaderGraph& out, std::string& error);
 
-    /// Bumped by every edit, including moving a node. Cheap change detection.
+    /// Bumped by every edit that can change the generated code -- cheap change
+    /// detection for a UI that recompiles. Moving a node (writing x and y
+    /// through node()) is not such an edit and leaves it alone.
     uint64_t revision() const { return revision_; }
 
     static constexpr int kFormatVersion = 1;

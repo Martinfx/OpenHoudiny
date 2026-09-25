@@ -5,6 +5,8 @@ node-based, nedestruktivní, headless-first.
 
 - **[ROADMAP.md](ROADMAP.md)** — fáze, milníky, rozhodovací brány, rizika
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — datový model, cook engine, invarianty
+- **[docs/shader-graph.md](docs/shader-graph.md)** — node editor shaderů pro
+  OpenGL, OpenGL ES, Vulkan a Direct3D: jak funguje a jak ho rozšiřovat
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -35,6 +37,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+S node editorem shaderů (stáhne Dear ImGui, imnodes a případně GLFW):
+
+```bash
+cmake -S . -B build -DPG_BUILD_SHADER_EDITOR=ON && cmake --build build
+```
+
 Se sanitizery:
 
 ```bash
@@ -45,9 +53,11 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON && cmake --build build-tsan && 
 ## Spuštění
 
 ```bash
-./build/pgtests            # 50 testů proti invariantům
+./build/pgtests            # 71 testů: 50 proti invariantům jádra, 21 pro shader graf
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
+./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
+./build/pgshadered examples/shaders/marble.pgsg      # jen s PG_BUILD_SHADER_EDITOR
 ```
 
 `pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,
@@ -72,8 +82,13 @@ Hotovo a otestováno: COW geometrie, cook engine, časová závislost, LRU cache
 deterministický paralelismus, per-element jazyk, 10 typů uzlů, 50 testů
 (čisté pod ASan, UBSan i ThreadSanitizerem).
 
+Vedle geometrie je síť druhého typu: **shader graf** s knihovnou uzlů
+v textových souborech, generátorem pro čtyři jazyky (GLSL 330, GLSL ES 300,
+Vulkan GLSL 450 → SPIR-V, HLSL) a editorem s živým náhledem. Každý vestavěný
+uzel se v CTestu překládá pro všechny cíle přes glslangValidator a spirv-val.
+
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
-serializace scény, Python vazby, GUI, simulace. Podrobně v
+serializace scény, Python vazby, GUI pro geometrii, simulace. Podrobně v
 [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
 
 ## Licence

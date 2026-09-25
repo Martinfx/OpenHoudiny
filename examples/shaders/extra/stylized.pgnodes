@@ -1,0 +1,54 @@
+# A user node library -- loaded at run time: no C++, no rebuild.
+#
+#   pgshadered --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
+#   pgshader gen --library examples/shaders/extra/stylized.pgnodes --target all examples/shaders/extra/toon.pgsg
+#   pgshader check --library F --nodes-from F        # F = this file: compile each node for every target
+#
+# In the editor: Library > Add library file..., then the nodes are in the
+# add-node menu under "Stylized". Edit this file and press Ctrl+R to reload.
+# The format is described in src/pg/shader/NodeLibrary.h; the built-in nodes
+# in src/pg/shader/builtin.pgnodes are written the same way.
+
+# Two outputs; the second one reads the first.
+node toon
+    label Toon
+    category Stylized
+    description Cel shading: the diffuse light cut into a few flat bands.
+    in color vec3 = 0.95 0.55 0.3 color
+    in shade vec3 = 0.22 0.12 0.25 color
+    in normal vec3 = $normal
+    in light vec3 = $light
+    in bands float = 3.0
+    out band float = ceil(max(dot(normalize({normal}), normalize({light})), 0.0) * {bands}) / {bands}
+    out result vec3 = mix({shade}, {color}, {band})
+
+# Calls a helper function; the function is emitted once, only when used.
+node stripes
+    label Stripes
+    category Stylized
+    description Stripes along a direction in space: 1 on a stripe, 0 between, soft edges.
+    in position vec3 = $position
+    in direction vec3 = 0.0 1.0 0.0
+    in count float = 6.0
+    in width float = 0.5
+    uses pg_stripe
+    out mask float = pg_stripe(dot({position}, normalize({direction})) * {count}, {width})
+
+function pg_stripe
+float pg_stripe(float x, float width) {
+    float d = abs(fract(x) - 0.5) * 2.0;  // 0 in the middle of a stripe, 1 halfway to the next
+    return 1.0 - smoothstep(width - 0.04, width + 0.04, d);
+}
+end
+
+# `any` in, `any` out: works on floats and on vectors. The neutral template is
+# GLSL; HLSL's fmod keeps the sign of x where GLSL's mod does not, so HLSL gets
+# a template of its own instead of the automatic rename mod -> fmod.
+node wrap
+    label Wrap
+    category Stylized
+    description x modulo y, always between 0 and y -- negative x too.
+    in x any = 0.0
+    in y any = 1.0
+    out result any = mod({x}, {y})
+    impl hlsl result = ({x} - {y} * floor({x} / {y}))

@@ -1,22 +1,22 @@
 pgshadergraph 1
 # Vertex animation: every vertex moves along its normal by
 # sin(8 * height + 3 * time) * 0.06. The offset input is computed per vertex.
-node 1 position 1 40 40
-node 2 split 1 240 40
-node 3 multiply 1 440 40
+node 1 position 1 20 40
+node 2 split 1 190 20
+node 3 multiply 1 360 20
   in b 8.0
-node 4 time 1 240 220
-node 5 multiply 1 440 220
+node 4 time 1 20 200
+node 5 multiply 1 360 180
   in b 3.0
-node 6 add 1 640 120
-node 7 sine 1 820 120
-node 8 multiply 1 1000 120
+node 6 add 1 530 100
+node 7 sine 1 700 100
+node 8 multiply 1 870 100
   in b 0.06
-node 9 normal 1 1000 280
-node 10 multiply 1 1200 180
-node 11 lambert 1 1200 380
+node 9 normal 1 20 470
+node 10 multiply 1 190 400
+node 11 lambert 1 190 560
   in color 0.95 0.55 0.2
-node 12 surface_output 1 1420 260
+node 12 surface_output 1 400 450
 link 1.position -> 2.vector
 link 2.y -> 3.a
 link 4.time -> 5.a

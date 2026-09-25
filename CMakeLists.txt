@@ -122,6 +122,73 @@ if(PG_EGL_INCLUDE_DIR AND PG_EGL_LIBRARY)
   target_compile_definitions(pgshader PRIVATE PG_HAVE_EGL)
 endif()
 
+# --- shader editor -----------------------------------------------------------
+#
+# pgshadered, the node editor: Dear ImGui + imnodes + GLFW. Off by default, so
+# the rest stays dependency-free. The sources are fetched at configure time; to
+# build offline, point FETCHCONTENT_SOURCE_DIR_IMGUI / _IMNODES / _GLFW at
+# local checkouts. A system GLFW 3.3+ is used when there is one.
+
+option(PG_BUILD_SHADER_EDITOR "Build pgshadered (fetches Dear ImGui, imnodes and GLFW)" OFF)
+if(PG_BUILD_SHADER_EDITOR)
+  include(FetchContent)
+  # Neither is added as a CMake subproject -- imgui has no CMakeLists.txt and
+  # imnodes' own wants an installed imgui package -- so SOURCE_SUBDIR points
+  # nowhere and their sources are compiled into the editor below.
+  FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.92.9b
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR no-cmake)
+  FetchContent_Declare(imnodes
+    GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
+    GIT_TAG eb36902c892548ef94f88f51ad7e7c9c7058a71c
+    SOURCE_SUBDIR no-cmake)
+  FetchContent_MakeAvailable(imgui imnodes)
+
+  find_package(glfw3 3.3 QUIET)
+  if(NOT glfw3_FOUND)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    # On Linux GLFW 3.4 builds for X11 and Wayland; Wayland needs
+    # wayland-scanner. Without it: X11 only.
+    find_program(PG_WAYLAND_SCANNER wayland-scanner)
+    if(NOT PG_WAYLAND_SCANNER)
+      set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+    endif()
+    FetchContent_Declare(glfw
+      GIT_REPOSITORY https://github.com/glfw/glfw.git
+      GIT_TAG 3.4
+      GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(glfw)
+  endif()
+
+  add_executable(pgshadered
+    tools/shader_editor/main.cpp
+    tools/shader_editor/Editor.cpp
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
+    ${imnodes_SOURCE_DIR}/imnodes.cpp
+  )
+  target_include_directories(pgshadered SYSTEM PRIVATE
+    ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends ${imnodes_SOURCE_DIR})
+  target_compile_definitions(pgshadered PRIVATE
+    PG_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders")
+  # The OpenGL backend finds its functions at run time, like pg::gl::Api.
+  target_link_libraries(pgshadered PRIVATE pgpreview glfw ${CMAKE_DL_LIBS})
+  if(NOT MSVC)
+    set_source_files_properties(tools/shader_editor/main.cpp tools/shader_editor/Editor.cpp
+                                PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic")
+  endif()
+endif()
+
 # --- tests -----------------------------------------------------------------
 enable_testing()
 add_executable(pgtests
@@ -150,6 +217,13 @@ if(GLSLANG_VALIDATOR)
   add_test(NAME shaders_compile
            COMMAND pgshader check --nodes --glslang ${GLSLANG_VALIDATOR} ${PG_SPIRV_VAL_ARGS}
                    ${PG_SHADER_EXAMPLES})
+  # The example user library, loaded at run time like any user's: each of its
+  # nodes, and the graph that uses them.
+  set(PG_USER_LIBRARY ${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/extra/stylized.pgnodes)
+  add_test(NAME shaders_compile_user_library
+           COMMAND pgshader check --library ${PG_USER_LIBRARY} --nodes-from ${PG_USER_LIBRARY}
+                   --glslang ${GLSLANG_VALIDATOR} ${PG_SPIRV_VAL_ARGS}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/extra/toon.pgsg)
 endif()
 
 # --- benchmark + demo ------------------------------------------------------

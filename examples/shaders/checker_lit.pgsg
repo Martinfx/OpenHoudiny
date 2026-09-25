@@ -1,16 +1,16 @@
 pgshadergraph 1
 # A checker pattern, lit: diffuse from Lambert plus a Blinn-Phong highlight.
-node 1 checker 1 40 40
+node 1 checker 1 20 40
   in scale 10.0
   in color1 0.12 0.3 0.55
   in color2 0.92 0.9 0.84
-node 2 lambert 1 320 40
-node 3 blinn_phong 1 320 280
+node 2 lambert 1 230 40
+node 3 blinn_phong 1 190 270
   in shininess 48.0
-node 4 multiply 1 580 280
+node 4 multiply 1 420 300
   in b 0.35
-node 5 add 1 780 120
-node 6 surface_output 1 1000 120
+node 5 add 1 610 140
+node 6 surface_output 1 800 140
 link 1.color -> 2.color
 link 2.result -> 5.a
 link 3.specular -> 4.a
