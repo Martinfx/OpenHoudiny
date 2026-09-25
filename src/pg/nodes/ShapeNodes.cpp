@@ -14,6 +14,7 @@
 #include "pg/grammar/Grammar.h"
 
 #include <algorithm>
+#include <cctype>
 #include <mutex>
 
 namespace pg {
@@ -208,7 +209,9 @@ public:
     GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr> in) override {
         const GeometryPtr shapes = firstInput(in);
         const std::string axisName = params_.getString("axis", "y");
-        const int axis = axisName == "x" ? 0 : (axisName == "z" ? 2 : 1);
+        const char a = axisName.empty() ? 'y' : static_cast<char>(std::tolower(
+                                                     static_cast<unsigned char>(axisName[0])));
+        const int axis = a == 'x' ? 0 : (a == 'z' ? 2 : 1);
 
         SplitPattern pattern;
         std::string error;

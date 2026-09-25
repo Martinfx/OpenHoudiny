@@ -232,6 +232,11 @@ TEST(nil_takes_up_space_but_makes_no_shape) {
     CHECK_NEAR(out[0].shape.scope.size.z, 5.0, 1e-5);  // other extents untouched
 }
 
+TEST(a_tiny_repeat_is_capped_instead_of_exhausting_memory) {
+    const SplitPattern p = pattern("{ ~0.0001: A }*");
+    CHECK_EQ(layoutSplit(p, 1.0e6f).size(), static_cast<size_t>(kMaxRepeats));
+}
+
 TEST(parts_that_do_not_fit_are_clipped_at_the_end_of_the_scope) {
     const SplitPattern p = pattern("{ 6: A | 6: B | 6: C }");
     const auto pieces = layoutSplit(p, 10.0f);

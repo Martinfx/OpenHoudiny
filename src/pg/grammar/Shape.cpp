@@ -174,7 +174,8 @@ std::vector<SplitPiece> layoutSplit(const SplitPattern& p, float length) {
     const float unit = unitFixed + unitFloating;
     const float room = length - outerFixed - outerFloating;
     if (!p.repeat.empty() && unit > kEpsilon && room > kEpsilon) {
-        const float fit = room / unit;
+        // Clamped before the int conversion, which would overflow for a tiny unit.
+        const float fit = std::min(room / unit, static_cast<float>(kMaxRepeats));
         repeats = unitFloating > 0.0f ? std::max(1, static_cast<int>(std::floor(fit + 0.5f)))
                                       : static_cast<int>(std::floor(fit + 1e-4f));
         repeats = std::min(repeats, kMaxRepeats);
