@@ -9,6 +9,8 @@
 //                   [--spirv-val PATH] [--library FILE]...
 //   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                   [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...
+//   pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution N]
+//                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--set NAME=VALUE]...
 //
 // `check` is the proof that the generated code is valid: it compiles every
 // graph -- and with --nodes every output of every node in the library, in the
@@ -16,7 +18,9 @@
 // and runs spirv-val on the SPIR-V. --nodes-from checks only the nodes one
 // library file defines: what the author of a library wants to know.
 // `render` draws a preview with OpenGL through EGL, with no window; it exists
-// only when EGL was found at build time.
+// only when EGL was found at build time. So does `pyro`: it simulates smoke or
+// fire (pg::sim::PyroSolver) and renders the last frame -- or every k-th, as a
+// numbered sequence -- with the volume renderer of the editor.
 //
 #include "Commands.h"
 
@@ -24,10 +28,13 @@
 #include "pg/gl/HeadlessContext.h"
 #include "pg/gl/Png.h"
 #include "pg/gl/Preview.h"
+#include "pg/gl/Volume.h"
+#include "pg/sim/Pyro.h"
 #endif
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -56,7 +63,16 @@ struct Options {
     std::string spirvVal;
     std::string mesh;  ///< empty: a billboard for graphs that blend, else a sphere
     int size = 512;
+    std::string sizeText;  ///< --size as given: N, or WxH for pyro
     float time = 0.0f, yaw = 30.0f, pitch = 18.0f;
+    bool yawSet = false, pitchSet = false;
+    // pyro
+    std::string preset = "fire";
+    int frames = 90;
+    int every = 0;       ///< write every k-th frame; 0: only the last
+    int resolution = 0;  ///< 0: the preset's
+    float distance = 0.0f;
+    std::vector<std::string> sets;  ///< NAME=VALUE
 };
 
 int usage() {
@@ -84,10 +100,16 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--glslang") { if (!next(o.glslang)) return false; }
         else if (a == "--spirv-val") { if (!next(o.spirvVal)) return false; }
         else if (a == "--mesh") { if (!next(o.mesh)) return false; }
-        else if (a == "--size") { if (!next(v)) return false; o.size = std::atoi(v.c_str()); }
+        else if (a == "--size") { if (!next(o.sizeText)) return false; o.size = std::atoi(o.sizeText.c_str()); }
         else if (a == "--time") { if (!next(v) || !parseFloat(v, o.time)) return false; }
-        else if (a == "--yaw") { if (!next(v) || !parseFloat(v, o.yaw)) return false; }
-        else if (a == "--pitch") { if (!next(v) || !parseFloat(v, o.pitch)) return false; }
+        else if (a == "--yaw") { if (!next(v) || !parseFloat(v, o.yaw)) return false; o.yawSet = true; }
+        else if (a == "--pitch") { if (!next(v) || !parseFloat(v, o.pitch)) return false; o.pitchSet = true; }
+        else if (a == "--distance") { if (!next(v) || !parseFloat(v, o.distance)) return false; }
+        else if (a == "--preset") { if (!next(o.preset)) return false; }
+        else if (a == "--frames") { if (!next(v)) return false; o.frames = std::atoi(v.c_str()); }
+        else if (a == "--every") { if (!next(v)) return false; o.every = std::atoi(v.c_str()); }
+        else if (a == "--resolution") { if (!next(v)) return false; o.resolution = std::atoi(v.c_str()); }
+        else if (a == "--set") { if (!next(v)) return false; o.sets.push_back(v); }
         else if (!a.empty() && a[0] == '-') return false;
         else o.positional.push_back(a);
     }
@@ -411,10 +433,150 @@ int render(const Options& o, const NodeLibrary& lib) {
 #endif
 }
 
+#ifdef PG_HAVE_EGL
+/// NAME=VALUE onto the simulation or its look. False, with why, for a name
+/// neither has or a value that is not a number.
+bool applySetting(const std::string& assignment, pg::sim::PyroSettings& settings, pg::gl::VolumeStyle& style,
+                  std::string& error) {
+    const size_t eq = assignment.find('=');
+    float value = 0.0f;
+    if (eq == std::string::npos || !parseFloat(assignment.substr(eq + 1), value)) {
+        error = "--set wants NAME=NUMBER, not '" + assignment + "'";
+        return false;
+    }
+    const std::string name = assignment.substr(0, eq);
+    for (const auto& p : pg::sim::pyroParams()) {
+        if (name == p.name) {
+            settings.*p.member = value;
+            return true;
+        }
+    }
+    for (const auto& p : pg::gl::volumeParams()) {
+        if (name == p.name) {
+            style.*p.member = value;
+            return true;
+        }
+    }
+    if (name == "timeStep") settings.timeStep = value;
+    else if (name == "resolution") settings.resolution = static_cast<int>(value);
+    else if (name == "substeps") settings.substeps = static_cast<int>(value);
+    else if (name == "pressureCycles") settings.pressureCycles = static_cast<int>(value);
+    else if (name == "seed") settings.seed = static_cast<uint32_t>(value);
+    else {
+        error = "no setting '" + name + "'; there are resolution, timeStep, substeps, pressureCycles, seed";
+        for (const auto& p : pg::sim::pyroParams()) error += std::string(", ") + p.name;
+        for (const auto& p : pg::gl::volumeParams()) error += std::string(", ") + p.name;
+        return false;
+    }
+    return true;
+}
+
+/// fire.png, 30 -> fire_0030.png
+std::string numbered(const std::string& path, int frame) {
+    char digits[16];
+    std::snprintf(digits, sizeof digits, "_%04d", frame);
+    const fs::path p(path);
+    return (p.parent_path() / (p.stem().string() + digits + p.extension().string())).string();
+}
+#endif
+
+int pyro(const Options& o) {
+    if (o.positional.size() != 1 || o.frames < 1) return usage();
+#ifdef PG_HAVE_EGL
+    namespace sim = pg::sim;
+    namespace gl = pg::gl;
+    sim::PyroSettings settings;
+    gl::VolumeStyle style;
+    if (o.preset == "fire") {
+        settings = sim::PyroSettings::fire();
+        style = gl::VolumeStyle::fire();
+    } else if (o.preset == "smoke") {
+        settings = sim::PyroSettings::smoke();
+        style = gl::VolumeStyle::smoke();
+    } else {
+        std::fprintf(stderr, "pyro: no preset '%s' (fire, smoke)\n", o.preset.c_str());
+        return 1;
+    }
+    if (o.resolution > 0) settings.resolution = o.resolution;
+    std::string error;
+    for (const auto& assignment : o.sets) {
+        if (!applySetting(assignment, settings, style, error)) {
+            std::fprintf(stderr, "pyro: %s\n", error.c_str());
+            return 1;
+        }
+    }
+    int width = 400, height = 600;
+    if (!o.sizeText.empty()) {
+        const size_t x = o.sizeText.find('x');
+        width = std::atoi(o.sizeText.c_str());
+        height = x == std::string::npos ? width * 3 / 2 : std::atoi(o.sizeText.c_str() + x + 1);
+    }
+    width = std::clamp(width, 16, 4096);
+    height = std::clamp(height, 16, 4096);
+
+    gl::HeadlessContext context;
+    if (!context.create(error)) {
+        std::fprintf(stderr, "pyro: %s\n", error.c_str());
+        return 1;
+    }
+    gl::Api api;
+    if (!api.load(gl::HeadlessContext::procAddress, error)) {
+        std::fprintf(stderr, "pyro: OpenGL function %s is missing\n", error.c_str());
+        return 1;
+    }
+    gl::VolumeRenderer volume(api);
+    std::string log;
+    if (!volume.init(log)) {
+        std::fprintf(stderr, "pyro: the driver rejected the volume shader:\n%s\n", log.c_str());
+        return 1;
+    }
+    volume.style = style;
+    if (o.yawSet) volume.orbit.yaw = o.yaw;
+    if (o.pitchSet) volume.orbit.pitch = o.pitch;
+    if (o.distance > 0.0f) volume.orbit.distance = o.distance;
+
+    using Clock = std::chrono::steady_clock;
+    auto ms = [](Clock::time_point since) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - since).count();
+    };
+    sim::PyroSolver solver(settings);
+    double simulating = 0.0, rendering = 0.0;
+    int images = 0;
+    std::string last;
+    for (int f = 1; f <= o.frames; ++f) {
+        auto t = Clock::now();
+        solver.step();
+        simulating += ms(t);
+        if (o.every > 0 ? f % o.every != 0 : f != o.frames) continue;
+        t = Clock::now();
+        volume.upload(solver.density(), solver.temperature(), solver.flame());
+        volume.render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
+        const std::vector<uint8_t> pixels = volume.readPixels(2);
+        rendering += ms(t);
+        last = o.every > 0 ? numbered(o.positional[0], f) : o.positional[0];
+        if (!gl::writePng(last, width, height, 3, pixels)) {
+            std::fprintf(stderr, "pyro: cannot write %s\n", last.c_str());
+            return 1;
+        }
+        ++images;
+    }
+    std::printf("wrote %s%s: %s, %d x %d x %d cells, %d frames (%.1f s); simulation %.1f ms/frame, "
+                "rendering %.0f ms/image (%s)\n",
+                last.c_str(), images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "",
+                o.preset.c_str(), solver.nx(), solver.ny(), solver.nz(), o.frames, solver.time(),
+                simulating / o.frames, rendering / std::max(images, 1),
+                reinterpret_cast<const char*>(api.GetString(gl::RENDERER)));
+    return 0;
+#else
+    std::fprintf(stderr, "pyro: this pgshader was built without EGL\n");
+    return 1;
+#endif
+}
+
 }  // namespace
 
 bool isCommand(const std::string& word) {
-    return word == "list" || word == "gen" || word == "check" || word == "render";
+    return word == "list" || word == "gen" || word == "check" || word == "render" || word == "pyro";
 }
 
 void printUsage(std::FILE* out) {
@@ -422,8 +584,8 @@ void printUsage(std::FILE* out) {
                  "usage:\n"
 #ifdef PG_HAVE_GUI
                  "  pgshader [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]\n"
-                 "           [--size WxH] [--screenshot OUT.png [--frames N]]\n"
-                 "                  the node editor -- what runs without a command\n"
+                 "           [--pyro [fire|smoke] [--resolution N]] [--size WxH] [--screenshot OUT.png [--frames N]]\n"
+                 "                  the node editor -- what runs without a command; --pyro: smoke and fire\n"
 #else
                  "  pgshader [GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
 #endif
@@ -433,6 +595,9 @@ void printUsage(std::FILE* out) {
                  "                  [--spirv-val PATH] [--library FILE]...\n"
                  "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
                  "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
+                 "  pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution N]\n"
+                 "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--set NAME=VALUE]...\n"
+                 "                  simulates smoke or fire, renders the last frame (every K-th: OUT_0001.png...)\n"
                  "  pgshader help\n");
 }
 
@@ -519,6 +684,7 @@ int runCommand(int argc, char** argv) {
     if (o.command == "list") return list(o, lib);
     if (o.command == "gen") return gen(o, lib);
     if (o.command == "check") return check(o, lib);
+    if (o.command == "pyro") return pyro(o);
     return render(o, lib);
 }
 

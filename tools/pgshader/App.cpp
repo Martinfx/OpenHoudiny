@@ -1,12 +1,13 @@
 // The editor's window -- what `pgshader` opens when it is given no command:
 //
 //   pgshader [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]
-//            [--size WxH] [--screenshot OUT.png [--frames N]]
+//            [--pyro [fire|smoke] [--resolution N]] [--size WxH] [--screenshot OUT.png [--frames N]]
 //
 // The graph on the left; the live preview, uniforms and generated code on the
-// right. --screenshot draws N frames (default 30), saves the window as a PNG
-// and quits; it is how the editor is tested on a machine without a display
-// (under xvfb-run).
+// right. --pyro opens the Pyro workspace instead: smoke and fire. --screenshot
+// draws N frames (default 30), saves the window as a PNG and quits; it is how
+// the editor is tested on a machine without a display (under xvfb-run). With
+// --pyro each of those frames is one step of the simulation.
 #include "App.h"
 
 #include "Commands.h"
@@ -86,9 +87,9 @@ void setupStyle(float scale) {
 namespace pg::editor {
 
 int runEditor(int argc, char** argv) {
-    std::string graphPath, screenshot, target, mesh;
+    std::string graphPath, screenshot, target, mesh, pyro;
     std::vector<std::string> libraries;
-    int frames = 30, width = 1600, height = 960;
+    int frames = 30, width = 1600, height = 960, resolution = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
@@ -116,6 +117,15 @@ int runEditor(int argc, char** argv) {
             const char* v = next();
             if (!v) return usage();
             mesh = v;
+        } else if (a == "--resolution") {
+            const char* v = next();
+            if (!v) return usage();
+            resolution = std::atoi(v);
+        } else if (a == "--pyro") {
+            pyro = "fire";
+            if (i + 1 < argc && (std::strcmp(argv[i + 1], "fire") == 0 || std::strcmp(argv[i + 1], "smoke") == 0)) {
+                pyro = argv[++i];
+            }
         } else if (!a.empty() && a[0] == '-') {
             return usage();
         } else if (graphPath.empty()) {
@@ -212,6 +222,7 @@ int runEditor(int argc, char** argv) {
             if (!found) std::fprintf(stderr, "pgshader: no mesh '%s'\n", mesh.c_str());
         }
         if (!graphPath.empty() && !editor.open(graphPath)) status = 1;
+        if (!pyro.empty()) editor.showPyro(pyro, !screenshot.empty(), resolution);
 
         int frame = 0;
         std::string title;

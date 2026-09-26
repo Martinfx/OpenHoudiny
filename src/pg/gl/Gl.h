@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 #define PG_GLAPI __stdcall
@@ -48,6 +49,9 @@ inline constexpr GLenum COLOR_ATTACHMENT0 = 0x8CE0, DEPTH_ATTACHMENT = 0x8D00;
 inline constexpr GLenum DEPTH_COMPONENT24 = 0x81A6, FRAMEBUFFER_COMPLETE = 0x8CD5;
 inline constexpr GLenum PACK_ALIGNMENT = 0x0D05, UNPACK_ALIGNMENT = 0x0CF5;
 inline constexpr GLenum RENDERER = 0x1F01, VERSION = 0x1F02;
+inline constexpr GLenum TEXTURE_3D = 0x806F, TEXTURE1 = 0x84C1, TEXTURE_WRAP_R = 0x8072;
+inline constexpr GLint CLAMP_TO_EDGE = 0x812F;
+inline constexpr GLenum RED = 0x1903, RG = 0x8227, RGB = 0x1907, R16F = 0x822D, RG16F = 0x822F, RGB16F = 0x881B;
 
 // name, return type, parameters -- one list drives the struct and the loader.
 #define PG_GL_FUNCTIONS(X)                                                                         \
@@ -94,11 +98,14 @@ inline constexpr GLenum RENDERER = 0x1F01, VERSION = 0x1F02;
     X(EnableVertexAttribArray, void, (GLuint))                                                     \
     X(VertexAttribPointer, void, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))         \
     X(DrawElements, void, (GLenum, GLsizei, GLenum, const void*))                                  \
+    X(DrawArrays, void, (GLenum, GLint, GLsizei))                                                  \
     X(GenTextures, void, (GLsizei, GLuint*))                                                       \
     X(BindTexture, void, (GLenum, GLuint))                                                         \
     X(DeleteTextures, void, (GLsizei, const GLuint*))                                              \
     X(ActiveTexture, void, (GLenum))                                                               \
     X(TexImage2D, void, (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*)) \
+    X(TexImage3D, void, (GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*)) \
+    X(TexSubImage3D, void, (GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void*)) \
     X(TexParameteri, void, (GLenum, GLenum, GLint))                                                \
     X(GenerateMipmap, void, (GLenum))                                                              \
     X(GenFramebuffers, void, (GLsizei, GLuint*))                                                   \
@@ -124,5 +131,13 @@ struct Api {
     /// the first missing name in `missing`, if the context lacks one.
     bool load(GetProc getProc, std::string& missing);
 };
+
+/// Compiles and links a program from GLSL sources. 0, with the driver's
+/// messages in `log`, if either stage or the link fails.
+GLuint buildProgram(const Api& gl, const std::string& vertex, const std::string& fragment, std::string& log);
+
+/// The colour of framebuffer `fbo` as RGB rows, top to bottom, averaged down
+/// by `factor` (render at 2x and read with 2 for anti-aliasing).
+std::vector<uint8_t> readRgb(const Api& gl, GLuint fbo, int width, int height, int factor);
 
 }  // namespace pg::gl

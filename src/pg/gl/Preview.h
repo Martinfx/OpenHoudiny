@@ -9,6 +9,7 @@
 // the graph's own: numbers start at their defaults, every texture gets a UV
 // test image.
 //
+#include "pg/gl/Camera.h"
 #include "pg/gl/Gl.h"
 #include "pg/shader/Target.h"
 
@@ -24,13 +25,6 @@ enum class MeshKind { Sphere, Torus, Cube, Plane, Billboard };
 inline constexpr MeshKind kMeshKinds[] = {MeshKind::Sphere, MeshKind::Torus, MeshKind::Cube,
                                           MeshKind::Plane, MeshKind::Billboard};
 const char* meshName(MeshKind kind);
-
-/// Camera orbiting the origin.
-struct Orbit {
-    float yaw = 30.0f;    ///< degrees around the vertical axis
-    float pitch = 18.0f;  ///< degrees above the horizon
-    float distance = 3.4f;
-};
 
 class PreviewRenderer {
 public:

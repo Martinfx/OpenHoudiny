@@ -1,6 +1,6 @@
 #pragma once
 //
-// The commands of pgshader: list, gen, check, render. Without a command,
+// The commands of pgshader: list, gen, check, render, pyro. Without a command,
 // pgshader opens the editor instead (main.cpp); the editor calls checkGraphs()
 // for its Validate action, so both check a graph the same way.
 //
@@ -13,7 +13,7 @@
 
 namespace pg::cli {
 
-/// list, gen, check, render.
+/// list, gen, check, render, pyro.
 bool isCommand(const std::string& word);
 /// Runs `pgshader <command> ...`; argv[1] is the command.
 int runCommand(int argc, char** argv);

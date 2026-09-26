@@ -9,57 +9,6 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
-using Mat4 = std::array<float, 16>;  // column-major, as GL expects
-
-Mat4 multiply(const Mat4& a, const Mat4& b) {
-    Mat4 r{};
-    for (int c = 0; c < 4; ++c) {
-        for (int row = 0; row < 4; ++row) {
-            float s = 0.0f;
-            for (int k = 0; k < 4; ++k) s += a[k * 4 + row] * b[c * 4 + k];
-            r[c * 4 + row] = s;
-        }
-    }
-    return r;
-}
-
-Mat4 perspective(float fovyDegrees, float aspect, float zNear, float zFar) {
-    const float f = 1.0f / std::tan(fovyDegrees * kPi / 360.0f);
-    Mat4 m{};
-    m[0] = f / aspect;
-    m[5] = f;
-    m[10] = (zFar + zNear) / (zNear - zFar);
-    m[11] = -1.0f;
-    m[14] = 2.0f * zFar * zNear / (zNear - zFar);
-    return m;
-}
-
-Mat4 lookAt(const float eye[3]) {
-    // Looking at the origin, y up.
-    float f[3] = {-eye[0], -eye[1], -eye[2]};
-    const float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
-    for (float& v : f) v /= fl;
-    float s[3] = {f[1] * 0.0f - f[2] * 1.0f, f[2] * 0.0f - f[0] * 0.0f, f[0] * 1.0f - f[1] * 0.0f};
-    const float sl = std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
-    for (float& v : s) v /= sl;
-    const float u[3] = {s[1] * f[2] - s[2] * f[1], s[2] * f[0] - s[0] * f[2], s[0] * f[1] - s[1] * f[0]};
-    Mat4 m{};
-    m[0] = s[0]; m[4] = s[1]; m[8] = s[2];
-    m[1] = u[0]; m[5] = u[1]; m[9] = u[2];
-    m[2] = -f[0]; m[6] = -f[1]; m[10] = -f[2];
-    m[12] = -(s[0] * eye[0] + s[1] * eye[1] + s[2] * eye[2]);
-    m[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
-    m[14] = f[0] * eye[0] + f[1] * eye[1] + f[2] * eye[2];
-    m[15] = 1.0f;
-    return m;
-}
-
-Mat4 identity() {
-    Mat4 m{};
-    m[0] = m[5] = m[10] = m[15] = 1.0f;
-    return m;
-}
-
 /// Interleaved position, normal, uv.
 struct MeshData {
     std::vector<float> v;
@@ -199,25 +148,6 @@ std::vector<uint8_t> testImage(int size) {
     return px;
 }
 
-GLuint compile(const Api& gl, GLenum stage, const std::string& source, std::string& log) {
-    const GLuint s = gl.CreateShader(stage);
-    const GLchar* text = source.c_str();
-    gl.ShaderSource(s, 1, &text, nullptr);
-    gl.CompileShader(s);
-    GLint ok = 0;
-    gl.GetShaderiv(s, COMPILE_STATUS, &ok);
-    if (!ok) {
-        GLint len = 0;
-        gl.GetShaderiv(s, INFO_LOG_LENGTH, &len);
-        std::string msg(static_cast<size_t>(std::max(len, 1)), '\0');
-        gl.GetShaderInfoLog(s, len, nullptr, msg.data());
-        log += (stage == VERTEX_SHADER ? "vertex: " : "fragment: ") + std::string(msg.c_str());
-        gl.DeleteShader(s);
-        return 0;
-    }
-    return s;
-}
-
 }  // namespace
 
 const char* meshName(MeshKind kind) {
@@ -264,31 +194,8 @@ PreviewRenderer::~PreviewRenderer() {
 
 bool PreviewRenderer::setProgram(const std::string& vertex, const std::string& fragment,
                                  std::string& log) {
-    log.clear();
-    const GLuint vs = compile(gl_, VERTEX_SHADER, vertex, log);
-    const GLuint fs = compile(gl_, FRAGMENT_SHADER, fragment, log);
-    if (!vs || !fs) {
-        if (vs) gl_.DeleteShader(vs);
-        if (fs) gl_.DeleteShader(fs);
-        return false;
-    }
-    const GLuint p = gl_.CreateProgram();
-    gl_.AttachShader(p, vs);
-    gl_.AttachShader(p, fs);
-    gl_.LinkProgram(p);
-    gl_.DeleteShader(vs);
-    gl_.DeleteShader(fs);
-    GLint ok = 0;
-    gl_.GetProgramiv(p, LINK_STATUS, &ok);
-    if (!ok) {
-        GLint len = 0;
-        gl_.GetProgramiv(p, INFO_LOG_LENGTH, &len);
-        std::string msg(static_cast<size_t>(std::max(len, 1)), '\0');
-        gl_.GetProgramInfoLog(p, len, nullptr, msg.data());
-        log = "link: " + std::string(msg.c_str());
-        gl_.DeleteProgram(p);
-        return false;
-    }
+    const GLuint p = buildProgram(gl_, vertex, fragment, log);
+    if (!p) return false;
     if (program_) gl_.DeleteProgram(program_);
     program_ = p;
     locations_.clear();
@@ -367,9 +274,8 @@ void PreviewRenderer::render(int width, int height, float time) {
     width = std::max(width, 1);
     height = std::max(height, 1);
     ensureTarget(width, height);
-    const float yaw = orbit.yaw * kPi / 180.0f, pitch = orbit.pitch * kPi / 180.0f;
-    const float eye[3] = {orbit.distance * std::cos(pitch) * std::sin(yaw), orbit.distance * std::sin(pitch),
-                          orbit.distance * std::cos(pitch) * std::cos(yaw)};
+    float eye[3];
+    orbit.eye(eye);
     // A billboard follows the camera, so it is rebuilt every frame: four vertices.
     if (meshDirty_ || meshKind_ == MeshKind::Billboard) uploadMesh(eye);
 
@@ -436,33 +342,7 @@ void PreviewRenderer::render(int width, int height, float time) {
 }
 
 std::vector<uint8_t> PreviewRenderer::readPixels(int factor) const {
-    factor = std::max(factor, 1);
-    std::vector<uint8_t> rgba(static_cast<size_t>(width_) * static_cast<size_t>(height_) * 4);
-    gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
-    gl_.PixelStorei(PACK_ALIGNMENT, 1);
-    gl_.ReadPixels(0, 0, width_, height_, RGBA, UNSIGNED_BYTE, rgba.data());
-    gl_.BindFramebuffer(FRAMEBUFFER, 0);
-
-    // GL rows run bottom to top; images top to bottom. Average factor x factor.
-    const int w = width_ / factor, h = height_ / factor;
-    std::vector<uint8_t> rgb(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            for (int c = 0; c < 3; ++c) {
-                int sum = 0;
-                for (int dy = 0; dy < factor; ++dy) {
-                    for (int dx = 0; dx < factor; ++dx) {
-                        const int sy = height_ - 1 - (y * factor + dy), sx = x * factor + dx;
-                        sum += rgba[(static_cast<size_t>(sy) * static_cast<size_t>(width_) + static_cast<size_t>(sx)) * 4 +
-                                    static_cast<size_t>(c)];
-                    }
-                }
-                rgb[(static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 3 + static_cast<size_t>(c)] =
-                    static_cast<uint8_t>(sum / (factor * factor));
-            }
-        }
-    }
-    return rgb;
+    return readRgb(gl_, fbo_, width_, height_, factor);
 }
 
 }  // namespace pg::gl

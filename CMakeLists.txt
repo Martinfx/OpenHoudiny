@@ -103,14 +103,34 @@ if(PG_SANITIZE_THREAD)
   target_link_options(pgshadergraph PUBLIC -fsanitize=thread)
 endif()
 
-# The preview renderer: OpenGL through function pointers the caller loads, so
-# it links against nothing. The editor and `pgshader render` both use it.
+# --- simulation --------------------------------------------------------------
+#
+# Smoke and fire as a gas on a 3D grid (src/pg/sim). Dependency-free; its
+# loops run on the core's deterministic pg::parallelFor.
+
+add_library(pgsim
+  src/pg/sim/Grid.cpp
+  src/pg/sim/Poisson.cpp
+  src/pg/sim/Pyro.cpp
+)
+target_link_libraries(pgsim PUBLIC pgcore)
+if(MSVC)
+  target_compile_options(pgsim PRIVATE /W4)
+else()
+  target_compile_options(pgsim PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# The renderers: OpenGL through function pointers the caller loads, so they
+# link against nothing. The shader preview (the editor, `pgshader render`) and
+# the volume renderer of the simulation (the editor, `pgshader pyro`).
 add_library(pgpreview
+  src/pg/gl/Camera.cpp
   src/pg/gl/Gl.cpp
   src/pg/gl/Png.cpp
   src/pg/gl/Preview.cpp
+  src/pg/gl/Volume.cpp
 )
-target_link_libraries(pgpreview PUBLIC pgshadergraph)
+target_link_libraries(pgpreview PUBLIC pgshadergraph pgsim)
 
 # --- pgshader --------------------------------------------------------------
 #
@@ -127,7 +147,7 @@ option(PG_BUILD_GUI "Build the editor into pgshader (fetches Dear ImGui, imnodes
 
 set(PG_TOOL_SOURCES tools/pgshader/main.cpp tools/pgshader/Commands.cpp)
 if(PG_BUILD_GUI)
-  list(APPEND PG_TOOL_SOURCES tools/pgshader/App.cpp tools/pgshader/Editor.cpp)
+  list(APPEND PG_TOOL_SOURCES tools/pgshader/App.cpp tools/pgshader/Editor.cpp tools/pgshader/PyroView.cpp)
 endif()
 add_executable(pgshader ${PG_TOOL_SOURCES})
 target_include_directories(pgshader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/pgshader)
@@ -220,8 +240,9 @@ add_executable(pgtests
   tests/test_determinism.cpp
   tests/test_expression.cpp
   tests/test_shader_graph.cpp
+  tests/test_pyro.cpp
 )
-target_link_libraries(pgtests PRIVATE pgcore pgshadergraph)
+target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 add_test(NAME pgtests COMMAND pgtests)
 # The commands work in every build, with or without the editor.
 add_test(NAME pgshader_list COMMAND pgshader list)

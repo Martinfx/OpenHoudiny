@@ -324,15 +324,22 @@ src/pg/shader/   Types      typy shader grafu a jejich převody
                  ShaderGraph instance uzlů, spoje, formát .pgsg
                  Generator  graf → příkazy, typy, mrtvý kód
                  Target     GLSL 330, GLSL ES 300, Vulkan, HLSL; registr
-src/pg/gl/       Gl, Preview, Png, HeadlessContext — náhled přes OpenGL
-tests/           50 testů proti invariantům + 24 pro shader graf
+src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkování
+                 Poisson    tlaková rovnice: geometrický multigrid
+                 Pyro       simulace kouře a ohně, stíny pro vykreslování
+src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
+                 Preview    náhled shaderu na tělese
+                 Volume     objemové vykreslování simulace
+tests/           50 testů proti invariantům + 24 pro shader graf + 9 pro simulaci
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
-tools/pgshader/  pgshader — editor shaderů (výchozí) i příkazy list/gen/check/render
+tools/pgshader/  pgshader — editor shaderů a pracovní plocha Pyro (výchozí),
+                 příkazy list/gen/check/render/pyro
 examples/        grafy shaderů a ukázková uživatelská knihovna
 ```
 
-Shader graf je popsaný zvlášť v [docs/shader-graph.md](docs/shader-graph.md).
+Shader graf je popsaný zvlášť v [docs/shader-graph.md](docs/shader-graph.md),
+simulace kouře a ohně v [docs/pyro.md](docs/pyro.md).
 
 Jmenný prostor `pg` je placeholder — jméno je výstup fáze 0 roadmapy.
 
@@ -356,6 +363,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | 10 typů uzlů, obsahový hash, export OBJ, headless CLI |
 | ✅ | 50 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
+| ✅ | Simulace kouře a ohně: MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader pyro` |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 
@@ -373,7 +381,8 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 
 I/O (USD, Alembic, VDB) · JIT · packed primitives a out-of-core · digital
 assets · serializace scény a migrace verzí · Python vazby · GUI pro geometrii ·
-booleany, subdivize, geometrické dotazy · simulace
+booleany, subdivize, geometrické dotazy · simulace kromě plynu (kapaliny,
+tělesa, látky) · řídké mřížky (VDB) a simulace na GPU
 
 ---
 

@@ -9,6 +9,8 @@ Editor v Blenderu nebo Shader Graph v Unity.
 
 Všechno je jeden program, `pgshader`. Bez příkazu otevře editor, s příkazem
 (`list`, `gen`, `check`, `render`) pracuje v příkazové řádce, bez okna.
+Vedle editoru shaderů má pracovní plochu **Pyro**, simulaci kouře a ohně
+([pyro.md](pyro.md)).
 
 Hlavní požadavek byl, aby šel systém **rozšiřovat bez zásahu do C++**:
 
@@ -273,8 +275,8 @@ Vestavěný uzel `texture` to dělá právě kvůli HLSL.
 
 Oheň i kouř jsou obyčejné grafy z vestavěných uzlů, žádný zvláštní kód. Jsou to
 procedurální efekty: tvar i pohyb počítá shader na jedné ploše ze šumu a času.
-Nejde o simulaci proudění, jakou dělá Pyro v Houdini; ta by patřila do
-geometrického jádra, ne do shaderů.
+Nejde o simulaci proudění, jakou dělá Pyro v Houdini. Tu má jádro zvlášť:
+viz [pyro.md](pyro.md) a záložku Pyro v editoru.
 
 ![Graf ohně v editoru; náhled sám přepnul na billboard](img/editor-fire.png)
 

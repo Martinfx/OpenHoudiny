@@ -7,6 +7,8 @@ node-based, nedestruktivní, headless-first.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — datový model, cook engine, invarianty
 - **[docs/shader-graph.md](docs/shader-graph.md)** — node editor shaderů pro
   OpenGL, OpenGL ES, Vulkan a Direct3D: jak funguje a jak ho rozšiřovat
+- **[docs/pyro.md](docs/pyro.md)** — simulace kouře a ohně (jako Pyro
+  v Houdini): proudění na 3D mřížce, multigrid, objemové vykreslování
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -53,13 +55,15 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 74 testů: 50 proti invariantům jádra, 24 pro shader graf
+./build/pgtests            # 83 testů: 50 jádro, 24 shader graf, 9 simulace kouře a ohně
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor shaderů (výchozí)
 ./build/pgshader examples/shaders/fire.pgsg       # editor s grafem
 ./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
-./build/pgshader help                             # příkazy: list, gen, check, render
+./build/pgshader --pyro                           # simulace ohně v editoru
+./build/pgshader pyro fire.png --frames 90        # totéž bez okna, do PNG
+./build/pgshader help                             # příkazy: list, gen, check, render, pyro
 ```
 
 `pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,
@@ -90,9 +94,15 @@ Vulkan GLSL 450 → SPIR-V, HLSL) a editorem s živým náhledem, včetně
 animovaných efektů (oheň, kouř). Každý vestavěný uzel se v CTestu překládá pro
 všechny cíle přes glslangValidator a spirv-val.
 
+**Simulace kouře a ohně** (`src/pg/sim`) řeší proudění plynu na 3D mřížce:
+posunutá mřížka MAC, advekce MacCormack, hoření, vorticity confinement,
+turbulence a tlak přes multigrid. Je deterministická na libovolném počtu
+vláken. V editoru má vlastní pracovní plochu s objemovým vykreslováním
+(stíny, záření černého tělesa) a simulace tam běží ve vlastním vlákně.
+
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
-serializace scény, Python vazby, GUI pro geometrii, simulace. Podrobně v
-[ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
+serializace scény, Python vazby, GUI pro geometrii, simulace kapalin, těles a
+látek. Podrobně v [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
 
 ## Licence
 
