@@ -1,12 +1,15 @@
-// pgshadered -- the node-based shader editor.
+// The editor's window -- what `pgshader` opens when it is given no command:
 //
-//   pgshadered [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]
-//              [--size WxH] [--screenshot OUT.png [--frames N]]
+//   pgshader [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]
+//            [--size WxH] [--screenshot OUT.png [--frames N]]
 //
-// A window with the graph on the left and the live preview, uniforms and
-// generated code on the right. --screenshot draws N frames (default 30),
-// saves the window as a PNG and quits; it is how the editor is tested on a
-// machine without a display (under xvfb-run).
+// The graph on the left; the live preview, uniforms and generated code on the
+// right. --screenshot draws N frames (default 30), saves the window as a PNG
+// and quits; it is how the editor is tested on a machine without a display
+// (under xvfb-run).
+#include "App.h"
+
+#include "Commands.h"
 #include "Editor.h"
 
 #include "pg/gl/Png.h"
@@ -33,9 +36,7 @@
 namespace {
 
 int usage() {
-    std::fprintf(stderr,
-                 "usage: pgshadered [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]\n"
-                 "                  [--size WxH] [--screenshot OUT.png [--frames N]]\n");
+    pg::cli::printUsage(stderr);
     return 2;
 }
 
@@ -73,7 +74,9 @@ void setupStyle(float scale) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+namespace pg::editor {
+
+int runEditor(int argc, char** argv) {
     std::string graphPath, screenshot, target, mesh;
     std::vector<std::string> libraries;
     int frames = 30, width = 1600, height = 960;
@@ -104,9 +107,6 @@ int main(int argc, char** argv) {
             const char* v = next();
             if (!v) return usage();
             mesh = v;
-        } else if (a == "-h" || a == "--help") {
-            usage();
-            return 0;
         } else if (!a.empty() && a[0] == '-') {
             return usage();
         } else if (graphPath.empty()) {
@@ -119,13 +119,19 @@ int main(int argc, char** argv) {
     glfwSetErrorCallback([](int code, const char* message) {
         std::fprintf(stderr, "glfw %d: %s\n", code, message);
     });
-    if (!glfwInit()) return 1;
+    if (!glfwInit()) {
+        std::fprintf(stderr,
+                     "pgshader: cannot open a window -- is there a display? The commands work without one:\n\n");
+        pg::cli::printUsage(stderr);
+        return 1;
+    }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);  // required on macOS
-    GLFWwindow* window = glfwCreateWindow(width, height, "pgshadered", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(width, height, "pgshader", nullptr, nullptr);
     if (!window) {
+        std::fprintf(stderr, "pgshader: cannot create a window with OpenGL 3.3\n");
         glfwTerminate();
         return 1;
     }
@@ -135,7 +141,7 @@ int main(int argc, char** argv) {
     pg::gl::Api gl;
     std::string missing;
     if (!gl.load(glfwGetProcAddress, missing)) {
-        std::fprintf(stderr, "pgshadered: OpenGL 3.3 functions missing: %s\n", missing.c_str());
+        std::fprintf(stderr, "pgshader: OpenGL 3.3 functions missing: %s\n", missing.c_str());
         return 1;
     }
 
@@ -184,7 +190,7 @@ int main(int argc, char** argv) {
                     found = true;
                 }
             }
-            if (!found) std::fprintf(stderr, "pgshadered: no mesh '%s'\n", mesh.c_str());
+            if (!found) std::fprintf(stderr, "pgshader: no mesh '%s'\n", mesh.c_str());
         }
         if (!graphPath.empty() && !editor.open(graphPath)) status = 1;
 
@@ -221,7 +227,7 @@ int main(int argc, char** argv) {
                     for (int x = 0; x < w; ++x) std::memcpy(dst + x * 3, src + x * 4, 3);
                 }
                 if (!pg::gl::writePng(screenshot, w, h, 3, rgb)) {
-                    std::fprintf(stderr, "pgshadered: cannot write %s\n", screenshot.c_str());
+                    std::fprintf(stderr, "pgshader: cannot write %s\n", screenshot.c_str());
                     status = 1;
                 }
                 break;
@@ -238,3 +244,5 @@ int main(int argc, char** argv) {
     glfwTerminate();
     return status;
 }
+
+}  // namespace pg::editor

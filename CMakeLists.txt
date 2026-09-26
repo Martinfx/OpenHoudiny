@@ -4,7 +4,9 @@ project(pgcore LANGUAGES CXX)
 # ---------------------------------------------------------------------------
 # Prototype of the procedural-geometry core.
 #
-# Deliberately dependency-free: C++20 and the standard library only, so that
+# The core is deliberately dependency-free: C++20 and the standard library.
+# The default build adds the shader editor to pgshader, which fetches Dear
+# ImGui, imnodes and (unless the system has it) GLFW; with -DPG_BUILD_GUI=OFF
 # `cmake -B build && cmake --build build && ctest --test-dir build` works on a
 # bare machine. Production targets (TBB, OpenVDB, USD, LLVM) are listed in
 # ARCHITECTURE.md; none of them are needed to evaluate the core invariants.
@@ -110,8 +112,33 @@ add_library(pgpreview
 )
 target_link_libraries(pgpreview PUBLIC pgshadergraph)
 
-add_executable(pgshader cli/shader_main.cpp)
+# --- pgshader --------------------------------------------------------------
+#
+# One program for the node editor -- what runs when it is given no command --
+# and for the same work from the command line: list, gen, check, render.
+#
+# The editor needs Dear ImGui, imnodes and GLFW. They are fetched at configure
+# time (a system GLFW 3.3+ is used when there is one); to build offline, point
+# FETCHCONTENT_SOURCE_DIR_IMGUI / _IMNODES / _GLFW at local checkouts.
+# PG_BUILD_GUI=OFF leaves the editor out: the commands alone, no dependencies
+# -- for servers and CI.
+
+option(PG_BUILD_GUI "Build the editor into pgshader (fetches Dear ImGui, imnodes and GLFW)" ON)
+
+set(PG_TOOL_SOURCES tools/pgshader/main.cpp tools/pgshader/Commands.cpp)
+if(PG_BUILD_GUI)
+  list(APPEND PG_TOOL_SOURCES tools/pgshader/App.cpp tools/pgshader/Editor.cpp)
+endif()
+add_executable(pgshader ${PG_TOOL_SOURCES})
+target_include_directories(pgshader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/pgshader)
 target_link_libraries(pgshader PRIVATE pgshadergraph Threads::Threads)
+# Warnings for our own sources only; the fetched libraries compile as they are.
+if(MSVC)
+  set_source_files_properties(${PG_TOOL_SOURCES} PROPERTIES COMPILE_OPTIONS "/W4")
+else()
+  set_source_files_properties(${PG_TOOL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic")
+endif()
+
 # `pgshader render` draws without a window through EGL; built when EGL exists.
 find_path(PG_EGL_INCLUDE_DIR EGL/egl.h)
 find_library(PG_EGL_LIBRARY EGL)
@@ -122,19 +149,11 @@ if(PG_EGL_INCLUDE_DIR AND PG_EGL_LIBRARY)
   target_compile_definitions(pgshader PRIVATE PG_HAVE_EGL)
 endif()
 
-# --- shader editor -----------------------------------------------------------
-#
-# pgshadered, the node editor: Dear ImGui + imnodes + GLFW. Off by default, so
-# the rest stays dependency-free. The sources are fetched at configure time; to
-# build offline, point FETCHCONTENT_SOURCE_DIR_IMGUI / _IMNODES / _GLFW at
-# local checkouts. A system GLFW 3.3+ is used when there is one.
-
-option(PG_BUILD_SHADER_EDITOR "Build pgshadered (fetches Dear ImGui, imnodes and GLFW)" OFF)
-if(PG_BUILD_SHADER_EDITOR)
+if(PG_BUILD_GUI)
   include(FetchContent)
   # Neither is added as a CMake subproject -- imgui has no CMakeLists.txt and
   # imnodes' own wants an installed imgui package -- so SOURCE_SUBDIR points
-  # nowhere and their sources are compiled into the editor below.
+  # nowhere and their sources are compiled into pgshader below.
   FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG v1.92.9b
@@ -165,9 +184,7 @@ if(PG_BUILD_SHADER_EDITOR)
     FetchContent_MakeAvailable(glfw)
   endif()
 
-  add_executable(pgshadered
-    tools/shader_editor/main.cpp
-    tools/shader_editor/Editor.cpp
+  target_sources(pgshader PRIVATE
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -177,16 +194,12 @@ if(PG_BUILD_SHADER_EDITOR)
     ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
     ${imnodes_SOURCE_DIR}/imnodes.cpp
   )
-  target_include_directories(pgshadered SYSTEM PRIVATE
+  target_include_directories(pgshader SYSTEM PRIVATE
     ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends ${imnodes_SOURCE_DIR})
-  target_compile_definitions(pgshadered PRIVATE
+  target_compile_definitions(pgshader PRIVATE PG_HAVE_GUI
     PG_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders")
   # The OpenGL backend finds its functions at run time, like pg::gl::Api.
-  target_link_libraries(pgshadered PRIVATE pgpreview glfw ${CMAKE_DL_LIBS})
-  if(NOT MSVC)
-    set_source_files_properties(tools/shader_editor/main.cpp tools/shader_editor/Editor.cpp
-                                PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic")
-  endif()
+  target_link_libraries(pgshader PRIVATE pgpreview glfw ${CMAKE_DL_LIBS})
 endif()
 
 # --- tests -----------------------------------------------------------------
@@ -203,6 +216,8 @@ add_executable(pgtests
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph)
 add_test(NAME pgtests COMMAND pgtests)
+# The commands work in every build, with or without the editor.
+add_test(NAME pgshader_list COMMAND pgshader list)
 
 # Compiles every example graph, and every output of every library node in both
 # stages, for every target with glslangValidator; SPIR-V goes through spirv-val.

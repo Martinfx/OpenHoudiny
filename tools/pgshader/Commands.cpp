@@ -1,6 +1,7 @@
 //
-// pgshader: the shader graph from the command line. Headless, like the rest
-// of the core -- the editor is one client of the same library, this is another.
+// The commands of pgshader, for the command line and for scripts: headless,
+// like the rest of the core. See Commands.h; without a command pgshader opens
+// the editor (main.cpp).
 //
 //   pgshader list   [--markdown] [--library FILE]...
 //   pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...
@@ -17,7 +18,7 @@
 // `render` draws a preview with OpenGL through EGL, with no window; it exists
 // only when EGL was found at build time.
 //
-#include "pg/shader/Generator.h"
+#include "Commands.h"
 
 #ifdef PG_HAVE_EGL
 #include "pg/gl/HeadlessContext.h"
@@ -32,12 +33,14 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <thread>
 
 namespace fs = std::filesystem;
 using namespace pg::shader;
 
+namespace pg::cli {
 namespace {
 
 struct Options {
@@ -57,14 +60,7 @@ struct Options {
 };
 
 int usage() {
-    std::fprintf(stderr,
-                 "usage:\n"
-                 "  pgshader list   [--markdown] [--library FILE]...\n"
-                 "  pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"
-                 "  pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]\n"
-                 "                  [--spirv-val PATH] [--library FILE]...\n"
-                 "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
-                 "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n");
+    printUsage(stderr);
     return 2;
 }
 
@@ -126,17 +122,24 @@ bool loadGraph(const std::string& path, ShaderGraph& g) {
     return true;
 }
 
-void printErrors(const std::string& what, const ShaderGraph& g, const NodeLibrary& lib,
-                 const GeneratedShader& s) {
+/// "what [target]: node 3 (Mix): message", one line per error.
+std::vector<std::string> errorLines(const std::string& what, const ShaderGraph& g, const NodeLibrary& lib,
+                                    const GeneratedShader& s) {
+    std::vector<std::string> lines;
     for (const auto& e : s.errors) {
         std::string where = "graph";
         if (const GraphNode* n = g.node(e.node)) {
             const NodeDef* def = lib.find(n->type);
             where = "node " + std::to_string(n->id) + " (" + (def ? def->label : n->type) + ")";
         }
-        std::fprintf(stderr, "%s [%s]: %s: %s\n", what.c_str(), s.target.c_str(), where.c_str(),
-                     e.message.c_str());
+        lines.push_back(what + " [" + s.target + "]: " + where + ": " + e.message);
     }
+    return lines;
+}
+
+void printErrors(const std::string& what, const ShaderGraph& g, const NodeLibrary& lib,
+                 const GeneratedShader& s) {
+    for (const auto& line : errorLines(what, g, lib, s)) std::fprintf(stderr, "%s\n", line.c_str());
 }
 
 std::vector<const Target*> selectedTargets(const Options& o) {
@@ -245,26 +248,28 @@ std::string quote(const fs::path& p) { return "\"" + p.string() + "\""; }
 
 /// How to validate each built-in target with glslang. Targets added by a user
 /// have no entry and are reported as not checked.
-std::vector<Job> jobsFor(const Options& o, const std::string& label, const GeneratedShader& s,
+std::vector<Job> jobsFor(const CheckTools& tools, const std::string& label, const GeneratedShader& s,
                          const fs::path& dir) {
     std::vector<Job> jobs;
-    const std::string validate = o.spirvVal.empty() ? "" : " && " + o.spirvVal + " --target-env vulkan1.0 ";
+    const std::string validate =
+        tools.spirvVal.empty() ? "" : " && " + tools.spirvVal + " --target-env vulkan1.0 ";
     for (const auto& f : s.files) {
         const fs::path file = dir / (s.target + f.extension);
         std::ofstream(file) << f.text;
         if (s.target == "glsl330" || s.target == "gles300") {
-            jobs.push_back({label + " " + file.filename().string(), o.glslang + " " + quote(file), file.string()});
+            jobs.push_back({label + " " + file.filename().string(), tools.glslang + " " + quote(file),
+                            file.string()});
         } else if (s.target == "vulkan") {
             const fs::path spv = file.string() + ".spv";
             jobs.push_back({label + " " + file.filename().string(),
-                            o.glslang + " -V --target-env vulkan1.0 " + quote(file) + " -o " + quote(spv) +
+                            tools.glslang + " -V --target-env vulkan1.0 " + quote(file) + " -o " + quote(spv) +
                                 (validate.empty() ? "" : validate + quote(spv)),
                             file.string()});
         } else if (s.target == "hlsl") {
             for (const auto& [stage, entry] : f.entryPoints) {
                 const fs::path spv = file.string() + "." + entry + ".spv";
                 jobs.push_back({label + " " + file.filename().string() + ":" + entry,
-                                o.glslang + " -D -V -e " + entry + " -S " +
+                                tools.glslang + " -D -V -e " + entry + " -S " +
                                     (stage == Stage::Vertex ? "vert " : "frag ") + quote(file) + " -o " +
                                     quote(spv) + (validate.empty() ? "" : validate + quote(spv)),
                                 file.string()});
@@ -327,64 +332,21 @@ int check(const Options& o, const NodeLibrary& lib) {
         for (auto& g : ng) graphs.push_back(std::move(g));
     }
     if (graphs.empty()) return usage();
-
-    const fs::path root = fs::temp_directory_path() / ("pgshader-check-" + std::to_string(std::rand()));
-    std::vector<Job> jobs;
-    int generationFailures = 0;
-    std::vector<std::string> unchecked;
-    for (const auto& [name, g] : graphs) {
-        for (const Target* t : TargetRegistry::instance().all()) {
-            const GeneratedShader s = generate(g, lib, *t);
-            if (!s.ok()) {
-                printErrors(name, g, lib, s);
-                ++generationFailures;
-                continue;
-            }
-            const fs::path dir = root / name;
-            fs::create_directories(dir);
-            auto js = jobsFor(o, name, s, dir);
-            if (js.empty() && std::find(unchecked.begin(), unchecked.end(), t->name()) == unchecked.end()) {
-                unchecked.push_back(t->name());
-            }
-            jobs.insert(jobs.end(), js.begin(), js.end());
+    for (const std::string& tool : {o.glslang, o.spirvVal}) {
+        if (!tool.empty() && !toolAvailable(tool)) {
+            std::fprintf(stderr, "pgshader: cannot run '%s' -- is it installed (glslang-tools, spirv-tools)?\n",
+                         tool.c_str());
+            return 1;
         }
     }
 
-    // Each job is its own process: run as many at once as there are cores.
-    std::atomic<size_t> next{0};
-    std::mutex mu;
-    std::vector<std::string> failures;
-    auto worker = [&](unsigned id) {
-        const fs::path log = root / ("log" + std::to_string(id) + ".txt");
-        for (size_t i = next++; i < jobs.size(); i = next++) {
-            // Grouped, so the redirect covers every command of an `a && b` chain.
-            const int rc = std::system(("(" + jobs[i].command + ") > " + quote(log) + " 2>&1").c_str());
-            if (rc == 0) continue;
-            std::ifstream in(log);
-            std::stringstream ss;
-            ss << in.rdbuf();
-            std::lock_guard<std::mutex> lk(mu);
-            failures.push_back(jobs[i].label + "\n  " + jobs[i].command + "\n" + ss.str() + "  source: " +
-                               jobs[i].source);
-        }
-    };
-    const unsigned n = std::max(1u, std::thread::hardware_concurrency());
-    std::vector<std::thread> threads;
-    for (unsigned i = 0; i < n; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-
-    std::sort(failures.begin(), failures.end());
-    for (const auto& f : failures) std::fprintf(stderr, "FAIL %s\n", f.c_str());
-    std::printf("checked %zu graphs x %zu targets: %zu compiler runs, %zu failed, %d did not generate\n",
-                graphs.size(), TargetRegistry::instance().all().size(), jobs.size(), failures.size(),
-                generationFailures);
-    for (const auto& t : unchecked) std::printf("  (no validator known for target '%s')\n", t.c_str());
-    if (failures.empty() && generationFailures == 0) {
-        fs::remove_all(root);
-        return 0;
-    }
-    std::printf("generated files kept in %s\n", root.string().c_str());
-    return 1;
+    const CheckReport r = checkGraphs(graphs, lib, CheckTools{o.glslang, o.spirvVal});
+    for (const auto& e : r.generationErrors) std::fprintf(stderr, "%s\n", e.c_str());
+    for (const auto& f : r.failures) std::fprintf(stderr, "FAIL %s\n", f.c_str());
+    std::printf("%s\n", r.summary().c_str());
+    for (const auto& t : r.unchecked) std::printf("  (no validator known for target '%s')\n", t.c_str());
+    if (!r.keptDir.empty()) std::printf("generated files kept in %s\n", r.keptDir.c_str());
+    return r.ok() ? 0 : 1;
 }
 
 // --- render ------------------------------------------------------------------------
@@ -451,14 +413,113 @@ int render(const Options& o, const NodeLibrary& lib) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+bool isCommand(const std::string& word) {
+    return word == "list" || word == "gen" || word == "check" || word == "render";
+}
+
+void printUsage(std::FILE* out) {
+    std::fprintf(out,
+                 "usage:\n"
+#ifdef PG_HAVE_GUI
+                 "  pgshader [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]\n"
+                 "           [--size WxH] [--screenshot OUT.png [--frames N]]\n"
+                 "                  the node editor -- what runs without a command\n"
+#else
+                 "  pgshader [GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
+#endif
+                 "  pgshader list   [--markdown] [--library FILE]...\n"
+                 "  pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"
+                 "  pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]\n"
+                 "                  [--spirv-val PATH] [--library FILE]...\n"
+                 "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
+                 "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
+                 "  pgshader help\n");
+}
+
+bool toolAvailable(const std::string& tool) {
+#ifdef _WIN32
+    const char* sink = " > NUL 2>&1";
+#else
+    const char* sink = " > /dev/null 2>&1";
+#endif
+    return std::system(("\"" + tool + "\" --version" + sink).c_str()) == 0;
+}
+
+std::string CheckReport::summary() const {
+    return "checked " + std::to_string(graphs) + (graphs == 1 ? " graph" : " graphs") + " x " +
+           std::to_string(targets) + " targets: " + std::to_string(compilerRuns) + " compiler runs, " +
+           std::to_string(failures.size()) + " failed, " + std::to_string(generationFailures) +
+           " did not generate";
+}
+
+CheckReport checkGraphs(const std::vector<std::pair<std::string, ShaderGraph>>& graphs,
+                        const NodeLibrary& library, const CheckTools& tools) {
+    CheckReport r;
+    r.graphs = graphs.size();
+    r.targets = TargetRegistry::instance().all().size();
+    // A directory of its own: checks may run side by side (CTest -j, the editor).
+    const fs::path root =
+        fs::temp_directory_path() / ("pgshader-check-" + std::to_string(std::random_device{}()) + "-" +
+                                     std::to_string(std::random_device{}()));
+    std::vector<Job> jobs;
+    for (const auto& [name, g] : graphs) {
+        for (const Target* t : TargetRegistry::instance().all()) {
+            const GeneratedShader s = generate(g, library, *t);
+            if (!s.ok()) {
+                for (auto& line : errorLines(name, g, library, s)) r.generationErrors.push_back(std::move(line));
+                ++r.generationFailures;
+                continue;
+            }
+            const fs::path dir = root / name;
+            fs::create_directories(dir);
+            auto js = jobsFor(tools, name, s, dir);
+            if (js.empty() && std::find(r.unchecked.begin(), r.unchecked.end(), t->name()) == r.unchecked.end()) {
+                r.unchecked.push_back(t->name());
+            }
+            jobs.insert(jobs.end(), js.begin(), js.end());
+        }
+    }
+    r.compilerRuns = jobs.size();
+
+    // Each job is its own process: run as many at once as there are cores.
+    std::atomic<size_t> next{0};
+    std::mutex mu;
+    auto worker = [&](unsigned id) {
+        const fs::path log = root / ("log" + std::to_string(id) + ".txt");
+        for (size_t i = next++; i < jobs.size(); i = next++) {
+            // Grouped, so the redirect covers every command of an `a && b` chain.
+            const int rc = std::system(("(" + jobs[i].command + ") > " + quote(log) + " 2>&1").c_str());
+            if (rc == 0) continue;
+            std::ifstream in(log);
+            std::stringstream ss;
+            ss << in.rdbuf();
+            std::lock_guard<std::mutex> lk(mu);
+            r.failures.push_back(jobs[i].label + "\n  " + jobs[i].command + "\n" + ss.str() + "  source: " +
+                                 jobs[i].source);
+        }
+    };
+    fs::create_directories(root);
+    const unsigned n = std::max(1u, std::thread::hardware_concurrency());
+    std::vector<std::thread> threads;
+    for (unsigned i = 0; i < n; ++i) threads.emplace_back(worker, i);
+    for (auto& t : threads) t.join();
+    std::sort(r.failures.begin(), r.failures.end());
+
+    std::error_code ec;
+    if (r.ok()) fs::remove_all(root, ec);
+    else r.keptDir = root.string();
+    return r;
+}
+
+int runCommand(int argc, char** argv) {
     Options o;
-    if (!parseArgs(argc, argv, o)) return usage();
+    if (!parseArgs(argc, argv, o) || !isCommand(o.command)) return usage();
     NodeLibrary lib;
     if (!loadLibrary(o, lib)) return 1;
     if (o.command == "list") return list(o, lib);
     if (o.command == "gen") return gen(o, lib);
     if (o.command == "check") return check(o, lib);
-    if (o.command == "render") return render(o, lib);
-    return usage();
+    return render(o, lib);
 }
+
+}  // namespace pg::cli

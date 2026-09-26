@@ -1,6 +1,6 @@
 pgshadergraph 1
 # Needs the user library next to it -- the nodes stripes and toon come from there:
-#   pgshadered --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
+#   pgshader --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
 # Two-colour stripes, cel-shaded in three bands, with a crisp rim light.
 node 1 stripes 1 20 40
   in count 4.0

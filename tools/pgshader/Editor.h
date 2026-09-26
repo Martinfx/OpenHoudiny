@@ -1,15 +1,19 @@
 #pragma once
 //
-// The shader node editor: a client of pg::shader, like the pgshader CLI.
+// The shader node editor -- what pgshader opens when it is given no command. A
+// client of pg::shader, like the commands in Commands.h, whose check it reuses.
 //
 // Nothing here knows any particular node. The add-node menu, the pins and
 // their colours, the widgets for values and params -- all of it is built from
 // the NodeDefs of the library, so a node added to a .pgnodes file shows up
 // here after Library > Reload, without recompiling the editor.
 //
+#include "Commands.h"
+
 #include "pg/gl/Preview.h"
 #include "pg/shader/Generator.h"
 
+#include <future>
 #include <map>
 #include <string>
 #include <vector>
@@ -30,7 +34,7 @@ public:
     void frame(float seconds);
 
     bool quitRequested() const { return quit_; }
-    /// "marble.pgsg * - pgshadered": the file, and a star for unsaved changes.
+    /// "marble.pgsg * - pgshader": the file, and a star for unsaved changes.
     std::string title() const;
 
     /// The language the code panel shows: a TargetRegistry name.
@@ -45,6 +49,11 @@ private:
     void recompile();
     bool save(const std::string& path);
     void exportShaders(const std::string& dir);
+    void savePreviewImage(const std::string& path);
+    /// Tools > Validate: what `pgshader check` does, for the graph on screen,
+    /// in the background so the editor stays live.
+    void startValidation();
+    void pollValidation();
     void setStatus(std::string message, bool error = false);
 
     // --- UI --------------------------------------------------------------------
@@ -96,7 +105,13 @@ private:
     std::string pathInput_;
     const char* openPopup_ = nullptr;
 
+    std::future<cli::CheckReport> validation_;
+    cli::CheckReport validationReport_;
+    bool hasValidation_ = false;
+    uint64_t validatedRevision_ = 0;
+
     bool animate_ = true;
+    float lastSeconds_ = 0.0f;
     float pausedTime_ = 0.0f;
     float sidePanelWidth_ = 520.0f;
     std::map<std::string, shader::Value> uniformValues_;

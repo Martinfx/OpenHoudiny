@@ -327,8 +327,8 @@ src/pg/shader/   Types      typy shader grafu a jejich převody
 src/pg/gl/       Gl, Preview, Png, HeadlessContext — náhled přes OpenGL
 tests/           50 testů proti invariantům + 24 pro shader graf
 bench/           měření tvrzení, o která se architektura opírá
-cli/             headless demo, export OBJ; pgshader
-tools/           pgshadered — node editor shaderů (Dear ImGui, imnodes)
+cli/             headless demo, export OBJ
+tools/pgshader/  pgshader — editor shaderů (výchozí) i příkazy list/gen/check/render
 examples/        grafy shaderů a ukázková uživatelská knihovna
 ```
 

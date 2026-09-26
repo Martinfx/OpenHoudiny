@@ -5,7 +5,10 @@ Graf uzlů, ze kterého vzniká zdrojový kód shaderu pro **OpenGL 3.3**, **Ope
 Je to síť vlastního typu vedle geometrie, podobně jako VOPy v Houdini, Shader
 Editor v Blenderu nebo Shader Graph v Unity.
 
-![Editor: graf, živý náhled a vygenerovaný kód](img/pgshadered.png)
+![Editor: graf, živý náhled, vygenerovaný kód a výsledek validace](img/editor.png)
+
+Všechno je jeden program, `pgshader`. Bez příkazu otevře editor, s příkazem
+(`list`, `gen`, `check`, `render`) pracuje v příkazové řádce, bez okna.
 
 Hlavní požadavek byl, aby šel systém **rozšiřovat bez zásahu do C++**:
 
@@ -34,26 +37,28 @@ Obsah:
 
 ## 1. Rychlý start
 
-Jádro shader grafu a CLI nástroj `pgshader` nemají žádné závislosti, stejně jako
-zbytek projektu:
-
 ```bash
+sudo apt install libglfw3-dev          # volitelné, jinak se GLFW postaví ze zdrojů
 cmake -S . -B build && cmake --build build
+./build/pgshader                                           # editor
+./build/pgshader examples/shaders/marble.pgsg              # editor s grafem
 ./build/pgshader list                                      # uzly a cíle
 ./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
+./build/pgshader check examples/shaders/*.pgsg --nodes     # překlad glslangValidatorem
 ./build/pgshader render examples/shaders/marble.pgsg marble.png   # bez okna, přes EGL
+./build/pgshader help                                      # všechny volby
 ```
 
-Editor `pgshadered` je volitelný. Stáhne si Dear ImGui a imnodes, a pokud
-v systému není GLFW 3.3+, tak i GLFW:
+Výchozí build obsahuje editor. Při konfiguraci si stáhne Dear ImGui, imnodes
+a GLFW, pokud v systému není GLFW 3.3+. Build bez editoru nemá žádné
+závislosti, stejně jako zbytek projektu; `pgshader` pak umí jen příkazy:
 
 ```bash
-sudo apt install libglfw3-dev            # volitelné, jinak se GLFW postaví ze zdrojů
-cmake -S . -B build -DPG_BUILD_SHADER_EDITOR=ON && cmake --build build
-./build/pgshadered examples/shaders/marble.pgsg
+cmake -S . -B build -DPG_BUILD_GUI=OFF     # servery, CI
 ```
 
-- Editor potřebuje OpenGL 3.3.
+- Editor potřebuje OpenGL 3.3. Bez displeje řekne, že okno otevřít nejde, a
+  nabídne příkazy.
 - Bez sítě nasměrujte `FETCHCONTENT_SOURCE_DIR_IMGUI`, `…_IMNODES` a
   `…_GLFW` na lokální kopie.
 - GLFW ze zdrojů chce na Linuxu vývojové balíčky X11 (`libxrandr-dev
@@ -82,6 +87,8 @@ a graf, který ji používá.
 | Kód | výběr cíle, záložky vertex/fragment, Copy |
 | Chyby | panel Problems; klik vybere uzel a posune na něj plátno |
 | Soubor | Ctrl+S, Ctrl+O, File → Export shaders… (všechny cíle naráz) |
+| Ověřit | Tools → Validate (F5): totéž co `pgshader check`, na pozadí; výsledek v panelu Problems |
+| Obrázek | File → Save preview image…: náhled jako PNG 1024 × 1024, totéž co `pgshader render` |
 | Knihovny | Library → Add library file…, Ctrl+R je znovu načte |
 
 - Nezapojený vstup má widget přímo v uzlu: číslo, vektor nebo barvu.
@@ -269,7 +276,7 @@ procedurální efekty: tvar i pohyb počítá shader na jedné ploše ze šumu a
 Nejde o simulaci proudění, jakou dělá Pyro v Houdini; ta by patřila do
 geometrického jádra, ne do shaderů.
 
-![Graf ohně v editoru; náhled sám přepnul na billboard](img/pgshadered-fire.png)
+![Graf ohně v editoru; náhled sám přepnul na billboard](img/editor-fire.png)
 
 Recept má tři části
 ([`examples/shaders/fire.pgsg`](../examples/shaders/fire.pgsg)):
@@ -351,7 +358,7 @@ node toon
 Po načtení knihovny se objeví v menu editoru pod kategorií *Stylized*
 a funguje ve všech čtyřech jazycích:
 
-![Uživatelská knihovna v editoru: uzly Stripes a Toon, hledání „sty“, kód pro Vulkan](img/pgshadered-library.png)
+![Uživatelská knihovna v editoru: uzly Stripes a Toon, hledání „sty“, kód pro Vulkan](img/editor-library.png)
 
 Řádky definice:
 
@@ -415,7 +422,7 @@ i vertex fázi a pro každý cíl; u uzlů s `any` navíc i s vektorovými hodno
 
 ### 7.2 Knihovny za běhu
 
-- `--library FILE` (lze opakovat) funguje u `pgshader` i `pgshadered`.
+- `--library FILE` (lze opakovat) funguje v editoru i u všech příkazů.
 - V editoru: Library → Add library file…; po úpravě souboru stačí Ctrl+R.
 - Pozdější definice se stejným jménem nahradí dřívější. Vlastní knihovna tak
   může **přepsat i vestavěný uzel**, třeba lepším `noise`.
@@ -469,7 +476,7 @@ v [tests/test_shader_graph.cpp](../tests/test_shader_graph.cpp). Jeho třída
 
 ### 7.4 Editor se staví z definic
 
-Editor ([tools/shader_editor/Editor.cpp](../tools/shader_editor/Editor.cpp))
+Editor ([tools/pgshader/Editor.cpp](../tools/pgshader/Editor.cpp))
 nezná žádný konkrétní uzel. Všechno bere z `NodeDef`:
 
 - menu tvoří kategorie a popisky;
@@ -489,6 +496,7 @@ v souladu s knihovnou. Po Ctrl+R je nový uzel v menu hned v příštím snímku
 `ctest --test-dir build` spouští:
 
 - **pgtests**: 74 testů, z toho 24 pro shader graf;
+- **pgshader_list**: příkazy fungují v každém buildu, s editorem i bez něj;
 - **shaders_compile**: každý příklad a každý výstup každého vestavěného uzlu
   v obou fázích (uzly s `any` i s vec3), pro 4 cíle. To je 116 grafů
   a 928 běhů `glslangValidator`. SPIR-V navíc projde `spirv-val` a HLSL se
@@ -599,8 +607,8 @@ Všechna jsou vědomá:
 ```
 src/pg/shader/   Types, NodeLibrary + builtin.pgnodes, ShaderGraph, Target, Generator
 src/pg/gl/       Gl (vlastní loader), Preview (náhled), Png, HeadlessContext (EGL)
-cli/shader_main.cpp          pgshader
-tools/shader_editor/         pgshadered
+tools/pgshader/              pgshader: main (bez příkazu editor, jinak příkaz),
+                             Commands (list, gen, check, render), App + Editor
 examples/shaders/            příklady, i fire a smoke; extra/ = uživatelská knihovna a graf
 tests/test_shader_graph.cpp  testy
 docs/shader-nodes.md         referenční přehled vestavěných uzlů (generovaný)

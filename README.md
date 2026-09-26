@@ -29,25 +29,25 @@ Jedno z kritérií roadmapy prototyp rovnou vyvrátil — viz poznámku u M5.
 
 ## Build
 
-Bez externích závislostí: stačí C++20 a standardní knihovna.
-
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-S node editorem shaderů (stáhne Dear ImGui, imnodes a případně GLFW):
+Výchozí build obsahuje editor shaderů: při konfiguraci stáhne Dear ImGui,
+imnodes a GLFW, pokud v systému není (`sudo apt install libglfw3-dev`). Bez
+editoru nemá build žádné externí závislosti, stačí C++20 a standardní knihovna:
 
 ```bash
-cmake -S . -B build -DPG_BUILD_SHADER_EDITOR=ON && cmake --build build
+cmake -S . -B build -DPG_BUILD_GUI=OFF
 ```
 
 Se sanitizery:
 
 ```bash
-cmake -S . -B build-asan -DPG_SANITIZE=ON       && cmake --build build-asan && ./build-asan/pgtests
-cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON && cmake --build build-tsan && ./build-tsan/pgtests
+cmake -S . -B build-asan -DPG_SANITIZE=ON -DPG_BUILD_GUI=OFF        && cmake --build build-asan && ./build-asan/pgtests
+cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --build build-tsan && ./build-tsan/pgtests
 ```
 
 ## Spuštění
@@ -56,8 +56,10 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON && cmake --build build-tsan && 
 ./build/pgtests            # 74 testů: 50 proti invariantům jádra, 24 pro shader graf
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
+./build/pgshader                                  # editor shaderů (výchozí)
+./build/pgshader examples/shaders/fire.pgsg       # editor s grafem
 ./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
-./build/pgshadered examples/shaders/marble.pgsg      # jen s PG_BUILD_SHADER_EDITOR
+./build/pgshader help                             # příkazy: list, gen, check, render
 ```
 
 `pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,

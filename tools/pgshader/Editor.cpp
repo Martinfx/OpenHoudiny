@@ -1,11 +1,14 @@
 #include "Editor.h"
 
+#include "pg/gl/Png.h"
+
 #include "imgui.h"
 #include "imnodes.h"
 #include "misc/cpp/imgui_stdlib.h"
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -241,6 +244,43 @@ void Editor::setCodeTarget(const std::string& name) {
     compiledRevision_ = ~0ull;
 }
 
+void Editor::savePreviewImage(const std::string& path) {
+    if (!preview_.hasProgram()) {
+        setStatus("nothing to save: the graph does not compile", true);
+        return;
+    }
+    // Twice the size, averaged down, like `pgshader render`. The panel draws
+    // at its own size again in this same frame.
+    const int size = 1024;
+    preview_.render(size * 2, size * 2, animate_ ? lastSeconds_ : pausedTime_);
+    if (gl::writePng(path, size, size, 3, preview_.readPixels(2))) setStatus("saved " + path);
+    else setStatus(path + ": cannot write", true);
+}
+
+void Editor::startValidation() {
+    if (validation_.valid()) return;  // one at a time
+    cli::CheckTools tools;
+    if (!cli::toolAvailable(tools.glslang)) {
+        setStatus("validating needs glslangValidator on the PATH (package glslang-tools)", true);
+        return;
+    }
+    if (cli::toolAvailable("spirv-val")) tools.spirvVal = "spirv-val";
+    const std::string name = path_.empty() ? "untitled" : fs::path(path_).stem().string();
+    validatedRevision_ = graph_.revision();
+    validation_ = std::async(std::launch::async, [graph = graph_, library = library_, tools, name] {
+        return cli::checkGraphs({{name, graph}}, library, tools);
+    });
+    setStatus("validating with glslangValidator...");
+}
+
+void Editor::pollValidation() {
+    if (!validation_.valid() || validation_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    validationReport_ = validation_.get();
+    hasValidation_ = true;
+    setStatus((validationReport_.ok() ? "valid -- " : "not valid -- ") + validationReport_.summary(),
+              !validationReport_.ok());
+}
+
 void Editor::setStatus(std::string message, bool error) {
     status_ = std::move(message);
     statusIsError_ = error;
@@ -281,11 +321,13 @@ void Editor::recompile() {
 
 std::string Editor::title() const {
     return (path_.empty() ? std::string("untitled") : fs::path(path_).filename().string()) +
-           (modified_ ? " *" : "") + " - pgshadered";
+           (modified_ ? " *" : "") + " - pgshader";
 }
 
 void Editor::frame(float seconds) {
+    lastSeconds_ = seconds;
     recompile();
+    pollValidation();
     modified_ = graph_.save() != savedText_;
 
     ImGuiIO& io = ImGui::GetIO();
@@ -295,6 +337,7 @@ void Editor::frame(float seconds) {
     }
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) openPopup_ = "Open graph";
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) reloadLibrary();
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) startValidation();
 
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
@@ -346,6 +389,7 @@ void Editor::menuBar() {
         if (ImGui::MenuItem("Save as...")) openPopup_ = "Save graph as";
         ImGui::Separator();
         if (ImGui::MenuItem("Export shaders...")) openPopup_ = "Export shaders";
+        if (ImGui::MenuItem("Save preview image...")) openPopup_ = "Save preview image";
         ImGui::Separator();
         if (ImGui::MenuItem("Quit")) quit_ = true;
         ImGui::EndMenu();
@@ -362,6 +406,14 @@ void Editor::menuBar() {
         for (const auto& f : libraryFiles_) ImGui::TextDisabled("  %s", f.c_str());
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Tools")) {
+        const bool running = validation_.valid();
+        if (ImGui::MenuItem(running ? "Validating..." : "Validate with glslangValidator", "F5", false, !running)) {
+            startValidation();
+        }
+        ImGui::SetItemTooltip("Compiles the graph for every target, like `pgshader check`.");
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Help")) {
         ImGui::TextUnformatted("Right click on the canvas      add a node");
         ImGui::TextUnformatted("Drag from a pin into space     add a node, connected");
@@ -370,6 +422,10 @@ void Editor::menuBar() {
         ImGui::TextUnformatted("Delete                         remove selected nodes and links");
         ImGui::TextUnformatted("Middle drag, or Alt + drag     pan");
         ImGui::TextUnformatted("F or Home                      frame the whole graph");
+        ImGui::TextUnformatted("F5                             validate with glslangValidator");
+        ImGui::Separator();
+        ImGui::TextUnformatted("The same program works from the command line:");
+        ImGui::TextUnformatted("  pgshader list | gen | check | render ...     pgshader help");
         ImGui::TextUnformatted("Drag / wheel on the preview    orbit / zoom");
         ImGui::TextUnformatted("Ctrl+R                         reload the node libraries");
         ImGui::EndMenu();
@@ -413,9 +469,14 @@ void Editor::examplesMenu(const std::string& dir) {
 
 void Editor::popups() {
     if (openPopup_) {
-        pathInput_ = std::string(openPopup_) == "Export shaders"
-                         ? (path_.empty() ? "shaders" : (fs::path(path_).parent_path() / "shaders").string())
-                         : path_;
+        const std::string which = openPopup_;
+        if (which == "Export shaders") {
+            pathInput_ = path_.empty() ? "shaders" : (fs::path(path_).parent_path() / "shaders").string();
+        } else if (which == "Save preview image") {
+            pathInput_ = path_.empty() ? "preview.png" : fs::path(path_).replace_extension(".png").string();
+        } else {
+            pathInput_ = path_;
+        }
         ImGui::OpenPopup(openPopup_);
         openPopup_ = nullptr;
     }
@@ -435,6 +496,7 @@ void Editor::popups() {
     pathPopup("Open graph", "Open", [&](const std::string& p) { open(p); });
     pathPopup("Save graph as", "Save", [&](const std::string& p) { save(p); });
     pathPopup("Export shaders", "Export", [&](const std::string& p) { exportShaders(p); });
+    pathPopup("Save preview image", "Save", [&](const std::string& p) { savePreviewImage(p); });
     pathPopup("Add library file", "Load", [&](const std::string& p) {
         libraryFiles_.push_back(p);
         reloadLibrary();
@@ -890,7 +952,8 @@ void Editor::codePanel() {
 
 void Editor::problemsPanel() {
     const auto& errors = previewShader_.errors;
-    const size_t count = errors.size() + (driverLog_.empty() ? 0 : 1);
+    const bool invalid = hasValidation_ && !validationReport_.ok();
+    const size_t count = errors.size() + (driverLog_.empty() ? 0 : 1) + (invalid ? 1 : 0);
     const std::string header =
         (count ? "Problems (" + std::to_string(count) + ")" : std::string("Problems (none)")) + "###problems";
     if (!ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) return;
@@ -909,6 +972,19 @@ void Editor::problemsPanel() {
     }
     if (!driverLog_.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "driver: %s", driverLog_.c_str());
+    }
+
+    // The last Tools > Validate.
+    if (validation_.valid()) {
+        ImGui::TextDisabled("validating with glslangValidator...");
+    } else if (hasValidation_) {
+        const cli::CheckReport& r = validationReport_;
+        const ImVec4 colour = r.ok() ? ImVec4(0.45f, 0.85f, 0.5f, 1.0f) : ImVec4(1.0f, 0.45f, 0.4f, 1.0f);
+        ImGui::TextColored(colour, "%s %s", r.ok() ? "valid:" : "not valid:", r.summary().c_str());
+        if (validatedRevision_ != graph_.revision()) ImGui::TextDisabled("(for an earlier version of the graph -- F5)");
+        for (const auto& e : r.generationErrors) ImGui::TextWrapped("%s", e.c_str());
+        for (const auto& f : r.failures) ImGui::TextWrapped("%s", f.c_str());
+        for (const auto& t : r.unchecked) ImGui::TextDisabled("no validator for target '%s'", t.c_str());
     }
 }
 

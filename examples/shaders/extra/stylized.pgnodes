@@ -1,6 +1,6 @@
 # A user node library -- loaded at run time: no C++, no rebuild.
 #
-#   pgshadered --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
+#   pgshader --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
 #   pgshader gen --library examples/shaders/extra/stylized.pgnodes --target all examples/shaders/extra/toon.pgsg
 #   pgshader check --library F --nodes-from F        # F = this file: compile each node for every target
 #
