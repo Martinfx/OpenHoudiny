@@ -9,7 +9,7 @@
 //                   [--spirv-val PATH] [--library FILE]...
 //   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                   [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution N]
+//   pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution 8..256]
 //                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--set NAME=VALUE]...
 //
 // `check` is the proof that the generated code is valid: it compiles every
@@ -19,8 +19,9 @@
 // library file defines: what the author of a library wants to know.
 // `render` draws a preview with OpenGL through EGL, with no window; it exists
 // only when EGL was found at build time. So does `pyro`: it simulates smoke or
-// fire (pg::sim::PyroSolver) and renders the last frame -- or every k-th, as a
-// numbered sequence -- with the volume renderer of the editor.
+// fire (pg::sim::PyroSolver) and renders the last frame -- or with --every K
+// frames K, 2K, 3K..., each file numbered by its frame -- with the volume
+// renderer of the editor.
 //
 #include "Commands.h"
 
@@ -34,15 +35,19 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 
 namespace fs = std::filesystem;
 using namespace pg::shader;
@@ -80,6 +85,15 @@ int usage() {
     return 2;
 }
 
+/// A whole number that is all of `text`.
+bool parseInt(const std::string& text, long long& out) {
+    if (text.empty()) return false;
+    char* end = nullptr;
+    errno = 0;
+    out = std::strtoll(text.c_str(), &end, 10);
+    return errno == 0 && end && *end == '\0';
+}
+
 bool parseArgs(int argc, char** argv, Options& o) {
     if (argc < 2) return false;
     o.command = argv[1];
@@ -91,6 +105,15 @@ bool parseArgs(int argc, char** argv, Options& o) {
             return true;
         };
         std::string v;
+        auto nextInt = [&](int& out) {
+            long long n = 0;
+            if (!next(v) || !parseInt(v, n) || n < std::numeric_limits<int>::min() ||
+                n > std::numeric_limits<int>::max()) {
+                return false;
+            }
+            out = static_cast<int>(n);
+            return true;
+        };
         if (a == "--library") { if (!next(v)) return false; o.libraries.push_back(v); }
         else if (a == "--target") { if (!next(o.target)) return false; }
         else if (a == "-o") { if (!next(o.outDir)) return false; }
@@ -106,9 +129,9 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--pitch") { if (!next(v) || !parseFloat(v, o.pitch)) return false; o.pitchSet = true; }
         else if (a == "--distance") { if (!next(v) || !parseFloat(v, o.distance)) return false; }
         else if (a == "--preset") { if (!next(o.preset)) return false; }
-        else if (a == "--frames") { if (!next(v)) return false; o.frames = std::atoi(v.c_str()); }
-        else if (a == "--every") { if (!next(v)) return false; o.every = std::atoi(v.c_str()); }
-        else if (a == "--resolution") { if (!next(v)) return false; o.resolution = std::atoi(v.c_str()); }
+        else if (a == "--frames") { if (!nextInt(o.frames)) return false; }
+        else if (a == "--every") { if (!nextInt(o.every)) return false; }
+        else if (a == "--resolution") { if (!nextInt(o.resolution)) return false; }
         else if (a == "--set") { if (!next(v)) return false; o.sets.push_back(v); }
         else if (!a.empty() && a[0] == '-') return false;
         else o.positional.push_back(a);
@@ -435,40 +458,67 @@ int render(const Options& o, const NodeLibrary& lib) {
 
 #ifdef PG_HAVE_EGL
 /// NAME=VALUE onto the simulation or its look. False, with why, for a name
-/// neither has or a value that is not a number.
+/// neither has, or a value that is not a number in its range.
 bool applySetting(const std::string& assignment, pg::sim::PyroSettings& settings, pg::gl::VolumeStyle& style,
                   std::string& error) {
     const size_t eq = assignment.find('=');
-    float value = 0.0f;
-    if (eq == std::string::npos || !parseFloat(assignment.substr(eq + 1), value)) {
+    if (eq == std::string::npos) {
         error = "--set wants NAME=NUMBER, not '" + assignment + "'";
         return false;
     }
-    const std::string name = assignment.substr(0, eq);
-    for (const auto& p : pg::sim::pyroParams()) {
-        if (name == p.name) {
-            settings.*p.member = value;
-            return true;
+    const std::string name = assignment.substr(0, eq), text = assignment.substr(eq + 1);
+
+    // Whole numbers, each in its range.
+    auto whole = [&](long long lo, long long hi, auto& out) {
+        long long n = 0;
+        if (!parseInt(text, n) || n < lo || n > hi) {
+            error = name + " wants a whole number from " + std::to_string(lo) + " to " + std::to_string(hi) +
+                    ", not '" + text + "'";
+            return false;
         }
-    }
-    for (const auto& p : pg::gl::volumeParams()) {
-        if (name == p.name) {
-            style.*p.member = value;
-            return true;
-        }
-    }
-    if (name == "timeStep") settings.timeStep = value;
-    else if (name == "resolution") settings.resolution = static_cast<int>(value);
-    else if (name == "substeps") settings.substeps = static_cast<int>(value);
-    else if (name == "pressureCycles") settings.pressureCycles = static_cast<int>(value);
-    else if (name == "seed") settings.seed = static_cast<uint32_t>(value);
-    else {
-        error = "no setting '" + name + "'; there are resolution, timeStep, substeps, pressureCycles, seed";
-        for (const auto& p : pg::sim::pyroParams()) error += std::string(", ") + p.name;
-        for (const auto& p : pg::gl::volumeParams()) error += std::string(", ") + p.name;
+        out = static_cast<std::remove_reference_t<decltype(out)>>(n);
+        return true;
+    };
+    if (name == "resolution") return whole(8, 256, settings.resolution);
+    if (name == "substeps") return whole(1, 16, settings.substeps);
+    if (name == "pressureCycles") return whole(1, 16, settings.pressureCycles);
+    if (name == "seed") return whole(0, 4294967295LL, settings.seed);
+
+    float value = 0.0f;
+    if (!parseFloat(text, value) || !std::isfinite(value)) {
+        error = "--set wants NAME=NUMBER, not '" + assignment + "'";
         return false;
     }
-    return true;
+    // The sliders' minimum is a real limit (no negative rates); their maximum
+    // is only where the slider ends.
+    auto atLeast = [&](float min, float& out) {
+        if (value < min) {
+            char text[64];
+            std::snprintf(text, sizeof text, " must be at least %g", static_cast<double>(min));
+            error = name + text;
+            return false;
+        }
+        out = value;
+        return true;
+    };
+    for (const auto& p : pg::sim::pyroParams()) {
+        if (name == p.name) return atLeast(p.min, settings.*p.member);
+    }
+    for (const auto& p : pg::gl::volumeParams()) {
+        if (name == p.name) return atLeast(p.min, style.*p.member);
+    }
+    if (name == "timeStep") {
+        if (!(value > 0.0f && value <= 1.0f)) {
+            error = "timeStep is in seconds: more than 0, at most 1";
+            return false;
+        }
+        settings.timeStep = value;
+        return true;
+    }
+    error = "no setting '" + name + "'; there are resolution, timeStep, substeps, pressureCycles, seed";
+    for (const auto& p : pg::sim::pyroParams()) error += std::string(", ") + p.name;
+    for (const auto& p : pg::gl::volumeParams()) error += std::string(", ") + p.name;
+    return false;
 }
 
 /// fire.png, 30 -> fire_0030.png
@@ -481,7 +531,16 @@ std::string numbered(const std::string& path, int frame) {
 #endif
 
 int pyro(const Options& o) {
-    if (o.positional.size() != 1 || o.frames < 1) return usage();
+    if (o.positional.size() != 1 || o.frames < 1 || o.every < 0) return usage();
+    if (o.every > o.frames) {
+        std::fprintf(stderr, "pyro: --every %d is more than --frames %d: no frame would be written\n", o.every,
+                     o.frames);
+        return 1;
+    }
+    if (o.resolution != 0 && (o.resolution < 8 || o.resolution > 256)) {
+        std::fprintf(stderr, "pyro: --resolution wants 8 to 256 cells across, not %d\n", o.resolution);
+        return 1;
+    }
 #ifdef PG_HAVE_EGL
     namespace sim = pg::sim;
     namespace gl = pg::gl;
@@ -595,9 +654,10 @@ void printUsage(std::FILE* out) {
                  "                  [--spirv-val PATH] [--library FILE]...\n"
                  "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
                  "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
-                 "  pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution N]\n"
+                 "  pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution 8..256]\n"
                  "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--set NAME=VALUE]...\n"
-                 "                  simulates smoke or fire, renders the last frame (every K-th: OUT_0001.png...)\n"
+                 "                  simulates smoke or fire and renders the last frame; --every K renders\n"
+                 "                  frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...)\n"
                  "  pgshader help\n");
 }
 

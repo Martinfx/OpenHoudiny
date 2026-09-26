@@ -330,7 +330,7 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
                  Volume     objemové vykreslování simulace
-tests/           50 testů proti invariantům + 24 pro shader graf + 9 pro simulaci
+tests/           50 testů proti invariantům + 24 pro shader graf + 10 pro simulaci
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor shaderů a pracovní plocha Pyro (výchozí),

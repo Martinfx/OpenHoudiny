@@ -37,11 +37,17 @@ Obsah:
 ./build/pgshader pyro fire.png --frames 90
 ./build/pgshader pyro out/fire.png --frames 120 --every 2 --resolution 96
 ./build/pgshader pyro smoke.png --preset smoke --set turbulence=6 --set smokeDensity=10
+
+# sekvence do videa
+ffmpeg -framerate 15 -pattern_type glob -i 'out/fire_*.png' fire.mp4
 ```
 
 Příkaz `pyro` vypíše, kolik času zabral jeden krok simulace a kolik jeden
 obrázek. Vykresluje přes EGL bez okna, takže funguje i na serveru; bez GPU
-stačí softwarový ovladač, třeba Mesa llvmpipe.
+stačí softwarový ovladač, třeba Mesa llvmpipe. Se `--every K` uloží snímky
+K, 2K, 3K… a soubor pojmenuje číslem snímku (`fire_0002.png`,
+`fire_0004.png`, …), jak je v produkci zvykem. Proto je v příkladu pro
+ffmpeg `glob`: čísla netvoří souvislou řadu.
 
 ## 2. Ovládání
 
@@ -51,6 +57,7 @@ stačí softwarový ovladač, třeba Mesa llvmpipe.
 - **Pohled:** tažením myší kolem domény obíháte, kolečkem přibližujete,
   dvojklik vrátí kameru na začátek.
 - **Fire / Smoke** načte preset. Simulace začne znovu, rozlišení zůstane.
+  Pohled na krok, který ještě běží, nečeká.
 - **Pause / Play** (mezerník), **Step** (jeden krok, když stojí),
   **Start again** (Home).
 - **Resolution**: počet buněk napříč doménou. Doména je 1 široká, 1,5 vysoká
@@ -62,7 +69,8 @@ stačí softwarový ovladač, třeba Mesa llvmpipe.
 - **File › Save image** uloží obrázek 800 × 1200.
 
 Simulace běží ve vlastním vlákně. Kamera se proto otáčí plynule s obnovovací
-frekvencí obrazovky, i když jeden krok simulace trvá déle. Posuvníky se
+frekvencí obrazovky, i když jeden krok simulace trvá déle. Když je vidět
+editor shaderů, simulace stojí a po návratu pokračuje. Posuvníky se
 generují z tabulek `pyroParams()` a `volumeParams()`, stejně jako editor
 shaderů staví uzly z knihovny. Nový parametr v tabulce se tedy v panelu
 objeví bez zásahu do editoru.
@@ -218,7 +226,12 @@ to integruje analyticky: světlo, které krok přidá, ztlumí i on sám.
 
 ## 5. Nastavení
 
-Jména platí pro `--set jméno=hodnota` i pro posuvníky editoru:
+Jména platí pro `--set jméno=hodnota` i pro posuvníky editoru. Minimum
+posuvníku je skutečná mez, takže záporné rychlosti hoření ani chladnutí
+nejdou zadat. Maximum je jen konec posuvníku; na příkazové řádce se dá jít
+dál. Rozlišení je 8 až 256, krok simulace víc než 0 a nejvýš 1 s. Řešič si
+nastavení navíc sám ohlídá (`PyroSettings::sanitized`), takže žádný vstup
+nevede k dělení nulou ani k alokaci celé paměti.
 
 | skupina | jméno | co dělá |
 |---|---|---|
@@ -279,13 +292,18 @@ Testy v [`tests/test_pyro.cpp`](../tests/test_pyro.cpp):
 - bitově stejný výsledek na 1 a na 4 vláknech;
 - nové rozlišení doménu vyprázdní, a mřížka rychlosti má o stěnu víc než
   buněk;
-- vrstva kouře vrhá stín na to, co je za ní.
+- vrstva kouře vrhá stín na to, co je za ní;
+- nesmyslná nastavení (nulový krok, NaN, záporný vztlak, 1000 podkroků)
+  řešič opraví a pole zůstanou konečná.
 
 Všechno je čisté pod AddressSanitizerem, UBSanem i ThreadSanitizerem. Pod
 TSanem běžel i editor s vláknem simulace: rychlé přepínání presetů a
 rozlišení, pauza, restart a zrušení editoru uprostřed kroku. Hlášení, která
 se objevila, pocházela všechna z vnitřku Mesa (llvmpipe), která pro TSan
-není instrumentovaná; v našem kódu nezbylo žádné.
+není instrumentovaná; v našem kódu nezbylo žádné. Vlákno simulace prošlo
+i samostatným měřením: když se táhne posuvníkem, simulace neběží rychleji než
+hodiny (2 s tahání = 1,97 s simulace), po restartu nepřijde žádný snímek
+z předchozího běhu a přepnutí presetu během kroku drží pohled 0,00 ms.
 
 ## 8. Co je potřeba znát
 

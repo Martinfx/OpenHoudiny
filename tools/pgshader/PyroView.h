@@ -32,6 +32,7 @@ struct PyroFrame {
     float time = 0.0f;
     int cells[3] = {0, 0, 0};
     double stepMs = 0.0;
+    unsigned generation = 0;  ///< which start of the simulation it belongs to
 };
 
 class PyroSimulation;
@@ -49,6 +50,9 @@ public:
     /// One step per frame on the calling thread instead of a thread of its
     /// own: what --screenshot uses, so that N frames are N steps.
     void setSynchronous(bool on);
+    /// Whether the workspace is on screen. Hidden, the simulation pauses --
+    /// and plays on when it is back, if it was playing.
+    void setVisible(bool on);
 
     /// Space, Home: play or pause, start again.
     void shortcuts();
@@ -66,6 +70,8 @@ private:
     void settingsPanel();
     /// Hands the request to the simulation, and the look to the renderer.
     void apply();
+    /// The request as the simulation gets it: paused when hidden.
+    PyroRequest sent() const;
 
     gl::VolumeRenderer volume_;
     std::string shaderLog_;  ///< why the volume shader did not compile, if it did not
@@ -74,6 +80,7 @@ private:
     std::unique_ptr<PyroFrame> frame_;
     bool hasFrame_ = false;
     bool synchronous_ = false;
+    bool visible_ = true;
     bool supersample_ = false;
     std::string preset_ = "fire";
     float lightAzimuth_ = 169.0f, lightElevation_ = 38.0f;  ///< degrees

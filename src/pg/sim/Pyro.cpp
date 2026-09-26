@@ -148,13 +148,28 @@ const std::vector<PyroParam>& pyroParams() {
     return params;
 }
 
+PyroSettings PyroSettings::sanitized() const {
+    const PyroSettings defaults;
+    PyroSettings s = *this;
+    s.resolution = std::clamp(resolution, 8, 256);
+    s.substeps = std::clamp(substeps, 1, 16);
+    s.pressureCycles = std::clamp(pressureCycles, 1, 16);
+    s.timeStep = std::isfinite(timeStep) ? std::clamp(timeStep, 1e-4f, 1.0f) : defaults.timeStep;
+    for (const PyroParam& p : pyroParams()) {
+        float& v = s.*p.member;
+        v = std::isfinite(v) ? std::max(v, p.min) : defaults.*p.member;
+    }
+    return s;
+}
+
 // --- solver ------------------------------------------------------------------------
 
-PyroSolver::PyroSolver(const PyroSettings& settings) : settings_(settings) { reset(); }
+PyroSolver::PyroSolver(const PyroSettings& settings) : settings_(settings.sanitized()) { reset(); }
 
 void PyroSolver::setSettings(const PyroSettings& settings) {
-    const bool resize = settings.resolution != settings_.resolution;
-    settings_ = settings;
+    const PyroSettings safe = settings.sanitized();
+    const bool resize = safe.resolution != settings_.resolution;
+    settings_ = safe;
     if (resize) reset();
 }
 

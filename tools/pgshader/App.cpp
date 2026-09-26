@@ -119,8 +119,13 @@ int runEditor(int argc, char** argv) {
             mesh = v;
         } else if (a == "--resolution") {
             const char* v = next();
-            if (!v) return usage();
-            resolution = std::atoi(v);
+            char* end = nullptr;
+            const long n = v ? std::strtol(v, &end, 10) : 0;
+            if (!v || *end || n < 8 || n > 256) {
+                std::fprintf(stderr, "pgshader: --resolution wants 8 to 256 cells across\n");
+                return 2;
+            }
+            resolution = static_cast<int>(n);
         } else if (a == "--pyro") {
             pyro = "fire";
             if (i + 1 < argc && (std::strcmp(argv[i + 1], "fire") == 0 || std::strcmp(argv[i + 1], "smoke") == 0)) {
@@ -133,6 +138,11 @@ int runEditor(int argc, char** argv) {
         } else {
             return usage();
         }
+    }
+
+    if (resolution != 0 && pyro.empty()) {
+        std::fprintf(stderr, "pgshader: --resolution goes with --pyro\n");
+        return 2;
     }
 
     glfwSetErrorCallback([](int code, const char* message) {

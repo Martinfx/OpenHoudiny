@@ -40,8 +40,9 @@
 namespace pg::sim {
 
 struct PyroSettings {
-    /// Cells across; the domain is 1 wide, 1.5 tall and 1 deep. Rounded up to
-    /// a multiple of 8, so that multigrid can halve the grid a few times.
+    /// Cells across, 8 to 256; the domain is 1 wide, 1.5 tall and 1 deep.
+    /// Rounded up to a multiple of 8, so that multigrid can halve the grid a
+    /// few times.
     int resolution = 64;
     float timeStep = 1.0f / 30.0f;
     int substeps = 1;
@@ -78,6 +79,13 @@ struct PyroSettings {
 
     static PyroSettings fire();
     static PyroSettings smoke();
+
+    /// Every number in a range the solver can work with: resolution 8 to 256,
+    /// a time step above 0 and at most 1 s, 1 to 16 substeps and pressure
+    /// cycles, rates at least the minimum of their pyroParams() entry. What is
+    /// not a number becomes the default. The solver takes its settings this
+    /// way, so no input makes it divide by zero or allocate the machine away.
+    PyroSettings sanitized() const;
 };
 
 /// The numbers of PyroSettings by name, with a range and a word of help: what

@@ -21,6 +21,10 @@ namespace pg::editor {
 // them into a frame of its own, with the shadows worked out, and swaps that
 // with the frame the view takes -- the buffers go back and forth, nothing is
 // allocated once they have their size.
+//
+// A change of the settings only republishes the frame (the shadows may
+// differ); the next step comes when it is due, so dragging a slider does not
+// make the gas run ahead of the clock.
 
 class PyroSimulation {
 public:
@@ -28,6 +32,7 @@ public:
         if (threaded) thread_ = std::thread([this] { loop(); });
     }
 
+    /// Waits for the step under way, if there is one.
     ~PyroSimulation() {
         {
             std::lock_guard<std::mutex> lock(mu_);
@@ -46,10 +51,13 @@ public:
         cv_.notify_all();
     }
 
+    /// An empty domain, time 0. A frame the thread is still computing from
+    /// before is dropped: take() hands out only frames of the new start.
     void reset() {
         {
             std::lock_guard<std::mutex> lock(mu_);
             reset_ = true;
+            ++generation_;
         }
         cv_.notify_all();
     }
@@ -62,16 +70,17 @@ public:
         cv_.notify_all();
     }
 
-    /// Without a thread: one round on the caller's.
+    /// Without a thread: one round on the caller's -- a step every call while
+    /// playing, whatever the clock says.
     void pump() {
         std::unique_lock<std::mutex> lock(mu_);
-        if (changed_ || reset_ || steps_ > 0 || request_.playing) round(lock);
+        if (changed_ || reset_ || steps_ > 0 || request_.playing) round(lock, false);
     }
 
     /// The newest frame, if the caller has not had it yet.
     bool take(PyroFrame& out) {
         std::lock_guard<std::mutex> lock(mu_);
-        if (!fresh_) return false;
+        if (!fresh_ || latest_.generation != generation_) return false;
         std::swap(out, latest_);
         fresh_ = false;
         return true;
@@ -79,6 +88,11 @@ public:
 
 private:
     using Clock = std::chrono::steady_clock;
+
+    static Clock::duration stepDuration(const PyroRequest& request) {
+        const std::chrono::duration<double> seconds(request.settings.sanitized().timeStep);
+        return std::chrono::duration_cast<Clock::duration>(seconds);
+    }
 
     void loop() {
         std::unique_lock<std::mutex> lock(mu_);
@@ -88,18 +102,21 @@ private:
             if (quit_) return;
             if (!work() && request_.realTime) {
                 // Playing: the next step is due one time step after the last.
-                const auto due = lastStep_ + std::chrono::duration_cast<Clock::duration>(
-                                                 std::chrono::duration<double>(request_.settings.timeStep));
+                const auto due = lastStep_ + stepDuration(request_);
                 if (cv_.wait_until(lock, due, [&] { return work() || !request_.playing; })) continue;
             }
-            round(lock);
+            round(lock, true);
         }
     }
 
     /// Takes what was asked for, works on it unlocked, publishes the frame.
-    void round(std::unique_lock<std::mutex>& lock) {
+    /// `paced`: step only when one is due, in real time.
+    void round(std::unique_lock<std::mutex>& lock, bool paced) {
         const PyroRequest request = request_;
-        const bool changed = changed_, reset = reset_, step = request_.playing || steps_ > 0;
+        const bool changed = changed_, reset = reset_;
+        const unsigned generation = generation_;
+        const bool due = !paced || !request.realTime || Clock::now() >= lastStep_ + stepDuration(request);
+        const bool step = steps_ > 0 || (request.playing && due);
         changed_ = reset_ = false;
         if (steps_ > 0) --steps_;
         lock.unlock();
@@ -120,6 +137,7 @@ private:
         next_.cells[0] = solver_.nx();
         next_.cells[1] = solver_.ny();
         next_.cells[2] = solver_.nz();
+        next_.generation = generation;
 
         lock.lock();
         std::swap(next_, latest_);
@@ -131,10 +149,11 @@ private:
     std::condition_variable cv_;
     PyroRequest request_;
     bool changed_ = false, reset_ = false, quit_ = false;
-    int steps_ = 0;       // single steps asked for
-    PyroFrame latest_;    // the view takes this one
+    int steps_ = 0;           // single steps asked for
+    unsigned generation_ = 0;  // resets so far
+    PyroFrame latest_;        // the view takes this one
     bool fresh_ = false;
-    PyroFrame next_;      // the thread fills this one
+    PyroFrame next_;          // the thread fills this one
     sim::PyroSolver solver_;
     Clock::time_point lastStep_ = Clock::now();
     std::thread thread_;
@@ -146,6 +165,9 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr int kResolutions[] = {32, 48, 64, 80, 96, 128};
+
+// Sliders keep a value typed in with Ctrl+click in their range too.
+constexpr ImGuiSliderFlags kClamp = ImGuiSliderFlags_AlwaysClamp;
 
 void help(const char* text) {
     if (text && *text) ImGui::SetItemTooltip("%s", text);
@@ -180,18 +202,33 @@ bool PyroView::loadPreset(const std::string& name, int resolution) {
     std::copy(std::begin(request_.light), std::end(request_.light), request.light);
     request_ = request;
     preset_ = name;
-    // A new preset starts from an empty domain, on a new thread.
-    simulation_ = std::make_unique<PyroSimulation>(request_, !synchronous_);
     hasFrame_ = false;
+    // The same thread goes on with the new settings, from an empty domain: the
+    // view does not wait for the step under way.
+    if (!simulation_) simulation_ = std::make_unique<PyroSimulation>(sent(), !synchronous_);
     apply();
+    simulation_->reset();
     return true;
 }
 
 void PyroView::setSynchronous(bool on) {
     if (on == synchronous_) return;
     synchronous_ = on;
-    simulation_ = std::make_unique<PyroSimulation>(request_, !synchronous_);
+    hasFrame_ = false;
+    simulation_ = std::make_unique<PyroSimulation>(sent(), !synchronous_);
     apply();
+}
+
+void PyroView::setVisible(bool on) {
+    if (on == visible_) return;
+    visible_ = on;
+    apply();
+}
+
+PyroRequest PyroView::sent() const {
+    PyroRequest request = request_;
+    request.playing = request_.playing && visible_;  // nobody watching: no work
+    return request;
 }
 
 void PyroView::apply() {
@@ -201,7 +238,7 @@ void PyroView::apply() {
     request_.light[2] = std::cos(el) * std::sin(az);
     volume_.style = request_.style;
     std::copy(std::begin(request_.light), std::end(request_.light), volume_.lightDirection);
-    simulation_->setRequest(request_);
+    simulation_->setRequest(sent());
 }
 
 void PyroView::shortcuts() {
@@ -336,7 +373,7 @@ void PyroView::settingsPanel() {
         }
         if (!open) continue;
         ImGui::PushID(p.name);
-        changed |= ImGui::SliderFloat(p.label, &(request_.settings.*p.member), p.min, p.max, "%.3g");
+        changed |= ImGui::SliderFloat(p.label, &(request_.settings.*p.member), p.min, p.max, "%.3g", kClamp);
         help(p.help);
         ImGui::PopID();
     }
@@ -344,7 +381,7 @@ void PyroView::settingsPanel() {
     if (ImGui::CollapsingHeader("Look", ImGuiTreeNodeFlags_DefaultOpen)) {
         for (const gl::VolumeParam& p : gl::volumeParams()) {
             ImGui::PushID(p.name);
-            changed |= ImGui::SliderFloat(p.label, &(request_.style.*p.member), p.min, p.max, "%.3g");
+            changed |= ImGui::SliderFloat(p.label, &(request_.style.*p.member), p.min, p.max, "%.3g", kClamp);
             help(p.help);
             ImGui::PopID();
         }
@@ -352,23 +389,23 @@ void PyroView::settingsPanel() {
         help("Share of the light the smoke scatters: pale for smoke, dark for soot.");
         changed |= ImGui::ColorEdit3("Light colour", request_.style.lightColor, ImGuiColorEditFlags_Float);
         changed |= ImGui::ColorEdit3("Sky colour", request_.style.skyColor, ImGuiColorEditFlags_Float);
-        changed |= ImGui::SliderFloat("Light around", &lightAzimuth_, -180.0f, 180.0f, "%.0f deg");
+        changed |= ImGui::SliderFloat("Light around", &lightAzimuth_, -180.0f, 180.0f, "%.0f deg", kClamp);
         help("Where the sun is, around the domain.");
-        changed |= ImGui::SliderFloat("Light height", &lightElevation_, -10.0f, 90.0f, "%.0f deg");
+        changed |= ImGui::SliderFloat("Light height", &lightElevation_, -10.0f, 90.0f, "%.0f deg", kClamp);
         ImGui::Checkbox("Supersample", &supersample_);
         help("Render the view at twice the size and scale it down: smoother, four times the work.");
     }
 
     if (ImGui::CollapsingHeader("Solver")) {
         float fps = 1.0f / request_.settings.timeStep;
-        if (ImGui::SliderFloat("Steps a second", &fps, 10.0f, 120.0f, "%.0f")) {
+        if (ImGui::SliderFloat("Steps a second", &fps, 10.0f, 120.0f, "%.0f", kClamp)) {
             request_.settings.timeStep = 1.0f / fps;
             changed = true;
         }
         help("Simulated time per step: 1 / this. More steps, finer motion.");
-        changed |= ImGui::SliderInt("Substeps", &request_.settings.substeps, 1, 4);
+        changed |= ImGui::SliderInt("Substeps", &request_.settings.substeps, 1, 4, "%d", kClamp);
         help("Solver steps per step: for fast, violent gas.");
-        changed |= ImGui::SliderInt("Pressure cycles", &request_.settings.pressureCycles, 1, 6);
+        changed |= ImGui::SliderInt("Pressure cycles", &request_.settings.pressureCycles, 1, 6, "%d", kClamp);
         help("Multigrid V-cycles per step: how exactly the flow is kept from compressing.");
         int seed = static_cast<int>(request_.settings.seed);
         if (ImGui::InputInt("Seed", &seed)) {

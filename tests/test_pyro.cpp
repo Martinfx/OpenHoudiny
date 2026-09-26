@@ -169,6 +169,31 @@ TEST(pyro_new_resolution_resets_the_domain) {
     CHECK_EQ(sim.density().sum(), 0.0);
 }
 
+TEST(pyro_settings_out_of_range_are_made_safe) {
+    PyroSettings s = small(PyroSettings::fire(), 16);
+    s.timeStep = 0.0f;  // expansion is burnt fuel / time step
+    s.cooling = std::nanf("");
+    s.buoyancy = -3.0f;
+    s.substeps = 1000;
+    s.resolution = 1 << 30;
+    const PyroSettings safe = s.sanitized();
+    CHECK(safe.timeStep > 0.0f);
+    CHECK_EQ(safe.cooling, PyroSettings{}.cooling);
+    CHECK_EQ(safe.buoyancy, 0.0f);
+    CHECK_EQ(safe.substeps, 16);
+    CHECK_EQ(safe.resolution, 256);
+
+    s.resolution = 16;
+    s.substeps = 1;
+    PyroSolver sim(s);  // takes the settings sanitized
+    for (int f = 0; f < 3; ++f) sim.step();
+    const PyroSolver& done = sim;
+    for (const Grid* g : {&done.density(), &done.temperature(), &done.flame(), &done.velocity(0),
+                          &done.velocity(1), &done.velocity(2)}) {
+        for (const float v : g->values()) CHECK(std::isfinite(v));
+    }
+}
+
 TEST(pyro_multigrid_converges_at_any_resolution) {
     // What makes multigrid worth it: each V-cycle removes most of the error,
     // however fine the grid -- plain sweeps get slower the finer it is.

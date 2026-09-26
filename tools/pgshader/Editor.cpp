@@ -327,7 +327,8 @@ std::string Editor::title() const {
 
 void Editor::setWorkspace(Workspace w) {
     if (w == Workspace::Pyro && !pyro_) pyro_ = std::make_unique<PyroView>(gl_);
-    if (w != workspace_) status_.clear();  // it was about the other workspace
+    if (pyro_) pyro_->setVisible(w == Workspace::Pyro);  // no simulating behind the shaders
+    if (w != workspace_) status_.clear();                 // it was about the other workspace
     workspace_ = w;
 }
 
