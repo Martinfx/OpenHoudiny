@@ -18,9 +18,11 @@
 
 namespace pg::gl {
 
-enum class MeshKind { Sphere, Torus, Cube, Plane };
+/// Billboard: an upright square that turns to face the camera -- where
+/// effects like fire and smoke are drawn, usually with blending.
+enum class MeshKind { Sphere, Torus, Cube, Plane, Billboard };
 inline constexpr MeshKind kMeshKinds[] = {MeshKind::Sphere, MeshKind::Torus, MeshKind::Cube,
-                                          MeshKind::Plane};
+                                          MeshKind::Plane, MeshKind::Billboard};
 const char* meshName(MeshKind kind);
 
 /// Camera orbiting the origin.
@@ -52,6 +54,11 @@ public:
     void setMesh(MeshKind kind);
     MeshKind mesh() const { return meshKind_; }
 
+    /// How the shader's colour meets the background -- what the generator
+    /// reported for the graph.
+    void setBlend(shader::BlendMode mode) { blend_ = mode; }
+    shader::BlendMode blend() const { return blend_; }
+
     /// Draws into the offscreen framebuffer at `width` x `height` pixels.
     void render(int width, int height, float time);
 
@@ -68,7 +75,7 @@ public:
     float background[3] = {0.16f, 0.17f, 0.19f};
 
 private:
-    void uploadMesh();
+    void uploadMesh(const float eye[3]);
     void ensureTarget(int width, int height);
     GLint location(const std::string& name);
 
@@ -79,6 +86,7 @@ private:
     std::map<std::string, shader::Value> overrides_;
 
     MeshKind meshKind_ = MeshKind::Sphere;
+    shader::BlendMode blend_ = shader::BlendMode::Opaque;
     GLuint vao_ = 0, vbo_ = 0, ibo_ = 0;
     GLsizei indexCount_ = 0;
     bool meshDirty_ = true;

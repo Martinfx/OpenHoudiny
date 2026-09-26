@@ -260,11 +260,13 @@ private:
     }
 
     /// param <name> <float|vec2|vec3|vec4|string> [= <value>] [color]
+    /// param <name> enum <choice> <choice>... [= <choice>]
     bool parseParam(Line& l) {
         ParamDef p;
         p.name = l.word();
         if (!uniqueName(p.name)) return false;
         const std::string typeWord = l.word();
+        if (typeWord == "enum") return parseEnumParam(l, std::move(p));
         if (typeWord == "string") {
             p.isString = true;
         } else {
@@ -297,6 +299,28 @@ private:
         } else if (!words.empty()) {
             return fail("unexpected '" + words[0] + "' -- a value needs '='");
         }
+        current_.params.push_back(std::move(p));
+        return true;
+    }
+
+    bool parseEnumParam(Line& l, ParamDef p) {
+        p.isString = true;
+        for (std::string w = l.word(); !w.empty(); w = l.word()) {
+            if (!isIdentifier(w)) return fail("'" + w + "' is not a valid choice name");
+            if (std::find(p.choices.begin(), p.choices.end(), w) != p.choices.end()) {
+                return fail("choice '" + w + "' is listed twice");
+            }
+            p.choices.push_back(w);
+        }
+        if (p.choices.size() < 2) return fail("an enum param needs at least two choices");
+        p.text = p.choices.front();
+        if (l.accept('=')) {
+            p.text = l.word();
+            if (std::find(p.choices.begin(), p.choices.end(), p.text) == p.choices.end()) {
+                return fail("'" + p.text + "' is not one of the choices of '" + p.name + "'");
+            }
+        }
+        if (!l.atEnd()) return fail("unexpected text after the enum param");
         current_.params.push_back(std::move(p));
         return true;
     }

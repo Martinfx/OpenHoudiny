@@ -6,7 +6,7 @@
 //   pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...
 //   pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]
 //                   [--spirv-val PATH] [--library FILE]...
-//   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane] [--size N]
+//   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                   [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...
 //
 // `check` is the proof that the generated code is valid: it compiles every
@@ -51,7 +51,7 @@ struct Options {
     bool markdown = false;
     std::string glslang = "glslangValidator";
     std::string spirvVal;
-    std::string mesh = "sphere";
+    std::string mesh;  ///< empty: a billboard for graphs that blend, else a sphere
     int size = 512;
     float time = 0.0f, yaw = 30.0f, pitch = 18.0f;
 };
@@ -63,7 +63,7 @@ int usage() {
                  "  pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"
                  "  pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]\n"
                  "                  [--spirv-val PATH] [--library FILE]...\n"
-                 "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane] [--size N]\n"
+                 "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
                  "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n");
     return 2;
 }
@@ -419,8 +419,17 @@ int render(const Options& o, const NodeLibrary& lib) {
         return 1;
     }
     preview.setUniforms(s.uniforms);
+    preview.setBlend(s.blend);
+    const std::string mesh = !o.mesh.empty() ? o.mesh : s.blend != BlendMode::Opaque ? "billboard" : "sphere";
+    bool found = false;
     for (pg::gl::MeshKind k : pg::gl::kMeshKinds) {
-        if (o.mesh == pg::gl::meshName(k)) preview.setMesh(k);
+        if (mesh != pg::gl::meshName(k)) continue;
+        preview.setMesh(k);
+        found = true;
+    }
+    if (!found) {
+        std::fprintf(stderr, "render: no mesh '%s' (sphere, torus, cube, plane, billboard)\n", mesh.c_str());
+        return 1;
     }
     preview.orbit.yaw = o.yaw;
     preview.orbit.pitch = o.pitch;
@@ -430,8 +439,8 @@ int render(const Options& o, const NodeLibrary& lib) {
         std::fprintf(stderr, "render: cannot write %s\n", o.positional[1].c_str());
         return 1;
     }
-    std::printf("wrote %s (%s, %s)\n", o.positional[1].c_str(), pg::gl::meshName(preview.mesh()),
-                reinterpret_cast<const char*>(gl.GetString(pg::gl::RENDERER)));
+    std::printf("wrote %s (%s, %s, %s)\n", o.positional[1].c_str(), pg::gl::meshName(preview.mesh()),
+                blendModeName(s.blend), reinterpret_cast<const char*>(gl.GetString(pg::gl::RENDERER)));
     return 0;
 #else
     (void)lib;

@@ -27,6 +27,18 @@
 
 namespace pg::shader {
 
+/// How a shader's colour combines with what is already on screen. It is
+/// render state, not code: the output node's `blend` param picks it, the
+/// generator reports it, and the application -- or the preview -- sets it.
+enum class BlendMode : uint8_t {
+    Opaque,    ///< replaces the pixel; writes depth
+    Alpha,     ///< src * alpha + dst * (1 - alpha): smoke, glass
+    Additive,  ///< src * alpha + dst: fire, glow -- black adds nothing
+};
+const char* blendModeName(BlendMode mode);
+/// False for a name that is not a blend mode.
+bool blendModeFromName(const std::string& name, BlendMode& mode);
+
 /// A uniform declared by a node -- a value the application sets.
 struct UniformInfo {
     std::string name;
@@ -58,6 +70,7 @@ struct Assembly {
     /// Globals the fragment stage reads that must come from the vertex stage:
     /// a subset of "position", "normal", "uv", in that order.
     std::vector<std::string> varyings;
+    BlendMode blend = BlendMode::Opaque;  ///< for a comment in the header
 
     bool fragmentUses(const std::string& global) const;
     bool vertexUses(const std::string& global) const;

@@ -497,3 +497,74 @@ TEST(generated_files_are_named_after_the_graph_and_the_target) {
     CHECK_EQ(outputFileName("marble", "vulkan", ShaderFile{".frag", "", {}}), "marble.vulkan.frag");
     CHECK_EQ(outputFileName("marble", "hlsl", ShaderFile{".hlsl", "", {}}), "marble.hlsl");
 }
+
+// --- effects: enum params, blending, noise ---------------------------------------
+
+TEST(an_enum_param_is_one_of_a_few_names) {
+    NodeLibrary lib = NodeLibrary::withBuiltins();
+    std::string error;
+    CHECK(lib.load("node pick\n"
+                   "    param mode enum soft hard = hard\n"
+                   "    in x float = 0.5\n"
+                   "    out result float = {x}\n",
+                   "test", error));
+    const ParamDef* p = lib.find("pick")->param("mode");
+    CHECK(p != nullptr && p->isEnum());
+    CHECK_EQ(p->text, "hard");
+    CHECK_EQ(p->choices.size(), 2u);
+
+    // a default that is no choice, a single choice, a choice listed twice
+    for (const char* bad : {"node b1\n    param m enum a b = c\n    out r float = 1.0\n",
+                            "node b2\n    param m enum only\n    out r float = 1.0\n",
+                            "node b3\n    param m enum a a\n    out r float = 1.0\n"}) {
+        std::string why;
+        CHECK(!lib.load(bad, "bad", why));
+        CHECK(contains(why, "bad:2:"));
+    }
+}
+
+TEST(the_blend_mode_is_render_state_not_code) {
+    int output = 0;
+    ShaderGraph g = litChecker(nullptr, &output);
+    const GeneratedShader opaque = build(g, "glsl330");
+    CHECK(opaque.blend == BlendMode::Opaque);
+    CHECK(!contains(fragment(opaque), "Blending"));
+
+    g.setParam(output, "blend", "additive");
+    const GeneratedShader additive = build(g, "glsl330");
+    CHECK(additive.blend == BlendMode::Additive);
+    // One header line more, the code the same.
+    std::string text = fragment(additive);
+    const size_t line = text.find("// Blending: additive");
+    CHECK(line != std::string::npos);
+    text.erase(line, text.find('\n', line) + 1 - line);
+    CHECK_EQ(text, fragment(opaque));
+    CHECK(contains(build(g, "hlsl").files[0].text, "// Blending: additive"));
+
+    g.setParam(output, "blend", "sideways");
+    const GeneratedShader bad = generate(g, builtins(), target("glsl330"));
+    CHECK(!bad.ok());
+    CHECK(contains(bad.errors[0].message, "not one of the choices"));
+}
+
+TEST(fractal_noise_animates_through_its_offset) {
+    const NodeLibrary& lib = builtins();
+    ShaderGraph g;
+    const int time = g.addNode("time", 0, 0, &lib);
+    const int move = g.addNode("combine", 0, 0, &lib);
+    const int noise = g.addNode("fractal_noise", 0, 0, &lib);
+    const int ramp = g.addNode("color_ramp", 0, 0, &lib);
+    const int out = g.addNode("surface_output", 0, 0, &lib);
+    link(g, time, "time", move, "y");
+    link(g, move, "vector", noise, "offset");
+    link(g, noise, "value", ramp, "t");
+    link(g, ramp, "color", out, "color");
+
+    const std::string text = fragment(build(g, "vulkan"));
+    CHECK(contains(text, "u_time"));
+    // Helper functions come once, callees first.
+    const size_t hash = text.find("float pg_hash3("), noise3 = text.find("float pg_noise3(");
+    const size_t fbm = text.find("float pg_fbm3("), ramp4 = text.find("vec3 pg_ramp4(");
+    CHECK(hash != std::string::npos && hash < noise3 && noise3 < fbm && ramp4 != std::string::npos);
+    CHECK_EQ(text.find("float pg_fbm3(", fbm + 1), std::string::npos);
+}

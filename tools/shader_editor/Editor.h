@@ -85,6 +85,7 @@ private:
     std::map<int, std::pair<float, float>> gridPositions_;
     std::map<int, std::pair<float, float>> screenPositions_;
     bool frameAll_ = true;  ///< pan so the graph is in view, after the next draw
+    bool pickMesh_ = true;  ///< choose the preview mesh for a graph just opened
 
     // add-node popup
     float addX_ = 0.0f, addY_ = 0.0f;

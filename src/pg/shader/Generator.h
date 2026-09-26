@@ -13,6 +13,10 @@
 //     always produces the same text.
 //  5. Hand the result to the Target, which writes declarations and entry points.
 //
+// The output node may also have an enum param `blend` (opaque, alpha,
+// additive). It is render state, not code: it is reported in `blend` and in
+// a header comment, and whoever draws the shader sets it.
+//
 #include "pg/shader/ShaderGraph.h"
 #include "pg/shader/Target.h"
 
@@ -30,6 +34,7 @@ struct GeneratedShader {
     std::string target;
     std::vector<ShaderFile> files;      ///< empty when there are errors
     std::vector<UniformInfo> uniforms;  ///< the graph's own uniforms, sorted by name
+    BlendMode blend = BlendMode::Opaque;  ///< from the output node's `blend` param
     std::vector<Diagnostic> errors;
 
     bool ok() const { return errors.empty(); }

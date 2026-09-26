@@ -53,7 +53,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON && cmake --build build-tsan && 
 ## Spuštění
 
 ```bash
-./build/pgtests            # 71 testů: 50 proti invariantům jádra, 21 pro shader graf
+./build/pgtests            # 74 testů: 50 proti invariantům jádra, 24 pro shader graf
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
@@ -84,8 +84,9 @@ deterministický paralelismus, per-element jazyk, 10 typů uzlů, 50 testů
 
 Vedle geometrie je síť druhého typu: **shader graf** s knihovnou uzlů
 v textových souborech, generátorem pro čtyři jazyky (GLSL 330, GLSL ES 300,
-Vulkan GLSL 450 → SPIR-V, HLSL) a editorem s živým náhledem. Každý vestavěný
-uzel se v CTestu překládá pro všechny cíle přes glslangValidator a spirv-val.
+Vulkan GLSL 450 → SPIR-V, HLSL) a editorem s živým náhledem, včetně
+animovaných efektů (oheň, kouř). Každý vestavěný uzel se v CTestu překládá pro
+všechny cíle přes glslangValidator a spirv-val.
 
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
 serializace scény, Python vazby, GUI pro geometrii, simulace. Podrobně v

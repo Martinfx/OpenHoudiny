@@ -37,6 +37,7 @@
 //                                                 are the stage outputs
 //   in    <name> <type> [= <numbers> | = $<global>] [color] [stage vertex|fragment]
 //   param <name> <float|vec2|vec3|vec4|string> [= <value>] [color]
+//   param <name> enum <choice> <choice>... [= <choice>]   one of a few names
 //   uniform <name-template> <type> [= <default-template>]
 //   uses  <function>...
 //   out   <name> <type> = <template>
@@ -69,11 +70,14 @@ struct PortDef {
 
 struct ParamDef {
     std::string name;
-    bool isString = false;
+    bool isString = false;       ///< a name: string and enum params
     Type type = Type::Float;     ///< numeric params
     Value value;
-    std::string text;            ///< string params
+    std::string text;            ///< string and enum params
+    std::vector<std::string> choices;  ///< enum params: the names allowed
     bool color = false;
+
+    bool isEnum() const { return !choices.empty(); }
 };
 
 struct OutputDef {

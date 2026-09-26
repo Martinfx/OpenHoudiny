@@ -3,10 +3,12 @@
 Vygenerováno příkazem `./build/pgshader list --markdown` z
 [src/pg/shader/builtin.pgnodes](../src/pg/shader/builtin.pgnodes); ručně needitovat.
 Popisy pocházejí přímo z definic uzlů, proto jsou anglicky, stejně jako v editoru.
-Jak přidat vlastní uzel, popisuje [shader-graph.md §6](shader-graph.md#6-rozšiřitelnost).
+Jak přidat vlastní uzel, popisuje [shader-graph.md §7](shader-graph.md#7-rozšiřitelnost).
 
 | Node | Category | Inputs | Outputs | What it does |
 |---|---|---|---|---|
+| **Color + Alpha** `rgba` | Color | rgb: vec3, alpha: float | rgba: vec4 | A colour and its opacity, for an output that blends. |
+| **Color Ramp** `color_ramp` | Color | t: float, color0: vec3, color1: vec3, color2: vec3, color3: vec3, pos1: float, pos2: float | color: vec3 | Maps t from 0 to 1 onto four colours; the middle two sit at pos1 and pos2. |
 | **Color** `color` | Input | - | color: vec3 | A colour baked into the shader. |
 | **Color Parameter** `color_parameter` | Input | - | color: vec3 | A colour uniform u_&lt;name&gt; that the application can change without recompiling. |
 | **Constant** `constant` | Input | - | result: float | A number baked into the shader. |
@@ -27,12 +29,14 @@ Jak přidat vlastní uzel, popisuje [shader-graph.md §6](shader-graph.md#6-roz�
 | **Multiply** `multiply` | Math | a: any, b: any | result: any |  |
 | **One Minus** `one_minus` | Math | x: any | result: any |  |
 | **Power** `power` | Math | base: any, exponent: any | result: any |  |
+| **Remap** `remap` | Math | x: any, from_min: float, from_max: float, to_min: float, to_max: float | result: any | Maps x from [from_min, from_max] onto [to_min, to_max]. |
 | **Saturate** `saturate` | Math | x: any | result: any | Clamps to [0, 1]. |
 | **Sine** `sine` | Math | x: any | result: any |  |
 | **Smoothstep** `smoothstep` | Math | edge0: float, edge1: float, x: any | result: any | 0 below edge0, 1 above edge1, a smooth curve between. |
 | **Subtract** `subtract` | Math | a: any, b: any | result: any |  |
-| **Surface Output** `surface_output` | Output | color: vec4, offset: vec3 | - | The result: the colour of each pixel, and an optional world-space offset of each vertex. |
+| **Surface Output** `surface_output` | Output | color: vec4, offset: vec3 | - | The result: the colour of each pixel, and an optional world-space offset of each vertex. Alpha matters when blend is alpha or additive. |
 | **Checker** `checker` | Pattern | uv: vec2 = $uv, scale: float, color1: vec3, color2: vec3 | color: vec3, mask: float |  |
+| **Fractal Noise** `fractal_noise` | Pattern | position: vec3 = $position, scale: float, offset: vec3, octaves: float, roughness: float | value: float | Octaves of 3D value noise added up, between 0 and 1. Animate it through offset. |
 | **Noise** `noise` | Pattern | uv: vec2 = $uv, scale: float | value: float | Smooth value noise between 0 and 1. |
 | **Texture** `texture` | Texture | uv: vec2 = $uv | rgba: vec4, rgb: vec3, alpha: float | Samples the 2D texture the application binds as u_&lt;name&gt;. |
 | **Combine XYZ** `combine` | Vector | x: float, y: float, z: float | vector: vec3 |  |

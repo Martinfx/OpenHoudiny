@@ -325,7 +325,7 @@ src/pg/shader/   Types      typy shader grafu a jejich převody
                  Generator  graf → příkazy, typy, mrtvý kód
                  Target     GLSL 330, GLSL ES 300, Vulkan, HLSL; registr
 src/pg/gl/       Gl, Preview, Png, HeadlessContext — náhled přes OpenGL
-tests/           50 testů proti invariantům + 21 pro shader graf
+tests/           50 testů proti invariantům + 24 pro shader graf
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ; pgshader
 tools/           pgshadered — node editor shaderů (Dear ImGui, imnodes)

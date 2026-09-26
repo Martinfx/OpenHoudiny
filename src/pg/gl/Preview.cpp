@@ -150,6 +150,31 @@ MeshData plane() {
     return m;
 }
 
+/// An upright square facing the eye, turned about the vertical axis only, so
+/// that flames keep pointing up. u runs left to right, v bottom to top.
+MeshData billboard(const float eye[3]) {
+    float rx = eye[2], rz = -eye[0];  // horizontal, perpendicular to the view
+    const float len = std::sqrt(rx * rx + rz * rz);
+    if (len < 1e-5f) {
+        rx = 1.0f;
+        rz = 0.0f;
+    } else {
+        rx /= len;
+        rz /= len;
+    }
+    const float nx = -rz, nz = rx;  // towards the eye
+    const float h = 0.95f;          // half the edge
+    MeshData m;
+    for (int r = 0; r <= 1; ++r) {
+        for (int c = 0; c <= 1; ++c) {
+            const float a = (c * 2.0f - 1.0f) * h, b = (r * 2.0f - 1.0f) * h;
+            m.vertex(rx * a, b, rz * a, nx, 0.0f, nz, static_cast<float>(c), static_cast<float>(r));
+        }
+    }
+    m.grid(0, 1, 1);
+    return m;
+}
+
 /// A UV test image: hue across u, brightness up v, a grid every 1/8.
 std::vector<uint8_t> testImage(int size) {
     std::vector<uint8_t> px(static_cast<size_t>(size) * static_cast<size_t>(size) * 4);
@@ -201,6 +226,7 @@ const char* meshName(MeshKind kind) {
         case MeshKind::Torus:  return "torus";
         case MeshKind::Cube:   return "cube";
         case MeshKind::Plane:  return "plane";
+        case MeshKind::Billboard: return "billboard";
     }
     return "?";
 }
@@ -291,13 +317,14 @@ GLint PreviewRenderer::location(const std::string& name) {
     return loc;
 }
 
-void PreviewRenderer::uploadMesh() {
+void PreviewRenderer::uploadMesh(const float eye[3]) {
     MeshData m;
     switch (meshKind_) {
         case MeshKind::Sphere: m = sphere(); break;
         case MeshKind::Torus:  m = torus(); break;
         case MeshKind::Cube:   m = cube(); break;
         case MeshKind::Plane:  m = plane(); break;
+        case MeshKind::Billboard: m = billboard(eye); break;
     }
     gl_.BindVertexArray(vao_);
     gl_.BindBuffer(ARRAY_BUFFER, vbo_);
@@ -340,7 +367,11 @@ void PreviewRenderer::render(int width, int height, float time) {
     width = std::max(width, 1);
     height = std::max(height, 1);
     ensureTarget(width, height);
-    if (meshDirty_) uploadMesh();
+    const float yaw = orbit.yaw * kPi / 180.0f, pitch = orbit.pitch * kPi / 180.0f;
+    const float eye[3] = {orbit.distance * std::cos(pitch) * std::sin(yaw), orbit.distance * std::sin(pitch),
+                          orbit.distance * std::cos(pitch) * std::cos(yaw)};
+    // A billboard follows the camera, so it is rebuilt every frame: four vertices.
+    if (meshDirty_ || meshKind_ == MeshKind::Billboard) uploadMesh(eye);
 
     gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
     gl_.Viewport(0, 0, width, height);
@@ -349,11 +380,16 @@ void PreviewRenderer::render(int width, int height, float time) {
     if (program_) {
         gl_.Enable(DEPTH_TEST);
         gl_.DepthFunc(LESS);
+        // The image stays opaque whatever alpha the shader writes: it is shown
+        // in a UI that blends, and the background is part of the preview.
+        gl_.ColorMask(1, 1, 1, 0);
+        if (blend_ != shader::BlendMode::Opaque) {
+            gl_.Enable(BLEND);
+            gl_.BlendFunc(SRC_ALPHA, blend_ == shader::BlendMode::Additive ? ONE : ONE_MINUS_SRC_ALPHA);
+            gl_.DepthMask(0);  // see-through surfaces do not hide what is behind them
+        }
         gl_.UseProgram(program_);
 
-        const float yaw = orbit.yaw * kPi / 180.0f, pitch = orbit.pitch * kPi / 180.0f;
-        const float eye[3] = {orbit.distance * std::cos(pitch) * std::sin(yaw), orbit.distance * std::sin(pitch),
-                              orbit.distance * std::cos(pitch) * std::cos(yaw)};
         const Mat4 viewProj = multiply(
             perspective(35.0f, static_cast<float>(width) / static_cast<float>(height), 0.05f, 50.0f), lookAt(eye));
         const Mat4 model = identity();
@@ -391,6 +427,9 @@ void PreviewRenderer::render(int width, int height, float time) {
         gl_.DrawElements(TRIANGLES, indexCount_, UNSIGNED_INT, nullptr);
         gl_.BindVertexArray(0);
         gl_.UseProgram(0);
+        gl_.Disable(BLEND);
+        gl_.DepthMask(1);
+        gl_.ColorMask(1, 1, 1, 1);
         gl_.Disable(DEPTH_TEST);
     }
     gl_.BindFramebuffer(FRAMEBUFFER, 0);

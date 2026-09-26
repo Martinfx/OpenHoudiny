@@ -33,6 +33,7 @@ using GLsizeiptr = std::ptrdiff_t;
 inline constexpr GLbitfield COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x0100;
 inline constexpr GLenum DEPTH_TEST = 0x0B71, CULL_FACE = 0x0B44, LESS = 0x0201;
 inline constexpr GLenum TRIANGLES = 0x0004;
+inline constexpr GLenum BLEND = 0x0BE2, ONE = 1, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303;
 inline constexpr GLenum UNSIGNED_BYTE = 0x1401, UNSIGNED_INT = 0x1405, FLOAT = 0x1406;
 inline constexpr GLenum ARRAY_BUFFER = 0x8892, ELEMENT_ARRAY_BUFFER = 0x8893, STATIC_DRAW = 0x88E4;
 inline constexpr GLenum VERTEX_SHADER = 0x8B31, FRAGMENT_SHADER = 0x8B30;
@@ -56,6 +57,9 @@ inline constexpr GLenum RENDERER = 0x1F01, VERSION = 0x1F02;
     X(Enable, void, (GLenum))                                                                      \
     X(Disable, void, (GLenum))                                                                     \
     X(DepthFunc, void, (GLenum))                                                                   \
+    X(DepthMask, void, (GLboolean))                                                                \
+    X(BlendFunc, void, (GLenum, GLenum))                                                           \
+    X(ColorMask, void, (GLboolean, GLboolean, GLboolean, GLboolean))                               \
     X(GetError, GLenum, ())                                                                        \
     X(GetString, const GLubyte*, (GLenum))                                                         \
     X(PixelStorei, void, (GLenum, GLint))                                                          \

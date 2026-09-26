@@ -14,18 +14,21 @@ Hlavní požadavek byl, aby šel systém **rozšiřovat bez zásahu do C++**:
 - **knihovny se načítají za běhu**: `--library`, menu Library, Ctrl+R;
 - **editor se staví z definic**: menu, piny i widgety vznikají z knihovny, žádný uzel není v editoru napsaný natvrdo.
 
+Z běžných uzlů se dají poskládat i animované efekty, třeba oheň a kouř (§6).
+
 Obsah:
 [1. Rychlý start](#1-rychlý-start) ·
 [2. Ovládání](#2-ovládání-editoru) ·
 [3. Jak to funguje](#3-jak-to-funguje) ·
 [4. Typy](#4-typy) ·
 [5. Cíle](#5-cíle-a-čím-se-liší) ·
-[6. Rozšiřitelnost](#6-rozšiřitelnost) ·
-[7. Ověřování](#7-ověřování) ·
-[8. Co je potřeba znát](#8-co-je-potřeba-znát) ·
-[9. Cvičení](#9-cvičení) ·
-[10. Omezení](#10-omezení) ·
-[11. Odkazy](#11-odkazy)
+[6. Oheň a kouř](#6-efekty-oheň-a-kouř) ·
+[7. Rozšiřitelnost](#7-rozšiřitelnost) ·
+[8. Ověřování](#8-ověřování) ·
+[9. Co je potřeba znát](#9-co-je-potřeba-znát) ·
+[10. Cvičení](#10-cvičení) ·
+[11. Omezení](#11-omezení) ·
+[12. Odkazy](#12-odkazy)
 
 ---
 
@@ -61,7 +64,7 @@ Příklady jsou v [`examples/shaders/`](../examples/shaders/). Podsložka
 [`extra/`](../examples/shaders/extra/) obsahuje ukázkovou uživatelskou knihovnu
 a graf, který ji používá.
 
-![Příklady: unlit, checker_lit, textured, rim_light, marble, wobble, toon (uživatelská knihovna), textured na toru](img/pgshader-examples.png)
+![Příklady: unlit, checker_lit, textured, rim_light, marble, wobble, fire, smoke, toon (uživatelská knihovna), textured na toru](img/pgshader-examples.png)
 
 ## 2. Ovládání editoru
 
@@ -74,7 +77,7 @@ a graf, který ji používá.
 | Smazat | vybrat (klik, obdélník), Delete |
 | Posun plátna | prostřední tlačítko, nebo Alt + levé |
 | Zarámovat graf | F nebo Home (děje se i při otevření) |
-| Náhled | tažení otáčí, kolečko přibližuje; volba tělesa, Animate, Reset view |
+| Náhled | tažení otáčí, kolečko přibližuje; volba tělesa (billboard pro efekty), Animate, Reset view |
 | Uniformy | panel Uniforms mění hodnotu v běžícím shaderu, bez rekompilace |
 | Kód | výběr cíle, záložky vertex/fragment, Copy |
 | Chyby | panel Problems; klik vybere uzel a posune na něj plátno |
@@ -254,12 +257,79 @@ Proč se liší:
   Přejmenování dělá `translate()` po celých identifikátorech. Čísla,
   komentáře ani členy za tečkou (`v.mix`) nemění.
 
-Kde nestačí přejmenovat, dostane uzel pro konkrétní cíl vlastní šablonu (§6.1).
+Kde nestačí přejmenovat, dostane uzel pro konkrétní cíl vlastní šablonu (§7.1).
 Vestavěný uzel `texture` to dělá právě kvůli HLSL.
 
-## 6. Rozšiřitelnost
+## 6. Efekty: oheň a kouř
 
-### 6.1 Nový uzel = pár řádků textu
+![Oheň (additive) a kouř (alpha) v náhledu](img/fire-smoke.gif)
+
+Oheň i kouř jsou obyčejné grafy z vestavěných uzlů, žádný zvláštní kód. Jsou to
+procedurální efekty: tvar i pohyb počítá shader na jedné ploše ze šumu a času.
+Nejde o simulaci proudění, jakou dělá Pyro v Houdini; ta by patřila do
+geometrického jádra, ne do shaderů.
+
+![Graf ohně v editoru; náhled sám přepnul na billboard](img/pgshadered-fire.png)
+
+Recept má tři části
+([`examples/shaders/fire.pgsg`](../examples/shaders/fire.pgsg)):
+
+1. **Pohyb.** Do vstupu `offset` uzlu Fractal Noise vede čas vynásobený
+   vektorem (0, −1.8, 0.5): šum stoupá vzhůru a zároveň se přelévá. UV jsou
+   předtím natažené svisle (× 3.5, 1.5), takže vznikají protáhlé jazyky.
+2. **Tvar.** Kopule nad spodní hranou, `1 − délka((UV − (0.5, 0)) × (2.9, 1.1))`.
+   Než se délka spočítá, šum posune UV do stran; posun se násobí výškou `v`,
+   takže základna je klidná a nahoře jazyky kmitají. Smoothstep dole změkčí
+   hranu.
+3. **Barva.** Color Ramp převede výsledek na barvu: černá → červená →
+   oranžová → světle žlutá. Černá se při aditivním prolínání neprojeví.
+
+Kouř ([`examples/shaders/smoke.pgsg`](../examples/shaders/smoke.pgsg)) je
+stejný recept: pomalejší, s širším vlněním, šedou barvou a hustotou v alfě.
+Zkuste v editoru změnit barvy v Color Ramp ohně na modré: vznikne plamen
+plynového hořáku.
+
+### Prolínání
+
+Výstupní uzel má výběrový parametr `blend`:
+
+| Režim | Co dělá | Na co |
+|---|---|---|
+| `opaque` | nahradí pixel a zapíše hloubku | pevné materiály (výchozí) |
+| `alpha` | barva × alfa + pozadí × (1 − alfa), bez zápisu hloubky | kouř, sklo, mlha |
+| `additive` | barva × alfa + pozadí; černá nepřidá nic | oheň, záře, jiskry |
+
+Prolínání není kód shaderu, ale stav renderu. Generátor ho vrací
+v `GeneratedShader::blend` a píše ho do hlavičky každého souboru
+(`// Blending: additive -- …`), aby ho aplikace mohla nastavit. Náhled ho
+nastaví sám.
+
+### Billboard
+
+Efekty se kreslí na **billboard**: svislý čtverec, který se natáčí ke kameře
+jen kolem svislé osy, aby plamen mířil vzhůru. UV jdou zleva doprava a zdola
+nahoru. Editor ho vybere sám, když otevřete graf, který prolíná; totéž dělá
+`pgshader render`.
+
+### Uzly pro efekty
+
+| Uzel | K čemu |
+|---|---|
+| Fractal Noise | 3D šum v několika oktávách, 0 až 1; animuje se přes `offset` |
+| Color Ramp | hodnota 0–1 na čtyři barvy; polohy prostředních dvou jsou vstupy |
+| Remap | přemapuje interval, třeba šum 0..1 na −0.5..0.5 |
+| Color + Alpha | spojí barvu a průhlednost do vec4 pro výstup |
+
+Výběrový parametr jako `blend` může mít i uzel ve vlastní knihovně. Editor
+z něj udělá rozbalovací seznam:
+
+```
+param blend enum opaque alpha additive = opaque
+```
+
+## 7. Rozšiřitelnost
+
+### 7.1 Nový uzel = pár řádků textu
 
 Celá definice uzlu Toon z ukázkové knihovny
 [`examples/shaders/extra/stylized.pgnodes`](../examples/shaders/extra/stylized.pgnodes):
@@ -292,6 +362,7 @@ a funguje ve všech čtyřech jazycích:
 | `version <n>` | verze typu uzlu; ukládá se do grafu kvůli budoucím migracím |
 | `in <jméno> <typ> [= čísla \| = $global] [color] [stage vertex\|fragment]` | vstup, tedy pin; výchozí hodnota; `color` = barevný widget; `stage` jen u výstupního uzlu |
 | `param <jméno> <typ\|string> [= hodnota] [color]` | parametr, který nejde zapojit, jen nastavit (třeba jméno uniformy) |
+| `param <jméno> enum <volba> <volba>… [= volba]` | výběr z několika jmen; v editoru rozbalovací seznam |
 | `uniform <šablona jména> <typ> [= šablona hodnoty]` | uniforma, kterou uzel deklaruje, např. `uniform u_{name} vec3 = {default}` |
 | `uses <funkce>…` | pomocné funkce, které šablony volají |
 | `out <jméno> <typ> = <šablona>` | výstup; šablona smí číst i dřívější výstupy téhož uzlu |
@@ -342,7 +413,7 @@ i vertex fázi a pro každý cíl; u uzlů s `any` navíc i s vektorovými hodno
 ./build/pgshader check --library moje.pgnodes --nodes-from moje.pgnodes
 ```
 
-### 6.2 Knihovny za běhu
+### 7.2 Knihovny za běhu
 
 - `--library FILE` (lze opakovat) funguje u `pgshader` i `pgshadered`.
 - V editoru: Library → Add library file…; po úpravě souboru stačí Ctrl+R.
@@ -353,7 +424,7 @@ i vertex fázi a pro každý cíl; u uzlů s `any` navíc i s vektorovými hodno
 - Složka s příklady může nést vlastní knihovny. Otevřete-li z menu Examples
   graf ze složky `extra/`, editor načte i `.pgnodes` ze stejné složky.
 
-### 6.3 Nový jazyk = jedna třída
+### 7.3 Nový jazyk = jedna třída
 
 Cíl je potomek `Target`. Přepíše to, čím se jeho jazyk liší, a zaregistruje
 se. Kostra pro Metal:
@@ -396,7 +467,7 @@ Funkční minimální příklad je test `a_new_target_plugs_in_as_one_class`
 v [tests/test_shader_graph.cpp](../tests/test_shader_graph.cpp). Jeho třída
 `ListingTarget` má čtrnáct řádků.
 
-### 6.4 Editor se staví z definic
+### 7.4 Editor se staví z definic
 
 Editor ([tools/shader_editor/Editor.cpp](../tools/shader_editor/Editor.cpp))
 nezná žádný konkrétní uzel. Všechno bere z `NodeDef`:
@@ -413,14 +484,14 @@ Je to možné díky Dear ImGui: immediate-mode GUI kreslí každý snímek celé
 znovu z dat, takže editor nemá žádný vlastní stav uzlů, který by musel držet
 v souladu s knihovnou. Po Ctrl+R je nový uzel v menu hned v příštím snímku.
 
-## 7. Ověřování
+## 8. Ověřování
 
 `ctest --test-dir build` spouští:
 
-- **pgtests**: 71 testů, z toho 21 pro shader graf;
+- **pgtests**: 74 testů, z toho 24 pro shader graf;
 - **shaders_compile**: každý příklad a každý výstup každého vestavěného uzlu
-  v obou fázích (uzly s `any` i s vec3), pro 4 cíle. To je 104 grafů
-  a 832 běhů `glslangValidator`. SPIR-V navíc projde `spirv-val` a HLSL se
+  v obou fázích (uzly s `any` i s vec3), pro 4 cíle. To je 116 grafů
+  a 928 běhů `glslangValidator`. SPIR-V navíc projde `spirv-val` a HLSL se
   překládá HLSL frontendem glslangu (`-D`);
 - **shaders_compile_user_library**: totéž pro ukázkovou uživatelskou knihovnu
   (`--nodes-from`).
@@ -432,7 +503,7 @@ Kromě testů:
 - Editor umí `--screenshot OUT.png --frames N`. Pod `xvfb-run` se tak dá
   vyzkoušet i na stroji bez displeje.
 
-## 8. Co je potřeba znát
+## 9. Co je potřeba znát
 
 Pro práci na tomhle kódu, ale i pro psaní vlastních uzlů:
 
@@ -462,24 +533,28 @@ výraz**. Generátor dělá totéž, co byste dělali ručně při přepisu graf
 kódu: odspodu nahoru, každý mezivýsledek do proměnné, a pak ho obalí tím, co
 chce konkrétní API.
 
-## 9. Cvičení
+## 10. Cvičení
 
 Od nejlehčího:
 
-1. Do vlastní knihovny přidejte uzel `remap` (hodnota `x` z intervalu
-   [a, b] do [c, d]) a ověřte ho přes `pgshader check --nodes-from`.
-2. Uzel `triplanar`: textura promítnutá podél tří os a smíchaná podle
+1. Do vlastní knihovny přidejte uzel `posterize` (hodnota zaokrouhlená na
+   několik úrovní, `floor(x * n) / n`) a ověřte ho přes
+   `pgshader check --nodes-from`.
+2. Jiskry k ohni: malé světlé body, které stoupají a hasnou. Náhodné číslo
+   pro každou buňku mřížky (jako `pg_hash`), `fract` z času posunutého o
+   to číslo a výsledek přičtený k ohni v režimu `additive`.
+3. Uzel `triplanar`: textura promítnutá podél tří os a smíchaná podle
    `abs($normal)`. Jsou to tři volání `texture()` a váhy.
-3. Uzel s `atan(y, x)`: HLSL tu funkci jmenuje `atan2`, takže je potřeba
+4. Uzel s `atan(y, x)`: HLSL tu funkci jmenuje `atan2`, takže je potřeba
    `impl hlsl`.
-4. Cíl WGSL pro WebGPU (`vec3<f32>`, `@vertex` a `@fragment`,
-   `@group(0) @binding(0)`), jako třída podle §6.3.
-5. Undo/redo v editoru. Graf se umí uložit do textu, takže historie může být
+5. Cíl WGSL pro WebGPU (`vec3<f32>`, `@vertex` a `@fragment`,
+   `@group(0) @binding(0)`), jako třída podle §7.3.
+6. Undo/redo v editoru. Graf se umí uložit do textu, takže historie může být
    seznam textů.
-6. Náhled mezivýsledku: položka „preview this output“, která dočasně zapojí
+7. Náhled mezivýsledku: položka „preview this output“, která dočasně zapojí
    vybraný výstup do výstupního uzlu.
 
-## 10. Omezení
+## 11. Omezení
 
 Všechna jsou vědomá:
 
@@ -490,8 +565,12 @@ Všechna jsou vědomá:
 - Textury v náhledu jsou testovací UV mřížka, načítání obrázků chybí.
 - Editor nemá undo/redo a při zavření se neptá na neuložené změny.
 - Metal ani WGSL zatím nejsou (viz cvičení).
+- Průhledné plochy se neřadí podle vzdálenosti. Na kouli s alfou se přední a
+  zadní strana mohou překrýt v nesprávném pořadí; billboard je jedna plocha,
+  tam to nevadí.
+- Oheň a kouř jsou procedurální efekty, ne simulace proudění.
 
-## 11. Odkazy
+## 12. Odkazy
 
 **Příbuzné systémy**
 
@@ -522,7 +601,7 @@ src/pg/shader/   Types, NodeLibrary + builtin.pgnodes, ShaderGraph, Target, Gene
 src/pg/gl/       Gl (vlastní loader), Preview (náhled), Png, HeadlessContext (EGL)
 cli/shader_main.cpp          pgshader
 tools/shader_editor/         pgshadered
-examples/shaders/            příklady; extra/ = uživatelská knihovna a graf
+examples/shaders/            příklady, i fire a smoke; extra/ = uživatelská knihovna a graf
 tests/test_shader_graph.cpp  testy
 docs/shader-nodes.md         referenční přehled vestavěných uzlů (generovaný)
 ```

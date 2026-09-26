@@ -47,6 +47,7 @@ ImU32 categoryColor(const std::string& category) {
     if (category == "Texture") return IM_COL32(150, 96, 52, 255);
     if (category == "Pattern") return IM_COL32(118, 74, 140, 255);
     if (category == "Lighting") return IM_COL32(156, 124, 36, 255);
+    if (category == "Color") return IM_COL32(150, 70, 110, 255);
     if (category == "Output") return IM_COL32(160, 54, 54, 255);
     return IM_COL32(62, 90, 64, 255);  // anything a user library adds
 }
@@ -169,6 +170,7 @@ void Editor::newGraph() {
     preview_.resetUniformValues();
     compiledRevision_ = ~0ull;
     frameAll_ = true;
+    pickMesh_ = true;
 }
 
 bool Editor::open(const std::string& path) {
@@ -193,6 +195,7 @@ bool Editor::open(const std::string& path) {
     preview_.resetUniformValues();
     compiledRevision_ = ~0ull;
     frameAll_ = true;
+    pickMesh_ = true;
     setStatus("opened " + path);
     return true;
 }
@@ -259,10 +262,19 @@ void Editor::recompile() {
         if (preview_.setProgram(previewShader_.fileFor(Stage::Vertex)->text,
                                 previewShader_.fileFor(Stage::Fragment)->text, log)) {
             preview_.setUniforms(previewShader_.uniforms);
+            preview_.setBlend(previewShader_.blend);
         } else {
             driverLog_ = log;  // the generator's fault, not the user's: worth seeing
         }
+        // A graph just opened gets the mesh it is meant for: effects that
+        // blend are drawn on a billboard, everything else on a solid.
+        if (pickMesh_) {
+            const bool blends = previewShader_.blend != BlendMode::Opaque;
+            if (blends) preview_.setMesh(gl::MeshKind::Billboard);
+            else if (preview_.mesh() == gl::MeshKind::Billboard) preview_.setMesh(gl::MeshKind::Sphere);
+        }
     }
+    pickMesh_ = false;
 }
 
 // --- frame -----------------------------------------------------------------------
@@ -433,6 +445,7 @@ void Editor::popups() {
 
 void Editor::canvas() {
     const ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    const ImVec2 canvasMin = ImGui::GetCursorScreenPos();
     std::set<int> broken;
     for (const auto& e : previewShader_.errors) broken.insert(e.node);
 
@@ -463,7 +476,15 @@ void Editor::canvas() {
         ImNodes::Link(in, pinId(l.fromNode, fd->outputIndex(l.fromPort), true), in);
         ImNodes::PopColorStyle();
     }
-    ImNodes::MiniMap(0.14f, ImNodesMiniMapLocation_BottomRight);
+    // The minimap earns its corner only while part of the graph is out of view.
+    bool outOfView = false;
+    for (const GraphNode& node : graph_.nodes()) {
+        const ImVec2 p = ImNodes::GetNodeScreenSpacePos(node.id);
+        const ImVec2 size = ImNodes::GetNodeDimensions(node.id);
+        outOfView = outOfView || p.x < canvasMin.x || p.y < canvasMin.y ||
+                    p.x + size.x > canvasMin.x + canvasSize.x || p.y + size.y > canvasMin.y + canvasSize.y;
+    }
+    if (outOfView) ImNodes::MiniMap(0.14f, ImNodesMiniMapLocation_BottomRight);
     const bool canvasHovered = ImNodes::IsEditorHovered();  // only answers inside the editor
     ImNodes::EndNodeEditor();
 
@@ -561,7 +582,20 @@ void Editor::nodeWidget(const GraphNode& node, const NodeDef* def) {
             ImGui::TextDisabled("%s", p.name.c_str());
             ImGui::SameLine();
             auto it = node.params.find(p.name);
-            if (p.isString) {
+            if (p.isEnum()) {
+                const std::string current = it != node.params.end() ? it->second : p.text;
+                ImGui::SetNextItemWidth(std::max(90.0f, column - ImGui::CalcTextSize(p.name.c_str()).x));
+                ImGui::PushID(p.name.c_str());
+                if (ImGui::BeginCombo("##e", current.c_str())) {
+                    for (const auto& choice : p.choices) {
+                        if (ImGui::Selectable(choice.c_str(), choice == current)) {
+                            graph_.setParam(node.id, p.name, choice);
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::PopID();
+            } else if (p.isString) {
                 std::string text = it != node.params.end() ? it->second : p.text;
                 ImGui::SetNextItemWidth(std::max(60.0f, column - ImGui::CalcTextSize(p.name.c_str()).x));
                 ImGui::PushID(p.name.c_str());

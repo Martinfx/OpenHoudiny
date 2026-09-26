@@ -48,6 +48,12 @@ public:
         if (!errors_.empty() || !resolve(*root)) return fail(out);
 
         Assembly a;
+        if (const ParamDef* p = od.param("blend"); p && p->isString) {
+            const std::string mode = paramText(*root, *p);
+            if (!blendModeFromName(mode, a.blend)) {
+                error(root->id(), "'" + mode + "' is not a blend mode (opaque, alpha, additive)");
+            }
+        }
         StageCtx vertex(Stage::Vertex, &a.vertex), fragment(Stage::Fragment, &a.fragment);
         if (vertexRoot >= 0 && !isZeroDefault(*root, static_cast<size_t>(vertexRoot))) {
             a.vertex.result = rootExpression(*root, static_cast<size_t>(vertexRoot), Type::Vec3, vertex);
@@ -76,6 +82,7 @@ public:
         a.fragment.uniforms.assign(fragment.uniforms.begin(), fragment.uniforms.end());
 
         out.uniforms = a.uniforms;
+        out.blend = a.blend;
         out.files = t_.assemble(a);
         return out;
     }
@@ -332,6 +339,10 @@ private:
         if (p.isString) {
             auto it = s.node->params.find(p.name);
             const std::string text = it != s.node->params.end() ? it->second : p.text;
+            if (p.isEnum() && std::find(p.choices.begin(), p.choices.end(), text) == p.choices.end()) {
+                error(s.id(), "'" + text + "' is not one of the choices for '" + p.name + "'");
+                return p.text;
+            }
             if (!isIdentifier(text)) {
                 error(s.id(), "'" + text + "' is not a valid name for '" + p.name + "'");
                 return p.text;

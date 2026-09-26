@@ -1,0 +1,70 @@
+pgshadergraph 1
+# Smoke on a billboard, blended over the background by its alpha.
+#   The same recipe as fire.pgsg, slower: noise rises and churns, and pushes
+#   the outline of a soft plume sideways, more the higher it goes.
+#   Density (alpha) is the plume times the noise; the colour darkens where
+#   the noise is thick, which gives the puffs some volume.
+node 1 uv 1 20 20
+node 2 time 1 20 170
+node 3 multiply 1 190 170
+  in b 0.0 -0.6 0.3
+node 4 multiply 1 190 20
+  in b 2.4 1.2
+node 5 fractal_noise 1 360 20
+  in scale 1.3
+  in octaves 6.0
+  in roughness 0.55
+node 6 remap 1 530 20
+  in to_min -0.5
+  in to_max 0.5
+node 7 multiply 1 700 20
+  in b 1.2 0.35
+node 8 split 1 360 220
+node 9 multiply 1 700 160
+node 10 add 1 870 90
+node 11 subtract 1 20 360
+  in b 0.5 0.18
+node 12 multiply 1 190 360
+  in b 2.5 1.35
+node 13 length 1 360 360
+node 14 one_minus 1 530 360
+node 15 smoothstep 1 530 480
+  in edge1 0.35
+node 16 multiply 1 700 380
+node 17 remap 1 190 520
+  in to_min 0.15
+  in to_max 1.8
+node 18 multiply 1 870 380
+node 19 saturate 1 870 500
+node 20 mix 1 530 620
+  in a 0.84 0.84 0.86
+  in b 0.6 0.6 0.63
+node 21 rgba 1 700 620
+node 22 surface_output 1 870 620
+  param blend alpha
+link 2.time -> 3.a
+link 1.uv -> 4.a
+link 4.result -> 5.position
+link 3.result -> 5.offset
+link 5.value -> 6.x
+link 6.result -> 7.a
+link 1.uv -> 8.vector
+link 7.result -> 9.a
+link 8.y -> 9.b
+link 1.uv -> 10.a
+link 9.result -> 10.b
+link 10.result -> 11.a
+link 11.result -> 12.a
+link 12.result -> 13.v
+link 13.result -> 14.x
+link 8.y -> 15.x
+link 14.result -> 16.a
+link 15.result -> 16.b
+link 5.value -> 17.x
+link 16.result -> 18.a
+link 17.result -> 18.b
+link 18.result -> 19.x
+link 5.value -> 20.t
+link 20.result -> 21.rgb
+link 19.result -> 21.alpha
+link 21.rgba -> 22.color

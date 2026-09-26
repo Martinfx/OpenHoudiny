@@ -1,0 +1,55 @@
+pgshadergraph 1
+# Fire on a billboard, added to the background (blend additive: black adds nothing).
+#   Motion: fractal noise, stretched upwards, scrolls up and churns with time.
+#   Shape:  a dome over the bottom edge, its outline pushed around by the noise
+#           -- more at the top than at the base, so the tongues flicker.
+#   Look:   a colour ramp from black through red and orange to pale yellow.
+node 1 uv 1 20 20
+node 2 time 1 20 170
+node 3 multiply 1 190 170
+  in b 0.0 -1.8 0.5
+node 4 multiply 1 190 20
+  in b 3.5 1.5
+node 5 fractal_noise 1 360 20
+  in scale 1.4
+  in roughness 0.55
+node 6 remap 1 530 20
+  in to_min -0.5
+  in to_max 0.5
+node 7 multiply 1 700 20
+  in b 1.0 0.4
+node 8 add 1 870 90
+node 9 subtract 1 20 360
+  in b 0.5 0.0
+node 10 multiply 1 190 360
+  in b 2.9 1.1
+node 11 length 1 360 360
+node 12 one_minus 1 530 360
+node 13 split 1 360 220
+node 14 smoothstep 1 530 480
+  in edge1 0.12
+node 15 multiply 1 700 400
+node 16 color_ramp 1 870 330
+node 17 surface_output 1 870 580
+  param blend additive
+node 18 multiply 1 700 160
+link 2.time -> 3.a
+link 1.uv -> 4.a
+link 4.result -> 5.position
+link 3.result -> 5.offset
+link 5.value -> 6.x
+link 6.result -> 7.a
+link 1.uv -> 8.a
+link 18.result -> 8.b
+link 8.result -> 9.a
+link 9.result -> 10.a
+link 10.result -> 11.v
+link 11.result -> 12.x
+link 1.uv -> 13.vector
+link 13.y -> 14.x
+link 12.result -> 15.a
+link 14.result -> 15.b
+link 15.result -> 16.t
+link 16.color -> 17.color
+link 7.result -> 18.a
+link 13.y -> 18.b

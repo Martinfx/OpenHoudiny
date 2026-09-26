@@ -164,6 +164,17 @@ node smoothstep
     in x any = 0.5
     out result any = smoothstep({edge0}, {edge1}, {x})
 
+node remap
+    label Remap
+    category Math
+    description Maps x from [from_min, from_max] onto [to_min, to_max].
+    in x any = 0.5
+    in from_min float = 0.0
+    in from_max float = 1.0
+    in to_min float = 0.0
+    in to_max float = 1.0
+    out result any = {to_min} + ({x} - {from_min}) / ({from_max} - {from_min}) * ({to_max} - {to_min})
+
 # --- Vector ------------------------------------------------------------------
 
 node dot
@@ -237,6 +248,45 @@ node noise
     uses pg_noise
     out value float = pg_noise({uv} * {scale})
 
+# Clouds, fire, smoke: noise at several sizes added up. Moving `offset` over
+# time scrolls it (y) and makes it churn (z); it is in noise cells, so the
+# speed does not change with the scale.
+node fractal_noise
+    label Fractal Noise
+    category Pattern
+    description Octaves of 3D value noise added up, between 0 and 1. Animate it through offset.
+    in position vec3 = $position
+    in scale float = 3.0
+    in offset vec3 = 0 0 0
+    in octaves float = 5.0
+    in roughness float = 0.5
+    uses pg_fbm3
+    out value float = pg_fbm3({position} * {scale} + {offset}, {octaves}, {roughness})
+
+# --- Color -------------------------------------------------------------------
+
+node color_ramp
+    label Color Ramp
+    category Color
+    description Maps t from 0 to 1 onto four colours; the middle two sit at pos1 and pos2.
+    in t float = 0.5
+    in color0 vec3 = 0.0 0.0 0.0 color
+    in color1 vec3 = 0.75 0.08 0.02 color
+    in color2 vec3 = 1.0 0.55 0.1 color
+    in color3 vec3 = 1.0 0.95 0.75 color
+    in pos1 float = 0.35
+    in pos2 float = 0.7
+    uses pg_ramp4
+    out color vec3 = pg_ramp4({t}, {color0}, {color1}, {color2}, {color3}, {pos1}, {pos2})
+
+node rgba
+    label Color + Alpha
+    category Color
+    description A colour and its opacity, for an output that blends.
+    in rgb vec3 = 1.0 1.0 1.0 color
+    in alpha float = 1.0
+    out rgba vec4 = vec4({rgb}, {alpha})
+
 # --- Lighting ----------------------------------------------------------------
 
 node lambert
@@ -270,13 +320,16 @@ node fresnel
 
 # --- Output ------------------------------------------------------------------
 
+# `blend` is not code but render state -- how the colour meets what is already
+# on screen. The generator reports it; the application sets it.
 node surface_output
     label Surface Output
     category Output
-    description The result: the colour of each pixel, and an optional world-space offset of each vertex.
+    description The result: the colour of each pixel, and an optional world-space offset of each vertex. Alpha matters when blend is alpha or additive.
     kind output
     in color vec4 = 0.8 0.8 0.8 1.0 color stage fragment
     in offset vec3 = 0 0 0 stage vertex
+    param blend enum opaque alpha additive = opaque
 
 # --- Helper functions --------------------------------------------------------
 #
@@ -309,5 +362,59 @@ float pg_noise(vec2 p) {
     float c = pg_hash(i + vec2(0.0, 1.0));
     float d = pg_hash(i + vec2(1.0, 1.0));
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+end
+
+function pg_hash3
+float pg_hash3(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+end
+
+function pg_noise3
+uses pg_hash3
+float pg_noise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    float a = pg_hash3(i);
+    float b = pg_hash3(i + vec3(1.0, 0.0, 0.0));
+    float c = pg_hash3(i + vec3(0.0, 1.0, 0.0));
+    float d = pg_hash3(i + vec3(1.0, 1.0, 0.0));
+    float e = pg_hash3(i + vec3(0.0, 0.0, 1.0));
+    float g = pg_hash3(i + vec3(1.0, 0.0, 1.0));
+    float h = pg_hash3(i + vec3(0.0, 1.0, 1.0));
+    float k = pg_hash3(i + vec3(1.0, 1.0, 1.0));
+    return mix(mix(mix(a, b, u.x), mix(c, d, u.x), u.y),
+               mix(mix(e, g, u.x), mix(h, k, u.x), u.y), u.z);
+}
+end
+
+# At most 8 octaves: a loop with a constant bound, which every target accepts.
+function pg_fbm3
+uses pg_noise3
+float pg_fbm3(vec3 p, float octaves, float roughness) {
+    float sum = 0.0;
+    float amplitude = 0.5;
+    float total = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        if (float(i) >= octaves) break;
+        sum += amplitude * pg_noise3(p);
+        total += amplitude;
+        p = p * 2.03 + vec3(17.1, 5.3, 11.7);
+        amplitude *= roughness;
+    }
+    return sum / max(total, 0.0001);
+}
+end
+
+function pg_ramp4
+vec3 pg_ramp4(float t, vec3 c0, vec3 c1, vec3 c2, vec3 c3, float p1, float p2) {
+    t = clamp(t, 0.0, 1.0);
+    if (t < p1) return mix(c0, c1, t / max(p1, 0.0001));
+    if (t < p2) return mix(c1, c2, (t - p1) / max(p2 - p1, 0.0001));
+    return mix(c2, c3, (t - p2) / max(1.0 - p2, 0.0001));
 }
 end
