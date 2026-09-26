@@ -22,6 +22,15 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+// The imgui.h on the include path has to be the one whose imgui.cpp is built
+// in. Another copy -- a system package next to other headers -- compiles and
+// then crashes; CMake passes the version it fetched.
+#ifdef PG_IMGUI_VERSION_NUM
+static_assert(IMGUI_VERSION_NUM == PG_IMGUI_VERSION_NUM,
+              "imgui.h is not the Dear ImGui fetched for this build: another copy on the include path "
+              "shadows it");
+#endif
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -161,10 +170,12 @@ int runEditor(int argc, char** argv) {
     ImFont* codeFont = nullptr;
     const std::string sans = findFont({"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                                        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                                       "/usr/local/share/fonts/dejavu/DejaVuSans.ttf",  // FreeBSD
                                        "/System/Library/Fonts/Supplemental/Arial.ttf",
                                        "C:/Windows/Fonts/segoeui.ttf"});
     const std::string mono = findFont({"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
                                        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+                                       "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf",
                                        "/System/Library/Fonts/Menlo.ttc",
                                        "C:/Windows/Fonts/consola.ttf"});
     if (!sans.empty()) io.Fonts->AddFontFromFileTTF(sans.c_str(), 15.0f * scale);
@@ -174,8 +185,16 @@ int runEditor(int argc, char** argv) {
     ImNodes::GetIO().LinkDetachWithModifierClick.Modifier = &io.KeyCtrl;
     ImNodes::GetIO().EmulateThreeButtonMouse.Modifier = &io.KeyAlt;  // Alt + drag pans
 
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init("#version 330 core");
+    const bool platform = ImGui_ImplGlfw_InitForOpenGL(window, true);
+    if (!platform || !ImGui_ImplOpenGL3_Init("#version 330 core")) {
+        std::fprintf(stderr, "pgshader: Dear ImGui's %s backend did not start\n", platform ? "OpenGL 3" : "GLFW");
+        if (platform) ImGui_ImplGlfw_Shutdown();
+        ImNodes::DestroyContext();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
 
     int status = 0;
     {

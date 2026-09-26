@@ -194,9 +194,16 @@ if(PG_BUILD_GUI)
     ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
     ${imnodes_SOURCE_DIR}/imnodes.cpp
   )
-  target_include_directories(pgshader SYSTEM PRIVATE
+  # First on the include path, and not SYSTEM (-isystem loses to any -I): a
+  # Dear ImGui installed on the system must not shadow the one fetched here.
+  # FreeBSD's ports put theirs in /usr/local/include, next to the EGL headers
+  # added above; a different 1.92.x compiles, then crashes at run time.
+  target_include_directories(pgshader BEFORE PRIVATE
     ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends ${imnodes_SOURCE_DIR})
-  target_compile_definitions(pgshader PRIVATE PG_HAVE_GUI
+  # The fetched version, which App.cpp checks the imgui.h it sees against.
+  file(STRINGS ${imgui_SOURCE_DIR}/imgui.h PG_IMGUI_VERSION_LINE REGEX "^#define IMGUI_VERSION_NUM")
+  string(REGEX MATCH "[0-9]+" PG_IMGUI_VERSION_NUM "${PG_IMGUI_VERSION_LINE}")
+  target_compile_definitions(pgshader PRIVATE PG_HAVE_GUI PG_IMGUI_VERSION_NUM=${PG_IMGUI_VERSION_NUM}
     PG_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders")
   # The OpenGL backend finds its functions at run time, like pg::gl::Api.
   target_link_libraries(pgshader PRIVATE pgpreview glfw ${CMAKE_DL_LIBS})
