@@ -1,0 +1,32 @@
+pgsim 1
+asset fence 1 "Fence"
+help "A fence along a path: a post on each of its points, rails from each point to the next. Link a Line -- or any points, in order -- into it."
+promote rails height height "Height"
+promote rails post_width post_width "Post Width"
+promote rails rails rails "Rails"
+promote rails rail_size rail_size "Rail Size"
+promote paint color color "Color"
+node 1 asset_input 1 path 0 130
+node 2 box 1 post 0 0
+  expr size.x "ch(\"../rails/post_width\")"
+  expr size.y "ch(\"../rails/height\")"
+  expr size.z "ch(\"../rails/post_width\")"
+  expr center.y "ch(\"../rails/height\") / 2"
+node 3 copy_to_points 1 posts 240 30
+  param align off
+node 4 detail_wrangle 1 rails 240 170
+  param snippet "// Rails from each point of the path to the next: a thin box each, at\n// heights up the posts.\nvoid beam(vector a; vector b; float t) {\n    vector d = b - a;\n    float len = length(d);\n    if (len < 1e-6) return;\n    vector x = d / len;\n    vector z = normalize(cross(x, set(0, 1, 0)));\n    vector y = cross(z, x);\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        vector o = (i & 1 ? d : set(0, 0, 0)) + y * ((i & 2 ? 0.5 : -0.5) * t) + z * ((i & 4 ? 0.5 : -0.5) * t);\n        append(p, addpoint(0, a + o));\n    }\n    addprim(0, \"poly\", p[0], p[4], p[6], p[2]);\n    addprim(0, \"poly\", p[1], p[3], p[7], p[5]);\n    addprim(0, \"poly\", p[0], p[1], p[5], p[4]);\n    addprim(0, \"poly\", p[2], p[6], p[7], p[3]);\n    addprim(0, \"poly\", p[0], p[2], p[3], p[1]);\n    addprim(0, \"poly\", p[4], p[5], p[7], p[6]);\n}\n\nfloat height = ch(\"height\");\nint rails = chi(\"rails\");\nfloat t = ch(\"rail_size\");\nfloat half = ch(\"post_width\") * 0.5;\nfor (int i = 0; i + 1 < npoints(1); i++) {\n    vector a = point(1, \"P\", i);\n    vector b = point(1, \"P\", i + 1);\n    vector along = normalize(b - a) * half;  // from a post's face to the next one's\n    for (int r = 0; r < rails; r++) {\n        vector up = set(0, height * 0.9 * (r + 1) / rails, 0);\n        beam(a + along + up, b - along + up, t);\n    }\n}"
+  param height 1
+  param rails 2
+  param rail_size 0.05
+  param post_width 0.08
+node 5 merge 1 fence 470 90
+node 6 color 1 paint 680 90
+  param color 0.45 0.32 0.2
+  display
+link 2.geometry -> 3.geometry
+link 1.geometry -> 3.points
+link 1.geometry -> 4.input1
+link 3.geometry -> 5.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 6.geometry

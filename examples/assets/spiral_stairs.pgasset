@@ -1,0 +1,18 @@
+pgsim 1
+asset spiral_stairs 1 "Spiral Stairs"
+help "A spiral staircase round a middle: Steps stairs, each Rise higher than the last and turned Turn degrees on, Width wide. Its geometry can be the shape of an object: water runs down it, rain drips off it."
+promote stairs steps steps "Steps"
+promote stairs rise rise "Rise"
+promote stairs turn turn "Turn"
+promote stairs width width "Width"
+promote paint color color "Color"
+node 1 detail_wrangle 1 stairs 0 0
+  param snippet "// A spiral staircase: a box a step, turned round the middle.\nvoid stair(vector c; vector size; float angle) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        vector o = set(i & 1 ? 0.5 : -0.5, i & 2 ? 0.5 : -0.5, i & 4 ? 0.5 : -0.5) * size;\n        append(p, addpoint(0, c + set(o.x * cos(angle) + o.z * sin(angle), o.y, o.z * cos(angle) - o.x * sin(angle))));\n    }\n    addprim(0, \"poly\", p[0], p[4], p[6], p[2]);\n    addprim(0, \"poly\", p[1], p[3], p[7], p[5]);\n    addprim(0, \"poly\", p[0], p[1], p[5], p[4]);\n    addprim(0, \"poly\", p[2], p[6], p[7], p[3]);\n    addprim(0, \"poly\", p[0], p[2], p[3], p[1]);\n    addprim(0, \"poly\", p[4], p[5], p[7], p[6]);\n}\n\nint steps = chi(\"steps\");\nfloat rise = ch(\"rise\");\nfloat width = ch(\"width\");\nfor (int s = 0; s < steps; s++) {\n    float a = radians(ch(\"turn\") * s);\n    float h = rise * (s + 1);  // from the floor up: a solid stair\n    stair(set(cos(a), 0, sin(a)) * (width * 0.5 + 0.2) + set(0, h * 0.5, 0), set(width, h, 0.24), -a);\n}"
+  param steps 12
+  param rise 0.1
+  param width 0.5
+  param turn 25
+node 2 color 1 paint 240 0
+  param color 0.55 0.5 0.45
+  display
+link 1.geometry -> 2.geometry

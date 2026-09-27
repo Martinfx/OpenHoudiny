@@ -22,6 +22,9 @@ okna.
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání
   geometrie; posuvníky z `ch()`
+- **[docs/assets.md](docs/assets.md)** — digital assets: vybrané uzly
+  jako jeden uzel s vlastními parametry a verzí, knihovna `.pgasset`,
+  vstup dovnitř a zpět, síť nese své assety s sebou
 - **[docs/animation.md](docs/animation.md)** — klíčové snímky na libovolném
   parametru, výrazy v parametrech (`$F`, `ch("../box1/sizex")`), pohyblivé
   překážky, jejichž pohyb převezme plyn i voda
@@ -80,7 +83,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 212 testů: 59 jádro, 27 jazyk wrangle a výrazy, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 218 testů: 59 jádro, 27 jazyk wrangle a výrazy, 6 digital assets, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -157,7 +160,7 @@ editor se jí dívá (s rámečkem obrazu) a render i `prototype sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a jednadvaceti příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a dvaceti třemi příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
@@ -171,6 +174,14 @@ v barvách `Cd`, body, čáry, objemy) a tabulka atributů ukáže body, rohy,
 primitiva, detail i objemy. Geometrie může být tvarem překážky, zdroje kouře
 nebo vody, a simulace se vracejí jako geometrie: částice vody, kapky deště
 a mřížky plynu jako body a objemy pro další uzly.
+
+**Digital assets**: vybrané geometrické uzly se stanou jedním uzlem
+(Edit › Make Asset) s parametry, které si asset vybere (pravým na jméno
+parametru › Promote). Dvojklik (I) vede dovnitř, U zpátky; každá změna
+uvnitř je nová verze, kterou hned sledují všechny instance. Knihovna čte
+soubory `.pgasset` z programu, z `$PROTOTYPE_ASSETS` a z uživatelské
+složky; síť ukládá definice použitých assetů na svůj konec, takže se
+otevře kdekoli.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo
@@ -195,7 +206,7 @@ nabídne soubor otevřít; příkazy `sim` a `render` kreslí bez okna přes EGL
 a když EGL nejde, přes skryté okno.
 
 Vědomě chybí (zatím): USD, Alembic, čtení VDB, JIT, packed primitives,
-digital assets, Python vazby, simulace těles a látek — pořadí v
+Python vazby, simulace těles a látek — pořadí v
 [ROADMAP.md §4](ROADMAP.md#4-další-kroky). Podrobně v
 [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
 

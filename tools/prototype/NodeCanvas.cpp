@@ -515,6 +515,8 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
                        mouse.x >= flo.x - 2.0f && mouse.x <= fhi.x + 2.0f && mouse.y >= flo.y - 2.0f &&
                        mouse.y <= fhi.y + 2.0f) {
                 if (model.toggleDisplay) model.toggleDisplay(hoverNode);
+            } else if (hoverNode && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && model.open) {
+                model.open(hoverNode);
             } else if (hoverNode) {
                 drag_ = Drag::Nodes;
                 pressedNode_ = hoverNode;
@@ -661,6 +663,8 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
         if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !ctrl && !chosen.empty() && model.toggleBypass) {
             model.toggleBypass(chosen);
         }
+        if (ImGui::IsKeyPressed(ImGuiKey_I, false) && !ctrl && current_ && model.open) model.open(current_);
+        if (ImGui::IsKeyPressed(ImGuiKey_U, false) && !ctrl && model.up) model.up();
         // Under the mouse only: over the viewport, R is its scale tool.
         if (underMouse && ImGui::IsKeyPressed(ImGuiKey_R, false) && !ctrl && current_ && model.toggleDisplay) {
             if (const CanvasNode* n = find(current_); n && n->displayable) model.toggleDisplay(current_);

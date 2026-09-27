@@ -5,6 +5,7 @@
 #include "pg/gl/Png.h"
 #include "pg/io/Export.h"
 #include "pg/io/Video.h"
+#include "pg/sim/Asset.h"
 #include "pg/sim/Cache.h"
 
 #include "misc/cpp/imgui_stdlib.h"
@@ -40,6 +41,7 @@ ImU32 categoryColor(const std::string& c) {
     if (c == "Forces") return IM_COL32(38, 124, 134, 255);
     if (c == "Simulation") return IM_COL32(112, 78, 160, 255);
     if (c == "Render") return IM_COL32(58, 128, 80, 255);
+    if (c == "Assets") return IM_COL32(150, 124, 48, 255);
     return IM_COL32(110, 60, 60, 255);
 }
 
@@ -97,6 +99,7 @@ Icon categoryIcon(const std::string& c) {
     if (c == "Sources") return Icon::Source;
     if (c == "Forces") return Icon::Force;
     if (c == "Simulation") return Icon::Solver;
+    if (c == "Assets") return Icon::Asset;
     return Icon::Look;
 }
 
@@ -113,6 +116,7 @@ Icon typeIcon(const sim::NodeType* t) {
     if (name == "scatter" || name == "point_cloud" || name == "liquid_points" || name == "rain_points") return Icon::Points;
     if (name == "point_wrangle") return Icon::Code;
     if (name == "file") return Icon::File;
+    if (name == "asset_input") return Icon::Input;
     return categoryIcon(t->category);
 }
 
@@ -281,13 +285,18 @@ SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
     if (!renderer_.init(rendererLog_)) rendererLog_ = "The driver rejected the volume shader:\n" + rendererLog_;
     else rendererLog_.clear();
     // Liquid Points and the like read the frames the runner keeps.
-    geometry_.setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
+    geometry_->setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     newNetwork();  // an empty scene; File > Examples has finished ones
 }
 
 // --- files --------------------------------------------------------------------------------
 
 std::string SimWorkspace::title() const {
+    if (editingAsset()) {
+        const sim::AssetInfo& a = net_.asset();
+        return (a.label.empty() ? a.name : a.label) + " (asset, version " + std::to_string(a.version) + ")" +
+               (modified() ? " *" : "");
+    }
     const std::string name = !path_.empty() ? fs::path(path_).filename().string()
                              : !example_.empty() ? example_ + " (example)"
                                                  : std::string("untitled.pgsim");
@@ -296,7 +305,10 @@ std::string SimWorkspace::title() const {
 
 bool SimWorkspace::modified() const { return net_.save() != savedText_; }
 
-bool SimWorkspace::canOpen(const std::string& path) const { return fs::path(path).extension() == ".pgsim"; }
+bool SimWorkspace::canOpen(const std::string& path) const {
+    const fs::path ext = fs::path(path).extension();
+    return ext == ".pgsim" || ext == ".pgasset";
+}
 
 std::string SimWorkspace::folder() const {
 #ifdef PG_SIM_EXAMPLES_DIR
@@ -306,6 +318,11 @@ std::string SimWorkspace::folder() const {
 }
 
 void SimWorkspace::load(const sim::Network& net, const std::string& path, const std::string& example) {
+    // Out of any asset gone into: the scene's graph is what cooks again.
+    if (!levels_.empty()) {
+        geometry_ = std::move(levels_.front().geometry);
+        levels_.clear();
+    }
     net_ = net;
     path_ = path;
     example_ = example;
@@ -339,6 +356,7 @@ bool SimWorkspace::open(const std::string& path) {
     }
     load(net, path, "");
     if (!warnings.empty()) setMessage(path + ": " + warnings.front(), true);
+    else if (editingAsset()) setMessage("Opened the asset " + path + ": Ctrl+S saves a new version, every instance following");
     else setMessage("Opened " + path);
     return true;
 }
@@ -398,9 +416,11 @@ void SimWorkspace::redo() {
 // --- each frame -----------------------------------------------------------------------------
 
 void SimWorkspace::recompile() {
+    // Inside an asset, the scene's simulation stays as it was.
+    if (!levels_.empty()) return;
     if (net_.revision() == compiledRevision_) return;
     compiledRevision_ = net_.revision();
-    compiled_ = net_.compile(folder(), &geometry_);
+    compiled_ = net_.compile(folder(), geometry_.get());
     if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
     else if (!simulates(net_)) runner_->clear();  // nothing left that simulates: its frames go too
     current_ = std::clamp(current_, 1, std::max(1, compiled_.frames));
@@ -419,7 +439,7 @@ void SimWorkspace::pose(int frame) {
         viewDirty_ = true;
     }
     if (again || !compiled_.poses.empty()) {
-        renderer_.setSolids(compiled_.solidsAt(frame));
+        renderer_.setSolids(levels_.empty() ? compiled_.solidsAt(frame) : std::vector<sim::Solid>());
         viewDirty_ = true;
     }
 }
@@ -433,6 +453,14 @@ std::shared_ptr<const sim::Frame> SimWorkspace::frameToShow() const {
 }
 
 void SimWorkspace::update(float dt) {
+    if (enterRequest_) {
+        enterAsset(enterRequest_);
+        enterRequest_ = 0;
+    }
+    if (leaveRequest_) {
+        leaveAsset();
+        leaveRequest_ = false;
+    }
     recompile();
     history_.track(net_.save(), settled());
     if (synchronous_) runner_->step();
@@ -459,8 +487,8 @@ void SimWorkspace::update(float dt) {
 
     // The frame on screen. While a simulation that started again has no
     // frame yet, the last one stays: dragging a slider does not flicker.
-    std::shared_ptr<const sim::Frame> f = frameToShow();
-    if (!f && shown_ && (runner_->busy() || gizmo_.dragging())) f = shown_;
+    std::shared_ptr<const sim::Frame> f = levels_.empty() ? frameToShow() : nullptr;  // inside an asset: its geometry alone
+    if (!f && shown_ && levels_.empty() && (runner_->busy() || gizmo_.dragging())) f = shown_;
     if (f != shown_) {
         shown_ = f;
         if (f) renderer_.setFrame(*f);
@@ -495,7 +523,9 @@ void SimWorkspace::shortcuts() {
         ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)) {
         redo();
     }
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && editingAsset()) {
+        commitAsset(path_);
+    } else if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
         if (path_.empty()) {
             files_.open("Save network", {".pgsim"}, true, (example_.empty() ? "untitled" : example_) + ".pgsim");
             fileAction_ = FileAction::SaveAs;
@@ -508,7 +538,7 @@ void SimWorkspace::shortcuts() {
         fileAction_ = FileAction::SaveAs;
     }
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) {
-        files_.open("Open network", {".pgsim"}, false, path_);
+        files_.open("Open network", {".pgsim", ".pgasset"}, false, path_);
         fileAction_ = FileAction::Open;
     }
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) newNetwork();
@@ -528,11 +558,14 @@ void SimWorkspace::shortcuts() {
         guides_ = !guides_;
         guidesRevision_ = ~0ull;
     }
+    if (ImGui::IsKeyPressed(ImGuiKey_U, false) && !levels_.empty()) leaveRequest_ = true;  // out of the asset
 }
 
 // --- the network ---------------------------------------------------------------------------
 
 std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
+    static const sim::Compiled none;
+    const sim::Compiled& compiled = levels_.empty() ? compiled_ : none;
     std::vector<CanvasNode> out;
     std::map<std::pair<int, std::string>, int> inCount, outCount;
     for (const sim::Link& l : net_.links()) {
@@ -560,8 +593,8 @@ std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
         c.bypassed = n.bypass;
         c.displayable = t && t->core;
         c.displayed = n.display;
-        c.dimmed = !compiled_.isActive(n.id);
-        for (const sim::Problem& p : compiled_.problems) {
+        c.dimmed = levels_.empty() && !compiled.isActive(n.id);
+        for (const sim::Problem& p : compiled.problems) {
             if (p.node != n.id) continue;
             c.problem = std::max(c.problem, p.level == sim::Problem::Level::Error ? 2 : 1);
             c.problemText += (c.problemText.empty() ? "" : "\n") + p.message;
@@ -570,7 +603,11 @@ std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
             c.problem = 2;
             c.problemText += (c.problemText.empty() ? "" : "\n") + e->second;
         }
-        c.summary = summaryOf(net_, n, compiled_);
+        c.summary = summaryOf(net_, n, compiled);
+        if (t && std::string(t->core ? t->core : "") == "asset" && c.summary.empty()) {
+            const auto def = sim::AssetLibrary::instance().find(n.type);
+            c.summary = "asset, version " + std::to_string(def ? def->version : 0);
+        }
         if (n.display) {
             if (const GeometryPtr& g = renderer_.geometry()) {
                 const std::string dot = " \xc2\xb7 ";
@@ -636,6 +673,10 @@ CanvasModel SimWorkspace::canvasModel() {
     m.toggleDisplay = [this](int node) { net_.setDisplay(net_.displayed() == node ? 0 : node); };
     m.addMenu = [this](ImVec2 at, const PinRef* pending) { return addMenu(at, pending); };
     m.nodeMenu = [this](int node) { nodeMenu(node); };
+    m.open = [this](int node) {
+        if (const sim::Node* n = net_.node(node); n && sim::AssetLibrary::instance().find(n->type)) enterRequest_ = node;
+    };
+    m.up = [this] { leaveRequest_ = !levels_.empty(); };
     return m;
 }
 
@@ -713,10 +754,16 @@ bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
     const sim::NodeType* first = nullptr;
     const sim::NodeType* chosen = nullptr;
     ImGui::Dummy(ImVec2(0.0f, theme::px(2.0f)));
+    const std::vector<const sim::NodeType*> all = sim::allNodeTypes();
     for (const char* category : sim::nodeCategories()) {
         std::vector<const sim::NodeType*> types;
-        for (const sim::NodeType& t : sim::nodeTypes()) {
-            if (category == std::string(t.category) && fits(t)) types.push_back(&t);
+        for (const sim::NodeType* t : all) {
+            if (category != std::string(t->category) || !fits(*t)) continue;
+            // Inside an asset: geometry nodes -- not the asset itself.
+            if (editingAsset() && (!t->core || net_.asset().name == t->name)) continue;
+            // An Asset Input belongs inside an asset.
+            if (!editingAsset() && std::string(t->name) == "asset_input") continue;
+            types.push_back(t);
         }
         if (types.empty()) continue;
         // The category, in its colour.
@@ -766,7 +813,23 @@ void SimWorkspace::nodeMenu(int id) {
     if (ImGui::MenuItem("Delete", "Del")) removeNodes(std::vector<int>(canvas_.selection().begin(), canvas_.selection().end()));
     ImGui::Separator();
     if (ImGui::MenuItem("Frame", "F")) canvas_.frame(true);
-    if (geometry_.contains(id)) {
+    if (const auto def = sim::AssetLibrary::instance().find(n->type)) {
+        ImGui::Separator();
+        if (ImGui::MenuItem("Edit Contents", "I")) enterRequest_ = id;
+        ImGui::SetItemTooltip("Go into the asset: what changes there changes every %s", t ? t->label : n->type.c_str());
+    }
+    {
+        const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
+        if (ImGui::MenuItem("Make Asset\xe2\x80\xa6")) {
+            assetNodes_ = chosen;
+            assetLabel_.clear();
+            assetName_.clear();
+            assetError_.clear();
+            makeAssetOpen_ = true;
+        }
+        ImGui::SetItemTooltip("The selected geometry nodes as one asset of their own, a node of it in their place");
+    }
+    if (geometry_->contains(id)) {
         ImGui::Separator();
         if (ImGui::MenuItem("Display", "R", net_.displayed() == id)) net_.setDisplay(net_.displayed() == id ? 0 : id);
         if (ImGui::MenuItem("Export Geometry\xe2\x80\xa6")) chooseExport(id, false);
@@ -921,8 +984,13 @@ void SimWorkspace::toggleBypass(const std::vector<int>& nodes) {
 
 void SimWorkspace::network(ImVec2 size) {
     (void)size;
-    ui::PanelHeader h = ui::panelHeader(Icon::Network, "Network", "simulation");
+    const std::string where = levelsText();
+    ui::PanelHeader h = ui::panelHeader(Icon::Network, "Network",
+                                        !where.empty() ? where.c_str() : editingAsset() ? "asset" : "simulation");
     if (ui::headerButton(h, "frame", Icon::Search, "Frame the network (F)")) canvas_.frame();
+    if (!levels_.empty() && ui::headerButton(h, "up", Icon::Up, "Back up out of the asset, its new version saved (U)")) {
+        leaveRequest_ = true;
+    }
     if (ui::headerButton(h, "add", Icon::Plus, "Add a node (Tab)")) ImGui::OpenPopup("add_from_header");
     if (ImGui::BeginPopup("add_from_header")) {
         if (addMenu(ImVec2(0.0f, 0.0f), nullptr)) ImGui::CloseCurrentPopup();
@@ -991,10 +1059,20 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
     ImGui::PopFont();
     ImGui::SetItemTooltip("The node's name: what --set NAME.param=value calls it");
     ui::note(type.help);
+    if (const auto def = sim::AssetLibrary::instance().find(node.type)) {
+        // An asset's node: what it is, and the way in.
+        const std::string file = def->file.empty() ? std::string("carried by the program or the network")
+                                                   : fs::path(def->file).filename().string();
+        ImGui::TextDisabled("Asset %s, version %d \xc2\xb7 %s", def->name.c_str(), def->version, file.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Edit Contents")) enterRequest_ = id;
+        ImGui::SetItemTooltip("Go into the asset (I, or a double click on its node): what changes there changes every %s",
+                              type.label);
+    }
 
     // What is wrong with it.
     for (const sim::Problem& p : compiled_.problems) {
-        if (p.node != id) continue;
+        if (p.node != id || !levels_.empty()) continue;
         const bool error = p.level == sim::Problem::Level::Error;
         const ImVec2 q = ImGui::GetCursorScreenPos();
         const float h = ImGui::GetTextLineHeight();
@@ -1050,7 +1128,7 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                                          : "Bypassed: left out of the simulation.");
         ImGui::PopStyleColor();
     }
-    if (!compiled_.isActive(id) && !node.bypass) {
+    if (levels_.empty() && !editingAsset() && !compiled_.isActive(id) && !node.bypass) {
         ui::note(type.core ? "Not displayed, and not the shape of anything: it takes no part."
                            : "Not linked to the Output: it takes no part.");
     }
@@ -1150,7 +1228,21 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                 }
                 ImGui::SetCursorScreenPos(row);
             }
+            const ImVec2 rowStart = ImGui::GetCursorScreenPos();
             ui::rowLabel(p.label, changed, helpFor(p).c_str());
+            // Right click on its name: promote it, copy a reference to it.
+            if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) ImGui::OpenPopup("param");
+            if (ImGui::BeginPopup("param")) {
+                paramMenu(id, p);
+                ImGui::EndPopup();
+            }
+            if (editingAsset() && net_.promotion(id, p.name)) {
+                // Promoted: a mark at its row's start.
+                const float fh = ImGui::GetFrameHeight();
+                ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(rowStart.x - theme::px(7.0f), rowStart.y + fh * 0.2f),
+                                                          ImVec2(rowStart.x - theme::px(4.0f), rowStart.y + fh * 0.8f),
+                                                          theme::kAccent, theme::px(1.5f));
+            }
             if (ui::resetButton("reset", changed)) {
                 net_.resetParam(id, p.name);
                 v = net_.param(id, p.name);
@@ -1268,6 +1360,10 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
 }
 
 void SimWorkspace::networkOverview() {
+    if (editingAsset()) {
+        assetOverview();
+        return;
+    }
     ImGui::PushFont(theme::fonts().bold, 0.0f);
     ImGui::TextUnformatted(title().c_str());
     ImGui::PopFont();
@@ -1384,7 +1480,7 @@ void SimWorkspace::updateGuides() {
     guidesSelection_ = chosen;
     guidesFrame_ = frame;
     gl::Lines lines;
-    if (guides_) {
+    if (guides_ && levels_.empty()) {  // inside an asset, the scene's guides wait with it
         // Not the camera looked through: its lines would start at the eye.
         const sim::Camera* camera = compiled_.hasCamera && !throughCamera_ ? &compiled_.cameraAt(frame) : nullptr;
         lines = gl::sceneGuides(compiled_.ok ? &compiled_.worldAt(frame) : nullptr, compiled_.solidsAt(frame), chosen,
@@ -1466,9 +1562,14 @@ void SimWorkspace::bottom(ImVec2 size) {
 void SimWorkspace::fileMenu() {
     if (ImGui::MenuItem("New", "Ctrl+N")) newNetwork();
     if (ImGui::MenuItem("Open\xe2\x80\xa6", "Ctrl+O")) {
-        files_.open("Open network", {".pgsim"}, false, path_);
+        files_.open("Open network", {".pgsim", ".pgasset"}, false, path_);
         fileAction_ = FileAction::Open;
     }
+    if (ImGui::MenuItem("Open Asset\xe2\x80\xa6")) {
+        files_.open("Open asset", {".pgasset"}, false, sim::AssetLibrary::userFolder() + "/");
+        fileAction_ = FileAction::OpenAsset;
+    }
+    ImGui::SetItemTooltip("An asset's network (.pgasset) to edit: saved, it is its new version, every instance following");
     if (ImGui::BeginMenu("Examples")) {
         for (const std::string& name : sim::Network::exampleNames()) {
             if (ImGui::MenuItem(name.c_str())) openExample(name);
@@ -1476,7 +1577,18 @@ void SimWorkspace::fileMenu() {
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Save", "Ctrl+S")) {
+    if (editingAsset()) {
+        if (ImGui::MenuItem("Save Asset", "Ctrl+S")) commitAsset(path_);
+        ImGui::SetItemTooltip("A new version of the asset, written to its file: every instance follows");
+        if (ImGui::MenuItem("Save Asset As\xe2\x80\xa6")) {
+            files_.open("Save asset", {".pgasset"}, true,
+                        path_.empty() ? sim::AssetLibrary::userFolder() + "/" + net_.asset().name + ".pgasset" : path_);
+            fileAction_ = FileAction::SaveAsset;
+        }
+        if (!levels_.empty() && ImGui::MenuItem("Back Up", "U")) leaveRequest_ = true;
+        ImGui::Separator();
+    }
+    if (!editingAsset() && ImGui::MenuItem("Save", "Ctrl+S")) {
         if (path_.empty()) {
             files_.open("Save network", {".pgsim"}, true, (example_.empty() ? "untitled" : example_) + ".pgsim");
             fileAction_ = FileAction::SaveAs;
@@ -1484,7 +1596,7 @@ void SimWorkspace::fileMenu() {
             save(path_);
         }
     }
-    if (ImGui::MenuItem("Save As\xe2\x80\xa6", "Ctrl+Shift+S")) {
+    if (!editingAsset() && ImGui::MenuItem("Save As\xe2\x80\xa6", "Ctrl+Shift+S")) {
         files_.open("Save network", {".pgsim"}, true, path_.empty() ? (example_.empty() ? "untitled" : example_) + ".pgsim" : path_);
         fileAction_ = FileAction::SaveAs;
     }
@@ -1524,6 +1636,21 @@ void SimWorkspace::editMenu() {
     if (ImGui::MenuItem("Bypass", "B", false, !chosen.empty())) toggleBypass(chosen);
     if (ImGui::MenuItem("Key Selection", "K", false, !chosen.empty())) keySelection();
     ImGui::SetItemTooltip("A key at the play head on where the selected nodes are: their place, turn and size");
+    ImGui::Separator();
+    if (ImGui::MenuItem("Make Asset\xe2\x80\xa6", nullptr, false, !chosen.empty())) {
+        assetNodes_ = chosen;
+        assetLabel_.clear();
+        assetName_.clear();
+        assetError_.clear();
+        makeAssetOpen_ = true;
+    }
+    ImGui::SetItemTooltip("The selected geometry nodes as one asset of their own, a node of it in their place");
+    const int current = canvas_.current();
+    const sim::Node* cn = net_.node(current);
+    if (ImGui::MenuItem("Edit Asset Contents", "I", false, cn && sim::AssetLibrary::instance().find(cn->type))) {
+        enterRequest_ = current;
+    }
+    if (ImGui::MenuItem("Back Up", "U", false, !levels_.empty())) leaveRequest_ = true;
     ImGui::Separator();
     if (ImGui::MenuItem("Arrange", "L")) canvas_.arrange();
     if (ImGui::MenuItem("Frame Network", "F")) canvas_.frame();
@@ -1630,6 +1757,7 @@ void SimWorkspace::helpMenu() {
 
 void SimWorkspace::popups() {
     job_.draw();
+    makeAssetDialog();
     std::string chosen;
     if (!files_.draw(chosen)) return;
     switch (fileAction_) {
@@ -1651,6 +1779,8 @@ void SimWorkspace::popups() {
         case FileAction::LoadCache: loadCache(chosen); break;
         case FileAction::ExportGeometry: exportGeometry(fileNode_, chosen); break;
         case FileAction::ExportFrames: exportFrames(fileNode_, chosen); break;
+        case FileAction::OpenAsset: open(chosen); break;
+        case FileAction::SaveAsset: commitAsset(chosen); break;
         case FileAction::None: break;
     }
     fileAction_ = FileAction::None;
@@ -1691,7 +1821,22 @@ std::string SimWorkspace::gridsText() const {
     return text;
 }
 
+bool SimWorkspace::geometryOnly() const {
+    if (!levels_.empty() || editingAsset()) return true;
+    if (!net_.displayed()) return false;
+    return std::all_of(net_.nodes().begin(), net_.nodes().end(), [](const sim::Node& n) {
+        const sim::NodeType* t = sim::findNodeType(n.type);
+        return t && t->core;
+    });
+}
+
 std::string SimWorkspace::status() const {
+    if (editingAsset()) {
+        const sim::AssetInfo& a = net_.asset();
+        return std::to_string(net_.nodes().size()) + " nodes  \xc2\xb7  asset " + a.name + ", version " +
+               std::to_string(a.version) + "  \xc2\xb7  " +
+               (levels_.empty() ? std::string("Ctrl+S saves a new version") : levelsText() + "  \xc2\xb7  U goes back up");
+    }
     if (emptyScene()) return "An empty scene  \xc2\xb7  Shift+A in the viewport, Tab in the network  \xc2\xb7  File > Examples";
     char text[240], step[32];
     // Frames from disk were not simulated: no time a step.
@@ -1982,7 +2127,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
 
 void SimWorkspace::chooseExport(int id, bool frames) {
     const sim::Node* n = net_.node(id);
-    if (!n || !geometry_.contains(id)) return;
+    if (!n || !geometry_->contains(id)) return;
     // What the node makes suggests the file: volumes alone go to OpenVDB,
     // the rest to PLY.
     const GeometryPtr geo = geometryOf(id);
@@ -2004,7 +2149,7 @@ bool SimWorkspace::exportGeometry(int id, const std::string& path) {
         setMessage("No geometry to export", true);
         return false;
     }
-    const std::string why = geometry_.error(id);
+    const std::string why = geometry_->error(id);
     if (!why.empty()) {
         setMessage(n->name + ": " + why, true);
         return false;
@@ -2022,13 +2167,13 @@ bool SimWorkspace::exportGeometry(int id, const std::string& path) {
 
 bool SimWorkspace::exportFrames(int id, const std::string& pattern) {
     const sim::Node* n = net_.node(id);
-    if (!n || !geometry_.contains(id)) return false;
+    if (!n || !geometry_->contains(id)) return false;
     const int cached = runner_->cached();
     std::string error, last;
     int written = 0;
     for (int f = 1; f <= cached; ++f) {
-        const GeometryPtr geo = geometry_.cook(id, f, compiled_.world.timeStep);
-        const std::string why = geometry_.error(id);
+        const GeometryPtr geo = geometry_->cook(id, f, compiled_.world.timeStep);
+        const std::string why = geometry_->error(id);
         if (!geo || !why.empty()) {
             setMessage(n->name + " at frame " + std::to_string(f) + ": " + (why.empty() ? "no geometry" : why), true);
             return false;

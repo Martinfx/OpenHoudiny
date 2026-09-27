@@ -15,6 +15,7 @@
 //   right click / Tab           add a node;  right click on a node: its menu
 //   F: frame the selection (or all),  L: lay it out,  Delete / X: remove,
 //   Ctrl+D: duplicate,  B: bypass,  R: the display flag,  Ctrl+A: select all
+//   double click on a node / I: go into it (an asset's inside),  U: back up
 //   left click on the flag at a node's right end: the display flag
 //
 #include "Theme.h"
@@ -82,10 +83,31 @@ struct CanvasModel {
     std::function<bool(ImVec2 at, const PinRef* pending)> addMenu;
     /// The items of a node's context menu, drawn inside its popup.
     std::function<void(int node)> nodeMenu;
+    /// Go into `node` -- double click, I -- as into an asset's inside.
+    std::function<void(int node)> open;
+    /// Back up out of it (U).
+    std::function<void()> up;
 };
 
 class NodeCanvas {
 public:
+    /// Where it looks, how close, what is selected: kept for a network gone
+    /// out of and back into.
+    struct View {
+        ImVec2 pan{40.0f, 40.0f};
+        float zoom = 1.0f;
+        std::set<int> selection;
+        int current = 0;
+    };
+    View view() const { return {pan_, zoom_, selection_, current_}; }
+    void setView(const View& v) {
+        pan_ = v.pan;
+        zoom_ = v.zoom;
+        selection_ = v.selection;
+        current_ = v.current;
+        firstDraw_ = false;
+    }
+
     /// Draws the network into the rest of the current window.
     void draw(const char* id, const std::vector<CanvasNode>& nodes, const std::vector<CanvasLink>& links,
               const CanvasModel& model);

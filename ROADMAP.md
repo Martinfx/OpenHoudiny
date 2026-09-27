@@ -104,9 +104,13 @@ předchozí hotový, zdokumentovaný a otestovaný (ASan, UBSan, TSan, libc++).
 - ✅ **Výrazy v parametrech** ([docs/animation.md §6](docs/animation.md#6-výrazy)):
   `$F`, `$T`, matematika a odkazy `ch("../uzel/parametr")`, se sledováním
   závislostí a času; tlačítko fx v editoru, `--set` na příkazové řádce.
-- **Subnety a digital assets:** kus sítě zabalený do uzlu s vybranými
-  parametry, uložený do knihovny a použitelný znovu; instance sledují
-  definici, definice má verzi.
+- ✅ **Digital assets** ([docs/assets.md](docs/assets.md)): vybrané uzly
+  jako jeden uzel (Make Asset) s parametry, které si vybere (promote);
+  knihovna `.pgasset` (s programem, `$PROTOTYPE_ASSETS`, uživatelská
+  složka), vstup dovnitř a zpět (I/U), každá změna je nová verze, kterou
+  sledují všechny instance; síť nese definice svých assetů s sebou;
+  vnořování, cykly odmítnuté. Subnet bez knihovny zatím není — asset
+  ho zastoupí.
 - **Smyčky a nové uzly:** for-each po kusech a opakování se zpětnou vazbou;
   Extrude, Subdivide, Boolean, Attribute Transfer a co si vyžádá demo.
 - **Vaření na pozadí:** těžká síť nezastaví editor a jde přerušit.

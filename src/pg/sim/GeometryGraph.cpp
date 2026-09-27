@@ -1,5 +1,7 @@
 #include "pg/sim/GeometryGraph.h"
 
+#include "pg/sim/Asset.h"
+
 #include "pg/sim/Network.h"
 
 #include <algorithm>
@@ -129,12 +131,16 @@ void registerSimGeometryNodes() {
     (void)once;
 }
 
-GeometryGraph::GeometryGraph() { registerSimGeometryNodes(); }
+GeometryGraph::GeometryGraph() {
+    registerSimGeometryNodes();
+    registerAssetNodes();
+}
 
 GeometryGraph::~GeometryGraph() = default;
 
 void GeometryGraph::sync(const Network& net, const std::string& folder) {
-    if (&net == synced_ && net.revision() == revision_ && folder == folder_) {
+    const uint64_t library = AssetLibrary::instance().revision();
+    if (&net == synced_ && net.revision() == revision_ && folder == folder_ && library == library_) {
         // The network is the same; a file it reads may not be.
         for (auto& [id, m] : nodes_) {
             if (m.file.empty()) continue;
@@ -145,6 +151,7 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
     synced_ = &net;
     revision_ = net.revision();
     folder_ = folder;
+    library_ = library;
 
     // Gone, or of another type now: out of the graph.
     for (auto it = nodes_.begin(); it != nodes_.end();) {
@@ -244,6 +251,12 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
                     }
                 }
             }
+            // An asset's instance: which asset, and which definition of it.
+            if (const NodeType* t = findNodeType(n.type); t && t->core && std::string_view(t->core) == "asset") {
+                changed |= p.setString("asset", n.type);
+                const auto def = AssetLibrary::instance().find(n.type);
+                changed |= p.setInt("definition", def ? static_cast<int>(def->revision) : 0);
+            }
             return changed;
         });
     }
@@ -303,10 +316,15 @@ GeometryPtr GeometryGraph::cook(int id, int frame, float timeStep) {
     const int shown = resolve(id);
     const auto it = nodes_.find(shown);
     if (it == nodes_.end()) return std::make_shared<Geometry>();  // bypassed, and nothing comes in
-    // The simulation's frame into the nodes that read it.
+    // The simulation's frame into the nodes that read it; what comes into
+    // the asset into its inputs.
     std::shared_ptr<const Frame> f = frames_ ? frames_(frame) : nullptr;
     for (auto& [nid, m] : nodes_) {
         if (auto* reads = dynamic_cast<FrameNode*>(m.node)) reads->setFrame(frame, f);
+        if (m.type == "asset_input") {
+            const auto index = static_cast<size_t>(std::clamp(m.node->params().getInt("index", 0), 0, 3));
+            setAssetInput(*m.node, index < inputs_.size() ? inputs_[index] : nullptr);
+        }
     }
     const double dt = std::max(timeStep, 1e-6f);
     return engine_.cook(*it->second.node, CookContext{static_cast<double>(frame) * dt, frame, 1.0 / dt});

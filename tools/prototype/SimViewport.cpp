@@ -1085,6 +1085,11 @@ void SimWorkspace::viewport(ImVec2 size) {
             std::snprintf(text, sizeof text, "simulating\xe2\x80\xa6 %d of %d", cached, current_);
             d->AddText(ImVec2(lo.x + pad, textY + ImGui::GetFontSize() * 1.3f), theme::kAccentHover, text);
         }
+    } else if (!levels_.empty() || editingAsset()) {
+        // Inside an asset: its geometry, at the play head.
+        std::snprintf(text, sizeof text, "Frame %d  \xc2\xb7  inside %s", current_,
+                      (net_.asset().label.empty() ? net_.asset().name : net_.asset().label).c_str());
+        d->AddText(theme::fonts().bold, ImGui::GetFontSize(), ImVec2(lo.x + pad, textY), IM_COL32(235, 236, 240, 230), text);
     } else if (compiled_.ok) {
         d->AddText(ImVec2(lo.x + pad, textY), theme::kAccentHover, gizmo_.dragging() ? "let go to simulate" : "simulating\xe2\x80\xa6");
     }
@@ -1122,7 +1127,7 @@ void SimWorkspace::viewport(ImVec2 size) {
             d->AddText(ImVec2(c.x - ImGui::CalcTextSize(l).x * 0.5f, y), theme::kTextDim, l);
             y += line;
         }
-    } else if (!compiled_.ok) {
+    } else if (!compiled_.ok && !geometryOnly()) {
         std::string why = "Nothing to simulate";
         for (const sim::Problem& p : compiled_.problems) {
             if (p.level == sim::Problem::Level::Error) {

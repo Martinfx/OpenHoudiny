@@ -584,6 +584,16 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             line(-0.25f, -0.35f, -0.25f, 0.75f);
             line(0.3f, -0.35f, 0.3f, 0.75f);
             break;
+        case Icon::Asset: {  // a nut: six sides round a hole -- a part made to be used again
+            ImVec2 hex[6];
+            for (int i = 0; i < 6; ++i) {
+                const float a = kPi / 3.0f * static_cast<float>(i) + kPi / 6.0f;
+                hex[i] = P(0.85f * std::cos(a), 0.85f * std::sin(a));
+            }
+            d->AddConvexPolyFilled(hex, 6, col);
+            d->AddCircleFilled(P(0.0f, 0.0f), 0.32f * s, shade(col, -0.65f));
+            break;
+        }
         case Icon::Film:  // a strip of film: holes along both edges, a picture between
             d->AddRect(P(-0.85f, -0.7f), P(0.85f, 0.7f), col, 0.1f * s, 0, t);
             for (int i = 0; i < 4; ++i) {

@@ -77,12 +77,13 @@ std::vector<Column> columnsOf(const Geometry& geo, AttrClass cls) {
 }  // namespace
 
 GeometryPtr SimWorkspace::geometryOf(int id) {
-    if (!geometry_.contains(id)) return nullptr;
-    return geometry_.cook(id, shownFrame(), compiled_.world.timeStep);
+    if (!geometry_->contains(id)) return nullptr;
+    return geometry_->cook(id, shownFrame(), compiled_.world.timeStep);
 }
 
 void SimWorkspace::updateGeometry() {
-    geometry_.sync(net_, folder());
+    if (editingAsset()) feedAssetInputs();
+    geometry_->sync(net_, folder());
     const int display = net_.displayed();
     const GeometryPtr geo = display ? geometryOf(display) : nullptr;
     if (geo != renderer_.geometry()) {
@@ -94,12 +95,12 @@ void SimWorkspace::updateGeometry() {
     cookWarnings_.clear();
     cookLogs_.clear();
     for (const sim::Node& n : net_.nodes()) {
-        if (!geometry_.contains(n.id)) continue;
-        std::string e = geometry_.error(n.id);
+        if (!geometry_->contains(n.id)) continue;
+        std::string e = geometry_->error(n.id);
         if (!e.empty()) cookErrors_[n.id] = std::move(e);
-        std::string w = geometry_.warning(n.id);
+        std::string w = geometry_->warning(n.id);
         if (!w.empty()) cookWarnings_[n.id] = std::move(w);
-        std::string l = geometry_.log(n.id);
+        std::string l = geometry_->log(n.id);
         if (!l.empty()) cookLogs_[n.id] = std::move(l);
     }
 }
@@ -107,7 +108,7 @@ void SimWorkspace::updateGeometry() {
 void SimWorkspace::spreadsheet() {
     // The current node's geometry, or else the displayed node's.
     int id = canvas_.current();
-    if (!geometry_.contains(id)) id = net_.displayed();
+    if (!geometry_->contains(id)) id = net_.displayed();
     const sim::Node* n = net_.node(id);
     const GeometryPtr geo = n ? geometryOf(id) : nullptr;
     if (!n || !geo) {

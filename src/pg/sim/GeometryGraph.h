@@ -70,6 +70,9 @@ public:
 
     /// Where the nodes that bring a simulation back get its frames.
     void setFrames(FrameSource frames) { frames_ = std::move(frames); }
+    /// What comes into the Asset Input nodes: the inputs of the asset whose
+    /// inside this graph cooks (Asset.h).
+    void setInputs(std::vector<GeometryPtr> inputs) { inputs_ = std::move(inputs); }
 
     CookEngine& engine() { return engine_; }
 
@@ -92,8 +95,10 @@ private:
     CookEngine engine_;
     std::map<int, Mirror> nodes_;
     FrameSource frames_;
+    std::vector<GeometryPtr> inputs_;
     const Network* synced_ = nullptr;
     uint64_t revision_ = ~0ull;
+    uint64_t library_ = ~0ull;  ///< the asset library's revision, when synced
     std::string folder_;
 };
 

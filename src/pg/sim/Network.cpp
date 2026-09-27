@@ -1,5 +1,6 @@
 #include "pg/sim/Network.h"
 
+#include "pg/sim/Asset.h"
 #include "pg/sim/GeometryGraph.h"
 
 #include "pg/lang/Lang.h"
@@ -523,6 +524,12 @@ std::vector<NodeType> buildTypes() {
                  1});
     t.back().core = "copytopoints";
     geometry("null", "Null", "null", "What comes in, unchanged: a name to point at, an end to display.", in, {});
+    geometry("asset_input", "Asset Input", "asset_input",
+             "What comes into a digital asset: inside its network, the geometry linked into the asset's input "
+             "Index. Outside an asset, nothing.",
+             {},
+             {{"index", "Index", "Input", K::Int, {0.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 3.0f, "",
+               "Which input of the asset, from 0."}});
     // What the simulations make, as geometry: at the frame shown.
     geometry("liquid_points", "Liquid Points", "liquid_points",
              "The particles of a Liquid Solver at the frame: points with their velocity v and foam -- to "
@@ -1066,6 +1073,8 @@ const PinDef* NodeType::output(std::string_view n) const {
     return nullptr;
 }
 
+bool isValidName(std::string_view name) { return validName(name); }
+
 const std::vector<NodeType>& nodeTypes() {
     static const std::vector<NodeType> types = buildTypes();
     return types;
@@ -1075,11 +1084,20 @@ const NodeType* findNodeType(std::string_view name) {
     for (const NodeType& t : nodeTypes()) {
         if (name == t.name) return &t;
     }
+    // A digital asset's: kept by the library as long as the program runs.
+    if (const auto def = AssetLibrary::instance().find(name)) return &def->type;
     return nullptr;
 }
 
+std::vector<const NodeType*> allNodeTypes() {
+    std::vector<const NodeType*> out;
+    for (const NodeType& t : nodeTypes()) out.push_back(&t);
+    for (const NodeType* t : assetTypes()) out.push_back(t);
+    return out;
+}
+
 const std::vector<const char*>& nodeCategories() {
-    static const std::vector<const char*> c = {"Geometry", "Objects", "Sources", "Forces", "Simulation", "Render"};
+    static const std::vector<const char*> c = {"Geometry", "Objects", "Sources", "Forces", "Simulation", "Render", "Assets"};
     return c;
 }
 
@@ -1273,6 +1291,7 @@ int Network::add(std::string_view type, float x, float y) {
 bool Network::remove(int id) {
     const int i = indexOf(id);
     if (i < 0) return false;
+    std::erase_if(asset_.promoted, [&](const Promotion& p) { return p.node == nodes_[static_cast<size_t>(i)].name; });
     nodes_.erase(nodes_.begin() + i);
     std::erase_if(links_, [&](const Link& l) { return l.from == id || l.to == id; });
     ++revision_;
@@ -1291,9 +1310,53 @@ bool Network::rename(int id, std::string_view name, std::string* error) {
         if (error) *error = "another node is called " + std::string(name);
         return false;
     }
+    for (Promotion& p : asset_.promoted) {
+        if (p.node == n->name) p.node = name;
+    }
     n->name = name;
     ++revision_;
     return true;
+}
+
+void Network::setAsset(AssetInfo info) {
+    if (info == asset_) return;
+    asset_ = std::move(info);
+    ++revision_;
+}
+
+bool Network::promote(int id, std::string_view param, bool on) {
+    const Node* n = node(id);
+    const ParamDef* d = n ? def(*n, param) : nullptr;
+    if (!d) return false;
+    const auto it = std::find_if(asset_.promoted.begin(), asset_.promoted.end(),
+                                 [&](const Promotion& p) { return p.node == n->name && p.param == param; });
+    if (!on) {
+        if (it == asset_.promoted.end()) return true;
+        asset_.promoted.erase(it);
+        ++revision_;
+        return true;
+    }
+    if (it != asset_.promoted.end()) return true;
+    // Its own name, unless another node's parameter has it already.
+    std::string name(param);
+    auto taken = [&](const std::string& s) {
+        return std::any_of(asset_.promoted.begin(), asset_.promoted.end(), [&](const Promotion& p) { return p.name == s; });
+    };
+    if (taken(name)) {
+        for (int k = 2; taken(name = std::string(param) + std::to_string(k)); ++k) {}
+    }
+    asset_.promoted.push_back({n->name, std::string(param), name, {}});
+    ++revision_;
+    return true;
+}
+
+const Promotion* Network::promotion(int id, std::string_view param) const {
+    const Node* n = node(id);
+    if (!n) return nullptr;
+    for (const Promotion& p : asset_.promoted) {
+        if (p.node == n->name && p.param == param) return &p;
+    }
+    return nullptr;
 }
 
 bool Network::canConnect(int from, std::string_view output, int to, std::string_view input,
@@ -1363,14 +1426,7 @@ std::vector<Link> Network::linksInto(int to, std::string_view input) const {
 
 namespace {
 
-/// Text that lives as long as the program: the names and labels of the
-/// parameters snippets ask for, which ParamDef points at.
-const char* interned(const std::string& s) {
-    static std::mutex mu;
-    static std::set<std::string> pool;
-    std::lock_guard<std::mutex> lock(mu);
-    return pool.insert(s).first->c_str();
-}
+const char* interned(const std::string& s) { return internText(s); }
 
 ParamDef spareDef(const lang::Channel& ch) {
     const char* name = interned(ch.name);
@@ -1393,6 +1449,13 @@ ParamDef spareDef(const lang::Channel& ch) {
 }
 
 }  // namespace
+
+const char* internText(const std::string& text) {
+    static std::mutex mu;
+    static std::set<std::string> pool;
+    std::lock_guard<std::mutex> lock(mu);
+    return pool.insert(text).first->c_str();
+}
 
 const ParamDef* Network::def(const Node& n, std::string_view name) const {
     const NodeType* t = findNodeType(n.type);
@@ -1972,6 +2035,13 @@ bool Network::setBypass(int id, bool on) {
 
 std::string Network::save() const {
     std::string out = "pgsim " + std::to_string(kFormatVersion) + "\n";
+    if (!asset_.name.empty()) {
+        out += "asset " + asset_.name + ' ' + std::to_string(asset_.version) + ' ' + quotedPath(asset_.label) + '\n';
+        if (!asset_.help.empty()) out += "help " + quotedPath(asset_.help) + '\n';
+        for (const Promotion& p : asset_.promoted) {
+            out += "promote " + p.node + ' ' + p.param + ' ' + p.name + ' ' + quotedPath(p.label) + '\n';
+        }
+    }
     for (const Node& n : nodes_) {
         out += "node " + std::to_string(n.id) + ' ' + n.type + ' ' + std::to_string(n.version) + ' ' + n.name + ' ' +
                formatNumber(n.x) + ' ' + formatNumber(n.y) + '\n';
@@ -2030,10 +2100,73 @@ std::string Network::save() const {
     for (const Link& l : links_) {
         out += "link " + std::to_string(l.from) + '.' + l.output + " -> " + std::to_string(l.to) + '.' + l.input + '\n';
     }
+    // The digital assets it uses, as they are now: the file is whole without the library.
+    std::set<std::string> used;
+    for (const Node& n : nodes_) {
+        if (used.count(n.type)) continue;
+        const auto def = AssetLibrary::instance().find(n.type);
+        if (!def) continue;
+        used.insert(n.type);
+        out += "definition " + n.type + '\n';
+        const std::string text = def->net->save();
+        size_t pos = 0;
+        while (pos < text.size()) {
+            const size_t end = std::min(text.find('\n', pos), text.size());
+            out += "| " + text.substr(pos, end - pos) + '\n';
+            pos = end + 1;
+        }
+        out += "end\n";
+    }
     return out;
 }
 
-bool Network::load(std::string_view text, Network& out, std::string& error, std::vector<std::string>* warnings) {
+bool Network::load(std::string_view whole, Network& out, std::string& error, std::vector<std::string>* warnings) {
+    // The definitions of the assets it uses, first: its nodes are of their types.
+    std::string rest;
+    {
+        size_t pos = 0;
+        int lineNo = 0;
+        while (pos < whole.size()) {
+            const size_t end = std::min(whole.find('\n', pos), whole.size());
+            const std::string_view line = whole.substr(pos, end - pos);
+            pos = end + 1;
+            ++lineNo;
+            if (line.rfind("definition ", 0) != 0) {
+                rest.append(line);
+                rest.push_back('\n');
+                continue;
+            }
+            // definition NAME, then its file a line each after "| ", then end
+            const int first = lineNo;
+            std::string inner;
+            bool closed = false;
+            while (pos < whole.size()) {
+                const size_t e = std::min(whole.find('\n', pos), whole.size());
+                const std::string_view l = whole.substr(pos, e - pos);
+                pos = e + 1;
+                ++lineNo;
+                rest.push_back('\n');  // the line numbers of the rest stay
+                if (l == "end" || l == "end\r") {
+                    closed = true;
+                    break;
+                }
+                if (l.rfind("|", 0) == 0) inner.append(l.substr(l.size() > 1 && l[1] == ' ' ? 2 : 1));
+                inner.push_back('\n');
+            }
+            rest.push_back('\n');
+            if (!closed) {
+                error = "line " + std::to_string(first) + ": a definition without its end";
+                return false;
+            }
+            Network def;
+            std::string why;
+            if (!load(inner, def, why) || !AssetLibrary::instance().addIfNewer(def, why)) {
+                if (warnings) warnings->push_back("line " + std::to_string(first) + ": the asset " +
+                                                  std::string(line.substr(11)) + " it carries: " + why);
+            }
+        }
+    }
+    const std::string_view text = rest;
     Network net;
     auto warn = [&](int line, const std::string& what) {
         if (warnings) warnings->push_back("line " + std::to_string(line) + ": " + what);
@@ -2084,6 +2217,27 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
                 return fail(lineNo, "written by a newer version (format " + std::string(w[1]) + ")");
             }
             header = true;
+            continue;
+        }
+        if (w[0] == "asset") {
+            // asset NAME VERSION "LABEL"
+            float version = 0.0f;
+            if (w.size() < 3 || !parseNumber(w[2], version)) return fail(lineNo, "an asset line is: asset NAME VERSION \"LABEL\"");
+            net.asset_.name = w[1];
+            net.asset_.version = std::max(1, static_cast<int>(version));
+            if (w.size() > 3) unquoted(line.substr(static_cast<size_t>(w[3].data() - line.data())), net.asset_.label);
+            continue;
+        }
+        if (w[0] == "help") {
+            if (w.size() > 1) unquoted(line.substr(static_cast<size_t>(w[1].data() - line.data())), net.asset_.help);
+            continue;
+        }
+        if (w[0] == "promote") {
+            // promote NODE PARAM NAME "LABEL"
+            if (w.size() < 4) return fail(lineNo, "a promote line is: promote NODE PARAM NAME \"LABEL\"");
+            Promotion p{std::string(w[1]), std::string(w[2]), std::string(w[3]), {}};
+            if (w.size() > 4) unquoted(line.substr(static_cast<size_t>(w[4].data() - line.data())), p.label);
+            net.asset_.promoted.push_back(std::move(p));
             continue;
         }
         if (w[0] == "node") {
@@ -2297,6 +2451,13 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
                              "; dropped");
         }
     }
+    // Promoted parameters that are not there.
+    std::erase_if(net.asset_.promoted, [&](const Promotion& p) {
+        const Node* n = net.named(p.node);
+        if (n && net.def(*n, p.param)) return false;
+        if (warnings) warnings->push_back("the promoted " + p.node + "." + p.param + " is not there; dropped");
+        return true;
+    });
     net.revision_ = out.revision_ + 1;
     out = std::move(net);
     return true;

@@ -68,6 +68,7 @@ enum class Icon {
     Wind, Vortex, Attractor, Drop, Rain, Trash, Copy,
     Geometry, Points, Table,                         // geometry
     Film,                                            // a video
+    Asset,                                           // a digital asset
 };
 
 /// `icon` in a square `size` wide, centred on `center`.

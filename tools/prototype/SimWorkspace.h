@@ -21,6 +21,14 @@
 //
 // It starts on an empty scene; File > Examples has finished ones.
 //
+// Digital assets (pg/sim/Asset.h): geometry nodes chosen become one asset
+// (Make Asset), its node in their place. Going into an instance -- double
+// click, I -- edits the asset's inside, with the instance's inputs coming
+// into its Asset Input nodes; the scene waits, simulated as it was. Back up
+// (U), what changed is a new version of the asset: written to its file, and
+// every instance follows. A parameter inside is promoted -- right click on
+// its name -- to show on the asset's node.
+//
 #include "Gizmo.h"
 #include "NodeCanvas.h"
 #include "RenderJob.h"
@@ -35,6 +43,7 @@
 #include <set>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace pg::editor {
 
@@ -98,6 +107,33 @@ private:
     void removeNodes(const std::vector<int>& nodes);
     void toggleBypass(const std::vector<int>& nodes);
 
+    // --- digital assets (SimAssets.cpp) --------------------------------------------------
+    /// Whether the network edited is an asset's inside -- gone into, or a
+    /// .pgasset opened.
+    bool editingAsset() const { return !net_.asset().name.empty(); }
+    /// Goes into asset node `id`: the asset's network is what is edited.
+    bool enterAsset(int id);
+    /// Back up a level; what changed inside becomes the asset's new version.
+    /// False, with why, when it cannot be one: the workspace stays inside.
+    bool leaveAsset();
+    /// What changed in the asset edited, as its new version: written to its
+    /// file -- `path`, or the one it came from, or one in the user's folder
+    /// -- and into the library, every instance following. True when nothing
+    /// changed.
+    bool commitAsset(const std::string& path = {});
+    /// The instance's inputs, at the frame on screen, into the Asset Input
+    /// nodes of the inside edited.
+    void feedAssetInputs();
+    /// The dialog of Make Asset: a name for the selected nodes as one asset.
+    void makeAssetDialog();
+    /// The asset's own settings -- label, help, what it promotes -- where
+    /// the network's overview is.
+    void assetOverview();
+    /// A parameter's right click menu: promote it, copy a reference to it.
+    void paramMenu(int id, const sim::ParamDef& p);
+    /// Scene > Building > ...: where in the assets the network edited is.
+    std::string levelsText() const;
+
     // --- parameters --------------------------------------------------------------------
     void nodeParameters(const sim::Node& node, const sim::NodeType& type);
     void networkOverview();
@@ -152,6 +188,9 @@ private:
     void chooseVideo();
     /// A network with no node: what a new scene is.
     bool emptyScene() const { return net_.nodes().empty(); }
+    /// A network of geometry nodes alone, one of them displayed -- a model,
+    /// an asset's inside: nothing to simulate is no problem.
+    bool geometryOnly() const;
 
     // --- the cache on disk, and export ------------------------------------------------
     /// Where a file made from the network goes by default: its file's
@@ -237,7 +276,24 @@ private:
     void viewKeys(bool overView);
 
     sim::Network net_;
-    sim::GeometryGraph geometry_;          ///< the geometry nodes, cooked
+    /// The geometry nodes, cooked: the network's; inside an asset, its inside's.
+    std::unique_ptr<sim::GeometryGraph> geometry_ = std::make_unique<sim::GeometryGraph>();
+
+    /// A network gone out of into an asset's inside, as it was left.
+    struct Level {
+        sim::Network net;
+        std::string path, example, savedText;
+        History history;
+        std::unique_ptr<sim::GeometryGraph> geometry;
+        NodeCanvas::View view;
+        int instance = 0;  ///< the asset node gone into
+    };
+    std::vector<Level> levels_;
+    int enterRequest_ = 0;         ///< a node to go into, next frame
+    bool leaveRequest_ = false;    ///< back up, next frame
+    bool makeAssetOpen_ = false;   ///< the Make Asset dialog is to open
+    std::string assetName_, assetLabel_, assetError_;
+    std::vector<int> assetNodes_;  ///< what Make Asset makes one
     /// Parameters shown as expressions ("node.param"), though they may have
     /// none yet: fx was clicked.
     std::set<std::string> exprMode_;
@@ -302,7 +358,8 @@ private:
 
     ui::FileBrowser files_;
     enum class FileAction {
-        None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, ExportGeometry, ExportFrames
+        None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, ExportGeometry, ExportFrames,
+        OpenAsset, SaveAsset
     } fileAction_ = FileAction::None;
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;

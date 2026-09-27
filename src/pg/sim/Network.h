@@ -138,6 +138,13 @@ struct NodeType {
 
 /// Every node type, in the order the editor lists them.
 const std::vector<NodeType>& nodeTypes();
+/// Those and the digital assets of the library (Asset.h).
+std::vector<const NodeType*> allNodeTypes();
+/// Letters, digits and '_', not starting with a digit.
+bool isValidName(std::string_view name);
+/// Text that lives as long as the program: what a NodeType made at run
+/// time -- an asset's -- points its names at.
+const char* internText(const std::string& text);
 const NodeType* findNodeType(std::string_view name);
 
 /// The categories, in the order the editor lists them.
@@ -207,6 +214,29 @@ struct Link {
     std::string input;
 
     bool operator==(const Link&) const = default;
+};
+
+/// A parameter of a node inside a digital asset, shown as the asset's own
+/// (Asset.h).
+struct Promotion {
+    std::string node;   ///< the node inside, by name
+    std::string param;  ///< its parameter
+    std::string name;   ///< the asset's parameter
+    std::string label;  ///< as the editor shows it; empty: the parameter's
+
+    bool operator==(const Promotion&) const = default;
+};
+
+/// What makes a network a digital asset's definition: its name -- the type
+/// of its instances -- its version, and what it shows of the nodes inside.
+struct AssetInfo {
+    std::string name;   ///< "building"; empty: the network is no asset
+    std::string label;  ///< "Building"
+    int version = 1;
+    std::string help;
+    std::vector<Promotion> promoted;
+
+    bool operator==(const AssetInfo&) const = default;
 };
 
 struct Problem {
@@ -383,6 +413,18 @@ public:
     /// velocity of what moves. The grids and the frame rate are frame 1's.
     Compiled compile(const std::string& folder = {}, GeometryGraph* geometry = nullptr) const;
 
+    // --- digital assets ----------------------------------------------------------------
+    /// What makes this network an asset's definition; its name is empty when
+    /// it is none.
+    const AssetInfo& asset() const { return asset_; }
+    void setAsset(AssetInfo info);
+    /// Shows parameter `param` of node `id` as the asset's own -- `on` false:
+    /// no longer. Its name there is the parameter's, made unique. False for
+    /// an unknown node or parameter.
+    bool promote(int id, std::string_view param, bool on);
+    /// How parameter `param` of node `id` is promoted; null if it is not.
+    const Promotion* promotion(int id, std::string_view param) const;
+
     /// Bumped by every edit -- all but moving a node, which goes through
     /// node() and changes nothing a simulation sees.
     uint64_t revision() const { return revision_; }
@@ -417,6 +459,7 @@ private:
     std::vector<Link> links_;
     int nextId_ = 1;
     uint64_t revision_ = 0;
+    AssetInfo asset_;
 };
 
 }  // namespace pg::sim
