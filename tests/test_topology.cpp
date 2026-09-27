@@ -277,6 +277,30 @@ TEST(topology_clip_cuts_and_closes) {
     ell->append(*engine.cook(*side, CookContext{}));
     const GeometryPtr cutEll = run("clip", {ell}, [](Node& n) { n.setVec3("origin", Vec3(0.0f, 0.25f, 0.0f)); });
     CHECK(std::fabs(volumeOf(*cutEll) - 1.5f) < 1e-4f);
+    // A box with a hollow in it, cut through the hollow: the cap a ring,
+    // a face with a hole.
+    auto hollow = std::make_shared<Geometry>(*box);
+    Node* core = g.create("box", "core");
+    core->setVec3("size", Vec3(0.5f, 0.5f, 0.5f));
+    core->setVec3("center", Vec3(0.0f, 0.5f, 0.0f));
+    const GeometryPtr inner = engine.cook(*core, CookContext{});
+    {
+        // Turned inside out: its faces round the other way.
+        Geometry turned;
+        turned.addPoints(inner->pointCount());
+        auto tp = turned.positionsForWrite();
+        for (size_t i = 0; i < inner->pointCount(); ++i) tp[i] = inner->positions()[i];
+        for (size_t prim = 0; prim < inner->primitiveCount(); ++prim) {
+            std::vector<uint32_t> f(inner->primitivePoints(prim).begin(), inner->primitivePoints(prim).end());
+            std::reverse(f.begin(), f.end());
+            turned.addPrimitive(f);
+        }
+        hollow->append(turned);
+    }
+    CHECK(std::fabs(volumeOf(*hollow) - (1.0f - 0.125f)) < 1e-5f);
+    const GeometryPtr ring = run("clip", {hollow}, [](Node& n) { n.setVec3("origin", Vec3(0.0f, 0.6f, 0.0f)); });
+    CHECK(watertight(*ring));
+    CHECK(std::fabs(volumeOf(*ring) - (0.4f - 0.25f * 0.15f)) < 1e-4f);
 }
 
 TEST(topology_attribute_transfer_colours_what_is_near) {
@@ -534,3 +558,76 @@ TEST(cooker_cooks_on_its_own_thread_and_gives_up_what_is_not_wanted) {
     bounds(*r.geometry[move], lo, hi);
     CHECK(std::fabs(lo.y - 5.0f) < 1e-5f && std::fabs(hi.y - 6.0f) < 1e-5f);  // the box, from the scene, lifted
 }
+
+// --- Voronoi Fracture --------------------------------------------------------------------------------
+
+TEST(fracture_cuts_a_solid_into_closed_pieces_that_make_the_whole) {
+    Graph g;
+    CookEngine engine;
+    const GeometryPtr box = cookBox(engine, g, 2);
+    const float whole = volumeOf(*box);
+    GeometryPtr pieces = run("voronoifracture", {box}, [](Node& n) { n.setInt("count", 12); });
+    const auto piece = pieces->primitives().find("piece")->read<int32_t>();
+    int count = 0;
+    for (const int32_t p : piece) count = std::max(count, p + 1);
+    CHECK_EQ(count, 12);
+    CHECK(pieces->findGroup("inside")->memberCount() > 0u);
+    // Each piece closed, all of them the box.
+    float sum = 0.0f;
+    for (int k = 0; k < count; ++k) {
+        std::vector<uint8_t> keep(piece.size());
+        for (size_t p = 0; p < piece.size(); ++p) keep[p] = piece[p] == k;
+        auto one = std::make_shared<Geometry>(*pieces);
+        one->deletePrimitives(keep, true);
+        CHECK(watertight(*one));
+        const float v = volumeOf(*one);
+        CHECK(v > 0.0f);
+        sum += v;
+    }
+    CHECK(std::fabs(sum - whole) < 1e-4f);
+    // The points carry it too.
+    CHECK(pieces->points().find("piece") != nullptr);
+
+    // The same on one thread and on four; another seed, other pieces.
+    const unsigned saved = TaskPool::instance().threadCount();
+    TaskPool::instance().setThreadCount(1);
+    const uint64_t one = run("voronoifracture", {box}, [](Node& n) { n.setInt("count", 12); })->hash();
+    TaskPool::instance().setThreadCount(4);
+    const uint64_t four = run("voronoifracture", {box}, [](Node& n) { n.setInt("count", 12); })->hash();
+    TaskPool::instance().setThreadCount(saved);
+    CHECK_EQ(one, four);
+    CHECK(run("voronoifracture", {box}, [](Node& n) {
+              n.setInt("count", 12);
+              n.setInt("seed", 2);
+          })->hash() != one);
+
+    // Points given: a cell each, those outside it none.
+    auto seeds = std::make_shared<Geometry>();
+    seeds->addPoints(3);
+    auto S = seeds->positionsForWrite();
+    S[0] = Vec3(-0.25f, 0.5f, 0.0f);
+    S[1] = Vec3(0.25f, 0.5f, 0.0f);
+    S[2] = Vec3(5.0f, 0.5f, 0.0f);  // outside: its cell holds nothing of the box
+    pieces = run("voronoifracture", {box, seeds});
+    int given = 0;
+    for (const int32_t p : pieces->primitives().find("piece")->read<int32_t>()) given = std::max(given, p + 1);
+    CHECK_EQ(given, 2);
+    CHECK(std::fabs(volumeOf(*pieces) - whole) < 1e-4f);
+}
+
+TEST(fracture_breaks_the_building) {
+    sim::AssetLibrary::instance().loadDefaults();
+    const auto def = sim::AssetLibrary::instance().find("building");
+    CHECK(def != nullptr);
+    if (!def) return;
+    sim::GeometryGraph inside;
+    inside.sync(*def->net);
+    const GeometryPtr body = inside.cook(def->net->named("paint")->id, 1);
+    const GeometryPtr pieces = run("voronoifracture", {body}, [](Node& n) { n.setInt("count", 24); });
+    CHECK(std::fabs(volumeOf(*pieces) - volumeOf(*body)) < 1e-3f * volumeOf(*body));
+    int count = 0;
+    for (const int32_t p : pieces->primitives().find("piece")->read<int32_t>()) count = std::max(count, p + 1);
+    CHECK_EQ(count, 24);
+    CHECK(pieces->primitives().find("Cd") != nullptr);  // the walls' colours go with them
+}
+

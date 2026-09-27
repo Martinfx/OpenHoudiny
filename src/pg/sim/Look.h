@@ -1,12 +1,15 @@
 #pragma once
 //
 // How a simulation is drawn: the colour and density of the smoke, the glow of
-// the fire, the colour and clarity of the water, the light. What the Volume
-// Look, the Water Look and the Output compile to (Network.h) and the renderer
-// draws with (pg/gl/Volume.h). Plain data: a change of look draws the frames
-// again, it never simulates them again.
+// the fire, the colour and clarity of the water, the pieces of what broke,
+// the light. What the Volume Look, the Water Look, the RBD Solver and the
+// Output compile to (Network.h) and the renderer draws with
+// (pg/gl/Volume.h). Plain data: a change of look draws the frames again, it
+// never simulates them again.
 //
 #include "pg/core/Types.h"
+
+#include <string>
 
 namespace pg::sim {
 
@@ -33,6 +36,12 @@ struct Look {
     float rainOpacity = 0.35f;    ///< how much of what is behind a drop it hides
     float rainStreak = 0.5f;      ///< a drop drawn as long as it falls in this share of a frame
     float wetness = 0.6f;         ///< how wet the rain makes the floor look: darker, shining
+
+    // The pieces of an RBD Solver (Rigid.h: drawnPieces)
+    bool pieces = false;          ///< drawn with the displayed geometry: the solver is linked into the Output
+    Vec3 piecesColor{0.62f, 0.6f, 0.57f};   ///< where they have no Cd of their own
+    Vec3 piecesInside{0.5f, 0.47f, 0.43f};  ///< the faces a fracture cut
+    std::string insideGroup = "inside";     ///< ... the group they are in
 
     // Light
     float lightAzimuth = 169.0f;  ///< degrees round the vertical, from +x towards +z

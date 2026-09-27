@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <cmath>
 #include <numeric>
 #include <sstream>
@@ -604,40 +605,151 @@ public:
 
 // --- Clip -----------------------------------------------------------------------------------------
 
-/// Triangles of the simple polygon `loop` (points of `P`, round `normal`
-/// anticlockwise), by cutting off ears: indices into `loop`.
-std::vector<std::array<size_t, 3>> earClip(std::span<const Vec3> P, const std::vector<uint32_t>& loop, const Vec3& normal) {
-    std::vector<std::array<size_t, 3>> out;
-    std::vector<size_t> left(loop.size());
-    std::iota(left.begin(), left.end(), size_t{0});
-    auto at = [&](size_t i) { return P[loop[left[i]]]; };
-    auto convex = [&](const Vec3& a, const Vec3& b, const Vec3& c) { return dot(cross(b - a, c - b), normal) > 0.0f; };
-    auto inside = [&](const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
-        return dot(cross(b - a, p - a), normal) >= 0.0f && dot(cross(c - b, p - b), normal) >= 0.0f &&
-               dot(cross(a - c, p - c), normal) >= 0.0f;
-    };
-    size_t guard = 0;
-    while (left.size() > 3 && guard++ < loop.size() * loop.size()) {
-        const size_t m = left.size();
-        bool cut = false;
-        for (size_t i = 0; i < m; ++i) {
-            const size_t a = (i + m - 1) % m, c = (i + 1) % m;
-            if (!convex(at(a), at(i), at(c))) continue;
-            bool empty = true;
-            for (size_t j = 0; j < m && empty; ++j) {
-                if (j == a || j == i || j == c) continue;
-                if (inside(at(j), at(a), at(i), at(c))) empty = false;
-            }
-            if (!empty) continue;
-            out.push_back({left[a], left[i], left[c]});
-            left.erase(left.begin() + static_cast<long>(i));
-            cut = true;
-            break;
+/// The plane of a cut, as 2D: `u` and `v` across it, anticlockwise about
+/// `n` -- what a cap faces.
+struct Plane2 {
+    Vec3 n, u, v;
+    explicit Plane2(const Vec3& normal) : n(normalize(normal)) {
+        const Vec3 axis = std::fabs(n.x) < 0.9f ? Vec3(1.0f, 0.0f, 0.0f) : Vec3(0.0f, 1.0f, 0.0f);
+        u = normalize(cross(axis, n));
+        v = cross(n, u);  // u x v = n
+    }
+    std::array<double, 2> at(const Vec3& p) const { return {static_cast<double>(dot(p, u)), static_cast<double>(dot(p, v))}; }
+};
+
+using P2 = std::array<double, 2>;
+double cross2(const P2& a, const P2& b, const P2& c) { return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]); }
+
+/// Twice the signed area of a loop in 2D: above 0 anticlockwise.
+double area2(const std::vector<P2>& q) {
+    double s = 0.0;
+    for (size_t i = 0; i < q.size(); ++i) {
+        const P2& a = q[i];
+        const P2& b = q[(i + 1) % q.size()];
+        s += a[0] * b[1] - b[0] * a[1];
+    }
+    return s;
+}
+
+/// Whether `p` is inside the loop `q` (crossings of a ray to +x; on a
+/// weakly simple loop -- one with bridges -- as well).
+bool inside2(const P2& p, const std::vector<P2>& q) {
+    bool in = false;
+    for (size_t i = 0, j = q.size() - 1; i < q.size(); j = i++) {
+        if ((q[i][1] > p[1]) != (q[j][1] > p[1])) {
+            const double x = q[j][0] + (p[1] - q[j][1]) * (q[i][0] - q[j][0]) / (q[i][1] - q[j][1]);
+            if (p[0] < x) in = !in;
         }
-        if (!cut) break;  // not simple: what is left, a fan
+    }
+    return in;
+}
+
+/// Whether segments a-b and c-d cross at a point inside both.
+bool crossProperly(const P2& a, const P2& b, const P2& c, const P2& d) {
+    const double d1 = cross2(c, d, a), d2 = cross2(c, d, b), d3 = cross2(a, b, c), d4 = cross2(a, b, d);
+    return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0)) && d1 != 0 && d2 != 0 && d3 != 0 && d4 != 0;
+}
+
+/// Triangles of the loop `poly` (point indices, `at` their places in 2D,
+/// anticlockwise; a point may come twice -- the bridges to holes): ears cut
+/// off, the flattest last. Indices into `poly`.
+std::vector<std::array<size_t, 3>> triangulate(const std::vector<uint32_t>& poly, const std::vector<P2>& at) {
+    std::vector<std::array<size_t, 3>> out;
+    std::vector<size_t> left(poly.size());
+    std::iota(left.begin(), left.end(), size_t{0});
+    double scale = 1e-30;
+    for (const P2& p : at) scale = std::max({scale, std::fabs(p[0]), std::fabs(p[1])});
+    const double eps = 1e-12 * scale * scale;
+    auto ear = [&](size_t i, bool flat) {
+        const size_t m = left.size();
+        const size_t a = (i + m - 1) % m, c = (i + 1) % m;
+        const P2 &pa = at[left[a]], &pb = at[left[i]], &pc = at[left[c]];
+        const double turn = cross2(pa, pb, pc);
+        if (flat ? std::fabs(turn) > eps : turn <= eps) return false;
+        if (flat) return true;  // a point on a line: cut off, it covers nothing
+        for (size_t j = 0; j < m; ++j) {
+            if (j == a || j == i || j == c) continue;
+            const uint32_t q = poly[left[j]];
+            if (q == poly[left[a]] || q == poly[left[i]] || q == poly[left[c]]) continue;
+            const P2& pj = at[left[j]];
+            if (cross2(pa, pb, pj) >= -eps && cross2(pb, pc, pj) >= -eps && cross2(pc, pa, pj) >= -eps) return false;
+        }
+        return true;
+    };
+    while (left.size() > 3) {
+        bool cut = false;
+        for (int pass = 0; pass < 2 && !cut; ++pass) {
+            for (size_t i = 0; i < left.size(); ++i) {
+                if (!ear(i, pass == 1)) continue;
+                const size_t m = left.size();
+                out.push_back({left[(i + m - 1) % m], left[i], left[(i + 1) % m]});
+                left.erase(left.begin() + static_cast<long>(i));
+                cut = true;
+                break;
+            }
+        }
+        if (!cut) break;  // not simple after all: what is left, a fan
     }
     for (size_t i = 1; i + 1 < left.size(); ++i) out.push_back({left[0], left[i], left[i + 1]});
     return out;
+}
+
+/// `outer` with `holes` in it, as one loop: each hole joined by a bridge
+/// -- there and back -- from its rightmost point to the nearest point of
+/// the loop it can see.
+std::vector<uint32_t> bridgeHoles(std::vector<uint32_t> outer, std::vector<std::vector<uint32_t>> holes,
+                                  const std::function<P2(uint32_t)>& at) {
+    auto rightmost = [&](const std::vector<uint32_t>& h) {
+        size_t best = 0;
+        for (size_t i = 1; i < h.size(); ++i) {
+            const P2 a = at(h[i]), b = at(h[best]);
+            if (a[0] > b[0] || (a[0] == b[0] && a[1] < b[1])) best = i;
+        }
+        return best;
+    };
+    std::sort(holes.begin(), holes.end(), [&](const auto& a, const auto& b) {
+        return at(a[rightmost(a)])[0] > at(b[rightmost(b)])[0];
+    });
+    for (size_t h = 0; h < holes.size(); ++h) {
+        const std::vector<uint32_t>& hole = holes[h];
+        const size_t mi = rightmost(hole);
+        const P2 m = at(hole[mi]);
+        // The points of the loop, nearest first; the first the bridge can reach.
+        std::vector<size_t> order(outer.size());
+        std::iota(order.begin(), order.end(), size_t{0});
+        auto dist = [&](size_t i) {
+            const P2 p = at(outer[i]);
+            return (p[0] - m[0]) * (p[0] - m[0]) + (p[1] - m[1]) * (p[1] - m[1]);
+        };
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return dist(a) < dist(b); });
+        std::vector<P2> outerAt(outer.size());
+        for (size_t i = 0; i < outer.size(); ++i) outerAt[i] = at(outer[i]);
+        size_t chosen = order.empty() ? 0 : order.front();
+        for (const size_t pi : order) {
+            const P2 p = outerAt[pi];
+            bool blocked = false;
+            auto against = [&](const std::vector<uint32_t>& loop) {
+                for (size_t k = 0; k < loop.size() && !blocked; ++k) {
+                    const uint32_t a = loop[k], b = loop[(k + 1) % loop.size()];
+                    if (a == outer[pi] || b == outer[pi] || a == hole[mi] || b == hole[mi]) continue;
+                    if (crossProperly(m, p, at(a), at(b))) blocked = true;
+                }
+            };
+            against(outer);
+            for (size_t o = h; o < holes.size() && !blocked; ++o) against(holes[o]);
+            if (blocked) continue;
+            const P2 mid{(m[0] + p[0]) * 0.5, (m[1] + p[1]) * 0.5};
+            if (!inside2(mid, outerAt)) continue;
+            chosen = pi;
+            break;
+        }
+        // outer[..chosen], the hole round from its rightmost point and back to it, outer[chosen..]
+        std::vector<uint32_t> joined(outer.begin(), outer.begin() + static_cast<long>(chosen) + 1);
+        for (size_t k = 0; k <= hole.size(); ++k) joined.push_back(hole[(mi + k) % hole.size()]);
+        joined.insert(joined.end(), outer.begin() + static_cast<long>(chosen), outer.end());
+        outer = std::move(joined);
+    }
+    return outer;
 }
 
 /// What is on one side of a plane kept; the faces cut are cut along it and,
@@ -701,8 +813,6 @@ public:
         std::vector<uint8_t> closed;
         std::vector<uint32_t> sourcePrim;
         Blends vertices;
-        std::vector<std::pair<uint32_t, uint32_t>> cut;  // along the plane: a face's way out to its way back in
-        std::vector<uint32_t> cutPrim;
         for (size_t p = 0; p < src.primitiveCount(); ++p) {
             const auto c = src.primitivePoints(p);
             const uint32_t v0 = static_cast<uint32_t>(src.primitiveVertexStart(p));
@@ -749,7 +859,6 @@ public:
             // A face: Sutherland-Hodgman against the one plane.
             std::vector<uint32_t> face;
             std::vector<std::pair<uint32_t, std::pair<uint32_t, float>>> verts;  // vertex, (other vertex, t)
-            std::vector<std::pair<uint32_t, bool>> crossings;  // the cut points, and whether the face leaves there
             auto push = [&](uint32_t q, uint32_t va, uint32_t vb, float t) {
                 if (!face.empty() && face.back() == q) return;
                 face.push_back(q);
@@ -762,7 +871,6 @@ public:
                 if (keep(a) != keep(b)) {
                     const uint32_t x = crossing(a, b);
                     push(x, va, vb, d[a] / (d[a] - d[b]));
-                    crossings.push_back({x, keep(a)});
                 }
             }
             if (face.size() > 1 && face.front() == face.back()) {
@@ -777,84 +885,140 @@ public:
                 if (other.first == ~0u) vertices.one(va);
                 else vertices.two(va, other.first, other.second);
             }
-            // Along the plane, from where it leaves to where it comes back.
-            for (size_t i = 0; i < crossings.size(); ++i) {
-                if (!crossings[i].second) continue;
-                for (size_t j = 1; j < crossings.size(); ++j) {
-                    const auto& next = crossings[(i + j) % crossings.size()];
-                    if (next.second) break;
-                    if (next.first != crossings[i].first) {
-                        cut.push_back({crossings[i].first, next.first});
-                        cutPrim.push_back(static_cast<uint32_t>(p));
-                    }
-                    break;
-                }
-            }
         }
 
-        // The caps: the cuts joined into loops, round the other way.
+        // The caps. Where the faces kept end on the plane -- an edge of them
+        // with no twin, both its ends on it -- a cap begins, running that
+        // edge the other way; the edges joined into loops, those round the
+        // other way holes in those round them.
         std::vector<uint8_t> isCap(faces.size(), 0);
-        if (cap && !cut.empty()) {
-            std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> next;  // entry -> exit, and the face
-            for (size_t i = 0; i < cut.size(); ++i) next.emplace(cut[i].second, std::make_pair(cut[i].first, cutPrim[i]));
-            std::vector<uint32_t> starts;
-            for (const auto& [from, to] : next) starts.push_back(from);
-            std::sort(starts.begin(), starts.end());
-            std::unordered_map<uint32_t, uint8_t> seen;
-            // The places of all the points, kept and made, for the ear clipping.
+        if (cap) {
             std::vector<Vec3> at(points.size());
+            std::vector<uint8_t> onPlane(points.size(), 0);
+            float extent = 0.0f;
+            for (size_t i = 0; i < np; ++i) extent = std::max(extent, std::fabs(d[i]));
+            const float eps = 1e-6f * std::max(extent, 1.0f);
             for (size_t i = 0; i < np; ++i) {
-                if (index[i] != ~0u) at[index[i]] = P[i];
+                if (index[i] == ~0u) continue;
+                at[index[i]] = P[i];
+                onPlane[index[i]] = d[i] <= eps;
             }
-            for (size_t i = 0; i < crossingAt.size(); ++i) at[kept + i] = crossingAt[i];
-            for (const uint32_t s : starts) {
-                if (seen.count(s)) continue;
-                std::vector<uint32_t> loop;
-                uint32_t prim = next.at(s).second;
-                uint32_t q = s;
+            for (size_t i = 0; i < crossingAt.size(); ++i) {
+                at[kept + i] = crossingAt[i];
+                onPlane[kept + i] = 1;
+            }
+            // The directed edges of the faces, and the face of each.
+            std::vector<std::pair<uint64_t, uint32_t>> edges;
+            for (size_t f = 0; f < faces.size(); ++f) {
+                if (!closed[f]) continue;
+                const auto& c = faces[f];
+                for (size_t i = 0; i < c.size(); ++i) {
+                    const uint64_t key = (static_cast<uint64_t>(c[i]) << 32) | c[(i + 1) % c.size()];
+                    edges.push_back({key, static_cast<uint32_t>(f)});
+                }
+            }
+            std::sort(edges.begin(), edges.end());
+            auto has = [&](uint64_t key) {
+                const auto it = std::lower_bound(edges.begin(), edges.end(), std::make_pair(key, 0u));
+                return it != edges.end() && it->first == key;
+            };
+            // The caps' edges: from -> to, and the face it closes.
+            std::vector<std::array<uint32_t, 3>> capEdges;
+            for (const auto& [key, f] : edges) {
+                const uint32_t a = static_cast<uint32_t>(key >> 32), b = static_cast<uint32_t>(key & 0xffffffffu);
+                if (!onPlane[a] || !onPlane[b] || has((static_cast<uint64_t>(b) << 32) | a)) continue;
+                capEdges.push_back({b, a, f});
+            }
+            std::sort(capEdges.begin(), capEdges.end());
+            std::vector<uint8_t> used(capEdges.size(), 0);
+            auto outOf = [&](uint32_t from) -> int64_t {
+                auto it = std::lower_bound(capEdges.begin(), capEdges.end(), std::array<uint32_t, 3>{from, 0u, 0u});
+                for (; it != capEdges.end() && (*it)[0] == from; ++it) {
+                    const size_t k = static_cast<size_t>(it - capEdges.begin());
+                    if (!used[k]) return static_cast<int64_t>(k);
+                }
+                return -1;
+            };
+            struct Loop {
+                std::vector<uint32_t> points;
+                uint32_t prim = 0;
+                double area = 0.0;  ///< signed, about the cap's normal
+            };
+            std::vector<Loop> loops;
+            const Plane2 plane(-dir);
+            for (size_t e = 0; e < capEdges.size(); ++e) {
+                if (used[e]) continue;
+                Loop loop;
+                loop.prim = sourcePrim[capEdges[e][2]];
+                const uint32_t start = capEdges[e][0];
+                int64_t k = static_cast<int64_t>(e);
                 bool whole = false;
-                while (!seen.count(q)) {
-                    seen.emplace(q, 1);
-                    loop.push_back(q);
-                    const auto it = next.find(q);
-                    if (it == next.end()) break;
-                    q = it->second.first;
-                    if (q == s) {
+                while (k >= 0 && loop.points.size() <= capEdges.size()) {
+                    used[static_cast<size_t>(k)] = 1;
+                    loop.points.push_back(capEdges[static_cast<size_t>(k)][0]);
+                    const uint32_t to = capEdges[static_cast<size_t>(k)][1];
+                    if (to == start) {
                         whole = true;
                         break;
                     }
+                    k = outOf(to);
                 }
-                if (!whole || loop.size() < 3) continue;
-                // Facing the side cut away.
-                Vec3 n;
-                for (size_t i = 0; i < loop.size(); ++i) {
-                    const Vec3& a = at[loop[i]];
-                    const Vec3& b = at[loop[(i + 1) % loop.size()]];
-                    n += Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+                if (!whole || loop.points.size() < 3) continue;
+                std::vector<P2> q;
+                for (const uint32_t pt : loop.points) q.push_back(plane.at(at[pt]));
+                loop.area = area2(q);
+                loops.push_back(std::move(loop));
+            }
+            // A mesh turned inside out gives holes only: turned round.
+            const bool anyOuter = std::any_of(loops.begin(), loops.end(), [](const Loop& l) { return l.area > 0.0; });
+            if (!anyOuter) {
+                for (Loop& l : loops) {
+                    std::reverse(l.points.begin(), l.points.end());
+                    l.area = -l.area;
                 }
-                if (dot(n, dir) > 0.0f) std::reverse(loop.begin(), loop.end());
-                const auto tris = earClip(at, loop, -dir);
-                const bool convexLoop = tris.size() == loop.size() - 2 && [&] {
-                    for (size_t i = 0; i < loop.size(); ++i) {
-                        const Vec3& a = at[loop[(i + loop.size() - 1) % loop.size()]];
-                        const Vec3& b = at[loop[i]];
-                        const Vec3& c = at[loop[(i + 1) % loop.size()]];
-                        if (dot(cross(b - a, c - b), -dir) < 0.0f) return false;
-                    }
-                    return true;
-                }();
-                auto addCap = [&](std::vector<uint32_t> corners) {
-                    faces.push_back(std::move(corners));
-                    closed.push_back(1);
-                    sourcePrim.push_back(prim);
-                    isCap.push_back(1);
-                    for (size_t i = 0; i < faces.back().size(); ++i) vertices.none();
-                };
-                if (convexLoop) {
-                    addCap(loop);
-                } else {
-                    for (const auto& t : tris) addCap({loop[t[0]], loop[t[1]], loop[t[2]]});
+            }
+            auto toPlane = [&](uint32_t pt) { return plane.at(at[pt]); };
+            std::vector<std::vector<size_t>> holesOf(loops.size());
+            for (size_t h = 0; h < loops.size(); ++h) {
+                if (loops[h].area >= 0.0) continue;
+                // In the smallest loop round it.
+                const P2 probe = toPlane(loops[h].points.front());
+                size_t best = loops.size();
+                for (size_t o = 0; o < loops.size(); ++o) {
+                    if (loops[o].area <= 0.0) continue;
+                    std::vector<P2> q;
+                    for (const uint32_t pt : loops[o].points) q.push_back(toPlane(pt));
+                    if (!inside2(probe, q)) continue;
+                    if (best == loops.size() || loops[o].area < loops[best].area) best = o;
                 }
+                if (best < loops.size()) holesOf[best].push_back(h);
+            }
+            auto addCap = [&](std::vector<uint32_t> corners, uint32_t prim) {
+                faces.push_back(std::move(corners));
+                closed.push_back(1);
+                sourcePrim.push_back(prim);
+                isCap.push_back(1);
+                for (size_t i = 0; i < faces.back().size(); ++i) vertices.none();
+            };
+            for (size_t o = 0; o < loops.size(); ++o) {
+                if (loops[o].area <= 0.0) continue;
+                std::vector<std::vector<uint32_t>> holes;
+                for (const size_t h : holesOf[o]) holes.push_back(loops[h].points);
+                std::vector<uint32_t> poly = holes.empty() ? loops[o].points : bridgeHoles(loops[o].points, holes, toPlane);
+                std::vector<P2> q;
+                for (const uint32_t pt : poly) q.push_back(toPlane(pt));
+                // Convex, and no holes: one face; else triangles.
+                bool convex = holes.empty();
+                double scale = 1e-30;
+                for (const P2& p : q) scale = std::max({scale, std::fabs(p[0]), std::fabs(p[1])});
+                for (size_t i = 0; i < q.size() && convex; ++i) {
+                    if (cross2(q[(i + q.size() - 1) % q.size()], q[i], q[(i + 1) % q.size()]) < -1e-12 * scale * scale) convex = false;
+                }
+                if (convex) {
+                    addCap(std::move(poly), loops[o].prim);
+                    continue;
+                }
+                for (const auto& t : triangulate(poly, q)) addCap({poly[t[0]], poly[t[1]], poly[t[2]]}, loops[o].prim);
             }
         }
         isCap.resize(faces.size(), 0);

@@ -318,6 +318,8 @@ void MeshShape::bake() {
 }
 
 float MeshShape::distance(const Vec3& p) const {
+    // A point that is nowhere -- a particle that blew up -- is far away.
+    if (!std::isfinite(p.x + p.y + p.z)) return 1e30f;
     // Into the grid, and the way there added.
     float g[3];
     Vec3 inside;

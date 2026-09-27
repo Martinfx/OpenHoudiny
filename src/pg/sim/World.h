@@ -1,9 +1,12 @@
 #pragma once
 //
 // Everything a network simulates, together: the gas of a Pyro Solver, the
-// water of a Liquid Solver and the rain, at one frame rate, stepped side by
-// side (WorldSolver) and kept as one Frame a step. The rain falls into the
-// water: it is stepped after it, and rings its surface.
+// water of a Liquid Solver, the rain and the pieces of an RBD Solver, at one
+// frame rate, stepped side by side (WorldSolver) and kept as one Frame a
+// step. The pieces are stepped first: the water, the gas and the rain go
+// round them where they have got to, and the dust of their broken glue
+// puffs into the gas. The rain falls into the water: it is stepped after
+// it, and rings its surface.
 //
 // Plain data, compared as a whole, as the scene of each part is: the
 // editor's runner starts again exactly when the World differs.
@@ -12,6 +15,7 @@
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Pyro.h"
 #include "pg/sim/Rain.h"
+#include "pg/sim/Rigid.h"
 #include "pg/sim/Scene.h"
 
 #include <memory>
@@ -38,6 +42,8 @@ struct World {
     LiquidScene water;               ///< the Liquid Solver's, when hasWater
     bool hasRain = false;
     RainScene rain;                  ///< the Rain's, when hasRain
+    bool hasRigid = false;
+    RigidScene rigid;                ///< the RBD Solver's, when hasRigid
     /// Frames keep the water's particles: something makes points of them
     /// (Liquid Points). They cost some 19 bytes a particle a frame.
     bool keepParticles = false;
@@ -50,7 +56,7 @@ struct World {
     const World& at(int frame) const;
 
     /// True when there is anything to simulate.
-    bool any() const { return hasGas || hasWater || hasRain; }
+    bool any() const { return hasGas || hasWater || hasRain || hasRigid; }
     /// Each part sanitized (Scene::sanitized), and the one time step in each.
     World sanitized() const;
 
@@ -75,12 +81,15 @@ public:
     const LiquidSolver* water() const { return water_.get(); }
     RainSolver* rain() { return rain_.get(); }
     const RainSolver* rain() const { return rain_.get(); }
+    RigidSolver* rigid() { return rigid_.get(); }
+    const RigidSolver* rigid() const { return rigid_.get(); }
 
 private:
     World world_;
     std::unique_ptr<PyroSolver> gas_;
     std::unique_ptr<LiquidSolver> water_;
     std::unique_ptr<RainSolver> rain_;
+    std::unique_ptr<RigidSolver> rigid_;
     int frame_ = 0;
     float time_ = 0.0f;
 };

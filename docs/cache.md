@@ -51,8 +51,11 @@ cache/fire/
 
 - Snímek je `sim::Frame` tak, jak ho drží editor: plyn v poloviční
   přesnosti (kouř, teplota, plamen v každé buňce), hladina vody po bajtech,
-  částice vody (poloha, rychlost, bělost), kapky a vlnky deště. Binárně,
-  little-endian, s hlavičkou `PGFRAME` a číslem verze.
+  částice vody (poloha, rychlost, bělost), kapky a vlnky deště a od verze 2
+  polohy, otočení a rychlosti kusů tuhých těles
+  ([destruction.md](destruction.md)); jejich klidová geometrie je sítě a
+  snímek načtený z disku ji dostane od ní. Binárně, little-endian,
+  s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
   část domény, takže 150 snímků mřížky 64 × 96 × 64 má na disku 63 MB,
   v paměti 338 MB.

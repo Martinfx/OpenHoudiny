@@ -187,7 +187,9 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            r.drops == s.drops && r.droplets == s.droplets && r.timeStep == s.timeStep &&
            r.rippleOrigin.x == s.rippleOrigin.x && r.rippleOrigin.y == s.rippleOrigin.y &&
            r.rippleOrigin.z == s.rippleOrigin.z && r.rippleCell == s.rippleCell &&
-           r.rippleCells[0] == s.rippleCells[0] && r.rippleCells[1] == s.rippleCells[1] && r.ripples == s.ripples;
+           r.rippleCells[0] == s.rippleCells[0] && r.rippleCells[1] == s.rippleCells[1] && r.ripples == s.ripples &&
+           a.rigid.attribute == b.rigid.attribute && a.rigid.joints == b.rigid.joints &&
+           a.rigid.broken == b.rigid.broken && a.rigid.poses == b.rigid.poses;
 }
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
@@ -222,6 +224,17 @@ sim::Frame madeUpFrame() {
     f.rain.drops = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     f.rain.droplets = {0.5f, 1, 1.5f, 2, 2.5f, 3};
     f.rain.timeStep = 1.0f / 30.0f;
+    f.rigid.attribute = "piece";
+    f.rigid.joints = 5;
+    f.rigid.broken = 2;
+    for (int k = 0; k < 3; ++k) {
+        sim::RigidPose p;
+        p.position = Vec3(0.1f * static_cast<float>(k), 1.0f, -0.5f);
+        p.rotation = Vec4(0.0f, 0.7071068f, 0.0f, 0.7071068f);
+        p.velocity = Vec3(0.0f, -2.0f, 0.5f);
+        p.spin = Vec3(1.0f, 0.0f, 0.0f);
+        f.rigid.poses.push_back(p);
+    }
     f.rain.rippleOrigin = {-1.0f, 0.2f, -1.0f};
     f.rain.rippleCell = 0.05f;
     f.rain.rippleCells[0] = 4;
@@ -497,7 +510,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 2;
+    newer[8] = 3;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

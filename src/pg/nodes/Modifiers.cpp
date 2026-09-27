@@ -210,6 +210,7 @@ void registerBuiltinNodes() {
         registerPrimitiveNodes();
         registerSurfaceNodes();
         registerTopologyNodes();
+        registerFractureNodes();
         return true;
     }();
     (void)once;

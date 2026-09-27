@@ -160,6 +160,10 @@ private:
     /// look, the objects where they are then -- whatever frame of the
     /// simulation is ready to show with them.
     void pose(int frame);
+    /// The pieces of the rigid bodies of the frame on screen, as the
+    /// solver's look draws them, into the renderer -- made again only when
+    /// the frame or the look changed.
+    void updatePieces();
     void updateGuides();
     void drawGnomon(ImDrawList* d, ImVec2 corner) const;
     /// The size of a render: the camera's picture, or the viewport's.
@@ -342,6 +346,8 @@ private:
 
     // What the viewport shows, to draw again only when it changes.
     std::shared_ptr<const sim::Frame> shown_;
+    std::shared_ptr<const sim::Frame> piecesFrame_;  ///< the frame the pieces drawn are of
+    std::string piecesKey_;                          ///< ... and the look they are drawn with
     bool viewDirty_ = true;
     int viewWidth_ = 0, viewHeight_ = 0;
     bool guides_ = true;

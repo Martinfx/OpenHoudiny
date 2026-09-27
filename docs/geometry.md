@@ -65,6 +65,8 @@ nastaveným na ni.
 | **Liquid Points** | Částice vody z Liquid Solveru: `P`, rychlost `v`, pěna `foam` |
 | **Rain Points** | Kapky deště a kapičky odstřiků: `P`, `v`, `droplet` (1 u kapičky) |
 | **Gas Volume** | Plyn z Pyro Solveru jako tři objemy: `density` (kouř), `temperature`, `flame` |
+| **Voronoi Fracture** | Uzavřené těleso rozřezané na kusy — buňky bodů z druhého vstupu, nebo Count náhodných uvnitř — každý uzavřený, s číslem `piece` a řeznými plochami ve skupině `inside`; viz [destruction.md](destruction.md) |
+| **RBD Pieces** | Kusy z RBD Solveru tam, kam ve snímku dopadly: body posunuté a otočené, rychlost `v` |
 
 Geometrické uzly se dají **obejít** (bypass, B): obejitý uzel pustí dál,
 co do něj vstupuje. Síť odmítne spoj, který by udělal smyčku.
@@ -211,9 +213,9 @@ geometrie (třeba Transform, nebo střed krychle). Souhrn uzlu ukáže „shape 
 
 ## 6. Simulace zpátky jako geometrie
 
-**Liquid Points**, **Rain Points** a **Gas Volume** mají vstup ze
-simulace (Liquid, Rain, Gas) a na výstupu geometrii snímku, který je právě
-vidět: v editoru z cache snímků, v `prototype sim` ze snímku právě
+**Liquid Points**, **Rain Points**, **Gas Volume** a **RBD Pieces** mají
+vstup ze simulace (Liquid, Rain, Gas, Rigid) a na výstupu geometrii snímku,
+který je právě vidět: v editoru z cache snímků, v `prototype sim` ze snímku právě
 spočítaného. Za nimi jdou libovolné geometrické uzly — wrangle, color,
 blast… — a výsledek se zobrazí nebo prohlíží v tabulce.
 

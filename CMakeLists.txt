@@ -22,6 +22,7 @@ endif()
 
 option(PG_SANITIZE "Build with address+undefined sanitizers" OFF)
 option(PG_SANITIZE_THREAD "Build with the thread sanitizer" OFF)
+option(PG_WITH_JOLT "Rigid bodies with Jolt Physics (MIT), fetched; OFF: the RBD Solver says it is not built in" ON)
 
 add_library(pgcore
   src/pg/core/Types.cpp
@@ -44,6 +45,7 @@ add_library(pgcore
   src/pg/nodes/Primitives.cpp
   src/pg/nodes/Surface.cpp
   src/pg/nodes/Topology.cpp
+  src/pg/nodes/Fracture.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/Jpeg.cpp
@@ -202,6 +204,7 @@ add_library(pgsim
   src/pg/sim/Asset.cpp
   src/pg/sim/ForEach.cpp
   src/pg/sim/Cooker.cpp
+  src/pg/sim/Rigid.cpp
   src/pg/sim/Camera.cpp
   src/pg/sim/Frame.cpp
   src/pg/sim/FreeSurface.cpp
@@ -226,6 +229,33 @@ if(MSVC)
   target_compile_options(pgsim PRIVATE /W4)
 else()
   target_compile_options(pgsim PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Rigid bodies (src/pg/sim/Rigid.cpp): Jolt Physics, fetched and built as a
+# static library -- deterministic across platforms, without the instruction
+# sets a machine may lack (AVX and later), with nothing but the library.
+if(PG_WITH_JOLT)
+  include(FetchContent)
+  foreach(off TARGET_UNIT_TESTS TARGET_HELLO_WORLD TARGET_PERFORMANCE_TEST TARGET_SAMPLES TARGET_VIEWER
+              ENABLE_ALL_WARNINGS INTERPROCEDURAL_OPTIMIZATION USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT
+              USE_TZCNT USE_F16C USE_FMADD DEBUG_RENDERER_IN_DEBUG_AND_RELEASE PROFILER_IN_DEBUG_AND_RELEASE
+              ENABLE_OBJECT_STREAM)
+    set(${off} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  set(CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "" FORCE)
+  # With C++ RTTI, as the rest of the program: the sanitizers check vtables.
+  set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.6.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR Build)
+  FetchContent_MakeAvailable(JoltPhysics)
+  # Its headers as the system's: our warnings are not about them.
+  get_target_property(PG_JOLT_INCLUDES Jolt INTERFACE_INCLUDE_DIRECTORIES)
+  set_target_properties(Jolt PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PG_JOLT_INCLUDES}")
+  target_link_libraries(pgsim PRIVATE Jolt)
+  target_compile_definitions(pgsim PRIVATE PG_HAVE_JOLT)
 endif()
 
 # The renderers: OpenGL through function pointers the caller loads, so they
@@ -360,6 +390,7 @@ add_executable(pgtests
   tests/test_lang.cpp
   tests/test_assets.cpp
   tests/test_topology.cpp
+  tests/test_rigid.cpp
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp

@@ -141,6 +141,7 @@ ImU32 pinColor(sim::PinType t) {
         case sim::PinType::Camera: return IM_COL32(205, 208, 216, 255);
         case sim::PinType::Geometry: return IM_COL32(236, 150, 190, 255);
         case sim::PinType::Rain: return IM_COL32(150, 172, 210, 255);
+        case sim::PinType::Rigid: return IM_COL32(214, 160, 96, 255);
     }
     return IM_COL32_WHITE;
 }
@@ -447,6 +448,19 @@ void SimWorkspace::pose(int frame) {
     }
 }
 
+void SimWorkspace::updatePieces() {
+    const sim::Look& look = renderer_.look;
+    const std::shared_ptr<const sim::Frame> f = look.pieces && levels_.empty() && shown_ && !shown_->rigid.empty() ? shown_ : nullptr;
+    char key[160];
+    std::snprintf(key, sizeof key, "%g %g %g %g %g %g %s", look.piecesColor.x, look.piecesColor.y, look.piecesColor.z,
+                  look.piecesInside.x, look.piecesInside.y, look.piecesInside.z, look.insideGroup.c_str());
+    if (f == piecesFrame_ && (!f || key == piecesKey_)) return;
+    piecesFrame_ = f;
+    piecesKey_ = key;
+    renderer_.setPieces(f ? sim::drawnPieces(f->rigid, look.piecesColor, look.piecesInside, look.insideGroup) : nullptr);
+    viewDirty_ = true;
+}
+
 std::shared_ptr<const sim::Frame> SimWorkspace::frameToShow() const {
     // The frame at the play head -- or, while the simulation has not got
     // there yet, the latest before it.
@@ -500,6 +514,7 @@ void SimWorkspace::update(float dt) {
     }
     if (!shown_) renderer_.setDomain(runner_->domain());
     pose(current_);
+    updatePieces();
     updateGeometry();
     updateGuides();
 
@@ -1977,6 +1992,7 @@ bool SimWorkspace::drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::stri
         renderer_.setFrame(*f);
     }
     pose(frame);
+    updatePieces();
     updateGeometry();
     renderShot(jobWidth_, jobHeight_, frame);
     rgb = renderer_.readPixels(2);
@@ -2126,6 +2142,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
             return false;
         }
         frame->number = f;
+        sim::adoptPieces(*frame, compiled_.world.rigid);
         frames.push_back(std::move(frame));
     }
     runner_->adopt(compiled_.world, compiled_.frames, std::move(frames));

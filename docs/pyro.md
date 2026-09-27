@@ -458,6 +458,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
+| `demolition` | destrukce: budova z assetu Building rozřezaná na kusy, slepená RBD Solverem a sražená demoliční koulí do bazénu; prach z přetržených spojů jde do Pyro Solveru ([destruction.md](destruction.md)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `prototype sim campfire` proto funguje bez souborů vedle.
@@ -787,6 +788,7 @@ kouř, voda i kapky pak jdou po stejném větru.
 | uzel | parametry |
 |---|---|
 | **Rain** (Simulation) | Cloud: `center`, `size` (mrak: kapky vznikají v tomto kvádru a prší pod ním); Rain: `rate` (kapek za sekundu na m²: 100 mrholení, 800 déšť, 3 000 liják), `speed` (rychlost pádu v m/s: kolem 7 pro déšť, méně pro mrholení), `splash` (kolik kapiček odletí od pevného povrchu), `ripples` (jak silně kapka rozvlní vodu), `seed`; Time: `start`, `end`; Look: `color`, `opacity`, `streak` (délka čáry jako podíl snímku: pohybová neostrost), `wet` (jak mokrá je podlaha) |
+| **RBD Solver** (Simulation) | Pieces: `attribute`; Physics: `density`, `friction`, `bounce`, `gravity`, `floor`; Glue: `glue` (pevnost lepidla v newtonech, 0 bez lepidla); Time: `substeps`; Dust: `dust`, `dust_size`; Look: `color`, `inside_color`, `inside_group`. Vstupy Pieces (geometrie s `piece`) a Colliders; výstupy Look (do Outputu: kusy se kreslí, kam dopadly), Rigid (do RBD Pieces), Collider (kusy jako pohyblivé překážky vody, plynu a deště) a Dust (zdroj kouře pro Pyro Solver); [destruction.md](destruction.md) |
 
 Ve viewportu je déšť v **Shift+A → Weather**:
 

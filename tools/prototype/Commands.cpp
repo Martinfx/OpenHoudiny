@@ -864,6 +864,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 return 1;
             }
             read->number = f;  // the file's name says which it is
+            sim::adoptPieces(*read, world.rigid);
             current = std::move(read);
         }
         simulating += ms(t);
@@ -890,7 +891,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
 #ifdef PG_CAN_RENDER
         if (!draws) continue;
         t = Clock::now();
-        if (!geometryOnly) volume->setFrame(*current);
+        if (!geometryOnly) {
+            volume->setFrame(*current);
+            const sim::Look& k = volume->look;
+            volume->setPieces(k.pieces && !current->rigid.empty()
+                                  ? sim::drawnPieces(current->rigid, k.piecesColor, k.piecesInside, k.insideGroup)
+                                  : nullptr);
+        }
         // Animated: the look, the objects and the camera of this frame.
         if (!c.poses.empty()) {
             volume->look = c.lookAt(f);

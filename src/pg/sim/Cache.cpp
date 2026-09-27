@@ -15,7 +15,7 @@ namespace pg::sim {
 namespace {
 
 constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;  // 2: the rigid bodies after the rain
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -59,6 +59,10 @@ public:
     void bytesOf(const std::vector<uint8_t>& v) {
         u64(v.size());
         bytes.append(reinterpret_cast<const char*>(v.data()), v.size());
+    }
+    void text(const std::string& s) {
+        u64(s.size());
+        bytes.append(s);
     }
     /// Half floats, their runs of zeros packed: the count, then runs of
     /// (zeros, values that follow, the values).
@@ -156,6 +160,12 @@ public:
         v.assign(data_.begin() + static_cast<std::ptrdiff_t>(pos_), data_.begin() + static_cast<std::ptrdiff_t>(pos_ + n));
         pos_ += n;
     }
+    std::string text() {
+        const size_t n = count(1);
+        std::string s(data_.substr(pos_, n));
+        pos_ += n;
+        return s;
+    }
     /// Half floats, `expected` of them -- or none: runs of zeros take
     /// little room, so the data cannot say how many are too many.
     void halves(std::vector<uint16_t>& v, size_t expected) {
@@ -240,6 +250,23 @@ std::string formatFrame(const Frame& f) {
     out.i32(r.rippleCells[0]);
     out.i32(r.rippleCells[1]);
     out.halves(r.ripples);
+    // The rigid bodies (version 2): where each piece is, how it is turned,
+    // how it moves. Their rest geometry is the network's: the reader puts
+    // it back (adoptPieces).
+    const RigidFrame& b = f.rigid;
+    out.text(b.attribute);
+    out.u64(b.joints);
+    out.u64(b.broken);
+    out.u64(b.poses.size());
+    for (const RigidPose& p : b.poses) {
+        out.vec3(p.position);
+        out.f32(p.rotation.x);
+        out.f32(p.rotation.y);
+        out.f32(p.rotation.z);
+        out.f32(p.rotation.w);
+        out.vec3(p.velocity);
+        out.vec3(p.spin);
+    }
     return std::move(out.bytes);
 }
 
@@ -280,6 +307,22 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     r.rippleCells[1] = in.i32();
     const bool ripples = r.rippleCells[0] >= 0 && r.rippleCells[0] <= 65536 && r.rippleCells[1] >= 0 && r.rippleCells[1] <= 65536;
     in.halves(r.ripples, ripples ? static_cast<size_t>(r.rippleCells[0]) * static_cast<size_t>(r.rippleCells[1]) : 0);
+    if (version >= 2) {
+        RigidFrame& b = f.rigid;
+        b.attribute = in.text();
+        b.joints = static_cast<size_t>(in.u64());
+        b.broken = static_cast<size_t>(in.u64());
+        b.poses.resize(in.count(4 * 13));
+        for (RigidPose& p : b.poses) {
+            p.position = in.vec3();
+            p.rotation.x = in.f32();
+            p.rotation.y = in.f32();
+            p.rotation.z = in.f32();
+            p.rotation.w = in.f32();
+            p.velocity = in.vec3();
+            p.spin = in.vec3();
+        }
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -292,6 +335,16 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         return false;
     }
     return true;
+}
+
+void adoptPieces(Frame& frame, const RigidScene& scene) {
+    RigidFrame& b = frame.rigid;
+    if (b.poses.empty() || !scene.pieces) return;
+    int count = 0;
+    pieceOfPrimitives(*scene.pieces, b.attribute.empty() ? scene.attribute : b.attribute, count);
+    if (static_cast<size_t>(count) != b.poses.size()) return;  // another geometry: not these pieces
+    b.pieces = scene.pieces;
+    if (b.attribute.empty()) b.attribute = scene.attribute;
 }
 
 std::string frameFile(const std::string& folder, int number) {

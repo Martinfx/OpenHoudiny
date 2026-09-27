@@ -31,6 +31,10 @@ okna.
 - **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
   body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
   Houdini, Blender a renderery
+- **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi
+  Fracture, tuhá tělesa nad Jolt Physics s lepidlem, které se pod silou
+  trhá, úlomky jako překážky vody a plynu, prach z přetržených spojů;
+  demolice budovy z assetu jako video
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem
@@ -83,7 +87,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 230 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 10 topologie, smyčky a vaření na pozadí, 25 shader graf, 86 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 242 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 10 tuhá tělesa, 25 shader graf, 86 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -132,7 +136,7 @@ snippet čte `@Time`, a `ch("radius")` mu přidá posuvník. Jazyk popisuje
 ## Stav
 
 Hotovo a otestováno: COW geometrie s objemy, cook engine, časová závislost,
-LRU cache, deterministický paralelismus, 26 typů uzlů (generátory,
+LRU cache, deterministický paralelismus, 27 typů uzlů (generátory,
 primitiva, scatter, copy to points, OBJ, extrude, subdivide, clip…), 59 testů jádra (čisté pod ASan,
 UBSan i ThreadSanitizerem). **Wrangle** je jazyk jako VEX: typy, proměnné,
 cykly, funkce, pole, řetězce, matice; běží nad body, primitivy, rohy nebo
@@ -163,7 +167,7 @@ editor se jí dívá (s rámečkem obrazu) a render i `prototype sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a dvaceti pěti příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a dvaceti šesti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
@@ -191,6 +195,18 @@ otevře kdekoli. Asset **Building** postaví budovu z deseti posuvníků
 (patra, rozměry, okna, balkony, barva) a příklad **street** z něj staví
 ulici; `prototype cook` uvaří geometrii bez okna do OBJ, PLY nebo VDB
 a vypíše její hash — stejný na 1 i 4 vláknech.
+
+**Destrukce**: **Voronoi Fracture** rozřeže uzavřené těleso na kusy
+(řezy rovinami s víčky, kusy dohromady jsou přesně původní těleso) a
+**RBD Solver** nad [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
+z nich udělá tuhá tělesa: konvexní obaly s hmotou, slepené pevnými spoji
+tam, kde sdílejí řeznou plochu; spoj tažený větší silou než `glue` se
+utrhne a vyfoukne prach. Klíčované objekty jsou kinematické překážky
+(demoliční koule), kusy jdou jako pohyblivé překážky do vody, plynu
+i deště, prach do Pyro Solveru, a uzel RBD Pieces je vrací jako geometrii
+s rychlostí `v`. Jolt běží v jednom vlákně a deterministicky: stejné
+snímky při každém běhu, snímky do cache. Příklad **demolition**: budova
+z assetu se pod koulí sesype do bazénu.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

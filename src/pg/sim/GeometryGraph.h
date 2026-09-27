@@ -16,10 +16,10 @@
 // expression of the core (its keys at the frame cooked): the node varies
 // with time, and its geometry is cached frame by frame.
 //
-// Three nodes bring a simulation back as geometry -- Liquid Points, Rain
-// Points, Gas Volume -- from the frame being cooked, which a FrameSource
-// hands over: the editor's cache of frames, or the frame the command line
-// has just simulated.
+// Four nodes bring a simulation back as geometry -- Liquid Points, Rain
+// Points, Gas Volume, RBD Pieces -- from the frame being cooked, which a
+// FrameSource hands over: the editor's cache of frames, or the frame the
+// command line has just simulated.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -106,8 +106,9 @@ private:
     std::string folder_;
 };
 
-/// Registers liquid_points, rain_points and gas_volume with the core's
-/// NodeRegistry: the nodes that bring a simulation back as geometry. Idempotent.
+/// Registers liquid_points, rain_points, gas_volume and rbd_pieces with the
+/// core's NodeRegistry: the nodes that bring a simulation back as geometry.
+/// Idempotent.
 void registerSimGeometryNodes();
 
 /// A node that makes its geometry from a frame of the simulation: the one

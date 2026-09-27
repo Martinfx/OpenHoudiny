@@ -11,6 +11,7 @@ void registerWrangleNodes();
 void registerPrimitiveNodes();
 void registerSurfaceNodes();
 void registerTopologyNodes();
+void registerFractureNodes();
 
 /// Newell's normal of the polygon through `corners`: pointing the way they
 /// turn anticlockwise, twice the polygon's area long.

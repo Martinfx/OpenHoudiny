@@ -107,6 +107,18 @@ public:
     }
 };
 
+/// The pieces of the rigid bodies where they are at the frame, with the
+/// velocity v of each point.
+class RbdPiecesNode : public FrameNode {
+public:
+    explicit RbdPiecesNode(std::string name) : FrameNode("rbd_pieces", std::move(name)) { setInputCount(0); }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
+        if (!frame_ || frame_->rigid.empty()) return std::make_shared<Geometry>();
+        return posedPieces(frame_->rigid);
+    }
+};
+
 /// "12345:1690000000": what says a file changed -- its size and the time it
 /// last did; empty for a file that is not there.
 std::string stampOf(const std::string& path) {
@@ -129,6 +141,7 @@ void registerSimGeometryNodes() {
         r.add("liquid_points", [](const std::string& n) { return std::make_unique<LiquidPointsNode>(n); });
         r.add("rain_points", [](const std::string& n) { return std::make_unique<RainPointsNode>(n); });
         r.add("gas_volume", [](const std::string& n) { return std::make_unique<GasVolumeNode>(n); });
+        r.add("rbd_pieces", [](const std::string& n) { return std::make_unique<RbdPiecesNode>(n); });
         return true;
     }();
     (void)once;

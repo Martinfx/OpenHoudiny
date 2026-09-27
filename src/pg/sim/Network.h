@@ -10,6 +10,7 @@
 //   [Object] -------+                                       +--> [Output]
 //   [Water Source] -+--> [Liquid Solver] -> [Water Look] ---+
 //   [Wind] ----------------> [Rain] ------------------------+
+//   [Voronoi Fracture] ----> [RBD Solver] ------------------+
 //
 // Objects are the solids of the scene: every one is drawn, and those linked
 // into a solver's Colliders are in the way of what it simulates. Objects and
@@ -57,7 +58,7 @@ namespace pg::sim {
 class GeometryGraph;
 
 /// What flows along a link. An output links only to an input of its type.
-enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid, Camera, Geometry, Rain };
+enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid, Camera, Geometry, Rain, Rigid };
 const char* pinTypeName(PinType type);
 
 struct PinDef {
@@ -266,6 +267,7 @@ struct Compiled {
     int output = 0, lookNode = 0, solver = 0;  ///< the Output, the Volume Look, the Pyro Solver; 0 if none
     int waterLook = 0, liquidSolver = 0;       ///< the Water Look, the Liquid Solver; 0 if none
     int rain = 0;                              ///< the Rain; 0 if none
+    int rigid = 0;                             ///< the RBD Solver; 0 if none
     /// The camera the Output renders through (its node in camera.node), if
     /// one is linked into it: otherwise the renders frame the scene.
     bool hasCamera = false;

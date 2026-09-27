@@ -10,6 +10,7 @@
 //   rain   where each drop and droplet is and how fast it goes, and the
 //          ripples on the water.
 //
+#include "pg/sim/Rigid.h"
 #include "pg/sim/Scene.h"
 
 #include <cstdint>
@@ -75,10 +76,13 @@ struct Frame {
     std::vector<uint16_t> fields;
     WaterFrame water;     ///< empty without water
     RainFrame rain;       ///< empty without rain
+    RigidFrame rigid;     ///< empty without rigid bodies
     double stepMs = 0.0;  ///< how long the step to it took
 
-    size_t bytes() const { return sizeof(Frame) + fields.size() * sizeof(uint16_t) + water.bytes() + rain.bytes(); }
-    bool empty() const { return fields.empty() && water.empty() && rain.empty(); }
+    size_t bytes() const {
+        return sizeof(Frame) + fields.size() * sizeof(uint16_t) + water.bytes() + rain.bytes() + rigid.bytes();
+    }
+    bool empty() const { return fields.empty() && water.empty() && rain.empty() && rigid.empty(); }
     /// The field `channel` (0 smoke, 1 temperature, 2 flame) of cell (i, j, k).
     float at(int channel, int i, int j, int k) const;
 };

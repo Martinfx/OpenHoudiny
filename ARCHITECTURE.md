@@ -24,7 +24,7 @@ Související dokumenty: [ROADMAP.md](ROADMAP.md) — cíl, co je hotové a dal�
 ├─────────────────────────────────────────────────────────────┤
 │  JÁDRO   cook engine · geometrie · atributy · paralelismus  │   hotovo
 ├─────────────────────────────────────────────────────────────┤
-│  Externí: Jolt · USD · (OpenVDB · Embree · OpenSubdiv)      │   kroky 2–3 · §5
+│  Externí: Jolt (hotovo) · USD · (OpenVDB · Embree · OpenSubdiv) │   kroky 2–3 · §5
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -317,7 +317,7 @@ studia musí smět psát proprietární uzly.
 | Obrázky, barvy | OpenImageIO, OpenColorIO, OpenEXR | BSD / Apache 2.0 |
 | Materiály | MaterialX, OSL | Apache 2.0 / BSD |
 | Threading | Intel TBB | Apache 2.0 |
-| Rigid body (po 1.0) | Jolt / PhysX 5 | MIT / BSD-3 |
+| Rigid body | **Jolt Physics** (krok 2, hotovo: [docs/destruction.md](docs/destruction.md)) | MIT |
 | JIT | LLVM ORC | Apache 2.0 + LLVM ex. |
 | GUI | Qt 6 | LGPL (dynamicky linkovat) |
 

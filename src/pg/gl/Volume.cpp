@@ -1664,7 +1664,28 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
 void VolumeRenderer::setGeometry(const GeometryPtr& geometry) {
     if (geometry == geometry_) return;
     geometry_ = geometry;
-    const sim::DisplayGeometry d = geometry ? sim::displayOf(*geometry) : sim::DisplayGeometry();
+    shownDisplay_ = geometry ? sim::displayOf(*geometry) : sim::DisplayGeometry();
+    uploadGeometry();
+}
+
+void VolumeRenderer::setPieces(const GeometryPtr& pieces) {
+    if (pieces == pieces_) return;
+    pieces_ = pieces;
+    piecesDisplay_ = pieces ? sim::displayOf(*pieces) : sim::DisplayGeometry();
+    uploadGeometry();
+}
+
+void VolumeRenderer::uploadGeometry() {
+    // The two one after the other.
+    sim::DisplayGeometry d = shownDisplay_;
+    const sim::DisplayGeometry& p = piecesDisplay_;
+    d.triangles.insert(d.triangles.end(), p.triangles.begin(), p.triangles.end());
+    d.dots.insert(d.dots.end(), p.dots.begin(), p.dots.end());
+    d.lines.insert(d.lines.end(), p.lines.begin(), p.lines.end());
+    for (int a = 0; a < 3; ++a) {
+        d.lo[a] = std::min(d.lo[a], p.lo[a]);
+        d.hi[a] = std::max(d.hi[a], p.hi[a]);
+    }
     hasGeoBounds_ = d.lo.x <= d.hi.x;
     geoLo_ = d.lo;
     geoHi_ = d.hi;
@@ -1698,7 +1719,7 @@ void VolumeRenderer::setGeometry(const GeometryPtr& geometry) {
 }
 
 bool VolumeRenderer::geometryBounds(Vec3& lo, Vec3& hi) const {
-    if (!geometry_ || !hasGeoBounds_) return false;
+    if ((!geometry_ && !pieces_) || !hasGeoBounds_) return false;
     lo = geoLo_;
     hi = geoHi_;
     return true;

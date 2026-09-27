@@ -21,9 +21,10 @@
 //            as long as they fall in a share of a frame (motion blur), after
 //            the rest, hidden where something is in front of them; rings on
 //            the water; a floor that the rain makes wet -- darker and shining;
-//   geometry the network's displayed node (sim/Display.h): its polygons in
-//            its colours, lit as the objects are; its points as dots, its
-//            polylines as lines, its volumes as dots where they are not empty;
+//   geometry the network's displayed node (sim/Display.h), and the pieces
+//            of an RBD Solver: polygons in their colours, lit as the objects
+//            are; points as dots, polylines as lines, volumes as dots where
+//            they are not empty;
 //   gas      marched front to back through the domain, up to the first solid:
 //            smoke absorbs what is behind it and scatters light towards the
 //            eye -- sunlight where it is not in shadow, mostly forwards, so
@@ -46,6 +47,7 @@
 #include "pg/gl/Camera.h"
 #include "pg/gl/Gl.h"
 #include "pg/sim/Camera.h"
+#include "pg/sim/Display.h"
 #include "pg/sim/Frame.h"
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
@@ -134,7 +136,12 @@ public:
     /// none. The same geometry again costs nothing.
     void setGeometry(const GeometryPtr& geometry);
     const GeometryPtr& geometry() const { return geometry_; }
-    /// The box round the geometry drawn; false when there is none.
+    /// The pieces of an RBD Solver, as its look draws them (sim::drawnPieces),
+    /// drawn with the displayed geometry. Null: none.
+    void setPieces(const GeometryPtr& pieces);
+    const GeometryPtr& pieces() const { return pieces_; }
+    /// The box round the geometry drawn -- the displayed node's and the
+    /// pieces; false when there is none.
     bool geometryBounds(Vec3& lo, Vec3& hi) const;
 
     /// Draws into the offscreen framebuffer at `width` x `height` pixels.
@@ -185,6 +192,8 @@ private:
     void renderMeshes(int width, int height, const Vec3& eye);
     /// The displayed geometry's dots and lines, over what the main pass drew.
     void drawGeometry(int width, int height);
+    /// The displayed geometry and the pieces, as they are drawn, to the GPU.
+    void uploadGeometry();
 
     const Api& gl_;
     GLuint program_ = 0, shadowProgram_ = 0, glowProgram_ = 0, lineProgram_ = 0;
@@ -222,7 +231,8 @@ private:
     GLuint meshProgram_ = 0;
     // The displayed geometry: triangles (position, normal, colour), dots
     // (position, colour, radius), lines (as guide lines are).
-    GeometryPtr geometry_;
+    GeometryPtr geometry_, pieces_;
+    sim::DisplayGeometry shownDisplay_, piecesDisplay_;  // what each is drawn as
     GLuint geoProgram_ = 0, dotProgram_ = 0;
     GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
     GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;

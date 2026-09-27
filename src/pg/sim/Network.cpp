@@ -579,6 +579,17 @@ std::vector<NodeType> buildTypes() {
                "Within this, a point takes the mean of the points of Source near it."},
               {"blend", "Blend Width", "Transfer", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "m",
                "Beyond Distance, over this much further, the nearest one's fading out."}});
+    geometry("voronoi_fracture", "Voronoi Fracture", "voronoifracture",
+             "A closed mesh broken into pieces: the cells of points -- those linked into Points, or Count of "
+             "them at random inside it -- each the part of it nearer its point than any other, closed where it "
+             "was cut. The pieces carry piece, their number; the cut faces are in the group Inside Group.",
+             {{"geometry", "Geometry", PinType::Geometry}, {"points", "Points", PinType::Geometry}},
+             {{"count", "Count", "Fracture", K::Int, {20.0f, 0.0f, 0.0f}, 1.0f, 200.0f, 0.0f, 10000.0f, "",
+               "How many pieces, when no points come in: points at random inside the mesh."},
+              {"seed", "Seed", "Fracture", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, 1e6f, "",
+               "Another number: the points elsewhere."},
+              text("attribute", "Piece Attribute", "Fracture", "piece", "What each piece's number is called."),
+              text("insidegroup", "Inside Group", "Fracture", "inside", "The faces made where it was cut.")});
     // Loops.
     geometry("foreach_begin", "For-Each Begin", "foreachbegin",
              "Where a loop begins: the nodes after it, up to a For-Each End, run once for each piece of what "
@@ -617,6 +628,11 @@ std::vector<NodeType> buildTypes() {
     geometry("gas_volume", "Gas Volume", "gas_volume",
              "The gas of a Pyro Solver at the frame, as volumes: density (smoke), temperature and flame.",
              {{"gas", "Gas", PinType::Gas}}, {});
+    geometry("rbd_pieces", "RBD Pieces", "rbd_pieces",
+             "The pieces of an RBD Solver at the frame, where they have fallen: moved and turned, with the "
+             "velocity v of each point -- to process further, to export, to show otherwise. The solver's look "
+             "draws them already.",
+             {{"rigid", "Rigid", PinType::Rigid}}, {});
 
     // --- objects ----------------------------------------------------------------------
     t.push_back({"object", "Object", "Objects",
@@ -753,6 +769,48 @@ std::vector<NodeType> buildTypes() {
            "At least this many steps a frame. Fast water takes more on its own: no drop crosses more than two "
            "cells a step."},
           seed("Time", "Another number: the drops of the sources at other places.")},
+         1});
+
+    t.push_back(
+        {"rbd_solver", "RBD Solver", "Simulation",
+         "Rigid bodies: the pieces of something broken -- a Voronoi Fracture's -- fall, knock into each other, "
+         "into the floor and into the objects linked into Colliders (a keyed one is a wrecking ball), glued to "
+         "the pieces they touch until a pull harder than Glue tears them apart, puffing dust. Link it into the "
+         "Output's Looks: it is simulated and drawn. Its Collider into a Liquid, Pyro Solver or Rain: they go "
+         "round the pieces; its Dust into a Pyro Solver's Sources: the dust is smoke.",
+         {{"pieces", "Pieces", PinType::Geometry}, {"colliders", "Colliders", PinType::Collider, true}},
+         {{"look", "Look", PinType::Look},
+          {"rigid", "Rigid", PinType::Rigid},
+          {"collider", "Collider", PinType::Collider},
+          {"dust", "Dust", PinType::Source}},
+         {text("attribute", "Piece Attribute", "Pieces", "piece",
+               "What says which piece a primitive is of -- a Voronoi Fracture's piece. Without it, what touches "
+               "what is one piece."),
+          {"density", "Density", "Physics", K::Float, {2000.0f, 0.0f, 0.0f}, 100.0f, 8000.0f, 1.0f, 1e6f,
+           "kg/m\xc2\xb3", "How heavy a cubic metre is: 2400 concrete, 700 wood, 7800 steel."},
+          {"friction", "Friction", "Physics", K::Float, {0.6f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 10.0f, "",
+           "How hard pieces grip what they slide on: 0 ice, 1 rubber."},
+          {"bounce", "Bounce", "Physics", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "How much of its speed a piece keeps when it knocks into something: 0 a thud, 1 a rubber ball."},
+          {"gravity", "Gravity", "Physics", K::Float, {9.81f, 0.0f, 0.0f}, 0.0f, 20.0f, -100.0f, 100.0f,
+           "m/s\xc2\xb2", "How hard the pieces are pulled down."},
+          {"floor", "Floor", "Physics", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "A floor at height 0 that the pieces land on. Off, they fall for ever."},
+          {"glue", "Glue", "Glue", K::Float, {20000.0f, 0.0f, 0.0f}, 0.0f, 200000.0f, 0.0f, 1e12f, "N",
+           "How hard two pieces that touch hold together: a joint pulled harder than this, in newtons, breaks "
+           "for good. 0: no glue -- the pieces fall apart at once. A piece of a tonne weighs some 10000 N."},
+          {"substeps", "Substeps", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
+           "Steps of the solver a frame: more for fast pieces and tall stacks, which then stand steadier."},
+          {"dust", "Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
+           "Smoke a joint gives off as it breaks, into the Pyro Solver its Dust is linked into."},
+          {"dust_size", "Puff Size", "Dust", K::Float, {0.3f, 0.0f, 0.0f}, 0.05f, 2.0f, 0.01f, 100.0f, "m",
+           "How big a puff of dust is."},
+          {"color", "Color", "Look", K::Color, {0.62f, 0.6f, 0.57f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of the pieces where they have no Cd of their own."},
+          {"inside_color", "Inside Color", "Look", K::Color, {0.5f, 0.47f, 0.43f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of the faces the fracture cut: what was inside."},
+          text("inside_group", "Inside Group", "Look", "inside",
+               "The group of those faces -- a Voronoi Fracture's Inside Group.")},
          1});
 
     // --- render ---------------------------------------------------------------------
@@ -1122,6 +1180,7 @@ const char* pinTypeName(PinType type) {
         case PinType::Camera: return "camera";
         case PinType::Geometry: return "geometry";
         case PinType::Rain: return "rain";
+        case PinType::Rigid: return "rigid";
     }
     return "?";
 }
@@ -2568,6 +2627,7 @@ const Camera& Compiled::cameraAt(int frame) const {
 struct Network::CompileMemo {
     std::map<int, std::shared_ptr<const MeshShape>> meshes;  // from files, by node
     std::map<int, std::shared_ptr<const MeshShape>> shapes;  // from geometry, by node
+    std::map<int, std::shared_ptr<const Geometry>> pieces;   // an RBD Solver's, by node
     std::unique_ptr<GeometryGraph> own;
     GeometryGraph* cooker = nullptr;
 };
@@ -2619,6 +2679,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
         w.hasGas = c.world.hasGas;
         w.hasWater = c.world.hasWater;
         w.hasRain = c.world.hasRain;
+        w.hasRigid = c.world.hasRigid;
         w.keepParticles = c.world.keepParticles;
         w.gas.solver.size = c.world.gas.solver.size;
         w.gas.solver.resolution = c.world.gas.solver.resolution;
@@ -2649,6 +2710,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
     colliders([](World& w) -> std::vector<Collider>& { return w.gas.colliders; });
     colliders([](World& w) -> std::vector<Collider>& { return w.water.colliders; });
     colliders([](World& w) -> std::vector<Collider>& { return w.rain.colliders; });
+    colliders([](World& w) -> std::vector<Collider>& { return w.rigid.colliders; });
     for (size_t k = 0; k < track->size(); ++k) {
         World& now = (*track)[k];
         const World& before = (*track)[previous(k)];
@@ -2678,6 +2740,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
     c.world.gas = track->front().gas;
     c.world.water = track->front().water;
     c.world.rain = track->front().rain;
+    c.world.rigid = track->front().rigid;
 
     // What cannot be animated is said.
     for (const Node& n : nodes_) {
@@ -2690,7 +2753,8 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
         for (const std::string& name : changing) {
             const bool fixed = (n.type == "pyro_solver" && (name == "size" || name == "resolution")) ||
                                (n.type == "liquid_solver" && (name == "size" || name == "resolution" || name == "closed_sides")) ||
-                               (n.type == "output" && (name == "frames" || name == "fps"));
+                               (n.type == "output" && (name == "frames" || name == "fps")) ||
+                               (n.type == "rbd_solver" && name != "color" && name != "inside_color");
             if (fixed) {
                 c.problems.push_back({Problem::Level::Warning, n.id,
                                       "'" + name + "' cannot change as the simulation runs: its value at frame 1 holds."});
@@ -2751,7 +2815,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             const Node* n = node(stack.back());
             stack.pop_back();
             if (!n) continue;
-            if (n->type == "liquid_points" || n->type == "rain_points" || n->type == "gas_volume") return true;
+            if (n->type == "liquid_points" || n->type == "rain_points" || n->type == "gas_volume" ||
+                n->type == "rbd_pieces") {
+                return true;
+            }
             for (const Link& l : links_) {
                 if (l.to == n->id && std::find(seen.begin(), seen.end(), l.from) == seen.end()) {
                     seen.push_back(l.from);
@@ -2761,16 +2828,18 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         }
         return false;
     };
+    auto startCooker = [&]() {
+        if (cooker) return;
+        if (!geometry) own = std::make_unique<GeometryGraph>();
+        cooker = geometry ? geometry : own.get();
+        cooker->sync(*this, folder);
+    };
     std::map<int, std::shared_ptr<const MeshShape>>& shapes = memo.shapes;
     auto geometryShape = [&](const Node& n) -> std::shared_ptr<const MeshShape> {
         const std::vector<Link> in = linksInto(n.id, "shape");
         if (in.empty()) return nullptr;
         if (const auto it = shapes.find(n.id); it != shapes.end()) return it->second;
-        if (!cooker) {
-            if (!geometry) own = std::make_unique<GeometryGraph>();
-            cooker = geometry ? geometry : own.get();
-            cooker->sync(*this, folder);
-        }
+        startCooker();
         std::shared_ptr<const MeshShape> mesh;
         const GeometryPtr geo = cooker->cook(in.front().from, 1, firstStep);
         const std::string error = cooker->error(in.front().from);
@@ -2960,6 +3029,74 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         return a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y && a.z < hi.z && b.z > lo.z;
     };
 
+    // The pieces of an RBD Solver: its settings, the geometry linked into
+    // Pieces (at frame 1), and the objects they knock into. One solver is
+    // simulated; its look, its collider and its dust may each bring it in.
+    std::map<int, std::shared_ptr<const Geometry>>& piecesMemo = memo.pieces;
+    auto compileRigid = [&](const Node* solver) -> RigidScene* {
+        RigidScene& r = c.world.rigid;
+        if (c.rigid == solver->id) return &r;
+        if (c.rigid) {
+            problem(L::Warning, solver->id, "Another RBD Solver: only " + node(c.rigid)->name + " is simulated.");
+            return nullptr;
+        }
+        c.rigid = solver->id;
+        c.active.push_back(solver->id);
+        c.world.hasRigid = true;
+        RigidSettings& s = r.solver;
+        s.density = f(*solver, "density");
+        s.friction = f(*solver, "friction");
+        s.bounce = f(*solver, "bounce");
+        s.gravity = Vec3(0.0f, -f(*solver, "gravity"), 0.0f);
+        s.floor = f(*solver, "floor") != 0.0f;
+        s.glue = f(*solver, "glue");
+        s.substeps = whole(*solver, "substeps");
+        s.dust = f(*solver, "dust");
+        s.dustSize = f(*solver, "dust_size");
+        s.timeStep = c.world.timeStep;
+        r.attribute = text(solver->id, "attribute");
+        r.node = solver->id;
+        if (!rigidAvailable()) {
+            problem(L::Error, solver->id, "This build has no rigid bodies: it was built without Jolt (PG_WITH_JOLT=OFF).");
+        }
+        // The pieces: cooked once a compile.
+        const std::vector<Link> in = linksInto(solver->id, "pieces");
+        if (in.empty()) {
+            problem(L::Warning, solver->id, "No pieces: link geometry into Pieces -- a Voronoi Fracture's.");
+        } else if (const auto it = piecesMemo.find(solver->id); it != piecesMemo.end()) {
+            r.pieces = it->second;
+        } else {
+            startCooker();
+            const GeometryPtr geo = cooker->cook(in.front().from, 1, firstStep);
+            const std::string error = cooker->error(in.front().from);
+            if (!error.empty()) problem(L::Warning, in.front().from, error);
+            if (fromSimulation(in.front().from)) {
+                problem(L::Warning, solver->id, "Its pieces come from a simulation, which has not run when the "
+                                                "pieces are taken: nothing to simulate.");
+            } else if (!geo || geo->primitiveCount() == 0) {
+                problem(L::Warning, solver->id, "The geometry linked into Pieces has no faces: nothing to simulate.");
+            } else {
+                r.pieces = geo;
+                int count = 0;
+                pieceOfPrimitives(*geo, r.attribute, count);
+                if (count > 3000) {
+                    problem(L::Warning, solver->id, std::to_string(count) + " pieces: it will be slow. Fewer, "
+                                                    "bigger pieces go a long way.");
+                }
+            }
+            piecesMemo[solver->id] = r.pieces;
+        }
+        for (const Node* n : feeding(solver, "colliders")) {
+            if (n->type == "rbd_solver") {
+                problem(L::Warning, n->id, "The pieces of one RBD Solver do not knock into another's.");
+                continue;
+            }
+            r.colliders.push_back(colliderOf(*n));
+            c.active.push_back(n->id);
+        }
+        return &r;
+    };
+
     // The gas of a Pyro Solver: its settings, and what feeds it.
     auto compileGas = [&](const Node* solver) {
         c.world.hasGas = true;
@@ -2982,7 +3119,13 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.cooling = f(*solver, "cooling");
         s.smokeDecay = f(*solver, "smoke_decay");
 
+        bool dust = false;
         for (const Node* n : feeding(solver, "sources")) {
+            if (n->type == "rbd_solver") {
+                // The dust of its broken glue, puffing in as it breaks.
+                if (RigidScene* r = compileRigid(n)) r->dustIntoGas = dust = true;
+                continue;
+            }
             Emitter e;
             const Placement p = placementOf(*n);
             e.shape = p.shape;
@@ -3008,6 +3151,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         }
         c.world.gas.forces = forcesOf(solver);
         for (const Node* n : feeding(solver, "colliders")) {
+            if (n->type == "rbd_solver") {
+                if (RigidScene* r = compileRigid(n)) r->intoGas = true;
+                continue;
+            }
             c.world.gas.colliders.push_back(colliderOf(*n));
             c.active.push_back(n->id);
         }
@@ -3015,7 +3162,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         // Things that run but will not do what was meant.
         const Domain domain = c.world.gas.sanitized().solver.domain();
         auto overlaps = [&](const Vec3& a, const Vec3& b) { return overlapsDomain(domain, a, b); };
-        if (c.world.gas.emitters.empty()) {
+        if (c.world.gas.emitters.empty() && !dust) {
             problem(L::Warning, solver->id, "No sources: nothing will appear. Link a source into Sources.");
         }
         for (const Emitter& e : c.world.gas.emitters) {
@@ -3077,6 +3224,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         }
         c.world.water.forces = forcesOf(solver);
         for (const Node* n : feeding(solver, "colliders")) {
+            if (n->type == "rbd_solver") {
+                if (RigidScene* r = compileRigid(n)) r->intoWater = true;
+                continue;
+            }
             c.world.water.colliders.push_back(colliderOf(*n));
             c.active.push_back(n->id);
         }
@@ -3112,7 +3263,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     // what is simulated.
     const std::vector<Link> layers = linksInto(output->id, "look");
     if (layers.empty()) {
-        problem(L::Error, output->id, "Nothing to show: link a Volume Look, a Water Look or a Rain into Looks.");
+        problem(L::Error, output->id,
+                "Nothing to show: link a Volume Look, a Water Look, a Rain or an RBD Solver into Looks.");
         return done();
     }
     for (const Link& layer : layers) {
@@ -3161,6 +3313,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             r.timeStep = c.world.timeStep;
             c.world.rain.forces = forcesOf(look);
             for (const Node* n : feeding(look, "colliders")) {
+                if (n->type == "rbd_solver") {
+                    if (RigidScene* r = compileRigid(n)) r->intoRain = true;
+                    continue;
+                }
                 c.world.rain.colliders.push_back(colliderOf(*n));
                 c.active.push_back(n->id);
             }
@@ -3172,6 +3328,12 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 problem(L::Warning, look->id, "The cloud is at or below the floor: raise it, or no rain falls.");
             }
             if (r.rate <= 0.0f) problem(L::Warning, look->id, "Rate 0: no drop falls.");
+        } else if (look->type == "rbd_solver") {
+            if (!compileRigid(look)) continue;
+            k.pieces = true;
+            k.piecesColor = v3(*look, "color");
+            k.piecesInside = v3(*look, "inside_color");
+            k.insideGroup = text(look->id, "inside_group");
         } else if (look->type == "water_look") {
             if (c.waterLook) {
                 problem(L::Warning, look->id, "Another Water Look: only " + node(c.waterLook)->name + " is drawn.");
@@ -3194,17 +3356,27 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         }
     }
     // The nodes that bring a simulation back as geometry: from what is simulated.
+    struct Back {
+        const char* type;
+        const char* input;
+        int simulated;
+        const char* solver;
+    };
+    const Back backs[] = {{"liquid_points", "liquid", c.liquidSolver, "Liquid Solver"},
+                          {"rain_points", "rain", c.rain, "Rain"},
+                          {"gas_volume", "gas", c.solver, "Pyro Solver"},
+                          {"rbd_pieces", "rigid", c.rigid, "RBD Solver"}};
     for (const Node& n : nodes_) {
         if (n.bypass) continue;
-        const char* input = n.type == "liquid_points" ? "liquid" : n.type == "rain_points" ? "rain" : n.type == "gas_volume" ? "gas" : nullptr;
-        if (!input) continue;
-        const Node* from = upstream(n, input);
-        const int simulated = n.type == "liquid_points" ? c.liquidSolver : n.type == "rain_points" ? c.rain : c.solver;
+        const Back* back = nullptr;
+        for (const Back& b : backs) {
+            if (n.type == b.type) back = &b;
+        }
+        if (!back) continue;
+        const Node* from = upstream(n, back->input);
         if (!from) {
-            problem(L::Warning, n.id, std::string("Nothing comes in: link a ") +
-                                          (n.type == "liquid_points" ? "Liquid Solver" : n.type == "rain_points" ? "Rain" : "Pyro Solver") +
-                                          " into it.");
-        } else if (from->id != simulated) {
+            problem(L::Warning, n.id, std::string("Nothing comes in: link a ") + back->solver + " into it.");
+        } else if (from->id != back->simulated) {
             problem(L::Warning, n.id, from->name + " is not simulated -- it does not reach the Output -- so this is empty.");
         } else if (n.type == "liquid_points") {
             c.world.keepParticles = true;

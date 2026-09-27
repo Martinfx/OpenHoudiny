@@ -68,7 +68,8 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Jádro | COW atributy, cook engine s verzemi a cache, časová závislost, deterministický paralelismus, per-element jazyk (interpret) | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Shader graf | Uzly z textu, čtyři cíle (GLSL, GLSL ES, Vulkan, HLSL), editor s náhledem | [docs/shader-graph.md](docs/shader-graph.md) |
 | Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; z uzlů, deterministicky na libovolném počtu vláken | [docs/pyro.md](docs/pyro.md) |
-| Geometrie v editoru | 26 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
+| Destrukce | Voronoi Fracture, tuhá tělesa nad Jolt s lepidlem, které se trhá, úlomky do vody a plynu, prach; demolice budovy jako video | [docs/destruction.md](docs/destruction.md) |
+| Geometrie v editoru | 28 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
 | Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB | [docs/cache.md](docs/cache.md) |
@@ -131,17 +132,28 @@ deset posuvníků; příklad **street** z něj staví ulici;
 `prototype cook street - --hash --threads 1` i `--threads 4` vypíší týž
 hash a hlídá to test.
 
-### Krok 2 — Destrukce
+### Krok 2 — Destrukce ✅
 
-- **Voronoi Fracture:** rozbití uzavřeného tělesa na kusy podle bodů,
-  řezné plochy jako skupina.
-- **Solver tuhých těles** nad knihovnou Jolt (MIT, deterministický běh)
-  a lepení kusů k sobě, které se nad prahem síly utrhne.
-- **Úlomky jako geometrie** (kusy s transformací); prach z úlomků do Pyro,
-  úlomky jako pohyblivé překážky vody.
+- ✅ **Voronoi Fracture** ([docs/destruction.md §1](docs/destruction.md#1-voronoi-fracture)):
+  buňky bodů (daných, nebo náhodných uvnitř) jako postupné řezy rovinami
+  s víčky (Clip), kusy uzavřené a dohromady přesně původní těleso; `piece`
+  na primitivech i bodech, řezné plochy ve skupině `inside`; paralelně
+  a bitově stejně na 1 i 4 vláknech.
+- ✅ **RBD Solver** ([docs/destruction.md §2](docs/destruction.md#2-rbd-solver))
+  nad Jolt Physics 5.6 (MIT, `CROSS_PLATFORM_DETERMINISTIC`, jedno vlákno):
+  kusy jako konvexní obaly s hustotou, lepidlo jako pevné spoje mezi kusy
+  se společnou řeznou plochou, které se nad `glue` newtonů utrhnou a
+  vyfouknou prach; klíčované objekty jako kinematické překážky; podlaha.
+- ✅ **Úlomky dál:** solver v Outputu se kreslí sám (barvy `Cd`, barva
+  řezu); uzel RBD Pieces je vrací jako geometrii s `v`; výstup Collider
+  dá kusy jako pohyblivé síťové překážky vodě, plynu a dešti; výstup Dust
+  je zdroj kouře; snímky s polohami kusů jdou do cache (formát 2).
 
 **Hotovo, když:** budova z kroku 1 se zřítí do vody a zvedne prach — celé
-jako video, deterministicky.
+jako video, deterministicky. ✅ Příklad **demolition**: budova z assetu
+Building u bazénu, demoliční koule s klíči; `prototype sim demolition
+out.mp4` dá video a snímky jsou bitově stejné při každém běhu (test na
+1 a 4 vláknech i mezi dvěma řešiči).
 
 ### Krok 3 — Pipeline
 
