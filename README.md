@@ -18,6 +18,10 @@ okna.
 - **[docs/geometry.md](docs/geometry.md)** — geometrie v téže síti (uzly
   jako SOP v Houdini): display flag, viewport, tabulka atributů, geometrie
   jako tvar překážek a zdrojů, simulace zpátky jako body a objemy
+- **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
+  geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
+  primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání
+  geometrie; posuvníky z `ch()`
 - **[docs/animation.md](docs/animation.md)** — klíčové snímky na libovolném
   parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda
 - **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
@@ -75,7 +79,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 185 testů: 59 jádro, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 208 testů: 59 jádro, 23 jazyk wrangle, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -87,6 +91,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ./build/prototype sim explosion out/boom.png --every 2 --set charge.fuel=80
 ./build/prototype sim lakeside shot.png            # záběr kamerou: oheň, voda, déšť, vítr
 ./build/prototype --example rock_garden            # geometrie v síti: kameny z kopií koule, déšť
+./build/prototype --example spiral_stairs          # Detail Wrangle postaví schodiště, voda po něm stéká
 ./build/prototype sim liquid_points points.png     # částice vody jako body obarvené wranglem
 ./build/prototype --example wake                   # animace: koule projíždí bazénem, vlna a brázda
 ./build/prototype sim campfire_vdb - --cache cache/fire                          # simulace jednou, na disk
@@ -106,18 +111,26 @@ který jde otevřít v Blenderu nebo kdekoliv jinde.
 @P.y = noise(@P * 0.45 + vec3(@Time, 0.0, 0.0)) * 2.0 - 1.0;
 @height = @P.y;
 @Cd = vec3(fit(@P.y, -1.0, 1.0, 0.1, 1.0), 0.4, 0.8);
+int near[] = nearpoints(0, @P, ch("radius"));
+foreach (int pt; near) {
+    if (pt > @ptnum) addprim(0, "polyline", @ptnum, pt);  // čáry k blízkým bodům
+}
 ```
 
 Typ vytvářeného atributu se odvodí z pravé strany: `@height` vznikne jako
-`float`, `@Cd` jako `vec3`. Uzel se sám označí za časově závislý, protože
-snippet čte `@Time`.
+`float`, `@Cd` jako `vector`. Uzel se sám označí za časově závislý, protože
+snippet čte `@Time`, a `ch("radius")` mu přidá posuvník. Jazyk popisuje
+[docs/wrangle.md](docs/wrangle.md).
 
 ## Stav
 
 Hotovo a otestováno: COW geometrie s objemy, cook engine, časová závislost,
-LRU cache, deterministický paralelismus, per-element jazyk, 19 typů uzlů
-(generátory, primitiva, scatter, copy to points, OBJ…), 59 testů jádra
-(čisté pod ASan, UBSan i ThreadSanitizerem).
+LRU cache, deterministický paralelismus, 19 typů uzlů (generátory,
+primitiva, scatter, copy to points, OBJ…), 59 testů jádra (čisté pod ASan,
+UBSan i ThreadSanitizerem). **Wrangle** je jazyk jako VEX: typy, proměnné,
+cykly, funkce, pole, řetězce, matice; běží nad body, primitivy, rohy nebo
+jednou nad celou geometrií, čte sousedy a další vstupy, staví a maže
+geometrii a výsledek nezávisí na počtu vláken.
 
 Vedle geometrie je síť druhého typu: **shader graf** s knihovnou uzlů
 v textových souborech, generátorem pro čtyři jazyky (GLSL 330, GLSL ES 300,
@@ -180,8 +193,9 @@ renderuje po snímcích na pozadí s oknem průběhu, počká na simulaci a nako
 nabídne soubor otevřít; příkazy `sim` a `render` kreslí bez okna přes EGL,
 a když EGL nejde, přes skryté okno.
 
-Vědomě chybí: USD, Alembic, čtení VDB, JIT, packed primitives, digital assets,
-Python vazby, simulace těles a látek. Podrobně v
+Vědomě chybí (zatím): USD, Alembic, čtení VDB, JIT, packed primitives,
+digital assets, Python vazby, simulace těles a látek — pořadí v
+[ROADMAP.md §4](ROADMAP.md#4-další-kroky). Podrobně v
 [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
 
 ## Licence

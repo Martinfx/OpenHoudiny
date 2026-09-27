@@ -189,6 +189,10 @@ struct Node {
     /// An animated parameter's value is its keys'; `params` holds it for
     /// when the keys are taken off.
     std::map<std::string, std::vector<Key>> keys;
+    /// The parameters a wrangle's snippet asks for -- ch("height"),
+    /// chv("dir") -- besides those of its type: made from the snippet each
+    /// time it changes, not written to files (their values are).
+    std::vector<ParamDef> spares;
 };
 
 struct Link {
@@ -282,6 +286,12 @@ public:
     /// solver applies its forces in.
     std::vector<Link> linksInto(int to, std::string_view input) const;
 
+    /// The parameters of node `id` in the order the editor shows them: its
+    /// type's, then those its snippet asks for (Node::spares).
+    std::vector<const ParamDef*> params(int id) const;
+    /// A parameter of node `id`, of its type or its snippet; null if none.
+    const ParamDef* paramDef(int id, std::string_view name) const;
+
     /// A parameter's value: the one set, else its default. The default of an
     /// unknown parameter is 0.
     ParamValue param(int id, std::string_view name) const;
@@ -365,6 +375,9 @@ private:
     Compiled compileFrame(const std::string& folder, GeometryGraph* geometry, float frame, CompileMemo& memo,
                           bool quiet) const;
     int indexOf(int id) const;
+    const ParamDef* def(const Node& n, std::string_view name) const;
+    /// Makes Node::spares what the node's snippet asks for. True if they changed.
+    static bool syncSpares(Node& n);
     /// Turns the nodes of old types (Legacy in Network.cpp) into the types
     /// that replaced them.
     void upgrade(const std::vector<Link>& links);

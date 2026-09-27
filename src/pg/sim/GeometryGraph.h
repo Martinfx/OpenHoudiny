@@ -57,6 +57,9 @@ public:
 
     /// What went wrong the last time node `id` cooked; empty if nothing.
     std::string error(int id) const;
+    /// What it warned about, one line each; what it printed (printf()).
+    std::string warning(int id) const;
+    std::string log(int id) const;
     /// True for a geometry node of the network last synced.
     bool contains(int id) const { return nodes_.count(id) > 0; }
     /// The core's node that cooks node `id`; null if there is none.

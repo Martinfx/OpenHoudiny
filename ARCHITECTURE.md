@@ -221,22 +221,35 @@ mutexem.
 Pipeline, kterou se sem míří:
 
 ```
-zdroj → lexer → parser → typová inference → vlastní IR → LLVM ORC JIT → SIMD kernel
-                                                             ↑
-                                             sem se připojuje M5
+zdroj → lexer → parser → typová kontrola a vazba → vlastní IR → LLVM ORC JIT → SIMD kernel
+                                                                    ↑
+                                                    sem se připojí JIT (ROADMAP §5)
 ```
 
-**Dnes** je místo posledních dvou kroků strom procházející interpret. Švem,
-kde JIT nahradí interpret, je `Program::run()`:
+**Dnes** je místo posledních dvou kroků interpret typovaného stromu
+(`src/pg/lang`, popis jazyka v [docs/wrangle.md](docs/wrangle.md)). Švem,
+kde JIT nahradí interpret, je `lang::Program::run()`:
 
-1. **Typová inference** — typy z existujících atributů, výraz se odvodí zdola
-   nahoru, přiřazení určuje typ vytvářeného atributu. `@v = @P * 2.0` vytvoří
-   `vec3`, `@d = length(@P)` vytvoří `float`.
-2. **Vazba na sloty** — každé `@jméno` dostane při parsování číslo slotu.
-   Před během se sloty **jednou** naváží na ukazatele do atributových polí.
-   Per-point se tedy nevyhledává podle jména.
-3. **Běh po deterministických chuncích** — jazyk sahá jen na aktuální bod,
-   takže chunky píšou do disjunktních rozsahů a není co synchronizovat.
+1. **Parse jednou** (`Parse.cpp`) — celý program: proměnné, `if`, `for`,
+   `foreach`, `while`, vlastní funkce, pole, řetězce. Už parser zná jména
+   a počty argumentů vestavěných funkcí, takže překlep v názvu je chyba
+   s řádkem a sloupcem hned při psaní.
+2. **Typová kontrola a vazba při každém běhu** (`Check.cpp`) — typy atributů
+   přicházejí z geometrie, nad kterou program běží, a ta se mezi cooky může
+   změnit. Kontrola z nich udělá typovaný strom: každé `@jméno` je navázané
+   na ukazatel do atributového pole, každé volání na konkrétní přetížení,
+   každý převod (int → float, float → vektor) je explicitní uzel. Za běhu
+   se už nic nevyhledává podle jména a nic se nerozhoduje podle typu.
+   Parametry `ch("x")` a `$F` jsou po celý běh stejné, takže se tu
+   dosadí jako konstanty.
+3. **Běh** (`Eval.cpp`, `Run.cpp`) — vyhodnocení je šablona podle typu
+   výsledku (`ev<float>`, `ev<Vec3>` …), lokální proměnné jsou sloty
+   v polích podle typu. Program, který sahá jen na svůj prvek, běží po
+   deterministických chuncích paralelně. Program, který vyrábí nebo maže
+   geometrii, zapisuje cizí prvky nebo řetězce, běží **popořadě**: změny se
+   řadí do fronty a provedou se po běhu v pořadí, v jakém je program
+   požádal. Výsledek tedy nikdy nezávisí na počtu vláken — test
+   `lang_results_do_not_depend_on_the_thread_count`.
 
 JIT zamění krok 3 za volání zkompilovaného kernelu. Kroky 1 a 2 zůstanou.
 
@@ -398,7 +411,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Časová závislost včetně tranzitivního šíření |
 | ✅ | Detekce cyklů při zapojování |
 | ✅ | Deterministický `parallelFor` / `parallelReduce`, thread pool |
-| ✅ | Per-element jazyk: parser, typová inference, vazba na sloty |
+| ✅ | Wrangle jazyk: proměnné, řízení toku, funkce, pole, řetězce, matice a kvaterniony; běh nad body, primitivy, rohy i detailem; čtení libovolných prvků a vstupů, hledání sousedů (k-d strom), tvorba a mazání geometrie; parametry z `ch()`; výsledek nezávislý na počtu vláken |
 | ✅ | 19 typů uzlů (box, sphere, tube, scatter, copy to points, file…), obsahový hash, čtení i zápis OBJ, headless CLI |
 | ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
 | ✅ | 185 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
@@ -420,8 +433,9 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | Editace uprostřed 100-uzlového řetězce | **48 %** času studeného cooku, 51 ze 101 uzlů |
 | Recook beze změny | **0.025 ms**, 0 uzlů |
 | Škálování na 4 vláknech | **2.99×**, hash bitově identický na 1/2/4 vláknech |
-| Interpret jazyka, aritmetika | 38 Mbodů/s (1M bodů za 26 ms) |
-| Interpret jazyka, noise | 63 Mbodů/s |
+| Interpret jazyka, aritmetika | 38 Mbodů/s (1M bodů za 26 ms) — první, jednoduchý jazyk |
+| Interpret jazyka, noise | 63 Mbodů/s — první, jednoduchý jazyk |
+| Wrangle v2 proti prvnímu jazyku, týž stroj (4 jádra) | aritmetika 26,6 proti 29,0 Mbodů/s, noise 38 proti 50 Mbodů/s |
 | 240 snímků s cache 256 MB | 1.9 ms/snímek, zdroj cooknut **1×** |
 
 ### Není v prototypu (vědomě)
@@ -440,9 +454,10 @@ Souhrn toho, co je v textu rozeseté — každá položka je vědomá, ne přehl
 2. **Duplicitní cook** uzlu dosažitelného přes dvě paralelně cookované větve.
 3. **Thread pool** má jednu frontu pod mutexem, bez work-stealingu → TBB.
 4. **Hash** je sériový FNV-1a po bajtech → xxHash3 paralelně.
-5. **Jazyk** je interpret, bez řídicích struktur, lokálních proměnných a
-   zápisu do int atributů.
-6. **Bez array a matice atributů.**
+5. **Jazyk** je interpret typovaného stromu, ne JIT; program, který mění
+   geometrii nebo píše řetězce, běží na jednom vlákně.
+6. **Bez array a matice atributů.** Jazyk pole i matice má, jen jako
+   lokální proměnné.
 7. **`gather` nekomprimuje string tabulku** — po velkém mazání v ní zůstávají
    nepoužité položky.
 8. **Detekce cyklů** je O(V) na každé zapojení; u velmi velkých grafů bude

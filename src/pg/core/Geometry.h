@@ -35,6 +35,9 @@ public:
     }
     void set(size_t i, bool member);
     void resize(size_t n);
+    /// The mask, one byte a member, written directly: unshared first. For
+    /// code that sets many members from several threads, each its own.
+    uint8_t* writableMask() { return maskForWrite().data(); }
     /// Number of members.
     size_t memberCount() const;
 
@@ -157,6 +160,11 @@ public:
     /// every primitive that referenced a removed point. Point order is
     /// preserved, so the result is deterministic.
     void deletePoints(std::span<const uint8_t> keep);
+
+    /// Keeps only the primitives selected by `keep` (size == primitiveCount),
+    /// in their order. With `unusedPoints`, the points that only deleted
+    /// primitives used go too; loose points that were loose before stay.
+    void deletePrimitives(std::span<const uint8_t> keep, bool unusedPoints);
 
     /// Order-stable content hash over every attribute, the topology and the
     /// groups. Two geometries with the same hash are byte-identical in content.

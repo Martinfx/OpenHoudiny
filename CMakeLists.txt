@@ -31,9 +31,15 @@ add_library(pgcore
   src/pg/core/Node.cpp
   src/pg/core/Graph.cpp
   src/pg/core/CookEngine.cpp
+  src/pg/core/Spatial.cpp
+  src/pg/lang/Parse.cpp
+  src/pg/lang/Check.cpp
+  src/pg/lang/Eval.cpp
+  src/pg/lang/Run.cpp
+  src/pg/lang/Builtins.cpp
+  src/pg/lang/BuiltinsGeo.cpp
   src/pg/nodes/Generators.cpp
   src/pg/nodes/Modifiers.cpp
-  src/pg/nodes/Expression.cpp
   src/pg/nodes/Wrangle.cpp
   src/pg/nodes/Primitives.cpp
   src/pg/nodes/Surface.cpp
@@ -308,6 +314,7 @@ add_executable(pgtests
   tests/test_cache.cpp
   tests/test_determinism.cpp
   tests/test_expression.cpp
+  tests/test_lang.cpp
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp

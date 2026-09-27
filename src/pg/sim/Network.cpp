@@ -2,6 +2,8 @@
 
 #include "pg/sim/GeometryGraph.h"
 
+#include "pg/lang/Lang.h"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -9,6 +11,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <locale>
+#include <mutex>
+#include <set>
 #include <sstream>
 
 namespace pg::sim {
@@ -469,16 +473,33 @@ std::vector<NodeType> buildTypes() {
               {"invert", "Keep", "Blast", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "Keep the group and delete the rest."}});
     {
-        ParamDef snippet{"snippet", "Snippet", "Wrangle", K::Code, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
-                         "What happens to every point, in the per-element language: @P.y = noise(@P * 2.0) * 0.3; "
-                         "@Cd = vec3(1.0, 0.5, 0.2);  Reads and writes any point attribute (@name), @ptnum, "
-                         "@numpt, @Time, @Frame. Functions: sin cos abs sqrt floor pow min max clamp length noise "
-                         "fit vec3. An attribute it writes that is not there is made -- a number or a vector, "
-                         "as the right side is."};
-        geometry("point_wrangle", "Point Wrangle", "pointwrangle",
-                 "Runs a snippet over every point: move them, colour them, make attributes. Reading @Time, it "
-                 "changes every frame.",
-                 in, {snippet});
+        // One node of the core, three ways in: over the points, the
+        // primitives, or once over the whole geometry.
+        auto wrangle = [&](const char* name, const char* label, int runOver, const char* help) {
+            ParamDef snippet{"snippet", "Snippet", "Wrangle", K::Code, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+                             "What runs for every element, in the wrangle language (like VEX): variables, if, for, "
+                             "functions; @P, @Cd, i@id, s@name; point(1, \"P\", @ptnum), nearpoints(0, @P, 0.5), "
+                             "addpoint(0, @P), removepoint(0, @ptnum); ch(\"amount\") makes a parameter of it. An "
+                             "attribute written that is not there is made. See docs/wrangle.md."};
+            ParamDef over{"runover", "Run Over", "Wrangle", K::Choice, {static_cast<float>(runOver), 0.0f, 0.0f}, 0.0f, 3.0f,
+                          0.0f, 3.0f, "", "What the snippet runs for: every point, primitive or vertex, or once for the "
+                                          "whole geometry (Detail) -- where making geometry is at home.",
+                          {"points", "primitives", "vertices", "detail"}, {"Points", "Primitives", "Vertices", "Detail"}};
+            geometry(name, label, "attribwrangle", help,
+                     {{"geometry", "Geometry", PinType::Geometry}, {"input1", "Input 1", PinType::Geometry},
+                      {"input2", "Input 2", PinType::Geometry}, {"input3", "Input 3", PinType::Geometry}},
+                     {snippet, over,
+                      text("group", "Group", "Wrangle", "",
+                           "Only the elements of this group run; empty: all of them.")});
+        };
+        wrangle("point_wrangle", "Point Wrangle", 0,
+                "Runs a snippet for every point: move them, colour them, read their neighbours, make and delete "
+                "geometry. Reading @Time or $F, it changes every frame.");
+        wrangle("primitive_wrangle", "Primitive Wrangle", 1,
+                "Runs a snippet for every primitive: @P is its middle, primpoints() its corners.");
+        wrangle("detail_wrangle", "Detail Wrangle", 3,
+                "Runs a snippet once for the whole geometry: build points and polygons with addpoint() and "
+                "addprim(), sum up, set detail attributes.");
     }
     geometry("normal", "Normal", "normal",
              "Point normals, N: the faces round each point, the larger ones counting more. The viewport "
@@ -1340,20 +1361,109 @@ std::vector<Link> Network::linksInto(int to, std::string_view input) const {
     return out;
 }
 
+namespace {
+
+/// Text that lives as long as the program: the names and labels of the
+/// parameters snippets ask for, which ParamDef points at.
+const char* interned(const std::string& s) {
+    static std::mutex mu;
+    static std::set<std::string> pool;
+    std::lock_guard<std::mutex> lock(mu);
+    return pool.insert(s).first->c_str();
+}
+
+ParamDef spareDef(const lang::Channel& ch) {
+    const char* name = interned(ch.name);
+    const char* help = interned("What the snippet reads with ch(\"" + ch.name + "\").");
+    switch (ch.type) {
+        case lang::Type::Int:
+            return {name, name, "Parameters", ParamKind::Int, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, -kBig, kBig, "", help};
+        case lang::Type::Vec2:
+        case lang::Type::Vec3:
+        case lang::Type::Vec4:
+            return {name, name, "Parameters", ParamKind::Vector, {0.0f, 0.0f, 0.0f}, -1.0f, 1.0f, -kBig, kBig, "", help};
+        case lang::Type::String: {
+            ParamDef d{name, name, "Parameters", ParamKind::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help};
+            d.text = "";
+            return d;
+        }
+        default:
+            return {name, name, "Parameters", ParamKind::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "", help};
+    }
+}
+
+}  // namespace
+
+const ParamDef* Network::def(const Node& n, std::string_view name) const {
+    const NodeType* t = findNodeType(n.type);
+    if (const ParamDef* d = t ? t->param(name) : nullptr) return d;
+    for (const ParamDef& d : n.spares) {
+        if (name == d.name) return &d;
+    }
+    return nullptr;
+}
+
+const ParamDef* Network::paramDef(int id, std::string_view name) const {
+    const Node* n = node(id);
+    return n ? def(*n, name) : nullptr;
+}
+
+std::vector<const ParamDef*> Network::params(int id) const {
+    std::vector<const ParamDef*> out;
+    const Node* n = node(id);
+    if (!n) return out;
+    if (const NodeType* t = findNodeType(n->type)) {
+        for (const ParamDef& d : t->params) out.push_back(&d);
+    }
+    for (const ParamDef& d : n->spares) out.push_back(&d);
+    return out;
+}
+
+bool Network::syncSpares(Node& n) {
+    const NodeType* t = findNodeType(n.type);
+    const bool wrangle = t && t->core && std::string_view(t->core) == "attribwrangle";
+    std::vector<ParamDef> next;
+    if (wrangle) {
+        const auto it = n.texts.find("snippet");
+        const std::string snippet = it != n.texts.end() ? it->second : std::string();
+        std::string error;
+        const auto prog = snippet.empty() ? nullptr : lang::Program::parse(snippet, error);
+        // A snippet that does not parse -- half typed -- keeps what it asked for.
+        if (!snippet.empty() && !prog) return false;
+        if (prog) {
+            for (const lang::Channel& ch : prog->channels()) {
+                if (!validName(ch.name) || t->param(ch.name)) continue;
+                next.push_back(spareDef(ch));
+            }
+        }
+    }
+    auto same = [](const ParamDef& a, const ParamDef& b) { return std::string_view(a.name) == b.name && a.kind == b.kind; };
+    bool changed = next.size() != n.spares.size();
+    for (const ParamDef& old : n.spares) {
+        const bool kept = std::any_of(next.begin(), next.end(), [&](const ParamDef& d) { return same(d, old); });
+        if (kept) continue;
+        changed = true;
+        n.params.erase(old.name);
+        n.texts.erase(old.name);
+        n.keys.erase(old.name);
+    }
+    for (size_t i = 0; !changed && i < next.size(); ++i) changed = !same(next[i], n.spares[i]);
+    n.spares = std::move(next);
+    return changed;
+}
+
 ParamValue Network::param(int id, std::string_view name) const {
     const Node* n = node(id);
     if (!n) return {};
     const auto it = n->params.find(std::string(name));
     if (it != n->params.end()) return it->second;
-    const NodeType* t = findNodeType(n->type);
-    const ParamDef* d = t ? t->param(name) : nullptr;
+    const ParamDef* d = def(*n, name);
     return d ? d->value : ParamValue{};
 }
 
 bool Network::setParam(int id, std::string_view name, const ParamValue& value) {
     Node* n = node(id);
-    const NodeType* t = n ? findNodeType(n->type) : nullptr;
-    const ParamDef* d = t ? t->param(name) : nullptr;
+    const ParamDef* d = n ? def(*n, name) : nullptr;
     if (!d) return false;
     const ParamValue v = keep(*d, value);
     const std::string key(name);
@@ -1370,7 +1480,7 @@ bool Network::setParam(int id, std::string_view name, const ParamValue& value) {
 bool Network::setParam(int id, std::string_view name, std::string_view text, std::string* error) {
     const Node* n = node(id);
     const NodeType* t = n ? findNodeType(n->type) : nullptr;
-    const ParamDef* d = t ? t->param(name) : nullptr;
+    const ParamDef* d = n ? def(*n, name) : nullptr;
     if (!d) {
         if (error) {
             *error = !n ? "no such node" : !t ? "unknown node type " + n->type : n->name + " has no parameter " + std::string(name);
@@ -1399,22 +1509,23 @@ std::string Network::text(int id, std::string_view name) const {
     if (!n) return {};
     const auto it = n->texts.find(std::string(name));
     if (it != n->texts.end()) return it->second;
-    const NodeType* t = findNodeType(n->type);
-    const ParamDef* d = t ? t->param(name) : nullptr;
+    const ParamDef* d = def(*n, name);
     return d && d->text ? d->text : std::string();
 }
 
 bool Network::setText(int id, std::string_view name, std::string_view value) {
     Node* n = node(id);
-    const NodeType* t = n ? findNodeType(n->type) : nullptr;
-    const ParamDef* d = t ? t->param(name) : nullptr;
+    const ParamDef* d = n ? def(*n, name) : nullptr;
     if (!d || !isText(d->kind)) return false;
     const std::string before = text(id, name);
     // Kept only when it differs from the default, as a number is.
     const std::string key(name);
     if (value == (d->text ? d->text : "")) n->texts.erase(key);
     else n->texts[key] = std::string(value);
-    if (before != value) ++revision_;
+    bool changed = before != value;
+    // A snippet asks for its own parameters.
+    if (changed && name == "snippet" && syncSpares(*n)) changed = true;
+    if (changed) ++revision_;
     return true;
 }
 
@@ -1437,8 +1548,7 @@ ParamValue Network::valueAt(int id, std::string_view name, float frame) const {
     const Node* n = node(id);
     if (n) {
         const auto it = n->keys.find(std::string(name));
-        const NodeType* t = findNodeType(n->type);
-        const ParamDef* d = t ? t->param(name) : nullptr;
+        const ParamDef* d = def(*n, name);
         if (it != n->keys.end() && d) return evaluate(it->second, frame, d->kind);
     }
     return param(id, name);
@@ -1446,8 +1556,7 @@ ParamValue Network::valueAt(int id, std::string_view name, float frame) const {
 
 bool Network::setKey(int id, std::string_view name, float frame, const ParamValue& value, Interp interp) {
     Node* n = node(id);
-    const NodeType* t = n ? findNodeType(n->type) : nullptr;
-    const ParamDef* d = t ? t->param(name) : nullptr;
+    const ParamDef* d = n ? def(*n, name) : nullptr;
     if (!d || isText(d->kind) || !std::isfinite(frame)) return false;
     std::vector<Key>& keys = n->keys[std::string(name)];
     const Key key{frame, keep(*d, value), interp};
@@ -1584,15 +1693,27 @@ std::string Network::save() const {
                 const auto it = n.params.find(d.name);
                 if (it != n.params.end()) out += std::string("  param ") + d.name + ' ' + formatParam(d, it->second) + '\n';
             }
+            // What the snippet asks for, after them.
+            for (const ParamDef& d : n.spares) {
+                if (isText(d.kind)) {
+                    const auto text = n.texts.find(d.name);
+                    if (text != n.texts.end()) out += std::string("  param ") + d.name + ' ' + quotedPath(text->second) + '\n';
+                    continue;
+                }
+                const auto it = n.params.find(d.name);
+                if (it != n.params.end()) out += std::string("  param ") + d.name + ' ' + formatParam(d, it->second) + '\n';
+            }
             // The keys, parameter by parameter in the same order.
-            for (const ParamDef& d : t->params) {
+            auto keysOf = [&](const ParamDef& d) {
                 const auto it = n.keys.find(d.name);
-                if (it == n.keys.end()) continue;
+                if (it == n.keys.end()) return;
                 for (const Key& k : it->second) {
                     out += std::string("  key ") + d.name + ' ' + formatNumber(k.frame) + ' ' + interpName(k.interp) + ' ' +
                            formatParam(d, k.value) + '\n';
                 }
-            }
+            };
+            for (const ParamDef& d : t->params) keysOf(d);
+            for (const ParamDef& d : n.spares) keysOf(d);
         } else {
             // A type this program does not know: its values as they came.
             for (const auto& [name, v] : n.params) {
@@ -1624,6 +1745,17 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
         Link link;
     };
     std::vector<PendingLink> links;
+    // Values of the parameters a snippet asks for: set once the snippet is
+    // read, whatever line it is on.
+    struct PendingValue {
+        int line;
+        int node;
+        bool key;
+        std::string name, value;
+        float frame = 1.0f;
+        Interp interp = Interp::Smooth;
+    };
+    std::vector<PendingValue> spareValues;
     bool header = false;
     Node* current = nullptr;
     int lineNo = 0;
@@ -1693,7 +1825,7 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
             }
             const ParamDef* d = t->param(name);
             if (!d) {
-                warn(lineNo, current->name + " (" + t->label + ") has no parameter " + name + "; dropped");
+                spareValues.push_back({lineNo, current->id, false, name, std::string(value)});
                 continue;
             }
             if (isText(d->kind)) {
@@ -1724,6 +1856,11 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
             Interp interp = Interp::Smooth;
             const bool known = w[3] == "smooth" || w[3] == "linear" || w[3] == "step";
             if (known) interp = w[3] == "linear" ? Interp::Linear : w[3] == "step" ? Interp::Step : Interp::Smooth;
+            if (!d && t && known && parseNumber(w[2], frame)) {
+                spareValues.push_back({lineNo, current->id, true, std::string(w[1]),
+                                       std::string(line.substr(static_cast<size_t>(w[4].data() - line.data()))), frame, interp});
+                continue;
+            }
             if (!d || isText(d->kind)) {
                 warn(lineNo, current->name + " has no parameter " + std::string(w[1]) + " to animate; key dropped");
                 continue;
@@ -1781,6 +1918,40 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
         return fail(lineNo, "unknown line '" + std::string(w[0]) + "'");
     }
     if (!header) return fail(1, "empty: a network starts with 'pgsim 1'");
+    for (Node& n : net.nodes_) syncSpares(n);
+    for (const PendingValue& p : spareValues) {
+        Node* n = net.node(p.node);
+        const ParamDef* d = n ? net.def(*n, p.name) : nullptr;
+        if (!d) {
+            const NodeType* t = n ? findNodeType(n->type) : nullptr;
+            warn(p.line, (n ? n->name : std::string("?")) + " (" + (t ? t->label : "?") + ") has no parameter " + p.name +
+                             (p.key ? " to animate; key dropped" : "; dropped"));
+            continue;
+        }
+        if (isText(d->kind)) {
+            std::string text;
+            if (p.key || !unquoted(p.value, text)) {
+                warn(p.line, n->name + ": " + p.name + " is left at the default");
+            } else if (!text.empty()) {
+                n->texts[p.name] = text;
+            }
+            continue;
+        }
+        ParamValue v;
+        std::string why;
+        if (!parseParam(*d, p.value, v, why)) {
+            warn(p.line, n->name + ": " + why + (p.key ? "; key dropped" : "; left at the default"));
+            continue;
+        }
+        if (p.key) {
+            std::vector<Key>& keys = n->keys[p.name];
+            auto at = std::lower_bound(keys.begin(), keys.end(), p.frame, [](const Key& k, float f) { return k.frame < f; });
+            if (at != keys.end() && std::fabs(at->frame - p.frame) <= 1e-4f) *at = {p.frame, v, p.interp};
+            else keys.insert(at, {p.frame, v, p.interp});
+        } else if (v != d->value) {
+            n->params[p.name] = v;
+        }
+    }
     std::vector<Link> pending;
     for (const PendingLink& p : links) pending.push_back(p.link);
     net.upgrade(pending);

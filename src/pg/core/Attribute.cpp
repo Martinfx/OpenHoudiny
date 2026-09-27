@@ -91,6 +91,16 @@ AttributeArray AttributeArray::gather(std::span<const uint32_t> indices) const {
     return out;
 }
 
+int32_t AttributeArray::addString(const std::string& s) {
+    if (!strings_) {
+        strings_ = std::make_shared<StringTable>();
+    } else if (strings_.use_count() > 1) {
+        strings_ = std::make_shared<StringTable>(*strings_);
+    }
+    strings_->push_back(s);
+    return static_cast<int32_t>(strings_->size() - 1);
+}
+
 int32_t AttributeArray::internString(const std::string& s) {
     if (!strings_) {
         strings_ = std::make_shared<StringTable>();

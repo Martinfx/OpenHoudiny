@@ -235,6 +235,8 @@ private:
 
     sim::Network net_;
     sim::GeometryGraph geometry_;          ///< the geometry nodes, cooked
+    std::map<int, std::string> cookWarnings_;  ///< what each warned about, cooking
+    std::map<int, std::string> cookLogs_;      ///< what each printed, cooking
     std::map<int, std::string> cookErrors_;  ///< what went wrong cooking each
     bool sheet_ = false;                   ///< the parameters panel shows the spreadsheet
     int sheetClass_ = 0;                   ///< points, vertices, primitives, detail, volumes

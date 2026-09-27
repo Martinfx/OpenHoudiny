@@ -91,10 +91,16 @@ void SimWorkspace::updateGeometry() {
     }
     // What went wrong the last time each node cooked.
     cookErrors_.clear();
+    cookWarnings_.clear();
+    cookLogs_.clear();
     for (const sim::Node& n : net_.nodes()) {
         if (!geometry_.contains(n.id)) continue;
         std::string e = geometry_.error(n.id);
         if (!e.empty()) cookErrors_[n.id] = std::move(e);
+        std::string w = geometry_.warning(n.id);
+        if (!w.empty()) cookWarnings_[n.id] = std::move(w);
+        std::string l = geometry_.log(n.id);
+        if (!l.empty()) cookLogs_[n.id] = std::move(l);
     }
 }
 

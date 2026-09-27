@@ -49,7 +49,7 @@ nastaveným na ni.
 | **Color** | Barva `Cd` bodů nebo primitiv |
 | **Group Box** | Skupina bodů uvnitř krabice |
 | **Blast** | Smaže body skupiny — nebo naopak nechá jen je (Keep) — i s primitivy, které ztratí bod |
-| **Point Wrangle** | Snippet nad každým bodem: posouvá body, barví je, vyrábí atributy (jazyk níže) |
+| **Point / Primitive / Detail Wrangle** | Kód nad každým bodem, primitivem, nebo jednou nad celou geometrií: posouvá, barví, vyrábí atributy, čte sousedy a další vstupy, staví a maže geometrii ([wrangle.md](wrangle.md)) |
 | **Normal** | Normály bodů `N`, průměr stěn kolem bodu vážený plochou |
 | **Scatter** | Body rozházené po polygonech úměrně ploše, deterministicky podle seed; barvy a další atributy se interpolují z rohů, `N` ze stěny |
 | **Copy to Points** | Kopie geometrie na každý bod druhého vstupu: velikost `pscale` × Scale, natočená +y do `N` (Align), s atributy bodu (kromě P, N, pscale) |
@@ -63,18 +63,19 @@ co do něj vstupuje. Síť odmítne spoj, který by udělal smyčku.
 
 ### Wrangle
 
-Snippet Point Wrangle je **kód** — víceřádkové pole s neproporcionálním
-písmem; použije se, když se klikne jinam. Chyba v kódu je u uzlu vidět
-(červený odznak, text v parametrech i v tabulce).
+Snippet wranglu je **kód** — víceřádkové pole s neproporcionálním písmem;
+použije se, když se klikne jinam. Chyba v kódu je u uzlu vidět (červený
+odznak, text v parametrech i v tabulce), varování žlutě.
 
 ```c
-@Cd = vec3(0.05, 0.2, 0.6) + vec3(0.9, 0.75, 0.4) * clamp(length(@v) / 2.5, 0, 1)
-@pscale = 0.6 + 0.9 * abs(noise(@P * 2.5))
+@Cd = vec3(0.05, 0.2, 0.6) + vec3(0.9, 0.75, 0.4) * clamp(length(@v) / 2.5, 0, 1);
+@pscale = 0.6 + 0.9 * abs(noise(@P * 2.5));
 ```
 
-Příkazy se oddělují středníkem. Čte `@P`, `@ptnum`, `@numpt`, `@Time`,
-`@Frame` a atributy bodů; funkce `sin cos abs sqrt floor pow min max clamp
-length noise fit vec3`. Typ nového atributu se odvodí z pravé strany.
+Jazyk má proměnné, podmínky, cykly, vlastní funkce, pole a řetězce; čte
+libovolné prvky a další vstupy (`point(1, "P", @ptnum)`, `nearpoints()`),
+staví a maže geometrii (`addpoint()`, `removeprim()`) a `ch("jméno")` z něj
+udělá posuvník uzlu. Celý popis je v [wrangle.md](wrangle.md).
 
 ## 3. Display flag a viewport
 
@@ -236,6 +237,5 @@ link 6.geometry -> 7.geometry
 - Zobrazená geometrie nevrhá stín, neodráží se ve vodě a nedá se kliknutím
   vybrat ve viewportu.
 - Objemy se kreslí jako tečky, ne jako kouř.
-- Jazyk wrangle nemá řídicí struktury ani lokální proměnné (viz ARCHITECTURE).
 - Vaří se na vlákně okna: velmi těžká geometrie (miliony bodů ve Scatter)
   editor na chvíli zastaví.

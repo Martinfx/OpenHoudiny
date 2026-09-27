@@ -1,0 +1,31 @@
+pgsim 1
+# Water on a spiral staircase that a Detail Wrangle builds: a function of
+# its own makes each step, a loop turns them round the middle, and ch()
+# makes the Steps, Rise and Turn sliders under the snippet. The stairs are
+# the shape of an object; water poured on the top step runs down them.
+node 1 detail_wrangle 1 stairs 0 0
+  param snippet "// A spiral staircase: a box a step, turned round the middle.\nvoid stair(vector c; vector size; float angle) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        vector o = set(i & 1 ? 0.5 : -0.5, i & 2 ? 0.5 : -0.5, i & 4 ? 0.5 : -0.5) * size;\n        append(p, addpoint(0, c + set(o.x * cos(angle) + o.z * sin(angle), o.y, o.z * cos(angle) - o.x * sin(angle))));\n    }\n    addprim(0, \"poly\", p[0], p[4], p[6], p[2]);\n    addprim(0, \"poly\", p[1], p[3], p[7], p[5]);\n    addprim(0, \"poly\", p[0], p[1], p[5], p[4]);\n    addprim(0, \"poly\", p[2], p[6], p[7], p[3]);\n    addprim(0, \"poly\", p[0], p[2], p[3], p[1]);\n    addprim(0, \"poly\", p[4], p[5], p[7], p[6]);\n}\n\nint steps = chi(\"steps\");\nfloat rise = ch(\"rise\");\nfor (int s = 0; s < steps; s++) {\n    float a = radians(ch(\"turn\") * s);\n    float h = rise * (s + 1);  // from the floor up: a solid stair\n    stair(set(cos(a) * 0.45, h * 0.5, sin(a) * 0.45), set(0.5, h, 0.24), -a);\n}"
+  param steps 12
+  param rise 0.1
+  param turn 25
+node 2 object 1 staircase 0 170
+  param color 0.55 0.5 0.45
+node 3 water_source 1 spout 0 290
+  param center -0.02 1.3 -0.47
+  param size 0.1 0.06 0.12
+  param mode flow
+  param velocity -0.3 0 0.08
+node 4 liquid_solver 1 solver 250 190
+  param size 1.8 1.6 1.8
+node 5 water_look 1 look 480 190
+node 6 output 2 output 700 190
+node 7 camera 1 camera 700 330
+  param center 1.9 1.6 2.1
+  param rotation -24 42 0
+  param focal 30
+link 1.geometry -> 2.shape
+link 2.collider -> 4.colliders
+link 3.water -> 4.sources
+link 4.liquid -> 5.liquid
+link 5.look -> 6.look
+link 7.camera -> 6.camera

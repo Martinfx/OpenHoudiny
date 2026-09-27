@@ -167,7 +167,8 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
     // The parameters, set -- only those that changed dirty anything.
     for (auto& [id, m] : nodes_) {
         const Node& n = *net.node(id);
-        const NodeType& t = *findNodeType(n.type);
+        // The type's parameters and those the node's snippet asks for.
+        const std::vector<const ParamDef*> defs = net.params(id);
         m.bypass = n.bypass;
         m.file.clear();
         m.node->editParams([&](ParamSet& p) {
@@ -175,7 +176,8 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
             // Animated parameters: their keys, as expressions of the frame.
             if (n.keys != m.keys) {
                 changed = true;
-                for (const ParamDef& d : t.params) {
+                for (const ParamDef* dp : defs) {
+                    const ParamDef& d = *dp;
                     const std::string name = d.name;
                     const bool vector = d.kind == ParamKind::Vector || d.kind == ParamKind::Color;
                     const auto it = n.keys.find(name);
@@ -200,7 +202,8 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
                 }
                 m.keys = n.keys;
             }
-            for (const ParamDef& d : t.params) {
+            for (const ParamDef* dp : defs) {
+                const ParamDef& d = *dp;
                 const ParamValue v = net.param(id, d.name);
                 const std::string name = d.name;
                 switch (d.kind) {
@@ -295,6 +298,16 @@ GeometryPtr GeometryGraph::cook(int id, int frame, float timeStep) {
 std::string GeometryGraph::error(int id) const {
     const auto it = nodes_.find(id);
     return it == nodes_.end() ? std::string() : it->second.node->cookError();
+}
+
+std::string GeometryGraph::warning(int id) const {
+    const auto it = nodes_.find(id);
+    return it == nodes_.end() ? std::string() : it->second.node->cookWarning();
+}
+
+std::string GeometryGraph::log(int id) const {
+    const auto it = nodes_.find(id);
+    return it == nodes_.end() ? std::string() : it->second.node->cookLog();
 }
 
 }  // namespace pg::sim

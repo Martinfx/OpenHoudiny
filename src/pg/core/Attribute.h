@@ -95,6 +95,13 @@ public:
 
     /// Returns the index for `s`, adding it to the table if new. Write path.
     int32_t internString(const std::string& s);
+    /// Adds `s` to the table without looking for it first -- for a caller
+    /// that knows it is not there (and keeps its own index). Write path.
+    int32_t addString(const std::string& s);
+    /// The string table, index by index.
+    std::span<const std::string> strings() const {
+        return strings_ ? std::span<const std::string>(*strings_) : std::span<const std::string>();
+    }
     /// Empty string for an out-of-range index.
     const std::string& stringValue(int32_t index) const;
     size_t stringTableSize() const { return strings_ ? strings_->size() : 0; }

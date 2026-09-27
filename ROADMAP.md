@@ -96,10 +96,11 @@ předchozí hotový, zdokumentovaný a otestovaný (ASan, UBSan, TSan, libc++).
 
 ### Krok 1 — Procedurální jádro naplno *(rozpracováno)*
 
-- **Wrangle v2:** lokální proměnné, `if`/`else`, `for`, `while`, vlastní
-  funkce; běh nad body, primitivy, rohy i celou geometrií; čtení jiných
-  prvků a hledání sousedů (`point()`, `nearpoints()`); tvorba a mazání bodů
-  a primitiv; celočíselné atributy; pole jako výsledky dotazů.
+- ✅ **Wrangle v2** ([docs/wrangle.md](docs/wrangle.md)): lokální
+  proměnné, `if`/`else`, `for`, `while`, vlastní funkce; běh nad body,
+  primitivy, rohy i celou geometrií; čtení jiných prvků a hledání sousedů
+  (`point()`, `nearpoints()`); tvorba a mazání bodů a primitiv;
+  celočíselné atributy; pole jako výsledky dotazů; posuvníky z `ch()`.
 - **Výrazy v parametrech:** `$F`, `$T`, matematika a odkazy
   `ch("../uzel/parametr")`, se sledováním závislostí a času.
 - **Subnety a digital assets:** kus sítě zabalený do uzlu s vybranými

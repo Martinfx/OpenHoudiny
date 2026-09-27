@@ -72,6 +72,11 @@ public:
     bool evalBool(const std::string& name, const CookContext& ctx, bool fallback = false) const;
 
     bool contains(const std::string& name) const { return values_.count(name) > 0; }
+    /// The value stored under `name`, of whatever type; null if none.
+    const ParamValue* value(const std::string& name) const {
+        const auto it = values_.find(name);
+        return it == values_.end() ? nullptr : &it->second;
+    }
     std::vector<std::string> names() const;
 
 private:
@@ -152,6 +157,11 @@ public:
     /// not parse, a file that is not there -- or empty. The node still cooks
     /// to something (its input, or nothing), so the graph downstream runs.
     virtual std::string cookError() const { return {}; }
+    /// What the last cook warned about -- it cooked, but something is not
+    /// as asked -- one line each; empty if nothing.
+    virtual std::string cookWarning() const { return {}; }
+    /// What the last cook printed (a wrangle's printf()); empty if nothing.
+    virtual std::string cookLog() const { return {}; }
 
 protected:
     ParamSet params_;

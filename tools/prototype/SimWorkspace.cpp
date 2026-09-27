@@ -796,8 +796,9 @@ void SimWorkspace::duplicate(const std::vector<int>& nodes) {
         const int copy = net_.add(original.type, at.x, at.y);
         if (!copy) continue;
         net_.rename(copy, net_.uniqueName(original.name));
-        for (const auto& [name, value] : original.params) net_.setParam(copy, name, value);
+        // Texts first: a snippet makes the parameters it asks for.
         for (const auto& [name, text] : original.texts) net_.setText(copy, name, text);
+        for (const auto& [name, value] : original.params) net_.setParam(copy, name, value);
         for (const auto& [name, keys] : original.keys) {
             for (const sim::Key& k : keys) net_.setKey(copy, name, k.frame, k.value, k.interp);
         }
@@ -948,6 +949,32 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
     }
+    if (const auto w = cookWarnings_.find(id); w != cookWarnings_.end()) {
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetTextLineHeight();
+        theme::drawIcon(ImGui::GetWindowDrawList(), Icon::Error, ImVec2(q.x + h * 0.5f, q.y + h * 0.5f), h * 0.9f, theme::kYellow);
+        ImGui::SetCursorScreenPos(ImVec2(q.x + h * 1.4f, q.y));
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kYellow));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(w->second.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    }
+    if (const auto l = cookLogs_.find(id); l != cookLogs_.end()) {
+        // What printf() said: the first lines of it.
+        std::string shown = l->second;
+        size_t lines = 0, cut = 0;
+        for (; cut < shown.size() && lines < 12; ++cut) {
+            if (shown[cut] == '\n') ++lines;
+        }
+        if (cut < shown.size()) shown = shown.substr(0, cut) + "\xe2\x80\xa6";
+        ImGui::TextDisabled("printf():");
+        ImGui::PushFont(theme::fonts().mono, 0.0f);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(shown.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopFont();
+    }
     if (node.bypass) {
         ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(IM_COL32(230, 200, 90, 255)));
         ImGui::TextUnformatted(type.core ? "Bypassed: what comes in goes on unchanged."
@@ -967,10 +994,12 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
         }
     }
 
-    // The parameters, section by section, in the order of the table.
+    // The parameters, section by section, in the order of the table --
+    // and after them those the node's snippet asks for with ch().
+    const std::vector<const sim::ParamDef*> defs = net_.params(id);
     std::vector<std::string> sections;
-    for (const sim::ParamDef& p : type.params) {
-        if (std::find(sections.begin(), sections.end(), p.section) == sections.end()) sections.push_back(p.section);
+    for (const sim::ParamDef* p : defs) {
+        if (std::find(sections.begin(), sections.end(), p->section) == sections.end()) sections.push_back(p->section);
     }
     for (const std::string& section : sections) {
         ImGui::PushID(section.c_str());
@@ -978,7 +1007,8 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
             ImGui::PopID();
             continue;
         }
-        for (const sim::ParamDef& p : type.params) {
+        for (const sim::ParamDef* pp : defs) {
+            const sim::ParamDef& p = *pp;
             if (section != p.section) continue;
             ImGui::PushID(p.name);
             // At the play head: an animated parameter's value there, and its key.
