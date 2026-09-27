@@ -1,13 +1,15 @@
 # Roadmapa
 
-> Stav dokumentu: **v2** · Poslední aktualizace: 2026-09-27
+> Stav dokumentu: **v3** · Poslední aktualizace: 2026-09-27
 >
 > Živý dokument. Verze 1 (2026-09-21) plánovala headless knihovnu pro
 > geometrii, GUI až ve třetí fázi a simulace po verzi 1.0. Cíl se změnil:
 > **prototyp profesionálního softwaru typu Houdini** — celá cesta od
 > geometrie přes simulace po obrázek a export. Verze 1 je v historii gitu
 > (`git show a8058b2:ROADMAP.md`); její měřená kritéria platí dál a prototyp
-> je ověřuje ([§3](#3-co-je-hotové)).
+> je ověřuje ([§3](#3-co-je-hotové)). Verze 3 rozepsala, co chybí k použití
+> ve VFX studiu: krok 3 je napojení do pipeline (USD, farma, EXR), krok 4
+> destrukce pro produkci, krok 5 měřítko.
 >
 > Související: [ARCHITECTURE.md](ARCHITECTURE.md) — datový model, cook engine
 > a to, co z toho prototyp ověřuje.
@@ -158,14 +160,63 @@ patra se drtí a oblak prachu se valí ulicemi; `prototype sim demolition
 out.mp4` dá video a snímky jsou bitově stejné při každém běhu (test na
 1 a 4 vláknech i mezi dvěma řešiči).
 
-### Krok 3 — Pipeline
+### Krok 3 — Napojení do studia (pipeline)
 
-- **Python API** (`import pg`): stavba sítě, parametry, vaření a simulace ze
-  skriptu; atributy jako pole numpy bez kopie.
-- **Export do USD** (`.usda`): animované meshe, body, kamera.
+Studio by prototyp používalo jako Houdini: jako FX nástroj uprostřed
+pipeline, který dostane modely a kameru od ostatních oddělení a vydá
+simulace, které vyrenderuje oddělení osvětlení (Karma, Arnold, RenderMan,
+Cycles) a složí compositing. Bez výměny dat s ostatními programy ho proto
+nepoužije nikdo, ať simuluje jakkoli dobře.
 
-**Hotovo, když:** scéna z kroku 2 jde postavit a spočítat čistě z Pythonu
-a výsledek se otevře v Blenderu jako USD.
+- **USD — zápis** (`.usda`, bez knihovny): celá scéna v jednom souboru —
+  zobrazená geometrie, kusy jako tělesa s pohybem (tvar jednou, pak jen
+  poloha a otočení), drť jako body, prach jako objemy (VDB vedle),
+  kamera s ohniskem podle konvence USD, slunce a obloha; časové vzorky jen
+  tam, kde se něco mění.
+- **USD — čtení**: geometrie a kamera z jiných programů (kamera
+  z matchmove) jako uzel sítě.
+- **`v` a stabilní `id`** u všech částic (drť, voda, déšť): z nich
+  renderery počítají rozmazání pohybem a instancování.
+- **Python API** (`import pg`): stavba sítě, parametry, vaření a simulace
+  ze skriptu; atributy jako pole numpy bez kopie.
+- **Farma**: rozsah snímků (`--start`, `--end`) pro render i export
+  z cache; simulace přerušená uprostřed jde dopočítat z uloženého stavu.
+- **EXR**: náhledový render do lineárního EXR s hloubkou, vektory pohybu
+  a maskami — pro previs a compositing.
+
+**Hotovo, když:** scéna z kroku 2 jde postavit a spočítat čistě
+z Pythonu; výsledek se otevře v Blenderu a v usdview jako USD (kusy, drť,
+prach, kamera, světlo) a render v Cycles sedí na náš náhled; simulace
+přerušená uprostřed jde dopočítat z cache bitově stejně.
+
+### Krok 4 — Destrukce pro produkci
+
+- **Lámání podle materiálu:** beton na hrudy s odštípnutými hranami, sklo
+  paprskovitě, dřevo na třísky podél vláken; šum na lomových plochách;
+  zjednodušené tvary pro simulaci a detailní pro render.
+- **Síť vazeb jako geometrie:** lepidlo, pružné vazby (ohýbaná výztuž),
+  klouby; pevnost z atributů, kterou jde malovat a upravovat.
+- **Sekundární lámání:** kus se rozpadne až při nárazu.
+- **Úlomky jako částice:** body z čerstvých lomových ploch, částicový
+  solver, instancované tvary kamínků; stopy prachu za letícími kusy.
+- **Usměrněná simulace:** kusy sledují animaci, síly je vedou — režisér
+  chce konkrétní průběh pádu.
+- **Tuhá tělesa na více vláknech**, deterministicky.
+
+**Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu
+a sekundární lámání a desetkrát víc kusů za stejný čas na snímek.
+
+### Krok 5 — Měřítko
+
+- **Řídké mřížky a GPU** pro kouř a vodu — rozhraní `Grid` je malé právě
+  proto, aby šlo vyměnit; **upres**: jemná turbulence doplněná do hrubé
+  simulace.
+- **Packed primitives, instance a out-of-core** — miliony kusů a data
+  větší než paměť.
+- **Viewport pro velké cache**: zástupné tvary, přehrávání z disku.
+
+**Hotovo, když:** prach odstřelu má 100 milionů voxelů a spočítá se na
+jednom stroji přes noc.
 
 ---
 
@@ -177,15 +228,15 @@ Seřazeno podle poměru hodnota / náklad:
    solver pokryje široké spektrum.
 2. **Vazby mezi řešiči** — voda uhasí oheň, úlomky a déšť v kouři, déšť
    přidá vodu do bazénu.
-3. **Řídké mřížky a GPU** pro kouř a vodu — řádově větší scény. Rozhraní
-   `Grid` je malé právě proto, aby šlo vyměnit.
-4. **Render pro finální obraz** — path tracing objemů a povrchů, průchody
-   (AOV) do EXR pro kompozici.
-5. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
+3. **Render pro finální obraz** — path tracing objemů a povrchů
+   s vícenásobným rozptylem, materiály a textury, rozmazání pohybem
+   a hloubka ostrosti, průchody (AOV) do EXR, barevná správa OCIO/ACES.
+   Do té doby renderují studia přes USD vlastními renderery.
+4. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
    hrdlem (kritérium M5 výše).
-6. **Packed primitives a out-of-core** — tisíce instancí a data větší než
-   paměť.
-7. **Alembic, čtení VDB, MaterialX.**
+5. **Alembic, čtení VDB, MaterialX.**
+6. **Build podle VFX Reference Platform** — Rocky Linux a knihovny ve
+   verzích, se kterými počítají pipeline studií.
 
 ---
 
@@ -196,7 +247,7 @@ Seřazeno podle poměru hodnota / náklad:
 | R1 | ~~Ochranná známka „Houdini"~~ | — | **Vyřešeno 2026-09-27:** projekt se jmenuje Prototype |
 | R2 | Rozsah přeroste síly | Nic není dotažené | Každý krok končí demem a kritériem „hotovo, když"; další až po něm |
 | R3 | Nedeterminismus objevený pozdě | Cache a render se rozejdou, testy nejdou | Bitová shoda na 1 a 4 vláknech je v testech každého řešiče |
-| R4 | Výkon hustých mřížek | Scény zůstanou malé | Malé rozhraní `Grid`, výměna za řídké mřížky (§5) |
+| R4 | Výkon hustých mřížek | Scény zůstanou malé | Malé rozhraní `Grid`, výměna za řídké mřížky (krok 5) |
 | R5 | Závislosti (Jolt, Python) | Build na FreeBSD, bez sítě | Každá závislost volitelná, jádro zůstává jen C++20; build ověřovaný i s libc++ |
 | R6 | Projekt zůstane „one man show" | Zánik při vyhoření | Dokumentace a příklady ke každému kroku, testy jako specifikace |
 
