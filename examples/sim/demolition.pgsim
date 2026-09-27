@@ -403,6 +403,7 @@ node 77 output 2 output 1400 60
   param sky_intensity 0.6
   param ground_color 0.2 0.2 0.2
   param grid off
+  param sky_behind on
 node 78 camera 1 camera 1400 200
   param focal 32
   key center 1 smooth 60 75 80

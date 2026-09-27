@@ -604,6 +604,17 @@ vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) { return shadeSurface(p, n, vi
 // and gone where they would crowd.
 uniform vec3 u_ground;
 uniform bool u_grid;
+uniform bool u_skyBehind;
+
+// The sky behind it all, outdoors: hazy and brightest towards the horizon,
+// glowing round the sun. Below the horizon, where the floor has faded out,
+// the haze at the horizon.
+vec3 skyBehind(vec3 d) {
+    float up = max(d.y, 0.0);
+    float toSun = max(dot(d, u_lightDir), 0.0);
+    vec3 haze = u_sky * (2.2 - 1.2 * sqrt(up)) + u_light * 0.06;
+    return haze + u_light * (0.5 * pow(toSun, 48.0) + 0.12 * pow(toSun, 6.0));
+}
 vec3 floorAlbedo(vec2 q, vec2 width) {
     if (!u_grid) return u_ground;
     vec2 w = max(width, vec2(1e-6));
@@ -687,7 +698,8 @@ vec3 shadeWater(vec3 p, vec3 d) {
 
 void main() {
     vec3 dir = normalize(u_forward + v_ndc.x * u_tanHalfFov.x * u_right + v_ndc.y * u_tanHalfFov.y * u_up);
-    vec3 background = mix(u_backgroundBottom, u_backgroundTop, clamp(v_ndc.y * 0.5 + 0.5, 0.0, 1.0));
+    vec3 background = u_skyBehind ? u_exposure * skyBehind(dir)
+                                  : mix(u_backgroundBottom, u_backgroundTop, clamp(v_ndc.y * 0.5 + 0.5, 0.0, 1.0));
 
     // Where the ray meets the floor -- worked out for every pixel, so that
     // the grid knows how wide a pixel is there.
@@ -882,7 +894,9 @@ void main() { o_depth = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0); }
 )";
 
 // The displayed geometry's loose points: round dots, shaded as little balls,
-// as wide as their pscale where they have one -- else a few pixels.
+// as wide as their pscale where they have one -- else a few pixels. In the
+// gas -- grit in the dust -- the smoke between the eye and a dot hides it,
+// and the smoke between it and the sun shades it.
 const char* kDotVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_color;
@@ -891,29 +905,60 @@ uniform mat4 u_viewProj;
 uniform float u_pixelsPerUnit;  // pixels a world unit spans 1 unit in front of the eye
 uniform float u_dot;            // pixels across a dot with no size
 out vec3 v_color;
+out vec3 v_world;
 void main() {
     gl_Position = u_viewProj * vec4(a_position, 1.0);
     float px = a_radius > 0.0 ? 2.0 * a_radius * u_pixelsPerUnit / max(gl_Position.w, 1e-4) : u_dot;
     gl_PointSize = clamp(px, 1.5, 64.0);
     v_color = a_color;
+    v_world = a_position;
 }
 )";
 
 const char* kDotFragment = R"(#version 330 core
 in vec3 v_color;
+in vec3 v_world;
 out vec4 o_color;
 uniform vec3 u_lightView;  // towards the sun, in the eye's frame: x right, y up, z back at the eye
 uniform vec3 u_light, u_sky;
 uniform float u_exposure;
+uniform bool u_hasGas;
+uniform sampler3D u_fields, u_sunlight;
+uniform vec3 u_boxMin, u_boxSize, u_texel, u_eye;
+uniform float u_extinction, u_occlusion;
 vec3 toneMap(vec3 x) { return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+bool inBox(vec3 uvw) { return all(greaterThanEqual(uvw, vec3(0.0))) && all(lessThanEqual(uvw, vec3(1.0))); }
+float fadeAt(vec3 uvw) {  // as the volume fades at the open sides of its box
+    vec3 cells = min(uvw, 1.0 - uvw) / u_texel;
+    float side = min(cells.x, cells.z) / 6.0, top = (1.0 - uvw.y) / u_texel.y / 10.0;
+    return smoothstep(0.0, 1.0, min(side, top));
+}
 void main() {
     vec2 q = gl_PointCoord * 2.0 - 1.0;
     q.y = -q.y;
     float r2 = dot(q, q);
     if (r2 > 1.0) discard;
     vec3 n = vec3(q, sqrt(1.0 - r2));
-    vec3 lit = v_color * (u_light * max(dot(n, u_lightView), 0.0) + u_sky * (0.7 + 0.5 * n.y));
-    o_color = vec4(pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), 1.0);
+    // The smoke: what of the sun gets here, how much the sky is hidden, and
+    // how much of the dot the smoke in front lets through.
+    float sun = 1.0, sky = 1.0, seen = 1.0;
+    if (u_hasGas) {
+        vec3 here = (v_world - u_boxMin) / u_boxSize;
+        if (inBox(here)) {
+            sun = textureLod(u_sunlight, here, 0.0).r;
+            sky = exp(-u_occlusion * max(textureLod(u_fields, here, 2.0).r, 0.0));
+        }
+        vec3 d = u_eye - v_world;
+        const int steps = 32;
+        float smoke = 0.0;
+        for (int i = 0; i < steps; ++i) {
+            vec3 uvw = (v_world + d * ((float(i) + 0.5) / float(steps)) - u_boxMin) / u_boxSize;
+            if (inBox(uvw)) smoke += max(textureLod(u_fields, uvw, 0.0).r, 0.0) * fadeAt(uvw);
+        }
+        seen = exp(-u_extinction * smoke * length(d) / float(steps));
+    }
+    vec3 lit = v_color * (u_light * sun * max(dot(n, u_lightView), 0.0) + u_sky * sky * (0.7 + 0.5 * n.y));
+    o_color = vec4(pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), seen);
 }
 )";
 
@@ -1885,8 +1930,31 @@ void VolumeRenderer::drawGeometry(int width, int height) {
         gl_.Uniform3f(location(dotProgram_, "u_sky"), s.skyColor.x * s.skyIntensity, s.skyColor.y * s.skyIntensity,
                       s.skyColor.z * s.skyIntensity);
         gl_.Uniform1f(location(dotProgram_, "u_exposure"), s.exposure);
+        // Through the smoke: the fields and the sunlight in them, where there is gas.
+        gl_.Uniform1i(location(dotProgram_, "u_hasGas"), hasFrame_ ? 1 : 0);
+        const Vec3 lo = domain_.origin(), size = domain_.size();
+        float eye[3];
+        orbit.eye(eye);
+        gl_.Uniform3f(location(dotProgram_, "u_boxMin"), lo.x, lo.y, lo.z);
+        gl_.Uniform3f(location(dotProgram_, "u_boxSize"), size.x, size.y, size.z);
+        gl_.Uniform3f(location(dotProgram_, "u_texel"), 1.0f / static_cast<float>(domain_.cells[0]),
+                      1.0f / static_cast<float>(domain_.cells[1]), 1.0f / static_cast<float>(domain_.cells[2]));
+        gl_.Uniform3f(location(dotProgram_, "u_eye"), eye[0], eye[1], eye[2]);
+        gl_.Uniform1f(location(dotProgram_, "u_extinction"), s.smokeDensity);
+        gl_.Uniform1f(location(dotProgram_, "u_occlusion"), s.occlusion);
+        gl_.ActiveTexture(TEXTURE0);
+        gl_.BindTexture(TEXTURE_3D, fields_);
+        gl_.Uniform1i(location(dotProgram_, "u_fields"), 0);
+        gl_.ActiveTexture(TEXTURE1);
+        gl_.BindTexture(TEXTURE_3D, light_);
+        gl_.Uniform1i(location(dotProgram_, "u_sunlight"), 1);
+        // A dot deep in the smoke is as good as gone: blended over what the
+        // smoke drew there.
+        gl_.Enable(BLEND);
+        gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
         gl_.BindVertexArray(dotVao_);
         gl_.DrawArrays(POINTS, 0, dots_);
+        gl_.Disable(BLEND);
         gl_.Disable(PROGRAM_POINT_SIZE);
     }
     if (curveVertices_ > 0 && lineProgram_) {
@@ -2202,6 +2270,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform1i(location(program_, "u_floor"), s.floor ? 1 : 0);
     gl_.Uniform3f(location(program_, "u_ground"), s.groundColor.x, s.groundColor.y, s.groundColor.z);
     gl_.Uniform1i(location(program_, "u_grid"), s.grid ? 1 : 0);
+    gl_.Uniform1i(location(program_, "u_skyBehind"), s.skyBehind ? 1 : 0);
     // The shadows of the geometry, from their map.
     const bool geoShadow = hasGeoShadow_ && geoVertices_ > 0;
     gl_.Uniform1i(location(program_, "u_hasGeoShadow"), geoShadow ? 1 : 0);

@@ -331,6 +331,9 @@ std::vector<ParamDef> outputParams() {
                  "The colour of the floor: dark asphalt, pale concrete, dusty earth."});
     p.push_back({"grid", "Grid", "Image", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                  "Lines on the floor every 10 cm and every metre, to judge sizes by. Off for a shot."});
+    p.push_back({"sky_behind", "Sky Behind", "Image", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                 "The sky behind everything, where the floor ends: hazy towards the horizon, glowing round the "
+                 "sun -- outdoors, and smoke against the light. Off, the dark backdrop of a studio."});
     return p;
 }
 
@@ -2972,6 +2975,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     k.floor = f(*output, "floor") != 0.0f;
     k.groundColor = v3(*output, "ground_color");
     k.grid = f(*output, "grid") != 0.0f;
+    k.skyBehind = f(*output, "sky_behind") != 0.0f;
     // The camera of the shot.
     if (const Node* cam = upstream(*output, "camera")) {
         Camera& m = c.camera;

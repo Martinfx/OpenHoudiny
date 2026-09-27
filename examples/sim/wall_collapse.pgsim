@@ -1,0 +1,227 @@
+pgsim 1
+# The front of a brick house blown into the street, seen from the ground:
+# the blocks of its wall -- broken by a Voronoi Fracture, glued back by the
+# RBD Solver -- are thrown out by charges that go off from the ground up,
+# and come tumbling down the street towards a camera a hand's width above
+# the asphalt, through the dust the knocks puff and the falling wall pushes
+# out (the Pyro Solver), against the low sun. prototype sim wall_collapse
+# out.mp4 renders it through the camera -- a slow track sideways.
+node 1 detail_wrangle 1 facade 0 0
+  param snippet "// The front of a brick house, the last wall of it standing: floor by\n// floor a band of stone where the floor was, piers between the windows and\n// the wall under and over them; a parapet on top. Every block a box of its\n// own, touching the next face to face: what the Voronoi Fracture cuts, and\n// what the RBD Solver glues where they touch.\nvoid block(vector lo; vector hi; vector color; int fl) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));  // -x\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));  // +x\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));  // -y\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));  // +y\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));  // -z\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));  // +z\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"floor\", f[k], fl);\n    }\n}\n\nfloat w = ch(\"width\");\nint floors = max(chi(\"floors\"), 1);\nfloat fh = max(ch(\"floor_height\"), 2.0);\nfloat t = ch(\"thickness\");\nfloat z1 = ch(\"front\");\nfloat z0 = z1 - t;\nfloat bay = max(ch(\"bay\"), 1.0);\nfloat win = ch(\"window\");\nfloat sill = ch(\"sill\");\nfloat head = ch(\"head\");\nvector brick = chv(\"brick\");\nvector stone = chv(\"stone\");\nfloat hw = w / 2;\nint n = max(1, int(rint(w / bay)));\nfloat bw = w / n;\nfloat pier = max(bw - win, 0.4) / 2;\nfor (int fl = 0; fl < floors; fl++) {\n    float y0 = fl * fh;\n    block(set(-hw, y0, z0), set(hw, y0 + 0.3, z1), stone, fl);\n    float a = y0 + 0.3;\n    float b = y0 + fh;\n    for (int k = 0; k < n; k++) {\n        float s = -hw + k * bw;\n        block(set(s, a, z0), set(s + pier, b, z1), brick, fl);\n        block(set(s + pier, a, z0), set(s + bw - pier, y0 + sill, z1), brick, fl);\n        block(set(s + pier, y0 + head, z0), set(s + bw - pier, b, z1), brick, fl);\n        block(set(s + bw - pier, a, z0), set(s + bw, b, z1), brick, fl);\n    }\n}\nfloat top = floors * fh;\nblock(set(-hw, top, z0), set(hw, top + 0.3, z1), stone, floors);\nblock(set(-hw, top + 0.3, z0), set(hw, top + 1.2, z1), brick, floors);"
+  param width 12
+  param floors 3
+  param floor_height 3
+  param thickness 0.45
+  param front 2
+  param bay 3
+  param window 1.3
+  param sill 0.9
+  param head 2.3
+  param brick 0.5 0.25 0.18
+  param stone 0.7 0.64 0.55
+node 2 detail_wrangle 1 seeds 0 130
+  param snippet "// Where the wall breaks: points in each of its blocks, as many as the\n// block holds cells of Size, a little random -- chunks the size of a few\n// bricks, no two alike.\nfloat size = ch(\"size\");\nint blocks = nprimitives(1) / 6;\nfor (int k = 0; k < blocks; k++) {\n    vector lo = set(1e9, 1e9, 1e9);\n    vector hi = set(-1e9, -1e9, -1e9);\n    for (int f = 0; f < 6; f++) {\n        foreach (int pt; primpoints(1, k * 6 + f)) {\n            vector p = point(1, \"P\", pt);\n            lo = set(min(lo.x, p.x), min(lo.y, p.y), min(lo.z, p.z));\n            hi = set(max(hi.x, p.x), max(hi.y, p.y), max(hi.z, p.z));\n        }\n    }\n    vector s = hi - lo;\n    float n = s.x * s.y * s.z / (size * size * size);\n    int count = max(1, int(floor(n + rand(k * 7 + 3))));\n    for (int i = 0; i < count; i++) {\n        vector r = set(rand(k * 131 + i * 3), rand(k * 131 + i * 3 + 1), rand(k * 131 + i * 3 + 2));\n        addpoint(0, lo + s * (0.1 + 0.8 * r));\n    }\n}"
+  param size 0.55
+node 3 voronoi_fracture 1 fracture 250 60
+node 4 primitive_wrangle 1 charges 480 60
+  param snippet "// The charges go off from the ground up, a course after the other: the foot\n// of the wall is blown out into the street and what stood on it thrown\n// after it -- less far the higher it was, so the wall folds over and comes\n// down in a wave of chunks that tumble towards the camera. The lowest\n// blocks turn to dust.\nfloat fire = ch(\"fire\");\nfloat push = ch(\"push\");\nfloat y = @P.y;\ni@active = 1;\nf@glue = 1;\nf@crush = 0;\nf@release = fire + 0.07 * y + 0.08 * rand(i@piece);\ni@vanish = y < 0.35 && rand(i@piece + 5) < 0.5;\nfloat out = push * max(1.3 - y / 9, 0.25) * (0.6 + 0.8 * rand(i@piece + 3));\nv@kick = set((rand(i@piece + 1) - 0.5) * 1.6, 0.4 + 1.6 * rand(i@piece + 2), out);"
+  param fire 0.5
+  param push 6
+node 5 rbd_solver 1 rbd 710 60
+  param density 1900
+  param friction 0.7
+  param bounce 0.25
+  param glue 80
+  param substeps 4
+  param dust 1.5
+  param impact_dust 2.5
+  param dust_size 0.5
+  param debris 0.2
+  param air 2
+  param color 0.5 0.25 0.18
+  param inside_color 0.56 0.36 0.27
+node 6 building 1 left 0 330
+  param floors 5
+  param floor_height 3.2
+  param width 20
+  param depth 10
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.62 0.52 0.42
+node 7 transform 1 at_left 230 330
+  param t -14.5 0 4
+  param r 0 90 0
+node 8 building 1 right 0 440
+  param floors 4
+  param floor_height 3.2
+  param width 20
+  param depth 10
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.55 0.33 0.26
+node 9 transform 1 at_right 230 440
+  param t 14.5 0 4
+  param r 0 -90 0
+node 10 box 1 kerb_left 460 330
+  param size 3 0.15 30
+  param center -8 0.075 6
+node 11 box 1 kerb_right 460 440
+  param size 3 0.15 30
+  param center 8 0.075 6
+node 12 color 1 pavement 690 330
+  param color 0.42 0.41 0.4
+  param class primitive
+node 13 merge 1 street 920 330
+  display
+node 14 turbulence 1 billows 710 240
+  param strength 2
+  param scale 1.5
+  param speed 0.5
+node 15 pyro_solver 2 dust 940 120
+  param size 28 12 28
+  param resolution 176
+  param buoyancy 0.2
+  param weight 0.3
+  param vorticity 4
+  param cooling 1.5
+  param smoke_decay 0.02
+node 16 volume_look 2 dust_look 1170 120
+  param smoke_color 0.74 0.66 0.55
+  param smoke_density 10
+  param occlusion 1
+node 17 object 1 in_left 940 330
+  param shape box
+  param center -14.5 7.8 4
+  param size 9 15.6 19
+  param color 0.5 0.5 0.5
+node 18 object 1 in_right 940 440
+  param shape box
+  param center 14.5 6.2 4
+  param size 9 12.4 19
+  param color 0.5 0.5 0.5
+node 19 output 2 output 1400 60
+  param frames 120
+  param light_azimuth 270
+  param light_elevation 14
+  param light_color 1 0.84 0.62
+  param light_intensity 4.5
+  param sky_color 0.9 0.84 0.76
+  param sky_intensity 0.55
+  param exposure 0.85
+  param ground_color 0.11 0.11 0.11
+  param grid off
+  param sky_behind on
+node 20 camera 1 camera 1400 200
+  param focal 22
+  key center 1 smooth 2.5 0.4 17
+  key center 120 smooth -2.5 0.4 16.5
+  key rotation 1 smooth 12 9.6 0
+  key rotation 120 smooth 12.3 -9.9 0
+link 1.geometry -> 2.input1
+link 1.geometry -> 3.geometry
+link 2.geometry -> 3.points
+link 3.geometry -> 4.geometry
+link 4.geometry -> 5.pieces
+link 6.geometry -> 7.geometry
+link 7.geometry -> 13.geometry
+link 8.geometry -> 9.geometry
+link 9.geometry -> 13.geometry
+link 11.geometry -> 12.geometry
+link 12.geometry -> 13.geometry
+link 5.dust -> 15.sources
+link 5.collider -> 15.colliders
+link 14.force -> 15.forces
+link 17.collider -> 15.colliders
+link 18.collider -> 15.colliders
+link 15.gas -> 16.gas
+link 5.look -> 19.look
+link 16.look -> 19.look
+link 20.camera -> 19.camera
+definition building
+| pgsim 1
+| asset building 1 "Building"
+| help "A building from sliders: Floors high, Width by Depth, its walls cut into bays with a window in each -- framed and set in -- a door in the middle of the front, a roof behind a parapet, and balconies on every Every-th bay of the front and the back."
+| promote shell floors floors "Floors"
+| promote shell floor_height floor_height "Floor Height"
+| promote shell width width "Width"
+| promote shell depth depth "Depth"
+| promote shell bay bay "Bay"
+| promote frames inset frame "Window Frame"
+| promote windows distance recess "Window Depth"
+| promote balcony_points balconies balconies "Balconies"
+| promote balcony_points every every "Every"
+| promote paint wall wall "Wall Color"
+| node 1 detail_wrangle 1 shell 0 0
+|   param snippet "// The shell: four walls, each a grid of cells -- a floor high, a bay\n// wide -- the flat roof and the base. Each cell knows its floor, its\n// column and its wall; the roof and the base have groups of their own.\nint floors = max(chi(\"floors\"), 1);\nfloat fh = max(ch(\"floor_height\"), 0.5);\nfloat w = max(ch(\"width\"), 1);\nfloat d = max(ch(\"depth\"), 1);\nfloat bay = max(ch(\"bay\"), 0.4);\nfloat h = floors * fh;\nvector corners[] = array(set(-w / 2, 0, d / 2), set(w / 2, 0, d / 2), set(w / 2, 0, -d / 2), set(-w / 2, 0, -d / 2));\nvector up = set(0, 1, 0);\nfor (int f = 0; f < 4; f++) {\n    vector a = corners[f];\n    vector b = corners[(f + 1) % 4];\n    int n = max(1, int(rint(length(b - a) / bay)));\n    for (int i = 0; i < floors; i++) {\n        for (int j = 0; j < n; j++) {\n            vector p0 = a + (b - a) * (float(j) / n) + up * (i * fh);\n            vector p1 = a + (b - a) * (float(j + 1) / n) + up * (i * fh);\n            int prim = addprim(0, \"poly\", addpoint(0, p0), addpoint(0, p1), addpoint(0, p1 + up * fh), addpoint(0, p0 + up * fh));\n            setprimattrib(0, \"floor\", prim, i);\n            setprimattrib(0, \"column\", prim, j);\n            setprimattrib(0, \"wall\", prim, f);\n            setprimattrib(0, \"columns\", prim, n);\n        }\n    }\n}\n// The roof and the base: the footprint through every corner of the cells\n// round it, so that they meet the walls edge to edge.\nint top[];\nint bottom[];\nfor (int f = 0; f < 4; f++) {\n    vector a = corners[f];\n    vector b = corners[(f + 1) % 4];\n    int n = max(1, int(rint(length(b - a) / bay)));\n    for (int j = 0; j < n; j++) {\n        vector p = a + (b - a) * (float(j) / n);\n        append(top, addpoint(0, p + up * h));\n        append(bottom, addpoint(0, p));\n    }\n}\nsetprimgroup(0, \"roof\", addprim(0, \"poly\", top), 1);\nint base[];\nfor (int k = len(bottom) - 1; k >= 0; k--) append(base, bottom[k]);  // facing down\nsetprimgroup(0, \"base\", addprim(0, \"poly\", base), 1);"
+|   param floors 6
+|   param floor_height 0.8
+|   param width 3
+|   param depth 2.4
+|   param bay 0.75
+| node 2 fuse 1 weld 0 110
+| node 3 primitive_wrangle 1 choose 0 220
+|   param snippet "// Which cell is what: the door in the middle of the front wall's ground\n// floor, windows everywhere else on the walls.\nint wallCell = !@group_roof && !@group_base;\nint door = wallCell && @wall == 0 && @floor == 0 && @column == int(@columns / 2);\n@group_door = door;\n@group_window = wallCell && !door;"
+| node 4 polyextrude 1 frames 0 330
+|   param distance 0
+|   param inset 0.15
+|   param group "window"
+|   param frontgroup "pane"
+|   param sidegroup ""
+| node 5 polyextrude 1 windows 0 440
+|   param distance -0.12
+|   param group "pane"
+|   param frontgroup "glass"
+|   param sidegroup "reveal"
+| node 6 polyextrude 1 door 0 550
+|   param distance -0.2
+|   param inset 0.1
+|   param group "door"
+|   param frontgroup "doorway"
+|   param sidegroup "door_reveal"
+| node 7 polyextrude 1 parapet 0 660
+|   param distance 0
+|   param inset 0.12
+|   param group "roof"
+|   param frontgroup "roof_inner"
+|   param sidegroup "parapet_top"
+| node 8 polyextrude 1 roof 0 770
+|   param distance -0.3
+|   param group "roof_inner"
+|   param frontgroup "roof_floor"
+|   param sidegroup "parapet_inside"
+| node 9 primitive_wrangle 1 paint 0 880
+|   param snippet "// The colours: the wall's, its glass, the reveals a shade darker.\nvector wall = chv(\"wall\");\n@Cd = wall;\nif (@group_glass) @Cd = set(0.16, 0.22, 0.3);\nif (@group_reveal || @group_door_reveal) @Cd = wall * 0.75;\nif (@group_doorway) @Cd = set(0.28, 0.18, 0.11);\nif (@group_roof_floor) @Cd = set(0.34, 0.34, 0.35);\nif (@group_parapet_inside) @Cd = wall * 0.85;"
+|   param wall 0.78 0.7 0.6
+| node 10 detail_wrangle 1 balcony_points 270 330
+|   param snippet "// A point at the foot of every Every-th window from the first floor up,\n// on the front and the back, turned out of the wall: where Copy to Points\n// puts a balcony.\nif (chi(\"balconies\")) {\n    int every = max(chi(\"every\"), 1);\n    for (int p = 0; p < nprimitives(1); p++) {\n        if (!inprimgroup(1, \"window\", p)) continue;\n        int fl = prim(1, \"floor\", p);\n        int col = prim(1, \"column\", p);\n        int wl = prim(1, \"wall\", p);\n        if (fl < 1 || (wl != 0 && wl != 2) || col % every != 0) continue;\n        int pts[] = primpoints(1, p);\n        float low = 1e9;\n        for (int k = 0; k < len(pts); k++) low = min(low, point(1, \"P\", pts[k]).y);\n        vector c = primcentroid(1, p);\n        int pt = addpoint(0, set(c.x, low, c.z));\n        setpointattrib(0, \"N\", pt, prim_normal(1, p));\n    }\n}"
+|   param balconies 1
+|   param every 2
+| node 11 box 1 slab 270 220
+|   param size 0.6 0.45 0.07
+|   param center 0 0.225 0
+|   expr size.x "ch(\"../shell/bay\") * 0.8"
+| node 12 copy_to_points 1 balconies 510 330
+| node 13 color 1 slab_paint 510 440
+|   param color 0.42 0.42 0.44
+|   param class primitive
+| node 14 merge 1 building 270 990
+|   display
+| link 1.geometry -> 2.geometry
+| link 2.geometry -> 3.geometry
+| link 3.geometry -> 4.geometry
+| link 4.geometry -> 5.geometry
+| link 5.geometry -> 6.geometry
+| link 6.geometry -> 7.geometry
+| link 7.geometry -> 8.geometry
+| link 8.geometry -> 9.geometry
+| link 3.geometry -> 10.input1
+| link 11.geometry -> 12.geometry
+| link 10.geometry -> 12.points
+| link 12.geometry -> 13.geometry
+| link 9.geometry -> 14.geometry
+| link 13.geometry -> 14.geometry
+end

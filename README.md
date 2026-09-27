@@ -34,7 +34,8 @@ okna.
 - **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi
   Fracture, tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
   které nárazy lámou, nálože, drcení na prach, drť, vzduch vytlačený
-  zřícením, který žene prach do ulic; odstřel věžáku ve městě jako video
+  zřícením, který žene prach do ulic; odstřel věžáku ve městě a zřícení
+  zdi z pohledu od země jako videa
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem
@@ -209,7 +210,9 @@ překážky do vody, plynu i deště, prach do Pyro Solveru, a uzel RBD Pieces
 je vrací jako geometrii s rychlostí `v`. Jolt běží v jednom vlákně
 a deterministicky: stejné snímky při každém běhu, snímky do cache.
 Příklad **demolition**: odstřel čtrnáctipatrového věžáku v bloku domů
-za zlatého světla.
+za zlatého světla; příklad **wall_collapse**: průčelí cihlového domu
+vyletí do ulice a kusy se kutálejí ke kameře těsně nad asfaltem, v prachu
+proti slunci.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

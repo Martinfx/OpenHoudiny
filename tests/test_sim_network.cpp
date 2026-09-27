@@ -266,6 +266,9 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     net.setParam(ids[1], "closed_floor", "off");
     net.setParam(ids[3], "light_elevation", "90");
     net.setParam(ids[2], "smoke_density", "7");
+    net.setParam(ids[3], "ground_color", "0.2 0.2 0.2");
+    net.setParam(ids[3], "grid", "off");
+    net.setParam(ids[3], "sky_behind", "on");
     net.setParam(ids[3], "frames", "48");
     const int box = net.add("object");
     net.setParam(box, "shape", "box");
@@ -304,6 +307,9 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     CHECK(s.colliders[0].shape == Shape::Box);
     CHECK(std::fabs(c.look.lightDirection().y - 1.0f) < 1e-6f);  // the Output's sun
     CHECK_EQ(c.look.smokeDensity, 7.0f);                         // the Volume Look's smoke
+    CHECK(c.look.groundColor == Vec3(0.2f, 0.2f, 0.2f));        // the Output's image
+    CHECK(!c.look.grid);
+    CHECK(c.look.skyBehind);
     CHECK(c.isActive(vortex) && c.isActive(box) && c.isActive(ids[3]));
 
     // Bypassed: out of the scene, and dimmed -- a node that feeds nothing too.

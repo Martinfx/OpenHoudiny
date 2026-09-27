@@ -340,7 +340,7 @@ tělesa i na kouř vrhá model paprskem pochodujícím polem vzdáleností
 
 | uzel | parametry |
 |---|---|
-| Pyro Source | `shape`, `file`, `center`, `rotation`, `size` jako u objektu; `fuel`, `smoke`, `heat` za sekundu; `velocity` (plyn opouští zdroj aspoň takhle rychle, ve vlastních osách zdroje, takže pootočený zdroj míří jinam); `flicker`, `flicker_size`, `seed` (blikotání šumem, který se zdrojem stoupá); `start`, `end` (časové okno: záblesk exploze); `motion` (static, circle, sway), `motion_size`, `motion_period` |
+| Pyro Source | `shape`, `file`, `center`, `rotation`, `size` jako u objektu; `fuel`, `smoke`, `heat` za sekundu; `velocity` (plyn opouští zdroj aspoň takhle rychle, ve vlastních osách zdroje, takže pootočený zdroj míří jinam); `expansion` (1/s: jak rychle se plyn ve zdroji rozpíná — tlačí ho do všech stran jako výbuch nebo vzduch vytlačený zřícením); `flicker`, `flicker_size`, `seed` (blikotání šumem, který se zdrojem stoupá); `start`, `end` (časové okno: záblesk exploze); `motion` (static, circle, sway), `motion_size`, `motion_period` |
 
 Koule je táborák, kvádr hořící poleno nebo průduch, prstenec plynový hořák.
 
@@ -380,7 +380,7 @@ Camera bere jednu kameru: pohled, kterým se renderuje.
 | Output | `frames` (délka časové osy), `fps` (snímků za sekundu pro všechny řešiče) |
 | Sun | `light_azimuth`, `light_elevation`, `light_color`, `light_intensity` |
 | Sky | `sky_color`, `sky_intensity` |
-| Image | `exposure`, `floor` |
+| Image | `exposure`, `floor`, `ground_color` (barva země: asfalt, beton, prach), `grid` (mřížka na zemi po 10 cm a po metru; pro záběr vypnout), `sky_behind` (za scénou obloha místo tmavého pozadí studia: opar nejsvětlejší u obzoru a záře kolem slunce — venku, kouř proti světlu) |
 
 **Camera** (Render): záběr ([§2](#kamera-a-záběr)).
 
@@ -459,6 +459,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
 | `demolition` | destrukce: odstřel věžáku mezi domy — nálože v přízemí, věž se zřítí do svého půdorysu a patra se drtí; prach z nárazů, drcení a přetržených spojů žene vytlačený vzduch do ulic ([destruction.md](destruction.md)) |
+| `wall_collapse` | destrukce zblízka: průčelí cihlového domu vyletí do ulice, kusy se kutálejí ke kameře těsně nad asfaltem a prach prosvítí nízké slunce ([destruction.md](destruction.md)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `prototype sim campfire` proto funguje bez souborů vedle.
@@ -788,7 +789,7 @@ kouř, voda i kapky pak jdou po stejném větru.
 | uzel | parametry |
 |---|---|
 | **Rain** (Simulation) | Cloud: `center`, `size` (mrak: kapky vznikají v tomto kvádru a prší pod ním); Rain: `rate` (kapek za sekundu na m²: 100 mrholení, 800 déšť, 3 000 liják), `speed` (rychlost pádu v m/s: kolem 7 pro déšť, méně pro mrholení), `splash` (kolik kapiček odletí od pevného povrchu), `ripples` (jak silně kapka rozvlní vodu), `seed`; Time: `start`, `end`; Look: `color`, `opacity`, `streak` (délka čáry jako podíl snímku: pohybová neostrost), `wet` (jak mokrá je podlaha) |
-| **RBD Solver** (Simulation) | Pieces: `attribute`; Physics: `density`, `friction`, `bounce`, `gravity`, `floor`; Glue: `glue` (pevnost lepidla v newtonech, 0 bez lepidla); Time: `substeps`; Dust: `dust`, `dust_size`; Look: `color`, `inside_color`, `inside_group`. Vstupy Pieces (geometrie s `piece`) a Colliders; výstupy Look (do Outputu: kusy se kreslí, kam dopadly), Rigid (do RBD Pieces), Collider (kusy jako pohyblivé překážky vody, plynu a deště) a Dust (zdroj kouře pro Pyro Solver); [destruction.md](destruction.md) |
+| **RBD Solver** (Simulation) | Pieces: `attribute`; Physics: `density`, `friction`, `bounce`, `gravity`, `floor`; Glue: `glue` (pevnost lepidla v kPa, 0 bez lepidla); Time: `substeps`; Dust: `dust`, `impact_dust`, `dust_size`, `debris`, `air`; Look: `color`, `inside_color`, `inside_group`. Vstupy Pieces (geometrie s `piece`) a Colliders; výstupy Look (do Outputu: kusy se kreslí, kam dopadly), Rigid (do RBD Pieces), Collider (kusy jako pohyblivé překážky vody, plynu a deště) a Dust (zdroj kouře pro Pyro Solver); [destruction.md](destruction.md) |
 
 Ve viewportu je déšť v **Shift+A → Weather**:
 

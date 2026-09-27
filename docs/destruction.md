@@ -53,6 +53,30 @@ podle skutečných odstřelů:
 [Box]×20 (obrubníky) ─▶ [Color] ──┴▶ [Merge city] (zobrazená) [Turbulence] ─▶ Forces ─▶ [Pyro Solver] ─▶ [Volume Look]
 ```
 
+### Druhý příklad: trosky u země
+
+![Zřícení zdi: cihly se kutálejí ulicí v prachu proti slunci](img/wall-collapse.png)
+
+```
+./build/prototype sim wall_collapse zed.mp4       # 120 snímků (4 s)
+```
+
+Příklad **wall_collapse** ([examples/sim/wall_collapse.pgsim](../examples/sim/wall_collapse.pgsim))
+je destrukce zblízka, jak ji točí kamera těsně nad asfaltem:
+
+- **Průčelí** cihlového domu postaví wrangle `facade`: pás kamene u každého
+  stropu, pilíře mezi okny, zeď pod okny a nad nimi, atika. Voronoi
+  Fracture ho rozřeže na kusy velké jako pár cihel.
+- **Nálože** jdou od země nahoru, řada po řadě: pata zdi vyletí do ulice
+  a co stálo nad ní, letí za ní — tím méně daleko, čím výš bylo — takže
+  se zeď přeloží a spadne vlnou kusů, které se kutálejí ke kameře. Část
+  nejnižších kvádrů se rozpráší.
+- **Prach** z lomů a nárazů žene vytlačený vzduch ulicí mezi domy; nízké
+  slunce za zdí ho prosvítí. Output má zapnutou oblohu za scénou
+  (`sky_behind`): opar nejsvětlejší u obzoru a záři kolem slunce.
+- **Kamera** je pár centimetrů nad asfaltem a pomalu jede bokem, se
+  širokým objektivem.
+
 ---
 
 ## 1. Voronoi Fracture
@@ -214,9 +238,11 @@ v průměru za 6 ms na snímek.
 kusy posunou a otočí tam, kam dopadly (`drawnPieces`), s barvou `Cd`, kterou
 si nesou, řezné plochy ze skupiny `inside_group` v barvě `inside_color`,
 kusy bez barvy v `color`; rozdrcené a rozmetané kusy zmizí. Drť se kreslí
-jako body své velikosti v barvě řezu, o odstín tmavší. Geometrie i kusy
-vrhají stíny na sebe, na zem i do kouře (stínová mapa slunce, 2048²,
-měkké okraje) a Output má barvu země a vypínač mřížky.
+jako body své velikosti v barvě řezu, o odstín tmavší; v prachu ji prach
+mezi okem a zrnkem zakryje a prach mezi ním a sluncem zastíní, takže
+drť v oblaku proti světlu tmavne. Geometrie i kusy vrhají stíny na sebe,
+na zem i do kouře (stínová mapa slunce, 2048², měkké okraje) a Output má
+barvu země, vypínač mřížky a oblohu za scénou (`sky_behind`).
 
 **RBD Pieces** (Geometry) vrátí kusy daného snímku jako geometrii: body
 posunuté a otočené, normály otočené a rychlost každého bodu v `v` — pro

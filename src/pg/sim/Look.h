@@ -56,6 +56,9 @@ struct Look {
     bool floor = true;            ///< a floor the gas stands on, with its shadow
     Vec3 groundColor{0.075f, 0.075f, 0.075f};  ///< the floor's colour
     bool grid = true;             ///< lines on the floor every 10 cm and every metre
+    /// The sky behind everything, where the floor ends -- hazy towards the
+    /// horizon, glowing round the sun: outdoors. Off, a studio's backdrop.
+    bool skyBehind = false;
 
     /// Unit vector towards the light.
     Vec3 lightDirection() const {
