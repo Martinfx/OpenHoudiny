@@ -1,9 +1,10 @@
 #pragma once
 //
-// How simulated gas is drawn: the colour and density of the smoke, the glow of
-// the fire, the light. What a Volume Look node compiles to (Network.h) and the
-// volume renderer draws with (pg/gl/Volume.h). Plain data: a change of look
-// draws the frames again, it never simulates them again.
+// How a simulation is drawn: the colour and density of the smoke, the glow of
+// the fire, the colour and clarity of the water, the light. What the Volume
+// Look, the Water Look and the Output compile to (Network.h) and the renderer
+// draws with (pg/gl/Volume.h). Plain data: a change of look draws the frames
+// again, it never simulates them again.
 //
 #include "pg/core/Types.h"
 
@@ -20,6 +21,11 @@ struct Look {
     float flameStart = 0.3f;      ///< temperature where flames start to glow
     float flameRange = 4.0f;      ///< ... and how much hotter they glow white
     float fireLight = 2.0f;       ///< how much the fire lights the smoke around it
+
+    // Water
+    Vec3 waterColor{0.1f, 0.42f, 0.5f};  ///< the colour water takes on where it is deep
+    float waterClarity = 1.5f;    ///< metres: how far one sees into it
+    float foam = 1.0f;            ///< how white foam and spray are drawn; 0 not at all
 
     // Light
     float lightAzimuth = 169.0f;  ///< degrees round the vertical, from +x towards +z

@@ -127,6 +127,13 @@ struct Domain {
     size_t cellCount() const {
         return static_cast<size_t>(cells[0]) * static_cast<size_t>(cells[1]) * static_cast<size_t>(cells[2]);
     }
+
+    /// The grid of a box of `size` with `resolution` cells along its longest
+    /// side; each count rounded up to a multiple of 8, so the domain may come
+    /// out a little larger.
+    static Domain ofBox(const Vec3& size, int resolution);
+
+    bool operator==(const Domain&) const = default;
 };
 
 struct SolverSettings {

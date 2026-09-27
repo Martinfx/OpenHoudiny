@@ -56,7 +56,7 @@ bool iconItem(Icon icon, ImU32 color, const char* label, const char* shortcut = 
     return clicked;
 }
 
-bool isSolver(const std::string& type) { return type == "pyro_solver"; }
+bool isSolver(const std::string& type) { return type == "pyro_solver" || type == "liquid_solver"; }
 
 }  // namespace
 
@@ -72,8 +72,7 @@ bool SimWorkspace::placeOf(int id, Vec3& center, sim::Rotation& frame) const {
     } else {
         // The wind blows everywhere: its handle is where its arrows are drawn,
         // over the middle of the domain.
-        const sim::Domain dm = compiled_.ok && compiled_.world.hasGas ? compiled_.world.gas.sanitized().solver.domain() : runner_->domain();
-        center = Vec3(0.0f, 0.6f * dm.size().y, 0.0f);
+        center = Vec3(0.0f, 0.6f * sceneBox().size().y, 0.0f);
     }
     frame = h.rotation ? sim::Rotation::fromEuler(v3(net_.param(id, h.rotation)))
             : h.axis   ? alongY(v3(net_.param(id, h.axis)))
@@ -221,6 +220,16 @@ int SimWorkspace::pickAt(const ViewCamera& cam, ImVec2 mouse) const {
             }
         }
     }
+    if (compiled_.ok && compiled_.world.hasWater) {
+        for (const sim::WaterSource& w : compiled_.world.water.sources) {
+            float t = 0.0f;
+            Vec3 n;
+            if (w.instance().intersect(o, d, 0.0f, t, n) && t < best) {
+                best = t;
+                node = w.node;
+            }
+        }
+    }
     // The guides: a line near the mouse, unless it is behind what was met.
     const float reach = theme::px(6.0f);
     const auto& v = guideLines_.vertices;
@@ -306,6 +315,32 @@ int SimWorkspace::ensurePyroChain() {
     return solver;
 }
 
+int SimWorkspace::ensureLiquidChain() {
+    for (const sim::Node& n : net_.nodes()) {
+        if (n.type == "liquid_solver") return n.id;
+    }
+    // Nothing simulates water yet: a solver, its look, into the output --
+    // below the gas's, if there is one.
+    float y = 40.0f;
+    for (const sim::Node& n : net_.nodes()) {
+        if (n.type == "pyro_solver" || n.type == "volume_look") y = std::max(y, n.y + 200.0f);
+    }
+    const int solver = net_.add("liquid_solver", 250.0f, y);
+    const int look = net_.add("water_look", 490.0f, y);
+    int output = 0;
+    for (const sim::Node& n : net_.nodes()) {
+        if (n.type == "output") output = n.id;
+    }
+    if (!output) output = net_.add("output", 720.0f, y);
+    net_.connect(solver, "liquid", look, "liquid");
+    net_.connect(look, "look", output, "look");
+    // The objects already there are in its way; the forces push it too.
+    for (const sim::Node& n : std::vector<sim::Node>(net_.nodes())) {
+        if (n.type == "object") net_.connect(n.id, "collider", solver, "colliders");
+    }
+    return solver;
+}
+
 int SimWorkspace::addToScene(const std::string& kind, const Vec3& at) {
     const ImVec2 slot = freeSlot();
     int id = 0;
@@ -346,12 +381,36 @@ int SimWorkspace::addToScene(const std::string& kind, const Vec3& at) {
             net_.connect(t, "force", solver, "forces");
         }
     }
+    if (kind == "water_block" || kind == "fountain" || kind == "hose") {
+        // Water: a block let go where the menu was opened, a jet straight
+        // up from the floor, or one sideways from half a metre up.
+        const int solver = ensureLiquidChain();
+        id = net_.add("water_source", slot.x, slot.y);
+        if (kind == "water_block") {
+            net_.setParam(id, "size", pv(Vec3(0.4f, 0.5f, 0.4f)));
+            net_.setParam(id, "center", pv(at + Vec3(0.0f, 0.25f, 0.0f)));
+        } else {
+            net_.setParam(id, "shape", {static_cast<float>(sim::Shape::Cylinder), 0.0f, 0.0f});
+            net_.setParam(id, "mode", {1.0f, 0.0f, 0.0f});
+            net_.setParam(id, "size", pv(Vec3(0.08f, 0.08f, 0.08f)));
+            if (kind == "fountain") {
+                net_.setParam(id, "center", pv(at + Vec3(0.0f, 0.05f, 0.0f)));
+                net_.setParam(id, "velocity", pv(Vec3(0.0f, 3.0f, 0.0f)));
+            } else {
+                // Along its own y, turned to point along x.
+                net_.setParam(id, "center", pv(at + Vec3(0.0f, 0.5f, 0.0f)));
+                net_.setParam(id, "rotation", pv(Vec3(0.0f, 0.0f, -90.0f)));
+                net_.setParam(id, "velocity", pv(Vec3(0.0f, 2.0f, 0.0f)));
+            }
+        }
+        net_.rename(id, net_.uniqueName(kind == "water_block" ? "water" : kind));
+        net_.connect(id, "water", solver, "sources");
+    }
     for (const char* force : {"wind", "vortex", "turbulence", "attractor", "drag"}) {
         if (kind != force) continue;
         id = net_.add(force, slot.x, slot.y);
         if (kind == "vortex" || kind == "attractor") {
-            const sim::Domain dm = compiled_.ok && compiled_.world.hasGas ? compiled_.world.gas.sanitized().solver.domain() : runner_->domain();
-            net_.setParam(id, "center", pv(Vec3(at.x, 0.5f * dm.size().y, at.z)));
+            net_.setParam(id, "center", pv(Vec3(at.x, 0.5f * sceneBox().size().y, at.z)));
         }
         linkIntoSolvers(id, "force", "forces");
     }
@@ -395,6 +454,10 @@ bool SimWorkspace::sceneMenu(const Vec3& at) {
     }
     ImGui::SetItemTooltip("An OBJ file: a rock, a statue, a car -- in the scene, colliding");
     items("Sources", {{"fire", "Fire", Icon::Source}, {"smoke", "Smoke", Icon::Source}}, sourceColor);
+    items("Water",
+          {{"water_block", "Block of Water", Icon::Drop}, {"fountain", "Fountain", Icon::Drop},
+           {"hose", "Hose", Icon::Drop}},
+          IM_COL32(64, 170, 250, 255));
     items("Forces",
           {{"wind", "Wind", Icon::Wind}, {"vortex", "Vortex", Icon::Vortex}, {"turbulence", "Turbulence", Icon::Force},
            {"attractor", "Attractor", Icon::Attractor}, {"drag", "Drag", Icon::Force}},
@@ -474,9 +537,17 @@ void SimWorkspace::frameSelection() {
             grow(a, b);
         }
     }
+    if (compiled_.ok && compiled_.world.hasWater) {
+        for (const sim::WaterSource& w : compiled_.world.water.sources) {
+            if (!chosen.count(w.node)) continue;
+            Vec3 a, b;
+            w.instance().bounds(a, b);
+            grow(a, b);
+        }
+    }
     for (const int id : chosen) {
         const sim::Node* n = net_.node(id);
-        if (!n || n->type == "object" || n->type == "pyro_source") continue;
+        if (!n || n->type == "object" || n->type == "pyro_source" || n->type == "water_source") continue;
         Vec3 c;
         sim::Rotation f;
         if (!placeOf(id, c, f)) continue;
@@ -485,8 +556,8 @@ void SimWorkspace::frameSelection() {
         grow(c - Vec3(r), c + Vec3(r));
     }
     if (!any) {
-        // Nothing selected: the domain and every object.
-        const sim::Domain dm = runner_->domain();
+        // Nothing selected: the domains and every object.
+        const sim::Domain dm = sceneBox();
         grow(dm.origin(), dm.origin() + dm.size());
         for (const sim::Solid& s : compiled_.solids) {
             Vec3 a, b;
@@ -626,10 +697,9 @@ void SimWorkspace::viewKeys(bool overView) {
 
 void SimWorkspace::viewport(ImVec2 size) {
     (void)size;
-    char info[128];
-    const sim::Domain dm = runner_->domain();
-    std::snprintf(info, sizeof info, "%d \xc3\x97 %d \xc3\x97 %d cells", dm.cells[0], dm.cells[1], dm.cells[2]);
-    ui::PanelHeader h = ui::panelHeader(Icon::Viewport, "Viewport", info);
+    const sim::Domain dm = sceneBox();
+    const std::string info = gridsText();
+    ui::PanelHeader h = ui::panelHeader(Icon::Viewport, "Viewport", info.c_str());
     if (ui::headerButton(h, "image", Icon::Camera, "Render this frame to a PNG\xe2\x80\xa6")) {
         files_.open("Render image", {".png"}, true, (example_.empty() ? std::string("frame") : example_) + ".png");
         fileAction_ = FileAction::Image;
@@ -645,7 +715,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     const int w = std::max(16, static_cast<int>(avail.x)), hh = std::max(16, static_cast<int>(avail.y));
     // The camera frames the domain when a network opens and when the
     // domain's size changes -- not for another resolution.
-    const Vec3 box = compiled_.ok && compiled_.world.hasGas ? compiled_.world.gas.solver.size : framedSize_;
+    const Vec3 box = compiled_.ok && compiled_.world.any() ? dm.size() : framedSize_;
     const bool resized = std::fabs(box.x - framedSize_.x) + std::fabs(box.y - framedSize_.y) +
                              std::fabs(box.z - framedSize_.z) > 1e-4f;
     if (!framed_ || resized) {

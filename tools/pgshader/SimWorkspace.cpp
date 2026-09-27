@@ -40,8 +40,16 @@ Icon categoryIcon(const std::string& c) {
 
 Icon typeIcon(const sim::NodeType* t) {
     if (!t) return Icon::Error;
-    if (std::string(t->name) == "output") return Icon::Output;
+    const std::string name = t->name;
+    if (name == "output") return Icon::Output;
+    if (name == "water_source") return Icon::Drop;
     return categoryIcon(t->category);
+}
+
+/// Water sources are blue, among the orange of fire.
+ImU32 typeColor(const sim::NodeType& t) {
+    if (std::string(t.name) == "water_source") return IM_COL32(40, 108, 172, 255);
+    return categoryColor(t.category);
 }
 
 ImU32 pinColor(sim::PinType t) {
@@ -51,6 +59,8 @@ ImU32 pinColor(sim::PinType t) {
         case sim::PinType::Collider: return IM_COL32(120, 155, 240, 255);
         case sim::PinType::Gas: return IM_COL32(200, 130, 235, 255);
         case sim::PinType::Look: return IM_COL32(110, 210, 135, 255);
+        case sim::PinType::Water: return IM_COL32(64, 170, 250, 255);
+        case sim::PinType::Liquid: return IM_COL32(40, 120, 230, 255);
     }
     return IM_COL32_WHITE;
 }
@@ -106,6 +116,26 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return std::to_string(d.cells[0]) + " \xc3\x97 " + std::to_string(d.cells[1]) + " \xc3\x97 " +
                std::to_string(d.cells[2]) + " cells";
     }
+    if (t == "water_source") {
+        std::string s = shapeOf() + dot;
+        if (static_cast<int>(v("mode")) == 1) {
+            const sim::ParamValue jet = net.param(n.id, "velocity");
+            s += "flow " + number(std::sqrt(jet[0] * jet[0] + jet[1] * jet[1] + jet[2] * jet[2])) + " m/s";
+            if (v("end") > v("start")) s += dot + number(v("start")) + "\xe2\x80\x93" + number(v("end")) + " s";
+        } else {
+            s += "fill";
+            if (v("start") > 0.0f) s += " at " + number(v("start")) + " s";
+        }
+        return s;
+    }
+    if (t == "liquid_solver") {
+        const sim::ParamValue size = net.param(n.id, "size");
+        const sim::Domain d = sim::Domain::ofBox(Vec3(size[0], size[1], size[2]),
+                                                 std::clamp(static_cast<int>(v("resolution")), 16, 256));
+        return std::to_string(d.cells[0]) + " \xc3\x97 " + std::to_string(d.cells[1]) + " \xc3\x97 " +
+               std::to_string(d.cells[2]) + " cells" + dot + (v("closed_sides") != 0.0f ? "tank" : "open");
+    }
+    if (t == "water_look") return "clear to " + number(v("clarity")) + " m";
     if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames" + dot + number(v("fps")) + " fps";
     (void)c;
     return {};
@@ -384,7 +414,7 @@ std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
         c.id = n.id;
         c.title = n.name;
         c.subtitle = t ? t->label : n.type;
-        c.color = t ? categoryColor(t->category) : IM_COL32(120, 40, 40, 255);
+        c.color = t ? typeColor(*t) : IM_COL32(120, 40, 40, 255);
         c.icon = typeIcon(t);
         c.x = n.x;
         c.y = n.y;
@@ -558,7 +588,7 @@ bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
             }
             const float h = ImGui::GetTextLineHeight();
             theme::drawIcon(d, typeIcon(t), ImVec2(p.x + theme::px(12.0f), p.y + h * 0.5f), h * 0.85f,
-                            theme::shade(categoryColor(category), 0.35f));
+                            theme::shade(typeColor(*t), 0.35f));
             d->AddText(ImVec2(p.x + theme::px(26.0f), p.y), theme::kText, t->label);
             ImGui::PopID();
         }
@@ -693,7 +723,7 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const float side = ImGui::GetFrameHeight();
-    d->AddRectFilled(at, ImVec2(at.x + side, at.y + side), categoryColor(type.category), theme::px(5.0f));
+    d->AddRectFilled(at, ImVec2(at.x + side, at.y + side), typeColor(type), theme::px(5.0f));
     theme::drawIcon(d, typeIcon(&type), ImVec2(at.x + side * 0.5f, at.y + side * 0.5f), side * 0.62f, IM_COL32_WHITE);
     ImGui::Dummy(ImVec2(side, side));
     ImGui::SameLine();
@@ -833,23 +863,37 @@ void SimWorkspace::networkOverview() {
     ImGui::TextUnformatted(title().c_str());
     ImGui::PopFont();
     ui::note("Nothing is selected. Click a node to see its parameters; Tab or a right click on the network "
-             "adds one. Sources, forces and colliders feed the Pyro Solver; its gas goes through a Volume Look "
-             "to the Output.");
+             "adds one. Sources, forces and colliders feed the solvers -- the Pyro Solver for smoke and fire, the "
+             "Liquid Solver for water; what they simulate goes through a look to the Output.");
     ImGui::Spacing();
     if (ui::section("Simulation")) {
-        if (compiled_.ok && compiled_.world.hasGas) {
-            const sim::Scene& gas = compiled_.world.gas;
-            const sim::Domain dm = gas.sanitized().solver.domain();
-            const Vec3 sz = dm.size();
-            ImGui::Text("Domain      %.2f \xc3\x97 %.2f \xc3\x97 %.2f m", static_cast<double>(sz.x), static_cast<double>(sz.y),
-                        static_cast<double>(sz.z));
-            ImGui::Text("Cells       %d \xc3\x97 %d \xc3\x97 %d  (%.1f million)", dm.cells[0], dm.cells[1], dm.cells[2],
-                        static_cast<double>(dm.cellCount()) / 1e6);
+        if (compiled_.ok && compiled_.world.any()) {
+            auto domainLines = [&](const char* what, const sim::Domain& dm) {
+                const Vec3 sz = dm.size();
+                ImGui::Text("%-11s %.2f \xc3\x97 %.2f \xc3\x97 %.2f m", what, static_cast<double>(sz.x),
+                            static_cast<double>(sz.y), static_cast<double>(sz.z));
+                ImGui::Text("Cells       %d \xc3\x97 %d \xc3\x97 %d  (%.2f million)", dm.cells[0], dm.cells[1], dm.cells[2],
+                            static_cast<double>(dm.cellCount()) / 1e6);
+            };
+            if (compiled_.world.hasGas) {
+                const sim::Scene& gas = compiled_.world.gas;
+                domainLines("Gas", gas.sanitized().solver.domain());
+                ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", gas.emitters.size(),
+                            gas.forces.size(), gas.colliders.size());
+            }
+            if (compiled_.world.hasWater) {
+                const sim::LiquidScene& water = compiled_.world.water;
+                domainLines("Water", water.sanitized().solver.domain());
+                ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", water.sources.size(),
+                            water.forces.size(), water.colliders.size());
+                const std::shared_ptr<const sim::Frame> f = frameToShow();
+                if (f && !f->water.empty()) {
+                    ImGui::Text("Particles   %zu  (%.0f litres)", f->water.particles, f->water.litres);
+                }
+            }
             ImGui::Text("Frames      %d at %.0f fps  (%.1f s)", compiled_.frames,
                         1.0 / static_cast<double>(compiled_.world.timeStep),
                         compiled_.frames * static_cast<double>(compiled_.world.timeStep));
-            ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", gas.emitters.size(),
-                        gas.forces.size(), gas.colliders.size());
             ImGui::Text("Cache       %d frames, %.0f MB", runner_->cached(),
                         static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
             if (runner_->stepMs() > 0.0) ImGui::Text("Step        %.0f ms", runner_->stepMs());
@@ -882,8 +926,10 @@ void SimWorkspace::updateGuides() {
     guidesRevision_ = net_.revision();
     guidesSelection_ = chosen;
     gl::Lines lines;
-    const sim::Scene* gas = compiled_.ok && compiled_.world.hasGas ? &compiled_.world.gas : nullptr;
-    if (guides_) lines = gl::sceneGuides(gas, compiled_.solids, chosen, compiled_.solver);
+    if (guides_) {
+        lines = gl::sceneGuides(compiled_.ok ? &compiled_.world : nullptr, compiled_.solids, chosen, compiled_.solver,
+                                compiled_.liquidSolver);
+    }
     renderer_.setLines(lines);
     guideLines_ = std::move(lines);
     viewDirty_ = true;
@@ -1099,11 +1145,37 @@ void SimWorkspace::popups() {
     fileAction_ = FileAction::None;
 }
 
+sim::Domain SimWorkspace::sceneBox() const {
+    return compiled_.ok && compiled_.world.any() ? gl::sceneDomain(compiled_.world) : runner_->domain();
+}
+
+std::string SimWorkspace::gridsText() const {
+    const std::string times = " \xc3\x97 ", dot = "  \xc2\xb7  ";
+    auto cells = [&](const sim::Domain& d) {
+        return std::to_string(d.cells[0]) + times + std::to_string(d.cells[1]) + times + std::to_string(d.cells[2]);
+    };
+    if (!compiled_.ok || !compiled_.world.any()) return cells(runner_->domain()) + " cells";
+    const sim::World& w = compiled_.world;
+    std::string text;
+    if (w.hasGas) text = cells(w.gas.sanitized().solver.domain()) + " cells";
+    if (w.hasWater) {
+        if (!text.empty()) text = "gas " + text + dot;
+        text += "water " + cells(w.water.sanitized().solver.domain());
+        const std::shared_ptr<const sim::Frame> f = frameToShow();
+        if (f && !f->water.empty()) {
+            const double k = static_cast<double>(f->water.particles) / 1000.0;
+            char buf[48];
+            std::snprintf(buf, sizeof buf, "%s%.0f k particles", dot.c_str(), k);
+            text += buf;
+        }
+    }
+    return text;
+}
+
 std::string SimWorkspace::status() const {
-    char text[200];
-    const sim::Domain dm = runner_->domain();
-    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %d \xc3\x97 %d \xc3\x97 %d cells  \xc2\xb7  cache %d / %d (%.0f MB)%s  \xc2\xb7  %.0f ms a step",
-                  net_.nodes().size(), dm.cells[0], dm.cells[1], dm.cells[2], runner_->cached(), compiled_.frames,
+    char text[240];
+    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %s  \xc2\xb7  cache %d / %d (%.0f MB)%s  \xc2\xb7  %.0f ms a step",
+                  net_.nodes().size(), gridsText().c_str(), runner_->cached(), compiled_.frames,
                   static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), runner_->full() ? " full" : "",
                   runner_->stepMs());
     return text;

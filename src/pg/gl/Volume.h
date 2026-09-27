@@ -1,8 +1,9 @@
 #pragma once
 //
 // Draws a simulation: the gas -- smoke that absorbs and scatters light, fire
-// that glows -- standing on a floor, the objects of the scene, and guide lines
-// on top. The viewport of the editor's Simulation network and of `pgshader sim`.
+// that glows -- and the water, standing on a floor, the objects of the scene,
+// and guide lines on top. The viewport of the editor's Simulation network and
+// of `pgshader sim`.
 //
 // A fragment shader follows the ray behind each pixel:
 //
@@ -11,6 +12,11 @@
 //            sized, met exactly by the ray -- lit by the sun (in the shadow of
 //            the smoke and of each other), the sky, and the glow of the fire;
 //            a selected object glows at its rim;
+//   water    the surface of its distance field, found by sphere tracing:
+//            it reflects the sky, the sun and the objects, more at grazing
+//            angles (Fresnel); the light that goes in bends (refraction) and
+//            fades with the way it goes through the water, taking on its
+//            colour; foam and spray are white; it shades what lies beneath;
 //   gas      marched front to back through the domain, up to the first solid:
 //            smoke absorbs what is behind it and scatters light towards the
 //            eye -- sunlight where it is not in shadow, mostly forwards, so
@@ -34,6 +40,7 @@
 #include "pg/sim/Frame.h"
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
+#include "pg/sim/World.h"
 
 #include <memory>
 #include <string>
@@ -72,12 +79,15 @@ struct Lines {
     }
 };
 
-/// The guides of a scene: the domain, the sources, the forces that act in a
-/// region -- when there is a gas scene -- and the outlines of the objects
-/// among `selected`. Those of the nodes in `selected` stand out.
-/// The domain's box belongs to `domainNode`: a click on it picks the solver.
-Lines sceneGuides(const sim::Scene* scene, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
-                  int domainNode = 0);
+/// The guides of a world: the domains of the gas and the water, their
+/// sources, the forces that act in a region, and the outlines of the objects
+/// among `selected`. Those of the nodes in `selected` stand out. The
+/// domains' boxes belong to `gasNode` and `waterNode`: a click on one picks
+/// its solver.
+Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
+                  int gasNode = 0, int waterNode = 0);
+/// A box that holds every domain of `world`: what a camera should show.
+sim::Domain sceneDomain(const sim::World& world);
 
 class VolumeRenderer {
 public:
@@ -89,11 +99,13 @@ public:
     /// Compiles the shaders. False, with the driver's message in `log`, if not.
     bool init(std::string& log);
 
-    /// The gas to draw. Until the first frame -- or after clearFrame() -- the
-    /// floor and the solids alone.
+    /// The gas and the water to draw. Until the first frame -- or after
+    /// clearFrame() -- the floor and the solids alone.
     void setFrame(const sim::Frame& frame);
     void clearFrame();
+    /// Gas is drawn: the last frame had some.
     bool hasFrame() const { return hasFrame_; }
+    bool hasWater() const { return hasWater_; }
     /// The domain the gas lives in: drawn where it is, even with no frame yet.
     void setDomain(const sim::Domain& domain);
     /// The objects of the scene, drawn and casting shadows; at most kMaxSolids.
@@ -131,6 +143,8 @@ public:
 
 private:
     void ensureTarget(int width, int height);
+    /// The water of a frame to the GPU; none when it has none.
+    void setWater(const sim::WaterFrame& water);
     /// The shadows of the smoke and the lamps of the fire, worked out again
     /// when the gas, the solids or the look they depend on change.
     void updateLighting();
@@ -155,6 +169,11 @@ private:
     int width_ = 0, height_ = 0;
     sim::Domain domain_;
     bool hasFrame_ = false;
+    GLuint water_ = 0;                          // 3D texture: distance to the surface, foam
+    int waterSize_[3] = {0, 0, 0};
+    bool hasWater_ = false;
+    sim::Domain waterDomain_;
+    float waterBand_ = 0.0f;
     std::vector<sim::Solid> solids_;
     std::vector<int> selected_;
     int hovered_ = 0;

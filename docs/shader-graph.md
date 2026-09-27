@@ -514,7 +514,7 @@ Undo a redo drží celé stavy grafu jako text (`ShaderGraph::save`).
 
 `ctest --test-dir build` spouští:
 
-- **pgtests**: 122 testů, z toho 25 pro shader graf;
+- **pgtests**: 133 testů, z toho 25 pro shader graf;
 - **pgshader_list**: příkazy fungují v každém buildu, s editorem i bez něj;
 - **shaders_compile**: každý příklad a každý výstup každého vestavěného uzlu
   v obou fázích (uzly s `any` i s vec3), pro 4 cíle. To je 116 grafů

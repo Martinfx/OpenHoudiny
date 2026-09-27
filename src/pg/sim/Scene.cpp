@@ -1,5 +1,7 @@
 #include "pg/sim/Scene.h"
 
+#include "pg/sim/Shared.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -10,20 +12,52 @@ namespace {
 constexpr float kTau = 6.28318530717958647692f;
 constexpr float kHuge = std::numeric_limits<float>::max();
 
-/// `v` in [lo, hi]; `fallback` when it is not a number at all.
+}  // namespace
+
+namespace detail {
+
 float fix(float v, float lo, float hi, float fallback) { return std::isfinite(v) ? std::clamp(v, lo, hi) : fallback; }
 
 Vec3 fix(const Vec3& v, float lo, float hi, const Vec3& fallback) {
     return {fix(v.x, lo, hi, fallback.x), fix(v.y, lo, hi, fallback.y), fix(v.z, lo, hi, fallback.z)};
 }
 
-/// A direction: finite and not zero, else the fallback.
 Vec3 fixDirection(const Vec3& v, const Vec3& fallback) {
     const Vec3 d = fix(v, -kHuge, kHuge, fallback);
     return length(d) > 1e-6f ? d : fallback;
 }
 
-}  // namespace
+void sanitize(std::vector<Force>& forces) {
+    const Force df;
+    for (Force& f : forces) {
+        // A negative attractor pushes away, a vortex with a negative speed
+        // spins the other way; the rest only makes sense forwards.
+        const bool vortex = f.kind == ForceKind::Vortex;
+        f.strength = fix(f.strength, f.kind == ForceKind::Attractor ? -kHuge : 0.0f, kHuge, df.strength);
+        f.scale = fix(f.scale, 0.005f, kHuge, df.scale);
+        f.speed = fix(f.speed, vortex ? -kHuge : 0.0f, kHuge, df.speed);
+        f.direction = fixDirection(f.direction, vortex ? Vec3(0, 1, 0) : df.direction);
+        f.gusts = fix(f.gusts, 0.0f, 1.0f, 0.0f);
+        f.center = fix(f.center, -kHuge, kHuge, df.center);
+        f.radius = fix(f.radius, 0.005f, kHuge, df.radius);
+        f.height = fix(f.height, 0.0f, kHuge, 0.0f);
+        f.lift = fix(f.lift, -kHuge, kHuge, 0.0f);
+        f.suction = fix(f.suction, -kHuge, kHuge, 0.0f);
+    }
+}
+
+void sanitize(std::vector<Collider>& colliders) {
+    const Collider dc;
+    for (Collider& c : colliders) {
+        c.center = fix(c.center, -kHuge, kHuge, dc.center);
+        c.rotation = fix(c.rotation, -kHuge, kHuge, Vec3());
+        c.size = fix(c.size, 0.005f, kHuge, dc.size);
+    }
+}
+
+}  // namespace detail
+
+using detail::fix;
 
 Vec3 Emitter::centerAt(float t) const {
     const float w = kTau / motionPeriod;
@@ -45,7 +79,7 @@ Vec3 Emitter::motionVelocityAt(float t) const {
     return Vec3();
 }
 
-Domain SolverSettings::domain() const {
+Domain Domain::ofBox(const Vec3& size, int resolution) {
     Domain d;
     const float longest = std::max({size.x, size.y, size.z});
     d.voxel = longest / static_cast<float>(resolution);
@@ -55,6 +89,8 @@ Domain SolverSettings::domain() const {
     }
     return d;
 }
+
+Domain SolverSettings::domain() const { return Domain::ofBox(size, resolution); }
 
 Scene Scene::sanitized() const {
     const SolverSettings ds;
@@ -92,28 +128,8 @@ Scene Scene::sanitized() const {
         e.motionSize = fix(e.motionSize, 0.0f, kHuge, 0.0f);
         e.motionPeriod = fix(e.motionPeriod, 0.05f, kHuge, de.motionPeriod);
     }
-    const Force df;
-    for (Force& f : s.forces) {
-        // A negative attractor pushes away, a vortex with a negative speed
-        // spins the other way; the rest only makes sense forwards.
-        const bool vortex = f.kind == ForceKind::Vortex;
-        f.strength = fix(f.strength, f.kind == ForceKind::Attractor ? -kHuge : 0.0f, kHuge, df.strength);
-        f.scale = fix(f.scale, 0.005f, kHuge, df.scale);
-        f.speed = fix(f.speed, vortex ? -kHuge : 0.0f, kHuge, df.speed);
-        f.direction = fixDirection(f.direction, vortex ? Vec3(0, 1, 0) : df.direction);
-        f.gusts = fix(f.gusts, 0.0f, 1.0f, 0.0f);
-        f.center = fix(f.center, -kHuge, kHuge, df.center);
-        f.radius = fix(f.radius, 0.005f, kHuge, df.radius);
-        f.height = fix(f.height, 0.0f, kHuge, 0.0f);
-        f.lift = fix(f.lift, -kHuge, kHuge, 0.0f);
-        f.suction = fix(f.suction, -kHuge, kHuge, 0.0f);
-    }
-    const Collider dc;
-    for (Collider& c : s.colliders) {
-        c.center = fix(c.center, -kHuge, kHuge, dc.center);
-        c.rotation = fix(c.rotation, -kHuge, kHuge, Vec3());
-        c.size = fix(c.size, 0.005f, kHuge, dc.size);
-    }
+    detail::sanitize(s.forces);
+    detail::sanitize(s.colliders);
     return s;
 }
 

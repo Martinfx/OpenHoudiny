@@ -100,6 +100,11 @@ private:
     };
     /// Where a node is and how it is turned; false for one with nothing to move.
     bool placeOf(int id, Vec3& center, sim::Rotation& frame) const;
+    /// A box round every domain of what is simulated -- the gas's, the
+    /// water's -- or the runner's when nothing compiles.
+    sim::Domain sceneBox() const;
+    /// "72 × 96 × 72 cells", "water 48 × 24 × 24 · 46 k particles", or both.
+    std::string gridsText() const;
     /// The selected nodes the gizmo can move, turn or size.
     std::vector<int> movable() const;
     /// The tool the gizmo is for `nodes`: the chosen one, or the first they allow.
@@ -125,6 +130,9 @@ private:
     /// file's folder, or the examples' for an example.
     std::string folder() const;
     int ensurePyroChain();
+    /// The Liquid Solver, made -- with a Water Look into the Output -- when
+    /// there is none.
+    int ensureLiquidChain();
     /// Links `node`'s output into that input of every solver that has it.
     void linkIntoSolvers(int node, const char* output, const char* input);
     /// Where a new object, source or force goes in the network.

@@ -660,3 +660,88 @@ TEST(sim_network_objects_can_be_meshes_from_files) {
     CHECK(!net.setParam(rock, "file", "\"not closed", &error));
     fs::remove_all(dir);
 }
+
+TEST(sim_network_water_compiles_to_the_world_and_the_look) {
+    Network net;
+    const int hose = net.add("water_source");
+    CHECK(net.setParam(hose, "mode", "flow"));
+    CHECK(net.setParam(hose, "velocity", "1 0 0"));
+    CHECK(net.setParam(hose, "center", "-0.5 0.5 0"));
+    const int solver = net.add("liquid_solver", 300, 0);
+    CHECK(net.setParam(solver, "resolution", "32"));
+    CHECK(net.setParam(solver, "closed_sides", "off"));
+    const int look = net.add("water_look", 560, 0);
+    CHECK(net.setParam(look, "clarity", "3"));
+    const int out = net.add("output", 800, 0);
+    std::string error;
+    CHECK(!net.connect(hose, "water", solver, "forces", &error));  // water is no force
+    CHECK(!net.connect(hose, "water", net.add("pyro_solver"), "sources", &error));  // nor gas
+    CHECK(net.connect(hose, "water", solver, "sources"));
+    CHECK(net.connect(solver, "liquid", look, "liquid"));
+    CHECK(net.connect(look, "look", out, "look"));
+    const int rock = net.add("object");
+    CHECK(net.connect(rock, "collider", solver, "colliders"));
+    const int wind = net.add("wind");
+    CHECK(net.connect(wind, "force", solver, "forces"));
+
+    Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK(!c.errors());
+    CHECK(c.world.hasWater && !c.world.hasGas);
+    CHECK_EQ(c.liquidSolver, solver);
+    CHECK_EQ(c.waterLook, look);
+    const LiquidScene& w = c.world.water;
+    CHECK_EQ(w.solver.resolution, 32);
+    CHECK(!w.solver.closedSides);
+    CHECK_EQ(w.sources.size(), size_t(1));
+    CHECK(w.sources[0].mode == WaterMode::Flow);
+    CHECK(w.sources[0].velocity == Vec3(1.0f, 0.0f, 0.0f));
+    CHECK_EQ(w.sources[0].node, hose);
+    CHECK_EQ(w.colliders.size(), size_t(1));
+    CHECK_EQ(w.forces.size(), size_t(1));
+    CHECK(w.forces[0].kind == ForceKind::Wind);
+    CHECK_EQ(c.look.waterClarity, 3.0f);
+    CHECK(c.isActive(hose) && c.isActive(solver) && c.isActive(look) && c.isActive(wind));
+
+    // Gas and water in one Output: both simulated at its frame rate, both drawn.
+    const int fire = net.add("pyro_source");
+    CHECK(net.setParam(fire, "fuel", "10"));
+    const int pyro = net.add("pyro_solver");
+    const int smoke = net.add("volume_look");
+    CHECK(net.connect(fire, "source", pyro, "sources"));
+    CHECK(net.connect(pyro, "gas", smoke, "gas"));
+    CHECK(net.connect(smoke, "look", out, "look"));
+    CHECK(net.setParam(out, "fps", "25"));
+    c = net.compile();
+    CHECK(c.ok);
+    CHECK(c.world.hasGas && c.world.hasWater);
+    CHECK_EQ(c.solver, pyro);
+    World world = c.world;
+    world.gas.solver.resolution = 16;
+    world.water.solver.resolution = 16;
+    WorldSolver sim(world);
+    CHECK(std::fabs(sim.world().water.solver.timeStep - 0.04f) < 1e-6f);
+    sim.step();
+    sim.step();
+    const Frame f = sim.capture();
+    CHECK(!f.fields.empty() && !f.water.empty());
+    CHECK(f.water.particles > 0);
+
+    // What is missing is said.
+    net.disconnect(net.linksInto(solver, "sources")[0]);
+    CHECK(mentions(net.compile(), solver, "No water"));
+    net.disconnect(net.linksInto(look, "liquid")[0]);
+    c = net.compile();
+    CHECK(mentions(c, look, "No water to draw"));
+    CHECK(!c.world.hasWater && c.world.hasGas);  // the gas goes on
+
+    // Saved and read back, the same.
+    const std::string text = net.save();
+    CHECK(text.find("node 1 water_source 1 water_source1 0 0\n  param center -0.5 0.5 0\n  param mode flow\n"
+                    "  param velocity 1 0 0\n") != std::string::npos);
+    Network back;
+    std::vector<std::string> warnings;
+    CHECK(Network::load(text, back, error, &warnings));
+    CHECK(warnings.empty());
+    CHECK_EQ(back.save(), text);
+}

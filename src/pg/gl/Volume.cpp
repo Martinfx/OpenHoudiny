@@ -364,12 +364,125 @@ vec3 toneMap(vec3 x) {  // ACES, Narkowicz's fit
     return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
-// Sunlight at a point of a solid: blocked by the solids, dimmed by the smoke.
-float sunAt(vec3 p) {
+// --- water ---------------------------------------------------------------------
+uniform bool u_hasWater;
+uniform sampler3D u_water;     // r: distance to the surface, 0 at -band to 1 at +band; g: foam
+uniform vec3 u_waterMin, u_waterSize;
+uniform float u_waterCell;     // a cell of the water's grid, world units
+uniform float u_waterBand;
+uniform vec3 u_waterColor;     // what deep water looks like
+uniform vec3 u_waterSigma;     // how fast light fades in it, per metre, for red, green and blue
+uniform float u_foam;
+
+// The distance to the water's surface at p, world units, below 0 in it.
+// Outside the water's grid there is none -- but a point on its side, where
+// a ray comes in, counts as in: rounded a hair outside, a ray would take its
+// first step from there as if in empty space, past water right at the side.
+float waterAt(vec3 p) {
+    vec3 uvw = (p - u_waterMin) / u_waterSize;
+    if (any(lessThan(uvw, vec3(-1e-3))) || any(greaterThan(uvw, vec3(1.001)))) return u_waterBand;
+    return (textureLod(u_water, clamp(uvw, 0.0, 1.0), 0.0).r * 2.0 - 1.0) * u_waterBand;
+}
+
+float foamAt(vec3 p) {
+    return textureLod(u_water, clamp((p - u_waterMin) / u_waterSize, 0.0, 1.0), 0.0).g;
+}
+
+// The gradient close round p: a sheet of water is often thinner than two
+// cells, and a wider difference would reach through to its other side.
+vec3 waterNormal(vec3 p) {
+    float e = 0.35 * u_waterCell;
+    vec3 g = vec3(waterAt(p + vec3(e, 0.0, 0.0)) - waterAt(p - vec3(e, 0.0, 0.0)),
+                  waterAt(p + vec3(0.0, e, 0.0)) - waterAt(p - vec3(0.0, e, 0.0)),
+                  waterAt(p + vec3(0.0, 0.0, e)) - waterAt(p - vec3(0.0, 0.0, e)));
+    return dot(g, g) > 1e-12 ? normalize(g) : vec3(0.0, 1.0, 0.0);
+}
+
+// Where a ray from o along d (unit) first meets the water between t0 and t1;
+// 1e30 if it does not. Sphere tracing: a step as long as the distance says
+// is free -- a little less, the field is an estimate -- then the secant
+// between the last point outside and the first inside.
+float hitWater(vec3 o, vec3 d, float t0, float t1) {
+    vec2 span = boxSpan(o, d, u_waterMin, u_waterMin + u_waterSize);
+    float t = max(span.x, t0);
+    float end = min(span.y, t1);
+    if (t >= end) return 1e30;
+    float least = 0.35 * u_waterCell;
+    float last = t, lastD = waterAt(o + d * t);
+    if (lastD < 0.0) return t;
+    // The grid ends a hair before `end`: water right against its side -- a
+    // film on the wall of a tank -- is looked at there too.
+    end -= 1e-4 * u_waterCell;
+    // The nearest the ray came: a sheet thinner than a step may never show
+    // a point inside it, but the ray comes close to it.
+    float nearT = 1e30, nearD = 1e30;
+    for (int i = 0; i < 400; ++i) {
+        if (last >= end) break;
+        t = min(last + max(0.9 * lastD, least), end);
+        float dist = waterAt(o + d * t);
+        if (dist < 0.0) {
+            float a = last, b = t, da = lastD, db = dist;
+            for (int k = 0; k < 4; ++k) {
+                float m = a + (b - a) * da / (da - db);
+                float dm = waterAt(o + d * m);
+                if (dm < 0.0) { b = m; db = dm; } else { a = m; da = dm; }
+            }
+            return a + (b - a) * da / (da - db);
+        }
+        if (dist < nearD) {
+            nearD = dist;
+            nearT = t;
+        }
+        last = t;
+        lastD = dist;
+    }
+    return nearD < 0.3 * u_waterCell ? nearT : 1e30;
+}
+
+// How far a ray from o along d, starting in the water, goes before it leaves
+// it -- at most `most`.
+float leaveWater(vec3 o, vec3 d, float most) {
+    float least = 0.5 * u_waterCell;
+    float t = least;
+    for (int i = 0; i < 200 && t < most; ++i) {
+        float dist = waterAt(o + d * t);
+        if (dist > 0.0) return t;
+        t += max(-0.8 * dist, least);
+    }
+    return min(t, most);
+}
+
+// The share of the sunlight that gets through the water on the way to p:
+// water dims the light a little -- less than it dims a view, the light it
+// bends comes back together (caustics). For a point on the water's own
+// surface only the water past it counts: the light comes in through that
+// surface, not along it, which a grazing ray through a thin sheet would.
+float waterShade(vec3 p, bool onSurface) {
+    if (!u_hasWater) return 1.0;
+    vec2 span = boxSpan(p, u_lightDir, u_waterMin, u_waterMin + u_waterSize);
+    float t0 = max(span.x, 0.0), t1 = span.y;
+    if (t1 <= t0) return 1.0;
+    float dt = max((t1 - t0) / 64.0, u_waterCell);
+    float depth = 0.0;
+    bool counting = !onSurface;
+    for (float t = t0 + 0.5 * dt; t < t1; t += dt) {
+        float dist = waterAt(p + u_lightDir * t);
+        if (!counting) {
+            counting = dist > 0.5 * u_waterBand;
+            continue;
+        }
+        depth += dt * smoothstep(0.5 * u_waterBand, -0.5 * u_waterBand, dist);
+    }
+    return exp(-0.4 * dot(u_waterSigma, vec3(1.0 / 3.0)) * depth);
+}
+
+// Sunlight at p: blocked by the solids, dimmed by the water and the smoke.
+float sunThrough(vec3 p, bool onWater) {
     vec3 n;
     int which;
     if (hitSolid(p, u_lightDir, 1e-3, n, which) < 1e29 || meshShadow(p, u_lightDir)) return 0.0;
-    if (!u_hasGas) return 1.0;
+    float light = waterShade(p, onWater);
+    if (!u_hasGas) return light;
     vec2 span = boxSpan(p, u_lightDir, u_boxMin, u_boxMin + u_boxSize);
     float t0 = max(span.x, 0.0), t1 = span.y;
     if (t1 <= t0) return 1.0;
@@ -379,8 +492,11 @@ float sunAt(vec3 p) {
         vec3 q = (p + u_lightDir * t - u_boxMin) / u_boxSize;
         depth += textureLod(u_fields, q, 1.0).r * fadeAt(q);
     }
-    return exp(-u_extinction * depth * dt);
+    return light * exp(-u_extinction * depth * dt);
 }
+
+// Sunlight at a point of a solid.
+float sunAt(vec3 p) { return sunThrough(p, false); }
 
 // Light the fire casts on a point of a solid facing n, from the lamp of each
 // block of the glow texture.
@@ -439,6 +555,61 @@ vec3 floorAlbedo(vec2 q, vec2 width) {
     return vec3(0.075 + lines);
 }
 
+// What the water reflects along r: the sky -- brighter overhead -- above the
+// horizon, the floor below it.
+vec3 environment(vec3 r) {
+    if (r.y < 0.0) return vec3(0.075) * (u_light * max(u_lightDir.y, 0.0) * 0.6 + u_sky);
+    return u_sky * (1.4 + 2.2 * r.y) + u_light * 0.04;
+}
+
+// What is seen through the water along d from p, just inside it: the floor
+// or an object -- or the sky, when the ray leaves the water first and meets
+// nothing. `travelled`: how far it went through the water.
+vec3 underWater(vec3 p, vec3 d, out float travelled) {
+    float tFloor = d.y < -1e-6 ? -p.y / d.y : 1e30;
+    if (!u_floor) tFloor = 1e30;
+    vec3 n;
+    int which;
+    float tSolid = hitSolid(p, d, 1e-3, n, which);
+    float tStop = min(tFloor, tSolid);
+    travelled = leaveWater(p, d, min(tStop, 50.0));
+    if (tStop >= 1e29) return environment(d);
+    vec3 q = p + d * tStop;
+    if (tSolid < tFloor) return shadeSolid(q, n, d, which);
+    return shade(q, vec3(0.0, 1.0, 0.0), floorAlbedo(q.xz, vec2(0.004)));
+}
+
+// The water's surface at p, seen along d.
+vec3 shadeWater(vec3 p, vec3 d) {
+    vec3 n = waterNormal(p);
+    if (dot(n, d) > 0.0) n = -n;
+    float cosi = clamp(-dot(d, n), 0.0, 1.0);
+    float fresnel = 0.02 + 0.98 * pow(1.0 - cosi, 5.0);
+    float sun = sunThrough(p + n * 2e-3, true);
+    // What it reflects: the sky and the sun's glint, or an object.
+    vec3 r = reflect(d, n);
+    vec3 reflected = environment(r) + u_light * sun * 30.0 * pow(max(dot(r, u_lightDir), 0.0), 800.0);
+    vec3 sn;
+    int which;
+    float ts = hitSolid(p + n * 1e-3, r, 0.0, sn, which);
+    if (ts < 1e29) reflected = shadeSolid(p + n * 1e-3 + r * ts, sn, r, which);
+    // What it lets through: bent, fading with the way through the water, and
+    // the water's own colour, from the light it scatters back.
+    vec3 t = refract(d, n, 1.0 / 1.33);
+    float travelled = 0.0;
+    vec3 behind = dot(t, t) > 0.0 ? underWater(p - n * 2e-3, t, travelled) : vec3(0.0);
+    vec3 through = exp(-u_waterSigma * travelled);
+    vec3 ambient = u_sky * 1.5 + u_light * sun * max(u_lightDir.y, 0.0) * 0.35;
+    vec3 c = mix(behind * through + u_waterColor * ambient * (1.0 - through), reflected, fresnel);
+    // Foam and spray: white and rough, lit like the floor.
+    float foam = clamp(foamAt(p) * u_foam, 0.0, 1.0);
+    if (foam > 0.02) {
+        vec3 white = vec3(0.85) * (u_light * sun * max(dot(n, u_lightDir), 0.0) + u_sky * (0.6 + 0.4 * n.y) * 1.5);
+        c = mix(c, white, 0.9 * smoothstep(0.1, 1.0, foam));
+    }
+    return c;
+}
+
 void main() {
     vec3 dir = normalize(u_forward + v_ndc.x * u_tanHalfFov.x * u_right + v_ndc.y * u_tanHalfFov.y * u_up);
     vec3 background = mix(u_backgroundBottom, u_backgroundTop, clamp(v_ndc.y * 0.5 + 0.5, 0.0, 1.0));
@@ -474,6 +645,15 @@ void main() {
         float away = length(floorPoint.xz - u_floorCenter.xz) / u_floorRadius;
         cover = 1.0 - smoothstep(0.35, 1.0, away);
         if (cover > 0.0) surface = shade(floorPoint, vec3(0.0, 1.0, 0.0), floorAlbedo(floorPoint.xz, pixel));
+    }
+    // The water, in front of it all.
+    if (u_hasWater) {
+        float tWater = hitWater(u_eye, dir, 0.0, tEnd);
+        if (tWater < 1e29) {
+            tEnd = tWater;
+            surface = shadeWater(u_eye + dir * tWater, dir);
+            cover = 1.0;
+        }
     }
 
     vec3 radiance = vec3(0.0);
@@ -747,9 +927,25 @@ void Lines::shape(const sim::ShapeInstance& s, const float color[4]) {
     }
 }
 
-Lines sceneGuides(const sim::Scene* gas, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
-                  int domainNode) {
+sim::Domain sceneDomain(const sim::World& world) {
+    const sim::World safe = world.sanitized();
+    Vec3 size;
+    bool any = false;
+    auto take = [&](const sim::Domain& d) {
+        const Vec3 e = d.size();
+        size = any ? Vec3(std::max(size.x, e.x), std::max(size.y, e.y), std::max(size.z, e.z)) : e;
+        any = true;
+    };
+    if (safe.hasGas) take(safe.gas.solver.domain());
+    if (safe.hasWater) take(safe.water.solver.domain());
+    if (!any) return sim::Scene().solver.domain();
+    return sim::Domain::ofBox(size, 64);
+}
+
+Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
+                  int domainNode, int waterNode) {
     Lines lines;
+    const sim::Scene* gas = world && world->hasGas ? &world->gas : nullptr;
     const sim::Scene scene = gas ? *gas : sim::Scene();
     const sim::Domain domain = scene.sanitized().solver.domain();
     const float dim = 0.35f, bright = 0.95f;
@@ -811,6 +1007,40 @@ Lines sceneGuides(const sim::Scene* gas, const std::vector<sim::Solid>& solids, 
             case sim::ForceKind::Drag: break;
         }
     }
+    // The water: its domain, its sources, the jets of its flows, its forces.
+    if (world && world->hasWater) {
+        const sim::LiquidScene water = world->water.sanitized();
+        const sim::Domain wd = water.solver.domain();
+        const std::array<float, 4> tank = {0.45f, 0.7f, 1.0f, isSelected(waterNode) ? 0.8f : 0.45f};
+        lines.owner = waterNode;
+        lines.box(wd.origin(), wd.origin() + wd.size(), tank.data());
+        for (const sim::WaterSource& w : water.sources) {
+            lines.owner = w.node;
+            const auto c = colour(0.3f, 0.7f, 1.0f, w.node);
+            const sim::ShapeInstance shape = w.instance();
+            lines.shape(shape, c.data());
+            const Vec3 jet = shape.turn().apply(w.velocity);
+            const float speed = length(jet);
+            if (w.mode == sim::WaterMode::Flow && speed > 1e-4f) {
+                const float r = 0.5f * length(w.size);
+                lines.arrow(w.center, w.center + jet * ((r + 0.15f) / std::max(speed, 0.5f)), c.data());
+            }
+        }
+        if (!gas) {
+            // The water's forces, as the gas's are drawn.
+            for (const sim::Force& f : water.forces) {
+                lines.owner = f.node;
+                if (f.kind == sim::ForceKind::Vortex) {
+                    const auto c = colour(0.35f, 0.85f, 1.0f, f.node);
+                    const float height = f.height > 0.0f ? f.height : wd.size().y;
+                    lines.cylinder(f.center, f.direction, f.radius, height, c.data());
+                } else if (f.kind == sim::ForceKind::Attractor) {
+                    const auto c = colour(0.95f, 0.45f, 0.95f, f.node);
+                    lines.sphere(f.center, f.radius, c.data());
+                }
+            }
+        }
+    }
     // The selected objects, outlined a hair outside their surface.
     const std::array<float, 4> outline = {1.0f, 0.6f, 0.25f, 0.9f};
     for (const sim::Solid& solid : solids) {
@@ -855,7 +1085,7 @@ VolumeRenderer::~VolumeRenderer() {
     gl_.DeleteVertexArrays(1, &vao_);
     gl_.DeleteVertexArrays(1, &lineVao_);
     gl_.DeleteBuffers(1, &lineBuffer_);
-    for (GLuint t : {fields_, light_, glow_, colorTex_}) {
+    for (GLuint t : {fields_, light_, glow_, colorTex_, water_}) {
         if (t) gl_.DeleteTextures(1, &t);
     }
     for (GLuint f : {fbo_, passFbo_}) {
@@ -909,8 +1139,12 @@ void VolumeRenderer::setDomain(const sim::Domain& domain) {
 }
 
 void VolumeRenderer::setFrame(const sim::Frame& frame) {
+    setWater(frame.water);
     const int nx = frame.domain.cells[0], ny = frame.domain.cells[1], nz = frame.domain.cells[2];
-    if (frame.fields.size() != 3 * frame.domain.cellCount() || nx <= 0) return;
+    if (frame.fields.size() != 3 * frame.domain.cellCount() || nx <= 0) {
+        hasFrame_ = false;  // no gas in this frame
+        return;
+    }
     setDomain(frame.domain);
     if (!fields_) gl_.GenTextures(1, &fields_);
     gl_.ActiveTexture(TEXTURE0);
@@ -937,7 +1171,38 @@ void VolumeRenderer::setFrame(const sim::Frame& frame) {
     lightingDirty_ = true;
 }
 
-void VolumeRenderer::clearFrame() { hasFrame_ = false; }
+void VolumeRenderer::setWater(const sim::WaterFrame& water) {
+    const int nx = water.domain.cells[0], ny = water.domain.cells[1], nz = water.domain.cells[2];
+    if (water.cells.size() != 2 * water.domain.cellCount() || nx <= 0) {
+        hasWater_ = false;
+        return;
+    }
+    if (!water_) gl_.GenTextures(1, &water_);
+    gl_.ActiveTexture(TEXTURE0);
+    gl_.BindTexture(TEXTURE_3D, water_);
+    gl_.PixelStorei(UNPACK_ALIGNMENT, 2);
+    if (waterSize_[0] != nx || waterSize_[1] != ny || waterSize_[2] != nz) {
+        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(RG8), nx, ny, nz, 0, RG, UNSIGNED_BYTE, water.cells.data());
+        gl_.TexParameteri(TEXTURE_3D, TEXTURE_MIN_FILTER, LINEAR);
+        gl_.TexParameteri(TEXTURE_3D, TEXTURE_MAG_FILTER, LINEAR);
+        for (GLenum wrap : {TEXTURE_WRAP_S, TEXTURE_WRAP_T, TEXTURE_WRAP_R}) gl_.TexParameteri(TEXTURE_3D, wrap, CLAMP_TO_EDGE);
+        waterSize_[0] = nx;
+        waterSize_[1] = ny;
+        waterSize_[2] = nz;
+    } else {
+        gl_.TexSubImage3D(TEXTURE_3D, 0, 0, 0, 0, nx, ny, nz, RG, UNSIGNED_BYTE, water.cells.data());
+    }
+    gl_.BindTexture(TEXTURE_3D, 0);
+    gl_.PixelStorei(UNPACK_ALIGNMENT, 4);
+    waterDomain_ = water.domain;
+    waterBand_ = water.band;
+    hasWater_ = true;
+}
+
+void VolumeRenderer::clearFrame() {
+    hasFrame_ = false;
+    hasWater_ = false;
+}
 
 void VolumeRenderer::setSolids(const std::vector<sim::Solid>& solids) {
     std::vector<sim::Solid> kept(solids.begin(), solids.begin() + std::min<size_t>(solids.size(), kMaxSolids));
@@ -1351,6 +1616,25 @@ void VolumeRenderer::render(int width, int height) {
     gl_.BindTexture(TEXTURE_2D, meshes ? gTex_ : 0);
     gl_.Uniform1i(location(program_, "u_meshG"), 3);
     gl_.Uniform1i(location(program_, "u_hasMeshes"), meshes ? 1 : 0);
+    // The water, on unit 8: how far light gets into it follows from its
+    // colour -- what a colour keeps, it loses slowly -- and its clarity.
+    gl_.ActiveTexture(TEXTURE8);
+    gl_.BindTexture(TEXTURE_3D, hasWater_ ? water_ : 0);
+    gl_.Uniform1i(location(program_, "u_water"), 8);
+    gl_.Uniform1i(location(program_, "u_hasWater"), hasWater_ ? 1 : 0);
+    {
+        const Vec3 lo = waterDomain_.origin(), extent = waterDomain_.size();
+        gl_.Uniform3f(location(program_, "u_waterMin"), lo.x, lo.y, lo.z);
+        gl_.Uniform3f(location(program_, "u_waterSize"), extent.x, extent.y, extent.z);
+        gl_.Uniform1f(location(program_, "u_waterCell"), waterDomain_.voxel);
+        gl_.Uniform1f(location(program_, "u_waterBand"), std::max(waterBand_, 1e-4f));
+        const Vec3& c = s.waterColor;
+        gl_.Uniform3f(location(program_, "u_waterColor"), c.x, c.y, c.z);
+        const float per = 3.0f / std::max(s.waterClarity, 0.01f);
+        gl_.Uniform3f(location(program_, "u_waterSigma"), (1.0f - 0.85f * c.x) * per, (1.0f - 0.85f * c.y) * per,
+                      (1.0f - 0.85f * c.z) * per);
+        gl_.Uniform1f(location(program_, "u_foam"), s.foam);
+    }
 
     gl_.BindVertexArray(vao_);
     gl_.DrawArrays(TRIANGLES, 0, 3);
@@ -1376,6 +1660,8 @@ void VolumeRenderer::render(int width, int height) {
         gl_.ActiveTexture(TEXTURE0 + static_cast<GLenum>(unit));
         gl_.BindTexture(TEXTURE_3D, 0);
     }
+    gl_.ActiveTexture(TEXTURE8);
+    gl_.BindTexture(TEXTURE_3D, 0);
     gl_.ActiveTexture(TEXTURE3);
     gl_.BindTexture(TEXTURE_2D, 0);
     gl_.ActiveTexture(TEXTURE2);

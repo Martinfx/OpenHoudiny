@@ -56,7 +56,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 122 testů: 50 jádro, 25 shader graf, 47 simulace, objekty a modely
+./build/pgtests            # 133 testů: 50 jádro, 25 shader graf, 58 simulace, voda, objekty a modely
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)

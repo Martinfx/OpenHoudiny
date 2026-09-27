@@ -576,7 +576,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      n ? n->name.c_str() : "", n ? ": " : "", p.message.c_str());
     }
     if (!c.ok) return 1;
-    if (o.resolution > 0) c.world.gas.solver.resolution = o.resolution;
+    if (o.resolution > 0) {
+        c.world.gas.solver.resolution = o.resolution;
+        c.world.water.solver.resolution = o.resolution;
+    }
     const int frames = o.frames > 0 ? o.frames : c.frames;
     if (o.every > frames) {
         std::fprintf(stderr, "%s: --every %d is more than the %d frames: no frame would be written\n", cmd, o.every,
@@ -585,7 +588,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
 #ifdef PG_HAVE_EGL
     namespace gl = pg::gl;
-    int width = 400, height = 600;
+    // Tall for a plume, wide for a scene wider than it is high.
+    const Vec3 extent = gl::sceneDomain(c.world).size();
+    int width = extent.y >= std::max(extent.x, extent.z) ? 400 : 640;
+    int height = extent.y >= std::max(extent.x, extent.z) ? 600 : 400;
     if (!o.sizeText.empty()) {
         const size_t x = o.sizeText.find('x');
         width = std::atoi(o.sizeText.c_str());
@@ -612,12 +618,12 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
     sim::WorldSolver solver(c.world);
     const sim::World& world = solver.world();
-    const sim::Domain domain = world.hasGas ? world.gas.solver.domain() : sim::Domain();
+    const sim::Domain domain = world.hasGas ? world.gas.solver.domain() : world.water.solver.domain();
     volume.look = c.look;
     volume.setDomain(domain);
     volume.setSolids(c.solids);
-    if (o.guides) volume.setLines(gl::sceneGuides(world.hasGas ? &world.gas : nullptr, c.solids, {}));
-    volume.orbit = gl::VolumeRenderer::viewOf(domain);
+    if (o.guides) volume.setLines(gl::sceneGuides(&world, c.solids, {}));
+    volume.orbit = gl::VolumeRenderer::viewOf(gl::sceneDomain(world));
     if (o.yawSet) volume.orbit.yaw = o.yaw;
     if (o.pitchSet) volume.orbit.pitch = o.pitch;
     if (o.distance > 0.0f) volume.orbit.distance = o.distance;
@@ -646,11 +652,21 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         }
         ++images;
     }
-    std::printf("wrote %s%s: %s, %d x %d x %d cells, %d frames (%.1f s); simulation %.1f ms/frame, "
-                "rendering %.0f ms/image (%s)\n",
+    std::string what;
+    if (world.hasGas) {
+        const sim::Domain& d = solver.gas()->domain();
+        what += ", gas " + std::to_string(d.cells[0]) + " x " + std::to_string(d.cells[1]) + " x " +
+                std::to_string(d.cells[2]) + " cells";
+    }
+    if (world.hasWater) {
+        const sim::Domain& d = solver.water()->domain();
+        what += ", water " + std::to_string(d.cells[0]) + " x " + std::to_string(d.cells[1]) + " x " +
+                std::to_string(d.cells[2]) + " cells, " + std::to_string(solver.water()->particleCount()) + " particles";
+    }
+    std::printf("wrote %s%s: %s%s, %d frames (%.1f s); simulation %.1f ms/frame, rendering %.0f ms/image (%s)\n",
                 last.c_str(), images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "",
-                network.c_str(), domain.cells[0], domain.cells[1], domain.cells[2], frames, solver.time(), simulating / frames,
-                rendering / std::max(images, 1), reinterpret_cast<const char*>(api.GetString(gl::RENDERER)));
+                network.c_str(), what.c_str(), frames, solver.time(), simulating / frames, rendering / std::max(images, 1),
+                reinterpret_cast<const char*>(api.GetString(gl::RENDERER)));
     return 0;
 #else
     (void)outPath;

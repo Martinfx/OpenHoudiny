@@ -1,8 +1,10 @@
 #include "pg/sim/Frame.h"
 
 #include "pg/core/Parallel.h"
+#include "pg/sim/Liquid.h"
 #include "pg/sim/Pyro.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -71,6 +73,47 @@ Frame capture(const PyroSolver& sim) {
         }
     });
     return f;
+}
+
+float WaterFrame::distance(int i, int j, int k) const {
+    const size_t cell = static_cast<size_t>(i) +
+                        static_cast<size_t>(domain.cells[0]) *
+                            (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k));
+    return (static_cast<float>(cells[2 * cell]) / 255.0f * 2.0f - 1.0f) * band;
+}
+
+float WaterFrame::foam(int i, int j, int k) const {
+    const size_t cell = static_cast<size_t>(i) +
+                        static_cast<size_t>(domain.cells[0]) *
+                            (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k));
+    return static_cast<float>(cells[2 * cell + 1]) / 255.0f;
+}
+
+WaterFrame capture(const LiquidSolver& sim) {
+    WaterFrame w;
+    const Domain& d = sim.domain();
+    for (int a = 0; a < 3; ++a) w.domain.cells[a] = 2 * d.cells[a];
+    w.domain.voxel = 0.5f * d.voxel;
+    // Three cells of the fine grid either side of the surface: as far as a
+    // ray steps at once, and enough for its normal.
+    w.band = 1.5f * d.voxel;
+    w.particles = sim.particleCount();
+    w.litres = sim.volume();
+    Grid distance, foam;
+    sim.surfaceField(2, w.band, distance, foam);
+    w.cells.resize(2 * distance.size());
+    const float* dist = distance.data();
+    const float* white = foam.data();
+    uint8_t* out = w.cells.data();
+    const float scale = 0.5f / w.band;
+    pg::parallelFor(distance.size(), 16384, [&](size_t begin, size_t end) {
+        for (size_t c = begin; c < end; ++c) {
+            const float x = std::clamp(dist[c] * scale + 0.5f, 0.0f, 1.0f);
+            out[2 * c] = static_cast<uint8_t>(std::lround(x * 255.0f));
+            out[2 * c + 1] = static_cast<uint8_t>(std::lround(std::clamp(white[c], 0.0f, 1.0f) * 255.0f));
+        }
+    });
+    return w;
 }
 
 }  // namespace pg::sim

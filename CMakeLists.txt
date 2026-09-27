@@ -148,7 +148,9 @@ configure_file(${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp.tmp
 
 add_library(pgsim
   src/pg/sim/Frame.cpp
+  src/pg/sim/FreeSurface.cpp
   src/pg/sim/Grid.cpp
+  src/pg/sim/Liquid.cpp
   src/pg/sim/Mesh.cpp
   src/pg/sim/Network.cpp
   src/pg/sim/Poisson.cpp
@@ -295,6 +297,7 @@ add_executable(pgtests
   tests/test_sim_network.cpp
   tests/test_shapes.cpp
   tests/test_mesh.cpp
+  tests/test_liquid.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")

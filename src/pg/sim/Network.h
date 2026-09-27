@@ -1,12 +1,14 @@
 #pragma once
 //
 // A simulation built from nodes: the network the editor shows and a .pgsim
-// file holds. Sources, forces and objects feed a Pyro Solver; its gas goes
-// through a Volume Look to the Output.
+// file holds. Sources, forces and objects feed the solvers -- a Pyro Solver
+// for smoke and fire, a Liquid Solver for water -- and what each simulates
+// goes through its look to the Output, which draws them all in one scene.
 //
 //   [Pyro Source] --+
-//   [Turbulence] ---+--> [Pyro Solver] --> [Volume Look] --> [Output]
-//   [Object] -------+
+//   [Turbulence] ---+--> [Pyro Solver] ---> [Volume Look] --+
+//   [Object] -------+                                       +--> [Output]
+//   [Water Source] -+--> [Liquid Solver] -> [Water Look] ---+
 //
 // Objects are the solids of the scene: every one is drawn, and those linked
 // into a solver's Colliders are in the way of what it simulates. Objects and
@@ -51,7 +53,7 @@
 namespace pg::sim {
 
 /// What flows along a link. An output links only to an input of its type.
-enum class PinType : uint8_t { Source, Force, Collider, Gas, Look };
+enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid };
 const char* pinTypeName(PinType type);
 
 struct PinDef {
@@ -164,8 +166,8 @@ struct Compiled {
     /// True when the Output is reached from a solver: there is something to
     /// simulate. False with the errors in `problems` that say why not.
     bool ok = false;
-    /// What is simulated: the gas (world.gas, when world.hasGas), at the
-    /// Output's frame rate.
+    /// What is simulated: the gas (world.gas, when world.hasGas) and the
+    /// water (world.water, when world.hasWater), at the Output's frame rate.
     World world;
     Look look;
     /// Every object of the network, bypassed ones aside, as it is drawn --
@@ -177,6 +179,7 @@ struct Compiled {
     /// editor dims the others.
     std::vector<int> active;
     int output = 0, lookNode = 0, solver = 0;  ///< the Output, the Volume Look, the Pyro Solver; 0 if none
+    int waterLook = 0, liquidSolver = 0;       ///< the Water Look, the Liquid Solver; 0 if none
 
     bool errors() const;
     bool isActive(int node) const;

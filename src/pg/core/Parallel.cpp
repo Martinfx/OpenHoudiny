@@ -44,6 +44,7 @@ struct TaskPool::Impl {
     std::mutex mu;
     std::condition_variable cv;
     std::vector<std::shared_ptr<Batch>> batches;
+    std::atomic<size_t> open{0};  // batches.size(), readable without the lock
     std::vector<std::thread> workers;
     std::atomic<bool> stop{false};
 };
@@ -112,6 +113,20 @@ void TaskPool::workerLoop() {
     using namespace std::chrono_literals;
     while (!impl_->stop.load(std::memory_order_relaxed)) {
         if (tryRunOne()) continue;
+        // Nothing to do. Work comes in bursts -- a solver's loops one after
+        // another, each split into chunks -- and waking a sleeping thread
+        // takes longer than many a chunk: look out for the next batch a
+        // moment before going to sleep.
+        const auto until = std::chrono::steady_clock::now() + 300us;
+        bool more = false;
+        while (!impl_->stop.load(std::memory_order_relaxed) && std::chrono::steady_clock::now() < until) {
+            if (impl_->open.load(std::memory_order_acquire) > 0 && tryRunOne()) {
+                more = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        if (more) continue;
         std::unique_lock<std::mutex> lk(impl_->mu);
         // Timed wait rather than a strict predicate: a spurious extra wakeup
         // costs one cheap scan, a missed wakeup would cost a hang.
@@ -133,6 +148,7 @@ void TaskPool::run(size_t n, const std::function<void(size_t)>& task) {
     {
         std::lock_guard<std::mutex> lk(impl_->mu);
         impl_->batches.push_back(batch);
+        impl_->open.store(impl_->batches.size(), std::memory_order_release);
     }
     impl_->cv.notify_all();
 
@@ -147,6 +163,7 @@ void TaskPool::run(size_t n, const std::function<void(size_t)>& task) {
         impl_->batches.erase(
             std::remove(impl_->batches.begin(), impl_->batches.end(), batch),
             impl_->batches.end());
+        impl_->open.store(impl_->batches.size(), std::memory_order_release);
     }
 }
 

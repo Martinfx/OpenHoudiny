@@ -52,12 +52,12 @@ ParamDef center(const char* section, Vec3 at, const char* help) {
 
 // --- shapes placed in the world: objects and sources (Shape.h) ----------------------
 
-ParamDef shape(const char* help) {
+ParamDef shape(const char* help, Shape byDefault = Shape::Sphere) {
     return {"shape",
             "Shape",
             "Shape",
             K::Choice,
-            {0.0f, 0.0f, 0.0f},
+            {static_cast<float>(byDefault), 0.0f, 0.0f},
             0.0f,
             5.0f,
             0.0f,
@@ -120,6 +120,29 @@ std::vector<ParamDef> pyroSourceParams() {
                  "Radius of the circle; how far it sways."});
     p.push_back({"motion_period", "Period", "Motion", K::Float, {4.0f, 0.0f, 0.0f}, 0.2f, 10.0f, 0.05f, kBig, "s",
                  "Seconds for one round."});
+    return p;
+}
+
+std::vector<ParamDef> waterSourceParams() {
+    std::vector<ParamDef> p;
+    p.push_back(shape("Its shape: the water fills it, or pours out of it.", Shape::Box));
+    p.push_back(file("An OBJ file, when the shape is mesh: water in the shape of a model. A relative path is read "
+                     "from the network's folder."));
+    p.push_back(position(Vec3(0.0f, 0.3f, 0.0f), "Where the water is; y is its height above the floor."));
+    p.push_back(rotation());
+    p.push_back(size(Vec3(0.4f, 0.6f, 0.4f), "Width, height and depth, along its own axes."));
+    p.push_back({"mode", "Mode", "Emission", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                 "Fill: the shape is filled with water once, when it starts -- a block of water let go, a pool. "
+                 "Flow: water keeps coming out of it at its velocity -- a hose, a fountain, a waterfall.",
+                 {"fill", "flow"}, {"Fill", "Flow"}});
+    p.push_back({"velocity", "Velocity", "Emission", K::Vector, {0.0f, 0.0f, 0.0f}, -5.0f, 5.0f, -kBig, kBig, "m/s",
+                 "How fast the water leaves, along the source's own axes: turn the source and the jet turns "
+                 "with it."});
+    p.push_back(seed("Emission", "Another number: the drops of water at other places."));
+    p.push_back({"start", "Start", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
+                 "When it fills, or starts to flow."});
+    p.push_back({"end", "End", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
+                 "When a flow stops. At or before the start, it never does."});
     return p;
 }
 
@@ -321,6 +344,14 @@ std::vector<NodeType> buildTypes() {
                  pyroSourceParams(),
                  2});
     t.back().handles = {"center", "rotation", nullptr, "size", nullptr, nullptr};
+    t.push_back({"water_source", "Water Source", "Sources",
+                 "A shape the water comes from: filled once -- a block of water, a pool -- or pouring water out "
+                 "at its velocity -- a hose, a fountain, a waterfall.",
+                 {},
+                 {{"water", "Water", PinType::Water}},
+                 waterSourceParams(),
+                 1});
+    t.back().handles = {"center", "rotation", nullptr, "size", nullptr, nullptr};
 
     // --- forces ---------------------------------------------------------------------
     t.push_back({"turbulence", "Turbulence", "Forces",
@@ -401,6 +432,31 @@ std::vector<NodeType> buildTypes() {
          {{"gas", "Gas", PinType::Gas}},
          pyroSolverParams(false),
          2});
+    t.push_back(
+        {"liquid_solver", "Liquid Solver", "Simulation",
+         "Simulates water in a box standing on the floor (FLIP): particles carry it, a grid keeps its volume. "
+         "It falls, splashes, piles up and flows round the colliders; the forces push it about.",
+         {{"sources", "Sources", PinType::Water, true},
+          {"forces", "Forces", PinType::Force, true},
+          {"colliders", "Colliders", PinType::Collider, true}},
+         {{"liquid", "Liquid", PinType::Liquid}},
+         {{"size", "Size", "Domain", K::Vector, {2.0f, 1.0f, 1.2f}, 0.1f, 5.0f, 0.1f, 20.0f, "m",
+           "Width, height and depth of the box the water lives in. It stands on the floor, centred."},
+          {"resolution", "Resolution", "Domain", K::Int, {64.0f, 0.0f, 0.0f}, 16.0f, 192.0f, 16.0f, 256.0f, "",
+           "Cells along the longest side; eight particles fill a cell. Twice as many: finer splashes, and "
+           "eight times the work."},
+          {"closed_sides", "Closed Sides", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "Walls round the four sides: a tank. Off, the water runs off the edges and is gone."},
+          {"gravity", "Gravity", "Motion", K::Float, {9.81f, 0.0f, 0.0f}, 0.0f, 20.0f, -100.0f, 100.0f,
+           "m/s\xc2\xb2", "How hard the water is pulled down."},
+          {"flip", "Splash", "Motion", K::Float, {0.95f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "1: lively and splashy, every drop keeps its own speed (FLIP); 0: smooth and thick, slowing down "
+           "(PIC). Most water is 0.9 to 0.98."},
+          {"substeps", "Substeps", "Time", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
+           "At least this many steps a frame. Fast water takes more on its own: no drop crosses more than two "
+           "cells a step."},
+          seed("Time", "Another number: the drops of the sources at other places.")},
+         1});
 
     // --- render ---------------------------------------------------------------------
     t.push_back(
@@ -411,6 +467,19 @@ std::vector<NodeType> buildTypes() {
          {{"look", "Look", PinType::Look}},
          volumeLookParams(),
          2});
+    t.push_back({"water_look", "Water Look", "Render",
+                 "How the water is drawn: a surface that reflects the sky and the sun and bends the light that "
+                 "goes in, water that takes on its colour with depth, and white foam and spray. Changing it "
+                 "draws the frames again -- nothing is simulated again.",
+                 {{"liquid", "Liquid", PinType::Liquid}},
+                 {{"look", "Look", PinType::Look}},
+                 {{"color", "Deep Color", "Water", K::Color, {0.1f, 0.42f, 0.5f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "The colour the water takes on where it is deep: blue-green for the sea, brown for a river."},
+                  {"clarity", "Clarity", "Water", K::Float, {1.5f, 0.0f, 0.0f}, 0.05f, 10.0f, 0.01f, kBig, "m",
+                   "How far one sees into it: murky to crystal clear."},
+                  {"foam", "Foam", "Water", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
+                   "How white the spray and the foam of fast water are drawn. 0: none."}},
+                 1});
     t.push_back({"output", "Output", "Render",
                  "Where the network ends: what the viewport shows and `pgshader sim` renders -- every look "
                  "linked into it, in one scene, lit by one sun and one sky, at one frame rate.",
@@ -683,6 +752,8 @@ const char* pinTypeName(PinType type) {
         case PinType::Collider: return "collider";
         case PinType::Gas: return "gas";
         case PinType::Look: return "look";
+        case PinType::Water: return "water";
+        case PinType::Liquid: return "liquid";
     }
     return "?";
 }
@@ -1326,62 +1397,21 @@ Compiled Network::compile(const std::string& folder) const {
     k.exposure = f(*output, "exposure");
     k.floor = f(*output, "floor") != 0.0f;
 
-    // The gas of a Pyro Solver: its settings, and what feeds it.
-    auto compileGas = [&](const Node* solver) {
-        c.world.hasGas = true;
-        SolverSettings& s = c.world.gas.solver;
-        s.size = v3(*solver, "size");
-        s.resolution = whole(*solver, "resolution");
-        s.closedFloor = f(*solver, "closed_floor") != 0.0f;
-        s.timeStep = c.world.timeStep;
-        s.substeps = whole(*solver, "substeps");
-        s.pressureCycles = whole(*solver, "pressure_cycles");
-        s.seed = static_cast<uint32_t>(whole(*solver, "seed"));
-        s.buoyancy = f(*solver, "buoyancy");
-        s.weight = f(*solver, "weight");
-        s.vorticity = f(*solver, "vorticity");
-        s.burnRate = f(*solver, "burn_rate");
-        s.heatRelease = f(*solver, "heat_release");
-        s.sootRelease = f(*solver, "soot_release");
-        s.expansion = f(*solver, "expansion");
-        s.flameLife = f(*solver, "flame_life");
-        s.cooling = f(*solver, "cooling");
-        s.smokeDecay = f(*solver, "smoke_decay");
-
-        // What feeds the solver, in the order it was linked. Bypassed nodes stay
-        // out; so do nodes of a type this program does not know (reported above).
-        auto feeding = [&](const char* input) {
-            std::vector<const Node*> out;
-            for (const Link& l : linksInto(solver->id, input)) {
-                const Node* n = node(l.from);
-                if (n && !n->bypass && findNodeType(n->type)) out.push_back(n);
-            }
-            return out;
-        };
-        for (const Node* n : feeding("sources")) {
-            Emitter e;
-            e.shape = static_cast<Shape>(whole(*n, "shape"));
-            e.center = v3(*n, "center");
-            e.rotation = v3(*n, "rotation");
-            e.size = v3(*n, "size");
-            e.mesh = meshOf(*n);
-            e.fuel = f(*n, "fuel");
-            e.smoke = f(*n, "smoke");
-            e.heat = f(*n, "heat");
-            e.velocity = v3(*n, "velocity");
-            e.flicker = f(*n, "flicker");
-            e.flickerSize = f(*n, "flicker_size");
-            e.seed = static_cast<uint32_t>(whole(*n, "seed"));
-            e.start = f(*n, "start");
-            e.end = f(*n, "end");
-            e.motion = static_cast<Motion>(whole(*n, "motion"));
-            e.motionSize = f(*n, "motion_size");
-            e.motionPeriod = f(*n, "motion_period");
-            e.node = n->id;
-            c.world.gas.emitters.push_back(e);
-            c.active.push_back(n->id);
+    // What feeds a solver's input, in the order it was linked. Bypassed nodes
+    // stay out; so do nodes of a type this program does not know (reported
+    // above).
+    auto feeding = [&](const Node* solver, const char* input) {
+        std::vector<const Node*> out;
+        for (const Link& l : linksInto(solver->id, input)) {
+            const Node* n = node(l.from);
+            if (n && !n->bypass && findNodeType(n->type)) out.push_back(n);
         }
-        for (const Node* n : feeding("forces")) {
+        return out;
+    };
+    // The forces linked into a solver, in their order.
+    auto forcesOf = [&](const Node* solver) {
+        std::vector<Force> out;
+        for (const Node* n : feeding(solver, "forces")) {
             Force force;
             force.node = n->id;
             const std::string& t = n->type;
@@ -1420,20 +1450,71 @@ Compiled Network::compile(const std::string& folder) const {
             } else {
                 continue;
             }
-            c.world.gas.forces.push_back(force);
+            out.push_back(force);
             c.active.push_back(n->id);
         }
-        for (const Node* n : feeding("colliders")) {
+        return out;
+    };
+    // Does a domain overlap the box from a to b?
+    auto overlapsDomain = [](const Domain& domain, const Vec3& a, const Vec3& b) {
+        const Vec3 lo = domain.origin(), hi = domain.origin() + domain.size();
+        return a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y && a.z < hi.z && b.z > lo.z;
+    };
+
+    // The gas of a Pyro Solver: its settings, and what feeds it.
+    auto compileGas = [&](const Node* solver) {
+        c.world.hasGas = true;
+        SolverSettings& s = c.world.gas.solver;
+        s.size = v3(*solver, "size");
+        s.resolution = whole(*solver, "resolution");
+        s.closedFloor = f(*solver, "closed_floor") != 0.0f;
+        s.timeStep = c.world.timeStep;
+        s.substeps = whole(*solver, "substeps");
+        s.pressureCycles = whole(*solver, "pressure_cycles");
+        s.seed = static_cast<uint32_t>(whole(*solver, "seed"));
+        s.buoyancy = f(*solver, "buoyancy");
+        s.weight = f(*solver, "weight");
+        s.vorticity = f(*solver, "vorticity");
+        s.burnRate = f(*solver, "burn_rate");
+        s.heatRelease = f(*solver, "heat_release");
+        s.sootRelease = f(*solver, "soot_release");
+        s.expansion = f(*solver, "expansion");
+        s.flameLife = f(*solver, "flame_life");
+        s.cooling = f(*solver, "cooling");
+        s.smokeDecay = f(*solver, "smoke_decay");
+
+        for (const Node* n : feeding(solver, "sources")) {
+            Emitter e;
+            e.shape = static_cast<Shape>(whole(*n, "shape"));
+            e.center = v3(*n, "center");
+            e.rotation = v3(*n, "rotation");
+            e.size = v3(*n, "size");
+            e.mesh = meshOf(*n);
+            e.fuel = f(*n, "fuel");
+            e.smoke = f(*n, "smoke");
+            e.heat = f(*n, "heat");
+            e.velocity = v3(*n, "velocity");
+            e.flicker = f(*n, "flicker");
+            e.flickerSize = f(*n, "flicker_size");
+            e.seed = static_cast<uint32_t>(whole(*n, "seed"));
+            e.start = f(*n, "start");
+            e.end = f(*n, "end");
+            e.motion = static_cast<Motion>(whole(*n, "motion"));
+            e.motionSize = f(*n, "motion_size");
+            e.motionPeriod = f(*n, "motion_period");
+            e.node = n->id;
+            c.world.gas.emitters.push_back(e);
+            c.active.push_back(n->id);
+        }
+        c.world.gas.forces = forcesOf(solver);
+        for (const Node* n : feeding(solver, "colliders")) {
             c.world.gas.colliders.push_back(colliderOf(*n));
             c.active.push_back(n->id);
         }
 
         // Things that run but will not do what was meant.
         const Domain domain = c.world.gas.sanitized().solver.domain();
-        const Vec3 lo = domain.origin(), hi = domain.origin() + domain.size();
-        auto overlaps = [&](const Vec3& a, const Vec3& b) {
-            return a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y && a.z < hi.z && b.z > lo.z;
-        };
+        auto overlaps = [&](const Vec3& a, const Vec3& b) { return overlapsDomain(domain, a, b); };
         if (c.world.gas.emitters.empty()) {
             problem(L::Warning, solver->id, "No sources: nothing will appear. Link a source into Sources.");
         }
@@ -1465,11 +1546,72 @@ Compiled Network::compile(const std::string& folder) const {
         }
     };
 
+    // The water of a Liquid Solver: its settings, and what feeds it.
+    auto compileWater = [&](const Node* solver) {
+        c.world.hasWater = true;
+        LiquidSettings& s = c.world.water.solver;
+        s.size = v3(*solver, "size");
+        s.resolution = whole(*solver, "resolution");
+        s.closedSides = f(*solver, "closed_sides") != 0.0f;
+        s.timeStep = c.world.timeStep;
+        s.substeps = whole(*solver, "substeps");
+        s.flip = f(*solver, "flip");
+        s.gravity = f(*solver, "gravity");
+        s.seed = static_cast<uint32_t>(whole(*solver, "seed"));
+        for (const Node* n : feeding(solver, "sources")) {
+            WaterSource w;
+            w.shape = static_cast<Shape>(whole(*n, "shape"));
+            w.center = v3(*n, "center");
+            w.rotation = v3(*n, "rotation");
+            w.size = v3(*n, "size");
+            w.mesh = meshOf(*n);
+            w.mode = static_cast<WaterMode>(whole(*n, "mode"));
+            w.velocity = v3(*n, "velocity");
+            w.seed = static_cast<uint32_t>(whole(*n, "seed"));
+            w.start = f(*n, "start");
+            w.end = f(*n, "end");
+            w.node = n->id;
+            c.world.water.sources.push_back(w);
+            c.active.push_back(n->id);
+        }
+        c.world.water.forces = forcesOf(solver);
+        for (const Node* n : feeding(solver, "colliders")) {
+            c.world.water.colliders.push_back(colliderOf(*n));
+            c.active.push_back(n->id);
+        }
+
+        // Things that run but will not do what was meant.
+        const Domain domain = c.world.water.sanitized().solver.domain();
+        if (c.world.water.sources.empty()) {
+            problem(L::Warning, solver->id, "No water: link a Water Source into Sources.");
+        }
+        for (const WaterSource& w : c.world.water.sources) {
+            Vec3 a, b;
+            w.instance().bounds(a, b);
+            if (!overlapsDomain(domain, a, b)) {
+                problem(L::Warning, w.node, "Outside the solver's domain: none of its water gets in.");
+            }
+            for (const Collider& col : c.world.water.colliders) {
+                if (col.contains(w.center)) {
+                    problem(L::Warning, w.node, "Inside a collider: the water there is left out.");
+                    break;
+                }
+            }
+        }
+        for (const Collider& col : c.world.water.colliders) {
+            Vec3 a, b;
+            col.instance().bounds(a, b);
+            if (!overlapsDomain(domain, a, b)) {
+                problem(L::Warning, col.node, "Outside the liquid's domain: nothing to collide with.");
+            }
+        }
+    };
+
     // Each look linked into the Output is a layer of the picture -- and of
     // what is simulated.
     const std::vector<Link> layers = linksInto(output->id, "look");
     if (layers.empty()) {
-        problem(L::Error, output->id, "Nothing to show: link a Volume Look into Looks.");
+        problem(L::Error, output->id, "Nothing to show: link a Volume Look or a Water Look into Looks.");
         return done();
     }
     for (const Link& layer : layers) {
@@ -1497,6 +1639,24 @@ Compiled Network::compile(const std::string& folder) const {
             c.solver = solver->id;
             c.active.push_back(solver->id);
             compileGas(solver);
+        } else if (look->type == "water_look") {
+            if (c.waterLook) {
+                problem(L::Warning, look->id, "Another Water Look: only " + node(c.waterLook)->name + " is drawn.");
+                continue;
+            }
+            c.waterLook = look->id;
+            c.active.push_back(look->id);
+            k.waterColor = v3(*look, "color");
+            k.waterClarity = f(*look, "clarity");
+            k.foam = f(*look, "foam");
+            const Node* solver = upstream(*look, "liquid");
+            if (!solver) {
+                problem(L::Error, look->id, "No water to draw: link a Liquid Solver into Liquid.");
+                continue;
+            }
+            c.liquidSolver = solver->id;
+            c.active.push_back(solver->id);
+            compileWater(solver);
         }
     }
     c.ok = c.world.any();

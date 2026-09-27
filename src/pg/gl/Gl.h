@@ -54,6 +54,7 @@ inline constexpr GLint CLAMP_TO_EDGE = 0x812F;
 inline constexpr GLenum RED = 0x1903, RG = 0x8227, RGB = 0x1907, R16F = 0x822D, RG16F = 0x822F, RGB16F = 0x881B;
 inline constexpr GLenum RGBA32F = 0x8814, TEXTURE2 = 0x84C2, TEXTURE3 = 0x84C3, TEXTURE4 = 0x84C4, TEXTURE5 = 0x84C5,
                          TEXTURE6 = 0x84C6, TEXTURE7 = 0x84C7, R32F = 0x822E;
+inline constexpr GLenum RG8 = 0x822B, TEXTURE8 = 0x84C8, TEXTURE9 = 0x84C9;
 
 // name, return type, parameters -- one list drives the struct and the loader.
 #define PG_GL_FUNCTIONS(X)                                                                         \
