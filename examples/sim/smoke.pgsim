@@ -1,0 +1,20 @@
+pgsim 1
+# A column of smoke: warm smoke, no fuel, rising and curling in the sun.
+node 1 sphere_source 1 chimney 0 0
+  param smoke 5
+  param heat 3
+  param velocity 0 0.55 0
+  param flicker 0.15
+node 2 turbulence 1 turbulence 0 330
+  param strength 3.5
+node 3 pyro_solver 1 solver 300 120
+  param weight 0.08
+  param vorticity 0.9
+  param cooling 0.6
+  param smoke_decay 0.03
+node 4 volume_look 1 look 560 120
+node 5 output 1 output 800 120
+link 1.source -> 3.sources
+link 2.force -> 3.forces
+link 3.gas -> 4.gas
+link 4.look -> 5.look

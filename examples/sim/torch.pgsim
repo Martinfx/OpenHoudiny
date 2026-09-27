@@ -1,0 +1,31 @@
+pgsim 1
+# A torch carried round in a circle: the flame trails behind it.
+node 1 sphere_source 1 torch 0 0
+  param center 0 0.35 0
+  param radius 0.06
+  param fuel 22
+  param heat 1
+  param velocity 0 0.3 0
+  param flicker 0.7
+  param flicker_size 0.05
+  param motion circle
+  param motion_size 0.3
+  param motion_period 3
+node 2 turbulence 1 turbulence 0 330
+  param strength 3
+  param scale 0.04
+node 3 pyro_solver 1 solver 300 120
+  param size 1.2 1.5 1.2
+  param buoyancy 0.9
+  param vorticity 0.9
+  param cooling 1.5
+  param smoke_decay 0.3
+node 4 volume_look 1 look 560 120
+  param smoke_color 0.2 0.19 0.18
+  param smoke_density 18
+  param fire_light 3
+node 5 output 1 output 800 120
+link 1.source -> 3.sources
+link 2.force -> 3.forces
+link 3.gas -> 4.gas
+link 4.look -> 5.look

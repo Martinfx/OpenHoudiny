@@ -1,0 +1,163 @@
+#pragma once
+//
+// What a gas simulation is made of: the description the solver runs, and what
+// a node network compiles to (Network.h). Plain data, compared as a whole --
+// a UI knows the simulation has to start again exactly when the scene differs.
+//
+// World units, y up. The domain stands on the floor, y = 0, centred on the y
+// axis: x in [-size.x/2, size.x/2], y in [0, size.y], z in [-size.z/2, size.z/2].
+//
+#include "pg/core/Types.h"
+
+#include <cstdint>
+#include <vector>
+
+namespace pg::sim {
+
+enum class Shape : uint8_t { Sphere, Box };
+
+/// How a source moves: it stays, circles the vertical axis through its
+/// centre, or sways from side to side along x.
+enum class Motion : uint8_t { Static, Circle, Sway };
+
+/// Where a force acts.
+enum class Mask : uint8_t { Everywhere, Heat, Smoke };
+
+/// A place gas comes from.
+struct Emitter {
+    Shape shape = Shape::Sphere;
+    Vec3 center{0.0f, 0.12f, 0.0f};
+    float radius = 0.1f;            ///< a sphere's
+    Vec3 size{0.2f, 0.1f, 0.2f};    ///< a box's edges
+    float fuel = 0.0f;              ///< added per second, at full strength -- fire
+    float smoke = 0.0f;
+    float heat = 0.0f;
+    Vec3 velocity{0.0f, 0.5f, 0.0f};  ///< the gas leaves the source this fast
+    float flicker = 0.0f;           ///< 0 steady, 1 strongly flickering
+    float flickerSize = 0.07f;      ///< size of the patches that flicker together
+    float start = 0.0f;             ///< seconds
+    float end = 0.0f;               ///< seconds; at or before start: never stops
+    Motion motion = Motion::Static;
+    float motionSize = 0.25f;       ///< radius of the circle, reach of the sway
+    float motionPeriod = 4.0f;      ///< seconds for a round
+    uint32_t seed = 1;
+    int node = 0;                   ///< the network node it came from, 0 if none
+
+    bool activeAt(float t) const { return t >= start && (end <= start || t < end); }
+    /// Where the source is at time t, and how fast it moves.
+    Vec3 centerAt(float t) const;
+    Vec3 motionVelocityAt(float t) const;
+
+    bool operator==(const Emitter&) const = default;
+};
+
+enum class ForceKind : uint8_t {
+    Turbulence,  ///< random whirls that change over time
+    Wind,        ///< pulls the gas towards a velocity
+    Vortex,      ///< pulls the gas round an axis, along it and in towards it
+    Attractor,   ///< pulls towards a point (pushes away when negative)
+    Drag,        ///< slows everything down
+};
+
+struct Force {
+    ForceKind kind = ForceKind::Turbulence;
+    /// Turbulence, attractor: the push, world units/s^2. Wind, vortex: how
+    /// fast the gas takes their speeds, per second. Drag: how fast it slows.
+    float strength = 1.0f;
+    Mask mask = Mask::Everywhere;
+    float scale = 0.05f;             ///< turbulence: size of the whirls
+    /// Turbulence: new whirls per second. Wind: its speed. Vortex: the speed
+    /// round the axis, halfway out to the radius -- below 0 the other way round.
+    float speed = 4.0f;
+    Vec3 direction{1.0f, 0.0f, 0.0f};  ///< wind: where it blows; vortex: its axis
+    float gusts = 0.0f;              ///< wind: 0 steady, 1 strongly gusting
+    Vec3 center{0.0f, 0.5f, 0.0f};   ///< vortex, attractor
+    float radius = 0.5f;             ///< vortex, attractor: how far they reach
+    float height = 0.0f;             ///< vortex: its length along the axis; 0 all the way through
+    float lift = 0.0f;               ///< vortex: speed along the axis
+    float suction = 0.0f;            ///< vortex: speed in towards the axis, at its edge
+    uint32_t seed = 1;
+    int node = 0;
+
+    bool operator==(const Force&) const = default;
+};
+
+/// A solid the gas flows around.
+struct Collider {
+    Shape shape = Shape::Sphere;
+    Vec3 center{0.0f, 0.6f, 0.0f};
+    float radius = 0.15f;
+    Vec3 size{0.3f, 0.3f, 0.3f};
+    int node = 0;
+
+    bool contains(const Vec3& p) const;
+    bool operator==(const Collider&) const = default;
+};
+
+/// The grid a domain is simulated on: cells of one size, a multiple of 8 of
+/// them along each axis, so that multigrid can halve the grid a few times.
+struct Domain {
+    int cells[3] = {8, 8, 8};
+    float voxel = 0.125f;  ///< edge of a cell, world units
+
+    Vec3 size() const {
+        return {voxel * static_cast<float>(cells[0]), voxel * static_cast<float>(cells[1]),
+                voxel * static_cast<float>(cells[2])};
+    }
+    /// The corner at the least x, y and z: (-size.x/2, 0, -size.z/2).
+    Vec3 origin() const { return {-0.5f * size().x, 0.0f, -0.5f * size().z}; }
+    size_t cellCount() const {
+        return static_cast<size_t>(cells[0]) * static_cast<size_t>(cells[1]) * static_cast<size_t>(cells[2]);
+    }
+};
+
+struct SolverSettings {
+    Vec3 size{1.0f, 1.5f, 1.0f};  ///< the domain, world units
+    /// Cells along the longest side, 16 to 256; each count is rounded up to a
+    /// multiple of 8, so the domain may come out a little larger.
+    int resolution = 96;
+    bool closedFloor = true;      ///< a floor at y = 0 the gas cannot pass; else open like the rest
+
+    float timeStep = 1.0f / 30.0f;
+    int substeps = 1;
+    int pressureCycles = 2;       ///< multigrid V-cycles per step
+    uint32_t seed = 1;
+
+    float buoyancy = 1.0f;        ///< lift per unit of heat
+    float weight = 0.05f;         ///< sink per unit of smoke
+    float vorticity = 0.6f;       ///< vorticity confinement: the swirls a coarse grid loses
+
+    float burnRate = 10.0f;       ///< share of the fuel that burns per second
+    float heatRelease = 2.5f;     ///< heat per unit of fuel burnt
+    float sootRelease = 0.5f;     ///< smoke per unit of fuel burnt
+    float expansion = 0.8f;       ///< expansion of the gas per unit of fuel burnt
+    float flameLife = 0.1f;       ///< seconds the flame of burning fuel lasts
+
+    float cooling = 1.0f;         ///< per second
+    float smokeDecay = 0.1f;      ///< per second
+
+    Domain domain() const;
+    bool operator==(const SolverSettings&) const = default;
+};
+
+struct Scene {
+    SolverSettings solver;
+    std::vector<Emitter> emitters;
+    std::vector<Force> forces;
+    std::vector<Collider> colliders;
+
+    /// Every number in a range the solver can work with -- 16 to 256 cells, a
+    /// time step above 0 and at most 1 s, no negative rates, sizes above 0 --
+    /// and what is not a number replaced by its default. The solver takes its
+    /// scene this way, so no input divides by zero or allocates the machine away.
+    Scene sanitized() const;
+
+    /// A campfire, and a column of smoke: what the node network's examples
+    /// build, for tests and for code without a network.
+    static Scene fire();
+    static Scene smoke();
+
+    bool operator==(const Scene&) const = default;
+};
+
+}  // namespace pg::sim

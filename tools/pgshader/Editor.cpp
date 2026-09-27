@@ -320,23 +320,8 @@ void Editor::recompile() {
 // --- frame -----------------------------------------------------------------------
 
 std::string Editor::title() const {
-    if (workspace_ == Workspace::Pyro) return "Pyro - pgshader";
     return (path_.empty() ? std::string("untitled") : fs::path(path_).filename().string()) +
            (modified_ ? " *" : "") + " - pgshader";
-}
-
-void Editor::setWorkspace(Workspace w) {
-    if (w == Workspace::Pyro && !pyro_) pyro_ = std::make_unique<PyroView>(gl_);
-    if (pyro_) pyro_->setVisible(w == Workspace::Pyro);  // no simulating behind the shaders
-    if (w != workspace_) status_.clear();                 // it was about the other workspace
-    workspace_ = w;
-}
-
-bool Editor::showPyro(const std::string& preset, bool synchronous, int resolution) {
-    setWorkspace(Workspace::Pyro);
-    selectTab_ = true;
-    pyro_->setSynchronous(synchronous);
-    return pyro_->loadPreset(preset, resolution);
 }
 
 void Editor::frame(float seconds) {
@@ -346,17 +331,13 @@ void Editor::frame(float seconds) {
     modified_ = graph_.save() != savedText_;
 
     ImGuiIO& io = ImGui::GetIO();
-    if (workspace_ == Workspace::Pyro) {
-        pyro_->shortcuts();
-    } else {
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
-            if (path_.empty()) openPopup_ = "Save graph as";
-            else save(path_);
-        }
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) openPopup_ = "Open graph";
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) reloadLibrary();
-        if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) startValidation();
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
+        if (path_.empty()) openPopup_ = "Save graph as";
+        else save(path_);
     }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) openPopup_ = "Open graph";
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) reloadLibrary();
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) startValidation();
 
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
@@ -372,12 +353,6 @@ void Editor::frame(float seconds) {
     const float statusHeight = ImGui::GetFrameHeightWithSpacing();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float height = avail.y - statusHeight;
-    if (workspace_ == Workspace::Pyro) {
-        pyro_->draw(height);
-        statusBar();
-        ImGui::End();
-        return;
-    }
     sidePanelWidth_ = std::clamp(sidePanelWidth_, 320.0f, std::max(320.0f, avail.x - 300.0f));
     const float splitter = 6.0f;
 
@@ -402,57 +377,8 @@ void Editor::frame(float seconds) {
 
 // --- menus and popups -----------------------------------------------------------
 
-void Editor::workspaceTabs() {
-    // At the right end of the menu bar.
-    const float width = ImGui::CalcTextSize("Shaders").x + ImGui::CalcTextSize("Pyro").x +
-                        4.0f * ImGui::GetStyle().FramePadding.x + 3.0f * ImGui::GetStyle().ItemInnerSpacing.x + 8.0f;
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - width));
-    if (!ImGui::BeginTabBar("workspaces")) return;
-    const struct {
-        const char* label;
-        Workspace workspace;
-        const char* tip;
-    } tabs[] = {{"Shaders", Workspace::Shaders, "The node editor for shaders."},
-                {"Pyro", Workspace::Pyro, "Smoke and fire, simulated."}};
-    for (const auto& t : tabs) {
-        const ImGuiTabItemFlags flags = selectTab_ && workspace_ == t.workspace ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem(t.label, nullptr, flags)) {
-            if (!selectTab_ && workspace_ != t.workspace) setWorkspace(t.workspace);
-            ImGui::EndTabItem();
-        }
-        ImGui::SetItemTooltip("%s", t.tip);
-    }
-    selectTab_ = false;
-    ImGui::EndTabBar();
-}
-
 void Editor::menuBar() {
     if (!ImGui::BeginMenuBar()) return;
-    if (workspace_ == Workspace::Pyro) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Save image...")) openPopup_ = "Save Pyro image";
-            ImGui::Separator();
-            if (ImGui::MenuItem("Quit")) quit_ = true;
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Simulation")) {
-            pyro_->menuItems();
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Help")) {
-            ImGui::TextUnformatted("Drag / wheel on the view        orbit / zoom");
-            ImGui::TextUnformatted("Double click on the view        the camera back where it started");
-            ImGui::TextUnformatted("Space                           play / pause");
-            ImGui::TextUnformatted("Home                            start again");
-            ImGui::Separator();
-            ImGui::TextUnformatted("The same from the command line, frames to PNG files:");
-            ImGui::TextUnformatted("  pgshader pyro fire.png --preset fire --frames 90 --every 3");
-            ImGui::EndMenu();
-        }
-        workspaceTabs();
-        ImGui::EndMenuBar();
-        return;
-    }
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New")) newGraph();
         if (ImGui::MenuItem("Open...", "Ctrl+O")) openPopup_ = "Open graph";
@@ -499,12 +425,11 @@ void Editor::menuBar() {
         ImGui::TextUnformatted("F5                             validate with glslangValidator");
         ImGui::Separator();
         ImGui::TextUnformatted("The same program works from the command line:");
-        ImGui::TextUnformatted("  pgshader list | gen | check | render | pyro ...     pgshader help");
+        ImGui::TextUnformatted("  pgshader list | gen | check | render | sim ...     pgshader help");
         ImGui::TextUnformatted("Drag / wheel on the preview    orbit / zoom");
         ImGui::TextUnformatted("Ctrl+R                         reload the node libraries");
         ImGui::EndMenu();
     }
-    workspaceTabs();
     ImGui::EndMenuBar();
 }
 
@@ -549,8 +474,6 @@ void Editor::popups() {
             pathInput_ = path_.empty() ? "shaders" : (fs::path(path_).parent_path() / "shaders").string();
         } else if (which == "Save preview image") {
             pathInput_ = path_.empty() ? "preview.png" : fs::path(path_).replace_extension(".png").string();
-        } else if (which == "Save Pyro image") {
-            pathInput_ = "pyro.png";
         } else {
             pathInput_ = path_;
         }
@@ -574,11 +497,6 @@ void Editor::popups() {
     pathPopup("Save graph as", "Save", [&](const std::string& p) { save(p); });
     pathPopup("Export shaders", "Export", [&](const std::string& p) { exportShaders(p); });
     pathPopup("Save preview image", "Save", [&](const std::string& p) { savePreviewImage(p); });
-    pathPopup("Save Pyro image", "Save", [&](const std::string& p) {
-        std::string error;
-        if (pyro_ && pyro_->saveImage(p, 800, 1200, error)) setStatus("saved " + p);
-        else setStatus(error, true);
-    });
     pathPopup("Add library file", "Load", [&](const std::string& p) {
         libraryFiles_.push_back(p);
         reloadLibrary();
@@ -1072,12 +990,8 @@ void Editor::problemsPanel() {
 
 void Editor::statusBar() {
     ImGui::Separator();
-    if (workspace_ == Workspace::Pyro) {
-        ImGui::TextDisabled("Pyro  |  %s", pyro_->status().c_str());
-    } else {
-        ImGui::TextDisabled("%s%s  |  %zu nodes, %zu links", path_.empty() ? "untitled" : path_.c_str(),
-                            modified_ ? " *" : "", graph_.nodes().size(), graph_.links().size());
-    }
+    ImGui::TextDisabled("%s%s  |  %zu nodes, %zu links", path_.empty() ? "untitled" : path_.c_str(),
+                        modified_ ? " *" : "", graph_.nodes().size(), graph_.links().size());
     if (!status_.empty()) {
         ImGui::SameLine();
         ImGui::TextDisabled("  |  ");

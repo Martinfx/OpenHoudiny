@@ -2,7 +2,6 @@
 //
 // The shader node editor -- what pgshader opens when it is given no command. A
 // client of pg::shader, like the commands in Commands.h, whose check it reuses.
-// Beside it, in a workspace of its own, smoke and fire (PyroView.h).
 //
 // Nothing here knows any particular node. The add-node menu, the pins and
 // their colours, the widgets for values and params -- all of it is built from
@@ -10,7 +9,6 @@
 // here after Library > Reload, without recompiling the editor.
 //
 #include "Commands.h"
-#include "PyroView.h"
 
 #include "pg/gl/Preview.h"
 #include "pg/shader/Generator.h"
@@ -46,11 +44,6 @@ public:
     /// A monospace font for the code panel; the default font when null.
     void setCodeFont(ImFont* font) { codeFont_ = font; }
 
-    /// Switches to the Pyro workspace with a preset, "fire" or "smoke", at
-    /// `resolution` cells across (0: as it was). `synchronous`: one step of
-    /// the simulation per frame, for screenshots.
-    bool showPyro(const std::string& preset, bool synchronous, int resolution = 0);
-
 private:
     // --- model -----------------------------------------------------------------
     void reloadLibrary();
@@ -65,10 +58,7 @@ private:
     void setStatus(std::string message, bool error = false);
 
     // --- UI --------------------------------------------------------------------
-    enum class Workspace { Shaders, Pyro };
-    void setWorkspace(Workspace w);
     void menuBar();
-    void workspaceTabs();
     void examplesMenu(const std::string& dir);
     void popups();
     void canvas();
@@ -84,9 +74,6 @@ private:
     void statusBar();
 
     const gl::Api& gl_;
-    Workspace workspace_ = Workspace::Shaders;
-    bool selectTab_ = false;  ///< make the tab bar show workspace_, which the code changed
-    std::unique_ptr<PyroView> pyro_;  ///< made the first time the workspace opens
 
     shader::NodeLibrary library_;
     std::vector<std::string> libraryFiles_;

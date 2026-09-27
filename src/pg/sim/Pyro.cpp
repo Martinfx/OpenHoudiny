@@ -9,28 +9,29 @@
 namespace pg::sim {
 namespace {
 
-/// f(i, j, k) for every cell of an nx x ny x nz grid, in parallel. The rows
-/// of cells are split into chunks of some 8k cells -- enough work that handing
-/// a chunk to a thread costs little. Every cell is visited by exactly one
-/// chunk and computed the same whichever it is, so the split changes how the
-/// work spreads over threads, never a result.
-size_t rowsPerChunk(int nx) { return std::max<size_t>(1, 8192 / static_cast<size_t>(std::max(1, nx))); }
-
+/// f(i, j, k) for every cell of a box of cells [x0, x1) x [y0, y1) x [z0, z1),
+/// in parallel. The rows are split into chunks of some 8k cells -- enough work
+/// that handing a chunk to a thread costs little. Every cell is visited by
+/// exactly one chunk and computed the same whichever it is, so the split
+/// changes how the work spreads over threads, never a result.
 template <class F>
-void forEachCell(int nx, int ny, int nz, const F& f) {
-    const size_t rows = static_cast<size_t>(ny) * static_cast<size_t>(nz);
-    pg::parallelFor(rows, rowsPerChunk(nx), [&](size_t begin, size_t end) {
+void forEachIn(int x0, int x1, int y0, int y1, int z0, int z1, const F& f) {
+    if (x0 >= x1 || y0 >= y1 || z0 >= z1) return;
+    const size_t ny = static_cast<size_t>(y1 - y0);
+    const size_t rows = ny * static_cast<size_t>(z1 - z0);
+    const size_t grain = std::max<size_t>(1, 8192 / static_cast<size_t>(x1 - x0));
+    pg::parallelFor(rows, grain, [&](size_t begin, size_t end) {
         for (size_t r = begin; r < end; ++r) {
-            const int j = static_cast<int>(r % static_cast<size_t>(ny));
-            const int k = static_cast<int>(r / static_cast<size_t>(ny));
-            for (int i = 0; i < nx; ++i) f(i, j, k);
+            const int j = y0 + static_cast<int>(r % ny);
+            const int k = z0 + static_cast<int>(r / ny);
+            for (int i = x0; i < x1; ++i) f(i, j, k);
         }
     });
 }
 
 template <class F>
 void forEachCell(const Grid& g, const F& f) {
-    forEachCell(g.nx(), g.ny(), g.nz(), f);
+    forEachIn(0, g.nx(), 0, g.ny(), 0, g.nz(), f);
 }
 
 uint32_t hash(int x, int y, int z, uint32_t seed) {
@@ -52,7 +53,12 @@ float lattice(int x, int y, int z, uint32_t seed) {
     return static_cast<float>(hash(x, y, z, seed) & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu);
 }
 
-/// Smooth value noise in [0, 1]: what makes the source flicker.
+float smoothstep(float edge0, float edge1, float x) {
+    const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/// Smooth value noise in [0, 1]: what makes sources flicker.
 float noise3(float x, float y, float z, uint32_t seed) {
     const float fx = std::floor(x), fy = std::floor(y), fz = std::floor(z);
     const int ix = static_cast<int>(fx), iy = static_cast<int>(fy), iz = static_cast<int>(fz);
@@ -65,9 +71,13 @@ float noise3(float x, float y, float z, uint32_t seed) {
     return lerp(y0, y1, tz);
 }
 
-float smoothstep(float edge0, float edge1, float x) {
-    const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
+/// Smooth noise over time alone, in [0, 1]: gusts.
+float noise1(float t, uint32_t seed) {
+    const float f = std::floor(t);
+    const int i = static_cast<int>(f);
+    const float u = smoothstep(0.0f, 1.0f, t - f);
+    const float a = lattice(i, 0, 0, seed), b = lattice(i + 1, 0, 0, seed);
+    return a + (b - a) * u;
 }
 
 /// Position of sample (0, 0, 0) of velocity component `axis` along axis `a`,
@@ -76,119 +86,117 @@ float faceOffset(int axis, int a) { return axis == a ? 0.0f : 0.5f; }
 
 }  // namespace
 
-// --- presets -------------------------------------------------------------------
+// --- set-up ----------------------------------------------------------------------
 
-PyroSettings PyroSettings::fire() {
-    PyroSettings s;
-    s.fuelRate = 14.0f;
-    s.heatRate = 1.0f;
-    s.sourceSpeed = 0.4f;
-    s.sourceNoise = 0.7f;
-    s.burnRate = 10.0f;
-    s.heatRelease = 2.5f;
-    s.sootRelease = 0.5f;
-    s.expansion = 0.8f;
-    s.flameLife = 0.1f;
-    s.buoyancy = 0.9f;
-    s.weight = 0.05f;
-    s.vorticity = 0.9f;
-    s.turbulence = 3.5f;
-    s.turbulenceScale = 0.05f;
-    s.cooling = 1.5f;
-    s.smokeDecay = 0.15f;
-    return s;
-}
+PyroSolver::PyroSolver(const Scene& scene) : scene_(scene.sanitized()) { reset(); }
 
-PyroSettings PyroSettings::smoke() {
-    PyroSettings s;
-    s.smokeRate = 5.0f;
-    s.heatRate = 3.0f;
-    s.sourceSpeed = 0.55f;
-    s.sourceNoise = 0.15f;
-    s.buoyancy = 1.0f;
-    s.weight = 0.08f;
-    s.vorticity = 0.9f;
-    s.turbulence = 3.5f;
-    s.turbulenceScale = 0.05f;
-    s.cooling = 0.6f;
-    s.smokeDecay = 0.03f;
-    return s;
-}
-
-const std::vector<PyroParam>& pyroParams() {
-    using S = PyroSettings;
-    static const std::vector<PyroParam> params = {
-        {"sourceRadius", "Radius", "Source", &S::sourceRadius, 0.02f, 0.4f, "Size of the source sphere."},
-        {"sourceHeight", "Height", "Source", &S::sourceHeight, 0.02f, 1.0f, "Its centre above the floor."},
-        {"sourceSpeed", "Speed", "Source", &S::sourceSpeed, 0.0f, 3.0f, "How fast it pushes the gas up."},
-        {"fuelRate", "Fuel", "Source", &S::fuelRate, 0.0f, 40.0f, "Fuel added per second: fire."},
-        {"smokeRate", "Smoke", "Source", &S::smokeRate, 0.0f, 20.0f, "Smoke added per second."},
-        {"heatRate", "Heat", "Source", &S::heatRate, 0.0f, 10.0f, "Heat added per second."},
-        {"sourceNoise", "Flicker", "Source", &S::sourceNoise, 0.0f, 1.0f, "0 steady, 1 strongly flickering."},
-        {"burnRate", "Burn rate", "Combustion", &S::burnRate, 0.0f, 20.0f,
-         "Share of the fuel that burns per second: short or tall flames."},
-        {"heatRelease", "Heat", "Combustion", &S::heatRelease, 0.0f, 10.0f, "Heat per unit of fuel burnt."},
-        {"sootRelease", "Soot", "Combustion", &S::sootRelease, 0.0f, 2.0f, "Smoke per unit of fuel burnt."},
-        {"expansion", "Expansion", "Combustion", &S::expansion, 0.0f, 3.0f,
-         "How much the burning gas expands: it pushes outwards."},
-        {"flameLife", "Flame life", "Combustion", &S::flameLife, 0.02f, 1.0f,
-         "Seconds a flame lasts: short licks or long tongues."},
-        {"buoyancy", "Buoyancy", "Forces", &S::buoyancy, 0.0f, 5.0f, "Lift per unit of heat."},
-        {"weight", "Weight", "Forces", &S::weight, 0.0f, 2.0f, "Sink per unit of smoke."},
-        {"vorticity", "Swirl", "Forces", &S::vorticity, 0.0f, 2.0f,
-         "Vorticity confinement: the small swirls a coarse grid loses."},
-        {"turbulence", "Turbulence", "Forces", &S::turbulence, 0.0f, 10.0f,
-         "Noisy force where there is heat or fuel: breaks the flow up."},
-        {"turbulenceScale", "Turbulence size", "Forces", &S::turbulenceScale, 0.03f, 0.5f,
-         "Size of the whirls the turbulence makes."},
-        {"cooling", "Cooling", "Dissipation", &S::cooling, 0.0f, 5.0f, "How fast the heat fades, per second."},
-        {"smokeDecay", "Smoke decay", "Dissipation", &S::smokeDecay, 0.0f, 2.0f,
-         "How fast the smoke thins out, per second."},
-    };
-    return params;
-}
-
-PyroSettings PyroSettings::sanitized() const {
-    const PyroSettings defaults;
-    PyroSettings s = *this;
-    s.resolution = std::clamp(resolution, 8, 256);
-    s.substeps = std::clamp(substeps, 1, 16);
-    s.pressureCycles = std::clamp(pressureCycles, 1, 16);
-    s.timeStep = std::isfinite(timeStep) ? std::clamp(timeStep, 1e-4f, 1.0f) : defaults.timeStep;
-    for (const PyroParam& p : pyroParams()) {
-        float& v = s.*p.member;
-        v = std::isfinite(v) ? std::max(v, p.min) : defaults.*p.member;
+void PyroSolver::setScene(const Scene& scene) {
+    const Scene safe = scene.sanitized();
+    const Domain d = safe.solver.domain();
+    const bool resize = d.cells[0] != domain_.cells[0] || d.cells[1] != domain_.cells[1] ||
+                        d.cells[2] != domain_.cells[2] || d.voxel != domain_.voxel;
+    const bool walls = safe.colliders != scene_.colliders || safe.solver.closedFloor != scene_.solver.closedFloor;
+    scene_ = safe;
+    if (resize) {
+        reset();
+        return;
     }
-    return s;
-}
-
-// --- solver ------------------------------------------------------------------------
-
-PyroSolver::PyroSolver(const PyroSettings& settings) : settings_(settings.sanitized()) { reset(); }
-
-void PyroSolver::setSettings(const PyroSettings& settings) {
-    const PyroSettings safe = settings.sanitized();
-    const bool resize = safe.resolution != settings_.resolution;
-    settings_ = safe;
-    if (resize) reset();
+    noise_.resize(scene_.forces.size());
+    if (walls) updateSolids();
 }
 
 void PyroSolver::reset() {
-    nx_ = std::max(8, (settings_.resolution + 7) / 8 * 8);
-    ny_ = nx_ / 2 * 3;
-    nz_ = nx_;
+    domain_ = scene_.solver.domain();
+    nx_ = domain_.cells[0];
+    ny_ = domain_.cells[1];
+    nz_ = domain_.cells[2];
     for (int a = 0; a < 3; ++a) {
         const int fx = nx_ + (a == 0), fy = ny_ + (a == 1), fz = nz_ + (a == 2);
         vel_[a] = Grid(fx, fy, fz);
         velNext_[a] = Grid(fx, fy, fz);
     }
-    for (Grid* g : {&density_, &temperature_, &fuel_, &flame_, &back_[0], &back_[1], &back_[2], &forward_[0], &forward_[1],
-                    &forward_[2], &predicted_, &lo_, &hi_, &corrected_, &expansion_, &pressure_, &divergence_,
-                    &centre_[0], &centre_[1], &centre_[2], &curl_[0], &curl_[1], &curl_[2], &curlLength_}) {
+    for (Grid* g : {&density_, &temperature_, &fuel_, &flame_, &solid_, &back_[0], &back_[1], &back_[2], &forward_[0],
+                    &forward_[1], &forward_[2], &predicted_, &lo_, &hi_, &corrected_, &expansion_, &pressure_,
+                    &divergence_, &centre_[0], &centre_[1], &centre_[2], &curl_[0], &curl_[1], &curl_[2],
+                    &curlLength_}) {
         *g = Grid(nx_, ny_, nz_);
     }
+    noise_.assign(scene_.forces.size(), {});
     frame_ = 0;
     time_ = 0.0f;
+    updateSolids();
+}
+
+Vec3 PyroSolver::worldAt(float x, float y, float z) const {
+    const Vec3 o = domain_.origin();
+    const float h = domain_.voxel;
+    return {o.x + x * h, o.y + y * h, o.z + z * h};
+}
+
+void PyroSolver::updateSolids() {
+    solid_.fill(0.0f);
+    anySolid_ = false;
+    if (!scene_.colliders.empty()) {
+        forEachCell(solid_, [&](int i, int j, int k) {
+            const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
+                                   static_cast<float>(k) + 0.5f);
+            for (const Collider& c : scene_.colliders) {
+                if (c.contains(p)) {
+                    solid_.at(i, j, k) = 1.0f;
+                    return;
+                }
+            }
+        });
+        const std::vector<float>& s = solid_.values();
+        anySolid_ = std::any_of(s.begin(), s.end(), [](float v) { return v > 0.5f; });
+    }
+    // The solid cells and the faces they block, listed once: the walls are
+    // enforced several times a step, by walking these short lists.
+    solidCells_.clear();
+    for (int a = 0; a < 3; ++a) blocked_[a].clear();
+    if (anySolid_) {
+        for (size_t c = 0; c < solid_.size(); ++c) {
+            if (solid_.data()[c] > 0.5f) solidCells_.push_back(c);
+        }
+        for (int a = 0; a < 3; ++a) {
+            const Grid& v = vel_[a];
+            for (int k = 0; k < v.nz(); ++k) {
+                for (int j = 0; j < v.ny(); ++j) {
+                    for (int i = 0; i < v.nx(); ++i) {
+                        if (faceBlocked(a, i, j, k)) blocked_[a].push_back(v.index(i, j, k));
+                    }
+                }
+            }
+        }
+    }
+    PoissonBoundary boundary;
+    boundary.closed[2] = scene_.solver.closedFloor;
+    boundary.solid = anySolid_ ? &solid_ : nullptr;
+    poisson_.setBoundary(boundary);
+    // No gas inside a solid.
+    for (const size_t c : solidCells_) {
+        density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = 0.0f;
+    }
+    enforceWalls();
+}
+
+bool PyroSolver::faceBlocked(int axis, int i, int j, int k) const {
+    const int f = axis == 0 ? i : axis == 1 ? j : k;  // face f: between cells f-1 and f
+    const int n = axis == 0 ? nx_ : axis == 1 ? ny_ : nz_;
+    if (axis == 1 && f == 0 && scene_.solver.closedFloor) return true;
+    if (!anySolid_) return false;
+    if (f > 0 && solid_.at(i - (axis == 0), j - (axis == 1), k - (axis == 2)) > 0.5f) return true;
+    return f < n && solid_.at(i, j, k) > 0.5f;
+}
+
+void PyroSolver::enforceWalls() {
+    if (scene_.solver.closedFloor) {
+        forEachIn(0, nx_, 0, 1, 0, nz_, [&](int i, int, int k) { vel_[1].at(i, 0, k) = 0.0f; });
+    }
+    for (int a = 0; a < 3; ++a) {
+        float* v = vel_[a].data();
+        for (const size_t f : blocked_[a]) v[f] = 0.0f;
+    }
 }
 
 void PyroSolver::velocityAt(float x, float y, float z, float out[3]) const {
@@ -198,8 +206,8 @@ void PyroSolver::velocityAt(float x, float y, float z, float out[3]) const {
 }
 
 void PyroSolver::step() {
-    const int n = std::max(1, settings_.substeps);
-    const float dt = settings_.timeStep / static_cast<float>(n);
+    const int n = scene_.solver.substeps;
+    const float dt = scene_.solver.timeStep / static_cast<float>(n);
     for (int s = 0; s < n; ++s) {
         emit(dt);
         advect(dt);
@@ -212,57 +220,100 @@ void PyroSolver::step() {
     ++frame_;
 }
 
-void PyroSolver::emit(float dt) {
-    const PyroSettings& s = settings_;
-    const float h = cellSize(), r = s.sourceRadius, t = time_;
-    // How much of the source is at a point (domain units), and its flicker.
-    auto source = [&](float x, float y, float z, float& weight, float& flicker) {
-        const float dx = x - 0.5f, dy = y - s.sourceHeight, dz = z - 0.5f;
-        const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (d >= r) return false;
-        weight = 1.0f - smoothstep(0.6f * r, r, d);
-        // Noise that moves up through the source.
-        const float n = noise3(x * 14.0f, y * 14.0f - t * 7.0f, z * 14.0f, s.seed);
-        flicker = std::max(0.0f, 1.0f + s.sourceNoise * 1.5f * (2.0f * n - 1.0f));
-        return true;
-    };
+// --- emit ------------------------------------------------------------------------
 
-    forEachCell(nx_, ny_, nz_, [&](int i, int j, int k) {
-        float w, m;
-        if (!source((static_cast<float>(i) + 0.5f) * h, (static_cast<float>(j) + 0.5f) * h,
-                    (static_cast<float>(k) + 0.5f) * h, w, m)) {
-            return;
-        }
-        const size_t c = density_.index(i, j, k);
-        fuel_.data()[c] += s.fuelRate * dt * w * m;
-        density_.data()[c] += s.smokeRate * dt * w * m;
-        temperature_.data()[c] += s.heatRate * dt * w * m;
-    });
-    // Push the gas up, and a little sideways, so the plume does not stay a column.
-    for (int a = 0; a < 3; ++a) {
-        Grid& vel = vel_[a];
-        forEachCell(vel, [&](int i, int j, int k) {
-            const float x = (static_cast<float>(i) + faceOffset(a, 0)) * h;
-            const float y = (static_cast<float>(j) + faceOffset(a, 1)) * h;
-            const float z = (static_cast<float>(k) + faceOffset(a, 2)) * h;
-            float w, m;
-            if (!source(x, y, z, w, m)) return;
-            float& v = vel.at(i, j, k);
-            if (a == 1) {
-                v = std::max(v, s.sourceSpeed * w * (0.6f + 0.4f * m));
-            } else {
-                const float wobble = noise3(x * 6.0f + 11.0f * static_cast<float>(a), y * 6.0f - t * 4.0f, z * 6.0f,
-                                            s.seed + 1 + static_cast<uint32_t>(a));
-                v += s.sourceSpeed * 0.3f * s.sourceNoise * w * (wobble - 0.5f);
+void PyroSolver::emit(float dt) {
+    const float h = domain_.voxel;
+    const Vec3 origin = domain_.origin();
+    const int n[3] = {nx_, ny_, nz_};
+    for (const Emitter& e : scene_.emitters) {
+        if (!e.activeAt(time_)) continue;
+        const Vec3 c = e.centerAt(time_);
+        const bool sphere = e.shape == Shape::Sphere;
+        const Vec3 half = sphere ? Vec3(e.radius) : e.size * 0.5f;
+        const uint32_t seed = e.seed * 7919u + scene_.solver.seed;
+
+        // How much of the source is at a world point: 1 inside, easing to 0
+        // at its edge.
+        auto weight = [&](const Vec3& p) {
+            if (sphere) {
+                const float d = length(p - c);
+                return d >= e.radius ? 0.0f : 1.0f - smoothstep(0.6f * e.radius, e.radius, d);
             }
+            float w = 1.0f;
+            for (int a = 0; a < 3; ++a) {
+                const float t = std::fabs(p[a] - c[a]) / half[a];
+                if (t >= 1.0f) return 0.0f;
+                w *= 1.0f - smoothstep(0.75f, 1.0f, t);
+            }
+            return w;
+        };
+        // Its output flickers with noise that rises with the gas.
+        const float rise = time_ * std::max(length(e.velocity), 0.2f);
+        auto flicker = [&](const Vec3& p) {
+            if (e.flicker <= 0.0f) return 1.0f;
+            const float s = 1.0f / e.flickerSize;
+            const float noise = noise3(p.x * s, (p.y - rise) * s, p.z * s, seed);
+            return std::max(0.0f, 1.0f + e.flicker * 1.5f * (2.0f * noise - 1.0f));
+        };
+
+        // The cells the source can reach, and one more face along each axis.
+        int lo[3], hi[3];
+        for (int a = 0; a < 3; ++a) {
+            lo[a] = std::clamp(static_cast<int>(std::floor((c[a] - half[a] - origin[a]) / h)) - 1, 0, n[a]);
+            hi[a] = std::clamp(static_cast<int>(std::ceil((c[a] + half[a] - origin[a]) / h)) + 1, 0, n[a]);
+        }
+        forEachIn(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], [&](int i, int j, int k) {
+            if (anySolid_ && solid_.at(i, j, k) > 0.5f) return;
+            const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
+                                   static_cast<float>(k) + 0.5f);
+            const float w = weight(p);
+            if (w <= 0.0f) return;
+            const float amount = dt * w * flicker(p);
+            fuel_.at(i, j, k) += e.fuel * amount;
+            density_.at(i, j, k) += e.smoke * amount;
+            temperature_.at(i, j, k) += e.heat * amount;
         });
+
+        // Push the gas the source's way -- and across it a little, so a plume
+        // does not stay a column. A moving source drags the gas along.
+        const Vec3 push = e.velocity + e.motionVelocityAt(time_);
+        const float speed = length(push);
+        if (speed <= 0.0f) continue;
+        const Vec3 along = push * (1.0f / speed);
+        for (int a = 0; a < 3; ++a) {
+            Grid& vel = vel_[a];
+            const float across = 1.0f - std::fabs(along[a]);
+            forEachIn(lo[0], std::min(hi[0] + (a == 0), vel.nx()), lo[1], std::min(hi[1] + (a == 1), vel.ny()), lo[2],
+                      std::min(hi[2] + (a == 2), vel.nz()), [&](int i, int j, int k) {
+                          const Vec3 p = worldAt(static_cast<float>(i) + faceOffset(a, 0),
+                                                 static_cast<float>(j) + faceOffset(a, 1),
+                                                 static_cast<float>(k) + faceOffset(a, 2));
+                          const float w = weight(p);
+                          if (w <= 0.0f) return;
+                          const float m = flicker(p);
+                          float& v = vel.at(i, j, k);
+                          const float target = push[a] * w * (0.6f + 0.4f * m);
+                          if (push[a] > 0.0f) v = std::max(v, target);
+                          else if (push[a] < 0.0f) v = std::min(v, target);
+                          if (e.flicker > 0.0f && across > 0.0f) {
+                              const float s = 6.0f / (e.flickerSize * 14.0f);  // broader than the flicker
+                              const float wobble = noise3(p.x * s + 11.0f * static_cast<float>(a),
+                                                          (p.y - rise) * s, p.z * s, seed + 1u + static_cast<uint32_t>(a));
+                              v += speed * 0.3f * e.flicker * across * w * (wobble - 0.5f);
+                          }
+                      });
+        }
     }
+    enforceWalls();
 }
 
+// --- advect ----------------------------------------------------------------------
+
 void PyroSolver::advect(float dt) {
-    const float cells = dt / cellSize();  // velocity x dt, in cells
+    const float cells = dt / domain_.voxel;  // velocity x dt, in cells
     // Where the gas of each cell was a step ago, and where it will be (RK2).
-    forEachCell(nx_, ny_, nz_, [&](int i, int j, int k) {
+    forEachCell(density_, [&](int i, int j, int k) {
         const size_t c = density_.index(i, j, k);
         const float x = static_cast<float>(i) + 0.5f, y = static_cast<float>(j) + 0.5f,
                     z = static_cast<float>(k) + 0.5f;
@@ -287,6 +338,10 @@ void PyroSolver::advect(float dt) {
     advectScalar(temperature_);
     advectScalar(fuel_);
     advectScalar(flame_);
+    for (const size_t c : solidCells_) {
+        density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = 0.0f;
+    }
+    enforceWalls();
 }
 
 void PyroSolver::faceVelocity(int axis, int i, int j, int k, float out[3]) const {
@@ -308,16 +363,25 @@ void PyroSolver::faceVelocity(int axis, int i, int j, int k, float out[3]) const
 
 void PyroSolver::advectVelocity(int axis, float cells) {
     const float ox = faceOffset(axis, 0), oy = faceOffset(axis, 1), oz = faceOffset(axis, 2);
+    const float nx = static_cast<float>(nx_), ny = static_cast<float>(ny_), nz = static_cast<float>(nz_);
+    const bool floor = scene_.solver.closedFloor;
     Grid& out = velNext_[axis];
     forEachCell(out, [&](int i, int j, int k) {
         const float x = static_cast<float>(i) + ox, y = static_cast<float>(j) + oy, z = static_cast<float>(k) + oz;
         float v0[3], v1[3];
         faceVelocity(axis, i, j, k, v0);
         velocityAt(x - 0.5f * cells * v0[0], y - 0.5f * cells * v0[1], z - 0.5f * cells * v0[2], v1);
+        const float px = x - cells * v1[0], py = y - cells * v1[1], pz = z - cells * v1[2];
+        // Gas that comes in through an open side comes from the still air
+        // outside. (Carrying in the velocity at the side instead, a flow that
+        // sucks gas in -- the low pressure in a vortex -- would feed on itself.)
+        if (px < 0.0f || px > nx || pz < 0.0f || pz > nz || py > ny || (py < 0.0f && !floor)) {
+            out.at(i, j, k) = 0.0f;
+            return;
+        }
         // This component where the gas came from. Grid::sample puts sample
         // (0, 0, 0) at 0.5: shift by what the faces lack of it.
-        out.at(i, j, k) = vel_[axis].sample(x - cells * v1[0] + (0.5f - ox), y - cells * v1[1] + (0.5f - oy),
-                                            z - cells * v1[2] + (0.5f - oz));
+        out.at(i, j, k) = vel_[axis].sample(px + (0.5f - ox), py + (0.5f - oy), pz + (0.5f - oz));
     });
 }
 
@@ -349,8 +413,10 @@ void PyroSolver::advectScalar(Grid& field) {
     std::swap(field, corrected_);
 }
 
+// --- combust -----------------------------------------------------------------------
+
 void PyroSolver::combust(float dt) {
-    const PyroSettings& s = settings_;
+    const SolverSettings& s = scene_.solver;
     const float share = 1.0f - std::exp(-s.burnRate * dt);
     forEachCell(fuel_, [&](int i, int j, int k) {
         const size_t c = fuel_.index(i, j, k);
@@ -363,8 +429,10 @@ void PyroSolver::combust(float dt) {
     });
 }
 
+// --- forces --------------------------------------------------------------------------
+
 void PyroSolver::addForces(float dt) {
-    const PyroSettings& s = settings_;
+    const SolverSettings& s = scene_.solver;
     // Buoyancy on the vertical faces, from the cells below and above them.
     forEachCell(vel_[1], [&](int i, int j, int k) {
         float heat = 0.0f, smoke = 0.0f, n = 0.0f;
@@ -380,13 +448,16 @@ void PyroSolver::addForces(float dt) {
         }
         vel_[1].at(i, j, k) += dt * (s.buoyancy * heat - s.weight * smoke) / n;
     });
-    if (s.turbulence > 0.0f) addTurbulence(dt);
-    if (s.vorticity <= 0.0f) return;
+    if (s.vorticity > 0.0f) addVorticity(dt);
+    for (size_t f = 0; f < scene_.forces.size(); ++f) addForce(scene_.forces[f], f, dt);
+    enforceWalls();
+}
 
+void PyroSolver::addVorticity(float dt) {
     // Vorticity confinement: find the swirls, push along them. Worked out at
     // the cell centres, then spread to the faces.
-    const float h = cellSize();
-    forEachCell(nx_, ny_, nz_, [&](int i, int j, int k) {
+    const float h = domain_.voxel;
+    forEachCell(density_, [&](int i, int j, int k) {
         centre_[0].at(i, j, k) = 0.5f * (vel_[0].at(i, j, k) + vel_[0].at(i + 1, j, k));
         centre_[1].at(i, j, k) = 0.5f * (vel_[1].at(i, j, k) + vel_[1].at(i, j + 1, k));
         centre_[2].at(i, j, k) = 0.5f * (vel_[2].at(i, j, k) + vel_[2].at(i, j, k + 1));
@@ -407,7 +478,7 @@ void PyroSolver::addForces(float dt) {
                       {1.0f / (static_cast<float>(ip - im) * h), 1.0f / (static_cast<float>(jp - jm) * h),
                        1.0f / (static_cast<float>(kp - km) * h)}};
     };
-    forEachCell(nx_, ny_, nz_, [&](int i, int j, int k) {
+    forEachCell(density_, [&](int i, int j, int k) {
         const Around n = around(i, j, k);
         // d(component a)/d(axis b)
         auto d = [&](int a, int b) { return (centre_[a].data()[n.plus[b]] - centre_[a].data()[n.minus[b]]) * n.scale[b]; };
@@ -421,8 +492,8 @@ void PyroSolver::addForces(float dt) {
         curlLength_.data()[c] = std::sqrt(wx * wx + wy * wy + wz * wz);
     });
     // The force, at the centres: centre_ is free again.
-    const float strength = s.vorticity * h;
-    forEachCell(nx_, ny_, nz_, [&](int i, int j, int k) {
+    const float strength = scene_.solver.vorticity * h;
+    forEachCell(density_, [&](int i, int j, int k) {
         const Around n = around(i, j, k);
         const float* l = curlLength_.data();
         float g[3];
@@ -453,68 +524,159 @@ void PyroSolver::addForces(float dt) {
     }
 }
 
-void PyroSolver::addTurbulence(float dt) {
-    const PyroSettings& s = settings_;
-    // A random force on a coarse lattice, a knot every turbulenceScale, that
-    // changes smoothly a few times a second and is interpolated to the faces.
-    // Random, so it pushes the gas together here and apart there; the
-    // projection that follows keeps only its swirling part.
-    const float h = cellSize();
-    const float cellsPerKnot = std::max(s.turbulenceScale / h, 2.0f);
-    const int kx = static_cast<int>(std::ceil(static_cast<float>(nx_) / cellsPerKnot)) + 2;
-    const int ky = static_cast<int>(std::ceil(static_cast<float>(ny_) / cellsPerKnot)) + 2;
-    const int kz = static_cast<int>(std::ceil(static_cast<float>(nz_) / cellsPerKnot)) + 2;
-    const float clock = time_ * 4.0f;
-    const int slice = static_cast<int>(std::floor(clock));
-    const float blend = smoothstep(0.0f, 1.0f, clock - static_cast<float>(slice));
-    for (int a = 0; a < 3; ++a) {
-        Grid& knots = noise_[a];
-        if (knots.nx() != kx || knots.ny() != ky || knots.nz() != kz) knots = Grid(kx, ky, kz);
-        const uint32_t seed = s.seed * 7919u + 104729u * static_cast<uint32_t>(a + 1);
-        for (int k = 0; k < kz; ++k) {
-            for (int j = 0; j < ky; ++j) {
-                for (int i = 0; i < kx; ++i) {
-                    const float now = lattice(i, j, k, seed + static_cast<uint32_t>(slice) * 31u);
-                    const float next = lattice(i, j, k, seed + static_cast<uint32_t>(slice + 1) * 31u);
-                    knots.at(i, j, k) = 2.0f * (now + (next - now) * blend) - 1.0f;
+float PyroSolver::maskAt(Mask mask, int axis, int i, int j, int k) const {
+    if (mask == Mask::Everywhere) return 1.0f;
+    const int f = axis == 0 ? i : axis == 1 ? j : k;
+    const int n = axis == 0 ? nx_ : axis == 1 ? ny_ : nz_;
+    auto amount = [&](int x, int y, int z) {
+        return mask == Mask::Heat ? temperature_.at(x, y, z) + fuel_.at(x, y, z) : density_.at(x, y, z);
+    };
+    float m = 0.0f;
+    if (f > 0) m += amount(i - (axis == 0), j - (axis == 1), k - (axis == 2));
+    if (f < n) m += amount(i, j, k);
+    return std::min(m, 1.0f);
+}
+
+void PyroSolver::addForce(const Force& force, size_t index, float dt) {
+    const uint32_t seed = force.seed * 7919u + scene_.solver.seed * 31u;
+    // World position of face (i, j, k) of component a.
+    auto facePosition = [&](int a, int i, int j, int k) {
+        return worldAt(static_cast<float>(i) + faceOffset(a, 0), static_cast<float>(j) + faceOffset(a, 1),
+                       static_cast<float>(k) + faceOffset(a, 2));
+    };
+
+    switch (force.kind) {
+        case ForceKind::Turbulence: {
+            // A random force on a coarse lattice, a knot every `scale`, that
+            // changes smoothly `speed` times a second and is interpolated to
+            // the faces. Random, so it pushes the gas together here and apart
+            // there; the projection that follows keeps only its swirling part.
+            const float cellsPerKnot = std::max(force.scale / domain_.voxel, 2.0f);
+            const int kx = static_cast<int>(std::ceil(static_cast<float>(nx_) / cellsPerKnot)) + 2;
+            const int ky = static_cast<int>(std::ceil(static_cast<float>(ny_) / cellsPerKnot)) + 2;
+            const int kz = static_cast<int>(std::ceil(static_cast<float>(nz_) / cellsPerKnot)) + 2;
+            const float clock = time_ * force.speed;
+            const int slice = static_cast<int>(std::floor(clock));
+            const float blend = smoothstep(0.0f, 1.0f, clock - static_cast<float>(slice));
+            std::array<Grid, 3>& knots = noise_[index];
+            for (int a = 0; a < 3; ++a) {
+                Grid& g = knots[static_cast<size_t>(a)];
+                if (g.nx() != kx || g.ny() != ky || g.nz() != kz) g = Grid(kx, ky, kz);
+                const uint32_t s = seed + 104729u * static_cast<uint32_t>(a + 1);
+                for (int k = 0; k < kz; ++k) {
+                    for (int j = 0; j < ky; ++j) {
+                        for (int i = 0; i < kx; ++i) {
+                            const float now = lattice(i, j, k, s + static_cast<uint32_t>(slice) * 31u);
+                            const float next = lattice(i, j, k, s + static_cast<uint32_t>(slice + 1) * 31u);
+                            g.at(i, j, k) = 2.0f * (now + (next - now) * blend) - 1.0f;
+                        }
+                    }
                 }
             }
-        }
-    }
-    for (int a = 0; a < 3; ++a) {
-        const int n = a == 0 ? nx_ : a == 1 ? ny_ : nz_;
-        const float ox = faceOffset(a, 0), oy = faceOffset(a, 1), oz = faceOffset(a, 2);
-        forEachCell(vel_[a], [&](int i, int j, int k) {
-            // Only where something burns or is hot: the cells on either side.
-            const int f = a == 0 ? i : a == 1 ? j : k;
-            const int bi = i - (a == 0), bj = j - (a == 1), bk = k - (a == 2);
-            float mask = 0.0f;
-            if (f > 0) mask += temperature_.at(bi, bj, bk) + fuel_.at(bi, bj, bk);
-            if (f < n) mask += temperature_.at(i, j, k) + fuel_.at(i, j, k);
-            if (mask <= 0.0f) return;
-            const float push = noise_[a].sample((static_cast<float>(i) + ox) / cellsPerKnot + 0.5f,
+            for (int a = 0; a < 3; ++a) {
+                const float ox = faceOffset(a, 0), oy = faceOffset(a, 1), oz = faceOffset(a, 2);
+                const Grid& g = knots[static_cast<size_t>(a)];
+                forEachCell(vel_[a], [&](int i, int j, int k) {
+                    const float m = maskAt(force.mask, a, i, j, k);
+                    if (m <= 0.0f) return;
+                    const float push = g.sample((static_cast<float>(i) + ox) / cellsPerKnot + 0.5f,
                                                 (static_cast<float>(j) + oy) / cellsPerKnot + 0.5f,
                                                 (static_cast<float>(k) + oz) / cellsPerKnot + 0.5f);
-            vel_[a].at(i, j, k) += dt * s.turbulence * std::min(mask, 1.0f) * push;
-        });
+                    vel_[a].at(i, j, k) += dt * force.strength * m * push;
+                });
+            }
+            break;
+        }
+        case ForceKind::Wind: {
+            // The air is pulled towards the wind's velocity, `strength` per
+            // second; gusts vary its speed over time.
+            const float gust = 1.0f + force.gusts * (2.0f * noise1(time_ * 0.8f, seed) - 1.0f);
+            const Vec3 wind = normalize(force.direction) * (force.speed * gust);
+            const float pull = 1.0f - std::exp(-force.strength * dt);
+            for (int a = 0; a < 3; ++a) {
+                forEachCell(vel_[a], [&](int i, int j, int k) {
+                    const float m = maskAt(force.mask, a, i, j, k);
+                    float& v = vel_[a].at(i, j, k);
+                    v += pull * m * (wind[a] - v);
+                });
+            }
+            break;
+        }
+        case ForceKind::Vortex: {
+            // Inside a cylinder round the axis -- `radius` wide, `height`
+            // long -- the gas is pulled towards going round the axis at
+            // `speed` (fastest halfway out), along it at `lift` and in towards
+            // it at `suction`, `strength` per second; eased off at the edges.
+            // A pull, not a push: however long it acts, nothing gets faster
+            // than those speeds -- except by the pressure it builds up.
+            const Vec3 axis = normalize(force.direction);
+            const float pull = 1.0f - std::exp(-force.strength * dt);
+            const float half = 0.5f * force.height;
+            for (int a = 0; a < 3; ++a) {
+                forEachCell(vel_[a], [&](int i, int j, int k) {
+                    const Vec3 r = facePosition(a, i, j, k) - force.center;
+                    const float along = dot(r, axis);
+                    if (half > 0.0f && std::fabs(along) >= half) return;
+                    const Vec3 out = r - axis * along;
+                    const float d = length(out);
+                    if (d >= force.radius) return;
+                    const float x = d / force.radius;
+                    float w = 1.0f - smoothstep(0.75f, 1.0f, x);
+                    if (half > 0.0f) w *= 1.0f - smoothstep(0.75f, 1.0f, std::fabs(along) / half);
+                    const Vec3 outward = d > 1e-6f ? out * (1.0f / d) : Vec3();
+                    const Vec3 target = cross(axis, outward) * (force.speed * 4.0f * x * (1.0f - x)) +
+                                        axis * force.lift - outward * (force.suction * x);
+                    float& v = vel_[a].at(i, j, k);
+                    v += pull * w * maskAt(force.mask, a, i, j, k) * (target[a] - v);
+                });
+            }
+            break;
+        }
+        case ForceKind::Attractor: {
+            for (int a = 0; a < 3; ++a) {
+                forEachCell(vel_[a], [&](int i, int j, int k) {
+                    const Vec3 r = force.center - facePosition(a, i, j, k);
+                    const float d = length(r);
+                    if (d < 1e-6f || d >= force.radius) return;
+                    const float falloff = (1.0f - d / force.radius) * (1.0f - d / force.radius);
+                    vel_[a].at(i, j, k) += dt * force.strength * falloff * maskAt(force.mask, a, i, j, k) * r[a] / d;
+                });
+            }
+            break;
+        }
+        case ForceKind::Drag: {
+            const float keep = std::exp(-force.strength * dt);
+            for (int a = 0; a < 3; ++a) {
+                forEachCell(vel_[a], [&](int i, int j, int k) {
+                    const float m = maskAt(force.mask, a, i, j, k);
+                    vel_[a].at(i, j, k) *= 1.0f - (1.0f - keep) * m;
+                });
+            }
+            break;
+        }
     }
 }
+
+// --- project -----------------------------------------------------------------------
 
 float PyroSolver::divergence(int i, int j, int k) const {
     return (vel_[0].at(i + 1, j, k) - vel_[0].at(i, j, k) + vel_[1].at(i, j + 1, k) - vel_[1].at(i, j, k) +
             vel_[2].at(i, j, k + 1) - vel_[2].at(i, j, k)) /
-           cellSize();
+           domain_.voxel;
 }
 
 void PyroSolver::project() {
-    const float h = cellSize();
-    forEachCell(nx_, ny_, nz_, [&](int i, int j, int k) {
-        divergence_.at(i, j, k) = divergence(i, j, k) - expansion_.at(i, j, k);
+    const float h = domain_.voxel;
+    enforceWalls();  // what flows through walls is 0 before anything is measured
+    forEachCell(divergence_, [&](int i, int j, int k) {
+        divergence_.at(i, j, k) =
+            anySolid_ && solid_.at(i, j, k) > 0.5f ? 0.0f : divergence(i, j, k) - expansion_.at(i, j, k);
     });
     // The pressure of the previous step is the first guess.
-    poisson_.solve(pressure_, divergence_, h, settings_.pressureCycles);
-    // Subtract its gradient. Open boundaries: the pressure is 0 on the faces of
-    // the domain -- a ghost cell outside holds minus the cell inside.
+    poisson_.solve(pressure_, divergence_, h, scene_.solver.pressureCycles);
+    // Subtract its gradient. The open sides hold p = 0 on the face -- a ghost
+    // cell outside holds minus the cell inside. What this does to the faces of
+    // walls and solids does not count: they go back to 0 right after.
     for (int a = 0; a < 3; ++a) {
         const int n = a == 0 ? nx_ : a == 1 ? ny_ : nz_;
         forEachCell(vel_[a], [&](int i, int j, int k) {
@@ -525,28 +687,44 @@ void PyroSolver::project() {
             vel_[a].at(i, j, k) -= (ahead - behind) / h;
         });
     }
+    enforceWalls();
 }
 
+// --- dissipate ---------------------------------------------------------------------
+
 void PyroSolver::dissipate(float dt) {
-    const float smoke = std::exp(-settings_.smokeDecay * dt), heat = std::exp(-settings_.cooling * dt);
-    const float flame = settings_.flameLife > 0.0f ? std::exp(-dt / settings_.flameLife) : 0.0f;
+    const SolverSettings& s = scene_.solver;
+    const float smoke = std::exp(-s.smokeDecay * dt), heat = std::exp(-s.cooling * dt);
+    const float flame = s.flameLife > 0.0f ? std::exp(-dt / s.flameLife) : 0.0f;
     forEachCell(density_, [&](int i, int j, int k) {
         const size_t c = density_.index(i, j, k);
-        density_.data()[c] = std::max(0.0f, density_.data()[c]) * smoke;
+        // Where the burning gas swells -- by expansion x dt of its volume this
+        // step -- what it carries spreads over the more room. Advection alone
+        // keeps a value as it moves: right where the gas neither swells nor
+        // shrinks, wrong here. Swollen fuel that stayed as rich would burn
+        // and swell again, and an explosion would feed on itself until it
+        // filled the domain.
+        const float thinner = 1.0f / (1.0f + expansion_.data()[c] * dt);
+        density_.data()[c] = std::max(0.0f, density_.data()[c]) * smoke * thinner;
         temperature_.data()[c] = std::max(0.0f, temperature_.data()[c]) * heat;
-        fuel_.data()[c] = std::max(0.0f, fuel_.data()[c]);
-        flame_.data()[c] = std::max(0.0f, flame_.data()[c]) * flame;
+        fuel_.data()[c] = std::max(0.0f, fuel_.data()[c]) * thinner;
+        flame_.data()[c] = std::max(0.0f, flame_.data()[c]) * flame * thinner;
     });
 }
 
 double PyroSolver::meanDivergence() const {
     double sum = 0.0;
+    size_t cells = 0;
     for (int k = 0; k < nz_; ++k) {
         for (int j = 0; j < ny_; ++j) {
-            for (int i = 0; i < nx_; ++i) sum += std::fabs(divergence(i, j, k) - expansion_.at(i, j, k));
+            for (int i = 0; i < nx_; ++i) {
+                if (anySolid_ && solid_.at(i, j, k) > 0.5f) continue;
+                sum += std::fabs(divergence(i, j, k) - expansion_.at(i, j, k));
+                ++cells;
+            }
         }
     }
-    return sum / static_cast<double>(density_.size());
+    return cells ? sum / static_cast<double>(cells) : 0.0;
 }
 
 Grid lightTransmittance(const Grid& density, const float towardsLight[3], float extinctionPerCell, int divisor) {

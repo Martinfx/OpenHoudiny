@@ -1,0 +1,24 @@
+pgsim 1
+# Smoke rising into a ball: it spreads over it and rolls off round its sides.
+node 1 sphere_source 1 vent 0 0
+  param smoke 6
+  param heat 3
+  param velocity 0 0.7 0
+  param flicker 0.2
+node 2 sphere_collider 1 ball 0 330
+  param center 0 0.65 0
+  param radius 0.2
+node 3 turbulence 1 turbulence 0 480
+  param strength 2.5
+node 4 pyro_solver 1 solver 300 120
+  param weight 0.08
+  param vorticity 0.9
+  param cooling 0.5
+  param smoke_decay 0.03
+node 5 volume_look 1 look 560 120
+node 6 output 1 output 800 120
+link 1.source -> 4.sources
+link 3.force -> 4.forces
+link 2.collider -> 4.colliders
+link 4.gas -> 5.gas
+link 5.look -> 6.look

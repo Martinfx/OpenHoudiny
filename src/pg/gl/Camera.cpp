@@ -31,8 +31,12 @@ Mat4 perspective(float fovyDegrees, float aspect, float zNear, float zFar) {
 }
 
 Mat4 lookAt(const float eye[3]) {
-    // Looking at the origin, y up.
-    float f[3] = {-eye[0], -eye[1], -eye[2]};
+    const float origin[3] = {0.0f, 0.0f, 0.0f};
+    return lookAt(eye, origin);
+}
+
+Mat4 lookAt(const float eye[3], const float target[3]) {
+    float f[3] = {target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]};
     const float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
     for (float& v : f) v /= fl;
     float s[3] = {f[1] * 0.0f - f[2] * 1.0f, f[2] * 0.0f - f[0] * 0.0f, f[0] * 1.0f - f[1] * 0.0f};
@@ -58,9 +62,9 @@ Mat4 identity() {
 
 void Orbit::eye(float out[3]) const {
     const float y = yaw * kPi / 180.0f, p = pitch * kPi / 180.0f;
-    out[0] = distance * std::cos(p) * std::sin(y);
-    out[1] = distance * std::sin(p);
-    out[2] = distance * std::cos(p) * std::cos(y);
+    out[0] = target[0] + distance * std::cos(p) * std::sin(y);
+    out[1] = target[1] + distance * std::sin(p);
+    out[2] = target[2] + distance * std::cos(p) * std::cos(y);
 }
 
 }  // namespace pg::gl

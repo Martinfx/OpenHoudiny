@@ -33,9 +33,9 @@ using GLsizeiptr = std::ptrdiff_t;
 
 inline constexpr GLbitfield COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x0100;
 inline constexpr GLenum DEPTH_TEST = 0x0B71, CULL_FACE = 0x0B44, LESS = 0x0201;
-inline constexpr GLenum TRIANGLES = 0x0004;
+inline constexpr GLenum LINES = 0x0001, TRIANGLES = 0x0004, LEQUAL = 0x0203, ALWAYS = 0x0207;
 inline constexpr GLenum BLEND = 0x0BE2, ONE = 1, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303;
-inline constexpr GLenum UNSIGNED_BYTE = 0x1401, UNSIGNED_INT = 0x1405, FLOAT = 0x1406;
+inline constexpr GLenum UNSIGNED_BYTE = 0x1401, UNSIGNED_INT = 0x1405, FLOAT = 0x1406, HALF_FLOAT = 0x140B;
 inline constexpr GLenum ARRAY_BUFFER = 0x8892, ELEMENT_ARRAY_BUFFER = 0x8893, STATIC_DRAW = 0x88E4;
 inline constexpr GLenum VERTEX_SHADER = 0x8B31, FRAGMENT_SHADER = 0x8B30;
 inline constexpr GLenum COMPILE_STATUS = 0x8B81, LINK_STATUS = 0x8B82, INFO_LOG_LENGTH = 0x8B84;
@@ -52,6 +52,7 @@ inline constexpr GLenum RENDERER = 0x1F01, VERSION = 0x1F02;
 inline constexpr GLenum TEXTURE_3D = 0x806F, TEXTURE1 = 0x84C1, TEXTURE_WRAP_R = 0x8072;
 inline constexpr GLint CLAMP_TO_EDGE = 0x812F;
 inline constexpr GLenum RED = 0x1903, RG = 0x8227, RGB = 0x1907, R16F = 0x822D, RG16F = 0x822F, RGB16F = 0x881B;
+inline constexpr GLenum RGBA32F = 0x8814, TEXTURE2 = 0x84C2;
 
 // name, return type, parameters -- one list drives the struct and the loader.
 #define PG_GL_FUNCTIONS(X)                                                                         \
@@ -87,6 +88,9 @@ inline constexpr GLenum RED = 0x1903, RG = 0x8227, RGB = 0x1907, R16F = 0x822D, 
     X(Uniform2f, void, (GLint, GLfloat, GLfloat))                                                  \
     X(Uniform3f, void, (GLint, GLfloat, GLfloat, GLfloat))                                         \
     X(Uniform4f, void, (GLint, GLfloat, GLfloat, GLfloat, GLfloat))                                \
+    X(Uniform3i, void, (GLint, GLint, GLint, GLint))                                               \
+    X(Uniform1iv, void, (GLint, GLsizei, const GLint*))                                            \
+    X(Uniform3fv, void, (GLint, GLsizei, const GLfloat*))                                          \
     X(UniformMatrix4fv, void, (GLint, GLsizei, GLboolean, const GLfloat*))                         \
     X(GenVertexArrays, void, (GLsizei, GLuint*))                                                   \
     X(BindVertexArray, void, (GLuint))                                                             \
@@ -112,6 +116,7 @@ inline constexpr GLenum RED = 0x1903, RG = 0x8227, RGB = 0x1907, R16F = 0x822D, 
     X(BindFramebuffer, void, (GLenum, GLuint))                                                     \
     X(DeleteFramebuffers, void, (GLsizei, const GLuint*))                                          \
     X(FramebufferTexture2D, void, (GLenum, GLenum, GLenum, GLuint, GLint))                         \
+    X(FramebufferTextureLayer, void, (GLenum, GLenum, GLuint, GLint, GLint))                       \
     X(CheckFramebufferStatus, GLenum, (GLenum))                                                    \
     X(GenRenderbuffers, void, (GLsizei, GLuint*))                                                  \
     X(BindRenderbuffer, void, (GLenum, GLuint))                                                    \

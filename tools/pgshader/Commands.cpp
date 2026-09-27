@@ -9,8 +9,11 @@
 //                   [--spirv-val PATH] [--library FILE]...
 //   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                   [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution 8..256]
-//                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--set NAME=VALUE]...
+//   pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png [--frames N] [--every K] [--resolution 16..256]
+//                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
+//                   [--set NODE.PARAM=VALUE]...
+//   pgshader sim --list
+//   pgshader pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
 //
 // `check` is the proof that the generated code is valid: it compiles every
 // graph -- and with --nodes every output of every node in the library, in the
@@ -18,10 +21,12 @@
 // and runs spirv-val on the SPIR-V. --nodes-from checks only the nodes one
 // library file defines: what the author of a library wants to know.
 // `render` draws a preview with OpenGL through EGL, with no window; it exists
-// only when EGL was found at build time. So does `pyro`: it simulates smoke or
-// fire (pg::sim::PyroSolver) and renders the last frame -- or with --every K
-// frames K, 2K, 3K..., each file numbered by its frame -- with the volume
-// renderer of the editor.
+// only when EGL was found at build time. So does `sim`: it compiles a network
+// of simulation nodes (pg::sim::Network) -- a .pgsim file, or an example the
+// program carries -- simulates it and renders the last frame, or with
+// --every K frames K, 2K, 3K..., each file numbered by its frame, with the
+// renderer of the editor's viewport. --set changes a parameter first:
+// NODE.PARAM=VALUE, or PARAM=VALUE when a single node has that parameter.
 //
 #include "Commands.h"
 
@@ -30,8 +35,9 @@
 #include "pg/gl/Png.h"
 #include "pg/gl/Preview.h"
 #include "pg/gl/Volume.h"
-#include "pg/sim/Pyro.h"
 #endif
+#include "pg/sim/Network.h"
+#include "pg/sim/Pyro.h"
 
 #include <algorithm>
 #include <atomic>
@@ -73,11 +79,13 @@ struct Options {
     bool yawSet = false, pitchSet = false;
     // pyro
     std::string preset = "fire";
-    int frames = 90;
+    int frames = 0;      ///< 0: as many as the network's Output says
     int every = 0;       ///< write every k-th frame; 0: only the last
-    int resolution = 0;  ///< 0: the preset's
+    int resolution = 0;  ///< 0: the network's
     float distance = 0.0f;
-    std::vector<std::string> sets;  ///< NAME=VALUE
+    std::vector<std::string> sets;  ///< NODE.PARAM=VALUE
+    bool guides = false;             ///< sim: draw the domain and the sources
+    bool listExamples = false;       ///< sim --list
 };
 
 int usage() {
@@ -133,6 +141,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--every") { if (!nextInt(o.every)) return false; }
         else if (a == "--resolution") { if (!nextInt(o.resolution)) return false; }
         else if (a == "--set") { if (!next(v)) return false; o.sets.push_back(v); }
+        else if (a == "--guides") o.guides = true;
+        else if (a == "--list") o.listExamples = true;
         else if (!a.empty() && a[0] == '-') return false;
         else o.positional.push_back(a);
     }
@@ -456,71 +466,73 @@ int render(const Options& o, const NodeLibrary& lib) {
 #endif
 }
 
-#ifdef PG_HAVE_EGL
-/// NAME=VALUE onto the simulation or its look. False, with why, for a name
-/// neither has, or a value that is not a number in its range.
-bool applySetting(const std::string& assignment, pg::sim::PyroSettings& settings, pg::gl::VolumeStyle& style,
-                  std::string& error) {
-    const size_t eq = assignment.find('=');
-    if (eq == std::string::npos) {
-        error = "--set wants NAME=NUMBER, not '" + assignment + "'";
-        return false;
-    }
-    const std::string name = assignment.substr(0, eq), text = assignment.substr(eq + 1);
-
-    // Whole numbers, each in its range.
-    auto whole = [&](long long lo, long long hi, auto& out) {
-        long long n = 0;
-        if (!parseInt(text, n) || n < lo || n > hi) {
-            error = name + " wants a whole number from " + std::to_string(lo) + " to " + std::to_string(hi) +
-                    ", not '" + text + "'";
+/// Where a network comes from: a file, or one of the examples compiled in.
+bool loadNetwork(const std::string& what, pg::sim::Network& net, std::string& error) {
+    std::error_code ec;
+    if (fs::is_regular_file(what, ec)) {
+        std::ifstream in(what, std::ios::binary);
+        std::stringstream text;
+        text << in.rdbuf();
+        std::vector<std::string> warnings;
+        if (!pg::sim::Network::load(text.str(), net, error, &warnings)) {
+            error = what + ": " + error;
             return false;
         }
-        out = static_cast<std::remove_reference_t<decltype(out)>>(n);
-        return true;
-    };
-    if (name == "resolution") return whole(8, 256, settings.resolution);
-    if (name == "substeps") return whole(1, 16, settings.substeps);
-    if (name == "pressureCycles") return whole(1, 16, settings.pressureCycles);
-    if (name == "seed") return whole(0, 4294967295LL, settings.seed);
-
-    float value = 0.0f;
-    if (!parseFloat(text, value) || !std::isfinite(value)) {
-        error = "--set wants NAME=NUMBER, not '" + assignment + "'";
-        return false;
-    }
-    // The sliders' minimum is a real limit (no negative rates); their maximum
-    // is only where the slider ends.
-    auto atLeast = [&](float min, float& out) {
-        if (value < min) {
-            char text[64];
-            std::snprintf(text, sizeof text, " must be at least %g", static_cast<double>(min));
-            error = name + text;
-            return false;
-        }
-        out = value;
-        return true;
-    };
-    for (const auto& p : pg::sim::pyroParams()) {
-        if (name == p.name) return atLeast(p.min, settings.*p.member);
-    }
-    for (const auto& p : pg::gl::volumeParams()) {
-        if (name == p.name) return atLeast(p.min, style.*p.member);
-    }
-    if (name == "timeStep") {
-        if (!(value > 0.0f && value <= 1.0f)) {
-            error = "timeStep is in seconds: more than 0, at most 1";
-            return false;
-        }
-        settings.timeStep = value;
+        for (const std::string& w : warnings) std::fprintf(stderr, "sim: %s: %s\n", what.c_str(), w.c_str());
         return true;
     }
-    error = "no setting '" + name + "'; there are resolution, timeStep, substeps, pressureCycles, seed";
-    for (const auto& p : pg::sim::pyroParams()) error += std::string(", ") + p.name;
-    for (const auto& p : pg::gl::volumeParams()) error += std::string(", ") + p.name;
+    if (pg::sim::Network::example(what, net)) return true;
+    error = "no file or example '" + what + "'; the examples are:";
+    for (const std::string& name : pg::sim::Network::exampleNames()) error += " " + name;
     return false;
 }
 
+/// NODE.PARAM=VALUE onto the network -- or PARAM=VALUE, when only one node
+/// has a parameter of that name. False, with why, if it does not fit.
+bool applySetting(const std::string& assignment, pg::sim::Network& net, std::string& error) {
+    const size_t eq = assignment.find('=');
+    if (eq == std::string::npos || eq == 0) {
+        error = "--set wants NODE.PARAM=VALUE, not '" + assignment + "'";
+        return false;
+    }
+    const std::string name = assignment.substr(0, eq), value = assignment.substr(eq + 1);
+    const size_t dot = name.find('.');
+    int node = 0;
+    std::string param = name;
+    if (dot != std::string::npos) {
+        const pg::sim::Node* n = net.named(name.substr(0, dot));
+        if (!n) {
+            error = "no node '" + name.substr(0, dot) + "'; there are";
+            for (const pg::sim::Node& m : net.nodes()) error += " " + m.name;
+            return false;
+        }
+        node = n->id;
+        param = name.substr(dot + 1);
+    } else {
+        std::vector<std::string> owners;
+        for (const pg::sim::Node& n : net.nodes()) {
+            const pg::sim::NodeType* t = pg::sim::findNodeType(n.type);
+            if (t && t->param(param)) {
+                node = n.id;
+                owners.push_back(n.name);
+            }
+        }
+        if (owners.size() != 1) {
+            error = owners.empty() ? "no node has a parameter '" + param + "'"
+                                   : "'" + param + "' is a parameter of several nodes; say which:";
+            for (const std::string& o : owners) error += " " + o + "." + param;
+            return false;
+        }
+    }
+    std::string why;
+    if (!net.setParam(node, param, value, &why)) {
+        error = name + ": " + why;
+        return false;
+    }
+    return true;
+}
+
+#ifdef PG_HAVE_EGL
 /// fire.png, 30 -> fire_0030.png
 std::string numbered(const std::string& path, int frame) {
     char digits[16];
@@ -530,40 +542,44 @@ std::string numbered(const std::string& path, int frame) {
 }
 #endif
 
-int pyro(const Options& o) {
-    if (o.positional.size() != 1 || o.frames < 1 || o.every < 0) return usage();
-    if (o.every > o.frames) {
-        std::fprintf(stderr, "pyro: --every %d is more than --frames %d: no frame would be written\n", o.every,
-                     o.frames);
+/// `sim NETWORK OUT.png`, and `pyro OUT.png --preset NAME`: the same, with an example.
+int simulate(const Options& o, const std::string& network, const std::string& outPath) {
+    const char* cmd = o.command.c_str();
+    if (o.frames < 0 || o.every < 0) return usage();
+    if (o.resolution != 0 && (o.resolution < 16 || o.resolution > 256)) {
+        std::fprintf(stderr, "%s: --resolution wants 16 to 256 cells along the longest side, not %d\n", cmd,
+                     o.resolution);
         return 1;
     }
-    if (o.resolution != 0 && (o.resolution < 8 || o.resolution > 256)) {
-        std::fprintf(stderr, "pyro: --resolution wants 8 to 256 cells across, not %d\n", o.resolution);
-        return 1;
-    }
-#ifdef PG_HAVE_EGL
     namespace sim = pg::sim;
-    namespace gl = pg::gl;
-    sim::PyroSettings settings;
-    gl::VolumeStyle style;
-    if (o.preset == "fire") {
-        settings = sim::PyroSettings::fire();
-        style = gl::VolumeStyle::fire();
-    } else if (o.preset == "smoke") {
-        settings = sim::PyroSettings::smoke();
-        style = gl::VolumeStyle::smoke();
-    } else {
-        std::fprintf(stderr, "pyro: no preset '%s' (fire, smoke)\n", o.preset.c_str());
+    sim::Network net;
+    std::string error;
+    if (!loadNetwork(network, net, error)) {
+        std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
-    if (o.resolution > 0) settings.resolution = o.resolution;
-    std::string error;
-    for (const auto& assignment : o.sets) {
-        if (!applySetting(assignment, settings, style, error)) {
-            std::fprintf(stderr, "pyro: %s\n", error.c_str());
+    for (const std::string& assignment : o.sets) {
+        if (!applySetting(assignment, net, error)) {
+            std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
             return 1;
         }
     }
+    sim::Compiled c = net.compile();
+    for (const sim::Problem& p : c.problems) {
+        const sim::Node* n = net.node(p.node);
+        std::fprintf(stderr, "%s: %s%s%s%s\n", cmd, p.level == sim::Problem::Level::Error ? "error: " : "warning: ",
+                     n ? n->name.c_str() : "", n ? ": " : "", p.message.c_str());
+    }
+    if (!c.ok) return 1;
+    if (o.resolution > 0) c.scene.solver.resolution = o.resolution;
+    const int frames = o.frames > 0 ? o.frames : c.frames;
+    if (o.every > frames) {
+        std::fprintf(stderr, "%s: --every %d is more than the %d frames: no frame would be written\n", cmd, o.every,
+                     frames);
+        return 1;
+    }
+#ifdef PG_HAVE_EGL
+    namespace gl = pg::gl;
     int width = 400, height = 600;
     if (!o.sizeText.empty()) {
         const size_t x = o.sizeText.find('x');
@@ -575,21 +591,26 @@ int pyro(const Options& o) {
 
     gl::HeadlessContext context;
     if (!context.create(error)) {
-        std::fprintf(stderr, "pyro: %s\n", error.c_str());
+        std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
     gl::Api api;
     if (!api.load(gl::HeadlessContext::procAddress, error)) {
-        std::fprintf(stderr, "pyro: OpenGL function %s is missing\n", error.c_str());
+        std::fprintf(stderr, "%s: OpenGL function %s is missing\n", cmd, error.c_str());
         return 1;
     }
     gl::VolumeRenderer volume(api);
     std::string log;
     if (!volume.init(log)) {
-        std::fprintf(stderr, "pyro: the driver rejected the volume shader:\n%s\n", log.c_str());
+        std::fprintf(stderr, "%s: the driver rejected the volume shader:\n%s\n", cmd, log.c_str());
         return 1;
     }
-    volume.style = style;
+    sim::PyroSolver solver(c.scene);
+    volume.look = c.look;
+    volume.setDomain(solver.domain());
+    volume.setColliders(solver.scene().colliders);
+    if (o.guides) volume.setLines(gl::sceneGuides(solver.scene(), 0));
+    volume.orbit = gl::VolumeRenderer::viewOf(solver.domain());
     if (o.yawSet) volume.orbit.yaw = o.yaw;
     if (o.pitchSet) volume.orbit.pitch = o.pitch;
     if (o.distance > 0.0f) volume.orbit.distance = o.distance;
@@ -598,23 +619,22 @@ int pyro(const Options& o) {
     auto ms = [](Clock::time_point since) {
         return std::chrono::duration<double, std::milli>(Clock::now() - since).count();
     };
-    sim::PyroSolver solver(settings);
     double simulating = 0.0, rendering = 0.0;
     int images = 0;
     std::string last;
-    for (int f = 1; f <= o.frames; ++f) {
+    for (int f = 1; f <= frames; ++f) {
         auto t = Clock::now();
         solver.step();
         simulating += ms(t);
-        if (o.every > 0 ? f % o.every != 0 : f != o.frames) continue;
+        if (o.every > 0 ? f % o.every != 0 : f != frames) continue;
         t = Clock::now();
-        volume.upload(solver.density(), solver.temperature(), solver.flame());
+        volume.setFrame(sim::capture(solver));
         volume.render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
         const std::vector<uint8_t> pixels = volume.readPixels(2);
         rendering += ms(t);
-        last = o.every > 0 ? numbered(o.positional[0], f) : o.positional[0];
+        last = o.every > 0 ? numbered(outPath, f) : outPath;
         if (!gl::writePng(last, width, height, 3, pixels)) {
-            std::fprintf(stderr, "pyro: cannot write %s\n", last.c_str());
+            std::fprintf(stderr, "%s: cannot write %s\n", cmd, last.c_str());
             return 1;
         }
         ++images;
@@ -622,20 +642,37 @@ int pyro(const Options& o) {
     std::printf("wrote %s%s: %s, %d x %d x %d cells, %d frames (%.1f s); simulation %.1f ms/frame, "
                 "rendering %.0f ms/image (%s)\n",
                 last.c_str(), images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "",
-                o.preset.c_str(), solver.nx(), solver.ny(), solver.nz(), o.frames, solver.time(),
-                simulating / o.frames, rendering / std::max(images, 1),
-                reinterpret_cast<const char*>(api.GetString(gl::RENDERER)));
+                network.c_str(), solver.nx(), solver.ny(), solver.nz(), frames, solver.time(), simulating / frames,
+                rendering / std::max(images, 1), reinterpret_cast<const char*>(api.GetString(gl::RENDERER)));
     return 0;
 #else
-    std::fprintf(stderr, "pyro: this pgshader was built without EGL\n");
+    (void)outPath;
+    std::fprintf(stderr, "%s: this pgshader was built without EGL\n", cmd);
     return 1;
 #endif
+}
+
+int simCommand(const Options& o) {
+    if (o.listExamples) {
+        for (const std::string& name : pg::sim::Network::exampleNames()) std::printf("%s\n", name.c_str());
+        return 0;
+    }
+    if (o.positional.size() != 2) return usage();
+    return simulate(o, o.positional[0], o.positional[1]);
+}
+
+/// The command of the earlier versions: an example by --preset.
+int pyro(const Options& o) {
+    if (o.positional.size() != 1) return usage();
+    const std::string example = o.preset == "fire" ? "campfire" : o.preset;
+    return simulate(o, example, o.positional[0]);
 }
 
 }  // namespace
 
 bool isCommand(const std::string& word) {
-    return word == "list" || word == "gen" || word == "check" || word == "render" || word == "pyro";
+    return word == "list" || word == "gen" || word == "check" || word == "render" || word == "sim" ||
+           word == "pyro";
 }
 
 void printUsage(std::FILE* out) {
@@ -643,8 +680,8 @@ void printUsage(std::FILE* out) {
                  "usage:\n"
 #ifdef PG_HAVE_GUI
                  "  pgshader [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]\n"
-                 "           [--pyro [fire|smoke] [--resolution N]] [--size WxH] [--screenshot OUT.png [--frames N]]\n"
-                 "                  the node editor -- what runs without a command; --pyro: smoke and fire\n"
+                 "           [--size WxH] [--screenshot OUT.png [--frames N]]\n"
+                 "                  the node editor -- what runs without a command\n"
 #else
                  "  pgshader [GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
 #endif
@@ -654,10 +691,13 @@ void printUsage(std::FILE* out) {
                  "                  [--spirv-val PATH] [--library FILE]...\n"
                  "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
                  "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
-                 "  pgshader pyro   OUT.png [--preset fire|smoke] [--frames N] [--every K] [--resolution 8..256]\n"
-                 "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--set NAME=VALUE]...\n"
-                 "                  simulates smoke or fire and renders the last frame; --every K renders\n"
+                 "  pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png [--frames N] [--every K] [--resolution 16..256]\n"
+                 "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
+                 "                  [--set NODE.PARAM=VALUE]...\n"
+                 "                  simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                  frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...)\n"
+                 "  pgshader sim --list    the examples it carries: campfire, smoke, ...\n"
+                 "  pgshader pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
                  "  pgshader help\n");
 }
 
@@ -744,6 +784,7 @@ int runCommand(int argc, char** argv) {
     if (o.command == "list") return list(o, lib);
     if (o.command == "gen") return gen(o, lib);
     if (o.command == "check") return check(o, lib);
+    if (o.command == "sim") return simCommand(o);
     if (o.command == "pyro") return pyro(o);
     return render(o, lib);
 }
