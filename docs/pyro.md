@@ -1,10 +1,12 @@
-# Kouř, oheň a voda: simulace z uzlů
+# Kouř, oheň, voda a déšť: simulace z uzlů
 
 Skutečná simulace plynu na 3D mřížce, stejný princip jako Pyro v Houdini a
 EmberGen, a vody z částic, jako FLIP v Houdini. Kouř a oheň se tu hýbou,
 protože to vyplývá z rovnic proudění: teplo stoupá, víry se stáčejí,
 palivo hoří, plyn se rozpíná a obtéká překážky. Voda padá, tříští se,
-vzdouvá se ve vlnách a drží svůj objem ([§5](#5-voda)). Simulace se skládá
+vzdouvá se ve vlnách a drží svůj objem ([§5](#5-voda)). Déšť padá z mraku,
+vítr ho v nárazech šikmí, odstřikuje od objektů a na vodě dělá kroužky
+([§6](#6-déšť-a-vítr)). Simulace se skládá
 z **uzlů**: zdroje, síly a překážky vedou do řešičů, ty do vzhledů a vzhledy
 na výstup. Shaderové efekty
 z [shader-graph.md §6](shader-graph.md#6-efekty-oheň-a-kouř) pohyb jen
@@ -24,13 +26,14 @@ Obsah:
 [3. Síť simulace](#3-síť-simulace) ·
 [4. Jak simulace funguje](#4-jak-simulace-funguje) ·
 [5. Voda](#5-voda) ·
-[6. Jak se kreslí](#6-jak-se-kreslí) ·
-[7. Výkon a determinismus](#7-výkon-a-determinismus) ·
-[8. Ověřování](#8-ověřování) ·
-[9. Jak přidat uzel](#9-jak-přidat-uzel) ·
-[10. Co je potřeba znát](#10-co-je-potřeba-znát) ·
-[11. Omezení a co dělá produkce](#11-omezení-a-co-dělá-produkce) ·
-[12. Odkazy](#12-odkazy)
+[6. Déšť a vítr](#6-déšť-a-vítr) ·
+[7. Jak se kreslí](#7-jak-se-kreslí) ·
+[8. Výkon a determinismus](#8-výkon-a-determinismus) ·
+[9. Ověřování](#9-ověřování) ·
+[10. Jak přidat uzel](#10-jak-přidat-uzel) ·
+[11. Co je potřeba znát](#11-co-je-potřeba-znát) ·
+[12. Omezení a co dělá produkce](#12-omezení-a-co-dělá-produkce) ·
+[13. Odkazy](#13-odkazy)
 
 ---
 
@@ -144,17 +147,20 @@ spolu a rotace je točí kolem společného středu.
 
 Gizmo zná parametry, které uzel má (`NodeType::handles`): objekt a zdroj
 mají polohu, rotaci a velikost, vír polohu, osu, poloměr a výšku, atraktor
-polohu a poloměr, vítr jen směr (rotace ho otáčí).
+polohu a poloměr, vítr jen směr (rotace ho otáčí), mrak deště polohu a
+velikost.
 
 **Add** (Shift+A, pravé tlačítko) přidá objekt (koule, kvádr, válec, kužel,
-prstenec), zdroj (oheň, kouř) nebo sílu (vítr, vír, turbulence, atraktor,
-odpor) tam, kam míří myš na podlaze. Objekt stojí na podlaze, dostane
-vlastní barvu a rovnou se připojí do Colliders všech řešičů. Oheň a kouř se
-připojí do řešiče, a když žádný není, vznikne i s vzhledem a výstupem.
-Síly se připojí do Forces.
+prstenec), zdroj (oheň, kouř), vodu, počasí (déšť, bouřka) nebo sílu (vítr,
+vír, turbulence, atraktor, odpor) tam, kam míří myš na podlaze. Objekt stojí
+na podlaze, dostane vlastní barvu a rovnou se připojí do Colliders všech
+řešičů i deště. Oheň a kouř se připojí do řešiče, a když žádný není, vznikne
+i s vzhledem a výstupem. Síly se připojí do Forces řešičů i deště.
 
 **G** zapne vodítka: obrys domény, zdroje (oranžově, se šipkou rychlosti a
-drahou pohybu), víry a atraktory, šipky větru, obrys vybraných objektů.
+drahou pohybu), víry a atraktory, šipky větru, mrak deště se šipkami, kudy
+kapky padají, obrys vybraných objektů. Každá síla se kreslí jednou, i když
+působí ve více řešičích.
 Ikona fotoaparátu uloží snímek jako PNG ve dvojnásobném rozlišení.
 
 ### Časová osa a cache
@@ -189,13 +195,15 @@ je jeden krok, ne sto.
 ```
 [Pyro Source] ──Source───┐
 [Turbulence] ───Force────┼──▶ [Pyro Solver] ──Gas──▶ [Volume Look] ──Look──┐
-[Object] ───────Collider─┘                                                 ├──▶ [Output]
-[Water Source] ─Water──────▶ [Liquid Solver] ─Liquid─▶ [Water Look] ──Look──┘
+[Object] ───────Collider─┘                                                 │
+[Water Source] ─Water──────▶ [Liquid Solver] ─Liquid─▶ [Water Look] ──Look──┼──▶ [Output]
+[Wind] ─────────Force──────▶ [Rain] ───────────────────────────────Look──┘
 ```
 
 Piny mají typ a barvu: **Source** oranžová, **Force** tyrkysová,
 **Collider** modrá, **Gas** fialová, **Look** zelená, **Water** a
-**Liquid** modré (voda, [§5](#5-voda)). Výstup jde jen do
+**Liquid** modré (voda, [§5](#5-voda)). Déšť ([§6](#6-déšť-a-vítr)) je
+řešič a vzhled v jednom: jeho výstup je rovnou vrstva Outputu. Výstup jde jen do
 vstupu stejného typu. Vstupy řešiče Sources, Forces a Colliders berou
 libovolný počet spojů (kreslí se jako obdélníček místo kolečka). Síly se
 použijí v pořadí, v jakém byly připojené. Simuluje se jen to, co vede na
@@ -373,6 +381,8 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `dam_break` | voda: blok vody v rohu nádrže se protrhne, oteče sloup, vyšplhá po protější stěně a přelévá se |
 | `waterfall` | voda z pramene na římse padá na šikmou desku, stéká po ní a plní bazén |
 | `splash` | koule vody dopadne do bazénu: korunka tříště, pak se dutina zavře a vystřelí sloupec (Worthingtonův výtrysk) |
+| `rain_pond` | déšť na jezírku: kroužky na hladině, odstřiky od kamene, vánek v nárazech a mokrá podlaha |
+| `storm` | táborák v bouřce: nárazy větru kladou plameny a strhávají kouř, déšť se šikmí ve stejném větru a odstřikuje od polen |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.
@@ -674,7 +684,114 @@ zabere přenos na mřížku, polovinu tlak. Vlákna poolu po dávce práce ješt
 chvíli hlídají další, než usnou: probudit spící vlákno trvá déle než
 mnohá dávka. To zrychlilo i plyn.
 
-## 6. Jak se kreslí
+## 6. Déšť a vítr
+
+![Déšť na jezírku a táborák v bouřce](img/rain.png)
+
+Kapka deště není voda pro FLIP. Je malá, padá skoro stálou rychlostí a na
+jejím tvaru nezáleží. Důležité je, kudy letí, kam dopadne a co tam udělá.
+Uzel **Rain** proto simuluje kapky jako samostatné částice
+([`src/pg/sim/Rain.h`](../src/pg/sim/Rain.h)): padají z mraku, vítr je nese,
+na podlaze a objektech odstřikují a na hladině vody dělají kroužky. Je to
+levné: bouřka s 9 500 kapkami ve vzduchu a 11 000 kapičkami odstřiků
+zabere na 4 jádrech 0,6 ms na krok.
+
+### Síť
+
+```
+[Wind] ─────Force────┐
+[Object] ───Collider─┴──▶ [Rain] ──Look──▶ [Output] ◀──Look── [Water Look] ◀── [Liquid Solver]
+```
+
+Rain je řešič i vzhled najednou a sám je vrstvou Outputu. Do jeho Forces
+patří vítr, případně turbulence, vír, atraktor nebo odpor, do Colliders
+objekty, na které prší. Když Output kreslí i vodu, kapky dopadají na její
+hladinu. Stejný vítr se připojí do Pyro Solveru, Liquid Solveru i do deště:
+kouř, voda i kapky pak jdou po stejném větru.
+
+| uzel | parametry |
+|---|---|
+| **Rain** (Simulation) | Cloud: `center`, `size` (mrak: kapky vznikají v tomto kvádru a prší pod ním); Rain: `rate` (kapek za sekundu na m²: 100 mrholení, 800 déšť, 3 000 liják), `speed` (rychlost pádu v m/s: kolem 7 pro déšť, méně pro mrholení), `splash` (kolik kapiček odletí od pevného povrchu), `ripples` (jak silně kapka rozvlní vodu), `seed`; Time: `start`, `end`; Look: `color`, `opacity`, `streak` (délka čáry jako podíl snímku: pohybová neostrost), `wet` (jak mokrá je podlaha) |
+
+Ve viewportu je déšť v **Shift+A → Weather**:
+
+- *Rain* dá mrak nad celou scénu, připojí ho do Outputu a připojí do něj
+  všechny objekty jako překážky a vítr, který už ve scéně je;
+- *Rainstorm* je hustší a rychlejší déšť s většími odstřiky. Když ve scéně
+  vítr není, přidá nárazový vítr a připojí ho do deště i do řešičů.
+
+Mrak se vybere kliknutím na jeho kvádr, gizmo ho posouvá (**W**) a mění
+jeho velikost (**R**).
+
+### Jak to funguje
+
+1. **Vznik.** Za krok vznikne `rate × plocha mraku × dt` kapek, zlomek kapky
+   počká na další krok. Kde kapka vznikne, určuje hash jejího pořadového
+   čísla. Když prší od začátku (`start` 0), je vzduch pod mrakem hned
+   v prvním kroku plný kapek, které padaly už dřív: tolik, kolik jich spadne
+   za dobu pádu na zem, rozložených od mraku k zemi a posunutých větrem. Ty,
+   které by už dopadly do objektu nebo do vody, se vynechají. Déšť
+   s pozdějším `start` začne padat až z mraku.
+2. **Pohyb.** Rychlost kapky se blíží rychlosti vzduchu plus vlastnímu pádu,
+   každý krok o podíl `1 − e^(−1,4·dt)`. Kapka se tak ustálí asi za 0,7 s,
+   což je pro 7 m/s právě `v/g`. Rychlost vzduchu dává vítr, i s nárazy (viz
+   dál). Turbulence s kapkou třese, odpor ji brzdí, vír ji stáčí a atraktor
+   přitahuje.
+3. **Dopad.** Na podlahu nebo do objektu: kapka zmizí a vyletí z ní `splash`
+   kapiček, od povrchu nahoru (0,6 až 1,5 m/s) a do stran. Žijí 0,12 až
+   0,3 s, padají s gravitací a zmizí, když znovu dopadnou. Do vody: kapka
+   zmizí, vyrazí na hladině kroužek a občas vyskočí kapička (Worthingtonův
+   výtrysk v malém). Kde je hladina, říká Liquid Solver
+   (`distanceToSurface`).
+4. **Vlnky.** Nad vodou leží mřížka výšek, nejvýš 256 buněk na delší stranu
+   a nejmíň polovina buňky řešiče. Kapka do ní vtiskne kráter s valem kolem,
+   profil `(1 − q)·e^(−q)` s `q = (r/w)²`, takže kolik vody jde dolů, tolik
+   jde nahoru. Vlnová rovnice `h'' = c²∇²h − k·h'` ho rozvede do kroužku,
+   který se šíří rychlostí 0,35 m/s a slábne s útlumem 3/s. Laplacián bere
+   i diagonální sousedy (izotropní 9bodový): se čtyřmi by kroužky vyšly
+   hranaté. Okraje vlny odrážejí. Co ze součtu výšek po zaokrouhlení zbude,
+   se každý krok odečte, jinak by hladina pomalu klesala.
+
+**Determinismus.** Každá kapka se hýbe sama (paralelně), dopady se
+zpracují jeden po druhém v pořadí kapek a kapičky vznikají ve stejném
+pořadí. Výsledek je bitově stejný na libovolném počtu vláken.
+
+### Nárazový vítr
+
+Vítr s `gusts` > 0 nefouká pořád stejně. Síla nárazu je šum v čase, ale
+není v jednu chvíli všude stejná: **fronta nárazu putuje s větrem**. Co
+teď fouká tady, fouká o `Δt` později o `speed · Δt` dál po větru:
+
+```
+rychlost(p, t) = d · speed · (1 + gusts · (2 · šum(0,8 · (t − p·d / speed)) − 1))
+```
+
+kde `d` je směr větru. Tak je to i ve skutečnosti, náraz je vzduch, který
+přiletí. Kouř se ve frontě ohne nejdřív na návětrné straně a déšť se šikmí
+postupně, jak fronta prochází mrakem. Stejná funkce
+([`Shared.h`](../src/pg/sim/Shared.h), `windAt`) pohání plyn, vodu (tu jen
+u hladiny) i déšť.
+
+### Jak se déšť kreslí
+
+- **Kapka je čára** od místa, kde je, zpět podél rychlosti, tak dlouhá,
+  kolik kapka uletí za `streak` snímku (pohybová neostrost závěrky). Kreslí
+  se jako úzký obdélník natočený na obrazovce a její ocas se vytrácí.
+- **Kapka je malá**, 2,5 mm. Čára je široká asi 1,3 px. Vzdálená kapka
+  pokryje jen část té šířky a je o to slabší, blízká je širší. V dálce se
+  déšť proto slévá v opar a zblízka má jednotlivé čáry. Bez toho vypadá
+  hustý déšť jako bílá opona.
+- **Barva** je barva deště osvětlená oblohou a trochu sluncem, se stejnou
+  expozicí a tone mappingem jako zbytek obrazu. V zamračeném světle jsou
+  kapky tmavší.
+- **Vlnky** naklánějí normálu hladiny podle sklonu výšek a odrazy i lom je
+  ukážou. Nejlépe jsou vidět při pohledu po hladině, jako ve skutečnosti.
+- **Mokrá podlaha** je tmavší (o `wet`/2) a odráží oblohu podle Fresnela.
+
+Snímek nese šest čísel na kapku a vlnky jako čísla v poloviční přesnosti,
+celkem desítky kilobajtů.
+
+## 7. Jak se kreslí
 
 Renderer ([`src/pg/gl/Volume.h`](../src/pg/gl/Volume.h)) kreslí scénu ve
 světových souřadnicích: doménu, jak stojí na podlaze, podlahu s mřížkou,
@@ -719,10 +836,14 @@ Co je v obraze:
   otevřených stěn a u stropu plynule mizí, jinak by hlava kouřového sloupce
   u stropu vypadala jako useknutá poklicí.
 
+Voda se kreslí v témže průchodu ([§5](#jak-se-voda-kreslí)). Déšť přijde
+až po něm: čáry kapek se kreslí přes obraz s hloubkovým testem, takže je
+schová objekt, který je blíž.
+
 Viewport editoru kreslí znovu, jen když se něco změní: snímek, vzhled,
 kamera, velikost, vodítka.
 
-## 7. Výkon a determinismus
+## 8. Výkon a determinismus
 
 Krok řešiče na 4 jádrech (Xeon 2,1 GHz), táborák, bez vykreslování:
 
@@ -747,7 +868,7 @@ buněk, každou buňku zapisuje právě jeden kus práce a mezi buňkami se nic
 nesčítá. Test to ověřuje se všemi prvky naráz: dva zdroje (jeden pohyblivý),
 všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 
-## 8. Ověřování
+## 9. Ověřování
 
 [`tests/test_pyro.cpp`](../tests/test_pyro.cpp) (21 testů):
 
@@ -766,7 +887,7 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
-[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (17 testů):
+[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (18 testů):
 tabulka typů uzlů je konzistentní (a každá výchozí hodnota se zapíše a
 přečte zpět stejně), jména a spoje, meze parametrů včetně čísel, která
 se čtou stejně s každou standardní knihovnou, soubory tam a zpět, co se ze
@@ -777,7 +898,9 @@ ve scéně připojené i nepřipojené a nová barva nic nesimuluje znovu;
 `fps` a světlo ze souborů verze 1 se přestěhují do Outputu; svět
 (`WorldSolver`) krokuje všechny řešiče jednou frekvencí a druhý vzhled
 plynu se nahlásí; uzly vody se přeloží do světa i vzhledu, kouř a voda
-v jednom Outputu běží spolu a co chybí, se nahlásí.
+v jednom Outputu běží spolu a co chybí, se nahlásí; déšť je vrstva
+Outputu s větrem a překážkami, mrak pod podlahou, nulová hustota a druhý
+déšť se nahlásí.
 
 [`tests/test_liquid.cpp`](../tests/test_liquid.cpp) (10 testů): tlak
 s volnou hladinou konverguje do 30 iterací a reziduum sedí i přepočítané
@@ -789,6 +912,16 @@ míří; voda se nedostane do tělesa a steče z něj; otevřenými stranami
 odteče; snímek nese hladinu (uvnitř záporná vzdálenost, venku kladná,
 o buňku na buňku); bitově stejný výsledek na 1 a na 4 vláknech i s tělesem
 a turbulencí; nesmyslné vstupy se opraví.
+
+[`tests/test_rain.cpp`](../tests/test_rain.cpp) (8 testů): vzduch pod
+mrakem je od prvního kroku plný kapek až k zemi a dopadá jich přesně tolik,
+kolik říká `rate` (na 2 %); kapky padají svou rychlostí a ve větru se šikmí
+(3 m po větru na 7 m pádu); fronty nárazů putují s větrem a mění jen jeho
+sílu, ne směr; kapky nezůstanou v objektu a kapičky od něj odletí nahoru;
+do vody dopadne, co má, pod hladinu nic neproletí a vlnky zůstanou
+vlnkami; déšť začne a skončí včas a pozdní začne u mraku; bitově stejný
+výsledek na 1 a na 4 vláknech (s vodou, větrem, turbulencí a objektem);
+nesmyslné vstupy se opraví.
 
 [`tests/test_shapes.cpp`](../tests/test_shapes.cpp) (5 testů): rotace na
 úhly a zpět (i přes 180° a v gimbal locku), uvnitř a vně, vzdálenosti, kde
@@ -815,7 +948,7 @@ kontextovou nabídku. Žádný data race ani chyba paměti v našem kódu;
 hlášení zbyla jen uvnitř X11, GLX a Mesy, které pro sanitizery nejsou
 instrumentované.
 
-## 9. Jak přidat uzel
+## 10. Jak přidat uzel
 
 Editor, soubory i příkazová řádka berou uzly z jedné tabulky
 ([`src/pg/sim/Network.cpp`](../src/pg/sim/Network.cpp), `buildTypes()`).
@@ -834,7 +967,7 @@ parametrů, v souborech i v `--set`.
    `gl::sceneGuides()` v [`Volume.cpp`](../src/pg/gl/Volume.cpp).
 5. **Test:** test tabulky ho zkontroluje sám; přidat test fyziky.
 
-## 10. Co je potřeba znát
+## 11. Co je potřeba znát
 
 - **Vektorový počet:** gradient, divergence, rotace (curl). Divergence říká,
   kolik z bodu vytéká, rotace jak moc se točí. Celá simulace se dá číst jako
@@ -859,7 +992,7 @@ parametrů, v souborech i v `--set`.
   nastavuje: Pyro Solver, pole `flame`, `temperature`, `density`, `fuel`,
   POP Axis Force (předloha uzlu Vortex).
 
-## 11. Omezení a co dělá produkce
+## 12. Omezení a co dělá produkce
 
 Tahle simulace je prototyp, který ukazuje, jak Pyro funguje, a měří, kolik
 to stojí. Oproti produkci:
@@ -886,12 +1019,16 @@ to stojí. Oproti produkci:
    z anizotropních jader (Yu a Turk, 2013) a tříšť, pěnu a bubliny
    simuluje zvlášť (whitewater). Chybí viskozita a povrchové napětí.
 8. **Kouř a voda o sobě nevědí.** Každý řešič má svou doménu; oheň vodou
-   neuhasne a voda se kouřem nepohne.
+   neuhasne a voda se kouřem nepohne. Stejně déšť: vodu v bazénu nepřidá,
+   oheň neuhasí, kouř ho neunáší (vítr ano) a mokrá je jen podlaha, ne
+   objekty. Vlnky jsou mřížka výšek nad hladinou, kterou řešič vody nevidí.
+   Produkce dělá déšť z částic stejně, ale kapky jsou tam i součástí FLIP,
+   jakmile dopadnou, a mokrost se maluje do textur objektů.
 9. **Simulace není uzel geometrické sítě.** Další krok je uzel
    `pyrosolver`: cook engine jádra už zná časovou závislost a cache
    snímků ([ARCHITECTURE.md §4.3](../ARCHITECTURE.md#43-čas-jako-dimenze-závislosti)).
 
-## 12. Odkazy
+## 13. Odkazy
 
 - J. Stam: *Stable Fluids*, SIGGRAPH 1999.
 - R. Fedkiw, J. Stam, H. W. Jensen: *Visual Simulation of Smoke*, SIGGRAPH 2001.
@@ -914,4 +1051,8 @@ to stojí. Oproti produkci:
 - A. McAdams, E. Sifakis, J. Teran: *A Parallel Multigrid Poisson Solver
   for Fluids Simulation on Large Grids*, SCA 2010.
 - H. Zhao: *A Fast Sweeping Method for Eikonal Equations*, Math. Comp. 2005.
+- R. Gunn, G. D. Kinzer: *The Terminal Velocity of Fall for Water Droplets
+  in Stagnant Air*, J. Meteorology 1949 (kapky padají 2 až 9 m/s).
+- K. Garg, S. K. Nayar: *Photorealistic Rendering of Rain Streaks*,
+  SIGGRAPH 2006 (jak vypadá čára kapky při pohybové neostrosti).
 - SideFX: dokumentace Houdini, *Pyro*, *FLIP Solver* a *POP Axis Force*.

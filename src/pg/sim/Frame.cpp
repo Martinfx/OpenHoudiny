@@ -3,6 +3,7 @@
 #include "pg/core/Parallel.h"
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Pyro.h"
+#include "pg/sim/Rain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -114,6 +115,32 @@ WaterFrame capture(const LiquidSolver& sim) {
         }
     });
     return w;
+}
+
+RainFrame capture(const RainSolver& sim) {
+    RainFrame r;
+    auto pack = [](const std::vector<RainParticle>& from, std::vector<float>& to) {
+        to.resize(6 * from.size());
+        for (size_t i = 0; i < from.size(); ++i) {
+            const RainParticle& p = from[i];
+            float* o = to.data() + 6 * i;
+            o[0] = p.position.x, o[1] = p.position.y, o[2] = p.position.z;
+            o[3] = p.velocity.x, o[4] = p.velocity.y, o[5] = p.velocity.z;
+        }
+    };
+    pack(sim.drops(), r.drops);
+    pack(sim.droplets(), r.droplets);
+    r.timeStep = sim.scene().rain.timeStep;
+    const Ripples& w = sim.ripples();
+    if (!w.empty()) {
+        r.rippleOrigin = w.origin;
+        r.rippleCell = w.cell;
+        r.rippleCells[0] = w.nx;
+        r.rippleCells[1] = w.nz;
+        r.ripples.resize(w.height.size());
+        for (size_t i = 0; i < w.height.size(); ++i) r.ripples[i] = toHalf(w.height[i]);
+    }
+    return r;
 }
 
 }  // namespace pg::sim

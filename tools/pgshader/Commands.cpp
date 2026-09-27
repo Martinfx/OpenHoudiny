@@ -622,7 +622,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     volume.look = c.look;
     volume.setDomain(domain);
     volume.setSolids(c.solids);
-    if (o.guides) volume.setLines(gl::sceneGuides(&world, c.solids, {}));
+    if (o.guides) volume.setLines(gl::sceneGuides(&world, c.solids, {}, c.solver, c.liquidSolver, c.rain));
     volume.orbit = gl::VolumeRenderer::viewOf(gl::sceneDomain(world));
     if (o.yawSet) volume.orbit.yaw = o.yaw;
     if (o.pitchSet) volume.orbit.pitch = o.pitch;
@@ -662,6 +662,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         const sim::Domain& d = solver.water()->domain();
         what += ", water " + std::to_string(d.cells[0]) + " x " + std::to_string(d.cells[1]) + " x " +
                 std::to_string(d.cells[2]) + " cells, " + std::to_string(solver.water()->particleCount()) + " particles";
+    }
+    if (world.hasRain) {
+        what += ", rain " + std::to_string(solver.rain()->drops().size()) + " drops, " +
+                std::to_string(solver.rain()->droplets().size()) + " droplets";
     }
     std::printf("wrote %s%s: %s%s, %d frames (%.1f s); simulation %.1f ms/frame, rendering %.0f ms/image (%s)\n",
                 last.c_str(), images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "",

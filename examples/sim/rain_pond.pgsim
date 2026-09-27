@@ -1,0 +1,31 @@
+pgsim 1
+# Rain on a pond: every drop rings the water, and the stone throws up spray
+# where they hit it. A gusting breeze slants them and ruffles the surface;
+# round the pond the floor is wet and shines with the sky.
+node 1 water_source 1 pond 0 0
+  param center 0 0.1 0
+  param size 1.6 0.2 1.2
+node 2 object 1 stone 0 96
+  param center 0.3 0.12 0.1
+  param size 0.35 0.3 0.35
+  param color 0.11 0.105 0.1
+node 3 wind 1 breeze 0 192
+  param direction 1 0 0.3
+  param speed 1.5
+  param gusts 0.5
+node 4 liquid_solver 1 solver 250 0
+  param size 1.6 0.6 1.2
+node 5 water_look 1 look 490 0
+node 6 rain 1 rain 490 150
+node 7 output 2 output 720 60
+  param frames 90
+  param light_intensity 1.2
+  param sky_intensity 0.4
+link 1.water -> 4.sources
+link 2.collider -> 4.colliders
+link 2.collider -> 6.colliders
+link 3.force -> 4.forces
+link 3.force -> 6.forces
+link 4.liquid -> 5.liquid
+link 5.look -> 7.look
+link 6.look -> 7.look

@@ -9,6 +9,7 @@
 //   [Turbulence] ---+--> [Pyro Solver] ---> [Volume Look] --+
 //   [Object] -------+                                       +--> [Output]
 //   [Water Source] -+--> [Liquid Solver] -> [Water Look] ---+
+//   [Wind] ----------------> [Rain] ------------------------+
 //
 // Objects are the solids of the scene: every one is drawn, and those linked
 // into a solver's Colliders are in the way of what it simulates. Objects and
@@ -180,6 +181,7 @@ struct Compiled {
     std::vector<int> active;
     int output = 0, lookNode = 0, solver = 0;  ///< the Output, the Volume Look, the Pyro Solver; 0 if none
     int waterLook = 0, liquidSolver = 0;       ///< the Water Look, the Liquid Solver; 0 if none
+    int rain = 0;                              ///< the Rain; 0 if none
 
     bool errors() const;
     bool isActive(int node) const;

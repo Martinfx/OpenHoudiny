@@ -110,10 +110,17 @@ inline float faceOffset(int axis, int a) { return axis == a ? 0.0f : 0.5f; }
 
 // --- forces --------------------------------------------------------------------------
 
-/// How fast a wind of `force` blows at time t: its speed, varied by its gusts.
-inline Vec3 windAt(const Force& force, float t, uint32_t seed) {
-    const float gust = 1.0f + force.gusts * (2.0f * noise1(t * 0.8f, seed) - 1.0f);
-    return normalize(force.direction) * (force.speed * gust);
+/// How fast a wind of `force` blows at time t at p: its speed, varied by
+/// its gusts -- fronts that sweep through with the wind, so that what is
+/// downwind feels a gust a little later.
+inline Vec3 windAt(const Force& force, float t, uint32_t seed, const Vec3& p) {
+    const Vec3 d = normalize(force.direction);
+    float gust = 1.0f;
+    if (force.gusts > 0.0f) {
+        const float late = dot(p, d) / std::max(force.speed, 0.5f);
+        gust += force.gusts * (2.0f * noise1((t - late) * 0.8f, seed) - 1.0f);
+    }
+    return d * (force.speed * gust);
 }
 
 /// Adds `force` over dt at time t to the velocity `vel` (the three
@@ -177,14 +184,14 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
         }
         case ForceKind::Wind: {
             // Pulled towards the wind's velocity, `strength` per second; gusts
-            // vary its speed over time.
-            const Vec3 wind = windAt(force, time, seed);
+            // sweep through with it.
             const float pull = 1.0f - std::exp(-force.strength * dt);
             for (int a = 0; a < 3; ++a) {
                 forEachCell(vel[a], [&](int i, int j, int k) {
                     const float m = mask(a, i, j, k);
+                    const float wind = windAt(force, time, seed, facePosition(a, i, j, k))[a];
                     float& v = vel[a].at(i, j, k);
-                    v += pull * m * (wind[a] - v);
+                    v += pull * m * (wind - v);
                 });
             }
             break;

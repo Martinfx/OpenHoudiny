@@ -316,6 +316,16 @@ void LiquidSolver::updateSolids() {
     }
 }
 
+float LiquidSolver::distanceToSurface(const Vec3& p) const {
+    const Vec3 g = toCells(p);
+    const float far = kReach * domain_.voxel;
+    if (g.x < 0.0f || g.y < 0.0f || g.z < 0.0f || g.x > static_cast<float>(n_[0]) || g.y > static_cast<float>(n_[1]) ||
+        g.z > static_cast<float>(n_[2])) {
+        return far;
+    }
+    return phi_.sample(g.x, g.y, g.z);
+}
+
 float LiquidSolver::solidDistance(const Vec3& p) const {
     if (!anySolid_) return 3.0f * domain_.voxel;
     const Vec3 g = toCells(p);

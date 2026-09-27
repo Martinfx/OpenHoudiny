@@ -43,12 +43,14 @@ Icon typeIcon(const sim::NodeType* t) {
     const std::string name = t->name;
     if (name == "output") return Icon::Output;
     if (name == "water_source") return Icon::Drop;
+    if (name == "rain") return Icon::Rain;
     return categoryIcon(t->category);
 }
 
-/// Water sources are blue, among the orange of fire.
+/// Water sources are blue, among the orange of fire; the rain is grey-blue.
 ImU32 typeColor(const sim::NodeType& t) {
     if (std::string(t.name) == "water_source") return IM_COL32(40, 108, 172, 255);
+    if (std::string(t.name) == "rain") return IM_COL32(88, 106, 140, 255);
     return categoryColor(t.category);
 }
 
@@ -136,6 +138,12 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
                std::to_string(d.cells[2]) + " cells" + dot + (v("closed_sides") != 0.0f ? "tank" : "open");
     }
     if (t == "water_look") return "clear to " + number(v("clarity")) + " m";
+    if (t == "rain") {
+        std::string s = number(v("rate")) + " /m\xc2\xb2s" + dot + number(v("speed")) + " m/s";
+        if (v("end") > v("start")) s += dot + number(v("start")) + "\xe2\x80\x93" + number(v("end")) + " s";
+        else if (v("start") > 0.0f) s += dot + "from " + number(v("start")) + " s";
+        return s;
+    }
     if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames" + dot + number(v("fps")) + " fps";
     (void)c;
     return {};
@@ -864,7 +872,7 @@ void SimWorkspace::networkOverview() {
     ImGui::PopFont();
     ui::note("Nothing is selected. Click a node to see its parameters; Tab or a right click on the network "
              "adds one. Sources, forces and colliders feed the solvers -- the Pyro Solver for smoke and fire, the "
-             "Liquid Solver for water; what they simulate goes through a look to the Output.");
+             "Liquid Solver for water, the Rain; what they simulate goes through a look to the Output.");
     ImGui::Spacing();
     if (ui::section("Simulation")) {
         if (compiled_.ok && compiled_.world.any()) {
@@ -889,6 +897,17 @@ void SimWorkspace::networkOverview() {
                 const std::shared_ptr<const sim::Frame> f = frameToShow();
                 if (f && !f->water.empty()) {
                     ImGui::Text("Particles   %zu  (%.0f litres)", f->water.particles, f->water.litres);
+                }
+            }
+            if (compiled_.world.hasRain) {
+                const sim::RainScene& rain = compiled_.world.rain;
+                const Vec3& sz = rain.rain.size;
+                ImGui::Text("Rain        %.2f \xc3\x97 %.2f m cloud, %.0f m up", static_cast<double>(sz.x),
+                            static_cast<double>(sz.z), static_cast<double>(rain.rain.center.y));
+                ImGui::Text("Forces %zu \xc2\xb7 colliders %zu", rain.forces.size(), rain.colliders.size());
+                const std::shared_ptr<const sim::Frame> f = frameToShow();
+                if (f && !f->rain.empty()) {
+                    ImGui::Text("Drops       %zu  (%zu droplets)", f->rain.dropCount(), f->rain.dropletCount());
                 }
             }
             ImGui::Text("Frames      %d at %.0f fps  (%.1f s)", compiled_.frames,
@@ -928,7 +947,7 @@ void SimWorkspace::updateGuides() {
     gl::Lines lines;
     if (guides_) {
         lines = gl::sceneGuides(compiled_.ok ? &compiled_.world : nullptr, compiled_.solids, chosen, compiled_.solver,
-                                compiled_.liquidSolver);
+                                compiled_.liquidSolver, compiled_.rain);
     }
     renderer_.setLines(lines);
     guideLines_ = std::move(lines);
@@ -1168,6 +1187,13 @@ std::string SimWorkspace::gridsText() const {
             std::snprintf(buf, sizeof buf, "%s%.0f k particles", dot.c_str(), k);
             text += buf;
         }
+    }
+    if (w.hasRain) {
+        const std::shared_ptr<const sim::Frame> f = frameToShow();
+        if (!text.empty()) text += dot;
+        char buf[48];
+        std::snprintf(buf, sizeof buf, "rain %.0f k drops", f ? static_cast<double>(f->rain.dropCount()) / 1000.0 : 0.0);
+        text += buf;
     }
     return text;
 }

@@ -333,14 +333,15 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Pyro       simulace kouře a ohně
                  Liquid     voda: FLIP -- částice nesou vodu, mřížka drží její objem
                  FreeSurface tlak kapaliny s volnou hladinou: CG s multigridem, ghost fluid
-                 Shared     co řešiče sdílejí: paralelní smyčky, šum, síly na MAC mřížce
+                 Rain       déšť: kapky z mraku ve větru, odstřiky, vlnky na hladině
+                 Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
                  World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
                  Network    síť uzlů simulace, formát .pgsim, překlad na World + Look
-                 Frame      snímek: plyn v poloviční přesnosti, hladina vody po bajtech
+                 Frame      snímek: plyn v poloviční přesnosti, hladina vody po bajtech, kapky
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
-                 Volume     objemové vykreslování simulace: podlaha, objekty, vodítka
-tests/           50 testů proti invariantům + 25 pro shader graf + 58 pro simulaci, vodu, objekty a modely
+                 Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť, vodítka
+tests/           50 testů proti invariantům + 25 pro shader graf + 67 pro simulaci, vodu, déšť, objekty a modely
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,
@@ -376,6 +377,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
+| ✅ | Déšť a vítr: kapky z mraku, nárazy větru putující s větrem, odstřiky od objektů, vlnky na vodě (vlnová rovnice), mokrá podlaha; bitově stejné na 1 i 4 vláknech |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 

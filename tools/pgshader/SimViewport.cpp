@@ -56,7 +56,8 @@ bool iconItem(Icon icon, ImU32 color, const char* label, const char* shortcut = 
     return clicked;
 }
 
-bool isSolver(const std::string& type) { return type == "pyro_solver" || type == "liquid_solver"; }
+/// What objects and forces are linked into: the solvers, and the rain.
+bool isSolver(const std::string& type) { return type == "pyro_solver" || type == "liquid_solver" || type == "rain"; }
 
 }  // namespace
 
@@ -341,6 +342,53 @@ int SimWorkspace::ensureLiquidChain() {
     return solver;
 }
 
+int SimWorkspace::addRain(bool storm) {
+    // A cloud over the whole scene, drawn as a layer of the Output, below
+    // the looks already there.
+    float y = 40.0f;
+    int output = 0;
+    for (const sim::Node& n : net_.nodes()) {
+        const sim::NodeType* t = sim::findNodeType(n.type);
+        if (t && (std::string(t->category) == "Simulation" || std::string(t->category) == "Render") &&
+            n.type != "output") {
+            y = std::max(y, n.y + 200.0f);
+        }
+        if (n.type == "output") output = n.id;
+    }
+    const int id = net_.add("rain", 490.0f, y);
+    if (!output) output = net_.add("output", 720.0f, y);
+    net_.connect(id, "look", output, "look");
+    const sim::Domain box = sceneBox();
+    const Vec3 middle = box.origin() + box.size() * 0.5f;
+    const Vec3 size(std::max(3.0f, box.size().x + 1.0f), 0.5f, std::max(3.0f, box.size().z + 1.0f));
+    net_.setParam(id, "center", pv(Vec3(middle.x, std::max(2.5f, box.size().y + 0.8f), middle.z)));
+    net_.setParam(id, "size", pv(size));
+    // It lands on every object, and the wind that blows the rest blows it.
+    for (const sim::Node& n : std::vector<sim::Node>(net_.nodes())) {
+        if (n.type == "object") net_.connect(n.id, "collider", id, "colliders");
+        if (n.type == "wind") net_.connect(n.id, "force", id, "forces");
+    }
+    if (storm) {
+        net_.setParam(id, "rate", {2500.0f, 0.0f, 0.0f});
+        net_.setParam(id, "speed", {9.0f, 0.0f, 0.0f});
+        net_.setParam(id, "splash", {4.0f, 0.0f, 0.0f});
+        net_.setParam(id, "ripples", {1.5f, 0.0f, 0.0f});
+        net_.setParam(id, "wet", {0.85f, 0.0f, 0.0f});
+        net_.rename(id, net_.uniqueName("rainstorm"));
+        // A storm blows: a gusting wind, if there is none yet -- into the
+        // rain, and into the solvers.
+        if (net_.linksInto(id, "forces").empty()) {
+            const ImVec2 slot = freeSlot();
+            const int wind = net_.add("wind", slot.x, slot.y);
+            net_.setParam(wind, "direction", pv(normalize(Vec3(1.0f, 0.0f, 0.3f))));
+            net_.setParam(wind, "speed", {4.0f, 0.0f, 0.0f});
+            net_.setParam(wind, "gusts", {0.6f, 0.0f, 0.0f});
+            linkIntoSolvers(wind, "force", "forces");
+        }
+    }
+    return id;
+}
+
 int SimWorkspace::addToScene(const std::string& kind, const Vec3& at) {
     const ImVec2 slot = freeSlot();
     int id = 0;
@@ -406,6 +454,7 @@ int SimWorkspace::addToScene(const std::string& kind, const Vec3& at) {
         net_.rename(id, net_.uniqueName(kind == "water_block" ? "water" : kind));
         net_.connect(id, "water", solver, "sources");
     }
+    if (kind == "rain" || kind == "rainstorm") id = addRain(kind == "rainstorm");
     for (const char* force : {"wind", "vortex", "turbulence", "attractor", "drag"}) {
         if (kind != force) continue;
         id = net_.add(force, slot.x, slot.y);
@@ -458,6 +507,8 @@ bool SimWorkspace::sceneMenu(const Vec3& at) {
           {{"water_block", "Block of Water", Icon::Drop}, {"fountain", "Fountain", Icon::Drop},
            {"hose", "Hose", Icon::Drop}},
           IM_COL32(64, 170, 250, 255));
+    items("Weather", {{"rain", "Rain", Icon::Rain}, {"rainstorm", "Rainstorm", Icon::Rain}},
+          IM_COL32(150, 172, 210, 255));
     items("Forces",
           {{"wind", "Wind", Icon::Wind}, {"vortex", "Vortex", Icon::Vortex}, {"turbulence", "Turbulence", Icon::Force},
            {"attractor", "Attractor", Icon::Attractor}, {"drag", "Drag", Icon::Force}},
@@ -547,6 +598,12 @@ void SimWorkspace::frameSelection() {
     }
     for (const int id : chosen) {
         const sim::Node* n = net_.node(id);
+        if (n && n->type == "rain") {
+            // The cloud, and the ground it rains on.
+            const Vec3 c = v3(net_.param(id, "center")), half = v3(net_.param(id, "size")) * 0.5f;
+            grow(Vec3(c.x - half.x, 0.0f, c.z - half.z), c + half);
+            continue;
+        }
         if (!n || n->type == "object" || n->type == "pyro_source" || n->type == "water_source") continue;
         Vec3 c;
         sim::Rotation f;

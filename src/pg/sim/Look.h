@@ -27,6 +27,12 @@ struct Look {
     float waterClarity = 1.5f;    ///< metres: how far one sees into it
     float foam = 1.0f;            ///< how white foam and spray are drawn; 0 not at all
 
+    // Rain
+    Vec3 rainColor{0.75f, 0.8f, 0.9f};
+    float rainOpacity = 0.35f;    ///< how much of what is behind a drop it hides
+    float rainStreak = 0.5f;      ///< a drop drawn as long as it falls in this share of a frame
+    float wetness = 0.6f;         ///< how wet the rain makes the floor look: darker, shining
+
     // Light
     float lightAzimuth = 169.0f;  ///< degrees round the vertical, from +x towards +z
     float lightElevation = 38.0f; ///< degrees above the horizon

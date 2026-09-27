@@ -133,6 +133,9 @@ private:
     /// The Liquid Solver, made -- with a Water Look into the Output -- when
     /// there is none.
     int ensureLiquidChain();
+    /// Rain over the whole scene, a layer of the Output; a storm is heavier
+    /// and brings a gusting wind. Returns its id.
+    int addRain(bool storm);
     /// Links `node`'s output into that input of every solver that has it.
     void linkIntoSolvers(int node, const char* output, const char* input);
     /// Where a new object, source or force goes in the network.

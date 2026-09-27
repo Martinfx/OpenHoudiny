@@ -1,0 +1,67 @@
+pgsim 1
+# A campfire in a rainstorm: the gusts lay the flames over and tear the smoke
+# away; the rain slants in the same wind, splashes off the logs and the
+# stones and darkens the floor. The sun is behind the clouds.
+node 1 pyro_source 2 fire 0 0
+  param center -0.3 0.14 0
+  param size 0.36 0.14 0.36
+  param fuel 20
+  param heat 1
+  param velocity 0 0.4 0
+  param flicker 0.8
+node 2 object 1 log 0 96
+  param shape cylinder
+  param center -0.3 0.05 0
+  param rotation 0 30 90
+  param size 0.1 0.5 0.1
+  param color 0.13 0.085 0.055
+node 3 object 1 log2 0 192
+  param shape cylinder
+  param center -0.3 0.05 0
+  param rotation 0 -40 90
+  param size 0.1 0.5 0.1
+  param color 0.11 0.075 0.05
+node 4 object 1 stone 0 288
+  param center 0.35 0.08 0.25
+  param size 0.22 0.16 0.2
+  param color 0.12 0.118 0.115
+node 5 wind 1 gale 0 384
+  param direction 1 0 0.2
+  param speed 1.4
+  param strength 1.2
+  param gusts 0.7
+node 6 turbulence 1 turbulence 0 480
+  param strength 4
+node 7 pyro_solver 2 solver 250 60
+  param size 2.4 1.5 1.2
+  param buoyancy 0.9
+  param vorticity 0.9
+  param cooling 1.5
+node 8 volume_look 2 look 490 60
+  param smoke_color 0.22 0.21 0.2
+  param smoke_density 18
+  param fire_light 3.5
+node 9 rain 1 rain 490 220
+  param center 0 3 0
+  param size 4 0.5 3
+  param rate 2200
+  param speed 8
+  param wet 0.85
+node 10 output 2 output 720 120
+  param frames 120
+  param light_intensity 0.6
+  param sky_color 0.5 0.54 0.6
+  param sky_intensity 0.5
+link 1.source -> 7.sources
+link 2.collider -> 7.colliders
+link 3.collider -> 7.colliders
+link 4.collider -> 7.colliders
+link 2.collider -> 9.colliders
+link 3.collider -> 9.colliders
+link 4.collider -> 9.colliders
+link 5.force -> 7.forces
+link 5.force -> 9.forces
+link 6.force -> 7.forces
+link 7.gas -> 8.gas
+link 8.look -> 10.look
+link 9.look -> 10.look

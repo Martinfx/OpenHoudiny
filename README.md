@@ -7,10 +7,10 @@ node-based, nedestruktivní, headless-first.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — datový model, cook engine, invarianty
 - **[docs/shader-graph.md](docs/shader-graph.md)** — node editor shaderů pro
   OpenGL, OpenGL ES, Vulkan a Direct3D: jak funguje a jak ho rozšiřovat
-- **[docs/pyro.md](docs/pyro.md)** — simulace kouře, ohně a vody z uzlů
-  (jako Pyro a FLIP v Houdini): editor se sítí uzlů, objekty a gizmo ve
-  viewportu, proudění na 3D mřížce, multigrid, voda z částic, objemové
-  vykreslování a hladina s odrazy a lomem
+- **[docs/pyro.md](docs/pyro.md)** — simulace kouře, ohně, vody a deště
+  z uzlů (jako Pyro a FLIP v Houdini): editor se sítí uzlů, objekty a gizmo
+  ve viewportu, proudění na 3D mřížce, multigrid, voda z částic, déšť ve
+  větru, objemové vykreslování a hladina s odrazy a lomem
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -57,7 +57,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 133 testů: 50 jádro, 25 shader graf, 58 simulace, voda, objekty a modely
+./build/pgtests            # 142 testů: 50 jádro, 25 shader graf, 67 simulace, voda, déšť, objekty a modely
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
@@ -97,7 +97,7 @@ Vulkan GLSL 450 → SPIR-V, HLSL) a editorem s živým náhledem, včetně
 animovaných efektů (oheň, kouř). Každý vestavěný uzel se v CTestu překládá pro
 všechny cíle přes glslangValidator a spirv-val.
 
-**Simulace kouře, ohně a vody** (`src/pg/sim`) se skládá z uzlů jako Pyro
+**Simulace kouře, ohně, vody a deště** (`src/pg/sim`) se skládá z uzlů jako Pyro
 a FLIP v Houdini: objekty scény (koule, kvádr, válec, kužel, prstenec a modely
 ze souborů OBJ, každý posunutý, pootočený a protažený), zdroje stejných
 tvarů (palivo, kouř, teplo, blikotání, pohyb, časové okno), síly (turbulence, vítr, vír,
@@ -107,14 +107,16 @@ a tlak přes multigrid, který zná podlahu i překážky. Vodu nesou částice
 (FLIP) a mřížka jí drží objem: tlak s volnou hladinou (ghost fluid, stěny
 částečně zakryté tělesy) řeší metoda sdružených gradientů s multigridem.
 Voda padá, tříští se, obtéká tělesa a plní nádrže; v obraze odráží oblohu
-a objekty, láme světlo a v hloubce bere svou barvu. Obojí je
+a objekty, láme světlo a v hloubce bere svou barvu. Déšť padá z mraku,
+vítr ho v nárazech (frontách, které putují s větrem) šikmí, od objektů
+odstřikuje a na vodě dělá kroužky; podlaha je mokrá. Všechno je
 deterministické na libovolném počtu vláken. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a dvanácti příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a čtrnácti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
-objekt, zdroj kouře nebo vody či sílu rovnou propojené do sítě.
+objekt, zdroj kouře nebo vody, déšť či sílu rovnou propojené do sítě.
 
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
 serializace scény, Python vazby, GUI pro geometrii, simulace těles a

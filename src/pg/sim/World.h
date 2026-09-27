@@ -1,8 +1,9 @@
 #pragma once
 //
 // Everything a network simulates, together: the gas of a Pyro Solver, the
-// water of a Liquid Solver -- and, as it comes, the rain -- at one frame
-// rate, stepped side by side (WorldSolver) and kept as one Frame a step.
+// water of a Liquid Solver and the rain, at one frame rate, stepped side by
+// side (WorldSolver) and kept as one Frame a step. The rain falls into the
+// water: it is stepped after it, and rings its surface.
 //
 // Plain data, compared as a whole, as the scene of each part is: the
 // editor's runner starts again exactly when the World differs.
@@ -10,6 +11,7 @@
 #include "pg/sim/Frame.h"
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Pyro.h"
+#include "pg/sim/Rain.h"
 #include "pg/sim/Scene.h"
 
 #include <memory>
@@ -22,9 +24,11 @@ struct World {
     Scene gas;                       ///< the Pyro Solver's, when hasGas
     bool hasWater = false;
     LiquidScene water;               ///< the Liquid Solver's, when hasWater
+    bool hasRain = false;
+    RainScene rain;                  ///< the Rain's, when hasRain
 
     /// True when there is anything to simulate.
-    bool any() const { return hasGas || hasWater; }
+    bool any() const { return hasGas || hasWater || hasRain; }
     /// Each part sanitized (Scene::sanitized), and the one time step in each.
     World sanitized() const;
 
@@ -47,11 +51,14 @@ public:
     const PyroSolver* gas() const { return gas_.get(); }
     LiquidSolver* water() { return water_.get(); }
     const LiquidSolver* water() const { return water_.get(); }
+    RainSolver* rain() { return rain_.get(); }
+    const RainSolver* rain() const { return rain_.get(); }
 
 private:
     World world_;
     std::unique_ptr<PyroSolver> gas_;
     std::unique_ptr<LiquidSolver> water_;
+    std::unique_ptr<RainSolver> rain_;
     int frame_ = 0;
     float time_ = 0.0f;
 };

@@ -155,6 +155,7 @@ add_library(pgsim
   src/pg/sim/Network.cpp
   src/pg/sim/Poisson.cpp
   src/pg/sim/Pyro.cpp
+  src/pg/sim/Rain.cpp
   src/pg/sim/Scene.cpp
   src/pg/sim/Shape.cpp
   src/pg/sim/World.cpp
@@ -298,6 +299,7 @@ add_executable(pgtests
   tests/test_shapes.cpp
   tests/test_mesh.cpp
   tests/test_liquid.cpp
+  tests/test_rain.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")

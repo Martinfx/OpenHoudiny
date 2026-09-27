@@ -142,6 +142,8 @@ public:
     /// units, below 0 in the water -- from the particles as they were at the
     /// start of the last substep.
     const Grid& surface() const { return phi_; }
+    /// surface() at a world point, interpolated; outside the domain, no water.
+    float distanceToSurface(const Vec3& p) const;
     /// Velocity component `axis` on its faces, world units per second, as
     /// PyroSolver::velocity().
     const Grid& velocity(int axis) const { return vel_[axis]; }

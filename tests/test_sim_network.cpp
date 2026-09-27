@@ -367,6 +367,63 @@ TEST(sim_network_says_what_is_missing) {
     CHECK(mentions(c, look2, "Another Volume Look"));
 }
 
+TEST(sim_network_rain_is_a_layer_of_the_output) {
+    Network net;
+    const int rain = net.add("rain", 560, 0);
+    CHECK(net.setParam(rain, "rate", "1200"));
+    CHECK(net.setParam(rain, "center", "0 3 0"));
+    CHECK(net.setParam(rain, "wet", "0.9"));
+    const int out = net.add("output", 800, 0);
+    CHECK(net.connect(rain, "look", out, "look"));
+    const int roof = net.add("object");
+    CHECK(net.connect(roof, "collider", rain, "colliders"));
+    const int gusts = net.add("wind");
+    CHECK(net.setParam(gusts, "gusts", "0.5"));
+    CHECK(net.connect(gusts, "force", rain, "forces"));
+    std::string error;
+    CHECK(!net.connect(rain, "look", net.add("water_look"), "liquid", &error));  // rain is no liquid
+
+    Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK(!c.errors());
+    CHECK(c.world.hasRain && !c.world.hasGas && !c.world.hasWater);
+    CHECK_EQ(c.rain, rain);
+    const RainScene& r = c.world.rain;
+    CHECK_EQ(r.rain.rate, 1200.0f);
+    CHECK(r.rain.center == Vec3(0.0f, 3.0f, 0.0f));
+    CHECK_EQ(r.rain.timeStep, c.world.timeStep);
+    CHECK_EQ(r.colliders.size(), size_t(1));
+    CHECK_EQ(r.colliders[0].node, roof);
+    CHECK_EQ(r.forces.size(), size_t(1));
+    CHECK(r.forces[0].kind == ForceKind::Wind && r.forces[0].gusts == 0.5f);
+    CHECK_EQ(c.look.wetness, 0.9f);
+    CHECK(c.isActive(rain) && c.isActive(roof) && c.isActive(gusts));
+    WorldSolver sim(c.world);
+    sim.step();
+    CHECK(!sim.capture().rain.empty());
+
+    // What does not make sense is said.
+    CHECK(net.setParam(rain, "center", "0 0.1 0"));
+    CHECK(mentions(net.compile(), rain, "below the floor"));
+    CHECK(net.setParam(rain, "center", "0 3 0"));
+    CHECK(net.setParam(rain, "rate", "0"));
+    CHECK(mentions(net.compile(), rain, "Rate 0"));
+    const int second = net.add("rain");
+    CHECK(net.connect(second, "look", out, "look"));
+    CHECK(mentions(net.compile(), second, "Another Rain"));
+    net.disconnect(net.linksInto(out, "look")[0]);
+    net.disconnect(net.linksInto(out, "look")[0]);
+    CHECK(mentions(net.compile(), out, "a Rain"));
+
+    // Saved and read back, the same.
+    const std::string text = net.save();
+    Network back;
+    std::vector<std::string> warnings;
+    CHECK(Network::load(text, back, error, &warnings));
+    CHECK(warnings.empty());
+    CHECK_EQ(back.save(), text);
+}
+
 TEST(sim_network_examples_match_the_presets) {
     // The campfire and the column of smoke the solver's tests use are the
     // networks the program comes with.
@@ -396,6 +453,7 @@ TEST(sim_network_examples_all_run) {
         CHECK_EQ(sim.frame(), 3);
         if (sim.gas()) CHECK(std::isfinite(sim.gas()->density().sum()));
         if (sim.water()) CHECK(sim.water()->particleCount() > 0 && std::isfinite(sim.water()->maxSpeed()));
+        if (sim.rain()) CHECK(!sim.rain()->drops().empty());
     }
 }
 

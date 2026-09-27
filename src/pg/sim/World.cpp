@@ -13,17 +13,21 @@ World World::sanitized() const {
     w.gas = w.gas.sanitized();
     w.water.solver.timeStep = w.timeStep;
     w.water = w.water.sanitized();
+    w.rain.rain.timeStep = w.timeStep;
+    w.rain = w.rain.sanitized();
     return w;
 }
 
 WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     if (world_.hasGas) gas_ = std::make_unique<PyroSolver>(world_.gas);
     if (world_.hasWater) water_ = std::make_unique<LiquidSolver>(world_.water);
+    if (world_.hasRain) rain_ = std::make_unique<RainSolver>(world_.rain);
 }
 
 void WorldSolver::step() {
     if (gas_) gas_->step();
     if (water_) water_->step();
+    if (rain_) rain_->step(water_.get());
     ++frame_;
     time_ += world_.timeStep;
 }
@@ -32,6 +36,7 @@ Frame WorldSolver::capture() const {
     Frame f;
     if (gas_) f = sim::capture(*gas_);
     if (water_) f.water = sim::capture(*water_);
+    if (rain_) f.rain = sim::capture(*rain_);
     f.number = frame_;
     f.time = time_;
     return f;

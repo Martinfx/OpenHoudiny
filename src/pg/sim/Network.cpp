@@ -467,6 +467,40 @@ std::vector<NodeType> buildTypes() {
          {{"look", "Look", PinType::Look}},
          volumeLookParams(),
          2});
+    t.push_back({"rain", "Rain", "Simulation",
+                 "Rain from a cloud: drops fall from the box, the wind blows them slanting, they land on the "
+                 "floor, on the objects linked into Colliders and in the water -- spraying off a solid, "
+                 "ringing the water's surface -- and the floor gets wet. It is drawn as it falls: link it into "
+                 "the Output's Looks.",
+                 {{"forces", "Forces", PinType::Force, true}, {"colliders", "Colliders", PinType::Collider, true}},
+                 {{"look", "Look", PinType::Look}},
+                 {{"center", "Position", "Cloud", K::Vector, {0.0f, 2.5f, 0.0f}, -2.0f, 5.0f, -kBig, kBig, "m",
+                   "The middle of the cloud: y is how high the drops start."},
+                  {"size", "Size", "Cloud", K::Vector, {3.0f, 0.5f, 3.0f}, 0.1f, 10.0f, 0.01f, 100.0f, "m",
+                   "How wide, thick and deep the cloud is: the rain falls under it."},
+                  {"rate", "Rate", "Rain", K::Float, {800.0f, 0.0f, 0.0f}, 0.0f, 4000.0f, 0.0f, 20000.0f, "1/m\xc2\xb2s",
+                   "Drops a second on each square metre: drizzle to downpour."},
+                  {"speed", "Speed", "Rain", K::Float, {7.0f, 0.0f, 0.0f}, 1.0f, 15.0f, 0.1f, 50.0f, "m/s",
+                   "How fast the drops fall: some 7 m/s for rain, less for drizzle."},
+                  {"splash", "Splash", "Rain", K::Float, {3.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, 20.0f, "",
+                   "Droplets a drop throws up where it lands on something solid."},
+                  {"ripples", "Ripples", "Rain", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 20.0f, "",
+                   "How hard a drop rings the water it falls in."},
+                  seed("Rain", "Another number: the drops at other places."),
+                  {"start", "Start", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
+                   "When it starts to rain."},
+                  {"end", "End", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
+                   "When it stops. At or before the start, it never does."},
+                  {"color", "Color", "Look", K::Color, {0.75f, 0.8f, 0.9f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "The colour of the drops in the light of the sky."},
+                  {"opacity", "Opacity", "Look", K::Float, {0.35f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "How much of what is behind a drop it hides."},
+                  {"streak", "Streak", "Look", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 4.0f, "",
+                   "How long a drop is drawn: as far as it falls in this share of a frame -- motion blur."},
+                  {"wet", "Wet Floor", "Look", K::Float, {0.6f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "How wet the floor looks: darker, and shining with the sky."}},
+                 1});
+    t.back().handles = {"center", nullptr, nullptr, "size", nullptr, nullptr};
     t.push_back({"water_look", "Water Look", "Render",
                  "How the water is drawn: a surface that reflects the sky and the sun and bends the light that "
                  "goes in, water that takes on its colour with depth, and white foam and spray. Changing it "
@@ -1611,7 +1645,7 @@ Compiled Network::compile(const std::string& folder) const {
     // what is simulated.
     const std::vector<Link> layers = linksInto(output->id, "look");
     if (layers.empty()) {
-        problem(L::Error, output->id, "Nothing to show: link a Volume Look or a Water Look into Looks.");
+        problem(L::Error, output->id, "Nothing to show: link a Volume Look, a Water Look or a Rain into Looks.");
         return done();
     }
     for (const Link& layer : layers) {
@@ -1639,6 +1673,38 @@ Compiled Network::compile(const std::string& folder) const {
             c.solver = solver->id;
             c.active.push_back(solver->id);
             compileGas(solver);
+        } else if (look->type == "rain") {
+            if (c.rain) {
+                problem(L::Warning, look->id, "Another Rain: only " + node(c.rain)->name + " falls.");
+                continue;
+            }
+            c.rain = look->id;
+            c.active.push_back(look->id);
+            c.world.hasRain = true;
+            RainSettings& r = c.world.rain.rain;
+            r.center = v3(*look, "center");
+            r.size = v3(*look, "size");
+            r.rate = f(*look, "rate");
+            r.speed = f(*look, "speed");
+            r.splash = f(*look, "splash");
+            r.ripples = f(*look, "ripples");
+            r.seed = static_cast<uint32_t>(whole(*look, "seed"));
+            r.start = f(*look, "start");
+            r.end = f(*look, "end");
+            r.timeStep = c.world.timeStep;
+            c.world.rain.forces = forcesOf(look);
+            for (const Node* n : feeding(look, "colliders")) {
+                c.world.rain.colliders.push_back(colliderOf(*n));
+                c.active.push_back(n->id);
+            }
+            k.rainColor = v3(*look, "color");
+            k.rainOpacity = f(*look, "opacity");
+            k.rainStreak = f(*look, "streak");
+            k.wetness = f(*look, "wet");
+            if (r.center.y - 0.5f * r.size.y <= 0.0f) {
+                problem(L::Warning, look->id, "The cloud is at or below the floor: raise it, or no rain falls.");
+            }
+            if (r.rate <= 0.0f) problem(L::Warning, look->id, "Rate 0: no drop falls.");
         } else if (look->type == "water_look") {
             if (c.waterLook) {
                 problem(L::Warning, look->id, "Another Water Look: only " + node(c.waterLook)->name + " is drawn.");

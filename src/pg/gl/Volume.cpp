@@ -555,6 +555,30 @@ vec3 floorAlbedo(vec2 q, vec2 width) {
     return vec3(0.075 + lines);
 }
 
+// --- rain: ripples on the water, a wet floor ------------------------------------
+uniform bool u_hasRipples;
+uniform sampler2D u_ripples;   // heights of the rings the drops make, world units
+uniform vec2 u_rippleMin, u_rippleSize;
+uniform float u_rippleCell;
+uniform float u_wet;           // how wet the floor is, 0 to 1
+uniform vec2 u_wetMin, u_wetMax; // where it rains: wet there, drying off a little way out
+
+float wetAt(vec2 q) {
+    vec2 out_ = max(max(u_wetMin - q, q - u_wetMax), vec2(0.0));
+    return u_wet * (1.0 - smoothstep(0.0, 0.35, length(out_)));
+}
+
+// How the ripples tilt the water at p: their height's slope along x and z.
+vec2 rippleSlope(vec3 p) {
+    if (!u_hasRipples) return vec2(0.0);
+    vec2 uv = (p.xz - u_rippleMin) / u_rippleSize;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec2(0.0);
+    vec2 e = vec2(u_rippleCell / u_rippleSize.x, 0.0), f = vec2(0.0, u_rippleCell / u_rippleSize.y);
+    float hx = textureLod(u_ripples, uv + e, 0.0).r - textureLod(u_ripples, uv - e, 0.0).r;
+    float hz = textureLod(u_ripples, uv + f, 0.0).r - textureLod(u_ripples, uv - f, 0.0).r;
+    return vec2(hx, hz) / (2.0 * u_rippleCell);
+}
+
 // What the water reflects along r: the sky -- brighter overhead -- above the
 // horizon, the floor below it.
 vec3 environment(vec3 r) {
@@ -583,6 +607,11 @@ vec3 underWater(vec3 p, vec3 d, out float travelled) {
 vec3 shadeWater(vec3 p, vec3 d) {
     vec3 n = waterNormal(p);
     if (dot(n, d) > 0.0) n = -n;
+    // Rings from the rain, on what faces up.
+    if (n.y > 0.3) {
+        vec2 slope = rippleSlope(p);
+        n = normalize(n - vec3(slope.x, 0.0, slope.y) * n.y);
+    }
     float cosi = clamp(-dot(d, n), 0.0, 1.0);
     float fresnel = 0.02 + 0.98 * pow(1.0 - cosi, 5.0);
     float sun = sunThrough(p + n * 2e-3, true);
@@ -644,7 +673,15 @@ void main() {
         tEnd = tFloor;
         float away = length(floorPoint.xz - u_floorCenter.xz) / u_floorRadius;
         cover = 1.0 - smoothstep(0.35, 1.0, away);
-        if (cover > 0.0) surface = shade(floorPoint, vec3(0.0, 1.0, 0.0), floorAlbedo(floorPoint.xz, pixel));
+        if (cover > 0.0) {
+            // Wet, it is darker and shines with the sky.
+            float wet = u_wet > 0.0 ? wetAt(floorPoint.xz) : 0.0;
+            surface = shade(floorPoint, vec3(0.0, 1.0, 0.0), floorAlbedo(floorPoint.xz, pixel) * (1.0 - 0.5 * wet));
+            if (wet > 0.0) {
+                float f = 0.02 + 0.98 * pow(1.0 - clamp(-dir.y, 0.0, 1.0), 5.0);
+                surface += environment(reflect(dir, vec3(0.0, 1.0, 0.0))) * (f * wet * 0.8);
+            }
+        }
     }
     // The water, in front of it all.
     if (u_hasWater) {
@@ -763,6 +800,68 @@ in vec4 v_color;
 out vec4 o_color;
 void main() { o_color = v_color; }
 )";
+
+// A drop as a streak: from where it is back along its velocity, as far as it
+// falls in a share of a frame. A streak is drawn a line wide; a drop far
+// away covers less of that line, and is fainter for it -- far off, the rain
+// is a haze -- while one close by is as wide as it looks.
+const char* kRainVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_velocity;
+layout(location = 2) in vec3 a_corner;  // x: 0 tail, 1 head; y: -1 or 1 across; z: 1 for a droplet
+uniform mat4 u_viewProj;
+uniform float u_streakTime;             // seconds of fall a streak shows
+uniform vec2 u_pixel;                   // a pixel, in clip units
+uniform float u_width;                  // pixels
+uniform float u_cover;                  // how far off a drop is as wide as the line
+out float v_along;
+out float v_alpha;
+void main() {
+    float droplet = a_corner.z;
+    vec3 tail = a_position - a_velocity * (u_streakTime * (droplet > 0.5 ? 0.6 : 1.0));
+    vec4 h = u_viewProj * vec4(a_position, 1.0), t = u_viewProj * vec4(tail, 1.0);
+    if (h.w < 0.02 || t.w < 0.02) {  // behind the eye: nothing
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        v_along = 0.0;
+        v_alpha = 0.0;
+        return;
+    }
+    vec2 dp = (h.xy / h.w - t.xy / t.w) / u_pixel;
+    vec2 across = dot(dp, dp) > 1e-6 ? normalize(vec2(-dp.y, dp.x)) : vec2(1.0, 0.0);
+    vec2 along = dot(dp, dp) > 1e-6 ? normalize(dp) : vec2(0.0, 1.0);
+    vec4 p = mix(t, h, a_corner.x);
+    // A droplet is some half the size of a drop.
+    float cover = u_cover * (droplet > 0.5 ? 0.5 : 1.0) / (0.5 * (h.w + t.w));
+    float w = u_width * clamp(cover, 1.0, 4.0);
+    // Half a pixel past each end: a drop seen head on is still a dot.
+    p.xy += (across * (0.5 * w * a_corner.y) + along * (a_corner.x - 0.5)) * u_pixel * p.w;
+    gl_Position = p;
+    v_along = a_corner.x;
+    v_alpha = clamp(cover, 0.12, 1.0);
+}
+)";
+
+const char* kRainFragment = R"(#version 330 core
+in float v_along;
+in float v_alpha;
+out vec4 o_color;
+uniform vec3 u_color;     // lit, tone mapped
+uniform float u_opacity;
+void main() {
+    float fade = smoothstep(0.0, 0.4, v_along);  // the tail fades out
+    o_color = vec4(u_color, u_opacity * fade * v_alpha);
+}
+)";
+
+/// ACES as the view shader has it (Narkowicz), then gamma: a colour lit in
+/// the scene as it comes out on screen.
+Vec3 toScreen(const Vec3& x) {
+    auto one = [](float v) {
+        const float t = std::clamp(v * (2.51f * v + 0.03f) / (v * (2.43f * v + 0.59f) + 0.14f), 0.0f, 1.0f);
+        return std::pow(t, 1.0f / 2.2f);
+    };
+    return {one(x.x), one(x.y), one(x.z)};
+}
 
 /// A mesh's triangles as the GPU draws them: three corners each, a position
 /// and a normal per corner. A corner's normal averages the faces round its
@@ -938,12 +1037,15 @@ sim::Domain sceneDomain(const sim::World& world) {
     };
     if (safe.hasGas) take(safe.gas.solver.domain());
     if (safe.hasWater) take(safe.water.solver.domain());
+    // Rain alone: some ground to fall on, not the sky it falls from -- and
+    // the same however the cloud is sized, or the camera would follow it.
+    if (!any && safe.hasRain) take(sim::Domain::ofBox(Vec3(3.0f, 1.5f, 3.0f), 64));
     if (!any) return sim::Scene().solver.domain();
     return sim::Domain::ofBox(size, 64);
 }
 
 Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
-                  int domainNode, int waterNode) {
+                  int domainNode, int waterNode, int rainNode) {
     Lines lines;
     const sim::Scene* gas = world && world->hasGas ? &world->gas : nullptr;
     const sim::Scene scene = gas ? *gas : sim::Scene();
@@ -977,13 +1079,27 @@ Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids
             lines.arrow(e.center, e.center + jet * ((r + 0.15f) / std::max(speed, 0.5f)), c.data());
         }
     }
-    const Vec3 middle = domain.origin() + domain.size() * 0.5f;
-    for (const sim::Force& f : scene.forces) {
+    // The forces, each once, whichever solvers it acts in: the vortex's
+    // cylinder, the attractor's sphere, the wind's arrows over the middle of
+    // the scene.
+    std::vector<sim::Force> forces = scene.forces;
+    auto more = [&](const std::vector<sim::Force>& list) {
+        for (const sim::Force& f : list) {
+            const bool seen = f.node != 0 && std::any_of(forces.begin(), forces.end(),
+                                                         [&](const sim::Force& g) { return g.node == f.node; });
+            if (!seen) forces.push_back(f);
+        }
+    };
+    if (world && world->hasWater) more(world->water.sanitized().forces);
+    if (world && world->hasRain) more(world->rain.sanitized().forces);
+    const sim::Domain whole = world && world->any() ? sceneDomain(*world) : domain;
+    const Vec3 middle = whole.origin() + whole.size() * 0.5f;
+    for (const sim::Force& f : forces) {
         lines.owner = f.node;
         switch (f.kind) {
             case sim::ForceKind::Vortex: {
                 const auto c = colour(0.35f, 0.85f, 1.0f, f.node);
-                const float height = f.height > 0.0f ? f.height : domain.size().y;
+                const float height = f.height > 0.0f ? f.height : whole.size().y;
                 lines.cylinder(f.center, f.direction, f.radius, height, c.data());
                 lines.arrow(f.center, f.center + normalize(f.direction) * (0.5f * height), c.data());
                 break;
@@ -996,9 +1112,9 @@ Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids
             case sim::ForceKind::Wind: {
                 const auto c = colour(0.55f, 0.8f, 1.0f, f.node);
                 const Vec3 d = normalize(f.direction);
-                const float reach = 0.35f * length(domain.size());
+                const float reach = 0.35f * length(whole.size());
                 for (const float up : {0.3f, 0.6f}) {
-                    const Vec3 at(middle.x, domain.size().y * up, middle.z);
+                    const Vec3 at(middle.x, whole.size().y * up, middle.z);
                     lines.arrow(at - d * reach, at - d * (0.4f * reach), c.data());
                 }
                 break;
@@ -1007,7 +1123,7 @@ Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids
             case sim::ForceKind::Drag: break;
         }
     }
-    // The water: its domain, its sources, the jets of its flows, its forces.
+    // The water: its domain, its sources, the jets of its flows.
     if (world && world->hasWater) {
         const sim::LiquidScene water = world->water.sanitized();
         const sim::Domain wd = water.solver.domain();
@@ -1026,18 +1142,28 @@ Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids
                 lines.arrow(w.center, w.center + jet * ((r + 0.15f) / std::max(speed, 0.5f)), c.data());
             }
         }
-        if (!gas) {
-            // The water's forces, as the gas's are drawn.
-            for (const sim::Force& f : water.forces) {
-                lines.owner = f.node;
-                if (f.kind == sim::ForceKind::Vortex) {
-                    const auto c = colour(0.35f, 0.85f, 1.0f, f.node);
-                    const float height = f.height > 0.0f ? f.height : wd.size().y;
-                    lines.cylinder(f.center, f.direction, f.radius, height, c.data());
-                } else if (f.kind == sim::ForceKind::Attractor) {
-                    const auto c = colour(0.95f, 0.45f, 0.95f, f.node);
-                    lines.sphere(f.center, f.radius, c.data());
-                }
+    }
+    // The rain: its cloud, and arrows the way the drops fall from it -- down,
+    // slanting with the wind's steady speed.
+    if (world && world->hasRain) {
+        const sim::RainScene rain = world->rain.sanitized();
+        const sim::RainSettings& r = rain.rain;
+        lines.owner = rainNode;
+        const auto c = colour(0.72f, 0.8f, 0.95f, rainNode);
+        const Vec3 half = r.size * 0.5f;
+        lines.box(r.center - half, r.center + half, c.data());
+        Vec3 wind;
+        for (const sim::Force& f : rain.forces) {
+            if (f.kind == sim::ForceKind::Wind) wind += normalize(f.direction) * f.speed;
+        }
+        const Vec3 fall = normalize(wind + Vec3(0.0f, -r.speed, 0.0f));
+        const float base = r.center.y - half.y;
+        const float reach = std::min(0.6f, 0.5f * std::max(base, 0.0f)) / std::max(-fall.y, 0.2f);
+        if (reach > 0.01f) {
+            for (const Vec3 at : {Vec3(), Vec3(-0.3f, 0.0f, -0.3f), Vec3(0.3f, 0.0f, -0.3f), Vec3(-0.3f, 0.0f, 0.3f),
+                                  Vec3(0.3f, 0.0f, 0.3f)}) {
+                const Vec3 from(r.center.x + at.x * r.size.x, base, r.center.z + at.z * r.size.z);
+                lines.arrow(from, from + fall * reach, c.data());
             }
         }
     }
@@ -1071,9 +1197,12 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 }
 
 VolumeRenderer::~VolumeRenderer() {
-    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_}) {
+    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
+    if (rainVao_) gl_.DeleteVertexArrays(1, &rainVao_);
+    if (rainBuffer_) gl_.DeleteBuffers(1, &rainBuffer_);
+    if (ripples_) gl_.DeleteTextures(1, &ripples_);
     for (MeshGpu& m : meshes_) {
         gl_.DeleteVertexArrays(1, &m.vao);
         gl_.DeleteBuffers(1, &m.vbo);
@@ -1106,13 +1235,14 @@ bool VolumeRenderer::init(std::string& log) {
     const GLuint glow = buildProgram(gl_, kFullScreen, header + kCommon + kGlowFragment, log);
     const GLuint lines = glow ? buildProgram(gl_, kLineVertex, kLineFragment, log) : 0;
     const GLuint meshes = lines ? buildProgram(gl_, kMeshVertex, kMeshFragment, log) : 0;
-    if (!meshes) {
-        for (GLuint p : {view, shadow, glow, lines}) {
+    const GLuint rain = meshes ? buildProgram(gl_, kRainVertex, kRainFragment, log) : 0;
+    if (!rain) {
+        for (GLuint p : {view, shadow, glow, lines, meshes}) {
             if (p) gl_.DeleteProgram(p);
         }
         return false;
     }
-    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_}) {
+    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
     program_ = view;
@@ -1120,6 +1250,7 @@ bool VolumeRenderer::init(std::string& log) {
     glowProgram_ = glow;
     lineProgram_ = lines;
     meshProgram_ = meshes;
+    rainProgram_ = rain;
     lightingDirty_ = true;
     return true;
 }
@@ -1140,6 +1271,7 @@ void VolumeRenderer::setDomain(const sim::Domain& domain) {
 
 void VolumeRenderer::setFrame(const sim::Frame& frame) {
     setWater(frame.water);
+    setRain(frame.rain);
     const int nx = frame.domain.cells[0], ny = frame.domain.cells[1], nz = frame.domain.cells[2];
     if (frame.fields.size() != 3 * frame.domain.cellCount() || nx <= 0) {
         hasFrame_ = false;  // no gas in this frame
@@ -1199,9 +1331,108 @@ void VolumeRenderer::setWater(const sim::WaterFrame& water) {
     hasWater_ = true;
 }
 
+void VolumeRenderer::setRain(const sim::RainFrame& rain) {
+    hasRain_ = !rain.drops.empty() || !rain.droplets.empty();
+    rainTimeStep_ = rain.timeStep;
+    rainVertices_ = 0;
+    if (hasRain_) {
+        // The floor is wet where the drops are.
+        wetMin_[0] = wetMin_[1] = 1e30f;
+        wetMax_[0] = wetMax_[1] = -1e30f;
+        for (size_t i = 0; i + 5 < rain.drops.size(); i += 6) {
+            wetMin_[0] = std::min(wetMin_[0], rain.drops[i]);
+            wetMax_[0] = std::max(wetMax_[0], rain.drops[i]);
+            wetMin_[1] = std::min(wetMin_[1], rain.drops[i + 2]);
+            wetMax_[1] = std::max(wetMax_[1], rain.drops[i + 2]);
+        }
+        // Six corners a streak: two triangles from its tail to its head.
+        static const float corners[6][2] = {{0, -1}, {1, -1}, {1, 1}, {0, -1}, {1, 1}, {0, 1}};
+        std::vector<float> v;
+        v.reserve((rain.drops.size() + rain.droplets.size()) * 9);
+        for (int kind = 0; kind < 2; ++kind) {
+            const std::vector<float>& from = kind == 0 ? rain.drops : rain.droplets;
+            for (size_t i = 0; i + 5 < from.size(); i += 6) {
+                for (const auto& c : corners) {
+                    v.insert(v.end(), {from[i], from[i + 1], from[i + 2], from[i + 3], from[i + 4], from[i + 5], c[0],
+                                       c[1], static_cast<float>(kind)});
+                }
+            }
+        }
+        if (!rainVao_) {
+            gl_.GenVertexArrays(1, &rainVao_);
+            gl_.GenBuffers(1, &rainBuffer_);
+            gl_.BindVertexArray(rainVao_);
+            gl_.BindBuffer(ARRAY_BUFFER, rainBuffer_);
+            for (GLuint a = 0; a < 3; ++a) {
+                gl_.EnableVertexAttribArray(a);
+                gl_.VertexAttribPointer(a, 3, FLOAT, 0, 9 * sizeof(float), reinterpret_cast<const void*>(3 * a * sizeof(float)));
+            }
+            gl_.BindVertexArray(0);
+        }
+        gl_.BindBuffer(ARRAY_BUFFER, rainBuffer_);
+        gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(v.size() * sizeof(float)), v.data(), STATIC_DRAW);
+        gl_.BindBuffer(ARRAY_BUFFER, 0);
+        rainVertices_ = static_cast<GLsizei>(v.size() / 9);
+    }
+    hasRipples_ = !rain.ripples.empty() && rain.rippleCells[0] > 0 && rain.rippleCells[1] > 0;
+    if (hasRipples_) {
+        if (!ripples_) gl_.GenTextures(1, &ripples_);
+        gl_.ActiveTexture(TEXTURE0);
+        gl_.BindTexture(TEXTURE_2D, ripples_);
+        gl_.PixelStorei(UNPACK_ALIGNMENT, 2);
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(R16F), rain.rippleCells[0], rain.rippleCells[1], 0, RED, HALF_FLOAT,
+                       rain.ripples.data());
+        gl_.PixelStorei(UNPACK_ALIGNMENT, 4);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
+        gl_.BindTexture(TEXTURE_2D, 0);
+        rippleMin_ = rain.rippleOrigin;
+        rippleCell_ = rain.rippleCell;
+        rippleSize_[0] = rain.rippleCells[0];
+        rippleSize_[1] = rain.rippleCells[1];
+    }
+}
+
+void VolumeRenderer::drawRain(int width, int height, const Vec3& eye) {
+    (void)eye;
+    if (!hasRain_ || !rainProgram_ || rainVertices_ == 0) return;
+    const sim::Look& s = look;
+    // The drops are lit by the sky, and a little by the sun they fall
+    // through; as the rest, then tone mapped.
+    const Vec3 sky = s.skyColor * s.skyIntensity, sun = s.lightColor * s.lightIntensity;
+    const Vec3 lit = s.rainColor * ((sky * 3.0f + sun * 0.25f) * s.exposure);
+    const Vec3 c = toScreen(lit);
+    gl_.Enable(DEPTH_TEST);
+    gl_.DepthFunc(LEQUAL);
+    gl_.DepthMask(0);
+    gl_.Enable(BLEND);
+    gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
+    gl_.UseProgram(rainProgram_);
+    gl_.UniformMatrix4fv(location(rainProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+    gl_.Uniform1f(location(rainProgram_, "u_streakTime"), s.rainStreak * rainTimeStep_);
+    gl_.Uniform2f(location(rainProgram_, "u_pixel"), 2.0f / static_cast<float>(width), 2.0f / static_cast<float>(height));
+    // As wide on a big image as on a small one: some 1.3 px at 600 high.
+    const float line = std::max(1.0f, 1.3f * static_cast<float>(height) / 600.0f);
+    gl_.Uniform1f(location(rainProgram_, "u_width"), line);
+    // A drop 2.5 mm across is as wide as that line this far off.
+    const float pixelAt1m = 2.0f * std::tan(0.5f * kFovY * kPi / 180.0f) / static_cast<float>(height);
+    gl_.Uniform1f(location(rainProgram_, "u_cover"), 0.0025f / (pixelAt1m * line));
+    gl_.Uniform3f(location(rainProgram_, "u_color"), c.x, c.y, c.z);
+    gl_.Uniform1f(location(rainProgram_, "u_opacity"), s.rainOpacity);
+    gl_.BindVertexArray(rainVao_);
+    gl_.DrawArrays(TRIANGLES, 0, rainVertices_);
+    gl_.BindVertexArray(0);
+    gl_.Disable(BLEND);
+    gl_.DepthMask(1);
+}
+
 void VolumeRenderer::clearFrame() {
     hasFrame_ = false;
     hasWater_ = false;
+    hasRain_ = false;
+    hasRipples_ = false;
 }
 
 void VolumeRenderer::setSolids(const std::vector<sim::Solid>& solids) {
@@ -1635,9 +1866,22 @@ void VolumeRenderer::render(int width, int height) {
                       (1.0f - 0.85f * c.z) * per);
         gl_.Uniform1f(location(program_, "u_foam"), s.foam);
     }
+    // The rain's ripples, on unit 9, and the wet floor.
+    gl_.ActiveTexture(TEXTURE9);
+    gl_.BindTexture(TEXTURE_2D, hasRipples_ ? ripples_ : 0);
+    gl_.Uniform1i(location(program_, "u_ripples"), 9);
+    gl_.Uniform1i(location(program_, "u_hasRipples"), hasRipples_ ? 1 : 0);
+    gl_.Uniform2f(location(program_, "u_rippleMin"), rippleMin_.x, rippleMin_.z);
+    gl_.Uniform2f(location(program_, "u_rippleSize"), rippleCell_ * static_cast<float>(rippleSize_[0]),
+                  rippleCell_ * static_cast<float>(rippleSize_[1]));
+    gl_.Uniform1f(location(program_, "u_rippleCell"), std::max(rippleCell_, 1e-4f));
+    gl_.Uniform1f(location(program_, "u_wet"), hasRain_ && wetMin_[0] <= wetMax_[0] ? s.wetness : 0.0f);
+    gl_.Uniform2f(location(program_, "u_wetMin"), wetMin_[0], wetMin_[1]);
+    gl_.Uniform2f(location(program_, "u_wetMax"), wetMax_[0], wetMax_[1]);
 
     gl_.BindVertexArray(vao_);
     gl_.DrawArrays(TRIANGLES, 0, 3);
+    drawRain(width, height, e);
 
     // The guide lines, behind the solids where they pass behind them.
     if (lineCount_ > 0 && lineProgram_) {
@@ -1662,6 +1906,8 @@ void VolumeRenderer::render(int width, int height) {
     }
     gl_.ActiveTexture(TEXTURE8);
     gl_.BindTexture(TEXTURE_3D, 0);
+    gl_.ActiveTexture(TEXTURE9);
+    gl_.BindTexture(TEXTURE_2D, 0);
     gl_.ActiveTexture(TEXTURE3);
     gl_.BindTexture(TEXTURE_2D, 0);
     gl_.ActiveTexture(TEXTURE2);

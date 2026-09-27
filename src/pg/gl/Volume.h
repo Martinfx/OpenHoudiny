@@ -17,6 +17,10 @@
 //            angles (Fresnel); the light that goes in bends (refraction) and
 //            fades with the way it goes through the water, taking on its
 //            colour; foam and spray are white; it shades what lies beneath;
+//   rain     drops and the droplets they splash up, drawn as thin streaks
+//            as long as they fall in a share of a frame (motion blur), after
+//            the rest, hidden where something is in front of them; rings on
+//            the water; a floor that the rain makes wet -- darker and shining;
 //   gas      marched front to back through the domain, up to the first solid:
 //            smoke absorbs what is behind it and scatters light towards the
 //            eye -- sunlight where it is not in shadow, mostly forwards, so
@@ -80,12 +84,12 @@ struct Lines {
 };
 
 /// The guides of a world: the domains of the gas and the water, their
-/// sources, the forces that act in a region, and the outlines of the objects
+/// sources, the forces, the rain's cloud, and the outlines of the objects
 /// among `selected`. Those of the nodes in `selected` stand out. The
-/// domains' boxes belong to `gasNode` and `waterNode`: a click on one picks
-/// its solver.
+/// domains' boxes belong to `gasNode` and `waterNode`, the cloud to
+/// `rainNode`: a click on one picks its node.
 Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
-                  int gasNode = 0, int waterNode = 0);
+                  int gasNode = 0, int waterNode = 0, int rainNode = 0);
 /// A box that holds every domain of `world`: what a camera should show.
 sim::Domain sceneDomain(const sim::World& world);
 
@@ -145,6 +149,11 @@ private:
     void ensureTarget(int width, int height);
     /// The water of a frame to the GPU; none when it has none.
     void setWater(const sim::WaterFrame& water);
+    /// The rain of a frame: a streak for each drop and droplet, and the
+    /// ripples.
+    void setRain(const sim::RainFrame& rain);
+    /// The streaks, over what the main pass drew, behind what is in front.
+    void drawRain(int width, int height, const Vec3& eye);
     /// The shadows of the smoke and the lamps of the fire, worked out again
     /// when the gas, the solids or the look they depend on change.
     void updateLighting();
@@ -169,6 +178,14 @@ private:
     int width_ = 0, height_ = 0;
     sim::Domain domain_;
     bool hasFrame_ = false;
+    GLuint rainProgram_ = 0, rainVao_ = 0, rainBuffer_ = 0, ripples_ = 0;
+    GLsizei rainVertices_ = 0;
+    bool hasRain_ = false, hasRipples_ = false;
+    float rainTimeStep_ = 0.0f;
+    Vec3 rippleMin_;
+    float wetMin_[2] = {0.0f, 0.0f}, wetMax_[2] = {0.0f, 0.0f};  // where it rains, x and z
+    float rippleCell_ = 0.0f;
+    int rippleSize_[2] = {0, 0};
     GLuint water_ = 0;                          // 3D texture: distance to the surface, foam
     int waterSize_[3] = {0, 0, 0};
     bool hasWater_ = false;
