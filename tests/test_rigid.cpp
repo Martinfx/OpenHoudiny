@@ -734,6 +734,6 @@ TEST(rigid_heavier_pieces_by_attribute) {
     Vec3 lo, hi;
     bounds(*posed, lo, hi);
     // Tipped towards +x: the heavy end is down.
-    const RigidPose& p = solver.capture().poses[1];
+    const RigidPose p = solver.capture().poses[1];  // a copy: the frame is gone after this line
     CHECK(p.apply(Vec3(1.0f, 2.5f, 0.0f)).y < 2.0f);
 }
