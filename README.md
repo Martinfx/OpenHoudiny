@@ -37,8 +37,9 @@ okna.
   zřícením, který žene prach do ulic; odstřel věžáku ve městě a zřícení
   zdi z pohledu od země jako videa
 - **[docs/usd.md](docs/usd.md)** — celý záběr do USD pro Houdini, Blender
-  a renderery: geometrie, kusy jako tělesa v pohybu, drť, prach jako VDB,
-  kamera, slunce a obloha
+  a renderery: geometrie, kusy jako tělesa v pohybu, drť, povrch vody,
+  déšť, prach jako VDB, kamera, slunce a obloha; co se mění každý snímek,
+  v souboru pro každý snímek (value clips)
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem; EXR v lineárním světle s hloubkou, vektory
@@ -92,7 +93,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 263 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 89 simulace, voda, déšť, geometrie, animace, 12 cache a export, 8 USD, 3 EXR, 5 video
+./build/pgtests            # 270 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 91 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 USD, 3 EXR, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -141,8 +142,9 @@ snippet čte `@Time`, a `ch("radius")` mu přidá posuvník. Jazyk popisuje
 ## Stav
 
 Hotovo a otestováno: COW geometrie s objemy, cook engine, časová závislost,
-LRU cache, deterministický paralelismus, 27 typů uzlů (generátory,
-primitiva, scatter, copy to points, OBJ, extrude, subdivide, clip…), 59 testů jádra (čisté pod ASan,
+LRU cache, deterministický paralelismus, 28 typů uzlů (generátory,
+primitiva, scatter, copy to points, OBJ, extrude, subdivide, clip, objem
+na polygony…), 62 testů jádra (čisté pod ASan,
 UBSan i ThreadSanitizerem). **Wrangle** je jazyk jako VEX: typy, proměnné,
 cykly, funkce, pole, řetězce, matice; běží nad body, primitivy, rohy nebo
 jednou nad celou geometrií, čte sousedy a další vstupy, staví a maže
@@ -181,14 +183,16 @@ sítě.
 **Geometrie** žije ve stejné síti jako simulace, jako SOP v Houdini: krychle,
 koule, válec, mřížka, soubor OBJ, scatter, copy to points, transform, merge,
 wrangle, PolyExtrude, Subdivide (Catmull-Clark), Clip s uzavřením řezu,
-Fuse, Connectivity, Attribute Transfer a další. **Smyčky For-Each** pustí
+Fuse, Connectivity, Attribute Transfer, Convert Volume (objem na
+polygony) a další. **Smyčky For-Each** pustí
 část sítě pro každý kus, primitivum či bod, nebo opakovaně na vlastním
 výsledku. Počítá ji geometrické jádro inkrementálně — tah posuvníkem
 přepočítá jen uzly za ním. Uzel s *display flagem* je ve viewportu (polygony
 v barvách `Cd`, body, čáry, objemy) a tabulka atributů ukáže body, rohy,
 primitiva, detail i objemy. Geometrie může být tvarem překážky, zdroje kouře
 nebo vody, a simulace se vracejí jako geometrie: částice vody, kapky deště
-a mřížky plynu jako body a objemy pro další uzly.
+a mřížky plynu jako body a objemy pro další uzly, a voda i jako uzavřený
+povrch s rychlostí a pěnou (Liquid Surface), ze kterého ji renderer renderuje.
 
 **Digital assets**: vybrané geometrické uzly se stanou jedním uzlem
 (Edit › Make Asset) s parametry, které si asset vybere (pravým na jméno
@@ -231,11 +235,14 @@ přehrají se, vykreslí a vyexportují bez nového počítání; nuly se
 nezapisují, 150 snímků táboráku má 63 MB. Geometrie kteréhokoli uzlu jde
 ven snímek po snímku: body s atributy do PLY, objemy do OpenVDB (vlastní
 zapisovač bez knihovny, soubory ověřené čtením v OpenVDB 10), polygony do
-OBJ. Celý záběr jde do **USD** jako jeden soubor `.usda` (`--export
+OBJ. Celý záběr jde do **USD** jako jedna scéna `.usda` (`--export
 shot.usda`, v editoru File › Export USD Scene…): geometrie, kusy jako
 tělesa, která se pohybují (tvar jednou, pak jen poloha a otočení), drť,
-prach jako VDB vedle, kamera, slunce a obloha — ověřeno Pixarovou
-knihovnou, všechny validátory bez nálezu ([docs/usd.md](docs/usd.md)).
+povrch vody, déšť, prach jako VDB vedle, kamera, slunce a obloha. Co je
+velké a v každém snímku jiné, jde do souboru pro každý snímek, zapsaného
+hned, jak snímek přijde, a scéna ho skládá (USD value clips) — záběr
+libovolné délky se nemusí vejít do paměti. Ověřeno Pixarovou knihovnou,
+všechny validátory bez nálezu ([docs/usd.md](docs/usd.md)).
 
 **Obrázky a video**: záběr jde do PNG, do očíslované sekvence nebo do videa
 — `.avi` (Motion JPEG, vlastní kodér JPEG i kontejner) bez jakékoli

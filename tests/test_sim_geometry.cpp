@@ -8,6 +8,7 @@
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Mesh.h"
 #include "pg/sim/Network.h"
+#include "pg/sim/WaterMesh.h"
 #include "pg/sim/World.h"
 
 #include "test_framework.h"
@@ -536,6 +537,105 @@ TEST(sim_geometry_simulations_come_back_as_points_and_volumes) {
     c = net.compile();
     CHECK(mentions(c, points, "not simulated"));
     CHECK(!c.world.keepParticles);
+}
+
+TEST(sim_geometry_water_comes_back_as_a_closed_surface) {
+    // A block of water let go in a tank: the Liquid Surface node gives a
+    // closed mesh round it, turned outward, holding as much as the water
+    // does, moving as the water does, with its foam.
+    Network net;
+    const int block = net.add("water_source");
+    CHECK(net.setParam(block, "center", "-0.2 0.25 0"));
+    CHECK(net.setParam(block, "size", "0.5 0.5 0.8"));
+    const int liquid = net.add("liquid_solver");
+    CHECK(net.setParam(liquid, "resolution", "24"));
+    CHECK(net.setParam(liquid, "size", "1.2 0.8 1"));
+    const int look = net.add("water_look");
+    const int out = net.add("output");
+    CHECK(net.connect(block, "water", liquid, "sources"));
+    CHECK(net.connect(liquid, "liquid", look, "liquid"));
+    CHECK(net.connect(look, "look", out, "look"));
+    const int surface = net.add("liquid_surface");
+    CHECK(net.connect(liquid, "liquid", surface, "liquid"));
+    CHECK(net.setDisplay(surface));
+    Compiled c = net.compile();
+    CHECK(c.ok && c.problems.empty());
+    CHECK(!c.world.keepParticles);  // the surface needs no particles
+    WorldSolver sim(c.world);
+    for (int f = 0; f < 6; ++f) sim.step();
+    auto frame = std::make_shared<const Frame>(sim.capture());
+    GeometryGraph g;
+    g.setFrames([&](int f) { return f == 6 ? frame : nullptr; });
+    g.sync(net);
+    const GeometryPtr geo = g.cook(surface, 6);
+    CHECK(geo && geo->primitiveCount() > 100);
+    if (!geo || geo->primitiveCount() == 0) return;
+    // Closed: each edge between two faces, once each way.
+    std::map<std::pair<uint32_t, uint32_t>, int> edges;
+    for (size_t f = 0; f < geo->primitiveCount(); ++f) {
+        const auto p = geo->primitivePoints(f);
+        for (size_t i = 0; i < p.size(); ++i) ++edges[{p[i], p[(i + 1) % p.size()]}];
+    }
+    size_t open = 0;
+    for (const auto& [e, n] : edges) {
+        if (n != 1 || edges.count({e.second, e.first}) == 0) ++open;
+    }
+    CHECK_EQ(open, size_t(0));
+    // As much as the frame's distance holds below 0 -- and so a little more
+    // than the water itself: the particles' spheres reach past it.
+    const auto P = geo->positions();
+    double held = 0.0;
+    for (size_t f = 0; f < geo->primitiveCount(); ++f) {
+        const auto p = geo->primitivePoints(f);
+        for (size_t i = 1; i + 1 < p.size(); ++i) held += dot(P[p[0]], cross(P[p[i]], P[p[i + 1]])) / 6.0;
+    }
+    const WaterFrame& w = frame->water;
+    double inside = 0.0;
+    for (int k = 0; k < w.domain.cells[2]; ++k) {
+        for (int j = 0; j < w.domain.cells[1]; ++j) {
+            for (int i = 0; i < w.domain.cells[0]; ++i) inside += w.distance(i, j, k) < 0.0f ? 1.0 : 0.0;
+        }
+    }
+    inside *= static_cast<double>(w.domain.voxel) * w.domain.voxel * w.domain.voxel;
+    CHECK(std::fabs(held / inside - 1.0) < 0.05);
+    CHECK(held * 1000.0 > w.litres && held * 1000.0 < 1.15 * w.litres);
+    // Its normals, its velocity -- the frame's flow where it is --, its foam.
+    const AttributeArray* n = geo->points().find("N");
+    const AttributeArray* v = geo->points().find("v");
+    const AttributeArray* foam = geo->points().find("foam");
+    CHECK(n && v && foam);
+    if (!n || !v || !foam) return;
+    float fastest = 0.0f;
+    for (size_t i = 0; i < P.size(); ++i) {
+        CHECK(std::fabs(length(n->read<Vec3>()[i]) - 1.0f) < 1e-4f);
+        CHECK(near(v->read<Vec3>()[i], frame->water.flowAt(P[i])));
+        CHECK(foam->read<float>()[i] >= 0.0f && foam->read<float>()[i] <= 1.0f);
+        fastest = std::max(fastest, length(v->read<Vec3>()[i]));
+    }
+    CHECK(fastest > 0.3f);  // the block falls apart
+
+    // Rain rings the water: the ripples raise and tilt its top, not its sides
+    // or its bottom.
+    Frame rained = *frame;
+    RainFrame& r = rained.rain;
+    const Domain d = rained.water.flowDomain();
+    r.rippleOrigin = d.origin();
+    r.rippleCell = 0.02f;
+    r.rippleCells[0] = static_cast<int>(d.size().x / r.rippleCell);
+    r.rippleCells[1] = static_cast<int>(d.size().z / r.rippleCell);
+    r.ripples.assign(static_cast<size_t>(r.rippleCells[0]) * static_cast<size_t>(r.rippleCells[1]), toHalf(0.004f));
+    const auto calm = waterMesh(rained.water), rippled = waterMesh(rained.water, &rained.rain);
+    CHECK_EQ(calm->pointCount(), rippled->pointCount());
+    const auto Nc = calm->points().find("N")->read<Vec3>();
+    const auto a = calm->positions(), b = rippled->positions();
+    int raised = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const float up = std::max(Nc[i].y, 0.0f);
+        CHECK(std::fabs(b[i].y - a[i].y - 0.004f * up * up) < 1e-4f);
+        if (Nc[i].y > 0.99f) ++raised;
+        CHECK(b[i].x == a[i].x && b[i].z == a[i].z);
+    }
+    CHECK(raised > 50);
 }
 
 TEST(sim_geometry_is_drawn_in_its_colours) {

@@ -39,16 +39,27 @@ struct WaterFrame {
     std::vector<uint16_t> velocities;
     std::vector<uint8_t> whiteness;
     std::vector<uint32_t> ids;
+    /// How fast the water goes at the centre of each cell of the solver's
+    /// grid -- half as fine as `domain` -- three half floats a cell, x
+    /// fastest: what moves its surface, for motion blur. In the water and
+    /// some two cells round its surface; 0 further. Empty in a frame cached
+    /// before it was kept.
+    std::vector<uint16_t> flow;
 
     bool empty() const { return cells.empty(); }
     size_t bytes() const {
         return cells.size() + positions.size() * sizeof(Vec3) + velocities.size() * sizeof(uint16_t) + whiteness.size() +
-               ids.size() * sizeof(uint32_t);
+               ids.size() * sizeof(uint32_t) + flow.size() * sizeof(uint16_t);
     }
     /// The distance at cell (i, j, k), world units, below 0 in the water.
     float distance(int i, int j, int k) const;
     /// The foam there, 0 to 1.
     float foam(int i, int j, int k) const;
+    /// The grid of `flow`: the solver's.
+    Domain flowDomain() const;
+    /// The flow at a world point, trilinear between the cells' centres, the
+    /// nearest cell's beyond them; 0 without it.
+    Vec3 flowAt(const Vec3& p) const;
 };
 
 /// The rain of a frame, as it is drawn.

@@ -2,14 +2,17 @@
 
 #include "pg/io/Vdb.h"
 #include "pg/sim/Rigid.h"
+#include "pg/sim/WaterMesh.h"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <climits>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -23,7 +26,12 @@ namespace {
 
 const Vec3 kGrey(0.72f, 0.72f, 0.74f);  // what the viewport draws what has no colour in
 const char* const kSurface = "</World/Looks/surface>";
+const char* const kWaterLook = "</World/Looks/water>";
+const char* const kRainLook = "</World/Looks/rain>";
 const char* const kBinding = "prepend apiSchemas = [\"MaterialBindingAPI\"]";
+// How wide a drop and a droplet are drawn, metres: a renderer streaks them
+// by their velocities.
+constexpr float kDropWidth = 0.002f, kDropletWidth = 0.001f;
 
 std::string four(int frame) {
     char digits[16];
@@ -31,17 +39,97 @@ std::string four(int frame) {
     return digits;
 }
 
+/// 30, not the 29.999998 that 1 / (1 / 30.0f) comes to; 23.976 stays.
+std::string rateOf(float fps) {
+    return usda::number(std::fabs(fps - std::round(fps)) < 1e-3f ? std::round(fps) : fps);
+}
+
+/// The particles' numbers as int64[]: whole, not as the int32 they would wrap to.
+std::string idList(const std::vector<uint32_t>& ids) {
+    std::string out = "[";
+    out.reserve(ids.size() * 7 + 2);
+    char buf[16];
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (i > 0) out += ", ";
+        const auto r = std::to_chars(buf, buf + sizeof buf, ids[i]);
+        out.append(buf, r.ptr);
+    }
+    return out + "]";
+}
+
+std::vector<std::string> namesOf(const std::string& path) {
+    std::vector<std::string> names;
+    for (size_t at = 1; at <= path.size();) {
+        const size_t end = std::min(path.find('/', at), path.size());
+        if (end > at) names.push_back(path.substr(at, end - at));
+        at = end + 1;
+    }
+    return names;
+}
+
+/// The prim at `path` ("/World/rain/drops") in `prims`, made -- an over, or
+/// as `specifier` says -- where it is not there yet.
+Prim& primAt(std::list<Prim>& prims, const std::string& path, const char* specifier = "over") {
+    std::list<Prim>* level = &prims;
+    Prim* at = nullptr;
+    for (const std::string& name : namesOf(path)) {
+        at = nullptr;
+        for (Prim& p : *level) {
+            if (p.name == name) at = &p;
+        }
+        if (!at) {
+            at = &level->emplace_back("", name);
+            at->specifier = specifier;
+        }
+        level = &at->children;
+    }
+    return *at;
+}
+
+bool hasValues(const std::list<Prim>& prims) {
+    for (const Prim& p : prims) {
+        if (!p.attributes.empty() || hasValues(p.children)) return true;
+    }
+    return false;
+}
+
+/// Whether a frame's rain has drops or droplets to write.
+bool raining(const RainFrame& r) { return r.dropCount() + r.dropletCount() > 0; }
+
 }  // namespace
 
 struct UsdExport::Impl {
     std::string path, geometryName, stem;
-    fs::path gasFolder;
-    int frames = 0, first = 0, last = 0;
-    usda::Bounds scene;  // what is in it, for the size of the ground
+    float fps = 30.0f;
+    fs::path gasFolder, framesFolder;
+    int frames = 0, first = 0, last = 0, layers = 0;
+    std::vector<int> numbers;  // every frame added
+    usda::Bounds scene;        // what is in it, for the size of the ground
 
-    // The displayed geometry, a frame each; whether it ever changes.
-    std::vector<std::pair<int, GeometryPtr>> geometry;
+    // What takes its values from the frames' layers: a prim each, by its
+    // path -- its type and the attributes the layers give it, declared (for
+    // the stage and the manifest) with no value.
+    struct Clipped {
+        std::string type;
+        std::map<std::string, usda::Field> declared;
+    };
+    std::map<std::string, Clipped> clipped;
+    // ... in sets, each on the prim it hangs from (/World/water, /World/rain):
+    // the frames whose layers it takes, and the frames it is there at.
+    struct ClipSet {
+        std::vector<int> frames, present;
+    };
+    std::map<std::string, ClipSet> clipSets;
+
+    // The displayed geometry: as it first showed -- written once, in the
+    // stage, as long as it never changes; the layer of the frame it first
+    // showed at is held back till then. When it does change, each frame it
+    // changed at has it in its layer.
+    GeometryPtr firstGeometry, lastGeometry;
+    int firstGeometryFrame = 0;
     bool geometryChanges = false;
+    std::unique_ptr<usda::Stage> held;
+    std::vector<int> geometryPresent;
 
     // The bodies of the RBD Solver: their shapes at rest, coloured as they
     // are drawn, about their middles; a pose a frame -- where the middle
@@ -53,12 +141,6 @@ struct UsdExport::Impl {
     std::vector<int> bodyFrames;
     std::vector<std::vector<std::array<float, 7>>> motion;
     std::vector<int> gone;
-    struct Grit {
-        int frame = 0;
-        std::vector<float> bits, velocity;  // x, y, z and size of each bit; how fast it goes
-        std::vector<uint32_t> ids;
-    };
-    std::vector<Grit> grit;
     Vec3 gritColor;
 
     // The gas: a file a frame, and the box it fills.
@@ -66,6 +148,173 @@ struct UsdExport::Impl {
 
     std::vector<std::pair<int, Camera>> cameras;
     std::vector<std::pair<int, Look>> looks;
+
+    std::string geometryPath() const { return "/World/" + geometryName; }
+    std::string layerFile(int frame) const { return stem + "." + four(frame) + ".usda"; }
+    std::string layerAsset(int frame) const { return "./" + stem + "_frames/" + layerFile(frame); }
+    std::string manifestAsset() const { return "./" + stem + "_frames/" + stem + ".manifest.usda"; }
+
+    usda::Stage newLayer() const {
+        usda::Stage layer;
+        layer.metadata = {{"framesPerSecond", rateOf(fps)}, {"timeCodesPerSecond", rateOf(fps)}};
+        return layer;
+    }
+
+    /// `fields` at frame f into `layer`, on the prim at `path` -- of `type`,
+    /// which the stage declares them on.
+    void sample(usda::Stage& layer, const std::string& at, const char* type, int f, std::vector<usda::Field> fields) {
+        Prim& over = primAt(layer.prims, at);
+        Clipped& c = clipped[at];
+        c.type = type;
+        for (usda::Field& field : fields) {
+            if (c.declared.find(field.name) == c.declared.end()) {
+                c.declared[field.name] = {field.type, field.name, field.metadata, ""};
+            }
+            usda::Attribute a;
+            a.type = field.type;
+            a.name = field.name;
+            a.samples.emplace_back(f, std::move(field.value));
+            over.attributes.push_back(std::move(a));
+        }
+    }
+
+    /// The displayed geometry at frame f: its mesh, curves and points, as
+    /// geometryPrim makes them.
+    void sampleGeometry(usda::Stage& layer, int f, const Geometry& geo) {
+        std::vector<uint32_t> all(geo.primitiveCount());
+        for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<uint32_t>(i);
+        std::vector<int32_t> scratch;
+        const usda::MeshText mesh = usda::meshText(geo, all, Vec3(), nullptr, scratch);
+        const usda::CurvesText curves = usda::curvesText(geo);
+        const usda::PointsText points = usda::pointsText(geo);
+        const std::string at = geometryPath();
+        if (!mesh.empty()) sample(layer, at + "/mesh", "Mesh", f, usda::fields(mesh));
+        if (!curves.empty()) sample(layer, at + "/curves", "BasisCurves", f, usda::fields(curves));
+        if (!points.empty()) sample(layer, at + "/points", "Points", f, usda::fields(points));
+        primAt(layer.prims, at);  // there, even when it is empty now
+    }
+
+    /// The grit at frame f: a point a bit, as wide as it is, with its
+    /// velocity and its number where the frame has them.
+    void sampleGrit(usda::Stage& layer, int f, const RigidFrame& r) {
+        const size_t n = r.debris.size() / 4;
+        std::vector<Vec3> at, v;
+        std::vector<float> size;
+        usda::Bounds box;
+        float widest = 0.0f;
+        const bool moving = r.debrisVelocity.size() == 3 * n, numbered = r.debrisIds.size() == n;
+        for (size_t i = 0; i < n; ++i) {
+            at.emplace_back(r.debris[4 * i], r.debris[4 * i + 1], r.debris[4 * i + 2]);
+            size.push_back(r.debris[4 * i + 3]);
+            box.grow(at.back());
+            widest = std::max(widest, r.debris[4 * i + 3]);
+            if (moving) v.emplace_back(r.debrisVelocity[3 * i], r.debrisVelocity[3 * i + 1], r.debrisVelocity[3 * i + 2]);
+        }
+        std::vector<usda::Field> fields = {{"float3[]", "extent", "", box.extent(0.5f * widest)}};
+        if (numbered) fields.push_back({"int64[]", "ids", "", idList(r.debrisIds)});
+        fields.push_back({"point3f[]", "points", "", usda::tuples(at)});
+        if (moving) fields.push_back({"vector3f[]", "velocities", "", usda::tuples(v)});
+        fields.push_back({"float[]", "widths", usda::interpolation("vertex"), usda::numbers(size)});
+        sample(layer, "/World/grit", "Points", f, std::move(fields));
+        scene.grow(box);
+    }
+
+    /// The water's surface at frame f; its colour is the stage's.
+    void sampleWater(usda::Stage& layer, int f, const Geometry& mesh) {
+        std::vector<uint32_t> all(mesh.primitiveCount());
+        for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<uint32_t>(i);
+        std::vector<int32_t> scratch;
+        std::vector<usda::Field> fields = usda::fields(usda::meshText(mesh, all, Vec3(), nullptr, scratch));
+        fields.erase(std::remove_if(fields.begin(), fields.end(),
+                                    [](const usda::Field& x) { return x.name == "primvars:displayColor"; }),
+                     fields.end());
+        sample(layer, "/World/water", "Mesh", f, std::move(fields));
+    }
+
+    /// The rain at frame f: its drops and its droplets, each numbered and
+    /// moving -- both, even when one of them has none now.
+    void sampleRain(usda::Stage& layer, int f, const RainFrame& r) {
+        auto one = [&](const char* name, const std::vector<float>& six, const std::vector<uint32_t>& ids, float width) {
+            const size_t n = six.size() / 6;
+            std::vector<Vec3> at(n), v(n);
+            usda::Bounds box;
+            for (size_t i = 0; i < n; ++i) {
+                const float* p = six.data() + 6 * i;
+                at[i] = Vec3(p[0], p[1], p[2]);
+                v[i] = Vec3(p[3], p[4], p[5]);
+                box.grow(at[i]);
+            }
+            std::vector<usda::Field> fields = {{"float3[]", "extent", "", box.extent(0.5f * width)}};
+            if (ids.size() == n) fields.push_back({"int64[]", "ids", "", idList(ids)});
+            fields.push_back({"point3f[]", "points", "", usda::tuples(at)});
+            fields.push_back({"vector3f[]", "velocities", "", usda::tuples(v)});
+            sample(layer, std::string("/World/rain/") + name, "Points", f, std::move(fields));
+            scene.grow(box);
+        };
+        one("drops", r.drops, r.dropIds, kDropWidth);
+        one("droplets", r.droplets, r.dropletIds, kDropletWidth);
+    }
+
+    /// A frame's layer, when it has values -- or when a clip names it, if
+    /// only to say its prims have none then.
+    bool writeLayer(const usda::Stage& layer, int f, bool named, std::string& error) {
+        if (!named && !hasValues(layer.prims)) return true;
+        std::error_code ec;
+        fs::create_directories(framesFolder, ec);
+        if (!usda::writeStage(layer, (framesFolder / layerFile(f)).string(), error)) return false;
+        ++layers;
+        return true;
+    }
+
+    /// visibility, where a prim is not there at every frame: invisible where
+    /// it is not, written where that changes.
+    void visibility(Prim& prim, const std::vector<int>& present) const {
+        if (present.size() == numbers.size()) return;
+        usda::Attribute& seen = prim.set("token", "visibility", "");
+        size_t k = 0;
+        int was = -1;
+        for (const int f : numbers) {
+            while (k < present.size() && present[k] < f) ++k;
+            const int now = k < present.size() && present[k] == f ? 1 : 0;
+            if (now != was) seen.samples.emplace_back(f, usda::quoted(now ? "inherited" : "invisible"));
+            was = now;
+        }
+    }
+
+    /// The prim `at` of the stage, its values from the frames' layers: the
+    /// clips on it, and each prim under it the layers give values to,
+    /// declared with their types and how they spread; invisible at the
+    /// frames it is not `present` at.
+    Prim& clippedPrim(Prim& world, const std::string& at, const char* type, const std::vector<int>& present) const {
+        Prim& p = primAt(world.children, at.substr(std::string("/World").size()), "def");
+        p.type = type;
+        const ClipSet& set = clipSets.at(at);
+        std::vector<std::pair<int, std::string>> assets;
+        for (const int f : set.frames) assets.emplace_back(f, layerAsset(f));
+        p.metadata.push_back(usda::clips(assets, manifestAsset(), at));
+        visibility(p, present);
+        for (const auto& [path, c] : clipped) {
+            if (path != at && path.rfind(at + "/", 0) != 0) continue;
+            Prim& q = path == at ? p : primAt(p.children, path.substr(at.size()), "def");
+            q.type = c.type;
+            for (const auto& [name, field] : c.declared) q.set(field.type, name, "").metadata = field.metadata;
+            if (c.type == "Mesh") q.setUniform("token", "subdivisionScheme", usda::quoted("none"));
+            if (c.type == "BasisCurves") {
+                q.setUniform("token", "type", usda::quoted("linear"));
+                q.set("float[]", "widths", "[0.01]").metadata = usda::interpolation("constant");
+            }
+        }
+        return p;
+    }
+
+    usda::Stage manifest() const {
+        usda::Stage s;
+        for (const auto& [path, c] : clipped) {
+            Prim& p = primAt(s.prims, path);
+            for (const auto& [name, field] : c.declared) p.set(field.type, name, "");
+        }
+        return s;
+    }
 
     void startBodies(const RigidFrame& r, const Look& look) {
         layout = r.layout ? r.layout : rigidLayout(*r.pieces, r.attribute);
@@ -93,16 +342,18 @@ struct UsdExport::Impl {
     }
 };
 
-UsdExport::UsdExport(std::string path, std::string geometryName) : impl_(std::make_unique<Impl>()) {
+UsdExport::UsdExport(std::string path, std::string geometryName, float fps) : impl_(std::make_unique<Impl>()) {
     impl_->path = std::move(path);
+    impl_->fps = fps > 0.0f ? fps : 30.0f;
     impl_->geometryName = usda::identifier(geometryName.empty() ? "geometry" : geometryName);
     // Not the name of another prim of the stage.
-    for (const char* taken : {"Looks", "pieces", "grit", "gas", "camera", "sun", "sky", "ground"}) {
+    for (const char* taken : {"Looks", "pieces", "grit", "water", "rain", "gas", "camera", "sun", "sky", "ground"}) {
         if (impl_->geometryName == taken) impl_->geometryName += "_geometry";
     }
     const fs::path p(impl_->path);
     impl_->stem = p.stem().string();
     impl_->gasFolder = p.parent_path() / (impl_->stem + "_gas");
+    impl_->framesFolder = p.parent_path() / (impl_->stem + "_frames");
 }
 
 UsdExport::~UsdExport() = default;
@@ -111,6 +362,8 @@ const std::string& UsdExport::path() const { return impl_->path; }
 int UsdExport::frames() const { return impl_->frames; }
 int UsdExport::bodies() const { return static_cast<int>(impl_->middles.size()); }
 int UsdExport::gasFiles() const { return static_cast<int>(impl_->gasFiles.size()); }
+int UsdExport::frameFiles() const { return impl_->layers; }
+std::string UsdExport::frameFile(int frame) const { return impl_->layerAsset(frame); }
 
 bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camera* camera, const Look& look,
                     std::string& error) {
@@ -119,18 +372,41 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
     if (m.frames == 0) m.first = f;
     m.last = f;
     ++m.frames;
+    m.numbers.push_back(f);
+    usda::Stage layer = m.newLayer();
+    bool hold = false, named = false;  // held back; named by a clip
 
-    // The displayed geometry: whether it changed since the frame before.
-    if (!m.geometry.empty()) {
-        const GeometryPtr& before = m.geometry.back().second;
-        if (before != geometry && (!before || !geometry || before->hash() != geometry->hash())) m.geometryChanges = true;
+    // The displayed geometry: held back as it first shows; into the layer
+    // of each frame it changes at.
+    if (geometry) {
+        m.geometryPresent.push_back(f);
+        if (!m.firstGeometry) {
+            m.firstGeometry = m.lastGeometry = geometry;
+            m.firstGeometryFrame = f;
+            for (const Vec3& p : geometry->positions()) m.scene.grow(p);
+            hold = true;
+        } else if (m.lastGeometry != geometry && m.lastGeometry->hash() != geometry->hash()) {
+            Impl::ClipSet& set = m.clipSets[m.geometryPath()];
+            if (!m.geometryChanges) {
+                // It changes after all: the frame it first showed at has it
+                // in its layer too.
+                m.geometryChanges = true;
+                if (m.held) {
+                    m.sampleGeometry(*m.held, m.firstGeometryFrame, *m.firstGeometry);
+                    if (!m.writeLayer(*m.held, m.firstGeometryFrame, true, error)) return false;
+                    m.held.reset();
+                }
+                set.frames.push_back(m.firstGeometryFrame);
+            }
+            m.sampleGeometry(layer, f, *geometry);
+            set.frames.push_back(f);
+            named = true;
+            for (const Vec3& p : geometry->positions()) m.scene.grow(p);
+            m.lastGeometry = geometry;
+        }
     }
-    if (geometry && (m.geometry.empty() || m.geometryChanges)) {
-        for (const Vec3& p : geometry->positions()) m.scene.grow(p);
-    }
-    m.geometry.emplace_back(f, geometry);
 
-    // The bodies: a pose each.
+    // The bodies: a pose each; the grit into the layer.
     const RigidFrame& r = frame.rigid;
     if (!r.empty() && r.pieces) {
         if (!m.layout) m.startBodies(r, look);
@@ -143,7 +419,39 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
         for (const uint32_t v : r.vanished) {
             if (v < m.gone.size()) m.gone[v] = std::min(m.gone[v], f);
         }
-        m.grit.push_back({f, r.debris, r.debrisVelocity, r.debrisIds});
+        if (!r.debris.empty()) {
+            m.sampleGrit(layer, f, r);
+            Impl::ClipSet& set = m.clipSets["/World/grit"];
+            set.frames.push_back(f);
+            set.present.push_back(f);
+            named = true;
+        }
+    }
+
+    // The water's surface -- unless the look hides it.
+    if (!frame.water.empty() && look.waterSurface) {
+        const std::shared_ptr<Geometry> surface = waterMesh(frame.water, &frame.rain);
+        if (surface->primitiveCount() > 0) {
+            m.sampleWater(layer, f, *surface);
+            Impl::ClipSet& set = m.clipSets["/World/water"];
+            set.frames.push_back(f);
+            set.present.push_back(f);
+            named = true;
+            const Domain d = frame.water.flowDomain();
+            usda::Bounds box;
+            box.grow(d.origin());
+            box.grow(d.origin() + d.size());
+            m.scene.grow(box);
+        }
+    }
+
+    // The rain.
+    if (raining(frame.rain)) {
+        m.sampleRain(layer, f, frame.rain);
+        Impl::ClipSet& set = m.clipSets["/World/rain"];
+        set.frames.push_back(f);
+        set.present.push_back(f);
+        named = true;
     }
 
     // The gas: a file of it.
@@ -172,14 +480,19 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
 
     if (camera) m.cameras.emplace_back(f, *camera);
     m.looks.emplace_back(f, look);
-    return true;
+
+    // The layer: out now, or held back with the geometry.
+    if (hold) {
+        m.held = std::make_unique<usda::Stage>(std::move(layer));
+        return true;
+    }
+    return m.writeLayer(layer, f, named, error);
 }
 
-usda::Stage UsdExport::stage(float fps) const {
+usda::Stage UsdExport::stage() const {
     const Impl& m = *impl_;
     usda::Stage s;
-    // 30, not the 29.999998 that 1 / (1 / 30.0f) comes to; 23.976 stays.
-    const std::string rate = usda::number(std::fabs(fps - std::round(fps)) < 1e-3f ? std::round(fps) : fps);
+    const std::string rate = rateOf(m.fps);
     s.metadata = {{"defaultPrim", usda::quoted("World")},
                   {"doc", usda::quoted("Written by Prototype")},
                   {"endTimeCode", std::to_string(m.last)},
@@ -190,8 +503,10 @@ usda::Stage UsdExport::stage(float fps) const {
                   {"upAxis", usda::quoted("Y")}};
     Prim& world = s.prims.emplace_back("Xform", "World");
     std::vector<int32_t> local;  // scratch for meshText
+    const Look look = m.looks.empty() ? Look() : m.looks.front().second;
 
-    // The material: the colour of displayColor, a little rough.
+    // The materials: the colour of displayColor, a little rough; the
+    // water's, clear and smooth, bending light as water does; the rain's.
     {
         Prim& looks = world.child("Scope", "Looks");
         Prim& material = looks.child("Material", "surface");
@@ -206,18 +521,33 @@ usda::Stage UsdExport::stage(float fps) const {
         color.set("float3", "inputs:fallback", usda::tuple(kGrey));
         color.set("string", "inputs:varname", usda::quoted("displayColor"));
         color.set("float3", "outputs:result", "");
+        auto plain = [&](const char* name, const Vec3& tint, float opacity, float roughness, float ior) {
+            Prim& mat = looks.child("Material", name);
+            mat.set("token", "outputs:surface.connect", std::string("</World/Looks/") + name + "/shader.outputs:surface>");
+            Prim& sh = mat.child("Shader", "shader");
+            sh.setUniform("token", "info:id", usda::quoted("UsdPreviewSurface"));
+            sh.set("color3f", "inputs:diffuseColor", usda::tuple(tint));
+            sh.set("float", "inputs:ior", usda::number(ior));
+            sh.set("float", "inputs:opacity", usda::number(opacity));
+            sh.set("float", "inputs:roughness", usda::number(roughness));
+            sh.set("token", "outputs:surface", "");
+        };
+        if (m.clipSets.count("/World/water")) plain("water", look.waterColor, 0.35f, 0.02f, 1.33f);
+        if (m.clipSets.count("/World/rain")) plain("rain", look.rainColor, look.rainOpacity, 0.05f, 1.33f);
     }
 
-    // The displayed geometry: a frame of it each when it changes, else the
-    // first.
-    std::vector<std::pair<int, const Geometry*>> shown;
-    for (const auto& [f, geo] : m.geometry) {
-        if (geo && (m.geometryChanges || shown.empty())) shown.emplace_back(f, geo.get());
-    }
-    if (!shown.empty()) {
-        Prim& g = world.children.emplace_back(usda::geometryPrim(m.geometryName, shown));
-        g.metadata.push_back(kBinding);
-        g.relate("material:binding", kSurface);
+    // The displayed geometry: once, when it never changes; else from the
+    // layers of the frames it changed at.
+    if (m.firstGeometry) {
+        Prim* g = nullptr;
+        if (m.geometryChanges) {
+            g = &m.clippedPrim(world, m.geometryPath(), "Xform", m.geometryPresent);
+        } else {
+            g = &world.children.emplace_back(usda::geometryPrim(m.geometryName, {{m.firstGeometryFrame, m.firstGeometry.get()}}));
+            m.visibility(*g, m.geometryPresent);
+        }
+        g->metadata.push_back(kBinding);
+        g->relate("material:binding", kSurface);
     }
 
     // The bodies: a shape each, moved and turned.
@@ -247,7 +577,9 @@ usda::Stage UsdExport::stage(float fps) const {
                 usda::Attribute& seen = body.set("token", "visibility", "");
                 seen.samples = {{m.first, usda::quoted("inherited")}, {m.gone[b], usda::quoted("invisible")}};
             }
-            const usda::MeshText shape = usda::meshText(*m.drawn, m.layout->prims[b], m.middles[b], inside, local);
+            usda::MeshText shape = usda::meshText(*m.drawn, m.layout->prims[b], m.middles[b], inside, local);
+            shape.primvars.clear();  // the shape at rest: nothing of it moves
+            shape.velocities.clear();
             Prim mesh = usda::meshPrim("mesh", {{m.first, shape}});
             if (!shape.inside.empty()) {
                 mesh.setUniform("token", "subsetFamily:materialBind:familyType", usda::quoted("nonOverlapping"));
@@ -258,48 +590,32 @@ usda::Stage UsdExport::stage(float fps) const {
             }
             body.children.push_back(std::move(mesh));
         }
-        // The grit: its velocity and its numbers where the frames have them --
-        // a renderer blurs a bit by them as it flies.
-        const bool anyGrit = std::any_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& g) { return !g.bits.empty(); });
-        if (anyGrit) {
-            Prim& grit = world.child("Points", "grit");
-            grit.metadata.push_back(kBinding);
-            const bool moving = std::all_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& g) {
-                return g.velocity.size() == 3 * (g.bits.size() / 4);
-            });
-            const bool numbered = std::all_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& g) {
-                return g.ids.size() == g.bits.size() / 4;
-            });
-            std::vector<std::pair<int, std::string>> extent, points, widths, velocities, ids;
-            for (const Impl::Grit& g : m.grit) {
-                const size_t n = g.bits.size() / 4;
-                std::vector<Vec3> at, v;
-                std::vector<float> size;
-                std::vector<int32_t> number;
-                usda::Bounds box;
-                float widest = 0.0f;
-                for (size_t i = 0; i < n; ++i) {
-                    at.emplace_back(g.bits[4 * i], g.bits[4 * i + 1], g.bits[4 * i + 2]);
-                    size.push_back(g.bits[4 * i + 3]);
-                    box.grow(at.back());
-                    widest = std::max(widest, g.bits[4 * i + 3]);
-                    if (moving) v.emplace_back(g.velocity[3 * i], g.velocity[3 * i + 1], g.velocity[3 * i + 2]);
-                    if (numbered) number.push_back(static_cast<int32_t>(g.ids[i]));
-                }
-                extent.emplace_back(g.frame, box.extent(0.5f * widest));
-                points.emplace_back(g.frame, usda::tuples(at));
-                widths.emplace_back(g.frame, usda::numbers(size));
-                if (moving) velocities.emplace_back(g.frame, usda::tuples(v));
-                if (numbered) ids.emplace_back(g.frame, usda::integers(number));
-            }
-            usda::animate(grit, "float3[]", "extent", extent);
-            usda::animate(grit, "int64[]", "ids", ids);
-            usda::animate(grit, "point3f[]", "points", points);
-            grit.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&m.gritColor, 1))).metadata =
+    }
+
+    // The grit, the water and the rain: from the frames' layers.
+    if (m.clipSets.count("/World/grit")) {
+        Prim& grit = m.clippedPrim(world, "/World/grit", "Points", m.clipSets.at("/World/grit").present);
+        grit.metadata.push_back(kBinding);
+        grit.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&m.gritColor, 1))).metadata =
+            usda::interpolation("constant");
+        grit.relate("material:binding", kSurface);
+    }
+    if (m.clipSets.count("/World/water")) {
+        Prim& water = m.clippedPrim(world, "/World/water", "Mesh", m.clipSets.at("/World/water").present);
+        water.metadata.push_back(kBinding);
+        water.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&look.waterColor, 1))).metadata =
+            usda::interpolation("constant");
+        water.relate("material:binding", kWaterLook);
+    }
+    if (m.clipSets.count("/World/rain")) {
+        Prim& rain = m.clippedPrim(world, "/World/rain", "Xform", m.clipSets.at("/World/rain").present);
+        for (Prim& points : rain.children) {
+            points.metadata.push_back(kBinding);
+            points.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&look.rainColor, 1))).metadata =
                 usda::interpolation("constant");
-            usda::animate(grit, "vector3f[]", "velocities", velocities);
-            usda::animate(grit, "float[]", "widths", widths, usda::interpolation("vertex"));
-            grit.relate("material:binding", kSurface);
+            points.set("float[]", "widths", "[" + usda::number(points.name == "drops" ? kDropWidth : kDropletWidth) + "]")
+                .metadata = usda::interpolation("constant");
+            points.relate("material:binding", kRainLook);
         }
     }
 
@@ -327,7 +643,7 @@ usda::Stage UsdExport::stage(float fps) const {
             focal.emplace_back(f, usda::number(c.focal / 100.0f));
             across.emplace_back(f, usda::number(0.24f * c.aspect()));
         }
-        for (const auto& [f, look] : m.looks) exposure.emplace_back(f, usda::number(std::log2(std::max(look.exposure, 1e-6f))));
+        for (const auto& [f, k] : m.looks) exposure.emplace_back(f, usda::number(std::log2(std::max(k.exposure, 1e-6f))));
         cam.set("float2", "clippingRange", "(0.05, 20000)");
         usda::animate(cam, "float", "exposure", exposure);
         usda::animate(cam, "float", "focalLength", focal);
@@ -345,13 +661,13 @@ usda::Stage UsdExport::stage(float fps) const {
         Prim& sky = world.child("DomeLight", "sky");
         std::vector<std::pair<int, std::string>> sunColor, sunIntensity, sunTurned, skyColor, skyIntensity;
         Vec3 near;
-        for (const auto& [f, look] : m.looks) {
-            sunColor.emplace_back(f, usda::tuple(look.lightColor));
-            sunIntensity.emplace_back(f, usda::number(look.lightIntensity));
-            near = Camera::rotationFor(look.lightDirection() * -1.0f, Vec3(0.0f, 1.0f, 0.0f), near);
+        for (const auto& [f, k] : m.looks) {
+            sunColor.emplace_back(f, usda::tuple(k.lightColor));
+            sunIntensity.emplace_back(f, usda::number(k.lightIntensity));
+            near = Camera::rotationFor(k.lightDirection() * -1.0f, Vec3(0.0f, 1.0f, 0.0f), near);
             sunTurned.emplace_back(f, usda::tuple(near));
-            skyColor.emplace_back(f, usda::tuple(look.skyColor));
-            skyIntensity.emplace_back(f, usda::number(look.skyIntensity));
+            skyColor.emplace_back(f, usda::tuple(k.skyColor));
+            skyIntensity.emplace_back(f, usda::number(k.skyIntensity));
         }
         sun.set("float", "inputs:angle", "0.53");
         usda::animate(sun, "color3f", "inputs:color", sunColor);
@@ -363,7 +679,6 @@ usda::Stage UsdExport::stage(float fps) const {
 
         // The floor: a square round what is in the scene, in the look's
         // ground colour.
-        const Look& look = m.looks.front().second;
         if (look.floor) {
             usda::Bounds box = m.scene;
             if (box.empty()) box.grow(Vec3());
@@ -392,15 +707,26 @@ bool isUsdPath(const std::string& path) {
     return ext == ".usda" || ext == ".usd";
 }
 
-bool UsdExport::finish(float fps, std::string& error) {
-    if (impl_->frames == 0) {
-        error = "no frame to write to " + impl_->path;
+bool UsdExport::finish(std::string& error) {
+    Impl& m = *impl_;
+    if (m.frames == 0) {
+        error = "no frame to write to " + m.path;
         return false;
     }
     std::error_code ec;
-    const fs::path folder = fs::path(impl_->path).parent_path();
+    const fs::path folder = fs::path(m.path).parent_path();
     if (!folder.empty()) fs::create_directories(folder, ec);
-    return usda::writeStage(stage(fps), impl_->path, error);
+    // The layer held back: the geometry never changed, so it is not in it.
+    if (m.held) {
+        if (!m.writeLayer(*m.held, m.firstGeometryFrame, false, error)) return false;
+        m.held.reset();
+    }
+    if (!m.clipped.empty()) {
+        fs::create_directories(m.framesFolder, ec);
+        const std::string manifest = (m.framesFolder / (m.stem + ".manifest.usda")).string();
+        if (!usda::writeStage(m.manifest(), manifest, error)) return false;
+    }
+    return usda::writeStage(stage(), m.path, error);
 }
 
 }  // namespace pg::sim

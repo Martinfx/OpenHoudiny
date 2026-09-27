@@ -51,7 +51,12 @@ struct Attribute {
 struct Prim {
     std::string type;                   ///< "Xform", "Mesh"...; empty: a typeless prim
     std::string name;                   ///< an identifier
-    std::vector<std::string> metadata;  ///< lines in the parentheses: prepend apiSchemas = [...]
+    /// "def" defines it; "over" only adds to a prim another layer defines --
+    /// what a layer of one frame's values has.
+    std::string specifier = "def";
+    /// Entries in the parentheses: prepend apiSchemas = [...]; one may take
+    /// several lines (a dictionary), each indented as it sits.
+    std::vector<std::string> metadata;
     std::vector<Attribute> attributes;
     std::vector<std::pair<std::string, std::string>> relationships;  ///< name and target(s): </World/x>
     /// A list: a child held by reference stays where it is as more are added.
@@ -98,6 +103,20 @@ struct Bounds {
     std::string extent(float pad = 0.0f) const;
 };
 
+// --- Value clips ------------------------------------------------------------------------------
+//
+// A prim's values from other layers, one a frame (USD's value clips): the
+// stage keeps what does not change and names the layers; each layer has the
+// prim's time samples at its frame. A manifest -- a layer of its own --
+// declares which attributes they give; a layer without samples for one
+// leaves it without a value at that frame.
+
+/// The clips entry of a prim's metadata: `assets` (as the stage finds them)
+/// active from their `frames` on, each at its own time; attributes as the
+/// layers have them at `primPath`, declared in `manifest`.
+std::string clips(const std::vector<std::pair<int, std::string>>& assets, const std::string& manifest,
+                  const std::string& primPath);
+
 // --- Geometry ---------------------------------------------------------------------------------
 //
 // A frame of geometry as the text of its prims: closed primitives a Mesh,
@@ -108,8 +127,21 @@ struct Bounds {
 // points' N; points as wide as pscale (else 2 cm), their v as velocities
 // and id as ids. Meshes are polygons as they are: subdivisionScheme none.
 
+/// An attribute of a frame of geometry as USD has it: its type, its name,
+/// its metadata (how a primvar spreads over the prim), its value.
+struct Field {
+    std::string type, name, metadata, value;
+};
+
+/// The points' other attributes -- numbers, whole numbers, vectors; not P,
+/// N, v, Cd, pscale or id, which have names of their own in USD -- as
+/// primvars a point each: foam as float[] primvars:foam. `source`: the
+/// points, in the order the prim has them.
+std::vector<Field> pointPrimvars(const Geometry& geo, std::span<const uint32_t> source);
+
 struct MeshText {
-    std::string points, counts, indices, colors, colorHow, normals, extent;
+    std::string points, counts, indices, colors, colorHow, normals, velocities, extent;
+    std::vector<Field> primvars;  ///< pointPrimvars
     std::vector<int32_t> inside;  ///< the faces in the group asked for, numbered as the Mesh has them
     bool empty() const { return counts.size() <= 2; }
 };
@@ -126,9 +158,16 @@ CurvesText curvesText(const Geometry& geo);
 
 struct PointsText {
     std::string points, widths, colors, velocities, ids, extent;
+    std::vector<Field> primvars;  ///< pointPrimvars
     bool empty() const { return points.size() <= 2; }
 };
 PointsText pointsText(const Geometry& geo);
+
+/// What of each changes from frame to frame: the attributes of a frame, in
+/// the order of their names.
+std::vector<Field> fields(const MeshText& m);
+std::vector<Field> fields(const CurvesText& c);
+std::vector<Field> fields(const PointsText& p);
 
 /// The prims of frames of it: what stays the same once, the rest a sample a frame.
 Prim meshPrim(const std::string& name, const std::vector<std::pair<int, MeshText>>& frames);

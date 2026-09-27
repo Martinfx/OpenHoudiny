@@ -211,6 +211,7 @@ void registerBuiltinNodes() {
         registerSurfaceNodes();
         registerTopologyNodes();
         registerFractureNodes();
+        registerVolumeNodes();
         return true;
     }();
     (void)once;

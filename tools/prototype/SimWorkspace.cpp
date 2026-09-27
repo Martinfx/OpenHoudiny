@@ -117,6 +117,7 @@ Icon typeIcon(const sim::NodeType* t) {
     if (name == "tube") return Icon::Cylinder;
     if (name == "scatter" || name == "point_cloud" || name == "liquid_points" || name == "rain_points") return Icon::Points;
     if (name == "point_wrangle") return Icon::Code;
+    if (name == "liquid_surface") return Icon::Drop;
     if (name == "file") return Icon::File;
     if (name == "asset_input") return Icon::Input;
     if (name == "foreach_begin" || name == "foreach_end") return Icon::Loop;
@@ -2267,7 +2268,7 @@ bool SimWorkspace::exportUsd(const std::string& path) {
     const int shown = net_.displayed();
     const sim::Node* n = shown ? net_.node(shown) : nullptr;
     const bool withGeometry = n && geometry_->contains(shown);
-    sim::UsdExport usd(path, withGeometry ? n->name : std::string("geometry"));
+    sim::UsdExport usd(path, withGeometry ? n->name : std::string("geometry"), 1.0f / compiled_.world.timeStep);
     const int cached = runner_->cached();
     std::string error;
     for (int f = 1; f <= cached; ++f) {
@@ -2279,13 +2280,14 @@ bool SimWorkspace::exportUsd(const std::string& path) {
             return false;
         }
     }
-    if (!usd.finish(1.0f / compiled_.world.timeStep, error)) {
+    if (!usd.finish(error)) {
         setMessage(error, true);
         return false;
     }
     std::string text = "Exported " + std::to_string(usd.frames()) + " frames as USD to " + shownPath(path);
     if (usd.bodies() > 0) text += ", " + std::to_string(usd.bodies()) + " bodies";
-    if (usd.gasFiles() > 0) text += ", the gas in " + std::to_string(usd.gasFiles()) + " VDB files beside it";
+    if (usd.frameFiles() > 0) text += ", what changes every frame in " + std::to_string(usd.frameFiles()) + " layers beside it";
+    if (usd.gasFiles() > 0) text += ", the gas in " + std::to_string(usd.gasFiles()) + " VDB files";
     setMessage(text);
     return true;
 }

@@ -62,7 +62,9 @@ nastaveným na ni.
 | **Clip** | Nechá to, co je na jedné straně roviny: stěny rozřízne podél ní a s Cap uzavřené těleso zase uzavře stěnou v rovině (skupina `cut`); nekonvexní řez rozloží na trojúhelníky |
 | **Attribute Transfer** | Atributy bodů z druhého vstupu (Source) na body blízko nich: do Distance vážený průměr bodů, dál slábnoucí přes Blend Width; celá čísla a řetězce od nejbližšího |
 | **For-Each Begin / End** | Smyčka: uzly mezi nimi běží pro každý kus, primitivum nebo bod — nebo Count krát, nebo Feedback (každý běh na výsledku předchozího); viz níže |
+| **Convert Volume** | Povrch objemu jako polygony: tam, kde hodnoty překročí Iso, uzavřená síť čtyřúhelníků otočených ven, s normálami `N`; uzavřená i tam, kde objem končí. Uvnitř jsou hodnoty nad Iso (hustota, kouř) nebo pod ním (vzdálenost, záporná uvnitř). Viz níže |
 | **Liquid Points** | Částice vody z Liquid Solveru: `P`, rychlost `v`, pěna `foam`, číslo `id` (stejné ze snímku na snímek) |
+| **Liquid Surface** | Voda z Liquid Solveru jako povrch, ze kterého ji renderer renderuje: uzavřená síť kolem ní s normálami `N`, rychlostí `v` a pěnou `foam`; s Ripples i vlnky od deště. Viz níže |
 | **Rain Points** | Kapky deště a kapičky odstřiků: `P`, `v`, `droplet` (1 u kapičky), `id` (kapičky od 2³⁰) |
 | **Gas Volume** | Plyn z Pyro Solveru jako tři objemy: `density` (kouř), `temperature`, `flame` |
 | **Voronoi Fracture** | Uzavřené těleso rozřezané na kusy — buňky bodů z druhého vstupu, nebo Count náhodných uvnitř — každý uzavřený, s číslem `piece` a řeznými plochami ve skupině `inside`; viz [destruction.md](destruction.md) |
@@ -213,7 +215,7 @@ geometrie (třeba Transform, nebo střed krychle). Souhrn uzlu ukáže „shape 
 
 ## 6. Simulace zpátky jako geometrie
 
-**Liquid Points**, **Rain Points**, **Gas Volume** a **RBD Pieces** mají
+**Liquid Points**, **Liquid Surface**, **Rain Points**, **Gas Volume** a **RBD Pieces** mají
 vstup ze simulace (Liquid, Rain, Gas, Rigid) a na výstupu geometrii snímku,
 který je právě vidět: v editoru z cache snímků, v `prototype sim` ze snímku právě
 spočítaného. Za nimi jdou libovolné geometrické uzly — wrangle, color,
@@ -225,6 +227,39 @@ blast… — a výsledek se zobrazí nebo prohlíží v tabulce.
 - Uzel napojený na řešič, který nevede do Output (a tedy se nesimuluje),
   dostane varování a je prázdný.
 - Ze snímku, který ještě není spočítaný, je geometrie prázdná.
+
+### Povrch vody (Liquid Surface) a Convert Volume
+
+Houdini dělá z FLIP simulace povrch uzlem Particle Fluid Surface; tady je
+to **Liquid Surface**. Snímek vody nese vzdálenost k hladině na mřížce
+dvakrát jemnější než řešič (z ní kreslí vodu i viewport) a z ní vznikne
+síť algoritmem *surface nets* (Gibson 1998):
+
+- v každé krychli osmi buněk, kterou povrch protíná, je jeden bod — průměr
+  míst, kde povrch protíná její hrany;
+- přes každou hranu mezi buňkami, kterou povrch protíná, vede čtyřúhelník
+  přes body čtyř krychlí kolem ní, otočený ven.
+
+Vyjde uzavřená síť čtyřúhelníků s hladkými normálami (z ploch kolem bodu).
+Je uzavřená i u podlahy a stěn nádrže: renderer potřebuje uzavřené těleso
+vody, aby jím lámal světlo. Ostré hrany a rohy se zaoblí asi o čtvrt buňky.
+
+- **`v`** je rychlost vody v místě bodu, z rychlosti, kterou snímek nese na
+  mřížce řešiče (formát cache 5): podle ní renderer rozmaže pohyb. Snímek
+  z cache starší než formát 5 ji nemá a síť je bez `v`.
+- **`foam`** je pěna z téže jemné mřížky, 0 až 1.
+- **Ripples:** vlnky, které dělá déšť, zvednou horní plochu (celou tam, kde
+  hledí nahoru, stěny vůbec) a nakloní její normály.
+  Vlnky užší než buňka jemné mřížky se ztratí.
+
+Síť drží tolik vody, kolik je v poli vzdáleností pod nulou (test: do 5 %),
+tedy trochu víc než samotná voda, protože koule kolem částic sahají kousek
+za ni. V `rain_pond` s rozlišením 64 má povrch asi 35 tisíc bodů; snímek
+i se sítí vody jde do USD za 0,06 s.
+
+**Convert Volume** dělá totéž s libovolným objemem geometrie, třeba s kouřem
+z Gas Volume (`density` nad 0,1). Oba uzly dávají stejné body na libovolném
+počtu vláken.
 
 ## 7. Jak to funguje
 

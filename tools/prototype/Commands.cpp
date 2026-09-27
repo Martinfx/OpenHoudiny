@@ -41,9 +41,11 @@
 // --export PATH writes the displayed geometry of every frame -- or that of
 // --export-node -- to .ply, .obj, .vdb or .usda files, $F4 in PATH the
 // frame (pg/io/Export.h); a .usda without $F is the whole shot as one USD
-// stage -- the geometry, the pieces, the grit, the gas (VDB files beside
-// it), the camera and the light (pg/sim/UsdExport.h). '-' for OUT.png draws
-// nothing: the cache and the export alone, which need no OpenGL.
+// stage -- the geometry, the pieces, the grit, the water's surface, the
+// rain, the gas (VDB files beside it), the camera and the light; what
+// changes every frame in a layer a frame beside it (pg/sim/UsdExport.h).
+// '-' for OUT.png draws nothing: the cache and the export alone, which need
+// no OpenGL.
 //
 // `cook` cooks a network's geometry and nothing else -- no simulation, no
 // OpenGL: the displayed node, or --node, at frame 1, --frame N, or frames 1
@@ -728,7 +730,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     std::unique_ptr<sim::UsdExport> usd;
     if (sim::isUsdPath(o.exportPattern) && o.exportPattern.find("$F") == std::string::npos) {
         const sim::Node* n = exported ? net.node(exported) : nullptr;
-        usd = std::make_unique<sim::UsdExport>(o.exportPattern, n ? n->name : std::string("geometry"));
+        usd = std::make_unique<sim::UsdExport>(o.exportPattern, n ? n->name : std::string("geometry"),
+                                               1.0f / c.world.sanitized().timeStep);
     }
     if (!o.exportPattern.empty() && !exported && !usd) {
         std::fprintf(stderr, "%s: --export writes the displayed geometry, and no node is displayed: give one the "
@@ -996,7 +999,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         return 1;
     }
 #endif
-    if (usd && !usd->finish(1.0f / world.timeStep, error)) {
+    if (usd && !usd->finish(error)) {
         std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
@@ -1063,9 +1066,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());
     if (exports > 0) std::printf("exported %d frames of geometry, the last %s\n", exports, lastExport.c_str());
     if (usd) {
+        std::string beside;
+        if (usd->frameFiles() > 0) {
+            beside += ", what changes every frame in " + std::to_string(usd->frameFiles()) + " layers beside it";
+        }
+        if (usd->gasFiles() > 0) beside += ", the gas in " + std::to_string(usd->gasFiles()) + " VDB files";
         std::printf("exported %d frames as USD to %s: %d bodies%s\n", usd->frames(), usd->path().c_str(), usd->bodies(),
-                    usd->gasFiles() > 0 ? (", the gas in " + std::to_string(usd->gasFiles()) + " VDB files beside it").c_str()
-                                        : "");
+                    beside.c_str());
     }
     return 0;
 }
@@ -1197,8 +1204,9 @@ void printUsage(std::FILE* out) {
                  "                   --from-cache reads them from there instead of simulating; --export writes\n"
                  "                   the displayed geometry of every frame, PATH with $F4 for the frame:\n"
                  "                   .ply points, .obj polygons, .vdb volumes, .usda; a .usda without $F: the\n"
-                 "                   whole shot as one USD stage -- geometry, pieces, grit, gas (VDB beside it),\n"
-                 "                   camera, light.\n"
+                 "                   whole shot as one USD stage -- geometry, pieces, grit, water, rain, gas (VDB\n"
+                 "                   beside it), camera, light; what changes every frame in a layer a frame\n"
+                 "                   beside it (NAME_frames/).\n"
                  "                   '-' for OUT.png: no pictures.\n"
                  "                   --start N: pictures and export from frame N on (a farm's share of a shot);\n"
                  "                   --end N is --frames N. A simulation still starts at frame 1; a cache is\n"

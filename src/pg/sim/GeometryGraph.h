@@ -106,7 +106,7 @@ private:
     std::string folder_;
 };
 
-/// Registers liquid_points, rain_points, gas_volume and rbd_pieces with the
+/// Registers liquid_points, liquid_surface, rain_points, gas_volume and rbd_pieces with the
 /// core's NodeRegistry: the nodes that bring a simulation back as geometry.
 /// Idempotent.
 void registerSimGeometryNodes();

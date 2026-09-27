@@ -600,6 +600,18 @@ std::vector<NodeType> buildTypes() {
                "Another number: the points elsewhere."},
               text("attribute", "Piece Attribute", "Fracture", "piece", "What each piece's number is called."),
               text("insidegroup", "Inside Group", "Fracture", "inside", "The faces made where it was cut.")});
+    geometry("convert_volume", "Convert Volume", "convertvolume",
+             "The surface of a volume as polygons: where its values cross Iso, a closed mesh of quads turned "
+             "outward, with normals N -- closed where the volume ends. Smoke from a Gas Volume, a distance "
+             "field, anything that is a volume.",
+             in,
+             {text("volume", "Volume", "Convert", "", "Which volume, by name; empty: the first."),
+              {"iso", "Iso", "Convert", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
+               "The value where the surface is."},
+              {"inside", "Inside", "Convert", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "What is inside: values above Iso -- a density, smoke -- or below it -- a distance, below 0 "
+               "inside.",
+               {"above", "below"}, {"Above Iso", "Below Iso"}}});
     // Loops.
     geometry("foreach_begin", "For-Each Begin", "foreachbegin",
              "Where a loop begins: the nodes after it, up to a For-Each End, run once for each piece of what "
@@ -630,6 +642,13 @@ std::vector<NodeType> buildTypes() {
              "The particles of a Liquid Solver at the frame: points with their velocity v, foam and id -- the "
              "same number from frame to frame -- to colour, to copy drops onto, to export.",
              {{"liquid", "Liquid", PinType::Liquid}}, {});
+    geometry("liquid_surface", "Liquid Surface", "liquid_surface",
+             "The water of a Liquid Solver at the frame as a surface: a closed mesh round it, turned outward, "
+             "with normals N, its velocity v -- what a renderer blurs it by -- and foam. What a renderer renders "
+             "the water from; closed against the floor and the walls too, to bend light through it.",
+             {{"liquid", "Liquid", PinType::Liquid}},
+             {{"ripples", "Ripples", "Water", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The rain's ripples on it: its top raised and tilted as they are."}});
     geometry("rain_points", "Rain Points", "rain_points",
              "The drops of a Rain at the frame: points with their velocity v and id -- the same number from "
              "frame to frame.",
@@ -2841,8 +2860,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             const Node* n = node(stack.back());
             stack.pop_back();
             if (!n) continue;
-            if (n->type == "liquid_points" || n->type == "rain_points" || n->type == "gas_volume" ||
-                n->type == "rbd_pieces") {
+            if (n->type == "liquid_points" || n->type == "liquid_surface" || n->type == "rain_points" ||
+                n->type == "gas_volume" || n->type == "rbd_pieces") {
                 return true;
             }
             for (const Link& l : links_) {
@@ -3396,6 +3415,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         const char* solver;
     };
     const Back backs[] = {{"liquid_points", "liquid", c.liquidSolver, "Liquid Solver"},
+                          {"liquid_surface", "liquid", c.liquidSolver, "Liquid Solver"},
                           {"rain_points", "rain", c.rain, "Rain"},
                           {"gas_volume", "gas", c.solver, "Pyro Solver"},
                           {"rbd_pieces", "rigid", c.rigid, "RBD Solver"}};

@@ -192,7 +192,7 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            a.rigid.broken == b.rigid.broken && a.rigid.poses == b.rigid.poses && a.rigid.debris == b.rigid.debris &&
            a.rigid.vanished == b.rigid.vanished && w.ids == x.ids && r.dropIds == s.dropIds &&
            r.dropletIds == s.dropletIds && a.rigid.debrisIds == b.rigid.debrisIds &&
-           a.rigid.debrisVelocity == b.rigid.debrisVelocity;
+           a.rigid.debrisVelocity == b.rigid.debrisVelocity && w.flow == x.flow;
 }
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
@@ -225,6 +225,9 @@ sim::Frame madeUpFrame() {
     f.water.velocities = {0, 0x3c00, 0xbc00, 1, 2, 3, 0, 0, 0};
     f.water.whiteness = {0, 128, 255};
     f.water.ids = {7, 3, 4000000000u};
+    // The flow on the solver's grid, 4 x 4 x 4: still water, and a stream.
+    f.water.flow.assign(3 * 64, 0);
+    for (size_t k = 90; k < 150; ++k) f.water.flow[k] = static_cast<uint16_t>(0x3800 + k);
     f.rain.drops = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     f.rain.droplets = {0.5f, 1, 1.5f, 2, 2.5f, 3};
     f.rain.dropIds = {12, 13};
@@ -520,8 +523,9 @@ TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
     f.rain.dropletIds.clear();
     f.rigid.debrisIds.clear();
     f.rigid.debrisVelocity.clear();
+    f.water.flow.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 5 * 8);  // the five counts, all 0
+    bytes.resize(bytes.size() - 6 * 8);  // the five counts and version 5's, all 0
     bytes[8] = 3;
     sim::Frame back;
     std::string error;
@@ -534,6 +538,25 @@ TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
     CHECK(error.find("do not fit") != std::string::npos);
 }
 
+TEST(frames_of_version_4_still_read_without_the_waters_flow) {
+    // As version 4 wrote it: without the flow at the end.
+    sim::Frame f = madeUpFrame();
+    f.water.flow.clear();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - 8);  // its count, 0
+    bytes[8] = 4;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.water.flow.empty());
+    CHECK(back.water.flowAt(Vec3(0.1f, 0.2f, 0.0f)) == Vec3());
+    // A flow not of the solver's grid is refused.
+    sim::Frame wrong = madeUpFrame();
+    wrong.water.flow.resize(3 * 63);
+    CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
+}
+
 TEST(frames_that_are_not_what_they_say_are_refused) {
     const std::string bytes = sim::formatFrame(madeUpFrame());
     sim::Frame f;
@@ -544,7 +567,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 5;
+    newer[8] = 6;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

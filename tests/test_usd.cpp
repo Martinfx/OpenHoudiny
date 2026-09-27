@@ -15,6 +15,7 @@
 #include "pg/sim/Rigid.h"
 #include "pg/sim/Shape.h"
 #include "pg/sim/UsdExport.h"
+#include "pg/sim/WaterMesh.h"
 #include "pg/sim/World.h"
 
 #include "test_framework.h"
@@ -254,7 +255,8 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
     scene.solver.glue = 0.0f;  // loose: they fall and tumble
     sim::RigidSolver solver(scene);
     CHECK(solver.error().empty());
-    sim::UsdExport usd("unused.usda");
+    TempFolder dir("usd_bodies");
+    sim::UsdExport usd(dir / "shot.usda");
     std::string error;
     sim::Frame last;
     for (int f = 1; f <= 20; ++f) {
@@ -268,7 +270,7 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
     const std::shared_ptr<const sim::RigidLayout> layout = sim::rigidLayout(*scene.pieces, "piece");
     CHECK_EQ(usd.bodies(), layout->bodies);
     CHECK_EQ(usd.frames(), 20);
-    const usda::Stage s = usd.stage(30.0f);
+    const usda::Stage s = usd.stage();
     const GeometryPtr posed = sim::posedPieces(last.rigid);
     const auto Q = posed->positions();
     for (int b = 0; b < layout->bodies; ++b) {
@@ -307,8 +309,9 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
 }
 
 TEST(usd_export_the_grit_carries_its_numbers_and_velocities) {
-    // A block blown to dust throws grit: in the stage, each frame's bits
-    // with the numbers and velocities the frame has for them.
+    // A block blown to dust throws grit: each frame's bits -- with the
+    // numbers and velocities the frame has for them -- in the frame's layer,
+    // written as it comes; the stage takes them from there.
     CHECK(sim::rigidAvailable());
     Geometry block = *fracturedBox(Vec3(0.0f, 1.0f, 0.0f), Vec3(1.0f, 1.0f, 1.0f), 1);
     {
@@ -320,31 +323,55 @@ TEST(usd_export_the_grit_carries_its_numbers_and_velocities) {
     sim::RigidScene scene;
     scene.pieces = std::make_shared<Geometry>(block);
     sim::RigidSolver solver(scene);
-    sim::UsdExport usd("unused.usda");
+    TempFolder dir("usd_grit");
+    sim::UsdExport usd(dir / "shot.usda");
     std::string error;
     sim::Frame last;
+    int firstGrit = 0;
     for (int f = 1; f <= 12; ++f) {
         solver.step();
         sim::Frame frame;
         frame.number = f;
         frame.rigid = solver.capture();
         CHECK(usd.add(frame, nullptr, nullptr, sim::Look(), error));
+        if (!frame.rigid.debris.empty()) {
+            if (firstGrit == 0) firstGrit = f;
+            CHECK(fs::exists(dir.path / "shot_frames" / ("shot.00" + std::string(f < 10 ? "0" : "") + std::to_string(f) + ".usda")));
+        }
         last = frame;
     }
     const size_t bits = last.rigid.debris.size() / 4;
     CHECK(bits > 10);
-    const usda::Stage s = usd.stage(30.0f);
+    CHECK(firstGrit > 0);
+    CHECK(usd.finish(error));
+    CHECK(fs::exists(dir.path / "shot_frames" / "shot.manifest.usda"));
+    const usda::Stage s = usd.stage();
     const usda::Prim* grit = find(s, {"World", "grit"});
     CHECK(grit != nullptr);
     if (!grit) return;
+    // The stage names the layers, from the first frame with grit; before it,
+    // the grit is not there.
+    std::string clips;
+    for (const std::string& m : grit->metadata) {
+        if (m.rfind("clips", 0) == 0) clips = m;
+    }
+    CHECK(clips.find("@./shot_frames/shot.0012.usda@") != std::string::npos);
+    CHECK(clips.find("string primPath = \"/World/grit\"") != std::string::npos);
+    CHECK(clips.find("asset manifestAssetPath = @./shot_frames/shot.manifest.usda@") != std::string::npos);
     const usda::Attribute* ids = attribute(*grit, "ids");
-    const usda::Attribute* velocities = attribute(*grit, "velocities");
-    CHECK(ids && velocities);
-    if (!ids || !velocities) return;
-    CHECK_EQ(ids->type, std::string("int64[]"));
+    CHECK(ids && ids->type == "int64[]" && ids->value.empty());  // declared; the values are the layers'
+    if (firstGrit > 1) CHECK(attribute(*grit, "visibility") != nullptr);
+    // The layer of the last frame: its bits' numbers and velocities.
+    const std::string layer = fileText(dir / "shot_frames/shot.0012.usda");
+    CHECK(layer.find("over \"World\"") != std::string::npos);
     std::vector<int32_t> expected(last.rigid.debrisIds.begin(), last.rigid.debrisIds.end());
-    CHECK_EQ(valueAt(*ids, 12), usda::integers(expected));
-    const std::vector<Vec3> v = parseTuples(valueAt(*velocities, 12));
+    const size_t idsAt = layer.find("int64[] ids.timeSamples = {");
+    CHECK(idsAt != std::string::npos && layer.find("12: " + usda::integers(expected) + ",\n", idsAt) != std::string::npos);
+    const size_t at = layer.find("vector3f[] velocities.timeSamples");
+    CHECK(at != std::string::npos);
+    if (at == std::string::npos) return;
+    const size_t open = layer.find("12: ", at);
+    const std::vector<Vec3> v = parseTuples(layer.substr(open, layer.find('\n', open) - open));
     CHECK_EQ(v.size(), bits);
     for (size_t i = 0; i < v.size() && i < bits; ++i) {
         const float* w = last.rigid.debrisVelocity.data() + 3 * i;
@@ -367,8 +394,9 @@ TEST(usd_export_writes_the_gas_beside_the_stage_a_file_a_frame) {
         const sim::Frame f = solver.capture();
         CHECK(usd.add(f, nullptr, c.hasCamera ? &c.camera : nullptr, c.look, error));
     }
-    CHECK(usd.finish(30.0f, error));
+    CHECK(usd.finish(error));
     CHECK_EQ(usd.gasFiles(), 3);
+    CHECK_EQ(usd.frameFiles(), 0);  // smoke alone: nothing of it in layers
     for (const char* file : {"shot_gas.0001.vdb", "shot_gas.0002.vdb", "shot_gas.0003.vdb"}) {
         CHECK(fs::exists(dir.path / "shot_gas" / file));
     }
@@ -394,14 +422,14 @@ TEST(usd_export_lens_in_tenths_of_a_unit_and_the_sun_where_the_look_has_it) {
     look.lightAzimuth = 270.0f;
     look.lightElevation = 14.0f;
     look.exposure = 2.0f;
-    sim::UsdExport usd("unused.usda");
+    sim::UsdExport usd("unused.usda", "geometry", 24.0f);
     std::string error;
     for (int f = 1; f <= 3; ++f) {
         sim::Frame frame;
         frame.number = f;
         CHECK(usd.add(frame, nullptr, &camera, look, error));
     }
-    const usda::Stage s = usd.stage(24.0f);
+    const usda::Stage s = usd.stage();
     const usda::Prim* cam = find(s, {"World", "camera"});
     CHECK(cam != nullptr);
     if (cam) {
@@ -431,27 +459,114 @@ TEST(usd_export_lens_in_tenths_of_a_unit_and_the_sun_where_the_look_has_it) {
 }
 
 TEST(usd_export_writes_what_does_not_change_once) {
-    // The same geometry every frame: written once. Geometry that moves: a
-    // sample a frame -- of where its points are, not of its faces.
+    // The same geometry every frame: written once, in the stage. Geometry
+    // that moves: in the layers of the frames it moves at -- the first one
+    // too, once it is clear it moves -- and the stage takes it from there.
+    TempFolder dir("usd_once");
     auto still = std::make_shared<Geometry>(sampler());
-    sim::UsdExport same("unused.usda", "thing");
-    sim::UsdExport moving("unused.usda", "ground");  // a name another prim has: it gives way
+    sim::UsdExport same(dir / "same.usda", "thing");
+    sim::UsdExport moving(dir / "moving.usda", "ground");  // a name another prim has: it gives way
     std::string error;
-    for (int f = 1; f <= 3; ++f) {
+    for (int f = 1; f <= 4; ++f) {
         sim::Frame frame;
         frame.number = f;
         CHECK(same.add(frame, still, nullptr, sim::Look(), error));
+        // Still for two frames, then rising.
         auto moved = std::make_shared<Geometry>(sampler());
-        for (Vec3& p : moved->positionsForWrite()) p.y += 0.1f * static_cast<float>(f);
+        for (Vec3& p : moved->positionsForWrite()) p.y += 0.1f * static_cast<float>(std::max(f, 2));
         CHECK(moving.add(frame, moved, nullptr, sim::Look(), error));
+        // The first frame is held back till the geometry is seen to move.
+        CHECK_EQ(fs::exists(dir.path / "moving_frames" / "moving.0001.usda"), f >= 3);
     }
-    const usda::Stage a = same.stage(30.0f), b = moving.stage(30.0f);
+    CHECK(same.finish(error) && moving.finish(error));
+    CHECK_EQ(same.frameFiles(), 0);
+    CHECK(!fs::exists(dir.path / "same_frames"));
+    const usda::Stage a = same.stage(), b = moving.stage();
     const usda::Prim* stillMesh = find(a, {"World", "thing", "mesh"});
+    const usda::Prim* movingGeo = find(b, {"World", "ground_geometry"});
     const usda::Prim* movingMesh = find(b, {"World", "ground_geometry", "mesh"});
-    CHECK(stillMesh && movingMesh);
-    if (!stillMesh || !movingMesh) return;
+    CHECK(stillMesh && movingGeo && movingMesh);
+    if (!stillMesh || !movingGeo || !movingMesh) return;
     CHECK(attribute(*stillMesh, "points")->samples.empty());
-    CHECK_EQ(attribute(*movingMesh, "points")->samples.size(), size_t(3));
-    CHECK(attribute(*movingMesh, "faceVertexCounts")->samples.empty());
-    CHECK(std::fabs(parseTuples(valueAt(*attribute(*movingMesh, "points"), 3))[0].y - 0.3f) < 1e-6f);
+    CHECK(!attribute(*stillMesh, "points")->value.empty());
+    // Frames 1 (as it first showed), 3 and 4 (as it moved): 2 was as 1.
+    CHECK_EQ(moving.frameFiles(), 3);
+    CHECK(!fs::exists(dir.path / "moving_frames" / "moving.0002.usda"));
+    std::string clips;
+    for (const std::string& m : movingGeo->metadata) {
+        if (m.rfind("clips", 0) == 0) clips = m;
+    }
+    CHECK(clips.find("double2[] active = [(1, 0), (3, 1), (4, 2)]") != std::string::npos);
+    CHECK(clips.find("double2[] times = [(1, 1), (3, 3), (4, 4)]") != std::string::npos);
+    CHECK(attribute(*movingMesh, "points")->value.empty());  // declared; the values are the layers'
+    CHECK(attribute(*movingMesh, "subdivisionScheme") != nullptr);
+    const std::string three = fileText(dir / "moving_frames/moving.0003.usda");
+    const size_t at = three.find("point3f[] points.timeSamples");
+    CHECK(at != std::string::npos);
+    if (at != std::string::npos) CHECK(std::fabs(parseTuples(three.substr(three.find("3: ", at)))[0].y - 0.3f) < 1e-6f);
+    const std::string manifest = fileText(dir / "moving_frames/moving.manifest.usda");
+    CHECK(manifest.find("over \"ground_geometry\"") != std::string::npos);
+    CHECK(manifest.find("point3f[] points\n") != std::string::npos);
+}
+
+TEST(usd_export_water_and_rain_go_to_a_layer_a_frame) {
+    // Rain on a pond: the water's surface and the drops, each frame in its
+    // own layer -- written as the frame comes -- and the stage with their
+    // materials, taking the values from the layers.
+    TempFolder dir("usd_water");
+    sim::Network net;
+    CHECK(sim::Network::example("rain_pond", net));
+    sim::Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);
+    CHECK(c.ok);
+    c.world.water.solver.resolution = 16;
+    sim::WorldSolver solver(c.world);
+    sim::UsdExport usd(dir / "pond.usda", "geometry", 1.0f / c.world.timeStep);
+    std::string error;
+    sim::Frame last;
+    for (int f = 1; f <= 3; ++f) {
+        solver.step();
+        last = solver.capture();
+        CHECK(usd.add(last, nullptr, c.hasCamera ? &c.cameraAt(f) : nullptr, c.lookAt(f), error));
+        CHECK(fs::exists(dir.path / "pond_frames" / ("pond.000" + std::to_string(f) + ".usda")));
+    }
+    CHECK(usd.finish(error));
+    CHECK_EQ(usd.frameFiles(), 3);
+    const usda::Stage s = usd.stage();
+    const usda::Prim* water = find(s, {"World", "water"});
+    const usda::Prim* drops = find(s, {"World", "rain", "drops"});
+    const usda::Prim* droplets = find(s, {"World", "rain", "droplets"});
+    CHECK(water && drops && droplets);
+    CHECK(find(s, {"World", "Looks", "water"}) && find(s, {"World", "Looks", "rain"}));
+    if (!water || !drops || !droplets) return;
+    CHECK_EQ(water->type, std::string("Mesh"));
+    CHECK_EQ(drops->type, std::string("Points"));
+    for (const char* name : {"points", "normals", "velocities", "primvars:foam", "faceVertexCounts", "extent"}) {
+        const usda::Attribute* a = attribute(*water, name);
+        CHECK(a && a->value.empty());  // declared; the values are the layers'
+    }
+    CHECK_EQ(attribute(*water, "primvars:foam")->metadata, usda::interpolation("vertex"));
+    CHECK_EQ(attribute(*drops, "widths")->value, std::string("[0.002]"));
+    const std::string text = s.text();
+    CHECK(text.find("string primPath = \"/World/water\"") != std::string::npos);
+    CHECK(text.find("string primPath = \"/World/rain\"") != std::string::npos);
+    CHECK(text.find("rel material:binding = </World/Looks/water>") != std::string::npos);
+    // The last frame's layer: the surface as the frame gives it, the drops
+    // with their numbers.
+    const std::string layer = fileText(dir / "pond_frames/pond.0003.usda");
+    const std::shared_ptr<Geometry> surface = sim::waterMesh(last.water, &last.rain);
+    CHECK(surface->pointCount() > 100);
+    const size_t at = layer.find("point3f[] points.timeSamples");
+    CHECK(at != std::string::npos);
+    if (at != std::string::npos) {
+        const size_t open = layer.find("3: ", at);
+        CHECK_EQ(parseTuples(layer.substr(open, layer.find('\n', open) - open)).size(), surface->pointCount());
+    }
+    CHECK(last.rain.dropCount() > 0);
+    std::string ids = "[";
+    for (size_t i = 0; i < last.rain.dropIds.size(); ++i) ids += (i ? ", " : "") + std::to_string(last.rain.dropIds[i]);
+    CHECK(layer.find("3: " + ids + "],") != std::string::npos);
+    const std::string manifest = fileText(dir / "pond_frames/pond.manifest.usda");
+    CHECK(manifest.find("over \"water\"") != std::string::npos);
+    CHECK(manifest.find("over \"droplets\"") != std::string::npos);
+    CHECK(manifest.find("float[] primvars:foam\n") != std::string::npos);
 }

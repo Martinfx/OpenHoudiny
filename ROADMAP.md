@@ -71,10 +71,10 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Shader graf | Uzly z textu, čtyři cíle (GLSL, GLSL ES, Vulkan, HLSL), editor s náhledem | [docs/shader-graph.md](docs/shader-graph.md) |
 | Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; z uzlů, deterministicky na libovolném počtu vláken | [docs/pyro.md](docs/pyro.md) |
 | Destrukce | Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení, drť, prach hnaný vytlačeným vzduchem; odstřel věžáku jako video | [docs/destruction.md](docs/destruction.md) |
-| Geometrie v editoru | 28 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
+| Geometrie v editoru | 30 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture, Convert Volume, Liquid Surface), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
-| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť, prach, kamera, světla) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
+| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť, povrch vody, déšť, prach, kamera, světla; co se mění, v souboru pro každý snímek) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
 | Obraz | Kamera záběru, render do PNG, sekvence a videa | [docs/render.md](docs/render.md) |
 
 ### Co měření změnilo
@@ -169,17 +169,24 @@ Cycles) a složí compositing. Bez výměny dat s ostatními programy ho proto
 nepoužije nikdo, ať simuluje jakkoli dobře.
 
 - ✅ **USD — zápis** (`.usda`, bez knihovny; [docs/usd.md](docs/usd.md)):
-  celá scéna v jednom souboru —
+  celá scéna —
   zobrazená geometrie, kusy jako tělesa s pohybem (tvar jednou, pak jen
-  poloha a otočení), drť jako body, prach jako objemy (VDB vedle),
+  poloha a otočení), drť jako body, povrch vody jako uzavřená síť
+  s rychlostí a pěnou, déšť, prach jako objemy (VDB vedle),
   kamera s ohniskem podle konvence USD, slunce a obloha; časové vzorky jen
-  tam, kde se něco mění.
+  tam, kde se něco mění. Co je velké a v každém snímku jiné, jde do
+  souboru pro každý snímek (value clips), takže záběr libovolné délky se
+  nemusí vejít do paměti.
 - **USD — čtení**: geometrie a kamera z jiných programů (kamera
   z matchmove) jako uzel sítě.
 - ✅ **`v` a stabilní `id`** u všech částic (drť, voda, déšť): z nich
   renderery počítají rozmazání pohybem a instancování. Nesou je snímky
   (cache formát 4), uzly Liquid Points, Rain Points a RBD Pieces (`grit`)
-  a drť v USD. Zbývá voda a déšť v USD — po snímcích (value clips).
+  a drť, voda a déšť v USD.
+- ✅ **Povrch vody jako síť** (Liquid Surface, jako Particle Fluid Surface
+  v Houdini) a objem na polygony (Convert Volume): surface nets, uzavřená
+  síť s rychlostí z mřížky řešiče (cache formát 5) a pěnou
+  ([docs/geometry.md](docs/geometry.md#povrch-vody-liquid-surface-a-convert-volume)).
 - **Python API** (`import pg`): stavba sítě, parametry, vaření a simulace
   ze skriptu; atributy jako pole numpy bez kopie.
 - **Farma**: ✅ rozsah snímků (`--start`, `--end`) pro render i export

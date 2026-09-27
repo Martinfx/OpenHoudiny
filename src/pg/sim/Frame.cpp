@@ -58,6 +58,40 @@ float WaterFrame::foam(int i, int j, int k) const {
     return static_cast<float>(cells[2 * cell + 1]) / 255.0f;
 }
 
+Domain WaterFrame::flowDomain() const {
+    Domain d;
+    for (int a = 0; a < 3; ++a) d.cells[a] = domain.cells[a] / 2;
+    d.voxel = 2.0f * domain.voxel;
+    return d;
+}
+
+Vec3 WaterFrame::flowAt(const Vec3& p) const {
+    const Domain d = flowDomain();
+    if (flow.size() != 3 * d.cellCount() || flow.empty()) return {};
+    // In cells, from the first cell's centre.
+    const Vec3 g = (p - d.origin()) * (1.0f / d.voxel) - Vec3(0.5f, 0.5f, 0.5f);
+    int i0[3];
+    float t[3];
+    const float at[3] = {g.x, g.y, g.z};
+    for (int a = 0; a < 3; ++a) {
+        const float x = std::clamp(at[a], 0.0f, static_cast<float>(d.cells[a] - 1));
+        i0[a] = std::min(static_cast<int>(x), d.cells[a] - 2 < 0 ? 0 : d.cells[a] - 2);
+        t[a] = d.cells[a] > 1 ? x - static_cast<float>(i0[a]) : 0.0f;
+    }
+    Vec3 v;
+    for (int c = 0; c < 8; ++c) {
+        const int di = c & 1, dj = (c >> 1) & 1, dk = (c >> 2) & 1;
+        const int i = std::min(i0[0] + di, d.cells[0] - 1), j = std::min(i0[1] + dj, d.cells[1] - 1),
+                  k = std::min(i0[2] + dk, d.cells[2] - 1);
+        const float w = (di ? t[0] : 1.0f - t[0]) * (dj ? t[1] : 1.0f - t[1]) * (dk ? t[2] : 1.0f - t[2]);
+        if (w == 0.0f) continue;
+        const size_t cell = static_cast<size_t>(i) +
+                            static_cast<size_t>(d.cells[0]) * (static_cast<size_t>(j) + static_cast<size_t>(d.cells[1]) * static_cast<size_t>(k));
+        v = v + Vec3(fromHalf(flow[3 * cell]), fromHalf(flow[3 * cell + 1]), fromHalf(flow[3 * cell + 2])) * w;
+    }
+    return v;
+}
+
 WaterFrame capture(const LiquidSolver& sim, bool particles) {
     WaterFrame w;
     if (particles) {
@@ -93,6 +127,53 @@ WaterFrame capture(const LiquidSolver& sim, bool particles) {
             const float x = std::clamp(dist[c] * scale + 0.5f, 0.0f, 1.0f);
             out[2 * c] = static_cast<uint8_t>(std::lround(x * 255.0f));
             out[2 * c + 1] = static_cast<uint8_t>(std::lround(std::clamp(white[c], 0.0f, 1.0f) * 255.0f));
+        }
+    });
+
+    // The velocity at the centre of each cell of the solver's -- the mean of
+    // its faces' -- in the water and a cell round what is near its surface;
+    // 0 further out, where the air has only what gravity gave it.
+    const int nx = d.cells[0], ny = d.cells[1], nz = d.cells[2];
+    auto cellOf = [&](int i, int j, int k) {
+        return static_cast<size_t>(i) + static_cast<size_t>(nx) * (static_cast<size_t>(j) + static_cast<size_t>(ny) * static_cast<size_t>(k));
+    };
+    std::vector<uint8_t> near(d.cellCount(), 0);
+    pg::parallelFor(static_cast<size_t>(nz), 1, [&](size_t begin, size_t end) {
+        for (int k = static_cast<int>(begin); k < static_cast<int>(end); ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    bool in = false;
+                    for (int q = 0; q < 8 && !in; ++q) {
+                        in = distance.at(2 * i + (q & 1), 2 * j + ((q >> 1) & 1), 2 * k + ((q >> 2) & 1)) < w.band;
+                    }
+                    near[cellOf(i, j, k)] = in;
+                }
+            }
+        }
+    });
+    const Grid* v[3] = {&sim.velocity(0), &sim.velocity(1), &sim.velocity(2)};
+    w.flow.assign(3 * d.cellCount(), 0);
+    uint16_t* flow = w.flow.data();
+    pg::parallelFor(static_cast<size_t>(nz), 1, [&](size_t begin, size_t end) {
+        for (int k = static_cast<int>(begin); k < static_cast<int>(end); ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    bool kept = false;
+                    for (int dk = -1; dk <= 1 && !kept; ++dk) {
+                        for (int dj = -1; dj <= 1 && !kept; ++dj) {
+                            for (int di = -1; di <= 1 && !kept; ++di) {
+                                const int a = i + di, b = j + dj, c = k + dk;
+                                kept = a >= 0 && b >= 0 && c >= 0 && a < nx && b < ny && c < nz && near[cellOf(a, b, c)];
+                            }
+                        }
+                    }
+                    if (!kept) continue;
+                    const size_t c = cellOf(i, j, k);
+                    flow[3 * c] = toHalf(0.5f * (v[0]->at(i, j, k) + v[0]->at(i + 1, j, k)));
+                    flow[3 * c + 1] = toHalf(0.5f * (v[1]->at(i, j, k) + v[1]->at(i, j + 1, k)));
+                    flow[3 * c + 2] = toHalf(0.5f * (v[2]->at(i, j, k) + v[2]->at(i, j, k + 1)));
+                }
+            }
         }
     });
     return w;

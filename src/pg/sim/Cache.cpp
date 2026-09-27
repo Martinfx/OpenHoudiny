@@ -17,8 +17,8 @@ namespace {
 constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 2: the rigid bodies after the rain; 3: and their grit; 4: the particles'
 // numbers -- the water's, the drops', the droplets', the grit's -- and how
-// fast the grit goes.
-constexpr uint32_t kVersion = 4;
+// fast the grit goes; 5: how fast the water goes, on the solver's grid.
+constexpr uint32_t kVersion = 5;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -287,6 +287,7 @@ std::string formatFrame(const Frame& f) {
     out.words(r.dropletIds);
     out.words(b.debrisIds);
     out.floats(b.debrisVelocity);
+    out.halves(w.flow);  // version 5
     return std::move(out.bytes);
 }
 
@@ -355,6 +356,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         in.words(f.rigid.debrisIds);
         in.floats(f.rigid.debrisVelocity);
     }
+    if (version >= 5) in.halves(w.flow, 3 * w.flowDomain().cellCount());
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;

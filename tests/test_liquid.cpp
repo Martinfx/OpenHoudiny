@@ -338,7 +338,50 @@ TEST(liquid_frames_hold_the_surface) {
         CHECK(step > 0.5f * cell && step < 1.2f * cell);  // rising by about a cell a cell
     }
     CHECK(f.foam(mid, 4, mid) >= 0.0f && f.foam(mid, 4, mid) <= 1.0f);
-    CHECK(f.bytes() == f.cells.size());
+    CHECK(f.bytes() == f.cells.size() + f.flow.size() * sizeof(uint16_t));
+}
+
+TEST(liquid_frames_hold_how_fast_the_water_goes) {
+    // A dam breaks: the frame's flow is the solver's velocity at the cells'
+    // centres -- the mean of their faces' -- near the water, fast where it
+    // falls; nothing far above it.
+    LiquidScene s = tank(Vec3(1.0f, 2.0f, 1.0f), 32, block(Vec3(-0.25f, 0.25f, 0.0f), Vec3(0.5f, 0.5f, 1.0f)));
+    LiquidSolver sim(s);
+    for (int i = 0; i < 5; ++i) sim.step();
+    const WaterFrame f = capture(sim);
+    const Domain d = f.flowDomain();
+    CHECK(d == sim.domain());
+    CHECK_EQ(f.flow.size(), 3 * d.cellCount());
+    float fastest = 0.0f, worst = 0.0f;
+    for (int k = 0; k < d.cells[2]; ++k) {
+        for (int j = 0; j < d.cells[1]; ++j) {
+            for (int i = 0; i < d.cells[0]; ++i) {
+                const Vec3 centre = d.origin() + Vec3((static_cast<float>(i) + 0.5f) * d.voxel,
+                                                      (static_cast<float>(j) + 0.5f) * d.voxel,
+                                                      (static_cast<float>(k) + 0.5f) * d.voxel);
+                const Vec3 mean(0.5f * (sim.velocity(0).at(i, j, k) + sim.velocity(0).at(i + 1, j, k)),
+                                0.5f * (sim.velocity(1).at(i, j, k) + sim.velocity(1).at(i, j + 1, k)),
+                                0.5f * (sim.velocity(2).at(i, j, k) + sim.velocity(2).at(i, j, k + 1)));
+                const Vec3 v = f.flowAt(centre);
+                // Near the surface -- within the band the frame's distance
+                // has -- or in the water: the solver's.
+                bool near = false;
+                for (int q = 0; q < 8; ++q) {
+                    near = near || f.distance(2 * i + (q & 1), 2 * j + ((q >> 1) & 1), 2 * k + ((q >> 2) & 1)) < f.band;
+                }
+                if (near) worst = std::max(worst, length(v - mean) / std::max(1.0f, length(mean)));
+                fastest = std::max(fastest, length(v));
+                if (j == d.cells[1] - 1) CHECK(v == Vec3());  // far above the water: still
+            }
+        }
+    }
+    CHECK(worst < 2e-3f);  // as a half float holds it
+    CHECK(fastest > 0.5f);
+    // Between the centres it blends; beyond the grid, the nearest cell's.
+    const Vec3 a = f.flowAt(Vec3(-0.2f, 0.1f, 0.03f)), b = f.flowAt(Vec3(-0.2f, 0.1f, 0.09f));
+    const Vec3 between = f.flowAt(Vec3(-0.2f, 0.1f, 0.06f));
+    CHECK(length(between - (a + b) * 0.5f) < 0.5f * length(a - b) + 1e-3f);
+    CHECK(f.flowAt(Vec3(-5.0f, 0.03f, 0.03f)) == f.flowAt(Vec3(-0.49f, 0.03f, 0.03f)));
 }
 
 TEST(liquid_is_bitwise_identical_across_thread_counts) {

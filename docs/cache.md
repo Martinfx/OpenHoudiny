@@ -53,9 +53,11 @@ cache/fire/
   přesnosti (kouř, teplota, plamen v každé buňce), hladina vody po bajtech,
   částice vody (poloha, rychlost, bělost), kapky a vlnky deště, od verze 2
   polohy, otočení a rychlosti kusů tuhých těles, od verze 3 i drť a kusy,
-  které se rozprášily ([destruction.md](destruction.md)), a od verze 4
+  které se rozprášily ([destruction.md](destruction.md)), od verze 4
   číslo každé částice — vody, kapky, kapičky, zrnka drti —, stejné ze
-  snímku na snímek, a rychlost drti; klidová geometrie
+  snímku na snímek, a rychlost drti, a od verze 5 rychlost vody na mřížce
+  řešiče (ve vodě a asi dvě buňky kolem hladiny, dál nuly), ze které má
+  povrch vody `v` pro rozmazání pohybem ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)); klidová geometrie
   kusů je v síti a snímek načtený z disku ji dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
@@ -184,7 +186,7 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 
 ## 6. Testy
 
-`tests/test_export.cpp`, 12 testů:
+`tests/test_export.cpp`, 13 testů:
 
 - PLY tam a zpět se všemi druhy atributů — i celé číslo 2²⁴ + 1, které by
   float nezachoval —, barvami v bajtech a polygony; ASCII s CRLF, `alpha`,
@@ -198,8 +200,9 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 - snímky tam a zpět: vymyšlený snímek se všemi částmi a běhy nul všech
   délek, skutečné snímky táboráku, vody s částicemi a deště; odmítnutí
   useknutých, novějších a nesmyslných snímků, převrácený bajt nikdy nespadne;
-  snímek verze 3 se čte dál (bez čísel částic), čísla, která nejsou jedno
-  na částici, se odmítnou;
+  snímek verze 3 se čte dál (bez čísel částic) a verze 4 také (bez rychlosti
+  vody); čísla, která nejsou jedno na částici, a rychlost vody, která není
+  na mřížce řešiče, se odmítnou;
 - složka cache s `cache.txt` (fps 30, ne 29.999998) a hash sítě bez poloh
   uzlů.
 
@@ -207,7 +210,8 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 
 - VDB se jen zapisuje, a jen husté float mřížky. Rychlost plynu (`vel`)
   snímek nedrží, takže ve VDB není a renderer z ní motion blur neudělá.
-  Hladina vody jako level set také ne — voda jde ven jako částice.
+  Hladina vody jako level set také ne — voda jde ven jako částice nebo jako
+  povrch (Liquid Surface, v USD `/World/water`).
 - Uvnitř VDB není komprese (zip, blosc): soubory jsou větší, než by zapsal
   Houdini.
 - Cache drží, co editor ukazuje (poloviční přesnost), ne stav řešiče. Ze

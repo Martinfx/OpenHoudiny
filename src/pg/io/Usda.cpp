@@ -67,14 +67,20 @@ void writeAttribute(std::ostream& out, const Attribute& a, int depth) {
 
 void writePrim(std::ostream& out, const Prim& p, int depth) {
     indent(out, depth);
-    out << "def ";
+    out << (p.specifier.empty() ? "def" : p.specifier) << " ";
     if (!p.type.empty()) out << p.type << " ";
     out << quoted(p.name);
     if (!p.metadata.empty()) {
         out << " (\n";
         for (const std::string& m : p.metadata) {
-            indent(out, depth + 1);
-            out << m << "\n";
+            // Each line of it where it sits.
+            for (size_t at = 0; at <= m.size();) {
+                const size_t end = std::min(m.find('\n', at), m.size());
+                indent(out, depth + 1);
+                out.write(m.data() + at, static_cast<std::streamsize>(end - at));
+                out << "\n";
+                at = end + 1;
+            }
         }
         indent(out, depth);
         out << ")";
@@ -283,6 +289,71 @@ void animate(Prim& p, const std::string& type, const std::string& name,
 
 std::string interpolation(const char* how) { return std::string("interpolation = \"") + how + "\""; }
 
+std::string clips(const std::vector<std::pair<int, std::string>>& assets, const std::string& manifest,
+                  const std::string& primPath) {
+    std::string active, paths, times;
+    for (size_t i = 0; i < assets.size(); ++i) {
+        const std::string f = std::to_string(assets[i].first);
+        const char* comma = i > 0 ? ", " : "";
+        active += comma + ("(" + f + ", " + std::to_string(i) + ")");
+        paths += comma + asset(assets[i].second);
+        times += comma + ("(" + f + ", " + f + ")");
+    }
+    return "clips = {\n"
+           "    dictionary default = {\n"
+           "        double2[] active = [" + active + "]\n"
+           "        asset[] assetPaths = [" + paths + "]\n"
+           "        asset manifestAssetPath = " + asset(manifest) + "\n"
+           "        string primPath = " + quoted(primPath) + "\n"
+           "        double2[] times = [" + times + "]\n"
+           "    }\n"
+           "}";
+}
+
+std::vector<Field> pointPrimvars(const Geometry& geo, std::span<const uint32_t> source) {
+    std::vector<Field> out;
+    for (const std::string& name : geo.points().names()) {
+        if (name == "P" || name == "N" || name == "v" || name == "Cd" || name == "pscale" || name == "id" ||
+            name.rfind("__", 0) == 0) {
+            continue;
+        }
+        const AttributeArray* a = geo.points().find(name);
+        if (!a || a->size() != geo.pointCount()) continue;
+        Field f;
+        f.name = "primvars:" + identifier(name);
+        f.metadata = interpolation("vertex");
+        switch (a->type()) {
+            case AttrType::Float: {
+                std::vector<float> v;
+                v.reserve(source.size());
+                for (const uint32_t p : source) v.push_back(a->read<float>()[p]);
+                f.type = "float[]";
+                f.value = numbers(v);
+                break;
+            }
+            case AttrType::Int: {
+                std::vector<int32_t> v;
+                v.reserve(source.size());
+                for (const uint32_t p : source) v.push_back(a->read<int32_t>()[p]);
+                f.type = "int[]";
+                f.value = integers(v);
+                break;
+            }
+            case AttrType::Vec3: {
+                std::vector<Vec3> v;
+                v.reserve(source.size());
+                for (const uint32_t p : source) v.push_back(a->read<Vec3>()[p]);
+                f.type = "float3[]";
+                f.value = tuples(v);
+                break;
+            }
+            default: continue;
+        }
+        out.push_back(std::move(f));
+    }
+    return out;
+}
+
 
 MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Vec3& middle, const Group* inside,
                 std::vector<int32_t>& local) {
@@ -345,39 +416,90 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
         m.colors = tuples(corners);
         m.colorHow = interpolation("faceVarying");
     }
-    // The normals, where the points have them.
-    const AttributeArray* N = geo.points().find("N");
-    if (N && N->type() == AttrType::Vec3 && N->size() == geo.pointCount()) {
-        std::vector<Vec3> normals;
-        normals.reserve(source.size());
-        for (const uint32_t p : source) normals.push_back(N->read<Vec3>()[p]);
-        m.normals = tuples(normals);
-    }
+    // The normals and the velocities, where the points have them; the rest
+    // as primvars.
+    auto vectors = [&](const char* name) {
+        const AttributeArray* a = geo.points().find(name);
+        if (!a || a->type() != AttrType::Vec3 || a->size() != geo.pointCount()) return std::string();
+        std::vector<Vec3> v;
+        v.reserve(source.size());
+        for (const uint32_t p : source) v.push_back(a->read<Vec3>()[p]);
+        return tuples(v);
+    };
+    m.normals = vectors("N");
+    m.velocities = vectors("v");
+    m.primvars = pointPrimvars(geo, source);
     for (const uint32_t p : source) local[p] = -1;
     return m;
 }
 
-Prim meshPrim(const std::string& name, const std::vector<std::pair<int, MeshText>>& frames) {
-    Prim mesh("Mesh", name);
-    auto each = [&](auto field) {
-        std::vector<std::pair<int, std::string>> v;
-        v.reserve(frames.size());
-        for (const auto& [f, m] : frames) v.emplace_back(f, field(m));
-        return v;
-    };
-    animate(mesh, "float3[]", "extent", each([](const MeshText& m) { return m.extent; }));
-    animate(mesh, "int[]", "faceVertexCounts", each([](const MeshText& m) { return m.counts; }));
-    animate(mesh, "int[]", "faceVertexIndices", each([](const MeshText& m) { return m.indices; }));
-    if (!frames.empty() && !frames[0].second.normals.empty()) {
-        animate(mesh, "normal3f[]", "normals", each([](const MeshText& m) { return m.normals; }), interpolation("vertex"));
+namespace {
+
+/// The fields of frames of one prim, each animated: written once when alike.
+/// The metadata of each is the first frame's that has it.
+template <class Text>
+void animateFields(Prim& prim, const std::vector<std::pair<int, Text>>& frames) {
+    std::vector<std::string> order;
+    std::vector<std::pair<std::string, std::string>> kinds;  // type and metadata, by name as in order
+    std::vector<std::vector<std::pair<int, std::string>>> values;
+    for (const auto& [f, text] : frames) {
+        for (Field& field : fields(text)) {
+            size_t i = static_cast<size_t>(std::find(order.begin(), order.end(), field.name) - order.begin());
+            if (i == order.size()) {
+                order.push_back(field.name);
+                kinds.emplace_back(field.type, field.metadata);
+                values.emplace_back();
+            }
+            values[i].emplace_back(f, std::move(field.value));
+        }
     }
-    animate(mesh, "point3f[]", "points", each([](const MeshText& m) { return m.points; }));
+    std::vector<size_t> sorted(order.size());
+    for (size_t i = 0; i < sorted.size(); ++i) sorted[i] = i;
+    std::sort(sorted.begin(), sorted.end(), [&](size_t a, size_t b) { return order[a] < order[b]; });
+    for (const size_t i : sorted) animate(prim, kinds[i].first, order[i], values[i], kinds[i].second);
+}
+
+}  // namespace
+
+std::vector<Field> fields(const MeshText& m) {
+    std::vector<Field> out;
+    out.push_back({"float3[]", "extent", "", m.extent});
+    out.push_back({"int[]", "faceVertexCounts", "", m.counts});
+    out.push_back({"int[]", "faceVertexIndices", "", m.indices});
+    if (!m.normals.empty()) out.push_back({"normal3f[]", "normals", interpolation("vertex"), m.normals});
+    out.push_back({"point3f[]", "points", "", m.points});
     // The colour's interpolation is the first frame's: a colour of another
     // kind later is taken as the first frame's kind would read it.
-    if (!frames.empty()) {
-        animate(mesh, "color3f[]", "primvars:displayColor", each([](const MeshText& m) { return m.colors; }),
-                frames[0].second.colorHow);
-    }
+    out.push_back({"color3f[]", "primvars:displayColor", m.colorHow, m.colors});
+    for (const Field& f : m.primvars) out.push_back(f);
+    if (!m.velocities.empty()) out.push_back({"vector3f[]", "velocities", "", m.velocities});
+    std::sort(out.begin(), out.end(), [](const Field& a, const Field& b) { return a.name < b.name; });
+    return out;
+}
+
+std::vector<Field> fields(const CurvesText& c) {
+    return {{"int[]", "curveVertexCounts", "", c.counts},
+            {"float3[]", "extent", "", c.extent},
+            {"point3f[]", "points", "", c.points},
+            {"color3f[]", "primvars:displayColor", interpolation("vertex"), c.colors}};
+}
+
+std::vector<Field> fields(const PointsText& p) {
+    std::vector<Field> out;
+    out.push_back({"float3[]", "extent", "", p.extent});
+    if (!p.ids.empty()) out.push_back({"int64[]", "ids", "", p.ids});
+    out.push_back({"point3f[]", "points", "", p.points});
+    out.push_back({"color3f[]", "primvars:displayColor", interpolation("vertex"), p.colors});
+    for (const Field& f : p.primvars) out.push_back(f);
+    if (!p.velocities.empty()) out.push_back({"vector3f[]", "velocities", "", p.velocities});
+    out.push_back({"float[]", "widths", interpolation("vertex"), p.widths});
+    std::sort(out.begin(), out.end(), [](const Field& a, const Field& b) { return a.name < b.name; });
+    return out;
+}
+
+Prim meshPrim(const std::string& name, const std::vector<std::pair<int, MeshText>>& frames) {
+    Prim mesh("Mesh", name);
+    animateFields(mesh, frames);
     mesh.setUniform("token", "subdivisionScheme", quoted("none"));
     return mesh;
 }
@@ -456,6 +578,11 @@ PointsText pointsText(const Geometry& geo) {
     if (moving) t.velocities = tuples(velocities);
     if (named) t.ids = integers(ids);
     t.extent = box.extent(0.5f * widest);
+    std::vector<uint32_t> loose;
+    for (size_t p = 0; p < used.size(); ++p) {
+        if (!used[p]) loose.push_back(static_cast<uint32_t>(p));
+    }
+    t.primvars = pointPrimvars(geo, loose);
     return t;
 }
 
@@ -479,16 +606,7 @@ std::string Bounds::extent(float pad) const {
 
 Prim curvesPrim(const std::string& name, const std::vector<std::pair<int, CurvesText>>& frames) {
     Prim c("BasisCurves", name);
-    auto each = [&](auto field) {
-        std::vector<std::pair<int, std::string>> v;
-        for (const auto& [f, t] : frames) v.emplace_back(f, field(t));
-        return v;
-    };
-    animate(c, "int[]", "curveVertexCounts", each([](const CurvesText& t) { return t.counts; }));
-    animate(c, "float3[]", "extent", each([](const CurvesText& t) { return t.extent; }));
-    animate(c, "point3f[]", "points", each([](const CurvesText& t) { return t.points; }));
-    animate(c, "color3f[]", "primvars:displayColor", each([](const CurvesText& t) { return t.colors; }),
-            interpolation("vertex"));
+    animateFields(c, frames);
     c.setUniform("token", "type", quoted("linear"));
     c.set("float[]", "widths", "[0.01]").metadata = interpolation("constant");
     return c;
@@ -496,22 +614,7 @@ Prim curvesPrim(const std::string& name, const std::vector<std::pair<int, Curves
 
 Prim pointsPrim(const std::string& name, const std::vector<std::pair<int, PointsText>>& frames) {
     Prim p("Points", name);
-    auto each = [&](auto field) {
-        std::vector<std::pair<int, std::string>> v;
-        for (const auto& [f, t] : frames) v.emplace_back(f, field(t));
-        return v;
-    };
-    animate(p, "float3[]", "extent", each([](const PointsText& t) { return t.extent; }));
-    if (!frames.empty() && !frames[0].second.ids.empty()) {
-        animate(p, "int64[]", "ids", each([](const PointsText& t) { return t.ids; }));
-    }
-    animate(p, "point3f[]", "points", each([](const PointsText& t) { return t.points; }));
-    animate(p, "color3f[]", "primvars:displayColor", each([](const PointsText& t) { return t.colors; }),
-            interpolation("vertex"));
-    if (!frames.empty() && !frames[0].second.velocities.empty()) {
-        animate(p, "vector3f[]", "velocities", each([](const PointsText& t) { return t.velocities; }));
-    }
-    animate(p, "float[]", "widths", each([](const PointsText& t) { return t.widths; }), interpolation("vertex"));
+    animateFields(p, frames);
     return p;
 }
 

@@ -4,6 +4,7 @@
 #include "pg/sim/ForEach.h"
 
 #include "pg/sim/Network.h"
+#include "pg/sim/WaterMesh.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -53,6 +54,21 @@ public:
             for (size_t i = 0; i < n; ++i) id[i] = static_cast<int32_t>(w.ids[i]);
         }
         return geo;
+    }
+};
+
+/// The water's surface: a closed mesh round it with N, v and foam, the
+/// rain's ripples on it (WaterMesh.h).
+class LiquidSurfaceNode : public FrameNode {
+public:
+    explicit LiquidSurfaceNode(std::string name) : FrameNode("liquid_surface", std::move(name)) {
+        setInputCount(0);
+        params_.setBool("ripples", true);
+    }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
+        if (!frame_) return std::make_shared<Geometry>();
+        return waterMesh(frame_->water, params_.getBool("ripples", true) ? &frame_->rain : nullptr);
     }
 };
 
@@ -156,6 +172,7 @@ void registerSimGeometryNodes() {
     static const bool once = [] {
         auto& r = NodeRegistry::instance();
         r.add("liquid_points", [](const std::string& n) { return std::make_unique<LiquidPointsNode>(n); });
+        r.add("liquid_surface", [](const std::string& n) { return std::make_unique<LiquidSurfaceNode>(n); });
         r.add("rain_points", [](const std::string& n) { return std::make_unique<RainPointsNode>(n); });
         r.add("gas_volume", [](const std::string& n) { return std::make_unique<GasVolumeNode>(n); });
         r.add("rbd_pieces", [](const std::string& n) { return std::make_unique<RbdPiecesNode>(n); });

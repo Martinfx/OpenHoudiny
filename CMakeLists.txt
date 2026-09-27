@@ -46,6 +46,7 @@ add_library(pgcore
   src/pg/nodes/Surface.cpp
   src/pg/nodes/Topology.cpp
   src/pg/nodes/Fracture.cpp
+  src/pg/nodes/Volumes.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/Jpeg.cpp
@@ -209,6 +210,7 @@ add_library(pgsim
   src/pg/sim/Rigid.cpp
   src/pg/sim/Camera.cpp
   src/pg/sim/Frame.cpp
+  src/pg/sim/WaterMesh.cpp
   src/pg/sim/FreeSurface.cpp
   src/pg/sim/Cache.cpp
   src/pg/sim/Display.cpp
@@ -410,6 +412,7 @@ add_executable(pgtests
   tests/test_export.cpp
   tests/test_usd.cpp
   tests/test_exr.cpp
+  tests/test_volume_mesh.cpp
   tests/test_video.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)

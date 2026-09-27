@@ -442,9 +442,9 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Detekce cyklů při zapojování |
 | ✅ | Deterministický `parallelFor` / `parallelReduce`, thread pool |
 | ✅ | Wrangle jazyk: proměnné, řízení toku, funkce, pole, řetězce, matice a kvaterniony; běh nad body, primitivy, rohy i detailem; čtení libovolných prvků a vstupů, hledání sousedů (k-d strom), tvorba a mazání geometrie; parametry z `ch()`; výsledek nezávislý na počtu vláken |
-| ✅ | 26 typů uzlů (box, sphere, tube, scatter, copy to points, file, polyextrude, subdivide, clip…), obsahový hash, čtení i zápis OBJ, headless CLI |
+| ✅ | 28 typů uzlů (box, sphere, tube, scatter, copy to points, file, polyextrude, subdivide, clip, objem na polygony…), obsahový hash, čtení i zápis OBJ, headless CLI |
 | ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
-| ✅ | 230 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
+| ✅ | 270 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `prototype sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
@@ -456,6 +456,10 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Smyčky For-Each (kusy, primitivy, body, počet, zpětná vazba) a uzly topologie: PolyExtrude, Subdivide, Clip s uzavřením řezu (i nekonvexního), Fuse, Connectivity, Attribute Transfer |
 | ✅ | Animace: klíče na libovolném parametru (Smooth/Linear/Step), síť snímek po snímku, pohyblivé překážky s rychlostí i rotací v okrajových podmínkách plynu i vody, animované parametry geometrie jako výrazy jádra |
 | ✅ | Cache simulace na disku (editor i `prototype sim`), export geometrie snímek po snímku: PLY s atributy, **OpenVDB** (ověřeno čtením v OpenVDB 10: voxely i součty sedí s mřížkou simulace), OBJ |
+| ✅ | Destrukce: Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení na prach, drť, vytlačený vzduch žene prach ([docs/destruction.md](docs/destruction.md)) |
+| ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
+| ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
+| ✅ | Render do **EXR** bez knihovny: lineární světlo, hloubka, vektory pohybu, masky; čte ho OpenEXR 3.5 ([docs/render.md](docs/render.md)) |
 | ✅ | Video: AVI s Motion JPEG bez závislostí (vlastní kodér JPEG), MP4/MOV/MKV (H.264), WebM (VP9) a GIF přes ffmpeg; v editoru render na pozadí s průběhem, z příkazové řádky `sim OUT.mp4` a `render OUT.mp4`; ověřeno dekódováním v ffmpeg |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
@@ -473,9 +477,9 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 
 ### Není v prototypu (vědomě)
 
-I/O (USD, Alembic; VDB jen zápis hustých mřížek) · JIT · packed primitives a out-of-core ·
+I/O (čtení USD, Alembic; VDB jen zápis hustých mřížek) · JIT · packed primitives a out-of-core ·
 Python vazby · booleany, geometrické dotazy (xyzdist, primuv) · simulace
-těles a látek · řídké mřížky (VDB) a simulace na GPU
+látek · řídké mřížky (VDB) a simulace na GPU
 
 ---
 
