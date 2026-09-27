@@ -1,10 +1,12 @@
-# Kouř a oheň: simulace z uzlů (Pyro)
+# Kouř, oheň a voda: simulace z uzlů
 
 Skutečná simulace plynu na 3D mřížce, stejný princip jako Pyro v Houdini a
-EmberGen. Kouř a oheň se tu hýbou, protože to vyplývá z rovnic proudění:
-teplo stoupá, víry se stáčejí, palivo hoří, plyn se rozpíná a obtéká
-překážky. Simulace se skládá z **uzlů**: zdroje, síly a překážky vedou do
-řešiče, ten do vzhledu a vzhled na výstup. Shaderové efekty
+EmberGen, a vody z částic, jako FLIP v Houdini. Kouř a oheň se tu hýbou,
+protože to vyplývá z rovnic proudění: teplo stoupá, víry se stáčejí,
+palivo hoří, plyn se rozpíná a obtéká překážky. Voda padá, tříští se,
+vzdouvá se ve vlnách a drží svůj objem ([§5](#5-voda)). Simulace se skládá
+z **uzlů**: zdroje, síly a překážky vedou do řešičů, ty do vzhledů a vzhledy
+na výstup. Shaderové efekty
 z [shader-graph.md §6](shader-graph.md#6-efekty-oheň-a-kouř) pohyb jen
 předstírají šumem na jedné ploše.
 
@@ -21,13 +23,14 @@ Obsah:
 [2. Editor](#2-editor) ·
 [3. Síť simulace](#3-síť-simulace) ·
 [4. Jak simulace funguje](#4-jak-simulace-funguje) ·
-[5. Jak se kreslí](#5-jak-se-kreslí) ·
-[6. Výkon a determinismus](#6-výkon-a-determinismus) ·
-[7. Ověřování](#7-ověřování) ·
-[8. Jak přidat uzel](#8-jak-přidat-uzel) ·
-[9. Co je potřeba znát](#9-co-je-potřeba-znát) ·
-[10. Omezení a co dělá produkce](#10-omezení-a-co-dělá-produkce) ·
-[11. Odkazy](#11-odkazy)
+[5. Voda](#5-voda) ·
+[6. Jak se kreslí](#6-jak-se-kreslí) ·
+[7. Výkon a determinismus](#7-výkon-a-determinismus) ·
+[8. Ověřování](#8-ověřování) ·
+[9. Jak přidat uzel](#9-jak-přidat-uzel) ·
+[10. Co je potřeba znát](#10-co-je-potřeba-znát) ·
+[11. Omezení a co dělá produkce](#11-omezení-a-co-dělá-produkce) ·
+[12. Odkazy](#12-odkazy)
 
 ---
 
@@ -185,12 +188,14 @@ je jeden krok, ne sto.
 
 ```
 [Pyro Source] ──Source───┐
-[Turbulence] ───Force────┼──▶ [Pyro Solver] ──Gas──▶ [Volume Look] ──Look──▶ [Output]
-[Object] ───────Collider─┘
+[Turbulence] ───Force────┼──▶ [Pyro Solver] ──Gas──▶ [Volume Look] ──Look──┐
+[Object] ───────Collider─┘                                                 ├──▶ [Output]
+[Water Source] ─Water──────▶ [Liquid Solver] ─Liquid─▶ [Water Look] ──Look──┘
 ```
 
 Piny mají typ a barvu: **Source** oranžová, **Force** tyrkysová,
-**Collider** modrá, **Gas** fialová, **Look** zelená. Výstup jde jen do
+**Collider** modrá, **Gas** fialová, **Look** zelená, **Water** a
+**Liquid** modré (voda, [§5](#5-voda)). Výstup jde jen do
 vstupu stejného typu. Vstupy řešiče Sources, Forces a Colliders berou
 libovolný počet spojů (kreslí se jako obdélníček místo kolečka). Síly se
 použijí v pořadí, v jakém byly připojené. Simuluje se jen to, co vede na
@@ -204,7 +209,8 @@ Síť se překládá do popisu scény pro řešič
 ([`src/pg/sim/Network.h`](../src/pg/sim/Network.h)) a zároveň hlídá, co by
 nedělalo, co uživatel čeká:
 
-- chybí Output, vzhled nebo řešič (chyba, simulovat není co);
+- chybí Output, vzhled nebo řešič (chyba, simulovat není co); vzhled bez
+  řešiče (chyba, ostatní vrstvy běží dál);
 - řešič nemá zdroj; zdroj nic nepřidává; zdroj je mimo doménu nebo uvnitř
   překážky; překážka je mimo doménu (varování);
 - neznámý typ uzlu ze souboru z novější verze se zachová a nahlásí.
@@ -364,6 +370,9 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `tornado` | vír s nasáváním a zdvihem sbírá kouř z podlahy |
 | `obstacles` | kouř mezi objekty: narazí do šikmé desky, vyteče po ní a stoupá k prstenci; koule na podlaze je kulisa bez kolizí |
 | `arch` | modely z OBJ: vítr žene kouř kamenným obloukem a kolem kamene ([`examples/models`](../examples/models)) |
+| `dam_break` | voda: blok vody v rohu nádrže se protrhne, oteče sloup, vyšplhá po protější stěně a přelévá se |
+| `waterfall` | voda z pramene na římse padá na šikmou desku, stéká po ní a plní bazén |
+| `splash` | koule vody dopadne do bazénu: korunka tříště, pak se dutina zavře a vystřelí sloupec (Worthingtonův výtrysk) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.
@@ -536,7 +545,136 @@ to řeší stejně jako tahle simulace: **teplo** zvedá plyn a chladne pomalu,
 **plamen** je čerstvě hořící palivo a vydrží zlomek sekundy (`flame_life`).
 Oheň se kreslí z plamene a barvu dostane podle teploty.
 
-## 5. Jak se kreslí
+## 5. Voda
+
+![Protržená přehrada, vodopád na šikmé desce a kapka dopadající do bazénu, rozlišení 64](img/water.png)
+
+Voda má na rozdíl od kouře **hladinu**: kde končí, začíná vzduch, a na ní se
+všechno odehrává: vlny, stříkance, kapky. Proto se simuluje jinak, metodou
+**FLIP** (Zhu a Bridson, 2005), na které stojí FLIP solver v Houdini. Vodu
+nesou **částice**, osm v každé plné buňce, a každá si pamatuje svou rychlost.
+**Mřížka** (stejná mřížka MAC jako u plynu) slouží k tomu, aby voda držela
+objem.
+
+### Síť
+
+```
+[Water Source] ──Water────┐
+[Wind] ──────────Force────┼──▶ [Liquid Solver] ──Liquid──▶ [Water Look] ──Look──▶ [Output]
+[Object] ────────Collider─┘
+```
+
+Output bere vzhled kouře i vzhled vody zároveň. Obojí se simuluje jednou
+snímkovou frekvencí a kreslí do jednoho obrazu. Objekty a síly se dají
+připojit do obou řešičů najednou.
+
+| uzel | parametry |
+|---|---|
+| **Water Source** (Sources) | `shape`, `file`, `center`, `rotation`, `size` jako u objektu; `mode`: `fill` naplní tvar vodou jednou, když zdroj začne (blok vody, bazén), `flow` z něj vodu vylévá (hadice, fontána, pramen); `velocity` rychlost vytékající vody v osách zdroje; `seed`; `start`, `end` |
+| **Liquid Solver** (Simulation) | Domain: `size`, `resolution` (buněk podél nejdelší strany, 16 až 256), `closed_sides` (nádrž se stěnami; vypnuté: voda přetéká okraji a mizí); Motion: `gravity`, `flip` (Splash: 1 živá, stříkající voda, 0 hladká a hustá; běžně 0,9 až 0,98); Time: `substeps`, `seed` |
+| **Water Look** (Render) | `color` (barva hluboké vody), `clarity` (jak daleko je do vody vidět, v metrech), `foam` (jak bílá je pěna a tříšť) |
+
+Ve viewportu se voda přidá přes **Shift+A → Water**: *Block of Water*,
+*Fountain*, *Hose*. Když ještě chybí řešič vody, vznikne i s Water Look
+připojeným do Outputu a objekty scény se do něj připojí jako překážky. Zdroj
+vody se vybírá kliknutím a posouvá gizmem jako objekt.
+
+### Jak to funguje
+
+Jeden podkrok ([`src/pg/sim/Liquid.h`](../src/pg/sim/Liquid.h)):
+
+1. **emit** — zdroj `fill` naplní tvar: do každé osminy buňky uvnitř tvaru,
+   kde ještě částice není, přidá jednu, na místo dané hashem buňky a
+   podkroku. Zdroj `flow` to dělá v každém podkroku a vodě ve svém tvaru
+   nastaví svou rychlost, takže ji vytlačuje ven.
+2. **na mřížku** — rychlosti částic se zprůměrují na stěny buněk
+   (trilineární váhy). Z částic se spočítá i hladina: vzdálenost ke kouli
+   kolem váženého průměru okolních částic (Zhu a Bridson). Buňka, jejíž
+   střed je pod hladinou, je voda.
+3. **síly** — gravitace, pak síly sítě. Vítr fouká jen na hladinu a do
+   tříště.
+4. **tlak** — dělá vodu nestlačitelnou. Ve vzduchu je tlak nula, stěnou
+   tělesa nic neproteče.
+5. **na částice** — každá částice přičte, o kolik se rychlost mřížky v jejím
+   místě změnila (FLIP), smíchané s rychlostí mřížky samotnou (PIC)
+   v poměru `flip`. Čistý PIC by vodu rozmazal a zpomalil, čistý FLIP je
+   živý, ale šumí.
+6. **pohyb** — částice se posunou rychlostí mřížky (Runge-Kutta 2. řádu),
+   ven z těles a od stěn nádrže. Co odteče otevřenou stranou nebo vyletí
+   nad doménu, zmizí.
+
+Podkroků je tolik, aby se žádná částice nepohnula o víc než dvě buňky,
+nejméně `substeps`.
+
+**Tlak s volnou hladinou** ([`FreeSurface.h`](../src/pg/sim/FreeSurface.h)).
+Rovnice je stejná jako u plynu, jen se řeší na buňkách vody a tlak na
+hladině je nula. Dvě věci ji dělají přesnější než schody po buňkách:
+
+- **Ghost fluid** (Gibou a kol., 2002): hladina protíná spojnici středů
+  vodní a vzdušné buňky v podílu θ, který se pozná z pole vzdálenosti.
+  Nulový tlak leží tam, ne ve středu vzdušné buňky; stěna má v rovnici
+  váhu 1/θ. Klidná hladina proto nestojí na schodech.
+- **Otevřenost stěn** (Batty, Bertails a Bridson, 2007): těleso, které
+  buňky protíná šikmo, zakryje část stěny. Váha stěny je podíl, který
+  zůstal otevřený; spočítá se z pole vzdálenosti těles v rozích buněk.
+  Voda proto stéká po šikmé desce plynule, ne po schodech.
+
+Oblast vody je nepravidelná a mění se každý krok, takže samotný multigrid
+by konvergoval pomalu. Rovnice se proto řeší **metodou sdružených
+gradientů** předpodmíněnou jedním V-cyklem multigridu (McAdams, Sifakis a
+Teran, 2010). Na hrubších mřížkách je buňka vodou, má-li vodu aspoň jedno
+z jejích osmi dětí, a stěna je otevřená jako průměr čtyř, které zakrývá.
+V-cyklus není přesně symetrický, proto se používá flexibilní varianta
+metody (β podle Polaka a Ribièra). Relativní reziduum 10⁻⁴ padne za 10 až
+20 iterací a počítá se jen v řádcích mřížky, kde voda je.
+
+**Determinismus.** Částice se každý krok seřadí do buněk stabilním
+counting sortem. Přenos na mřížku jde po vrstvách dvou buněk tlustých,
+nejdřív sudé, pak liché. Částice zapisuje nejdál do sousední vrstvy, takže
+dvě vrstvy stejné barvy nikdy nepíší na totéž místo a každé místo dostává
+příspěvky ve stejném pořadí. Výsledek je bitově stejný na libovolném počtu
+vláken.
+
+**Pěna** je vlastnost částice. Bílá je tříšť (částice ve vzduchu, kolem
+které je málo dalších) a rychlá voda u hladiny. Za 0,8 s vybledne na
+třetinu.
+
+### Jak se voda kreslí
+
+Snímek nese hladinu jako pole vzdálenosti na mřížce **dvakrát jemnější**
+než řešič. Koule částic se zprůměrují (osamělé částice jsou o trochu větší,
+aby tříšť držela pohromadě), pole se vyhladí a **přepočítá na skutečnou
+vzdálenost** (fast sweeping, Zhao 2005). Na tom záleží: paprsek pak může po
+poli bezpečně skákat a tenký plát vody nepřeskočí. Vzdálenost a pěna
+zaberou po bajtu na buňku.
+
+Shader hledá hladinu **sphere tracingem** a v místě dopadu:
+
+- **odráží** oblohu, slunce (ostrý odlesk) a objekty, tím víc, čím
+  šikměji se na hladinu dívá (Fresnelův jev, Schlickova aproximace);
+- **láme** světlo (index lomu 1,33) a sleduje lomený paprsek k podlaze nebo
+  k objektu pod vodou. Co je vidět, slábne podle délky cesty vodou a bere
+  barvu vody (`color`, `clarity`): mělká voda je průzračná, hluboká má svou
+  barvu;
+- **pěnu** kreslí bílou a matnou;
+- **stín**: sluneční světlo, které prochází vodou k podlaze, trochu zeslábne.
+
+Kouř se kreslí před vodou; co je za hladinou, voda zakryje.
+
+### Výkon
+
+| příklad | buněk | částic | ms na snímek |
+|---|---|---|---|
+| `dam_break` | 64 × 40 × 32 | 104 tisíc | 110 |
+| `waterfall` | 64 × 40 × 32 | 80 až 130 tisíc | 100 až 125 |
+| `splash` | 64 × 56 × 64 | 280 tisíc | 240 |
+
+(4 jádra, Xeon 2,1 GHz; snímek má 1 až 4 podkroky.) Čtvrtinu podkroku
+zabere přenos na mřížku, polovinu tlak. Vlákna poolu po dávce práce ještě
+chvíli hlídají další, než usnou: probudit spící vlákno trvá déle než
+mnohá dávka. To zrychlilo i plyn.
+
+## 6. Jak se kreslí
 
 Renderer ([`src/pg/gl/Volume.h`](../src/pg/gl/Volume.h)) kreslí scénu ve
 světových souřadnicích: doménu, jak stojí na podlaze, podlahu s mřížkou,
@@ -584,7 +722,7 @@ Co je v obraze:
 Viewport editoru kreslí znovu, jen když se něco změní: snímek, vzhled,
 kamera, velikost, vodítka.
 
-## 6. Výkon a determinismus
+## 7. Výkon a determinismus
 
 Krok řešiče na 4 jádrech (Xeon 2,1 GHz), táborák, bez vykreslování:
 
@@ -609,7 +747,7 @@ buněk, každou buňku zapisuje právě jeden kus práce a mezi buňkami se nic
 nesčítá. Test to ověřuje se všemi prvky naráz: dva zdroje (jeden pohyblivý),
 všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 
-## 7. Ověřování
+## 8. Ověřování
 
 [`tests/test_pyro.cpp`](../tests/test_pyro.cpp) (21 testů):
 
@@ -628,7 +766,7 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
-[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (16 testů):
+[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (17 testů):
 tabulka typů uzlů je konzistentní (a každá výchozí hodnota se zapíše a
 přečte zpět stejně), jména a spoje, meze parametrů včetně čísel, která
 se čtou stejně s každou standardní knihovnou, soubory tam a zpět, co se ze
@@ -638,7 +776,19 @@ přesně v uloženém tvaru, soubory starších verzí se převedou, objekty jso
 ve scéně připojené i nepřipojené a nová barva nic nesimuluje znovu;
 `fps` a světlo ze souborů verze 1 se přestěhují do Outputu; svět
 (`WorldSolver`) krokuje všechny řešiče jednou frekvencí a druhý vzhled
-plynu se nahlásí.
+plynu se nahlásí; uzly vody se přeloží do světa i vzhledu, kouř a voda
+v jednom Outputu běží spolu a co chybí, se nahlásí.
+
+[`tests/test_liquid.cpp`](../tests/test_liquid.cpp) (10 testů): tlak
+s volnou hladinou konverguje do 30 iterací a reziduum sedí i přepočítané
+z operátoru; stojatá voda zůstane stát a tlak na dně je `g × hloubka`;
+protržená přehrada doteče ke stěně a neztratí jedinou částici; koule vody
+padá volným pádem (rychlost `g t` na procento); zdroj `fill` naplní tvar
+osmi částicemi na buňku jednou, `flow` teče jen ve svém čase a tam, kam
+míří; voda se nedostane do tělesa a steče z něj; otevřenými stranami
+odteče; snímek nese hladinu (uvnitř záporná vzdálenost, venku kladná,
+o buňku na buňku); bitově stejný výsledek na 1 a na 4 vláknech i s tělesem
+a turbulencí; nesmyslné vstupy se opraví.
 
 [`tests/test_shapes.cpp`](../tests/test_shapes.cpp) (5 testů): rotace na
 úhly a zpět (i přes 180° a v gimbal locku), uvnitř a vně, vzdálenosti, kde
@@ -665,7 +815,7 @@ kontextovou nabídku. Žádný data race ani chyba paměti v našem kódu;
 hlášení zbyla jen uvnitř X11, GLX a Mesy, které pro sanitizery nejsou
 instrumentované.
 
-## 8. Jak přidat uzel
+## 9. Jak přidat uzel
 
 Editor, soubory i příkazová řádka berou uzly z jedné tabulky
 ([`src/pg/sim/Network.cpp`](../src/pg/sim/Network.cpp), `buildTypes()`).
@@ -684,7 +834,7 @@ parametrů, v souborech i v `--set`.
    `gl::sceneGuides()` v [`Volume.cpp`](../src/pg/gl/Volume.cpp).
 5. **Test:** test tabulky ho zkontroluje sám; přidat test fyziky.
 
-## 9. Co je potřeba znát
+## 10. Co je potřeba znát
 
 - **Vektorový počet:** gradient, divergence, rotace (curl). Divergence říká,
   kolik z bodu vytéká, rotace jak moc se točí. Celá simulace se dá číst jako
@@ -709,7 +859,7 @@ parametrů, v souborech i v `--set`.
   nastavuje: Pyro Solver, pole `flame`, `temperature`, `density`, `fuel`,
   POP Axis Force (předloha uzlu Vortex).
 
-## 10. Omezení a co dělá produkce
+## 11. Omezení a co dělá produkce
 
 Tahle simulace je prototyp, který ukazuje, jak Pyro funguje, a měří, kolik
 to stojí. Oproti produkci:
@@ -730,11 +880,18 @@ to stojí. Oproti produkci:
 5. **Jednoduchý rozptyl.** Produkční renderery (Karma, Arnold) počítají
    mnohonásobný rozptyl, díky kterému je hustý kouř uvnitř světlejší.
 6. **Cache je v paměti.** Chybí zápis snímků na disk a export do `.vdb`.
-7. **Simulace není uzel geometrické sítě.** Další krok je uzel
+7. **Voda je hrubá.** Rozlišení 64 dává kapky a pláty centimetry tlusté
+   a řídká tříšť se z částic skládá do hrbolatých tvarů. Produkce počítá
+   mřížky řídce (OpenVDB), s desítkami milionů částic, povrch staví
+   z anizotropních jader (Yu a Turk, 2013) a tříšť, pěnu a bubliny
+   simuluje zvlášť (whitewater). Chybí viskozita a povrchové napětí.
+8. **Kouř a voda o sobě nevědí.** Každý řešič má svou doménu; oheň vodou
+   neuhasne a voda se kouřem nepohne.
+9. **Simulace není uzel geometrické sítě.** Další krok je uzel
    `pyrosolver`: cook engine jádra už zná časovou závislost a cache
    snímků ([ARCHITECTURE.md §4.3](../ARCHITECTURE.md#43-čas-jako-dimenze-závislosti)).
 
-## 11. Odkazy
+## 12. Odkazy
 
 - J. Stam: *Stable Fluids*, SIGGRAPH 1999.
 - R. Fedkiw, J. Stam, H. W. Jensen: *Visual Simulation of Smoke*, SIGGRAPH 2001.
@@ -747,4 +904,14 @@ to stojí. Oproti produkci:
   kap. 11 a 14.
 - J. Jimenez: *Next Generation Post Processing in Call of Duty: Advanced
   Warfare*, SIGGRAPH 2014 (interleaved gradient noise).
-- SideFX: dokumentace Houdini, *Pyro* a *POP Axis Force*.
+- Y. Zhu, R. Bridson: *Animating Sand as a Fluid*, SIGGRAPH 2005 (FLIP a
+  hladina z částic).
+- C. Batty, F. Bertails, R. Bridson: *A Fast Variational Framework for
+  Accurate Solid-Fluid Coupling*, SIGGRAPH 2007.
+- F. Gibou, R. Fedkiw, L.-T. Cheng, M. Kang: *A Second-Order-Accurate
+  Symmetric Discretization of the Poisson Equation on Irregular Domains*,
+  J. Comput. Phys. 2002 (ghost fluid).
+- A. McAdams, E. Sifakis, J. Teran: *A Parallel Multigrid Poisson Solver
+  for Fluids Simulation on Large Grids*, SCA 2010.
+- H. Zhao: *A Fast Sweeping Method for Eikonal Equations*, Math. Comp. 2005.
+- SideFX: dokumentace Houdini, *Pyro*, *FLIP Solver* a *POP Axis Force*.

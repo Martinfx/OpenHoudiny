@@ -390,10 +390,12 @@ TEST(sim_network_examples_all_run) {
         for (const Problem& p : c.problems) ::testing::fail(__FILE__, __LINE__, name + ": " + p.message);
         World world = c.world;
         world.gas.solver.resolution = 16;
+        world.water.solver.resolution = 16;
         WorldSolver sim(world);
         for (int f = 0; f < 3; ++f) sim.step();
         CHECK_EQ(sim.frame(), 3);
         if (sim.gas()) CHECK(std::isfinite(sim.gas()->density().sum()));
+        if (sim.water()) CHECK(sim.water()->particleCount() > 0 && std::isfinite(sim.water()->maxSpeed()));
     }
 }
 

@@ -375,6 +375,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | 50 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader sim` |
+| ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 
@@ -392,8 +393,8 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 
 I/O (USD, Alembic, VDB) · JIT · packed primitives a out-of-core · digital
 assets · serializace scény a migrace verzí · Python vazby · GUI pro geometrii ·
-booleany, subdivize, geometrické dotazy · simulace kromě plynu (kapaliny,
-tělesa, látky) · řídké mřížky (VDB) a simulace na GPU
+booleany, subdivize, geometrické dotazy · simulace těles a látek ·
+řídké mřížky (VDB) a simulace na GPU
 
 ---
 
