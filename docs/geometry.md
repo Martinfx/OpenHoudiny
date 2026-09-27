@@ -25,6 +25,7 @@ stejné, na kterém stojí `pgdemo`. Geometrie se:
 ./build/prototype --example liquid_points      # částice vody jako body, wrangle je barví
 ./build/prototype --example scatter_fire       # oheň z bodů rozházených po mřížce
 ./build/prototype --example rock_garden        # kameny z kopií koule, déšť na nich
+./build/prototype --example foreach_city       # městský blok: smyčka For-Each přes 25 věží
 ./build/prototype sim rock_garden rocks.png    # bez okna: poslední snímek do PNG
 ./build/prototype sim liquid_points out/p.png --every 5 --set look.surface=on
 ```
@@ -54,6 +55,13 @@ nastaveným na ni.
 | **Scatter** | Body rozházené po polygonech úměrně ploše, deterministicky podle seed; barvy a další atributy se interpolují z rohů, `N` ze stěny |
 | **Copy to Points** | Kopie geometrie na každý bod druhého vstupu: velikost `pscale` × Scale, natočená +y do `N` (Align), s atributy bodu (kromě P, N, pscale) |
 | **Null** | Nic nemění: jméno, na které se dá ukázat, konec řetězce |
+| **Connectivity** | Očísluje souvislé kusy (primitivy, které sdílejí body, jsou jeden kus): celočíselný atribut `class` na primitivech nebo bodech, kusy od 0 v pořadí prvních primitiv |
+| **Fuse** | Body blíž než Distance spojí v jeden (uprostřed nich), primitivy je následují; co se zhroutí (trojúhelník ze dvou bodů), zmizí |
+| **PolyExtrude** | Každou stěnu (nebo stěny skupiny) vytáhne podél normály, s bočními stěnami podél hran: dovnitř okno, ven římsa; Inset ji předtím zmenší o pevnou vzdálenost od hran; Output Back nechá i původní stěnu (uzavřené těleso); skupiny `extrudeFront` a `extrudeSide` |
+| **Subdivide** | Catmull-Clark: každá stěna na čtyřúhelníky, body posunuté do hladkého tvaru; volné hrany drží svou čáru a rohy mřížky zůstávají; atributy bodů jdou s nimi, rohů lineárně |
+| **Clip** | Nechá to, co je na jedné straně roviny: stěny rozřízne podél ní a s Cap uzavřené těleso zase uzavře stěnou v rovině (skupina `cut`); nekonvexní řez rozloží na trojúhelníky |
+| **Attribute Transfer** | Atributy bodů z druhého vstupu (Source) na body blízko nich: do Distance vážený průměr bodů, dál slábnoucí přes Blend Width; celá čísla a řetězce od nejbližšího |
+| **For-Each Begin / End** | Smyčka: uzly mezi nimi běží pro každý kus, primitivum nebo bod — nebo Count krát, nebo Feedback (každý běh na výsledku předchozího); viz níže |
 | **Liquid Points** | Částice vody z Liquid Solveru: `P`, rychlost `v`, pěna `foam` |
 | **Rain Points** | Kapky deště a kapičky odstřiků: `P`, `v`, `droplet` (1 u kapičky) |
 | **Gas Volume** | Plyn z Pyro Solveru jako tři objemy: `density` (kouř), `temperature`, `flame` |
@@ -76,6 +84,53 @@ Jazyk má proměnné, podmínky, cykly, vlastní funkce, pole a řetězce; čte
 libovolné prvky a další vstupy (`point(1, "P", @ptnum)`, `nearpoints()`),
 staví a maže geometrii (`addpoint()`, `removeprim()`) a `ch("jméno")` z něj
 udělá posuvník uzlu. Celý popis je v [wrangle.md](wrangle.md).
+
+### Smyčky For-Each
+
+![Městský blok z jedné krabice: 25 věží, každá s vlastní výškou, odstínem a terasou na střeše](img/foreach-city.png)
+
+Uzly mezi **For-Each Begin** a **For-Each End** běží jednou pro každý kus
+toho, co do Begin vstupuje. End výsledky spojí, jako Merge, v pořadí kusů:
+
+```
+[Grid] ─┐
+[Box] ──┴→ [Copy to Points] → [Connectivity] → [For-Each Begin] → [height] → [top] → [terrace] → [For-Each End]
+                                                     └──────── jednou pro každou krabici ────────┘
+```
+
+**Method** v Begin určuje, co každý běh dostane:
+
+| Method | Každý běh dostane |
+|---|---|
+| **Pieces** | primitivy (nebo body) jedné hodnoty atributu **Piece Attribute** — výchozí `class`, který dá Connectivity; kusy v pořadí hodnot |
+| **Primitives** | jedno primitivum |
+| **Points** | jeden bod |
+| **Count** | celý vstup, Count krát |
+| **Feedback** | Count krát, pokaždé výsledek předchozího běhu; End vydá poslední |
+
+Každý kus nese atributy detailu `iteration` (od 0), `numiterations`
+a `value` (hodnota atributu kusu, nebo číslo prvku). Wrangle v těle smyčky
+je čte funkcí `detail()`:
+
+```c
+int i = detail(0, "iteration");
+float h = 0.5 + 2.5 * pow(rand(i * 7.31 + 0.5), 3);   // každá věž jiná, pořád stejně
+@P.y *= h;
+```
+
+- **Begin samotný** vydá první kus. Uzly těla tak při editaci ukazují jeden
+  kus a smyčka běží jen v End, jako „single pass“ v Houdini.
+- End najde svůj Begin sám (nejbližší proti proudu), nebo podle jména
+  v parametru **Begin**. Když chybí, End napíše proč.
+- **Tělo** smyčky jsou všechny uzly proti proudu od End až po Begin. End si
+  je zkopíruje do vlastní sítě (místo Begin do ní vstupuje kus) a vaří je
+  ve vlastním grafu, kus po kusu. Změna uzlu v těle nebo vstupu smyčku
+  přepočítá, beze změny se nevaří nic.
+- Výsledek je stejný na 1 i 4 vláknech. Kusy běží po sobě; uvnitř každého
+  kusu pracují uzly paralelně jako jinde.
+- Smyčky jde vnořovat: tělo může obsahovat další dvojici Begin/End.
+- Výrazy v parametrech uzlů těla nevidí číslo běhu. Pro hodnoty, které se
+  liší kus od kusu, slouží wrangle a `detail()`.
 
 ## 3. Display flag a viewport
 
@@ -237,5 +292,10 @@ link 6.geometry -> 7.geometry
 - Zobrazená geometrie nevrhá stín, neodráží se ve vodě a nedá se kliknutím
   vybrat ve viewportu.
 - Objemy se kreslí jako tečky, ne jako kouř.
-- Vaří se na vlákně okna: velmi těžká geometrie (miliony bodů ve Scatter)
-  editor na chvíli zastaví.
+- Zobrazená geometrie se vaří na vlastním vlákně (`pg/sim/Cooker.h`)
+  a okno na ni nečeká: dokud nová není hotová, viewport ukazuje
+  předchozí a po chvíli napíše „cooking…“. Když se změní parametr během
+  vaření, rozpracované vaření se přeruší (wrangle, smyčky, assety se
+  vzdají uprostřed) a začne se znovu s novou hodnotou; nic z přerušeného
+  vaření se neuloží do cache. Na vlákně okna se pořád vaří tvary pro
+  simulaci (Shape objektů a zdrojů) a export.

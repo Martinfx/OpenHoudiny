@@ -476,7 +476,8 @@ public:
         graph_->setInputs(std::vector<GeometryPtr>(in.begin(), in.end()));
         graph_->sync(*inner_, def->file.empty() ? std::string() : fs::path(def->file).parent_path().string());
         const double fps = ctx.fps > 0.0 ? ctx.fps : 30.0;
-        GeometryPtr out = graph_->cook(def->output, ctx.frame, static_cast<float>(1.0 / fps));
+        GeometryPtr out = graph_->cook(def->output, ctx.frame, static_cast<float>(1.0 / fps), ctx.interrupt);
+        if (ctx.interrupted()) return nullptr;
         // What went wrong inside, node by node.
         for (const sim::Node& n : inner_->nodes()) {
             const std::string e = graph_->error(n.id);

@@ -1,0 +1,35 @@
+pgsim 1
+# A city block from one box: Copy to Points puts a box on each point of a
+# grid, Connectivity numbers the boxes, and a For-Each loop runs the nodes
+# between its Begin and End once a box -- each gets a height and a shade
+# of its own (rand of its iteration) and a roof terrace cut into its top
+# (PolyExtrude of the group top: inset, then in).
+node 1 grid 1 lots 0 0
+  param sizex 5
+  param sizez 5
+  param rows 5
+  param cols 5
+node 2 box 1 block 0 150
+  param size 0.7 1 0.7
+node 3 copy_to_points 1 blocks 230 60
+  param align off
+node 4 connectivity 1 pieces 460 60
+node 5 foreach_begin 1 each_block 690 60
+node 6 point_wrangle 1 height 920 60
+  param snippet "int i = detail(0, \"iteration\");\nfloat h = 0.5 + 2.5 * pow(rand(i * 7.31 + 0.5), 3);\n@P.y *= h;\n@Cd = set(0.62, 0.64, 0.7) * (0.75 + 0.5 * rand(i * 3.7 + 0.2));"
+node 7 primitive_wrangle 1 top 1150 60
+  param snippet "@group_top = prim_normal(0, @primnum).y > 0.5;"
+node 8 polyextrude 1 terrace 1380 60
+  param distance -0.12
+  param inset 0.08
+  param group "top"
+node 9 foreach_end 1 city 1610 60
+  display
+link 1.geometry -> 3.points
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 7.geometry
+link 7.geometry -> 8.geometry
+link 8.geometry -> 9.geometry

@@ -83,7 +83,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 218 testů: 59 jádro, 27 jazyk wrangle a výrazy, 6 digital assets, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 229 testů: 59 jádro, 27 jazyk wrangle a výrazy, 6 digital assets, 10 topologie, smyčky a vaření na pozadí, 25 shader graf, 86 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -102,6 +102,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ./build/prototype sim campfire_vdb fire.png --from-cache cache/fire --every 10   # render z cache
 ./build/prototype sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
 ./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # částice do PLY
+./build/prototype --example foreach_city         # smyčka For-Each: městský blok z jedné krabice
 ./build/prototype help                             # příkazy: list, gen, check, render, sim
 ```
 
@@ -129,8 +130,8 @@ snippet čte `@Time`, a `ch("radius")` mu přidá posuvník. Jazyk popisuje
 ## Stav
 
 Hotovo a otestováno: COW geometrie s objemy, cook engine, časová závislost,
-LRU cache, deterministický paralelismus, 19 typů uzlů (generátory,
-primitiva, scatter, copy to points, OBJ…), 59 testů jádra (čisté pod ASan,
+LRU cache, deterministický paralelismus, 26 typů uzlů (generátory,
+primitiva, scatter, copy to points, OBJ, extrude, subdivide, clip…), 59 testů jádra (čisté pod ASan,
 UBSan i ThreadSanitizerem). **Wrangle** je jazyk jako VEX: typy, proměnné,
 cykly, funkce, pole, řetězce, matice; běží nad body, primitivy, rohy nebo
 jednou nad celou geometrií, čte sousedy a další vstupy, staví a maže
@@ -160,7 +161,7 @@ editor se jí dívá (s rámečkem obrazu) a render i `prototype sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a dvaceti třemi příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a dvaceti čtyřmi příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
@@ -168,7 +169,10 @@ sítě.
 
 **Geometrie** žije ve stejné síti jako simulace, jako SOP v Houdini: krychle,
 koule, válec, mřížka, soubor OBJ, scatter, copy to points, transform, merge,
-wrangle a další. Počítá ji geometrické jádro inkrementálně — tah posuvníkem
+wrangle, PolyExtrude, Subdivide (Catmull-Clark), Clip s uzavřením řezu,
+Fuse, Connectivity, Attribute Transfer a další. **Smyčky For-Each** pustí
+část sítě pro každý kus, primitivum či bod, nebo opakovaně na vlastním
+výsledku. Počítá ji geometrické jádro inkrementálně — tah posuvníkem
 přepočítá jen uzly za ním. Uzel s *display flagem* je ve viewportu (polygony
 v barvách `Cd`, body, čáry, objemy) a tabulka atributů ukáže body, rohy,
 primitiva, detail i objemy. Geometrie může být tvarem překážky, zdroje kouře

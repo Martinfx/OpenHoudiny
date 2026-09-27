@@ -524,6 +524,80 @@ std::vector<NodeType> buildTypes() {
                  1});
     t.back().core = "copytopoints";
     geometry("null", "Null", "null", "What comes in, unchanged: a name to point at, an end to display.", in, {});
+    // What changes the mesh itself.
+    geometry("connectivity", "Connectivity", "connectivity",
+             "Which piece each primitive -- or point -- is in: those that share points are one. An integer "
+             "attribute, the pieces numbered from 0: what a For-Each goes over, piece by piece.",
+             in,
+             {text("attribute", "Attribute", "Connectivity", "class", "What the number is called."),
+              {"class", "Class", "Connectivity", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "On the primitives, or on the points.", {"primitive", "point"}, {"Primitive", "Point"}}});
+    geometry("fuse", "Fuse", "fuse",
+             "Points nearer each other than Distance made one, at their middle -- the seams of pieces merged "
+             "closed. What folds to nothing goes.",
+             in,
+             {{"distance", "Distance", "Fuse", K::Float, {0.001f, 0.0f, 0.0f}, 0.0f, 0.1f, 0.0f, kBig, "m",
+               "How near two points must be to become one."}});
+    geometry("polyextrude", "PolyExtrude", "polyextrude",
+             "Each face pushed out along its normal, a wall along each of its edges -- inward for a window, "
+             "outward for a ledge; Inset shrinks it first. The faces moved are in the group Front Group, the "
+             "walls in Side Group.",
+             in,
+             {{"distance", "Distance", "Extrude", K::Float, {0.2f, 0.0f, 0.0f}, -2.0f, 2.0f, -kBig, kBig, "m",
+               "How far out along the face's normal; less than 0, in."},
+              {"inset", "Inset", "Extrude", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "m",
+               "How far each edge moves in across the face first."},
+              text("group", "Group", "Extrude", "", "Only the primitives of this group; empty: every face."),
+              {"outputback", "Output Back", "Extrude", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Keep the face where it was, turned round: a closed solid."},
+              text("frontgroup", "Front Group", "Groups", "extrudeFront", "The faces moved; empty: no group."),
+              text("sidegroup", "Side Group", "Groups", "extrudeSide", "The walls; empty: no group.")});
+    geometry("subdivide", "Subdivide", "subdivide",
+             "Smoother: each face cut into quads, the points moved to round the surface off (Catmull-Clark). "
+             "Open edges keep their line; the attributes of the points go with them.",
+             in,
+             {{"iterations", "Depth", "Subdivide", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 6.0f, "",
+               "How many times: each makes four times the faces."}});
+    geometry("clip", "Clip", "clip",
+             "What is on one side of a plane: the faces it cuts are cut along it and, with Cap, closed with "
+             "new faces there -- in the group Cap Group.",
+             in,
+             {vec("origin", "Origin", "Plane", Vec3(0.0f, 0.5f, 0.0f), -5.0f, 5.0f, "m", "A point of the plane."),
+              vec("dir", "Direction", "Plane", Vec3(0.0f, 1.0f, 0.0f), -1.0f, 1.0f, "",
+                  "Square to the plane: the side kept is the side it points to."),
+              {"keep", "Keep", "Plane", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The side Direction points to, or the other.", {"above", "below"}, {"Above", "Below"}},
+              {"cap", "Cap", "Plane", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Close a closed mesh again where it was cut."},
+              text("capgroup", "Cap Group", "Plane", "cut", "The faces that close the cut; empty: no group.")});
+    geometry("attribute_transfer", "Attribute Transfer", "attribtransfer",
+             "Point attributes of Source onto the points near them: within Distance, the weighted mean of the "
+             "points there; further, fading out over Blend Width.",
+             {{"geometry", "Geometry", PinType::Geometry}, {"source", "Source", PinType::Geometry}},
+             {text("attributes", "Attributes", "Transfer", "Cd", "Which: names with spaces between; * for all."),
+              {"distance", "Distance", "Transfer", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "m",
+               "Within this, a point takes the mean of the points of Source near it."},
+              {"blend", "Blend Width", "Transfer", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "m",
+               "Beyond Distance, over this much further, the nearest one's fading out."}});
+    // Loops.
+    geometry("foreach_begin", "For-Each Begin", "foreachbegin",
+             "Where a loop begins: the nodes after it, up to a For-Each End, run once for each piece of what "
+             "comes in -- by an attribute (the class a Connectivity gives), each primitive, each point -- or "
+             "Count times; Feedback runs them Count times, each on what the time before made. Cooked alone it "
+             "gives the first piece. A piece carries detail attributes: iteration, numiterations, value.",
+             in,
+             {{"method", "Method", "Loop", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 4.0f, "",
+               "What each time gets.", {"pieces", "primitives", "points", "count", "feedback"},
+               {"Pieces", "Primitives", "Points", "Count", "Feedback"}},
+              text("attribute", "Piece Attribute", "Loop", "class",
+                   "For Pieces: the primitives (or points) of one value of it are one piece."),
+              {"count", "Count", "Loop", K::Int, {4.0f, 0.0f, 0.0f}, 1.0f, 20.0f, 0.0f, 100000.0f, "",
+               "For Count and Feedback: how many times."}});
+    geometry("foreach_end", "For-Each End", "foreachend",
+             "Where a loop ends: what the nodes from its For-Each Begin made of each piece, put together -- "
+             "for Feedback, what the last time made.",
+             in,
+             {text("begin", "Begin", "Loop", "", "The For-Each Begin it closes, by name; empty: the nearest upstream.")});
     geometry("asset_input", "Asset Input", "asset_input",
              "What comes into a digital asset: inside its network, the geometry linked into the asset's input "
              "Index. Outside an asset, nothing.",

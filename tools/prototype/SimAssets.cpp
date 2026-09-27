@@ -49,6 +49,8 @@ bool SimWorkspace::enterAsset(int id) {
     if (!def) return false;
     Level up;
     up.net = net_;
+    up.snapshot = std::make_shared<const sim::Network>(net_);
+    up.folder = folder();
     up.path = path_;
     up.example = example_;
     up.savedText = savedText_;
@@ -57,6 +59,7 @@ bool SimWorkspace::enterAsset(int id) {
     up.view = canvas_.view();
     up.instance = id;
     levels_.push_back(std::move(up));
+    ++levelsRevision_;
 
     net_ = *def->net;
     path_ = def->file;
@@ -86,6 +89,7 @@ bool SimWorkspace::leaveAsset() {
     if (!commitAsset()) return false;
     Level up = std::move(levels_.back());
     levels_.pop_back();
+    ++levelsRevision_;
     net_ = std::move(up.net);
     path_ = std::move(up.path);
     example_ = std::move(up.example);

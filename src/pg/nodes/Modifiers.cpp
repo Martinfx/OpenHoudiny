@@ -209,6 +209,7 @@ void registerBuiltinNodes() {
         registerWrangleNodes();
         registerPrimitiveNodes();
         registerSurfaceNodes();
+        registerTopologyNodes();
         return true;
     }();
     (void)once;

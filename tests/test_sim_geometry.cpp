@@ -608,3 +608,24 @@ TEST(sim_geometry_is_drawn_in_its_colours) {
     CHECK(d.dotCount() <= 5000 && d.dotCount() > 1000);
     CHECK(d.dots[6] > 0.03f);  // thinned dots are bigger
 }
+
+TEST(sim_geometry_examples_of_geometry_alone_cook) {
+    // The examples without an Output -- models: what they display cooks,
+    // without an error, into something.
+    int models = 0;
+    for (const std::string& name : Network::exampleNames()) {
+        Network net;
+        std::string error;
+        CHECK(Network::load(Network::exampleText(name), net, error));
+        if (std::any_of(net.nodes().begin(), net.nodes().end(), [](const sim::Node& n) { return n.type == "output"; })) continue;
+        ++models;
+        GeometryGraph geo;
+        geo.sync(net, PG_SIM_EXAMPLES_DIR);
+        const GeometryPtr g = geo.cook(net.displayed(), 1);
+        CHECK(net.displayed() != 0 && g && g->primitiveCount() > 0);
+        for (const sim::Node& n : net.nodes()) {
+            if (!geo.error(n.id).empty()) ::testing::fail(__FILE__, __LINE__, name + ": " + n.name + ": " + geo.error(n.id));
+        }
+    }
+    CHECK(models >= 1);
+}

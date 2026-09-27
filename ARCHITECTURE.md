@@ -214,6 +214,18 @@ mutexem.
 > Test, který počítá přesné počty cooků na diamantovém grafu, si proto
 > paralelismus větví vypíná.
 
+### 4.6 Přerušení
+
+`CookContext::interrupt` je příznak toho, kdo o vaření požádal: „už
+nechci“. Engine ho čte před každým uzlem a po něm. Když je nastavený,
+nevaří dál, vrátí null a **nic, co vzniklo po nastavení, neuloží do
+cache** — přerušený výsledek může být poloviční. Uzly, které trvají
+dlouho, se na příznak ptají samy: wrangle každých 1024 kroků
+interpretu, smyčka For-Each mezi průchody, asset předá příznak svému
+vnitřnímu grafu. Editor tak vaří zobrazenou geometrii na vlastním
+vlákně (`pg/sim/Cooker.h`) a každý nový požadavek (tah posuvníkem)
+přeruší ten rozpracovaný.
+
 ---
 
 ## 5. Per-element jazyk
@@ -341,6 +353,8 @@ src/pg/nodes/    Generators grid, line, pointcloud
                             attribcreate, groupbox, blast
                  Surface    file (OBJ), scatter, normal, copytopoints, color
                  Wrangle    uzly pointwrangle a attribwrangle (body, primitivy, rohy, detail)
+                 Topology   connectivity, fuse, polyextrude, subdivide (Catmull-Clark),
+                            clip s uzavřením řezu, attribtransfer; nové body jako váhy starých
 src/pg/io/       Obj        čtení a zápis OBJ (body, polygony, čáry)
                  Ply        body s atributy a polygony do PLY a zpátky (ASCII i binárně)
                  Vdb        objemy do OpenVDB bez knihovny: řídký strom 5-4-3, soubor verze 224
@@ -369,6 +383,10 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                             překlad na World + Look (snímek po snímku, když je co animovat)
                  GeometryGraph  geometrické uzly sítě jako graf jádra: synchronizace,
                             inkrementální vaření, simulace zpátky jako body a objemy
+                 Cooker     geometrie vařená na vlastním vlákně: požadavek (síť, snímek, uzly),
+                            přerušení rozpracovaného, úrovně assetů se vstupy instance
+                 ForEach    smyčky For-Each: kusy, primitivy, body, počet, zpětná vazba;
+                            tělo smyčky jako vlastní síť ve vlastním GeometryGraph
                  Asset      digital assets: knihovna definic s verzemi, typ instance
                             z definice, instance vařená ve vlastním GeometryGraph,
                             asset z vybraných uzlů (collapseToAsset)
@@ -380,7 +398,7 @@ src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť,
                             zobrazená geometrie, vodítka
 tests/           59 testů jádra (invarianty, SOP uzly) + 27 pro jazyk a výrazy + 6 pro
-                 digital assets + 25 pro shader graf + 85 pro simulaci, vodu, déšť, objekty,
+                 digital assets + 10 pro topologii, smyčky a vaření na pozadí + 25 pro shader graf + 86 pro simulaci, vodu, déšť, objekty,
                  modely, geometrii v síti a animaci + 11 pro cache a export + 5 pro JPEG a video
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
@@ -423,9 +441,9 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Detekce cyklů při zapojování |
 | ✅ | Deterministický `parallelFor` / `parallelReduce`, thread pool |
 | ✅ | Wrangle jazyk: proměnné, řízení toku, funkce, pole, řetězce, matice a kvaterniony; běh nad body, primitivy, rohy i detailem; čtení libovolných prvků a vstupů, hledání sousedů (k-d strom), tvorba a mazání geometrie; parametry z `ch()`; výsledek nezávislý na počtu vláken |
-| ✅ | 19 typů uzlů (box, sphere, tube, scatter, copy to points, file…), obsahový hash, čtení i zápis OBJ, headless CLI |
+| ✅ | 26 typů uzlů (box, sphere, tube, scatter, copy to points, file, polyextrude, subdivide, clip…), obsahový hash, čtení i zápis OBJ, headless CLI |
 | ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
-| ✅ | 218 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
+| ✅ | 229 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `prototype sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
@@ -434,6 +452,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Geometrie v síti editoru: SOP uzly vařené jádrem inkrementálně, display flag, viewport, **geometry spreadsheet**; geometrie jako tvar překážek a zdrojů, simulace zpátky jako body a objemy |
 | ✅ | Výrazy v parametrech (`$F`, `$T`, `ch("../uzel/parametr")`) se sledováním závislostí a detekcí smyček |
 | ✅ | Digital assets: knihovna `.pgasset` s verzemi, instance vařené ve vlastním grafu, promotované parametry, definice nesené v souboru sítě, odmítnuté cykly; v editoru Make Asset, vstup dovnitř a zpět |
+| ✅ | Smyčky For-Each (kusy, primitivy, body, počet, zpětná vazba) a uzly topologie: PolyExtrude, Subdivide, Clip s uzavřením řezu (i nekonvexního), Fuse, Connectivity, Attribute Transfer |
 | ✅ | Animace: klíče na libovolném parametru (Smooth/Linear/Step), síť snímek po snímku, pohyblivé překážky s rychlostí i rotací v okrajových podmínkách plynu i vody, animované parametry geometrie jako výrazy jádra |
 | ✅ | Cache simulace na disku (editor i `prototype sim`), export geometrie snímek po snímku: PLY s atributy, **OpenVDB** (ověřeno čtením v OpenVDB 10: voxely i součty sedí s mřížkou simulace), OBJ |
 | ✅ | Video: AVI s Motion JPEG bez závislostí (vlastní kodér JPEG), MP4/MOV/MKV (H.264), WebM (VP9) a GIF přes ffmpeg; v editoru render na pozadí s průběhem, z příkazové řádky `sim OUT.mp4` a `render OUT.mp4`; ověřeno dekódováním v ffmpeg |
@@ -454,7 +473,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 ### Není v prototypu (vědomě)
 
 I/O (USD, Alembic; VDB jen zápis hustých mřížek) · JIT · packed primitives a out-of-core ·
-Python vazby · booleany, subdivize, geometrické dotazy · simulace
+Python vazby · booleany, geometrické dotazy (xyzdist, primuv) · simulace
 těles a látek · řídké mřížky (VDB) a simulace na GPU
 
 ---

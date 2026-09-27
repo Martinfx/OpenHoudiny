@@ -77,40 +77,68 @@ std::vector<Column> columnsOf(const Geometry& geo, AttrClass cls) {
 }  // namespace
 
 GeometryPtr SimWorkspace::geometryOf(int id) {
+    // Now, on the window's thread: for an export, which waits for it.
+    geometry_->sync(net_, folder());
     if (!geometry_->contains(id)) return nullptr;
+    if (editingAsset()) feedAssetInputs();
     return geometry_->cook(id, shownFrame(), compiled_.world.timeStep);
 }
 
+int SimWorkspace::sheetNode() const {
+    const int id = canvas_.current();
+    return geometry_->contains(id) ? id : net_.displayed();
+}
+
 void SimWorkspace::updateGeometry() {
-    if (editingAsset()) feedAssetInputs();
+    // The window's graph knows which nodes are geometry nodes; the cooker cooks them.
     geometry_->sync(net_, folder());
     const int display = net_.displayed();
-    const GeometryPtr geo = display ? geometryOf(display) : nullptr;
+    const int sheet = sheetNode();
+    // What is asked of the cooker -- again only when something in it changed:
+    // the network, the levels gone into, the frame, the nodes wanted, the
+    // simulation's frame (what Liquid Points reads).
+    const std::shared_ptr<const sim::Frame> simFrame = runner_->frame(shownFrame());
+    char key[160];
+    std::snprintf(key, sizeof key, "%llu/%llu/%d/%d/%d/%p/%s", static_cast<unsigned long long>(net_.revision()),
+                  static_cast<unsigned long long>(levelsRevision_), shownFrame(), display, sheet_ ? sheet : 0,
+                  static_cast<const void*>(simFrame.get()), folder().c_str());
+    if (key != cookKey_) {
+        cookKey_ = key;
+        sim::Cooker::Request r;
+        for (const Level& l : levels_) r.levels.push_back({l.snapshot, l.folder, l.instance});
+        r.levels.push_back({std::make_shared<const sim::Network>(net_), folder(), 0});
+        r.frame = shownFrame();
+        r.timeStep = compiled_.world.timeStep;
+        if (display) r.nodes.push_back(display);
+        if (sheet_ && sheet) r.nodes.push_back(sheet);
+        cooker_->submit(std::move(r));
+        cookAsked_ = ImGui::GetTime();
+    }
+    if (synchronous_) cooker_->wait();  // screenshots: the geometry of this frame
+    sim::Cooker::Result done;
+    if (!cooker_->take(done)) return;
+    const auto shown = done.geometry.find(display);
+    const GeometryPtr geo = shown != done.geometry.end() ? shown->second : nullptr;
     if (geo != renderer_.geometry()) {
         renderer_.setGeometry(geo);
         viewDirty_ = true;
     }
+    const auto sheetGeo = done.geometry.find(sheet);
+    sheetGeometry_ = sheetGeo != done.geometry.end() ? sheetGeo->second : nullptr;
+    sheetGeometryNode_ = sheet;
     // What went wrong the last time each node cooked.
-    cookErrors_.clear();
-    cookWarnings_.clear();
-    cookLogs_.clear();
-    for (const sim::Node& n : net_.nodes()) {
-        if (!geometry_->contains(n.id)) continue;
-        std::string e = geometry_->error(n.id);
-        if (!e.empty()) cookErrors_[n.id] = std::move(e);
-        std::string w = geometry_->warning(n.id);
-        if (!w.empty()) cookWarnings_[n.id] = std::move(w);
-        std::string l = geometry_->log(n.id);
-        if (!l.empty()) cookLogs_[n.id] = std::move(l);
-    }
+    cookErrors_ = std::move(done.errors);
+    cookWarnings_ = std::move(done.warnings);
+    cookLogs_ = std::move(done.logs);
+    cookMs_ = done.ms;
 }
 
 void SimWorkspace::spreadsheet() {
-    // The current node's geometry, or else the displayed node's.
-    int id = canvas_.current();
-    if (!geometry_->contains(id)) id = net_.displayed();
+    // The current node's geometry, or else the displayed node's -- as the
+    // cooker last made it.
+    const int id = sheetNode();
     const sim::Node* n = net_.node(id);
-    const GeometryPtr geo = n ? geometryOf(id) : nullptr;
+    const GeometryPtr geo = n && sheetGeometryNode_ == id ? sheetGeometry_ : nullptr;
     if (!n || !geo) {
         ui::note("No geometry to show. Select a geometry node -- a Box, a Scatter, a Liquid Points... -- or "
                  "give one the display flag (the flag at its right end, or R).");

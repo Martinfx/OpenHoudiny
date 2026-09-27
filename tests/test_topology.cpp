@@ -1,0 +1,536 @@
+//
+// The nodes that change the mesh itself (src/pg/nodes/Topology.cpp):
+// Connectivity, Fuse, PolyExtrude, Subdivide, Clip, Attribute Transfer; and
+// For-Each loops (src/pg/sim/ForEach.h), which run nodes piece by piece.
+//
+#include "pg/core/CookEngine.h"
+#include "pg/core/Graph.h"
+#include "pg/core/Parallel.h"
+#include "pg/nodes/Nodes.h"
+#include "pg/sim/Asset.h"
+#include "pg/sim/ForEach.h"
+#include "pg/sim/GeometryGraph.h"
+#include "pg/sim/Network.h"
+
+#include "test_framework.h"
+
+#include <cmath>
+#include <map>
+#include <utility>
+
+using namespace pg;
+
+namespace {
+
+/// Every edge of a closed surface is shared by two faces, turned opposite ways.
+bool watertight(const Geometry& geo) {
+    std::map<std::pair<uint32_t, uint32_t>, int> edges;
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        const auto f = geo.primitivePoints(prim);
+        for (size_t i = 0; i < f.size(); ++i) ++edges[{f[i], f[(i + 1) % f.size()]}];
+    }
+    for (const auto& [e, count] : edges) {
+        if (count != 1) return false;
+        const auto back = edges.find({e.second, e.first});
+        if (back == edges.end() || back->second != 1) return false;
+    }
+    return !edges.empty();
+}
+
+/// The volume a closed surface holds (the divergence theorem over its fans).
+float volumeOf(const Geometry& geo) {
+    const auto P = geo.positions();
+    double v = 0.0;
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        const auto f = geo.primitivePoints(prim);
+        for (size_t i = 1; i + 1 < f.size(); ++i) {
+            const Vec3 &a = P[f[0]], &b = P[f[i]], &c = P[f[i + 1]];
+            v += static_cast<double>(dot(a, cross(b, c))) / 6.0;
+        }
+    }
+    return static_cast<float>(v);
+}
+
+void bounds(const Geometry& geo, Vec3& lo, Vec3& hi) {
+    lo = Vec3(1e30f, 1e30f, 1e30f);
+    hi = Vec3(-1e30f, -1e30f, -1e30f);
+    for (const Vec3& p : geo.positions()) {
+        for (int a = 0; a < 3; ++a) {
+            lo[a] = std::min(lo[a], p[a]);
+            hi[a] = std::max(hi[a], p[a]);
+        }
+    }
+}
+
+GeometryPtr cookBox(CookEngine& engine, Graph& g, int divisions = 1) {
+    Node* box = g.create("box", "box" + std::to_string(divisions));
+    box->setInt("divisions", divisions);
+    box->setVec3("size", Vec3(1.0f, 1.0f, 1.0f));
+    box->setVec3("center", Vec3(0.0f, 0.5f, 0.0f));  // on the floor
+    return engine.cook(*box, CookContext{});
+}
+
+/// A node of type `type` fed `in`, cooked.
+GeometryPtr run(const std::string& type, std::vector<GeometryPtr> in, const std::function<void(Node&)>& set = {}) {
+    registerBuiltinNodes();
+    struct Given : Node {
+        GeometryPtr g;
+        explicit Given(GeometryPtr geo) : Node("given", "given"), g(std::move(geo)) { setInputCount(0); }
+        GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override { return g; }
+    };
+    std::vector<std::unique_ptr<Given>> sources;
+    auto node = NodeRegistry::instance().create(type, "probe");
+    for (size_t i = 0; i < in.size(); ++i) {
+        sources.push_back(std::make_unique<Given>(in[i]));
+        node->setInput(i, sources.back().get());
+    }
+    if (set) set(*node);
+    CookEngine engine;
+    return engine.cook(*node, CookContext{});
+}
+
+}  // namespace
+
+TEST(topology_connectivity_numbers_the_pieces) {
+    Graph g;
+    CookEngine engine;
+    auto two = std::make_shared<Geometry>(*cookBox(engine, g));
+    two->append(*cookBox(engine, g, 2));
+    GeometryPtr out = run("connectivity", {two});
+    const auto cls = out->primitives().find("class")->read<int32_t>();
+    CHECK_EQ(cls.size(), 6u + 24u);
+    for (size_t p = 0; p < 6; ++p) CHECK_EQ(cls[p], 0);
+    for (size_t p = 6; p < cls.size(); ++p) CHECK_EQ(cls[p], 1);
+    out = run("connectivity", {two}, [](Node& n) {
+        n.setInt("class", 1);
+        n.setString("attribute", "piece");
+    });
+    const auto pts = out->points().find("piece")->read<int32_t>();
+    CHECK_EQ(pts[0], 0);
+    CHECK_EQ(pts[pts.size() - 1], 1);
+}
+
+TEST(topology_fuse_welds_what_is_near) {
+    // Two quads side by side with their shared edge's points twice, and a
+    // triangle two of whose corners are one point.
+    auto geo = std::make_shared<Geometry>();
+    geo->addPoints(11);
+    auto P = geo->positionsForWrite();
+    const Vec3 at[11] = {{0, 0, 0}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1},       // quad a
+                         {1, 0, 0}, {2, 0, 0}, {2, 0, 1}, {1, 0.0005f, 1},  // quad b, its left edge a's right
+                         {5, 0, 0}, {6, 0, 0}, {5, 0, 0.0001f}};            // a triangle that folds
+    for (size_t i = 0; i < 11; ++i) P[i] = at[i];
+    const uint32_t a[4] = {0, 3, 2, 1}, b[4] = {4, 7, 6, 5}, t[3] = {8, 9, 10};
+    geo->addPrimitive(a);
+    geo->addPrimitive(b);
+    geo->addPrimitive(t);
+    auto cd = geo->points().create("Cd", AttrType::Vec3).write<Vec3>();
+    cd[1] = Vec3(1.0f, 0.0f, 0.0f);
+    GeometryPtr out = run("fuse", {geo}, [](Node& n) { n.setFloat("distance", 0.001f); });
+    CHECK_EQ(out->pointCount(), 8u);  // two welded on the seam, one in the triangle
+    CHECK_EQ(out->primitiveCount(), 2u);  // the triangle folded to a line: gone
+    // The seam's points at their middle; the first's attributes kept.
+    CHECK(std::fabs(out->positions()[2].y - 0.00025f) < 1e-6f);
+    CHECK_EQ(out->points().find("Cd")->read<Vec3>()[1].x, 1.0f);
+    // The quads share an edge now.
+    const auto qa = out->primitivePoints(0), qb = out->primitivePoints(1);
+    int shared = 0;
+    for (const uint32_t x : qa) {
+        for (const uint32_t y : qb) shared += x == y;
+    }
+    CHECK_EQ(shared, 2);
+}
+
+TEST(topology_polyextrude_pushes_faces_out) {
+    Graph g;
+    CookEngine engine;
+    const GeometryPtr box = cookBox(engine, g);
+    // Every face of the box, out by 0.25 and inset 0.1: six blocks on it.
+    GeometryPtr out = run("polyextrude", {box}, [](Node& n) {
+        n.setFloat("distance", 0.25f);
+        n.setFloat("inset", 0.1f);
+    });
+    CHECK_EQ(out->primitiveCount(), 6u * 5u);
+    CHECK_EQ(out->pointCount(), 8u + 24u);
+    CHECK_EQ(out->findGroup("extrudeFront")->memberCount(), 6u);
+    CHECK_EQ(out->findGroup("extrudeSide")->memberCount(), 24u);
+    Vec3 lo, hi;
+    bounds(*out, lo, hi);
+    CHECK(std::fabs(hi.y - 1.25f) < 1e-5f && std::fabs(lo.x + 0.75f) < 1e-5f);
+    // The top's front: 0.8 wide, 0.25 up.
+    const GeometryPtr top = out;
+    const Group* front = top->findGroup("extrudeFront");
+    for (size_t p = 0; p < top->primitiveCount(); ++p) {
+        if (!front->contains(p)) continue;
+        Vec3 flo(1e9f, 1e9f, 1e9f), fhi(-1e9f, -1e9f, -1e9f);
+        for (const uint32_t q : top->primitivePoints(p)) {
+            for (int a = 0; a < 3; ++a) {
+                flo[a] = std::min(flo[a], top->positions()[q][a]);
+                fhi[a] = std::max(fhi[a], top->positions()[q][a]);
+            }
+        }
+        if (fhi.y > 1.2f && flo.y > 1.2f) CHECK(std::fabs((fhi.x - flo.x) - 0.8f) < 1e-4f);
+    }
+    // One face, its back kept: a closed block, turned out.
+    auto quad = std::make_shared<Geometry>();
+    quad->addPoints(4);
+    auto P = quad->positionsForWrite();
+    P[0] = Vec3(0, 0, 0);
+    P[1] = Vec3(0, 0, 1);
+    P[2] = Vec3(1, 0, 1);
+    P[3] = Vec3(1, 0, 0);  // anticlockwise seen from +y
+    const uint32_t f[4] = {0, 1, 2, 3};
+    quad->addPrimitive(f);
+    out = run("polyextrude", {quad}, [](Node& n) {
+        n.setFloat("distance", 0.5f);
+        n.setBool("outputback", true);
+    });
+    CHECK_EQ(out->primitiveCount(), 6u);
+    CHECK(watertight(*out));
+    CHECK(std::fabs(volumeOf(*out) - 0.5f) < 1e-4f);
+    // Inward (a window): walls that face the hole, the volume the other way.
+    out = run("polyextrude", {quad}, [](Node& n) {
+        n.setFloat("distance", -0.5f);
+        n.setBool("outputback", true);
+    });
+    CHECK(watertight(*out));
+    CHECK(std::fabs(volumeOf(*out) + 0.5f) < 1e-4f);
+}
+
+TEST(topology_subdivide_rounds_a_box_and_keeps_a_grid_flat) {
+    Graph g;
+    CookEngine engine;
+    const GeometryPtr box = cookBox(engine, g);
+    GeometryPtr once = run("subdivide", {box});
+    CHECK_EQ(once->primitiveCount(), 24u);
+    CHECK_EQ(once->pointCount(), 8u + 12u + 6u);
+    CHECK(watertight(*once));
+    GeometryPtr twice = run("subdivide", {box}, [](Node& n) { n.setInt("iterations", 2); });
+    CHECK_EQ(twice->primitiveCount(), 96u);
+    CHECK(watertight(*twice));
+    // Rounder: less than the box holds, inside it, still around its middle.
+    const float v0 = volumeOf(*box), v2 = volumeOf(*twice);
+    CHECK(v2 > 0.3f * v0 && v2 < 0.8f * v0);
+    Vec3 lo, hi;
+    bounds(*twice, lo, hi);
+    CHECK(lo.x > -0.5f && hi.x < 0.5f && lo.y > 0.0f && hi.y < 1.0f);
+    CHECK(std::fabs(lo.x + hi.x) < 1e-5f);
+    // A grid: its corners stay, its edges stay on its sides, it stays flat.
+    Node* grid = g.create("grid", "grid");
+    grid->setInt("rows", 3);
+    grid->setInt("cols", 3);
+    const GeometryPtr flat = engine.cook(*grid, CookContext{});
+    GeometryPtr fine = run("subdivide", {flat}, [](Node& n) { n.setInt("iterations", 2); });
+    Vec3 flo, fhi, glo, ghi;
+    bounds(*flat, glo, ghi);
+    bounds(*fine, flo, fhi);
+    CHECK(std::fabs(flo.x - glo.x) < 1e-5f && std::fabs(fhi.z - ghi.z) < 1e-5f);
+    CHECK(std::fabs(fhi.y) < 1e-6f && std::fabs(flo.y) < 1e-6f);
+    CHECK_EQ(fine->primitiveCount(), 4u * 16u);
+}
+
+TEST(topology_clip_cuts_and_closes) {
+    Graph g;
+    CookEngine engine;
+    const GeometryPtr box = cookBox(engine, g, 2);
+    GeometryPtr top = run("clip", {box}, [](Node& n) {
+        n.setVec3("origin", Vec3(0.0f, 0.3f, 0.0f));
+        n.setVec3("dir", Vec3(0.0f, 1.0f, 0.0f));
+    });
+    Vec3 lo, hi;
+    bounds(*top, lo, hi);
+    CHECK(std::fabs(lo.y - 0.3f) < 1e-5f && std::fabs(hi.y - 1.0f) < 1e-5f);
+    CHECK(watertight(*top));
+    CHECK(std::fabs(volumeOf(*top) - 0.7f) < 1e-4f);
+    CHECK(top->findGroup("cut")->memberCount() >= 1u);
+    // Below, slanted: what is left and what was cut make the whole.
+    auto slant = [&](int keep) {
+        return run("clip", {box}, [keep](Node& n) {
+            n.setVec3("origin", Vec3(0.1f, 0.5f, 0.0f));
+            n.setVec3("dir", Vec3(1.0f, 1.0f, 0.3f));
+            n.setInt("keep", keep);
+        });
+    };
+    const GeometryPtr above = slant(0), below = slant(1);
+    CHECK(watertight(*above) && watertight(*below));
+    CHECK(std::fabs(volumeOf(*above) + volumeOf(*below) - 1.0f) < 1e-4f);
+    // A sphere cut through the middle: a hemisphere, closed.
+    Node* ball = g.create("sphere", "ball");
+    ball->setFloat("radius", 0.5f);
+    ball->setVec3("center", Vec3(0.0f, 0.5f, 0.0f));
+    const GeometryPtr sphere = engine.cook(*ball, CookContext{});
+    const GeometryPtr half = run("clip", {sphere}, [](Node& n) { n.setVec3("origin", Vec3(0.0f, 0.5f, 0.0f)); });
+    CHECK(watertight(*half));
+    CHECK(std::fabs(volumeOf(*half) * 2.0f - volumeOf(*sphere)) < 0.01f * volumeOf(*sphere));
+    // Without the cap: open where it was cut.
+    const GeometryPtr open = run("clip", {sphere}, [](Node& n) {
+        n.setVec3("origin", Vec3(0.0f, 0.5f, 0.0f));
+        n.setBool("cap", false);
+    });
+    CHECK(!watertight(*open));
+    CHECK_EQ(open->primitiveCount() + 1, half->primitiveCount());
+    // A concave cut: an L of two boxes, capped by triangles that cover it.
+    auto ell = std::make_shared<Geometry>(*box);
+    Node* side = g.create("box", "side");
+    side->setVec3("size", Vec3(1.0f, 1.0f, 1.0f));
+    side->setVec3("center", Vec3(1.0f, 0.5f, 0.0f));
+    ell->append(*engine.cook(*side, CookContext{}));
+    const GeometryPtr cutEll = run("clip", {ell}, [](Node& n) { n.setVec3("origin", Vec3(0.0f, 0.25f, 0.0f)); });
+    CHECK(std::fabs(volumeOf(*cutEll) - 1.5f) < 1e-4f);
+}
+
+TEST(topology_attribute_transfer_colours_what_is_near) {
+    Graph g;
+    CookEngine engine;
+    Node* grid = g.create("grid", "grid");
+    grid->setInt("rows", 11);
+    grid->setInt("cols", 11);
+    const GeometryPtr target = engine.cook(*grid, CookContext{});
+    auto source = std::make_shared<Geometry>();
+    source->addPoints(1);
+    source->positionsForWrite()[0] = Vec3(0.0f, 0.0f, 0.0f);
+    source->points().create("Cd", AttrType::Vec3).write<Vec3>()[0] = Vec3(1.0f, 0.0f, 0.0f);
+    source->points().create("id", AttrType::Int).write<int32_t>()[0] = 7;
+    GeometryPtr out = run("attribtransfer", {target, source}, [](Node& n) {
+        n.setString("attributes", "Cd id");
+        n.setFloat("distance", 0.35f);
+        n.setFloat("blend", 0.3f);
+    });
+    const auto P = out->positions();
+    const auto cd = out->points().find("Cd")->read<Vec3>();
+    const auto id = out->points().find("id")->read<int32_t>();
+    for (size_t i = 0; i < P.size(); ++i) {
+        const float d = length(P[i]);
+        if (d <= 0.35f) CHECK(std::fabs(cd[i].x - 1.0f) < 1e-5f && id[i] == 7);
+        else if (d >= 0.65f) CHECK(cd[i].x == 0.0f && id[i] == 0);
+        else CHECK(cd[i].x > 0.0f && cd[i].x < 1.0f);
+    }
+}
+
+// --- For-Each loops ----------------------------------------------------------------------------
+
+namespace {
+
+/// Three boxes on a line, numbered by Connectivity, into a loop whose body
+/// lifts each by its iteration: nodes box, line, copies, pieces, begin,
+/// lift, end.
+sim::Network loopOverPieces(std::map<std::string, int>& id) {
+    sim::Network net;
+    id["box"] = net.add("box");
+    id["line"] = net.add("line");
+    id["copies"] = net.add("copy_to_points");
+    id["pieces"] = net.add("connectivity");
+    id["begin"] = net.add("foreach_begin");
+    id["lift"] = net.add("point_wrangle");
+    id["end"] = net.add("foreach_end");
+    std::string error;
+    net.setParam(id["line"], "points", sim::ParamValue{3.0f, 0.0f, 0.0f});
+    net.setParam(id["line"], "length", sim::ParamValue{4.0f, 0.0f, 0.0f});
+    net.connect(id["box"], "geometry", id["copies"], "geometry", &error);
+    net.connect(id["line"], "geometry", id["copies"], "points", &error);
+    net.connect(id["copies"], "geometry", id["pieces"], "geometry", &error);
+    net.connect(id["pieces"], "geometry", id["begin"], "geometry", &error);
+    net.connect(id["begin"], "geometry", id["lift"], "geometry", &error);
+    net.connect(id["lift"], "geometry", id["end"], "geometry", &error);
+    net.setText(id["lift"], "snippet", "@P.y += detail(0, \"iteration\") + 10 * (detail(0, \"numiterations\") - 3);");
+    net.setDisplay(id["end"]);
+    return net;
+}
+
+float highest(const GeometryPtr& g) {
+    float y = -1e9f;
+    for (const Vec3& p : g->positions()) y = std::max(y, p.y);
+    return y;
+}
+
+}  // namespace
+
+TEST(topology_foreach_runs_the_body_once_a_piece) {
+    std::map<std::string, int> id;
+    sim::Network net = loopOverPieces(id);
+    sim::GeometryGraph geo;
+    geo.sync(net);
+    GeometryPtr out = geo.cook(id["end"], 1);
+    CHECK_EQ(geo.error(id["end"]), std::string());
+    CHECK_EQ(out->pointCount(), 24u);
+    CHECK_EQ(out->primitiveCount(), 18u);
+    CHECK(std::fabs(highest(out) - 3.0f) < 1e-5f);  // the third box, 2 up
+    CHECK(out->detail().find("iteration") == nullptr);
+    // Each box by itself: the one at x = 4 lifted by 2.
+    for (const Vec3& p : out->positions()) {
+        if (p.x > 3.0f) CHECK(p.y >= 2.0f - 1e-5f);
+        if (p.x < 1.0f) CHECK(p.y <= 1.0f + 1e-5f);
+    }
+    // Cooked alone, the Begin gives the first piece; the body shows it.
+    CHECK_EQ(geo.cook(id["begin"], 1)->pointCount(), 8u);
+    CHECK(std::fabs(highest(geo.cook(id["lift"], 1)) - 1.0f) < 1e-5f);
+
+    // The same on one thread and on four.
+    const uint64_t many = out->hash();
+    const unsigned threads = TaskPool::instance().threadCount();
+    TaskPool::instance().setThreadCount(1);
+    sim::GeometryGraph single;
+    single.sync(net);
+    CHECK_EQ(single.cook(id["end"], 1)->hash(), many);
+    TaskPool::instance().setThreadCount(threads);
+
+    // Count: the whole, three times, each lifted by its number.
+    net.setParam(id["begin"], "method", sim::ParamValue{3.0f, 0.0f, 0.0f});
+    net.setParam(id["begin"], "count", sim::ParamValue{3.0f, 0.0f, 0.0f});
+    geo.sync(net);
+    out = geo.cook(id["end"], 1);
+    CHECK_EQ(out->pointCount(), 3u * 24u);
+    CHECK(std::fabs(highest(out) - 3.0f) < 1e-5f);
+    // Primitives: each face of each box on its own.
+    net.setParam(id["begin"], "method", sim::ParamValue{1.0f, 0.0f, 0.0f});
+    geo.sync(net);
+    out = geo.cook(id["end"], 1);
+    CHECK_EQ(out->primitiveCount(), 18u);
+    CHECK_EQ(out->pointCount(), 18u * 4u);
+}
+
+TEST(topology_foreach_feedback_and_errors) {
+    sim::Network net;
+    const int box = net.add("box");
+    const int begin = net.add("foreach_begin");
+    const int move = net.add("transform");
+    const int end = net.add("foreach_end");
+    std::string error;
+    net.connect(box, "geometry", begin, "geometry", &error);
+    net.connect(begin, "geometry", move, "geometry", &error);
+    net.connect(move, "geometry", end, "geometry", &error);
+    net.setParam(begin, "method", sim::ParamValue{4.0f, 0.0f, 0.0f});  // feedback
+    net.setParam(begin, "count", sim::ParamValue{5.0f, 0.0f, 0.0f});
+    net.setParam(move, "t", sim::ParamValue{0.0f, 1.0f, 0.0f});
+    sim::GeometryGraph geo;
+    geo.sync(net);
+    GeometryPtr out = geo.cook(end, 1);
+    CHECK_EQ(geo.error(end), std::string());
+    CHECK_EQ(out->pointCount(), 8u);
+    CHECK(std::fabs(highest(out) - 6.0f) < 1e-5f);  // up one, five times
+
+    // What goes wrong is said on the End.
+    net.setParam(begin, "method", sim::ParamValue{0.0f, 0.0f, 0.0f});  // pieces, but no class
+    geo.sync(net);
+    geo.cook(end, 1);
+    CHECK(geo.error(end).find("Connectivity") != std::string::npos);
+    geo.cook(begin, 1);
+    CHECK(geo.error(begin).find("class") != std::string::npos);
+    sim::Network lone;
+    const int b2 = lone.add("box");
+    const int e2 = lone.add("foreach_end");
+    lone.connect(b2, "geometry", e2, "geometry", &error);
+    sim::GeometryGraph g2;
+    g2.sync(lone);
+    g2.cook(e2, 1);
+    CHECK(g2.error(e2).find("no For-Each Begin") != std::string::npos);
+    // Begin named that is not one.
+    lone.setText(e2, "begin", "box1");
+    g2.sync(lone);
+    g2.cook(e2, 1);
+    CHECK(g2.error(e2).find("box1") != std::string::npos);
+}
+
+TEST(topology_foreach_follows_changes_in_its_body_and_input) {
+    std::map<std::string, int> id;
+    sim::Network net = loopOverPieces(id);
+    sim::GeometryGraph geo;
+    geo.sync(net);
+    CHECK(std::fabs(highest(geo.cook(id["end"], 1)) - 3.0f) < 1e-5f);
+    // The body changed: cooked again.
+    net.setText(id["lift"], "snippet", "@P.y += 2 * detail(0, \"iteration\");");
+    geo.sync(net);
+    CHECK(std::fabs(highest(geo.cook(id["end"], 1)) - 5.0f) < 1e-5f);
+    // What comes in changed: four boxes now.
+    net.setParam(id["line"], "points", sim::ParamValue{4.0f, 0.0f, 0.0f});
+    geo.sync(net);
+    CHECK(std::fabs(highest(geo.cook(id["end"], 1)) - 7.0f) < 1e-5f);
+    // Nothing changed: nothing cooks.
+    const uint64_t before = geo.coreNode(id["end"])->cookCount();
+    geo.sync(net);
+    geo.cook(id["end"], 1);
+    CHECK_EQ(geo.coreNode(id["end"])->cookCount(), before);
+    // The file keeps it.
+    const std::string text = net.save();
+    sim::Network back;
+    std::string error;
+    CHECK(sim::Network::load(text, back, error));
+    CHECK_EQ(back.save(), text);
+}
+
+// --- cooking on a thread of its own ----------------------------------------------------------------
+
+#include "pg/sim/Cooker.h"
+
+#include <chrono>
+#include <thread>
+
+TEST(cooker_cooks_on_its_own_thread_and_gives_up_what_is_not_wanted) {
+    sim::Network net;
+    const int box = net.add("box");
+    const int slow = net.add("detail_wrangle");
+    std::string error;
+    net.connect(box, "geometry", slow, "geometry", &error);
+    net.setText(slow, "snippet", "int n = chi(\"n\"); float s = 0; for (int i = 0; i < n; i++) s += sin(i); @sum = s;");
+    net.setParam(slow, "n", sim::ParamValue{300000000.0f, 0.0f, 0.0f});  // seconds of work
+    net.setDisplay(slow);
+    sim::Cooker cooker;
+    auto ask = [&](const sim::Network& n) {
+        sim::Cooker::Request r;
+        r.levels.push_back({std::make_shared<const sim::Network>(n), "", 0});
+        r.nodes = {slow, box};
+        return cooker.submit(std::move(r));
+    };
+    const auto start = std::chrono::steady_clock::now();
+    ask(net);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));  // under way
+    net.setParam(slow, "n", sim::ParamValue{10.0f, 0.0f, 0.0f});
+    const uint64_t wanted = ask(net);
+    cooker.wait();
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    CHECK(seconds < 3.0);  // the long one was given up
+    CHECK(!cooker.busy());
+    sim::Cooker::Result r;
+    CHECK(cooker.take(r));
+    CHECK_EQ(r.serial, wanted);
+    CHECK(!cooker.take(r));  // one result, the last
+    CHECK(r.geometry.count(slow) && r.geometry.count(box));
+    const float sum = r.geometry[slow]->detail().find("sum")->read<float>()[0];
+    float expected = 0.0f;
+    for (int i = 0; i < 10; ++i) expected += std::sin(static_cast<float>(i));
+    CHECK(std::fabs(sum - expected) < 1e-4f);
+    CHECK(r.errors.empty());
+
+    // What went wrong is said, per node.
+    net.setText(slow, "snippet", "@sum = nosuch(1);");
+    ask(net);
+    cooker.wait();
+    CHECK(cooker.take(r));
+    CHECK(r.errors.count(slow) && r.errors[slow].find("nosuch") != std::string::npos);
+
+    // An asset's inside, with the instance's inputs.
+    sim::Network def;
+    const int in = def.add("asset_input");
+    const int move = def.add("transform");
+    def.connect(in, "geometry", move, "geometry", &error);
+    def.setParam(move, "t", sim::ParamValue{0.0f, 5.0f, 0.0f});
+    def.setDisplay(move);
+    sim::AssetInfo info;
+    info.name = "cooker_lift";
+    def.setAsset(info);
+    CHECK(sim::AssetLibrary::instance().add(def, "", error));
+    sim::Network scene;
+    const int b = scene.add("box");
+    const int inst = scene.add("cooker_lift");
+    scene.connect(b, "geometry", inst, "geometry", &error);
+    sim::Cooker::Request inside;
+    inside.levels.push_back({std::make_shared<const sim::Network>(scene), "", inst});
+    inside.levels.push_back({std::make_shared<const sim::Network>(def), "", 0});
+    inside.nodes = {move};
+    cooker.submit(std::move(inside));
+    cooker.wait();
+    CHECK(cooker.take(r));
+    Vec3 lo, hi;
+    bounds(*r.geometry[move], lo, hi);
+    CHECK(std::fabs(lo.y - 5.0f) < 1e-5f && std::fabs(hi.y - 6.0f) < 1e-5f);  // the box, from the scene, lifted
+}

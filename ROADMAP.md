@@ -111,9 +111,16 @@ předchozí hotový, zdokumentovaný a otestovaný (ASan, UBSan, TSan, libc++).
   sledují všechny instance; síť nese definice svých assetů s sebou;
   vnořování, cykly odmítnuté. Subnet bez knihovny zatím není — asset
   ho zastoupí.
-- **Smyčky a nové uzly:** for-each po kusech a opakování se zpětnou vazbou;
-  Extrude, Subdivide, Boolean, Attribute Transfer a co si vyžádá demo.
-- **Vaření na pozadí:** těžká síť nezastaví editor a jde přerušit.
+- ✅ **Smyčky a nové uzly** ([docs/geometry.md](docs/geometry.md#smyčky-for-each)):
+  For-Each Begin/End po kusech, primitivech, bodech, počtem i se zpětnou
+  vazbou (tělo vařené ve vlastním grafu, bitově stejně na 1 i 4 vláknech);
+  PolyExtrude s inset, Subdivide (Catmull-Clark), Clip s uzavřením řezu,
+  Fuse, Connectivity, Attribute Transfer. Boolean zatím ne — řezy rovinou
+  (Clip) pokryjí, co potřebuje Voronoi Fracture v kroku 2.
+- ✅ **Vaření na pozadí:** zobrazená geometrie se vaří na vlastním vlákně
+  (`pg/sim/Cooker.h`), editor na ni nečeká; nový požadavek přeruší
+  rozpracované vaření (`CookContext::interrupt` — wrangle, smyčky
+  i assety se vzdají uprostřed) a nic přerušeného se neuloží do cache.
 
 **Hotovo, když:** procedurální budova z několika posuvníků (digital asset)
 jde v editoru i z příkazové řádky (`prototype cook`) a stejné hodnoty dají

@@ -86,12 +86,14 @@ public:
         for (size_t i = 0; i < 4 && i < in.size(); ++i) o.inputs[i] = in[i];
         if (!o.inputs[0]) o.inputs[0] = std::make_shared<Geometry>();
         o.ctx = ctx;
+        o.interrupt = ctx.interrupt;
         const WrangleHost host(params_, ctx);
         o.host = &host;
 
         std::string error;
         lang::RunReport report;
         const bool ok = prog->run(*geo, o, error, &report);
+        if (ctx.interrupted()) return nullptr;  // given up: says nothing, is not kept
         std::lock_guard<std::mutex> lk(mu_);
         runError_ = ok ? std::string() : error;
         warnings_.clear();

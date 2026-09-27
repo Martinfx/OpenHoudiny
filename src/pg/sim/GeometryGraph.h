@@ -26,6 +26,7 @@
 #include "pg/sim/Frame.h"
 #include "pg/sim/Network.h"
 
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -54,6 +55,8 @@ public:
     /// -- cooking only what is out of date. A bypassed node puts out what
     /// comes into it. Null for a node that is not a geometry node.
     GeometryPtr cook(int id, int frame, float timeStep = 1.0f / 30.0f);
+    /// The same, given up -- null -- once `interrupt` is set.
+    GeometryPtr cook(int id, int frame, float timeStep, const std::atomic<bool>* interrupt);
 
     /// What went wrong the last time node `id` cooked; empty if nothing.
     std::string error(int id) const;
@@ -87,6 +90,7 @@ private:
         std::map<std::string, std::string> exprs;      ///< the expressions, as last bound
         std::vector<std::string> varying;              ///< the parameters bound as expressions of the core
         uint64_t revision = 0;                         ///< the network's, when they were
+        std::string body;                              ///< a For-Each End's body, as last handed over
     };
     /// Follows bypassed nodes up to the one whose output counts.
     int resolve(int id) const;

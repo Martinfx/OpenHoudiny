@@ -530,6 +530,10 @@ TEST(sim_network_examples_all_run) {
         std::vector<std::string> warnings;
         CHECK(Network::load(Network::exampleText(name), net, error, &warnings));
         if (!warnings.empty()) ::testing::fail(__FILE__, __LINE__, name + ": " + warnings[0]);
+        // Geometry alone -- a model -- is cooked in test_sim_geometry.
+        const bool model = std::none_of(net.nodes().begin(), net.nodes().end(),
+                                        [](const Node& n) { return n.type == "output"; });
+        if (model) continue;
         const Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);  // where their meshes are
         CHECK(c.ok);
         for (const Problem& p : c.problems) ::testing::fail(__FILE__, __LINE__, name + ": " + p.message);

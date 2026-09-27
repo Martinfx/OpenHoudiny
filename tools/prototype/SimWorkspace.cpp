@@ -117,6 +117,7 @@ Icon typeIcon(const sim::NodeType* t) {
     if (name == "point_wrangle") return Icon::Code;
     if (name == "file") return Icon::File;
     if (name == "asset_input") return Icon::Input;
+    if (name == "foreach_begin" || name == "foreach_end") return Icon::Loop;
     return categoryIcon(t->category);
 }
 
@@ -286,6 +287,7 @@ SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
     else rendererLog_.clear();
     // Liquid Points and the like read the frames the runner keeps.
     geometry_->setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
+    cooker_ = std::make_unique<sim::Cooker>([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     newNetwork();  // an empty scene; File > Examples has finished ones
 }
 
@@ -322,6 +324,7 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     if (!levels_.empty()) {
         geometry_ = std::move(levels_.front().geometry);
         levels_.clear();
+        ++levelsRevision_;
     }
     net_ = net;
     path_ = path;
@@ -1792,6 +1795,18 @@ sim::Domain SimWorkspace::sceneBox() const {
 
 std::string SimWorkspace::gridsText() const {
     const std::string times = " \xc3\x97 ", dot = "  \xc2\xb7  ";
+    if (geometryOnly()) {
+        // A model: what it shows, not what it would simulate.
+        const GeometryPtr& g = renderer_.geometry();
+        if (!g) return "no geometry shown";
+        auto thousands = [](size_t n) {
+            char buf[32];
+            if (n >= 10000) std::snprintf(buf, sizeof buf, "%.0f k", static_cast<double>(n) / 1000.0);
+            else std::snprintf(buf, sizeof buf, "%zu", n);
+            return std::string(buf);
+        };
+        return thousands(g->pointCount()) + " points" + dot + thousands(g->primitiveCount()) + " primitives";
+    }
     auto cells = [&](const sim::Domain& d) {
         return std::to_string(d.cells[0]) + times + std::to_string(d.cells[1]) + times + std::to_string(d.cells[2]);
     };
@@ -1838,6 +1853,7 @@ std::string SimWorkspace::status() const {
                (levels_.empty() ? std::string("Ctrl+S saves a new version") : levelsText() + "  \xc2\xb7  U goes back up");
     }
     if (emptyScene()) return "An empty scene  \xc2\xb7  Shift+A in the viewport, Tab in the network  \xc2\xb7  File > Examples";
+    if (geometryOnly()) return std::to_string(net_.nodes().size()) + " nodes  \xc2\xb7  " + gridsText();
     char text[240], step[32];
     // Frames from disk were not simulated: no time a step.
     if (runner_->adopted()) std::snprintf(step, sizeof step, "from disk");

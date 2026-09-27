@@ -1,6 +1,7 @@
 #include "pg/sim/GeometryGraph.h"
 
 #include "pg/sim/Asset.h"
+#include "pg/sim/ForEach.h"
 
 #include "pg/sim/Network.h"
 
@@ -121,6 +122,8 @@ std::string stampOf(const std::string& path) {
 }  // namespace
 
 void registerSimGeometryNodes() {
+    registerAssetNodes();
+    registerForEachNodes();
     static const bool once = [] {
         auto& r = NodeRegistry::instance();
         r.add("liquid_points", [](const std::string& n) { return std::make_unique<LiquidPointsNode>(n); });
@@ -134,6 +137,7 @@ void registerSimGeometryNodes() {
 GeometryGraph::GeometryGraph() {
     registerSimGeometryNodes();
     registerAssetNodes();
+    registerForEachNodes();
 }
 
 GeometryGraph::~GeometryGraph() = default;
@@ -181,6 +185,12 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
     // parameter that changes -- is bound as an expression of the core,
     // evaluated on a copy of the network as it is now.
     std::shared_ptr<const Network> snapshot;
+    struct Body {
+        pg::Node* node;
+        std::shared_ptr<const Network> net;
+        int output;
+    };
+    std::vector<Body> bodies;  // loops whose body changed: handed over after
     for (auto& [id, m] : nodes_) {
         const Node& n = *net.node(id);
         // The type's parameters and those the node's snippet asks for.
@@ -257,9 +267,29 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
                 const auto def = AssetLibrary::instance().find(n.type);
                 changed |= p.setInt("definition", def ? static_cast<int>(def->revision) : 0);
             }
+            // A loop's end: how its Begin cuts, and the nodes between them.
+            if (n.type == "foreach_end") {
+                std::string why;
+                const int begin = forEachBegin(net, id, why);
+                auto body = std::make_shared<Network>();
+                int output = 0;
+                if (!begin || !forEachBody(net, begin, id, *body, output, why)) body.reset();
+                changed |= p.setString("problem", why);
+                if (begin) {
+                    changed |= p.setInt("method", static_cast<int>(net.param(begin, "method")[0]));
+                    changed |= p.setString("attribute", net.text(begin, "attribute"));
+                    changed |= p.setInt("count", static_cast<int>(net.param(begin, "count")[0]));
+                }
+                std::string text = body ? body->save() : std::string();
+                if (text != m.body) {
+                    m.body = std::move(text);
+                    bodies.push_back({m.node, std::move(body), output});
+                }
+            }
             return changed;
         });
     }
+    for (Body& b : bodies) setForEachBody(*b.node, std::move(b.net), b.output);
 
     // The wiring: each geometry input in the order of its pins, and of the
     // links into a pin that takes several. First what goes in, for every
@@ -280,6 +310,13 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
                 sources.push_back(in.empty() ? 0 : in.front().from);
             }
             if (m.input == 0 && !in.empty()) m.input = in.front().from;
+        }
+        if (net.node(id)->type == "foreach_end") {
+            // The loop cuts what comes into its Begin; the body is its own.
+            std::string why;
+            const int begin = forEachBegin(net, id, why);
+            const std::vector<Link> in = begin ? net.linksInto(begin, "geometry") : std::vector<Link>();
+            sources = {in.empty() ? 0 : in.front().from};
         }
         const size_t count = std::max<size_t>(sources.size(), geometryPins ? 1 : 0);
         if (m.node->inputCount() != count) m.node->setInputCount(count);
@@ -311,7 +348,9 @@ int GeometryGraph::resolve(int id) const {
     return 0;
 }
 
-GeometryPtr GeometryGraph::cook(int id, int frame, float timeStep) {
+GeometryPtr GeometryGraph::cook(int id, int frame, float timeStep) { return cook(id, frame, timeStep, nullptr); }
+
+GeometryPtr GeometryGraph::cook(int id, int frame, float timeStep, const std::atomic<bool>* interrupt) {
     if (!nodes_.count(id)) return nullptr;
     const int shown = resolve(id);
     const auto it = nodes_.find(shown);
@@ -327,7 +366,7 @@ GeometryPtr GeometryGraph::cook(int id, int frame, float timeStep) {
         }
     }
     const double dt = std::max(timeStep, 1e-6f);
-    return engine_.cook(*it->second.node, CookContext{static_cast<double>(frame) * dt, frame, 1.0 / dt});
+    return engine_.cook(*it->second.node, CookContext{static_cast<double>(frame) * dt, frame, 1.0 / dt, interrupt});
 }
 
 std::string GeometryGraph::error(int id) const {

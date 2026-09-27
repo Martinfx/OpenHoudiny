@@ -36,6 +36,7 @@
 #include "Workspace.h"
 
 #include "pg/gl/Volume.h"
+#include "pg/sim/Cooker.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
 
@@ -142,9 +143,11 @@ private:
     /// Syncs the geometry graph with the network and cooks the displayed
     /// node at the frame on screen, for the viewport; notes cook errors.
     void updateGeometry();
-    /// Geometry node `id`'s geometry at the frame on screen; null for a
-    /// node that is not one.
+    /// Geometry node `id`'s geometry at the frame on screen, cooked now on
+    /// the window's thread (exports); null for a node that is not one.
     GeometryPtr geometryOf(int id);
+    /// The node the spreadsheet shows: the current one, or the displayed.
+    int sheetNode() const;
     /// The spreadsheet: the current node's geometry, or the displayed one's.
     void spreadsheet();
 
@@ -285,10 +288,13 @@ private:
         std::string path, example, savedText;
         History history;
         std::unique_ptr<sim::GeometryGraph> geometry;
+        std::shared_ptr<const sim::Network> snapshot;  ///< `net`, for the cooker
+        std::string folder;
         NodeCanvas::View view;
         int instance = 0;  ///< the asset node gone into
     };
     std::vector<Level> levels_;
+    uint64_t levelsRevision_ = 0;  ///< changes as levels are gone into and out of
     int enterRequest_ = 0;         ///< a node to go into, next frame
     bool leaveRequest_ = false;    ///< back up, next frame
     bool makeAssetOpen_ = false;   ///< the Make Asset dialog is to open
@@ -319,6 +325,14 @@ private:
     gl::VolumeRenderer renderer_;
     std::string rendererLog_;
     std::unique_ptr<SimRunner> runner_;
+    /// The geometry, cooked on a thread of its own -- after runner_, whose
+    /// frames it reads: it goes first.
+    std::unique_ptr<sim::Cooker> cooker_;
+    std::string cookKey_;          ///< what was last asked of it
+    double cookAsked_ = 0.0;       ///< when (ImGui time)
+    double cookMs_ = 0.0;          ///< how long the last cook took
+    GeometryPtr sheetGeometry_;    ///< the spreadsheet's node's, as last cooked
+    int sheetGeometryNode_ = 0;
     bool synchronous_ = false;
 
     // Playback.

@@ -30,6 +30,12 @@ struct CookContext {
     double time = 0.0;  ///< seconds
     int frame = 1;
     double fps = 24.0;
+    /// Set by whoever asked, when the answer is no longer wanted: a node
+    /// that takes long looks at it and gives up. What a cook makes once it
+    /// is set is not kept (CookEngine).
+    const std::atomic<bool>* interrupt = nullptr;
+
+    bool interrupted() const { return interrupt && interrupt->load(std::memory_order_relaxed); }
 };
 
 using ParamValue = std::variant<int, float, bool, std::string, Vec3>;

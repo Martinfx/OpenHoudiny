@@ -1093,6 +1093,11 @@ void SimWorkspace::viewport(ImVec2 size) {
     } else if (compiled_.ok) {
         d->AddText(ImVec2(lo.x + pad, textY), theme::kAccentHover, gizmo_.dragging() ? "let go to simulate" : "simulating\xe2\x80\xa6");
     }
+    // The geometry still cooking, a while after it was asked for: said.
+    if (cooker_->busy() && ImGui::GetTime() - cookAsked_ > 0.25) {
+        const float y = lo.y + pad + ImGui::GetFontSize() * (shown_ ? 2.6f : 1.3f);
+        d->AddText(ImVec2(lo.x + pad + theme::px(44.0f), y), theme::kAccentHover, "cooking\xe2\x80\xa6");
+    }
     // What is selected, or under the mouse, at the bottom.
     const int named = hovered_ ? hovered_ : canvas_.current();
     if (const sim::Node* n = net_.node(named)) {

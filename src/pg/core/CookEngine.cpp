@@ -133,6 +133,8 @@ GeometryPtr CookEngine::cookRecursive(Node& node, const CookContext& ctx,
 
     const CacheKey key{&node, node.version(), timeDep ? ctx.frame : kAnyFrame};
     if (GeometryPtr hit = cache_.find(key)) return hit;
+    // No longer wanted: nothing more is cooked -- and nothing made is kept.
+    if (ctx.interrupted()) return nullptr;
 
     const size_t inputCount = node.inputCount();
     std::vector<GeometryPtr> inputs(inputCount);
@@ -147,7 +149,9 @@ GeometryPtr CookEngine::cookRecursive(Node& node, const CookContext& ctx,
         }
     }
 
+    if (ctx.interrupted()) return nullptr;
     GeometryPtr out = node.cookInstrumented(ctx, inputs);
+    if (ctx.interrupted()) return nullptr;  // it may have given up halfway
     cache_.insert(key, out, out ? out->memoryUsage() : 0);
     return out;
 }

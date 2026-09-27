@@ -43,6 +43,7 @@ add_library(pgcore
   src/pg/nodes/Wrangle.cpp
   src/pg/nodes/Primitives.cpp
   src/pg/nodes/Surface.cpp
+  src/pg/nodes/Topology.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/Jpeg.cpp
@@ -199,6 +200,8 @@ configure_file(${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp.tmp
 
 add_library(pgsim
   src/pg/sim/Asset.cpp
+  src/pg/sim/ForEach.cpp
+  src/pg/sim/Cooker.cpp
   src/pg/sim/Camera.cpp
   src/pg/sim/Frame.cpp
   src/pg/sim/FreeSurface.cpp
@@ -356,6 +359,7 @@ add_executable(pgtests
   tests/test_expression.cpp
   tests/test_lang.cpp
   tests/test_assets.cpp
+  tests/test_topology.cpp
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp
