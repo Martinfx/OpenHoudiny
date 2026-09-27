@@ -236,10 +236,13 @@ endif()
 # sets a machine may lack (AVX and later), with nothing but the library.
 if(PG_WITH_JOLT)
   include(FetchContent)
+  # No GPU compute either (JPH_USE_VK and the others): with a Vulkan or
+  # DirectX SDK about, Jolt would build its compute shaders with dxc, which
+  # the machine need not have; the rigid bodies run on the CPU.
   foreach(off TARGET_UNIT_TESTS TARGET_HELLO_WORLD TARGET_PERFORMANCE_TEST TARGET_SAMPLES TARGET_VIEWER
               ENABLE_ALL_WARNINGS INTERPROCEDURAL_OPTIMIZATION USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT
               USE_TZCNT USE_F16C USE_FMADD DEBUG_RENDERER_IN_DEBUG_AND_RELEASE PROFILER_IN_DEBUG_AND_RELEASE
-              ENABLE_OBJECT_STREAM)
+              ENABLE_OBJECT_STREAM JPH_USE_DX12 JPH_USE_VK JPH_USE_MTL ENABLE_INSTALL)
     set(${off} OFF CACHE BOOL "" FORCE)
   endforeach()
   set(CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "" FORCE)
