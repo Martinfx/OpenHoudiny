@@ -15,6 +15,8 @@
 //                    [--export PATH] [--export-node NODE]
 //   prototype sim --list
 //   prototype pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
+//   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE] [--set NODE.PARAM=VALUE]...
+//                    [--frame N] [--frames N] [--threads N] [--hash]
 //
 // `check` is the proof that the generated code is valid: it compiles every
 // graph -- and with --nodes every output of every node in the library, in the
@@ -38,6 +40,13 @@
 // (pg/io/Export.h). '-' for OUT.png draws nothing: the cache and the export
 // alone, which need no OpenGL.
 //
+// `cook` cooks a network's geometry and nothing else -- no simulation, no
+// OpenGL: the displayed node, or --node, at frame 1, --frame N, or frames 1
+// to --frames N; written to OUT by its extension ($F4 in OUT for the frame),
+// or '-' for nothing. It says what it made, how long it took and, with
+// --hash, the geometry's content hash -- the same on any number of threads
+// (--threads N), which is how the determinism of a network is checked.
+//
 #include "Commands.h"
 
 #include "pg/lang/Lang.h"
@@ -48,6 +57,7 @@
 #include "pg/gl/Preview.h"
 #include "pg/gl/Volume.h"
 #endif
+#include "pg/core/Parallel.h"
 #include "pg/io/Export.h"
 #include "pg/io/Video.h"
 #include "pg/sim/Cache.h"
@@ -106,6 +116,11 @@ struct Options {
     std::string fromCache;           ///< sim --from-cache: read the frames from there
     std::string exportPattern;       ///< sim --export: the displayed geometry of every frame, to files
     std::string exportNode;          ///< sim --export-node: that node's rather than the displayed one's
+    // cook
+    std::string node;   ///< --node: which node's geometry, rather than the displayed one's
+    int frame = 0;      ///< --frame: the one frame cooked; 0: frame 1
+    int threads = 0;    ///< --threads: how many; 0: all there are
+    bool hash = false;  ///< --hash: print the geometry's content hash
 };
 
 int usage() {
@@ -167,6 +182,10 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--export") { if (!next(o.exportPattern)) return false; }
         else if (a == "--export-node") { if (!next(o.exportNode)) return false; }
         else if (a == "--list") o.listExamples = true;
+        else if (a == "--node") { if (!next(o.node)) return false; }
+        else if (a == "--frame") { if (!nextInt(o.frame)) return false; }
+        else if (a == "--threads") { if (!nextInt(o.threads)) return false; }
+        else if (a == "--hash") o.hash = true;
         else if (a.size() > 1 && a[0] == '-') return false;  // "-" alone: sim with no pictures
         else o.positional.push_back(a);
     }
@@ -982,6 +1001,72 @@ int simCommand(const Options& o) {
     return simulate(o, o.positional[0], o.positional[1]);
 }
 
+/// `cook NETWORK OUT`: a network's geometry, cooked and written.
+int cook(const Options& o) {
+    if (o.positional.size() != 2 || o.frames < 0 || o.frame < 0 || o.threads < 0) return usage();
+    pg::sim::Network net;
+    std::string error, folder;
+    if (!loadNetwork(o.positional[0], net, error, folder)) {
+        std::fprintf(stderr, "cook: %s\n", error.c_str());
+        return 1;
+    }
+    for (const std::string& s : o.sets) {
+        if (!applySetting(s, net, error)) {
+            std::fprintf(stderr, "cook: %s\n", error.c_str());
+            return 1;
+        }
+    }
+    int id = net.displayed();
+    if (!o.node.empty()) {
+        const pg::sim::Node* n = net.named(o.node);
+        if (!n) {
+            std::fprintf(stderr, "cook: no node '%s'\n", o.node.c_str());
+            return 1;
+        }
+        id = n->id;
+    }
+    if (!id) {
+        std::fprintf(stderr, "cook: no node is displayed -- --node NODE says which to cook\n");
+        return 1;
+    }
+    if (o.threads > 0) pg::TaskPool::instance().setThreadCount(static_cast<unsigned>(o.threads));
+    pg::sim::GeometryGraph geo;
+    geo.sync(net, folder);
+    if (!geo.contains(id)) {
+        std::fprintf(stderr, "cook: %s is not a geometry node\n", net.node(id)->name.c_str());
+        return 1;
+    }
+    const int first = o.frames > 0 ? 1 : std::max(o.frame, 1);
+    const int last = o.frames > 0 ? o.frames : first;
+    const std::string& out = o.positional[1];
+    const bool numbered = last > first || out.find("$F") != std::string::npos;
+    for (int f = first; f <= last; ++f) {
+        const auto start = std::chrono::steady_clock::now();
+        const pg::GeometryPtr g = geo.cook(id, f, 1.0f / 30.0f);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        bool failed = false;
+        for (const pg::sim::Node& n : net.nodes()) {
+            const std::string e = geo.error(n.id);
+            if (e.empty()) continue;
+            std::fprintf(stderr, "cook: %s: %s\n", n.name.c_str(), e.c_str());
+            failed |= n.id == id;
+        }
+        if (failed || !g) return 1;
+        std::printf("frame %d: %zu points, %zu primitives, %zu volumes, %.1f ms", f, g->pointCount(), g->primitiveCount(),
+                    g->volumeCount(), ms);
+        if (o.hash) std::printf(", hash %016llx", static_cast<unsigned long long>(g->hash()));
+        std::printf("\n");
+        if (out == "-") continue;
+        const std::string path = numbered ? pg::io::framePath(out, f) : out;
+        if (!pg::io::writeGeometry(*g, path, error)) {
+            std::fprintf(stderr, "cook: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("wrote %s\n", path.c_str());
+    }
+    return 0;
+}
+
 /// The command of the earlier versions: an example by --preset.
 int pyro(const Options& o) {
     if (o.positional.size() != 1) return usage();
@@ -993,7 +1078,7 @@ int pyro(const Options& o) {
 
 bool isCommand(const std::string& word) {
     return word == "list" || word == "gen" || word == "check" || word == "render" || word == "sim" ||
-           word == "pyro";
+           word == "pyro" || word == "cook";
 }
 
 void printUsage(std::FILE* out) {
@@ -1032,6 +1117,12 @@ void printUsage(std::FILE* out) {
                  "                   'box1.sizex=ch(\"../base/sizex\")*2', 'fire.center={0, $F*0.01, 0}'\n"
                  "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"
                  "  prototype pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
+                 "  prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE]\n"
+                 "                   [--set NODE.PARAM=VALUE]... [--frame N] [--frames N] [--threads N] [--hash]\n"
+                 "                   cooks the geometry of the displayed node (or --node) -- no simulation --\n"
+                 "                   and writes it by OUT's extension, $F4 in OUT for the frame; '-' writes nothing.\n"
+                 "                   Says what it made and how long it took; --hash its content hash, the same\n"
+                 "                   on any number of --threads\n"
                  "  prototype help\n");
 }
 
@@ -1119,6 +1210,7 @@ int runCommand(int argc, char** argv) {
     if (o.command == "gen") return gen(o, lib);
     if (o.command == "check") return check(o, lib);
     if (o.command == "sim") return simCommand(o);
+    if (o.command == "cook") return cook(o);
     if (o.command == "pyro") return pyro(o);
     return render(o, lib);
 }

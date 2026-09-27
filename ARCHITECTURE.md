@@ -397,7 +397,7 @@ src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
                  Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť,
                             zobrazená geometrie, vodítka
-tests/           59 testů jádra (invarianty, SOP uzly) + 27 pro jazyk a výrazy + 6 pro
+tests/           59 testů jádra (invarianty, SOP uzly) + 27 pro jazyk a výrazy + 7 pro
                  digital assets + 10 pro topologii, smyčky a vaření na pozadí + 25 pro shader graf + 86 pro simulaci, vodu, déšť, objekty,
                  modely, geometrii v síti a animaci + 11 pro cache a export + 5 pro JPEG a video
 bench/           měření tvrzení, o která se architektura opírá
@@ -410,6 +410,7 @@ tools/prototype/  prototype — editor se dvěma sítěmi, simulací (výchozí)
                  sekvencí a videa po snímcích s průběhem (RenderJob); kontext bez okna
                  pro příkazy (Offscreen: EGL, jinak skryté okno GLFW);
                  příkazy list/gen/check/render/sim (sim --cache/--from-cache/--export, video)
+                 a cook (geometrie bez simulace do souboru, hash pro determinismus)
 examples/        grafy shaderů, ukázková uživatelská knihovna, sítě simulace, assety (assets/)
 ```
 
@@ -443,7 +444,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Wrangle jazyk: proměnné, řízení toku, funkce, pole, řetězce, matice a kvaterniony; běh nad body, primitivy, rohy i detailem; čtení libovolných prvků a vstupů, hledání sousedů (k-d strom), tvorba a mazání geometrie; parametry z `ch()`; výsledek nezávislý na počtu vláken |
 | ✅ | 26 typů uzlů (box, sphere, tube, scatter, copy to points, file, polyextrude, subdivide, clip…), obsahový hash, čtení i zápis OBJ, headless CLI |
 | ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
-| ✅ | 229 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
+| ✅ | 230 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `prototype sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |

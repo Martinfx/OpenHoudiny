@@ -68,7 +68,8 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Jádro | COW atributy, cook engine s verzemi a cache, časová závislost, deterministický paralelismus, per-element jazyk (interpret) | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Shader graf | Uzly z textu, čtyři cíle (GLSL, GLSL ES, Vulkan, HLSL), editor s náhledem | [docs/shader-graph.md](docs/shader-graph.md) |
 | Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; z uzlů, deterministicky na libovolném počtu vláken | [docs/pyro.md](docs/pyro.md) |
-| Geometrie v editoru | 19 SOP uzlů, display flag, tabulka atributů; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
+| Geometrie v editoru | 26 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
+| Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
 | Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB | [docs/cache.md](docs/cache.md) |
 | Obraz | Kamera záběru, render do PNG, sekvence a videa | [docs/render.md](docs/render.md) |
@@ -94,7 +95,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 Každý krok končí demem a kritériem „hotovo, když". Další krok začíná, až je
 předchozí hotový, zdokumentovaný a otestovaný (ASan, UBSan, TSan, libc++).
 
-### Krok 1 — Procedurální jádro naplno *(rozpracováno)*
+### Krok 1 — Procedurální jádro naplno ✅
 
 - ✅ **Wrangle v2** ([docs/wrangle.md](docs/wrangle.md)): lokální
   proměnné, `if`/`else`, `for`, `while`, vlastní funkce; běh nad body,
@@ -124,7 +125,11 @@ předchozí hotový, zdokumentovaný a otestovaný (ASan, UBSan, TSan, libc++).
 
 **Hotovo, když:** procedurální budova z několika posuvníků (digital asset)
 jde v editoru i z příkazové řádky (`prototype cook`) a stejné hodnoty dají
-bitově stejnou geometrii na 1 i 4 vláknech.
+bitově stejnou geometrii na 1 i 4 vláknech. ✅ Asset **Building**
+([docs/assets.md §5](docs/assets.md#5-příklad-budova-z-posuvníků)) má
+deset posuvníků; příklad **street** z něj staví ulici;
+`prototype cook street - --hash --threads 1` i `--threads 4` vypíší týž
+hash a hlídá to test.
 
 ### Krok 2 — Destrukce
 

@@ -860,8 +860,11 @@ public:
         isCap.resize(faces.size(), 0);
         auto out = rebuild(src, points, faces, closed, vertices, sourcePrim);
         if (!capGroup.empty() && cap) {
+            // Added to: the caps of earlier cuts stay in it.
             Group& g = out->createGroup(capGroup, AttrClass::Primitive);
-            for (size_t f = 0; f < isCap.size(); ++f) g.set(f, isCap[f] != 0);
+            for (size_t f = 0; f < isCap.size(); ++f) {
+                if (isCap[f]) g.set(f, true);
+            }
         }
         return out;
     }

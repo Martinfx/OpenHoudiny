@@ -83,7 +83,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 229 testů: 59 jádro, 27 jazyk wrangle a výrazy, 6 digital assets, 10 topologie, smyčky a vaření na pozadí, 25 shader graf, 86 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 230 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 10 topologie, smyčky a vaření na pozadí, 25 shader graf, 86 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -102,8 +102,10 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ./build/prototype sim campfire_vdb fire.png --from-cache cache/fire --every 10   # render z cache
 ./build/prototype sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
 ./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # částice do PLY
-./build/prototype --example foreach_city         # smyčka For-Each: městský blok z jedné krabice
-./build/prototype help                             # příkazy: list, gen, check, render, sim
+./build/prototype --example street                 # ulice ze tří digital assetů Building
+./build/prototype cook street street.obj --set tower.floors=12   # geometrie bez okna, do OBJ
+./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
+./build/prototype help                             # příkazy: list, gen, check, render, sim, cook
 ```
 
 `pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,
@@ -161,7 +163,7 @@ editor se jí dívá (s rámečkem obrazu) a render i `prototype sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a dvaceti čtyřmi příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a dvaceti pěti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
@@ -185,7 +187,10 @@ parametru › Promote). Dvojklik (I) vede dovnitř, U zpátky; každá změna
 uvnitř je nová verze, kterou hned sledují všechny instance. Knihovna čte
 soubory `.pgasset` z programu, z `$PROTOTYPE_ASSETS` a z uživatelské
 složky; síť ukládá definice použitých assetů na svůj konec, takže se
-otevře kdekoli.
+otevře kdekoli. Asset **Building** postaví budovu z deseti posuvníků
+(patra, rozměry, okna, balkony, barva) a příklad **street** z něj staví
+ulici; `prototype cook` uvaří geometrii bez okna do OBJ, PLY nebo VDB
+a vypíše její hash — stejný na 1 i 4 vláknech.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

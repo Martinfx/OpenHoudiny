@@ -3,6 +3,7 @@
 // with the parameters it shows, used in another network and following its
 // definition.
 //
+#include "pg/core/Parallel.h"
 #include "pg/sim/Asset.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
@@ -10,6 +11,7 @@
 #include "test_framework.h"
 
 #include <cmath>
+#include <map>
 #include <cstdio>
 #include <cstdlib>
 
@@ -300,4 +302,45 @@ TEST(asset_the_program_carries_load_and_cook) {
         CHECK_EQ(geo.error(inst), std::string());
         CHECK(g->primitiveCount() > 0);
     }
+}
+
+TEST(asset_building_is_the_same_on_any_number_of_threads) {
+    AssetLibrary::instance().loadDefaults();
+    Network street;
+    CHECK(Network::example("street", street));
+    const unsigned saved = pg::TaskPool::instance().threadCount();
+    uint64_t hashes[2] = {0, 0};
+    for (int k = 0; k < 2; ++k) {
+        pg::TaskPool::instance().setThreadCount(k == 0 ? 1u : 4u);
+        GeometryGraph geo;
+        geo.sync(street);
+        const GeometryPtr g = geo.cook(street.displayed(), 1);
+        CHECK(g && g->primitiveCount() > 2000);
+        for (const Node& n : street.nodes()) CHECK_EQ(geo.error(n.id), std::string());
+        hashes[k] = g ? g->hash() : 0;
+    }
+    pg::TaskPool::instance().setThreadCount(saved);
+    CHECK_EQ(hashes[0], hashes[1]);
+
+    // Its walls, windows, door and roof close round it: a solid, which a
+    // fracture can cut.
+    const auto def = AssetLibrary::instance().find("building");
+    CHECK(def != nullptr);
+    if (!def) return;
+    GeometryGraph inside;
+    inside.sync(*def->net);
+    const GeometryPtr body = inside.cook(def->net->named("paint")->id, 1);
+    std::map<std::pair<uint32_t, uint32_t>, int> edges;
+    for (size_t p = 0; p < body->primitiveCount(); ++p) {
+        const auto f = body->primitivePoints(p);
+        for (size_t i = 0; i < f.size(); ++i) ++edges[{f[i], f[(i + 1) % f.size()]}];
+    }
+    bool closed = !edges.empty();
+    for (const auto& [e, count] : edges) closed = closed && count == 1 && edges.count({e.second, e.first}) == 1;
+    CHECK(closed);
+    // More floors, more of it.
+    CHECK(street.setParam(street.named("tower")->id, "floors", ParamValue{12.0f, 0.0f, 0.0f}));
+    GeometryGraph taller;
+    taller.sync(street);
+    CHECK(taller.cook(street.displayed(), 1)->primitiveCount() > 2000u + 200u);
 }

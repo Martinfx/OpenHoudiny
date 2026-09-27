@@ -156,7 +156,42 @@ v souborech a starší scéna dostane nový plot.
 `prototype sim` a ostatní příkazy načítají knihovnu stejně jako editor.
 `--set fence.height=0.8` nastaví promotovaný parametr instance.
 
-## 5. Co asset odmítne
+## 5. Příklad: budova z posuvníků
+
+![Ulice ze tří budov, každá je uzel assetu Building s jinými posuvníky](img/street.png)
+
+Asset **Building** (program ho nosí s sebou) postaví budovu z deseti
+posuvníků: Floors, Floor Height, Width, Depth, Bay (šířka pole), Window
+Frame, Window Depth, Balconies, Every a Wall Color. Uvnitř je síť čtrnácti
+uzlů:
+
+| Uzel | Co dělá |
+|---|---|
+| `shell` (Detail Wrangle) | stěny jako mřížky polí — patro vysoké, bay široké; každé pole má atributy `floor`, `column`, `wall`; střecha a základ ve skupinách `roof` a `base` |
+| `weld` (Fuse) | svaří body sousedních polí: obal je uzavřený |
+| `choose` (Primitive Wrangle) | dveře uprostřed přední stěny v přízemí, jinde okna (skupiny `door`, `window`) |
+| `frames`, `windows` (PolyExtrude) | okno: nejdřív inset (rám v rovině stěny), pak zapuštění dovnitř (sklo `glass`, ostění `reveal`) |
+| `door` (PolyExtrude) | dveře zapuštěné hlouběji |
+| `parapet`, `roof` (PolyExtrude) | střecha za atikou: inset, pak dolů |
+| `paint` (Primitive Wrangle) | barvy podle skupin; `chv("wall")` je posuvník Wall Color |
+| `balcony_points` (Detail Wrangle) | bod u paty každého Every-tého okna vpředu a vzadu, s normálou ze stěny |
+| `slab`, `balconies`, `slab_paint` | deska balkonu zkopírovaná na ty body (Copy to Points, Align to N); šířka desky je výraz `ch("../shell/bay") * 0.8` |
+| `building` (Merge) | budova a balkony |
+
+Příklad **street** staví ze stejného assetu tři různé domy. Z příkazové
+řádky jde budova (nebo celá ulice) uvařit a uložit bez okna:
+
+```bash
+./build/prototype cook street street.obj                          # celá ulice do OBJ
+./build/prototype cook street tower.obj --node tower --set tower.floors=14
+./build/prototype cook street - --hash --threads 1                # hash geometrie
+./build/prototype cook street - --hash --threads 4                # týž hash
+```
+
+Hash geometrie je stejný na 1 i 4 vláknech, takže stejné posuvníky dají
+bitově stejnou geometrii. Hlídá to test `asset_building_is_the_same_on_any_number_of_threads`.
+
+## 6. Co asset odmítne
 
 | Situace | Co se stane |
 |---|---|
@@ -167,7 +202,7 @@ v souborech a starší scéna dostane nový plot.
 | hodnota nebo klíč parametru, který instance už nemá | při načtení se zahodí s varováním |
 | instance assetu, který knihovna nezná (soubor bez definice) | síť se načte, uzel hlásí chybu, dokud se asset neobjeví |
 
-## 6. Jak to funguje
+## 7. Jak to funguje
 
 - **Knihovna** (`pg/sim/Asset.h`, `AssetLibrary`) drží definice podle
   jména. Každá změna zvýší číslo revize knihovny. `GeometryGraph` ho
@@ -191,7 +226,7 @@ v souborech a starší scéna dostane nový plot.
   tvořily cyklus, by tu poslední kontrola odmítla, takže v knihovně cyklus
   nikdy není a vaření nemůže běžet donekonečna.
 
-## 7. Omezení (zatím)
+## 8. Omezení (zatím)
 
 - Uvnitř jsou jen geometrické uzly. Simulace se do assetu nezabalí.
 - Asset má nejvýš čtyři vstupy a jeden výstup.
