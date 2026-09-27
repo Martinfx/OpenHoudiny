@@ -1,16 +1,25 @@
 #pragma once
 //
 // A simulation built from nodes: the network the editor shows and a .pgsim
-// file holds. Sources, forces and colliders feed a Pyro Solver; its gas goes
+// file holds. Sources, forces and objects feed a Pyro Solver; its gas goes
 // through a Volume Look to the Output.
 //
-//   [Sphere Source] ---+
-//   [Turbulence] ------+--> [Pyro Solver] --> [Volume Look] --> [Output]
-//   [Sphere Collider] -+
+//   [Pyro Source] --+
+//   [Turbulence] ---+--> [Pyro Solver] --> [Volume Look] --> [Output]
+//   [Object] -------+
+//
+// Objects are the solids of the scene: every one is drawn, and those linked
+// into a solver's Colliders are in the way of what it simulates. Objects and
+// sources have a shape, a position, a rotation and a size (Shape.h) -- what
+// the viewport's gizmo moves, turns and sizes (NodeType::handles).
 //
 // compile() turns the network into what runs: a Scene (Scene.h) for the
 // solver, a Look (Look.h) for the renderer, and the problems it found, each
 // tied to the node it is about, so that the editor can mark it.
+//
+// Files from earlier versions still load: a node type that changed carries
+// its version, and load() turns an old node into its successor (a Sphere
+// Source becomes a Pyro Source with the shape sphere, its radius a size).
 //
 // The node types are a table (nodeTypes()): the type of a pin decides what may
 // be linked to it; a parameter carries its section, range, unit and help. The
@@ -20,7 +29,7 @@
 // File format (.pgsim) -- plain text, one fact per line, in a stable order:
 //
 //   pgsim 1
-//   node 1 sphere_source 1 fire 40 80   # id, type, type version, name, editor x y
+//   node 1 pyro_source 2 fire 40 80     # id, type, type version, name, editor x y
 //     param center 0 0.12 0             # the parameters that differ from the default
 //     param fuel 14
 //     param motion circle
@@ -77,17 +86,31 @@ struct ParamDef {
     std::vector<const char*> choiceLabels = {};  ///< ... and as the editor shows them
 };
 
+/// The parameters of a node that the viewport's gizmo moves, turns and
+/// sizes; null where the node has none.
+struct Handles {
+    const char* center = nullptr;    ///< Vector, m: where it is
+    const char* rotation = nullptr;  ///< Vector, degrees about x, y, z
+    const char* axis = nullptr;      ///< Vector: a direction, turned by the gizmo
+    const char* size = nullptr;      ///< Vector, m: its extent along its own axes
+    const char* radius = nullptr;    ///< Float, m: a radius, across its axis
+    const char* height = nullptr;    ///< Float, m: a length along its axis
+
+    bool any() const { return center || rotation || axis || size || radius || height; }
+};
+
 struct NodeType {
-    const char* name;      ///< "sphere_source"
-    const char* label;     ///< "Sphere Source"
-    const char* category;  ///< "Sources", "Forces", "Colliders", "Simulation", "Render"
+    const char* name;      ///< "pyro_source"
+    const char* label;     ///< "Pyro Source"
+    const char* category;  ///< "Objects", "Sources", "Forces", "Simulation", "Render"
     const char* help;
     std::vector<PinDef> inputs;
     std::vector<PinDef> outputs;
     std::vector<ParamDef> params;
     int version = 1;
-    /// Sources, forces and colliders can be bypassed: left out, kept in place.
+    /// Objects, sources and forces can be bypassed: left out, kept in place.
     bool bypassable = false;
+    Handles handles = {};
 
     const ParamDef* param(std::string_view name) const;
     const PinDef* input(std::string_view name) const;
@@ -140,6 +163,9 @@ struct Compiled {
     bool ok = false;
     Scene scene;
     Look look;
+    /// Every object of the network, bypassed ones aside, as it is drawn --
+    /// whether a solver collides with it or not.
+    std::vector<Solid> solids;
     int frames = 150;  ///< how long the simulation runs, from the Output
     std::vector<Problem> problems;
     /// The nodes that take part in what is simulated, by id, sorted: the
@@ -216,6 +242,9 @@ public:
 
 private:
     int indexOf(int id) const;
+    /// Turns the nodes of old types (Legacy in Network.cpp) into the types
+    /// that replaced them.
+    void upgrade(const std::vector<Link>& links);
 
     std::vector<Node> nodes_;
     std::vector<Link> links_;

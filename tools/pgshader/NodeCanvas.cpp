@@ -91,6 +91,15 @@ void NodeCanvas::clearSelection() {
     current_ = 0;
 }
 
+void NodeCanvas::toggle(int node) {
+    if (selection_.erase(node) > 0) {
+        if (current_ == node) current_ = selection_.empty() ? 0 : *selection_.begin();
+        return;
+    }
+    selection_.insert(node);
+    current_ = node;
+}
+
 void NodeCanvas::frame(bool selectionOnly) { frameRequest_ = selectionOnly ? 2 : 1; }
 
 void NodeCanvas::reveal(int node) { revealNode_ = node; }

@@ -9,6 +9,7 @@
 // simulated -- a source, a force, the solver -- starts it again from frame 1
 // while the play head stays; a change of the look only draws the frame again.
 //
+#include "Gizmo.h"
 #include "NodeCanvas.h"
 #include "SimRunner.h"
 #include "Workspace.h"
@@ -56,6 +57,8 @@ public:
     void newNetwork();
     /// Selects a node by name, as if clicked: for screenshots.
     void selectNode(const std::string& name);
+    /// What the viewport's gizmo does: select, move, rotate, scale.
+    void setTool(GizmoMode tool) { tool_ = tool; }
 
 private:
     void load(const sim::Network& net, const std::string& path, const std::string& example);
@@ -88,6 +91,42 @@ private:
     bool renderImage(const std::string& path, int width, int height);
     bool renderFrames(const std::string& folder);
 
+    // --- selecting, the gizmo, adding to the scene (SimViewport.cpp) --------------------
+    /// A node the gizmo moves, with its values when a drag began.
+    struct Placed {
+        int id = 0;
+        sim::ParamValue center{}, rotation{}, axis{}, size{};
+        float radius = 0.0f, height = 0.0f;
+    };
+    /// Where a node is and how it is turned; false for one with nothing to move.
+    bool placeOf(int id, Vec3& center, sim::Rotation& frame) const;
+    /// The selected nodes the gizmo can move, turn or size.
+    std::vector<int> movable() const;
+    /// The tool the gizmo is for `nodes`: the chosen one, or the first they allow.
+    GizmoMode toolFor(const std::vector<int>& nodes) const;
+    void pivotOf(const std::vector<int>& nodes, GizmoMode tool, Vec3& pivot, sim::Rotation& frame) const;
+    Placed placedOf(int id) const;
+    void applyDrag(const GizmoDrag& drag);
+    void restoreDrag();
+    /// The node under a point of the viewport: an object the ray meets, a
+    /// source, or a guide line near it. 0 for none.
+    int pickAt(const ViewCamera& cam, ImVec2 mouse) const;
+    /// Where the ray under a point of the screen meets the floor.
+    Vec3 floorPoint(const ViewCamera& cam, ImVec2 screen) const;
+    void viewTools(ImVec2 at);
+    void viewMenu();
+    /// The items that add to the scene, what they add placed at `at`. True
+    /// when something was added.
+    bool sceneMenu(const Vec3& at);
+    int addToScene(const std::string& kind, const Vec3& at);
+    int ensurePyroChain();
+    /// Links `node`'s output into that input of every solver that has it.
+    void linkIntoSolvers(int node, const char* output, const char* input);
+    /// Where a new object, source or force goes in the network.
+    ImVec2 freeSlot() const;
+    void frameSelection();
+    void viewKeys(bool overView);
+
     sim::Network net_;
     std::string path_;       ///< empty: never saved
     std::string example_;    ///< the example it came from, if any
@@ -116,10 +155,25 @@ private:
     bool viewDirty_ = true;
     int viewWidth_ = 0, viewHeight_ = 0;
     bool guides_ = true;
-    int guidesNode_ = -1;
+    std::vector<int> guidesSelection_;
     uint64_t guidesRevision_ = ~0ull;
     Vec3 framedSize_;  ///< the domain the camera was framed for, world units
     bool framed_ = false;
+
+    gl::Lines guideLines_;       ///< the guides drawn, for picking
+    Gizmo gizmo_;
+    GizmoMode tool_ = GizmoMode::Move;
+    bool localAxes_ = true, snap_ = false;
+    std::vector<Placed> dragStart_;
+    Vec3 dragPivot_;
+    bool gizmoOwnsMouse_ = false;  ///< the press began on the gizmo
+    int hovered_ = 0;              ///< the node under the mouse
+    std::vector<int> highlighted_;
+    int highlightedHover_ = 0;
+    ImVec2 toolsLo_, toolsHi_;     ///< the toolbar, last frame
+    ViewCamera camera_;            ///< the viewport's, last frame
+    Vec3 addAt_;                   ///< where the add menu puts what it adds
+    int newColor_ = 0;
 
     ui::FileBrowser files_;
     enum class FileAction { None, Open, SaveAs, Image, Frames } fileAction_ = FileAction::None;

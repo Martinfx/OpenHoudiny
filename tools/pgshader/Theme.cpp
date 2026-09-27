@@ -430,6 +430,136 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             d->PathStroke(col, 0, t);
             line(0.15f, -0.75f, -0.15f, 0.75f);
             break;
+        case Icon::Select:  // a pointer
+            d->PathLineTo(P(-0.55f, -0.85f));
+            d->PathLineTo(P(-0.55f, 0.55f));
+            d->PathLineTo(P(-0.2f, 0.22f));
+            d->PathLineTo(P(0.05f, 0.8f));
+            d->PathLineTo(P(0.3f, 0.7f));
+            d->PathLineTo(P(0.05f, 0.12f));
+            d->PathLineTo(P(0.5f, 0.1f));
+            d->PathFillConcave(col);
+            break;
+        case Icon::Move:  // four arrows
+            line(-0.8f, 0.0f, 0.8f, 0.0f);
+            line(0.0f, -0.8f, 0.0f, 0.8f);
+            tri(0.95f, 0.0f, 0.6f, -0.3f, 0.6f, 0.3f);
+            tri(-0.95f, 0.0f, -0.6f, 0.3f, -0.6f, -0.3f);
+            tri(0.0f, -0.95f, 0.3f, -0.6f, -0.3f, -0.6f);
+            tri(0.0f, 0.95f, -0.3f, 0.6f, 0.3f, 0.6f);
+            break;
+        case Icon::Rotate:  // a turning arrow
+            arc(0.0f, 0.0f, 0.68f, -kPi * 0.35f, kPi * 1.25f, t * 1.2f);
+            tri(0.55f, -0.95f, 0.95f, -0.45f, 0.3f, -0.35f);
+            break;
+        case Icon::Scale:  // a box and a corner pulled out
+            d->AddRect(P(-0.85f, -0.1f), P(0.1f, 0.85f), col, 0, 0, t);
+            line(-0.25f, 0.25f, 0.7f, -0.7f);
+            tri(0.9f, -0.9f, 0.3f, -0.8f, 0.8f, -0.3f);
+            break;
+        case Icon::World:  // a globe
+            d->AddCircle(c, 0.8f * s, col, 0, t);
+            d->AddEllipse(c, ImVec2(0.35f * s, 0.8f * s), col, 0.0f, 0, t);
+            line(-0.8f, 0.0f, 0.8f, 0.0f);
+            break;
+        case Icon::Local: {  // a turned frame of axes
+            line(-0.6f, 0.6f, 0.75f, 0.2f, t * 1.2f);
+            line(-0.6f, 0.6f, -0.2f, -0.8f, t * 1.2f);
+            line(-0.6f, 0.6f, 0.2f, 0.95f, t * 1.2f);
+            d->AddCircleFilled(P(-0.6f, 0.6f), 0.18f * s, col);
+            break;
+        }
+        case Icon::Magnet:
+            d->PathArcTo(P(0.0f, 0.0f), 0.62f * s, kPi, kPi * 2.0f, 16);
+            d->PathStroke(col, 0, t * 2.4f);
+            line(-0.62f, 0.0f, -0.62f, 0.55f, t * 2.4f);
+            line(0.62f, 0.0f, 0.62f, 0.55f, t * 2.4f);
+            d->AddRectFilled(P(-0.85f, 0.6f), P(-0.39f, 0.9f), col);
+            d->AddRectFilled(P(0.39f, 0.6f), P(0.85f, 0.9f), col);
+            break;
+        case Icon::Frame:  // corners round a dot
+            for (const float sx : {-1.0f, 1.0f}) {
+                for (const float sy : {-1.0f, 1.0f}) {
+                    line(0.85f * sx, 0.85f * sy, 0.4f * sx, 0.85f * sy);
+                    line(0.85f * sx, 0.85f * sy, 0.85f * sx, 0.4f * sy);
+                }
+            }
+            d->AddCircleFilled(c, 0.22f * s, col);
+            break;
+        case Icon::Sphere:
+            d->AddCircle(c, 0.8f * s, col, 0, t);
+            d->AddEllipse(c, ImVec2(0.8f * s, 0.3f * s), col, 0.0f, 0, t);
+            break;
+        case Icon::Box:
+            d->AddRect(P(-0.8f, -0.4f), P(0.4f, 0.8f), col, 0, 0, t);
+            line(-0.8f, -0.4f, -0.4f, -0.8f);
+            line(0.4f, -0.4f, 0.8f, -0.8f);
+            line(0.4f, 0.8f, 0.8f, 0.4f);
+            line(-0.4f, -0.8f, 0.8f, -0.8f);
+            line(0.8f, -0.8f, 0.8f, 0.4f);
+            break;
+        case Icon::Cylinder:
+            d->AddEllipse(P(0.0f, -0.6f), ImVec2(0.65f * s, 0.25f * s), col, 0.0f, 0, t);
+            d->PathArcTo(P(0.0f, 0.6f), 0.65f * s, 0.0f, kPi, 12);  // the lower rim, the front half
+            d->PathStroke(col, 0, t);
+            line(-0.65f, -0.6f, -0.65f, 0.6f);
+            line(0.65f, -0.6f, 0.65f, 0.6f);
+            break;
+        case Icon::Cone:
+            d->AddEllipse(P(0.0f, 0.6f), ImVec2(0.7f * s, 0.25f * s), col, 0.0f, 0, t);
+            line(-0.7f, 0.6f, 0.0f, -0.9f);
+            line(0.7f, 0.6f, 0.0f, -0.9f);
+            break;
+        case Icon::Torus:
+            d->AddEllipse(c, ImVec2(0.85f * s, 0.5f * s), col, 0.0f, 0, t * 1.1f);
+            d->AddEllipse(c, ImVec2(0.38f * s, 0.18f * s), col, 0.0f, 0, t);
+            break;
+        case Icon::Wind:
+            for (int i = 0; i < 3; ++i) {
+                const float y = -0.5f + 0.5f * static_cast<float>(i);
+                const float end = i == 1 ? 0.8f : 0.45f;
+                line(-0.85f, y, end - 0.2f, y);
+                d->PathArcTo(P(end - 0.2f, y - 0.2f), 0.2f * s, kPi * 0.5f, -kPi * 0.5f, 10);
+                d->PathStroke(col, 0, t);
+            }
+            break;
+        case Icon::Vortex:
+            d->PathClear();
+            for (int i = 0; i <= 40; ++i) {
+                const float a = static_cast<float>(i) * 0.4f;
+                const float r = 0.08f + 0.022f * static_cast<float>(i);
+                d->PathLineTo(P(r * std::cos(a), r * std::sin(a)));
+            }
+            d->PathStroke(col, 0, t);
+            break;
+        case Icon::Attractor:
+            d->AddCircle(c, 0.8f * s, col, 0, t);
+            d->AddCircle(c, 0.45f * s, col, 0, t);
+            d->AddCircleFilled(c, 0.16f * s, col);
+            break;
+        case Icon::Drop:
+            d->PathArcTo(P(0.0f, 0.3f), 0.55f * s, -kPi * 0.1f, kPi * 1.1f, 16);
+            d->PathLineTo(P(0.0f, -0.9f));
+            d->PathFillConvex(col);
+            break;
+        case Icon::Rain:
+            d->AddCircleFilled(P(-0.35f, -0.35f), 0.3f * s, col);
+            d->AddCircleFilled(P(0.1f, -0.5f), 0.38f * s, col);
+            d->AddCircleFilled(P(0.5f, -0.3f), 0.28f * s, col);
+            d->AddRectFilled(P(-0.6f, -0.35f), P(0.75f, -0.05f), col);
+            for (const float x : {-0.45f, 0.05f, 0.55f}) line(x, 0.2f, x - 0.18f, 0.75f);
+            break;
+        case Icon::Trash:
+            line(-0.75f, -0.55f, 0.75f, -0.55f);
+            line(-0.25f, -0.75f, 0.25f, -0.75f);
+            d->AddRect(P(-0.55f, -0.45f), P(0.55f, 0.85f), col, 0.15f * s, 0, t);
+            line(-0.15f, -0.2f, -0.15f, 0.6f);
+            line(0.2f, -0.2f, 0.2f, 0.6f);
+            break;
+        case Icon::Copy:
+            d->AddRect(P(-0.8f, -0.4f), P(0.35f, 0.85f), col, 0.12f * s, 0, t);
+            d->AddRect(P(-0.35f, -0.85f), P(0.8f, 0.35f), col, 0.12f * s, 0, t);
+            break;
     }
 }
 

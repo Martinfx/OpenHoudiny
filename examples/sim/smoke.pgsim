@@ -1,6 +1,6 @@
 pgsim 1
 # A column of smoke: warm smoke, no fuel, rising and curling in the sun.
-node 1 sphere_source 1 chimney 0 0
+node 1 pyro_source 2 chimney 0 0
   param smoke 5
   param heat 3
   param velocity 0 0.55 0

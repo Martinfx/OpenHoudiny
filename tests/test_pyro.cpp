@@ -257,7 +257,7 @@ TEST(pyro_colliders_keep_the_gas_out_and_the_flow_around) {
     Scene s = small(Scene::smoke(), 36);
     Collider ball;
     ball.center = Vec3(0.0f, 0.55f, 0.0f);
-    ball.radius = 0.15f;
+    ball.size = Vec3(0.3f);
     s.colliders.push_back(ball);
     PyroSolver sim(s);
     for (int f = 0; f < 40; ++f) sim.step();
@@ -443,7 +443,7 @@ TEST(pyro_scenes_out_of_range_are_made_safe) {
     s.solver.cooling = std::nanf("");
     s.solver.substeps = 1000;
     s.solver.resolution = 1 << 30;
-    s.emitters[0].radius = -1.0f;
+    s.emitters[0].size = Vec3(-1.0f);
     s.emitters[0].fuel = -5.0f;
     Force f;
     f.kind = ForceKind::Wind;
@@ -455,7 +455,7 @@ TEST(pyro_scenes_out_of_range_are_made_safe) {
     CHECK_EQ(safe.solver.cooling, SolverSettings{}.cooling);
     CHECK_EQ(safe.solver.substeps, 16);
     CHECK_EQ(safe.solver.resolution, 256);
-    CHECK(safe.emitters[0].radius > 0.0f);
+    CHECK(safe.emitters[0].size.x > 0.0f);
     CHECK_EQ(safe.emitters[0].fuel, 0.0f);
     CHECK(length(safe.forces[1].direction) > 0.0f);
 
@@ -518,7 +518,7 @@ TEST(pyro_burning_gas_thins_out_as_it_swells) {
     Scene s = small(Scene::fire(), 32);
     s.emitters[0].fuel = 60.0f;
     s.emitters[0].end = 0.2f;
-    s.emitters[0].radius = 0.12f;
+    s.emitters[0].size = Vec3(0.24f);
     s.emitters[0].center = Vec3(0.0f, 0.3f, 0.0f);
     s.solver.expansion = 3.0f;
     s.solver.substeps = 2;

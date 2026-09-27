@@ -1,6 +1,7 @@
 pgsim 1
 # A fire in gusty wind: the flames lean over and the smoke streams away.
-node 1 box_source 1 logs 0 0
+node 1 pyro_source 2 logs 0 0
+  param shape box
   param center -0.45 0.06 0
   param size 0.3 0.08 0.2
   param fuel 16
@@ -18,7 +19,6 @@ node 4 pyro_solver 1 solver 250 76
   param buoyancy 0.9
   param vorticity 0.9
   param cooling 1.5
-  param smoke_decay 0.1
 node 5 volume_look 1 look 490 76
   param smoke_color 0.24 0.23 0.22
   param smoke_density 16

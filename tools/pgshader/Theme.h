@@ -63,6 +63,9 @@ enum class Icon {
     Source, Force, Collider, Solver, Look, Output,  // simulation nodes
     Shader, Input, Math, Texture, Pattern,           // shader nodes
     Network, Viewport, Parameters, Timeline, Code,   // panels
+    Select, Move, Rotate, Scale, World, Local, Magnet, Frame,  // viewport tools
+    Sphere, Box, Cylinder, Cone, Torus,              // shapes
+    Wind, Vortex, Attractor, Drop, Rain, Trash, Copy,
 };
 
 /// `icon` in a square `size` wide, centred on `center`.

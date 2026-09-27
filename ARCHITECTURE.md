@@ -326,18 +326,21 @@ src/pg/shader/   Types      typy shader grafu a jejich převody
                  Target     GLSL 330, GLSL ES 300, Vulkan, HLSL; registr
 src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkování
                  Poisson    tlaková rovnice: geometrický multigrid se stěnami a překážkami
-                 Scene      co se simuluje: doména, zdroje, síly, překážky
+                 Shape      tvary umístěné ve světě: poloha, rotace, velikost; uvnitř,
+                            vzdálenost, průsečík s paprskem
+                 Scene      co se simuluje: doména, zdroje, síly, překážky, objekty
                  Pyro       simulace kouře a ohně
                  Network    síť uzlů simulace, formát .pgsim, překlad na Scene + Look
                  Frame      snímek v poloviční přesnosti: cache a vykreslování
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
-                 Volume     objemové vykreslování simulace: podlaha, překážky, vodítka
-tests/           50 testů proti invariantům + 25 pro shader graf + 30 pro simulaci
+                 Volume     objemové vykreslování simulace: podlaha, objekty, vodítka
+tests/           50 testů proti invariantům + 25 pro shader graf + 38 pro simulaci a objekty
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,
-                 na společném plátně uzlů; příkazy list/gen/check/render/sim
+                 na společném plátně uzlů; viewport s výběrem a gizmem
+                 (SimViewport, Gizmo); příkazy list/gen/check/render/sim
 examples/        grafy shaderů, ukázková uživatelská knihovna, sítě simulace
 ```
 

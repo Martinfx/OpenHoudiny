@@ -45,6 +45,12 @@ void SimRunner::setRunning(bool on) {
     wake_.notify_all();
 }
 
+void SimRunner::hold(bool on) {
+    if (hold_ == on) return;
+    hold_ = on;
+    wake_.notify_all();
+}
+
 void SimRunner::setBudget(size_t bytes) {
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -66,7 +72,7 @@ std::shared_ptr<const sim::Frame> SimRunner::frame(int number) const {
 
 bool SimRunner::busy() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return running_ && (fresh_ || static_cast<int>(cache_.size()) < frames_) && bytes_ < budget_;
+    return running_ && !hold_ && (fresh_ || static_cast<int>(cache_.size()) < frames_) && bytes_ < budget_;
 }
 
 bool SimRunner::full() const {
@@ -101,7 +107,7 @@ bool SimRunner::advance() {
     {
         std::lock_guard<std::mutex> lock(mu_);
         const bool more = fresh_ || static_cast<int>(cache_.size()) < frames_;
-        if (!running_ || !more || bytes_ >= budget_) return false;
+        if (!running_ || hold_ || !more || bytes_ >= budget_) return false;
         if (fresh_) {
             scene = scene_;
             restart = true;
@@ -132,8 +138,8 @@ void SimRunner::loop() {
         {
             std::unique_lock<std::mutex> lock(mu_);
             wake_.wait(lock, [&] {
-                return quit_ ||
-                       (running_ && (fresh_ || static_cast<int>(cache_.size()) < frames_) && bytes_ < budget_);
+                return quit_ || (running_ && !hold_ && (fresh_ || static_cast<int>(cache_.size()) < frames_) &&
+                                 bytes_ < budget_);
             });
             if (quit_) return;
         }

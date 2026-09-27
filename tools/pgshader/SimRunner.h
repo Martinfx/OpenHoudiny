@@ -36,6 +36,9 @@ public:
     /// Simulate ahead or not.
     void setRunning(bool on);
     bool running() const { return running_; }
+    /// While held it starts nothing: a scene still changing under the mouse
+    /// -- a gizmo being dragged -- is not worth simulating until it is let go.
+    void hold(bool on);
     /// The most memory the frames may take.
     void setBudget(size_t bytes);
 
@@ -79,6 +82,7 @@ private:
     sim::Domain domain_;
 
     std::atomic<bool> running_{true};
+    std::atomic<bool> hold_{false};
     std::unique_ptr<sim::PyroSolver> solver_;  // the thread's (or the caller's in synchronous mode)
 };
 

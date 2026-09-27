@@ -69,7 +69,7 @@ se přepíná přepínačem uprostřed horní lišty.
 
 | panel | co ukazuje |
 |---|---|
-| **Viewport** (vlevo nahoře) | plyn na podlaze se stínem, překážky, vodítka |
+| **Viewport** (vlevo nahoře) | scéna: plyn na podlaze se stínem, objekty, vodítka; výběr kliknutím a gizmo |
 | **Časová osa** (vlevo dole) | přehrávání, snímky v cache, přehrávací hlava |
 | **Parameters** (vpravo nahoře) | parametry vybraného uzlu; bez výběru přehled sítě |
 | **Network** (vpravo dole) | síť uzlů |
@@ -106,13 +106,53 @@ dovolí napsat číslo i mimo něj, meze drží jen fyzikální smysl (třeba ž
 záporné palivo). Vektory mají osy barevně, x červeně, y zeleně, z modře, a
 volby po několika tlačítkách vedle sebe.
 
-### Viewport
+### Viewport: objekty a gizmo
 
-Levé tažení kamerou obíhá, prostřední nebo Shift+levé posouvá, pravé
-tažení a kolečko přibližují, dvojklik zarámuje doménu. **G** zapne vodítka:
-obrys domény, zdroje (oranžově, se šipkou rychlosti a drahou pohybu), víry
-a atraktory, šipky větru. Vodítka vybraného uzlu svítí. Ikona fotoaparátu
-uloží snímek jako PNG ve dvojnásobném rozlišení.
+Viewport se ovládá jako ve 3D programech. Kliknutí vybere, co je pod myší:
+objekt, zdroj, vodítko síly nebo hranu domény (ta vybere řešič). Výběr je
+jeden pro viewport i síť: uzel vybraný kliknutím ve scéně svítí i v síti a
+jeho parametry ukáže panel Parameters. Objekt pod myší se jemně rozsvítí,
+vybraný má oranžový okraj a obrys.
+
+![Viewport: vybraný objekt, gizmo pro posun v lokálních osách, lišta nástrojů vlevo](img/editor-objects.png)
+
+| akce | jak |
+|---|---|
+| vybrat | klik; **Shift** nebo **Ctrl** přidá / ubere; klik do prázdna výběr zruší |
+| nástroj | **Q** výběr, **W** posun, **E** rotace, **R** měřítko (lišta vlevo) |
+| posun | táhnout šipku osy, čtverec roviny mezi dvěma osami, nebo tečku uprostřed (v rovině obrazovky) |
+| rotace | táhnout kružnici osy, nebo vnější kružnici (kolem směru pohledu) |
+| měřítko | táhnout kostičku na konci osy; prostřední kostička mění všechny tři |
+| přichytávání | tlačítko s magnetem, nebo držet **Ctrl** při tažení: 5 cm, 15°, ×0,1 |
+| lokální / světové osy | tlačítko na liště; měřítko je vždy v osách objektu |
+| přidat | **Shift+A**, pravé tlačítko › Add, tlačítko + nebo menu **Add** |
+| smazat, duplikovat | **Del** / **X**, **Ctrl+D** (kopie stojí vedle originálu a kolidují jako on) |
+| zaostřit | **F** na výběr (nebo na všechno), dvojklik na objekt |
+| zrušit tažení | **Esc** vrátí, co gizmo posunulo |
+| kamera | levé tažení mimo gizmo obíhá, prostřední nebo Shift+levé posouvá, pravé tažení a kolečko přibližují |
+
+Gizmo je stejně velké v každé vzdálenosti, osy mají barvy x červeně,
+y zeleně, z modře a úchyt pod myší zežloutne. Během tažení ukazuje u myši,
+o kolik se posunulo, pootočilo nebo zvětšilo. Tažení pracuje s hodnotami,
+které uzel měl na začátku, takže se zaokrouhlování nesčítá, a v historii je
+to jeden krok (**Ctrl+Z**). Dokud se táhne, simulace čeká: začne znovu až
+s tím, kam objekt dopadl. Vybraných uzlů může být víc najednou, posouvají se
+spolu a rotace je točí kolem společného středu.
+
+Gizmo zná parametry, které uzel má (`NodeType::handles`): objekt a zdroj
+mají polohu, rotaci a velikost, vír polohu, osu, poloměr a výšku, atraktor
+polohu a poloměr, vítr jen směr (rotace ho otáčí).
+
+**Add** (Shift+A, pravé tlačítko) přidá objekt (koule, kvádr, válec, kužel,
+prstenec), zdroj (oheň, kouř) nebo sílu (vítr, vír, turbulence, atraktor,
+odpor) tam, kam míří myš na podlaze. Objekt stojí na podlaze, dostane
+vlastní barvu a rovnou se připojí do Colliders všech řešičů. Oheň a kouř se
+připojí do řešiče, a když žádný není, vznikne i s vzhledem a výstupem.
+Síly se připojí do Forces.
+
+**G** zapne vodítka: obrys domény, zdroje (oranžově, se šipkou rychlosti a
+drahou pohybu), víry a atraktory, šipky větru, obrys vybraných objektů.
+Ikona fotoaparátu uloží snímek jako PNG ve dvojnásobném rozlišení.
 
 ### Časová osa a cache
 
@@ -144,9 +184,9 @@ je jeden krok, ne sto.
 ## 3. Síť simulace
 
 ```
-[Sphere Source] ──Source──┐
-[Turbulence] ─────Force───┼──▶ [Pyro Solver] ──Gas──▶ [Volume Look] ──Look──▶ [Output]
-[Sphere Collider] Collider┘
+[Pyro Source] ──Source───┐
+[Turbulence] ───Force────┼──▶ [Pyro Solver] ──Gas──▶ [Volume Look] ──Look──▶ [Output]
+[Object] ───────Collider─┘
 ```
 
 Piny mají typ a barvu: **Source** oranžová, **Force** tyrkysová,
@@ -155,6 +195,10 @@ vstupu stejného typu. Vstupy řešiče Sources, Forces a Colliders berou
 libovolný počet spojů (kreslí se jako obdélníček místo kolečka). Síly se
 použijí v pořadí, v jakém byly připojené. Simuluje se jen to, co vede na
 uzel Output.
+
+Objekty jsou výjimka: patří do scény vždycky, kreslí se a vrhají stín, i
+když nejsou nikam připojené. Připojené do Colliders řešiče mu navíc stojí
+v cestě. Kulisa, která s ničím nekoliduje, je tedy objekt bez spoje.
 
 Síť se překládá do popisu scény pro řešič
 ([`src/pg/sim/Network.h`](../src/pg/sim/Network.h)) a zároveň hlídá, co by
@@ -167,11 +211,24 @@ nedělalo, co uživatel čeká:
 
 ### Uzly
 
+**Objekty** (Objects) — pevná tělesa scény.
+
+| uzel | parametry |
+|---|---|
+| Object | `shape` (sphere, box, cylinder, cone, torus); `center` (poloha středu), `rotation` (stupně kolem x, pak y, pak z), `size` (šířka, výška, hloubka ve vlastních osách: průměr koule, hrany kvádru, šířka a tloušťka prstence); `color` |
+
+Tvar ve vlastních osách vyplní `[-size/2, size/2]`: válec a kužel stojí
+podél své osy y (kužel má špičku nahoře), prstenec leží v rovině xz a je
+tlustý `size.y`. Různé velikosti tvar protáhnou, z koule je elipsoid. Změna
+barvy simulaci nespouští znovu.
+
 **Zdroje** (Sources) — kde plyn vzniká.
 
 | uzel | parametry |
 |---|---|
-| Sphere Source, Box Source | `center`, `radius` / `size`; `fuel`, `smoke`, `heat` za sekundu; `velocity` (plyn opouští zdroj aspoň takhle rychle); `flicker`, `flicker_size`, `seed` (blikotání šumem, který se zdrojem stoupá); `start`, `end` (časové okno: záblesk exploze); `motion` (static, circle, sway), `motion_size`, `motion_period` |
+| Pyro Source | `shape`, `center`, `rotation`, `size` jako u objektu; `fuel`, `smoke`, `heat` za sekundu; `velocity` (plyn opouští zdroj aspoň takhle rychle, ve vlastních osách zdroje, takže pootočený zdroj míří jinam); `flicker`, `flicker_size`, `seed` (blikotání šumem, který se zdrojem stoupá); `start`, `end` (časové okno: záblesk exploze); `motion` (static, circle, sway), `motion_size`, `motion_period` |
+
+Koule je táborák, kvádr hořící poleno nebo průduch, prstenec plynový hořák.
 
 **Síly** (Forces) — každá má `mask`: působí všude, jen kde je teplo (nebo
 palivo), nebo jen kde je kouř.
@@ -183,9 +240,6 @@ palivo), nebo jen kde je kouř.
 | Vortex | točí plynem kolem osy, nese ho podél osy a nasává k ní | `center`, `axis`, `radius`, `height` (0 = celou doménou), `speed`, `lift`, `suction`, `strength` |
 | Attractor | přitahuje k bodu, záporná síla odpuzuje | `center`, `radius`, `strength` |
 | Drag | zpomaluje: hustý, klidný vzduch | `strength` |
-
-**Překážky** (Colliders): Sphere Collider (`center`, `radius`) a Box
-Collider (`center`, `size`). Plyn je obtéká, vrhají stín na kouř i podlahu.
 
 **Pyro Solver** (Simulation):
 
@@ -213,7 +267,7 @@ porovnávají v gitu. Parametry se ukládají jen ty, které se liší od výcho
 ```
 pgsim 1
 # A campfire: a flickering ball of fuel just above the floor.
-node 1 sphere_source 1 fire 0 0      # id, typ, verze typu, jméno, x y v editoru
+node 1 pyro_source 2 fire 0 0        # id, typ, verze typu, jméno, x y v editoru
   param fuel 14
   param heat 1
   param velocity 0 0.4 0
@@ -236,6 +290,13 @@ s neznámým parametrem nebo spojem, který nepasuje, se načte a výhrada se
 vypíše; neznámý typ uzlu se zachová i s parametry, aby ho novější program
 přečetl.
 
+Soubory starších verzí se načtou: uzel si nese verzi svého typu a zastaralý
+typ se při načtení převede na nástupce. Sphere Source a Box Source se stanou
+Pyro Source s tvarem koule nebo kvádru (poloměr se převede na velikost),
+Sphere Collider a Box Collider se stanou Object. Uložený soubor už má nové
+typy. Test hlídá, že příklady jsou přesně v tom tvaru, v jakém je program
+uloží.
+
 ### Příklady
 
 ![Příklady: táborák, pochodeň, oheň ve větru, exploze, kouř, kouř kolem koule, tornádo](img/sim-examples.png)
@@ -249,6 +310,7 @@ přečetl.
 | `smoke` | teplý kouř ve slunci |
 | `smoke_sphere` | kouř narazí do koule, rozlije se po ní a obteče ji |
 | `tornado` | vír s nasáváním a zdvihem sbírá kouř z podlahy |
+| `obstacles` | kouř mezi objekty: narazí do šikmé desky, vyteče po ní a stoupá k prstenci; koule na podlaze je kulisa bez kolizí |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.
@@ -513,20 +575,29 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
-[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (9 testů):
+[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (13 testů):
 tabulka typů uzlů je konzistentní (a každá výchozí hodnota se zapíše a
-přečte zpět stejně), jména a spoje, meze parametrů, soubory tam a zpět,
-co se ze souboru zachová, kompilace do scény a vzhledu, problémy sítě,
-příklady dávají `Scene::fire()` a `Scene::smoke()` a všechny příklady
-běží.
+přečte zpět stejně), jména a spoje, meze parametrů včetně čísel, která
+se čtou stejně s každou standardní knihovnou, soubory tam a zpět, co se ze
+souboru zachová, kompilace do scény a vzhledu, problémy sítě, příklady
+dávají `Scene::fire()` a `Scene::smoke()`, všechny příklady běží a jsou
+přesně v uloženém tvaru, soubory starších verzí se převedou, objekty jsou
+ve scéně připojené i nepřipojené a nová barva nic nesimuluje znovu.
+
+[`tests/test_shapes.cpp`](../tests/test_shapes.cpp) (5 testů): rotace na
+úhly a zpět (i přes 180° a v gimbal locku), uvnitř a vně, vzdálenosti, kde
+paprsek potká každý tvar (i pootočený a protažený) a s jakou normálou,
+útlum zdroje ke kraji tvaru.
 
 Vše čisté pod AddressSanitizerem, UBSanem i ThreadSanitizerem. Pod TSanem a
 ASanem běžel i editor s vláknem simulace a skriptovaným vstupem (`pgshader
 --script`: myš, klávesy a snímky obrazovky ze souboru): přidání uzlu přes
 Tab, spojení tažením, rychlé změny parametrů, které simulaci opakovaně
 restartují, undo a redo, posun po časové ose, přepnutí sítí a konec
-uprostřed kroku. Žádný data race ani chyba paměti v našem kódu; hlášení
-zbyla jen uvnitř X11, GLX a Mesy, které pro sanitizery nejsou
+uprostřed kroku; výběr kliknutím, tažení gizma pro posun, rotaci i
+měřítko, výběr více objektů, duplikace, mazání, přidání přes Shift+A a
+kontextovou nabídku. Žádný data race ani chyba paměti v našem kódu;
+hlášení zbyla jen uvnitř X11, GLX a Mesy, které pro sanitizery nejsou
 instrumentované.
 
 ## 8. Jak přidat uzel
@@ -586,7 +657,8 @@ to stojí. Oproti produkci:
    přímo převést na compute shader.
 3. **Rychlost se unáší semi-Lagrangeovou metodou**, která rozmazává.
    MacCormack nebo BFECC i pro rychlost, případně FLIP, drží víry déle.
-4. **Překážky jsou koule a kvádry** a stojí na místě. Produkce bere
+4. **Překážky jsou jednoduché tvary** (koule, kvádr, válec, kužel,
+   prstenec, pootočené a protažené) a stojí na místě. Produkce bere
    libovolnou geometrii převedenou na SDF a pohyblivé překážky předávají
    plynu svou rychlost.
 5. **Jednoduchý rozptyl.** Produkční renderery (Karma, Arnold) počítají

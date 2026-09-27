@@ -8,13 +8,12 @@
 // axis: x in [-size.x/2, size.x/2], y in [0, size.y], z in [-size.z/2, size.z/2].
 //
 #include "pg/core/Types.h"
+#include "pg/sim/Shape.h"
 
 #include <cstdint>
 #include <vector>
 
 namespace pg::sim {
-
-enum class Shape : uint8_t { Sphere, Box };
 
 /// How a source moves: it stays, circles the vertical axis through its
 /// centre, or sways from side to side along x.
@@ -23,16 +22,18 @@ enum class Motion : uint8_t { Static, Circle, Sway };
 /// Where a force acts.
 enum class Mask : uint8_t { Everywhere, Heat, Smoke };
 
-/// A place gas comes from.
+/// A place gas comes from: a shape (Shape.h) placed in the world.
 struct Emitter {
     Shape shape = Shape::Sphere;
     Vec3 center{0.0f, 0.12f, 0.0f};
-    float radius = 0.1f;            ///< a sphere's
-    Vec3 size{0.2f, 0.1f, 0.2f};    ///< a box's edges
+    Vec3 rotation;                  ///< degrees about x, then y, then z
+    Vec3 size{0.2f, 0.2f, 0.2f};    ///< along its own axes: a ball's diameters, a box's edges
     float fuel = 0.0f;              ///< added per second, at full strength -- fire
     float smoke = 0.0f;
     float heat = 0.0f;
-    Vec3 velocity{0.0f, 0.5f, 0.0f};  ///< the gas leaves the source this fast
+    /// The gas leaves the source at least this fast, along the source's own
+    /// axes: turn the source and its jet turns with it.
+    Vec3 velocity{0.0f, 0.5f, 0.0f};
     float flicker = 0.0f;           ///< 0 steady, 1 strongly flickering
     float flickerSize = 0.07f;      ///< size of the patches that flicker together
     float start = 0.0f;             ///< seconds
@@ -47,6 +48,8 @@ struct Emitter {
     /// Where the source is at time t, and how fast it moves.
     Vec3 centerAt(float t) const;
     Vec3 motionVelocityAt(float t) const;
+    /// Its shape where it is at time t.
+    ShapeInstance shapeAt(float t) const { return {shape, centerAt(t), rotation, size}; }
 
     bool operator==(const Emitter&) const = default;
 };
@@ -82,16 +85,27 @@ struct Force {
     bool operator==(const Force&) const = default;
 };
 
-/// A solid the gas flows around.
+/// A solid the gas flows around: a shape (Shape.h) placed in the world.
 struct Collider {
     Shape shape = Shape::Sphere;
     Vec3 center{0.0f, 0.6f, 0.0f};
-    float radius = 0.15f;
-    Vec3 size{0.3f, 0.3f, 0.3f};
+    Vec3 rotation;                  ///< degrees about x, then y, then z
+    Vec3 size{0.3f, 0.3f, 0.3f};    ///< along its own axes
     int node = 0;
 
-    bool contains(const Vec3& p) const;
+    ShapeInstance instance() const { return {shape, center, rotation, size}; }
+    bool contains(const Vec3& p) const { return instance().contains(p); }
     bool operator==(const Collider&) const = default;
+};
+
+/// An object of the scene as it is drawn: its body, and its colour. Every
+/// object of a network is drawn, collided with or not; the colour is kept
+/// apart from the Collider so that painting an object simulates nothing again.
+struct Solid {
+    Collider body;
+    Vec3 color{0.45f, 0.45f, 0.46f};
+
+    bool operator==(const Solid&) const = default;
 };
 
 /// The grid a domain is simulated on: cells of one size, a multiple of 8 of

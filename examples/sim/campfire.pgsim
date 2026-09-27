@@ -1,7 +1,7 @@
 pgsim 1
 # A campfire: a flickering ball of fuel just above the floor. Turbulence where
 # the gas is hot breaks the flames up; the soot above them is dark.
-node 1 sphere_source 1 fire 0 0
+node 1 pyro_source 2 fire 0 0
   param fuel 14
   param heat 1
   param velocity 0 0.4 0

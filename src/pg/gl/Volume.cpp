@@ -8,7 +8,7 @@ namespace pg::gl {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
-constexpr float kFovY = 35.0f;  // degrees, as the shader preview
+constexpr float kFovY = VolumeRenderer::kFovY;
 constexpr float kNear = 0.02f, kFar = 500.0f;
 
 const char* kFullScreen = R"(#version 330 core
@@ -21,14 +21,20 @@ void main() {
 }
 )";
 
-// What both passes need: the box, the colliders, the fade at the open faces.
+// What both passes need: the box, the solids, the fade at the open faces.
 const char* kCommon = R"(
 uniform vec3 u_boxMin, u_boxSize;
 uniform vec3 u_texel;          // one cell, in texture coordinates
-uniform int u_colliderCount;
-uniform int u_colliderShape[16];    // 0 sphere, 1 box
-uniform vec3 u_colliderCenter[16];
-uniform vec3 u_colliderSize[16];    // a sphere's radius in x; a box's half edges
+// The solids: each a shape placed in the world (pg/sim/Shape.h), packed in
+// fours -- centre and shape; its own axes, each with half its size along it;
+// colour and highlight; a torus's ring and tube.
+uniform int u_solidCount;
+uniform vec4 u_solidA[16];     // centre, shape (0 sphere, 1 box, 2 cylinder, 3 cone, 4 torus)
+uniform vec4 u_solidB[16];     // its x axis in the world, half its size along it
+uniform vec4 u_solidC[16];     // y
+uniform vec4 u_solidD[16];     // z
+uniform vec4 u_solidE[16];     // colour, highlight: 0 none, 1 hovered, 2 selected
+uniform vec4 u_solidF[16];     // a torus's ring and tube radius
 
 vec3 safeDir(vec3 d) { return mix(vec3(1e-6), d, greaterThan(abs(d), vec3(1e-6))); }
 
@@ -40,34 +46,118 @@ vec2 boxSpan(vec3 o, vec3 d, vec3 lo, vec3 hi) {
     return vec2(max(max(n.x, n.y), n.z), min(min(f.x, f.y), f.z));
 }
 
-// The nearest collider the ray from o along d meets at tMin or later: how far,
-// and the surface normal there. 1e30 when it meets none.
-float hitCollider(vec3 o, vec3 d, float tMin, out vec3 normal) {
+// The nearer root of a t^2 + 2 b t + c = 0 at tMin or later; 1e30 if none.
+float firstRoot(float a, float b, float c, float tMin) {
+    float disc = b * b - a * c;
+    if (disc < 0.0 || abs(a) < 1e-12) return 1e30;
+    float s = sqrt(disc);
+    float t0 = (-b - s) / a, t1 = (-b + s) / a;
+    float lo = min(t0, t1), hi = max(t0, t1);
+    return lo >= tMin ? lo : (hi >= tMin ? hi : 1e30);
+}
+
+// Where the ray first meets solid i at tMin or later, with the normal there;
+// 1e30 if it does not. In the solid's unit space -- where it fills [-1, 1]
+// along its own axes -- the shapes are simple, and t stays the same.
+float hitShape(int i, vec3 o, vec3 d, float tMin, out vec3 normal) {
+    normal = vec3(0.0, 1.0, 0.0);
+    vec3 ax = u_solidB[i].xyz, ay = u_solidC[i].xyz, az = u_solidD[i].xyz;
+    vec3 h = vec3(u_solidB[i].w, u_solidC[i].w, u_solidD[i].w);
+    vec3 oc = o - u_solidA[i].xyz;
+    vec3 lo = vec3(dot(ax, oc), dot(ay, oc), dot(az, oc));
+    vec3 ld = vec3(dot(ax, d), dot(ay, d), dot(az, d));
+    int shape = int(u_solidA[i].w + 0.5);
+    if (shape == 4) {
+        // A torus: sphere tracing its exact distance, z squeezed to x's scale.
+        float k = h.x / h.z;
+        vec3 to = vec3(lo.x, lo.y, lo.z * k), td = vec3(ld.x, ld.y, ld.z * k);
+        float speed = length(td);
+        float ring = u_solidF[i].x, tube = u_solidF[i].y;
+        vec2 span = boxSpan(to, td, -vec3(h.x, tube, h.x), vec3(h.x, tube, h.x));
+        if (span.x > span.y || span.y < tMin || speed < 1e-12) return 1e30;
+        float t = max(span.x, tMin);
+        for (int s = 0; s < 96; ++s) {
+            vec3 p = to + td * t;
+            float r = length(p.xz);
+            float dist = length(vec2(r - ring, p.y)) - tube;
+            if (dist < 1e-4 * h.x) {
+                float a = 1.0 - ring / max(r, 1e-6);
+                vec3 g = vec3(p.x * a, p.y, p.z * a * k);
+                normal = normalize(ax * g.x + ay * g.y + az * g.z);
+                return t;
+            }
+            t += dist / speed;
+            if (t > span.y) break;
+        }
+        return 1e30;
+    }
+    vec3 uo = lo / h, ud = ld / h;
+    float best = 1e30;
+    vec3 un = vec3(0.0, 1.0, 0.0);
+    if (shape == 0) {
+        best = firstRoot(dot(ud, ud), dot(uo, ud), dot(uo, uo) - 1.0, tMin);
+        un = uo + ud * best;
+    } else if (shape == 1) {
+        vec2 span = boxSpan(uo, ud, vec3(-1.0), vec3(1.0));
+        if (span.x <= span.y) {
+            best = span.x >= tMin ? span.x : (span.y >= tMin ? span.y : 1e30);
+            vec3 p = uo + ud * best, a = abs(p);
+            un = a.x > a.y && a.x > a.z ? vec3(sign(p.x), 0.0, 0.0)
+               : a.y > a.z             ? vec3(0.0, sign(p.y), 0.0)
+                                       : vec3(0.0, 0.0, sign(p.z));
+        }
+    } else if (shape == 2 || shape == 3) {
+        // The side: x^2 + z^2 = 1 for a cylinder; = (1 - y)^2 / 4 for a cone,
+        // its base at y = -1 and its apex at y = 1.
+        float k2 = shape == 2 ? 0.0 : 0.25;
+        float w = 1.0 - uo.y, dw = -ud.y;
+        float a = ud.x * ud.x + ud.z * ud.z - k2 * dw * dw;
+        float b = uo.x * ud.x + uo.z * ud.z - k2 * w * dw;
+        float c = uo.x * uo.x + uo.z * uo.z - (shape == 2 ? 1.0 : k2 * w * w);
+        float disc = b * b - a * c;
+        if (abs(a) > 1e-12 && disc >= 0.0) {
+            for (int r = 0; r < 2; ++r) {
+                float t = (-b + (r == 0 ? -1.0 : 1.0) * sqrt(disc)) / a;
+                vec3 p = uo + ud * t;
+                if (t >= tMin && t < best && abs(p.y) <= 1.0) {
+                    best = t;
+                    un = vec3(p.x, shape == 2 ? 0.0 : k2 * (1.0 - p.y), p.z);
+                }
+            }
+        }
+        // The caps: both for a cylinder, the base for a cone.
+        if (abs(ud.y) > 1e-12) {
+            for (int e = 0; e < 2; ++e) {
+                float y = e == 0 ? -1.0 : 1.0;
+                if (shape == 3 && e == 1) break;
+                float t = (y - uo.y) / ud.y;
+                vec3 p = uo + ud * t;
+                if (t >= tMin && t < best && dot(p.xz, p.xz) <= 1.0) {
+                    best = t;
+                    un = vec3(0.0, y, 0.0);
+                }
+            }
+        }
+    }
+    if (best >= 1e29) return 1e30;
+    vec3 n = un / h;  // back through the inverse transpose
+    normal = normalize(ax * n.x + ay * n.y + az * n.z);
+    return best;
+}
+
+// The nearest solid the ray from o along d meets at tMin or later: how far,
+// the normal there and which solid. 1e30 when it meets none.
+float hitSolid(vec3 o, vec3 d, float tMin, out vec3 normal, out int which) {
     float best = 1e30;
     normal = vec3(0.0, 1.0, 0.0);
-    for (int i = 0; i < u_colliderCount; ++i) {
-        vec3 c = u_colliderCenter[i], s = u_colliderSize[i];
-        if (u_colliderShape[i] == 0) {
-            vec3 oc = o - c;
-            float b = dot(oc, d), h = b * b - (dot(oc, oc) - s.x * s.x);
-            if (h < 0.0) continue;
-            h = sqrt(h);
-            float t = -b - h;
-            if (t < tMin) t = -b + h;
-            if (t >= tMin && t < best) {
-                best = t;
-                normal = (o + d * t - c) / s.x;
-            }
-        } else {
-            vec2 span = boxSpan(o, d, c - s, c + s);
-            if (span.x > span.y) continue;
-            float t = span.x >= tMin ? span.x : span.y;
-            if (t < tMin || t >= best) continue;
+    which = -1;
+    for (int i = 0; i < u_solidCount; ++i) {
+        vec3 n;
+        float t = hitShape(i, o, d, tMin, n);
+        if (t < best) {
             best = t;
-            vec3 p = (o + d * t - c) / s, a = abs(p);
-            normal = a.x > a.y && a.x > a.z ? vec3(sign(p.x), 0.0, 0.0)
-                   : a.y > a.z             ? vec3(0.0, sign(p.y), 0.0)
-                                           : vec3(0.0, 0.0, sign(p.z));
+            normal = n;
+            which = i;
         }
     }
     return best;
@@ -117,7 +207,8 @@ void main() {
     vec3 uvw = vec3(gl_FragCoord.xy, u_layer + 0.5) / u_size;
     vec3 p = u_boxMin + uvw * u_boxSize;
     vec3 n;
-    if (hitCollider(p, u_lightDir, 0.0, n) < 1e29) {
+    int which;
+    if (hitSolid(p, u_lightDir, 0.0, n, which) < 1e29) {
         o_light = vec4(0.0);
         return;
     }
@@ -210,10 +301,11 @@ vec3 toneMap(vec3 x) {  // ACES, Narkowicz's fit
     return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
-// Sunlight at a point of a solid: blocked by the colliders, dimmed by the smoke.
+// Sunlight at a point of a solid: blocked by the solids, dimmed by the smoke.
 float sunAt(vec3 p) {
     vec3 n;
-    if (hitCollider(p, u_lightDir, 1e-3, n) < 1e29) return 0.0;
+    int which;
+    if (hitSolid(p, u_lightDir, 1e-3, n, which) < 1e29) return 0.0;
     if (!u_hasGas) return 1.0;
     vec2 span = boxSpan(p, u_lightDir, u_boxMin, u_boxMin + u_boxSize);
     float t0 = max(span.x, 0.0), t1 = span.y;
@@ -254,6 +346,24 @@ vec3 shade(vec3 p, vec3 n, vec3 albedo) {
     return albedo * (u_light * sun * ndl + sky + fireGlow(p, n));
 }
 
+// An object: as shade(), with a soft highlight of the sun, and the rim of a
+// selected (or hovered) one in the colour of the selection.
+vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) {
+    vec3 albedo = u_solidE[i].rgb;
+    float ndl = max(dot(n, u_lightDir), 0.0);
+    float sun = ndl > 0.0 ? sunAt(p + n * 2e-3) : 0.0;
+    vec3 sky = u_sky * (0.6 + 0.4 * n.y);
+    vec3 half_ = normalize(u_lightDir - view);
+    vec3 c = albedo * (u_light * sun * ndl + sky + fireGlow(p, n)) +
+             u_light * sun * 0.12 * pow(max(dot(n, half_), 0.0), 40.0) * ndl;
+    float mark = u_solidE[i].w;
+    if (mark > 0.5) {
+        float rim = pow(1.0 - abs(dot(n, view)), 2.0);
+        c += vec3(1.0, 0.36, 0.08) * rim * (mark > 1.5 ? 1.4 : 0.6) + vec3(0.06, 0.025, 0.005) * (mark > 1.5 ? 1.0 : 0.0);
+    }
+    return c;
+}
+
 // The floor: grey, a line every 10 cm and a stronger one every metre, each
 // as thin as the pixels allow and gone where they would crowd.
 vec3 floorAlbedo(vec2 q, vec2 width) {
@@ -277,15 +387,16 @@ void main() {
     vec3 floorPoint = u_eye + dir * min(tFloor, 1e4);
     vec2 pixel = fwidth(floorPoint.xz);
 
-    // The first solid on the way: a collider, or the floor.
+    // The first solid on the way: an object, or the floor.
     vec3 normal;
-    float tSolid = hitCollider(u_eye, dir, 0.0, normal);
+    int which;
+    float tSolid = hitSolid(u_eye, dir, 0.0, normal, which);
     vec3 surface = vec3(0.0);
     float cover = 0.0;  // how much of the pixel the solid covers
     float tEnd = 1e30;
     if (tSolid < tFloor && tSolid < 1e29) {
         tEnd = tSolid;
-        surface = shade(u_eye + dir * tSolid, normalize(normal), vec3(0.42, 0.43, 0.45));
+        surface = shadeSolid(u_eye + dir * tSolid, normal, dir, which);
         cover = 1.0;
     } else if (u_floor && down) {
         tEnd = tFloor;
@@ -382,6 +493,7 @@ void basis(const Vec3& axis, Vec3& u, Vec3& v) {
 void Lines::segment(const Vec3& a, const Vec3& b, const float color[4]) {
     vertices.push_back({{a.x, a.y, a.z}, {color[0], color[1], color[2], color[3]}});
     vertices.push_back({{b.x, b.y, b.z}, {color[0], color[1], color[2], color[3]}});
+    owners.push_back(owner);
 }
 
 void Lines::box(const Vec3& lo, const Vec3& hi, const float color[4]) {
@@ -433,20 +545,80 @@ void Lines::arrow(const Vec3& from, const Vec3& to, const float color[4]) {
     for (const Vec3& side : {u, v, u * -1.0f, v * -1.0f}) segment(to, back + side * w, color);
 }
 
-Lines sceneGuides(const sim::Scene& scene, int highlight) {
+void Lines::shape(const sim::ShapeInstance& s, const float color[4]) {
+    const Vec3& h = s.half();
+    // A ring in the shape's own plane through `centre`, spanned by u and v
+    // (local, each as long as the ring's radius along it).
+    auto ring = [&](const Vec3& centre, const Vec3& u, const Vec3& v, int segments) {
+        Vec3 previous = s.toWorld(centre + u);
+        for (int i = 1; i <= segments; ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(segments);
+            const Vec3 p = s.toWorld(centre + u * std::cos(a) + v * std::sin(a));
+            segment(previous, p, color);
+            previous = p;
+        }
+    };
+    const Vec3 x(h.x, 0.0f, 0.0f), y(0.0f, h.y, 0.0f), z(0.0f, 0.0f, h.z);
+    switch (s.shape()) {
+        case sim::Shape::Sphere:
+            ring(Vec3(), x, y, 48);
+            ring(Vec3(), y, z, 48);
+            ring(Vec3(), x, z, 48);
+            break;
+        case sim::Shape::Box:
+            for (int i = 0; i < 8; ++i) {
+                for (const int bit : {1, 2, 4}) {
+                    if (i & bit) continue;
+                    auto corner = [&](int c) {
+                        return s.toWorld(Vec3(c & 1 ? h.x : -h.x, c & 2 ? h.y : -h.y, c & 4 ? h.z : -h.z));
+                    };
+                    segment(corner(i), corner(i | bit), color);
+                }
+            }
+            break;
+        case sim::Shape::Cylinder:
+            ring(y * -1.0f, x, z, 48);
+            ring(y, x, z, 48);
+            for (const Vec3& side : {x, z, x * -1.0f, z * -1.0f}) segment(s.toWorld(side - y), s.toWorld(side + y), color);
+            break;
+        case sim::Shape::Cone:
+            ring(y * -1.0f, x, z, 48);
+            for (const Vec3& side : {x, z, x * -1.0f, z * -1.0f}) segment(s.toWorld(side - y), s.toWorld(y), color);
+            break;
+        case sim::Shape::Torus: {
+            // The outer and the inner rim, and the tube at four places round.
+            const float out = s.ring() + s.tube(), in = s.ring() - s.tube(), k = h.z / h.x;
+            ring(Vec3(), Vec3(out, 0, 0), Vec3(0, 0, out * k), 64);
+            ring(Vec3(), Vec3(in, 0, 0), Vec3(0, 0, in * k), 64);
+            for (int q = 0; q < 4; ++q) {
+                const float a = 0.5f * kPi * static_cast<float>(q);
+                const Vec3 dir(std::cos(a), 0.0f, std::sin(a) * k);
+                ring(dir * s.ring(), dir * s.tube(), Vec3(0.0f, s.tube(), 0.0f), 24);
+            }
+            break;
+        }
+    }
+}
+
+Lines sceneGuides(const sim::Scene* gas, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
+                  int domainNode) {
     Lines lines;
+    const sim::Scene scene = gas ? *gas : sim::Scene();
     const sim::Domain domain = scene.sanitized().solver.domain();
     const float dim = 0.35f, bright = 0.95f;
-    auto colour = [&](float r, float g, float b, int node) {
-        const float a = node != 0 && node == highlight ? bright : dim;
-        return std::array<float, 4>{r, g, b, a};
+    auto isSelected = [&](int node) {
+        return node != 0 && std::find(selected.begin(), selected.end(), node) != selected.end();
     };
-    const std::array<float, 4> box = {0.62f, 0.65f, 0.72f, 0.45f};
-    lines.box(domain.origin(), domain.origin() + domain.size(), box.data());
+    auto colour = [&](float r, float g, float b, int node) {
+        return std::array<float, 4>{r, g, b, isSelected(node) ? bright : dim};
+    };
+    const std::array<float, 4> box = {0.62f, 0.65f, 0.72f, isSelected(domainNode) ? 0.8f : 0.45f};
+    lines.owner = domainNode;
+    if (gas) lines.box(domain.origin(), domain.origin() + domain.size(), box.data());
     for (const sim::Emitter& e : scene.emitters) {
+        lines.owner = e.node;
         const auto c = colour(1.0f, 0.62f, 0.25f, e.node);
-        if (e.shape == sim::Shape::Sphere) lines.sphere(e.center, e.radius, c.data());
-        else lines.box(e.center - e.size * 0.5f, e.center + e.size * 0.5f, c.data());
+        lines.shape(e.shapeAt(0.0f), c.data());
         if (e.motion == sim::Motion::Circle) {
             auto path = c;
             path[3] *= 0.6f;
@@ -455,14 +627,16 @@ Lines sceneGuides(const sim::Scene& scene, int highlight) {
             lines.segment(e.center - Vec3(e.motionSize, 0.0f, 0.0f), e.center + Vec3(e.motionSize, 0.0f, 0.0f),
                           c.data());
         }
-        const float speed = length(e.velocity);
+        const Vec3 jet = e.shapeAt(0.0f).turn().apply(e.velocity);
+        const float speed = length(jet);
         if (speed > 1e-4f) {
-            const float r = e.shape == sim::Shape::Sphere ? e.radius : 0.5f * length(e.size);
-            lines.arrow(e.center, e.center + e.velocity * ((r + 0.15f) / std::max(speed, 0.5f)), c.data());
+            const float r = 0.5f * length(e.size);
+            lines.arrow(e.center, e.center + jet * ((r + 0.15f) / std::max(speed, 0.5f)), c.data());
         }
     }
     const Vec3 middle = domain.origin() + domain.size() * 0.5f;
     for (const sim::Force& f : scene.forces) {
+        lines.owner = f.node;
         switch (f.kind) {
             case sim::ForceKind::Vortex: {
                 const auto c = colour(0.35f, 0.85f, 1.0f, f.node);
@@ -490,12 +664,15 @@ Lines sceneGuides(const sim::Scene& scene, int highlight) {
             case sim::ForceKind::Drag: break;
         }
     }
-    for (const sim::Collider& col : scene.colliders) {
-        if (col.node == 0 || col.node != highlight) continue;
-        const auto c = colour(0.55f, 0.75f, 1.0f, col.node);
-        if (col.shape == sim::Shape::Sphere) lines.sphere(col.center, col.radius * 1.01f, c.data());
-        else lines.box(col.center - col.size * 0.505f, col.center + col.size * 0.505f, c.data());
+    // The selected objects, outlined a hair outside their surface.
+    const std::array<float, 4> outline = {1.0f, 0.6f, 0.25f, 0.9f};
+    for (const sim::Solid& solid : solids) {
+        const sim::Collider& b = solid.body;
+        if (!isSelected(b.node)) continue;
+        lines.owner = b.node;
+        lines.shape(sim::ShapeInstance(b.shape, b.center, b.rotation, b.size * 1.01f), outline.data());
     }
+    lines.owner = 0;
     return lines;
 }
 
@@ -605,12 +782,18 @@ void VolumeRenderer::setFrame(const sim::Frame& frame) {
 
 void VolumeRenderer::clearFrame() { hasFrame_ = false; }
 
-void VolumeRenderer::setColliders(const std::vector<sim::Collider>& colliders) {
-    std::vector<sim::Collider> kept(colliders.begin(),
-                                    colliders.begin() + std::min<size_t>(colliders.size(), kMaxColliders));
-    if (kept == colliders_) return;
-    colliders_ = std::move(kept);
-    lightingDirty_ = true;
+void VolumeRenderer::setSolids(const std::vector<sim::Solid>& solids) {
+    std::vector<sim::Solid> kept(solids.begin(), solids.begin() + std::min<size_t>(solids.size(), kMaxSolids));
+    // The shadows in the smoke hang on the bodies, not on their colours.
+    bool moved = kept.size() != solids_.size();
+    for (size_t i = 0; !moved && i < kept.size(); ++i) moved = !(kept[i].body == solids_[i].body);
+    solids_ = std::move(kept);
+    if (moved) lightingDirty_ = true;
+}
+
+void VolumeRenderer::setHighlight(const std::vector<int>& selected, int hovered) {
+    selected_ = selected;
+    hovered_ = hovered;
 }
 
 void VolumeRenderer::setLines(const Lines& lines) {
@@ -621,24 +804,36 @@ void VolumeRenderer::setLines(const Lines& lines) {
     lineCount_ = lines.vertices.size();
 }
 
-void VolumeRenderer::setColliderUniforms(GLuint program) {
-    int shapes[kMaxColliders] = {};
-    float centers[3 * kMaxColliders] = {}, sizes[3 * kMaxColliders] = {};
-    const int n = static_cast<int>(colliders_.size());
+void VolumeRenderer::setSceneUniforms(GLuint program) {
+    float a[4 * kMaxSolids] = {}, b[4 * kMaxSolids] = {}, c[4 * kMaxSolids] = {}, d[4 * kMaxSolids] = {},
+          e[4 * kMaxSolids] = {}, f[4 * kMaxSolids] = {};
+    const int n = static_cast<int>(solids_.size());
     for (int i = 0; i < n; ++i) {
-        const sim::Collider& c = colliders_[static_cast<size_t>(i)];
-        const bool sphere = c.shape == sim::Shape::Sphere;
-        shapes[i] = sphere ? 0 : 1;
-        const Vec3 half = sphere ? Vec3(c.radius, 0.0f, 0.0f) : c.size * 0.5f;
-        for (int a = 0; a < 3; ++a) {
-            centers[3 * i + a] = c.center[a];
-            sizes[3 * i + a] = half[a];
-        }
+        const sim::Solid& solid = solids_[static_cast<size_t>(i)];
+        const sim::ShapeInstance s = solid.body.instance();
+        const Vec3& h = s.half();
+        auto put = [&](float* to, const Vec3& v, float w) {
+            to[4 * i] = v.x;
+            to[4 * i + 1] = v.y;
+            to[4 * i + 2] = v.z;
+            to[4 * i + 3] = w;
+        };
+        put(a, s.center(), static_cast<float>(s.shape()));
+        put(b, s.turn().x, h.x);
+        put(c, s.turn().y, h.y);
+        put(d, s.turn().z, h.z);
+        const int node = solid.body.node;
+        const bool selected = node != 0 && std::find(selected_.begin(), selected_.end(), node) != selected_.end();
+        put(e, solid.color, selected ? 2.0f : node != 0 && node == hovered_ ? 1.0f : 0.0f);
+        put(f, Vec3(s.ring(), s.tube(), 0.0f), 0.0f);
     }
-    gl_.Uniform1i(location(program, "u_colliderCount"), n);
-    gl_.Uniform1iv(location(program, "u_colliderShape"), kMaxColliders, shapes);
-    gl_.Uniform3fv(location(program, "u_colliderCenter"), kMaxColliders, centers);
-    gl_.Uniform3fv(location(program, "u_colliderSize"), kMaxColliders, sizes);
+    gl_.Uniform1i(location(program, "u_solidCount"), n);
+    gl_.Uniform4fv(location(program, "u_solidA"), kMaxSolids, a);
+    gl_.Uniform4fv(location(program, "u_solidB"), kMaxSolids, b);
+    gl_.Uniform4fv(location(program, "u_solidC"), kMaxSolids, c);
+    gl_.Uniform4fv(location(program, "u_solidD"), kMaxSolids, d);
+    gl_.Uniform4fv(location(program, "u_solidE"), kMaxSolids, e);
+    gl_.Uniform4fv(location(program, "u_solidF"), kMaxSolids, f);
     const Vec3 lo = domain_.origin(), size = domain_.size();
     gl_.Uniform3f(location(program, "u_boxMin"), lo.x, lo.y, lo.z);
     gl_.Uniform3f(location(program, "u_boxSize"), size.x, size.y, size.z);
@@ -689,7 +884,7 @@ void VolumeRenderer::updateLighting() {
     gl_.BindVertexArray(vao_);
 
     gl_.UseProgram(shadowProgram_);
-    setColliderUniforms(shadowProgram_);
+    setSceneUniforms(shadowProgram_);
     const Vec3 l = normalize(key.light);
     gl_.Uniform3f(location(shadowProgram_, "u_lightDir"), l.x, l.y, l.z);
     gl_.Uniform3f(location(shadowProgram_, "u_size"), static_cast<float>(light[0]), static_cast<float>(light[1]),
@@ -797,7 +992,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.DepthFunc(ALWAYS);
     gl_.Disable(BLEND);
     gl_.UseProgram(program_);
-    setColliderUniforms(program_);
+    setSceneUniforms(program_);
     gl_.Uniform3f(location(program_, "u_eye"), e.x, e.y, e.z);
     gl_.Uniform3f(location(program_, "u_right"), right.x, right.y, right.z);
     gl_.Uniform3f(location(program_, "u_up"), up.x, up.y, up.z);

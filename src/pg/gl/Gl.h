@@ -91,6 +91,7 @@ inline constexpr GLenum RGBA32F = 0x8814, TEXTURE2 = 0x84C2;
     X(Uniform3i, void, (GLint, GLint, GLint, GLint))                                               \
     X(Uniform1iv, void, (GLint, GLsizei, const GLint*))                                            \
     X(Uniform3fv, void, (GLint, GLsizei, const GLfloat*))                                          \
+    X(Uniform4fv, void, (GLint, GLsizei, const GLfloat*))                                          \
     X(UniformMatrix4fv, void, (GLint, GLsizei, GLboolean, const GLfloat*))                         \
     X(GenVertexArrays, void, (GLsizei, GLuint*))                                                   \
     X(BindVertexArray, void, (GLuint))                                                             \

@@ -89,6 +89,8 @@ public:
     /// The node whose parameters show: the one clicked last, if selected.
     int current() const { return current_; }
     void select(int node, bool add = false);
+    /// Adds the node to the selection, or takes it out if it was in.
+    void toggle(int node);
     void clearSelection();
     /// Pans and zooms to the selection -- or everything -- on the next draw.
     void frame(bool selectionOnly = false);

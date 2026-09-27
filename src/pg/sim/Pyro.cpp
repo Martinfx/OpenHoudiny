@@ -137,11 +137,26 @@ void PyroSolver::updateSolids() {
     solid_.fill(0.0f);
     anySolid_ = false;
     if (!scene_.colliders.empty()) {
+        // A cell is solid when its centre is inside a collider; the box round
+        // each collider skips the cells far from it.
+        struct Solid {
+            ShapeInstance shape;
+            Vec3 lo, hi;
+        };
+        std::vector<Solid> solids;
+        for (const Collider& c : scene_.colliders) {
+            Solid s{c.instance(), {}, {}};
+            s.shape.bounds(s.lo, s.hi);
+            solids.push_back(s);
+        }
         forEachCell(solid_, [&](int i, int j, int k) {
             const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
                                    static_cast<float>(k) + 0.5f);
-            for (const Collider& c : scene_.colliders) {
-                if (c.contains(p)) {
+            for (const Solid& s : solids) {
+                if (p.x < s.lo.x || p.y < s.lo.y || p.z < s.lo.z || p.x > s.hi.x || p.y > s.hi.y || p.z > s.hi.z) {
+                    continue;
+                }
+                if (s.shape.contains(p)) {
                     solid_.at(i, j, k) = 1.0f;
                     return;
                 }
@@ -228,26 +243,11 @@ void PyroSolver::emit(float dt) {
     const int n[3] = {nx_, ny_, nz_};
     for (const Emitter& e : scene_.emitters) {
         if (!e.activeAt(time_)) continue;
-        const Vec3 c = e.centerAt(time_);
-        const bool sphere = e.shape == Shape::Sphere;
-        const Vec3 half = sphere ? Vec3(e.radius) : e.size * 0.5f;
-        const uint32_t seed = e.seed * 7919u + scene_.solver.seed;
-
         // How much of the source is at a world point: 1 inside, easing to 0
-        // at its edge.
-        auto weight = [&](const Vec3& p) {
-            if (sphere) {
-                const float d = length(p - c);
-                return d >= e.radius ? 0.0f : 1.0f - smoothstep(0.6f * e.radius, e.radius, d);
-            }
-            float w = 1.0f;
-            for (int a = 0; a < 3; ++a) {
-                const float t = std::fabs(p[a] - c[a]) / half[a];
-                if (t >= 1.0f) return 0.0f;
-                w *= 1.0f - smoothstep(0.75f, 1.0f, t);
-            }
-            return w;
-        };
+        // at its surface.
+        const ShapeInstance shape = e.shapeAt(time_);
+        auto weight = [&](const Vec3& p) { return shape.falloff(p); };
+        const uint32_t seed = e.seed * 7919u + scene_.solver.seed;
         // Its output flickers with noise that rises with the gas.
         const float rise = time_ * std::max(length(e.velocity), 0.2f);
         auto flicker = [&](const Vec3& p) {
@@ -258,10 +258,12 @@ void PyroSolver::emit(float dt) {
         };
 
         // The cells the source can reach, and one more face along each axis.
+        Vec3 reachLo, reachHi;
+        shape.bounds(reachLo, reachHi);
         int lo[3], hi[3];
         for (int a = 0; a < 3; ++a) {
-            lo[a] = std::clamp(static_cast<int>(std::floor((c[a] - half[a] - origin[a]) / h)) - 1, 0, n[a]);
-            hi[a] = std::clamp(static_cast<int>(std::ceil((c[a] + half[a] - origin[a]) / h)) + 1, 0, n[a]);
+            lo[a] = std::clamp(static_cast<int>(std::floor((reachLo[a] - origin[a]) / h)) - 1, 0, n[a]);
+            hi[a] = std::clamp(static_cast<int>(std::ceil((reachHi[a] - origin[a]) / h)) + 1, 0, n[a]);
         }
         forEachIn(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], [&](int i, int j, int k) {
             if (anySolid_ && solid_.at(i, j, k) > 0.5f) return;
@@ -275,9 +277,10 @@ void PyroSolver::emit(float dt) {
             temperature_.at(i, j, k) += e.heat * amount;
         });
 
-        // Push the gas the source's way -- and across it a little, so a plume
-        // does not stay a column. A moving source drags the gas along.
-        const Vec3 push = e.velocity + e.motionVelocityAt(time_);
+        // Push the gas the source's way -- along its own axes -- and across it
+        // a little, so a plume does not stay a column. A moving source drags
+        // the gas along.
+        const Vec3 push = shape.turn().apply(e.velocity) + e.motionVelocityAt(time_);
         const float speed = length(push);
         if (speed <= 0.0f) continue;
         const Vec3 along = push * (1.0f / speed);

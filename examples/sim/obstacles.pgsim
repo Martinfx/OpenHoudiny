@@ -1,0 +1,54 @@
+pgsim 1
+# Smoke among objects: it rises from a vent, meets a tilted board, slides up
+# along it and leaves over its high edge, through a ring. A column stands in
+# the way; the ball on the floor is set dressing -- drawn, but not linked
+# into the solver, so the smoke goes through it.
+node 1 pyro_source 2 vent 0 0
+  param shape box
+  param center 0 0.05 0
+  param size 0.3 0.06 0.3
+  param smoke 5
+  param heat 5
+  param velocity 0 0.8 0
+  param flicker 0.3
+  param flicker_size 0.1
+node 2 turbulence 1 turbulence 0 96
+  param strength 2.5
+node 3 object 1 board 0 192
+  param shape box
+  param center 0.08 0.5 0
+  param rotation 0 0 20
+  param size 0.7 0.05 0.9
+  param color 0.62 0.42 0.26
+node 4 object 1 ring 0 288
+  param shape torus
+  param center 0.46 1.1 0
+  param size 0.5 0.08 0.5
+  param color 0.78 0.66 0.3
+node 5 object 1 column 0 384
+  param shape cylinder
+  param center -0.42 0.55 -0.28
+  param size 0.14 1.1 0.14
+  param color 0.6 0.6 0.62
+node 6 object 1 ball 0 480
+  param center 0.45 0.15 0.45
+  param color 0.32 0.5 0.72
+node 7 pyro_solver 1 solver 250 76
+  param size 1.4 2 1.4
+  param buoyancy 1.4
+  param weight 0.06
+  param vorticity 0.9
+  param cooling 0.3
+  param smoke_decay 0.04
+node 8 volume_look 1 look 490 76
+  param smoke_color 0.78 0.78 0.8
+  param smoke_density 16
+node 9 output 1 output 720 76
+  param frames 180
+link 1.source -> 7.sources
+link 2.force -> 7.forces
+link 3.collider -> 7.colliders
+link 4.collider -> 7.colliders
+link 5.collider -> 7.colliders
+link 7.gas -> 8.gas
+link 8.look -> 9.look

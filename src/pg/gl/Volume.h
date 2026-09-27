@@ -1,14 +1,16 @@
 #pragma once
 //
 // Draws a simulation: the gas -- smoke that absorbs and scatters light, fire
-// that glows -- standing on a floor, the colliders in it, and guide lines on
-// top. The viewport of the editor's Simulation network and of `pgshader sim`.
+// that glows -- standing on a floor, the objects of the scene, and guide lines
+// on top. The viewport of the editor's Simulation network and of `pgshader sim`.
 //
 // A fragment shader follows the ray behind each pixel:
 //
 //   solids   the floor (a grid on it, fading into the distance) and the
-//            colliders, lit by the sun -- in the shadow of the smoke and of
-//            each other -- the sky, and the glow of the fire;
+//            objects -- balls, boxes, columns, cones, rings, each turned and
+//            sized, met exactly by the ray -- lit by the sun (in the shadow of
+//            the smoke and of each other), the sky, and the glow of the fire;
+//            a selected object glows at its rim;
 //   gas      marched front to back through the domain, up to the first solid:
 //            smoke absorbs what is behind it and scatters light towards the
 //            eye -- sunlight where it is not in shadow, mostly forwards, so
@@ -44,9 +46,12 @@ struct LineVertex {
     float color[4];
 };
 
-/// Guide shapes, as pairs of line vertices.
+/// Guide shapes, as pairs of line vertices. Each segment remembers the node
+/// it was drawn for: a click near it picks that node.
 struct Lines {
     std::vector<LineVertex> vertices;
+    std::vector<int> owners;  ///< the node of each segment, one per two vertices
+    int owner = 0;            ///< the node the segments added from now on belong to
 
     void segment(const Vec3& a, const Vec3& b, const float color[4]);
     void box(const Vec3& lo, const Vec3& hi, const float color[4]);
@@ -57,12 +62,21 @@ struct Lines {
     void cylinder(const Vec3& center, const Vec3& axis, float radius, float height, const float color[4]);
     /// A line with a head at `to`.
     void arrow(const Vec3& from, const Vec3& to, const float color[4]);
-    void clear() { vertices.clear(); }
+    /// The outline of a placed shape, along its own axes: a ball's three
+    /// rings, a box's edges, a column's two rims and four sides...
+    void shape(const sim::ShapeInstance& shape, const float color[4]);
+    void clear() {
+        vertices.clear();
+        owners.clear();
+    }
 };
 
 /// The guides of a scene: the domain, the sources, the forces that act in a
-/// region, the colliders. Those of node `highlight` stand out.
-Lines sceneGuides(const sim::Scene& scene, int highlight);
+/// region -- when there is a gas scene -- and the outlines of the objects
+/// among `selected`. Those of the nodes in `selected` stand out.
+/// The domain's box belongs to `domainNode`: a click on it picks the solver.
+Lines sceneGuides(const sim::Scene* scene, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
+                  int domainNode = 0);
 
 class VolumeRenderer {
 public:
@@ -81,8 +95,11 @@ public:
     bool hasFrame() const { return hasFrame_; }
     /// The domain the gas lives in: drawn where it is, even with no frame yet.
     void setDomain(const sim::Domain& domain);
-    /// The solids in it, drawn and casting shadows; at most kMaxColliders.
-    void setColliders(const std::vector<sim::Collider>& colliders);
+    /// The objects of the scene, drawn and casting shadows; at most kMaxSolids.
+    void setSolids(const std::vector<sim::Solid>& solids);
+    /// The objects that stand out, by node: the selected ones, and the one
+    /// under the mouse.
+    void setHighlight(const std::vector<int>& selected, int hovered);
     /// Guide lines, drawn over the rest.
     void setLines(const Lines& lines);
 
@@ -105,7 +122,9 @@ public:
     Orbit orbit;
     sim::Look look;
 
-    static constexpr int kMaxColliders = 16;
+    static constexpr int kMaxSolids = 16;
+    /// The vertical field of view, degrees.
+    static constexpr float kFovY = 35.0f;
 
 private:
     void ensureTarget(int width, int height);
@@ -113,7 +132,8 @@ private:
     /// when the gas, the solids or the look they depend on change.
     void updateLighting();
     GLint location(GLuint program, const char* name) const;
-    void setColliderUniforms(GLuint program);
+    /// The box of the gas and the solids, for both programs.
+    void setSceneUniforms(GLuint program);
 
     const Api& gl_;
     GLuint program_ = 0, shadowProgram_ = 0, glowProgram_ = 0, lineProgram_ = 0;
@@ -126,7 +146,9 @@ private:
     int width_ = 0, height_ = 0;
     sim::Domain domain_;
     bool hasFrame_ = false;
-    std::vector<sim::Collider> colliders_;
+    std::vector<sim::Solid> solids_;
+    std::vector<int> selected_;
+    int hovered_ = 0;
     size_t lineCount_ = 0;
     // What the lighting was worked out for.
     struct LightingKey {

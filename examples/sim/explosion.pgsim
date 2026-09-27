@@ -2,12 +2,11 @@ pgsim 1
 # An explosion: a ball of fuel that burns for a fifth of a second. Burning gas
 # swells -- the push of the blast -- then the fireball rises and rolls into a
 # cloud of soot.
-node 1 sphere_source 1 charge 0 0
+node 1 pyro_source 2 charge 0 0
   param center 0 0.3 0
-  param radius 0.18
+  param size 0.36 0.36 0.36
   param fuel 50
   param heat 2
-  param velocity 0 0.5 0
   param flicker 0.6
   param flicker_size 0.12
   param end 0.2

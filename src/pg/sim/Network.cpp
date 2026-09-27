@@ -49,7 +49,87 @@ ParamDef center(const char* section, Vec3 at, const char* help) {
     return {"center", "Center", section, K::Vector, {at.x, at.y, at.z}, -1.0f, 1.0f, -kBig, kBig, "m", help};
 }
 
-std::vector<ParamDef> sourceParams(bool sphere) {
+// --- shapes placed in the world: objects and sources (Shape.h) ----------------------
+
+ParamDef shape(const char* help) {
+    return {"shape",
+            "Shape",
+            "Shape",
+            K::Choice,
+            {0.0f, 0.0f, 0.0f},
+            0.0f,
+            4.0f,
+            0.0f,
+            4.0f,
+            "",
+            help,
+            {"sphere", "box", "cylinder", "cone", "torus"},
+            {"Sphere", "Box", "Cylinder", "Cone", "Torus"}};
+}
+
+ParamDef position(Vec3 at, const char* help) {
+    return {"center", "Position", "Transform", K::Vector, {at.x, at.y, at.z}, -1.0f, 1.0f, -kBig, kBig, "m", help};
+}
+
+ParamDef rotation() {
+    return {"rotation", "Rotation", "Transform", K::Vector, {0.0f, 0.0f, 0.0f}, -180.0f, 180.0f, -kBig, kBig,
+            "\xc2\xb0", "Degrees about x, then y, then z: how it is turned. The W / E / R gizmo in the viewport "
+            "moves, turns and sizes it."};
+}
+
+ParamDef size(Vec3 extent, const char* help) {
+    return {"size", "Size", "Transform", K::Vector, {extent.x, extent.y, extent.z}, 0.01f, 2.0f, 0.005f, kBig, "m", help};
+}
+
+std::vector<ParamDef> pyroSourceParams() {
+    std::vector<ParamDef> p;
+    p.push_back(shape("Its shape. Gas comes out of all of it, most away from its surface."));
+    p.push_back(position(Vec3(0.0f, 0.12f, 0.0f), "Where the source is; y is its height above the floor."));
+    p.push_back(rotation());
+    p.push_back(size(Vec3(0.2f, 0.2f, 0.2f),
+                     "Width, height and depth, along its own axes: a ball's diameter, a box's edges."));
+    p.push_back({"fuel", "Fuel", "Emission", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 40.0f, 0.0f, kBig, "1/s",
+                 "Fuel added each second. Fuel burns -- into flame, heat and soot, and the gas swells: fire."});
+    p.push_back({"smoke", "Smoke", "Emission", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 20.0f, 0.0f, kBig, "1/s",
+                 "Smoke added each second."});
+    p.push_back({"heat", "Heat", "Emission", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 20.0f, 0.0f, kBig, "1/s",
+                 "Heat added each second. Hot gas rises, and cools as it goes."});
+    p.push_back({"velocity", "Velocity", "Emission", K::Vector, {0.0f, 0.5f, 0.0f}, -2.0f, 2.0f, -kBig, kBig, "m/s",
+                 "The gas leaves the source at least this fast, along the source's own axes: turn the source "
+                 "and the jet turns with it."});
+    p.push_back({"flicker", "Flicker", "Noise", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+                 "How much the output flickers: 0 steady, 1 strongly -- what makes flames lick."});
+    p.push_back({"flicker_size", "Flicker Size", "Noise", K::Float, {0.07f, 0.0f, 0.0f}, 0.01f, 0.3f, 0.005f, kBig,
+                 "m", "Size of the patches that flicker together."});
+    p.push_back(seed("Noise", "Another number, another flicker."));
+    p.push_back({"start", "Start", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
+                 "When it starts."});
+    p.push_back({"end", "End", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
+                 "When it stops. At or before the start, it never does."});
+    p.push_back({"motion", "Motion", "Motion", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+                 "How it moves: it stays, goes round in a circle about its position, or sways from side to side.",
+                 {"static", "circle", "sway"}, {"Static", "Circle", "Sway"}});
+    p.push_back({"motion_size", "Reach", "Motion", K::Float, {0.25f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, kBig, "m",
+                 "Radius of the circle; how far it sways."});
+    p.push_back({"motion_period", "Period", "Motion", K::Float, {4.0f, 0.0f, 0.0f}, 0.2f, 10.0f, 0.05f, kBig, "s",
+                 "Seconds for one round."});
+    return p;
+}
+
+std::vector<ParamDef> objectParams() {
+    return {shape("Its shape: a ball, a box, a column, a cone, a ring."),
+            position(Vec3(0.0f, 0.15f, 0.0f), "Where it is: its middle. y is its height above the floor."),
+            rotation(),
+            size(Vec3(0.3f, 0.3f, 0.3f),
+                 "Width, height and depth, along its own axes: a ball's diameter, a box's edges, a ring's width "
+                 "and thickness."),
+            {"color", "Color", "Look", K::Color, {0.45f, 0.45f, 0.46f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "Its colour. Painting it simulates nothing again."}};
+}
+
+// --- the nodes of earlier versions, as their files hold them (Legacy below) ------
+
+std::vector<ParamDef> legacySourceParams(bool sphere) {
     std::vector<ParamDef> p;
     p.push_back(center("Shape", Vec3(0.0f, 0.12f, 0.0f), "Where the source is; y is its height above the floor."));
     if (sphere) {
@@ -86,7 +166,7 @@ std::vector<ParamDef> sourceParams(bool sphere) {
     return p;
 }
 
-std::vector<ParamDef> colliderParams(bool sphere) {
+std::vector<ParamDef> legacyColliderParams(bool sphere) {
     std::vector<ParamDef> p;
     p.push_back(center("Shape", Vec3(0.0f, 0.6f, 0.0f), "Where the solid is."));
     if (sphere) {
@@ -102,18 +182,27 @@ std::vector<ParamDef> colliderParams(bool sphere) {
 std::vector<NodeType> buildTypes() {
     std::vector<NodeType> t;
 
+    // --- objects ----------------------------------------------------------------------
+    t.push_back({"object", "Object", "Objects",
+                 "A solid in the scene: a ball, a box, a column, a cone, a ring. It is drawn and casts shadows; "
+                 "linked into a solver's Colliders, what the solver simulates goes round it. Move, turn and size "
+                 "it in the viewport: W, E, R.",
+                 {},
+                 {{"collider", "Collider", PinType::Collider}},
+                 objectParams(),
+                 1});
+    t.back().handles = {"center", "rotation", nullptr, "size", nullptr, nullptr};
+
     // --- sources --------------------------------------------------------------------
-    t.push_back({"sphere_source", "Sphere Source", "Sources",
-                 "A ball that gives off fuel, smoke and heat, and pushes the gas its way. Fuel makes fire; "
-                 "smoke and heat without fuel make a column of smoke.",
+    t.push_back({"pyro_source", "Pyro Source", "Sources",
+                 "A shape that gives off fuel, smoke and heat, and pushes the gas its way. Fuel makes fire; "
+                 "smoke and heat without fuel make a column of smoke. A ball for a campfire, a box for a burning "
+                 "log or a vent, a ring for a gas burner.",
                  {},
                  {{"source", "Source", PinType::Source}},
-                 sourceParams(true)});
-    t.push_back({"box_source", "Box Source", "Sources",
-                 "A box that gives off fuel, smoke and heat: a burning log, a vent, a line of fire.",
-                 {},
-                 {{"source", "Source", PinType::Source}},
-                 sourceParams(false)});
+                 pyroSourceParams(),
+                 2});
+    t.back().handles = {"center", "rotation", nullptr, "size", nullptr, nullptr};
 
     // --- forces ---------------------------------------------------------------------
     t.push_back({"turbulence", "Turbulence", "Forces",
@@ -142,6 +231,7 @@ std::vector<NodeType> buildTypes() {
                    "0 steady, 1 strongly gusting."},
                   mask(0),
                   seed("Wind", "Another number, other gusts.")}});
+    t.back().handles = {nullptr, nullptr, "direction", nullptr, nullptr, nullptr};
     t.push_back({"vortex", "Vortex", "Forces",
                  "Turns the gas round an axis, and can carry it along the axis and draw it in: a whirl, a "
                  "fire tornado. It acts inside a cylinder about the axis.",
@@ -163,6 +253,7 @@ std::vector<NodeType> buildTypes() {
                   {"strength", "Grip", "Motion", K::Float, {3.0f, 0.0f, 0.0f}, 0.0f, 20.0f, 0.0f, kBig, "1/s",
                    "How quickly the gas takes on these speeds."},
                   mask(0)}});
+    t.back().handles = {"center", nullptr, "axis", nullptr, "radius", "height"};
     t.push_back({"attractor", "Attractor", "Forces",
                  "Pulls the gas towards a point -- or, below 0, pushes it away -- harder the closer it is.",
                  {},
@@ -173,24 +264,13 @@ std::vector<NodeType> buildTypes() {
                   {"strength", "Strength", "Force", K::Float, {2.0f, 0.0f, 0.0f}, -20.0f, 20.0f, -kBig, kBig,
                    "m/s\xc2\xb2", "How hard it pulls at the center. Below 0 it pushes away."},
                   mask(0)}});
+    t.back().handles = {"center", nullptr, nullptr, nullptr, "radius", nullptr};
     t.push_back({"drag", "Drag", "Forces", "Slows the gas down: thick, calm air.",
                  {},
                  {{"force", "Force", PinType::Force}},
                  {{"strength", "Strength", "Force", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "1/s",
                    "How quickly the gas slows down."},
                   mask(0)}});
-
-    // --- colliders --------------------------------------------------------------------
-    t.push_back({"sphere_collider", "Sphere Collider", "Colliders",
-                 "A solid ball the gas flows around.",
-                 {},
-                 {{"collider", "Collider", PinType::Collider}},
-                 colliderParams(true)});
-    t.push_back({"box_collider", "Box Collider", "Colliders",
-                 "A solid box the gas flows around: a wall, a table, a ceiling.",
-                 {},
-                 {{"collider", "Collider", PinType::Collider}},
-                 colliderParams(false)});
 
     // --- the solver -------------------------------------------------------------------
     t.push_back(
@@ -281,10 +361,12 @@ std::vector<NodeType> buildTypes() {
 
     for (NodeType& type : t) {
         const std::string c = type.category;
-        type.bypassable = c == "Sources" || c == "Forces" || c == "Colliders";
+        type.bypassable = c == "Objects" || c == "Sources" || c == "Forces";
     }
     return t;
 }
+
+
 
 bool validName(std::string_view name) {
     if (name.empty() || name.size() > 64) return false;
@@ -344,6 +426,99 @@ ParamValue keep(const ParamDef& def, ParamValue v) {
     return v;
 }
 
+// --- files of earlier versions ------------------------------------------------------
+
+/// A node type as an earlier version wrote it -- its parameters, so that its
+/// values read as they were meant -- and how to turn such a node into the
+/// type that replaced it.
+struct Legacy {
+    NodeType type;          ///< name, the parameters, `version`: the files up to it
+    void (*upgrade)(Node& node);
+};
+
+/// Every value of `node` under the parameters of `type`: the ones set, the
+/// rest at the defaults of that type.
+std::map<std::string, ParamValue> allValues(const Node& node, const NodeType& type) {
+    std::map<std::string, ParamValue> v;
+    for (const ParamDef& d : type.params) v[d.name] = d.value;
+    for (const auto& [name, value] : node.params) v[name] = value;
+    return v;
+}
+
+/// `node` becomes a node of `type` with `values`; only those that differ
+/// from the defaults of `type` are kept, as always.
+void become(Node& node, const NodeType& type, const std::map<std::string, ParamValue>& values) {
+    node.type = type.name;
+    node.version = type.version;
+    node.params.clear();
+    for (const ParamDef& d : type.params) {
+        const auto it = values.find(d.name);
+        if (it != values.end() && keep(d, it->second) != d.value) node.params[d.name] = keep(d, it->second);
+    }
+}
+
+const std::vector<Legacy>& legacyTypes();
+
+/// Sphere Source, Box Source (version 1) -> Pyro Source: the shape a choice,
+/// a sphere's radius half its size.
+void upgradeSource(Node& node) {
+    const bool box = node.type == "box_source";
+    const NodeType* old = nullptr;
+    for (const Legacy& l : legacyTypes()) {
+        if (node.type == l.type.name) old = &l.type;
+    }
+    std::map<std::string, ParamValue> v = allValues(node, *old);
+    if (!box) {
+        const float d = 2.0f * v["radius"][0];
+        v["size"] = {d, d, d};
+    }
+    v["shape"] = {box ? 1.0f : 0.0f, 0.0f, 0.0f};
+    become(node, *findNodeType("pyro_source"), v);
+}
+
+/// Sphere Collider, Box Collider (version 1) -> Object.
+void upgradeCollider(Node& node) {
+    const bool box = node.type == "box_collider";
+    const NodeType* old = nullptr;
+    for (const Legacy& l : legacyTypes()) {
+        if (node.type == l.type.name) old = &l.type;
+    }
+    std::map<std::string, ParamValue> v = allValues(node, *old);
+    if (!box) {
+        const float d = 2.0f * v["radius"][0];
+        v["size"] = {d, d, d};
+    }
+    v["shape"] = {box ? 1.0f : 0.0f, 0.0f, 0.0f};
+    become(node, *findNodeType("object"), v);
+}
+
+const std::vector<Legacy>& legacyTypes() {
+    static const std::vector<Legacy> types = [] {
+        std::vector<Legacy> l;
+        const std::vector<PinDef> source = {{"source", "Source", PinType::Source}};
+        const std::vector<PinDef> collider = {{"collider", "Collider", PinType::Collider}};
+        l.push_back({{"sphere_source", "Sphere Source", "Sources", "", {}, source, legacySourceParams(true), 1},
+                     upgradeSource});
+        l.push_back({{"box_source", "Box Source", "Sources", "", {}, source, legacySourceParams(false), 1},
+                     upgradeSource});
+        l.push_back({{"sphere_collider", "Sphere Collider", "Colliders", "", {}, collider,
+                      legacyColliderParams(true), 1},
+                     upgradeCollider});
+        l.push_back({{"box_collider", "Box Collider", "Colliders", "", {}, collider, legacyColliderParams(false), 1},
+                     upgradeCollider});
+        return l;
+    }();
+    return types;
+}
+
+/// The old type a node of `name` and `version` is, if it is one.
+const Legacy* legacyType(std::string_view name, int version) {
+    for (const Legacy& l : legacyTypes()) {
+        if (name == l.type.name && version <= l.type.version) return &l;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 // --- the types -----------------------------------------------------------------------
@@ -393,7 +568,7 @@ const NodeType* findNodeType(std::string_view name) {
 }
 
 const std::vector<const char*>& nodeCategories() {
-    static const std::vector<const char*> c = {"Sources", "Forces", "Colliders", "Simulation", "Render"};
+    static const std::vector<const char*> c = {"Objects", "Sources", "Forces", "Simulation", "Render"};
     return c;
 }
 
@@ -767,7 +942,9 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
             if (w.size() < 3) return fail(lineNo, "a param line is: param NAME VALUE");
             const std::string name(w[1]);
             const std::string_view value = line.substr(static_cast<size_t>(w[2].data() - line.data()));
-            const NodeType* t = findNodeType(current->type);
+            // A node of an old type reads by the parameters it had then.
+            const Legacy* legacy = legacyType(current->type, current->version);
+            const NodeType* t = legacy ? &legacy->type : findNodeType(current->type);
             if (!t) {
                 // Kept as numbers, for a newer program to read back.
                 ParamValue v{};
@@ -815,6 +992,9 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
         return fail(lineNo, "unknown line '" + std::string(w[0]) + "'");
     }
     if (!header) return fail(1, "empty: a network starts with 'pgsim 1'");
+    std::vector<Link> pending;
+    for (const PendingLink& p : links) pending.push_back(p.link);
+    net.upgrade(pending);
     for (const PendingLink& p : links) {
         const Node* a = net.node(p.link.from);
         const Node* b = net.node(p.link.to);
@@ -837,6 +1017,13 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
     return true;
 }
 
+void Network::upgrade(const std::vector<Link>& links) {
+    (void)links;
+    for (Node& n : nodes_) {
+        if (const Legacy* l = legacyType(n.type, n.version)) l->upgrade(n);
+    }
+}
+
 // --- compile -------------------------------------------------------------------------
 
 bool Compiled::errors() const {
@@ -857,9 +1044,31 @@ Compiled Network::compile() const {
         return Vec3(p[0], p[1], p[2]);
     };
     auto whole = [&](const Node& n, const char* name) { return static_cast<int>(std::lround(f(n, name))); };
+    auto colliderOf = [&](const Node& n) {
+        Collider col;
+        col.shape = static_cast<Shape>(whole(n, "shape"));
+        col.center = v3(n, "center");
+        col.rotation = v3(n, "rotation");
+        col.size = v3(n, "size");
+        col.node = n.id;
+        return col;
+    };
+    // Every return goes through here: `active` is searched, so sorted.
+    auto done = [&]() {
+        std::sort(c.active.begin(), c.active.end());
+        c.active.erase(std::unique(c.active.begin(), c.active.end()), c.active.end());
+        return c;
+    };
 
     for (const Node& n : nodes_) {
         if (!findNodeType(n.type)) problem(L::Error, n.id, "Unknown node type '" + n.type + "' -- from a newer version?");
+    }
+
+    // The objects: all of them are in the scene, drawn, whatever feeds what.
+    for (const Node& n : nodes_) {
+        if (n.type != "object" || n.bypass) continue;
+        c.solids.push_back({colliderOf(n), v3(n, "color")});
+        c.active.push_back(n.id);
     }
 
     // Output <- Volume Look <- Pyro Solver: the spine.
@@ -871,7 +1080,7 @@ Compiled Network::compile() const {
     }
     if (!output) {
         problem(L::Error, 0, "No Output node. Add one (Render > Output) and link a Volume Look into it.");
-        return c;
+        return done();
     }
     c.output = output->id;
     c.active.push_back(output->id);
@@ -884,7 +1093,7 @@ Compiled Network::compile() const {
     const Node* look = upstream(*output, "look");
     if (!look) {
         problem(L::Error, output->id, "Nothing to show: link a Volume Look into Look.");
-        return c;
+        return done();
     }
     c.lookNode = look->id;
     c.active.push_back(look->id);
@@ -908,7 +1117,7 @@ Compiled Network::compile() const {
     const Node* solver = upstream(*look, "gas");
     if (!solver) {
         problem(L::Error, look->id, "No gas to draw: link a Pyro Solver into Gas.");
-        return c;
+        return done();
     }
     c.solver = solver->id;
     c.active.push_back(solver->id);
@@ -944,10 +1153,10 @@ Compiled Network::compile() const {
     };
     for (const Node* n : feeding("sources")) {
         Emitter e;
-        e.shape = n->type == "box_source" ? Shape::Box : Shape::Sphere;
+        e.shape = static_cast<Shape>(whole(*n, "shape"));
         e.center = v3(*n, "center");
-        if (e.shape == Shape::Sphere) e.radius = f(*n, "radius");
-        else e.size = v3(*n, "size");
+        e.rotation = v3(*n, "rotation");
+        e.size = v3(*n, "size");
         e.fuel = f(*n, "fuel");
         e.smoke = f(*n, "smoke");
         e.heat = f(*n, "heat");
@@ -1007,16 +1216,9 @@ Compiled Network::compile() const {
         c.active.push_back(n->id);
     }
     for (const Node* n : feeding("colliders")) {
-        Collider col;
-        col.shape = n->type == "box_collider" ? Shape::Box : Shape::Sphere;
-        col.center = v3(*n, "center");
-        if (col.shape == Shape::Sphere) col.radius = f(*n, "radius");
-        else col.size = v3(*n, "size");
-        col.node = n->id;
-        c.scene.colliders.push_back(col);
+        c.scene.colliders.push_back(colliderOf(*n));
         c.active.push_back(n->id);
     }
-    std::sort(c.active.begin(), c.active.end());
 
     // Things that run but will not do what was meant.
     const Domain domain = c.scene.sanitized().solver.domain();
@@ -1028,10 +1230,14 @@ Compiled Network::compile() const {
         problem(L::Warning, solver->id, "No sources: nothing will appear. Link a source into Sources.");
     }
     for (const Emitter& e : c.scene.emitters) {
-        Vec3 half = e.shape == Shape::Sphere ? Vec3(e.radius) : e.size * 0.5f;
-        if (e.motion == Motion::Circle) half += Vec3(e.motionSize, 0.0f, e.motionSize);
-        if (e.motion == Motion::Sway) half += Vec3(e.motionSize, 0.0f, 0.0f);
-        if (!overlaps(e.center - half, e.center + half)) {
+        Vec3 a, b;
+        e.shapeAt(0.0f).bounds(a, b);
+        a = a - e.shapeAt(0.0f).center();
+        b = b - e.shapeAt(0.0f).center();
+        Vec3 reach;
+        if (e.motion == Motion::Circle) reach = Vec3(e.motionSize, 0.0f, e.motionSize);
+        if (e.motion == Motion::Sway) reach = Vec3(e.motionSize, 0.0f, 0.0f);
+        if (!overlaps(e.center + a - reach, e.center + b + reach)) {
             problem(L::Warning, e.node, "Outside the solver's domain: none of its gas gets in.");
         }
         if (e.fuel <= 0.0f && e.smoke <= 0.0f && e.heat <= 0.0f) {
@@ -1045,12 +1251,11 @@ Compiled Network::compile() const {
         }
     }
     for (const Collider& col : c.scene.colliders) {
-        const Vec3 half = col.shape == Shape::Sphere ? Vec3(col.radius) : col.size * 0.5f;
-        if (!overlaps(col.center - half, col.center + half)) {
-            problem(L::Warning, col.node, "Outside the solver's domain: nothing to collide with.");
-        }
+        Vec3 a, b;
+        col.instance().bounds(a, b);
+        if (!overlaps(a, b)) problem(L::Warning, col.node, "Outside the solver's domain: nothing to collide with.");
     }
-    return c;
+    return done();
 }
 
 // --- examples ------------------------------------------------------------------------

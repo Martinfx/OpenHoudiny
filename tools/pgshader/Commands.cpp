@@ -608,8 +608,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     sim::PyroSolver solver(c.scene);
     volume.look = c.look;
     volume.setDomain(solver.domain());
-    volume.setColliders(solver.scene().colliders);
-    if (o.guides) volume.setLines(gl::sceneGuides(solver.scene(), 0));
+    volume.setSolids(c.solids);
+    if (o.guides) volume.setLines(gl::sceneGuides(&solver.scene(), c.solids, {}));
     volume.orbit = gl::VolumeRenderer::viewOf(solver.domain());
     if (o.yawSet) volume.orbit.yaw = o.yaw;
     if (o.pitchSet) volume.orbit.pitch = o.pitch;

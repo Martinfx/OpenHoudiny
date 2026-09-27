@@ -45,12 +45,6 @@ Vec3 Emitter::motionVelocityAt(float t) const {
     return Vec3();
 }
 
-bool Collider::contains(const Vec3& p) const {
-    const Vec3 d = p - center;
-    if (shape == Shape::Sphere) return dot(d, d) < radius * radius;
-    return std::fabs(d.x) < 0.5f * size.x && std::fabs(d.y) < 0.5f * size.y && std::fabs(d.z) < 0.5f * size.z;
-}
-
 Domain SolverSettings::domain() const {
     Domain d;
     const float longest = std::max({size.x, size.y, size.z});
@@ -85,7 +79,7 @@ Scene Scene::sanitized() const {
     const Emitter de;
     for (Emitter& e : s.emitters) {
         e.center = fix(e.center, -kHuge, kHuge, de.center);
-        e.radius = fix(e.radius, 0.005f, kHuge, de.radius);
+        e.rotation = fix(e.rotation, -kHuge, kHuge, Vec3());
         e.size = fix(e.size, 0.005f, kHuge, de.size);
         e.fuel = fix(e.fuel, 0.0f, kHuge, 0.0f);
         e.smoke = fix(e.smoke, 0.0f, kHuge, 0.0f);
@@ -117,7 +111,7 @@ Scene Scene::sanitized() const {
     const Collider dc;
     for (Collider& c : s.colliders) {
         c.center = fix(c.center, -kHuge, kHuge, dc.center);
-        c.radius = fix(c.radius, 0.005f, kHuge, dc.radius);
+        c.rotation = fix(c.rotation, -kHuge, kHuge, Vec3());
         c.size = fix(c.size, 0.005f, kHuge, dc.size);
     }
     return s;
@@ -139,7 +133,7 @@ Scene Scene::fire() {
 
     Emitter e;
     e.center = Vec3(0.0f, 0.12f, 0.0f);
-    e.radius = 0.1f;
+    e.size = Vec3(0.2f);
     e.fuel = 14.0f;
     e.heat = 1.0f;
     e.velocity = Vec3(0.0f, 0.4f, 0.0f);
@@ -166,7 +160,7 @@ Scene Scene::smoke() {
 
     Emitter e;
     e.center = Vec3(0.0f, 0.12f, 0.0f);
-    e.radius = 0.1f;
+    e.size = Vec3(0.2f);
     e.smoke = 5.0f;
     e.heat = 3.0f;
     e.velocity = Vec3(0.0f, 0.55f, 0.0f);

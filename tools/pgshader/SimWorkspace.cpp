@@ -22,18 +22,18 @@ namespace {
 using theme::Icon;
 
 ImU32 categoryColor(const std::string& c) {
+    if (c == "Objects") return IM_COL32(70, 98, 150, 255);
     if (c == "Sources") return IM_COL32(178, 86, 44, 255);
     if (c == "Forces") return IM_COL32(38, 124, 134, 255);
-    if (c == "Colliders") return IM_COL32(70, 98, 150, 255);
     if (c == "Simulation") return IM_COL32(112, 78, 160, 255);
     if (c == "Render") return IM_COL32(58, 128, 80, 255);
     return IM_COL32(110, 60, 60, 255);
 }
 
 Icon categoryIcon(const std::string& c) {
+    if (c == "Objects") return Icon::Collider;
     if (c == "Sources") return Icon::Source;
     if (c == "Forces") return Icon::Force;
-    if (c == "Colliders") return Icon::Collider;
     if (c == "Simulation") return Icon::Solver;
     return Icon::Look;
 }
@@ -66,12 +66,14 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
     auto v = [&](const char* p) { return net.value(n.id, p); };
     const std::string dot = " \xc2\xb7 ";
     const std::string& t = n.type;
-    if (t == "sphere_source" || t == "box_source") {
-        std::string s;
+    const std::string times = " \xc3\x97 ";
+    auto shapeOf = [&]() { return std::string(sim::shapeName(static_cast<sim::Shape>(static_cast<int>(v("shape"))))); };
+    if (t == "pyro_source") {
+        std::string s = v("shape") != 0.0f ? shapeOf() : "";
         for (const char* p : {"fuel", "smoke", "heat"}) {
             if (v(p) > 0.0f) s += (s.empty() ? "" : dot) + std::string(p) + " " + number(v(p));
         }
-        if (s.empty()) s = "adds nothing";
+        if (s.empty() || s == shapeOf()) s += (s.empty() ? "" : dot) + std::string("adds nothing");
         const int motion = static_cast<int>(v("motion"));
         if (motion == 1) s += dot + "circles";
         if (motion == 2) s += dot + "sways";
@@ -86,10 +88,10 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return s;
     }
     if (t == "attractor" || t == "drag") return "strength " + number(v("strength"));
-    if (t == "sphere_collider") return "radius " + number(v("radius")) + " m";
-    if (t == "box_collider") {
+    if (t == "object") {
         const sim::ParamValue s = net.param(n.id, "size");
-        return number(s[0]) + " \xc3\x97 " + number(s[1]) + " \xc3\x97 " + number(s[2]) + " m";
+        const bool even = s[0] == s[1] && s[1] == s[2];
+        return shapeOf() + dot + (even ? number(s[0]) : number(s[0]) + times + number(s[1]) + times + number(s[2])) + " m";
     }
     if (t == "pyro_solver") {
         sim::Scene scene;
@@ -200,7 +202,7 @@ bool SimWorkspace::openExample(const std::string& name) {
 
 void SimWorkspace::newNetwork() {
     sim::Network net;
-    const int source = net.add("sphere_source", 0, 0);
+    const int source = net.add("pyro_source", 0, 0);
     net.setParam(source, "smoke", "4");
     net.setParam(source, "heat", "2");
     const int solver = net.add("pyro_solver", 300, 20);
@@ -262,7 +264,7 @@ void SimWorkspace::recompile() {
     if (compiled_.ok) runner_->set(compiled_.scene, compiled_.frames);
     if (!(compiled_.look == before)) viewDirty_ = true;
     renderer_.look = compiled_.look;
-    renderer_.setColliders(compiled_.ok ? compiled_.scene.colliders : std::vector<sim::Collider>{});
+    renderer_.setSolids(compiled_.solids);
     current_ = std::clamp(current_, 1, std::max(1, compiled_.frames));
 }
 
@@ -302,7 +304,7 @@ void SimWorkspace::update(float dt) {
     // The frame on screen. While a simulation that started again has no
     // frame yet, the last one stays: dragging a slider does not flicker.
     std::shared_ptr<const sim::Frame> f = frameToShow();
-    if (!f && shown_ && runner_->busy()) f = shown_;
+    if (!f && shown_ && (runner_->busy() || gizmo_.dragging())) f = shown_;
     if (f != shown_) {
         shown_ = f;
         if (f) renderer_.setFrame(*f);
@@ -585,15 +587,41 @@ void SimWorkspace::duplicate(const std::vector<int>& nodes) {
         const sim::Node* n = net_.node(id);
         if (!n) continue;
         const sim::Node original = *n;
-        const int copy = net_.add(original.type, original.x + 40.0f, original.y + 40.0f);
+        const sim::NodeType* type = sim::findNodeType(original.type);
+        if (!type) continue;
+        // Objects, sources and forces go under the others of their kind; the
+        // rest beside the original.
+        const std::string category = type->category;
+        const bool column = category == "Objects" || category == "Sources" || category == "Forces";
+        const ImVec2 at = column ? freeSlot() : ImVec2(original.x + 40.0f, original.y + 40.0f);
+        const int copy = net_.add(original.type, at.x, at.y);
         if (!copy) continue;
+        net_.rename(copy, net_.uniqueName(original.name));
         for (const auto& [name, value] : original.params) net_.setParam(copy, name, value);
         net_.setBypass(copy, original.bypass);
+        // In the world too, beside the original rather than inside it.
+        const sim::Handles& h = sim::findNodeType(original.type)->handles;
+        if (h.center) {
+            const float step = h.size ? 1.2f * net_.param(copy, h.size)[0] : h.radius ? 2.2f * net_.value(copy, h.radius) : 0.3f;
+            sim::ParamValue c = net_.param(copy, h.center);
+            c[0] += step;
+            net_.setParam(copy, h.center, c);
+        }
         copies[id] = copy;
     }
-    // Links among the copies, as among the originals.
+    // Links among the copies, as among the originals -- and a copy feeds
+    // what its original fed through an input that takes many (a solver's
+    // colliders, sources, forces), so a copied object is in the way too.
     for (const sim::Link& l : std::vector<sim::Link>(net_.links())) {
-        if (copies.count(l.from) && copies.count(l.to)) net_.connect(copies[l.from], l.output, copies[l.to], l.input);
+        if (!copies.count(l.from)) continue;
+        if (copies.count(l.to)) {
+            net_.connect(copies[l.from], l.output, copies[l.to], l.input);
+            continue;
+        }
+        const sim::Node* to = net_.node(l.to);
+        const sim::NodeType* t = to ? sim::findNodeType(to->type) : nullptr;
+        const sim::PinDef* in = t ? t->input(l.input) : nullptr;
+        if (in && in->many) net_.connect(copies[l.from], l.output, l.to, l.input);
     }
     canvas_.clearSelection();
     for (const auto& [from, to] : copies) canvas_.select(to, true);
@@ -814,13 +842,14 @@ void SimWorkspace::networkOverview() {
 // --- the viewport -------------------------------------------------------------------------------
 
 void SimWorkspace::updateGuides() {
-    const int selected = canvas_.current();
-    if (guidesRevision_ == net_.revision() && guidesNode_ == selected) return;
+    const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
+    if (guidesRevision_ == net_.revision() && guidesSelection_ == chosen) return;
     guidesRevision_ = net_.revision();
-    guidesNode_ = selected;
+    guidesSelection_ = chosen;
     gl::Lines lines;
-    if (guides_ && compiled_.ok) lines = gl::sceneGuides(compiled_.scene, selected);
+    if (guides_) lines = gl::sceneGuides(compiled_.ok ? &compiled_.scene : nullptr, compiled_.solids, chosen, compiled_.solver);
     renderer_.setLines(lines);
+    guideLines_ = std::move(lines);
     viewDirty_ = true;
 }
 
@@ -852,121 +881,6 @@ void SimWorkspace::drawGnomon(ImDrawList* d, ImVec2 corner) const {
         const ImVec2 t = ImGui::CalcTextSize(a.label);
         d->AddText(ImVec2(tip.x - t.x * 0.5f, tip.y - t.y * 0.5f), IM_COL32(20, 20, 24, 255), a.label);
     }
-}
-
-void SimWorkspace::viewport(ImVec2 size) {
-    (void)size;
-    char info[128];
-    const sim::Domain dm = runner_->domain();
-    std::snprintf(info, sizeof info, "%d \xc3\x97 %d \xc3\x97 %d cells", dm.cells[0], dm.cells[1], dm.cells[2]);
-    ui::PanelHeader h = ui::panelHeader(Icon::Viewport, "Viewport", info);
-    if (ui::headerButton(h, "image", Icon::Camera, "Render this frame to a PNG\xe2\x80\xa6")) {
-        files_.open("Render image", {".png"}, true, (example_.empty() ? std::string("frame") : example_) + ".png");
-        fileAction_ = FileAction::Image;
-    }
-    if (ui::headerButton(h, "home", Icon::Viewport, "Frame the domain (double click)")) framed_ = false;
-    if (ui::headerButton(h, "guides", Icon::Guides, "Guides: the domain, sources, forces (G)", guides_)) {
-        guides_ = !guides_;
-        guidesRevision_ = ~0ull;
-        updateGuides();
-    }
-
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const int w = std::max(16, static_cast<int>(avail.x)), hh = std::max(16, static_cast<int>(avail.y));
-    // The camera frames the domain when a network opens and when the
-    // domain's size changes -- not for another resolution.
-    const Vec3 box = compiled_.ok ? compiled_.scene.solver.size : framedSize_;
-    const bool resized = std::fabs(box.x - framedSize_.x) + std::fabs(box.y - framedSize_.y) +
-                             std::fabs(box.z - framedSize_.z) > 1e-4f;
-    if (!framed_ || resized) {
-        renderer_.orbit = gl::VolumeRenderer::viewOf(dm);
-        framedSize_ = box;
-        framed_ = true;
-        viewDirty_ = true;
-    }
-    if (w != viewWidth_ || hh != viewHeight_) viewDirty_ = true;
-    if (viewDirty_ && rendererLog_.empty()) {
-        renderer_.render(w, hh);
-        viewWidth_ = w;
-        viewHeight_ = hh;
-        viewDirty_ = false;
-    }
-    const ImVec2 lo = ImGui::GetCursorScreenPos();
-    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(renderer_.colorTexture())), ImVec2(static_cast<float>(w), static_cast<float>(hh)),
-                 ImVec2(0, 1), ImVec2(1, 0));
-    ImGui::SetCursorScreenPos(lo);
-    ImGui::InvisibleButton("view", ImVec2(static_cast<float>(w), static_cast<float>(hh)),
-                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
-                               ImGuiButtonFlags_MouseButtonMiddle);
-    const ImGuiIO& io = ImGui::GetIO();
-    gl::Orbit& o = renderer_.orbit;
-    if (ImGui::IsItemActive()) {
-        const ImVec2 dlt = io.MouseDelta;
-        if (dlt.x != 0.0f || dlt.y != 0.0f) {
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyShift)) {
-                // Pan: move what the camera looks at, in the plane of the screen.
-                float eye[3];
-                o.eye(eye);
-                const Vec3 forward = normalize(Vec3(o.target[0] - eye[0], o.target[1] - eye[1], o.target[2] - eye[2]));
-                const Vec3 right = normalize(cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
-                const Vec3 up = cross(right, forward);
-                const float k = o.distance * 0.0018f;
-                const Vec3 move = right * (-dlt.x * k) + up * (dlt.y * k);
-                for (int a = 0; a < 3; ++a) o.target[a] += move[a];
-            } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-                o.distance = std::clamp(o.distance * std::exp(dlt.y * 0.006f), 0.2f, 200.0f);
-            } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                o.yaw -= dlt.x * 0.35f;
-                o.pitch = std::clamp(o.pitch + dlt.y * 0.35f, -89.0f, 89.0f);
-            }
-            viewDirty_ = true;
-        }
-    }
-    if (ImGui::IsItemHovered()) {
-        if (io.MouseWheel != 0.0f) {
-            o.distance = std::clamp(o.distance * std::pow(0.88f, io.MouseWheel), 0.2f, 200.0f);
-            viewDirty_ = true;
-        }
-        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) framed_ = false;
-    }
-
-    // Overlays: what is shown, the axes, the state of things.
-    ImDrawList* d = ImGui::GetWindowDrawList();
-    const ImVec2 hi(lo.x + static_cast<float>(w), lo.y + static_cast<float>(hh));
-    d->PushClipRect(lo, hi, true);
-    const float pad = theme::px(10.0f);
-    if (!rendererLog_.empty()) {
-        d->AddText(ImVec2(lo.x + pad, lo.y + pad), theme::kRed, rendererLog_.c_str());
-    }
-    char text[160];
-    const int cached = runner_->cached();
-    if (shown_) {
-        std::snprintf(text, sizeof text, "Frame %d  \xc2\xb7  %.2f s", shown_->number, static_cast<double>(shown_->time));
-        d->AddText(theme::fonts().bold, ImGui::GetFontSize(), ImVec2(lo.x + pad, lo.y + pad), IM_COL32(235, 236, 240, 230), text);
-        if (current_ > cached) {
-            std::snprintf(text, sizeof text, "simulating\xe2\x80\xa6 %d of %d", cached, current_);
-            d->AddText(ImVec2(lo.x + pad, lo.y + pad + ImGui::GetFontSize() * 1.3f), theme::kAccentHover, text);
-        }
-    } else if (compiled_.ok) {
-        d->AddText(ImVec2(lo.x + pad, lo.y + pad), theme::kAccentHover, "simulating\xe2\x80\xa6");
-    }
-    if (!compiled_.ok) {
-        std::string why = "Nothing to simulate";
-        for (const sim::Problem& p : compiled_.problems) {
-            if (p.level == sim::Problem::Level::Error) {
-                why = p.message;
-                break;
-            }
-        }
-        const ImVec2 t = ImGui::CalcTextSize(why.c_str());
-        const ImVec2 c((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f);
-        d->AddRectFilled(ImVec2(c.x - t.x * 0.5f - pad * 2.0f, c.y - t.y - pad), ImVec2(c.x + t.x * 0.5f + pad * 2.0f, c.y + t.y + pad),
-                         IM_COL32(20, 20, 24, 210), theme::px(6.0f));
-        theme::drawIcon(d, Icon::Warning, ImVec2(c.x, c.y - t.y * 0.45f), t.y * 1.1f, theme::kYellow);
-        d->AddText(ImVec2(c.x - t.x * 0.5f, c.y + t.y * 0.25f), theme::kText, why.c_str());
-    }
-    drawGnomon(d, ImVec2(lo.x, hi.y));
-    d->PopClipRect();
 }
 
 // --- the timeline ---------------------------------------------------------------------------------
@@ -1078,7 +992,18 @@ void SimWorkspace::menus() {
         }
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Add")) {
+        if (ImGui::IsWindowAppearing()) {
+            addAt_ = floorPoint(camera_, ImVec2(camera_.lo.x + camera_.size.x * 0.5f, camera_.lo.y + camera_.size.y * 0.5f));
+        }
+        sceneMenu(addAt_);
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Local Axes", nullptr, localAxes_)) localAxes_ = !localAxes_;
+        if (ImGui::MenuItem("Snap", nullptr, snap_)) snap_ = !snap_;
+        if (ImGui::MenuItem("Frame the Selection", "F")) frameSelection();
+        ImGui::Separator();
         if (ImGui::MenuItem("Guides", "G", guides_)) {
             guides_ = !guides_;
             guidesRevision_ = ~0ull;
@@ -1098,10 +1023,15 @@ void SimWorkspace::helpMenu() {
     ImGui::TextUnformatted("F / Del / Ctrl+D / B      frame, delete, duplicate, bypass");
     ImGui::Separator();
     ImGui::TextDisabled("Viewport");
+    ImGui::TextUnformatted("Click                     select (Shift, Ctrl: add)");
+    ImGui::TextUnformatted("Q  W  E  R                select, move, rotate, scale");
+    ImGui::TextUnformatted("Drag a handle             move, turn, size (Ctrl: snap)");
+    ImGui::TextUnformatted("Shift+A, right click      add an object, a source, a force");
+    ImGui::TextUnformatted("Del, Ctrl+D, F, Esc       delete, duplicate, frame, cancel");
     ImGui::TextUnformatted("Left drag                 orbit");
     ImGui::TextUnformatted("Middle / Shift+left drag  pan");
     ImGui::TextUnformatted("Right drag, wheel         zoom");
-    ImGui::TextUnformatted("Double click              frame the domain");
+    ImGui::TextUnformatted("Double click              frame what is clicked, or the domain");
     ImGui::Separator();
     ImGui::TextDisabled("Timeline");
     ImGui::TextUnformatted("Space  Home  End  Left  Right");

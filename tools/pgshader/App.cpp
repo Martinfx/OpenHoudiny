@@ -20,6 +20,7 @@
 //   down / up [left|right|middle]                 wheel D
 //   key [ctrl+][shift+]NAME      tab, enter, escape, delete, space, left,
 //                                right, home, end, backspace, f5, a..z
+//   hold / release ctrl|shift|alt                 a modifier down over the steps between
 //   type TEXT           characters, as typed
 //   wait N              N frames with no input
 //   shot FILE           the window as a PNG, now
@@ -151,6 +152,13 @@ public:
                 std::getline(words, rest);
                 if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
                 steps_.push_back({Step::Type, 0, 0, 0, ImGuiKey_None, 0, rest});
+            } else if (cmd == "hold" || cmd == "release") {
+                // A modifier held down over the steps between: hold shift ... release shift
+                std::string k;
+                if (!(words >> k)) return fail(cmd + " ctrl|shift|alt");
+                const ImGuiKey mod = k == "ctrl" ? ImGuiMod_Ctrl : k == "shift" ? ImGuiMod_Shift : k == "alt" ? ImGuiMod_Alt : ImGuiKey_None;
+                if (mod == ImGuiKey_None) return fail("hold and release take ctrl, shift or alt");
+                steps_.push_back({cmd == "hold" ? Step::Hold : Step::Release, 0, 0, 0, mod});
             } else if (cmd == "wait") {
                 int n = 1;
                 words >> n;
@@ -191,6 +199,8 @@ public:
                 if (s.mods & ImGuiMod_Shift) io.AddKeyEvent(ImGuiMod_Shift, false);
                 if (s.mods & ImGuiMod_Alt) io.AddKeyEvent(ImGuiMod_Alt, false);
                 break;
+            case Step::Hold: io.AddKeyEvent(s.key, true); break;
+            case Step::Release: io.AddKeyEvent(s.key, false); break;
             case Step::Type: io.AddInputCharactersUTF8(s.text.c_str()); break;
             case Step::Wait: break;
             case Step::Shot: shot = s.text; break;
@@ -199,7 +209,7 @@ public:
 
 private:
     struct Step {
-        enum Kind { Move, Down, Up, Wheel, Key, KeyUp, Type, Wait, Shot } kind;
+        enum Kind { Move, Down, Up, Wheel, Key, KeyUp, Hold, Release, Type, Wait, Shot } kind;
         float x = 0.0f, y = 0.0f;
         int button = 0;
         ImGuiKey key = ImGuiKey_None;

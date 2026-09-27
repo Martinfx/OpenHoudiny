@@ -1,7 +1,8 @@
 pgsim 1
 # A tornado of smoke: a vortex draws the smoke from the floor in towards its
 # axis and lifts it, turning.
-node 1 box_source 1 ground 0 0
+node 1 pyro_source 2 ground 0 0
+  param shape box
   param center 0 0.04 0
   param size 0.5 0.06 0.5
   param smoke 5

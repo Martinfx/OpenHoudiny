@@ -153,6 +153,7 @@ add_library(pgsim
   src/pg/sim/Poisson.cpp
   src/pg/sim/Pyro.cpp
   src/pg/sim/Scene.cpp
+  src/pg/sim/Shape.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp
 )
 target_link_libraries(pgsim PUBLIC pgcore)
@@ -192,9 +193,11 @@ if(PG_BUILD_GUI)
   list(APPEND PG_TOOL_SOURCES
     tools/pgshader/App.cpp
     tools/pgshader/Editor.cpp
+    tools/pgshader/Gizmo.cpp
     tools/pgshader/NodeCanvas.cpp
     tools/pgshader/ShaderWorkspace.cpp
     tools/pgshader/SimRunner.cpp
+    tools/pgshader/SimViewport.cpp
     tools/pgshader/SimWorkspace.cpp
     tools/pgshader/Theme.cpp
     tools/pgshader/Widgets.cpp)
@@ -286,6 +289,7 @@ add_executable(pgtests
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp
+  tests/test_shapes.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 add_test(NAME pgtests COMMAND pgtests)

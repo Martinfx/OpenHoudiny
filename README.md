@@ -8,8 +8,8 @@ node-based, nedestruktivní, headless-first.
 - **[docs/shader-graph.md](docs/shader-graph.md)** — node editor shaderů pro
   OpenGL, OpenGL ES, Vulkan a Direct3D: jak funguje a jak ho rozšiřovat
 - **[docs/pyro.md](docs/pyro.md)** — simulace kouře a ohně z uzlů (jako Pyro
-  v Houdini): editor se sítí uzlů, proudění na 3D mřížce, multigrid,
-  objemové vykreslování
+  v Houdini): editor se sítí uzlů, objekty a gizmo ve viewportu, proudění
+  na 3D mřížce, multigrid, objemové vykreslování
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -56,7 +56,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 105 testů: 50 jádro, 25 shader graf, 30 simulace kouře a ohně
+./build/pgtests            # 113 testů: 50 jádro, 25 shader graf, 38 simulace kouře a ohně a objekty
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
@@ -97,15 +97,19 @@ animovaných efektů (oheň, kouř). Každý vestavěný uzel se v CTestu překl
 všechny cíle přes glslangValidator a spirv-val.
 
 **Simulace kouře a ohně** (`src/pg/sim`) se skládá z uzlů jako Pyro
-v Houdini: zdroje (koule, kvádr; palivo, kouř, teplo, blikotání, pohyb,
-časové okno), síly (turbulence, vítr, vír, atraktor, odpor), překážky,
-řešič, vzhled a výstup. Řešič počítá proudění plynu na 3D mřížce: posunutá
+v Houdini: objekty scény (koule, kvádr, válec, kužel, prstenec, každý
+posunutý, pootočený a protažený), zdroje stejných tvarů (palivo, kouř,
+teplo, blikotání, pohyb, časové okno), síly (turbulence, vítr, vír,
+atraktor, odpor), řešič, vzhled a výstup. Řešič počítá proudění plynu na 3D mřížce: posunutá
 mřížka MAC, advekce MacCormack, hoření s rozpínáním, vorticity confinement
 a tlak přes multigrid, který zná podlahu i překážky. Je deterministický na
 libovolném počtu vláken. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
-se stíny, záře ohně, překážky, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a sedmi příklady.
+se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
+se simulací ve vlastním vlákně, undo/redo a osmi příklady. Ve viewportu se
+pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
+velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
+objekt, zdroj nebo sílu rovnou propojené do sítě.
 
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
 serializace scény, Python vazby, GUI pro geometrii, simulace kapalin, těles a
