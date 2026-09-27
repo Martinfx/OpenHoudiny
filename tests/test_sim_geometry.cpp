@@ -480,6 +480,13 @@ TEST(sim_geometry_simulations_come_back_as_points_and_volumes) {
     GeometryPtr geo = g.cook(colored, 4);
     CHECK(geo && geo->pointCount() == sim.water()->particleCount() && geo->pointCount() > 0);
     CHECK(geo->points().find("v") && geo->points().find("foam") && geo->points().find("Cd"));
+    // ... and each one's number, the same from frame to frame.
+    const AttributeArray* id = geo->points().find("id");
+    CHECK(id && id->type() == AttrType::Int);
+    if (id) {
+        const auto ids = id->read<int32_t>();
+        for (size_t i = 0; i < ids.size(); ++i) CHECK_EQ(static_cast<uint32_t>(ids[i]), frames[4]->water.ids[i]);
+    }
     // Another frame, other points -- the hose has poured less by then; one
     // not simulated yet, none.
     CHECK(g.cook(points, 2)->pointCount() > 0);
@@ -501,6 +508,15 @@ TEST(sim_geometry_simulations_come_back_as_points_and_volumes) {
     geo = g.cook(drops, 4);
     CHECK(geo && geo->pointCount() == frames[4]->rain.dropCount() + frames[4]->rain.dropletCount());
     CHECK(geo->pointCount() > 0 && geo->points().find("droplet") && geo->points().find("v"));
+    // Numbered: the drops as the rain numbers them, the droplets from 2^30.
+    const AttributeArray* rainId = geo->points().find("id");
+    CHECK(rainId != nullptr);
+    if (rainId) {
+        const auto ids = rainId->read<int32_t>();
+        const auto droplet = geo->points().find("droplet")->read<int32_t>();
+        for (size_t i = 0; i < ids.size(); ++i) CHECK_EQ(ids[i] >= (1 << 30), droplet[i] == 1);
+        CHECK_EQ(static_cast<uint32_t>(ids[0]), frames[4]->rain.dropIds[0]);
+    }
     // The gas: three volumes on the solver's grid.
     geo = g.cook(gas, 4);
     CHECK(geo && geo->volumeCount() == 3);

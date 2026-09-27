@@ -19,6 +19,7 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -302,6 +303,52 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
         pose.position = parseTuple(valueAt(*translate, 20));
         pose.rotation = parseQuat(valueAt(*orient, 20));
         for (size_t i = 0; i < local.size() && i < source.size(); ++i) CHECK(near(pose.apply(local[i]), Q[source[i]], 1e-4f));
+    }
+}
+
+TEST(usd_export_the_grit_carries_its_numbers_and_velocities) {
+    // A block blown to dust throws grit: in the stage, each frame's bits
+    // with the numbers and velocities the frame has for them.
+    CHECK(sim::rigidAvailable());
+    Geometry block = *fracturedBox(Vec3(0.0f, 1.0f, 0.0f), Vec3(1.0f, 1.0f, 1.0f), 1);
+    {
+        auto r = block.primitives().create("release", AttrType::Float).write<float>();
+        std::fill(r.begin(), r.end(), 0.1f);
+        auto v = block.primitives().create("vanish", AttrType::Int).write<int32_t>();
+        std::fill(v.begin(), v.end(), 1);
+    }
+    sim::RigidScene scene;
+    scene.pieces = std::make_shared<Geometry>(block);
+    sim::RigidSolver solver(scene);
+    sim::UsdExport usd("unused.usda");
+    std::string error;
+    sim::Frame last;
+    for (int f = 1; f <= 12; ++f) {
+        solver.step();
+        sim::Frame frame;
+        frame.number = f;
+        frame.rigid = solver.capture();
+        CHECK(usd.add(frame, nullptr, nullptr, sim::Look(), error));
+        last = frame;
+    }
+    const size_t bits = last.rigid.debris.size() / 4;
+    CHECK(bits > 10);
+    const usda::Stage s = usd.stage(30.0f);
+    const usda::Prim* grit = find(s, {"World", "grit"});
+    CHECK(grit != nullptr);
+    if (!grit) return;
+    const usda::Attribute* ids = attribute(*grit, "ids");
+    const usda::Attribute* velocities = attribute(*grit, "velocities");
+    CHECK(ids && velocities);
+    if (!ids || !velocities) return;
+    CHECK_EQ(ids->type, std::string("int64[]"));
+    std::vector<int32_t> expected(last.rigid.debrisIds.begin(), last.rigid.debrisIds.end());
+    CHECK_EQ(valueAt(*ids, 12), usda::integers(expected));
+    const std::vector<Vec3> v = parseTuples(valueAt(*velocities, 12));
+    CHECK_EQ(v.size(), bits);
+    for (size_t i = 0; i < v.size() && i < bits; ++i) {
+        const float* w = last.rigid.debrisVelocity.data() + 3 * i;
+        CHECK(near(v[i], Vec3(w[0], w[1], w[2]), 1e-5f));
     }
 }
 

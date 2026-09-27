@@ -562,22 +562,38 @@ std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, co
     geo->detail().erase("Cd");
     auto cd = geo->vertices().create("Cd", AttrType::Vec3).write<Vec3>();
     std::copy(corners.begin(), corners.end(), cd.begin());
-    // The grit: loose points, as big as it is.
-    const size_t grit = f.debris.size() / 4;
-    if (grit > 0) {
-        const size_t first = geo->pointCount();
-        geo->addPoints(grit);
-        auto P = geo->positionsForWrite();
-        auto pscale = geo->points().create("pscale", AttrType::Float).write<float>();
+    // The grit: loose points, as big as it is, in the colour of a cut.
+    const size_t first = appendGrit(*geo, f);
+    if (geo->pointCount() > first) {
         auto pc = geo->points().create("Cd", AttrType::Vec3).write<Vec3>();
-        for (size_t i = 0; i < grit; ++i) {
-            const float* g = f.debris.data() + 4 * i;
-            P[first + i] = Vec3(g[0], g[1], g[2]);
-            pscale[first + i] = 0.5f * g[3];
-            pc[first + i] = inside * 0.9f;
-        }
+        for (size_t i = first; i < pc.size(); ++i) pc[i] = inside * 0.9f;
     }
     return geo;
+}
+
+size_t appendGrit(Geometry& geo, const RigidFrame& f) {
+    const size_t grit = f.debris.size() / 4, first = geo.pointCount();
+    if (grit == 0) return first;
+    geo.addPoints(grit);
+    auto P = geo.positionsForWrite();
+    auto pscale = geo.points().create("pscale", AttrType::Float).write<float>();
+    for (size_t i = 0; i < grit; ++i) {
+        const float* g = f.debris.data() + 4 * i;
+        P[first + i] = Vec3(g[0], g[1], g[2]);
+        pscale[first + i] = 0.5f * g[3];
+    }
+    if (f.debrisVelocity.size() == 3 * grit) {
+        auto v = geo.points().create("v", AttrType::Vec3).write<Vec3>();
+        for (size_t i = 0; i < grit; ++i) {
+            const float* g = f.debrisVelocity.data() + 3 * i;
+            v[first + i] = Vec3(g[0], g[1], g[2]);
+        }
+    }
+    if (f.debrisIds.size() == grit) {
+        auto id = geo.points().create("id", AttrType::Int).write<int32_t>();
+        for (size_t i = 0; i < grit; ++i) id[first + i] = static_cast<int32_t>(f.debrisIds[i]);
+    }
+    return first;
 }
 
 #ifdef PG_HAVE_JOLT
@@ -798,9 +814,11 @@ struct RigidSolver::Impl : public JPH::ContactListener {
     struct Grit {
         Vec3 p, v;
         float size = 0.03f;
+        uint32_t id = 0;  ///< its own number, from the first thrown: the same as long as it is there
         bool resting = false;
     };
     std::vector<Grit> grit;
+    uint32_t gritThrown = 0;  ///< how many bits so far: the next one's number
     struct Knock {
         Vec3 at, normal, velocity;
         float speed = 0.0f;
@@ -924,6 +942,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
             g.p = at + inBall() * spread;
             g.v = base + inBall() * speed;
             g.size = (0.02f + 0.08f * unit() * unit()) * gritScale;
+            g.id = gritThrown++;
             grit.push_back(g);
         }
     }
@@ -1485,7 +1504,13 @@ RigidFrame RigidSolver::capture() const {
         f.poses.push_back(pose);
     }
     f.debris.reserve(m.grit.size() * 4);
-    for (const Impl::Grit& q : m.grit) f.debris.insert(f.debris.end(), {q.p.x, q.p.y, q.p.z, q.size});
+    f.debrisVelocity.reserve(m.grit.size() * 3);
+    f.debrisIds.reserve(m.grit.size());
+    for (const Impl::Grit& q : m.grit) {
+        f.debris.insert(f.debris.end(), {q.p.x, q.p.y, q.p.z, q.size});
+        f.debrisVelocity.insert(f.debrisVelocity.end(), {q.v.x, q.v.y, q.v.z});
+        f.debrisIds.push_back(q.id);
+    }
     f.joints = m.edges.size();
     f.broken = m.broken;
     return f;

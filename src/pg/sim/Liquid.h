@@ -142,6 +142,9 @@ public:
     const std::vector<Vec3>& velocities() const { return velocity_; }
     /// How white each particle is, 0 to 1: spray, and water thrown about fast.
     const std::vector<float>& foam() const { return foam_; }
+    /// Each particle's own number, from the first made: the same as long as
+    /// it is there, whatever order the particles are kept in.
+    const std::vector<uint32_t>& ids() const { return id_; }
     /// Litres of water: the particles' share of the cells they fill.
     double volume() const;
 
@@ -207,6 +210,8 @@ private:
     int n_[3] = {0, 0, 0};
     std::vector<Vec3> position_, velocity_;
     std::vector<float> foam_;
+    std::vector<uint32_t> id_;
+    uint32_t made_ = 0;                // particles made so far: the next one's number
     std::vector<Vec3> cellPos_;        // the positions in cell units, as of the last sort
     std::vector<uint32_t> cellStart_;  // particles of cell c: [cellStart_[c], cellStart_[c + 1])
     Grid vel_[3], old_[3], weight_[3], open_[3];

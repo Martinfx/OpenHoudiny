@@ -52,8 +52,10 @@ cache/fire/
 - Snímek je `sim::Frame` tak, jak ho drží editor: plyn v poloviční
   přesnosti (kouř, teplota, plamen v každé buňce), hladina vody po bajtech,
   částice vody (poloha, rychlost, bělost), kapky a vlnky deště, od verze 2
-  polohy, otočení a rychlosti kusů tuhých těles a od verze 3 i drť a kusy,
-  které se rozprášily ([destruction.md](destruction.md)); klidová geometrie
+  polohy, otočení a rychlosti kusů tuhých těles, od verze 3 i drť a kusy,
+  které se rozprášily ([destruction.md](destruction.md)), a od verze 4
+  číslo každé částice — vody, kapky, kapičky, zrnka drti —, stejné ze
+  snímku na snímek, a rychlost drti; klidová geometrie
   kusů je v síti a snímek načtený z disku ji dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
@@ -131,7 +133,7 @@ pojmenovávají pyro shadery Houdini a Blenderu.
 ## 4. Příkazová řádka
 
 ```
-prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] ...
+prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--start N] [--every K] ...
              [--cache DIR] [--from-cache DIR] [--export PATH] [--export-node NODE]
 ```
 
@@ -139,11 +141,21 @@ prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] ...
 |---|---|
 | `--cache DIR` | každý snímek do složky `DIR` (vytvoří ji), nakonec `cache.txt` |
 | `--from-cache DIR` | snímky čte ze složky místo simulace; `--frames N` jich vezme nejvýš N |
+| `--start N`, `--end N` | obrázky a export jen od snímku N (do `--end`, což je totéž co `--frames`) — díl záběru pro jeden stroj farmy; cache se čte od N, simulace ale začíná snímkem 1 a do cache jde každý snímek |
 | `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. Výjimka: `.usda` bez `$F` je celý záběr v jednom souboru ([usd.md](usd.md)). |
 | `--export-node NODE` | geometrie uzlu `NODE` místo zobrazeného |
 | `-` místo `OUT.png` | žádný obrázek, jen cache a export — funguje i v buildu bez EGL |
 
 `--every K` se týká jen obrázků: cache i export dostanou každý snímek.
+
+Farma: jeden stroj simuluje do cache, ostatní renderují nebo exportují
+každý svůj díl z ní:
+
+```
+prototype sim demolition - --cache cache/demo                                   # stroj 1
+prototype sim demolition shot.png --from-cache cache/demo --start 1 --end 60 --every 1
+prototype sim demolition shot.png --from-cache cache/demo --start 61 --end 120 --every 1
+```
 
 ```
 $ prototype sim campfire_vdb - --cache cache/fire
@@ -172,7 +184,7 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 
 ## 6. Testy
 
-`tests/test_export.cpp`, 11 testů:
+`tests/test_export.cpp`, 12 testů:
 
 - PLY tam a zpět se všemi druhy atributů — i celé číslo 2²⁴ + 1, které by
   float nezachoval —, barvami v bajtech a polygony; ASCII s CRLF, `alpha`,
@@ -186,6 +198,8 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 - snímky tam a zpět: vymyšlený snímek se všemi částmi a běhy nul všech
   délek, skutečné snímky táboráku, vody s částicemi a deště; odmítnutí
   useknutých, novějších a nesmyslných snímků, převrácený bajt nikdy nespadne;
+  snímek verze 3 se čte dál (bez čísel částic), čísla, která nejsou jedno
+  na částici, se odmítnou;
 - složka cache s `cache.txt` (fps 30, ne 29.999998) a hash sítě bez poloh
   uzlů.
 

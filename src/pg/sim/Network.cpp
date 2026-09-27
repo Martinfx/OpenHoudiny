@@ -627,14 +627,15 @@ std::vector<NodeType> buildTypes() {
                "Which input of the asset, from 0."}});
     // What the simulations make, as geometry: at the frame shown.
     geometry("liquid_points", "Liquid Points", "liquid_points",
-             "The particles of a Liquid Solver at the frame: points with their velocity v and foam -- to "
-             "colour, to copy drops onto, to export.",
+             "The particles of a Liquid Solver at the frame: points with their velocity v, foam and id -- the "
+             "same number from frame to frame -- to colour, to copy drops onto, to export.",
              {{"liquid", "Liquid", PinType::Liquid}}, {});
     geometry("rain_points", "Rain Points", "rain_points",
-             "The drops of a Rain at the frame: points with their velocity v.",
+             "The drops of a Rain at the frame: points with their velocity v and id -- the same number from "
+             "frame to frame.",
              {{"rain", "Rain", PinType::Rain}},
              {{"droplets", "Droplets", "Rain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-               "The droplets of the splashes too, with droplet 1."}});
+               "The droplets of the splashes too, with droplet 1 and ids from 2^30."}});
     geometry("gas_volume", "Gas Volume", "gas_volume",
              "The gas of a Pyro Solver at the frame, as volumes: density (smoke), temperature and flame.",
              {{"gas", "Gas", PinType::Gas}}, {});
@@ -642,7 +643,10 @@ std::vector<NodeType> buildTypes() {
              "The pieces of an RBD Solver at the frame, where they have fallen: moved and turned, with the "
              "velocity v of each point -- to process further, to export, to show otherwise. The solver's look "
              "draws them already.",
-             {{"rigid", "Rigid", PinType::Rigid}}, {});
+             {{"rigid", "Rigid", PinType::Rigid}},
+             {{"grit", "Grit", "Rigid", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The grit too: points as wide as a bit is (pscale), with its velocity v and id -- the same number "
+               "from frame to frame."}});
 
     // --- objects ----------------------------------------------------------------------
     t.push_back({"object", "Object", "Objects",

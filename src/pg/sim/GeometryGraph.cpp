@@ -47,6 +47,11 @@ public:
             v[i] = Vec3(fromHalf(w.velocities[3 * i]), fromHalf(w.velocities[3 * i + 1]), fromHalf(w.velocities[3 * i + 2]));
             foam[i] = i < w.whiteness.size() ? static_cast<float>(w.whiteness[i]) / 255.0f : 0.0f;
         }
+        // Each particle's number, the same from frame to frame.
+        if (w.ids.size() == n) {
+            auto id = geo->points().create("id", AttrType::Int).write<int32_t>();
+            for (size_t i = 0; i < n; ++i) id[i] = static_cast<int32_t>(w.ids[i]);
+        }
         return geo;
     }
 };
@@ -70,16 +75,23 @@ public:
         auto P = geo->positionsForWrite();
         auto v = geo->points().create("v", AttrType::Vec3).write<Vec3>();
         auto mark = geo->points().create("droplet", AttrType::Int).write<int32_t>();
-        auto fill = [&](const std::vector<float>& from, size_t count, size_t at, int32_t kind) {
+        // Each one's number, the same from frame to frame -- the droplets'
+        // from 2^30 on, not to meet the drops'.
+        const bool numbered = r.dropIds.size() == r.dropCount() && r.dropletIds.size() == r.dropletCount();
+        std::span<int32_t> id;
+        if (numbered) id = geo->points().create("id", AttrType::Int).write<int32_t>();
+        auto fill = [&](const std::vector<float>& from, const std::vector<uint32_t>& ids, size_t count, size_t at,
+                        int32_t kind) {
             for (size_t i = 0; i < count; ++i) {
                 const float* p = from.data() + 6 * i;
                 P[at + i] = Vec3(p[0], p[1], p[2]);
                 v[at + i] = Vec3(p[3], p[4], p[5]);
                 mark[at + i] = kind;
+                if (numbered) id[at + i] = static_cast<int32_t>(kind ? (ids[i] | (1u << 30)) : ids[i]);
             }
         };
-        fill(r.drops, drops, 0, 0);
-        fill(r.droplets, splashes, drops, 1);
+        fill(r.drops, r.dropIds, drops, 0, 0);
+        fill(r.droplets, r.dropletIds, splashes, drops, 1);
         return geo;
     }
 };
@@ -111,11 +123,16 @@ public:
 /// velocity v of each point.
 class RbdPiecesNode : public FrameNode {
 public:
-    explicit RbdPiecesNode(std::string name) : FrameNode("rbd_pieces", std::move(name)) { setInputCount(0); }
+    explicit RbdPiecesNode(std::string name) : FrameNode("rbd_pieces", std::move(name)) {
+        setInputCount(0);
+        params_.setBool("grit", false);
+    }
 
     GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
         if (!frame_ || frame_->rigid.empty()) return std::make_shared<Geometry>();
-        return posedPieces(frame_->rigid);
+        std::shared_ptr<Geometry> geo = posedPieces(frame_->rigid);
+        if (params_.getBool("grit", false)) appendGrit(*geo, frame_->rigid);
+        return geo;
     }
 };
 

@@ -95,6 +95,7 @@ WaterFrame capture(const LiquidSolver& sim, bool particles) {
     if (particles) {
         const size_t n = sim.particleCount();
         w.positions = sim.positions();
+        w.ids = sim.ids();
         w.velocities.resize(3 * n);
         w.whiteness.resize(n);
         const auto& v = sim.velocities();
@@ -131,17 +132,19 @@ WaterFrame capture(const LiquidSolver& sim, bool particles) {
 
 RainFrame capture(const RainSolver& sim) {
     RainFrame r;
-    auto pack = [](const std::vector<RainParticle>& from, std::vector<float>& to) {
+    auto pack = [](const std::vector<RainParticle>& from, std::vector<float>& to, std::vector<uint32_t>& ids) {
         to.resize(6 * from.size());
+        ids.resize(from.size());
         for (size_t i = 0; i < from.size(); ++i) {
             const RainParticle& p = from[i];
             float* o = to.data() + 6 * i;
             o[0] = p.position.x, o[1] = p.position.y, o[2] = p.position.z;
             o[3] = p.velocity.x, o[4] = p.velocity.y, o[5] = p.velocity.z;
+            ids[i] = p.id;
         }
     };
-    pack(sim.drops(), r.drops);
-    pack(sim.droplets(), r.droplets);
+    pack(sim.drops(), r.drops, r.dropIds);
+    pack(sim.droplets(), r.droplets, r.dropletIds);
     r.timeStep = sim.scene().rain.timeStep;
     const Ripples& w = sim.ripples();
     if (!w.empty()) {

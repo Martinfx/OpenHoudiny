@@ -119,6 +119,7 @@ void RainSolver::spawn(float dt, const LiquidSolver* water) {
     for (; made_ < due; ++made_) {
         const Vec3 u = random3(made_, 0, r.seed);
         RainParticle d;
+        d.id = static_cast<uint32_t>(made_);
         d.position = lo + Vec3(u.x * r.size.x, u.y * r.size.y, u.z * r.size.z);
         d.velocity = air(d.position) + Vec3(0.0f, -r.speed, 0.0f);
         if (static_cast<double>(made_) < already) {
@@ -315,6 +316,7 @@ void RainSolver::move(float dt, const LiquidSolver* water) {
                 jump.position = d.position + Vec3(0.0f, 0.004f, 0.0f);
                 jump.velocity = Vec3(0.0f, 0.8f + 0.7f * random3(id, 1, seed).y, 0.0f);
                 jump.life = 0.18f;
+                jump.id = splashed_++;
                 droplets_.push_back(jump);
             }
             continue;
@@ -334,6 +336,7 @@ void RainSolver::move(float dt, const LiquidSolver* water) {
             drop.velocity = n * (0.6f + 0.9f * q.y) + (u * std::cos(turn) + v * std::sin(turn)) * (0.2f + 0.6f * q.z) +
                             Vec3(d.velocity.x, 0.0f, d.velocity.z) * 0.2f;
             drop.life = 0.12f + 0.18f * random3(id, 13 + c, seed).x;
+            drop.id = splashed_++;
             droplets_.push_back(drop);
         }
     }

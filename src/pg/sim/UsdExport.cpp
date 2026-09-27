@@ -53,7 +53,12 @@ struct UsdExport::Impl {
     std::vector<int> bodyFrames;
     std::vector<std::vector<std::array<float, 7>>> motion;
     std::vector<int> gone;
-    std::vector<std::pair<int, std::vector<float>>> grit;  // x, y, z and size of each bit
+    struct Grit {
+        int frame = 0;
+        std::vector<float> bits, velocity;  // x, y, z and size of each bit; how fast it goes
+        std::vector<uint32_t> ids;
+    };
+    std::vector<Grit> grit;
     Vec3 gritColor;
 
     // The gas: a file a frame, and the box it fills.
@@ -138,7 +143,7 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
         for (const uint32_t v : r.vanished) {
             if (v < m.gone.size()) m.gone[v] = std::min(m.gone[v], f);
         }
-        m.grit.emplace_back(f, r.debris);
+        m.grit.push_back({f, r.debris, r.debrisVelocity, r.debrisIds});
     }
 
     // The gas: a file of it.
@@ -253,31 +258,46 @@ usda::Stage UsdExport::stage(float fps) const {
             }
             body.children.push_back(std::move(mesh));
         }
-        // The grit.
-        const bool anyGrit = std::any_of(m.grit.begin(), m.grit.end(), [](const auto& g) { return !g.second.empty(); });
+        // The grit: its velocity and its numbers where the frames have them --
+        // a renderer blurs a bit by them as it flies.
+        const bool anyGrit = std::any_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& g) { return !g.bits.empty(); });
         if (anyGrit) {
             Prim& grit = world.child("Points", "grit");
             grit.metadata.push_back(kBinding);
-            std::vector<std::pair<int, std::string>> extent, points, widths;
-            for (const auto& [f, bits] : m.grit) {
-                std::vector<Vec3> at;
+            const bool moving = std::all_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& g) {
+                return g.velocity.size() == 3 * (g.bits.size() / 4);
+            });
+            const bool numbered = std::all_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& g) {
+                return g.ids.size() == g.bits.size() / 4;
+            });
+            std::vector<std::pair<int, std::string>> extent, points, widths, velocities, ids;
+            for (const Impl::Grit& g : m.grit) {
+                const size_t n = g.bits.size() / 4;
+                std::vector<Vec3> at, v;
                 std::vector<float> size;
+                std::vector<int32_t> number;
                 usda::Bounds box;
                 float widest = 0.0f;
-                for (size_t i = 0; i + 3 < bits.size(); i += 4) {
-                    at.emplace_back(bits[i], bits[i + 1], bits[i + 2]);
-                    size.push_back(bits[i + 3]);
+                for (size_t i = 0; i < n; ++i) {
+                    at.emplace_back(g.bits[4 * i], g.bits[4 * i + 1], g.bits[4 * i + 2]);
+                    size.push_back(g.bits[4 * i + 3]);
                     box.grow(at.back());
-                    widest = std::max(widest, bits[i + 3]);
+                    widest = std::max(widest, g.bits[4 * i + 3]);
+                    if (moving) v.emplace_back(g.velocity[3 * i], g.velocity[3 * i + 1], g.velocity[3 * i + 2]);
+                    if (numbered) number.push_back(static_cast<int32_t>(g.ids[i]));
                 }
-                extent.emplace_back(f, box.extent(0.5f * widest));
-                points.emplace_back(f, usda::tuples(at));
-                widths.emplace_back(f, usda::numbers(size));
+                extent.emplace_back(g.frame, box.extent(0.5f * widest));
+                points.emplace_back(g.frame, usda::tuples(at));
+                widths.emplace_back(g.frame, usda::numbers(size));
+                if (moving) velocities.emplace_back(g.frame, usda::tuples(v));
+                if (numbered) ids.emplace_back(g.frame, usda::integers(number));
             }
             usda::animate(grit, "float3[]", "extent", extent);
+            usda::animate(grit, "int64[]", "ids", ids);
             usda::animate(grit, "point3f[]", "points", points);
             grit.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&m.gritColor, 1))).metadata =
                 usda::interpolation("constant");
+            usda::animate(grit, "vector3f[]", "velocities", velocities);
             usda::animate(grit, "float[]", "widths", widths, usda::interpolation("vertex"));
             grit.relate("material:binding", kSurface);
         }

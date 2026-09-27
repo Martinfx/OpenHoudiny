@@ -176,11 +176,13 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   tam, kde se něco mění.
 - **USD — čtení**: geometrie a kamera z jiných programů (kamera
   z matchmove) jako uzel sítě.
-- **`v` a stabilní `id`** u všech částic (drť, voda, déšť): z nich
-  renderery počítají rozmazání pohybem a instancování.
+- ✅ **`v` a stabilní `id`** u všech částic (drť, voda, déšť): z nich
+  renderery počítají rozmazání pohybem a instancování. Nesou je snímky
+  (cache formát 4), uzly Liquid Points, Rain Points a RBD Pieces (`grit`)
+  a drť v USD. Zbývá voda a déšť v USD — po snímcích (value clips).
 - **Python API** (`import pg`): stavba sítě, parametry, vaření a simulace
   ze skriptu; atributy jako pole numpy bez kopie.
-- **Farma**: rozsah snímků (`--start`, `--end`) pro render i export
+- **Farma**: ✅ rozsah snímků (`--start`, `--end`) pro render i export
   z cache; simulace přerušená uprostřed jde dopočítat z uloženého stavu.
 - **EXR**: náhledový render do lineárního EXR s hloubkou, vektory pohybu
   a maskami — pro previs a compositing.

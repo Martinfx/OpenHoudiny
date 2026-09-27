@@ -9,14 +9,14 @@
 //                    [--spirv-val PATH] [--library FILE]...
 //   prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                    [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]
+//   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..256]
 //                    [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
 //                    [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
 //                    [--export PATH] [--export-node NODE]
 //   prototype sim --list
 //   prototype pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
 //   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE] [--set NODE.PARAM=VALUE]...
-//                    [--frame N] [--frames N] [--threads N] [--hash]
+//                    [--frame N] [--frames N [--start N]] [--threads N] [--hash]
 //
 // `check` is the proof that the generated code is valid: it compiles every
 // graph -- and with --nodes every output of every node in the library, in the
@@ -30,7 +30,8 @@
 // or an example the program carries -- simulates it and renders the last
 // frame, or with --every K frames K, 2K, 3K..., each file numbered by its
 // frame, or every frame into a video, with the renderer of the editor's
-// viewport. --set changes a
+// viewport; --start S draws and exports from frame S on -- a farm machine's
+// share of a shot read from a cache. --set changes a
 // parameter first: NODE.PARAM=VALUE, or PARAM=VALUE when a single node has
 // that parameter; a VALUE that is not a value is an expression ($F, ch()),
 // and NODE.PARAM.x=... sets one component of a vector. --cache DIR writes every frame to a folder, and
@@ -44,7 +45,8 @@
 //
 // `cook` cooks a network's geometry and nothing else -- no simulation, no
 // OpenGL: the displayed node, or --node, at frame 1, --frame N, or frames 1
-// to --frames N; written to OUT by its extension ($F4 in OUT for the frame),
+// (--start S: S) to --frames N; written to OUT by its extension ($F4 in OUT
+// for the frame),
 // or '-' for nothing. It says what it made, how long it took and, with
 // --hash, the geometry's content hash -- the same on any number of threads
 // (--threads N), which is how the determinism of a network is checked.
@@ -108,7 +110,8 @@ struct Options {
     bool yawSet = false, pitchSet = false;
     // pyro
     std::string preset = "fire";
-    int frames = 0;      ///< 0: as many as the network's Output says
+    int frames = 0;      ///< 0: as many as the network's Output says; --end is the same
+    int start = 0;       ///< --start: the first frame written; 0: frame 1
     int every = 0;       ///< write every k-th frame; 0: only the last
     int resolution = 0;  ///< 0: the network's
     float distance = 0.0f;
@@ -175,7 +178,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--pitch") { if (!next(v) || !parseFloat(v, o.pitch)) return false; o.pitchSet = true; }
         else if (a == "--distance") { if (!next(v) || !parseFloat(v, o.distance)) return false; }
         else if (a == "--preset") { if (!next(o.preset)) return false; }
-        else if (a == "--frames") { if (!nextInt(o.frames)) return false; }
+        else if (a == "--frames" || a == "--end") { if (!nextInt(o.frames)) return false; }
+        else if (a == "--start") { if (!nextInt(o.start)) return false; }
         else if (a == "--every") { if (!nextInt(o.every)) return false; }
         else if (a == "--resolution") { if (!nextInt(o.resolution)) return false; }
         else if (a == "--set") { if (!next(v)) return false; o.sets.push_back(v); }
@@ -657,7 +661,7 @@ std::string numbered(const std::string& path, int frame) {
 /// `sim NETWORK OUT.png`, and `pyro OUT.png --preset NAME`: the same, with an example.
 int simulate(const Options& o, const std::string& network, const std::string& outPath) {
     const char* cmd = o.command.c_str();
-    if (o.frames < 0 || o.every < 0) return usage();
+    if (o.frames < 0 || o.every < 0 || o.start < 0) return usage();
     if (o.resolution != 0 && (o.resolution < 16 || o.resolution > 256)) {
         std::fprintf(stderr, "%s: --resolution wants 16 to 256 cells along the longest side, not %d\n", cmd,
                      o.resolution);
@@ -739,6 +743,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                                  "of it); its frames are used as they are\n", cmd, o.fromCache.c_str());
         }
         frames = o.frames > 0 ? std::min(o.frames, from.frames) : from.frames;
+    }
+    // The frames written: --start to the last. A simulation gets there from
+    // frame 1 all the same; a cache is read from --start.
+    const int first = std::max(o.start, 1);
+    if (first > frames) {
+        std::fprintf(stderr, "%s: --start %d is after the last frame, %d\n", cmd, first, frames);
+        return 1;
     }
     if (pictures && o.every > frames) {
         std::fprintf(stderr, "%s: --every %d is more than the %d frames: no frame would be written\n", cmd, o.every,
@@ -853,18 +864,19 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         return std::chrono::duration<double, std::milli>(Clock::now() - since).count();
     };
     double simulating = 0.0, rendering = 0.0;
-    int images = 0, cachedFrames = 0, exports = 0;
+    int images = 0, cachedFrames = 0, exports = 0, passed = 0;  // passed: frames from --start on
     std::string last, lastExport;
-    for (int f = 1; f <= frames; ++f) {
+    for (int f = solver ? 1 : first; f <= frames; ++f) {
+        const bool inRange = f >= first;  // before --start: simulated, cached, not drawn or exported
         bool draws = false;
 #ifdef PG_CAN_RENDER
-        draws = volume && (o.every > 0 ? f % o.every == 0 : video || f == frames);
+        draws = volume && inRange && (o.every > 0 ? f % o.every == 0 : video || f == frames);
 #endif
         auto t = Clock::now();
         // The frame: simulated -- and taken when something wants it -- or read.
         if (solver) {
             solver->step();
-            if (draws || !o.cacheDir.empty() || !o.exportPattern.empty()) {
+            if (draws || !o.cacheDir.empty() || (inRange && !o.exportPattern.empty())) {
                 current = std::make_shared<const sim::Frame>(solver->capture());
             }
         } else {
@@ -885,6 +897,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             }
             ++cachedFrames;
         }
+        if (!inRange) continue;
+        ++passed;
         if (usd) {
             const GeometryPtr geo = exported ? geometry.cook(exported, f, world.timeStep) : nullptr;
             if (!usd->add(*current, geo, c.hasCamera ? &c.cameraAt(f) : nullptr, c.lookAt(f), error)) {
@@ -1003,16 +1017,20 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
 #else
     const std::string through;
 #endif
+    // Simulated: every frame to the last; read: those from --start.
+    const int stepped = solver ? frames : passed;
+    const std::string range = first > 1 ? " " + std::to_string(first) + "-" + std::to_string(frames) : std::string();
     if (images > 0) {
-        std::printf("wrote %s: %s%s, %d frames (%.1f s); %s %.1f ms/frame, rendering %.0f ms/image%s\n", written.c_str(),
-                    network.c_str(), what.c_str(), frames, static_cast<double>(frames) * static_cast<double>(world.timeStep),
-                    solver ? "simulation" : "reading", simulating / frames, rendering / std::max(images, 1), through.c_str());
+        std::printf("wrote %s: %s%s, %d frames%s (%.1f s); %s %.1f ms/frame, rendering %.0f ms/image%s\n",
+                    written.c_str(), network.c_str(), what.c_str(), passed, range.c_str(),
+                    static_cast<double>(passed) * static_cast<double>(world.timeStep), solver ? "simulation" : "reading",
+                    simulating / std::max(stepped, 1), rendering / std::max(images, 1), through.c_str());
     } else if (solver) {
         std::printf("%s: simulated%s, %d frames; simulation %.1f ms/frame\n", network.c_str(), what.c_str(), frames,
                     simulating / frames);
     } else {
-        std::printf("%s: %d frames read from %s; reading %.1f ms/frame\n", network.c_str(), frames, o.fromCache.c_str(),
-                    simulating / frames);
+        std::printf("%s: %d frames%s read from %s; reading %.1f ms/frame\n", network.c_str(), passed, range.c_str(),
+                    o.fromCache.c_str(), simulating / std::max(stepped, 1));
     }
     if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());
     if (exports > 0) std::printf("exported %d frames of geometry, the last %s\n", exports, lastExport.c_str());
@@ -1035,7 +1053,7 @@ int simCommand(const Options& o) {
 
 /// `cook NETWORK OUT`: a network's geometry, cooked and written.
 int cook(const Options& o) {
-    if (o.positional.size() != 2 || o.frames < 0 || o.frame < 0 || o.threads < 0) return usage();
+    if (o.positional.size() != 2 || o.frames < 0 || o.frame < 0 || o.threads < 0 || o.start < 0) return usage();
     pg::sim::Network net;
     std::string error, folder;
     if (!loadNetwork(o.positional[0], net, error, folder)) {
@@ -1068,8 +1086,12 @@ int cook(const Options& o) {
         std::fprintf(stderr, "cook: %s is not a geometry node\n", net.node(id)->name.c_str());
         return 1;
     }
-    const int first = o.frames > 0 ? 1 : std::max(o.frame, 1);
+    const int first = o.frames > 0 ? std::max(o.start, 1) : std::max(o.frame, 1);
     const int last = o.frames > 0 ? o.frames : first;
+    if (first > last) {
+        std::fprintf(stderr, "cook: --start %d is after the last frame, %d\n", first, last);
+        return 1;
+    }
     const std::string& out = o.positional[1];
     const bool numbered = last > first || out.find("$F") != std::string::npos;
     for (int f = first; f <= last; ++f) {
@@ -1132,7 +1154,8 @@ void printUsage(std::FILE* out) {
                  "  prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
                  "                   [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
                  "                   a video: --frames of the preview animated, 30 a second (90)\n"
-                 "  prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]\n"
+                 "  prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--start N] [--every K]\n"
+                 "                   [--resolution 16..256]\n"
                  "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
                  "                   [--export PATH] [--export-node NODE]\n"
@@ -1148,12 +1171,15 @@ void printUsage(std::FILE* out) {
                  "                   whole shot as one USD stage -- geometry, pieces, grit, gas (VDB beside it),\n"
                  "                   camera, light.\n"
                  "                   '-' for OUT.png: no pictures.\n"
+                 "                   --start N: pictures and export from frame N on (a farm's share of a shot);\n"
+                 "                   --end N is --frames N. A simulation still starts at frame 1; a cache is\n"
+                 "                   read from N.\n"
                  "                   --set takes an expression too: 'fire.center.x=sin($T*6)*0.3',\n"
                  "                   'box1.sizex=ch(\"../base/sizex\")*2', 'fire.center={0, $F*0.01, 0}'\n"
                  "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"
                  "  prototype pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
                  "  prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE]\n"
-                 "                   [--set NODE.PARAM=VALUE]... [--frame N] [--frames N] [--threads N] [--hash]\n"
+                 "                   [--set NODE.PARAM=VALUE]... [--frame N] [--frames N [--start N]] [--threads N] [--hash]\n"
                  "                   cooks the geometry of the displayed node (or --node) -- no simulation --\n"
                  "                   and writes it by OUT's extension, $F4 in OUT for the frame; '-' writes nothing.\n"
                  "                   Says what it made and how long it took; --hash its content hash, the same\n"

@@ -14,6 +14,8 @@
 #include "test_framework.h"
 
 #include <cmath>
+#include <map>
+#include <set>
 #include <cstring>
 #include <random>
 
@@ -272,6 +274,48 @@ TEST(liquid_open_sides_let_the_water_go) {
     // It poured, ran out over the side and is gone.
     CHECK(most > 100);
     CHECK(sim.particleCount() < most / 4);
+}
+
+TEST(liquid_particles_keep_their_numbers_as_they_are_sorted_and_lost) {
+    // A hose pours out over an open side: particles are made, sorted by cell
+    // every step and lost. Each keeps its number -- near where it was the
+    // frame before -- and a number is never given again.
+    WaterSource hose = block(Vec3(0.3f, 0.2f, 0.0f), Vec3(0.2f, 0.2f, 0.2f));
+    hose.mode = WaterMode::Flow;
+    hose.velocity = Vec3(2.0f, 0.0f, 0.0f);
+    LiquidScene s = tank(Vec3(1.0f, 1.0f, 0.5f), 24, hose);
+    s.solver.closedSides = false;
+    LiquidSolver sim(s);
+    std::map<uint32_t, Vec3> before;
+    std::set<uint32_t> gone;
+    size_t followed = 0;
+    bool lost = false;
+    for (int f = 0; f < 30; ++f) {
+        sim.step();
+        const std::vector<uint32_t>& ids = sim.ids();
+        CHECK_EQ(ids.size(), sim.particleCount());
+        std::map<uint32_t, Vec3> now;
+        for (size_t p = 0; p < ids.size(); ++p) {
+            const Vec3 at = sim.positions()[p];
+            CHECK(now.emplace(ids[p], at).second);  // one of each number
+            CHECK(!gone.count(ids[p]));
+            const auto was = before.find(ids[p]);
+            if (was != before.end()) {
+                CHECK(length(at - was->second) < 0.2f);  // a frame of flow: centimetres
+                ++followed;
+            }
+        }
+        for (const auto& [id, at] : before) {
+            if (!now.count(id)) gone.insert(id);
+        }
+        lost = lost || !gone.empty();
+        before = std::move(now);
+    }
+    CHECK(followed > 1000);
+    CHECK(lost);
+    // The frame keeps them, a number a particle.
+    const WaterFrame w = capture(sim, true);
+    CHECK(w.ids == sim.ids());
 }
 
 TEST(liquid_frames_hold_the_surface) {

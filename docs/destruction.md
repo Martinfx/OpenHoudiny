@@ -260,7 +260,11 @@ světlem, rozmazáním pohybem a materiály; plochy řezu jsou `GeomSubset`
 **RBD Pieces** (Geometry) vrátí kusy daného snímku jako geometrii: body
 posunuté a otočené, normály otočené a rychlost každého bodu v `v` — pro
 další uzly, pro export snímek po snímku (`prototype sim --export`), pro
-scatter jisker z hran. Bez snímku (před simulací) je prázdný.
+scatter jisker z hran. Se zapnutým `grit` přidá i drť jako body: `pscale`
+je polovina velikosti zrnka, `v` jeho rychlost a `id` jeho číslo — každé
+zrnko dostane při vyhození své a drží ho, dokud je ve scéně, takže renderer
+podle něj zrnko sleduje a rozmaže pohybem. Bez snímku (před simulací) je
+prázdný.
 
 **Voda, plyn a déšť.** Výstup Collider dá každý kus jako překážku typu
 síť (`MeshShape` z jeho trojúhelníků), posunutou a otočenou tam, kde kus

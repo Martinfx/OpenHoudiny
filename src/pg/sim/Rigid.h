@@ -152,17 +152,29 @@ struct RigidFrame {
     std::vector<RigidPose> poses;                  ///< body by body
     std::vector<uint32_t> vanished;                ///< the bodies blown to dust, in order
     /// The grit in the air and on the ground: x, y, z and size (metres
-    /// across), one after the other.
+    /// across), one after the other; how fast each bit goes (three floats
+    /// a bit) and its own number -- the same from frame to frame, as long as
+    /// it is there. Those two empty in a frame cached before they were kept.
     std::vector<float> debris;
+    std::vector<float> debrisVelocity;
+    std::vector<uint32_t> debrisIds;
     size_t joints = 0, broken = 0;                 ///< the glue: how many joints, how many broken so far
 
     bool empty() const { return poses.empty(); }
-    size_t bytes() const { return poses.size() * sizeof(RigidPose) + debris.size() * sizeof(float); }
+    size_t bytes() const {
+        return poses.size() * sizeof(RigidPose) + (debris.size() + debrisVelocity.size()) * sizeof(float) +
+               debrisIds.size() * sizeof(uint32_t);
+    }
 };
 
 /// The pieces of `f` where it puts them: points and normals moved and
 /// turned, and each point's velocity in v; those blown to dust gone.
 std::shared_ptr<Geometry> posedPieces(const RigidFrame& f);
+
+/// The grit of `f` added to `geo` as points: pscale half as wide as a bit
+/// is, its velocity v and its number id -- where the frame has them (a frame
+/// cached before version 4 has neither). The first point added is returned.
+size_t appendGrit(Geometry& geo, const RigidFrame& f);
 
 /// How the solver's look draws the pieces: posed, their faces in the colour
 /// Cd they have -- `color` where they have none -- and those of the group

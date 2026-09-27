@@ -471,17 +471,20 @@ void LiquidSolver::sortParticles() {
     }
     std::vector<Vec3> position(n), velocity(n);
     std::vector<float> foam(n);
+    std::vector<uint32_t> id(n);
     pg::parallelFor(n, 8192, [&](size_t begin, size_t end) {
         for (size_t p = begin; p < end; ++p) {
             position[to[p]] = position_[p];
             velocity[to[p]] = velocity_[p];
             foam[to[p]] = foam_[p];
+            id[to[p]] = id_[p];
             cellPos_[to[p]] = toCells(position_[p]);
         }
     });
     position_.swap(position);
     velocity_.swap(velocity);
     foam_.swap(foam);
+    id_.swap(id);
 }
 
 void LiquidSolver::emit() {
@@ -547,6 +550,7 @@ void LiquidSolver::emit() {
                         position_.push_back(p);
                         velocity_.push_back(jet);
                         foam_.push_back(0.0f);
+                        id_.push_back(made_++);
                         added = true;
                     }
                 }
@@ -908,11 +912,13 @@ void LiquidSolver::advect(float dt) {
         position_[kept] = position_[p];
         velocity_[kept] = velocity_[p];
         foam_[kept] = foam_[p];
+        id_[kept] = id_[p];
         ++kept;
     }
     position_.resize(kept);
     velocity_.resize(kept);
     foam_.resize(kept);
+    id_.resize(kept);
 }
 
 // --- what is drawn ---------------------------------------------------------------------

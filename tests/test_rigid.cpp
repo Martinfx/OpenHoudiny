@@ -432,6 +432,19 @@ TEST(rigid_solver_is_a_node_of_the_network) {
     bounds(*back, lo, hi);
     CHECK(hi.y < 1.5f);  // fallen from where the box stood
     CHECK(back->points().find("v") != nullptr);
+    // With the grit: a point more for each bit, as wide as it is, numbered.
+    CHECK(net.setParam(pieces, "grit", "1"));
+    graph.sync(net);
+    const GeometryPtr gritty = graph.cook(pieces, 30, c.world.timeStep);
+    const size_t bits = frame->rigid.debris.size() / 4;
+    CHECK_EQ(gritty->pointCount(), back->pointCount() + bits);
+    if (bits > 0) {
+        CHECK(gritty->points().find("pscale") && gritty->points().find("id"));
+        const auto id = gritty->points().find("id")->read<int32_t>();
+        CHECK_EQ(static_cast<uint32_t>(id[back->pointCount()]), frame->rigid.debrisIds[0]);
+    }
+    CHECK(net.setParam(pieces, "grit", "0"));
+    graph.sync(net);
     // Without a frame, nothing.
     graph.setFrames({});
     CHECK_EQ(graph.cook(pieces, 30, c.world.timeStep)->pointCount(), 0u);
@@ -684,6 +697,54 @@ TEST(rigid_knocks_puff_dust_and_throw_grit) {
     RigidSolver clean(scene);
     for (int i = 0; i < 30; ++i) clean.step();
     CHECK(clean.capture().debris.empty());
+}
+
+TEST(rigid_grit_keeps_its_number_and_its_velocity_from_frame_to_frame) {
+    // A block blown to dust by a charge throws a burst of grit. Each bit has
+    // a number of its own, the same as long as it is there -- a renderer
+    // follows it by that, to blur it as it moves -- and its velocity: a bit
+    // in the air is where its velocity took it.
+    Geometry block = boxPiece(Vec3(0.0f, 1.0f, 0.0f), Vec3(1.0f), 0);
+    {
+        auto r = block.primitives().create("release", AttrType::Float).write<float>();
+        std::fill(r.begin(), r.end(), 0.1f);
+        auto v = block.primitives().create("vanish", AttrType::Int).write<int32_t>();
+        std::fill(v.begin(), v.end(), 1);
+    }
+    RigidScene scene;
+    scene.pieces = together({block});
+    RigidSolver solver(scene);
+    const float dt = scene.solver.timeStep;
+    std::map<uint32_t, Vec3> before;
+    std::set<uint32_t> gone;
+    int followed = 0;
+    for (int i = 0; i < 30; ++i) {
+        solver.step();
+        const RigidFrame f = solver.capture();
+        const size_t n = f.debris.size() / 4;
+        CHECK_EQ(f.debrisIds.size(), n);
+        CHECK_EQ(f.debrisVelocity.size(), 3 * n);
+        std::map<uint32_t, Vec3> now;
+        for (size_t k = 0; k < n; ++k) {
+            const uint32_t id = f.debrisIds[k];
+            const Vec3 at(f.debris[4 * k], f.debris[4 * k + 1], f.debris[4 * k + 2]);
+            const Vec3 v(f.debrisVelocity[3 * k], f.debrisVelocity[3 * k + 1], f.debrisVelocity[3 * k + 2]);
+            CHECK(now.emplace(id, at).second);  // one of each number
+            CHECK(!gone.count(id));             // a number is never given again
+            const auto was = before.find(id);
+            // Above the floor both frames -- higher than a bit is wide: it did
+            // not bounce in between.
+            if (was != before.end() && was->second.y > 0.12f && at.y > 0.12f) {
+                CHECK(length(at - (was->second + v * dt)) < 1e-4f);
+                ++followed;
+            }
+        }
+        for (const auto& [id, at] : before) {
+            if (!now.count(id)) gone.insert(id);
+        }
+        before = std::move(now);
+    }
+    CHECK(followed > 20);
 }
 
 TEST(rigid_knocks_squeeze_out_the_air_that_swells_the_dust) {

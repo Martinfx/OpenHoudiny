@@ -189,7 +189,10 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            r.rippleOrigin.z == s.rippleOrigin.z && r.rippleCell == s.rippleCell &&
            r.rippleCells[0] == s.rippleCells[0] && r.rippleCells[1] == s.rippleCells[1] && r.ripples == s.ripples &&
            a.rigid.attribute == b.rigid.attribute && a.rigid.joints == b.rigid.joints &&
-           a.rigid.broken == b.rigid.broken && a.rigid.poses == b.rigid.poses;
+           a.rigid.broken == b.rigid.broken && a.rigid.poses == b.rigid.poses && a.rigid.debris == b.rigid.debris &&
+           a.rigid.vanished == b.rigid.vanished && w.ids == x.ids && r.dropIds == s.dropIds &&
+           r.dropletIds == s.dropletIds && a.rigid.debrisIds == b.rigid.debrisIds &&
+           a.rigid.debrisVelocity == b.rigid.debrisVelocity;
 }
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
@@ -221,8 +224,11 @@ sim::Frame madeUpFrame() {
     f.water.positions = {{0.1f, 0.2f, 0.3f}, {-0.1f, 0.0f, 0.5f}, {0.0f, 1.0f, 0.0f}};
     f.water.velocities = {0, 0x3c00, 0xbc00, 1, 2, 3, 0, 0, 0};
     f.water.whiteness = {0, 128, 255};
+    f.water.ids = {7, 3, 4000000000u};
     f.rain.drops = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     f.rain.droplets = {0.5f, 1, 1.5f, 2, 2.5f, 3};
+    f.rain.dropIds = {12, 13};
+    f.rain.dropletIds = {99};
     f.rain.timeStep = 1.0f / 30.0f;
     f.rigid.attribute = "piece";
     f.rigid.joints = 5;
@@ -235,6 +241,10 @@ sim::Frame madeUpFrame() {
         p.spin = Vec3(1.0f, 0.0f, 0.0f);
         f.rigid.poses.push_back(p);
     }
+    f.rigid.debris = {0.0f, 0.1f, 0.2f, 0.05f, 1.0f, 0.0f, 1.0f, 0.02f};  // two bits of grit
+    f.rigid.debrisVelocity = {0.0f, -1.0f, 0.0f, 0.5f, 0.0f, 0.0f};
+    f.rigid.debrisIds = {40, 41};
+    f.rigid.vanished = {1};
     f.rain.rippleOrigin = {-1.0f, 0.2f, -1.0f};
     f.rain.rippleCell = 0.05f;
     f.rain.rippleCells[0] = 4;
@@ -500,6 +510,30 @@ TEST(frames_of_simulations_round_trip) {
     }
 }
 
+TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
+    // A frame as version 3 wrote it: the same bytes without what version 4
+    // adds at the end -- the particles' numbers and the grit's velocity, here
+    // five empty arrays.
+    sim::Frame f = madeUpFrame();
+    f.water.ids.clear();
+    f.rain.dropIds.clear();
+    f.rain.dropletIds.clear();
+    f.rigid.debrisIds.clear();
+    f.rigid.debrisVelocity.clear();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - 5 * 8);  // the five counts, all 0
+    bytes[8] = 3;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    // Numbers that are not one a particle are refused.
+    sim::Frame wrong = madeUpFrame();
+    wrong.water.ids.pop_back();
+    CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
+    CHECK(error.find("do not fit") != std::string::npos);
+}
+
 TEST(frames_that_are_not_what_they_say_are_refused) {
     const std::string bytes = sim::formatFrame(madeUpFrame());
     sim::Frame f;
@@ -510,7 +544,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 4;
+    newer[8] = 5;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

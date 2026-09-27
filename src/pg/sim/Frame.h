@@ -33,14 +33,17 @@ struct WaterFrame {
     double litres = 0.0;
     /// The particles themselves, when the world keeps them
     /// (World::keepParticles): where each is, how fast it goes (half floats,
-    /// three a particle) and how white (0 to 255).
+    /// three a particle), how white (0 to 255) and its own number -- the same
+    /// from frame to frame (empty in a frame cached before they were kept).
     std::vector<Vec3> positions;
     std::vector<uint16_t> velocities;
     std::vector<uint8_t> whiteness;
+    std::vector<uint32_t> ids;
 
     bool empty() const { return cells.empty(); }
     size_t bytes() const {
-        return cells.size() + positions.size() * sizeof(Vec3) + velocities.size() * sizeof(uint16_t) + whiteness.size();
+        return cells.size() + positions.size() * sizeof(Vec3) + velocities.size() * sizeof(uint16_t) + whiteness.size() +
+               ids.size() * sizeof(uint32_t);
     }
     /// The distance at cell (i, j, k), world units, below 0 in the water.
     float distance(int i, int j, int k) const;
@@ -51,8 +54,10 @@ struct WaterFrame {
 /// The rain of a frame, as it is drawn.
 struct RainFrame {
     /// Drops, then droplets: six floats each -- position and velocity,
-    /// world units -- one after the other.
+    /// world units -- one after the other; and the number of each, the same
+    /// from frame to frame (empty in a frame cached before they were kept).
     std::vector<float> drops, droplets;
+    std::vector<uint32_t> dropIds, dropletIds;
     float timeStep = 0.0f;   ///< seconds a frame: how long a streak of motion blur a drop draws
     /// The ripples on the water: heights, world units, as half floats, over
     /// nx x nz cells of `cell` from `origin` (Rain.h); empty without water.
@@ -64,7 +69,10 @@ struct RainFrame {
     size_t dropCount() const { return drops.size() / 6; }
     size_t dropletCount() const { return droplets.size() / 6; }
     bool empty() const { return drops.empty() && droplets.empty() && ripples.empty(); }
-    size_t bytes() const { return (drops.size() + droplets.size()) * sizeof(float) + ripples.size() * sizeof(uint16_t); }
+    size_t bytes() const {
+        return (drops.size() + droplets.size()) * sizeof(float) + (dropIds.size() + dropletIds.size()) * sizeof(uint32_t) +
+               ripples.size() * sizeof(uint16_t);
+    }
 };
 
 struct Frame {

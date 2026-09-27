@@ -15,6 +15,8 @@
 #include "test_framework.h"
 
 #include <cmath>
+#include <map>
+#include <set>
 #include <cstring>
 #include <memory>
 
@@ -184,6 +186,42 @@ TEST(rain_lands_on_objects_and_splashes_off_them) {
     RainSolver dry(s);
     for (int f = 0; f < 10; ++f) dry.step();
     CHECK(dry.droplets().empty());
+}
+
+TEST(rain_drops_and_droplets_keep_their_numbers) {
+    // Drops fall onto a table and splash: each drop keeps its number while
+    // it falls -- near where it was a frame before -- and the droplets have
+    // numbers of their own; the frame keeps them.
+    RainScene s = cloud(2.0f, Vec3(1.0f, 0.1f, 1.0f), 2000.0f);
+    Collider table;
+    table.shape = Shape::Box;
+    table.center = Vec3(0.0f, 0.5f, 0.0f);
+    table.size = Vec3(0.6f, 1.0f, 0.6f);
+    s.colliders.push_back(table);
+    RainSolver rain(s);
+    std::map<uint32_t, Vec3> before;
+    size_t followed = 0;
+    for (int f = 0; f < 20; ++f) {
+        rain.step();
+        std::map<uint32_t, Vec3> now;
+        for (const RainParticle& d : rain.drops()) {
+            CHECK(now.emplace(d.id, d.position).second);  // one of each number
+            const auto was = before.find(d.id);
+            if (was != before.end()) {
+                CHECK(length(d.position - was->second) < 0.5f);  // a frame of falling
+                ++followed;
+            }
+        }
+        std::set<uint32_t> splashes;
+        for (const RainParticle& d : rain.droplets()) CHECK(splashes.insert(d.id).second);
+        before = std::move(now);
+    }
+    CHECK(followed > 1000);
+    CHECK(!rain.droplets().empty());
+    const RainFrame frame = capture(rain);
+    CHECK_EQ(frame.dropIds.size(), frame.dropCount());
+    CHECK_EQ(frame.dropletIds.size(), frame.dropletCount());
+    CHECK_EQ(frame.dropIds[0], rain.drops()[0].id);
 }
 
 TEST(rain_rings_the_water_it_falls_in) {

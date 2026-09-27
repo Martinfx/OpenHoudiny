@@ -15,7 +15,10 @@ namespace pg::sim {
 namespace {
 
 constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
-constexpr uint32_t kVersion = 3;  // 2: the rigid bodies after the rain; 3: and their grit
+// 2: the rigid bodies after the rain; 3: and their grit; 4: the particles'
+// numbers -- the water's, the drops', the droplets', the grit's -- and how
+// fast the grit goes.
+constexpr uint32_t kVersion = 4;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -59,6 +62,10 @@ public:
     void bytesOf(const std::vector<uint8_t>& v) {
         u64(v.size());
         bytes.append(reinterpret_cast<const char*>(v.data()), v.size());
+    }
+    void words(const std::vector<uint32_t>& v) {
+        u64(v.size());
+        for (const uint32_t x : v) u32(x);
     }
     void text(const std::string& s) {
         u64(s.size());
@@ -154,6 +161,10 @@ public:
     void floats(std::vector<float>& v) {
         v.resize(count(4));
         for (float& x : v) x = f32();
+    }
+    void words(std::vector<uint32_t>& v) {
+        v.resize(count(4));
+        for (uint32_t& x : v) x = u32();
     }
     void bytesOf(std::vector<uint8_t>& v) {
         const size_t n = count(1);
@@ -270,6 +281,12 @@ std::string formatFrame(const Frame& f) {
     out.floats(b.debris);  // version 3
     out.u64(b.vanished.size());
     for (const uint32_t k : b.vanished) out.u32(k);
+    // Version 4: the numbers of the particles, and the grit's velocity.
+    out.words(w.ids);
+    out.words(r.dropIds);
+    out.words(r.dropletIds);
+    out.words(b.debrisIds);
+    out.floats(b.debrisVelocity);
     return std::move(out.bytes);
 }
 
@@ -331,14 +348,26 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
             for (uint32_t& k : b.vanished) k = in.u32();
         }
     }
+    if (version >= 4) {
+        in.words(w.ids);
+        in.words(r.dropIds);
+        in.words(r.dropletIds);
+        in.words(f.rigid.debrisIds);
+        in.floats(f.rigid.debrisVelocity);
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
     }
     // What is drawn from it indexes these by the sizes it gives.
+    // Numbers and velocities: none, or one for each.
+    auto fits = [](size_t have, size_t each) { return have == 0 || have == each; };
+    const RigidFrame& b = f.rigid;
     if ((!w.cells.empty() && w.cells.size() != 2 * w.domain.cellCount()) ||
         (!w.whiteness.empty() && w.whiteness.size() != w.positions.size()) || r.drops.size() % 6 != 0 ||
-        r.droplets.size() % 6 != 0 || f.rigid.debris.size() % 4 != 0) {
+        r.droplets.size() % 6 != 0 || b.debris.size() % 4 != 0 || !fits(w.ids.size(), w.positions.size()) ||
+        !fits(r.dropIds.size(), r.dropCount()) || !fits(r.dropletIds.size(), r.dropletCount()) ||
+        !fits(b.debrisIds.size(), b.debris.size() / 4) || !fits(b.debrisVelocity.size(), 3 * (b.debris.size() / 4))) {
         error = "the frame's parts do not fit their grids";
         return false;
     }

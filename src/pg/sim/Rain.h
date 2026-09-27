@@ -66,6 +66,7 @@ struct RainParticle {
     Vec3 position, velocity;
     float age = 0.0f;       ///< seconds since it was made
     float life = 0.0f;      ///< droplets: seconds it lives; drops: 0 -- until they land
+    uint32_t id = 0;        ///< its own number among the drops, or among the droplets
 };
 
 /// The ripples on the water: a height field over the xz extent of the
@@ -120,6 +121,7 @@ private:
     int frame_ = 0;
     float time_ = 0.0f;
     uint64_t made_ = 0;             // drops made so far: each one's number
+    uint32_t splashed_ = 0;         // droplets made so far: the next one's number
     int lastSolid_ = 0, lastWater_ = 0;
 };
 
