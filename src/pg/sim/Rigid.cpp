@@ -5,6 +5,7 @@
 #include "pg/sim/Shared.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -1053,8 +1054,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         c.id = body->GetID();
         c.alive = true;
         c.mass = 1.0f / std::max(body->GetMotionProperties()->GetInverseMass(), 1e-12f);
-        const bool moving = length(velocity) > 1e-4f || length(spin) > 1e-4f;
-        bi.AddBody(c.id, moving ? JPH::EActivation::Activate : JPH::EActivation::Activate);
+        bi.AddBody(c.id, JPH::EActivation::Activate);
         for (const int k : members) pieces[static_cast<size_t>(k)].cluster = index;
         // Held where it is glued to still pieces.
         std::vector<int> held;
@@ -1073,7 +1073,9 @@ struct RigidSolver::Impl : public JPH::ContactListener {
             if (still.IsInvalid()) continue;
             JPH::FixedConstraintSettings fs;
             fs.mAutoDetectPoint = true;
-            JPH::BodyLockMultiWrite lock(physics.GetBodyLockInterfaceNoLock(), std::array<JPH::BodyID, 2>{c.id, still}.data(), 2);
+            // The lock keeps the pointer to the ids: they outlive it.
+            const std::array<JPH::BodyID, 2> pair{c.id, still};
+            JPH::BodyLockMultiWrite lock(physics.GetBodyLockInterfaceNoLock(), pair.data(), 2);
             JPH::Body* a = lock.GetBody(0);
             JPH::Body* b = lock.GetBody(1);
             if (!a || !b) continue;
