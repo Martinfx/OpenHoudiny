@@ -87,7 +87,7 @@ public:
         params_.setInt("seed", 0);
     }
 
-    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr> in) override {
+    GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
         auto out = std::make_shared<Geometry>();
         const GeometryPtr src = in.empty() ? nullptr : in[0];
         if (!src) return out;
@@ -101,9 +101,9 @@ public:
             total += 0.5 * static_cast<double>(length(cross(P[tris[t].b] - P[tris[t].a], P[tris[t].c] - P[tris[t].a])));
             ends[t] = total;
         }
-        const size_t n = tris.empty() || total <= 0.0 ? 0 : static_cast<size_t>(std::clamp(params_.getInt("count", 1000), 0, 10000000));
+        const size_t n = tris.empty() || total <= 0.0 ? 0 : static_cast<size_t>(std::clamp(params_.evalInt("count", ctx, 1000), 0, 10000000));
         if (n == 0) return out;
-        const uint32_t seed = static_cast<uint32_t>(params_.getInt("seed", 0));
+        const uint32_t seed = static_cast<uint32_t>(params_.evalInt("seed", ctx, 0));
 
         // Each point: its triangle and its weights on the three corners.
         std::vector<uint32_t> which(n);
@@ -275,7 +275,7 @@ public:
 
         // Moved, sized and turned.
         const float scale = params_.evalFloat("scale", ctx, 1.0f);
-        const bool align = params_.getBool("align", true);
+        const bool align = params_.evalBool("align", ctx, true);
         const auto at = pts->positions();
         const AttributeArray* pscaleAttr = pts->points().find("pscale");
         const AttributeArray* normalAttr = pts->points().find("N");
@@ -314,7 +314,7 @@ public:
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
         auto geo = editableCopy(in.empty() ? nullptr : in[0]);
         const Vec3 color = params_.evalVec3("color", ctx, Vec3(1.0f, 1.0f, 1.0f));
-        AttributeSet& set = params_.getInt("class", 0) == 1 ? geo->primitives() : geo->points();
+        AttributeSet& set = params_.evalInt("class", ctx, 0) == 1 ? geo->primitives() : geo->points();
         auto Cd = set.create("Cd", AttrType::Vec3).write<Vec3>();
         std::fill(Cd.begin(), Cd.end(), color);
         return geo;

@@ -15,8 +15,20 @@
 #include "pg/sim/Scene.h"
 
 #include <memory>
+#include <vector>
 
 namespace pg::sim {
+
+struct World;
+
+/// A world frame by frame: what an animated network gives each step to take.
+/// Shared -- copying a World copies no frames -- and compared by what it holds.
+struct Animation {
+    std::shared_ptr<const std::vector<World>> frames;  ///< frame 1 first
+
+    bool empty() const { return !frames || frames->empty(); }
+    bool operator==(const Animation& other) const;
+};
 
 struct World {
     float timeStep = 1.0f / 30.0f;  ///< seconds a frame, for every part
@@ -29,6 +41,13 @@ struct World {
     /// Frames keep the water's particles: something makes points of them
     /// (Liquid Points). They cost some 19 bytes a particle a frame.
     bool keepParticles = false;
+    /// Something is animated: the world at each frame -- the sources, the
+    /// forces and the solids where they are then, and how they move. The
+    /// step that makes a frame takes it. Empty: the same all along.
+    Animation animation;
+
+    /// The world at `frame` (1 on): the animation's, else this one.
+    const World& at(int frame) const;
 
     /// True when there is anything to simulate.
     bool any() const { return hasGas || hasWater || hasRain; }

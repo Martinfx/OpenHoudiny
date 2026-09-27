@@ -69,6 +69,13 @@ RainSolver::RainSolver(const RainScene& scene) : scene_(scene.sanitized()) {
     noise_.assign(scene_.forces.size(), {});
 }
 
+void RainSolver::setScene(const RainScene& scene) {
+    scene_ = scene.sanitized();
+    solids_.clear();
+    for (const Collider& c : scene_.colliders) solids_.push_back(c.instance());
+    noise_.resize(scene_.forces.size());
+}
+
 Vec3 RainSolver::air(const Vec3& p) const {
     Vec3 wind;
     for (size_t f = 0; f < scene_.forces.size(); ++f) {

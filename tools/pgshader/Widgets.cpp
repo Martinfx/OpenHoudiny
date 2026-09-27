@@ -158,6 +158,33 @@ bool resetButton(const char* id, bool visible) {
     return clicked;
 }
 
+int keyButton(const char* id, int state, const char* tooltip) {
+    const float side = ImGui::GetFrameHeight();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::PushID(id);
+    ImGui::InvisibleButton("##key", ImVec2(side * 0.8f, side), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool hovered = ImGui::IsItemHovered();
+    int clicked = 0;
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) clicked = 1;
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) clicked = 2;
+    if (hovered && tooltip && *tooltip) ImGui::SetTooltip("%s", tooltip);
+    ImGui::PopID();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 c(at.x + side * 0.4f, at.y + side * 0.5f);
+    const float r = side * (state == 2 ? 0.24f : 0.2f);
+    const ImVec2 q[4] = {ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y)};
+    const ImU32 key = IM_COL32(255, 196, 70, 255);
+    if (state == 2) {
+        d->AddConvexPolyFilled(q, 4, key);
+    } else if (state == 1) {
+        d->AddPolyline(q, 4, key, ImDrawFlags_Closed, theme::px(1.5f));
+    } else if (hovered) {
+        d->AddPolyline(q, 4, IM_COL32(255, 255, 255, 120), ImDrawFlags_Closed, theme::px(1.2f));
+    }
+    ImGui::SetCursorScreenPos(at);
+    return clicked;
+}
+
 bool sliderFloat(const char* id, float& v, float min, float max, const char* format) {
     // Past the ends when typed (Ctrl + click): a slider's range is where it
     // is useful, not a limit.
@@ -340,6 +367,17 @@ TimelineActions timeline(const char* id, const TimelineState& s) {
             const float size = ImGui::GetFontSize() * 0.78f;
             d->AddText(nullptr, size, ImVec2(x + theme::px(3.0f), mid - theme::px(10.0f) - size * 0.9f), theme::kTextFaint, n);
         }
+    }
+    // The keys: diamonds on the track.
+    auto diamond = [&](float frame, ImU32 col, float r) {
+        const float x = xOf(std::clamp(frame, 1.0f, static_cast<float>(frames)));
+        const ImVec2 c(x, mid);
+        d->AddQuadFilled(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y), col);
+    };
+    for (const float f : s.otherKeys) diamond(f, IM_COL32(200, 170, 90, 110), theme::px(3.5f));
+    for (const float f : s.keys) {
+        diamond(f, IM_COL32(20, 20, 22, 255), theme::px(6.0f));
+        diamond(f, IM_COL32(255, 196, 70, 255), theme::px(4.5f));
     }
     // The play head.
     const float px = xOf(static_cast<float>(std::clamp(s.current, 1, frames)));

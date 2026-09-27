@@ -58,7 +58,7 @@ public:
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr>) override {
         const Vec3 size = params_.evalVec3("size", ctx, Vec3(1.0f, 1.0f, 1.0f));
         const Vec3 center = params_.evalVec3("center", ctx, Vec3());
-        const int d = std::clamp(params_.getInt("divisions", 1), 1, 100);
+        const int d = std::clamp(params_.evalInt("divisions", ctx, 1), 1, 100);
         auto geo = std::make_shared<Geometry>();
 
         // The points of the lattice (i, j, k) in [0, d]^3 on the surface, made
@@ -124,8 +124,8 @@ public:
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr>) override {
         const float r = params_.evalFloat("radius", ctx, 0.5f);
         const Vec3 center = params_.evalVec3("center", ctx, Vec3());
-        const int rows = std::clamp(params_.getInt("rows", 12), 3, 1000);
-        const int cols = std::clamp(params_.getInt("columns", 24), 3, 1000);
+        const int rows = std::clamp(params_.evalInt("rows", ctx, 12), 3, 1000);
+        const int cols = std::clamp(params_.evalInt("columns", ctx, 24), 3, 1000);
         auto geo = std::make_shared<Geometry>();
         // The north pole, the rings between, the south pole.
         const size_t ringPoints = static_cast<size_t>(rows - 1) * static_cast<size_t>(cols);
@@ -176,8 +176,8 @@ public:
         const float r = params_.evalFloat("radius", ctx, 0.3f);
         const float h = params_.evalFloat("height", ctx, 1.0f);
         const Vec3 center = params_.evalVec3("center", ctx, Vec3());
-        const int cols = std::clamp(params_.getInt("columns", 24), 3, 1000);
-        const int rows = std::clamp(params_.getInt("rows", 1), 1, 1000);
+        const int cols = std::clamp(params_.evalInt("columns", ctx, 24), 3, 1000);
+        const int rows = std::clamp(params_.evalInt("rows", ctx, 1), 1, 1000);
         auto geo = std::make_shared<Geometry>();
         geo->addPoints(static_cast<size_t>(rows + 1) * static_cast<size_t>(cols));
         auto P = geo->positionsForWrite();
@@ -197,7 +197,7 @@ public:
                 addFacing(*geo, std::move(q), Vec3(m.x - center.x, 0.0f, m.z - center.z));
             }
         }
-        if (params_.getBool("caps", true)) {
+        if (params_.evalBool("caps", ctx, true)) {
             std::vector<uint32_t> bottom, top;
             for (int s = 0; s < cols; ++s) {
                 bottom.push_back(at(0, s));

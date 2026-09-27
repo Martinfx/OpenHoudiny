@@ -66,6 +66,10 @@ public:
     /// Per-component expressions are named "<name>.x" / ".y" / ".z".
     Vec3 evalVec3(const std::string& name, const CookContext& ctx,
                   const Vec3& fallback = {}) const;
+    /// An int or a bool at `ctx`: an expression bound to it rounded, or
+    /// above one half for true.
+    int evalInt(const std::string& name, const CookContext& ctx, int fallback = 0) const;
+    bool evalBool(const std::string& name, const CookContext& ctx, bool fallback = false) const;
 
     bool contains(const std::string& name) const { return values_.count(name) > 0; }
     std::vector<std::string> names() const;

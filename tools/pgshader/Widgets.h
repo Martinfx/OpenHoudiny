@@ -45,6 +45,11 @@ float labelWidth();
 /// A small button at the right end of a row that puts the value back to its
 /// default. Call it before the widget, which then takes the rest of the width.
 bool resetButton(const char* id, bool visible);
+/// A parameter's key, a diamond at the start of its row -- before rowLabel,
+/// which it leaves the cursor for. `state`: 0 not animated, 1 animated with
+/// no key at this frame, 2 a key at this frame. Returns 1 for a click, 2 for
+/// a right click, 0 for none.
+int keyButton(const char* id, int state, const char* tooltip);
 
 bool sliderFloat(const char* id, float& v, float min, float max, const char* format);
 bool sliderInt(const char* id, int& v, int min, int max);
@@ -69,6 +74,9 @@ struct TimelineState {
     bool playing = false;
     bool loop = true;
     float fps = 30.0f;
+    /// Frames with keys: diamonds on the track -- the selected nodes'
+    /// bright, the rest of the network's dim.
+    std::vector<float> keys, otherKeys;
 };
 
 struct TimelineActions {

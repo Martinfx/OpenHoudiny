@@ -5,6 +5,18 @@
 
 namespace pg::sim {
 
+bool Animation::operator==(const Animation& other) const {
+    if (frames == other.frames) return true;
+    if (empty() || other.empty()) return empty() && other.empty();
+    return *frames == *other.frames;
+}
+
+const World& World::at(int frame) const {
+    if (animation.empty()) return *this;
+    const std::vector<World>& f = *animation.frames;
+    return f[static_cast<size_t>(std::clamp(frame, 1, static_cast<int>(f.size())) - 1)];
+}
+
 World World::sanitized() const {
     World w = *this;
     if (!std::isfinite(w.timeStep)) w.timeStep = World().timeStep;
@@ -25,6 +37,27 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
 }
 
 void WorldSolver::step() {
+    if (!world_.animation.empty()) {
+        // The frame this step makes: its sources, forces and solids.
+        const World& now = world_.at(frame_ + 1);
+        if (gas_) {
+            Scene gas = now.gas;
+            gas.solver.size = world_.gas.solver.size;
+            gas.solver.resolution = world_.gas.solver.resolution;
+            gas.solver.timeStep = world_.timeStep;
+            gas_->setScene(gas);
+        }
+        if (water_) {
+            LiquidScene water = now.water;
+            water.solver.timeStep = world_.timeStep;
+            water_->setScene(water);
+        }
+        if (rain_) {
+            RainScene rain = now.rain;
+            rain.rain.timeStep = world_.timeStep;
+            rain_->setScene(rain);
+        }
+    }
     if (gas_) gas_->step();
     if (water_) water_->step();
     if (rain_) rain_->step(water_.get());

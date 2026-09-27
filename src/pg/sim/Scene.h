@@ -43,6 +43,9 @@ struct Emitter {
     Motion motion = Motion::Static;
     float motionSize = 0.25f;       ///< radius of the circle, reach of the sway
     float motionPeriod = 4.0f;      ///< seconds for a round
+    /// How fast it is carried, when it is animated (keys on its place): the
+    /// gas it gives off leaves with that velocity too.
+    Vec3 moving;
     uint32_t seed = 1;
     std::shared_ptr<const MeshShape> mesh;  ///< Shape::Mesh: what it is (Mesh.h)
     int node = 0;                   ///< the network node it came from, 0 if none
@@ -96,9 +99,16 @@ struct Collider {
     Vec3 size{0.3f, 0.3f, 0.3f};    ///< along its own axes
     std::shared_ptr<const MeshShape> mesh;  ///< Shape::Mesh: what it is (Mesh.h); the same file, the same mesh
     int node = 0;
+    /// How it moves, when it is animated: its velocity, world units per
+    /// second, and its spin -- along the axis it turns round, radians per
+    /// second. The gas and the water it pushes take it on.
+    Vec3 velocity, spin;
 
     ShapeInstance instance() const { return {shape, center, rotation, size, mesh}; }
     bool contains(const Vec3& p) const { return instance().contains(p); }
+    bool moves() const { return velocity != Vec3() || spin != Vec3(); }
+    /// The velocity of its point p.
+    Vec3 velocityAt(const Vec3& p) const { return velocity + cross(spin, p - center); }
     bool operator==(const Collider&) const = default;
 };
 

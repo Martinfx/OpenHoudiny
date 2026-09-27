@@ -1062,6 +1062,55 @@ const std::vector<const char*>& nodeCategories() {
     return c;
 }
 
+const char* interpName(Interp interp) {
+    switch (interp) {
+        case Interp::Smooth: return "smooth";
+        case Interp::Linear: return "linear";
+        case Interp::Step: return "step";
+    }
+    return "smooth";
+}
+
+ParamValue evaluate(const std::vector<Key>& keys, float frame, ParamKind kind) {
+    if (keys.empty()) return {};
+    if (frame <= keys.front().frame) return keys.front().value;
+    if (frame >= keys.back().frame) return keys.back().value;
+    size_t i = 0;
+    while (i + 2 < keys.size() && keys[i + 1].frame <= frame) ++i;
+    const Key &a = keys[i], &b = keys[i + 1];
+    const bool steps = kind == K::Toggle || kind == K::Choice;
+    if (a.interp == Interp::Step || steps) return a.value;
+    const float span = std::max(b.frame - a.frame, 1e-6f);
+    const float t = std::clamp((frame - a.frame) / span, 0.0f, 1.0f);
+    ParamValue v{};
+    for (size_t c = 0; c < 3; ++c) {
+        if (a.interp == Interp::Linear) {
+            v[c] = a.value[c] + (b.value[c] - a.value[c]) * t;
+            continue;
+        }
+        // The slope at a key: flat at the first and the last, and where the
+        // value turns; elsewhere Catmull-Rom's, limited so that the curve
+        // does not overshoot between the keys (Fritsch and Carlson).
+        auto slope = [&](size_t k) {
+            if (k == 0 || k + 1 >= keys.size()) return 0.0f;
+            const float before = (keys[k].value[c] - keys[k - 1].value[c]) / std::max(keys[k].frame - keys[k - 1].frame, 1e-6f);
+            const float after = (keys[k + 1].value[c] - keys[k].value[c]) / std::max(keys[k + 1].frame - keys[k].frame, 1e-6f);
+            if (before * after <= 0.0f) return 0.0f;
+            const float m = (keys[k + 1].value[c] - keys[k - 1].value[c]) /
+                            std::max(keys[k + 1].frame - keys[k - 1].frame, 1e-6f);
+            const float most = 3.0f * std::min(std::fabs(before), std::fabs(after));
+            return std::clamp(m, -most, most);
+        };
+        const float t2 = t * t, t3 = t2 * t;
+        v[c] = (2.0f * t3 - 3.0f * t2 + 1.0f) * a.value[c] + (t3 - 2.0f * t2 + t) * span * slope(i) +
+               (-2.0f * t3 + 3.0f * t2) * b.value[c] + (t3 - t2) * span * slope(i + 1);
+    }
+    if (kind == K::Int) {
+        for (float& x : v) x = std::round(x);
+    }
+    return v;
+}
+
 std::string formatParam(const ParamDef& def, const ParamValue& v) {
     switch (def.kind) {
         case K::Toggle: return v[0] != 0.0f ? "on" : "off";
@@ -1372,13 +1421,115 @@ bool Network::setText(int id, std::string_view name, std::string_view value) {
 bool Network::resetParam(int id, std::string_view name) {
     Node* n = node(id);
     if (!n) return false;
-    if (n->params.erase(std::string(name)) + n->texts.erase(std::string(name)) > 0) ++revision_;
+    const std::string key(name);
+    if (n->params.erase(key) + n->texts.erase(key) + n->keys.erase(key) > 0) ++revision_;
     return true;
 }
 
 bool Network::isDefault(int id, std::string_view name) const {
     const Node* n = node(id);
-    return !n || (n->params.find(std::string(name)) == n->params.end() && n->texts.find(std::string(name)) == n->texts.end());
+    const std::string key(name);
+    return !n || (n->params.find(key) == n->params.end() && n->texts.find(key) == n->texts.end() &&
+                  n->keys.find(key) == n->keys.end());
+}
+
+ParamValue Network::valueAt(int id, std::string_view name, float frame) const {
+    const Node* n = node(id);
+    if (n) {
+        const auto it = n->keys.find(std::string(name));
+        const NodeType* t = findNodeType(n->type);
+        const ParamDef* d = t ? t->param(name) : nullptr;
+        if (it != n->keys.end() && d) return evaluate(it->second, frame, d->kind);
+    }
+    return param(id, name);
+}
+
+bool Network::setKey(int id, std::string_view name, float frame, const ParamValue& value, Interp interp) {
+    Node* n = node(id);
+    const NodeType* t = n ? findNodeType(n->type) : nullptr;
+    const ParamDef* d = t ? t->param(name) : nullptr;
+    if (!d || isText(d->kind) || !std::isfinite(frame)) return false;
+    std::vector<Key>& keys = n->keys[std::string(name)];
+    const Key key{frame, keep(*d, value), interp};
+    auto at = std::lower_bound(keys.begin(), keys.end(), frame - 1e-4f,
+                               [](const Key& k, float f) { return k.frame < f; });
+    if (at != keys.end() && std::fabs(at->frame - frame) <= 1e-4f) {
+        if (*at == key) return true;
+        *at = key;
+    } else {
+        keys.insert(at, key);
+    }
+    ++revision_;
+    return true;
+}
+
+bool Network::removeKey(int id, std::string_view name, float frame) {
+    Node* n = node(id);
+    if (!n) return false;
+    const auto it = n->keys.find(std::string(name));
+    if (it == n->keys.end()) return false;
+    std::vector<Key>& keys = it->second;
+    const auto at = std::find_if(keys.begin(), keys.end(), [&](const Key& k) { return std::fabs(k.frame - frame) <= 1e-4f; });
+    if (at == keys.end()) return false;
+    if (keys.size() == 1) {
+        // The last key: the parameter keeps its value, no longer animated.
+        const ParamValue v = at->value;
+        n->keys.erase(it);
+        setParam(id, name, v);
+    } else {
+        keys.erase(at);
+    }
+    ++revision_;
+    return true;
+}
+
+bool Network::clearKeys(int id, std::string_view name, float frame) {
+    Node* n = node(id);
+    if (!n) return false;
+    const auto it = n->keys.find(std::string(name));
+    if (it == n->keys.end()) return false;
+    const ParamValue v = valueAt(id, name, frame);
+    n->keys.erase(it);
+    setParam(id, name, v);
+    ++revision_;
+    return true;
+}
+
+const std::vector<Key>* Network::keys(int id, std::string_view name) const {
+    const Node* n = node(id);
+    if (!n) return nullptr;
+    const auto it = n->keys.find(std::string(name));
+    return it == n->keys.end() ? nullptr : &it->second;
+}
+
+bool Network::anyAnimated() const {
+    return std::any_of(nodes_.begin(), nodes_.end(), [](const Node& n) { return !n.keys.empty(); });
+}
+
+bool Network::setParamAt(int id, std::string_view name, float frame, const ParamValue& value) {
+    if (const std::vector<Key>* k = keys(id, name)) {
+        // A key there: it changes; else a new one, as smooth as its neighbour.
+        Interp interp = Interp::Smooth;
+        for (const Key& key : *k) {
+            if (key.frame <= frame + 1e-4f) interp = key.interp;
+        }
+        return setKey(id, name, frame, value, interp);
+    }
+    return setParam(id, name, value);
+}
+
+std::vector<float> Network::keyFrames(int id) const {
+    std::vector<float> frames;
+    for (const Node& n : nodes_) {
+        if (id != 0 && n.id != id) continue;
+        for (const auto& [name, keys] : n.keys) {
+            for (const Key& k : keys) frames.push_back(k.frame);
+        }
+    }
+    std::sort(frames.begin(), frames.end());
+    frames.erase(std::unique(frames.begin(), frames.end(), [](float a, float b) { return std::fabs(a - b) <= 1e-4f; }),
+                 frames.end());
+    return frames;
 }
 
 bool Network::setDisplay(int id) {
@@ -1432,6 +1583,15 @@ std::string Network::save() const {
                 }
                 const auto it = n.params.find(d.name);
                 if (it != n.params.end()) out += std::string("  param ") + d.name + ' ' + formatParam(d, it->second) + '\n';
+            }
+            // The keys, parameter by parameter in the same order.
+            for (const ParamDef& d : t->params) {
+                const auto it = n.keys.find(d.name);
+                if (it == n.keys.end()) continue;
+                for (const Key& k : it->second) {
+                    out += std::string("  key ") + d.name + ' ' + formatNumber(k.frame) + ' ' + interpName(k.interp) + ' ' +
+                           formatParam(d, k.value) + '\n';
+                }
             }
         } else {
             // A type this program does not know: its values as they came.
@@ -1554,6 +1714,37 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
             if (v != d->value) current->params[name] = v;
             continue;
         }
+        if (w[0] == "key") {
+            // key NAME FRAME INTERP VALUE
+            if (!current) return fail(lineNo, "a key belongs to the node above it, and there is none");
+            if (w.size() < 5) return fail(lineNo, "a key line is: key NAME FRAME smooth|linear|step VALUE");
+            const NodeType* t = findNodeType(current->type);
+            const ParamDef* d = t ? t->param(w[1]) : nullptr;
+            float frame = 0.0f;
+            Interp interp = Interp::Smooth;
+            const bool known = w[3] == "smooth" || w[3] == "linear" || w[3] == "step";
+            if (known) interp = w[3] == "linear" ? Interp::Linear : w[3] == "step" ? Interp::Step : Interp::Smooth;
+            if (!d || isText(d->kind)) {
+                warn(lineNo, current->name + " has no parameter " + std::string(w[1]) + " to animate; key dropped");
+                continue;
+            }
+            if (!parseNumber(w[2], frame) || !known) {
+                warn(lineNo, current->name + ": a key is: key NAME FRAME smooth|linear|step VALUE; dropped");
+                continue;
+            }
+            ParamValue v;
+            std::string why;
+            const std::string_view value = line.substr(static_cast<size_t>(w[4].data() - line.data()));
+            if (!parseParam(*d, value, v, why)) {
+                warn(lineNo, current->name + ": " + why + "; key dropped");
+                continue;
+            }
+            std::vector<Key>& keys = current->keys[std::string(w[1])];
+            auto at = std::lower_bound(keys.begin(), keys.end(), frame, [](const Key& k, float f) { return k.frame < f; });
+            if (at != keys.end() && std::fabs(at->frame - frame) <= 1e-4f) *at = {frame, v, interp};
+            else keys.insert(at, {frame, v, interp});
+            continue;
+        }
         if (w[0] == "bypass") {
             if (!current) return fail(lineNo, "bypass belongs to the node above it, and there is none");
             current->bypass = true;
@@ -1629,21 +1820,165 @@ bool Compiled::errors() const {
 
 bool Compiled::isActive(int node) const { return std::binary_search(active.begin(), active.end(), node); }
 
+const Look& Compiled::lookAt(int frame) const {
+    return poses.empty() ? look : poses[static_cast<size_t>(std::clamp(frame, 1, static_cast<int>(poses.size())) - 1)].look;
+}
+
+const std::vector<Solid>& Compiled::solidsAt(int frame) const {
+    return poses.empty() ? solids : poses[static_cast<size_t>(std::clamp(frame, 1, static_cast<int>(poses.size())) - 1)].solids;
+}
+
+const Camera& Compiled::cameraAt(int frame) const {
+    return poses.empty() ? camera : poses[static_cast<size_t>(std::clamp(frame, 1, static_cast<int>(poses.size())) - 1)].camera;
+}
+
+/// What compiling a network once for each frame shares: meshes read and
+/// geometry cooked once.
+struct Network::CompileMemo {
+    std::map<int, std::shared_ptr<const MeshShape>> meshes;  // from files, by node
+    std::map<int, std::shared_ptr<const MeshShape>> shapes;  // from geometry, by node
+    std::unique_ptr<GeometryGraph> own;
+    GeometryGraph* cooker = nullptr;
+};
+
+namespace {
+
+/// How far and which way a rotation turns into the next in `dt`: the axis,
+/// as long as radians per second.
+Vec3 spinBetween(const Vec3& fromDegrees, const Vec3& toDegrees, float dt) {
+    if (fromDegrees == toDegrees || dt <= 0.0f) return {};
+    const Rotation a = Rotation::fromEuler(fromDegrees), b = Rotation::fromEuler(toDegrees);
+    // The turn from a to b, b a^T, as a matrix of rows.
+    float m[3][3];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            float sum = 0.0f;
+            for (int k = 0; k < 3; ++k) sum += b.axis(k)[r] * a.axis(k)[c];
+            m[r][c] = sum;
+        }
+    }
+    const float cosine = std::clamp(0.5f * (m[0][0] + m[1][1] + m[2][2] - 1.0f), -1.0f, 1.0f);
+    const float angle = std::acos(cosine);
+    const Vec3 axis(m[2][1] - m[1][2], m[0][2] - m[2][0], m[1][0] - m[0][1]);  // 2 sin(angle) along the axis
+    const float twiceSine = length(axis);
+    if (twiceSine < 1e-7f) return {};
+    return axis * (angle / (twiceSine * dt));
+}
+
+}  // namespace
+
 Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) const {
+    CompileMemo memo;
+    Compiled c = compileFrame(folder, geometry, 1.0f, memo, false);
+    if (!anyAnimated()) return c;
+
+    // Animated: the network at every frame.
+    const int count = std::max(1, c.frames);
+    const float dt = c.world.timeStep;
+    auto track = std::make_shared<std::vector<World>>();
+    track->reserve(static_cast<size_t>(count));
+    c.poses.reserve(static_cast<size_t>(count));
+    for (int f = 1; f <= count; ++f) {
+        Compiled at = f == 1 ? c : compileFrame(folder, geometry, static_cast<float>(f), memo, true);
+        World w = std::move(at.world);
+        // The grids, the frame rate and what is simulated are frame 1's: they
+        // cannot change as the simulation runs.
+        w.animation = {};
+        w.timeStep = c.world.timeStep;
+        w.hasGas = c.world.hasGas;
+        w.hasWater = c.world.hasWater;
+        w.hasRain = c.world.hasRain;
+        w.keepParticles = c.world.keepParticles;
+        w.gas.solver.size = c.world.gas.solver.size;
+        w.gas.solver.resolution = c.world.gas.solver.resolution;
+        w.water.solver.size = c.world.water.solver.size;
+        w.water.solver.resolution = c.world.water.solver.resolution;
+        w.water.solver.closedSides = c.world.water.solver.closedSides;
+        track->push_back(std::move(w));
+        c.poses.push_back({std::move(at.look), std::move(at.solids), at.camera});
+    }
+    // How what is animated moves: from each frame to the next, the one
+    // before it -- frame 1 as frame 2 will find it.
+    auto previous = [&](size_t k) { return k == 0 ? std::min<size_t>(1, track->size() - 1) : k - 1; };
+    auto sign = [](size_t k) { return k == 0 ? -1.0f : 1.0f; };
+    auto colliders = [&](auto member) {
+        for (size_t k = 0; k < track->size(); ++k) {
+            std::vector<Collider>& now = member((*track)[k]);
+            const std::vector<Collider>& before = member((*track)[previous(k)]);
+            for (Collider& col : now) {
+                for (const Collider& b : before) {
+                    if (b.node != col.node || col.node == 0) continue;
+                    col.velocity = (col.center - b.center) * (sign(k) / dt);
+                    col.spin = sign(k) > 0.0f ? spinBetween(b.rotation, col.rotation, dt) : spinBetween(col.rotation, b.rotation, dt);
+                    break;
+                }
+            }
+        }
+    };
+    colliders([](World& w) -> std::vector<Collider>& { return w.gas.colliders; });
+    colliders([](World& w) -> std::vector<Collider>& { return w.water.colliders; });
+    colliders([](World& w) -> std::vector<Collider>& { return w.rain.colliders; });
+    for (size_t k = 0; k < track->size(); ++k) {
+        World& now = (*track)[k];
+        const World& before = (*track)[previous(k)];
+        for (Emitter& e : now.gas.emitters) {
+            for (const Emitter& b : before.gas.emitters) {
+                if (b.node == e.node && e.node != 0) e.moving = (e.center - b.center) * (sign(k) / dt);
+            }
+        }
+        for (WaterSource& s : now.water.sources) {
+            for (const WaterSource& b : before.water.sources) {
+                if (b.node == s.node && s.node != 0) s.moving = (s.center - b.center) * (sign(k) / dt);
+            }
+        }
+    }
+    // The objects as they are drawn move too.
+    for (size_t k = 0; k < c.poses.size(); ++k) {
+        for (Solid& s : c.poses[k].solids) {
+            for (const Collider& col : (*track)[k].gas.colliders) {
+                if (col.node == s.body.node) s.body = col;
+            }
+        }
+    }
+    // Only the look or the camera animated: what is simulated is the same
+    // all along, and needs no frames of its own.
+    const bool same = std::all_of(track->begin(), track->end(), [&](const World& w) { return w == track->front(); });
+    if (!same) c.world.animation.frames = track;
+    c.world.gas = track->front().gas;
+    c.world.water = track->front().water;
+    c.world.rain = track->front().rain;
+
+    // What cannot be animated is said.
+    for (const Node& n : nodes_) {
+        for (const auto& [name, keys] : n.keys) {
+            const bool fixed = (n.type == "pyro_solver" && (name == "size" || name == "resolution")) ||
+                               (n.type == "liquid_solver" && (name == "size" || name == "resolution" || name == "closed_sides")) ||
+                               (n.type == "output" && (name == "frames" || name == "fps"));
+            if (fixed) {
+                c.problems.push_back({Problem::Level::Warning, n.id,
+                                      "'" + name + "' cannot change as the simulation runs: its value at frame 1 holds."});
+            }
+        }
+    }
+    return c;
+}
+
+Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometry, float frame, CompileMemo& memo,
+                               bool quiet) const {
     Compiled c;
     auto problem = [&](Problem::Level level, int node, std::string message) {
-        c.problems.push_back({level, node, std::move(message)});
+        if (!quiet) c.problems.push_back({level, node, std::move(message)});
     };
     using L = Problem::Level;
-    auto f = [&](const Node& n, const char* name) { return param(n.id, name)[0]; };
+    auto f = [&](const Node& n, const char* name) { return valueAt(n.id, name, frame)[0]; };
     auto v3 = [&](const Node& n, const char* name) {
-        const ParamValue p = param(n.id, name);
+        const ParamValue p = valueAt(n.id, name, frame);
         return Vec3(p[0], p[1], p[2]);
     };
     auto whole = [&](const Node& n, const char* name) { return static_cast<int>(std::lround(f(n, name))); };
     // A mesh from its file, read once per compile -- and once in all while
     // it is in use (loadMesh); a relative path from the network's folder.
-    std::map<int, std::shared_ptr<const MeshShape>> meshes;
+    std::map<int, std::shared_ptr<const MeshShape>>& meshes = memo.meshes;
     auto meshOf = [&](const Node& n) -> std::shared_ptr<const MeshShape> {
         if (static_cast<Shape>(whole(n, "shape")) != Shape::Mesh) return nullptr;
         if (const auto it = meshes.find(n.id); it != meshes.end()) return it->second;
@@ -1663,8 +1998,8 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
     };
     // Geometry linked into a Shape: cooked at frame 1, the first time one is
     // asked for -- in the editor's graph, or in one of our own.
-    std::unique_ptr<GeometryGraph> own;
-    GeometryGraph* cooker = nullptr;
+    std::unique_ptr<GeometryGraph>& own = memo.own;
+    GeometryGraph*& cooker = memo.cooker;
     float firstStep = 1.0f / 30.0f;
     for (const Node& n : nodes_) {
         if (n.type == "output") {
@@ -1689,7 +2024,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
         }
         return false;
     };
-    std::map<int, std::shared_ptr<const MeshShape>> shapes;
+    std::map<int, std::shared_ptr<const MeshShape>>& shapes = memo.shapes;
     auto geometryShape = [&](const Node& n) -> std::shared_ptr<const MeshShape> {
         const std::vector<Link> in = linksInto(n.id, "shape");
         if (in.empty()) return nullptr;

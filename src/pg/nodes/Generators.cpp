@@ -22,8 +22,8 @@ public:
 
     GeometryPtr cookNode(const CookContext& ctx,
                          std::span<const GeometryPtr>) override {
-        const int rows = std::max(2, params_.getInt("rows", 10));
-        const int cols = std::max(2, params_.getInt("cols", 10));
+        const int rows = std::max(2, params_.evalInt("rows", ctx, 10));
+        const int cols = std::max(2, params_.evalInt("cols", ctx, 10));
         const float sx = params_.evalFloat("sizex", ctx, 1.0f);
         const float sz = params_.evalFloat("sizez", ctx, 1.0f);
         const Vec3 center = params_.evalVec3("center", ctx, Vec3(0, 0, 0));
@@ -72,7 +72,7 @@ public:
 
     GeometryPtr cookNode(const CookContext& ctx,
                          std::span<const GeometryPtr>) override {
-        const int n = std::max(2, params_.getInt("points", 10));
+        const int n = std::max(2, params_.evalInt("points", ctx, 10));
         const float len = params_.evalFloat("length", ctx, 1.0f);
         const Vec3 origin = params_.evalVec3("origin", ctx, Vec3(0, 0, 0));
         Vec3 dir = normalize(params_.evalVec3("direction", ctx, Vec3(1, 0, 0)));
@@ -105,8 +105,8 @@ public:
 
     GeometryPtr cookNode(const CookContext& ctx,
                          std::span<const GeometryPtr>) override {
-        const size_t n = static_cast<size_t>(std::max(0, params_.getInt("count", 1000)));
-        const uint32_t seed = static_cast<uint32_t>(params_.getInt("seed", 0));
+        const size_t n = static_cast<size_t>(std::max(0, params_.evalInt("count", ctx, 1000)));
+        const uint32_t seed = static_cast<uint32_t>(params_.evalInt("seed", ctx, 0));
         const float size = params_.evalFloat("size", ctx, 1.0f);
         const Vec3 center = params_.evalVec3("center", ctx, Vec3(0, 0, 0));
 

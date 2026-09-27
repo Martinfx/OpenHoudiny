@@ -340,7 +340,8 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Camera     kamera záběru: poloha, rotace, objektiv, rozlišení
                  Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
                  World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
-                 Network    síť uzlů simulace i geometrie, formát .pgsim, překlad na World + Look
+                 Network    síť uzlů simulace i geometrie, formát .pgsim, klíčové snímky,
+                            překlad na World + Look (snímek po snímku, když je co animovat)
                  GeometryGraph  geometrické uzly sítě jako graf jádra: synchronizace,
                             inkrementální vaření, simulace zpátky jako body a objemy
                  Display    geometrie pro viewport: trojúhelníky s barvou, tečky, čáry
@@ -349,8 +350,8 @@ src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
                  Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť,
                             zobrazená geometrie, vodítka
-tests/           59 testů jádra (invarianty, SOP uzly) + 25 pro shader graf + 79 pro simulaci,
-                 vodu, déšť, objekty, modely a geometrii v síti
+tests/           59 testů jádra (invarianty, SOP uzly) + 25 pro shader graf + 85 pro simulaci,
+                 vodu, déšť, objekty, modely, geometrii v síti a animaci
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,
@@ -363,7 +364,8 @@ examples/        grafy shaderů, ukázková uživatelská knihovna, sítě simul
 Shader graf je popsaný zvlášť v [docs/shader-graph.md](docs/shader-graph.md),
 simulace kouře a ohně v [docs/pyro.md](docs/pyro.md), geometrie v síti
 editoru (uzly jako SOP, display flag, tabulka atributů, geometrie jako tvar
-simulací) v [docs/geometry.md](docs/geometry.md).
+simulací) v [docs/geometry.md](docs/geometry.md), klíčové snímky a
+pohyblivé překážky v [docs/animation.md](docs/animation.md).
 
 Jmenný prostor `pg` je placeholder — jméno je výstup fáze 0 roadmapy.
 
@@ -386,13 +388,14 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Per-element jazyk: parser, typová inference, vazba na sloty |
 | ✅ | 19 typů uzlů (box, sphere, tube, scatter, copy to points, file…), obsahový hash, čtení i zápis OBJ, headless CLI |
 | ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
-| ✅ | 163 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
+| ✅ | 169 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
 | ✅ | Déšť a vítr: kapky z mraku, nárazy větru putující s větrem, odstřiky od objektů, vlnky na vodě (vlnová rovnice), mokrá podlaha; bitově stejné na 1 i 4 vláknech |
 | ✅ | Kamera záběru: pohled kamerou v editoru s rámečkem obrazu, kamera z pohledu, render a sekvence kamerou (editor i `pgshader sim`) |
 | ✅ | Geometrie v síti editoru: SOP uzly vařené jádrem inkrementálně, display flag, viewport, **geometry spreadsheet**; geometrie jako tvar překážek a zdrojů, simulace zpátky jako body a objemy |
+| ✅ | Animace: klíče na libovolném parametru (Smooth/Linear/Step), síť snímek po snímku, pohyblivé překážky s rychlostí i rotací v okrajových podmínkách plynu i vody, animované parametry geometrie jako výrazy jádra |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 

@@ -12,7 +12,9 @@
 //
 // Bypassed nodes are left out of the wiring: whatever feeds them feeds what
 // they fed. A File parameter is read from the network's folder, and read
-// again when the file changes.
+// again when the file changes. An animated parameter is bound as an
+// expression of the core (its keys at the frame cooked): the node varies
+// with time, and its geometry is cached frame by frame.
 //
 // Three nodes bring a simulation back as geometry -- Liquid Points, Rain
 // Points, Gas Volume -- from the frame being cooked, which a FrameSource
@@ -22,6 +24,7 @@
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
 #include "pg/sim/Frame.h"
+#include "pg/sim/Network.h"
 
 #include <functional>
 #include <map>
@@ -74,6 +77,7 @@ private:
         bool bypass = false;
         int input = 0;       ///< for a bypassed node: what comes into it, 0 if nothing
         std::string file;    ///< the file it reads, if any: looked at again at each sync
+        std::map<std::string, std::vector<Key>> keys;  ///< the animated parameters, as last bound
     };
     /// Follows bypassed nodes up to the one whose output counts.
     int resolve(int id) const;

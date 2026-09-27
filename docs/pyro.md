@@ -444,6 +444,8 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `scatter_fire` | geometrie jako zdroj: body rozházené po mřížce, wrangle jim dá velikost, na každém plamínek; koule z uzlu Sphere visí v kouři ([geometry.md](geometry.md)) |
 | `liquid_points` | simulace zpátky jako geometrie: částice vody z Liquid Points, wrangle je barví podle rychlosti, tabulka atributů je ukáže |
 | `rock_garden` | geometrie jako překážka: koule zkopírovaná na rozházené body a zmáčknutá je tvarem kamenů, na které prší |
+| `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
+| `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.

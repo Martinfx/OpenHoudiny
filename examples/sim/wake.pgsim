@@ -1,0 +1,27 @@
+pgsim 1
+# A ball ploughs through a pool: its place is animated -- keys at frames 1
+# and 60 -- and the water takes its motion on: a bow wave heaps up ahead of
+# it, a wake spreads behind. Scrub the timeline, or move the ball at another
+# frame and press K to key it there.
+node 1 water_source 1 pool 0 0
+  param center 0 0.1 0
+  param size 2.2 0.2 1.2
+node 2 object 1 ball 0 110
+  param size 0.34 0.34 0.34
+  param color 0.75 0.3 0.12
+  key center 1 smooth -0.85 0.19 0
+  key center 60 smooth 0.85 0.19 0
+node 3 liquid_solver 1 solver 250 40
+  param size 2.2 0.6 1.2
+node 4 water_look 1 look 490 40
+node 5 output 2 output 720 40
+  param frames 90
+node 6 camera 1 camera 720 180
+  param center 1.2 1.05 1.9
+  param rotation -26 29 0
+  param focal 28
+link 1.water -> 3.sources
+link 2.collider -> 3.colliders
+link 3.liquid -> 4.liquid
+link 4.look -> 5.look
+link 6.camera -> 5.camera

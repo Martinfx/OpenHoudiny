@@ -149,6 +149,30 @@ std::string formatParam(const ParamDef& def, const ParamValue& value);
 /// for text that is not a value of this parameter.
 bool parseParam(const ParamDef& def, std::string_view text, ParamValue& out, std::string& error);
 
+/// How an animated parameter goes from a key to the next.
+enum class Interp : uint8_t {
+    Smooth,  ///< eases through the keys: a cubic that flattens at the first and last key and where the value turns
+    Linear,  ///< straight from one to the next
+    Step,    ///< holds the key's value up to the next key
+};
+/// "smooth", "linear", "step": as files write it.
+const char* interpName(Interp interp);
+
+/// A keyframe: the value a parameter has at a frame, and how it goes on to
+/// the next key.
+struct Key {
+    float frame = 1.0f;
+    ParamValue value{};
+    Interp interp = Interp::Smooth;
+
+    bool operator==(const Key&) const = default;
+};
+
+/// The value of a parameter of `kind` animated by `keys` (in the order of
+/// their frames) at `frame`: before the first key its value, after the last
+/// the last's. Ints come out whole; toggles and choices step.
+ParamValue evaluate(const std::vector<Key>& keys, float frame, ParamKind kind);
+
 struct Node {
     int id = 0;
     std::string type;
@@ -161,6 +185,10 @@ struct Node {
     bool display = false;
     std::map<std::string, ParamValue> params;  ///< the values set; the rest are defaults
     std::map<std::string, std::string> texts;  ///< File, Text and Code parameters set; the rest are defaults
+    /// The animated parameters: their keys, in the order of their frames.
+    /// An animated parameter's value is its keys'; `params` holds it for
+    /// when the keys are taken off.
+    std::map<std::string, std::vector<Key>> keys;
 };
 
 struct Link {
@@ -206,6 +234,21 @@ struct Compiled {
     /// The geometry node whose geometry is shown (Network::displayed()); 0 if none.
     int display = 0;
 
+    /// When something is animated, what is drawn at each frame from 1 on:
+    /// the look, the objects where they are, the camera. (What is simulated
+    /// frame by frame is world.animation.) Empty when nothing is animated.
+    struct Pose {
+        Look look;
+        std::vector<Solid> solids;
+        Camera camera;
+    };
+    std::vector<Pose> poses;
+    const Look& lookAt(int frame) const;
+    const std::vector<Solid>& solidsAt(int frame) const;
+    const Camera& cameraAt(int frame) const;
+    /// The world at `frame`: world.at(frame).
+    const World& worldAt(int frame) const { return world.at(frame); }
+
     bool errors() const;
     bool isActive(int node) const;
 };
@@ -248,8 +291,33 @@ public:
     bool setParam(int id, std::string_view name, const ParamValue& value);
     /// The same from text ("0 1 0", "circle"). False, with why, if it is not.
     bool setParam(int id, std::string_view name, std::string_view text, std::string* error = nullptr);
+    /// Back to the default, and the keys taken off.
     bool resetParam(int id, std::string_view name);
+    /// True for a parameter left at its default -- not set, not animated.
     bool isDefault(int id, std::string_view name) const;
+
+    // --- animation ---------------------------------------------------------------------
+    /// A parameter at `frame`: from its keys when it is animated, else param().
+    ParamValue valueAt(int id, std::string_view name, float frame) const;
+    /// Adds a key at `frame` -- or replaces the one there -- its value kept
+    /// within the parameter's limits; the parameter is animated from then
+    /// on. Text parameters are not animated. False for an unknown node or
+    /// parameter, or a text one.
+    bool setKey(int id, std::string_view name, float frame, const ParamValue& value, Interp interp = Interp::Smooth);
+    bool removeKey(int id, std::string_view name, float frame);
+    /// Takes the keys off; the parameter keeps the value it had at `frame`.
+    bool clearKeys(int id, std::string_view name, float frame = 1.0f);
+    /// The keys of a parameter, null if it is not animated.
+    const std::vector<Key>* keys(int id, std::string_view name) const;
+    bool animated(int id, std::string_view name) const { return keys(id, name) != nullptr; }
+    /// True when any parameter of any node is animated.
+    bool anyAnimated() const;
+    /// What editing a parameter at `frame` does: a key there when it is
+    /// animated, else its value.
+    bool setParamAt(int id, std::string_view name, float frame, const ParamValue& value);
+    /// The frames that have a key of any parameter of node `id` -- of every
+    /// node, for 0 -- in order, each once.
+    std::vector<float> keyFrames(int id = 0) const;
     /// A File, Text or Code parameter: the text set, else its default.
     std::string text(int id, std::string_view name) const;
     /// False for an unknown node or a parameter that is not text.
@@ -273,6 +341,10 @@ public:
     /// nodes cook -- the editor keeps one, so that only what changed cooks
     /// again; without one they cook afresh. Geometry linked into a Shape is
     /// taken at frame 1.
+    ///
+    /// Animated parameters are taken frame by frame: what is simulated at
+    /// each (world.animation) and what is drawn (Compiled::poses), with the
+    /// velocity of what moves. The grids and the frame rate are frame 1's.
     Compiled compile(const std::string& folder = {}, GeometryGraph* geometry = nullptr) const;
 
     /// Bumped by every edit -- all but moving a node, which goes through
@@ -288,6 +360,10 @@ public:
     static constexpr int kFormatVersion = 1;
 
 private:
+    struct CompileMemo;
+    /// The network at `frame`; `quiet`: without problems -- the first frame said them.
+    Compiled compileFrame(const std::string& folder, GeometryGraph* geometry, float frame, CompileMemo& memo,
+                          bool quiet) const;
     int indexOf(int id) const;
     /// Turns the nodes of old types (Legacy in Network.cpp) into the types
     /// that replaced them.

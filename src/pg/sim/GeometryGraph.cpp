@@ -160,7 +160,7 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
         const NodeType* t = findNodeType(n.type);
         if (!t || !t->core || nodes_.count(n.id)) continue;
         pg::Node* made = graph_.create(t->core, "n" + std::to_string(n.id));
-        if (made) nodes_[n.id] = {made, n.type, false, 0, {}};
+        if (made) nodes_[n.id] = {made, n.type, false, 0, {}, {}};
     }
 
     // The parameters, set -- only those that changed dirty anything.
@@ -171,6 +171,34 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
         m.file.clear();
         m.node->editParams([&](ParamSet& p) {
             bool changed = false;
+            // Animated parameters: their keys, as expressions of the frame.
+            if (n.keys != m.keys) {
+                changed = true;
+                for (const ParamDef& d : t.params) {
+                    const std::string name = d.name;
+                    const bool vector = d.kind == ParamKind::Vector || d.kind == ParamKind::Color;
+                    const auto it = n.keys.find(name);
+                    if (it == n.keys.end()) {
+                        p.setExpression(name, {});
+                        for (const char* c : {".x", ".y", ".z"}) p.setExpression(name + c, {});
+                        continue;
+                    }
+                    const std::vector<Key> keys = it->second;
+                    const ParamKind kind = d.kind;
+                    if (!vector) {
+                        p.setExpression(name, [keys, kind](const CookContext& ctx) {
+                            return static_cast<double>(evaluate(keys, static_cast<float>(ctx.frame), kind)[0]);
+                        });
+                        continue;
+                    }
+                    for (size_t c = 0; c < 3; ++c) {
+                        p.setExpression(name + (c == 0 ? ".x" : c == 1 ? ".y" : ".z"), [keys, kind, c](const CookContext& ctx) {
+                            return static_cast<double>(evaluate(keys, static_cast<float>(ctx.frame), kind)[c]);
+                        });
+                    }
+                }
+                m.keys = n.keys;
+            }
             for (const ParamDef& d : t.params) {
                 const ParamValue v = net.param(id, d.name);
                 const std::string name = d.name;

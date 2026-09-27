@@ -304,6 +304,7 @@ add_executable(pgtests
   tests/test_pyro.cpp
   tests/test_sim_network.cpp
   tests/test_sim_geometry.cpp
+  tests/test_animation.cpp
   tests/test_shapes.cpp
   tests/test_mesh.cpp
   tests/test_liquid.cpp

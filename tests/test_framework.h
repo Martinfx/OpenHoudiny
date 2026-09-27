@@ -72,8 +72,9 @@ std::string describe(const char* expr, const A& a, const B& b) {
 
 #define CHECK_EQ(a, b)                                                         \
     do {                                                                       \
-        const auto& va_ = (a);                                                 \
-        const auto& vb_ = (b);                                                 \
+        /* copies: (a) may be an element of a temporary */                    \
+        const auto va_ = (a);                                                  \
+        const auto vb_ = (b);                                                  \
         if (!(va_ == vb_)) {                                                   \
             ::testing::fail(__FILE__, __LINE__,                                \
                             ::testing::describe(#a " == " #b, va_, vb_));      \

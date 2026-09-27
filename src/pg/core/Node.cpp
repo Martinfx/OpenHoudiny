@@ -1,3 +1,4 @@
+#include <cmath>
 #include "pg/core/Node.h"
 
 #include <algorithm>
@@ -64,6 +65,18 @@ float ParamSet::evalFloat(const std::string& name, const CookContext& ctx, float
     auto it = exprs_.find(name);
     if (it != exprs_.end()) return static_cast<float>(it->second(ctx));
     return getFloat(name, fallback);
+}
+
+int ParamSet::evalInt(const std::string& name, const CookContext& ctx, int fallback) const {
+    auto it = exprs_.find(name);
+    if (it != exprs_.end()) return static_cast<int>(std::lround(it->second(ctx)));
+    return getInt(name, fallback);
+}
+
+bool ParamSet::evalBool(const std::string& name, const CookContext& ctx, bool fallback) const {
+    auto it = exprs_.find(name);
+    if (it != exprs_.end()) return it->second(ctx) > 0.5;
+    return getBool(name, fallback);
 }
 
 Vec3 ParamSet::evalVec3(const std::string& name, const CookContext& ctx,

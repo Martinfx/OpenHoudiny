@@ -90,7 +90,7 @@ public:
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
         int idx = static_cast<int>(params_.evalFloat("index", ctx,
-                                                     static_cast<float>(params_.getInt("index", 0))));
+                                                     static_cast<float>(params_.evalInt("index", ctx, 0))));
         if (in.empty()) return std::make_shared<Geometry>();
         idx = std::clamp(idx, 0, static_cast<int>(in.size()) - 1);
         return in[static_cast<size_t>(idx)] ? in[static_cast<size_t>(idx)]
@@ -116,10 +116,10 @@ public:
         if (attrName.empty()) return geo;
 
         const auto cls = static_cast<AttrClass>(
-            std::clamp(params_.getInt("class", 1), 0, 3));
+            std::clamp(params_.evalInt("class", ctx, 1), 0, 3));
         AttributeSet& set = geo->attributes(cls);
 
-        if (params_.getBool("vector", false)) {
+        if (params_.evalBool("vector", ctx, false)) {
             const Vec3 v = params_.evalVec3("vvalue", ctx, Vec3(0, 0, 0));
             auto span = set.create(attrName, AttrType::Vec3).write<Vec3>();
             std::fill(span.begin(), span.end(), v);
@@ -173,12 +173,12 @@ public:
         params_.setBool("invert", false);
     }
 
-    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr> in) override {
+    GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
         auto geo = editableCopy(in.empty() ? nullptr : in[0]);
         const Group* g = geo->findGroup(params_.getString("group", "selected"));
         if (!g) return geo;
 
-        const bool invert = params_.getBool("invert", false);
+        const bool invert = params_.evalBool("invert", ctx, false);
         std::vector<uint8_t> keep(geo->pointCount(), invert ? 0 : 1);
         for (size_t i = 0; i < keep.size(); ++i) {
             const bool member = g->contains(i);

@@ -689,6 +689,16 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         t = Clock::now();
         current = std::make_shared<const sim::Frame>(solver.capture());
         if (!geometryOnly) volume.setFrame(*current);
+        // Animated: the look, the objects and the camera of this frame.
+        if (!c.poses.empty()) {
+            volume.look = c.lookAt(f);
+            volume.setSolids(c.solidsAt(f));
+            if (throughCamera) {
+                const sim::Camera& cam = c.cameraAt(f);
+                const Vec3 middle = box.origin() + box.size() * 0.5f;
+                volume.orbit = gl::orbitThrough(cam, std::max(dot(middle - cam.position, cam.forward()), 0.5f));
+            }
+        }
         if (c.display) {
             volume.setGeometry(geometry.cook(c.display, f, world.timeStep));
             const std::string why = geometry.error(c.display);

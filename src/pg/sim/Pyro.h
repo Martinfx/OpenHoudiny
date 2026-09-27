@@ -65,7 +65,8 @@ public:
     const Grid& fuel() const { return fuel_; }
     /// Fuel burnt within the last flameLife seconds: where the fire is.
     const Grid& flame() const { return flame_; }
-    /// 1 in the cells the colliders take, 0 elsewhere.
+    /// Above 0 in the cells the colliders take -- 1 + the collider's index
+    /// -- 0 elsewhere.
     const Grid& solid() const { return solid_; }
     /// Velocity component `axis` on its faces, world units per second: value
     /// (i, j, k) of axis 0 is on the face between cells i-1 and i.
@@ -120,6 +121,7 @@ private:
     bool anySolid_ = false;
     std::vector<size_t> solidCells_;   // indices of the solid cells
     std::vector<size_t> blocked_[3];   // faces next to or inside a solid, per axis
+    std::vector<float> blockedVel_[3]; // ... and the velocity a moving solid gives each (0 when none moves)
     Grid back_[3], forward_[3];  // where each cell's gas came from / goes to, cell units
     Grid predicted_, lo_, hi_, corrected_;
     Grid expansion_;             // divergence the burning asks for, 1/s

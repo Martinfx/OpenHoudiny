@@ -87,6 +87,9 @@ public:
     /// Advances by the time step. `water`, if there is any, is what the drops
     /// fall into: its surface stops them and carries their ripples.
     void step(const LiquidSolver* water = nullptr);
+    /// Takes on another scene as it runs: the cloud, the forces, the solids;
+    /// the drops in the air stay.
+    void setScene(const RainScene& scene);
 
     const RainScene& scene() const { return scene_; }
     int frame() const { return frame_; }

@@ -68,6 +68,9 @@ struct WaterSource {
     Vec3 velocity;
     float start = 0.0f;             ///< seconds
     float end = 0.0f;               ///< seconds; at or before start: a flow never stops
+    /// How fast it is carried, when it is animated: a flow's water leaves
+    /// with that velocity too.
+    Vec3 moving;
     uint32_t seed = 1;
     std::shared_ptr<const MeshShape> mesh;  ///< Shape::Mesh: what it is
     int node = 0;                   ///< the network node it came from, 0 if none
@@ -119,6 +122,10 @@ public:
 
     /// Advances by the time step, in as many substeps as it takes.
     void step();
+    /// Takes on another scene as it runs -- sources, forces, solids and the
+    /// settings that are not the grid: the water stays. The domain stays
+    /// as it was (its size, resolution and sides).
+    void setScene(const LiquidScene& scene);
 
     /// The scene, sanitized.
     const LiquidScene& scene() const { return scene_; }
@@ -154,6 +161,8 @@ public:
     /// The distance to the nearest solid -- the colliders, not the floor or
     /// the walls -- at a world point, world units, below 0 inside one.
     float solidDistance(const Vec3& p) const;
+    /// The velocity of the collider nearest a world point; 0 when none moves.
+    Vec3 solidVelocity(const Vec3& p) const;
 
     /// The water's surface on a grid `factor` times finer than the solver's,
     /// for drawing: the signed distance at its cell centres, world units,
@@ -206,6 +215,9 @@ private:
     Grid sphereWeight_, sphereCentre_[3], sphereFoam_;  // splat() at the solver's resolution
     Grid solidPhi_;                    // at the grid's corners: (nx+1) x (ny+1) x (nz+1)
     bool anySolid_ = false;
+    bool movingSolid_ = false;         // a collider moves: solidVel_ holds its velocity
+    Grid solidVel_[3];                 // on the faces the solids cover, their velocity along each axis
+    std::vector<ShapeInstance> shapes_;  // the colliders, placed
     std::vector<uint8_t> cells_;       // FreeSurfaceSolver::Cell of each cell
     std::vector<uint8_t> solidCell_;   // a cell whose centre is in a solid
     FreeSurfaceSolver pressureSolver_;

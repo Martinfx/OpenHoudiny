@@ -77,15 +77,17 @@ void PyroSolver::updateSolids() {
             s.shape.bounds(s.lo, s.hi);
             solids.push_back(s);
         }
+        // solid_ holds 1 + the collider's index: which one it is, for its velocity.
         forEachCell(solid_, [&](int i, int j, int k) {
             const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
                                    static_cast<float>(k) + 0.5f);
-            for (const Solid& s : solids) {
+            for (size_t c = 0; c < solids.size(); ++c) {
+                const Solid& s = solids[c];
                 if (p.x < s.lo.x || p.y < s.lo.y || p.z < s.lo.z || p.x > s.hi.x || p.y > s.hi.y || p.z > s.hi.z) {
                     continue;
                 }
                 if (s.shape.contains(p)) {
-                    solid_.at(i, j, k) = 1.0f;
+                    solid_.at(i, j, k) = 1.0f + static_cast<float>(c);
                     return;
                 }
             }
@@ -110,6 +112,31 @@ void PyroSolver::updateSolids() {
                     }
                 }
             }
+        }
+    }
+    // What a moving solid gives the faces it blocks: its velocity there,
+    // along the face's axis -- the gas next to it is pushed and dragged.
+    const bool moving = anySolid_ && std::any_of(scene_.colliders.begin(), scene_.colliders.end(),
+                                                 [](const Collider& c) { return c.moves(); });
+    for (int a = 0; a < 3; ++a) {
+        blockedVel_[a].assign(blocked_[a].size(), 0.0f);
+        if (!moving) continue;
+        const Grid& v = vel_[a];
+        const int n = a == 0 ? nx_ : a == 1 ? ny_ : nz_;
+        for (size_t b = 0; b < blocked_[a].size(); ++b) {
+            const size_t f = blocked_[a][b];
+            const int i = static_cast<int>(f % static_cast<size_t>(v.nx()));
+            const int j = static_cast<int>((f / static_cast<size_t>(v.nx())) % static_cast<size_t>(v.ny()));
+            const int k = static_cast<int>(f / (static_cast<size_t>(v.nx()) * static_cast<size_t>(v.ny())));
+            const int at = a == 0 ? i : a == 1 ? j : k;
+            // The solid cell beside the face: ahead of it, or behind.
+            float owner = at < n ? solid_.at(std::min(i, nx_ - 1), std::min(j, ny_ - 1), std::min(k, nz_ - 1)) : 0.0f;
+            if (owner < 0.5f && at > 0) owner = solid_.at(i - (a == 0), j - (a == 1), k - (a == 2));
+            if (owner < 0.5f) continue;  // the floor
+            const Collider& c = scene_.colliders[static_cast<size_t>(owner - 0.5f)];
+            const Vec3 p = worldAt(static_cast<float>(i) + (a == 0 ? 0.0f : 0.5f), static_cast<float>(j) + (a == 1 ? 0.0f : 0.5f),
+                                   static_cast<float>(k) + (a == 2 ? 0.0f : 0.5f));
+            blockedVel_[a][b] = c.velocityAt(p)[a];
         }
     }
     PoissonBoundary boundary;
@@ -138,7 +165,9 @@ void PyroSolver::enforceWalls() {
     }
     for (int a = 0; a < 3; ++a) {
         float* v = vel_[a].data();
-        for (const size_t f : blocked_[a]) v[f] = 0.0f;
+        const std::vector<size_t>& faces = blocked_[a];
+        const float* moving = blockedVel_[a].data();
+        for (size_t b = 0; b < faces.size(); ++b) v[faces[b]] = moving[b];
     }
 }
 
@@ -208,7 +237,7 @@ void PyroSolver::emit(float dt) {
         // Push the gas the source's way -- along its own axes -- and across it
         // a little, so a plume does not stay a column. A moving source drags
         // the gas along.
-        const Vec3 push = shape.turn().apply(e.velocity) + e.motionVelocityAt(time_);
+        const Vec3 push = shape.turn().apply(e.velocity) + e.motionVelocityAt(time_) + e.moving;
         const float speed = length(push);
         if (speed <= 0.0f) continue;
         const Vec3 along = push * (1.0f / speed);

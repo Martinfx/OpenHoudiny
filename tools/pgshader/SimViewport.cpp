@@ -69,14 +69,14 @@ bool SimWorkspace::placeOf(int id, Vec3& center, sim::Rotation& frame) const {
     if (!t || !t->handles.any()) return false;
     const sim::Handles& h = t->handles;
     if (h.center) {
-        center = v3(net_.param(id, h.center));
+        center = v3(net_.valueAt(id, h.center, static_cast<float>(current_)));
     } else {
         // The wind blows everywhere: its handle is where its arrows are drawn,
         // over the middle of the domain.
         center = Vec3(0.0f, 0.6f * sceneBox().size().y, 0.0f);
     }
-    frame = h.rotation ? sim::Rotation::fromEuler(v3(net_.param(id, h.rotation)))
-            : h.axis   ? alongY(v3(net_.param(id, h.axis)))
+    frame = h.rotation ? sim::Rotation::fromEuler(v3(net_.valueAt(id, h.rotation, static_cast<float>(current_))))
+            : h.axis   ? alongY(v3(net_.valueAt(id, h.axis, static_cast<float>(current_))))
                        : sim::Rotation();
     return true;
 }
@@ -136,12 +136,12 @@ SimWorkspace::Placed SimWorkspace::placedOf(int id) const {
     Placed p;
     p.id = id;
     const sim::Handles& h = sim::findNodeType(net_.node(id)->type)->handles;
-    if (h.center) p.center = net_.param(id, h.center);
-    if (h.rotation) p.rotation = net_.param(id, h.rotation);
-    if (h.axis) p.axis = net_.param(id, h.axis);
-    if (h.size) p.size = net_.param(id, h.size);
-    if (h.radius) p.radius = net_.value(id, h.radius);
-    if (h.height) p.height = net_.value(id, h.height);
+    if (h.center) p.center = net_.valueAt(id, h.center, static_cast<float>(current_));
+    if (h.rotation) p.rotation = net_.valueAt(id, h.rotation, static_cast<float>(current_));
+    if (h.axis) p.axis = net_.valueAt(id, h.axis, static_cast<float>(current_));
+    if (h.size) p.size = net_.valueAt(id, h.size, static_cast<float>(current_));
+    if (h.radius) p.radius = net_.valueAt(id, h.radius, static_cast<float>(current_))[0];
+    if (h.height) p.height = net_.valueAt(id, h.height, static_cast<float>(current_))[0];
     return p;
 }
 
@@ -157,25 +157,25 @@ void SimWorkspace::applyDrag(const GizmoDrag& drag) {
         switch (drag.mode) {
             case GizmoMode::Select: break;
             case GizmoMode::Move:
-                if (h.center) net_.setParam(p.id, h.center, pv(v3(p.center) + drag.move));
+                if (h.center) net_.setParamAt(p.id, h.center, static_cast<float>(current_), pv(v3(p.center) + drag.move));
                 break;
             case GizmoMode::Rotate:
                 if (h.rotation) {
                     const Vec3 before = v3(p.rotation);
-                    net_.setParam(p.id, h.rotation, pv(turn.then(sim::Rotation::fromEuler(before)).toEuler(before)));
+                    net_.setParamAt(p.id, h.rotation, static_cast<float>(current_), pv(turn.then(sim::Rotation::fromEuler(before)).toEuler(before)));
                 }
-                if (h.axis) net_.setParam(p.id, h.axis, pv(turn.apply(v3(p.axis))));
+                if (h.axis) net_.setParamAt(p.id, h.axis, static_cast<float>(current_), pv(turn.apply(v3(p.axis))));
                 // Several turn together, round their middle.
-                if (h.center && several) net_.setParam(p.id, h.center, pv(dragPivot_ + turn.apply(v3(p.center) - dragPivot_)));
+                if (h.center && several) net_.setParamAt(p.id, h.center, static_cast<float>(current_), pv(dragPivot_ + turn.apply(v3(p.center) - dragPivot_)));
                 break;
             case GizmoMode::Scale: {
                 const Vec3& s = drag.scale;
-                if (h.size) net_.setParam(p.id, h.size, pv(v3(p.size) * s));
+                if (h.size) net_.setParamAt(p.id, h.size, static_cast<float>(current_), pv(v3(p.size) * s));
                 if (h.radius) {
                     const float f = h.axis ? strongest(s.x, s.z) : strongest(strongest(s.x, s.y), s.z);
-                    net_.setParam(p.id, h.radius, {p.radius * f, 0.0f, 0.0f});
+                    net_.setParamAt(p.id, h.radius, static_cast<float>(current_), {p.radius * f, 0.0f, 0.0f});
                 }
-                if (h.height) net_.setParam(p.id, h.height, {p.height * s.y, 0.0f, 0.0f});
+                if (h.height) net_.setParamAt(p.id, h.height, static_cast<float>(current_), {p.height * s.y, 0.0f, 0.0f});
                 break;
             }
         }
@@ -187,14 +187,29 @@ void SimWorkspace::restoreDrag() {
         const sim::Node* n = net_.node(p.id);
         if (!n) continue;
         const sim::Handles& h = sim::findNodeType(n->type)->handles;
-        if (h.center) net_.setParam(p.id, h.center, p.center);
-        if (h.rotation) net_.setParam(p.id, h.rotation, p.rotation);
-        if (h.axis) net_.setParam(p.id, h.axis, p.axis);
-        if (h.size) net_.setParam(p.id, h.size, p.size);
-        if (h.radius) net_.setParam(p.id, h.radius, {p.radius, 0.0f, 0.0f});
-        if (h.height) net_.setParam(p.id, h.height, {p.height, 0.0f, 0.0f});
+        if (h.center) net_.setParamAt(p.id, h.center, static_cast<float>(current_), p.center);
+        if (h.rotation) net_.setParamAt(p.id, h.rotation, static_cast<float>(current_), p.rotation);
+        if (h.axis) net_.setParamAt(p.id, h.axis, static_cast<float>(current_), p.axis);
+        if (h.size) net_.setParamAt(p.id, h.size, static_cast<float>(current_), p.size);
+        if (h.radius) net_.setParamAt(p.id, h.radius, static_cast<float>(current_), {p.radius, 0.0f, 0.0f});
+        if (h.height) net_.setParamAt(p.id, h.height, static_cast<float>(current_), {p.height, 0.0f, 0.0f});
     }
     dragStart_.clear();
+}
+
+void SimWorkspace::keySelection() {
+    const float frame = static_cast<float>(current_);
+    int keyed = 0;
+    for (const int id : movable()) {
+        const sim::Handles& h = sim::findNodeType(net_.node(id)->type)->handles;
+        for (const char* name : {h.center, h.rotation, h.axis, h.size, h.radius, h.height}) {
+            if (!name) continue;
+            net_.setKey(id, name, frame, net_.valueAt(id, name, frame));
+            ++keyed;
+        }
+    }
+    if (keyed) setMessage("Keyed at frame " + std::to_string(current_) + ": move to another frame, move it, key again (K)");
+    else setMessage("Select an object, a source or a force to key where it is", true);
 }
 
 // --- picking --------------------------------------------------------------------------
@@ -205,7 +220,7 @@ int SimWorkspace::pickAt(const ViewCamera& cam, ImVec2 mouse) const {
     float best = 1e30f;
     int node = 0;
     // The objects and the sources, where the ray meets them.
-    for (const sim::Solid& s : compiled_.solids) {
+    for (const sim::Solid& s : compiled_.solidsAt(current_)) {
         float t = 0.0f;
         Vec3 n;
         if (s.body.instance().intersect(o, d, 0.0f, t, n) && t < best) {
@@ -617,9 +632,9 @@ void SimWorkspace::cameraFromView() {
         return;
     }
     const int id = compiled_.camera.node;
-    const sim::Camera c = gl::cameraFrom(renderer_.orbit, compiled_.camera);
-    net_.setParam(id, "center", pv(c.position));
-    net_.setParam(id, "rotation", pv(c.rotation));
+    const sim::Camera c = gl::cameraFrom(renderer_.orbit, compiled_.cameraAt(current_));
+    net_.setParamAt(id, "center", static_cast<float>(current_), pv(c.position));
+    net_.setParamAt(id, "rotation", static_cast<float>(current_), pv(c.rotation));
     recompile();
     setMessage(net_.node(id)->name + " sees what the view sees");
 }
@@ -638,7 +653,7 @@ void SimWorkspace::frameSelection() {
         any = true;
     };
     const std::set<int>& chosen = canvas_.selection();
-    for (const sim::Solid& s : compiled_.solids) {
+    for (const sim::Solid& s : compiled_.solidsAt(current_)) {
         if (!chosen.count(s.body.node)) continue;
         Vec3 a, b;
         s.body.instance().bounds(a, b);
@@ -689,7 +704,7 @@ void SimWorkspace::frameSelection() {
             const sim::Domain dm = sceneBox();
             grow(dm.origin(), dm.origin() + dm.size());
         }
-        for (const sim::Solid& s : compiled_.solids) {
+        for (const sim::Solid& s : compiled_.solidsAt(current_)) {
             Vec3 a, b;
             s.body.instance().bounds(a, b);
             grow(a, b);
@@ -822,6 +837,7 @@ void SimWorkspace::viewKeys(bool overView) {
         return;
     }
     if (io.KeyAlt || io.KeyShift) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_K, false)) keySelection();
     if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) tool_ = GizmoMode::Select;
     if (ImGui::IsKeyPressed(ImGuiKey_W, false)) tool_ = GizmoMode::Move;
     if (ImGui::IsKeyPressed(ImGuiKey_E, false)) tool_ = GizmoMode::Rotate;
@@ -893,7 +909,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     // viewport allows, the rest of the view round it.
     if (throughCamera_ && !compiled_.hasCamera) setThroughCamera(false);
     if (throughCamera_) {
-        const sim::Camera& c = compiled_.camera;
+        const sim::Camera& c = compiled_.cameraAt(current_);
         const float fw = static_cast<float>(w), fh = static_cast<float>(hh);
         float gw = fw, gh = fh;
         if (fw / fh > c.aspect()) gw = fh * c.aspect();
@@ -954,7 +970,7 @@ void SimWorkspace::viewport(ImVec2 size) {
         d->AddRectFilled(ImVec2(lo.x, gateLo_.y), ImVec2(gateLo_.x, gateHi_.y), dim);
         d->AddRectFilled(ImVec2(gateHi_.x, gateLo_.y), ImVec2(hi.x, gateHi_.y), dim);
         d->AddRect(gateLo_, gateHi_, IM_COL32(225, 226, 232, 170), 0.0f, 0, theme::px(1.0f));
-        const sim::Camera& c = compiled_.camera;
+        const sim::Camera& c = compiled_.cameraAt(current_);
         const sim::Node* n = net_.node(c.node);
         char label[128];
         std::snprintf(label, sizeof label, "%s  \xc2\xb7  %.0f mm  \xc2\xb7  %d \xc3\x97 %d", n ? n->name.c_str() : "camera",

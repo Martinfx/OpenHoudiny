@@ -14,6 +14,8 @@ node-based, nedestruktivní, headless-first.
 - **[docs/geometry.md](docs/geometry.md)** — geometrie v téže síti (uzly
   jako SOP v Houdini): display flag, viewport, tabulka atributů, geometrie
   jako tvar překážek a zdrojů, simulace zpátky jako body a objemy
+- **[docs/animation.md](docs/animation.md)** — klíčové snímky na libovolném
+  parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -60,7 +62,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 163 testů: 59 jádro, 25 shader graf, 79 simulace, voda, déšť, objekty, geometrie
+./build/pgtests            # 169 testů: 59 jádro, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
@@ -72,6 +74,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ./build/pgshader sim lakeside shot.png                # záběr kamerou: oheň, voda, déšť, vítr
 ./build/pgshader --example rock_garden            # geometrie v síti: kameny z kopií koule, déšť
 ./build/pgshader sim liquid_points points.png     # částice vody jako body obarvené wranglem
+./build/pgshader --example wake                   # animace: koule projíždí bazénem, vlna a brázda
 ./build/pgshader help                             # příkazy: list, gen, check, render, sim
 ```
 
@@ -122,7 +125,7 @@ editor se jí dívá (s rámečkem obrazu) a render i `pgshader sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a osmnácti příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a dvaceti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
@@ -136,6 +139,13 @@ v barvách `Cd`, body, čáry, objemy) a tabulka atributů ukáže body, rohy,
 primitiva, detail i objemy. Geometrie může být tvarem překážky, zdroje kouře
 nebo vody, a simulace se vracejí jako geometrie: částice vody, kapky deště
 a mřížky plynu jako body a objemy pro další uzly.
+
+**Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
+Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo
+zapisuje klíče. Síť se překládá snímek po snímku a řešiče si každý krok
+převezmou zdroje, síly a překážky toho snímku. Pohyblivé překážky předají
+plynu i vodě svou rychlost i rotaci: koule v bazénu dělá vlnu a brázdu,
+lopatka víří kouř, letící pochodeň nechává stopu.
 
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
 Python vazby, simulace těles a látek. Podrobně v

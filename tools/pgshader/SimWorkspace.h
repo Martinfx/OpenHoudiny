@@ -103,13 +103,20 @@ private:
 
     // --- the viewport -------------------------------------------------------------------
     std::shared_ptr<const sim::Frame> frameToShow() const;
+    /// The frame the viewport shows: the simulation's frame on screen, else
+    /// the play head's.
+    int shownFrame() const { return shown_ ? shown_->number : current_; }
+    /// The renderer draws what is there at `frame` -- the play head's: the
+    /// look, the objects where they are then -- whatever frame of the
+    /// simulation is ready to show with them.
+    void pose(int frame);
     void updateGuides();
     void drawGnomon(ImDrawList* d, ImVec2 corner) const;
     /// The size of a render: the camera's picture, or the viewport's.
     void shotSize(int& width, int& height) const;
-    /// Draws what a render shows -- through the camera, if there is one --
-    /// at twice `width` x `height`, the viewport's view kept.
-    void renderShot(int width, int height);
+    /// Draws what a render shows at `frame` -- through the camera, if there
+    /// is one -- at twice `width` x `height`, the viewport's view kept.
+    void renderShot(int width, int height, int frame);
     /// How far in front of `camera` the middle of the scene is: where an
     /// orbit through it turns round.
     float focusOf(const sim::Camera& camera) const;
@@ -147,6 +154,9 @@ private:
     Placed placedOf(int id) const;
     void applyDrag(const GizmoDrag& drag);
     void restoreDrag();
+    /// A key at the play head on where each selected node is -- its place,
+    /// turn and size (K).
+    void keySelection();
     /// The node under a point of the viewport: an object the ray meets, a
     /// source, or a guide line near it. 0 for none.
     int pickAt(const ViewCamera& cam, ImVec2 mouse) const;
@@ -212,6 +222,9 @@ private:
     bool guides_ = true;
     std::vector<int> guidesSelection_;
     uint64_t guidesRevision_ = ~0ull;
+    int guidesFrame_ = 0;
+    int posedFrame_ = 0;               ///< the frame the renderer draws the objects and the look at
+    uint64_t posedRevision_ = ~0ull;
     Vec3 framedSize_;  ///< the domain the camera was framed for, world units
     bool framed_ = false;
     bool throughCamera_ = false;  ///< the viewport looks through the Output's camera

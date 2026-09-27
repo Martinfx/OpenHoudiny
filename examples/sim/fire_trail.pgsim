@@ -1,0 +1,40 @@
+pgsim 1
+# A torch flies a loop through the air, leaving a trail of fire and smoke --
+# the source's place is animated, and the gas it gives off leaves with its
+# velocity -- while a paddle spins above, animated round y: the smoke that
+# rises into it is stirred round.
+node 1 pyro_source 2 torch 0 0
+  param fuel 22
+  param smoke 3
+  param heat 1.5
+  param velocity 0 0.2 0
+  param flicker 0.5
+  key center 1 smooth -0.65 0.35 0
+  key center 30 smooth 0 0.6 0.35
+  key center 60 smooth 0.65 0.35 0
+  key center 90 smooth 0 0.5 -0.35
+  key center 120 smooth -0.65 0.35 0
+node 2 object 1 paddle 0 120
+  param shape box
+  param center 0 0.95 0
+  param size 1 0.08 0.3
+  param color 0.3 0.28 0.26
+  key rotation 1 linear 0 0 0
+  key rotation 120 linear 0 720 0
+node 3 turbulence 1 turbulence 0 240
+node 4 pyro_solver 2 solver 250 60
+  param size 1.8 1.5 1.4
+  param buoyancy 0.9
+  param vorticity 0.8
+  param cooling 1.4
+node 5 volume_look 2 look 490 60
+  param smoke_color 0.22 0.2 0.19
+  param smoke_density 32
+  param fire_light 3
+node 6 output 2 output 720 60
+  param frames 120
+link 1.source -> 4.sources
+link 2.collider -> 4.colliders
+link 3.force -> 4.forces
+link 4.gas -> 5.gas
+link 5.look -> 6.look

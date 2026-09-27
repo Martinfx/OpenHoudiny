@@ -347,13 +347,27 @@ void SimWorkspace::redo() {
 void SimWorkspace::recompile() {
     if (net_.revision() == compiledRevision_) return;
     compiledRevision_ = net_.revision();
-    const sim::Look before = compiled_.look;
     compiled_ = net_.compile(folder(), &geometry_);
     if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
-    if (!(compiled_.look == before)) viewDirty_ = true;
-    renderer_.look = compiled_.look;
-    renderer_.setSolids(compiled_.solids);
     current_ = std::clamp(current_, 1, std::max(1, compiled_.frames));
+    posedRevision_ = ~0ull;
+    pose(current_);
+}
+
+void SimWorkspace::pose(int frame) {
+    if (frame == posedFrame_ && posedRevision_ == compiledRevision_) return;
+    const bool again = posedRevision_ != compiledRevision_;
+    posedFrame_ = frame;
+    posedRevision_ = compiledRevision_;
+    const sim::Look& look = compiled_.lookAt(frame);
+    if (!(renderer_.look == look)) {
+        renderer_.look = look;
+        viewDirty_ = true;
+    }
+    if (again || !compiled_.poses.empty()) {
+        renderer_.setSolids(compiled_.solidsAt(frame));
+        viewDirty_ = true;
+    }
 }
 
 std::shared_ptr<const sim::Frame> SimWorkspace::frameToShow() const {
@@ -400,6 +414,7 @@ void SimWorkspace::update(float dt) {
         viewDirty_ = true;
     }
     if (!shown_) renderer_.setDomain(runner_->domain());
+    pose(current_);
     updateGeometry();
     updateGuides();
 }
@@ -709,6 +724,9 @@ void SimWorkspace::duplicate(const std::vector<int>& nodes) {
         net_.rename(copy, net_.uniqueName(original.name));
         for (const auto& [name, value] : original.params) net_.setParam(copy, name, value);
         for (const auto& [name, text] : original.texts) net_.setText(copy, name, text);
+        for (const auto& [name, keys] : original.keys) {
+            for (const sim::Key& k : keys) net_.setKey(copy, name, k.frame, k.value, k.interp);
+        }
         net_.setBypass(copy, original.bypass);
         // In the world too, beside the original rather than inside it.
         const sim::Handles& h = sim::findNodeType(original.type)->handles;
@@ -889,12 +907,64 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
         for (const sim::ParamDef& p : type.params) {
             if (section != p.section) continue;
             ImGui::PushID(p.name);
-            sim::ParamValue v = net_.param(id, p.name);
+            // At the play head: an animated parameter's value there, and its key.
+            const float frame = static_cast<float>(current_);
+            sim::ParamValue v = net_.valueAt(id, p.name, frame);
             const bool changed = !net_.isDefault(id, p.name);
+            const std::vector<sim::Key>* keys = net_.keys(id, p.name);
+            const sim::Key* here = nullptr;
+            if (keys) {
+                for (const sim::Key& k : *keys) {
+                    if (std::fabs(k.frame - frame) <= 1e-4f) here = &k;
+                }
+            }
+            if (!sim::isText(p.kind)) {
+                const int click = ui::keyButton("key", !keys ? 0 : here ? 2 : 1,
+                                                here ? "A key at this frame: click to take it off, right click for more"
+                                                : keys ? "Animated: click to add a key at this frame (the value there), "
+                                                         "right click for more"
+                                                       : "Click to animate: a key at this frame");
+                if (click == 1) {
+                    if (here) net_.removeKey(id, p.name, frame);
+                    else net_.setKey(id, p.name, frame, v);
+                }
+                if (click == 2) ImGui::OpenPopup("keys");
+                if (ImGui::BeginPopup("keys")) {
+                    ImGui::TextDisabled("%s at frame %d", p.label, current_);
+                    ImGui::Separator();
+                    if (!here && ImGui::MenuItem("Set Key")) net_.setKey(id, p.name, frame, v);
+                    if (here) {
+                        for (const sim::Interp in : {sim::Interp::Smooth, sim::Interp::Linear, sim::Interp::Step}) {
+                            const char* names[3] = {"Smooth to the next key", "Linear to the next key", "Step: hold to the next key"};
+                            if (ImGui::MenuItem(names[static_cast<int>(in)], nullptr, here->interp == in)) {
+                                net_.setKey(id, p.name, frame, here->value, in);
+                            }
+                        }
+                        if (ImGui::MenuItem("Delete Key")) net_.removeKey(id, p.name, frame);
+                    }
+                    if (keys && ImGui::MenuItem("Delete All Keys", nullptr, false, true)) net_.clearKeys(id, p.name, frame);
+                    ImGui::EndPopup();
+                }
+                keys = net_.keys(id, p.name);  // the button may have changed them
+                here = nullptr;
+                if (keys) {
+                    for (const sim::Key& k : *keys) {
+                        if (std::fabs(k.frame - frame) <= 1e-4f) here = &k;
+                    }
+                }
+            }
             ui::rowLabel(p.label, changed, helpFor(p).c_str());
             if (ui::resetButton("reset", changed)) {
                 net_.resetParam(id, p.name);
                 v = net_.param(id, p.name);
+            }
+            // An animated field is tinted: amber on a key, green between.
+            const bool tinted = keys != nullptr;
+            if (tinted) {
+                const ImVec4 bg = here ? ImVec4(0.42f, 0.31f, 0.08f, 1.0f) : ImVec4(0.14f, 0.3f, 0.17f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, bg);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(bg.x * 1.25f, bg.y * 1.25f, bg.z * 1.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(bg.x * 1.4f, bg.y * 1.4f, bg.z * 1.4f, 1.0f));
             }
             bool edited = false;
             const std::string format = formatFor(p);
@@ -986,7 +1056,8 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                     break;
                 }
             }
-            if (edited) net_.setParam(id, p.name, v);
+            if (tinted) ImGui::PopStyleColor(3);
+            if (edited) net_.setParamAt(id, p.name, frame, v);
             ImGui::PopID();
         }
         ImGui::PopID();
@@ -1074,15 +1145,18 @@ void SimWorkspace::networkOverview() {
 
 void SimWorkspace::updateGuides() {
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
-    if (guidesRevision_ == net_.revision() && guidesSelection_ == chosen) return;
+    // Animated, the guides follow the frame shown.
+    const int frame = compiled_.poses.empty() ? 1 : current_;
+    if (guidesRevision_ == net_.revision() && guidesSelection_ == chosen && guidesFrame_ == frame) return;
     guidesRevision_ = net_.revision();
     guidesSelection_ = chosen;
+    guidesFrame_ = frame;
     gl::Lines lines;
     if (guides_) {
         // Not the camera looked through: its lines would start at the eye.
-        const sim::Camera* camera = compiled_.hasCamera && !throughCamera_ ? &compiled_.camera : nullptr;
-        lines = gl::sceneGuides(compiled_.ok ? &compiled_.world : nullptr, compiled_.solids, chosen, compiled_.solver,
-                                compiled_.liquidSolver, compiled_.rain, camera);
+        const sim::Camera* camera = compiled_.hasCamera && !throughCamera_ ? &compiled_.cameraAt(frame) : nullptr;
+        lines = gl::sceneGuides(compiled_.ok ? &compiled_.worldAt(frame) : nullptr, compiled_.solidsAt(frame), chosen,
+                                compiled_.solver, compiled_.liquidSolver, compiled_.rain, camera);
     }
     renderer_.setLines(lines);
     guideLines_ = std::move(lines);
@@ -1130,6 +1204,12 @@ void SimWorkspace::bottom(ImVec2 size) {
     s.playing = playing_;
     s.loop = loop_;
     s.fps = compiled_.ok ? 1.0f / compiled_.world.timeStep : 30.0f;
+    // The keys of the selected nodes, bright; the rest of the network's, dim.
+    for (const int id : canvas_.selection()) {
+        const std::vector<float> k = net_.keyFrames(id);
+        s.keys.insert(s.keys.end(), k.begin(), k.end());
+    }
+    s.otherKeys = net_.keyFrames();
     const ui::TimelineActions a = ui::timeline("timeline", s);
     if (a.togglePlay) playing_ = !playing_;
     if (a.toStart) current_ = 1;
@@ -1195,6 +1275,8 @@ void SimWorkspace::editMenu() {
     if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, !chosen.empty())) duplicate(chosen);
     if (ImGui::MenuItem("Delete", "Del", false, !chosen.empty())) removeNodes(chosen);
     if (ImGui::MenuItem("Bypass", "B", false, !chosen.empty())) toggleBypass(chosen);
+    if (ImGui::MenuItem("Key Selection", "K", false, !chosen.empty())) keySelection();
+    ImGui::SetItemTooltip("A key at the play head on where the selected nodes are: their place, turn and size");
     ImGui::Separator();
     if (ImGui::MenuItem("Arrange", "L")) canvas_.arrange();
     if (ImGui::MenuItem("Frame Network", "F")) canvas_.frame();
@@ -1359,12 +1441,15 @@ void SimWorkspace::shotSize(int& width, int& height) const {
     height = compiled_.hasCamera ? compiled_.camera.height : std::max(viewHeight_, 64);
 }
 
-void SimWorkspace::renderShot(int width, int height) {
+void SimWorkspace::renderShot(int width, int height, int frame) {
     // Through the camera, as it sees -- or as the viewport does -- without
     // the guides and the selection's highlight; twice the size, to be
     // averaged down.
     const gl::Orbit view = renderer_.orbit;
-    if (compiled_.hasCamera) renderer_.orbit = gl::orbitThrough(compiled_.camera, focusOf(compiled_.camera));
+    if (compiled_.hasCamera) {
+        const sim::Camera& camera = compiled_.cameraAt(frame);
+        renderer_.orbit = gl::orbitThrough(camera, focusOf(camera));
+    }
     renderer_.setLines({});
     renderer_.setHighlight({}, 0);
     renderer_.render(width * 2, height * 2);
@@ -1384,7 +1469,7 @@ float SimWorkspace::focusOf(const sim::Camera& camera) const {
 bool SimWorkspace::renderImage(const std::string& path) {
     int width = 0, height = 0;
     shotSize(width, height);
-    renderShot(width, height);
+    renderShot(width, height, current_);
     const std::vector<uint8_t> pixels = renderer_.readPixels(2);
     if (!gl::writePng(path, width, height, 3, pixels)) {
         setMessage(path + ": cannot write it", true);
@@ -1406,7 +1491,8 @@ bool SimWorkspace::renderFrames(const std::string& folder) {
         const auto frame = runner_->frame(f);
         if (!frame) break;
         renderer_.setFrame(*frame);
-        renderShot(width, height);
+        pose(f);
+        renderShot(width, height, f);
         char name[64];
         std::snprintf(name, sizeof name, "_%04d.png", f);
         if (!gl::writePng((fs::path(folder) / (stem + name)).string(), width, height, 3, renderer_.readPixels(2))) break;

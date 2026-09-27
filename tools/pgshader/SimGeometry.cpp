@@ -78,7 +78,7 @@ std::vector<Column> columnsOf(const Geometry& geo, AttrClass cls) {
 
 GeometryPtr SimWorkspace::geometryOf(int id) {
     if (!geometry_.contains(id)) return nullptr;
-    return geometry_.cook(id, shown_ ? shown_->number : current_, compiled_.world.timeStep);
+    return geometry_.cook(id, shownFrame(), compiled_.world.timeStep);
 }
 
 void SimWorkspace::updateGeometry() {

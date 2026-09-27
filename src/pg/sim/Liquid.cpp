@@ -244,9 +244,39 @@ Vec3 LiquidSolver::toCells(const Vec3& p) const {
     return {(p.x - o.x) * inv, (p.y - o.y) * inv, (p.z - o.z) * inv};
 }
 
+void LiquidSolver::setScene(const LiquidScene& scene) {
+    LiquidScene next = scene;
+    // The grid stays as it is.
+    next.solver.size = scene_.solver.size;
+    next.solver.resolution = scene_.solver.resolution;
+    next.solver.closedSides = scene_.solver.closedSides;
+    next = next.sanitized();
+    const bool walls = next.colliders != scene_.colliders;
+    scene_ = next;
+    noise_.resize(scene_.forces.size());
+    filled_.resize(scene_.sources.size(), 0);
+    if (walls) updateSolids();
+}
+
+Vec3 LiquidSolver::solidVelocity(const Vec3& p) const {
+    if (!movingSolid_) return {};
+    size_t nearest = 0;
+    float best = 1e30f;
+    for (size_t c = 0; c < shapes_.size(); ++c) {
+        const float d = shapes_[c].distance(p);
+        if (d < best) {
+            best = d;
+            nearest = c;
+        }
+    }
+    return scene_.colliders[nearest].velocityAt(p);
+}
+
 void LiquidSolver::updateSolids() {
     const int nx = n_[0], ny = n_[1], nz = n_[2];
     const float h = domain_.voxel;
+    shapes_.clear();
+    for (const Collider& c : scene_.colliders) shapes_.push_back(c.instance());
     // The colliders' distance at the grid's corners, cut off a few cells
     // away: only near a solid does it matter.
     const float far = 3.0f * h;
@@ -312,6 +342,23 @@ void LiquidSolver::updateSolids() {
             float sum = 0.0f;
             for (int q = 0; q < 8; ++q) sum += solidPhi_.at(i + (q & 1), j + ((q >> 1) & 1), k + (q >> 2));
             solidCell_[phi_.index(i, j, k)] = sum < 0.0f ? 1 : 0;
+        });
+    }
+    // Moving solids: on each face they cover, the velocity of the nearest
+    // one there -- what the water next to it is pushed with.
+    movingSolid_ = anySolid_ && std::any_of(scene_.colliders.begin(), scene_.colliders.end(),
+                                            [](const Collider& c) { return c.moves(); });
+    for (int a = 0; a < 3; ++a) {
+        solidVel_[a] = movingSolid_ ? Grid(nx + (a == 0), ny + (a == 1), nz + (a == 2), 0.0f) : Grid();
+        if (!movingSolid_) continue;
+        forEachCell(solidVel_[a], [&](int i, int j, int k) {
+            if (open_[a].at(i, j, k) >= 1.0f) return;
+            const int f = a == 0 ? i : a == 1 ? j : k;
+            if (a == 1 && f == 0) return;  // the floor
+            if (a != 1 && closedSides && (f == 0 || f == n_[a])) return;  // a wall
+            const Vec3 p = worldAt(static_cast<float>(i) + (a == 0 ? 0.0f : 0.5f), static_cast<float>(j) + (a == 1 ? 0.0f : 0.5f),
+                                   static_cast<float>(k) + (a == 2 ? 0.0f : 0.5f));
+            solidVel_[a].at(i, j, k) = solidVelocity(p)[a];
         });
     }
 }
@@ -449,7 +496,7 @@ void LiquidSolver::emit() {
             filled_[s] = 1;
         }
         const ShapeInstance shape = src.instance();
-        const Vec3 jet = shape.turn().apply(src.velocity);
+        const Vec3 jet = shape.turn().apply(src.velocity) + src.moving;
         Vec3 lo, hi;
         shape.bounds(lo, hi);
         const Vec3 a = toCells(lo), b = toCells(hi);
@@ -661,9 +708,15 @@ void LiquidSolver::project(float dt) {
             rhs_.data()[c] = 0.0f;
             return;
         }
-        const float out = open_[0].at(i + 1, j, k) * vel_[0].at(i + 1, j, k) - open_[0].at(i, j, k) * vel_[0].at(i, j, k) +
-                          open_[1].at(i, j + 1, k) * vel_[1].at(i, j + 1, k) - open_[1].at(i, j, k) * vel_[1].at(i, j, k) +
-                          open_[2].at(i, j, k + 1) * vel_[2].at(i, j, k + 1) - open_[2].at(i, j, k) * vel_[2].at(i, j, k);
+        // Through the open part of a face the water's velocity, through the
+        // rest the solid's (Batty, Bertails and Bridson).
+        auto flux = [&](int a, int fi, int fj, int fk) {
+            const float o = open_[a].at(fi, fj, fk);
+            const float u = o * vel_[a].at(fi, fj, fk);
+            return movingSolid_ ? u + (1.0f - o) * solidVel_[a].at(fi, fj, fk) : u;
+        };
+        const float out = flux(0, i + 1, j, k) - flux(0, i, j, k) + flux(1, i, j + 1, k) - flux(1, i, j, k) +
+                          flux(2, i, j, k + 1) - flux(2, i, j, k);
         rhs_.data()[c] = -(h / dt) * out;
     });
     pressureSolver_.setSystem(cells_, open_, phi_);
@@ -681,8 +734,8 @@ void LiquidSolver::project(float dt) {
         forEachCell(v, [&](int i, int j, int k) {
             const size_t f = v.index(i, j, k);
             const float open = open_[a].at(i, j, k);
-            if (open <= 0.0f) {  // a wall: nothing through it
-                v.data()[f] = 0.0f;
+            if (open <= 0.0f) {  // a wall: nothing through it -- but what a moving solid carries
+                v.data()[f] = movingSolid_ ? solidVel_[a].data()[f] : 0.0f;
                 valid[f] = 0;
                 return;
             }
@@ -819,7 +872,7 @@ void LiquidSolver::advect(float dt) {
                     normal = normalize(normal);
                     if (length(normal) > 0.5f) {
                         x = x + normal * (margin - d);
-                        const float into = dot(v, normal);
+                        const float into = dot(v - solidVelocity(x), normal);
                         if (into < 0.0f) v = v - normal * into;
                     }
                 }
