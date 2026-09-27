@@ -27,6 +27,10 @@ namespace pg::sim {
 struct DisplayGeometry {
     /// Nine floats a corner, three corners a triangle: position, normal, colour.
     std::vector<float> triangles;
+    /// Three floats a corner of `triangles`: its point's velocity v, world
+    /// units a second -- what motion blur needs. Empty when the points have
+    /// no v.
+    std::vector<float> velocities;
     /// Seven floats a dot: position, colour, radius -- world units; 0 for a
     /// dot a few pixels wide.
     std::vector<float> dots;

@@ -127,13 +127,20 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots) {
         const AttributeArray* N = geo.points().find("N");
         const bool pointNormals = N && N->type() == AttrType::Vec3 && N->size() == points;
         if (!pointNormals) normals = cornerNormals(std::vector<Vec3>(P.begin(), P.end()), tris);
+        const AttributeArray* v = geo.points().find("v");
+        const bool moving = v && v->type() == AttrType::Vec3 && v->size() == points;
         d.triangles.reserve(tris.size() * 27);
+        if (moving) d.velocities.reserve(tris.size() * 9);
         for (size_t t = 0; t < tris.size(); ++t) {
             for (int c = 0; c < 3; ++c) {
                 const uint32_t p = tris[t][static_cast<size_t>(c)];
                 Vec3 n = pointNormals ? N->read<Vec3>()[p] : normals[t * 3 + static_cast<size_t>(c)];
                 const Vec3 col = cornerColor(owner[t], corners[t][static_cast<size_t>(c)], p);
                 d.triangles.insert(d.triangles.end(), {P[p].x, P[p].y, P[p].z, n.x, n.y, n.z, col.x, col.y, col.z});
+                if (moving) {
+                    const Vec3 w = v->read<Vec3>()[p];
+                    d.velocities.insert(d.velocities.end(), {w.x, w.y, w.z});
+                }
                 grow(d, P[p]);
             }
         }

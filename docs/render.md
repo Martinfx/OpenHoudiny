@@ -4,7 +4,9 @@ Záběr jde ven jako obrázek PNG, jako očíslovaná sekvence PNG, nebo rovnou
 jako **video**: `.avi` (Motion JPEG) zapíše program sám, bez čehokoli
 dalšího; `.mp4`, `.mov`, `.mkv` (H.264), `.webm` (VP9) a `.gif` zapíše přes
 **ffmpeg**, když je nainstalovaný. Totéž umí editor i příkazová řádka,
-pro simulace i pro náhled shaderu.
+pro simulace i pro náhled shaderu. Pro compositing jde snímek do **EXR**:
+v lineárním světle a s průchody — hloubkou, vektory pohybu a maskami
+([§4](#4-exr-pro-compositing)).
 
 ![Editor: render videa běží -- okno s průběhem, odhadem času a tlačítkem Stop](img/editor-render.png)
 
@@ -15,6 +17,7 @@ pro simulace i pro náhled shaderu.
 ./build/prototype sim campfire fire.avi             # totéž bez ffmpeg: Motion JPEG
 ./build/prototype sim lakeside shot.mp4 --every 2   # každý druhý snímek, 15 fps
 ./build/prototype sim campfire fire.png             # poslední snímek jako PNG
+./build/prototype sim wall_collapse zed.exr --every 1   # každý snímek jako EXR s průchody
 ./build/prototype render examples/shaders/fire.pgsg fire.mp4 --frames 90   # animovaný shader
 ```
 
@@ -23,6 +26,7 @@ V editoru:
 | akce | kde |
 |---|---|
 | snímek na obrazovce jako PNG | **File › Render Image…**, nebo ikona fotoaparátu v záhlaví viewportu |
+| snímek na obrazovce jako EXR s průchody | **File › Render Image…**, přípona `.exr` |
 | všechny snímky jako PNG | **File › Render Frames…** (složka) |
 | celý záběr jako video | **File › Render Video…**, nebo ikona filmu v záhlaví viewportu |
 | animovaný náhled shaderu | v síti Shaders **File › Save Preview Video…** (5 s, 720 × 720) |
@@ -81,7 +85,35 @@ a blízko originálu (test `videos_decode_to_what_went_in_where_ffmpeg_is`);
 JPEG má na skutečném renderu PSNR 44,6 dB a stejné číslo jako kodér JPEG
 v ffmpeg na umělém obrázku s ostrými hranami (26,0 dB).
 
-## 4. Příkazová řádka
+## 4. EXR pro compositing
+
+`prototype sim záběr OUT.exr` zapíše snímky do OpenEXR (s `--every K` každý
+K-tý jako `OUT_0001.exr`…, s `--start` a `--end` jen díl záběru). Zapisovač
+je vlastní, bez knihovny; soubory čte knihovna OpenEXR 3.5 kanál po kanálu
+stejně, 32bitové bit po bitu.
+
+| kanál | co v něm je |
+|---|---|
+| `R`, `G`, `B`, `A` | obraz v **lineárním světle** (half float): expozice ano, tónová křivka a gama ne, takže světlé nebe a prach proti slunci jdou nad 1. `A` je 1 — obraz je celý, s pozadím |
+| `Z` | hloubka nejbližšího povrchu podél osy pohledu, v metrech (float); kde povrch není (nebe), nekonečno |
+| `forward.u`, `forward.v` | **vektory pohybu**: o kolik pixelů se bod posune do dalšího snímku, doprava a nahoru (jako v Nuke). Kusy a zobrazená geometrie podle rychlosti svých bodů `v`, všechno podle pohybu kamery |
+| `mask.floor`, `mask.geometry`, `mask.pieces`, `mask.objects`, `mask.water` | kolik z pixelu je podlaha, zobrazená geometrie, kusy RBD, objekty, voda: pokrytí z vyhlazení 2 × 2 |
+| `mask.smoke` | kolik z toho, co je za kouřem, kouř zakrývá: jeho neprůhlednost |
+
+Jak se to počítá: renderer kreslí v režimu průchodů do 16bitových floatů
+a vedle obrazu do dvou dalších cílů (MRT). Povrchy se nejdřív rasterizují
+do G-bufferu a každý roh trojúhelníku dostane polohu teď a v příštím
+snímku (bod posunutý o `v` × délka snímku, promítnutý kamerou příštího
+snímku). Rozdíl po pixelech je vektor pohybu. Hlavní průchod pak k obrazu
+zapíše hloubku, neprůhlednost kouře a to, co je v pixelu za povrch.
+Podlahu, objekty, vodu a nebe posouvá jen kamera. Drť a déšť jsou
+v obraze, ale ne v hloubce, maskách a pohybu.
+
+Ověřeno: kamera jedoucí doprava posune nehybnou scénu doleva
+(`forward.u` −0,64 px), kamera jedoucí nahoru dolů (`forward.v` −0,59 px, blízká
+podlaha −3 px); obraz bez průchodů je pixel po pixelu stejný jako předtím.
+
+## 5. Příkazová řádka
 
 ```
 prototype sim    NETWORK|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] ...
@@ -120,7 +152,7 @@ sim: no OpenGL context to draw with -- EGL: no EGL context without a window
 `-` místo jména obrázku kreslení vynechá úplně (jen cache a export,
 viz [cache.md](cache.md)).
 
-## 5. Když se obrázek „neuloží“
+## 6. Když se obrázek „neuloží“
 
 - Podívejte se na oznámení ve viewportu nebo na terminál: úspěch vypíše
   celou cestu (`prototype: rendered /home/…/campfire.png (875 x 828)`),
@@ -132,7 +164,7 @@ viz [cache.md](cache.md)).
 - Render Frames do existující složky: otevřít ji (dvojklik) a **Choose**
   bez jména, nebo na ni jednou kliknout a Choose.
 
-## 6. V kódu
+## 7. V kódu
 
 | soubor | co dělá |
 |---|---|
@@ -141,8 +173,18 @@ viz [cache.md](cache.md)).
 | `tools/prototype/Offscreen.h` | kontext bez okna pro `render` a `sim`: EGL, nebo skryté okno GLFW |
 | `tools/prototype/RenderJob.h` | render po snímcích na pozadí editoru, okno s průběhem a Stop |
 | `tests/test_video.cpp` | 5 testů: segmenty JPEG, struktura AVI a index, zlomky frekvence, chyby, dekódování přes ffmpeg |
+| `src/pg/io/Exr.h` | `formatExr`, `writeExr`: OpenEXR 2, řádky, half i float, RLE jako OpenEXR, textové a maticové atributy |
+| `src/pg/gl/Volume.h` | `VolumeRenderer::passes`, `readPasses`, `writePassesExr`: průchody a jejich zápis |
+| `tests/test_exr.cpp` | 3 testy: hlavička a řádky podle rozvržení OpenEXR a hodnoty zpět vlastním čtením RLE, běhy se zmenší a šum zůstane, chyby |
 
-## 7. Omezení
+## 8. Omezení
+
+- EXR je komprimované jen RLE: masky a nebe se zmenší hodně, obraz,
+  hloubka a pohyb málo — 1280 × 720 má asi 15 MB. ZIP (deflate) zatím ne.
+- Sekvence do EXR jen z příkazové řádky; editor zapíše do EXR jeden snímek
+  (Render Image).
+- Kouř nemá vektory pohybu ani hloubku (rychlost plynu snímek nedrží).
+- Kryptomatte ne: masky jsou po druzích povrchu, ne po objektech.
 
 - Motion JPEG je velký (každý snímek celý): zhruba desetkrát víc než H.264.
 - Zvuk žádný.

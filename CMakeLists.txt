@@ -53,6 +53,7 @@ add_library(pgcore
   src/pg/io/Ply.cpp
   src/pg/io/Export.cpp
   src/pg/io/Usda.cpp
+  src/pg/io/Exr.cpp
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
@@ -408,6 +409,7 @@ add_executable(pgtests
   tests/test_sops.cpp
   tests/test_export.cpp
   tests/test_usd.cpp
+  tests/test_exr.cpp
   tests/test_video.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)

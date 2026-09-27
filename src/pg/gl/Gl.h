@@ -56,6 +56,7 @@ inline constexpr GLenum RED = 0x1903, RG = 0x8227, RGB = 0x1907, R16F = 0x822D, 
 inline constexpr GLenum RGBA32F = 0x8814, TEXTURE2 = 0x84C2, TEXTURE3 = 0x84C3, TEXTURE4 = 0x84C4, TEXTURE5 = 0x84C5,
                          TEXTURE6 = 0x84C6, TEXTURE7 = 0x84C7, R32F = 0x822E;
 inline constexpr GLenum RG8 = 0x822B, TEXTURE8 = 0x84C8, TEXTURE9 = 0x84C9, TEXTURE10 = 0x84CA;
+inline constexpr GLenum RGBA16F = 0x881A, COLOR_ATTACHMENT1 = 0x8CE1, COLOR_ATTACHMENT2 = 0x8CE2;
 
 // name, return type, parameters -- one list drives the struct and the loader.
 #define PG_GL_FUNCTIONS(X)                                                                         \
@@ -72,6 +73,8 @@ inline constexpr GLenum RG8 = 0x822B, TEXTURE8 = 0x84C8, TEXTURE9 = 0x84C9, TEXT
     X(GetString, const GLubyte*, (GLenum))                                                         \
     X(PixelStorei, void, (GLenum, GLint))                                                          \
     X(ReadPixels, void, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*))                   \
+    X(ReadBuffer, void, (GLenum))                                                                  \
+    X(DrawBuffers, void, (GLsizei, const GLenum*))                                                 \
     X(CreateShader, GLuint, (GLenum))                                                              \
     X(ShaderSource, void, (GLuint, GLsizei, const GLchar* const*, const GLint*))                   \
     X(CompileShader, void, (GLuint))                                                               \
@@ -105,6 +108,8 @@ inline constexpr GLenum RG8 = 0x822B, TEXTURE8 = 0x84C8, TEXTURE9 = 0x84C9, TEXT
     X(DeleteBuffers, void, (GLsizei, const GLuint*))                                               \
     X(EnableVertexAttribArray, void, (GLuint))                                                     \
     X(VertexAttribPointer, void, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))         \
+    X(DisableVertexAttribArray, void, (GLuint))                                                    \
+    X(VertexAttrib3f, void, (GLuint, GLfloat, GLfloat, GLfloat))                                   \
     X(DrawElements, void, (GLenum, GLsizei, GLenum, const void*))                                  \
     X(DrawArrays, void, (GLenum, GLint, GLsizei))                                                  \
     X(GenTextures, void, (GLsizei, GLuint*))                                                       \

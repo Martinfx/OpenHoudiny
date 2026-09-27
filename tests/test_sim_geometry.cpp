@@ -587,6 +587,20 @@ TEST(sim_geometry_is_drawn_in_its_colours) {
     for (size_t i = 0; i < 4; ++i) N[i] = Vec3(0, 0, -1);
     d = displayOf(geo);
     CHECK(near(Vec3(d.triangles[3], d.triangles[4], d.triangles[5]), Vec3(0, 0, -1)));
+    // No velocity v: none for the corners; with one, each corner its point's
+    // -- what the passes' motion vectors come from.
+    CHECK(d.velocities.empty());
+    auto V = geo.points().create("v", AttrType::Vec3).write<Vec3>();
+    for (size_t i = 0; i < 4; ++i) V[i] = Vec3(static_cast<float>(i), 0, 0);
+    d = displayOf(geo);
+    CHECK_EQ(d.velocities.size(), d.triangles.size() / 3);
+    for (size_t c = 0; c < d.triangleCount() * 3; ++c) {
+        const Vec3 at(d.triangles[9 * c], d.triangles[9 * c + 1], d.triangles[9 * c + 2]);
+        const Vec3 v(d.velocities[3 * c], d.velocities[3 * c + 1], d.velocities[3 * c + 2]);
+        for (size_t i = 0; i < 4; ++i) {
+            if (near(at, P[i])) CHECK(near(v, V[i]));  // the corner's point's
+        }
+    }
 
     // An open polyline: its segments; a point no primitive uses: a dot, as
     // wide as its pscale.

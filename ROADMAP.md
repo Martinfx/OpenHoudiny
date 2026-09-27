@@ -184,8 +184,8 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   ze skriptu; atributy jako pole numpy bez kopie.
 - **Farma**: ✅ rozsah snímků (`--start`, `--end`) pro render i export
   z cache; simulace přerušená uprostřed jde dopočítat z uloženého stavu.
-- **EXR**: náhledový render do lineárního EXR s hloubkou, vektory pohybu
-  a maskami — pro previs a compositing.
+- ✅ **EXR**: náhledový render do lineárního EXR s hloubkou, vektory pohybu
+  a maskami — pro previs a compositing ([docs/render.md](docs/render.md#4-exr-pro-compositing)).
 
 **Hotovo, když:** scéna z kroku 2 jde postavit a spočítat čistě
 z Pythonu; výsledek se otevře v Blenderu a v usdview jako USD (kusy, drť,

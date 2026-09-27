@@ -9,7 +9,7 @@
 //                    [--spirv-val PATH] [--library FILE]...
 //   prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                    [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..256]
+//   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..256]
 //                    [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
 //                    [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
 //                    [--export PATH] [--export-node NODE]
@@ -31,7 +31,9 @@
 // frame, or with --every K frames K, 2K, 3K..., each file numbered by its
 // frame, or every frame into a video, with the renderer of the editor's
 // viewport; --start S draws and exports from frame S on -- a farm machine's
-// share of a shot read from a cache. --set changes a
+// share of a shot read from a cache. OUT.exr: the pictures in linear light
+// with their passes for compositing -- depth, motion vectors, masks
+// (gl::writePassesExr). --set changes a
 // parameter first: NODE.PARAM=VALUE, or PARAM=VALUE when a single node has
 // that parameter; a VALUE that is not a value is an expression ($F, ch()),
 // and NODE.PARAM.x=... sets one component of a vector. --cache DIR writes every frame to a folder, and
@@ -72,6 +74,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -658,6 +661,7 @@ std::string numbered(const std::string& path, int frame) {
 }
 #endif
 
+
 /// `sim NETWORK OUT.png`, and `pyro OUT.png --preset NAME`: the same, with an example.
 int simulate(const Options& o, const std::string& network, const std::string& outPath) {
     const char* cmd = o.command.c_str();
@@ -779,6 +783,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
 
     // A video: every frame -- or every K-th -- into one file.
     const bool video = pictures && pg::io::isVideoPath(outPath);
+    // An EXR: the picture in linear light and its passes, a file a frame.
+    std::string outExt = fs::path(outPath).extension().string();
+    for (char& ch : outExt) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    const bool exr = pictures && outExt == ".exr";
     std::unique_ptr<pg::io::VideoWriter> movie;
     const double videoFps = 1.0 / (static_cast<double>(c.world.timeStep) * std::max(o.every, 1));
     Offscreen context;
@@ -943,7 +951,27 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             const std::string why = geometry.error(c.display);
             if (!why.empty()) std::fprintf(stderr, "%s: %s: %s\n", cmd, net.node(c.display)->name.c_str(), why.c_str());
         }
+        if (exr) {
+            // The passes: motion to the next frame's camera, when it moves.
+            volume->passes.on = true;
+            volume->passes.frameTime = world.timeStep;
+            volume->passes.moving = throughCamera && !c.poses.empty();
+            if (volume->passes.moving) {
+                const sim::Camera& next = c.cameraAt(f + 1);
+                volume->passes.next = gl::orbitThrough(next, 1.0f);
+            }
+        }
         volume->render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
+        if (exr) {
+            last = o.every > 0 ? numbered(outPath, f) : outPath;
+            if (!gl::writePassesExr(*volume, last, "prototype sim " + network + ", frame " + std::to_string(f), error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
+            rendering += ms(t);
+            ++images;
+            continue;
+        }
         const std::vector<uint8_t> pixels = volume->readPixels(2);
         if (movie) {
             if (!movie->add(pixels.data(), error)) {
@@ -1154,13 +1182,14 @@ void printUsage(std::FILE* out) {
                  "  prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
                  "                   [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
                  "                   a video: --frames of the preview animated, 30 a second (90)\n"
-                 "  prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--start N] [--every K]\n"
+                 "  prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K]\n"
                  "                   [--resolution 16..256]\n"
                  "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
                  "                   [--export PATH] [--export-node NODE]\n"
                  "                   simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                   frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
+                 "                   OUT.exr: linear light and passes for compositing (Z, forward.u/v, mask.*);\n"
                  "                   a video gets every frame (every K-th): .avi always, .mp4 .mov .mkv .webm .gif\n"
                  "                   when ffmpeg is installed;\n"
                  "                   through the network's camera at its size, unless --yaw, --pitch or --distance\n"

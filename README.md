@@ -41,7 +41,8 @@ okna.
   kamera, slunce a obloha
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
-  pozadí editoru s průběhem
+  pozadí editoru s průběhem; EXR v lineárním světle s hloubkou, vektory
+  pohybu a maskami pro compositing
 
 > **Jméno.** Projekt se jmenuje **Prototype**; pracovní název byl příliš
 > podobný ochranné známce SideFX. Jmenný prostor v kódu zůstává neutrální
@@ -91,7 +92,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 260 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 89 simulace, voda, déšť, geometrie, animace, 12 cache a export, 8 USD, 5 video
+./build/pgtests            # 263 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 89 simulace, voda, déšť, geometrie, animace, 12 cache a export, 8 USD, 3 EXR, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -241,9 +242,13 @@ knihovnou, všechny validátory bez nálezu ([docs/usd.md](docs/usd.md)).
 závislosti, `.mp4`, `.mov`, `.mkv`, `.webm` a `.gif` přes ffmpeg. Editor
 renderuje po snímcích na pozadí s oknem průběhu, počká na simulaci a nakonec
 nabídne soubor otevřít; příkazy `sim` a `render` kreslí bez okna přes EGL,
-a když EGL nejde, přes skryté okno.
+a když EGL nejde, přes skryté okno. Pro compositing jde snímek do **EXR**
+(vlastní zapisovač, RLE): obraz v lineárním světle nad bílou, hloubka `Z`,
+vektory pohybu `forward.u/v` (kusy podle své rychlosti, vše podle kamery)
+a masky podlahy, geometrie, kusů, objektů, vody a kouře
+([docs/render.md](docs/render.md#4-exr-pro-compositing)).
 
-Vědomě chybí (zatím): USD, Alembic, čtení VDB, JIT, packed primitives,
+Vědomě chybí (zatím): čtení USD, Alembic, čtení VDB, JIT, packed primitives,
 Python vazby, simulace těles a látek — pořadí v
 [ROADMAP.md §4](ROADMAP.md#4-další-kroky). Podrobně v
 [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).

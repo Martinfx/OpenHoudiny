@@ -1,10 +1,12 @@
 #include "pg/gl/Volume.h"
 
+#include "pg/io/Exr.h"
 #include "pg/sim/Display.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace pg::gl {
 namespace {
@@ -308,7 +310,16 @@ void main() {
 
 const char* kViewFragment = R"(
 in vec2 v_ndc;
-out vec4 o_color;
+layout(location = 0) out vec4 o_color;
+// The passes, when they are drawn (VolumeRenderer::Passes): the depth of
+// the surface along the view, how much of what is behind the smoke hides,
+// what the surface is; and how far the pixel moves by the next frame.
+layout(location = 1) out vec4 o_aux;
+layout(location = 2) out vec4 o_motion;
+uniform bool u_linear;         // light as it is: no tone curve, no gamma
+uniform mat4 u_nextViewProj;   // the camera of the next frame
+uniform vec2 u_viewport;       // pixels
+uniform sampler2D u_meshAux;   // the meshes' motion (pixels) and what each is
 
 uniform vec3 u_eye, u_right, u_up, u_forward;
 uniform vec2 u_tanHalfFov;
@@ -716,10 +727,14 @@ void main() {
     // geometry's colour, 8 bits a channel.
     bool displayed = false;
     vec3 displayColor = vec3(0.0);
+    bool fromMesh = false;
+    vec4 meshAux = vec4(0.0);
     if (u_hasMeshes) {
         vec4 g = texelFetch(u_meshG, ivec2(gl_FragCoord.xy), 0);
         if (g.w > 0.0 && g.w < tSolid) {
             tSolid = g.w;
+            fromMesh = true;
+            meshAux = texelFetch(u_meshAux, ivec2(gl_FragCoord.xy), 0);
             normal = octDecode(g.xy);
             displayed = g.z < -0.5;
             if (displayed) {
@@ -735,15 +750,21 @@ void main() {
     vec3 surface = vec3(0.0);
     float cover = 0.0;  // how much of the pixel the solid covers
     float tEnd = 1e30;
+    // What the surface is, for the masks: 0 nothing, 1 the floor, 2 the
+    // displayed geometry, 3 the pieces, 4 an object, 5 the water.
+    float surfaceClass = 0.0;
     if (tSolid < tFloor && tSolid < 1e29) {
         tEnd = tSolid;
         surface = displayed ? shadeSurface(u_eye + dir * tSolid, normal, dir, displayColor, 0.0)
                             : shadeSolid(u_eye + dir * tSolid, normal, dir, which);
         cover = 1.0;
+        surfaceClass = fromMesh && meshAux.w > 0.0 ? meshAux.z : 4.0;
     } else if (u_floor && down) {
         tEnd = tFloor;
+        fromMesh = false;
         float away = length(floorPoint.xz - u_floorCenter.xz) / u_floorRadius;
         cover = 1.0 - smoothstep(0.35, 1.0, away);
+        surfaceClass = cover > 0.5 ? 1.0 : 0.0;
         if (cover > 0.0) {
             vec3 up = vec3(0.0, 1.0, 0.0);
             surface = wetten(shade(floorPoint, up, floorAlbedo(floorPoint.xz, pixel)), floorPoint, up, dir);
@@ -756,6 +777,8 @@ void main() {
             tEnd = tWater;
             surface = shadeWater(u_eye + dir * tWater, dir);
             cover = 1.0;
+            surfaceClass = 5.0;
+            fromMesh = false;
         }
     }
 
@@ -800,9 +823,17 @@ void main() {
             if (transmittance < 0.004) break;
         }
     }
-    vec3 colour = toneMap(u_exposure * (radiance + transmittance * cover * surface) +
-                          transmittance * (1.0 - cover) * background);
-    o_color = vec4(pow(colour, vec3(1.0 / 2.2)), 1.0);
+    vec3 colour = u_exposure * (radiance + transmittance * cover * surface) + transmittance * (1.0 - cover) * background;
+    o_color = u_linear ? vec4(colour, 1.0) : vec4(pow(toneMap(colour), vec3(1.0 / 2.2)), 1.0);
+    // The passes. The motion: of the point seen -- far off for the sky --
+    // as the camera moves; a mesh's as it moves too, from its buffer.
+    vec3 seen = u_eye + dir * min(tEnd, 1e5);
+    vec4 now = u_viewProj * vec4(seen, 1.0), next = u_nextViewProj * vec4(seen, 1.0);
+    vec2 motion = (next.xy / next.w - now.xy / now.w) * 0.5 * u_viewport;
+    if (fromMesh && meshAux.w > 0.0 && tEnd == tSolid) motion = meshAux.xy;
+    float depth = tEnd < 1e29 && cover > 0.5 ? tEnd * dot(dir, u_forward) : -1.0;  // -1: none
+    o_aux = vec4(depth, 1.0 - transmittance, surfaceClass, 1.0);
+    o_motion = vec4(motion, 0.0, 1.0);
 
     // The depth of the solid, for the guide lines drawn next.
     if (tEnd < 1e29) {
@@ -820,25 +851,31 @@ void main() {
 const char* kMeshVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;  // the mesh's own space
 layout(location = 1) in vec3 a_normal;
-uniform mat4 u_viewProj;
+uniform mat4 u_viewProj, u_nextViewProj;
 uniform vec3 u_center, u_axisX, u_axisY, u_axisZ;
 uniform vec3 u_scale;       // world units per mesh unit along each own axis
 uniform vec3 u_meshCenter;
 out vec3 v_world, v_normal;
+out vec4 v_now, v_next;     // where it is on the screen, and next frame: the camera's motion
 void main() {
     vec3 local = (a_position - u_meshCenter) * u_scale;
     v_world = u_center + u_axisX * local.x + u_axisY * local.y + u_axisZ * local.z;
     vec3 n = a_normal / u_scale;  // the inverse transpose of the stretch
     v_normal = u_axisX * n.x + u_axisY * n.y + u_axisZ * n.z;
     gl_Position = u_viewProj * vec4(v_world, 1.0);
+    v_now = gl_Position;
+    v_next = u_nextViewProj * vec4(v_world, 1.0);
 }
 )";
 
 const char* kMeshFragment = R"(#version 330 core
 in vec3 v_world, v_normal;
-out vec4 o_g;
+in vec4 v_now, v_next;
+layout(location = 0) out vec4 o_g;
+layout(location = 1) out vec4 o_aux;  // the passes: motion in pixels, and 4 -- an object
 uniform vec3 u_eye;
 uniform float u_index;
+uniform vec2 u_viewport;
 vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
 void main() {
     vec3 view = v_world - u_eye;
@@ -846,6 +883,7 @@ void main() {
     if (dot(n, view) > 0.0) n = -n;  // both sides: an open mesh shows its inside
     n /= abs(n.x) + abs(n.y) + abs(n.z);
     o_g = vec4(n.z >= 0.0 ? n.xy : octWrap(n.xy), u_index, length(view));
+    o_aux = vec4((v_next.xy / v_next.w - v_now.xy / v_now.w) * 0.5 * u_viewport, 4.0, 1.0);
 }
 )";
 
@@ -855,20 +893,29 @@ const char* kGeoVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec3 a_color;
-uniform mat4 u_viewProj;
+layout(location = 3) in vec3 a_velocity;  // world units a second
+uniform mat4 u_viewProj, u_nextViewProj;
+uniform float u_frameTime;                // seconds to the next frame
 out vec3 v_world, v_normal, v_color;
+out vec4 v_now, v_next;                   // on the screen now, and where it moves by the next frame
 void main() {
     v_world = a_position;
     v_normal = a_normal;
     v_color = a_color;
     gl_Position = u_viewProj * vec4(a_position, 1.0);
+    v_now = gl_Position;
+    v_next = u_nextViewProj * vec4(a_position + a_velocity * u_frameTime, 1.0);
 }
 )";
 
 const char* kGeoFragment = R"(#version 330 core
 in vec3 v_world, v_normal, v_color;
-out vec4 o_g;
+in vec4 v_now, v_next;
+layout(location = 0) out vec4 o_g;
+layout(location = 1) out vec4 o_aux;  // the passes: motion in pixels, and what it is
 uniform vec3 u_eye;
+uniform vec2 u_viewport;
+uniform float u_class;                // 2 the displayed geometry, 3 the pieces
 vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
 void main() {
     vec3 view = v_world - u_eye;
@@ -877,6 +924,7 @@ void main() {
     n /= abs(n.x) + abs(n.y) + abs(n.z);
     vec3 c = floor(clamp(v_color, 0.0, 1.0) * 255.0 + 0.5);
     o_g = vec4(n.z >= 0.0 ? n.xy : octWrap(n.xy), -1.0 - (c.r + c.g * 256.0 + c.b * 65536.0), length(view));
+    o_aux = vec4((v_next.xy / v_next.w - v_now.xy / v_now.w) * 0.5 * u_viewport, u_class, 1.0);
 }
 )";
 
@@ -924,6 +972,7 @@ in vec3 v_world;
 flat in uint v_seed;
 out vec4 o_color;
 uniform bool u_chips;      // chips of stone, not balls
+uniform bool u_linear;     // light as it is: no tone curve, no gamma
 uniform vec3 u_lightView;  // towards the sun, in the eye's frame: x right, y up, z back at the eye
 uniform vec3 u_light, u_sky;
 uniform float u_exposure;
@@ -1011,7 +1060,7 @@ void main() {
         seen = exp(-u_extinction * smoke * length(d) / float(steps));
     }
     vec3 lit = color * (u_light * sun * max(dot(n, u_lightView), 0.0) + u_sky * sky * (0.7 + 0.5 * n.y));
-    o_color = vec4(pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), seen);
+    o_color = vec4(u_linear ? u_exposure * lit : pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), seen);
 }
 )";
 
@@ -1436,8 +1485,11 @@ VolumeRenderer::~VolumeRenderer() {
     for (GLuint a : {geoVao_, dotVao_, curveVao_}) {
         if (a) gl_.DeleteVertexArrays(1, &a);
     }
-    for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_}) {
+    for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_, geoVelocityBuffer_}) {
         if (b) gl_.DeleteBuffers(1, &b);
+    }
+    for (GLuint t : {auxTex_[0], auxTex_[1], gAux_}) {
+        if (t) gl_.DeleteTextures(1, &t);
     }
     if (rainVao_) gl_.DeleteVertexArrays(1, &rainVao_);
     if (rainBuffer_) gl_.DeleteBuffers(1, &rainBuffer_);
@@ -1650,7 +1702,7 @@ void VolumeRenderer::drawRain(int width, int height, const Vec3& eye) {
     // through; as the rest, then tone mapped.
     const Vec3 sky = s.skyColor * s.skyIntensity, sun = s.lightColor * s.lightIntensity;
     const Vec3 lit = s.rainColor * ((sky * 3.0f + sun * 0.25f) * s.exposure);
-    const Vec3 c = toScreen(lit);
+    const Vec3 c = passes.on ? lit : toScreen(lit);  // the passes: light as it is
     gl_.Enable(DEPTH_TEST);
     gl_.DepthFunc(LEQUAL);
     gl_.DepthMask(0);
@@ -1747,6 +1799,7 @@ void VolumeRenderer::syncMeshes() {
 }
 
 void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
+    const bool resized = width != gWidth_ || height != gHeight_;
     if (!gFbo_) {
         gl_.GenFramebuffers(1, &gFbo_);
         gl_.GenTextures(1, &gTex_);
@@ -1767,7 +1820,20 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
         gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, gTex_, 0);
         gl_.FramebufferRenderbuffer(FRAMEBUFFER, DEPTH_ATTACHMENT, RENDERBUFFER, gDepth_);
     }
+    // The passes: each mesh's motion to the next frame and what it is, beside.
+    if (passes.on && (!gAux_ || resized || !gPasses_)) {
+        if (!gAux_) gl_.GenTextures(1, &gAux_);
+        gl_.BindTexture(TEXTURE_2D, gAux_);
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), width, height, 0, RGBA, FLOAT, nullptr);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, 0x2600);  // NEAREST
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, 0x2600);
+        gl_.BindTexture(TEXTURE_2D, 0);
+    }
     gl_.BindFramebuffer(FRAMEBUFFER, gFbo_);
+    gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT1, TEXTURE_2D, passes.on ? gAux_ : 0, 0);
+    const GLenum buffers[2] = {COLOR_ATTACHMENT0, COLOR_ATTACHMENT1};
+    gl_.DrawBuffers(passes.on ? 2 : 1, buffers);
+    gPasses_ = passes.on;
     gl_.Viewport(0, 0, width, height);
     gl_.ClearColor(0.0f, 0.0f, 0.0f, -1.0f);  // w < 0: no mesh here
     gl_.Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
@@ -1778,6 +1844,8 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
     gl_.Disable(CULL_FACE);
     gl_.UseProgram(meshProgram_);
     gl_.UniformMatrix4fv(location(meshProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+    gl_.UniformMatrix4fv(location(meshProgram_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
+    gl_.Uniform2f(location(meshProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
     gl_.Uniform3f(location(meshProgram_, "u_eye"), eye.x, eye.y, eye.z);
     for (size_t i = 0; i < solids_.size(); ++i) {
         const sim::Collider& body = solids_[i].body;
@@ -1801,9 +1869,16 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
     if (geoVertices_ > 0 && geoProgram_) {
         gl_.UseProgram(geoProgram_);
         gl_.UniformMatrix4fv(location(geoProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.UniformMatrix4fv(location(geoProgram_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
+        gl_.Uniform1f(location(geoProgram_, "u_frameTime"), passes.on ? passes.frameTime : 0.0f);
+        gl_.Uniform2f(location(geoProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
         gl_.Uniform3f(location(geoProgram_, "u_eye"), eye.x, eye.y, eye.z);
         gl_.BindVertexArray(geoVao_);
-        gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
+        // The displayed geometry, then the pieces: what each is, for the masks.
+        gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Geometry));
+        if (shownVertices_ > 0) gl_.DrawArrays(TRIANGLES, 0, shownVertices_);
+        gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Pieces));
+        if (geoVertices_ > shownVertices_) gl_.DrawArrays(TRIANGLES, shownVertices_, geoVertices_ - shownVertices_);
     }
     gl_.BindVertexArray(0);
     gl_.UseProgram(0);
@@ -1860,6 +1935,28 @@ void VolumeRenderer::uploadGeometry() {
         gl_.BindBuffer(ARRAY_BUFFER, 0);
     };
     upload(geoVao_, geoBuffer_, d.triangles, {{0, 3}, {1, 3}, {2, 3}});
+    // The corners' velocities, on attribute 3 -- 0 for the part that has none.
+    std::vector<float> velocities;
+    if (!shownDisplay_.velocities.empty() || !p.velocities.empty()) {
+        velocities = shownDisplay_.velocities;
+        velocities.resize(shownDisplay_.triangles.size() / 3, 0.0f);
+        velocities.insert(velocities.end(), p.velocities.begin(), p.velocities.end());
+        velocities.resize(d.triangles.size() / 3, 0.0f);
+    }
+    gl_.BindVertexArray(geoVao_);
+    if (velocities.empty()) {
+        gl_.DisableVertexAttribArray(3);
+        gl_.VertexAttrib3f(3, 0.0f, 0.0f, 0.0f);
+    } else {
+        if (!geoVelocityBuffer_) gl_.GenBuffers(1, &geoVelocityBuffer_);
+        gl_.BindBuffer(ARRAY_BUFFER, geoVelocityBuffer_);
+        gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(velocities.size() * sizeof(float)), velocities.data(), STATIC_DRAW);
+        gl_.EnableVertexAttribArray(3);
+        gl_.VertexAttribPointer(3, 3, FLOAT, 0, 3 * static_cast<GLsizei>(sizeof(float)), nullptr);
+        gl_.BindBuffer(ARRAY_BUFFER, 0);
+    }
+    gl_.BindVertexArray(0);
+    shownVertices_ = static_cast<GLsizei>(shownDisplay_.triangles.size() / 9);
     upload(dotVao_, dotBuffer_, d.dots, {{0, 3}, {1, 3}, {2, 1}});
     upload(curveVao_, curveBuffer_, d.lines, {{0, 3}, {1, 4}});
     geoVertices_ = static_cast<GLsizei>(d.triangles.size() / 9);
@@ -1984,6 +2081,7 @@ void VolumeRenderer::drawGeometry(int width, int height) {
         gl_.Uniform3f(location(dotProgram_, "u_sky"), s.skyColor.x * s.skyIntensity, s.skyColor.y * s.skyIntensity,
                       s.skyColor.z * s.skyIntensity);
         gl_.Uniform1f(location(dotProgram_, "u_exposure"), s.exposure);
+        gl_.Uniform1i(location(dotProgram_, "u_linear"), passes.on ? 1 : 0);
         // Through the smoke: the fields and the sunlight in them, where there is gas.
         gl_.Uniform1i(location(dotProgram_, "u_hasGas"), hasFrame_ ? 1 : 0);
         const Vec3 lo = domain_.origin(), size = domain_.size();
@@ -2201,7 +2299,7 @@ void VolumeRenderer::updateLighting() {
 }
 
 void VolumeRenderer::ensureTarget(int width, int height) {
-    if (fbo_ && width == width_ && height == height_) return;
+    if (fbo_ && width == width_ && height == height_ && targetPasses_ == passes.on) return;
     if (!fbo_) {
         gl_.GenFramebuffers(1, &fbo_);
         gl_.GenTextures(1, &colorTex_);
@@ -2209,17 +2307,37 @@ void VolumeRenderer::ensureTarget(int width, int height) {
     }
     width_ = width;
     height_ = height;
+    targetPasses_ = passes.on;
+    // The passes: the picture in linear light, beyond white -- 16-bit
+    // floats -- and two targets beside it; else 8 bits, tone mapped.
     gl_.BindTexture(TEXTURE_2D, colorTex_);
-    gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA8), width, height, 0, RGBA, UNSIGNED_BYTE, nullptr);
+    if (passes.on) {
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA16F), width, height, 0, RGBA, FLOAT, nullptr);
+    } else {
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA8), width, height, 0, RGBA, UNSIGNED_BYTE, nullptr);
+    }
     gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
     gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+    if (passes.on) {
+        if (!auxTex_[0]) gl_.GenTextures(2, auxTex_);
+        for (const GLuint t : auxTex_) {
+            gl_.BindTexture(TEXTURE_2D, t);
+            gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), width, height, 0, RGBA, FLOAT, nullptr);
+            gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, 0x2600);  // NEAREST
+            gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, 0x2600);
+        }
+    }
     gl_.BindTexture(TEXTURE_2D, 0);
     gl_.BindRenderbuffer(RENDERBUFFER, depthBuffer_);
     gl_.RenderbufferStorage(RENDERBUFFER, DEPTH_COMPONENT24, width, height);
     gl_.BindRenderbuffer(RENDERBUFFER, 0);
     gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
     gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, colorTex_, 0);
+    gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT1, TEXTURE_2D, passes.on ? auxTex_[0] : 0, 0);
+    gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT2, TEXTURE_2D, passes.on ? auxTex_[1] : 0, 0);
     gl_.FramebufferRenderbuffer(FRAMEBUFFER, DEPTH_ATTACHMENT, RENDERBUFFER, depthBuffer_);
+    const GLenum buffers[3] = {COLOR_ATTACHMENT0, COLOR_ATTACHMENT1, COLOR_ATTACHMENT2};
+    gl_.DrawBuffers(passes.on ? 3 : 1, buffers);
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
 }
 
@@ -2277,6 +2395,15 @@ void VolumeRenderer::render(int width, int height) {
     orbit.axes(towards, across, upwards);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     viewProjection_ = multiply(perspective(orbit.fovY, aspect, kNear, kFar), lookAlong(eye, towards, upwards));
+    // The view of the next frame, for the passes' motion; the same when the
+    // camera stands still.
+    nextViewProjection_ = viewProjection_;
+    if (passes.on && passes.moving) {
+        float nextEye[3], nextTowards[3], nextAcross[3], nextUp[3];
+        passes.next.eye(nextEye);
+        passes.next.axes(nextTowards, nextAcross, nextUp);
+        nextViewProjection_ = multiply(perspective(passes.next.fovY, aspect, kNear, kFar), lookAlong(nextEye, nextTowards, nextUp));
+    }
     // The shadows of the geometry: its map from the sun, when it or the sun moved.
     updateGeoShadow(normalize(look.lightDirection()));
     // The meshes first, into their own buffer, seen by the same camera.
@@ -2351,6 +2478,13 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform3f(location(program_, "u_glowCell"), block, block, block);
     gl_.Uniform3f(location(program_, "u_backgroundTop"), 0.075f, 0.082f, 0.095f);
     gl_.Uniform3f(location(program_, "u_backgroundBottom"), 0.022f, 0.023f, 0.027f);
+    // The passes: linear light, and the motion to the next frame.
+    gl_.Uniform1i(location(program_, "u_linear"), passes.on ? 1 : 0);
+    gl_.UniformMatrix4fv(location(program_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
+    gl_.Uniform2f(location(program_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
+    gl_.ActiveTexture(TEXTURE0 + 11);
+    gl_.BindTexture(TEXTURE_2D, meshes && passes.on ? gAux_ : 0);
+    gl_.Uniform1i(location(program_, "u_meshAux"), 11);
 
     gl_.ActiveTexture(TEXTURE0);
     gl_.BindTexture(TEXTURE_3D, fields_);
@@ -2399,6 +2533,10 @@ void VolumeRenderer::render(int width, int height) {
 
     gl_.BindVertexArray(vao_);
     gl_.DrawArrays(TRIANGLES, 0, 3);
+    // What is drawn over it -- the dots, the rain, the guides -- goes into
+    // the picture alone: the passes are the main pass's.
+    const GLenum picture = COLOR_ATTACHMENT0;
+    if (passes.on) gl_.DrawBuffers(1, &picture);
     drawGeometry(width, height);
     drawRain(width, height, e);
 
@@ -2418,7 +2556,13 @@ void VolumeRenderer::render(int width, int height) {
     gl_.BindVertexArray(0);
     gl_.Disable(DEPTH_TEST);
     gl_.DepthFunc(LESS);
+    if (passes.on) {
+        const GLenum all[3] = {COLOR_ATTACHMENT0, COLOR_ATTACHMENT1, COLOR_ATTACHMENT2};
+        gl_.DrawBuffers(3, all);
+    }
 
+    gl_.ActiveTexture(TEXTURE0 + 11);
+    gl_.BindTexture(TEXTURE_2D, 0);
     for (int unit = 4; unit < 4 + kMaxMeshShadows; ++unit) {
         gl_.ActiveTexture(TEXTURE0 + static_cast<GLenum>(unit));
         gl_.BindTexture(TEXTURE_3D, 0);
@@ -2443,6 +2587,93 @@ void VolumeRenderer::render(int width, int height) {
 
 std::vector<uint8_t> VolumeRenderer::readPixels(int factor) const {
     return readRgb(gl_, fbo_, width_, height_, factor);
+}
+
+VolumeRenderer::PassImage VolumeRenderer::readPasses(int factor) const {
+    PassImage out;
+    if (!fbo_ || !targetPasses_) return out;
+    factor = std::max(factor, 1);
+    const size_t W = static_cast<size_t>(width_), H = static_cast<size_t>(height_), n = W * H;
+    std::vector<float> color(4 * n), aux(4 * n), motion(4 * n);
+    gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
+    gl_.PixelStorei(PACK_ALIGNMENT, 4);
+    const std::pair<GLenum, std::vector<float>*> reads[3] = {
+        {COLOR_ATTACHMENT0, &color}, {COLOR_ATTACHMENT1, &aux}, {COLOR_ATTACHMENT2, &motion}};
+    for (const auto& [attachment, into] : reads) {
+        gl_.ReadBuffer(attachment);
+        gl_.ReadPixels(0, 0, width_, height_, RGBA, FLOAT, into->data());
+    }
+    gl_.ReadBuffer(COLOR_ATTACHMENT0);
+    gl_.BindFramebuffer(FRAMEBUFFER, 0);
+
+    // GL's lines run bottom to top, a picture's top to bottom; factor x
+    // factor pixels make one: averaged, the depth the nearest, each mask
+    // the share of them that are of it, the motion in the picture's pixels.
+    const int w = width_ / factor, h = height_ / factor;
+    out.width = w;
+    out.height = h;
+    const size_t m = static_cast<size_t>(w) * static_cast<size_t>(h);
+    out.rgba.assign(4 * m, 0.0f);
+    out.depth.assign(m, std::numeric_limits<float>::infinity());
+    out.smoke.assign(m, 0.0f);
+    out.motion.assign(2 * m, 0.0f);
+    for (auto& mask : out.masks) mask.assign(m, 0.0f);
+    const float share = 1.0f / static_cast<float>(factor * factor);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const size_t o = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+            for (int dy = 0; dy < factor; ++dy) {
+                for (int dx = 0; dx < factor; ++dx) {
+                    const size_t sy = H - 1 - static_cast<size_t>(y * factor + dy), sx = static_cast<size_t>(x * factor + dx);
+                    const size_t i = sy * W + sx;
+                    for (int c = 0; c < 4; ++c) out.rgba[4 * o + static_cast<size_t>(c)] += share * color[4 * i + static_cast<size_t>(c)];
+                    const float depth = aux[4 * i];
+                    if (depth >= 0.0f) out.depth[o] = std::min(out.depth[o], depth);
+                    out.smoke[o] += share * std::clamp(aux[4 * i + 1], 0.0f, 1.0f);
+                    const int surface = static_cast<int>(std::lround(aux[4 * i + 2]));
+                    if (surface >= 0 && surface < static_cast<int>(Surface::Count)) out.masks[surface][o] += share;
+                    out.motion[2 * o] += share * motion[4 * i] / static_cast<float>(factor);
+                    out.motion[2 * o + 1] += share * motion[4 * i + 1] / static_cast<float>(factor);
+                }
+            }
+        }
+    }
+    return out;
+}
+
+bool writePassesExr(const VolumeRenderer& renderer, const std::string& path, const std::string& comment,
+                    std::string& error) {
+    using Surface = VolumeRenderer::Surface;
+    VolumeRenderer::PassImage p = renderer.readPasses(2);
+    if (p.width == 0) {
+        error = path + ": nothing was rendered with the passes";
+        return false;
+    }
+    io::ExrImage img;
+    img.width = p.width;
+    img.height = p.height;
+    const size_t n = static_cast<size_t>(p.width) * static_cast<size_t>(p.height);
+    const char* rgba[4] = {"R", "G", "B", "A"};
+    for (int c = 0; c < 4; ++c) {
+        io::ExrChannel ch{rgba[c], true, std::vector<float>(n)};
+        for (size_t i = 0; i < n; ++i) ch.values[i] = p.rgba[4 * i + static_cast<size_t>(c)];
+        img.channels.push_back(std::move(ch));
+    }
+    img.channels.push_back({"Z", false, std::move(p.depth)});
+    io::ExrChannel u{"forward.u", false, std::vector<float>(n)}, v{"forward.v", false, std::vector<float>(n)};
+    for (size_t i = 0; i < n; ++i) {
+        u.values[i] = p.motion[2 * i];
+        v.values[i] = p.motion[2 * i + 1];
+    }
+    img.channels.push_back(std::move(u));
+    img.channels.push_back(std::move(v));
+    const std::pair<Surface, const char*> masks[] = {{Surface::Floor, "mask.floor"},   {Surface::Geometry, "mask.geometry"},
+                                                     {Surface::Pieces, "mask.pieces"}, {Surface::Objects, "mask.objects"},
+                                                     {Surface::Water, "mask.water"}};
+    for (const auto& [surface, name] : masks) img.channels.push_back({name, true, std::move(p.masks[static_cast<int>(surface)])});
+    img.channels.push_back({"mask.smoke", true, std::move(p.smoke)});
+    img.strings = {{"comments", comment}, {"owner", "Prototype"}};
+    return io::writeExr(img, path, error);
 }
 
 }  // namespace pg::gl

@@ -16,6 +16,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -1621,10 +1622,11 @@ void SimWorkspace::fileMenu() {
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Render Image\xe2\x80\xa6")) {
-        files_.open("Render image", {".png"}, true, (fs::path(renderFolder()) / (stem() + ".png")).string());
+        files_.open("Render image", {".png", ".exr"}, true, (fs::path(renderFolder()) / (stem() + ".png")).string());
         fileAction_ = FileAction::Image;
     }
-    ImGui::SetItemTooltip("The frame on screen as a PNG -- through the camera, if there is one");
+    ImGui::SetItemTooltip("The frame on screen as a PNG -- through the camera, if there is one; as an EXR, in linear "
+                          "light with its passes for compositing: depth, motion vectors, masks");
     if (ImGui::MenuItem("Render Frames\xe2\x80\xa6", nullptr, false, compiled_.ok)) {
         files_.openFolder("Render frames into a folder", true, (fs::path(renderFolder()) / (stem() + "_frames")).string());
         fileAction_ = FileAction::Frames;
@@ -1929,6 +1931,31 @@ bool SimWorkspace::renderImage(const std::string& path) {
     if (!parent.empty()) fs::create_directories(parent, ec);
     // Whatever went wrong before is not this render's.
     for (int i = 0; i < 16 && gl_.GetError() != 0;) ++i;
+    // An EXR: the picture in linear light and its passes -- the motion to
+    // the next frame's camera, when the camera moves.
+    std::string ext = fs::path(path).extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext == ".exr") {
+        renderer_.passes.on = true;
+        renderer_.passes.frameTime = compiled_.world.timeStep;
+        renderer_.passes.moving = compiled_.hasCamera && !compiled_.poses.empty();
+        if (renderer_.passes.moving) renderer_.passes.next = gl::orbitThrough(compiled_.cameraAt(current_ + 1), 1.0f);
+        renderShot(width, height, current_);
+        std::string error;
+        const bool written = gl::writePassesExr(renderer_, path, "prototype " + stem() + ", frame " + std::to_string(current_), error);
+        renderer_.passes.on = false;
+        if (!written) {
+            setMessage(error, true);
+            notify(error, "", true);
+            return false;
+        }
+        renderFolder_ = parent.string();
+        const std::string done = "Rendered " + shownPath(path) + " with its passes (" + std::to_string(width) + " \xc3\x97 " +
+                                 std::to_string(height) + ")";
+        setMessage(done);
+        notify(done, path, false);
+        return true;
+    }
     renderShot(width, height, current_);
     const std::vector<uint8_t> pixels = renderer_.readPixels(2);
     // What the driver says went wrong drawing it: written all the same, and said.

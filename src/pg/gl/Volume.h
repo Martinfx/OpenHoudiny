@@ -106,6 +106,16 @@ Orbit orbitThrough(const sim::Camera& camera, float distance);
 /// as they were.
 sim::Camera cameraFrom(const Orbit& orbit, sim::Camera camera);
 
+class VolumeRenderer;
+/// The passes of the renderer's last render -- drawn with passes on --
+/// averaged down 2x, to an OpenEXR file (pg/io/Exr.h): the picture in
+/// linear light (R, G, B, A, halves), the depth along the view (Z, a float,
+/// infinity where nothing is), the motion to the next frame in pixels, right
+/// and up (forward.u, forward.v), a mask for each kind of surface and one
+/// for the smoke (mask.*); `comment` in the header. False, with why.
+bool writePassesExr(const VolumeRenderer& renderer, const std::string& path, const std::string& comment,
+                    std::string& error);
+
 class VolumeRenderer {
 public:
     explicit VolumeRenderer(const Api& gl);
@@ -153,6 +163,33 @@ public:
     int height() const { return height_; }
     /// The last frame as RGB rows, top to bottom, averaged down by `factor`.
     std::vector<uint8_t> readPixels(int factor = 1) const;
+
+    /// The passes a compositor wants, drawn with the picture while `on`: the
+    /// picture in linear light -- no tone curve, no gamma -- in 16-bit
+    /// floats, and beside it the depth of the nearest surface, how much the
+    /// smoke hides, what the surface is, and how far each pixel moves by the
+    /// next frame: the displayed geometry and the pieces by their points'
+    /// velocity v, everything by the camera -- `next` its view then.
+    struct Passes {
+        bool on = false;
+        Orbit next;                      ///< the view of the next frame
+        bool moving = false;             ///< false: the camera stands still
+        float frameTime = 1.0f / 30.0f;  ///< seconds to the next frame
+    };
+    Passes passes;
+    /// What a surface is, in the masks of the passes.
+    enum class Surface { None, Floor, Geometry, Pieces, Objects, Water, Count };
+    /// The passes of the last render, top line first, averaged over `factor`
+    /// x `factor` pixels -- the depth the nearest of them.
+    struct PassImage {
+        int width = 0, height = 0;
+        std::vector<float> rgba;    ///< four a pixel, linear
+        std::vector<float> depth;   ///< along the view, world units; infinity where there is no surface
+        std::vector<float> smoke;   ///< 0 to 1: how much of what is behind the smoke hides
+        std::vector<float> motion;  ///< two a pixel: pixels right and up, to the next frame
+        std::vector<float> masks[static_cast<int>(Surface::Count)];  ///< how much of each pixel is of each
+    };
+    PassImage readPasses(int factor = 1) const;
 
     /// A camera that shows the whole of `domain`, from a little above.
     static Orbit viewOf(const sim::Domain& domain);
@@ -248,6 +285,14 @@ private:
     GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
     GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;
     GLsizei gritDots_ = 0;  // the last of the dots: the pieces' loose points, their grit
+    GLsizei shownVertices_ = 0;   // the first of the triangles: the displayed geometry's, then the pieces'
+    GLuint geoVelocityBuffer_ = 0;  // the triangles' corners' velocities (attribute 3), when they have any
+    // The passes: the targets beside the picture, and the meshes' motion.
+    GLuint auxTex_[2] = {0, 0};
+    bool targetPasses_ = false;
+    GLuint gAux_ = 0;
+    bool gPasses_ = false;
+    Mat4 nextViewProjection_{};
     Vec3 geoLo_, geoHi_;
     bool hasGeoBounds_ = false;
     GLuint gFbo_ = 0, gTex_ = 0, gDepth_ = 0;
