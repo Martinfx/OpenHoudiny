@@ -7,9 +7,9 @@
 //   pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...
 //   pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]
 //                   [--spirv-val PATH] [--library FILE]...
-//   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]
-//                   [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] [--resolution 16..256]
+//   pgshader render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]
+//                   [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...
+//   pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]
 //                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
 //                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
 //                   [--export PATH] [--export-node NODE]
@@ -21,29 +21,32 @@
 // fragment and in the vertex stage -- for every target with glslangValidator,
 // and runs spirv-val on the SPIR-V. --nodes-from checks only the nodes one
 // library file defines: what the author of a library wants to know.
-// `render` draws a preview with OpenGL through EGL, with no window; it exists
-// only when EGL was found at build time. So do the pictures of `sim`: it
+// `render` draws a preview with OpenGL and no window (Offscreen.h: EGL, or a
+// hidden window in the builds with the editor); to a video (.mp4, .avi...:
+// pg/io/Video.h), --frames of it animated. So do the pictures of `sim`: it
 // compiles a network of simulation nodes (pg::sim::Network) -- a .pgsim file,
 // or an example the program carries -- simulates it and renders the last
 // frame, or with --every K frames K, 2K, 3K..., each file numbered by its
-// frame, with the renderer of the editor's viewport. --set changes a
+// frame, or every frame into a video, with the renderer of the editor's
+// viewport. --set changes a
 // parameter first: NODE.PARAM=VALUE, or PARAM=VALUE when a single node has
 // that parameter. --cache DIR writes every frame to a folder, and
 // --from-cache DIR reads them from one instead of simulating (pg/sim/Cache.h);
 // --export PATH writes the displayed geometry of every frame -- or that of
 // --export-node -- to .ply, .obj or .vdb files, $F4 in PATH the frame
 // (pg/io/Export.h). '-' for OUT.png draws nothing: the cache and the export
-// alone, which need no EGL.
+// alone, which need no OpenGL.
 //
 #include "Commands.h"
+#include "Offscreen.h"
 
-#ifdef PG_HAVE_EGL
-#include "pg/gl/HeadlessContext.h"
+#ifdef PG_CAN_RENDER
 #include "pg/gl/Png.h"
 #include "pg/gl/Preview.h"
 #include "pg/gl/Volume.h"
 #endif
 #include "pg/io/Export.h"
+#include "pg/io/Video.h"
 #include "pg/sim/Cache.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
@@ -426,7 +429,7 @@ int check(const Options& o, const NodeLibrary& lib) {
 
 int render(const Options& o, const NodeLibrary& lib) {
     if (o.positional.size() != 2) return usage();
-#ifdef PG_HAVE_EGL
+#ifdef PG_CAN_RENDER
     ShaderGraph g;
     if (!loadGraph(o.positional[0], g)) return 1;
     const Target* t = TargetRegistry::instance().find("glsl330");
@@ -436,14 +439,14 @@ int render(const Options& o, const NodeLibrary& lib) {
         return 1;
     }
 
-    pg::gl::HeadlessContext context;
+    Offscreen context;
     std::string error;
     if (!context.create(error)) {
         std::fprintf(stderr, "render: %s\n", error.c_str());
         return 1;
     }
     pg::gl::Api gl;
-    if (!gl.load(pg::gl::HeadlessContext::procAddress, error)) {
+    if (!gl.load(context.procAddress(), error)) {
         std::fprintf(stderr, "render: OpenGL function %s is missing\n", error.c_str());
         return 1;
     }
@@ -469,17 +472,42 @@ int render(const Options& o, const NodeLibrary& lib) {
     preview.orbit.yaw = o.yaw;
     preview.orbit.pitch = o.pitch;
     const int size = std::clamp(o.size, 16, 4096);
+    const std::string& out = o.positional[1];
+    const char* renderer = reinterpret_cast<const char*>(gl.GetString(pg::gl::RENDERER));
+    if (pg::io::isVideoPath(out)) {
+        // The preview animated: --frames of it, 30 a second, from --time on.
+        const int frames = o.frames > 0 ? o.frames : 90;
+        auto video = pg::io::openVideo(out, size, size, 30.0, error);
+        if (!video) {
+            std::fprintf(stderr, "render: %s\n", error.c_str());
+            return 1;
+        }
+        for (int f = 0; f < frames; ++f) {
+            preview.render(size * 2, size * 2, o.time + static_cast<float>(f) / 30.0f);
+            const std::vector<uint8_t> pixels = preview.readPixels(2);
+            if (!video->add(pixels.data(), error)) {
+                std::fprintf(stderr, "render: %s\n", error.c_str());
+                return 1;
+            }
+        }
+        if (!video->finish(error)) {
+            std::fprintf(stderr, "render: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("wrote %s (%d frames at 30 fps, %s; %s, %s, %s)\n", out.c_str(), frames, video->codec().c_str(),
+                    pg::gl::meshName(preview.mesh()), blendModeName(s.blend), renderer);
+        return 0;
+    }
     preview.render(size * 2, size * 2, o.time);  // 2x, averaged down: anti-aliasing
-    if (!pg::gl::writePng(o.positional[1], size, size, 3, preview.readPixels(2))) {
-        std::fprintf(stderr, "render: cannot write %s\n", o.positional[1].c_str());
+    if (!pg::gl::writePng(out, size, size, 3, preview.readPixels(2))) {
+        std::fprintf(stderr, "render: cannot write %s\n", out.c_str());
         return 1;
     }
-    std::printf("wrote %s (%s, %s, %s)\n", o.positional[1].c_str(), pg::gl::meshName(preview.mesh()),
-                blendModeName(s.blend), reinterpret_cast<const char*>(gl.GetString(pg::gl::RENDERER)));
+    std::printf("wrote %s (%s, %s, %s)\n", out.c_str(), pg::gl::meshName(preview.mesh()), blendModeName(s.blend), renderer);
     return 0;
 #else
     (void)lib;
-    std::fprintf(stderr, "render: this pgshader was built without EGL\n");
+    std::fprintf(stderr, "render: this pgshader was built without EGL and without the editor: it draws no picture\n");
     return 1;
 #endif
 }
@@ -555,7 +583,7 @@ bool applySetting(const std::string& assignment, pg::sim::Network& net, std::str
     return true;
 }
 
-#ifdef PG_HAVE_EGL
+#ifdef PG_CAN_RENDER
 /// fire.png, 30 -> fire_0030.png
 std::string numbered(const std::string& path, int frame) {
     char digits[16];
@@ -650,7 +678,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      frames);
         return 1;
     }
-#ifdef PG_HAVE_EGL
+#ifdef PG_CAN_RENDER
     namespace gl = pg::gl;
     // Through the network's camera, at the size of its picture -- unless
     // the command line asks for a view round the scene. Without a camera:
@@ -671,7 +699,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     width = std::clamp(width, 16, 4096);
     height = std::clamp(height, 16, 4096);
 
-    gl::HeadlessContext context;
+    // A video: every frame -- or every K-th -- into one file.
+    const bool video = pictures && pg::io::isVideoPath(outPath);
+    std::unique_ptr<pg::io::VideoWriter> movie;
+    const double videoFps = 1.0 / (static_cast<double>(c.world.timeStep) * std::max(o.every, 1));
+    Offscreen context;
     gl::Api api;
     std::unique_ptr<gl::VolumeRenderer> volume;
     if (pictures) {
@@ -679,7 +711,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
             return 1;
         }
-        if (!api.load(gl::HeadlessContext::procAddress, error)) {
+        if (!api.load(context.procAddress(), error)) {
             std::fprintf(stderr, "%s: OpenGL function %s is missing\n", cmd, error.c_str());
             return 1;
         }
@@ -689,11 +721,17 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             std::fprintf(stderr, "%s: the driver rejected the volume shader:\n%s\n", cmd, log.c_str());
             return 1;
         }
+        // Opened before anything is simulated: a video that cannot be
+        // written says so at once.
+        if (video && !(movie = pg::io::openVideo(outPath, width, height, videoFps, error))) {
+            std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+            return 1;
+        }
     }
 #else
     if (pictures) {
-        std::fprintf(stderr, "%s: this pgshader was built without EGL: it draws no picture -- '-' in place of "
-                             "OUT.png simulates, caches and exports all the same\n", cmd);
+        std::fprintf(stderr, "%s: this pgshader was built without EGL and without the editor: it draws no picture -- "
+                             "'-' in place of OUT.png simulates, caches and exports all the same\n", cmd);
         return 1;
     }
 #endif
@@ -701,7 +739,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     std::unique_ptr<sim::WorldSolver> solver;
     if (o.fromCache.empty()) solver = std::make_unique<sim::WorldSolver>(c.world);
     const sim::World world = c.world.sanitized();
-#ifdef PG_HAVE_EGL
+#ifdef PG_CAN_RENDER
     sim::Domain box = gl::sceneDomain(world);
     if (volume) {
         const sim::Domain domain = world.hasGas ? world.gas.solver.domain() : world.water.solver.domain();
@@ -751,8 +789,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     std::string last, lastExport;
     for (int f = 1; f <= frames; ++f) {
         bool draws = false;
-#ifdef PG_HAVE_EGL
-        draws = volume && (o.every > 0 ? f % o.every == 0 : f == frames);
+#ifdef PG_CAN_RENDER
+        draws = volume && (o.every > 0 ? f % o.every == 0 : video || f == frames);
 #endif
         auto t = Clock::now();
         // The frame: simulated -- and taken when something wants it -- or read.
@@ -791,7 +829,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             }
             ++exports;
         }
-#ifdef PG_HAVE_EGL
+#ifdef PG_CAN_RENDER
         if (!draws) continue;
         t = Clock::now();
         if (!geometryOnly) volume->setFrame(*current);
@@ -812,15 +850,29 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         }
         volume->render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
         const std::vector<uint8_t> pixels = volume->readPixels(2);
-        rendering += ms(t);
-        last = o.every > 0 ? numbered(outPath, f) : outPath;
-        if (!gl::writePng(last, width, height, 3, pixels)) {
-            std::fprintf(stderr, "%s: cannot write %s\n", cmd, last.c_str());
-            return 1;
+        if (movie) {
+            if (!movie->add(pixels.data(), error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
+            last = outPath;
+        } else {
+            last = o.every > 0 ? numbered(outPath, f) : outPath;
+            if (!gl::writePng(last, width, height, 3, pixels)) {
+                std::fprintf(stderr, "%s: cannot write %s\n", cmd, last.c_str());
+                return 1;
+            }
         }
+        rendering += ms(t);
         ++images;
 #endif
     }
+#ifdef PG_CAN_RENDER
+    if (movie && !movie->finish(error)) {
+        std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+        return 1;
+    }
+#endif
     if (!o.cacheDir.empty()) {
         sim::CacheInfo info;
         info.frames = frames;
@@ -847,17 +899,29 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 std::to_string(solver->rain()->droplets().size()) + " droplets";
     }
     if (!o.fromCache.empty()) what += ", read from " + o.fromCache;
-#ifdef PG_HAVE_EGL
+#ifdef PG_CAN_RENDER
     if (volume && throughCamera) {
         const sim::Node* n = net.node(c.camera.node);
         what += ", through " + (n ? n->name : std::string("the camera"));
     }
 #endif
+    std::string written = last;
+#ifdef PG_CAN_RENDER
+    if (movie) {
+        char rate[32];
+        std::snprintf(rate, sizeof rate, "%g", videoFps);
+        written += " (" + std::to_string(movie->frames()) + " frames at " + rate + " fps, " + movie->codec() + ")";
+    } else if (images > 1) {
+        written += " and " + std::to_string(images - 1) + " before it";
+    }
+    const std::string through = images > 0 ? std::string(" through ") + context.kind() : std::string();
+#else
+    const std::string through;
+#endif
     if (images > 0) {
-        std::printf("wrote %s%s: %s%s, %d frames (%.1f s); %s %.1f ms/frame, rendering %.0f ms/image\n", last.c_str(),
-                    images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "", network.c_str(),
-                    what.c_str(), frames, static_cast<double>(frames) * static_cast<double>(world.timeStep),
-                    solver ? "simulation" : "reading", simulating / frames, rendering / std::max(images, 1));
+        std::printf("wrote %s: %s%s, %d frames (%.1f s); %s %.1f ms/frame, rendering %.0f ms/image%s\n", written.c_str(),
+                    network.c_str(), what.c_str(), frames, static_cast<double>(frames) * static_cast<double>(world.timeStep),
+                    solver ? "simulation" : "reading", simulating / frames, rendering / std::max(images, 1), through.c_str());
     } else if (solver) {
         std::printf("%s: simulated%s, %d frames; simulation %.1f ms/frame\n", network.c_str(), what.c_str(), frames,
                     simulating / frames);
@@ -900,8 +964,8 @@ void printUsage(std::FILE* out) {
                  "  pgshader [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]\n"
                  "           [--library FILE]... [--target NAME] [--mesh NAME] [--size WxH]\n"
                  "           [--screenshot OUT.png [--frames N]] [--script FILE]\n"
-                 "                  the node editor -- what runs without a command: smoke and fire\n"
-                 "                  from nodes (the campfire example), shaders with --shaders\n"
+                 "                  the node editor -- what runs without a command: an empty scene,\n"
+                 "                  an example with --example, shaders with --shaders\n"
 #else
                  "  pgshader [NETWORK.pgsim | GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
 #endif
@@ -909,14 +973,17 @@ void printUsage(std::FILE* out) {
                  "  pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"
                  "  pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]\n"
                  "                  [--spirv-val PATH] [--library FILE]...\n"
-                 "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
-                 "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
-                 "  pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] [--resolution 16..256]\n"
+                 "  pgshader render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
+                 "                  [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
+                 "                  a video: --frames of the preview animated, 30 a second (90)\n"
+                 "  pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]\n"
                  "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                  [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
                  "                  [--export PATH] [--export-node NODE]\n"
                  "                  simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                  frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
+                 "                  a video gets every frame (every K-th): .avi always, .mp4 .mov .mkv .webm .gif\n"
+                 "                  when ffmpeg is installed;\n"
                  "                  through the network's camera at its size, unless --yaw, --pitch or --distance\n"
                  "                  ask for a view round the scene. --cache writes every frame to DIR;\n"
                  "                  --from-cache reads them from there instead of simulating; --export writes\n"

@@ -2,13 +2,21 @@
 
 #include "pg/gl/Png.h"
 #include "pg/io/Export.h"
+#include "pg/io/Video.h"
 #include "pg/sim/Cache.h"
 
 #include "misc/cpp/imgui_stdlib.h"
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -31,6 +39,45 @@ ImU32 categoryColor(const std::string& c) {
     if (c == "Simulation") return IM_COL32(112, 78, 160, 255);
     if (c == "Render") return IM_COL32(58, 128, 80, 255);
     return IM_COL32(110, 60, 60, 255);
+}
+
+/// Whether a network has a node that simulates: a solver, the rain.
+bool simulates(const sim::Network& net) {
+    for (const sim::Node& n : net.nodes()) {
+        if (n.type == "pyro_solver" || n.type == "liquid_solver" || n.type == "rain") return true;
+    }
+    return false;
+}
+
+/// Whether files can be made in `folder`.
+bool writable(const fs::path& folder) {
+    std::error_code ec;
+    if (!fs::is_directory(folder, ec)) return false;
+#ifdef _WIN32
+    return true;
+#else
+    return access(folder.c_str(), W_OK) == 0;
+#endif
+}
+
+/// `s` as one word of the shell's.
+std::string shellWord(const std::string& s) {
+    std::string q = "'";
+    for (const char c : s) q += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    return q + "'";
+}
+
+/// Opens a file or a folder in what the desktop opens it with; false when
+/// that could not be started.
+bool openExternally(const std::string& path) {
+#if defined(_WIN32)
+    const std::string command = "start \"\" \"" + path + "\"";
+#elif defined(__APPLE__)
+    const std::string command = "open " + shellWord(path) + " >/dev/null 2>&1 &";
+#else
+    const std::string command = "xdg-open " + shellWord(path) + " >/dev/null 2>&1 &";
+#endif
+    return std::system(command.c_str()) == 0;
 }
 
 /// A path as the messages show it: from the current folder when it is in
@@ -228,12 +275,12 @@ bool readFile(const std::string& path, std::string& out) {
 }  // namespace
 
 SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
-    : renderer_(gl), runner_(std::make_unique<SimRunner>(synchronous)), synchronous_(synchronous) {
+    : gl_(gl), renderer_(gl), runner_(std::make_unique<SimRunner>(synchronous)), synchronous_(synchronous) {
     if (!renderer_.init(rendererLog_)) rendererLog_ = "The driver rejected the volume shader:\n" + rendererLog_;
     else rendererLog_.clear();
     // Liquid Points and the like read the frames the runner keeps.
     geometry_.setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
-    if (!openExample("campfire")) newNetwork();
+    newNetwork();  // an empty scene; File > Examples has finished ones
 }
 
 // --- files --------------------------------------------------------------------------------
@@ -264,6 +311,9 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     history_.reset(savedText_);
     canvas_.clearSelection();
     canvas_.frame();
+    // The frames of what was open before are not this network's.
+    runner_->clear();
+    shown_.reset();
     compiledRevision_ = ~0ull;
     recompile();
     current_ = 1;
@@ -300,18 +350,8 @@ bool SimWorkspace::openExample(const std::string& name) {
 }
 
 void SimWorkspace::newNetwork() {
-    sim::Network net;
-    const int source = net.add("pyro_source", 0, 0);
-    net.setParam(source, "smoke", "4");
-    net.setParam(source, "heat", "2");
-    const int solver = net.add("pyro_solver", 300, 20);
-    const int look = net.add("volume_look", 560, 20);
-    const int out = net.add("output", 800, 20);
-    net.connect(source, "source", solver, "sources");
-    net.connect(solver, "gas", look, "gas");
-    net.connect(look, "look", out, "look");
-    load(net, "", "");
-    setMessage("A new network: a source, the solver, a look, the output");
+    load(sim::Network(), "", "");
+    setMessage("");  // the status line says where to begin
 }
 
 bool SimWorkspace::save(const std::string& path) {
@@ -360,6 +400,7 @@ void SimWorkspace::recompile() {
     compiledRevision_ = net_.revision();
     compiled_ = net_.compile(folder(), &geometry_);
     if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
+    else if (!simulates(net_)) runner_->clear();  // nothing left that simulates: its frames go too
     current_ = std::clamp(current_, 1, std::max(1, compiled_.frames));
     posedRevision_ = ~0ull;
     pose(current_);
@@ -428,6 +469,20 @@ void SimWorkspace::update(float dt) {
     pose(current_);
     updateGeometry();
     updateGuides();
+
+    // Rendering frames or a video: a few a frame of the window.
+    job_.step();
+    std::string result, where;
+    bool failed = false;
+    if (job_.takeResult(result, failed, where)) {
+        current_ = jobReturnFrame_;
+        playing_ = jobWasPlaying_;
+        shown_.reset();  // the frame at the play head, again
+        viewDirty_ = true;
+        setMessage(result, failed);
+        notify(result, failed ? std::string() : where, failed, true);
+        std::fprintf(stderr, "pgshader: %s\n", result.c_str());
+    }
 }
 
 void SimWorkspace::shortcuts() {
@@ -1087,6 +1142,27 @@ void SimWorkspace::networkOverview() {
     ImGui::PushFont(theme::fonts().bold, 0.0f);
     ImGui::TextUnformatted(title().c_str());
     ImGui::PopFont();
+    if (emptyScene()) {
+        // Where to begin: what the Add menu adds, a click away.
+        ui::note("An empty scene. Add what it should hold -- the solver, its look and the Output come with it -- "
+                 "or open a finished one from File > Examples.");
+        ImGui::Spacing();
+        struct Start {
+            const char* kind;
+            const char* label;
+        };
+        static const Start starts[] = {{"fire", "Fire"},       {"smoke", "Smoke"},          {"water_block", "Water"},
+                                       {"fountain", "Fountain"}, {"rain", "Rain"},           {"sphere", "Sphere"},
+                                       {"box", "Box"}};
+        for (size_t i = 0; i < std::size(starts); ++i) {
+            if (i > 0) ImGui::SameLine();
+            if (ImGui::Button(starts[i].label)) addToScene(starts[i].kind, Vec3(0.0f, 0.0f, 0.0f));
+        }
+        ImGui::Spacing();
+        ImGui::TextDisabled("Shift+A or a right click in the viewport: the whole Add menu");
+        ImGui::TextDisabled("Tab or a right click in the network: any node");
+        return;
+    }
     ui::note("Nothing is selected. Click a node to see its parameters; Tab or a right click on the network "
              "adds one. Sources, forces and colliders feed the solvers -- the Pyro Solver for smoke and fire, the "
              "Liquid Solver for water, the Rain; what they simulate goes through a look to the Output.");
@@ -1285,13 +1361,20 @@ void SimWorkspace::fileMenu() {
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Render Image\xe2\x80\xa6")) {
-        files_.open("Render image", {".png"}, true, (example_.empty() ? std::string("frame") : example_) + ".png");
+        files_.open("Render image", {".png"}, true, (fs::path(renderFolder()) / (stem() + ".png")).string());
         fileAction_ = FileAction::Image;
     }
-    if (ImGui::MenuItem("Render Frames\xe2\x80\xa6", nullptr, false, runner_->cached() > 0)) {
-        files_.openFolder("Render frames into a folder", true, (fs::path(outputFolder()) / (stem() + "_frames")).string());
+    ImGui::SetItemTooltip("The frame on screen as a PNG -- through the camera, if there is one");
+    if (ImGui::MenuItem("Render Frames\xe2\x80\xa6", nullptr, false, compiled_.ok)) {
+        files_.openFolder("Render frames into a folder", true, (fs::path(renderFolder()) / (stem() + "_frames")).string());
         fileAction_ = FileAction::Frames;
     }
+    ImGui::SetItemTooltip("Every frame of the shot as a PNG, numbered -- as the simulation gets there");
+    if (ImGui::MenuItem("Render Video\xe2\x80\xa6", nullptr, false, compiled_.ok)) chooseVideo();
+    ImGui::SetItemTooltip(io::ffmpegAvailable() ? "Every frame of the shot into a video: .mp4 (H.264), .mov, .mkv, "
+                                                  ".webm (VP9), .gif -- through ffmpeg -- or .avi (Motion JPEG)"
+                                                : "Every frame of the shot into a video: .avi (Motion JPEG). With "
+                                                  "ffmpeg installed also .mp4, .mov, .mkv, .webm and .gif");
     ImGui::Separator();
     const int shown = net_.displayed();
     if (ImGui::MenuItem("Export Geometry\xe2\x80\xa6", nullptr, false, shown != 0)) chooseExport(shown, false);
@@ -1410,19 +1493,22 @@ void SimWorkspace::helpMenu() {
     ImGui::Separator();
     ImGui::TextDisabled("The same from the command line:");
     ImGui::TextUnformatted("  pgshader sim campfire fire.png --every 10");
+    ImGui::TextUnformatted("  pgshader sim campfire fire.mp4            (every frame, a video)");
     ImGui::TextUnformatted("  pgshader sim my.pgsim out.png --set fire.fuel=20");
     ImGui::TextUnformatted("  pgshader sim my.pgsim - --cache my_cache");
     ImGui::TextUnformatted("  pgshader sim campfire_vdb - --export-node volumes --export 'fire.$F4.vdb'");
 }
 
 void SimWorkspace::popups() {
+    job_.draw();
     std::string chosen;
     if (!files_.draw(chosen)) return;
     switch (fileAction_) {
         case FileAction::Open: open(chosen); break;
         case FileAction::SaveAs: save(chosen); break;
         case FileAction::Image: renderImage(chosen); break;
-        case FileAction::Frames: renderFrames(chosen); break;
+        case FileAction::Frames:
+        case FileAction::Video: startRender(chosen); break;
         case FileAction::MeshFile:
             if (net_.setText(fileNode_, fileParam_, chosen)) {
                 // An object that was no mesh becomes one.
@@ -1450,6 +1536,7 @@ std::string SimWorkspace::gridsText() const {
     auto cells = [&](const sim::Domain& d) {
         return std::to_string(d.cells[0]) + times + std::to_string(d.cells[1]) + times + std::to_string(d.cells[2]);
     };
+    if (emptyScene()) return "an empty scene";
     if (!compiled_.ok || !compiled_.world.any()) return cells(runner_->domain()) + " cells";
     const sim::World& w = compiled_.world;
     std::string text;
@@ -1476,6 +1563,7 @@ std::string SimWorkspace::gridsText() const {
 }
 
 std::string SimWorkspace::status() const {
+    if (emptyScene()) return "An empty scene  \xc2\xb7  Shift+A in the viewport, Tab in the network  \xc2\xb7  File > Examples";
     char text[240], step[32];
     // Frames from disk were not simulated: no time a step.
     if (runner_->adopted()) std::snprintf(step, sizeof step, "from disk");
@@ -1525,47 +1613,162 @@ float SimWorkspace::focusOf(const sim::Camera& camera) const {
 bool SimWorkspace::renderImage(const std::string& path) {
     int width = 0, height = 0;
     shotSize(width, height);
+    std::error_code ec;
+    const fs::path parent = fs::path(path).parent_path();
+    if (!parent.empty()) fs::create_directories(parent, ec);
+    // Whatever went wrong before is not this render's.
+    for (int i = 0; i < 16 && gl_.GetError() != 0;) ++i;
     renderShot(width, height, current_);
     const std::vector<uint8_t> pixels = renderer_.readPixels(2);
+    // What the driver says went wrong drawing it: written all the same, and said.
+    std::string glError;
+    if (const unsigned code = gl_.GetError()) {
+        char hex[16];
+        std::snprintf(hex, sizeof hex, "0x%04x", code);
+        glError = std::string(" -- OpenGL reported error ") + hex + " while drawing it";
+    }
     if (!gl::writePng(path, width, height, 3, pixels)) {
-        setMessage(path + ": cannot write it", true);
+        const std::string error = path + ": cannot write it (" + std::strerror(errno) + ")";
+        setMessage(error, true);
+        notify(error, "", true);
+        std::fprintf(stderr, "pgshader: %s\n", error.c_str());
         return false;
     }
-    setMessage("Rendered " + path);
+    renderFolder_ = parent.string();
+    const std::string done = "Rendered " + shownPath(path) + " (" + std::to_string(width) + " \xc3\x97 " +
+                             std::to_string(height) + ")" + glError;
+    setMessage(done, !glError.empty());
+    notify(done, path, false);
+    std::fprintf(stderr, "pgshader: rendered %s (%d x %d)%s\n", path.c_str(), width, height, glError.c_str());
     return true;
 }
 
-bool SimWorkspace::renderFrames(const std::string& folder) {
-    std::error_code ec;
-    fs::create_directories(folder, ec);
-    const int cached = runner_->cached();
+void SimWorkspace::startRender(const std::string& target) {
+    if (!compiled_.ok) {
+        setMessage("Nothing to render: the network does not compile", true);
+        return;
+    }
     int width = 0, height = 0;
     shotSize(width, height);
-    const std::string name = stem();
-    int written = 0;
-    for (int f = 1; f <= cached; ++f) {
-        const auto frame = runner_->frame(f);
-        if (!frame) break;
-        renderer_.setFrame(*frame);
-        pose(f);
-        renderShot(width, height, f);
-        char digits[16];
-        std::snprintf(digits, sizeof digits, "_%04d.png", f);
-        if (!gl::writePng((fs::path(folder) / (name + digits)).string(), width, height, 3, renderer_.readPixels(2))) break;
-        ++written;
+    jobWidth_ = width;
+    jobHeight_ = height;
+    jobReturnFrame_ = current_;
+    jobWasPlaying_ = playing_;
+    playing_ = false;
+    runner_->setRunning(true);  // the shot is simulated as it is rendered
+    std::string error;
+    if (!job_.start(target, shownPath(target), stem(), width, height, 1.0 / static_cast<double>(compiled_.world.timeStep), 1,
+                    std::max(1, compiled_.frames),
+                    [this](int frame, std::vector<uint8_t>& rgb, std::string& why) { return drawShotFrame(frame, rgb, why); },
+                    error)) {
+        playing_ = jobWasPlaying_;
+        setMessage(error, true);
+        notify(error, "", true);
+        return;
     }
-    shown_.reset();  // put the frame at the play head back
-    viewDirty_ = true;
-    setMessage("Rendered " + std::to_string(written) + " frames into " + folder, written != cached);
-    return written == cached;
+    renderFolder_ = fs::path(target).parent_path().string();
+}
+
+bool SimWorkspace::drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error) {
+    const std::shared_ptr<const sim::Frame> f = runner_->frame(frame);
+    if (!f) {
+        if (runner_->busy()) return false;  // on its way there
+        error = runner_->full()      ? "the cache is full (Simulation > Cache Size)"
+                : runner_->adopted() ? "the frames loaded from disk end"
+                                     : "the simulation stopped";
+        error += " at frame " + std::to_string(frame);
+        return false;
+    }
+    // As the viewport shows it then: the frame, the objects and the look,
+    // the displayed geometry.
+    current_ = frame;
+    if (f != shown_) {
+        shown_ = f;
+        renderer_.setFrame(*f);
+    }
+    pose(frame);
+    updateGeometry();
+    renderShot(jobWidth_, jobHeight_, frame);
+    rgb = renderer_.readPixels(2);
+    return true;
+}
+
+std::string SimWorkspace::renderFolder() const {
+    std::error_code ec;
+    if (!renderFolder_.empty() && fs::is_directory(renderFolder_, ec)) return renderFolder_;
+    return outputFolder();
+}
+
+void SimWorkspace::chooseVideo() {
+    const std::vector<std::string> kinds = io::videoExtensions();
+    files_.open(io::ffmpegAvailable() ? "Render video" : "Render video (.avi -- with ffmpeg also .mp4, .webm, .gif)", kinds,
+                true, (fs::path(renderFolder()) / (stem() + kinds.front())).string());
+    fileAction_ = FileAction::Video;
+}
+
+void SimWorkspace::drawNotice(ImDrawList* d, ImVec2 lo, ImVec2 hi) {
+    noticeLo_ = noticeHi_ = ImVec2(0.0f, 0.0f);
+    if (notice_.text.empty()) return;
+    if (notice_.until > 0.0 && ImGui::GetTime() > notice_.until) {
+        notice_ = Notice();
+        return;
+    }
+    // A card at the bottom: what happened, then Open and Show for what was
+    // written, and a close.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const bool file = !notice_.path.empty();
+    const float pad = theme::px(10.0f), gap = theme::px(6.0f), button = ImGui::GetFrameHeight();
+    const float openW = ImGui::CalcTextSize("Open").x + 2.0f * style.FramePadding.x;
+    const float showW = ImGui::CalcTextSize("Show").x + 2.0f * style.FramePadding.x;
+    const float buttons = (file ? openW + showW + 2.0f * gap : 0.0f) + button;
+    const float wrap = std::max(theme::px(120.0f), std::min(theme::px(560.0f), hi.x - lo.x - buttons - theme::px(80.0f)));
+    const ImVec2 ts = ImGui::CalcTextSize(notice_.text.c_str(), nullptr, false, wrap);
+    const float w = pad + ts.x + gap + buttons + pad, h = std::max(ts.y, button) + 2.0f * pad;
+    const ImVec2 a(std::round((lo.x + hi.x - w) * 0.5f), std::round(hi.y - h - theme::px(44.0f)));
+    const ImVec2 b(a.x + w, a.y + h);
+    noticeLo_ = a;
+    noticeHi_ = b;
+    d->AddRectFilled(a, b, IM_COL32(24, 25, 29, 238), theme::px(7.0f));
+    d->AddRect(a, b, notice_.error ? theme::kRed : theme::kAccentDim, theme::px(7.0f), 0, theme::px(1.0f));
+    d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + pad, a.y + (h - ts.y) * 0.5f),
+               notice_.error ? theme::kRed : theme::kText, notice_.text.c_str(), nullptr, wrap);
+    float x = a.x + pad + ts.x + gap;
+    const float y = a.y + (h - button) * 0.5f;
+    if (file) {
+        std::error_code ec;
+        const std::string folder = fs::is_directory(notice_.path, ec) ? notice_.path : fs::path(notice_.path).parent_path().string();
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        if (ImGui::Button("Open##notice")) openExternally(notice_.path);
+        ImGui::SetItemTooltip("Open %s", notice_.path.c_str());
+        x += openW + gap;
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        if (ImGui::Button("Show##notice")) openExternally(folder);
+        ImGui::SetItemTooltip("The folder it is in: %s", folder.c_str());
+        x += showW + gap;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    if (theme::iconButton("close_notice", Icon::Close, "Close", false, true, button)) notice_ = Notice();
+}
+
+void SimWorkspace::notify(std::string text, std::string path, bool error, bool sticky) {
+    notice_.text = std::move(text);
+    notice_.path = std::move(path);
+    notice_.error = error;
+    notice_.until = error || sticky ? 0.0 : ImGui::GetTime() + 12.0;
 }
 
 // --- the cache on disk, and export ------------------------------------------------------------------
 
 std::string SimWorkspace::outputFolder() const {
+    // The network's folder; else the current one -- unless files cannot be
+    // made there (a program started from a menu may be in /) -- else home.
     std::error_code ec;
     const fs::path parent = fs::path(path_).parent_path();
-    return parent.empty() ? fs::current_path(ec).string() : parent.string();
+    if (!parent.empty()) return parent.string();
+    const fs::path here = fs::current_path(ec);
+    if (!ec && writable(here)) return here.string();
+    if (const char* home = std::getenv("HOME"); home && *home) return home;
+    return here.string();
 }
 
 std::string SimWorkspace::stem() const {

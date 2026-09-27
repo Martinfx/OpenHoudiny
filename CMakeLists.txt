@@ -39,6 +39,8 @@ add_library(pgcore
   src/pg/nodes/Surface.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
+  src/pg/io/Jpeg.cpp
+  src/pg/io/Video.cpp
   src/pg/io/Ply.cpp
   src/pg/io/Export.cpp
 )
@@ -203,13 +205,14 @@ target_link_libraries(pgpreview PUBLIC pgshadergraph pgsim)
 
 option(PG_BUILD_GUI "Build the editor into pgshader (fetches Dear ImGui and GLFW)" ON)
 
-set(PG_TOOL_SOURCES tools/pgshader/main.cpp tools/pgshader/Commands.cpp)
+set(PG_TOOL_SOURCES tools/pgshader/main.cpp tools/pgshader/Commands.cpp tools/pgshader/Offscreen.cpp)
 if(PG_BUILD_GUI)
   list(APPEND PG_TOOL_SOURCES
     tools/pgshader/App.cpp
     tools/pgshader/Editor.cpp
     tools/pgshader/Gizmo.cpp
     tools/pgshader/NodeCanvas.cpp
+    tools/pgshader/RenderJob.cpp
     tools/pgshader/ShaderWorkspace.cpp
     tools/pgshader/SimGeometry.cpp
     tools/pgshader/SimRunner.cpp
@@ -230,7 +233,8 @@ else()
   set_source_files_properties(${PG_TOOL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic")
 endif()
 
-# `pgshader render` draws without a window through EGL; built when EGL exists.
+# `pgshader render` and `sim` draw without a window through EGL when it exists
+# -- and through a hidden GLFW window in the builds with the editor (Offscreen.h).
 find_path(PG_EGL_INCLUDE_DIR EGL/egl.h)
 find_library(PG_EGL_LIBRARY EGL)
 if(PG_EGL_INCLUDE_DIR AND PG_EGL_LIBRARY)
@@ -315,6 +319,7 @@ add_executable(pgtests
   tests/test_rain.cpp
   tests/test_sops.cpp
   tests/test_export.cpp
+  tests/test_video.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")

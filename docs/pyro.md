@@ -19,9 +19,11 @@ předstírají šumem na jedné ploše.
 
 ![Editor: síť Simulation s tornádem, vybraný uzel Vortex a jeho vodítka ve viewportu](img/editor-sim.png)
 
-Všechno je v programu `pgshader`. Editor se otevře rovnou na síti
-**Simulation** s táborákem; bez okna simulaci spočítá a vykreslí příkaz
-`pgshader sim`.
+Všechno je v programu `pgshader`. Editor se otevře na síti **Simulation**
+s prázdnou scénou: **Shift+A** ve viewportu přidá oheň, kouř, vodu, déšť,
+objekt nebo kameru (i s řešičem, vzhledem a Outputem, které k tomu patří),
+hotové scény jsou ve **File › Examples**. Bez okna simulaci spočítá a
+vykreslí příkaz `pgshader sim` — i rovnou do videa ([render.md](render.md)).
 
 Obsah:
 [1. Rychlý start](#1-rychlý-start) ·
@@ -43,7 +45,8 @@ Obsah:
 ## 1. Rychlý start
 
 ```bash
-./build/pgshader                          # editor: síť Simulation s táborákem
+./build/pgshader                          # editor: prázdná scéna (Shift+A přidá oheň, vodu, déšť)
+./build/pgshader --example campfire       # vestavěný příklad: táborák
 ./build/pgshader --example tornado        # jiný vestavěný příklad
 ./build/pgshader moje.pgsim               # vlastní síť
 
@@ -55,8 +58,9 @@ Obsah:
 ./build/pgshader sim tornado t.png --set vortex.speed=3 --set solver.resolution=128
 ./build/pgshader sim --list               # vestavěné příklady
 
-# sekvence do videa
-ffmpeg -framerate 15 -pattern_type glob -i 'out/boom_*.png' boom.mp4
+# rovnou video: celý záběr, snímek po snímku (.avi bez čehokoli, .mp4 přes ffmpeg)
+./build/pgshader sim campfire fire.mp4
+./build/pgshader sim examples/sim/explosion.pgsim boom.avi --every 2
 ```
 
 `sim` síť načte ze souboru, nebo vezme vestavěný příklad podle jména.
@@ -67,7 +71,8 @@ rozlišení řešiče. Příkaz vypíše, kolik trval krok simulace a kolik jede
 obrázek. Vykresluje přes EGL bez okna, takže funguje i na serveru; bez GPU
 stačí softwarový ovladač, třeba Mesa llvmpipe. Se `--every K` uloží snímky
 K, 2K, 3K… a pojmenuje je číslem snímku (`boom_0002.png`, `boom_0004.png`,
-…). Proto je v příkladu pro ffmpeg `glob`: čísla netvoří souvislou řadu.
+…). Do videa (`.avi`, s ffmpeg i `.mp4`, `.webm`, `.gif`) jde každý
+snímek, se `--every K` každý K-tý ([render.md](render.md)).
 `--guides` do obrázku nakreslí vodítka: doménu, zdroje a síly.
 
 Má-li síť kameru připojenou do Outputu, `sim` renderuje jejím pohledem a
@@ -226,10 +231,11 @@ tažení, **Space**, **Home**, **End**, šipky) pak nic nepočítají znovu.
 
 ### Soubory, undo
 
-**Ctrl+N/O/S**, **Ctrl+Shift+S**, příklady v **File › Examples**. Otevřený
-příklad se ukládá přes Save As. **File › Render Image** uloží snímek,
-**Render Frames** všechny spočítané snímky do složky, obojí kamerou, pokud
-síť nějakou má. **Export Geometry** a **Export Geometry Frames** zapíšou
+**Ctrl+N/O/S**, **Ctrl+Shift+S**, příklady v **File › Examples**; **New**
+dá prázdnou scénu. Otevřený příklad se ukládá přes Save As. **File › Render
+Image** uloží snímek, **Render Frames** celý záběr jako očíslované PNG
+a **Render Video** celý záběr do videa — obojí po snímcích na pozadí, s oknem
+průběhu a tlačítkem Stop, a kamerou, pokud ji síť má ([render.md](render.md)). **Export Geometry** a **Export Geometry Frames** zapíšou
 geometrii zobrazeného uzlu do PLY, OBJ nebo OpenVDB — snímek na obrazovce,
 nebo všechny ([cache.md](cache.md)). Dialog souborů ukazuje složky a soubory
 dané přípony a cestu jde napsat; kde se vybírá složka, vezme i tu otevřenou.

@@ -40,6 +40,9 @@ public:
     void adopt(const sim::World& world, int frames, std::vector<std::shared_ptr<const sim::Frame>> loaded);
     /// The frames are adopted ones, not simulated.
     bool adopted() const;
+    /// Nothing to simulate: the frames and the world go, and the next set()
+    /// starts again whatever it brings -- another network, or none.
+    void clear();
     /// Simulate ahead or not.
     void setRunning(bool on);
     bool running() const { return running_; }

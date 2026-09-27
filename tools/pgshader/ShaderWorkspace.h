@@ -11,6 +11,7 @@
 //
 #include "Commands.h"
 #include "NodeCanvas.h"
+#include "RenderJob.h"
 #include "Workspace.h"
 
 #include "pg/gl/Preview.h"
@@ -63,6 +64,9 @@ private:
     bool save(const std::string& path);
     void exportShaders(const std::string& dir);
     void savePreviewImage(const std::string& path);
+    /// The preview animated -- five seconds of $time at 30 frames a second --
+    /// into a video, behind the render modal.
+    void savePreviewVideo(const std::string& path);
     void startValidation();
     void pollValidation();
     void setMessage(std::string message, bool error = false);
@@ -81,7 +85,6 @@ private:
     void problemsPanel();
     void uniformsPanel();
 
-    const gl::Api& gl_;
     shader::NodeLibrary library_;
     std::vector<std::string> libraryFiles_;
     std::string examplesDir_;
@@ -113,7 +116,8 @@ private:
     int bottomTab_ = 0;
 
     ui::FileBrowser files_;
-    enum class FileAction { None, Open, SaveAs, Export, Image, Library } fileAction_ = FileAction::None;
+    enum class FileAction { None, Open, SaveAs, Export, Image, Video, Library } fileAction_ = FileAction::None;
+    RenderJob job_;
 
     std::string message_;
     bool messageError_ = false;

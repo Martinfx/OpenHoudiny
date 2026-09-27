@@ -12,6 +12,14 @@ namespace fs = std::filesystem;
 namespace pg::editor::ui {
 namespace {
 
+/// A path typed by hand: "~" and "~/..." are the home folder.
+fs::path typed(const std::string& text) {
+    if (text == "~" || text.rfind("~/", 0) == 0) {
+        if (const char* home = std::getenv("HOME"); home && *home) return fs::path(home) / text.substr(std::min<size_t>(2, text.size()));
+    }
+    return fs::path(text);
+}
+
 std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
@@ -408,7 +416,7 @@ void FileBrowser::open(const std::string& title, std::vector<std::string> extens
     places_ = std::move(places);
     error_.clear();
     std::error_code ec;
-    fs::path p = start.empty() ? fs::current_path(ec) : fs::path(start);
+    fs::path p = start.empty() ? fs::current_path(ec) : typed(start);
     if (fs::is_directory(p, ec)) {
         dir_ = p;
         name_.clear();
@@ -497,7 +505,7 @@ bool FileBrowser::draw(std::string& chosen) {
     if (theme::iconButton("up", theme::Icon::Up, "The folder above")) go(dir_.parent_path());
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::InputText("##path", &pathText_, ImGuiInputTextFlags_EnterReturnsTrue)) go(fs::path(pathText_));
+    if (ImGui::InputText("##path", &pathText_, ImGuiInputTextFlags_EnterReturnsTrue)) go(typed(pathText_));
 
     // Places on the left, the folder on the right.
     const float footer = ImGui::GetFrameHeightWithSpacing() * 2.0f + theme::px(8.0f);
@@ -559,12 +567,12 @@ bool FileBrowser::draw(std::string& chosen) {
     const bool pressed = ImGui::Button(folders_ ? "Choose" : save_ ? "Save" : "Open", ImVec2(theme::px(92.0f), 0.0f)) || enter;
     if (pressed && folders_) {
         // The folder named, or with no name the one open.
-        const fs::path p = name_.empty() ? dir_ : fs::path(name_).is_absolute() ? fs::path(name_) : dir_ / name_;
+        const fs::path p = name_.empty() ? dir_ : typed(name_).is_absolute() ? typed(name_) : dir_ / name_;
         std::error_code ec;
         if (fs::is_directory(p, ec) || (save_ && !fs::exists(p, ec))) accept(p);
         else error_ = fs::exists(p, ec) ? p.string() + ": not a folder" : "no folder " + p.string();
     } else if (pressed && !name_.empty()) {
-        const fs::path p = fs::path(name_).is_absolute() ? fs::path(name_) : dir_ / name_;
+        const fs::path p = typed(name_).is_absolute() ? typed(name_) : dir_ / name_;
         std::error_code ec;
         if (fs::is_directory(p, ec)) {
             go(p);

@@ -15,10 +15,15 @@
 // while the play head stays; a change of the look only draws the frame again.
 // The frames go to a folder on disk and come back from one (Save Cache, Load
 // Cache: sim/Cache.h); a geometry node's geometry -- the particles, the gas as
-// volumes -- is exported, a frame or every frame (io/Export.h).
+// volumes -- is exported, a frame or every frame (io/Export.h). The shot is
+// rendered to a PNG, to numbered PNGs or to a video (io/Video.h), the last
+// two a frame at a time behind a modal that shows how far it got (RenderJob).
+//
+// It starts on an empty scene; File > Examples has finished ones.
 //
 #include "Gizmo.h"
 #include "NodeCanvas.h"
+#include "RenderJob.h"
 #include "SimRunner.h"
 #include "Workspace.h"
 
@@ -124,7 +129,26 @@ private:
     /// orbit through it turns round.
     float focusOf(const sim::Camera& camera) const;
     bool renderImage(const std::string& path);
-    bool renderFrames(const std::string& folder);
+    /// Every frame of the shot -- 1 to the Output's last, as the simulation
+    /// gets there -- into `target`: a video when its extension is one's,
+    /// else a folder of numbered PNGs.
+    void startRender(const std::string& target);
+    /// Frame `frame` of the shot for the render job, posed and drawn as the
+    /// viewport would show it then. False while the simulation has not got
+    /// there; false with why when it will not.
+    bool drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error);
+    /// Where a render goes by default: where the last one went, the
+    /// network's folder, the current one if it can be written, or home.
+    std::string renderFolder() const;
+    /// A notice over the viewport: what was written, where, with Open and
+    /// Show. An error -- or a `sticky` one, the end of a long render --
+    /// stays until closed.
+    void notify(std::string text, std::string path, bool error, bool sticky = false);
+    void drawNotice(ImDrawList* d, ImVec2 lo, ImVec2 hi);
+    /// The dialog of Render Video: the kinds of file there are to write.
+    void chooseVideo();
+    /// A network with no node: what a new scene is.
+    bool emptyScene() const { return net_.nodes().empty(); }
 
     // --- the cache on disk, and export ------------------------------------------------
     /// Where a file made from the network goes by default: its file's
@@ -227,6 +251,7 @@ private:
     std::string nameEdit_;
     int nameEditNode_ = 0;
 
+    const gl::Api& gl_;
     gl::VolumeRenderer renderer_;
     std::string rendererLog_;
     std::unique_ptr<SimRunner> runner_;
@@ -269,11 +294,24 @@ private:
 
     ui::FileBrowser files_;
     enum class FileAction {
-        None, Open, SaveAs, Image, Frames, MeshFile, ImportMesh, SaveCache, LoadCache, ExportGeometry, ExportFrames
+        None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, ExportGeometry, ExportFrames
     } fileAction_ = FileAction::None;
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;
     std::string cacheFolder_;  ///< the folder the cache was last saved to or loaded from
+
+    // Rendering.
+    RenderJob job_;
+    int jobWidth_ = 0, jobHeight_ = 0;  ///< the size of the job's frames, fixed when it starts
+    int jobReturnFrame_ = 1;            ///< the play head, put back when the job ends
+    bool jobWasPlaying_ = false;
+    std::string renderFolder_;          ///< where the last render went
+    struct Notice {
+        std::string text, path;
+        bool error = false;
+        double until = 0.0;  ///< ImGui time it goes away at; 0: when closed
+    } notice_;
+    ImVec2 noticeLo_, noticeHi_;  ///< the notice, last frame: the viewport's clicks are not its
 
     std::string message_;
     bool messageError_ = false;

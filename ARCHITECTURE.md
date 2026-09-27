@@ -325,6 +325,8 @@ src/pg/io/       Obj        čtení a zápis OBJ (body, polygony, čáry)
                  Ply        body s atributy a polygony do PLY a zpátky (ASCII i binárně)
                  Vdb        objemy do OpenVDB bez knihovny: řídký strom 5-4-3, soubor verze 224
                  Export     geometrie podle přípony (.ply, .obj, .vdb), sekvence ($F4)
+                 Jpeg       baseline JPEG: YCbCr 4:2:0, tabulky normy, AAN DCT
+                 Video      video po snímcích: AVI s Motion JPEG sám, .mp4/.webm/.gif rourou do ffmpeg
 src/pg/shader/   Types      typy shader grafu a jejich převody
                  NodeLibrary definice uzlů z textu (builtin.pgnodes)
                  ShaderGraph instance uzlů, spoje, formát .pgsg
@@ -356,13 +358,16 @@ src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                             zobrazená geometrie, vodítka
 tests/           59 testů jádra (invarianty, SOP uzly) + 25 pro shader graf + 85 pro simulaci,
                  vodu, déšť, objekty, modely, geometrii v síti a animaci + 11 pro cache a export
+                 + 5 pro JPEG a video
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,
                  na společném plátně uzlů; viewport s výběrem a gizmem
                  (SimViewport, Gizmo), zobrazená geometrie a tabulka atributů
-                 (SimGeometry); cache na disk a export (SimRunner::adopt, menu);
-                 příkazy list/gen/check/render/sim (sim --cache/--from-cache/--export)
+                 (SimGeometry); cache na disk a export (SimRunner::adopt, menu); render
+                 sekvencí a videa po snímcích s průběhem (RenderJob); kontext bez okna
+                 pro příkazy (Offscreen: EGL, jinak skryté okno GLFW);
+                 příkazy list/gen/check/render/sim (sim --cache/--from-cache/--export, video)
 examples/        grafy shaderů, ukázková uživatelská knihovna, sítě simulace
 ```
 
@@ -371,7 +376,8 @@ simulace kouře a ohně v [docs/pyro.md](docs/pyro.md), geometrie v síti
 editoru (uzly jako SOP, display flag, tabulka atributů, geometrie jako tvar
 simulací) v [docs/geometry.md](docs/geometry.md), klíčové snímky a
 pohyblivé překážky v [docs/animation.md](docs/animation.md), cache na disku
-a export do PLY, OpenVDB a OBJ v [docs/cache.md](docs/cache.md).
+a export do PLY, OpenVDB a OBJ v [docs/cache.md](docs/cache.md), obrázky
+a video v [docs/render.md](docs/render.md).
 
 Jmenný prostor `pg` je placeholder — jméno je výstup fáze 0 roadmapy.
 
@@ -394,7 +400,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Per-element jazyk: parser, typová inference, vazba na sloty |
 | ✅ | 19 typů uzlů (box, sphere, tube, scatter, copy to points, file…), obsahový hash, čtení i zápis OBJ, headless CLI |
 | ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
-| ✅ | 180 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
+| ✅ | 185 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
@@ -403,6 +409,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Geometrie v síti editoru: SOP uzly vařené jádrem inkrementálně, display flag, viewport, **geometry spreadsheet**; geometrie jako tvar překážek a zdrojů, simulace zpátky jako body a objemy |
 | ✅ | Animace: klíče na libovolném parametru (Smooth/Linear/Step), síť snímek po snímku, pohyblivé překážky s rychlostí i rotací v okrajových podmínkách plynu i vody, animované parametry geometrie jako výrazy jádra |
 | ✅ | Cache simulace na disku (editor i `pgshader sim`), export geometrie snímek po snímku: PLY s atributy, **OpenVDB** (ověřeno čtením v OpenVDB 10: voxely i součty sedí s mřížkou simulace), OBJ |
+| ✅ | Video: AVI s Motion JPEG bez závislostí (vlastní kodér JPEG), MP4/MOV/MKV (H.264), WebM (VP9) a GIF přes ffmpeg; v editoru render na pozadí s průběhem, z příkazové řádky `sim OUT.mp4` a `render OUT.mp4`; ověřeno dekódováním v ffmpeg |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 

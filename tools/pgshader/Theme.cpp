@@ -584,6 +584,15 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             line(-0.25f, -0.35f, -0.25f, 0.75f);
             line(0.3f, -0.35f, 0.3f, 0.75f);
             break;
+        case Icon::Film:  // a strip of film: holes along both edges, a picture between
+            d->AddRect(P(-0.85f, -0.7f), P(0.85f, 0.7f), col, 0.1f * s, 0, t);
+            for (int i = 0; i < 4; ++i) {
+                const float x = -0.6f + 0.4f * static_cast<float>(i);
+                d->AddRectFilled(P(x - 0.09f, -0.56f), P(x + 0.09f, -0.4f), col);
+                d->AddRectFilled(P(x - 0.09f, 0.4f), P(x + 0.09f, 0.56f), col);
+            }
+            d->AddRectFilled(P(-0.5f, -0.22f), P(0.5f, 0.22f), col, 0.05f * s);
+            break;
     }
 }
 

@@ -60,6 +60,23 @@ void SimRunner::adopt(const sim::World& world, int frames, std::vector<std::shar
     wake_.notify_all();
 }
 
+void SimRunner::clear() {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        started_ = false;
+        fresh_ = false;
+        adopted_ = false;
+        world_ = sim::World();
+        frames_ = 0;
+        cache_.clear();
+        bytes_ = 0;
+        ++generation_;  // a frame simulated meanwhile belongs to no one
+        stepMs_ = 0.0;
+        domain_ = sim::Domain();
+    }
+    wake_.notify_all();
+}
+
 bool SimRunner::adopted() const {
     std::lock_guard<std::mutex> lock(mu_);
     return adopted_;

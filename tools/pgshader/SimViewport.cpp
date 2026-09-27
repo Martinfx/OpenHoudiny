@@ -23,6 +23,8 @@
 #include <cstdio>
 #include <filesystem>
 
+namespace fs = std::filesystem;
+
 namespace pg::editor {
 namespace {
 
@@ -861,9 +863,10 @@ void SimWorkspace::viewport(ImVec2 size) {
     const std::string info = gridsText();
     ui::PanelHeader h = ui::panelHeader(Icon::Viewport, "Viewport", info.c_str());
     if (ui::headerButton(h, "image", Icon::Camera, "Render this frame to a PNG\xe2\x80\xa6")) {
-        files_.open("Render image", {".png"}, true, (example_.empty() ? std::string("frame") : example_) + ".png");
+        files_.open("Render image", {".png"}, true, (fs::path(renderFolder()) / (stem() + ".png")).string());
         fileAction_ = FileAction::Image;
     }
+    if (ui::headerButton(h, "video", Icon::Film, "Render the shot to a video\xe2\x80\xa6", false, compiled_.ok)) chooseVideo();
     if (ui::headerButton(h, "home", Icon::Viewport, "Frame the domain")) {
         setThroughCamera(false);
         framed_ = false;
@@ -929,7 +932,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     ViewCamera cam = ViewCamera::of(renderer_.orbit, lo, ImVec2(static_cast<float>(w), static_cast<float>(hh)));
     camera_ = cam;
     auto within = [](ImVec2 p, ImVec2 a, ImVec2 b) { return p.x >= a.x && p.y >= a.y && p.x < b.x && p.y < b.y; };
-    const bool onTools = within(io.MousePos, toolsLo_, toolsHi_);
+    const bool onTools = within(io.MousePos, toolsLo_, toolsHi_) || within(io.MousePos, noticeLo_, noticeHi_);
     const bool overView = ImGui::IsWindowHovered() && within(io.MousePos, lo, hi) && !onTools;
 
     // What is under the mouse lights up -- while nothing is being dragged.
@@ -1093,12 +1096,33 @@ void SimWorkspace::viewport(ImVec2 size) {
                       hovered_ && hovered_ != canvas_.current() ? "" : "  \xc2\xb7  selected");
         const ImVec2 ts = ImGui::CalcTextSize(text);
         d->AddText(ImVec2(hi.x - ts.x - pad, hi.y - ts.y - pad), hovered_ ? theme::kText : theme::kAccentHover, text);
-    } else if (!compiled_.solids.empty() || compiled_.ok) {
+    } else if (!emptyScene() && (!compiled_.solids.empty() || compiled_.ok)) {
         const char* hint = "Click to select  \xc2\xb7  W E R move, rotate, scale  \xc2\xb7  Shift+A add";
         const ImVec2 ts = ImGui::CalcTextSize(hint);
         d->AddText(ImVec2(hi.x - ts.x - pad, hi.y - ts.y - pad), theme::kTextFaint, hint);
     }
-    if (!compiled_.ok) {
+    if (emptyScene()) {
+        // Where to begin, in the middle of the view.
+        const char* title = "An empty scene";
+        const char* lines[] = {"Shift+A or a right click here: an object, fire, water, rain, a camera",
+                               "Tab or a right click in the network: any node", "File > Examples: finished scenes"};
+        float w = 0.0f;
+        for (const char* l : lines) w = std::max(w, ImGui::CalcTextSize(l).x);
+        const float line = ImGui::GetTextLineHeightWithSpacing();
+        const ImVec2 c((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f - line * 2.0f);
+        const float hh = line * 5.2f;
+        d->AddRectFilled(ImVec2(c.x - w * 0.5f - pad * 2.0f, c.y - hh * 0.5f), ImVec2(c.x + w * 0.5f + pad * 2.0f, c.y + hh * 0.5f),
+                         IM_COL32(20, 20, 24, 200), theme::px(8.0f));
+        float y = c.y - hh * 0.5f + pad;
+        ImGui::PushFont(theme::fonts().bold, 0.0f);
+        d->AddText(ImVec2(c.x - ImGui::CalcTextSize(title).x * 0.5f, y), theme::kText, title);
+        ImGui::PopFont();
+        y += line * 1.4f;
+        for (const char* l : lines) {
+            d->AddText(ImVec2(c.x - ImGui::CalcTextSize(l).x * 0.5f, y), theme::kTextDim, l);
+            y += line;
+        }
+    } else if (!compiled_.ok) {
         std::string why = "Nothing to simulate";
         for (const sim::Problem& p : compiled_.problems) {
             if (p.level == sim::Problem::Level::Error) {
@@ -1114,6 +1138,7 @@ void SimWorkspace::viewport(ImVec2 size) {
         d->AddText(ImVec2(c.x - t.x * 0.5f, c.y + t.y * 0.25f), theme::kText, why.c_str());
     }
     drawGnomon(d, ImVec2(lo.x, hi.y));
+    drawNotice(d, lo, hi);
 
     // The toolbar, on the left under the frame's number.
     viewTools(ImVec2(lo.x + pad, lo.y + pad + ImGui::GetFontSize() * 2.6f));

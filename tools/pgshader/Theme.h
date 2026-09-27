@@ -67,6 +67,7 @@ enum class Icon {
     Sphere, Box, Cylinder, Cone, Torus,              // shapes
     Wind, Vortex, Attractor, Drop, Rain, Trash, Copy,
     Geometry, Points, Table,                         // geometry
+    Film,                                            // a video
 };
 
 /// `icon` in a square `size` wide, centred on `center`.

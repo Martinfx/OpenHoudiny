@@ -19,6 +19,9 @@ node-based, nedestruktivní, headless-first.
 - **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
   body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
   Houdini, Blender a renderery
+- **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
+  video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
+  pozadí editoru s průběhem
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -65,11 +68,12 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 180 testů: 59 jádro, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export
+./build/pgtests            # 185 testů: 59 jádro, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
-./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
-./build/pgshader --example tornado                # jiný příklad simulace
+./build/pgshader                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
+./build/pgshader --example campfire               # příklad simulace: táborák
+./build/pgshader sim campfire fire.mp4            # celý záběr do videa (.avi i bez ffmpeg)
 ./build/pgshader examples/shaders/fire.pgsg       # editor na síti shaderů, s grafem
 ./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
 ./build/pgshader sim campfire fire.png            # simulace bez okna, do PNG
@@ -161,6 +165,13 @@ nezapisují, 150 snímků táboráku má 63 MB. Geometrie kteréhokoli uzlu jde
 ven snímek po snímku: body s atributy do PLY, objemy do OpenVDB (vlastní
 zapisovač bez knihovny, soubory ověřené čtením v OpenVDB 10), polygony do
 OBJ.
+
+**Obrázky a video**: záběr jde do PNG, do očíslované sekvence nebo do videa
+— `.avi` (Motion JPEG, vlastní kodér JPEG i kontejner) bez jakékoli
+závislosti, `.mp4`, `.mov`, `.mkv`, `.webm` a `.gif` přes ffmpeg. Editor
+renderuje po snímcích na pozadí s oknem průběhu, počká na simulaci a nakonec
+nabídne soubor otevřít; příkazy `sim` a `render` kreslí bez okna přes EGL,
+a když EGL nejde, přes skryté okno.
 
 Vědomě chybí: USD, Alembic, čtení VDB, JIT, packed primitives, digital assets,
 Python vazby, simulace těles a látek. Podrobně v

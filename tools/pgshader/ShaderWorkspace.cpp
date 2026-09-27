@@ -1,6 +1,7 @@
 #include "ShaderWorkspace.h"
 
 #include "pg/gl/Png.h"
+#include "pg/io/Video.h"
 
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -128,7 +129,7 @@ const char* fileLabel(const ShaderFile& f) {
 }  // namespace
 
 ShaderWorkspace::ShaderWorkspace(const gl::Api& gl, std::vector<std::string> libraryFiles, std::string examplesDir)
-    : gl_(gl), libraryFiles_(std::move(libraryFiles)), examplesDir_(std::move(examplesDir)), preview_(gl) {
+    : libraryFiles_(std::move(libraryFiles)), examplesDir_(std::move(examplesDir)), preview_(gl) {
     reloadLibrary();
     newGraph();
 }
@@ -319,6 +320,28 @@ void ShaderWorkspace::update(float dt) {
     recompile();
     pollValidation();
     history_.track(graph_.save(), settled());
+    job_.step();
+    std::string result, where;
+    bool failed = false;
+    if (job_.takeResult(result, failed, where)) setMessage(result, failed);
+}
+
+void ShaderWorkspace::savePreviewVideo(const std::string& path) {
+    if (!preview_.hasProgram()) {
+        setMessage("Nothing to save: the graph does not compile", true);
+        return;
+    }
+    constexpr int size = 720;
+    std::string error;
+    const bool started = job_.start(
+        path, path, "preview", size, size, 30.0, 0, 149,
+        [this](int frame, std::vector<uint8_t>& rgb, std::string&) {
+            preview_.render(size * 2, size * 2, static_cast<float>(frame) / 30.0f);
+            rgb = preview_.readPixels(2);
+            return true;
+        },
+        error);
+    if (!started) setMessage(error, true);
 }
 
 void ShaderWorkspace::shortcuts() {
@@ -915,6 +938,12 @@ void ShaderWorkspace::fileMenu() {
         files_.open("Save preview image", {".png"}, true, "preview.png");
         fileAction_ = FileAction::Image;
     }
+    if (ImGui::MenuItem("Save Preview Video\xe2\x80\xa6")) {
+        const std::vector<std::string> kinds = io::videoExtensions();
+        files_.open("Save preview video: five seconds of $time", kinds, true, "preview" + kinds.front());
+        fileAction_ = FileAction::Video;
+    }
+    ImGui::SetItemTooltip("The preview animated, $time from 0 to 5 s, 720 x 720 at 30 fps");
 }
 
 void ShaderWorkspace::editMenu() {
@@ -971,6 +1000,7 @@ void ShaderWorkspace::helpMenu() {
 }
 
 void ShaderWorkspace::popups() {
+    job_.draw();
     std::string chosen;
     if (!files_.draw(chosen)) return;
     switch (fileAction_) {
@@ -978,6 +1008,7 @@ void ShaderWorkspace::popups() {
         case FileAction::SaveAs: save(chosen); break;
         case FileAction::Export: exportShaders(chosen); break;
         case FileAction::Image: savePreviewImage(chosen); break;
+        case FileAction::Video: savePreviewVideo(chosen); break;
         case FileAction::Library:
             libraryFiles_.push_back(chosen);
             reloadLibrary();
