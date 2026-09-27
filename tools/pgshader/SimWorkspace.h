@@ -119,6 +119,11 @@ private:
     /// when something was added.
     bool sceneMenu(const Vec3& at);
     int addToScene(const std::string& kind, const Vec3& at);
+    /// An object of the mesh in an OBJ file, sized to fit the scene.
+    int addMesh(const std::string& path, const Vec3& at);
+    /// Where relative paths of the network (meshes) are read from: its
+    /// file's folder, or the examples' for an example.
+    std::string folder() const;
     int ensurePyroChain();
     /// Links `node`'s output into that input of every solver that has it.
     void linkIntoSolvers(int node, const char* output, const char* input);
@@ -176,7 +181,9 @@ private:
     int newColor_ = 0;
 
     ui::FileBrowser files_;
-    enum class FileAction { None, Open, SaveAs, Image, Frames } fileAction_ = FileAction::None;
+    enum class FileAction { None, Open, SaveAs, Image, Frames, MeshFile, ImportMesh } fileAction_ = FileAction::None;
+    int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen
+    std::string fileParam_;
 
     std::string message_;
     bool messageError_ = false;

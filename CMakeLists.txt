@@ -149,6 +149,7 @@ configure_file(${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp.tmp
 add_library(pgsim
   src/pg/sim/Frame.cpp
   src/pg/sim/Grid.cpp
+  src/pg/sim/Mesh.cpp
   src/pg/sim/Network.cpp
   src/pg/sim/Poisson.cpp
   src/pg/sim/Pyro.cpp
@@ -204,6 +205,8 @@ if(PG_BUILD_GUI)
 endif()
 add_executable(pgshader ${PG_TOOL_SOURCES})
 target_include_directories(pgshader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/pgshader)
+# Where the examples built into the program read their files (meshes) from.
+target_compile_definitions(pgshader PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
 target_link_libraries(pgshader PRIVATE pgshadergraph pgsim Threads::Threads)
 # Warnings for our own sources only; the fetched libraries compile as they are.
 if(MSVC)
@@ -290,8 +293,10 @@ add_executable(pgtests
   tests/test_pyro.cpp
   tests/test_sim_network.cpp
   tests/test_shapes.cpp
+  tests/test_mesh.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
+target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
 add_test(NAME pgtests COMMAND pgtests)
 # The commands work in every build, with or without the editor.
 add_test(NAME pgshader_list COMMAND pgshader list)

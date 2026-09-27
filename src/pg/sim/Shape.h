@@ -1,7 +1,8 @@
 #pragma once
 //
 // Shapes placed in the world: the solids of a scene -- a ball, a box, a
-// column, a cone, a ring -- and the regions sources emit from.
+// column, a cone, a ring, a mesh from a file (Mesh.h) -- and the regions
+// sources emit from.
 //
 // Each is a canonical shape in a unit space of its own, placed by three
 // things, as in any 3D program:
@@ -14,7 +15,8 @@
 //
 // Along its own axes a shape fills [-size/2, size/2]. A cylinder and a cone
 // stand along their own y; a torus lies in their own xz plane, as thick as
-// size.y. Sizes that differ stretch the shape: a ball becomes an ellipsoid.
+// size.y; a mesh's box is stretched onto it. Sizes that differ stretch the
+// shape: a ball becomes an ellipsoid.
 //
 // ShapeInstance precomputes what the hot loops need -- the turn, the half
 // size -- and answers: is a point inside, how far is it from the surface,
@@ -25,10 +27,13 @@
 #include "pg/core/Types.h"
 
 #include <cstdint>
+#include <memory>
 
 namespace pg::sim {
 
-enum class Shape : uint8_t { Sphere, Box, Cylinder, Cone, Torus };
+class MeshShape;
+
+enum class Shape : uint8_t { Sphere, Box, Cylinder, Cone, Torus, Mesh };
 
 /// Names as files and the command line write them: "sphere", "box", ...
 const char* shapeName(Shape shape);
@@ -62,9 +67,15 @@ struct Rotation {
 class ShapeInstance {
 public:
     ShapeInstance() = default;
-    ShapeInstance(Shape shape, const Vec3& center, const Vec3& rotationDegrees, const Vec3& size);
+    /// `mesh`: what a Shape::Mesh is; without one it is a box.
+    ShapeInstance(Shape shape, const Vec3& center, const Vec3& rotationDegrees, const Vec3& size,
+                  std::shared_ptr<const MeshShape> mesh = nullptr);
 
     Shape shape() const { return shape_; }
+    const MeshShape* mesh() const { return mesh_.get(); }
+    /// From the shape's own axes (world units) to the mesh's space: its box
+    /// onto the shape's size.
+    Vec3 toMesh(const Vec3& local) const;
     const Vec3& center() const { return center_; }
     const Rotation& turn() const { return turn_; }
     /// Half the size: the shape fills [-half, half] along its own axes.
@@ -105,6 +116,9 @@ private:
     Rotation turn_;
     Vec3 half_{0.5f, 0.5f, 0.5f};
     float tube_ = 0.0f, ring_ = 0.0f;
+    std::shared_ptr<const MeshShape> mesh_;
+    Vec3 toMesh_{1.0f, 1.0f, 1.0f};  // mesh units per world unit, along each own axis
+    float fromMesh_ = 1.0f;          // world units per mesh unit, the least: distances stay on the safe side
 };
 
 }  // namespace pg::sim

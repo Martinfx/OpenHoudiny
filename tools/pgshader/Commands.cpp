@@ -467,9 +467,11 @@ int render(const Options& o, const NodeLibrary& lib) {
 }
 
 /// Where a network comes from: a file, or one of the examples compiled in.
-bool loadNetwork(const std::string& what, pg::sim::Network& net, std::string& error) {
+/// `folder`: where its relative paths (meshes) are read from.
+bool loadNetwork(const std::string& what, pg::sim::Network& net, std::string& error, std::string& folder) {
     std::error_code ec;
     if (fs::is_regular_file(what, ec)) {
+        folder = fs::path(what).parent_path().string();
         std::ifstream in(what, std::ios::binary);
         std::stringstream text;
         text << in.rdbuf();
@@ -481,7 +483,10 @@ bool loadNetwork(const std::string& what, pg::sim::Network& net, std::string& er
         for (const std::string& w : warnings) std::fprintf(stderr, "sim: %s: %s\n", what.c_str(), w.c_str());
         return true;
     }
-    if (pg::sim::Network::example(what, net)) return true;
+    if (pg::sim::Network::example(what, net)) {
+        folder = PG_SIM_EXAMPLES_DIR;
+        return true;
+    }
     error = "no file or example '" + what + "'; the examples are:";
     for (const std::string& name : pg::sim::Network::exampleNames()) error += " " + name;
     return false;
@@ -553,8 +558,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
     namespace sim = pg::sim;
     sim::Network net;
-    std::string error;
-    if (!loadNetwork(network, net, error)) {
+    std::string error, folder;
+    if (!loadNetwork(network, net, error, folder)) {
         std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
@@ -564,7 +569,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             return 1;
         }
     }
-    sim::Compiled c = net.compile();
+    sim::Compiled c = net.compile(folder);
     for (const sim::Problem& p : c.problems) {
         const sim::Node* n = net.node(p.node);
         std::fprintf(stderr, "%s: %s%s%s%s\n", cmd, p.level == sim::Problem::Level::Error ? "error: " : "warning: ",

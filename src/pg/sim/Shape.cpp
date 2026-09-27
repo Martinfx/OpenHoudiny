@@ -1,5 +1,7 @@
 #include "pg/sim/Shape.h"
 
+#include "pg/sim/Mesh.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -58,6 +60,7 @@ const char* shapeName(Shape shape) {
         case Shape::Cylinder: return "cylinder";
         case Shape::Cone: return "cone";
         case Shape::Torus: return "torus";
+        case Shape::Mesh: return "mesh";
     }
     return "?";
 }
@@ -123,7 +126,8 @@ Rotation Rotation::about(const Vec3& axis, float degrees) {
 
 // --- shapes ------------------------------------------------------------------------
 
-ShapeInstance::ShapeInstance(Shape shape, const Vec3& center, const Vec3& rotationDegrees, const Vec3& size)
+ShapeInstance::ShapeInstance(Shape shape, const Vec3& center, const Vec3& rotationDegrees, const Vec3& size,
+                             std::shared_ptr<const MeshShape> mesh)
     : shape_(shape), center_(center), turn_(Rotation::fromEuler(rotationDegrees)) {
     half_ = Vec3(std::max(size.x, 1e-4f) * 0.5f, std::max(size.y, 1e-4f) * 0.5f, std::max(size.z, 1e-4f) * 0.5f);
     if (shape_ == Shape::Torus) {
@@ -131,6 +135,20 @@ ShapeInstance::ShapeInstance(Shape shape, const Vec3& center, const Vec3& rotati
         tube_ = std::min(half_.y, 0.5f * half_.x);
         ring_ = half_.x - tube_;
     }
+    if (shape_ == Shape::Mesh) {
+        if (mesh) {
+            mesh_ = std::move(mesh);
+            const Vec3& m = mesh_->half();
+            toMesh_ = Vec3(m.x / half_.x, m.y / half_.y, m.z / half_.z);
+            fromMesh_ = std::min({half_.x / m.x, half_.y / m.y, half_.z / m.z});
+        } else {
+            shape_ = Shape::Box;  // a mesh not there: its box
+        }
+    }
+}
+
+Vec3 ShapeInstance::toMesh(const Vec3& local) const {
+    return mesh_ ? local * toMesh_ + mesh_->center() : local;
 }
 
 float ShapeInstance::localDistance(const Vec3& q) const {
@@ -174,6 +192,7 @@ float ShapeInstance::localDistance(const Vec3& q) const {
             const float a = std::sqrt(q.x * q.x + z * z) - ring_;
             return std::sqrt(a * a + q.y * q.y) - tube_;
         }
+        case Shape::Mesh: return mesh_->distance(toMesh(q)) * fromMesh_;
     }
     return 1.0f;
 }
@@ -226,6 +245,12 @@ float ShapeInstance::falloff(const Vec3& p) const {
             const float d = std::sqrt(a * a + q.y * q.y) / std::max(tube_, 1e-6f);
             return d >= 1.0f ? 0.0f : 1.0f - smoothstep(0.6f, 1.0f, d);
         }
+        case Shape::Mesh: {
+            // Over a band inside the surface, a tenth of the mesh's size.
+            const float d = localDistance(q);
+            if (d >= 0.0f) return 0.0f;
+            return smoothstep(0.0f, 0.1f * std::min({h.x, h.y, h.z}) * 2.0f, -d);
+        }
     }
     return 0.0f;
 }
@@ -275,6 +300,14 @@ bool ShapeInstance::intersect(const Vec3& origin, const Vec3& dir, float tMin, f
         return false;
     }
 
+    if (shape_ == Shape::Mesh) {
+        // In the mesh's space, where its triangles are; t stays the same.
+        Vec3 n;
+        if (!mesh_->intersect(toMesh(lo), ld * toMesh_, tMin, tHit, n)) return false;
+        // A normal goes back through the inverse transpose.
+        normalOut = normalize(turn_.apply(n * toMesh_));
+        return true;
+    }
     // The unit space: the shape fills [-1, 1] along each of its axes.
     const Vec3 o(lo.x / h.x, lo.y / h.y, lo.z / h.z), d(ld.x / h.x, ld.y / h.y, ld.z / h.z);
     float best = 1e30f;
@@ -369,7 +402,8 @@ bool ShapeInstance::intersect(const Vec3& origin, const Vec3& dir, float tMin, f
             }
             break;
         }
-        case Shape::Torus: break;
+        case Shape::Torus:
+        case Shape::Mesh: break;
     }
     if (best >= 1e29f) return false;
     tHit = best;

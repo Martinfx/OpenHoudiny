@@ -7,6 +7,8 @@
 
 #include "test_framework.h"
 
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 
@@ -368,7 +370,7 @@ TEST(sim_network_examples_all_run) {
         std::vector<std::string> warnings;
         CHECK(Network::load(Network::exampleText(name), net, error, &warnings));
         if (!warnings.empty()) ::testing::fail(__FILE__, __LINE__, name + ": " + warnings[0]);
-        const Compiled c = net.compile();
+        const Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);  // where their meshes are
         CHECK(c.ok);
         for (const Problem& p : c.problems) ::testing::fail(__FILE__, __LINE__, name + ": " + p.message);
         Scene scene = c.scene;
@@ -506,4 +508,53 @@ TEST(sim_network_examples_are_in_the_current_format) {
         CHECK(Network::load(text, net, error));
         if (net.save() != bare) ::testing::fail(__FILE__, __LINE__, name + " is not as saving writes it:\n" + net.save());
     }
+}
+
+TEST(sim_network_objects_can_be_meshes_from_files) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "pg_test_network_mesh";
+    fs::create_directories(dir / "models dir");
+    {
+        std::ofstream out(dir / "models dir" / "tetra.obj", std::ios::binary);
+        out << "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n";
+    }
+    int ids[4];
+    Network net = chain(ids);
+    const int rock = net.add("object");
+    CHECK(net.setParam(rock, "shape", "mesh"));
+    // A path with a space, set as the command line would: in quotes.
+    std::string error;
+    CHECK(net.setParam(rock, "file", "\"models dir/tetra.obj\"", &error));
+    CHECK_EQ(net.text(rock, "file"), std::string("models dir/tetra.obj"));
+    CHECK(!net.isDefault(rock, "file"));
+    CHECK(net.connect(rock, "collider", ids[1], "colliders"));
+
+    // Read from the network's folder.
+    Compiled c = net.compile(dir.string());
+    CHECK_EQ(c.solids.size(), size_t(1));
+    CHECK(c.solids[0].body.shape == Shape::Mesh && c.solids[0].body.mesh);
+    CHECK_EQ(c.solids[0].body.mesh->mesh().triangles.size(), size_t(4));
+    CHECK(c.scene.colliders[0].mesh == c.solids[0].body.mesh);  // one mesh, read once
+    CHECK(!mentions(c, rock, "mesh"));
+    // From elsewhere the file is not there: said, and its box stands in.
+    c = net.compile((dir / "elsewhere").string());
+    CHECK(mentions(c, rock, "cannot be read"));
+    CHECK(!c.solids[0].body.mesh && c.solids[0].body.instance().shape() == Shape::Box);
+
+    // Saved in quotes, read back -- a '#' in a path is no comment.
+    net.setText(rock, "file", "odd \"name\" #1.obj");
+    const std::string text = net.save();
+    CHECK(text.find("  param file \"odd \\\"name\\\" #1.obj\"\n") != std::string::npos);
+    Network back;
+    std::vector<std::string> warnings;
+    CHECK(Network::load(text + "# the end\n", back, error, &warnings));
+    CHECK(warnings.empty());
+    CHECK_EQ(back.text(rock, "file"), std::string("odd \"name\" #1.obj"));
+    CHECK_EQ(back.save(), text);
+    // An empty path is the default, and a mesh without one is said so.
+    CHECK(net.resetParam(rock, "file"));
+    CHECK(net.isDefault(rock, "file") && net.text(rock, "file").empty());
+    CHECK(mentions(net.compile(), rock, "choose its OBJ file"));
+    CHECK(!net.setParam(rock, "file", "\"not closed", &error));
+    fs::remove_all(dir);
 }

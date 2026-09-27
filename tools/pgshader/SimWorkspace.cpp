@@ -88,6 +88,10 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return s;
     }
     if (t == "attractor" || t == "drag") return "strength " + number(v("strength"));
+    if (t == "object" && static_cast<sim::Shape>(static_cast<int>(v("shape"))) == sim::Shape::Mesh) {
+        const std::string file = net.text(n.id, "file");
+        return "mesh" + dot + (file.empty() ? std::string("no file") : fs::path(file).filename().string());
+    }
     if (t == "object") {
         const sim::ParamValue s = net.param(n.id, "size");
         const bool even = s[0] == s[1] && s[1] == s[2];
@@ -157,6 +161,13 @@ std::string SimWorkspace::title() const {
 bool SimWorkspace::modified() const { return net_.save() != savedText_; }
 
 bool SimWorkspace::canOpen(const std::string& path) const { return fs::path(path).extension() == ".pgsim"; }
+
+std::string SimWorkspace::folder() const {
+#ifdef PG_SIM_EXAMPLES_DIR
+    if (!example_.empty()) return PG_SIM_EXAMPLES_DIR;
+#endif
+    return path_.empty() ? std::string() : fs::path(path_).parent_path().string();
+}
 
 void SimWorkspace::load(const sim::Network& net, const std::string& path, const std::string& example) {
     net_ = net;
@@ -260,7 +271,7 @@ void SimWorkspace::recompile() {
     if (net_.revision() == compiledRevision_) return;
     compiledRevision_ = net_.revision();
     const sim::Look before = compiled_.look;
-    compiled_ = net_.compile();
+    compiled_ = net_.compile(folder());
     if (compiled_.ok) runner_->set(compiled_.scene, compiled_.frames);
     if (!(compiled_.look == before)) viewDirty_ = true;
     renderer_.look = compiled_.look;
@@ -598,6 +609,7 @@ void SimWorkspace::duplicate(const std::vector<int>& nodes) {
         if (!copy) continue;
         net_.rename(copy, net_.uniqueName(original.name));
         for (const auto& [name, value] : original.params) net_.setParam(copy, name, value);
+        for (const auto& [name, text] : original.texts) net_.setText(copy, name, text);
         net_.setBypass(copy, original.bypass);
         // In the world too, beside the original rather than inside it.
         const sim::Handles& h = sim::findNodeType(original.type)->handles;
@@ -769,6 +781,28 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                     break;
                 }
                 case sim::ParamKind::Color: edited = ui::colorEdit("##v", v.data()); break;
+                case sim::ParamKind::File: {
+                    // The path, and a button that browses for one.
+                    std::string value = net_.text(id, p.name);
+                    const float button = ImGui::GetFrameHeight();
+                    ImGui::SetNextItemWidth(std::max(10.0f, ImGui::GetContentRegionAvail().x - button - ImGui::GetStyle().ItemSpacing.x));
+                    if (ImGui::InputTextWithHint("##v", "no file", &value, ImGuiInputTextFlags_EnterReturnsTrue) ||
+                        ImGui::IsItemDeactivatedAfterEdit()) {
+                        net_.setText(id, p.name, value);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("\xe2\x80\xa6", ImVec2(button, button))) {
+                        fs::path start(value);
+                        if (!value.empty() && start.is_relative() && !folder().empty()) start = fs::path(folder()) / start;
+                        std::vector<std::string> extensions(p.choices.begin(), p.choices.end());
+                        files_.open("Choose a mesh", extensions, false, value.empty() ? folder() : start.string());
+                        fileAction_ = FileAction::MeshFile;
+                        fileNode_ = id;
+                        fileParam_ = p.name;
+                    }
+                    ImGui::SetItemTooltip("Browse for an OBJ file");
+                    break;
+                }
                 case sim::ParamKind::Choice: {
                     int i = static_cast<int>(v[0]);
                     const auto& labels = p.choiceLabels.empty() ? p.choices : p.choiceLabels;
@@ -1049,6 +1083,15 @@ void SimWorkspace::popups() {
         case FileAction::SaveAs: save(chosen); break;
         case FileAction::Image: renderImage(chosen, std::max(viewWidth_, 64), std::max(viewHeight_, 64)); break;
         case FileAction::Frames: renderFrames(chosen); break;
+        case FileAction::MeshFile:
+            if (net_.setText(fileNode_, fileParam_, chosen)) {
+                // An object that was no mesh becomes one.
+                if (const sim::Node* n = net_.node(fileNode_); n && n->type == "object") {
+                    net_.setParam(fileNode_, "shape", {static_cast<float>(sim::Shape::Mesh), 0.0f, 0.0f});
+                }
+            }
+            break;
+        case FileAction::ImportMesh: addMesh(chosen, addAt_); break;
         case FileAction::None: break;
     }
     fileAction_ = FileAction::None;

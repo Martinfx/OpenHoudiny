@@ -1,0 +1,52 @@
+pgsim 1
+# Smoke in the wind through a stone arch -- two meshes from OBJ files: the
+# arch, and a rock beside it. The wind takes the smoke from a vent on the
+# ground through the arch; what misses it rolls over the top and round the
+# rock.
+node 1 pyro_source 2 vent 0 0
+  param shape box
+  param center -0.75 0.05 0
+  param size 0.3 0.06 0.4
+  param smoke 6
+  param heat 2
+  param velocity 0 0.4 0
+  param flicker 0.3
+  param flicker_size 0.1
+node 2 wind 1 wind 0 96
+  param speed 0.9
+  param gusts 0.4
+node 3 turbulence 1 turbulence 0 192
+  param strength 2.5
+  param mask everywhere
+node 4 object 1 arch 0 288
+  param shape mesh
+  param file "../models/arch.obj"
+  param center 0 0.5 0
+  param rotation 0 90 0
+  param size 0.9 1 0.18
+  param color 0.62 0.58 0.52
+node 5 object 1 rock 0 384
+  param shape mesh
+  param file "../models/rock.obj"
+  param center 0.55 0.1 0.45
+  param rotation 0 30 0
+  param size 0.5 0.2 0.42
+  param color 0.46 0.43 0.4
+node 6 pyro_solver 1 solver 250 76
+  param size 2.4 1.4 1.4
+  param weight 0.04
+  param vorticity 0.9
+  param cooling 0.4
+  param smoke_decay 0.06
+node 7 volume_look 1 look 490 76
+  param smoke_color 0.8 0.8 0.82
+  param smoke_density 14
+node 8 output 1 output 720 76
+  param frames 180
+link 1.source -> 6.sources
+link 2.force -> 6.forces
+link 3.force -> 6.forces
+link 4.collider -> 6.colliders
+link 5.collider -> 6.colliders
+link 6.gas -> 7.gas
+link 7.look -> 8.look

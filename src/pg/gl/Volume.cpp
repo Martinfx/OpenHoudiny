@@ -145,8 +145,61 @@ float hitShape(int i, vec3 o, vec3 d, float tMin, out vec3 normal) {
     return best;
 }
 
+// The meshes that cast shadows: their distance fields (pg/sim/Mesh.h), and
+// which solid each is. A mesh is drawn by rasterising its triangles; for
+// the shadows, rays march through its distance field.
+uniform int u_meshShadows;
+uniform sampler3D u_sdf0, u_sdf1, u_sdf2, u_sdf3;
+uniform int u_meshSolid[4];
+uniform vec4 u_meshScale[4];   // mesh units per world unit along the solid's axes; w: world units per mesh unit
+uniform vec3 u_meshCenter[4];
+uniform vec4 u_sdfLo[4];       // the grid's corner, and its cell (w), mesh units
+uniform vec3 u_sdfCount[4];    // its points along each axis
+
+// World distance to mesh `slot`: on the safe side where the solid is stretched.
+float meshDistance(sampler3D sdf, int slot, vec3 p) {
+    int i = u_meshSolid[slot];
+    vec3 oc = p - u_solidA[i].xyz;
+    vec3 local = vec3(dot(u_solidB[i].xyz, oc), dot(u_solidC[i].xyz, oc), dot(u_solidD[i].xyz, oc));
+    vec3 m = local * u_meshScale[slot].xyz + u_meshCenter[slot];
+    vec3 g = (m - u_sdfLo[slot].xyz) / u_sdfLo[slot].w;
+    vec3 inside = clamp(g, vec3(0.0), u_sdfCount[slot] - 1.0);
+    float d = textureLod(sdf, (inside + 0.5) / u_sdfCount[slot], 0.0).r;
+    return (d + length(g - inside) * u_sdfLo[slot].w) * u_meshScale[slot].w;
+}
+
+// Does the ray from o along d (unit) pass through mesh `slot`? It starts
+// a cell and a half out: the field is coarser than the triangles drawn,
+// and a surface must not shadow itself.
+bool meshBlocks(sampler3D sdf, int slot, vec3 o, vec3 d) {
+    int i = u_meshSolid[slot];
+    vec3 h = vec3(u_solidB[i].w, u_solidC[i].w, u_solidD[i].w);
+    vec3 oc = o - u_solidA[i].xyz;
+    vec3 lo = vec3(dot(u_solidB[i].xyz, oc), dot(u_solidC[i].xyz, oc), dot(u_solidD[i].xyz, oc)) / h;
+    vec3 ld = vec3(dot(u_solidB[i].xyz, d), dot(u_solidC[i].xyz, d), dot(u_solidD[i].xyz, d)) / h;
+    vec2 span = boxSpan(lo, ld, vec3(-1.05), vec3(1.05));
+    if (span.x > span.y || span.y < 0.0) return false;
+    float cell = u_sdfLo[slot].w * u_meshScale[slot].w;
+    float t = max(span.x, 0.0) + 1.5 * cell;
+    for (int s = 0; s < 64 && t < span.y; ++s) {
+        float dist = meshDistance(sdf, slot, o + d * t);
+        if (dist < 0.25 * cell) return true;
+        t += max(dist, 0.5 * cell);
+    }
+    return false;
+}
+
+bool meshShadow(vec3 o, vec3 d) {
+    if (u_meshShadows > 0 && meshBlocks(u_sdf0, 0, o, d)) return true;
+    if (u_meshShadows > 1 && meshBlocks(u_sdf1, 1, o, d)) return true;
+    if (u_meshShadows > 2 && meshBlocks(u_sdf2, 2, o, d)) return true;
+    if (u_meshShadows > 3 && meshBlocks(u_sdf3, 3, o, d)) return true;
+    return false;
+}
+
 // The nearest solid the ray from o along d meets at tMin or later: how far,
-// the normal there and which solid. 1e30 when it meets none.
+// the normal there and which solid. 1e30 when it meets none. Meshes are
+// not among them: they are rasterised (u_meshG).
 float hitSolid(vec3 o, vec3 d, float tMin, out vec3 normal, out int which) {
     float best = 1e30;
     normal = vec3(0.0, 1.0, 0.0);
@@ -208,7 +261,7 @@ void main() {
     vec3 p = u_boxMin + uvw * u_boxSize;
     vec3 n;
     int which;
-    if (hitSolid(p, u_lightDir, 0.0, n, which) < 1e29) {
+    if (hitSolid(p, u_lightDir, 0.0, n, which) < 1e29 || meshShadow(p, u_lightDir)) {
         o_light = vec4(0.0);
         return;
     }
@@ -277,6 +330,16 @@ uniform sampler3D u_glow;      // the light of the fire, a lamp for each block o
 uniform ivec3 u_glowDims;      // blocks
 uniform vec3 u_glowCell;       // the size of one, world units
 uniform vec3 u_backgroundTop, u_backgroundBottom;
+uniform bool u_hasMeshes;
+uniform sampler2D u_meshG;     // the rasterised meshes: normal (octahedral), which solid, distance (< 0: none)
+
+vec3 octDecode(vec2 f) {
+    vec3 n = vec3(f, 1.0 - abs(f.x) - abs(f.y));
+    float t = clamp(-n.z, 0.0, 1.0);
+    n.x += n.x >= 0.0 ? -t : t;
+    n.y += n.y >= 0.0 ? -t : t;
+    return normalize(n);
+}
 
 // Henyey-Greenstein, times 4 pi: 1 for light scattered evenly in all directions.
 float henyeyGreenstein(float cosTheta, float g) {
@@ -305,7 +368,7 @@ vec3 toneMap(vec3 x) {  // ACES, Narkowicz's fit
 float sunAt(vec3 p) {
     vec3 n;
     int which;
-    if (hitSolid(p, u_lightDir, 1e-3, n, which) < 1e29) return 0.0;
+    if (hitSolid(p, u_lightDir, 1e-3, n, which) < 1e29 || meshShadow(p, u_lightDir)) return 0.0;
     if (!u_hasGas) return 1.0;
     vec2 span = boxSpan(p, u_lightDir, u_boxMin, u_boxMin + u_boxSize);
     float t0 = max(span.x, 0.0), t1 = span.y;
@@ -391,6 +454,14 @@ void main() {
     vec3 normal;
     int which;
     float tSolid = hitSolid(u_eye, dir, 0.0, normal, which);
+    if (u_hasMeshes) {
+        vec4 g = texelFetch(u_meshG, ivec2(gl_FragCoord.xy), 0);
+        if (g.w > 0.0 && g.w < tSolid) {
+            tSolid = g.w;
+            normal = octDecode(g.xy);
+            which = int(g.z + 0.5);
+        }
+    }
     vec3 surface = vec3(0.0);
     float cover = 0.0;  // how much of the pixel the solid covers
     float tEnd = 1e30;
@@ -460,6 +531,41 @@ void main() {
 }
 )";
 
+// A mesh's triangles, placed like the solid it is: into a buffer the pass
+// that shades everything reads -- the normal facing the eye, which solid,
+// and how far along the ray.
+const char* kMeshVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;  // the mesh's own space
+layout(location = 1) in vec3 a_normal;
+uniform mat4 u_viewProj;
+uniform vec3 u_center, u_axisX, u_axisY, u_axisZ;
+uniform vec3 u_scale;       // world units per mesh unit along each own axis
+uniform vec3 u_meshCenter;
+out vec3 v_world, v_normal;
+void main() {
+    vec3 local = (a_position - u_meshCenter) * u_scale;
+    v_world = u_center + u_axisX * local.x + u_axisY * local.y + u_axisZ * local.z;
+    vec3 n = a_normal / u_scale;  // the inverse transpose of the stretch
+    v_normal = u_axisX * n.x + u_axisY * n.y + u_axisZ * n.z;
+    gl_Position = u_viewProj * vec4(v_world, 1.0);
+}
+)";
+
+const char* kMeshFragment = R"(#version 330 core
+in vec3 v_world, v_normal;
+out vec4 o_g;
+uniform vec3 u_eye;
+uniform float u_index;
+vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
+void main() {
+    vec3 view = v_world - u_eye;
+    vec3 n = normalize(v_normal);
+    if (dot(n, view) > 0.0) n = -n;  // both sides: an open mesh shows its inside
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    o_g = vec4(n.z >= 0.0 ? n.xy : octWrap(n.xy), u_index, length(view));
+}
+)";
+
 const char* kLineVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec4 a_color;
@@ -477,6 +583,46 @@ in vec4 v_color;
 out vec4 o_color;
 void main() { o_color = v_color; }
 )";
+
+/// A mesh's triangles as the GPU draws them: three corners each, a position
+/// and a normal per corner. A corner's normal averages the faces round its
+/// vertex that bend less than 60 degrees from its own: round things come
+/// out round, a box keeps its edges.
+std::vector<float> meshVertices(const sim::TriangleMesh& m) {
+    const size_t faces = m.triangles.size(), verts = m.positions.size();
+    std::vector<Vec3> faceNormal(faces);  // as long as twice the area: bigger faces count more
+    for (size_t f = 0; f < faces; ++f) {
+        const auto& t = m.triangles[f];
+        faceNormal[f] = cross(m.positions[t[1]] - m.positions[t[0]], m.positions[t[2]] - m.positions[t[0]]);
+    }
+    // The faces round each vertex, packed.
+    std::vector<uint32_t> start(verts + 1, 0), around(faces * 3);
+    for (const auto& t : m.triangles) {
+        for (const uint32_t v : t) ++start[v + 1];
+    }
+    for (size_t v = 0; v < verts; ++v) start[v + 1] += start[v];
+    std::vector<uint32_t> fill(start.begin(), start.end() - 1);
+    for (size_t f = 0; f < faces; ++f) {
+        for (const uint32_t v : m.triangles[f]) around[fill[v]++] = static_cast<uint32_t>(f);
+    }
+    const float crease = std::cos(60.0f * kPi / 180.0f);
+    std::vector<float> out;
+    out.reserve(faces * 18);
+    for (size_t f = 0; f < faces; ++f) {
+        const Vec3 own = normalize(faceNormal[f]);
+        for (const uint32_t v : m.triangles[f]) {
+            Vec3 sum;
+            for (uint32_t k = start[v]; k < start[v + 1]; ++k) {
+                const Vec3& other = faceNormal[around[k]];
+                if (dot(normalize(other), own) >= crease) sum += other;
+            }
+            const Vec3 n = length(sum) > 0.0f ? normalize(sum) : own;
+            const Vec3& p = m.positions[v];
+            out.insert(out.end(), {p.x, p.y, p.z, n.x, n.y, n.z});
+        }
+    }
+    return out;
+}
 
 /// Two unit vectors square to `axis` and to each other.
 void basis(const Vec3& axis, Vec3& u, Vec3& v) {
@@ -566,6 +712,7 @@ void Lines::shape(const sim::ShapeInstance& s, const float color[4]) {
             ring(Vec3(), x, z, 48);
             break;
         case sim::Shape::Box:
+        case sim::Shape::Mesh:  // its box: the triangles would crowd the picture
             for (int i = 0; i < 8; ++i) {
                 for (const int bit : {1, 2, 4}) {
                     if (i & bit) continue;
@@ -694,9 +841,17 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 }
 
 VolumeRenderer::~VolumeRenderer() {
-    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_}) {
+    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
+    for (MeshGpu& m : meshes_) {
+        gl_.DeleteVertexArrays(1, &m.vao);
+        gl_.DeleteBuffers(1, &m.vbo);
+        gl_.DeleteTextures(1, &m.sdf);
+    }
+    if (gFbo_) gl_.DeleteFramebuffers(1, &gFbo_);
+    if (gTex_) gl_.DeleteTextures(1, &gTex_);
+    if (gDepth_) gl_.DeleteRenderbuffers(1, &gDepth_);
     gl_.DeleteVertexArrays(1, &vao_);
     gl_.DeleteVertexArrays(1, &lineVao_);
     gl_.DeleteBuffers(1, &lineBuffer_);
@@ -720,19 +875,21 @@ bool VolumeRenderer::init(std::string& log) {
     }
     const GLuint glow = buildProgram(gl_, kFullScreen, header + kCommon + kGlowFragment, log);
     const GLuint lines = glow ? buildProgram(gl_, kLineVertex, kLineFragment, log) : 0;
-    if (!lines) {
-        for (GLuint p : {view, shadow, glow}) {
+    const GLuint meshes = lines ? buildProgram(gl_, kMeshVertex, kMeshFragment, log) : 0;
+    if (!meshes) {
+        for (GLuint p : {view, shadow, glow, lines}) {
             if (p) gl_.DeleteProgram(p);
         }
         return false;
     }
-    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_}) {
+    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
     program_ = view;
     shadowProgram_ = shadow;
     glowProgram_ = glow;
     lineProgram_ = lines;
+    meshProgram_ = meshes;
     lightingDirty_ = true;
     return true;
 }
@@ -789,6 +946,118 @@ void VolumeRenderer::setSolids(const std::vector<sim::Solid>& solids) {
     for (size_t i = 0; !moved && i < kept.size(); ++i) moved = !(kept[i].body == solids_[i].body);
     solids_ = std::move(kept);
     if (moved) lightingDirty_ = true;
+    syncMeshes();
+}
+
+void VolumeRenderer::syncMeshes() {
+    std::vector<MeshGpu> kept;
+    anyMesh_ = false;
+    for (const sim::Solid& solid : solids_) {
+        const auto& mesh = solid.body.mesh;
+        if (solid.body.shape != sim::Shape::Mesh || !mesh) continue;
+        anyMesh_ = true;
+        if (std::any_of(kept.begin(), kept.end(), [&](const MeshGpu& m) { return m.mesh == mesh; })) continue;
+        const auto had = std::find_if(meshes_.begin(), meshes_.end(), [&](const MeshGpu& m) { return m.mesh == mesh; });
+        if (had != meshes_.end()) {
+            kept.push_back(*had);
+            had->mesh.reset();  // moved: not to be deleted below
+            continue;
+        }
+        // New: its triangles, and its distance field as half floats.
+        MeshGpu gpu;
+        gpu.mesh = mesh;
+        const std::vector<float> data = meshVertices(mesh->mesh());
+        gpu.vertices = static_cast<GLsizei>(data.size() / 6);
+        gl_.GenVertexArrays(1, &gpu.vao);
+        gl_.GenBuffers(1, &gpu.vbo);
+        gl_.BindVertexArray(gpu.vao);
+        gl_.BindBuffer(ARRAY_BUFFER, gpu.vbo);
+        gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data(), STATIC_DRAW);
+        gl_.EnableVertexAttribArray(0);
+        gl_.VertexAttribPointer(0, 3, FLOAT, 0, 6 * sizeof(float), nullptr);
+        gl_.EnableVertexAttribArray(1);
+        gl_.VertexAttribPointer(1, 3, FLOAT, 0, 6 * sizeof(float), reinterpret_cast<const void*>(3 * sizeof(float)));
+        gl_.BindVertexArray(0);
+        gl_.BindBuffer(ARRAY_BUFFER, 0);
+        std::vector<uint16_t> field(mesh->field().size());
+        for (size_t i = 0; i < field.size(); ++i) field[i] = sim::toHalf(mesh->field()[i]);
+        gl_.GenTextures(1, &gpu.sdf);
+        gl_.ActiveTexture(TEXTURE0);
+        gl_.BindTexture(TEXTURE_3D, gpu.sdf);
+        gl_.PixelStorei(UNPACK_ALIGNMENT, 2);
+        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(R16F), mesh->points(0), mesh->points(1), mesh->points(2), 0, RED,
+                       HALF_FLOAT, field.data());
+        gl_.PixelStorei(UNPACK_ALIGNMENT, 4);
+        gl_.TexParameteri(TEXTURE_3D, TEXTURE_MIN_FILTER, LINEAR);
+        gl_.TexParameteri(TEXTURE_3D, TEXTURE_MAG_FILTER, LINEAR);
+        for (GLenum wrap : {TEXTURE_WRAP_S, TEXTURE_WRAP_T, TEXTURE_WRAP_R}) gl_.TexParameteri(TEXTURE_3D, wrap, CLAMP_TO_EDGE);
+        gl_.BindTexture(TEXTURE_3D, 0);
+        kept.push_back(gpu);
+    }
+    for (MeshGpu& m : meshes_) {
+        if (!m.mesh) continue;  // kept
+        gl_.DeleteVertexArrays(1, &m.vao);
+        gl_.DeleteBuffers(1, &m.vbo);
+        gl_.DeleteTextures(1, &m.sdf);
+    }
+    meshes_ = std::move(kept);
+}
+
+void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
+    if (!gFbo_) {
+        gl_.GenFramebuffers(1, &gFbo_);
+        gl_.GenTextures(1, &gTex_);
+        gl_.GenRenderbuffers(1, &gDepth_);
+    }
+    if (width != gWidth_ || height != gHeight_) {
+        gWidth_ = width;
+        gHeight_ = height;
+        gl_.BindTexture(TEXTURE_2D, gTex_);
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), width, height, 0, RGBA, FLOAT, nullptr);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, 0x2600);  // NEAREST: each pixel its own
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, 0x2600);
+        gl_.BindTexture(TEXTURE_2D, 0);
+        gl_.BindRenderbuffer(RENDERBUFFER, gDepth_);
+        gl_.RenderbufferStorage(RENDERBUFFER, DEPTH_COMPONENT24, width, height);
+        gl_.BindRenderbuffer(RENDERBUFFER, 0);
+        gl_.BindFramebuffer(FRAMEBUFFER, gFbo_);
+        gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, gTex_, 0);
+        gl_.FramebufferRenderbuffer(FRAMEBUFFER, DEPTH_ATTACHMENT, RENDERBUFFER, gDepth_);
+    }
+    gl_.BindFramebuffer(FRAMEBUFFER, gFbo_);
+    gl_.Viewport(0, 0, width, height);
+    gl_.ClearColor(0.0f, 0.0f, 0.0f, -1.0f);  // w < 0: no mesh here
+    gl_.Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
+    gl_.Enable(DEPTH_TEST);
+    gl_.DepthFunc(LESS);
+    gl_.DepthMask(1);
+    gl_.Disable(BLEND);
+    gl_.Disable(CULL_FACE);
+    gl_.UseProgram(meshProgram_);
+    gl_.UniformMatrix4fv(location(meshProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+    gl_.Uniform3f(location(meshProgram_, "u_eye"), eye.x, eye.y, eye.z);
+    for (size_t i = 0; i < solids_.size(); ++i) {
+        const sim::Collider& body = solids_[i].body;
+        if (body.shape != sim::Shape::Mesh || !body.mesh) continue;
+        const auto gpu = std::find_if(meshes_.begin(), meshes_.end(), [&](const MeshGpu& m) { return m.mesh == body.mesh; });
+        if (gpu == meshes_.end()) continue;
+        const sim::ShapeInstance shape = body.instance();
+        const Vec3& h = shape.half();
+        const Vec3& mh = body.mesh->half();
+        const Vec3& mc = body.mesh->center();
+        gl_.Uniform3f(location(meshProgram_, "u_center"), shape.center().x, shape.center().y, shape.center().z);
+        gl_.Uniform3f(location(meshProgram_, "u_axisX"), shape.turn().x.x, shape.turn().x.y, shape.turn().x.z);
+        gl_.Uniform3f(location(meshProgram_, "u_axisY"), shape.turn().y.x, shape.turn().y.y, shape.turn().y.z);
+        gl_.Uniform3f(location(meshProgram_, "u_axisZ"), shape.turn().z.x, shape.turn().z.y, shape.turn().z.z);
+        gl_.Uniform3f(location(meshProgram_, "u_scale"), h.x / mh.x, h.y / mh.y, h.z / mh.z);
+        gl_.Uniform3f(location(meshProgram_, "u_meshCenter"), mc.x, mc.y, mc.z);
+        gl_.Uniform1f(location(meshProgram_, "u_index"), static_cast<float>(i));
+        gl_.BindVertexArray(gpu->vao);
+        gl_.DrawArrays(TRIANGLES, 0, gpu->vertices);
+    }
+    gl_.BindVertexArray(0);
+    gl_.UseProgram(0);
+    gl_.BindFramebuffer(FRAMEBUFFER, 0);
 }
 
 void VolumeRenderer::setHighlight(const std::vector<int>& selected, int hovered) {
@@ -827,6 +1096,43 @@ void VolumeRenderer::setSceneUniforms(GLuint program) {
         put(e, solid.color, selected ? 2.0f : node != 0 && node == hovered_ ? 1.0f : 0.0f);
         put(f, Vec3(s.ring(), s.tube(), 0.0f), 0.0f);
     }
+    // The meshes' distance fields, on texture units 4 to 7.
+    int slots = 0;
+    int meshSolid[kMaxMeshShadows] = {};
+    float scale[4 * kMaxMeshShadows] = {}, centers[3 * kMaxMeshShadows] = {}, grid[4 * kMaxMeshShadows] = {},
+          counts[3 * kMaxMeshShadows] = {};
+    for (int i = 0; i < n && slots < kMaxMeshShadows; ++i) {
+        const sim::Collider& body = solids_[static_cast<size_t>(i)].body;
+        if (body.shape != sim::Shape::Mesh || !body.mesh) continue;
+        const auto gpu = std::find_if(meshes_.begin(), meshes_.end(), [&](const MeshGpu& m) { return m.mesh == body.mesh; });
+        if (gpu == meshes_.end()) continue;
+        const sim::MeshShape& m = *body.mesh;
+        const Vec3 h = body.instance().half();
+        meshSolid[slots] = i;
+        const Vec3 toMesh(m.half().x / h.x, m.half().y / h.y, m.half().z / h.z);
+        const float fromMesh = std::min({h.x / m.half().x, h.y / m.half().y, h.z / m.half().z});
+        for (int a = 0; a < 3; ++a) {
+            scale[4 * slots + a] = toMesh[a];
+            centers[3 * slots + a] = m.center()[a];
+            grid[4 * slots + a] = m.gridLo()[a];
+            counts[3 * slots + a] = static_cast<float>(m.points(a));
+        }
+        scale[4 * slots + 3] = fromMesh;
+        grid[4 * slots + 3] = m.cell();
+        gl_.ActiveTexture(TEXTURE4 + static_cast<GLenum>(slots));
+        gl_.BindTexture(TEXTURE_3D, gpu->sdf);
+        ++slots;
+    }
+    gl_.ActiveTexture(TEXTURE0);
+    gl_.Uniform1i(location(program, "u_meshShadows"), slots);
+    gl_.Uniform1iv(location(program, "u_meshSolid"), kMaxMeshShadows, meshSolid);
+    gl_.Uniform4fv(location(program, "u_meshScale"), kMaxMeshShadows, scale);
+    gl_.Uniform3fv(location(program, "u_meshCenter"), kMaxMeshShadows, centers);
+    gl_.Uniform4fv(location(program, "u_sdfLo"), kMaxMeshShadows, grid);
+    gl_.Uniform3fv(location(program, "u_sdfCount"), kMaxMeshShadows, counts);
+    const char* samplers[kMaxMeshShadows] = {"u_sdf0", "u_sdf1", "u_sdf2", "u_sdf3"};
+    for (int k = 0; k < kMaxMeshShadows; ++k) gl_.Uniform1i(location(program, samplers[k]), 4 + k);
+
     gl_.Uniform1i(location(program, "u_solidCount"), n);
     gl_.Uniform4fv(location(program, "u_solidA"), kMaxSolids, a);
     gl_.Uniform4fv(location(program, "u_solidB"), kMaxSolids, b);
@@ -961,6 +1267,15 @@ Orbit VolumeRenderer::viewOf(const sim::Domain& domain) {
 void VolumeRenderer::render(int width, int height) {
     ensureTarget(width, height);
     updateLighting();
+    // The meshes first, into their own buffer, seen by the same camera.
+    const bool meshes = anyMesh_ && meshProgram_;
+    if (meshes) {
+        float at[3];
+        orbit.eye(at);
+        viewProjection_ = multiply(perspective(kFovY, static_cast<float>(width) / static_cast<float>(height), kNear, kFar),
+                                   lookAt(at, orbit.target));
+        renderMeshes(width, height, Vec3(at[0], at[1], at[2]));
+    }
     gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
     gl_.Viewport(0, 0, width, height);
     gl_.ColorMask(1, 1, 1, 1);
@@ -1032,6 +1347,10 @@ void VolumeRenderer::render(int width, int height) {
     gl_.ActiveTexture(TEXTURE2);
     gl_.BindTexture(TEXTURE_3D, glow_);
     gl_.Uniform1i(location(program_, "u_glow"), 2);
+    gl_.ActiveTexture(TEXTURE3);
+    gl_.BindTexture(TEXTURE_2D, meshes ? gTex_ : 0);
+    gl_.Uniform1i(location(program_, "u_meshG"), 3);
+    gl_.Uniform1i(location(program_, "u_hasMeshes"), meshes ? 1 : 0);
 
     gl_.BindVertexArray(vao_);
     gl_.DrawArrays(TRIANGLES, 0, 3);
@@ -1053,6 +1372,12 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Disable(DEPTH_TEST);
     gl_.DepthFunc(LESS);
 
+    for (int unit = 4; unit < 4 + kMaxMeshShadows; ++unit) {
+        gl_.ActiveTexture(TEXTURE0 + static_cast<GLenum>(unit));
+        gl_.BindTexture(TEXTURE_3D, 0);
+    }
+    gl_.ActiveTexture(TEXTURE3);
+    gl_.BindTexture(TEXTURE_2D, 0);
     gl_.ActiveTexture(TEXTURE2);
     gl_.BindTexture(TEXTURE_3D, 0);
     gl_.ActiveTexture(TEXTURE1);

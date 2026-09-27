@@ -56,7 +56,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 113 testů: 50 jádro, 25 shader graf, 38 simulace kouře a ohně a objekty
+./build/pgtests            # 120 testů: 50 jádro, 25 shader graf, 45 simulace, objekty a modely
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
@@ -97,16 +97,16 @@ animovaných efektů (oheň, kouř). Každý vestavěný uzel se v CTestu překl
 všechny cíle přes glslangValidator a spirv-val.
 
 **Simulace kouře a ohně** (`src/pg/sim`) se skládá z uzlů jako Pyro
-v Houdini: objekty scény (koule, kvádr, válec, kužel, prstenec, každý
-posunutý, pootočený a protažený), zdroje stejných tvarů (palivo, kouř,
-teplo, blikotání, pohyb, časové okno), síly (turbulence, vítr, vír,
+v Houdini: objekty scény (koule, kvádr, válec, kužel, prstenec a modely
+ze souborů OBJ, každý posunutý, pootočený a protažený), zdroje stejných
+tvarů (palivo, kouř, teplo, blikotání, pohyb, časové okno), síly (turbulence, vítr, vír,
 atraktor, odpor), řešič, vzhled a výstup. Řešič počítá proudění plynu na 3D mřížce: posunutá
 mřížka MAC, advekce MacCormack, hoření s rozpínáním, vorticity confinement
 a tlak přes multigrid, který zná podlahu i překážky. Je deterministický na
 libovolném počtu vláken. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a osmi příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a devíti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj nebo sílu rovnou propojené do sítě.

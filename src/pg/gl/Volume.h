@@ -35,6 +35,7 @@
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -123,6 +124,8 @@ public:
     sim::Look look;
 
     static constexpr int kMaxSolids = 16;
+    /// Meshes that cast shadows; more are drawn, without.
+    static constexpr int kMaxMeshShadows = 4;
     /// The vertical field of view, degrees.
     static constexpr float kFovY = 35.0f;
 
@@ -134,6 +137,12 @@ private:
     GLint location(GLuint program, const char* name) const;
     /// The box of the gas and the solids, for both programs.
     void setSceneUniforms(GLuint program);
+    /// The meshes among the solids on the GPU: their triangles, and their
+    /// distance fields for the shadows they cast.
+    void syncMeshes();
+    /// The meshes rasterised: normal, which solid and distance per pixel,
+    /// for the pass that shades everything.
+    void renderMeshes(int width, int height, const Vec3& eye);
 
     const Api& gl_;
     GLuint program_ = 0, shadowProgram_ = 0, glowProgram_ = 0, lineProgram_ = 0;
@@ -149,6 +158,16 @@ private:
     std::vector<sim::Solid> solids_;
     std::vector<int> selected_;
     int hovered_ = 0;
+    struct MeshGpu {
+        std::shared_ptr<const sim::MeshShape> mesh;
+        GLuint vao = 0, vbo = 0, sdf = 0;
+        GLsizei vertices = 0;
+    };
+    std::vector<MeshGpu> meshes_;  // one per mesh in use, whoever uses it
+    GLuint meshProgram_ = 0;
+    GLuint gFbo_ = 0, gTex_ = 0, gDepth_ = 0;
+    int gWidth_ = 0, gHeight_ = 0;
+    bool anyMesh_ = false;
     size_t lineCount_ = 0;
     // What the lighting was worked out for.
     struct LightingKey {

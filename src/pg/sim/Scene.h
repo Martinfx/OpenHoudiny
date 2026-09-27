@@ -8,9 +8,11 @@
 // axis: x in [-size.x/2, size.x/2], y in [0, size.y], z in [-size.z/2, size.z/2].
 //
 #include "pg/core/Types.h"
+#include "pg/sim/Mesh.h"
 #include "pg/sim/Shape.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace pg::sim {
@@ -42,6 +44,7 @@ struct Emitter {
     float motionSize = 0.25f;       ///< radius of the circle, reach of the sway
     float motionPeriod = 4.0f;      ///< seconds for a round
     uint32_t seed = 1;
+    std::shared_ptr<const MeshShape> mesh;  ///< Shape::Mesh: what it is (Mesh.h)
     int node = 0;                   ///< the network node it came from, 0 if none
 
     bool activeAt(float t) const { return t >= start && (end <= start || t < end); }
@@ -49,7 +52,7 @@ struct Emitter {
     Vec3 centerAt(float t) const;
     Vec3 motionVelocityAt(float t) const;
     /// Its shape where it is at time t.
-    ShapeInstance shapeAt(float t) const { return {shape, centerAt(t), rotation, size}; }
+    ShapeInstance shapeAt(float t) const { return {shape, centerAt(t), rotation, size, mesh}; }
 
     bool operator==(const Emitter&) const = default;
 };
@@ -91,9 +94,10 @@ struct Collider {
     Vec3 center{0.0f, 0.6f, 0.0f};
     Vec3 rotation;                  ///< degrees about x, then y, then z
     Vec3 size{0.3f, 0.3f, 0.3f};    ///< along its own axes
+    std::shared_ptr<const MeshShape> mesh;  ///< Shape::Mesh: what it is (Mesh.h); the same file, the same mesh
     int node = 0;
 
-    ShapeInstance instance() const { return {shape, center, rotation, size}; }
+    ShapeInstance instance() const { return {shape, center, rotation, size, mesh}; }
     bool contains(const Vec3& p) const { return instance().contains(p); }
     bool operator==(const Collider&) const = default;
 };

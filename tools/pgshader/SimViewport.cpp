@@ -18,8 +18,10 @@
 #include "SimWorkspace.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 namespace pg::editor {
 namespace {
@@ -384,12 +386,65 @@ bool SimWorkspace::sceneMenu(const Vec3& at) {
           {{"sphere", "Sphere", Icon::Sphere}, {"box", "Box", Icon::Box}, {"cylinder", "Cylinder", Icon::Cylinder},
            {"cone", "Cone", Icon::Cone}, {"torus", "Torus", Icon::Torus}},
           objectColor);
+    if (iconItem(Icon::File, objectColor, "Mesh\xe2\x80\xa6")) {
+        // An OBJ file, placed where the menu was opened.
+        addAt_ = at;
+        files_.open("Import a mesh", {".obj"}, false, folder());
+        fileAction_ = FileAction::ImportMesh;
+        added = true;
+    }
+    ImGui::SetItemTooltip("An OBJ file: a rock, a statue, a car -- in the scene, colliding");
     items("Sources", {{"fire", "Fire", Icon::Source}, {"smoke", "Smoke", Icon::Source}}, sourceColor);
     items("Forces",
           {{"wind", "Wind", Icon::Wind}, {"vortex", "Vortex", Icon::Vortex}, {"turbulence", "Turbulence", Icon::Force},
            {"attractor", "Attractor", Icon::Attractor}, {"drag", "Drag", Icon::Force}},
           forceColor);
     return added;
+}
+
+int SimWorkspace::addMesh(const std::string& path, const Vec3& at) {
+    std::string why;
+    const auto mesh = sim::loadMesh(path, why);
+    if (!mesh) {
+        setMessage(why, true);
+        return 0;
+    }
+    // As big as it is -- unless it is far too big or too small for a scene
+    // metres across: then some 80 cm at its longest.
+    Vec3 size = mesh->half() * 2.0f;
+    const float longest = std::max({size.x, size.y, size.z});
+    if (longest > 3.0f || longest < 0.05f) size = size * (0.8f / longest);
+    const ImVec2 slot = freeSlot();
+    const int id = net_.add("object", slot.x, slot.y);
+    net_.setParam(id, "shape", {static_cast<float>(sim::Shape::Mesh), 0.0f, 0.0f});
+    // A path under the network's folder is kept relative to it: the two
+    // travel together.
+    std::string stored = path;
+    std::error_code ec;
+    if (!folder().empty()) {
+        const auto relative = std::filesystem::relative(path, folder(), ec);
+        if (!ec && !relative.empty() && relative.string().rfind("..", 0) != 0) stored = relative.generic_string();
+    }
+    net_.setText(id, "file", stored);
+    net_.setParam(id, "size", pv(size));
+    net_.setParam(id, "center", pv(at + Vec3(0.0f, 0.5f * size.y, 0.0f)));
+    net_.setParam(id, "color", pv(kPalette[newColor_++ % 6]));
+    // Named after its file, as far as a name allows.
+    std::string stem = std::filesystem::path(path).stem().string();
+    for (char& c : stem) {
+        if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+    }
+    if (stem.empty() || std::isdigit(static_cast<unsigned char>(stem[0]))) stem = "mesh_" + stem;
+    net_.rename(id, net_.uniqueName(stem));
+    linkIntoSolvers(id, "collider", "colliders");
+    canvas_.select(id);
+    canvas_.reveal(id);
+    char text[160];
+    std::snprintf(text, sizeof text, "Imported %s: %zu triangles, %.2f \xc3\x97 %.2f \xc3\x97 %.2f m",
+                  std::filesystem::path(path).filename().string().c_str(), mesh->mesh().triangles.size(),
+                  static_cast<double>(size.x), static_cast<double>(size.y), static_cast<double>(size.z));
+    setMessage(text);
+    return id;
 }
 
 // --- the camera frames the selection ----------------------------------------------------

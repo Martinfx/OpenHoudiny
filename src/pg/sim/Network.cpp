@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <locale>
 #include <sstream>
 
@@ -58,13 +59,17 @@ ParamDef shape(const char* help) {
             K::Choice,
             {0.0f, 0.0f, 0.0f},
             0.0f,
-            4.0f,
+            5.0f,
             0.0f,
-            4.0f,
+            5.0f,
             "",
             help,
-            {"sphere", "box", "cylinder", "cone", "torus"},
-            {"Sphere", "Box", "Cylinder", "Cone", "Torus"}};
+            {"sphere", "box", "cylinder", "cone", "torus", "mesh"},
+            {"Sphere", "Box", "Cylinder", "Cone", "Torus", "Mesh"}};
+}
+
+ParamDef file(const char* help) {
+    return {"file", "File", "Shape", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help, {".obj"}, {}};
 }
 
 ParamDef position(Vec3 at, const char* help) {
@@ -84,6 +89,8 @@ ParamDef size(Vec3 extent, const char* help) {
 std::vector<ParamDef> pyroSourceParams() {
     std::vector<ParamDef> p;
     p.push_back(shape("Its shape. Gas comes out of all of it, most away from its surface."));
+    p.push_back(file("An OBJ file, when the shape is mesh: a burning car, a smoking chimney. A relative path is "
+                     "read from the network's folder."));
     p.push_back(position(Vec3(0.0f, 0.12f, 0.0f), "Where the source is; y is its height above the floor."));
     p.push_back(rotation());
     p.push_back(size(Vec3(0.2f, 0.2f, 0.2f),
@@ -117,7 +124,9 @@ std::vector<ParamDef> pyroSourceParams() {
 }
 
 std::vector<ParamDef> objectParams() {
-    return {shape("Its shape: a ball, a box, a column, a cone, a ring."),
+    return {shape("Its shape: a ball, a box, a column, a cone, a ring -- or a mesh from an OBJ file."),
+            file("An OBJ file, when the shape is mesh: a rock, a statue, a car. Its box is stretched onto the "
+                 "size. A relative path is read from the network's folder."),
             position(Vec3(0.0f, 0.15f, 0.0f), "Where it is: its middle. y is its height above the floor."),
             rotation(),
             size(Vec3(0.3f, 0.3f, 0.3f),
@@ -396,6 +405,53 @@ bool parseNumber(std::string_view text, float& out) {
     return true;
 }
 
+/// "a \"b\" c" -- a path in quotes, as files write it.
+std::string quotedPath(std::string_view text) {
+    std::string out = "\"";
+    for (const char c : text) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out + '"';
+}
+
+/// The other way round -- or, not in quotes, the text as it is.
+bool unquoted(std::string_view text, std::string& out) {
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) text.remove_suffix(1);
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+    out.clear();
+    if (text.empty() || text.front() != '"') {
+        out = text;
+        return true;
+    }
+    for (size_t i = 1; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '\\' && i + 1 < text.size()) {
+            out += text[++i];
+        } else if (c == '"') {
+            return i + 1 == text.size();  // nothing after the closing quote
+        } else {
+            out += c;
+        }
+    }
+    return false;  // no closing quote
+}
+
+/// Where a line's comment starts: a '#' that is not inside quotes.
+size_t commentStart(std::string_view line) {
+    bool inside = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == '\\' && inside) {
+            ++i;
+        } else if (line[i] == '"') {
+            inside = !inside;
+        } else if (line[i] == '#' && !inside) {
+            return i;
+        }
+    }
+    return std::string_view::npos;
+}
+
 std::vector<std::string_view> splitWords(std::string_view s) {
     std::vector<std::string_view> words;
     size_t i = 0;
@@ -409,6 +465,7 @@ std::vector<std::string_view> splitWords(std::string_view s) {
 }
 
 ParamValue keep(const ParamDef& def, ParamValue v) {
+    if (def.kind == K::File) return def.value;  // its value is text
     const int n = def.kind == K::Vector || def.kind == K::Color ? 3 : 1;
     for (int i = 0; i < 3; ++i) {
         if (i >= n) {
@@ -581,6 +638,7 @@ std::string formatParam(const ParamDef& def, const ParamValue& v) {
         }
         case K::Vector:
         case K::Color: return formatNumber(v[0]) + ' ' + formatNumber(v[1]) + ' ' + formatNumber(v[2]);
+        case K::File: return "\"\"";  // the text is the node's, not the value's
         case K::Float:
         case K::Int: break;
     }
@@ -591,6 +649,12 @@ bool parseParam(const ParamDef& def, std::string_view text, ParamValue& out, std
     const std::vector<std::string_view> w = splitWords(text);
     ParamValue v = def.value;
     switch (def.kind) {
+        case K::File: {
+            std::string path;
+            if (!unquoted(text, path)) break;
+            out = v;
+            return true;
+        }
         case K::Toggle: {
             if (w.size() == 1) {
                 const std::string_view s = w[0];
@@ -633,6 +697,7 @@ bool parseParam(const ParamDef& def, std::string_view text, ParamValue& out, std
         }
     }
     switch (def.kind) {
+        case K::File: error = std::string(def.name) + " is a path, in quotes if it has spaces"; break;
         case K::Toggle: error = std::string(def.name) + " is on or off"; break;
         case K::Vector:
         case K::Color: error = std::string(def.name) + " wants three numbers, like 0 1 0"; break;
@@ -811,6 +876,14 @@ bool Network::setParam(int id, std::string_view name, std::string_view text, std
         }
         return false;
     }
+    if (d->kind == K::File) {
+        std::string path;
+        if (!unquoted(text, path)) {
+            if (error) *error = std::string(name) + ": a quote is not closed";
+            return false;
+        }
+        return setText(id, name, path);
+    }
     ParamValue v;
     std::string why;
     if (!parseParam(*d, text, v, why)) {
@@ -820,16 +893,37 @@ bool Network::setParam(int id, std::string_view name, std::string_view text, std
     return setParam(id, name, v);
 }
 
+std::string Network::text(int id, std::string_view name) const {
+    const Node* n = node(id);
+    if (!n) return {};
+    const auto it = n->texts.find(std::string(name));
+    return it != n->texts.end() ? it->second : std::string();
+}
+
+bool Network::setText(int id, std::string_view name, std::string_view value) {
+    Node* n = node(id);
+    const NodeType* t = n ? findNodeType(n->type) : nullptr;
+    const ParamDef* d = t ? t->param(name) : nullptr;
+    if (!d || d->kind != K::File) return false;
+    const std::string key(name);
+    const auto it = n->texts.find(key);
+    const std::string before = it != n->texts.end() ? it->second : std::string();
+    if (value.empty()) n->texts.erase(key);
+    else n->texts[key] = std::string(value);
+    if (before != value) ++revision_;
+    return true;
+}
+
 bool Network::resetParam(int id, std::string_view name) {
     Node* n = node(id);
     if (!n) return false;
-    if (n->params.erase(std::string(name)) > 0) ++revision_;
+    if (n->params.erase(std::string(name)) + n->texts.erase(std::string(name)) > 0) ++revision_;
     return true;
 }
 
 bool Network::isDefault(int id, std::string_view name) const {
     const Node* n = node(id);
-    return !n || n->params.find(std::string(name)) == n->params.end();
+    return !n || (n->params.find(std::string(name)) == n->params.end() && n->texts.find(std::string(name)) == n->texts.end());
 }
 
 bool Network::setBypass(int id, bool on) {
@@ -853,6 +947,11 @@ std::string Network::save() const {
         if (t) {
             // In the order of the type's table: the order the editor shows.
             for (const ParamDef& d : t->params) {
+                if (d.kind == K::File) {
+                    const auto text = n.texts.find(d.name);
+                    if (text != n.texts.end()) out += std::string("  param ") + d.name + ' ' + quotedPath(text->second) + '\n';
+                    continue;
+                }
                 const auto it = n.params.find(d.name);
                 if (it != n.params.end()) out += std::string("  param ") + d.name + ' ' + formatParam(d, it->second) + '\n';
             }
@@ -895,7 +994,7 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
         std::string_view line = text.substr(pos, end - pos);
         pos = end + 1;
         ++lineNo;
-        if (const size_t hash = line.find('#'); hash != std::string_view::npos) line = line.substr(0, hash);
+        if (const size_t hash = commentStart(line); hash != std::string_view::npos) line = line.substr(0, hash);
         const std::vector<std::string_view> w = splitWords(line);
         if (w.empty()) {
             if (end == text.size()) break;
@@ -956,6 +1055,15 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
             const ParamDef* d = t->param(name);
             if (!d) {
                 warn(lineNo, current->name + " (" + t->label + ") has no parameter " + name + "; dropped");
+                continue;
+            }
+            if (d->kind == K::File) {
+                std::string path;
+                if (!unquoted(value, path)) {
+                    warn(lineNo, current->name + ": " + name + " has a quote that is not closed; left empty");
+                } else if (!path.empty()) {
+                    current->texts[name] = path;
+                }
                 continue;
             }
             ParamValue v;
@@ -1032,7 +1140,7 @@ bool Compiled::errors() const {
 
 bool Compiled::isActive(int node) const { return std::binary_search(active.begin(), active.end(), node); }
 
-Compiled Network::compile() const {
+Compiled Network::compile(const std::string& folder) const {
     Compiled c;
     auto problem = [&](Problem::Level level, int node, std::string message) {
         c.problems.push_back({level, node, std::move(message)});
@@ -1044,12 +1152,33 @@ Compiled Network::compile() const {
         return Vec3(p[0], p[1], p[2]);
     };
     auto whole = [&](const Node& n, const char* name) { return static_cast<int>(std::lround(f(n, name))); };
+    // A mesh from its file, read once per compile -- and once in all while
+    // it is in use (loadMesh); a relative path from the network's folder.
+    std::map<int, std::shared_ptr<const MeshShape>> meshes;
+    auto meshOf = [&](const Node& n) -> std::shared_ptr<const MeshShape> {
+        if (static_cast<Shape>(whole(n, "shape")) != Shape::Mesh) return nullptr;
+        if (const auto it = meshes.find(n.id); it != meshes.end()) return it->second;
+        std::shared_ptr<const MeshShape> mesh;
+        const std::string name = text(n.id, "file");
+        if (name.empty()) {
+            problem(L::Warning, n.id, "The shape is a mesh: choose its OBJ file.");
+        } else {
+            std::filesystem::path path(name);
+            if (path.is_relative() && !folder.empty()) path = std::filesystem::path(folder) / path;
+            std::string why;
+            mesh = loadMesh(path.string(), why);
+            if (!mesh) problem(L::Warning, n.id, "The mesh cannot be read -- " + why + ". Its box stands in.");
+        }
+        meshes[n.id] = mesh;
+        return mesh;
+    };
     auto colliderOf = [&](const Node& n) {
         Collider col;
         col.shape = static_cast<Shape>(whole(n, "shape"));
         col.center = v3(n, "center");
         col.rotation = v3(n, "rotation");
         col.size = v3(n, "size");
+        col.mesh = meshOf(n);
         col.node = n.id;
         return col;
     };
@@ -1157,6 +1286,7 @@ Compiled Network::compile() const {
         e.center = v3(*n, "center");
         e.rotation = v3(*n, "rotation");
         e.size = v3(*n, "size");
+        e.mesh = meshOf(*n);
         e.fuel = f(*n, "fuel");
         e.smoke = f(*n, "smoke");
         e.heat = f(*n, "heat");

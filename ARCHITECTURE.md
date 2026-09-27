@@ -328,6 +328,7 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Poisson    tlaková rovnice: geometrický multigrid se stěnami a překážkami
                  Shape      tvary umístěné ve světě: poloha, rotace, velikost; uvnitř,
                             vzdálenost, průsečík s paprskem
+                 Mesh       modely z OBJ: pole vzdáleností (SDF), paprsky, cache souborů
                  Scene      co se simuluje: doména, zdroje, síly, překážky, objekty
                  Pyro       simulace kouře a ohně
                  Network    síť uzlů simulace, formát .pgsim, překlad na Scene + Look
@@ -335,7 +336,7 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
                  Volume     objemové vykreslování simulace: podlaha, objekty, vodítka
-tests/           50 testů proti invariantům + 25 pro shader graf + 38 pro simulaci a objekty
+tests/           50 testů proti invariantům + 25 pro shader graf + 45 pro simulaci, objekty a modely
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,

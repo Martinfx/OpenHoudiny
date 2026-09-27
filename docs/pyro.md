@@ -215,18 +215,59 @@ nedělalo, co uživatel čeká:
 
 | uzel | parametry |
 |---|---|
-| Object | `shape` (sphere, box, cylinder, cone, torus); `center` (poloha středu), `rotation` (stupně kolem x, pak y, pak z), `size` (šířka, výška, hloubka ve vlastních osách: průměr koule, hrany kvádru, šířka a tloušťka prstence); `color` |
+| Object | `shape` (sphere, box, cylinder, cone, torus, mesh); `file` (soubor OBJ, když je tvar mesh); `center` (poloha středu), `rotation` (stupně kolem x, pak y, pak z), `size` (šířka, výška, hloubka ve vlastních osách: průměr koule, hrany kvádru, šířka a tloušťka prstence, rozměry modelu); `color` |
 
 Tvar ve vlastních osách vyplní `[-size/2, size/2]`: válec a kužel stojí
 podél své osy y (kužel má špičku nahoře), prstenec leží v rovině xz a je
-tlustý `size.y`. Různé velikosti tvar protáhnou, z koule je elipsoid. Změna
-barvy simulaci nespouští znovu.
+tlustý `size.y`, modelu se na `size` natáhne jeho obalový kvádr. Různé
+velikosti tvar protáhnou, z koule je elipsoid. Změna barvy simulaci
+nespouští znovu.
+
+#### Modely z OBJ
+
+![Příklad arch: kamenný oblouk a kámen ze souborů OBJ, vybraný oblouk s gizmem a cestou k souboru](img/editor-mesh.png)
+
+Objekt i zdroj mohou mít tvar **mesh**: model ze souboru OBJ (kámen,
+socha, auto, komín). **Add › Mesh…** (Shift+A) otevře dialog, model postaví
+na podlahu tam, kam míří myš, a připojí ho do Colliders jako ostatní
+objekty. Pokud je model v souboru obrovský nebo drobný (přes 3 m nebo pod
+5 cm), zmenší nebo zvětší se na 80 cm. Jinak si nechá své rozměry.
+V parametrech je cesta a tlačítko **…**. Relativní cesta se čte ze složky
+souboru sítě (u vestavěných příkladů z `examples/sim`), takže síť a modely
+jdou kopírovat spolu. V `.pgsim` je cesta v uvozovkách:
+`param file "../models/arch.obj"`.
+
+Z OBJ se čtou vrcholy a stěny ve všech zápisech (`f 1 2 3`, `1/1`, `1//1`,
+`1/1/1`, záporné indexy). Mnohoúhelníky se rozdělí na trojúhelníky, normály,
+textury a materiály se přeskočí. Čísla se čtou nezávisle na locale.
+
+Pro simulaci se z trojúhelníků jednou upeče **pole vzdáleností** (SDF,
+[`src/pg/sim/Mesh.h`](../src/pg/sim/Mesh.h)) na mřížce 48 buněk podél
+nejdelší strany modelu. Postup je jako Bridsonův makelevelset3:
+
+1. přesná vzdálenost k nejbližšímu trojúhelníku v úzkém pásu kolem stěn;
+2. rychlé zametání (fast sweeping) ji rozšíří do celé mřížky;
+3. vnitřek a vnějšek se určí sčítáním průsečíků paprsků podél x, y a z
+   (lichý počet znamená uvnitř) a hlasováním dvou ze tří. Model s malou
+   dírou se tak nepřevrátí naruby.
+
+Z pole se pak rychle zjistí, jestli je bod uvnitř a jak je daleko od
+povrchu: řešič podle toho označí pevné buňky a zdroj z modelu (hořící
+auto) emituje v pásu pod povrchem. Stejný soubor (cesta, velikost, čas
+změny) se čte a peče jen jednou, dokud ho něco používá.
+
+Renderer kreslí skutečné trojúhelníky: rasterizuje je do bufferu (normála,
+který objekt, vzdálenost), ze kterého hlavní průchod stínuje jako ostatní
+tělesa. Normály se vyhladí mezi stěnami, které se lomí o méně než 60°, takže
+kulaté zůstane kulaté a hrany kvádru ostré. Stíny na podlahu, na ostatní
+tělesa i na kouř vrhá model paprskem pochodujícím polem vzdáleností
+(nejvýš 4 modely se stínem, další se jen nakreslí).
 
 **Zdroje** (Sources) — kde plyn vzniká.
 
 | uzel | parametry |
 |---|---|
-| Pyro Source | `shape`, `center`, `rotation`, `size` jako u objektu; `fuel`, `smoke`, `heat` za sekundu; `velocity` (plyn opouští zdroj aspoň takhle rychle, ve vlastních osách zdroje, takže pootočený zdroj míří jinam); `flicker`, `flicker_size`, `seed` (blikotání šumem, který se zdrojem stoupá); `start`, `end` (časové okno: záblesk exploze); `motion` (static, circle, sway), `motion_size`, `motion_period` |
+| Pyro Source | `shape`, `file`, `center`, `rotation`, `size` jako u objektu; `fuel`, `smoke`, `heat` za sekundu; `velocity` (plyn opouští zdroj aspoň takhle rychle, ve vlastních osách zdroje, takže pootočený zdroj míří jinam); `flicker`, `flicker_size`, `seed` (blikotání šumem, který se zdrojem stoupá); `start`, `end` (časové okno: záblesk exploze); `motion` (static, circle, sway), `motion_size`, `motion_period` |
 
 Koule je táborák, kvádr hořící poleno nebo průduch, prstenec plynový hořák.
 
@@ -311,6 +352,7 @@ uloží.
 | `smoke_sphere` | kouř narazí do koule, rozlije se po ní a obteče ji |
 | `tornado` | vír s nasáváním a zdvihem sbírá kouř z podlahy |
 | `obstacles` | kouř mezi objekty: narazí do šikmé desky, vyteče po ní a stoupá k prstenci; koule na podlaze je kulisa bez kolizí |
+| `arch` | modely z OBJ: vítr žene kouř kamenným obloukem a kolem kamene ([`examples/models`](../examples/models)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.
@@ -575,7 +617,7 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
-[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (13 testů):
+[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (14 testů):
 tabulka typů uzlů je konzistentní (a každá výchozí hodnota se zapíše a
 přečte zpět stejně), jména a spoje, meze parametrů včetně čísel, která
 se čtou stejně s každou standardní knihovnou, soubory tam a zpět, co se ze
@@ -588,6 +630,15 @@ ve scéně připojené i nepřipojené a nová barva nic nesimuluje znovu.
 úhly a zpět (i přes 180° a v gimbal locku), uvnitř a vně, vzdálenosti, kde
 paprsek potká každý tvar (i pootočený a protažený) a s jakou normálou,
 útlum zdroje ke kraji tvaru.
+
+[`tests/test_mesh.cpp`](../tests/test_mesh.cpp) (6 testů): OBJ ve všech
+zápisech stěn (i záporné indexy, mnohoúhelníky, CRLF, čísla nezávislá na
+locale) a chybné soubory; pole vzdáleností proti přesné vzdálenosti
+krychle; model s dírou je pořád správně uvnitř i vně; paprsky; model
+umístěný ve světě (posunutý, pootočený, protažený); soubor se čte jednou a
+po změně znovu. V testech sítě: cesta s mezerou a uvozovkami tam a zpět,
+relativní cesta ze složky sítě, chybějící soubor nahlásí a zastoupí ho
+kvádr.
 
 Vše čisté pod AddressSanitizerem, UBSanem i ThreadSanitizerem. Pod TSanem a
 ASanem běžel i editor s vláknem simulace a skriptovaným vstupem (`pgshader
@@ -657,9 +708,10 @@ to stojí. Oproti produkci:
    přímo převést na compute shader.
 3. **Rychlost se unáší semi-Lagrangeovou metodou**, která rozmazává.
    MacCormack nebo BFECC i pro rychlost, případně FLIP, drží víry déle.
-4. **Překážky jsou jednoduché tvary** (koule, kvádr, válec, kužel,
-   prstenec, pootočené a protažené) a stojí na místě. Produkce bere
-   libovolnou geometrii převedenou na SDF a pohyblivé překážky předávají
+4. **Překážky stojí na místě.** Jsou to tvary (koule, kvádr, válec, kužel,
+   prstenec) i modely z OBJ převedené na pole vzdáleností, ale pole má jen
+   48 buněk podél modelu a jemné detaily v kolizích zmizí. V produkci se
+   pole peče jemněji (a řídce, OpenVDB) a pohyblivé překážky předávají
    plynu svou rychlost.
 5. **Jednoduchý rozptyl.** Produkční renderery (Karma, Arnold) počítají
    mnohonásobný rozptyl, díky kterému je hustý kouř uvnitř světlejší.

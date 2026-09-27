@@ -67,6 +67,7 @@ enum class ParamKind : uint8_t {
     Vector,  ///< three numbers: a position, a size, a direction
     Color,   ///< three numbers, 0 to 1
     Choice,  ///< one of `choices`; the value is its index
+    File,    ///< a path, text (Node::texts); files write it in quotes; `choices` are the extensions
 };
 
 /// A parameter's value: one number, or three for vectors and colours.
@@ -138,6 +139,7 @@ struct Node {
     float x = 0.0f, y = 0.0f;  ///< where the editor shows it
     bool bypass = false;
     std::map<std::string, ParamValue> params;  ///< the values set; the rest are defaults
+    std::map<std::string, std::string> texts;  ///< File parameters set; the rest are empty
 };
 
 struct Link {
@@ -217,6 +219,10 @@ public:
     bool setParam(int id, std::string_view name, std::string_view text, std::string* error = nullptr);
     bool resetParam(int id, std::string_view name);
     bool isDefault(int id, std::string_view name) const;
+    /// A File parameter: the path set, else empty.
+    std::string text(int id, std::string_view name) const;
+    /// False for an unknown node or a parameter that is not a File.
+    bool setText(int id, std::string_view name, std::string_view value);
     bool setBypass(int id, bool on);
 
     std::string save() const;
@@ -226,7 +232,9 @@ public:
     static bool load(std::string_view text, Network& out, std::string& error,
                      std::vector<std::string>* warnings = nullptr);
 
-    Compiled compile() const;
+    /// `folder`: where the network's file is -- a relative path of a File
+    /// parameter (a mesh) is read from there.
+    Compiled compile(const std::string& folder = {}) const;
 
     /// Bumped by every edit -- all but moving a node, which goes through
     /// node() and changes nothing a simulation sees.

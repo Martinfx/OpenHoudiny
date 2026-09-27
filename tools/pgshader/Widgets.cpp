@@ -502,7 +502,7 @@ bool FileBrowser::draw(std::string& chosen) {
     ImGui::SameLine();
     const float buttons = theme::px(200.0f);
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - buttons);
-    if (ImGui::IsWindowAppearing() && save_) ImGui::SetKeyboardFocusHere();
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();  // a name can be typed at once
     const bool enter = ImGui::InputText("##name", &name_, ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
     if ((ImGui::Button(save_ ? "Save" : "Open", ImVec2(theme::px(92.0f), 0.0f)) || enter) && !name_.empty()) {
