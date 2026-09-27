@@ -74,7 +74,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Geometrie v editoru | 28 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
-| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB | [docs/cache.md](docs/cache.md) |
+| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť, prach, kamera, světla) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
 | Obraz | Kamera záběru, render do PNG, sekvence a videa | [docs/render.md](docs/render.md) |
 
 ### Co měření změnilo
@@ -168,7 +168,8 @@ simulace, které vyrenderuje oddělení osvětlení (Karma, Arnold, RenderMan,
 Cycles) a složí compositing. Bez výměny dat s ostatními programy ho proto
 nepoužije nikdo, ať simuluje jakkoli dobře.
 
-- **USD — zápis** (`.usda`, bez knihovny): celá scéna v jednom souboru —
+- ✅ **USD — zápis** (`.usda`, bez knihovny; [docs/usd.md](docs/usd.md)):
+  celá scéna v jednom souboru —
   zobrazená geometrie, kusy jako tělesa s pohybem (tvar jednou, pak jen
   poloha a otočení), drť jako body, prach jako objemy (VDB vedle),
   kamera s ohniskem podle konvence USD, slunce a obloha; časové vzorky jen

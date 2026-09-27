@@ -36,9 +36,11 @@
 // and NODE.PARAM.x=... sets one component of a vector. --cache DIR writes every frame to a folder, and
 // --from-cache DIR reads them from one instead of simulating (pg/sim/Cache.h);
 // --export PATH writes the displayed geometry of every frame -- or that of
-// --export-node -- to .ply, .obj or .vdb files, $F4 in PATH the frame
-// (pg/io/Export.h). '-' for OUT.png draws nothing: the cache and the export
-// alone, which need no OpenGL.
+// --export-node -- to .ply, .obj, .vdb or .usda files, $F4 in PATH the
+// frame (pg/io/Export.h); a .usda without $F is the whole shot as one USD
+// stage -- the geometry, the pieces, the grit, the gas (VDB files beside
+// it), the camera and the light (pg/sim/UsdExport.h). '-' for OUT.png draws
+// nothing: the cache and the export alone, which need no OpenGL.
 //
 // `cook` cooks a network's geometry and nothing else -- no simulation, no
 // OpenGL: the displayed node, or --node, at frame 1, --frame N, or frames 1
@@ -63,6 +65,7 @@
 #include "pg/sim/Cache.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
+#include "pg/sim/UsdExport.h"
 #include "pg/sim/World.h"
 
 #include <algorithm>
@@ -713,7 +716,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         }
         exported = n->id;
     }
-    if (!o.exportPattern.empty() && !exported) {
+    // A .usda: the whole shot, as one USD stage -- with or without geometry.
+    std::unique_ptr<sim::UsdExport> usd;
+    if (sim::isUsdPath(o.exportPattern) && o.exportPattern.find("$F") == std::string::npos) {
+        const sim::Node* n = exported ? net.node(exported) : nullptr;
+        usd = std::make_unique<sim::UsdExport>(o.exportPattern, n ? n->name : std::string("geometry"));
+    }
+    if (!o.exportPattern.empty() && !exported && !usd) {
         std::fprintf(stderr, "%s: --export writes the displayed geometry, and no node is displayed: give one the "
                              "display flag, or name it with --export-node\n", cmd);
         return 1;
@@ -876,7 +885,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             }
             ++cachedFrames;
         }
-        if (!o.exportPattern.empty()) {
+        if (usd) {
+            const GeometryPtr geo = exported ? geometry.cook(exported, f, world.timeStep) : nullptr;
+            if (!usd->add(*current, geo, c.hasCamera ? &c.cameraAt(f) : nullptr, c.lookAt(f), error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
+        } else if (!o.exportPattern.empty()) {
             const GeometryPtr geo = geometry.cook(exported, f, world.timeStep);
             lastExport = pg::io::framePath(o.exportPattern, f);
             std::error_code ec;
@@ -939,6 +954,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         return 1;
     }
 #endif
+    if (usd && !usd->finish(1.0f / world.timeStep, error)) {
+        std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+        return 1;
+    }
     if (!o.cacheDir.empty()) {
         sim::CacheInfo info;
         info.frames = frames;
@@ -997,6 +1016,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
     if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());
     if (exports > 0) std::printf("exported %d frames of geometry, the last %s\n", exports, lastExport.c_str());
+    if (usd) {
+        std::printf("exported %d frames as USD to %s: %d bodies%s\n", usd->frames(), usd->path().c_str(), usd->bodies(),
+                    usd->gasFiles() > 0 ? (", the gas in " + std::to_string(usd->gasFiles()) + " VDB files beside it").c_str()
+                                        : "");
+    }
     return 0;
 }
 
@@ -1120,7 +1144,10 @@ void printUsage(std::FILE* out) {
                  "                   ask for a view round the scene. --cache writes every frame to DIR;\n"
                  "                   --from-cache reads them from there instead of simulating; --export writes\n"
                  "                   the displayed geometry of every frame, PATH with $F4 for the frame:\n"
-                 "                   .ply points, .obj polygons, .vdb volumes. '-' for OUT.png: no pictures.\n"
+                 "                   .ply points, .obj polygons, .vdb volumes, .usda; a .usda without $F: the\n"
+                 "                   whole shot as one USD stage -- geometry, pieces, grit, gas (VDB beside it),\n"
+                 "                   camera, light.\n"
+                 "                   '-' for OUT.png: no pictures.\n"
                  "                   --set takes an expression too: 'fire.center.x=sin($T*6)*0.3',\n"
                  "                   'box1.sizex=ch(\"../base/sizex\")*2', 'fire.center={0, $F*0.01, 0}'\n"
                  "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"

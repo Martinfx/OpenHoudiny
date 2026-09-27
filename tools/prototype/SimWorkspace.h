@@ -217,6 +217,12 @@ private:
     /// A file a frame: `pattern` numbered by io::framePath ($F4, or .0007
     /// before the extension).
     bool exportFrames(int id, const std::string& pattern);
+    /// The dialog that exports the shot as a USD stage, and the export: the
+    /// frames cached, with the displayed geometry, the pieces, the grit, the
+    /// gas (VDB files beside it), the camera and the light
+    /// (pg/sim/UsdExport.h).
+    void chooseUsd();
+    bool exportUsd(const std::string& path);
 
     // --- the camera (SimViewport.cpp) ---------------------------------------------------
     /// Looks through the Output's camera, or stops.
@@ -379,7 +385,7 @@ private:
     ui::FileBrowser files_;
     enum class FileAction {
         None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, ExportGeometry, ExportFrames,
-        OpenAsset, SaveAsset
+        ExportUsd, OpenAsset, SaveAsset
     } fileAction_ = FileAction::None;
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;

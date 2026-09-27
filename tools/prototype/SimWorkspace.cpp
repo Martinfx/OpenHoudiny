@@ -4,6 +4,7 @@
 
 #include "pg/gl/Png.h"
 #include "pg/io/Export.h"
+#include "pg/sim/UsdExport.h"
 #include "pg/io/Video.h"
 #include "pg/sim/Asset.h"
 #include "pg/sim/Cache.h"
@@ -1642,6 +1643,10 @@ void SimWorkspace::fileMenu() {
         chooseExport(shown, true);
     }
     ImGui::SetItemTooltip("The displayed node's geometry at every frame cached, a file a frame");
+    if (ImGui::MenuItem("Export USD Scene\xe2\x80\xa6", nullptr, false, compiled_.ok && runner_->cached() > 0)) chooseUsd();
+    ImGui::SetItemTooltip("The shot as one USD stage, for Houdini, Blender or a renderer: every frame cached -- the "
+                          "displayed geometry, the pieces moving, the grit, the gas (VDB files beside it), the camera "
+                          "and the light");
 }
 
 void SimWorkspace::editMenu() {
@@ -1797,6 +1802,7 @@ void SimWorkspace::popups() {
         case FileAction::LoadCache: loadCache(chosen); break;
         case FileAction::ExportGeometry: exportGeometry(fileNode_, chosen); break;
         case FileAction::ExportFrames: exportFrames(fileNode_, chosen); break;
+        case FileAction::ExportUsd: exportUsd(chosen); break;
         case FileAction::OpenAsset: open(chosen); break;
         case FileAction::SaveAsset: commitAsset(chosen); break;
         case FileAction::None: break;
@@ -2223,6 +2229,38 @@ bool SimWorkspace::exportFrames(int id, const std::string& pattern) {
     }
     setMessage("Exported " + std::to_string(written) + " frames of " + n->name + ", the last " + shownPath(last));
     return written > 0;
+}
+
+void SimWorkspace::chooseUsd() {
+    files_.open("Export USD scene", {".usda"}, true, (fs::path(outputFolder()) / (stem() + ".usda")).string());
+    fileAction_ = FileAction::ExportUsd;
+}
+
+bool SimWorkspace::exportUsd(const std::string& path) {
+    const int shown = net_.displayed();
+    const sim::Node* n = shown ? net_.node(shown) : nullptr;
+    const bool withGeometry = n && geometry_->contains(shown);
+    sim::UsdExport usd(path, withGeometry ? n->name : std::string("geometry"));
+    const int cached = runner_->cached();
+    std::string error;
+    for (int f = 1; f <= cached; ++f) {
+        const std::shared_ptr<const sim::Frame> frame = runner_->frame(f);
+        if (!frame) continue;
+        const GeometryPtr geo = withGeometry ? geometry_->cook(shown, f, compiled_.world.timeStep) : nullptr;
+        if (!usd.add(*frame, geo, compiled_.hasCamera ? &compiled_.cameraAt(f) : nullptr, compiled_.lookAt(f), error)) {
+            setMessage(error, true);
+            return false;
+        }
+    }
+    if (!usd.finish(1.0f / compiled_.world.timeStep, error)) {
+        setMessage(error, true);
+        return false;
+    }
+    std::string text = "Exported " + std::to_string(usd.frames()) + " frames as USD to " + shownPath(path);
+    if (usd.bodies() > 0) text += ", " + std::to_string(usd.bodies()) + " bodies";
+    if (usd.gasFiles() > 0) text += ", the gas in " + std::to_string(usd.gasFiles()) + " VDB files beside it";
+    setMessage(text);
+    return true;
 }
 
 }  // namespace pg::editor

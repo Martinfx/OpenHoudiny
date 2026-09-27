@@ -11,8 +11,9 @@ namespace pg::io {
 
 /// Writes `geo` to `path` as its extension says: .ply -- points, their
 /// attributes, faces (Ply.h); .obj -- points, polygons, lines (Obj.h);
-/// .vdb -- volumes (Vdb.h). False, with why, for another extension, or a
-/// .vdb of geometry that has no volume.
+/// .vdb -- volumes (Vdb.h); .usda -- a USD stage of its polygons, lines
+/// and points (Usda.h). False, with why, for another extension, or a .vdb
+/// of geometry that has no volume.
 bool writeGeometry(const Geometry& geo, const std::string& path, std::string& error);
 /// The extensions writeGeometry() knows, with their dots.
 const char* const* geometryExtensions();

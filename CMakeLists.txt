@@ -52,6 +52,7 @@ add_library(pgcore
   src/pg/io/Video.cpp
   src/pg/io/Ply.cpp
   src/pg/io/Export.cpp
+  src/pg/io/Usda.cpp
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
@@ -221,6 +222,7 @@ add_library(pgsim
   src/pg/sim/Scene.cpp
   src/pg/sim/Shape.cpp
   src/pg/sim/World.cpp
+  src/pg/sim/UsdExport.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp
 )
@@ -405,6 +407,7 @@ add_executable(pgtests
   tests/test_rain.cpp
   tests/test_sops.cpp
   tests/test_export.cpp
+  tests/test_usd.cpp
   tests/test_video.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)

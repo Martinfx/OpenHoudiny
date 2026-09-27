@@ -81,6 +81,7 @@ cache/fire/
 | `.ply` | body s atributy, uzavřené polygony jako `face`; binárně, little-endian | Houdini, Blender, MeshLab, CloudCompare, ParaView |
 | `.vdb` | objemy jako float mřížky OpenVDB (soubor verze 224) | Houdini, Blender, renderery (Arnold, Redshift, V-Ray, Cycles, Karma) |
 | `.obj` | body, polygony, čáry | skoro všechno |
+| `.usda` | polygony jako Mesh, čáry, body; bez `$F` v `--export` celý záběr — tělesa, drť, prach, kamera, světla ([usd.md](usd.md)) | Houdini (Solaris), Blender, usdview, renderery |
 
 Formát určuje přípona (na velikosti písmen nezáleží). `.vdb` z geometrie
 bez objemů se nezapíše — chyba řekne, že objemy dělá uzel Gas Volume.
@@ -138,7 +139,7 @@ prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] ...
 |---|---|
 | `--cache DIR` | každý snímek do složky `DIR` (vytvoří ji), nakonec `cache.txt` |
 | `--from-cache DIR` | snímky čte ze složky místo simulace; `--frames N` jich vezme nejvýš N |
-| `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. |
+| `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. Výjimka: `.usda` bez `$F` je celý záběr v jednom souboru ([usd.md](usd.md)). |
 | `--export-node NODE` | geometrie uzlu `NODE` místo zobrazeného |
 | `-` místo `OUT.png` | žádný obrázek, jen cache a export — funguje i v buildu bez EGL |
 

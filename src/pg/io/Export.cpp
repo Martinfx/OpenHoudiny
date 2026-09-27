@@ -2,6 +2,7 @@
 
 #include "pg/io/Obj.h"
 #include "pg/io/Ply.h"
+#include "pg/io/Usda.h"
 #include "pg/io/Vdb.h"
 
 #include <cctype>
@@ -11,7 +12,7 @@
 namespace pg::io {
 
 const char* const* geometryExtensions() {
-    static const char* const kExtensions[] = {".ply", ".obj", ".vdb", nullptr};
+    static const char* const kExtensions[] = {".ply", ".obj", ".vdb", ".usda", nullptr};
     return kExtensions;
 }
 
@@ -27,7 +28,10 @@ bool writeGeometry(const Geometry& geo, const std::string& path, std::string& er
         }
         return writeVdb(geo.volumes(), path, error);
     }
-    error = path + ": geometry goes to .ply (points), .obj (polygons) or .vdb (volumes)";
+    if (ext == ".usda" || ext == ".usd") {
+        return usda::writeStage(usda::geometryStage(geo, std::filesystem::path(path).stem().string()), path, error);
+    }
+    error = path + ": geometry goes to .ply (points), .obj (polygons), .vdb (volumes) or .usda (a USD stage)";
     return false;
 }
 

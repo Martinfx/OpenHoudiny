@@ -36,6 +36,9 @@ okna.
   které nárazy lámou, nálože, drcení na prach, drť, vzduch vytlačený
   zřícením, který žene prach do ulic; odstřel věžáku ve městě a zřícení
   zdi z pohledu od země jako videa
+- **[docs/usd.md](docs/usd.md)** — celý záběr do USD pro Houdini, Blender
+  a renderery: geometrie, kusy jako tělesa v pohybu, drť, prach jako VDB,
+  kamera, slunce a obloha
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem
@@ -88,7 +91,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 248 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 15 tuhá tělesa, 25 shader graf, 87 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 255 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 15 tuhá tělesa, 25 shader graf, 87 simulace, voda, déšť, geometrie, animace, 11 cache a export, 7 USD, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -227,7 +230,11 @@ přehrají se, vykreslí a vyexportují bez nového počítání; nuly se
 nezapisují, 150 snímků táboráku má 63 MB. Geometrie kteréhokoli uzlu jde
 ven snímek po snímku: body s atributy do PLY, objemy do OpenVDB (vlastní
 zapisovač bez knihovny, soubory ověřené čtením v OpenVDB 10), polygony do
-OBJ.
+OBJ. Celý záběr jde do **USD** jako jeden soubor `.usda` (`--export
+shot.usda`, v editoru File › Export USD Scene…): geometrie, kusy jako
+tělesa, která se pohybují (tvar jednou, pak jen poloha a otočení), drť,
+prach jako VDB vedle, kamera, slunce a obloha — ověřeno Pixarovou
+knihovnou, všechny validátory bez nálezu ([docs/usd.md](docs/usd.md)).
 
 **Obrázky a video**: záběr jde do PNG, do očíslované sekvence nebo do videa
 — `.avi` (Motion JPEG, vlastní kodér JPEG i kontejner) bez jakékoli

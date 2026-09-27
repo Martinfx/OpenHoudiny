@@ -249,6 +249,14 @@ drť v oblaku proti světlu tmavne. Geometrie i kusy vrhají stíny na sebe,
 na zem i do kouře (stínová mapa slunce, 2048², měkké okraje) a Output má
 barvu země, vypínač mřížky a oblohu za scénou (`sky_behind`).
 
+**Do jiného rendereru.** `prototype sim demolition - --export
+demolition.usda` zapíše celý záběr jako scénu USD: každé těleso jednou
+jako tvar a pak jen jeho poloha a otočení v každém snímku, rozmetaná tělesa
+zneviditelněná, drť jako body, prach jako soubory VDB vedle, kamera,
+slunce a obloha. Blender, Houdini nebo Karma ho vyrenderují s vlastním
+světlem, rozmazáním pohybem a materiály; plochy řezu jsou `GeomSubset`
+`inside`, aby dostaly jiný materiál ([usd.md](usd.md)).
+
 **RBD Pieces** (Geometry) vrátí kusy daného snímku jako geometrii: body
 posunuté a otočené, normály otočené a rychlost každého bodu v `v` — pro
 další uzly, pro export snímek po snímku (`prototype sim --export`), pro
