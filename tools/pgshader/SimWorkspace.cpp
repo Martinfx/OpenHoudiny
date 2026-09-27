@@ -1,6 +1,8 @@
 #include "SimWorkspace.h"
 
 #include "pg/gl/Png.h"
+#include "pg/io/Export.h"
+#include "pg/sim/Cache.h"
 
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -29,6 +31,15 @@ ImU32 categoryColor(const std::string& c) {
     if (c == "Simulation") return IM_COL32(112, 78, 160, 255);
     if (c == "Render") return IM_COL32(58, 128, 80, 255);
     return IM_COL32(110, 60, 60, 255);
+}
+
+/// A path as the messages show it: from the current folder when it is in
+/// it, else whole.
+std::string shownPath(const std::string& path) {
+    std::error_code ec;
+    const fs::path relative = fs::relative(path, fs::current_path(ec), ec);
+    if (ec || relative.empty() || *relative.begin() == "..") return path;
+    return relative.string();
 }
 
 Icon categoryIcon(const std::string& c) {
@@ -698,6 +709,14 @@ void SimWorkspace::nodeMenu(int id) {
     if (ImGui::MenuItem("Delete", "Del")) removeNodes(std::vector<int>(canvas_.selection().begin(), canvas_.selection().end()));
     ImGui::Separator();
     if (ImGui::MenuItem("Frame", "F")) canvas_.frame(true);
+    if (geometry_.contains(id)) {
+        ImGui::Separator();
+        if (ImGui::MenuItem("Display", "R", net_.displayed() == id)) net_.setDisplay(net_.displayed() == id ? 0 : id);
+        if (ImGui::MenuItem("Export Geometry\xe2\x80\xa6")) chooseExport(id, false);
+        ImGui::SetItemTooltip("Its geometry at the frame on screen: .ply points, .obj polygons, .vdb volumes");
+        if (ImGui::MenuItem("Export Geometry Frames\xe2\x80\xa6", nullptr, false, runner_->cached() > 0)) chooseExport(id, true);
+        ImGui::SetItemTooltip("Its geometry at every frame cached, a file a frame");
+    }
     if (t) {
         ImGui::Separator();
         ImGui::PushTextWrapPos(theme::px(320.0f));
@@ -1119,7 +1138,15 @@ void SimWorkspace::networkOverview() {
                         compiled_.frames * static_cast<double>(compiled_.world.timeStep));
             ImGui::Text("Cache       %d frames, %.0f MB", runner_->cached(),
                         static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
-            if (runner_->stepMs() > 0.0) ImGui::Text("Step        %.0f ms", runner_->stepMs());
+            if (runner_->adopted()) {
+                fs::path from(cacheFolder_);
+                if (!from.has_filename()) from = from.parent_path();  // "cache/"
+                ImGui::TextDisabled("            from %s", from.filename().string().c_str());
+                ImGui::SetItemTooltip("Read from %s rather than simulated -- until what is simulated changes",
+                                      cacheFolder_.c_str());
+            } else if (runner_->stepMs() > 0.0) {
+                ImGui::Text("Step        %.0f ms", runner_->stepMs());
+            }
         } else {
             ImGui::TextColored(theme::vec(theme::kRed), "Nothing to simulate yet.");
         }
@@ -1262,9 +1289,17 @@ void SimWorkspace::fileMenu() {
         fileAction_ = FileAction::Image;
     }
     if (ImGui::MenuItem("Render Frames\xe2\x80\xa6", nullptr, false, runner_->cached() > 0)) {
-        files_.open("Render frames into a folder", {}, true, "");
+        files_.openFolder("Render frames into a folder", true, (fs::path(outputFolder()) / (stem() + "_frames")).string());
         fileAction_ = FileAction::Frames;
     }
+    ImGui::Separator();
+    const int shown = net_.displayed();
+    if (ImGui::MenuItem("Export Geometry\xe2\x80\xa6", nullptr, false, shown != 0)) chooseExport(shown, false);
+    ImGui::SetItemTooltip("The displayed node's geometry at the frame on screen: .ply points, .obj polygons, .vdb volumes");
+    if (ImGui::MenuItem("Export Geometry Frames\xe2\x80\xa6", nullptr, false, shown != 0 && runner_->cached() > 0)) {
+        chooseExport(shown, true);
+    }
+    ImGui::SetItemTooltip("The displayed node's geometry at every frame cached, a file a frame");
 }
 
 void SimWorkspace::editMenu() {
@@ -1305,6 +1340,19 @@ void SimWorkspace::menus() {
             }
             ImGui::EndMenu();
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save Cache to Disk\xe2\x80\xa6", nullptr, false, runner_->cached() > 0)) {
+            files_.openFolder("Save the cache into a folder", true, (fs::path(outputFolder()) / (stem() + "_cache")).string());
+            fileAction_ = FileAction::SaveCache;
+        }
+        ImGui::SetItemTooltip("The frames simulated, a file each: to play, render and export again without simulating "
+                              "-- here, or with pgshader sim --from-cache.");
+        if (ImGui::MenuItem("Load Cache from Disk\xe2\x80\xa6", nullptr, false, compiled_.ok)) {
+            files_.openFolder("Load a cache: its folder", false,
+                              cacheFolder_.empty() ? (fs::path(outputFolder()) / (stem() + "_cache")).string() : cacheFolder_);
+            fileAction_ = FileAction::LoadCache;
+        }
+        ImGui::SetItemTooltip("Frames saved before, in place of simulating them -- until what is simulated changes.");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Add")) {
@@ -1363,6 +1411,8 @@ void SimWorkspace::helpMenu() {
     ImGui::TextDisabled("The same from the command line:");
     ImGui::TextUnformatted("  pgshader sim campfire fire.png --every 10");
     ImGui::TextUnformatted("  pgshader sim my.pgsim out.png --set fire.fuel=20");
+    ImGui::TextUnformatted("  pgshader sim my.pgsim - --cache my_cache");
+    ImGui::TextUnformatted("  pgshader sim campfire_vdb - --export-node volumes --export 'fire.$F4.vdb'");
 }
 
 void SimWorkspace::popups() {
@@ -1382,6 +1432,10 @@ void SimWorkspace::popups() {
             }
             break;
         case FileAction::ImportMesh: addMesh(chosen, addAt_); break;
+        case FileAction::SaveCache: saveCache(chosen); break;
+        case FileAction::LoadCache: loadCache(chosen); break;
+        case FileAction::ExportGeometry: exportGeometry(fileNode_, chosen); break;
+        case FileAction::ExportFrames: exportFrames(fileNode_, chosen); break;
         case FileAction::None: break;
     }
     fileAction_ = FileAction::None;
@@ -1422,11 +1476,13 @@ std::string SimWorkspace::gridsText() const {
 }
 
 std::string SimWorkspace::status() const {
-    char text[240];
-    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %s  \xc2\xb7  cache %d / %d (%.0f MB)%s  \xc2\xb7  %.0f ms a step",
+    char text[240], step[32];
+    // Frames from disk were not simulated: no time a step.
+    if (runner_->adopted()) std::snprintf(step, sizeof step, "from disk");
+    else std::snprintf(step, sizeof step, "%.0f ms a step", runner_->stepMs());
+    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %s  \xc2\xb7  cache %d / %d (%.0f MB)%s  \xc2\xb7  %s",
                   net_.nodes().size(), gridsText().c_str(), runner_->cached(), compiled_.frames,
-                  static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), runner_->full() ? " full" : "",
-                  runner_->stepMs());
+                  static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), runner_->full() ? " full" : "", step);
     return text;
 }
 
@@ -1485,7 +1541,7 @@ bool SimWorkspace::renderFrames(const std::string& folder) {
     const int cached = runner_->cached();
     int width = 0, height = 0;
     shotSize(width, height);
-    const std::string stem = example_.empty() ? (path_.empty() ? "frame" : fs::path(path_).stem().string()) : example_;
+    const std::string name = stem();
     int written = 0;
     for (int f = 1; f <= cached; ++f) {
         const auto frame = runner_->frame(f);
@@ -1493,15 +1549,169 @@ bool SimWorkspace::renderFrames(const std::string& folder) {
         renderer_.setFrame(*frame);
         pose(f);
         renderShot(width, height, f);
-        char name[64];
-        std::snprintf(name, sizeof name, "_%04d.png", f);
-        if (!gl::writePng((fs::path(folder) / (stem + name)).string(), width, height, 3, renderer_.readPixels(2))) break;
+        char digits[16];
+        std::snprintf(digits, sizeof digits, "_%04d.png", f);
+        if (!gl::writePng((fs::path(folder) / (name + digits)).string(), width, height, 3, renderer_.readPixels(2))) break;
         ++written;
     }
     shown_.reset();  // put the frame at the play head back
     viewDirty_ = true;
     setMessage("Rendered " + std::to_string(written) + " frames into " + folder, written != cached);
     return written == cached;
+}
+
+// --- the cache on disk, and export ------------------------------------------------------------------
+
+std::string SimWorkspace::outputFolder() const {
+    std::error_code ec;
+    const fs::path parent = fs::path(path_).parent_path();
+    return parent.empty() ? fs::current_path(ec).string() : parent.string();
+}
+
+std::string SimWorkspace::stem() const {
+    if (!path_.empty()) return fs::path(path_).stem().string();
+    return example_.empty() ? std::string("untitled") : example_;
+}
+
+bool SimWorkspace::saveCache(const std::string& folder) {
+    const int cached = runner_->cached();
+    std::string error;
+    uintmax_t bytes = 0;
+    int written = 0;
+    for (int f = 1; f <= cached; ++f) {
+        const auto frame = runner_->frame(f);
+        if (!frame) break;
+        if (!sim::writeFrame(*frame, folder, error)) {
+            setMessage(error, true);
+            return false;
+        }
+        std::error_code ec;
+        bytes += fs::file_size(sim::frameFile(folder, frame->number), ec);
+        ++written;
+    }
+    // The frames of a longer cache saved there before are not this one's.
+    std::error_code ec;
+    for (int f = written + 1; fs::remove(sim::frameFile(folder, f), ec); ++f) {
+    }
+    sim::CacheInfo info;
+    info.frames = written;
+    info.fps = 1.0f / compiled_.world.timeStep;
+    info.network = sim::networkHash(net_.save());
+    if (written == 0 || !sim::writeCacheInfo(folder, info, error)) {
+        setMessage(written == 0 ? std::string("No frame to save yet") : error, true);
+        return false;
+    }
+    cacheFolder_ = folder;
+    std::string text = "Saved " + std::to_string(written) + " frames into " + shownPath(folder) + " (" + ui::sizeText(bytes) + ")";
+    if (written < compiled_.frames) text += " -- of " + std::to_string(compiled_.frames) + ": the rest are not simulated yet";
+    setMessage(text);
+    return true;
+}
+
+bool SimWorkspace::loadCache(const std::string& chosen) {
+    // A file in the folder -- its cache.txt -- stands for the folder.
+    std::error_code ec;
+    const std::string folder = fs::is_directory(chosen, ec) ? chosen : fs::path(chosen).parent_path().string();
+    sim::CacheInfo info;
+    std::string error;
+    if (!sim::readCacheInfo(folder, info, error)) {
+        setMessage(error, true);
+        return false;
+    }
+    if (!compiled_.ok) {
+        setMessage("The network does not compile: its frames from disk need what it simulates", true);
+        return false;
+    }
+    // No more than the timeline holds.
+    const int count = std::min(info.frames, std::max(1, compiled_.frames));
+    std::vector<std::shared_ptr<const sim::Frame>> frames;
+    frames.reserve(static_cast<size_t>(count));
+    for (int f = 1; f <= count; ++f) {
+        auto frame = std::make_shared<sim::Frame>();
+        if (!sim::readFrame(folder, f, *frame, error)) {
+            setMessage(error, true);
+            return false;
+        }
+        frame->number = f;
+        frames.push_back(std::move(frame));
+    }
+    runner_->adopt(compiled_.world, compiled_.frames, std::move(frames));
+    cacheFolder_ = folder;
+    shown_.reset();
+    viewDirty_ = true;
+    std::string text = "Loaded " + std::to_string(count) + " frames from " + shownPath(folder);
+    if (info.frames > count) text += " (the network has " + std::to_string(compiled_.frames) + ")";
+    if (info.network != sim::networkHash(net_.save())) {
+        text += " -- they were written by another network, or another version of this one";
+    }
+    setMessage(text);
+    return true;
+}
+
+void SimWorkspace::chooseExport(int id, bool frames) {
+    const sim::Node* n = net_.node(id);
+    if (!n || !geometry_.contains(id)) return;
+    // What the node makes suggests the file: volumes alone go to OpenVDB,
+    // the rest to PLY.
+    const GeometryPtr geo = geometryOf(id);
+    const bool volumes = geo && geo->volumeCount() > 0 && geo->pointCount() == 0;
+    std::vector<std::string> kinds;
+    for (const char* const* e = io::geometryExtensions(); *e; ++e) kinds.emplace_back(*e);
+    std::stable_partition(kinds.begin(), kinds.end(), [&](const std::string& e) { return e == (volumes ? ".vdb" : ".ply"); });
+    const std::string name = n->name + (frames ? ".$F4" : "") + kinds.front();
+    files_.open(frames ? "Export geometry frames ($F4: the frame)" : "Export geometry", kinds, true,
+                (fs::path(outputFolder()) / name).string());
+    fileNode_ = id;
+    fileAction_ = frames ? FileAction::ExportFrames : FileAction::ExportGeometry;
+}
+
+bool SimWorkspace::exportGeometry(int id, const std::string& path) {
+    const sim::Node* n = net_.node(id);
+    const GeometryPtr geo = n ? geometryOf(id) : nullptr;
+    if (!geo) {
+        setMessage("No geometry to export", true);
+        return false;
+    }
+    const std::string why = geometry_.error(id);
+    if (!why.empty()) {
+        setMessage(n->name + ": " + why, true);
+        return false;
+    }
+    std::error_code ec;
+    if (fs::path(path).has_parent_path()) fs::create_directories(fs::path(path).parent_path(), ec);
+    std::string error;
+    if (!io::writeGeometry(*geo, path, error)) {
+        setMessage(error, true);
+        return false;
+    }
+    setMessage("Exported " + n->name + " at frame " + std::to_string(shownFrame()) + " to " + shownPath(path));
+    return true;
+}
+
+bool SimWorkspace::exportFrames(int id, const std::string& pattern) {
+    const sim::Node* n = net_.node(id);
+    if (!n || !geometry_.contains(id)) return false;
+    const int cached = runner_->cached();
+    std::string error, last;
+    int written = 0;
+    for (int f = 1; f <= cached; ++f) {
+        const GeometryPtr geo = geometry_.cook(id, f, compiled_.world.timeStep);
+        const std::string why = geometry_.error(id);
+        if (!geo || !why.empty()) {
+            setMessage(n->name + " at frame " + std::to_string(f) + ": " + (why.empty() ? "no geometry" : why), true);
+            return false;
+        }
+        last = io::framePath(pattern, f);
+        std::error_code ec;
+        if (fs::path(last).has_parent_path()) fs::create_directories(fs::path(last).parent_path(), ec);
+        if (!io::writeGeometry(*geo, last, error)) {
+            setMessage(error, true);
+            return false;
+        }
+        ++written;
+    }
+    setMessage("Exported " + std::to_string(written) + " frames of " + n->name + ", the last " + shownPath(last));
+    return written > 0;
 }
 
 }  // namespace pg::editor

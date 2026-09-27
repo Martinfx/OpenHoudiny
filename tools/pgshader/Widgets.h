@@ -62,6 +62,8 @@ bool toggle(const char* id, bool& v);
 bool segmented(const char* id, int& v, const std::vector<const char*>& labels);
 
 /// Text that wraps, dim: help under a header.
+/// A file's size as people read it: "812 B", "8.1 KB", "4.4 MB".
+std::string sizeText(uintmax_t bytes);
 void note(const char* text);
 
 // --- the timeline ------------------------------------------------------------------------
@@ -98,6 +100,12 @@ public:
     /// the suggestion.
     void open(const std::string& title, std::vector<std::string> extensions, bool save, const std::string& start,
               std::vector<std::pair<std::string, std::string>> places = {});
+    /// A folder rather than a file: the one named -- clicked or typed -- or,
+    /// with no name, the one open. `create`: one that is not there yet may
+    /// be named too, for the caller to make. `start` is shown in the folder
+    /// above it, with its name typed.
+    void openFolder(const std::string& title, bool create, const std::string& start,
+                    std::vector<std::pair<std::string, std::string>> places = {});
     /// Draws the dialog while it is open. True, with the path in `chosen`,
     /// once the user picked one.
     bool draw(std::string& chosen);
@@ -110,6 +118,7 @@ private:
     std::string title_;
     std::vector<std::string> extensions_;
     bool save_ = false;
+    bool folders_ = false;  ///< openFolder: a folder is chosen
     bool open_ = false, requested_ = false;
     std::filesystem::path dir_;
     std::string name_, pathText_, error_;

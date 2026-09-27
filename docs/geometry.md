@@ -11,7 +11,9 @@ stejné, na kterém stojí `pgdemo`. Geometrie se:
 - **stává tvarem simulací** — vstup *Shape* objektu (překážky), zdroje
   kouře a zdroje vody;
 - **vrací ze simulací** — částice vody, kapky deště a mřížky plynu jako body
-  a objemy, které jdou dál upravovat dalšími uzly.
+  a objemy, které jdou dál upravovat dalšími uzly;
+- **exportuje** — do PLY, OBJ a OpenVDB, snímek po snímku
+  ([cache.md](cache.md)).
 
 ![Editor: částice vody jako body obarvené wranglem podle rychlosti, tabulka jejich atributů a síť s display flagem na uzlu speed_color](img/editor-geometry.png)
 

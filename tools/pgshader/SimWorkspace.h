@@ -13,6 +13,9 @@
 // play and scrub them without simulating again. A change that alters what is
 // simulated -- a source, a force, the solver -- starts it again from frame 1
 // while the play head stays; a change of the look only draws the frame again.
+// The frames go to a folder on disk and come back from one (Save Cache, Load
+// Cache: sim/Cache.h); a geometry node's geometry -- the particles, the gas as
+// volumes -- is exported, a frame or every frame (io/Export.h).
 //
 #include "Gizmo.h"
 #include "NodeCanvas.h"
@@ -122,6 +125,25 @@ private:
     float focusOf(const sim::Camera& camera) const;
     bool renderImage(const std::string& path);
     bool renderFrames(const std::string& folder);
+
+    // --- the cache on disk, and export ------------------------------------------------
+    /// Where a file made from the network goes by default: its file's
+    /// folder, or the current one for an example or a network never saved.
+    std::string outputFolder() const;
+    /// The network's name for the files made from it: its file's, the
+    /// example's, or "untitled".
+    std::string stem() const;
+    bool saveCache(const std::string& folder);
+    /// The frames in `folder` in place of simulated ones, until what is
+    /// simulated changes.
+    bool loadCache(const std::string& folder);
+    /// The dialog that exports geometry node `id`'s geometry: at the frame
+    /// on screen, or at every frame cached (`frames`).
+    void chooseExport(int id, bool frames);
+    bool exportGeometry(int id, const std::string& path);
+    /// A file a frame: `pattern` numbered by io::framePath ($F4, or .0007
+    /// before the extension).
+    bool exportFrames(int id, const std::string& pattern);
 
     // --- the camera (SimViewport.cpp) ---------------------------------------------------
     /// Looks through the Output's camera, or stops.
@@ -246,9 +268,12 @@ private:
     int newColor_ = 0;
 
     ui::FileBrowser files_;
-    enum class FileAction { None, Open, SaveAs, Image, Frames, MeshFile, ImportMesh } fileAction_ = FileAction::None;
-    int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen
+    enum class FileAction {
+        None, Open, SaveAs, Image, Frames, MeshFile, ImportMesh, SaveCache, LoadCache, ExportGeometry, ExportFrames
+    } fileAction_ = FileAction::None;
+    int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;
+    std::string cacheFolder_;  ///< the folder the cache was last saved to or loaded from
 
     std::string message_;
     bool messageError_ = false;

@@ -16,6 +16,9 @@ node-based, nedestruktivní, headless-first.
   jako tvar překážek a zdrojů, simulace zpátky jako body a objemy
 - **[docs/animation.md](docs/animation.md)** — klíčové snímky na libovolném
   parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda
+- **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
+  body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
+  Houdini, Blender a renderery
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -62,7 +65,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 169 testů: 59 jádro, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace
+./build/pgtests            # 180 testů: 59 jádro, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
@@ -75,6 +78,10 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ./build/pgshader --example rock_garden            # geometrie v síti: kameny z kopií koule, déšť
 ./build/pgshader sim liquid_points points.png     # částice vody jako body obarvené wranglem
 ./build/pgshader --example wake                   # animace: koule projíždí bazénem, vlna a brázda
+./build/pgshader sim campfire_vdb - --cache cache/fire                          # simulace jednou, na disk
+./build/pgshader sim campfire_vdb fire.png --from-cache cache/fire --every 10   # render z cache
+./build/pgshader sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
+./build/pgshader sim liquid_points - --export 'out/water.$F4.ply'                # částice do PLY
 ./build/pgshader help                             # příkazy: list, gen, check, render, sim
 ```
 
@@ -125,7 +132,7 @@ editor se jí dívá (s rámečkem obrazu) a render i `pgshader sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a dvaceti příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a jednadvaceti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
@@ -147,7 +154,15 @@ převezmou zdroje, síly a překážky toho snímku. Pohyblivé překážky pře
 plynu i vodě svou rychlost i rotaci: koule v bazénu dělá vlnu a brázdu,
 lopatka víří kouř, letící pochodeň nechává stopu.
 
-Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
+**Cache a export**: snímky simulace jdou na disk a zpátky (editor:
+Simulation › Save/Load Cache, `pgshader sim --cache` a `--from-cache`) —
+přehrají se, vykreslí a vyexportují bez nového počítání; nuly se
+nezapisují, 150 snímků táboráku má 63 MB. Geometrie kteréhokoli uzlu jde
+ven snímek po snímku: body s atributy do PLY, objemy do OpenVDB (vlastní
+zapisovač bez knihovny, soubory ověřené čtením v OpenVDB 10), polygony do
+OBJ.
+
+Vědomě chybí: USD, Alembic, čtení VDB, JIT, packed primitives, digital assets,
 Python vazby, simulace těles a látek. Podrobně v
 [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
 

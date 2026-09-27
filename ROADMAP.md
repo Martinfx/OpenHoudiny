@@ -152,6 +152,12 @@ Bez toho se nepokračuje.
 
 **Hotovo, když:** první end-to-end pipeline proběhne bez GUI a bez Pythonu.
 
+> **Prototyp:** `pgshader sim` proběhne celou cestu bez GUI: simulace → cache
+> na disku → export sekvence (`--cache`, `--from-cache`, `--export 'fire.$F4.vdb'`).
+> OpenVDB umí zatím jen zapsat, vlastním kódem bez knihovny (husté mřížky
+> jako řídký strom 5-4-3, soubory ověřené čtením v OpenVDB 10); body jdou
+> do PLY, polygony do OBJ ([docs/cache.md](docs/cache.md)). Alembic a USD chybí.
+
 ### M4 · Python API
 
 - Vazby přes `nanobind`

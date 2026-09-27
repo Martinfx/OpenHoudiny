@@ -220,14 +220,19 @@ tažení, **Space**, **Home**, **End**, šipky) pak nic nepočítají znovu.
   zastaví a stavový řádek ukáže „full“.
 - **Simulation › Simulate Ahead** vypne počítání dopředu,
   **Simulate Again** zahodí cache a začne znovu.
+- **Simulation › Save Cache to Disk** uloží spočítané snímky do složky,
+  **Load Cache from Disk** je odtamtud vezme místo simulace (na disku mají
+  díky vynechaným nulám zlomek velikosti, [cache.md](cache.md)).
 
 ### Soubory, undo
 
 **Ctrl+N/O/S**, **Ctrl+Shift+S**, příklady v **File › Examples**. Otevřený
 příklad se ukládá přes Save As. **File › Render Image** uloží snímek,
 **Render Frames** všechny spočítané snímky do složky, obojí kamerou, pokud
-síť nějakou má. Dialog souborů ukazuje složky a soubory dané přípony a
-cestu jde napsat.
+síť nějakou má. **Export Geometry** a **Export Geometry Frames** zapíšou
+geometrii zobrazeného uzlu do PLY, OBJ nebo OpenVDB — snímek na obrazovce,
+nebo všechny ([cache.md](cache.md)). Dialog souborů ukazuje složky a soubory
+dané přípony a cestu jde napsat; kde se vybírá složka, vezme i tu otevřenou.
 
 **Ctrl+Z / Ctrl+Shift+Z** vrací celé stavy sítě. Tah posuvníkem nebo uzlem
 je jeden krok, ne sto.
@@ -446,6 +451,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `rock_garden` | geometrie jako překážka: koule zkopírovaná na rozházené body a zmáčknutá je tvarem kamenů, na které prší |
 | `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
+| `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.

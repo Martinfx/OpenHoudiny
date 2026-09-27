@@ -9,9 +9,10 @@
 //                   [--spirv-val PATH] [--library FILE]...
 //   pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                   [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png [--frames N] [--every K] [--resolution 16..256]
+//   pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] [--resolution 16..256]
 //                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
-//                   [--set NODE.PARAM=VALUE]...
+//                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
+//                   [--export PATH] [--export-node NODE]
 //   pgshader sim --list
 //   pgshader pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
 //
@@ -21,12 +22,18 @@
 // and runs spirv-val on the SPIR-V. --nodes-from checks only the nodes one
 // library file defines: what the author of a library wants to know.
 // `render` draws a preview with OpenGL through EGL, with no window; it exists
-// only when EGL was found at build time. So does `sim`: it compiles a network
-// of simulation nodes (pg::sim::Network) -- a .pgsim file, or an example the
-// program carries -- simulates it and renders the last frame, or with
-// --every K frames K, 2K, 3K..., each file numbered by its frame, with the
-// renderer of the editor's viewport. --set changes a parameter first:
-// NODE.PARAM=VALUE, or PARAM=VALUE when a single node has that parameter.
+// only when EGL was found at build time. So do the pictures of `sim`: it
+// compiles a network of simulation nodes (pg::sim::Network) -- a .pgsim file,
+// or an example the program carries -- simulates it and renders the last
+// frame, or with --every K frames K, 2K, 3K..., each file numbered by its
+// frame, with the renderer of the editor's viewport. --set changes a
+// parameter first: NODE.PARAM=VALUE, or PARAM=VALUE when a single node has
+// that parameter. --cache DIR writes every frame to a folder, and
+// --from-cache DIR reads them from one instead of simulating (pg/sim/Cache.h);
+// --export PATH writes the displayed geometry of every frame -- or that of
+// --export-node -- to .ply, .obj or .vdb files, $F4 in PATH the frame
+// (pg/io/Export.h). '-' for OUT.png draws nothing: the cache and the export
+// alone, which need no EGL.
 //
 #include "Commands.h"
 
@@ -36,6 +43,8 @@
 #include "pg/gl/Preview.h"
 #include "pg/gl/Volume.h"
 #endif
+#include "pg/io/Export.h"
+#include "pg/sim/Cache.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
 #include "pg/sim/World.h"
@@ -87,6 +96,10 @@ struct Options {
     std::vector<std::string> sets;  ///< NODE.PARAM=VALUE
     bool guides = false;             ///< sim: draw the domain and the sources
     bool listExamples = false;       ///< sim --list
+    std::string cacheDir;            ///< sim --cache: write every frame there
+    std::string fromCache;           ///< sim --from-cache: read the frames from there
+    std::string exportPattern;       ///< sim --export: the displayed geometry of every frame, to files
+    std::string exportNode;          ///< sim --export-node: that node's rather than the displayed one's
 };
 
 int usage() {
@@ -143,8 +156,12 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--resolution") { if (!nextInt(o.resolution)) return false; }
         else if (a == "--set") { if (!next(v)) return false; o.sets.push_back(v); }
         else if (a == "--guides") o.guides = true;
+        else if (a == "--cache") { if (!next(o.cacheDir)) return false; }
+        else if (a == "--from-cache") { if (!next(o.fromCache)) return false; }
+        else if (a == "--export") { if (!next(o.exportPattern)) return false; }
+        else if (a == "--export-node") { if (!next(o.exportNode)) return false; }
         else if (a == "--list") o.listExamples = true;
-        else if (!a.empty() && a[0] == '-') return false;
+        else if (a.size() > 1 && a[0] == '-') return false;  // "-" alone: sim with no pictures
         else o.positional.push_back(a);
     }
     return true;
@@ -557,6 +574,12 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      o.resolution);
         return 1;
     }
+    // "-": no pictures -- the cache or the export alone.
+    const bool pictures = outPath != "-";
+    if (!pictures && o.cacheDir.empty() && o.exportPattern.empty()) {
+        std::fprintf(stderr, "%s: '-' draws no picture: give --cache DIR or --export PATH as well\n", cmd);
+        return 1;
+    }
     namespace sim = pg::sim;
     sim::Network net;
     std::string error, folder;
@@ -571,8 +594,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         }
     }
     // The geometry nodes cook here: shapes for the simulations, and the
-    // displayed node's geometry for the pictures -- from the frame just
-    // simulated, for the nodes that bring a simulation back.
+    // displayed node's geometry for the pictures and the export -- from the
+    // frame just simulated, for the nodes that bring a simulation back.
     sim::GeometryGraph geometry;
     std::shared_ptr<const sim::Frame> current;
     geometry.setFrames([&](int f) { return current && current->number == f ? current : nullptr; });
@@ -592,8 +615,37 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         c.world.gas.solver.resolution = o.resolution;
         c.world.water.solver.resolution = o.resolution;
     }
-    const int frames = o.frames > 0 ? o.frames : c.frames;
-    if (o.every > frames) {
+    int frames = o.frames > 0 ? o.frames : c.frames;
+    // What is exported: the displayed node's geometry, or the one named.
+    int exported = c.display;
+    if (!o.exportNode.empty()) {
+        const sim::Node* n = net.named(o.exportNode);
+        const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+        if (!t || !t->core) {
+            std::fprintf(stderr, "%s: --export-node %s: no geometry node of that name\n", cmd, o.exportNode.c_str());
+            return 1;
+        }
+        exported = n->id;
+    }
+    if (!o.exportPattern.empty() && !exported) {
+        std::fprintf(stderr, "%s: --export writes the displayed geometry, and no node is displayed: give one the "
+                             "display flag, or name it with --export-node\n", cmd);
+        return 1;
+    }
+    // The frames from a cache on disk, rather than simulated.
+    sim::CacheInfo from;
+    if (!o.fromCache.empty()) {
+        if (!sim::readCacheInfo(o.fromCache, from, error)) {
+            std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+            return 1;
+        }
+        if (from.network != sim::networkHash(net.save())) {
+            std::fprintf(stderr, "%s: warning: the cache in %s was written by another network (or another version "
+                                 "of it); its frames are used as they are\n", cmd, o.fromCache.c_str());
+        }
+        frames = o.frames > 0 ? std::min(o.frames, from.frames) : from.frames;
+    }
+    if (pictures && o.every > frames) {
         std::fprintf(stderr, "%s: --every %d is more than the %d frames: no frame would be written\n", cmd, o.every,
                      frames);
         return 1;
@@ -620,92 +672,146 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     height = std::clamp(height, 16, 4096);
 
     gl::HeadlessContext context;
-    if (!context.create(error)) {
-        std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
-        return 1;
-    }
     gl::Api api;
-    if (!api.load(gl::HeadlessContext::procAddress, error)) {
-        std::fprintf(stderr, "%s: OpenGL function %s is missing\n", cmd, error.c_str());
+    std::unique_ptr<gl::VolumeRenderer> volume;
+    if (pictures) {
+        if (!context.create(error)) {
+            std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+            return 1;
+        }
+        if (!api.load(gl::HeadlessContext::procAddress, error)) {
+            std::fprintf(stderr, "%s: OpenGL function %s is missing\n", cmd, error.c_str());
+            return 1;
+        }
+        volume = std::make_unique<gl::VolumeRenderer>(api);
+        std::string log;
+        if (!volume->init(log)) {
+            std::fprintf(stderr, "%s: the driver rejected the volume shader:\n%s\n", cmd, log.c_str());
+            return 1;
+        }
+    }
+#else
+    if (pictures) {
+        std::fprintf(stderr, "%s: this pgshader was built without EGL: it draws no picture -- '-' in place of "
+                             "OUT.png simulates, caches and exports all the same\n", cmd);
         return 1;
     }
-    gl::VolumeRenderer volume(api);
-    std::string log;
-    if (!volume.init(log)) {
-        std::fprintf(stderr, "%s: the driver rejected the volume shader:\n%s\n", cmd, log.c_str());
-        return 1;
-    }
-    sim::WorldSolver solver(c.world);
-    const sim::World& world = solver.world();
-    const sim::Domain domain = world.hasGas ? world.gas.solver.domain() : world.water.solver.domain();
-    volume.look = c.look;
-    volume.setDomain(domain);
-    volume.setSolids(c.solids);
-    if (o.guides) {
-        volume.setLines(gl::sceneGuides(&world, c.solids, {}, c.solver, c.liquidSolver, c.rain,
-                                        c.hasCamera && !throughCamera ? &c.camera : nullptr));
-    }
+#endif
+    // Simulated only when the frames do not come from a cache.
+    std::unique_ptr<sim::WorldSolver> solver;
+    if (o.fromCache.empty()) solver = std::make_unique<sim::WorldSolver>(c.world);
+    const sim::World world = c.world.sanitized();
+#ifdef PG_HAVE_EGL
     sim::Domain box = gl::sceneDomain(world);
-    // Geometry alone: the view frames it.
-    bool framed = false;
-    Vec3 middle;
-    if (geometryOnly) {
-        Vec3 lo, hi;
-        volume.setGeometry(geometry.cook(c.display, 1, world.timeStep));
-        if (volume.geometryBounds(lo, hi)) {
-            const Vec3 size = hi - lo;
-            box = sim::Domain::ofBox(Vec3(std::max(size.x, 0.1f), std::max(size.y, 0.1f), std::max(size.z, 0.1f)), 16);
-            middle = (lo + hi) * 0.5f;
-            framed = true;
+    if (volume) {
+        const sim::Domain domain = world.hasGas ? world.gas.solver.domain() : world.water.solver.domain();
+        volume->look = c.look;
+        volume->setDomain(domain);
+        volume->setSolids(c.solids);
+        if (o.guides) {
+            volume->setLines(gl::sceneGuides(&world, c.solids, {}, c.solver, c.liquidSolver, c.rain,
+                                             c.hasCamera && !throughCamera ? &c.camera : nullptr));
+        }
+        // Geometry alone: the view frames it.
+        bool framed = false;
+        Vec3 middle;
+        if (geometryOnly) {
+            Vec3 lo, hi;
+            volume->setGeometry(geometry.cook(c.display, 1, world.timeStep));
+            if (volume->geometryBounds(lo, hi)) {
+                const Vec3 size = hi - lo;
+                box = sim::Domain::ofBox(Vec3(std::max(size.x, 0.1f), std::max(size.y, 0.1f), std::max(size.z, 0.1f)), 16);
+                middle = (lo + hi) * 0.5f;
+                framed = true;
+            }
+        }
+        if (throughCamera) {
+            const Vec3 centre = box.origin() + box.size() * 0.5f;
+            volume->orbit = gl::orbitThrough(c.camera, std::max(dot(centre - c.camera.position, c.camera.forward()), 0.5f));
+        } else {
+            volume->orbit = gl::VolumeRenderer::viewOf(box);
+            if (framed) {
+                volume->orbit.target[0] = middle.x;
+                volume->orbit.target[1] = middle.y;
+                volume->orbit.target[2] = middle.z;
+            }
+            if (o.yawSet) volume->orbit.yaw = o.yaw;
+            if (o.pitchSet) volume->orbit.pitch = o.pitch;
+            if (o.distance > 0.0f) volume->orbit.distance = o.distance;
         }
     }
-    if (throughCamera) {
-        const Vec3 middle = box.origin() + box.size() * 0.5f;
-        volume.orbit = gl::orbitThrough(c.camera, std::max(dot(middle - c.camera.position, c.camera.forward()), 0.5f));
-    } else {
-        volume.orbit = gl::VolumeRenderer::viewOf(box);
-        if (framed) {
-            volume.orbit.target[0] = middle.x;
-            volume.orbit.target[1] = middle.y;
-            volume.orbit.target[2] = middle.z;
-        }
-        if (o.yawSet) volume.orbit.yaw = o.yaw;
-        if (o.pitchSet) volume.orbit.pitch = o.pitch;
-        if (o.distance > 0.0f) volume.orbit.distance = o.distance;
-    }
+#endif
 
     using Clock = std::chrono::steady_clock;
     auto ms = [](Clock::time_point since) {
         return std::chrono::duration<double, std::milli>(Clock::now() - since).count();
     };
     double simulating = 0.0, rendering = 0.0;
-    int images = 0;
-    std::string last;
+    int images = 0, cachedFrames = 0, exports = 0;
+    std::string last, lastExport;
     for (int f = 1; f <= frames; ++f) {
+        bool draws = false;
+#ifdef PG_HAVE_EGL
+        draws = volume && (o.every > 0 ? f % o.every == 0 : f == frames);
+#endif
         auto t = Clock::now();
-        solver.step();
+        // The frame: simulated -- and taken when something wants it -- or read.
+        if (solver) {
+            solver->step();
+            if (draws || !o.cacheDir.empty() || !o.exportPattern.empty()) {
+                current = std::make_shared<const sim::Frame>(solver->capture());
+            }
+        } else {
+            auto read = std::make_shared<sim::Frame>();
+            if (!sim::readFrame(o.fromCache, f, *read, error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
+            read->number = f;  // the file's name says which it is
+            current = std::move(read);
+        }
         simulating += ms(t);
-        if (o.every > 0 ? f % o.every != 0 : f != frames) continue;
+        if (!o.cacheDir.empty()) {
+            if (!sim::writeFrame(*current, o.cacheDir, error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
+            ++cachedFrames;
+        }
+        if (!o.exportPattern.empty()) {
+            const GeometryPtr geo = geometry.cook(exported, f, world.timeStep);
+            lastExport = pg::io::framePath(o.exportPattern, f);
+            std::error_code ec;
+            if (!std::filesystem::path(lastExport).parent_path().empty()) {
+                std::filesystem::create_directories(std::filesystem::path(lastExport).parent_path(), ec);
+            }
+            if (!geo || !pg::io::writeGeometry(*geo, lastExport, error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, geo ? error.c_str() : "the exported node gave no geometry");
+                return 1;
+            }
+            ++exports;
+        }
+#ifdef PG_HAVE_EGL
+        if (!draws) continue;
         t = Clock::now();
-        current = std::make_shared<const sim::Frame>(solver.capture());
-        if (!geometryOnly) volume.setFrame(*current);
+        if (!geometryOnly) volume->setFrame(*current);
         // Animated: the look, the objects and the camera of this frame.
         if (!c.poses.empty()) {
-            volume.look = c.lookAt(f);
-            volume.setSolids(c.solidsAt(f));
+            volume->look = c.lookAt(f);
+            volume->setSolids(c.solidsAt(f));
             if (throughCamera) {
                 const sim::Camera& cam = c.cameraAt(f);
-                const Vec3 middle = box.origin() + box.size() * 0.5f;
-                volume.orbit = gl::orbitThrough(cam, std::max(dot(middle - cam.position, cam.forward()), 0.5f));
+                const Vec3 centre = box.origin() + box.size() * 0.5f;
+                volume->orbit = gl::orbitThrough(cam, std::max(dot(centre - cam.position, cam.forward()), 0.5f));
             }
         }
         if (c.display) {
-            volume.setGeometry(geometry.cook(c.display, f, world.timeStep));
+            volume->setGeometry(geometry.cook(c.display, f, world.timeStep));
             const std::string why = geometry.error(c.display);
             if (!why.empty()) std::fprintf(stderr, "%s: %s: %s\n", cmd, net.node(c.display)->name.c_str(), why.c_str());
         }
-        volume.render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
-        const std::vector<uint8_t> pixels = volume.readPixels(2);
+        volume->render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
+        const std::vector<uint8_t> pixels = volume->readPixels(2);
         rendering += ms(t);
         last = o.every > 0 ? numbered(outPath, f) : outPath;
         if (!gl::writePng(last, width, height, 3, pixels)) {
@@ -713,36 +819,55 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             return 1;
         }
         ++images;
+#endif
+    }
+    if (!o.cacheDir.empty()) {
+        sim::CacheInfo info;
+        info.frames = frames;
+        info.fps = 1.0f / world.timeStep;
+        info.network = sim::networkHash(net.save());
+        if (!sim::writeCacheInfo(o.cacheDir, info, error)) {
+            std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+            return 1;
+        }
     }
     std::string what;
-    if (world.hasGas) {
-        const sim::Domain& d = solver.gas()->domain();
+    if (solver && world.hasGas) {
+        const sim::Domain& d = solver->gas()->domain();
         what += ", gas " + std::to_string(d.cells[0]) + " x " + std::to_string(d.cells[1]) + " x " +
                 std::to_string(d.cells[2]) + " cells";
     }
-    if (world.hasWater) {
-        const sim::Domain& d = solver.water()->domain();
+    if (solver && world.hasWater) {
+        const sim::Domain& d = solver->water()->domain();
         what += ", water " + std::to_string(d.cells[0]) + " x " + std::to_string(d.cells[1]) + " x " +
-                std::to_string(d.cells[2]) + " cells, " + std::to_string(solver.water()->particleCount()) + " particles";
+                std::to_string(d.cells[2]) + " cells, " + std::to_string(solver->water()->particleCount()) + " particles";
     }
-    if (world.hasRain) {
-        what += ", rain " + std::to_string(solver.rain()->drops().size()) + " drops, " +
-                std::to_string(solver.rain()->droplets().size()) + " droplets";
+    if (solver && world.hasRain) {
+        what += ", rain " + std::to_string(solver->rain()->drops().size()) + " drops, " +
+                std::to_string(solver->rain()->droplets().size()) + " droplets";
     }
-    if (throughCamera) {
+    if (!o.fromCache.empty()) what += ", read from " + o.fromCache;
+#ifdef PG_HAVE_EGL
+    if (volume && throughCamera) {
         const sim::Node* n = net.node(c.camera.node);
         what += ", through " + (n ? n->name : std::string("the camera"));
     }
-    std::printf("wrote %s%s: %s%s, %d frames (%.1f s); simulation %.1f ms/frame, rendering %.0f ms/image (%s)\n",
-                last.c_str(), images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "",
-                network.c_str(), what.c_str(), frames, solver.time(), simulating / frames, rendering / std::max(images, 1),
-                reinterpret_cast<const char*>(api.GetString(gl::RENDERER)));
-    return 0;
-#else
-    (void)outPath;
-    std::fprintf(stderr, "%s: this pgshader was built without EGL\n", cmd);
-    return 1;
 #endif
+    if (images > 0) {
+        std::printf("wrote %s%s: %s%s, %d frames (%.1f s); %s %.1f ms/frame, rendering %.0f ms/image\n", last.c_str(),
+                    images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "", network.c_str(),
+                    what.c_str(), frames, static_cast<double>(frames) * static_cast<double>(world.timeStep),
+                    solver ? "simulation" : "reading", simulating / frames, rendering / std::max(images, 1));
+    } else if (solver) {
+        std::printf("%s: simulated%s, %d frames; simulation %.1f ms/frame\n", network.c_str(), what.c_str(), frames,
+                    simulating / frames);
+    } else {
+        std::printf("%s: %d frames read from %s; reading %.1f ms/frame\n", network.c_str(), frames, o.fromCache.c_str(),
+                    simulating / frames);
+    }
+    if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());
+    if (exports > 0) std::printf("exported %d frames of geometry, the last %s\n", exports, lastExport.c_str());
+    return 0;
 }
 
 int simCommand(const Options& o) {
@@ -786,13 +911,17 @@ void printUsage(std::FILE* out) {
                  "                  [--spirv-val PATH] [--library FILE]...\n"
                  "  pgshader render GRAPH.pgsg OUT.png [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
                  "                  [--time SECONDS] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
-                 "  pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png [--frames N] [--every K] [--resolution 16..256]\n"
+                 "  pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] [--resolution 16..256]\n"
                  "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
-                 "                  [--set NODE.PARAM=VALUE]...\n"
+                 "                  [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
+                 "                  [--export PATH] [--export-node NODE]\n"
                  "                  simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                  frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
                  "                  through the network's camera at its size, unless --yaw, --pitch or --distance\n"
-                 "                  ask for a view round the scene\n"
+                 "                  ask for a view round the scene. --cache writes every frame to DIR;\n"
+                 "                  --from-cache reads them from there instead of simulating; --export writes\n"
+                 "                  the displayed geometry of every frame, PATH with $F4 for the frame:\n"
+                 "                  .ply points, .obj polygons, .vdb volumes. '-' for OUT.png: no pictures\n"
                  "  pgshader sim --list    the examples it carries: campfire, smoke, ...\n"
                  "  pgshader pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
                  "  pgshader help\n");

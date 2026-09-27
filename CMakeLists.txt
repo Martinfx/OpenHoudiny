@@ -38,6 +38,9 @@ add_library(pgcore
   src/pg/nodes/Primitives.cpp
   src/pg/nodes/Surface.cpp
   src/pg/io/Obj.cpp
+  src/pg/io/Vdb.cpp
+  src/pg/io/Ply.cpp
+  src/pg/io/Export.cpp
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
@@ -153,6 +156,7 @@ add_library(pgsim
   src/pg/sim/Camera.cpp
   src/pg/sim/Frame.cpp
   src/pg/sim/FreeSurface.cpp
+  src/pg/sim/Cache.cpp
   src/pg/sim/Display.cpp
   src/pg/sim/GeometryGraph.cpp
   src/pg/sim/Grid.cpp
@@ -310,6 +314,7 @@ add_executable(pgtests
   tests/test_liquid.cpp
   tests/test_rain.cpp
   tests/test_sops.cpp
+  tests/test_export.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")

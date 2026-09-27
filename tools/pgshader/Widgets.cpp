@@ -17,6 +17,8 @@ std::string lower(std::string s) {
     return s;
 }
 
+}  // namespace
+
 std::string sizeText(uintmax_t bytes) {
     char buf[32];
     if (bytes < 1024) std::snprintf(buf, sizeof buf, "%ju B", bytes);
@@ -24,8 +26,6 @@ std::string sizeText(uintmax_t bytes) {
     else std::snprintf(buf, sizeof buf, "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
     return buf;
 }
-
-}  // namespace
 
 // --- panels ------------------------------------------------------------------------------
 
@@ -404,6 +404,7 @@ void FileBrowser::open(const std::string& title, std::vector<std::string> extens
     title_ = title;
     extensions_ = std::move(extensions);
     save_ = save;
+    folders_ = false;
     places_ = std::move(places);
     error_.clear();
     std::error_code ec;
@@ -420,6 +421,16 @@ void FileBrowser::open(const std::string& title, std::vector<std::string> extens
     pathText_ = dir_.string();
     list();
     requested_ = true;
+}
+
+void FileBrowser::openFolder(const std::string& title, bool create, const std::string& start,
+                             std::vector<std::pair<std::string, std::string>> places) {
+    // Shown in the folder above, named: Choose takes it as it is.
+    fs::path p = fs::path(start).lexically_normal();
+    if (!p.has_filename() && p.has_parent_path()) p = p.parent_path();  // "cache/"
+    open(title, {}, create, p.parent_path().string(), std::move(places));
+    name_ = p.filename().string();
+    folders_ = true;
 }
 
 bool FileBrowser::wanted(const fs::path& p) const {
@@ -472,6 +483,7 @@ bool FileBrowser::draw(std::string& chosen) {
         dir_ = fs::weakly_canonical(p, ec);
         pathText_ = dir_.string();
         error_.clear();
+        if (folders_) name_.clear();  // the name was of a folder in the one left
         list();
     };
     auto accept = [&](const fs::path& p) {
@@ -519,14 +531,15 @@ bool FileBrowser::draw(std::string& chosen) {
         }
         if (clicked) {
             selected_ = static_cast<int>(i);
-            if (!e.folder) name_ = e.name;
+            // A file's name, or -- choosing a folder -- a folder's.
+            if (e.folder == folders_) name_ = e.name;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 if (e.folder) {
                     ImGui::PopID();
                     go(dir_ / e.name);
                     break;
                 }
-                accept(dir_ / e.name);
+                accept(folders_ ? dir_ : dir_ / e.name);  // a file in it: its folder
             }
         }
         ImGui::PopID();
@@ -536,14 +549,21 @@ bool FileBrowser::draw(std::string& chosen) {
 
     // The name, and the buttons.
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(save_ ? "Save as" : "File");
+    ImGui::TextUnformatted(folders_ ? "Folder" : save_ ? "Save as" : "File");
     ImGui::SameLine();
     const float buttons = theme::px(200.0f);
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - buttons);
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();  // a name can be typed at once
     const bool enter = ImGui::InputText("##name", &name_, ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
-    if ((ImGui::Button(save_ ? "Save" : "Open", ImVec2(theme::px(92.0f), 0.0f)) || enter) && !name_.empty()) {
+    const bool pressed = ImGui::Button(folders_ ? "Choose" : save_ ? "Save" : "Open", ImVec2(theme::px(92.0f), 0.0f)) || enter;
+    if (pressed && folders_) {
+        // The folder named, or with no name the one open.
+        const fs::path p = name_.empty() ? dir_ : fs::path(name_).is_absolute() ? fs::path(name_) : dir_ / name_;
+        std::error_code ec;
+        if (fs::is_directory(p, ec) || (save_ && !fs::exists(p, ec))) accept(p);
+        else error_ = fs::exists(p, ec) ? p.string() + ": not a folder" : "no folder " + p.string();
+    } else if (pressed && !name_.empty()) {
         const fs::path p = fs::path(name_).is_absolute() ? fs::path(name_) : dir_ / name_;
         std::error_code ec;
         if (fs::is_directory(p, ec)) {
@@ -560,6 +580,7 @@ bool FileBrowser::draw(std::string& chosen) {
         open_ = false;
     }
     if (!error_.empty()) ImGui::TextColored(theme::vec(theme::kRed), "%s", error_.c_str());
+    else if (folders_) ImGui::TextDisabled("%zu items -- with no name, Choose takes the folder open", entries_.size());
     else ImGui::TextDisabled("%zu items", entries_.size());
     if (done) open_ = false;
     if (!open_) ImGui::CloseCurrentPopup();

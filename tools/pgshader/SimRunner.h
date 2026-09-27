@@ -6,7 +6,8 @@
 // its budget of memory allows -- it simulates ahead.
 //
 // Frames are kept as half floats (sim::Frame), shared: the renderer reads
-// one while the thread adds the next.
+// one while the thread adds the next. Frames read from a cache on disk take
+// the place of simulated ones (adopt()).
 //
 #include "pg/sim/Frame.h"
 #include "pg/sim/World.h"
@@ -32,6 +33,13 @@ public:
     /// What to simulate, and how many frames. Another world throws the
     /// frames away and starts again; only another count keeps them.
     void set(const sim::World& world, int frames);
+    /// Frames from elsewhere -- a cache on disk -- as the world's frames
+    /// 1, 2, 3...: they are shown in place of simulated ones, and nothing is
+    /// simulated after them -- there is no solver to go on from -- until
+    /// set() brings another world.
+    void adopt(const sim::World& world, int frames, std::vector<std::shared_ptr<const sim::Frame>> loaded);
+    /// The frames are adopted ones, not simulated.
+    bool adopted() const;
     /// Simulate ahead or not.
     void setRunning(bool on);
     bool running() const { return running_; }
@@ -59,6 +67,8 @@ public:
     void step();
 
 private:
+    /// Frames still to simulate. Called with mu_ held.
+    bool more() const;
     void loop();
     /// Simulates the next frame; false if there was nothing to do.
     bool advance();
@@ -73,6 +83,7 @@ private:
     sim::World world_;
     bool started_ = false;  // set() was called
     bool fresh_ = false;    // world_ differs from what the solver runs
+    bool adopted_ = false;  // the frames came from adopt()
     int frames_ = 0;
     std::vector<std::shared_ptr<const sim::Frame>> cache_;
     size_t bytes_ = 0, budget_ = size_t(1536) << 20;
