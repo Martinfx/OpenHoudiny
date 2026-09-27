@@ -149,6 +149,17 @@ TEST(sim_network_parameters_keep_their_limits) {
     CHECK(net.setParam(s, "velocity", "2"));
     CHECK(net.param(s, "velocity") == (ParamValue{2.0f, 2.0f, 2.0f}));
 
+    // Numbers as people write them; the same with every standard library.
+    CHECK(net.setParam(s, "fuel", "+2.5"));
+    CHECK_EQ(net.value(s, "fuel"), 2.5f);
+    CHECK(net.setParam(s, "fuel", ".5"));
+    CHECK_EQ(net.value(s, "fuel"), 0.5f);
+    CHECK(net.setParam(s, "fuel", "1e1"));
+    CHECK_EQ(net.value(s, "fuel"), 10.0f);
+    for (const char* bad : {"", "1.5x", "0x10", "nan", "inf", "1e999", "- 1", "1..2"})
+        CHECK(!net.setParam(s, "fuel", bad, &error));
+    CHECK_EQ(net.value(s, "fuel"), 10.0f);
+
     // Only what differs from the default is stored.
     CHECK(!net.isDefault(s, "fuel"));
     CHECK(net.setParam(s, "fuel", "0"));

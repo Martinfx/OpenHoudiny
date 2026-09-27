@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <locale>
 #include <sstream>
 
 namespace pg::sim {
@@ -299,11 +300,16 @@ std::string formatNumber(float x) {
 }
 
 bool parseNumber(std::string_view text, float& out) {
-    // from_chars does not take a leading '+'; people write it.
-    if (!text.empty() && text[0] == '+') text.remove_prefix(1);
+    // Not std::from_chars: libc++ before LLVM 20 (FreeBSD 14, older macOS)
+    // has it for integers only. A stream in the classic locale reads "1.5"
+    // whatever the user's locale says; the characters are checked first, as
+    // libc++'s stream would also take hex, "inf" and "nan".
+    if (text.empty() || text.find_first_not_of("0123456789+-.eE") != std::string_view::npos) return false;
+    std::istringstream in{std::string(text)};
+    in.imbue(std::locale::classic());
     float v = 0.0f;
-    const auto res = std::from_chars(text.data(), text.data() + text.size(), v);
-    if (res.ec != std::errc() || res.ptr != text.data() + text.size() || !std::isfinite(v)) return false;
+    in >> v;
+    if (in.fail() || in.peek() != std::char_traits<char>::eof() || !std::isfinite(v)) return false;
     out = v;
     return true;
 }
