@@ -238,8 +238,13 @@ v průměru za 6 ms na snímek.
 kusy posunou a otočí tam, kam dopadly (`drawnPieces`), s barvou `Cd`, kterou
 si nesou, řezné plochy ze skupiny `inside_group` v barvě `inside_color`,
 kusy bez barvy v `color`; rozdrcené a rozmetané kusy zmizí. Drť se kreslí
-jako body své velikosti v barvě řezu, o odstín tmavší; v prachu ji prach
-mezi okem a zrnkem zakryje a prach mezi ním a sluncem zastíní, takže
+jako hranaté úlomky kamene své velikosti v barvě řezu, o odstín tmavší:
+každý úlomek vyřízne pět až sedm lomů kolem vršku mimo střed, každý lom je
+plocha, která se od oka odklání, a úlomek má svůj tvar i trochu jiný
+odstín (šedší, světlejší, tmavší). Tvar se odvodí z velikosti zrnka, která
+se za letu nemění, takže úlomek zůstane týž; v letu se otáčí, ležící je
+v klidu. Body zobrazené geometrie zůstávají kulaté tečky. V prachu drť
+zakryje prach mezi okem a zrnkem a zastíní prach mezi ním a sluncem, takže
 drť v oblaku proti světlu tmavne. Geometrie i kusy vrhají stíny na sebe,
 na zem i do kouře (stínová mapa slunce, 2048², měkké okraje) a Output má
 barvu země, vypínač mřížky a oblohu za scénou (`sky_behind`).

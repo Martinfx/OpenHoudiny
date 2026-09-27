@@ -137,7 +137,8 @@ public:
     void setGeometry(const GeometryPtr& geometry);
     const GeometryPtr& geometry() const { return geometry_; }
     /// The pieces of an RBD Solver, as its look draws them (sim::drawnPieces),
-    /// drawn with the displayed geometry. Null: none.
+    /// drawn with the displayed geometry -- their loose points, the grit, as
+    /// chips of stone. Null: none.
     void setPieces(const GeometryPtr& pieces);
     const GeometryPtr& pieces() const { return pieces_; }
     /// The box round the geometry drawn -- the displayed node's and the
@@ -246,6 +247,7 @@ private:
     GLuint geoProgram_ = 0, dotProgram_ = 0;
     GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
     GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;
+    GLsizei gritDots_ = 0;  // the last of the dots: the pieces' loose points, their grit
     Vec3 geoLo_, geoHi_;
     bool hasGeoBounds_ = false;
     GLuint gFbo_ = 0, gTex_ = 0, gDepth_ = 0;

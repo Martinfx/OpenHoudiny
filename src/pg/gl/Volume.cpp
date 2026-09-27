@@ -894,9 +894,10 @@ void main() { o_depth = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0); }
 )";
 
 // The displayed geometry's loose points: round dots, shaded as little balls,
-// as wide as their pscale where they have one -- else a few pixels. In the
-// gas -- grit in the dust -- the smoke between the eye and a dot hides it,
-// and the smoke between it and the sun shades it.
+// as wide as their pscale where they have one -- else a few pixels. The
+// pieces' -- their grit -- are chips of stone instead, each of a shape and a
+// shade of its own. In the gas -- grit in the dust -- the smoke between the
+// eye and a dot hides it, and the smoke between it and the sun shades it.
 const char* kDotVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_color;
@@ -906,19 +907,23 @@ uniform float u_pixelsPerUnit;  // pixels a world unit spans 1 unit in front of 
 uniform float u_dot;            // pixels across a dot with no size
 out vec3 v_color;
 out vec3 v_world;
+flat out uint v_seed;  // a chip's: from its size, which it keeps as it flies
 void main() {
     gl_Position = u_viewProj * vec4(a_position, 1.0);
     float px = a_radius > 0.0 ? 2.0 * a_radius * u_pixelsPerUnit / max(gl_Position.w, 1e-4) : u_dot;
     gl_PointSize = clamp(px, 1.5, 64.0);
     v_color = a_color;
     v_world = a_position;
+    v_seed = floatBitsToUint(a_radius);
 }
 )";
 
 const char* kDotFragment = R"(#version 330 core
 in vec3 v_color;
 in vec3 v_world;
+flat in uint v_seed;
 out vec4 o_color;
+uniform bool u_chips;      // chips of stone, not balls
 uniform vec3 u_lightView;  // towards the sun, in the eye's frame: x right, y up, z back at the eye
 uniform vec3 u_light, u_sky;
 uniform float u_exposure;
@@ -933,12 +938,60 @@ float fadeAt(vec3 uvw) {  // as the volume fades at the open sides of its box
     float side = min(cells.x, cells.z) / 6.0, top = (1.0 - uvw.y) / u_texel.y / 10.0;
     return smoothstep(0.0, 1.0, min(side, top));
 }
+float random(uint k) {  // the chip's k-th number, 0 to 1
+    uint h = v_seed + k * 0x9e3779b9u;
+    h ^= h >> 16;
+    h *= 0x7feb352du;
+    h ^= h >> 15;
+    h *= 0x846ca68bu;
+    h ^= h >> 16;
+    return float(h >> 8) / 16777216.0;
+}
+// A chip of stone as big as the dot: the planes of five to seven breaks cut
+// it out -- which way each faces and how far from the middle it is come from
+// the chip's numbers -- and each is a face of it, leaning away from the eye
+// from a top off the middle, where a face is turned to the eye. It turns as
+// it flies. False outside it.
+bool chip(vec2 q, out vec3 n) {
+    float turn = 6.2832 * random(0u) + dot(v_world, vec3(2.3, 1.7, 2.9));
+    int breaks = 5 + int(random(1u) * 3.0);
+    float sector = 6.2832 / float(breaks);
+    vec2 top = vec2(random(2u), random(3u)) * 0.36 - 0.18;
+    float nearest = 0.0, facing = 0.0;
+    int face = 0;
+    for (int k = 0; k < breaks; ++k) {
+        float a = turn + (float(k) + 0.6 * (random(uint(10 + k)) - 0.5)) * sector;
+        vec2 out_ = vec2(cos(a), sin(a));
+        // How far towards this break, from the top: 1 at it.
+        float far = dot(q - top, out_) / (0.5 + 0.45 * random(uint(20 + k)) - dot(top, out_));
+        if (far > 1.0) return false;
+        if (far > nearest) {
+            nearest = far;
+            face = k;
+            facing = a;
+        }
+    }
+    if (nearest < 0.2 + 0.45 * random(4u)) {
+        n = normalize(vec3(0.5 * random(5u) - 0.25, 0.5 * random(6u) - 0.25, 1.0));
+    } else {
+        float lean = 0.4 + 1.1 * random(uint(30 + face));
+        n = normalize(vec3(cos(facing) * lean, sin(facing) * lean, 1.0));
+    }
+    return true;
+}
 void main() {
     vec2 q = gl_PointCoord * 2.0 - 1.0;
     q.y = -q.y;
     float r2 = dot(q, q);
     if (r2 > 1.0) discard;
     vec3 n = vec3(q, sqrt(1.0 - r2));
+    vec3 color = v_color;
+    if (u_chips) {
+        if (!chip(q, n)) discard;
+        // Stones are not all of a colour: lighter and darker, some greyer.
+        float grey = dot(v_color, vec3(0.3, 0.5, 0.2));
+        color = mix(v_color, vec3(grey), 0.4 * random(40u)) * (0.7 + 0.55 * random(41u));
+    }
     // The smoke: what of the sun gets here, how much the sky is hidden, and
     // how much of the dot the smoke in front lets through.
     float sun = 1.0, sky = 1.0, seen = 1.0;
@@ -957,7 +1010,7 @@ void main() {
         }
         seen = exp(-u_extinction * smoke * length(d) / float(steps));
     }
-    vec3 lit = v_color * (u_light * sun * max(dot(n, u_lightView), 0.0) + u_sky * sky * (0.7 + 0.5 * n.y));
+    vec3 lit = color * (u_light * sun * max(dot(n, u_lightView), 0.0) + u_sky * sky * (0.7 + 0.5 * n.y));
     o_color = vec4(pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), seen);
 }
 )";
@@ -1812,6 +1865,7 @@ void VolumeRenderer::uploadGeometry() {
     geoVertices_ = static_cast<GLsizei>(d.triangles.size() / 9);
     geoShadowDirty_ = true;
     dots_ = static_cast<GLsizei>(d.dotCount());
+    gritDots_ = static_cast<GLsizei>(p.dotCount());
     curveVertices_ = static_cast<GLsizei>(d.lines.size() / 7);
 }
 
@@ -1953,7 +2007,13 @@ void VolumeRenderer::drawGeometry(int width, int height) {
         gl_.Enable(BLEND);
         gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
         gl_.BindVertexArray(dotVao_);
-        gl_.DrawArrays(POINTS, 0, dots_);
+        // The displayed geometry's points as balls; the pieces' -- their
+        // grit -- as chips of stone.
+        const GLsizei balls = dots_ - gritDots_;
+        gl_.Uniform1i(location(dotProgram_, "u_chips"), 0);
+        if (balls > 0) gl_.DrawArrays(POINTS, 0, balls);
+        gl_.Uniform1i(location(dotProgram_, "u_chips"), 1);
+        if (gritDots_ > 0) gl_.DrawArrays(POINTS, balls, gritDots_);
         gl_.Disable(BLEND);
         gl_.Disable(PROGRAM_POINT_SIZE);
     }
