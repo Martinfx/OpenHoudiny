@@ -6,7 +6,7 @@ project(pgcore LANGUAGES CXX)
 #
 # The core is deliberately dependency-free: C++20 and the standard library.
 # The default build adds the shader editor to pgshader, which fetches Dear
-# ImGui, imnodes and (unless the system has it) GLFW; with -DPG_BUILD_GUI=OFF
+# ImGui and (unless the system has it) GLFW; with -DPG_BUILD_GUI=OFF
 # `cmake -B build && cmake --build build && ctest --test-dir build` works on a
 # bare machine. Production targets (TBB, OpenVDB, USD, LLVM) are listed in
 # ARCHITECTURE.md; none of them are needed to evaluate the core invariants.
@@ -179,17 +179,25 @@ target_link_libraries(pgpreview PUBLIC pgshadergraph pgsim)
 # One program for the node editor -- what runs when it is given no command --
 # and for the same work from the command line: list, gen, check, render.
 #
-# The editor needs Dear ImGui, imnodes and GLFW. They are fetched at configure
+# The editor needs Dear ImGui and GLFW. They are fetched at configure
 # time (a system GLFW 3.3+ is used when there is one); to build offline, point
-# FETCHCONTENT_SOURCE_DIR_IMGUI / _IMNODES / _GLFW at local checkouts.
+# FETCHCONTENT_SOURCE_DIR_IMGUI / _GLFW at local checkouts.
 # PG_BUILD_GUI=OFF leaves the editor out: the commands alone, no dependencies
 # -- for servers and CI.
 
-option(PG_BUILD_GUI "Build the editor into pgshader (fetches Dear ImGui, imnodes and GLFW)" ON)
+option(PG_BUILD_GUI "Build the editor into pgshader (fetches Dear ImGui and GLFW)" ON)
 
 set(PG_TOOL_SOURCES tools/pgshader/main.cpp tools/pgshader/Commands.cpp)
 if(PG_BUILD_GUI)
-  list(APPEND PG_TOOL_SOURCES tools/pgshader/App.cpp tools/pgshader/Editor.cpp)
+  list(APPEND PG_TOOL_SOURCES
+    tools/pgshader/App.cpp
+    tools/pgshader/Editor.cpp
+    tools/pgshader/NodeCanvas.cpp
+    tools/pgshader/ShaderWorkspace.cpp
+    tools/pgshader/SimRunner.cpp
+    tools/pgshader/SimWorkspace.cpp
+    tools/pgshader/Theme.cpp
+    tools/pgshader/Widgets.cpp)
 endif()
 add_executable(pgshader ${PG_TOOL_SOURCES})
 target_include_directories(pgshader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/pgshader)
@@ -213,19 +221,15 @@ endif()
 
 if(PG_BUILD_GUI)
   include(FetchContent)
-  # Neither is added as a CMake subproject -- imgui has no CMakeLists.txt and
-  # imnodes' own wants an installed imgui package -- so SOURCE_SUBDIR points
-  # nowhere and their sources are compiled into pgshader below.
+  # Not added as a CMake subproject -- imgui has no CMakeLists.txt -- so
+  # SOURCE_SUBDIR points nowhere and its sources are compiled into pgshader
+  # below.
   FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG v1.92.9b
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR no-cmake)
-  FetchContent_Declare(imnodes
-    GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
-    GIT_TAG eb36902c892548ef94f88f51ad7e7c9c7058a71c
-    SOURCE_SUBDIR no-cmake)
-  FetchContent_MakeAvailable(imgui imnodes)
+  FetchContent_MakeAvailable(imgui)
 
   find_package(glfw3 3.3 QUIET)
   if(NOT glfw3_FOUND)
@@ -254,14 +258,12 @@ if(PG_BUILD_GUI)
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
     ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
-    ${imnodes_SOURCE_DIR}/imnodes.cpp
   )
   # First on the include path, and not SYSTEM (-isystem loses to any -I): a
   # Dear ImGui installed on the system must not shadow the one fetched here.
   # FreeBSD's ports put theirs in /usr/local/include, next to the EGL headers
   # added above; a different 1.92.x compiles, then crashes at run time.
-  target_include_directories(pgshader BEFORE PRIVATE
-    ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends ${imnodes_SOURCE_DIR})
+  target_include_directories(pgshader BEFORE PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
   # The fetched version, which App.cpp checks the imgui.h it sees against.
   file(STRINGS ${imgui_SOURCE_DIR}/imgui.h PG_IMGUI_VERSION_LINE REGEX "^#define IMGUI_VERSION_NUM")
   string(REGEX MATCH "[0-9]+" PG_IMGUI_VERSION_NUM "${PG_IMGUI_VERSION_LINE}")

@@ -568,3 +568,19 @@ TEST(fractal_noise_animates_through_its_offset) {
     CHECK(hash != std::string::npos && hash < noise3 && noise3 < fbm && ramp4 != std::string::npos);
     CHECK_EQ(text.find("float pg_fbm3(", fbm + 1), std::string::npos);
 }
+
+TEST(shader_graph_inputs_and_params_go_back_to_their_defaults) {
+    ShaderGraph g;
+    const int id = g.addNode("checker");
+    g.setInput(id, "scale", Value::scalar(12.0f));
+    g.setParam(id, "anything", "x");
+    const uint64_t before = g.revision();
+    g.resetInput(id, "scale");
+    g.resetParam(id, "anything");
+    CHECK(g.revision() > before);
+    CHECK(g.node(id)->inputs.empty());
+    CHECK(g.node(id)->params.empty());
+    const uint64_t after = g.revision();
+    g.resetInput(id, "scale");  // nothing to forget: no edit
+    CHECK_EQ(g.revision(), after);
+}

@@ -1,8 +1,8 @@
-// pgshader -- the shader graph tool: one program for the node editor and for
-// the same work from the command line.
+// pgshader -- smoke, fire and shaders from nodes: one program for the node
+// editor and for the same work from the command line.
 //
-//   pgshader [GRAPH.pgsg] [options]       opens the editor -- the default
-//   pgshader list|gen|check|render ...    runs a command, headless
+//   pgshader [NETWORK.pgsim | GRAPH.pgsg] [options]   opens the editor -- the default
+//   pgshader list|gen|check|render|sim ...            runs a command, headless
 //   pgshader help
 //
 // A build with PG_BUILD_GUI=OFF has no editor and needs no dependencies; it

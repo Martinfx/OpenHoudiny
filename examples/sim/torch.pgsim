@@ -11,20 +11,20 @@ node 1 sphere_source 1 torch 0 0
   param motion circle
   param motion_size 0.3
   param motion_period 3
-node 2 turbulence 1 turbulence 0 330
+node 2 turbulence 1 turbulence 0 96
   param strength 3
   param scale 0.04
-node 3 pyro_solver 1 solver 300 120
+node 3 pyro_solver 1 solver 250 28
   param size 1.2 1.5 1.2
   param buoyancy 0.9
   param vorticity 0.9
   param cooling 1.5
   param smoke_decay 0.3
-node 4 volume_look 1 look 560 120
+node 4 volume_look 1 look 490 28
   param smoke_color 0.2 0.19 0.18
   param smoke_density 18
   param fire_light 3
-node 5 output 1 output 800 120
+node 5 output 1 output 720 28
 link 1.source -> 3.sources
 link 2.force -> 3.forces
 link 3.gas -> 4.gas

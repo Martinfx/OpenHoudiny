@@ -1,127 +1,61 @@
 #pragma once
 //
-// The shader node editor -- what pgshader opens when it is given no command. A
-// client of pg::shader, like the commands in Commands.h, whose check it reuses.
+// The editor -- what pgshader opens when it is given no command: one window,
+// two networks in the same layout (Workspace.h). Simulation, the default:
+// smoke and fire from nodes (SimWorkspace.h). Shaders: shader graphs for
+// OpenGL, Vulkan and the rest (ShaderWorkspace.h).
 //
-// Nothing here knows any particular node. The add-node menu, the pins and
-// their colours, the widgets for values and params -- all of it is built from
-// the NodeDefs of the library, so a node added to a .pgnodes file shows up
-// here after Library > Reload, without recompiling the editor.
-//
-#include "Commands.h"
+#include "ShaderWorkspace.h"
+#include "SimWorkspace.h"
 
-#include "pg/gl/Preview.h"
-#include "pg/shader/Generator.h"
+#include "pg/gl/Gl.h"
 
-#include <future>
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
-
-struct ImFont;
-struct ImVec2;
 
 namespace pg::editor {
 
 class Editor {
 public:
-    Editor(const gl::Api& gl, std::vector<std::string> libraryFiles, std::string examplesDir);
+    /// `synchronous`: the simulation takes one step per frame of the window,
+    /// on its thread -- for screenshots.
+    Editor(const gl::Api& gl, std::vector<std::string> libraryFiles, std::string examplesDir, bool synchronous);
 
+    /// Opens a .pgsim network or a .pgsg shader graph, in its workspace.
     bool open(const std::string& path);
-    void newGraph();
+    /// A simulation example by name ("campfire"), in the Simulation workspace.
+    bool openExample(const std::string& name);
+    void showShaders();
+    void showSimulation();
+    SimWorkspace& simulation() { return *sim_; }
+    ShaderWorkspace& shaders() { return *shaders_; }
 
-    /// Draws the whole UI for one frame, rendering the preview on the way.
-    void frame(float seconds);
+    /// Draws the whole window for one frame.
+    void frame(float dt);
 
     bool quitRequested() const { return quit_; }
-    /// "marble.pgsg * - pgshader": the file, and a star for unsaved changes.
+    /// "campfire.pgsim * -- Simulation -- pgshader"
     std::string title() const;
 
-    /// The language the code panel shows: a TargetRegistry name.
-    void setCodeTarget(const std::string& name);
-    void setMesh(gl::MeshKind kind) { preview_.setMesh(kind); }
-    /// A monospace font for the code panel; the default font when null.
-    void setCodeFont(ImFont* font) { codeFont_ = font; }
-
 private:
-    // --- model -----------------------------------------------------------------
-    void reloadLibrary();
-    void recompile();
-    bool save(const std::string& path);
-    void exportShaders(const std::string& dir);
-    void savePreviewImage(const std::string& path);
-    /// Tools > Validate: what `pgshader check` does, for the graph on screen,
-    /// in the background so the editor stays live.
-    void startValidation();
-    void pollValidation();
-    void setStatus(std::string message, bool error = false);
-
-    // --- UI --------------------------------------------------------------------
     void menuBar();
-    void examplesMenu(const std::string& dir);
-    void popups();
-    void canvas();
-    void nodeWidget(const shader::GraphNode& node, const shader::NodeDef* def);
-    void handleCanvasEvents(bool canvasHovered);
-    void frameAll(const ImVec2& canvasSize);
-    void addNodePopup();
-    void sidePanel(float seconds);
-    void previewPanel(float seconds);
-    void uniformsPanel();
-    void codePanel();
-    void problemsPanel();
-    void statusBar();
+    void statusBar(float height);
+    Workspace& current() { return *workspaces_[active_]; }
+    const Workspace& current() const { return *workspaces_[active_]; }
 
-    const gl::Api& gl_;
+    std::unique_ptr<SimWorkspace> sim_;
+    std::unique_ptr<ShaderWorkspace> shaders_;
+    std::vector<Workspace*> workspaces_;
+    size_t active_ = 0;
 
-    shader::NodeLibrary library_;
-    std::vector<std::string> libraryFiles_;
-    std::string examplesDir_;
-    shader::ShaderGraph graph_;
-    std::string path_;
-    std::string savedText_;
-    bool modified_ = false;  ///< the graph differs from the file; updated every frame
+    // The layout, in pixels: kept as the window is resized, changed by the splitters.
+    float rightWidth_ = 0.0f;
+    float paramsHeight_ = 0.0f;
+    float bottomHeight_ = 0.0f;  ///< the shaders' code panel
 
-    gl::PreviewRenderer preview_;
-    uint64_t compiledRevision_ = ~0ull;
-    shader::GeneratedShader previewShader_;
-    shader::GeneratedShader codeShader_;
-    std::string codeTarget_ = "glsl330";
-    std::string driverLog_;
-    ImFont* codeFont_ = nullptr;
-    bool pickFragmentTab_ = true;
-
-    // Node positions to apply before the node is next drawn: grid space for
-    // loaded graphs, screen space for nodes just added at the mouse.
-    std::map<int, std::pair<float, float>> gridPositions_;
-    std::map<int, std::pair<float, float>> screenPositions_;
-    bool frameAll_ = true;  ///< pan so the graph is in view, after the next draw
-    bool pickMesh_ = true;  ///< choose the preview mesh for a graph just opened
-
-    // add-node popup
-    float addX_ = 0.0f, addY_ = 0.0f;
-    int pendingPin_ = -1;  ///< a link dropped on empty canvas, to connect the new node to
-    std::string search_;
-
-    // path popups
-    std::string pathInput_;
-    const char* openPopup_ = nullptr;
-
-    std::future<cli::CheckReport> validation_;
-    cli::CheckReport validationReport_;
-    bool hasValidation_ = false;
-    uint64_t validatedRevision_ = 0;
-
-    bool animate_ = true;
-    float lastSeconds_ = 0.0f;
-    float pausedTime_ = 0.0f;
-    float sidePanelWidth_ = 520.0f;
-    std::map<std::string, shader::Value> uniformValues_;
-
-    std::string status_;
-    bool statusIsError_ = false;
     bool quit_ = false;
+    bool about_ = false;
 };
 
 }  // namespace pg::editor

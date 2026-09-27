@@ -3,6 +3,7 @@
 // says, and that it keeps invariant I5 -- the same bits on any thread count.
 //
 #include "pg/core/Parallel.h"
+#include "pg/sim/Frame.h"
 #include "pg/sim/Pyro.h"
 
 #include "test_framework.h"
@@ -477,4 +478,53 @@ TEST(pyro_smoke_shadows_what_is_behind_it) {
     const Grid empty = lightTransmittance(Grid(8, 8, 8), up, 0.5f, 2);
     CHECK_EQ(empty.nx(), 4);
     CHECK_NEAR(empty.at(1, 1, 1), 1.0, 1e-6);
+}
+
+TEST(pyro_frames_keep_the_gas_as_half_floats) {
+    // Exact where a half is exact; rounded to nearest even otherwise; the
+    // ends of the range as IEEE 754 has them.
+    for (const float v : {0.0f, 1.0f, -2.0f, 0.5f, 1024.0f, 65504.0f, 6.103515625e-05f, 5.9604645e-08f}) {
+        CHECK_EQ(fromHalf(toHalf(v)), v);
+    }
+    CHECK_EQ(toHalf(1.0f), uint16_t(0x3C00));
+    CHECK_EQ(toHalf(65520.0f), uint16_t(0x7C00));     // past the largest half: infinity
+    CHECK_EQ(toHalf(1.0f + 1.0f / 2048.0f), uint16_t(0x3C00));  // halfway: to even
+    CHECK_EQ(toHalf(1.0f + 3.0f / 2048.0f), uint16_t(0x3C02));
+    CHECK(std::isnan(fromHalf(toHalf(std::nanf("")))));
+    CHECK(std::fabs(fromHalf(toHalf(0.1f)) - 0.1f) < 1e-4f);
+
+    PyroSolver sim(small(Scene::fire(), 24));
+    for (int f = 0; f < 5; ++f) sim.step();
+    const Frame frame = capture(sim);
+    CHECK_EQ(frame.number, 5);
+    CHECK_EQ(frame.fields.size(), 3 * sim.density().size());
+    // Every cell within half-float precision of the solver's.
+    double worst = 0.0;
+    for (int k = 0; k < sim.nz(); ++k) {
+        for (int j = 0; j < sim.ny(); ++j) {
+            for (int i = 0; i < sim.nx(); ++i) {
+                const float want = sim.temperature().at(i, j, k);
+                worst = std::max(worst, static_cast<double>(std::fabs(frame.at(1, i, j, k) - want) / std::max(1.0f, want)));
+            }
+        }
+    }
+    CHECK(worst < 1e-3);
+}
+
+TEST(pyro_burning_gas_thins_out_as_it_swells) {
+    // A burst of fuel that swells a lot. The gas that swells carries its fuel
+    // thinned out; kept as rich, that fuel burnt and swelled again, and the
+    // fire filled the whole domain within a few frames.
+    Scene s = small(Scene::fire(), 32);
+    s.emitters[0].fuel = 60.0f;
+    s.emitters[0].end = 0.2f;
+    s.emitters[0].radius = 0.12f;
+    s.emitters[0].center = Vec3(0.0f, 0.3f, 0.0f);
+    s.solver.expansion = 3.0f;
+    s.solver.substeps = 2;
+    PyroSolver sim(s);
+    for (int f = 0; f < 9; ++f) sim.step();
+    size_t burning = 0;
+    for (const float v : sim.flame().values()) burning += v > 0.01f;
+    CHECK(burning < sim.flame().size() / 5);
 }

@@ -121,6 +121,16 @@ void ShaderGraph::setParam(int id, const std::string& param, const std::string& 
     ++revision_;
 }
 
+void ShaderGraph::resetInput(int id, const std::string& port) {
+    GraphNode* n = node(id);
+    if (n && n->inputs.erase(port) > 0) ++revision_;
+}
+
+void ShaderGraph::resetParam(int id, const std::string& param) {
+    GraphNode* n = node(id);
+    if (n && n->params.erase(param) > 0) ++revision_;
+}
+
 // --- file format -------------------------------------------------------------
 
 std::string ShaderGraph::save() const {

@@ -7,8 +7,9 @@ node-based, nedestruktivní, headless-first.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — datový model, cook engine, invarianty
 - **[docs/shader-graph.md](docs/shader-graph.md)** — node editor shaderů pro
   OpenGL, OpenGL ES, Vulkan a Direct3D: jak funguje a jak ho rozšiřovat
-- **[docs/pyro.md](docs/pyro.md)** — simulace kouře a ohně (jako Pyro
-  v Houdini): proudění na 3D mřížce, multigrid, objemové vykreslování
+- **[docs/pyro.md](docs/pyro.md)** — simulace kouře a ohně z uzlů (jako Pyro
+  v Houdini): editor se sítí uzlů, proudění na 3D mřížce, multigrid,
+  objemové vykreslování
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -37,9 +38,9 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Výchozí build obsahuje editor shaderů: při konfiguraci stáhne Dear ImGui,
-imnodes a GLFW, pokud v systému není (`sudo apt install libglfw3-dev`). Bez
-editoru nemá build žádné externí závislosti, stačí C++20 a standardní knihovna:
+Výchozí build obsahuje editor: při konfiguraci stáhne Dear ImGui a GLFW,
+pokud v systému není (`sudo apt install libglfw3-dev`). Bez editoru nemá
+build žádné externí závislosti, stačí C++20 a standardní knihovna:
 
 ```bash
 cmake -S . -B build -DPG_BUILD_GUI=OFF
@@ -55,15 +56,16 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 84 testů: 50 jádro, 24 shader graf, 10 simulace kouře a ohně
+./build/pgtests            # 105 testů: 50 jádro, 25 shader graf, 30 simulace kouře a ohně
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
-./build/pgshader                                  # editor shaderů (výchozí)
-./build/pgshader examples/shaders/fire.pgsg       # editor s grafem
+./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
+./build/pgshader --example tornado                # jiný příklad simulace
+./build/pgshader examples/shaders/fire.pgsg       # editor na síti shaderů, s grafem
 ./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
-./build/pgshader --pyro                           # simulace ohně v editoru
-./build/pgshader pyro fire.png --frames 90        # totéž bez okna, do PNG
-./build/pgshader help                             # příkazy: list, gen, check, render, pyro
+./build/pgshader sim campfire fire.png            # simulace bez okna, do PNG
+./build/pgshader sim explosion out/boom.png --every 2 --set charge.fuel=80
+./build/pgshader help                             # příkazy: list, gen, check, render, sim
 ```
 
 `pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,
@@ -94,11 +96,16 @@ Vulkan GLSL 450 → SPIR-V, HLSL) a editorem s živým náhledem, včetně
 animovaných efektů (oheň, kouř). Každý vestavěný uzel se v CTestu překládá pro
 všechny cíle přes glslangValidator a spirv-val.
 
-**Simulace kouře a ohně** (`src/pg/sim`) řeší proudění plynu na 3D mřížce:
-posunutá mřížka MAC, advekce MacCormack, hoření, vorticity confinement,
-turbulence a tlak přes multigrid. Je deterministická na libovolném počtu
-vláken. V editoru má vlastní pracovní plochu s objemovým vykreslováním
-(stíny, záření černého tělesa) a simulace tam běží ve vlastním vlákně.
+**Simulace kouře a ohně** (`src/pg/sim`) se skládá z uzlů jako Pyro
+v Houdini: zdroje (koule, kvádr; palivo, kouř, teplo, blikotání, pohyb,
+časové okno), síly (turbulence, vítr, vír, atraktor, odpor), překážky,
+řešič, vzhled a výstup. Řešič počítá proudění plynu na 3D mřížce: posunutá
+mřížka MAC, advekce MacCormack, hoření s rozpínáním, vorticity confinement
+a tlak přes multigrid, který zná podlahu i překážky. Je deterministický na
+libovolném počtu vláken. Editor má pro simulaci i shadery stejné rozložení:
+vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
+se stíny, záře ohně, překážky, vodítka) a časovou osu nad cache snímků,
+se simulací ve vlastním vlákně, undo/redo a sedmi příklady.
 
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
 serializace scény, Python vazby, GUI pro geometrii, simulace kapalin, těles a

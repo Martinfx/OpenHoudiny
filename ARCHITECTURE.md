@@ -325,17 +325,20 @@ src/pg/shader/   Types      typy shader grafu a jejich převody
                  Generator  graf → příkazy, typy, mrtvý kód
                  Target     GLSL 330, GLSL ES 300, Vulkan, HLSL; registr
 src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkování
-                 Poisson    tlaková rovnice: geometrický multigrid
-                 Pyro       simulace kouře a ohně, stíny pro vykreslování
+                 Poisson    tlaková rovnice: geometrický multigrid se stěnami a překážkami
+                 Scene      co se simuluje: doména, zdroje, síly, překážky
+                 Pyro       simulace kouře a ohně
+                 Network    síť uzlů simulace, formát .pgsim, překlad na Scene + Look
+                 Frame      snímek v poloviční přesnosti: cache a vykreslování
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
-                 Volume     objemové vykreslování simulace
-tests/           50 testů proti invariantům + 24 pro shader graf + 10 pro simulaci
+                 Volume     objemové vykreslování simulace: podlaha, překážky, vodítka
+tests/           50 testů proti invariantům + 25 pro shader graf + 30 pro simulaci
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
-tools/pgshader/  pgshader — editor shaderů a pracovní plocha Pyro (výchozí),
-                 příkazy list/gen/check/render/pyro
-examples/        grafy shaderů a ukázková uživatelská knihovna
+tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,
+                 na společném plátně uzlů; příkazy list/gen/check/render/sim
+examples/        grafy shaderů, ukázková uživatelská knihovna, sítě simulace
 ```
 
 Shader graf je popsaný zvlášť v [docs/shader-graph.md](docs/shader-graph.md),
@@ -363,7 +366,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | 10 typů uzlů, obsahový hash, export OBJ, headless CLI |
 | ✅ | 50 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
-| ✅ | Simulace kouře a ohně: MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader pyro` |
+| ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader sim` |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 

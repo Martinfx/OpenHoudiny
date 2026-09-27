@@ -679,11 +679,13 @@ void printUsage(std::FILE* out) {
     std::fprintf(out,
                  "usage:\n"
 #ifdef PG_HAVE_GUI
-                 "  pgshader [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]\n"
-                 "           [--size WxH] [--screenshot OUT.png [--frames N]]\n"
-                 "                  the node editor -- what runs without a command\n"
+                 "  pgshader [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]\n"
+                 "           [--library FILE]... [--target NAME] [--mesh NAME] [--size WxH]\n"
+                 "           [--screenshot OUT.png [--frames N]] [--script FILE]\n"
+                 "                  the node editor -- what runs without a command: smoke and fire\n"
+                 "                  from nodes (the campfire example), shaders with --shaders\n"
 #else
-                 "  pgshader [GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
+                 "  pgshader [NETWORK.pgsim | GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
 #endif
                  "  pgshader list   [--markdown] [--library FILE]...\n"
                  "  pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"

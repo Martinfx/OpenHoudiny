@@ -1,0 +1,1179 @@
+#include "SimWorkspace.h"
+
+#include "pg/gl/Png.h"
+
+#include "misc/cpp/imgui_stdlib.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <optional>
+#include <set>
+#include <sstream>
+
+namespace fs = std::filesystem;
+
+namespace pg::editor {
+namespace {
+
+using theme::Icon;
+
+ImU32 categoryColor(const std::string& c) {
+    if (c == "Sources") return IM_COL32(178, 86, 44, 255);
+    if (c == "Forces") return IM_COL32(38, 124, 134, 255);
+    if (c == "Colliders") return IM_COL32(70, 98, 150, 255);
+    if (c == "Simulation") return IM_COL32(112, 78, 160, 255);
+    if (c == "Render") return IM_COL32(58, 128, 80, 255);
+    return IM_COL32(110, 60, 60, 255);
+}
+
+Icon categoryIcon(const std::string& c) {
+    if (c == "Sources") return Icon::Source;
+    if (c == "Forces") return Icon::Force;
+    if (c == "Colliders") return Icon::Collider;
+    if (c == "Simulation") return Icon::Solver;
+    return Icon::Look;
+}
+
+Icon typeIcon(const sim::NodeType* t) {
+    if (!t) return Icon::Error;
+    if (std::string(t->name) == "output") return Icon::Output;
+    return categoryIcon(t->category);
+}
+
+ImU32 pinColor(sim::PinType t) {
+    switch (t) {
+        case sim::PinType::Source: return IM_COL32(240, 142, 60, 255);
+        case sim::PinType::Force: return IM_COL32(70, 200, 215, 255);
+        case sim::PinType::Collider: return IM_COL32(120, 155, 240, 255);
+        case sim::PinType::Gas: return IM_COL32(200, 130, 235, 255);
+        case sim::PinType::Look: return IM_COL32(110, 210, 135, 255);
+    }
+    return IM_COL32_WHITE;
+}
+
+std::string number(float v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%g", static_cast<double>(v));
+    return buf;
+}
+
+/// "fuel 14 · heat 1": what a node does, at a glance.
+std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Compiled& c) {
+    auto v = [&](const char* p) { return net.value(n.id, p); };
+    const std::string dot = " \xc2\xb7 ";
+    const std::string& t = n.type;
+    if (t == "sphere_source" || t == "box_source") {
+        std::string s;
+        for (const char* p : {"fuel", "smoke", "heat"}) {
+            if (v(p) > 0.0f) s += (s.empty() ? "" : dot) + std::string(p) + " " + number(v(p));
+        }
+        if (s.empty()) s = "adds nothing";
+        const int motion = static_cast<int>(v("motion"));
+        if (motion == 1) s += dot + "circles";
+        if (motion == 2) s += dot + "sways";
+        if (v("end") > v("start")) s += dot + number(v("start")) + "\xe2\x80\x93" + number(v("end")) + " s";
+        return s;
+    }
+    if (t == "turbulence") return "strength " + number(v("strength")) + dot + number(v("scale")) + " m";
+    if (t == "wind") return number(v("speed")) + " m/s" + (v("gusts") > 0.0f ? dot + "gusts " + number(v("gusts")) : "");
+    if (t == "vortex") {
+        std::string s = number(v("speed")) + " m/s round";
+        if (v("lift") != 0.0f) s += dot + "lift " + number(v("lift"));
+        return s;
+    }
+    if (t == "attractor" || t == "drag") return "strength " + number(v("strength"));
+    if (t == "sphere_collider") return "radius " + number(v("radius")) + " m";
+    if (t == "box_collider") {
+        const sim::ParamValue s = net.param(n.id, "size");
+        return number(s[0]) + " \xc3\x97 " + number(s[1]) + " \xc3\x97 " + number(s[2]) + " m";
+    }
+    if (t == "pyro_solver") {
+        sim::Scene scene;
+        const sim::ParamValue size = net.param(n.id, "size");
+        scene.solver.size = Vec3(size[0], size[1], size[2]);
+        scene.solver.resolution = static_cast<int>(v("resolution"));
+        const sim::Domain d = scene.sanitized().solver.domain();
+        return std::to_string(d.cells[0]) + " \xc3\x97 " + std::to_string(d.cells[1]) + " \xc3\x97 " +
+               std::to_string(d.cells[2]) + " cells";
+    }
+    if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames";
+    (void)c;
+    return {};
+}
+
+/// A slider's format: digits for the range, and the unit.
+std::string formatFor(const sim::ParamDef& d) {
+    const float span = d.max - d.min;
+    std::string f = span <= 1.01f ? "%.3f" : span <= 20.0f ? "%.2f" : "%.1f";
+    if (d.kind == sim::ParamKind::Int) f = "%d";
+    if (d.unit && *d.unit) f += std::string(" ") + d.unit;
+    return f;
+}
+
+std::string helpFor(const sim::ParamDef& d) {
+    std::string h = d.help;
+    h += "\n\n";
+    h += d.name;
+    if (d.kind == sim::ParamKind::Float || d.kind == sim::ParamKind::Int) {
+        h += "   " + number(d.min) + " \xe2\x80\xa6 " + number(d.max);
+        if (d.unit && *d.unit) h += std::string(" ") + d.unit;
+    }
+    return h;
+}
+
+bool readFile(const std::string& path, std::string& out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+}  // namespace
+
+SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
+    : renderer_(gl), runner_(std::make_unique<SimRunner>(synchronous)), synchronous_(synchronous) {
+    if (!renderer_.init(rendererLog_)) rendererLog_ = "The driver rejected the volume shader:\n" + rendererLog_;
+    else rendererLog_.clear();
+    if (!openExample("campfire")) newNetwork();
+}
+
+// --- files --------------------------------------------------------------------------------
+
+std::string SimWorkspace::title() const {
+    const std::string name = !path_.empty() ? fs::path(path_).filename().string()
+                             : !example_.empty() ? example_ + " (example)"
+                                                 : std::string("untitled.pgsim");
+    return name + (modified() ? " *" : "");
+}
+
+bool SimWorkspace::modified() const { return net_.save() != savedText_; }
+
+bool SimWorkspace::canOpen(const std::string& path) const { return fs::path(path).extension() == ".pgsim"; }
+
+void SimWorkspace::load(const sim::Network& net, const std::string& path, const std::string& example) {
+    net_ = net;
+    path_ = path;
+    example_ = example;
+    savedText_ = net_.save();
+    history_.reset(savedText_);
+    canvas_.clearSelection();
+    canvas_.frame();
+    compiledRevision_ = ~0ull;
+    recompile();
+    current_ = 1;
+    playing_ = true;
+    framed_ = false;
+    viewDirty_ = true;
+}
+
+bool SimWorkspace::open(const std::string& path) {
+    std::string text, error;
+    if (!readFile(path, text)) {
+        setMessage(path + ": cannot read it", true);
+        return false;
+    }
+    sim::Network net;
+    std::vector<std::string> warnings;
+    if (!sim::Network::load(text, net, error, &warnings)) {
+        setMessage(path + ": " + error, true);
+        return false;
+    }
+    load(net, path, "");
+    if (!warnings.empty()) setMessage(path + ": " + warnings.front(), true);
+    else setMessage("Opened " + path);
+    return true;
+}
+
+bool SimWorkspace::openExample(const std::string& name) {
+    sim::Network net;
+    if (!sim::Network::example(name, net)) return false;
+    load(net, "", name);
+    setMessage("Example " + name + ": File > Save As keeps your changes");
+    return true;
+}
+
+void SimWorkspace::newNetwork() {
+    sim::Network net;
+    const int source = net.add("sphere_source", 0, 0);
+    net.setParam(source, "smoke", "4");
+    net.setParam(source, "heat", "2");
+    const int solver = net.add("pyro_solver", 300, 20);
+    const int look = net.add("volume_look", 560, 20);
+    const int out = net.add("output", 800, 20);
+    net.connect(source, "source", solver, "sources");
+    net.connect(solver, "gas", look, "gas");
+    net.connect(look, "look", out, "look");
+    load(net, "", "");
+    setMessage("A new network: a source, the solver, a look, the output");
+}
+
+bool SimWorkspace::save(const std::string& path) {
+    std::ofstream out(path, std::ios::binary);
+    const std::string text = net_.save();
+    if (!out || !(out << text)) {
+        setMessage(path + ": cannot write it", true);
+        return false;
+    }
+    path_ = path;
+    example_.clear();
+    savedText_ = text;
+    setMessage("Saved " + path);
+    return true;
+}
+
+void SimWorkspace::setMessage(std::string message, bool error) {
+    message_ = std::move(message);
+    messageError_ = error;
+}
+
+void SimWorkspace::restore(const std::string& state) {
+    sim::Network net;
+    std::string error;
+    if (!sim::Network::load(state, net, error)) return;
+    net_ = net;
+    compiledRevision_ = ~0ull;
+}
+
+void SimWorkspace::undo() {
+    if (!history_.canUndo()) return;
+    restore(history_.undo());
+    setMessage("Undone");
+}
+
+void SimWorkspace::redo() {
+    if (!history_.canRedo()) return;
+    restore(history_.redo());
+    setMessage("Redone");
+}
+
+// --- each frame -----------------------------------------------------------------------------
+
+void SimWorkspace::recompile() {
+    if (net_.revision() == compiledRevision_) return;
+    compiledRevision_ = net_.revision();
+    const sim::Look before = compiled_.look;
+    compiled_ = net_.compile();
+    if (compiled_.ok) runner_->set(compiled_.scene, compiled_.frames);
+    if (!(compiled_.look == before)) viewDirty_ = true;
+    renderer_.look = compiled_.look;
+    renderer_.setColliders(compiled_.ok ? compiled_.scene.colliders : std::vector<sim::Collider>{});
+    current_ = std::clamp(current_, 1, std::max(1, compiled_.frames));
+}
+
+std::shared_ptr<const sim::Frame> SimWorkspace::frameToShow() const {
+    // The frame at the play head -- or, while the simulation has not got
+    // there yet, the latest before it.
+    const int cached = runner_->cached();
+    if (cached == 0) return nullptr;
+    return runner_->frame(std::min(current_, cached));
+}
+
+void SimWorkspace::update(float dt) {
+    recompile();
+    history_.track(net_.save(), settled());
+    if (synchronous_) runner_->step();
+
+    // Playback at the network's frame rate, never past what is simulated.
+    const int cached = runner_->cached();
+    if (playing_ && compiled_.ok) {
+        const double frameTime = compiled_.scene.solver.timeStep;
+        clock_ += synchronous_ ? frameTime : static_cast<double>(dt);
+        while (clock_ >= frameTime) {
+            clock_ -= frameTime;
+            if (current_ < compiled_.frames && current_ < cached) {
+                ++current_;
+            } else if (current_ >= compiled_.frames && loop_ && cached >= compiled_.frames && !synchronous_) {
+                current_ = 1;
+            } else {
+                clock_ = 0.0;  // waiting for the simulation, or at the end
+                break;
+            }
+        }
+    } else {
+        clock_ = 0.0;
+    }
+
+    // The frame on screen. While a simulation that started again has no
+    // frame yet, the last one stays: dragging a slider does not flicker.
+    std::shared_ptr<const sim::Frame> f = frameToShow();
+    if (!f && shown_ && runner_->busy()) f = shown_;
+    if (f != shown_) {
+        shown_ = f;
+        if (f) renderer_.setFrame(*f);
+        else renderer_.clearFrame();
+        viewDirty_ = true;
+    }
+    if (!shown_) renderer_.setDomain(runner_->domain());
+    updateGuides();
+}
+
+void SimWorkspace::shortcuts() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) return;
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) undo();
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z) ||
+        ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)) {
+        redo();
+    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
+        if (path_.empty()) {
+            files_.open("Save network", {".pgsim"}, true, (example_.empty() ? "untitled" : example_) + ".pgsim");
+            fileAction_ = FileAction::SaveAs;
+        } else {
+            save(path_);
+        }
+    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) {
+        files_.open("Save network", {".pgsim"}, true, path_.empty() ? "untitled.pgsim" : path_);
+        fileAction_ = FileAction::SaveAs;
+    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) {
+        files_.open("Open network", {".pgsim"}, false, path_);
+        fileAction_ = FileAction::Open;
+    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) newNetwork();
+    if (io.KeyCtrl || io.KeyAlt) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playing_ = !playing_;
+    if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) current_ = 1;
+    if (ImGui::IsKeyPressed(ImGuiKey_End, false)) current_ = std::max(1, runner_->cached());
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+        playing_ = false;
+        current_ = std::max(1, current_ - 1);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+        playing_ = false;
+        current_ = std::min(compiled_.frames, current_ + 1);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+        guides_ = !guides_;
+        guidesRevision_ = ~0ull;
+    }
+}
+
+// --- the network ---------------------------------------------------------------------------
+
+std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
+    std::vector<CanvasNode> out;
+    std::map<std::pair<int, std::string>, int> inCount, outCount;
+    for (const sim::Link& l : net_.links()) {
+        ++outCount[{l.from, l.output}];
+        ++inCount[{l.to, l.input}];
+    }
+    for (const sim::Node& n : net_.nodes()) {
+        const sim::NodeType* t = sim::findNodeType(n.type);
+        CanvasNode c;
+        c.id = n.id;
+        c.title = n.name;
+        c.subtitle = t ? t->label : n.type;
+        c.color = t ? categoryColor(t->category) : IM_COL32(120, 40, 40, 255);
+        c.icon = typeIcon(t);
+        c.x = n.x;
+        c.y = n.y;
+        if (t) {
+            for (const sim::PinDef& p : t->inputs) {
+                c.inputs.push_back({p.label, pinColor(p.type), p.many, inCount[{n.id, p.name}]});
+            }
+            for (const sim::PinDef& p : t->outputs) {
+                c.outputs.push_back({p.label, pinColor(p.type), false, outCount[{n.id, p.name}]});
+            }
+        }
+        c.bypassed = n.bypass;
+        c.dimmed = !compiled_.isActive(n.id);
+        for (const sim::Problem& p : compiled_.problems) {
+            if (p.node != n.id) continue;
+            c.problem = std::max(c.problem, p.level == sim::Problem::Level::Error ? 2 : 1);
+            c.problemText += (c.problemText.empty() ? "" : "\n") + p.message;
+        }
+        c.summary = summaryOf(net_, n, compiled_);
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+std::vector<CanvasLink> SimWorkspace::canvasLinks() const {
+    std::vector<CanvasLink> out;
+    for (const sim::Link& l : net_.links()) {
+        const sim::Node* a = net_.node(l.from);
+        const sim::Node* b = net_.node(l.to);
+        const sim::NodeType* ta = a ? sim::findNodeType(a->type) : nullptr;
+        const sim::NodeType* tb = b ? sim::findNodeType(b->type) : nullptr;
+        if (!ta || !tb) continue;
+        int from = -1, to = -1;
+        for (size_t i = 0; i < ta->outputs.size(); ++i) {
+            if (l.output == ta->outputs[i].name) from = static_cast<int>(i);
+        }
+        for (size_t i = 0; i < tb->inputs.size(); ++i) {
+            if (l.input == tb->inputs[i].name) to = static_cast<int>(i);
+        }
+        if (from < 0 || to < 0) continue;
+        out.push_back({l.from, from, l.to, to, pinColor(ta->outputs[static_cast<size_t>(from)].type)});
+    }
+    return out;
+}
+
+CanvasModel SimWorkspace::canvasModel() {
+    auto pinName = [this](const PinRef& p) -> std::string {
+        const sim::Node* n = net_.node(p.node);
+        const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+        if (!t) return {};
+        const auto& pins = p.output ? t->outputs : t->inputs;
+        return p.pin >= 0 && static_cast<size_t>(p.pin) < pins.size() ? pins[static_cast<size_t>(p.pin)].name : "";
+    };
+    CanvasModel m;
+    m.canConnect = [this, pinName](const PinRef& from, const PinRef& to, std::string* why) {
+        return net_.canConnect(from.node, pinName(from), to.node, pinName(to), why);
+    };
+    m.connect = [this, pinName](const PinRef& from, const PinRef& to) {
+        std::string why;
+        if (!net_.connect(from.node, pinName(from), to.node, pinName(to), &why)) setMessage(why, true);
+    };
+    m.disconnect = [this, pinName](const CanvasLink& l) {
+        net_.disconnect({l.from, pinName({l.from, l.fromPin, true}), l.to, pinName({l.to, l.toPin, false})});
+    };
+    m.move = [this](int node, float x, float y) {
+        if (sim::Node* n = net_.node(node)) {
+            n->x = x;
+            n->y = y;
+        }
+    };
+    m.remove = [this](const std::vector<int>& nodes) { removeNodes(nodes); };
+    m.duplicate = [this](const std::vector<int>& nodes) { duplicate(nodes); };
+    m.toggleBypass = [this](const std::vector<int>& nodes) { toggleBypass(nodes); };
+    m.addMenu = [this](ImVec2 at, const PinRef* pending) { return addMenu(at, pending); };
+    m.nodeMenu = [this](int node) { nodeMenu(node); };
+    return m;
+}
+
+int SimWorkspace::addNode(const std::string& type, ImVec2 at, const PinRef* pending) {
+    const int id = net_.add(type, std::round(at.x - 24.0f), std::round(at.y - 14.0f));
+    if (!id) return 0;
+    if (pending) {
+        const sim::Node* other = net_.node(pending->node);
+        const sim::NodeType* ot = other ? sim::findNodeType(other->type) : nullptr;
+        const sim::NodeType* nt = sim::findNodeType(type);
+        if (ot && nt) {
+            const auto& pins = pending->output ? ot->outputs : ot->inputs;
+            if (pending->pin >= 0 && static_cast<size_t>(pending->pin) < pins.size()) {
+                const sim::PinDef& p = pins[static_cast<size_t>(pending->pin)];
+                if (pending->output) {
+                    for (const sim::PinDef& in : nt->inputs) {
+                        if (net_.connect(other->id, p.name, id, in.name)) break;
+                    }
+                } else {
+                    // Fed from the new node: it goes to the left of the pin.
+                    if (sim::Node* n = net_.node(id)) n->x -= 220.0f;
+                    for (const sim::PinDef& out : nt->outputs) {
+                        if (net_.connect(id, out.name, other->id, p.name)) break;
+                    }
+                }
+            }
+        }
+    }
+    canvas_.select(id);
+    return id;
+}
+
+bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
+    if (ImGui::IsWindowAppearing()) {
+        search_.clear();
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(theme::px(250.0f));
+    ImGui::InputTextWithHint("##search", "Search nodes\xe2\x80\xa6", &search_);
+    std::string q = search_;
+    for (char& ch : q) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+    // Only the types that fit the pin a link was dragged from.
+    std::optional<sim::PinType> want;
+    bool wantOutput = false;
+    if (pending) {
+        const sim::Node* n = net_.node(pending->node);
+        const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+        const auto* pins = t ? (pending->output ? &t->outputs : &t->inputs) : nullptr;
+        if (pins && pending->pin >= 0 && static_cast<size_t>(pending->pin) < pins->size()) {
+            want = (*pins)[static_cast<size_t>(pending->pin)].type;
+            wantOutput = !pending->output;  // the new node needs the other end
+        }
+    }
+    auto fits = [&](const sim::NodeType& t) {
+        if (want) {
+            const auto& pins = wantOutput ? t.outputs : t.inputs;
+            if (std::none_of(pins.begin(), pins.end(), [&](const sim::PinDef& p) { return p.type == *want; })) {
+                return false;
+            }
+        }
+        if (q.empty()) return true;
+        std::string label = t.label, category = t.category;
+        for (char& ch : label) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        for (char& ch : category) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return label.find(q) != std::string::npos || category.find(q) != std::string::npos ||
+               std::string(t.name).find(q) != std::string::npos;
+    };
+    const sim::NodeType* first = nullptr;
+    const sim::NodeType* chosen = nullptr;
+    ImGui::Dummy(ImVec2(0.0f, theme::px(2.0f)));
+    for (const char* category : sim::nodeCategories()) {
+        std::vector<const sim::NodeType*> types;
+        for (const sim::NodeType& t : sim::nodeTypes()) {
+            if (category == std::string(t.category) && fits(t)) types.push_back(&t);
+        }
+        if (types.empty()) continue;
+        // The category, in its colour.
+        const ImVec2 at0 = ImGui::GetCursorScreenPos();
+        ImDrawList* d = ImGui::GetWindowDrawList();
+        d->AddCircleFilled(ImVec2(at0.x + theme::px(5.0f), at0.y + ImGui::GetTextLineHeight() * 0.5f), theme::px(3.5f),
+                           categoryColor(category));
+        ImGui::SetCursorScreenPos(ImVec2(at0.x + theme::px(14.0f), at0.y));
+        ImGui::TextDisabled("%s", category);
+        for (const sim::NodeType* t : types) {
+            if (!first) first = t;
+            ImGui::PushID(t->name);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable("##t", false, 0, ImVec2(theme::px(250.0f), 0.0f))) chosen = t;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(theme::px(320.0f));
+                ImGui::TextUnformatted(t->help);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+            const float h = ImGui::GetTextLineHeight();
+            theme::drawIcon(d, typeIcon(t), ImVec2(p.x + theme::px(12.0f), p.y + h * 0.5f), h * 0.85f,
+                            theme::shade(categoryColor(category), 0.35f));
+            d->AddText(ImVec2(p.x + theme::px(26.0f), p.y), theme::kText, t->label);
+            ImGui::PopID();
+        }
+        ImGui::Dummy(ImVec2(0.0f, theme::px(3.0f)));
+    }
+    if (!first) ImGui::TextDisabled("Nothing fits");
+    if (first && ImGui::IsKeyPressed(ImGuiKey_Enter)) chosen = first;
+    if (chosen) {
+        addNode(chosen->name, at, pending);
+        return true;
+    }
+    return false;
+}
+
+void SimWorkspace::nodeMenu(int id) {
+    const sim::Node* n = net_.node(id);
+    if (!n) return;
+    const sim::NodeType* t = sim::findNodeType(n->type);
+    ImGui::TextDisabled("%s  (%s)", n->name.c_str(), t ? t->label : n->type.c_str());
+    ImGui::Separator();
+    if (t && t->bypassable && ImGui::MenuItem("Bypass", "B", n->bypass)) toggleBypass({id});
+    if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicate(std::vector<int>(canvas_.selection().begin(), canvas_.selection().end()));
+    if (ImGui::MenuItem("Delete", "Del")) removeNodes(std::vector<int>(canvas_.selection().begin(), canvas_.selection().end()));
+    ImGui::Separator();
+    if (ImGui::MenuItem("Frame", "F")) canvas_.frame(true);
+    if (t) {
+        ImGui::Separator();
+        ImGui::PushTextWrapPos(theme::px(320.0f));
+        ImGui::TextDisabled("%s", t->help);
+        ImGui::PopTextWrapPos();
+    }
+}
+
+void SimWorkspace::duplicate(const std::vector<int>& nodes) {
+    std::map<int, int> copies;
+    for (int id : nodes) {
+        const sim::Node* n = net_.node(id);
+        if (!n) continue;
+        const sim::Node original = *n;
+        const int copy = net_.add(original.type, original.x + 40.0f, original.y + 40.0f);
+        if (!copy) continue;
+        for (const auto& [name, value] : original.params) net_.setParam(copy, name, value);
+        net_.setBypass(copy, original.bypass);
+        copies[id] = copy;
+    }
+    // Links among the copies, as among the originals.
+    for (const sim::Link& l : std::vector<sim::Link>(net_.links())) {
+        if (copies.count(l.from) && copies.count(l.to)) net_.connect(copies[l.from], l.output, copies[l.to], l.input);
+    }
+    canvas_.clearSelection();
+    for (const auto& [from, to] : copies) canvas_.select(to, true);
+}
+
+void SimWorkspace::removeNodes(const std::vector<int>& nodes) {
+    for (int id : nodes) net_.remove(id);
+}
+
+void SimWorkspace::toggleBypass(const std::vector<int>& nodes) {
+    // All on if any is off; else all off.
+    bool any = false;
+    for (int id : nodes) {
+        const sim::Node* n = net_.node(id);
+        const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+        if (t && t->bypassable && !n->bypass) any = true;
+    }
+    for (int id : nodes) {
+        const sim::Node* n = net_.node(id);
+        const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+        if (t && t->bypassable) net_.setBypass(id, any);
+    }
+}
+
+void SimWorkspace::network(ImVec2 size) {
+    (void)size;
+    ui::PanelHeader h = ui::panelHeader(Icon::Network, "Network", "simulation");
+    if (ui::headerButton(h, "frame", Icon::Search, "Frame the network (F)")) canvas_.frame();
+    if (ui::headerButton(h, "add", Icon::Plus, "Add a node (Tab)")) ImGui::OpenPopup("add_from_header");
+    if (ImGui::BeginPopup("add_from_header")) {
+        if (addMenu(ImVec2(0.0f, 0.0f), nullptr)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    canvas_.draw("sim_canvas", canvasNodes(), canvasLinks(), canvasModel());
+}
+
+// --- parameters -------------------------------------------------------------------------------
+
+void SimWorkspace::parameters(ImVec2 size) {
+    (void)size;
+    const int id = canvas_.current();
+    const sim::Node* n = net_.node(id);
+    const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+    ui::PanelHeader h = ui::panelHeader(Icon::Parameters, "Parameters", t ? t->label : nullptr);
+    if (n && t && t->bypassable) {
+        if (ui::headerButton(h, "bypass", Icon::Bypass, "Bypass: leave the node out (B)", n->bypass)) toggleBypass({id});
+    }
+    ImGui::BeginChild("params", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+    if (n && t) nodeParameters(*n, *t);
+    else networkOverview();
+    ImGui::EndChild();
+}
+
+void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& type) {
+    const int id = node.id;
+    // The name, and what the node is.
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float side = ImGui::GetFrameHeight();
+    d->AddRectFilled(at, ImVec2(at.x + side, at.y + side), categoryColor(type.category), theme::px(5.0f));
+    theme::drawIcon(d, typeIcon(&type), ImVec2(at.x + side * 0.5f, at.y + side * 0.5f), side * 0.62f, IM_COL32_WHITE);
+    ImGui::Dummy(ImVec2(side, side));
+    ImGui::SameLine();
+    if (nameEditNode_ != id) {
+        nameEdit_ = node.name;
+        nameEditNode_ = id;
+    }
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    ImGui::PushFont(theme::fonts().bold, 0.0f);
+    if (ImGui::InputText("##name", &nameEdit_, ImGuiInputTextFlags_EnterReturnsTrue) || ImGui::IsItemDeactivatedAfterEdit()) {
+        std::string why;
+        if (!net_.rename(id, nameEdit_, &why)) {
+            setMessage(why, true);
+            nameEdit_ = node.name;
+        }
+    }
+    ImGui::PopFont();
+    ImGui::SetItemTooltip("The node's name: what --set NAME.param=value calls it");
+    ui::note(type.help);
+
+    // What is wrong with it.
+    for (const sim::Problem& p : compiled_.problems) {
+        if (p.node != id) continue;
+        const bool error = p.level == sim::Problem::Level::Error;
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetTextLineHeight();
+        theme::drawIcon(ImGui::GetWindowDrawList(), error ? Icon::Error : Icon::Warning,
+                        ImVec2(q.x + h * 0.5f, q.y + h * 0.5f), h * 0.9f, error ? theme::kRed : theme::kYellow);
+        ImGui::SetCursorScreenPos(ImVec2(q.x + h * 1.4f, q.y));
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(error ? theme::kRed : theme::kYellow));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(p.message.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    }
+    if (node.bypass) {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(IM_COL32(230, 200, 90, 255)));
+        ImGui::TextUnformatted("Bypassed: left out of the simulation.");
+        ImGui::PopStyleColor();
+    }
+    if (!compiled_.isActive(id) && !node.bypass) {
+        ui::note("Not linked to the Output: it takes no part.");
+    }
+
+    // The parameters, section by section, in the order of the table.
+    std::vector<std::string> sections;
+    for (const sim::ParamDef& p : type.params) {
+        if (std::find(sections.begin(), sections.end(), p.section) == sections.end()) sections.push_back(p.section);
+    }
+    for (const std::string& section : sections) {
+        ImGui::PushID(section.c_str());
+        if (!ui::section(section.c_str())) {
+            ImGui::PopID();
+            continue;
+        }
+        for (const sim::ParamDef& p : type.params) {
+            if (section != p.section) continue;
+            ImGui::PushID(p.name);
+            sim::ParamValue v = net_.param(id, p.name);
+            const bool changed = !net_.isDefault(id, p.name);
+            ui::rowLabel(p.label, changed, helpFor(p).c_str());
+            if (ui::resetButton("reset", changed)) {
+                net_.resetParam(id, p.name);
+                v = net_.param(id, p.name);
+            }
+            bool edited = false;
+            const std::string format = formatFor(p);
+            switch (p.kind) {
+                case sim::ParamKind::Float: edited = ui::sliderFloat("##v", v[0], p.min, p.max, format.c_str()); break;
+                case sim::ParamKind::Int: {
+                    int i = static_cast<int>(std::lround(v[0]));
+                    edited = ImGui::SliderInt("##v", &i, static_cast<int>(p.min), static_cast<int>(p.max), format.c_str());
+                    v[0] = static_cast<float>(i);
+                    break;
+                }
+                case sim::ParamKind::Toggle: {
+                    bool b = v[0] != 0.0f;
+                    edited = ui::toggle("##v", b);
+                    v[0] = b ? 1.0f : 0.0f;
+                    break;
+                }
+                case sim::ParamKind::Vector: {
+                    const float speed = std::max((p.max - p.min) / 400.0f, 0.001f);
+                    edited = ui::dragVector("##v", v.data(), speed, "%.3g");
+                    break;
+                }
+                case sim::ParamKind::Color: edited = ui::colorEdit("##v", v.data()); break;
+                case sim::ParamKind::Choice: {
+                    int i = static_cast<int>(v[0]);
+                    const auto& labels = p.choiceLabels.empty() ? p.choices : p.choiceLabels;
+                    if (labels.size() <= 3) {
+                        edited = ui::segmented("##v", i, labels);
+                    } else if (ImGui::BeginCombo("##v", labels[static_cast<size_t>(std::clamp(i, 0, static_cast<int>(labels.size()) - 1))])) {
+                        for (size_t c = 0; c < labels.size(); ++c) {
+                            if (ImGui::Selectable(labels[c], static_cast<int>(c) == i)) {
+                                i = static_cast<int>(c);
+                                edited = true;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    v[0] = static_cast<float>(i);
+                    break;
+                }
+            }
+            if (edited) net_.setParam(id, p.name, v);
+            ImGui::PopID();
+        }
+        ImGui::PopID();
+    }
+}
+
+void SimWorkspace::networkOverview() {
+    ImGui::PushFont(theme::fonts().bold, 0.0f);
+    ImGui::TextUnformatted(title().c_str());
+    ImGui::PopFont();
+    ui::note("Nothing is selected. Click a node to see its parameters; Tab or a right click on the network "
+             "adds one. Sources, forces and colliders feed the Pyro Solver; its gas goes through a Volume Look "
+             "to the Output.");
+    ImGui::Spacing();
+    if (ui::section("Simulation")) {
+        if (compiled_.ok) {
+            const sim::Domain dm = compiled_.scene.sanitized().solver.domain();
+            const Vec3 sz = dm.size();
+            ImGui::Text("Domain      %.2f \xc3\x97 %.2f \xc3\x97 %.2f m", static_cast<double>(sz.x), static_cast<double>(sz.y),
+                        static_cast<double>(sz.z));
+            ImGui::Text("Cells       %d \xc3\x97 %d \xc3\x97 %d  (%.1f million)", dm.cells[0], dm.cells[1], dm.cells[2],
+                        static_cast<double>(dm.cellCount()) / 1e6);
+            ImGui::Text("Frames      %d at %.0f fps  (%.1f s)", compiled_.frames,
+                        1.0 / static_cast<double>(compiled_.scene.solver.timeStep),
+                        compiled_.frames * static_cast<double>(compiled_.scene.solver.timeStep));
+            ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", compiled_.scene.emitters.size(),
+                        compiled_.scene.forces.size(), compiled_.scene.colliders.size());
+            ImGui::Text("Cache       %d frames, %.0f MB", runner_->cached(),
+                        static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
+            if (runner_->stepMs() > 0.0) ImGui::Text("Step        %.0f ms", runner_->stepMs());
+        } else {
+            ImGui::TextColored(theme::vec(theme::kRed), "Nothing to simulate yet.");
+        }
+    }
+    if (!compiled_.problems.empty() && ui::section("Problems")) {
+        for (size_t i = 0; i < compiled_.problems.size(); ++i) {
+            const sim::Problem& p = compiled_.problems[i];
+            const sim::Node* n = net_.node(p.node);
+            const std::string text = (n ? n->name + ": " : std::string()) + p.message;
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(p.level == sim::Problem::Level::Error ? theme::kRed : theme::kYellow));
+            if (ImGui::Selectable(text.c_str()) && n) {
+                canvas_.select(n->id);
+                canvas_.reveal(n->id);
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+    }
+}
+
+// --- the viewport -------------------------------------------------------------------------------
+
+void SimWorkspace::updateGuides() {
+    const int selected = canvas_.current();
+    if (guidesRevision_ == net_.revision() && guidesNode_ == selected) return;
+    guidesRevision_ = net_.revision();
+    guidesNode_ = selected;
+    gl::Lines lines;
+    if (guides_ && compiled_.ok) lines = gl::sceneGuides(compiled_.scene, selected);
+    renderer_.setLines(lines);
+    viewDirty_ = true;
+}
+
+void SimWorkspace::drawGnomon(ImDrawList* d, ImVec2 corner) const {
+    const gl::Orbit& o = renderer_.orbit;
+    float eye[3];
+    o.eye(eye);
+    const Vec3 forward = normalize(Vec3(o.target[0] - eye[0], o.target[1] - eye[1], o.target[2] - eye[2]));
+    const Vec3 right = normalize(cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
+    const Vec3 up = cross(right, forward);
+    const float len = theme::px(22.0f);
+    const ImVec2 c(corner.x + theme::px(34.0f), corner.y - theme::px(34.0f));
+    struct Axis {
+        Vec3 dir;
+        ImU32 col;
+        const char* label;
+    } axes[3] = {{Vec3(1, 0, 0), IM_COL32(230, 86, 86, 255), "X"},
+                 {Vec3(0, 1, 0), IM_COL32(120, 210, 96, 255), "Y"},
+                 {Vec3(0, 0, 1), IM_COL32(90, 140, 240, 255), "Z"}};
+    // Back to front, so the axis towards the eye is on top.
+    std::sort(std::begin(axes), std::end(axes), [&](const Axis& a, const Axis& b) {
+        return dot(a.dir, forward) > dot(b.dir, forward);
+    });
+    d->AddCircleFilled(c, len + theme::px(8.0f), IM_COL32(0, 0, 0, 60));
+    for (const Axis& a : axes) {
+        const ImVec2 tip(c.x + dot(a.dir, right) * len, c.y - dot(a.dir, up) * len);
+        d->AddLine(c, tip, a.col, theme::px(2.0f));
+        d->AddCircleFilled(tip, theme::px(7.0f), a.col);
+        const ImVec2 t = ImGui::CalcTextSize(a.label);
+        d->AddText(ImVec2(tip.x - t.x * 0.5f, tip.y - t.y * 0.5f), IM_COL32(20, 20, 24, 255), a.label);
+    }
+}
+
+void SimWorkspace::viewport(ImVec2 size) {
+    (void)size;
+    char info[128];
+    const sim::Domain dm = runner_->domain();
+    std::snprintf(info, sizeof info, "%d \xc3\x97 %d \xc3\x97 %d cells", dm.cells[0], dm.cells[1], dm.cells[2]);
+    ui::PanelHeader h = ui::panelHeader(Icon::Viewport, "Viewport", info);
+    if (ui::headerButton(h, "image", Icon::Camera, "Render this frame to a PNG\xe2\x80\xa6")) {
+        files_.open("Render image", {".png"}, true, (example_.empty() ? std::string("frame") : example_) + ".png");
+        fileAction_ = FileAction::Image;
+    }
+    if (ui::headerButton(h, "home", Icon::Viewport, "Frame the domain (double click)")) framed_ = false;
+    if (ui::headerButton(h, "guides", Icon::Guides, "Guides: the domain, sources, forces (G)", guides_)) {
+        guides_ = !guides_;
+        guidesRevision_ = ~0ull;
+        updateGuides();
+    }
+
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const int w = std::max(16, static_cast<int>(avail.x)), hh = std::max(16, static_cast<int>(avail.y));
+    // The camera frames the domain when a network opens and when the
+    // domain's size changes -- not for another resolution.
+    const Vec3 box = compiled_.ok ? compiled_.scene.solver.size : framedSize_;
+    const bool resized = std::fabs(box.x - framedSize_.x) + std::fabs(box.y - framedSize_.y) +
+                             std::fabs(box.z - framedSize_.z) > 1e-4f;
+    if (!framed_ || resized) {
+        renderer_.orbit = gl::VolumeRenderer::viewOf(dm);
+        framedSize_ = box;
+        framed_ = true;
+        viewDirty_ = true;
+    }
+    if (w != viewWidth_ || hh != viewHeight_) viewDirty_ = true;
+    if (viewDirty_ && rendererLog_.empty()) {
+        renderer_.render(w, hh);
+        viewWidth_ = w;
+        viewHeight_ = hh;
+        viewDirty_ = false;
+    }
+    const ImVec2 lo = ImGui::GetCursorScreenPos();
+    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(renderer_.colorTexture())), ImVec2(static_cast<float>(w), static_cast<float>(hh)),
+                 ImVec2(0, 1), ImVec2(1, 0));
+    ImGui::SetCursorScreenPos(lo);
+    ImGui::InvisibleButton("view", ImVec2(static_cast<float>(w), static_cast<float>(hh)),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+                               ImGuiButtonFlags_MouseButtonMiddle);
+    const ImGuiIO& io = ImGui::GetIO();
+    gl::Orbit& o = renderer_.orbit;
+    if (ImGui::IsItemActive()) {
+        const ImVec2 dlt = io.MouseDelta;
+        if (dlt.x != 0.0f || dlt.y != 0.0f) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyShift)) {
+                // Pan: move what the camera looks at, in the plane of the screen.
+                float eye[3];
+                o.eye(eye);
+                const Vec3 forward = normalize(Vec3(o.target[0] - eye[0], o.target[1] - eye[1], o.target[2] - eye[2]));
+                const Vec3 right = normalize(cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
+                const Vec3 up = cross(right, forward);
+                const float k = o.distance * 0.0018f;
+                const Vec3 move = right * (-dlt.x * k) + up * (dlt.y * k);
+                for (int a = 0; a < 3; ++a) o.target[a] += move[a];
+            } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                o.distance = std::clamp(o.distance * std::exp(dlt.y * 0.006f), 0.2f, 200.0f);
+            } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                o.yaw -= dlt.x * 0.35f;
+                o.pitch = std::clamp(o.pitch + dlt.y * 0.35f, -89.0f, 89.0f);
+            }
+            viewDirty_ = true;
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        if (io.MouseWheel != 0.0f) {
+            o.distance = std::clamp(o.distance * std::pow(0.88f, io.MouseWheel), 0.2f, 200.0f);
+            viewDirty_ = true;
+        }
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) framed_ = false;
+    }
+
+    // Overlays: what is shown, the axes, the state of things.
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 hi(lo.x + static_cast<float>(w), lo.y + static_cast<float>(hh));
+    d->PushClipRect(lo, hi, true);
+    const float pad = theme::px(10.0f);
+    if (!rendererLog_.empty()) {
+        d->AddText(ImVec2(lo.x + pad, lo.y + pad), theme::kRed, rendererLog_.c_str());
+    }
+    char text[160];
+    const int cached = runner_->cached();
+    if (shown_) {
+        std::snprintf(text, sizeof text, "Frame %d  \xc2\xb7  %.2f s", shown_->number, static_cast<double>(shown_->time));
+        d->AddText(theme::fonts().bold, ImGui::GetFontSize(), ImVec2(lo.x + pad, lo.y + pad), IM_COL32(235, 236, 240, 230), text);
+        if (current_ > cached) {
+            std::snprintf(text, sizeof text, "simulating\xe2\x80\xa6 %d of %d", cached, current_);
+            d->AddText(ImVec2(lo.x + pad, lo.y + pad + ImGui::GetFontSize() * 1.3f), theme::kAccentHover, text);
+        }
+    } else if (compiled_.ok) {
+        d->AddText(ImVec2(lo.x + pad, lo.y + pad), theme::kAccentHover, "simulating\xe2\x80\xa6");
+    }
+    if (!compiled_.ok) {
+        std::string why = "Nothing to simulate";
+        for (const sim::Problem& p : compiled_.problems) {
+            if (p.level == sim::Problem::Level::Error) {
+                why = p.message;
+                break;
+            }
+        }
+        const ImVec2 t = ImGui::CalcTextSize(why.c_str());
+        const ImVec2 c((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f);
+        d->AddRectFilled(ImVec2(c.x - t.x * 0.5f - pad * 2.0f, c.y - t.y - pad), ImVec2(c.x + t.x * 0.5f + pad * 2.0f, c.y + t.y + pad),
+                         IM_COL32(20, 20, 24, 210), theme::px(6.0f));
+        theme::drawIcon(d, Icon::Warning, ImVec2(c.x, c.y - t.y * 0.45f), t.y * 1.1f, theme::kYellow);
+        d->AddText(ImVec2(c.x - t.x * 0.5f, c.y + t.y * 0.25f), theme::kText, why.c_str());
+    }
+    drawGnomon(d, ImVec2(lo.x, hi.y));
+    d->PopClipRect();
+}
+
+// --- the timeline ---------------------------------------------------------------------------------
+
+float SimWorkspace::bottomHeight() const { return ImGui::GetFrameHeight() + theme::px(16.0f); }
+
+void SimWorkspace::bottom(ImVec2 size) {
+    (void)size;
+    ui::TimelineState s;
+    s.frames = std::max(1, compiled_.frames);
+    s.current = current_;
+    s.cached = runner_->cached();
+    s.simulating = runner_->busy();
+    s.playing = playing_;
+    s.loop = loop_;
+    s.fps = compiled_.ok ? 1.0f / compiled_.scene.solver.timeStep : 30.0f;
+    const ui::TimelineActions a = ui::timeline("timeline", s);
+    if (a.togglePlay) playing_ = !playing_;
+    if (a.toStart) current_ = 1;
+    if (a.toEnd) current_ = std::max(1, s.cached);
+    if (a.back) {
+        playing_ = false;
+        current_ = std::max(1, current_ - 1);
+    }
+    if (a.forward) {
+        playing_ = false;
+        current_ = std::min(s.frames, current_ + 1);
+    }
+    if (a.toggleLoop) loop_ = !loop_;
+    if (a.scrubTo > 0) {
+        playing_ = false;
+        current_ = a.scrubTo;
+    }
+}
+
+// --- menus ----------------------------------------------------------------------------------------
+
+void SimWorkspace::fileMenu() {
+    if (ImGui::MenuItem("New", "Ctrl+N")) newNetwork();
+    if (ImGui::MenuItem("Open\xe2\x80\xa6", "Ctrl+O")) {
+        files_.open("Open network", {".pgsim"}, false, path_);
+        fileAction_ = FileAction::Open;
+    }
+    if (ImGui::BeginMenu("Examples")) {
+        for (const std::string& name : sim::Network::exampleNames()) {
+            if (ImGui::MenuItem(name.c_str())) openExample(name);
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Save", "Ctrl+S")) {
+        if (path_.empty()) {
+            files_.open("Save network", {".pgsim"}, true, (example_.empty() ? "untitled" : example_) + ".pgsim");
+            fileAction_ = FileAction::SaveAs;
+        } else {
+            save(path_);
+        }
+    }
+    if (ImGui::MenuItem("Save As\xe2\x80\xa6", "Ctrl+Shift+S")) {
+        files_.open("Save network", {".pgsim"}, true, path_.empty() ? (example_.empty() ? "untitled" : example_) + ".pgsim" : path_);
+        fileAction_ = FileAction::SaveAs;
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Render Image\xe2\x80\xa6")) {
+        files_.open("Render image", {".png"}, true, (example_.empty() ? std::string("frame") : example_) + ".png");
+        fileAction_ = FileAction::Image;
+    }
+    if (ImGui::MenuItem("Render Frames\xe2\x80\xa6", nullptr, false, runner_->cached() > 0)) {
+        files_.open("Render frames into a folder", {}, true, "");
+        fileAction_ = FileAction::Frames;
+    }
+}
+
+void SimWorkspace::editMenu() {
+    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history_.canUndo())) undo();
+    if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z", false, history_.canRedo())) redo();
+    ImGui::Separator();
+    const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
+    if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, !chosen.empty())) duplicate(chosen);
+    if (ImGui::MenuItem("Delete", "Del", false, !chosen.empty())) removeNodes(chosen);
+    if (ImGui::MenuItem("Bypass", "B", false, !chosen.empty())) toggleBypass(chosen);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Arrange", "L")) canvas_.arrange();
+    if (ImGui::MenuItem("Frame Network", "F")) canvas_.frame();
+}
+
+void SimWorkspace::menus() {
+    if (ImGui::BeginMenu("Simulation")) {
+        if (ImGui::MenuItem(playing_ ? "Pause" : "Play", "Space")) playing_ = !playing_;
+        if (ImGui::MenuItem("To the Start", "Home")) current_ = 1;
+        if (ImGui::MenuItem("Loop", nullptr, loop_)) loop_ = !loop_;
+        ImGui::Separator();
+        bool running = runner_->running();
+        if (ImGui::MenuItem("Simulate Ahead", nullptr, &running)) runner_->setRunning(running);
+        ImGui::SetItemTooltip("Simulate the frames before they are played; off, it waits.");
+        if (ImGui::MenuItem("Simulate Again")) {
+            runner_ = std::make_unique<SimRunner>(synchronous_);
+            compiledRevision_ = ~0ull;
+            recompile();
+            shown_.reset();
+        }
+        ImGui::SetItemTooltip("Throws the cached frames away and simulates from frame 1.");
+        if (ImGui::BeginMenu("Cache Size")) {
+            for (int mb : {512, 1024, 2048, 4096}) {
+                const std::string label = mb < 1024 ? std::to_string(mb) + " MB" : std::to_string(mb / 1024) + " GB";
+                if (ImGui::MenuItem(label.c_str())) runner_->setBudget(static_cast<size_t>(mb) << 20);
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Guides", "G", guides_)) {
+            guides_ = !guides_;
+            guidesRevision_ = ~0ull;
+        }
+        if (ImGui::MenuItem("Frame the Domain", "double click")) framed_ = false;
+        if (ImGui::MenuItem("Frame the Network", "F")) canvas_.frame();
+        ImGui::EndMenu();
+    }
+}
+
+void SimWorkspace::helpMenu() {
+    ImGui::TextDisabled("Network");
+    ImGui::TextUnformatted("Tab, right click          add a node");
+    ImGui::TextUnformatted("Drag from a pin           link; into space: add a node, linked");
+    ImGui::TextUnformatted("Drag a linked input       move the link, or drop it");
+    ImGui::TextUnformatted("Wheel, middle drag        zoom, pan");
+    ImGui::TextUnformatted("F / Del / Ctrl+D / B      frame, delete, duplicate, bypass");
+    ImGui::Separator();
+    ImGui::TextDisabled("Viewport");
+    ImGui::TextUnformatted("Left drag                 orbit");
+    ImGui::TextUnformatted("Middle / Shift+left drag  pan");
+    ImGui::TextUnformatted("Right drag, wheel         zoom");
+    ImGui::TextUnformatted("Double click              frame the domain");
+    ImGui::Separator();
+    ImGui::TextDisabled("Timeline");
+    ImGui::TextUnformatted("Space  Home  End  Left  Right");
+    ImGui::Separator();
+    ImGui::TextDisabled("The same from the command line:");
+    ImGui::TextUnformatted("  pgshader sim campfire fire.png --every 10");
+    ImGui::TextUnformatted("  pgshader sim my.pgsim out.png --set fire.fuel=20");
+}
+
+void SimWorkspace::popups() {
+    std::string chosen;
+    if (!files_.draw(chosen)) return;
+    switch (fileAction_) {
+        case FileAction::Open: open(chosen); break;
+        case FileAction::SaveAs: save(chosen); break;
+        case FileAction::Image: renderImage(chosen, std::max(viewWidth_, 64), std::max(viewHeight_, 64)); break;
+        case FileAction::Frames: renderFrames(chosen); break;
+        case FileAction::None: break;
+    }
+    fileAction_ = FileAction::None;
+}
+
+std::string SimWorkspace::status() const {
+    char text[200];
+    const sim::Domain dm = runner_->domain();
+    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %d \xc3\x97 %d \xc3\x97 %d cells  \xc2\xb7  cache %d / %d (%.0f MB)%s  \xc2\xb7  %.0f ms a step",
+                  net_.nodes().size(), dm.cells[0], dm.cells[1], dm.cells[2], runner_->cached(), compiled_.frames,
+                  static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), runner_->full() ? " full" : "",
+                  runner_->stepMs());
+    return text;
+}
+
+void SimWorkspace::selectNode(const std::string& name) {
+    if (const sim::Node* n = net_.named(name)) canvas_.select(n->id);
+}
+
+// --- images -----------------------------------------------------------------------------------------
+
+bool SimWorkspace::renderImage(const std::string& path, int width, int height) {
+    // Twice the size, averaged down.
+    renderer_.render(width * 2, height * 2);
+    const std::vector<uint8_t> pixels = renderer_.readPixels(2);
+    viewDirty_ = true;
+    if (!gl::writePng(path, width, height, 3, pixels)) {
+        setMessage(path + ": cannot write it", true);
+        return false;
+    }
+    setMessage("Rendered " + path);
+    return true;
+}
+
+bool SimWorkspace::renderFrames(const std::string& folder) {
+    std::error_code ec;
+    fs::create_directories(folder, ec);
+    const int cached = runner_->cached();
+    const int width = std::max(viewWidth_, 64), height = std::max(viewHeight_, 64);
+    const std::string stem = example_.empty() ? (path_.empty() ? "frame" : fs::path(path_).stem().string()) : example_;
+    int written = 0;
+    for (int f = 1; f <= cached; ++f) {
+        const auto frame = runner_->frame(f);
+        if (!frame) break;
+        renderer_.setFrame(*frame);
+        renderer_.render(width * 2, height * 2);
+        char name[64];
+        std::snprintf(name, sizeof name, "_%04d.png", f);
+        if (!gl::writePng((fs::path(folder) / (stem + name)).string(), width, height, 3, renderer_.readPixels(2))) break;
+        ++written;
+    }
+    shown_.reset();  // put the frame at the play head back
+    viewDirty_ = true;
+    setMessage("Rendered " + std::to_string(written) + " frames into " + folder, written != cached);
+    return written == cached;
+}
+
+}  // namespace pg::editor

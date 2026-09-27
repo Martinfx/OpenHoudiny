@@ -80,6 +80,10 @@ public:
     /// Sets the value an unconnected input uses, or a param.
     void setInput(int id, const std::string& port, const Value& v);
     void setParam(int id, const std::string& param, const std::string& text);
+    /// Forgets the value set: the input or param is back at its default --
+    /// for an input with `= $global`, the global again.
+    void resetInput(int id, const std::string& port);
+    void resetParam(int id, const std::string& param);
 
     std::string save() const;
     /// Replaces `out` with the graph in `text`. Unknown node types are kept --

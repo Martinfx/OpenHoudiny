@@ -9,25 +9,25 @@ node 1 box_source 1 ground 0 0
   param velocity 0 0.2 0
   param flicker 0.4
   param flicker_size 0.1
-node 2 vortex 1 vortex 0 330
+node 2 vortex 1 vortex 0 96
   param center 0 1 0
   param radius 0.4
   param speed 2
   param lift 0.7
   param suction 0.35
-node 3 turbulence 1 turbulence 0 560
+node 3 turbulence 1 turbulence 0 192
   param strength 2
   param mask everywhere
-node 4 pyro_solver 1 solver 300 120
+node 4 pyro_solver 1 solver 250 76
   param size 1.2 2 1.2
   param weight 0.02
   param vorticity 1
   param cooling 0.5
   param smoke_decay 0.05
-node 5 volume_look 1 look 560 120
+node 5 volume_look 1 look 490 76
   param smoke_color 0.7 0.68 0.64
   param smoke_density 14
-node 6 output 1 output 800 120
+node 6 output 1 output 720 76
   param frames 180
 link 1.source -> 4.sources
 link 2.force -> 4.forces

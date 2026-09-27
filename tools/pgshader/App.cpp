@@ -1,23 +1,39 @@
 // The editor's window -- what `pgshader` opens when it is given no command:
 //
-//   pgshader [GRAPH.pgsg] [--library FILE]... [--target NAME] [--mesh NAME]
-//            [--size WxH] [--screenshot OUT.png [--frames N]]
+//   pgshader [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]
+//            [--library FILE]... [--target NAME] [--mesh NAME]
+//            [--size WxH] [--screenshot OUT.png [--frames N]] [--script FILE]
 //
-// The graph on the left; the live preview, uniforms and generated code on the
-// right. --screenshot draws N frames (default 30), saves the window as a PNG
-// and quits; it is how the editor is tested on a machine without a display
-// (under xvfb-run).
+// It opens on the Simulation network, with the campfire example -- or the
+// file given, in the network it belongs to. --screenshot draws N frames
+// (default 30), saves the window as a PNG and quits: how the editor is tested
+// on a machine without a display (under xvfb-run). Then each frame of the
+// window is one step of the simulation, so N frames show frame N.
+//
+// --script plays input from a file into the window, a step a frame, and
+// quits at its end: the mouse, the keys, screenshots along the way. How the
+// editor's interactions are tested without a person at it:
+//
+//   move X Y            the mouse to a point of the window
+//   click X Y [right|middle]      dclick X Y      a (double) click there
+//   drag X1 Y1 X2 Y2 [right|middle] [STEPS]       press, move, let go
+//   down / up [left|right|middle]                 wheel D
+//   key [ctrl+][shift+]NAME      tab, enter, escape, delete, space, left,
+//                                right, home, end, backspace, f5, a..z
+//   type TEXT           characters, as typed
+//   wait N              N frames with no input
+//   shot FILE           the window as a PNG, now
 #include "App.h"
 
 #include "Commands.h"
 #include "Editor.h"
+#include "Theme.h"
 
 #include "pg/gl/Png.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include "imnodes.h"
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -31,10 +47,15 @@ static_assert(IMGUI_VERSION_NUM == PG_IMGUI_VERSION_NUM,
               "shadows it");
 #endif
 
+#include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
+#include <deque>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -49,36 +70,176 @@ int usage() {
     return 2;
 }
 
-/// The first font file that exists, or empty.
-std::string findFont(std::initializer_list<const char*> candidates) {
-    for (const char* c : candidates) {
-        std::error_code ec;
-        if (std::filesystem::exists(c, ec)) return c;
+/// Input played into the window from a file (--script).
+class Script {
+public:
+    bool load(const std::string& path, std::string& error) {
+        std::ifstream in(path);
+        if (!in) {
+            error = path + ": cannot read it";
+            return false;
+        }
+        std::string line;
+        int number = 0;
+        while (std::getline(in, line)) {
+            ++number;
+            if (const size_t hash = line.find('#'); hash != std::string::npos && line.rfind("type", 0) != 0) {
+                line = line.substr(0, hash);
+            }
+            std::istringstream words(line);
+            std::string cmd;
+            if (!(words >> cmd)) continue;
+            auto fail = [&](const std::string& why) {
+                error = path + ":" + std::to_string(number) + ": " + why;
+                return false;
+            };
+            auto buttonOf = [](const std::string& b) { return b == "right" ? 1 : b == "middle" ? 2 : 0; };
+            if (cmd == "move" || cmd == "click" || cmd == "dclick") {
+                float x = 0, y = 0;
+                std::string b;
+                if (!(words >> x >> y)) return fail(cmd + " X Y");
+                words >> b;
+                steps_.push_back({Step::Move, x, y});
+                if (cmd == "move") continue;
+                for (int i = 0; i < (cmd == "dclick" ? 2 : 1); ++i) {
+                    steps_.push_back({Step::Down, 0, 0, buttonOf(b)});
+                    steps_.push_back({Step::Up, 0, 0, buttonOf(b)});
+                }
+            } else if (cmd == "drag") {
+                float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+                if (!(words >> x0 >> y0 >> x1 >> y1)) return fail("drag X1 Y1 X2 Y2");
+                std::string b;
+                int n = 12;
+                words >> b;
+                if (!b.empty() && std::isdigit(static_cast<unsigned char>(b[0]))) {
+                    n = std::stoi(b);
+                    b.clear();
+                } else {
+                    words >> n;
+                }
+                steps_.push_back({Step::Move, x0, y0});
+                steps_.push_back({Step::Down, 0, 0, buttonOf(b)});
+                for (int i = 1; i <= std::max(1, n); ++i) {
+                    const float t = static_cast<float>(i) / static_cast<float>(std::max(1, n));
+                    steps_.push_back({Step::Move, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t});
+                }
+                steps_.push_back({Step::Up, 0, 0, buttonOf(b)});
+            } else if (cmd == "down" || cmd == "up") {
+                std::string b;
+                words >> b;
+                steps_.push_back({cmd == "down" ? Step::Down : Step::Up, 0, 0, buttonOf(b)});
+            } else if (cmd == "wheel") {
+                float d = 0;
+                if (!(words >> d)) return fail("wheel D");
+                steps_.push_back({Step::Wheel, d});
+            } else if (cmd == "key") {
+                std::string k;
+                if (!(words >> k)) return fail("key NAME");
+                Step s{Step::Key};
+                for (;;) {
+                    if (k.rfind("ctrl+", 0) == 0) s.mods |= ImGuiMod_Ctrl, k = k.substr(5);
+                    else if (k.rfind("shift+", 0) == 0) s.mods |= ImGuiMod_Shift, k = k.substr(6);
+                    else if (k.rfind("alt+", 0) == 0) s.mods |= ImGuiMod_Alt, k = k.substr(4);
+                    else break;
+                }
+                s.key = keyOf(k);
+                if (s.key == ImGuiKey_None) return fail("no key '" + k + "'");
+                steps_.push_back(s);
+                steps_.push_back({Step::KeyUp, 0, 0, 0, s.key, s.mods});
+            } else if (cmd == "type") {
+                std::string rest;
+                std::getline(words, rest);
+                if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+                steps_.push_back({Step::Type, 0, 0, 0, ImGuiKey_None, 0, rest});
+            } else if (cmd == "wait") {
+                int n = 1;
+                words >> n;
+                for (int i = 0; i < n; ++i) steps_.push_back({Step::Wait});
+            } else if (cmd == "shot") {
+                std::string file;
+                if (!(words >> file)) return fail("shot FILE");
+                steps_.push_back({Step::Shot, 0, 0, 0, ImGuiKey_None, 0, file});
+            } else {
+                return fail("unknown command '" + cmd + "'");
+            }
+        }
+        return true;
     }
-    return {};
-}
 
-void setupStyle(float scale) {
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.PopupRounding = 4.0f;
-    style.GrabRounding = 3.0f;
-    style.ScaleAllSizes(scale);
+    bool done() const { return steps_.empty(); }
 
-    ImNodes::StyleColorsDark();
-    ImNodesStyle& nodes = ImNodes::GetStyle();
-    nodes.Flags |= ImNodesStyleFlags_GridLines;
-    nodes.NodeCornerRounding = 5.0f;
-    nodes.PinCircleRadius = 4.5f;
-    nodes.LinkThickness = 3.0f;
-    nodes.Colors[ImNodesCol_NodeBackground] = IM_COL32(44, 46, 52, 245);
-    nodes.Colors[ImNodesCol_NodeBackgroundHovered] = IM_COL32(52, 54, 61, 245);
-    nodes.Colors[ImNodesCol_NodeBackgroundSelected] = IM_COL32(58, 61, 70, 245);
-    nodes.Colors[ImNodesCol_NodeOutline] = IM_COL32(90, 92, 100, 255);
-    nodes.Colors[ImNodesCol_GridBackground] = IM_COL32(30, 31, 35, 255);
-    nodes.Colors[ImNodesCol_GridLine] = IM_COL32(48, 50, 56, 255);
+    /// Feeds this frame's step. A screenshot to take after the frame goes
+    /// into `shot`.
+    void feed(ImGuiIO& io, std::string& shot) {
+        if (steps_.empty()) return;
+        const Step s = steps_.front();
+        steps_.pop_front();
+        switch (s.kind) {
+            case Step::Move: io.AddMousePosEvent(s.x, s.y); break;
+            case Step::Down: io.AddMouseButtonEvent(s.button, true); break;
+            case Step::Up: io.AddMouseButtonEvent(s.button, false); break;
+            case Step::Wheel: io.AddMouseWheelEvent(0.0f, s.x); break;
+            case Step::Key:
+                if (s.mods & ImGuiMod_Ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, true);
+                if (s.mods & ImGuiMod_Shift) io.AddKeyEvent(ImGuiMod_Shift, true);
+                if (s.mods & ImGuiMod_Alt) io.AddKeyEvent(ImGuiMod_Alt, true);
+                io.AddKeyEvent(s.key, true);
+                break;
+            case Step::KeyUp:
+                io.AddKeyEvent(s.key, false);
+                if (s.mods & ImGuiMod_Ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, false);
+                if (s.mods & ImGuiMod_Shift) io.AddKeyEvent(ImGuiMod_Shift, false);
+                if (s.mods & ImGuiMod_Alt) io.AddKeyEvent(ImGuiMod_Alt, false);
+                break;
+            case Step::Type: io.AddInputCharactersUTF8(s.text.c_str()); break;
+            case Step::Wait: break;
+            case Step::Shot: shot = s.text; break;
+        }
+    }
+
+private:
+    struct Step {
+        enum Kind { Move, Down, Up, Wheel, Key, KeyUp, Type, Wait, Shot } kind;
+        float x = 0.0f, y = 0.0f;
+        int button = 0;
+        ImGuiKey key = ImGuiKey_None;
+        int mods = 0;
+        std::string text;
+
+        Step(Kind k, float x_ = 0.0f, float y_ = 0.0f, int b = 0, ImGuiKey k2 = ImGuiKey_None, int m = 0,
+             std::string t = {})
+            : kind(k), x(x_), y(y_), button(b), key(k2), mods(m), text(std::move(t)) {}
+    };
+
+    static ImGuiKey keyOf(const std::string& k) {
+        if (k.size() == 1 && k[0] >= 'a' && k[0] <= 'z') return static_cast<ImGuiKey>(ImGuiKey_A + (k[0] - 'a'));
+        if (k.size() == 1 && k[0] >= '0' && k[0] <= '9') return static_cast<ImGuiKey>(ImGuiKey_0 + (k[0] - '0'));
+        static const std::pair<const char*, ImGuiKey> names[] = {
+            {"tab", ImGuiKey_Tab},       {"enter", ImGuiKey_Enter},   {"escape", ImGuiKey_Escape},
+            {"delete", ImGuiKey_Delete}, {"space", ImGuiKey_Space},   {"left", ImGuiKey_LeftArrow},
+            {"right", ImGuiKey_RightArrow}, {"up", ImGuiKey_UpArrow}, {"down", ImGuiKey_DownArrow},
+            {"home", ImGuiKey_Home},     {"end", ImGuiKey_End},       {"backspace", ImGuiKey_Backspace},
+            {"f5", ImGuiKey_F5},         {"f12", ImGuiKey_F12}};
+        for (const auto& [name, key] : names) {
+            if (k == name) return key;
+        }
+        return ImGuiKey_None;
+    }
+
+    std::deque<Step> steps_;
+};
+
+bool saveWindow(const pg::gl::Api& gl, int w, int h, const std::string& path) {
+    std::vector<uint8_t> rgba(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+    gl.PixelStorei(pg::gl::PACK_ALIGNMENT, 1);
+    gl.ReadPixels(0, 0, w, h, pg::gl::RGBA, pg::gl::UNSIGNED_BYTE, rgba.data());
+    std::vector<uint8_t> rgb(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
+    for (int y = 0; y < h; ++y) {  // GL rows go bottom up, PNG rows top down
+        const uint8_t* src = &rgba[static_cast<size_t>(h - 1 - y) * static_cast<size_t>(w) * 4];
+        uint8_t* dst = &rgb[static_cast<size_t>(y) * static_cast<size_t>(w) * 3];
+        for (int x = 0; x < w; ++x) std::memcpy(dst + x * 3, src + x * 4, 3);
+    }
+    return pg::gl::writePng(path, w, h, 3, rgb);
 }
 
 }  // namespace
@@ -86,51 +247,65 @@ void setupStyle(float scale) {
 namespace pg::editor {
 
 int runEditor(int argc, char** argv) {
-    std::string graphPath, screenshot, target, mesh;
+    std::string path, screenshot, target, mesh, example, select, scriptPath;
     std::vector<std::string> libraries;
+    bool shaders = false;
     int frames = 30, width = 1600, height = 960;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
+        const char* v = nullptr;
         if (a == "--library") {
-            const char* v = next();
-            if (!v) return usage();
+            if (!(v = next())) return usage();
             libraries.push_back(v);
         } else if (a == "--screenshot") {
-            const char* v = next();
-            if (!v) return usage();
+            if (!(v = next())) return usage();
             screenshot = v;
         } else if (a == "--frames") {
-            const char* v = next();
-            if (!v) return usage();
+            if (!(v = next())) return usage();
             frames = std::max(1, std::atoi(v));
         } else if (a == "--size") {
-            const char* v = next();
-            if (!v || std::sscanf(v, "%dx%d", &width, &height) != 2) return usage();
+            if (!(v = next()) || std::sscanf(v, "%dx%d", &width, &height) != 2) return usage();
             if (width < 320 || height < 240) return usage();
         } else if (a == "--target") {
-            const char* v = next();
-            if (!v) return usage();
+            if (!(v = next())) return usage();
             target = v;
         } else if (a == "--mesh") {
-            const char* v = next();
-            if (!v) return usage();
+            if (!(v = next())) return usage();
             mesh = v;
+        } else if (a == "--example") {
+            if (!(v = next())) return usage();
+            example = v;
+        } else if (a == "--select") {
+            if (!(v = next())) return usage();
+            select = v;
+        } else if (a == "--script") {
+            if (!(v = next())) return usage();
+            scriptPath = v;
+        } else if (a == "--shaders") {
+            shaders = true;
         } else if (!a.empty() && a[0] == '-') {
             return usage();
-        } else if (graphPath.empty()) {
-            graphPath = a;
+        } else if (path.empty()) {
+            path = a;
         } else {
             return usage();
         }
     }
 
-    glfwSetErrorCallback([](int code, const char* message) {
-        std::fprintf(stderr, "glfw %d: %s\n", code, message);
-    });
+    Script script;
+    if (!scriptPath.empty()) {
+        std::string error;
+        if (!script.load(scriptPath, error)) {
+            std::fprintf(stderr, "pgshader: %s\n", error.c_str());
+            return 2;
+        }
+    }
+    const bool scripted = !scriptPath.empty();
+
+    glfwSetErrorCallback([](int code, const char* message) { std::fprintf(stderr, "glfw %d: %s\n", code, message); });
     if (!glfwInit()) {
-        std::fprintf(stderr,
-                     "pgshader: cannot open a window -- is there a display? The commands work without one:\n\n");
+        std::fprintf(stderr, "pgshader: cannot open a window -- is there a display? The commands work without one:\n\n");
         pg::cli::printUsage(stderr);
         return 1;
     }
@@ -156,40 +331,18 @@ int runEditor(int argc, char** argv) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImNodes::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.IniFilename = nullptr;  // the layout is fixed; nothing worth remembering
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
+    io.IniFilename = nullptr;  // the layout is the editor's; nothing worth remembering
+    // Played input: every event of a frame takes effect in it.
+    if (scripted) io.ConfigInputTrickleEventQueue = false;
     float xscale = 1.0f, yscale = 1.0f;
     glfwGetWindowContentScale(window, &xscale, &yscale);
-    const float scale = std::max(1.0f, xscale);
-    setupStyle(scale);
-
-    // System fonts when there are any; Dear ImGui's built-in one otherwise.
-    ImFont* codeFont = nullptr;
-    const std::string sans = findFont({"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                                       "/usr/share/fonts/TTF/DejaVuSans.ttf",
-                                       "/usr/local/share/fonts/dejavu/DejaVuSans.ttf",  // FreeBSD
-                                       "/System/Library/Fonts/Supplemental/Arial.ttf",
-                                       "C:/Windows/Fonts/segoeui.ttf"});
-    const std::string mono = findFont({"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-                                       "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-                                       "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf",
-                                       "/System/Library/Fonts/Menlo.ttc",
-                                       "C:/Windows/Fonts/consola.ttf"});
-    if (!sans.empty()) io.Fonts->AddFontFromFileTTF(sans.c_str(), 15.0f * scale);
-    else io.Fonts->AddFontDefault();
-    if (!mono.empty()) codeFont = io.Fonts->AddFontFromFileTTF(mono.c_str(), 14.0f * scale);
-
-    ImNodes::GetIO().LinkDetachWithModifierClick.Modifier = &io.KeyCtrl;
-    ImNodes::GetIO().EmulateThreeButtonMouse.Modifier = &io.KeyAlt;  // Alt + drag pans
+    theme::apply(std::max(1.0f, xscale));
 
     const bool platform = ImGui_ImplGlfw_InitForOpenGL(window, true);
     if (!platform || !ImGui_ImplOpenGL3_Init("#version 330 core")) {
         std::fprintf(stderr, "pgshader: Dear ImGui's %s backend did not start\n", platform ? "OpenGL 3" : "GLFW");
         if (platform) ImGui_ImplGlfw_Shutdown();
-        ImNodes::DestroyContext();
         ImGui::DestroyContext();
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -198,29 +351,46 @@ int runEditor(int argc, char** argv) {
 
     int status = 0;
     {
-        pg::editor::Editor editor(gl, libraries, PG_EXAMPLES_DIR);
-        editor.setCodeFont(codeFont);
-        if (!target.empty()) editor.setCodeTarget(target);
+        // A screenshot of frame N wants N steps: the simulation in step with
+        // the window. A script runs it as a person would see it, on its thread.
+        Editor editor(gl, libraries, PG_EXAMPLES_DIR, !screenshot.empty());
+        ShaderWorkspace& sh = editor.shaders();
+        if (!target.empty()) sh.setCodeTarget(target);
         if (!mesh.empty()) {
             bool found = false;
             for (pg::gl::MeshKind k : pg::gl::kMeshKinds) {
                 if (mesh == pg::gl::meshName(k)) {
-                    editor.setMesh(k);
+                    sh.setMesh(k);
                     found = true;
                 }
             }
             if (!found) std::fprintf(stderr, "pgshader: no mesh '%s'\n", mesh.c_str());
         }
-        if (!graphPath.empty() && !editor.open(graphPath)) status = 1;
+        if (!example.empty() && !editor.openExample(example)) {
+            std::fprintf(stderr, "pgshader: no example '%s'\n", example.c_str());
+            status = 1;
+        }
+        if (!path.empty() && !editor.open(path)) {
+            std::fprintf(stderr, "pgshader: cannot open %s\n", path.c_str());
+            status = 1;
+        }
+        if (shaders) editor.showShaders();
+        if (!select.empty()) editor.simulation().selectNode(select);
 
         int frame = 0;
         std::string title;
+        auto last = std::chrono::steady_clock::now();
         while (!glfwWindowShouldClose(window) && !editor.quitRequested()) {
             glfwPollEvents();
+            const auto now = std::chrono::steady_clock::now();
+            const float dt = std::min(0.25f, std::chrono::duration<float>(now - last).count());
+            last = now;
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
+            std::string shot;
+            if (scripted) script.feed(io, shot);
             ImGui::NewFrame();
-            editor.frame(static_cast<float>(glfwGetTime()));
+            editor.frame(dt);
             ImGui::Render();
             if (editor.title() != title) {
                 title = editor.title();
@@ -231,21 +401,17 @@ int runEditor(int argc, char** argv) {
             glfwGetFramebufferSize(window, &w, &h);
             gl.BindFramebuffer(pg::gl::FRAMEBUFFER, 0);
             gl.Viewport(0, 0, w, h);
-            gl.ClearColor(0.1f, 0.1f, 0.11f, 1.0f);
+            gl.ClearColor(0.09f, 0.09f, 0.1f, 1.0f);
             gl.Clear(pg::gl::COLOR_BUFFER_BIT);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
+            if (!shot.empty() && !saveWindow(gl, w, h, shot)) {
+                std::fprintf(stderr, "pgshader: cannot write %s\n", shot.c_str());
+                status = 1;
+            }
+            if (scripted && script.done()) break;
             if (!screenshot.empty() && ++frame >= frames) {
-                std::vector<uint8_t> rgba(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
-                gl.PixelStorei(pg::gl::PACK_ALIGNMENT, 1);
-                gl.ReadPixels(0, 0, w, h, pg::gl::RGBA, pg::gl::UNSIGNED_BYTE, rgba.data());
-                std::vector<uint8_t> rgb(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
-                for (int y = 0; y < h; ++y) {  // GL rows go bottom up, PNG rows top down
-                    const uint8_t* src = &rgba[static_cast<size_t>(h - 1 - y) * static_cast<size_t>(w) * 4];
-                    uint8_t* dst = &rgb[static_cast<size_t>(y) * static_cast<size_t>(w) * 3];
-                    for (int x = 0; x < w; ++x) std::memcpy(dst + x * 3, src + x * 4, 3);
-                }
-                if (!pg::gl::writePng(screenshot, w, h, 3, rgb)) {
+                if (!saveWindow(gl, w, h, screenshot)) {
                     std::fprintf(stderr, "pgshader: cannot write %s\n", screenshot.c_str());
                     status = 1;
                 }
@@ -257,7 +423,6 @@ int runEditor(int argc, char** argv) {
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
-    ImNodes::DestroyContext();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();

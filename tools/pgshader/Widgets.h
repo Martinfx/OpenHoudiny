@@ -1,0 +1,118 @@
+#pragma once
+//
+// The pieces the editor's panels are made of, in the editor's look (Theme.h):
+// panel headers, splitters, sections, parameter rows and their widgets, the
+// timeline, a file browser.
+//
+#include "Theme.h"
+
+#include "imgui.h"
+
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace pg::editor::ui {
+
+// --- panels ----------------------------------------------------------------------------
+
+/// A panel's header strip across the current window: an icon, a title and,
+/// dim, some information. Buttons go into it from the right (headerButton).
+struct PanelHeader {
+    ImVec2 min, max;
+    float right = 0.0f;  ///< where the next button from the right ends
+};
+PanelHeader panelHeader(theme::Icon icon, const char* title, const char* info = nullptr);
+bool headerButton(PanelHeader& header, const char* id, theme::Icon icon, const char* tooltip, bool on = false,
+                  bool enabled = true);
+
+/// A bar between two panes, dragged to resize the one before it: `size`,
+/// kept within [min, max]. `vertical`: the bar is vertical (panes side by side).
+void splitter(const char* id, bool vertical, float& size, float min, float max, float length);
+
+// --- sections and rows -------------------------------------------------------------------
+
+/// A section of a parameter pane: a title the user folds and unfolds. True
+/// when open.
+bool section(const char* title, bool openByDefault = true);
+
+/// A row: the label in the left column -- brighter when the value differs
+/// from its default -- then the widget, as wide as the rest (SetNextItemWidth
+/// is set). `help` shows when the label is hovered.
+void rowLabel(const char* label, bool changed, const char* help);
+/// Width of the label column.
+float labelWidth();
+/// A small button at the right end of a row that puts the value back to its
+/// default. Call it before the widget, which then takes the rest of the width.
+bool resetButton(const char* id, bool visible);
+
+bool sliderFloat(const char* id, float& v, float min, float max, const char* format);
+bool sliderInt(const char* id, int& v, int min, int max);
+/// Three numbers side by side, x red, y green, z blue.
+bool dragVector(const char* id, float v[3], float speed, const char* format);
+bool colorEdit(const char* id, float v[3]);
+/// An on/off switch.
+bool toggle(const char* id, bool& v);
+/// A few choices as buttons side by side.
+bool segmented(const char* id, int& v, const std::vector<const char*>& labels);
+
+/// Text that wraps, dim: help under a header.
+void note(const char* text);
+
+// --- the timeline ------------------------------------------------------------------------
+
+struct TimelineState {
+    int frames = 150;      ///< the range is 1 .. frames
+    int current = 1;       ///< the play head
+    int cached = 0;        ///< frames 1 .. cached are ready to show
+    bool simulating = false;
+    bool playing = false;
+    bool loop = true;
+    float fps = 30.0f;
+};
+
+struct TimelineActions {
+    bool togglePlay = false;
+    bool toStart = false, toEnd = false, back = false, forward = false;
+    bool toggleLoop = false;
+    int scrubTo = 0;  ///< a frame the user put the play head on, 0 if none
+};
+
+TimelineActions timeline(const char* id, const TimelineState& s);
+
+// --- files ---------------------------------------------------------------------------------
+
+/// A dialog to pick a file to open or a name to save under: the folders and
+/// the files with the wanted extensions, a path to type, places to jump to.
+class FileBrowser {
+public:
+    /// `start` is a folder or a file in it. For saving, the file's name is
+    /// the suggestion.
+    void open(const std::string& title, std::vector<std::string> extensions, bool save, const std::string& start,
+              std::vector<std::pair<std::string, std::string>> places = {});
+    /// Draws the dialog while it is open. True, with the path in `chosen`,
+    /// once the user picked one.
+    bool draw(std::string& chosen);
+    bool isOpen() const { return open_ || requested_; }
+
+private:
+    void list();
+    bool wanted(const std::filesystem::path& p) const;
+
+    std::string title_;
+    std::vector<std::string> extensions_;
+    bool save_ = false;
+    bool open_ = false, requested_ = false;
+    std::filesystem::path dir_;
+    std::string name_, pathText_, error_;
+    std::vector<std::pair<std::string, std::string>> places_;
+    struct Entry {
+        std::string name;
+        bool folder = false;
+        uintmax_t size = 0;
+    };
+    std::vector<Entry> entries_;
+    int selected_ = -1;
+};
+
+}  // namespace pg::editor::ui

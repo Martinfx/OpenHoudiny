@@ -5,12 +5,13 @@ Graf uzlů, ze kterého vzniká zdrojový kód shaderu pro **OpenGL 3.3**, **Ope
 Je to síť vlastního typu vedle geometrie, podobně jako VOPy v Houdini, Shader
 Editor v Blenderu nebo Shader Graph v Unity.
 
-![Editor: graf, živý náhled, vygenerovaný kód a výsledek validace](img/editor.png)
+![Editor: síť Shaders, náhled, parametry vybraného uzlu Checker a vygenerovaný kód](img/editor.png)
 
 Všechno je jeden program, `pgshader`. Bez příkazu otevře editor, s příkazem
 (`list`, `gen`, `check`, `render`) pracuje v příkazové řádce, bez okna.
-Vedle editoru shaderů má pracovní plochu **Pyro**, simulaci kouře a ohně
-([pyro.md](pyro.md)).
+Editor má dvě sítě ve stejném rozložení, mezi kterými se přepíná uprostřed
+horní lišty: **Simulation**, kouř a oheň z uzlů ([pyro.md](pyro.md)), a
+**Shaders**, o které je tenhle dokument.
 
 Hlavní požadavek byl, aby šel systém **rozšiřovat bez zásahu do C++**:
 
@@ -42,7 +43,7 @@ Obsah:
 ```bash
 sudo apt install libglfw3-dev          # volitelné, jinak se GLFW postaví ze zdrojů
 cmake -S . -B build && cmake --build build
-./build/pgshader                                           # editor
+./build/pgshader --shaders                                 # editor na síti Shaders
 ./build/pgshader examples/shaders/marble.pgsg              # editor s grafem
 ./build/pgshader list                                      # uzly a cíle
 ./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
@@ -51,8 +52,8 @@ cmake -S . -B build && cmake --build build
 ./build/pgshader help                                      # všechny volby
 ```
 
-Výchozí build obsahuje editor. Při konfiguraci si stáhne Dear ImGui, imnodes
-a GLFW, pokud v systému není GLFW 3.3+. Build bez editoru nemá žádné
+Výchozí build obsahuje editor. Při konfiguraci si stáhne Dear ImGui a GLFW,
+pokud v systému není GLFW 3.3+. Build bez editoru nemá žádné
 závislosti, stejně jako zbytek projektu; `pgshader` pak umí jen příkazy:
 
 ```bash
@@ -61,8 +62,8 @@ cmake -S . -B build -DPG_BUILD_GUI=OFF     # servery, CI
 
 - Editor potřebuje OpenGL 3.3. Bez displeje řekne, že okno otevřít nejde, a
   nabídne příkazy.
-- Bez sítě nasměrujte `FETCHCONTENT_SOURCE_DIR_IMGUI`, `…_IMNODES` a
-  `…_GLFW` na lokální kopie.
+- Bez sítě nasměrujte `FETCHCONTENT_SOURCE_DIR_IMGUI` a `…_GLFW` na lokální
+  kopie.
 - GLFW ze zdrojů chce na Linuxu vývojové balíčky X11 (`libxrandr-dev
   libxinerama-dev libxcursor-dev libxi-dev`). Wayland se přidá, jen když je
   k dispozici `wayland-scanner`.
@@ -75,30 +76,38 @@ a graf, který ji používá.
 
 ## 2. Ovládání editoru
 
+Rozložení je stejné jako u simulace: vlevo nahoře **náhled** (Preview),
+pod ním **kód** a **problémy**, vpravo nahoře **parametry** vybraného uzlu,
+vpravo dole **síť**. Rozhraní mezi panely jdou táhnout.
+
 | Co | Jak |
 |---|---|
-| Přidat uzel | pravé tlačítko na plátně → psát (hledá v názvu i kategorii, Enter vezme první) nebo vybrat z kategorií |
+| Přidat uzel | **Tab** nebo pravé tlačítko do prázdna → psát (hledá v názvu i kategorii, Enter vezme první) nebo vybrat z kategorií |
 | Přidat uzel rovnou zapojený | táhnout z pinu do prázdna; nový uzel se napojí prvním vhodným portem |
-| Spojit | táhnout z výstupu na vstup; vstup má nejvýš jeden spoj, nový nahradí starý |
-| Odpojit | Ctrl + kliknout na konec spoje a odtáhnout |
-| Smazat | vybrat (klik, obdélník), Delete |
-| Posun plátna | prostřední tlačítko, nebo Alt + levé |
-| Zarámovat graf | F nebo Home (děje se i při otevření) |
-| Náhled | tažení otáčí, kolečko přibližuje; volba tělesa (billboard pro efekty), Animate, Reset view |
-| Uniformy | panel Uniforms mění hodnotu v běžícím shaderu, bez rekompilace |
+| Spojit | táhnout z výstupu na vstup; vstup má nejvýš jeden spoj, nový nahradí starý. Nad pinem, který nepasuje, tooltip řekne proč |
+| Přesunout nebo zrušit spoj | táhnout za připojený vstup, puštěný do prázdna zanikne; Ctrl+klik na spoj ho zruší |
+| Výběr | klik, rámeček, Shift přidává, Ctrl přepíná, Ctrl+A vše |
+| Smazat / duplikovat | Delete nebo X / Ctrl+D |
+| Posun, zoom | prostřední tlačítko nebo Alt + levé; kolečko zvětšuje kolem myši |
+| Zarámovat / uspořádat | F (výběr, jinak vše) / L: automatické rozložení do sloupců podle toku |
+| Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
+| Náhled | levé tažení otáčí, pravé a kolečko přibližují; v hlavičce těleso (billboard pro efekty), animace, výchozí kamera, PNG |
 | Kód | výběr cíle, záložky vertex/fragment, Copy |
-| Chyby | panel Problems; klik vybere uzel a posune na něj plátno |
-| Soubor | Ctrl+S, Ctrl+O, File → Export shaders… (všechny cíle naráz) |
-| Ověřit | Tools → Validate (F5): totéž co `pgshader check`, na pozadí; výsledek v panelu Problems |
-| Obrázek | File → Save preview image…: náhled jako PNG 1024 × 1024, totéž co `pgshader render` |
-| Knihovny | Library → Add library file…, Ctrl+R je znovu načte |
+| Chyby | tlačítko Problems v hlavičce kódu; klik na chybu vybere uzel a posune na něj plátno |
+| Soubor | Ctrl+S, Ctrl+O (dialog se složkami a soubory `.pgsg`), File → Export Shaders… (všechny cíle naráz) |
+| Ověřit | Tools → Validate (F5): totéž co `pgshader check`, na pozadí; výsledek v Problems |
+| Knihovny | Library → Add Library File…, Ctrl+R je znovu načte |
 
-- Nezapojený vstup má widget přímo v uzlu: číslo, vektor nebo barvu.
-- Vstup, který bez spoje čte globální hodnotu, ukazuje místo widgetu
-  `$normal`, `$uv` atd.
-- Spoj, který nesedí typem nebo by uzavřel smyčku, se odmítne a stavový řádek
-  řekne proč.
-- Uzel s chybou má červený rámeček.
+- Uzel na plátně ukazuje jen piny; hodnoty se upravují v panelu parametrů.
+  Nezapojený vstup má widget podle typu: číslo, vektor (osy barevně) nebo
+  barvu. Ikona ↺ vrátí výchozí hodnotu.
+- Zapojený vstup ukazuje, odkud vede (`← Checker.color`); klik přeskočí na
+  ten uzel.
+- Vstup, který bez spoje čte globální hodnotu, ukazuje `$normal`, `$uv` atd.
+  a tlačítko, kterým se mu dá nastavit vlastní hodnota.
+- Bez výběru ukazuje panel parametrů přehled grafu a **uniformy**: mění
+  hodnotu v běžícím shaderu, bez rekompilace.
+- Uzel s chybou má červený odznak; tooltip nad ním chybu vypíše.
 - Titulek okna ukazuje jméno souboru, hvězdička značí neuložené změny.
 
 ## 3. Jak to funguje
@@ -276,7 +285,7 @@ Vestavěný uzel `texture` to dělá právě kvůli HLSL.
 Oheň i kouř jsou obyčejné grafy z vestavěných uzlů, žádný zvláštní kód. Jsou to
 procedurální efekty: tvar i pohyb počítá shader na jedné ploše ze šumu a času.
 Nejde o simulaci proudění, jakou dělá Pyro v Houdini. Tu má jádro zvlášť:
-viz [pyro.md](pyro.md) a záložku Pyro v editoru.
+viz [pyro.md](pyro.md) a síť Simulation v editoru.
 
 ![Graf ohně v editoru; náhled sám přepnul na billboard](img/editor-fire.png)
 
@@ -478,26 +487,34 @@ v [tests/test_shader_graph.cpp](../tests/test_shader_graph.cpp). Jeho třída
 
 ### 7.4 Editor se staví z definic
 
-Editor ([tools/pgshader/Editor.cpp](../tools/pgshader/Editor.cpp))
+Síť Shaders v editoru ([tools/pgshader/ShaderWorkspace.cpp](../tools/pgshader/ShaderWorkspace.cpp))
 nezná žádný konkrétní uzel. Všechno bere z `NodeDef`:
 
-- menu tvoří kategorie a popisky;
+- menu tvoří kategorie a popisky, ikona a barva hlavičky podle kategorie;
 - barva pinu odpovídá typu;
-- widget závisí na typu a nápovědě `color`;
-- parametr typu `string` je textové pole a ověřuje se jako identifikátor;
+- widget v panelu parametrů závisí na typu a nápovědě `color`;
+- parametr typu `string` je textové pole a ověřuje se jako identifikátor,
+  výběrový parametr jsou tlačítka nebo rozbalovací seznam;
 - výchozí globál se ukáže jako `$normal`;
 - tooltip je `description`;
 - neznámá kategorie dostane neutrální barvu.
 
+Plátno uzlů ([NodeCanvas.h](../tools/pgshader/NodeCanvas.h)) je společné
+pro obě sítě: nezná ani shadery, ani simulaci. Každý snímek dostane uzly a
+spoje jako data (titulek, barvy, piny) a co uživatel udělá, vrátí přes
+rozhraní `CanvasModel` (spojit, přesunout, smazat, nabídka uzlů). Obě sítě
+tak mají stejné ovládání, zoom, výběr i rozložení (L).
+
 Je to možné díky Dear ImGui: immediate-mode GUI kreslí každý snímek celé UI
 znovu z dat, takže editor nemá žádný vlastní stav uzlů, který by musel držet
 v souladu s knihovnou. Po Ctrl+R je nový uzel v menu hned v příštím snímku.
+Undo a redo drží celé stavy grafu jako text (`ShaderGraph::save`).
 
 ## 8. Ověřování
 
 `ctest --test-dir build` spouští:
 
-- **pgtests**: 74 testů, z toho 24 pro shader graf;
+- **pgtests**: 105 testů, z toho 25 pro shader graf;
 - **pgshader_list**: příkazy fungují v každém buildu, s editorem i bez něj;
 - **shaders_compile**: každý příklad a každý výstup každého vestavěného uzlu
   v obou fázích (uzly s `any` i s vec3), pro 4 cíle. To je 116 grafů
@@ -510,8 +527,11 @@ Kromě testů:
 
 - `pgshader render` vykreslí náhled bez okna přes EGL; obrázky příkladů výše
   jsou z něj.
-- Editor umí `--screenshot OUT.png --frames N`. Pod `xvfb-run` se tak dá
-  vyzkoušet i na stroji bez displeje.
+- Editor umí `--screenshot OUT.png --frames N` a `--script SOUBOR`, který do
+  okna přehraje myš, klávesy a snímky obrazovky ze souboru (příkazy `click`,
+  `drag`, `key ctrl+z`, `type`, `wheel`, `shot`, `wait`). Pod `xvfb-run` se
+  tak dá vyzkoušet celé ovládání i na stroji bez displeje; obrázky editoru
+  v dokumentaci vznikly takhle.
 
 ## 9. Co je potřeba znát
 
@@ -559,8 +579,9 @@ Od nejlehčího:
    `impl hlsl`.
 5. Cíl WGSL pro WebGPU (`vec3<f32>`, `@vertex` a `@fragment`,
    `@group(0) @binding(0)`), jako třída podle §7.3.
-6. Undo/redo v editoru. Graf se umí uložit do textu, takže historie může být
-   seznam textů.
+6. Kopírovat a vložit uzly (Ctrl+C, Ctrl+V), i mezi dvěma okny. Graf se
+   umí uložit do textu, takže schránka může být text vybraných uzlů a spojů
+   mezi nimi.
 7. Náhled mezivýsledku: položka „preview this output“, která dočasně zapojí
    vybraný výstup do výstupního uzlu.
 
@@ -570,10 +591,9 @@ Všechna jsou vědomá:
 
 - Jeden výstupní uzel (barva + posun vrcholů), jedno směrové světlo, bez stínů.
 - Graf je DAG: bez větvení, cyklů a podgrafů.
-- imnodes neumí zoom, jen posun; F graf zarámuje.
 - Náhled běží jen přes GLSL 330. Ostatní cíle ověřuje překladač, ne vykreslení.
 - Textury v náhledu jsou testovací UV mřížka, načítání obrázků chybí.
-- Editor nemá undo/redo a při zavření se neptá na neuložené změny.
+- Editor se při zavření neptá na neuložené změny.
 - Metal ani WGSL zatím nejsou (viz cvičení).
 - Průhledné plochy se neřadí podle vzdálenosti. Na kouli s alfou se přední a
   zadní strana mohou překrýt v nesprávném pořadí; billboard je jedna plocha,
@@ -598,9 +618,10 @@ Všechna jsou vědomá:
 - [glslang](https://github.com/KhronosGroup/glslang) (`glslangValidator`) a
   [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools) (`spirv-val`):
   ověřování.
-- [Dear ImGui](https://github.com/ocornut/imgui),
-  [imnodes](https://github.com/Nelarius/imnodes), [GLFW](https://www.glfw.org):
-  editor.
+- [Dear ImGui](https://github.com/ocornut/imgui) a [GLFW](https://www.glfw.org):
+  editor. Plátno uzlů je vlastní (`NodeCanvas`), kreslené přes draw listy
+  Dear ImGui; písmo se při zoomu rasterizuje v potřebné velikosti (dynamické
+  fonty Dear ImGui 1.92), takže zůstává ostré.
 - Rozložení std140: specifikace OpenGL 4.6, oddíl 7.6.2.2 *Standard Uniform
   Block Layout*.
 
@@ -610,7 +631,9 @@ Všechna jsou vědomá:
 src/pg/shader/   Types, NodeLibrary + builtin.pgnodes, ShaderGraph, Target, Generator
 src/pg/gl/       Gl (vlastní loader), Preview (náhled), Png, HeadlessContext (EGL)
 tools/pgshader/              pgshader: main (bez příkazu editor, jinak příkaz),
-                             Commands (list, gen, check, render), App + Editor
+                             Commands (list, gen, check, render, sim), App + Editor
+                             (okno a rozložení), ShaderWorkspace a SimWorkspace (sítě),
+                             NodeCanvas (plátno uzlů), Theme + Widgets (vzhled)
 examples/shaders/            příklady, i fire a smoke; extra/ = uživatelská knihovna a graf
 tests/test_shader_graph.cpp  testy
 docs/shader-nodes.md         referenční přehled vestavěných uzlů (generovaný)
