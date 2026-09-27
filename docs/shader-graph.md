@@ -7,7 +7,7 @@ Editor v Blenderu nebo Shader Graph v Unity.
 
 ![Editor: síť Shaders, náhled, parametry vybraného uzlu Checker a vygenerovaný kód](img/editor.png)
 
-Všechno je jeden program, `pgshader`. Bez příkazu otevře editor, s příkazem
+Všechno je jeden program, `prototype`. Bez příkazu otevře editor, s příkazem
 (`list`, `gen`, `check`, `render`) pracuje v příkazové řádce, bez okna.
 Editor má dvě sítě ve stejném rozložení, mezi kterými se přepíná uprostřed
 horní lišty: **Simulation**, kouř a oheň z uzlů ([pyro.md](pyro.md)), a
@@ -43,18 +43,18 @@ Obsah:
 ```bash
 sudo apt install libglfw3-dev          # volitelné, jinak se GLFW postaví ze zdrojů
 cmake -S . -B build && cmake --build build
-./build/pgshader --shaders                                 # editor na síti Shaders
-./build/pgshader examples/shaders/marble.pgsg              # editor s grafem
-./build/pgshader list                                      # uzly a cíle
-./build/pgshader gen examples/shaders/marble.pgsg --target all -o out/
-./build/pgshader check examples/shaders/*.pgsg --nodes     # překlad glslangValidatorem
-./build/pgshader render examples/shaders/marble.pgsg marble.png   # bez okna, přes EGL
-./build/pgshader help                                      # všechny volby
+./build/prototype --shaders                                 # editor na síti Shaders
+./build/prototype examples/shaders/marble.pgsg              # editor s grafem
+./build/prototype list                                      # uzly a cíle
+./build/prototype gen examples/shaders/marble.pgsg --target all -o out/
+./build/prototype check examples/shaders/*.pgsg --nodes     # překlad glslangValidatorem
+./build/prototype render examples/shaders/marble.pgsg marble.png   # bez okna, přes EGL
+./build/prototype help                                      # všechny volby
 ```
 
 Výchozí build obsahuje editor. Při konfiguraci si stáhne Dear ImGui a GLFW,
 pokud v systému není GLFW 3.3+. Build bez editoru nemá žádné
-závislosti, stejně jako zbytek projektu; `pgshader` pak umí jen příkazy:
+závislosti, stejně jako zbytek projektu; `prototype` pak umí jen příkazy:
 
 ```bash
 cmake -S . -B build -DPG_BUILD_GUI=OFF     # servery, CI
@@ -72,7 +72,7 @@ Příklady jsou v [`examples/shaders/`](../examples/shaders/). Podsložka
 [`extra/`](../examples/shaders/extra/) obsahuje ukázkovou uživatelskou knihovnu
 a graf, který ji používá.
 
-![Příklady: unlit, checker_lit, textured, rim_light, marble, wobble, fire, smoke, toon (uživatelská knihovna), textured na toru](img/pgshader-examples.png)
+![Příklady: unlit, checker_lit, textured, rim_light, marble, wobble, fire, smoke, toon (uživatelská knihovna), textured na toru](img/prototype-examples.png)
 
 ## 2. Ovládání editoru
 
@@ -95,7 +95,7 @@ vpravo dole **síť**. Rozhraní mezi panely jdou táhnout.
 | Kód | výběr cíle, záložky vertex/fragment, Copy |
 | Chyby | tlačítko Problems v hlavičce kódu; klik na chybu vybere uzel a posune na něj plátno |
 | Soubor | Ctrl+S, Ctrl+O (dialog se složkami a soubory `.pgsg`), File → Export Shaders… (všechny cíle naráz) |
-| Ověřit | Tools → Validate (F5): totéž co `pgshader check`, na pozadí; výsledek v Problems |
+| Ověřit | Tools → Validate (F5): totéž co `prototype check`, na pozadí; výsledek v Problems |
 | Knihovny | Library → Add Library File…, Ctrl+R je znovu načte |
 
 - Uzel na plátně ukazuje jen piny; hodnoty se upravují v panelu parametrů.
@@ -222,7 +222,7 @@ Převody se řeší jednou pro všechny cíle ve třídě `Target` (`convert`,
 ## 5. Cíle a čím se liší
 
 ```
-$ pgshader list
+$ prototype list
 targets
   glsl330    OpenGL 3.3 core (GLSL 330)
   gles300    OpenGL ES 3.0 / WebGL 2 (GLSL ES 300)
@@ -327,7 +327,7 @@ nastaví sám.
 Efekty se kreslí na **billboard**: svislý čtverec, který se natáčí ke kameře
 jen kolem svislé osy, aby plamen mířil vzhůru. UV jdou zleva doprava a zdola
 nahoru. Editor ho vybere sám, když otevřete graf, který prolíná; totéž dělá
-`pgshader render`.
+`prototype render`.
 
 ### Uzly pro efekty
 
@@ -428,7 +428,7 @@ node wrap
 i vertex fázi a pro každý cíl; u uzlů s `any` navíc i s vektorovými hodnotami:
 
 ```bash
-./build/pgshader check --library moje.pgnodes --nodes-from moje.pgnodes
+./build/prototype check --library moje.pgnodes --nodes-from moje.pgnodes
 ```
 
 ### 7.2 Knihovny za běhu
@@ -476,7 +476,7 @@ TargetRegistry::instance().add(std::make_unique<MetalTarget>());
 
 Od té chvíle cíl funguje všude:
 
-- `pgshader gen --target metal`;
+- `prototype gen --target metal`;
 - výběr cíle v editoru a File → Export shaders;
 - každý uzel každé knihovny, pokud `translate()` pokryje jména; kde ne,
   pomůže `impl metal …` v definici uzlu.
@@ -487,7 +487,7 @@ v [tests/test_shader_graph.cpp](../tests/test_shader_graph.cpp). Jeho třída
 
 ### 7.4 Editor se staví z definic
 
-Síť Shaders v editoru ([tools/pgshader/ShaderWorkspace.cpp](../tools/pgshader/ShaderWorkspace.cpp))
+Síť Shaders v editoru ([tools/prototype/ShaderWorkspace.cpp](../tools/prototype/ShaderWorkspace.cpp))
 nezná žádný konkrétní uzel. Všechno bere z `NodeDef`:
 
 - menu tvoří kategorie a popisky, ikona a barva hlavičky podle kategorie;
@@ -499,7 +499,7 @@ nezná žádný konkrétní uzel. Všechno bere z `NodeDef`:
 - tooltip je `description`;
 - neznámá kategorie dostane neutrální barvu.
 
-Plátno uzlů ([NodeCanvas.h](../tools/pgshader/NodeCanvas.h)) je společné
+Plátno uzlů ([NodeCanvas.h](../tools/prototype/NodeCanvas.h)) je společné
 pro obě sítě: nezná ani shadery, ani simulaci. Každý snímek dostane uzly a
 spoje jako data (titulek, barvy, piny) a co uživatel udělá, vrátí přes
 rozhraní `CanvasModel` (spojit, přesunout, smazat, nabídka uzlů). Obě sítě
@@ -515,7 +515,7 @@ Undo a redo drží celé stavy grafu jako text (`ShaderGraph::save`).
 `ctest --test-dir build` spouští:
 
 - **pgtests**: 133 testů, z toho 25 pro shader graf;
-- **pgshader_list**: příkazy fungují v každém buildu, s editorem i bez něj;
+- **prototype_list**: příkazy fungují v každém buildu, s editorem i bez něj;
 - **shaders_compile**: každý příklad a každý výstup každého vestavěného uzlu
   v obou fázích (uzly s `any` i s vec3), pro 4 cíle. To je 116 grafů
   a 928 běhů `glslangValidator`. SPIR-V navíc projde `spirv-val` a HLSL se
@@ -525,7 +525,7 @@ Undo a redo drží celé stavy grafu jako text (`ShaderGraph::save`).
 
 Kromě testů:
 
-- `pgshader render` vykreslí náhled bez okna přes EGL; obrázky příkladů výše
+- `prototype render` vykreslí náhled bez okna přes EGL; obrázky příkladů výše
   jsou z něj.
 - Editor umí `--screenshot OUT.png --frames N` a `--script SOUBOR`, který do
   okna přehraje myš, klávesy a snímky obrazovky ze souboru (příkazy `click`,
@@ -569,7 +569,7 @@ Od nejlehčího:
 
 1. Do vlastní knihovny přidejte uzel `posterize` (hodnota zaokrouhlená na
    několik úrovní, `floor(x * n) / n`) a ověřte ho přes
-   `pgshader check --nodes-from`.
+   `prototype check --nodes-from`.
 2. Jiskry k ohni: malé světlé body, které stoupají a hasnou. Náhodné číslo
    pro každou buňku mřížky (jako `pg_hash`), `fract` z času posunutého o
    to číslo a výsledek přičtený k ohni v režimu `additive`.
@@ -630,7 +630,7 @@ Všechna jsou vědomá:
 ```
 src/pg/shader/   Types, NodeLibrary + builtin.pgnodes, ShaderGraph, Target, Generator
 src/pg/gl/       Gl (vlastní loader), Preview (náhled), Png, HeadlessContext (EGL)
-tools/pgshader/              pgshader: main (bez příkazu editor, jinak příkaz),
+tools/prototype/              prototype: main (bez příkazu editor, jinak příkaz),
                              Commands (list, gen, check, render, sim), App + Editor
                              (okno a rozložení), ShaderWorkspace a SimWorkspace (sítě),
                              NodeCanvas (plátno uzlů), Theme + Widgets (vzhled)

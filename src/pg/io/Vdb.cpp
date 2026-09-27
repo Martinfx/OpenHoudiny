@@ -259,7 +259,7 @@ std::string formatVdb(const std::vector<Volume>& volumes) {
     out.raw(uuidOf(volumes));
     // File metadata.
     out.u32(1);
-    metadata(out, "creator", "string", "pgshader");
+    metadata(out, "creator", "string", "prototype");
     out.i32(static_cast<int32_t>(volumes.size()));
     std::set<std::string> names;
     for (const Volume& v : volumes) {

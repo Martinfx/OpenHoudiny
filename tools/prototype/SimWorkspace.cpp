@@ -481,7 +481,7 @@ void SimWorkspace::update(float dt) {
         viewDirty_ = true;
         setMessage(result, failed);
         notify(result, failed ? std::string() : where, failed, true);
-        std::fprintf(stderr, "pgshader: %s\n", result.c_str());
+        std::fprintf(stderr, "prototype: %s\n", result.c_str());
     }
 }
 
@@ -1429,7 +1429,7 @@ void SimWorkspace::menus() {
             fileAction_ = FileAction::SaveCache;
         }
         ImGui::SetItemTooltip("The frames simulated, a file each: to play, render and export again without simulating "
-                              "-- here, or with pgshader sim --from-cache.");
+                              "-- here, or with prototype sim --from-cache.");
         if (ImGui::MenuItem("Load Cache from Disk\xe2\x80\xa6", nullptr, false, compiled_.ok)) {
             files_.openFolder("Load a cache: its folder", false,
                               cacheFolder_.empty() ? (fs::path(outputFolder()) / (stem() + "_cache")).string() : cacheFolder_);
@@ -1492,11 +1492,11 @@ void SimWorkspace::helpMenu() {
     ImGui::TextUnformatted("Space  Home  End  Left  Right");
     ImGui::Separator();
     ImGui::TextDisabled("The same from the command line:");
-    ImGui::TextUnformatted("  pgshader sim campfire fire.png --every 10");
-    ImGui::TextUnformatted("  pgshader sim campfire fire.mp4            (every frame, a video)");
-    ImGui::TextUnformatted("  pgshader sim my.pgsim out.png --set fire.fuel=20");
-    ImGui::TextUnformatted("  pgshader sim my.pgsim - --cache my_cache");
-    ImGui::TextUnformatted("  pgshader sim campfire_vdb - --export-node volumes --export 'fire.$F4.vdb'");
+    ImGui::TextUnformatted("  prototype sim campfire fire.png --every 10");
+    ImGui::TextUnformatted("  prototype sim campfire fire.mp4            (every frame, a video)");
+    ImGui::TextUnformatted("  prototype sim my.pgsim out.png --set fire.fuel=20");
+    ImGui::TextUnformatted("  prototype sim my.pgsim - --cache my_cache");
+    ImGui::TextUnformatted("  prototype sim campfire_vdb - --export-node volumes --export 'fire.$F4.vdb'");
 }
 
 void SimWorkspace::popups() {
@@ -1631,7 +1631,7 @@ bool SimWorkspace::renderImage(const std::string& path) {
         const std::string error = path + ": cannot write it (" + std::strerror(errno) + ")";
         setMessage(error, true);
         notify(error, "", true);
-        std::fprintf(stderr, "pgshader: %s\n", error.c_str());
+        std::fprintf(stderr, "prototype: %s\n", error.c_str());
         return false;
     }
     renderFolder_ = parent.string();
@@ -1639,7 +1639,7 @@ bool SimWorkspace::renderImage(const std::string& path) {
                              std::to_string(height) + ")" + glError;
     setMessage(done, !glError.empty());
     notify(done, path, false);
-    std::fprintf(stderr, "pgshader: rendered %s (%d x %d)%s\n", path.c_str(), width, height, glError.c_str());
+    std::fprintf(stderr, "prototype: rendered %s (%d x %d)%s\n", path.c_str(), width, height, glError.c_str());
     return true;
 }
 

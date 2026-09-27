@@ -195,7 +195,7 @@ std::string formatPly(const Geometry& geo) {
         if (geo.primitiveClosed(p) && geo.primitiveVertexCount(p) >= 3 && geo.primitiveVertexCount(p) <= 255) faces.push_back(p);
     }
     std::ostringstream header;
-    header << "ply\nformat binary_little_endian 1.0\ncomment written by pgshader\n";
+    header << "ply\nformat binary_little_endian 1.0\ncomment written by prototype\n";
     header << "element vertex " << geo.pointCount() << "\n";
     for (const Column& c : columns) {
         header << "property " << (c.colorByte ? "uchar" : c.integer ? "int" : "float") << ' ' << c.name << "\n";

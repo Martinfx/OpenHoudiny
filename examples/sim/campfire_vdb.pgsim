@@ -2,7 +2,7 @@ pgsim 1
 # The campfire, out to OpenVDB -- for Houdini, Blender, the renderers. Gas
 # Volume brings the gas back as three volumes: density (smoke), temperature
 # and flame. A file a frame:
-#   pgshader sim campfire_vdb - --export-node volumes --export 'out/fire.$F4.vdb'
+#   prototype sim campfire_vdb - --export-node volumes --export 'out/fire.$F4.vdb'
 # In the editor: a right click on volumes, Export Geometry Frames. Simulated
 # once to disk (--cache DIR; Simulation > Save Cache to Disk), the frames are
 # rendered and exported again without simulating (--from-cache DIR).

@@ -3,8 +3,8 @@
 // An OpenGL context to render pictures with, nothing shown: EGL without a
 // window where the build has EGL (Mesa's surfaceless platform, a GPU device,
 // the default display); else -- or when EGL gives none -- a hidden window of
-// GLFW's, in the builds with the editor. What `pgshader render` and
-// `pgshader sim` draw with.
+// GLFW's, in the builds with the editor. What `prototype render` and
+// `prototype sim` draw with.
 //
 #include "pg/gl/Gl.h"
 

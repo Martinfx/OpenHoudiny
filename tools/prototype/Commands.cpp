@@ -1,20 +1,20 @@
 //
-// The commands of pgshader, for the command line and for scripts: headless,
-// like the rest of the core. See Commands.h; without a command pgshader opens
+// The commands of prototype, for the command line and for scripts: headless,
+// like the rest of the core. See Commands.h; without a command prototype opens
 // the editor (main.cpp).
 //
-//   pgshader list   [--markdown] [--library FILE]...
-//   pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...
-//   pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]
-//                   [--spirv-val PATH] [--library FILE]...
-//   pgshader render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]
-//                   [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]
-//                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
-//                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
-//                   [--export PATH] [--export-node NODE]
-//   pgshader sim --list
-//   pgshader pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
+//   prototype list   [--markdown] [--library FILE]...
+//   prototype gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...
+//   prototype check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]
+//                    [--spirv-val PATH] [--library FILE]...
+//   prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]
+//                    [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...
+//   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]
+//                    [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
+//                    [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
+//                    [--export PATH] [--export-node NODE]
+//   prototype sim --list
+//   prototype pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
 //
 // `check` is the proof that the generated code is valid: it compiles every
 // graph -- and with --nodes every output of every node in the library, in the
@@ -221,7 +221,7 @@ void printErrors(const std::string& what, const ShaderGraph& g, const NodeLibrar
 std::vector<const Target*> selectedTargets(const Options& o) {
     if (o.target == "all") return TargetRegistry::instance().all();
     if (const Target* t = TargetRegistry::instance().find(o.target)) return {t};
-    std::fprintf(stderr, "unknown target '%s'; try 'pgshader list'\n", o.target.c_str());
+    std::fprintf(stderr, "unknown target '%s'; try 'prototype list'\n", o.target.c_str());
     return {};
 }
 
@@ -401,7 +401,7 @@ int check(const Options& o, const NodeLibrary& lib) {
     if (o.nodes) {
         auto ng = nodeGraphs(lib, o.nodesFrom);
         if (ng.empty() && !o.nodesFrom.empty()) {
-            std::fprintf(stderr, "pgshader: no nodes from '%s' -- load it with --library, spelled the same\n",
+            std::fprintf(stderr, "prototype: no nodes from '%s' -- load it with --library, spelled the same\n",
                          o.nodesFrom.c_str());
             return 1;
         }
@@ -410,7 +410,7 @@ int check(const Options& o, const NodeLibrary& lib) {
     if (graphs.empty()) return usage();
     for (const std::string& tool : {o.glslang, o.spirvVal}) {
         if (!tool.empty() && !toolAvailable(tool)) {
-            std::fprintf(stderr, "pgshader: cannot run '%s' -- is it installed (glslang-tools, spirv-tools)?\n",
+            std::fprintf(stderr, "prototype: cannot run '%s' -- is it installed (glslang-tools, spirv-tools)?\n",
                          tool.c_str());
             return 1;
         }
@@ -507,7 +507,7 @@ int render(const Options& o, const NodeLibrary& lib) {
     return 0;
 #else
     (void)lib;
-    std::fprintf(stderr, "render: this pgshader was built without EGL and without the editor: it draws no picture\n");
+    std::fprintf(stderr, "render: this prototype was built without EGL and without the editor: it draws no picture\n");
     return 1;
 #endif
 }
@@ -730,7 +730,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
 #else
     if (pictures) {
-        std::fprintf(stderr, "%s: this pgshader was built without EGL and without the editor: it draws no picture -- "
+        std::fprintf(stderr, "%s: this prototype was built without EGL and without the editor: it draws no picture -- "
                              "'-' in place of OUT.png simulates, caches and exports all the same\n", cmd);
         return 1;
     }
@@ -961,37 +961,37 @@ void printUsage(std::FILE* out) {
     std::fprintf(out,
                  "usage:\n"
 #ifdef PG_HAVE_GUI
-                 "  pgshader [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]\n"
-                 "           [--library FILE]... [--target NAME] [--mesh NAME] [--size WxH]\n"
-                 "           [--screenshot OUT.png [--frames N]] [--script FILE]\n"
-                 "                  the node editor -- what runs without a command: an empty scene,\n"
-                 "                  an example with --example, shaders with --shaders\n"
+                 "  prototype [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]\n"
+                 "            [--library FILE]... [--target NAME] [--mesh NAME] [--size WxH]\n"
+                 "            [--screenshot OUT.png [--frames N]] [--script FILE]\n"
+                 "                   the node editor -- what runs without a command: an empty scene,\n"
+                 "                   an example with --example, shaders with --shaders\n"
 #else
-                 "  pgshader [NETWORK.pgsim | GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
+                 "  prototype [NETWORK.pgsim | GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
 #endif
-                 "  pgshader list   [--markdown] [--library FILE]...\n"
-                 "  pgshader gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"
-                 "  pgshader check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]\n"
-                 "                  [--spirv-val PATH] [--library FILE]...\n"
-                 "  pgshader render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
-                 "                  [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
-                 "                  a video: --frames of the preview animated, 30 a second (90)\n"
-                 "  pgshader sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]\n"
-                 "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
-                 "                  [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
-                 "                  [--export PATH] [--export-node NODE]\n"
-                 "                  simulates a network of nodes and renders its last frame; --every K renders\n"
-                 "                  frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
-                 "                  a video gets every frame (every K-th): .avi always, .mp4 .mov .mkv .webm .gif\n"
-                 "                  when ffmpeg is installed;\n"
-                 "                  through the network's camera at its size, unless --yaw, --pitch or --distance\n"
-                 "                  ask for a view round the scene. --cache writes every frame to DIR;\n"
-                 "                  --from-cache reads them from there instead of simulating; --export writes\n"
-                 "                  the displayed geometry of every frame, PATH with $F4 for the frame:\n"
-                 "                  .ply points, .obj polygons, .vdb volumes. '-' for OUT.png: no pictures\n"
-                 "  pgshader sim --list    the examples it carries: campfire, smoke, ...\n"
-                 "  pgshader pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
-                 "  pgshader help\n");
+                 "  prototype list   [--markdown] [--library FILE]...\n"
+                 "  prototype gen    GRAPH.pgsg... [--target NAME|all] [-o DIR] [--library FILE]...\n"
+                 "  prototype check  [GRAPH.pgsg...] [--nodes | --nodes-from FILE] [--glslang PATH]\n"
+                 "                   [--spirv-val PATH] [--library FILE]...\n"
+                 "  prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]\n"
+                 "                   [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
+                 "                   a video: --frames of the preview animated, 30 a second (90)\n"
+                 "  prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] [--resolution 16..256]\n"
+                 "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
+                 "                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
+                 "                   [--export PATH] [--export-node NODE]\n"
+                 "                   simulates a network of nodes and renders its last frame; --every K renders\n"
+                 "                   frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
+                 "                   a video gets every frame (every K-th): .avi always, .mp4 .mov .mkv .webm .gif\n"
+                 "                   when ffmpeg is installed;\n"
+                 "                   through the network's camera at its size, unless --yaw, --pitch or --distance\n"
+                 "                   ask for a view round the scene. --cache writes every frame to DIR;\n"
+                 "                   --from-cache reads them from there instead of simulating; --export writes\n"
+                 "                   the displayed geometry of every frame, PATH with $F4 for the frame:\n"
+                 "                   .ply points, .obj polygons, .vdb volumes. '-' for OUT.png: no pictures\n"
+                 "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"
+                 "  prototype pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
+                 "  prototype help\n");
 }
 
 bool toolAvailable(const std::string& tool) {
@@ -1017,7 +1017,7 @@ CheckReport checkGraphs(const std::vector<std::pair<std::string, ShaderGraph>>& 
     r.targets = TargetRegistry::instance().all().size();
     // A directory of its own: checks may run side by side (CTest -j, the editor).
     const fs::path root =
-        fs::temp_directory_path() / ("pgshader-check-" + std::to_string(std::random_device{}()) + "-" +
+        fs::temp_directory_path() / ("prototype-check-" + std::to_string(std::random_device{}()) + "-" +
                                      std::to_string(std::random_device{}()));
     std::vector<Job> jobs;
     for (const auto& [name, g] : graphs) {

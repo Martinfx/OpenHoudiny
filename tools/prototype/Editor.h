@@ -1,6 +1,6 @@
 #pragma once
 //
-// The editor -- what pgshader opens when it is given no command: one window,
+// The editor -- what prototype opens when it is given no command: one window,
 // two networks in the same layout (Workspace.h). Simulation, the default:
 // smoke and fire from nodes (SimWorkspace.h). Shaders: shader graphs for
 // OpenGL, Vulkan and the rest (ShaderWorkspace.h).
@@ -35,7 +35,7 @@ public:
     void frame(float dt);
 
     bool quitRequested() const { return quit_; }
-    /// "campfire.pgsim * -- Simulation -- pgshader"
+    /// "campfire.pgsim * -- Simulation -- prototype"
     std::string title() const;
 
 private:

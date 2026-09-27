@@ -1,7 +1,7 @@
 #pragma once
 //
-// The commands of pgshader: list, gen, check, render, sim (and pyro, sim with
-// an example). Without a command, pgshader opens the editor instead
+// The commands of prototype: list, gen, check, render, sim (and pyro, sim with
+// an example). Without a command, prototype opens the editor instead
 // (main.cpp); the editor calls checkGraphs() for its Validate action, so both
 // check a graph the same way.
 //
@@ -16,9 +16,9 @@ namespace pg::cli {
 
 /// list, gen, check, render, sim, pyro.
 bool isCommand(const std::string& word);
-/// Runs `pgshader <command> ...`; argv[1] is the command.
+/// Runs `prototype <command> ...`; argv[1] is the command.
 int runCommand(int argc, char** argv);
-/// How to use pgshader: the editor and the commands.
+/// How to use prototype: the editor and the commands.
 void printUsage(std::FILE* out);
 
 /// The compilers `check` runs.

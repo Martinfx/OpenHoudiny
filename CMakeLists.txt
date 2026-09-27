@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(pgcore LANGUAGES CXX)
+project(prototype LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
-# Prototype of the procedural-geometry core.
+# Prototype: procedural geometry, simulations and shaders, built from nodes.
 #
 # The core is deliberately dependency-free: C++20 and the standard library.
-# The default build adds the shader editor to pgshader, which fetches Dear
+# The default build adds the editor to the `prototype` program, which fetches Dear
 # ImGui and (unless the system has it) GLFW; with -DPG_BUILD_GUI=OFF
 # `cmake -B build && cmake --build build && ctest --test-dir build` works on a
 # bare machine. Production targets (TBB, OpenVDB, USD, LLVM) are listed in
@@ -117,7 +117,7 @@ endif()
 # loops run on the core's deterministic pg::parallelFor.
 
 # The example networks (examples/sim/*.pgsim) are compiled in the same way as
-# the built-in shader nodes: `pgshader pyro fire` needs no file next to it.
+# the built-in shader nodes: `prototype pyro fire` needs no file next to it.
 file(GLOB PG_SIM_EXAMPLES ${CMAKE_CURRENT_SOURCE_DIR}/examples/sim/*.pgsim)
 list(SORT PG_SIM_EXAMPLES)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -181,8 +181,8 @@ else()
 endif()
 
 # The renderers: OpenGL through function pointers the caller loads, so they
-# link against nothing. The shader preview (the editor, `pgshader render`) and
-# the volume renderer of the simulation (the editor, `pgshader pyro`).
+# link against nothing. The shader preview (the editor, `prototype render`) and
+# the volume renderer of the simulation (the editor, `prototype pyro`).
 add_library(pgpreview
   src/pg/gl/Camera.cpp
   src/pg/gl/Gl.cpp
@@ -192,7 +192,7 @@ add_library(pgpreview
 )
 target_link_libraries(pgpreview PUBLIC pgshadergraph pgsim)
 
-# --- pgshader --------------------------------------------------------------
+# --- prototype --------------------------------------------------------------
 #
 # One program for the node editor -- what runs when it is given no command --
 # and for the same work from the command line: list, gen, check, render.
@@ -203,29 +203,29 @@ target_link_libraries(pgpreview PUBLIC pgshadergraph pgsim)
 # PG_BUILD_GUI=OFF leaves the editor out: the commands alone, no dependencies
 # -- for servers and CI.
 
-option(PG_BUILD_GUI "Build the editor into pgshader (fetches Dear ImGui and GLFW)" ON)
+option(PG_BUILD_GUI "Build the editor into prototype (fetches Dear ImGui and GLFW)" ON)
 
-set(PG_TOOL_SOURCES tools/pgshader/main.cpp tools/pgshader/Commands.cpp tools/pgshader/Offscreen.cpp)
+set(PG_TOOL_SOURCES tools/prototype/main.cpp tools/prototype/Commands.cpp tools/prototype/Offscreen.cpp)
 if(PG_BUILD_GUI)
   list(APPEND PG_TOOL_SOURCES
-    tools/pgshader/App.cpp
-    tools/pgshader/Editor.cpp
-    tools/pgshader/Gizmo.cpp
-    tools/pgshader/NodeCanvas.cpp
-    tools/pgshader/RenderJob.cpp
-    tools/pgshader/ShaderWorkspace.cpp
-    tools/pgshader/SimGeometry.cpp
-    tools/pgshader/SimRunner.cpp
-    tools/pgshader/SimViewport.cpp
-    tools/pgshader/SimWorkspace.cpp
-    tools/pgshader/Theme.cpp
-    tools/pgshader/Widgets.cpp)
+    tools/prototype/App.cpp
+    tools/prototype/Editor.cpp
+    tools/prototype/Gizmo.cpp
+    tools/prototype/NodeCanvas.cpp
+    tools/prototype/RenderJob.cpp
+    tools/prototype/ShaderWorkspace.cpp
+    tools/prototype/SimGeometry.cpp
+    tools/prototype/SimRunner.cpp
+    tools/prototype/SimViewport.cpp
+    tools/prototype/SimWorkspace.cpp
+    tools/prototype/Theme.cpp
+    tools/prototype/Widgets.cpp)
 endif()
-add_executable(pgshader ${PG_TOOL_SOURCES})
-target_include_directories(pgshader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/pgshader)
+add_executable(prototype ${PG_TOOL_SOURCES})
+target_include_directories(prototype PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/prototype)
 # Where the examples built into the program read their files (meshes) from.
-target_compile_definitions(pgshader PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
-target_link_libraries(pgshader PRIVATE pgshadergraph pgsim Threads::Threads)
+target_compile_definitions(prototype PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
+target_link_libraries(prototype PRIVATE pgshadergraph pgsim Threads::Threads)
 # Warnings for our own sources only; the fetched libraries compile as they are.
 if(MSVC)
   set_source_files_properties(${PG_TOOL_SOURCES} PROPERTIES COMPILE_OPTIONS "/W4")
@@ -233,21 +233,21 @@ else()
   set_source_files_properties(${PG_TOOL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wpedantic")
 endif()
 
-# `pgshader render` and `sim` draw without a window through EGL when it exists
+# `prototype render` and `sim` draw without a window through EGL when it exists
 # -- and through a hidden GLFW window in the builds with the editor (Offscreen.h).
 find_path(PG_EGL_INCLUDE_DIR EGL/egl.h)
 find_library(PG_EGL_LIBRARY EGL)
 if(PG_EGL_INCLUDE_DIR AND PG_EGL_LIBRARY)
-  target_sources(pgshader PRIVATE src/pg/gl/HeadlessContext.cpp)
-  target_include_directories(pgshader PRIVATE ${PG_EGL_INCLUDE_DIR})
-  target_link_libraries(pgshader PRIVATE pgpreview ${PG_EGL_LIBRARY})
-  target_compile_definitions(pgshader PRIVATE PG_HAVE_EGL)
+  target_sources(prototype PRIVATE src/pg/gl/HeadlessContext.cpp)
+  target_include_directories(prototype PRIVATE ${PG_EGL_INCLUDE_DIR})
+  target_link_libraries(prototype PRIVATE pgpreview ${PG_EGL_LIBRARY})
+  target_compile_definitions(prototype PRIVATE PG_HAVE_EGL)
 endif()
 
 if(PG_BUILD_GUI)
   include(FetchContent)
   # Not added as a CMake subproject -- imgui has no CMakeLists.txt -- so
-  # SOURCE_SUBDIR points nowhere and its sources are compiled into pgshader
+  # SOURCE_SUBDIR points nowhere and its sources are compiled into prototype
   # below.
   FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -275,7 +275,7 @@ if(PG_BUILD_GUI)
     FetchContent_MakeAvailable(glfw)
   endif()
 
-  target_sources(pgshader PRIVATE
+  target_sources(prototype PRIVATE
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -288,14 +288,14 @@ if(PG_BUILD_GUI)
   # Dear ImGui installed on the system must not shadow the one fetched here.
   # FreeBSD's ports put theirs in /usr/local/include, next to the EGL headers
   # added above; a different 1.92.x compiles, then crashes at run time.
-  target_include_directories(pgshader BEFORE PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+  target_include_directories(prototype BEFORE PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
   # The fetched version, which App.cpp checks the imgui.h it sees against.
   file(STRINGS ${imgui_SOURCE_DIR}/imgui.h PG_IMGUI_VERSION_LINE REGEX "^#define IMGUI_VERSION_NUM")
   string(REGEX MATCH "[0-9]+" PG_IMGUI_VERSION_NUM "${PG_IMGUI_VERSION_LINE}")
-  target_compile_definitions(pgshader PRIVATE PG_HAVE_GUI PG_IMGUI_VERSION_NUM=${PG_IMGUI_VERSION_NUM}
+  target_compile_definitions(prototype PRIVATE PG_HAVE_GUI PG_IMGUI_VERSION_NUM=${PG_IMGUI_VERSION_NUM}
     PG_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders")
   # The OpenGL backend finds its functions at run time, like pg::gl::Api.
-  target_link_libraries(pgshader PRIVATE pgpreview glfw ${CMAKE_DL_LIBS})
+  target_link_libraries(prototype PRIVATE pgpreview glfw ${CMAKE_DL_LIBS})
 endif()
 
 # --- tests -----------------------------------------------------------------
@@ -325,7 +325,7 @@ target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
 add_test(NAME pgtests COMMAND pgtests)
 # The commands work in every build, with or without the editor.
-add_test(NAME pgshader_list COMMAND pgshader list)
+add_test(NAME prototype_list COMMAND prototype list)
 
 # Compiles every example graph, and every output of every library node in both
 # stages, for every target with glslangValidator; SPIR-V goes through spirv-val.
@@ -338,13 +338,13 @@ if(GLSLANG_VALIDATOR)
     set(PG_SPIRV_VAL_ARGS --spirv-val ${SPIRV_VAL})
   endif()
   add_test(NAME shaders_compile
-           COMMAND pgshader check --nodes --glslang ${GLSLANG_VALIDATOR} ${PG_SPIRV_VAL_ARGS}
+           COMMAND prototype check --nodes --glslang ${GLSLANG_VALIDATOR} ${PG_SPIRV_VAL_ARGS}
                    ${PG_SHADER_EXAMPLES})
   # The example user library, loaded at run time like any user's: each of its
   # nodes, and the graph that uses them.
   set(PG_USER_LIBRARY ${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/extra/stylized.pgnodes)
   add_test(NAME shaders_compile_user_library
-           COMMAND pgshader check --library ${PG_USER_LIBRARY} --nodes-from ${PG_USER_LIBRARY}
+           COMMAND prototype check --library ${PG_USER_LIBRARY} --nodes-from ${PG_USER_LIBRARY}
                    --glslang ${GLSLANG_VALIDATOR} ${PG_SPIRV_VAL_ARGS}
                    ${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/extra/toon.pgsg)
 endif()

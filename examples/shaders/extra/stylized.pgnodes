@@ -1,8 +1,8 @@
 # A user node library -- loaded at run time: no C++, no rebuild.
 #
-#   pgshader --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
-#   pgshader gen --library examples/shaders/extra/stylized.pgnodes --target all examples/shaders/extra/toon.pgsg
-#   pgshader check --library F --nodes-from F        # F = this file: compile each node for every target
+#   prototype --library examples/shaders/extra/stylized.pgnodes examples/shaders/extra/toon.pgsg
+#   prototype gen --library examples/shaders/extra/stylized.pgnodes --target all examples/shaders/extra/toon.pgsg
+#   prototype check --library F --nodes-from F        # F = this file: compile each node for every target
 #
 # In the editor: Library > Add library file..., then the nodes are in the
 # add-node menu under "Stylized". Edit this file and press Ctrl+R to reload.

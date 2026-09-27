@@ -19,11 +19,11 @@ předstírají šumem na jedné ploše.
 
 ![Editor: síť Simulation s tornádem, vybraný uzel Vortex a jeho vodítka ve viewportu](img/editor-sim.png)
 
-Všechno je v programu `pgshader`. Editor se otevře na síti **Simulation**
+Všechno je v programu `prototype`. Editor se otevře na síti **Simulation**
 s prázdnou scénou: **Shift+A** ve viewportu přidá oheň, kouř, vodu, déšť,
 objekt nebo kameru (i s řešičem, vzhledem a Outputem, které k tomu patří),
 hotové scény jsou ve **File › Examples**. Bez okna simulaci spočítá a
-vykreslí příkaz `pgshader sim` — i rovnou do videa ([render.md](render.md)).
+vykreslí příkaz `prototype sim` — i rovnou do videa ([render.md](render.md)).
 
 Obsah:
 [1. Rychlý start](#1-rychlý-start) ·
@@ -45,22 +45,22 @@ Obsah:
 ## 1. Rychlý start
 
 ```bash
-./build/pgshader                          # editor: prázdná scéna (Shift+A přidá oheň, vodu, déšť)
-./build/pgshader --example campfire       # vestavěný příklad: táborák
-./build/pgshader --example tornado        # jiný vestavěný příklad
-./build/pgshader moje.pgsim               # vlastní síť
+./build/prototype                          # editor: prázdná scéna (Shift+A přidá oheň, vodu, déšť)
+./build/prototype --example campfire       # vestavěný příklad: táborák
+./build/prototype --example tornado        # jiný vestavěný příklad
+./build/prototype moje.pgsim               # vlastní síť
 
 # bez okna: poslední snímek, nebo každý k-tý jako očíslovanou sekvenci
-./build/pgshader sim campfire fire.png
-./build/pgshader sim examples/sim/explosion.pgsim out/boom.png --every 2
-./build/pgshader sim lakeside shot.png    # záběr kamerou sítě, 1280 × 720
-./build/pgshader sim lakeside out/shot.png --every 1   # celý záběr, snímek po snímku
-./build/pgshader sim tornado t.png --set vortex.speed=3 --set solver.resolution=128
-./build/pgshader sim --list               # vestavěné příklady
+./build/prototype sim campfire fire.png
+./build/prototype sim examples/sim/explosion.pgsim out/boom.png --every 2
+./build/prototype sim lakeside shot.png    # záběr kamerou sítě, 1280 × 720
+./build/prototype sim lakeside out/shot.png --every 1   # celý záběr, snímek po snímku
+./build/prototype sim tornado t.png --set vortex.speed=3 --set solver.resolution=128
+./build/prototype sim --list               # vestavěné příklady
 
 # rovnou video: celý záběr, snímek po snímku (.avi bez čehokoli, .mp4 přes ffmpeg)
-./build/pgshader sim campfire fire.mp4
-./build/pgshader sim examples/sim/explosion.pgsim boom.avi --every 2
+./build/prototype sim campfire fire.mp4
+./build/prototype sim examples/sim/explosion.pgsim boom.avi --every 2
 ```
 
 `sim` síť načte ze souboru, nebo vezme vestavěný příklad podle jména.
@@ -79,7 +79,7 @@ Má-li síť kameru připojenou do Outputu, `sim` renderuje jejím pohledem a
 v rozlišení jejího obrazu (`--size` ho přepíše). `--yaw`, `--pitch` a
 `--distance` kameru obejdou a ukážou scénu z oběžné dráhy kolem ní.
 
-Starší `pgshader pyro OUT.png --preset fire` pořád funguje: spustí příklad
+Starší `prototype pyro OUT.png --preset fire` pořád funguje: spustí příklad
 (`fire` je táborák).
 
 ## 2. Editor
@@ -183,7 +183,7 @@ Ikona fotoaparátu uloží snímek jako PNG.
 
 Kamera (uzel **Camera**) je záběr: odkud se na scénu dívá, jakým
 objektivem a jak velký je obraz. Připojená do vstupu **Camera** uzlu
-Output určuje, co renderuje `pgshader sim` i **File › Render Image** a
+Output určuje, co renderuje `prototype sim` i **File › Render Image** a
 **Render Frames**. Bez kamery se renderuje pohled viewportu.
 
 | akce | jak |
@@ -460,7 +460,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
-programu. `pgshader sim campfire` proto funguje bez souborů vedle.
+programu. `prototype sim campfire` proto funguje bez souborů vedle.
 Táborák a kouř jsou zároveň scény, na kterých stojí testy řešiče: test
 hlídá, že síť dává přesně `Scene::fire()` a `Scene::smoke()`.
 
@@ -914,7 +914,7 @@ Co je v obraze:
 Pohled je oběžná dráha kolem bodu (otočení, sklon, vzdálenost) se zorným
 úhlem a náklonem kolem směru pohledu. Kamera sítě se na ni převede
 (`gl::orbitThrough`) a zpět (`gl::cameraFrom`), takže viewport, render
-v editoru i `pgshader sim` počítají pohled stejně.
+v editoru i `prototype sim` počítají pohled stejně.
 
 Voda se kreslí v témže průchodu ([§5](#jak-se-voda-kreslí)). Déšť přijde
 až po něm: čáry kapek se kreslí přes obraz s hloubkovým testem, takže je
@@ -1020,7 +1020,7 @@ relativní cesta ze složky sítě, chybějící soubor nahlásí a zastoupí ho
 kvádr.
 
 Vše čisté pod AddressSanitizerem, UBSanem i ThreadSanitizerem. Pod TSanem a
-ASanem běžel i editor s vláknem simulace a skriptovaným vstupem (`pgshader
+ASanem běžel i editor s vláknem simulace a skriptovaným vstupem (`prototype
 --script`: myš, klávesy a snímky obrazovky ze souboru): přidání uzlu přes
 Tab, spojení tažením, rychlé změny parametrů, které simulaci opakovaně
 restartují, undo a redo, posun po časové ose, přepnutí sítí a konec
@@ -1087,14 +1087,18 @@ to stojí. Oproti produkci:
    přímo převést na compute shader.
 3. **Rychlost se unáší semi-Lagrangeovou metodou**, která rozmazává.
    MacCormack nebo BFECC i pro rychlost, případně FLIP, drží víry déle.
-4. **Překážky stojí na místě.** Jsou to tvary (koule, kvádr, válec, kužel,
-   prstenec) i modely z OBJ převedené na pole vzdáleností, ale pole má jen
-   48 buněk podél modelu a jemné detaily v kolizích zmizí. V produkci se
-   pole peče jemněji (a řídce, OpenVDB) a pohyblivé překážky předávají
-   plynu svou rychlost.
+4. **Překážky jsou hrubé.** Tvary (koule, kvádr, válec, kužel, prstenec)
+   i modely z OBJ se převádějí na pole vzdáleností, které má jen 48 buněk
+   podél modelu, takže jemné detaily v kolizích zmizí. Pohyblivé překážky
+   předají plynu i vodě svou rychlost ([animation.md](animation.md)), ale
+   rychlá překážka tenkou vrstvou proskočí. V produkci se pole peče jemněji
+   (a řídce, OpenVDB) a krok se zkracuje podle rychlosti překážek.
 5. **Jednoduchý rozptyl.** Produkční renderery (Karma, Arnold) počítají
    mnohonásobný rozptyl, díky kterému je hustý kouř uvnitř světlejší.
-6. **Cache je v paměti.** Chybí zápis snímků na disk a export do `.vdb`.
+6. **Cache drží obraz, ne stav řešiče.** Snímky jdou na disk a do OpenVDB
+   ([cache.md](cache.md)), ale v poloviční přesnosti a bez rychlostí, takže
+   ze snímku v cache nejde simulovat dál. Produkce ukládá i stav řešiče
+   a na uložený snímek navazuje.
 7. **Voda je hrubá.** Rozlišení 64 dává kapky a pláty centimetry tlusté
    a řídká tříšť se z částic skládá do hrbolatých tvarů. Produkce počítá
    mřížky řídce (OpenVDB), s desítkami milionů částic, povrch staví

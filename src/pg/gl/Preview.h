@@ -3,7 +3,7 @@
 // Draws a generated shader onto a preview mesh -- the "material ball".
 //
 // Used by the editor, which shows the colour texture in its UI, and by
-// `pgshader render`, which reads the pixels back into a PNG without a window.
+// `prototype render`, which reads the pixels back into a PNG without a window.
 // Needs a current OpenGL 3.3 core context and the Api loaded from it. Feeds the
 // built-in uniforms (u_model, u_viewProj, u_cameraPos, u_lightDir, u_time) and
 // the graph's own: numbers start at their defaults, every texture gets a UV

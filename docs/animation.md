@@ -16,9 +16,9 @@ která se točí v kouři, ho víří.
 ## 1. Rychlý start
 
 ```bash
-./build/pgshader --example wake          # koule tlačí vodu: vlna a brázda
-./build/pgshader --example fire_trail    # pochodeň letí smyčkou, lopatka se točí v kouři
-./build/pgshader sim wake out/w.png --every 10
+./build/prototype --example wake          # koule tlačí vodu: vlna a brázda
+./build/prototype --example fire_trail    # pochodeň letí smyčkou, lopatka se točí v kouři
+./build/prototype sim wake out/w.png --every 10
 ```
 
 V editoru:
@@ -90,7 +90,7 @@ se klíče smažou.
 - **Vzhled**: Volume Look, Water Look, světlo a obloha v Output — mění se
   v obraze; když je animovaný jen vzhled (nebo kamera), simuluje se jednou
   a svět žádnou animaci nenese.
-- **Kamera**: poloha, rotace, ohnisko — `pgshader sim` i render sekvence
+- **Kamera**: poloha, rotace, ohnisko — `prototype sim` i render sekvence
   z editoru jdou animovanou kamerou.
 - **Geometrie**: parametry geometrických uzlů (krychle, transformace,
   scatter…) — viewport a tabulka atributů je ukazují v aktuálním snímku.

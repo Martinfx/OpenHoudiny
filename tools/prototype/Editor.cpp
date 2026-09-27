@@ -39,7 +39,7 @@ void Editor::showShaders() { active_ = 1; }
 void Editor::showSimulation() { active_ = 0; }
 
 std::string Editor::title() const {
-    return current().title() + " \xe2\x80\x94 " + current().name() + " \xe2\x80\x94 pgshader";
+    return current().title() + " \xe2\x80\x94 " + current().name() + " \xe2\x80\x94 Prototype";
 }
 
 void Editor::menuBar() {
@@ -53,7 +53,7 @@ void Editor::menuBar() {
     ImGui::Dummy(ImVec2(h * 0.8f, h * 0.5f));
     ImGui::SameLine();
     ImGui::PushFont(theme::fonts().bold, 0.0f);
-    ImGui::TextUnformatted("pgshader");
+    ImGui::TextUnformatted("Prototype");
     ImGui::PopFont();
     ImGui::Dummy(ImVec2(theme::px(6.0f), 0.0f));
 
@@ -72,7 +72,7 @@ void Editor::menuBar() {
     if (ImGui::BeginMenu("Help")) {
         w.helpMenu();
         ImGui::Separator();
-        if (ImGui::MenuItem("About pgshader")) about_ = true;
+        if (ImGui::MenuItem("About prototype")) about_ = true;
         ImGui::EndMenu();
     }
 
@@ -147,7 +147,7 @@ void Editor::frame(float dt) {
     ImGui::SetNextWindowSize(vp->WorkSize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(theme::px(8.0f), theme::px(6.0f)));
-    ImGui::Begin("pgshader", nullptr,
+    ImGui::Begin("prototype", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoBringToFrontOnFocus |
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
@@ -226,15 +226,16 @@ void Editor::frame(float dt) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::px(12.0f), theme::px(12.0f)));
     w.popups();
     if (about_) {
-        ImGui::OpenPopup("About pgshader");
+        ImGui::OpenPopup("About Prototype");
         about_ = false;
     }
-    if (ImGui::BeginPopupModal("About pgshader", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal("About Prototype", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushFont(theme::fonts().bold, 0.0f);
-        ImGui::TextUnformatted("pgshader");
+        ImGui::TextUnformatted("Prototype");
         ImGui::PopFont();
-        ImGui::TextUnformatted("Smoke and fire, and shaders, built from nodes.");
-        ImGui::TextDisabled("Simulation: a gas on a 3D grid, Houdini's Pyro in small.");
+        ImGui::TextUnformatted("Procedural geometry, simulations and shaders, built from nodes.");
+        ImGui::TextDisabled("Geometry: nodes like Houdini's SOPs, attributes, wrangle.");
+        ImGui::TextDisabled("Simulations: smoke and fire, water, rain -- cached, exported, rendered.");
         ImGui::TextDisabled("Shaders: GLSL, Vulkan GLSL, HLSL and more from one graph.");
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(theme::px(120.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {

@@ -1,7 +1,7 @@
 #pragma once
 //
 // An OpenGL 3.3 core context without a window or display, through EGL --
-// what `pgshader render` and CI use. On Linux, Mesa provides it even without a
+// what `prototype render` and CI use. On Linux, Mesa provides it even without a
 // GPU (llvmpipe). Built only when CMake finds EGL.
 //
 #include "pg/gl/Gl.h"

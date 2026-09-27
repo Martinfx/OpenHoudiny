@@ -1,6 +1,6 @@
-// The editor's window -- what `pgshader` opens when it is given no command:
+// The editor's window -- what `prototype` opens when it is given no command:
 //
-//   pgshader [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]
+//   prototype [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]
 //            [--library FILE]... [--target NAME] [--mesh NAME]
 //            [--size WxH] [--screenshot OUT.png [--frames N]] [--script FILE]
 //
@@ -307,7 +307,7 @@ int runEditor(int argc, char** argv) {
     if (!scriptPath.empty()) {
         std::string error;
         if (!script.load(scriptPath, error)) {
-            std::fprintf(stderr, "pgshader: %s\n", error.c_str());
+            std::fprintf(stderr, "prototype: %s\n", error.c_str());
             return 2;
         }
     }
@@ -315,7 +315,7 @@ int runEditor(int argc, char** argv) {
 
     glfwSetErrorCallback([](int code, const char* message) { std::fprintf(stderr, "glfw %d: %s\n", code, message); });
     if (!glfwInit()) {
-        std::fprintf(stderr, "pgshader: cannot open a window -- is there a display? The commands work without one:\n\n");
+        std::fprintf(stderr, "prototype: cannot open a window -- is there a display? The commands work without one:\n\n");
         pg::cli::printUsage(stderr);
         return 1;
     }
@@ -323,9 +323,9 @@ int runEditor(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);  // required on macOS
-    GLFWwindow* window = glfwCreateWindow(width, height, "pgshader", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(width, height, "Prototype", nullptr, nullptr);
     if (!window) {
-        std::fprintf(stderr, "pgshader: cannot create a window with OpenGL 3.3\n");
+        std::fprintf(stderr, "prototype: cannot create a window with OpenGL 3.3\n");
         glfwTerminate();
         return 1;
     }
@@ -335,7 +335,7 @@ int runEditor(int argc, char** argv) {
     pg::gl::Api gl;
     std::string missing;
     if (!gl.load(glfwGetProcAddress, missing)) {
-        std::fprintf(stderr, "pgshader: OpenGL 3.3 functions missing: %s\n", missing.c_str());
+        std::fprintf(stderr, "prototype: OpenGL 3.3 functions missing: %s\n", missing.c_str());
         return 1;
     }
 
@@ -351,7 +351,7 @@ int runEditor(int argc, char** argv) {
 
     const bool platform = ImGui_ImplGlfw_InitForOpenGL(window, true);
     if (!platform || !ImGui_ImplOpenGL3_Init("#version 330 core")) {
-        std::fprintf(stderr, "pgshader: Dear ImGui's %s backend did not start\n", platform ? "OpenGL 3" : "GLFW");
+        std::fprintf(stderr, "prototype: Dear ImGui's %s backend did not start\n", platform ? "OpenGL 3" : "GLFW");
         if (platform) ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         glfwDestroyWindow(window);
@@ -374,14 +374,14 @@ int runEditor(int argc, char** argv) {
                     found = true;
                 }
             }
-            if (!found) std::fprintf(stderr, "pgshader: no mesh '%s'\n", mesh.c_str());
+            if (!found) std::fprintf(stderr, "prototype: no mesh '%s'\n", mesh.c_str());
         }
         if (!example.empty() && !editor.openExample(example)) {
-            std::fprintf(stderr, "pgshader: no example '%s'\n", example.c_str());
+            std::fprintf(stderr, "prototype: no example '%s'\n", example.c_str());
             status = 1;
         }
         if (!path.empty() && !editor.open(path)) {
-            std::fprintf(stderr, "pgshader: cannot open %s\n", path.c_str());
+            std::fprintf(stderr, "prototype: cannot open %s\n", path.c_str());
             status = 1;
         }
         if (shaders) editor.showShaders();
@@ -416,13 +416,13 @@ int runEditor(int argc, char** argv) {
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
             if (!shot.empty() && !saveWindow(gl, w, h, shot)) {
-                std::fprintf(stderr, "pgshader: cannot write %s\n", shot.c_str());
+                std::fprintf(stderr, "prototype: cannot write %s\n", shot.c_str());
                 status = 1;
             }
             if (scripted && script.done()) break;
             if (!screenshot.empty() && ++frame >= frames) {
                 if (!saveWindow(gl, w, h, screenshot)) {
-                    std::fprintf(stderr, "pgshader: cannot write %s\n", screenshot.c_str());
+                    std::fprintf(stderr, "prototype: cannot write %s\n", screenshot.c_str());
                     status = 1;
                 }
                 break;

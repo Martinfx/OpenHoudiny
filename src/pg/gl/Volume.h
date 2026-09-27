@@ -3,7 +3,7 @@
 // Draws a simulation: the gas -- smoke that absorbs and scatters light, fire
 // that glows -- and the water, standing on a floor, the objects of the scene,
 // and guide lines on top. The viewport of the editor's Simulation network and
-// of `pgshader sim`.
+// of `prototype sim`.
 //
 // A fragment shader follows the ray behind each pixel:
 //

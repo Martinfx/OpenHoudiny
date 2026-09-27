@@ -3,7 +3,7 @@
 // targets -- and above all that it can be extended without touching C++:
 // a node is text, a language is one class.
 //
-// Whether the generated code actually compiles is checked by `pgshader check`,
+// Whether the generated code actually compiles is checked by `prototype check`,
 // which runs every node through glslangValidator for every target (CTest runs
 // it when the tool is installed).
 //

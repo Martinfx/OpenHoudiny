@@ -1,6 +1,6 @@
 # Vestavěné uzly shader grafu
 
-Vygenerováno příkazem `./build/pgshader list --markdown` z
+Vygenerováno příkazem `./build/prototype list --markdown` z
 [src/pg/shader/builtin.pgnodes](../src/pg/shader/builtin.pgnodes); ručně needitovat.
 Popisy pocházejí přímo z definic uzlů, proto jsou anglicky, stejně jako v editoru.
 Jak přidat vlastní uzel, popisuje [shader-graph.md §7](shader-graph.md#7-rozšiřitelnost).

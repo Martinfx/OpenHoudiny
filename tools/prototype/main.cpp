@@ -1,9 +1,9 @@
-// pgshader -- smoke, fire and shaders from nodes: one program for the node
-// editor and for the same work from the command line.
+// prototype -- procedural geometry, simulations and shaders from nodes: one
+// program for the node editor and for the same work from the command line.
 //
-//   pgshader [NETWORK.pgsim | GRAPH.pgsg] [options]   opens the editor -- the default
-//   pgshader list|gen|check|render|sim ...            runs a command, headless
-//   pgshader help
+//   prototype [NETWORK.pgsim | GRAPH.pgsg] [options]   opens the editor -- the default
+//   prototype list|gen|check|render|sim ...            runs a command, headless
+//   prototype help
 //
 // A build with PG_BUILD_GUI=OFF has no editor and needs no dependencies; it
 // then wants a command.
@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
 #ifdef PG_HAVE_GUI
     return pg::editor::runEditor(argc, argv);
 #else
-    std::fprintf(stderr, "pgshader: this build has no editor (PG_BUILD_GUI=OFF) -- give it a command\n\n");
+    std::fprintf(stderr, "prototype: this build has no editor (PG_BUILD_GUI=OFF) -- give it a command\n\n");
     pg::cli::printUsage(stderr);
     return 2;
 #endif

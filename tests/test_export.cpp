@@ -365,7 +365,7 @@ TEST(vdb_files_are_framed_as_openvdb_reads_them) {
     CHECK_EQ(file.version, 224u);
     CHECK_EQ(file.uuid.size(), size_t(36));
     CHECK_EQ(file.uuid[14], '4');  // a version 4 UUID
-    CHECK_EQ(file.fileMeta["creator"], std::string("pgshader"));
+    CHECK_EQ(file.fileMeta["creator"], std::string("prototype"));
     CHECK_EQ(file.grids.size(), size_t(3));
     CHECK_EQ(file.grids[0].name, std::string("density"));
     CHECK_EQ(file.grids[1].name, std::string("density_2"));  // one name, twice

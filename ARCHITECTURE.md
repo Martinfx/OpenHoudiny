@@ -6,7 +6,7 @@
 > (viz [§9](#9-co-prototyp-skutečně-umí)), zbytek je návrh. U každé kapitoly je
 > uvedeno, co platí dnes a co je plán.
 
-Související dokumenty: [ROADMAP.md](ROADMAP.md) — fáze, milníky a rozhodovací brány.
+Související dokumenty: [ROADMAP.md](ROADMAP.md) — cíl, co je hotové a další kroky.
 
 ---
 
@@ -14,21 +14,22 @@ Související dokumenty: [ROADMAP.md](ROADMAP.md) — fáze, milníky a rozhodov
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  GUI (Qt)   node editor · viewport · parametry · spreadsheet │   fáze 3
+│  Editor (Dear ImGui)  uzly · viewport · parametry · tabulka │   hotovo
 ├─────────────────────────────────────────────────────────────┤
-│  Python API (nanobind)          CLI / headless cook          │   M4
+│  CLI / headless cook               Python API (nanobind)    │   hotovo · krok 3
 ├─────────────────────────────────────────────────────────────┤
-│  Uzly: generátory · modifikátory · I/O · digital assets      │   M3, M6, M12
+│  Uzly: geometrie · simulace · I/O · digital assets          │   hotovo · kroky 1–2
 ├─────────────────────────────────────────────────────────────┤
-│  Jazyk: parser → IR → LLVM ORC JIT → SIMD kernely            │   M5
+│  Jazyk: parser → interpret (později JIT → SIMD kernely)     │   krok 1 · §5
 ├─────────────────────────────────────────────────────────────┤
-│  JÁDRO   cook engine · geometrie · atributy · paralelismus   │   M1, M2
+│  JÁDRO   cook engine · geometrie · atributy · paralelismus  │   hotovo
 ├─────────────────────────────────────────────────────────────┤
-│  Externí: OpenVDB · USD/Hydra · Embree · OpenSubdiv · OIIO   │   M3, M6, M8
+│  Externí: Jolt · USD · (OpenVDB · Embree · OpenSubdiv)      │   kroky 2–3 · §5
 └─────────────────────────────────────────────────────────────┘
 ```
 
 Zásadní vlastnost tohohle uspořádání: **GUI je klient knihovny, ne naopak.**
+Kroky vpravo odkazují do [ROADMAP.md §4](ROADMAP.md#4-další-kroky).
 Každá schopnost musí být dosažitelná voláním knihovny dřív, než pro ni vznikne
 tlačítko. Render farma nemá viewport a testy nemají myš.
 
@@ -361,7 +362,7 @@ tests/           59 testů jádra (invarianty, SOP uzly) + 25 pro shader graf + 
                  + 5 pro JPEG a video
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
-tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,
+tools/prototype/  prototype — editor se dvěma sítěmi, simulací (výchozí) a shadery,
                  na společném plátně uzlů; viewport s výběrem a gizmem
                  (SimViewport, Gizmo), zobrazená geometrie a tabulka atributů
                  (SimGeometry); cache na disk a export (SimRunner::adopt, menu); render
@@ -379,7 +380,7 @@ pohyblivé překážky v [docs/animation.md](docs/animation.md), cache na disku
 a export do PLY, OpenVDB a OBJ v [docs/cache.md](docs/cache.md), obrázky
 a video v [docs/render.md](docs/render.md).
 
-Jmenný prostor `pg` je placeholder — jméno je výstup fáze 0 roadmapy.
+Jmenný prostor `pg` zůstává i po přejmenování projektu na Prototype.
 
 ---
 
@@ -402,13 +403,13 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
 | ✅ | 185 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
-| ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader sim` |
+| ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `prototype sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
 | ✅ | Déšť a vítr: kapky z mraku, nárazy větru putující s větrem, odstřiky od objektů, vlnky na vodě (vlnová rovnice), mokrá podlaha; bitově stejné na 1 i 4 vláknech |
-| ✅ | Kamera záběru: pohled kamerou v editoru s rámečkem obrazu, kamera z pohledu, render a sekvence kamerou (editor i `pgshader sim`) |
+| ✅ | Kamera záběru: pohled kamerou v editoru s rámečkem obrazu, kamera z pohledu, render a sekvence kamerou (editor i `prototype sim`) |
 | ✅ | Geometrie v síti editoru: SOP uzly vařené jádrem inkrementálně, display flag, viewport, **geometry spreadsheet**; geometrie jako tvar překážek a zdrojů, simulace zpátky jako body a objemy |
 | ✅ | Animace: klíče na libovolném parametru (Smooth/Linear/Step), síť snímek po snímku, pohyblivé překážky s rychlostí i rotací v okrajových podmínkách plynu i vody, animované parametry geometrie jako výrazy jádra |
-| ✅ | Cache simulace na disku (editor i `pgshader sim`), export geometrie snímek po snímku: PLY s atributy, **OpenVDB** (ověřeno čtením v OpenVDB 10: voxely i součty sedí s mřížkou simulace), OBJ |
+| ✅ | Cache simulace na disku (editor i `prototype sim`), export geometrie snímek po snímku: PLY s atributy, **OpenVDB** (ověřeno čtením v OpenVDB 10: voxely i součty sedí s mřížkou simulace), OBJ |
 | ✅ | Video: AVI s Motion JPEG bez závislostí (vlastní kodér JPEG), MP4/MOV/MKV (H.264), WebM (VP9) a GIF přes ffmpeg; v editoru render na pozadí s průběhem, z příkazové řádky `sim OUT.mp4` a `render OUT.mp4`; ověřeno dekódováním v ffmpeg |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)

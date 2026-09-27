@@ -127,7 +127,7 @@ bool readObj(const std::string& path, Geometry& out, std::string& error) {
 }
 
 std::string formatObj(const Geometry& geo) {
-    std::string out = "# pgshader\n";
+    std::string out = "# prototype\n";
     char buf[48];
     auto number = [&](float x) {
         const auto r = std::to_chars(buf, buf + sizeof buf, x);

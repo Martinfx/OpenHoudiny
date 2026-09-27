@@ -284,7 +284,7 @@ public:
         const int pid = static_cast<int>(getpid());
 #endif
         std::error_code ec;
-        log_ = (fs::temp_directory_path(ec) / ("pgshader-ffmpeg-" + std::to_string(pid) + "-" + std::to_string(++count) + ".log")).string();
+        log_ = (fs::temp_directory_path(ec) / ("prototype-ffmpeg-" + std::to_string(pid) + "-" + std::to_string(++count) + ".log")).string();
         uint32_t rate = 0, scale = 0;
         frameRate(fps_, rate, scale);
         const std::string command = shellWord(ffmpegProgram()) + " -hide_banner -loglevel error -y -f rawvideo -pix_fmt rgb24 -video_size " +

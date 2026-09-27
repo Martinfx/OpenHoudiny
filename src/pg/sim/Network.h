@@ -352,7 +352,7 @@ public:
     uint64_t revision() const { return revision_; }
 
     /// The examples the program carries with it -- the same networks as the
-    /// files in examples/sim, so that `pgshader pyro fire` needs no file.
+    /// files in examples/sim, so that `prototype pyro fire` needs no file.
     static const std::vector<std::string>& exampleNames();
     static bool example(std::string_view name, Network& out);
     static const char* exampleText(std::string_view name);

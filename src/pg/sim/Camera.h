@@ -1,7 +1,7 @@
 #pragma once
 //
 // The camera of a shot: where it stands, which way it looks and how wide it
-// sees -- what `pgshader sim` renders through, and what the editor's
+// sees -- what `prototype sim` renders through, and what the editor's
 // viewport can look through.
 //
 // As a camera in Houdini or Blender it looks along its own -z, its own y up

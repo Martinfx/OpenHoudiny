@@ -11,11 +11,11 @@ pro simulace i pro náhled shaderu.
 ## 1. Rychlý start
 
 ```bash
-./build/pgshader sim campfire fire.mp4             # celý záběr do videa (H.264 přes ffmpeg)
-./build/pgshader sim campfire fire.avi             # totéž bez ffmpeg: Motion JPEG
-./build/pgshader sim lakeside shot.mp4 --every 2   # každý druhý snímek, 15 fps
-./build/pgshader sim campfire fire.png             # poslední snímek jako PNG
-./build/pgshader render examples/shaders/fire.pgsg fire.mp4 --frames 90   # animovaný shader
+./build/prototype sim campfire fire.mp4             # celý záběr do videa (H.264 přes ffmpeg)
+./build/prototype sim campfire fire.avi             # totéž bez ffmpeg: Motion JPEG
+./build/prototype sim lakeside shot.mp4 --every 2   # každý druhý snímek, 15 fps
+./build/prototype sim campfire fire.png             # poslední snímek jako PNG
+./build/prototype render examples/shaders/fire.pgsg fire.mp4 --frames 90   # animovaný shader
 ```
 
 V editoru:
@@ -51,7 +51,7 @@ dopíše a jde přehrát, snímky PNG zůstanou ve složce.
 - Po skončení ukáže viewport **oznámení**: co se zapsalo a kam, s tlačítky
   **Open** (otevře soubor v programu, který na to systém má) a **Show**
   (otevře složku). U dlouhého renderu oznámení zůstane, dokud se nezavře.
-  Totéž stojí ve stavovém řádku a v terminálu (`pgshader: Rendered 150
+  Totéž stojí ve stavovém řádku a v terminálu (`prototype: Rendered 150
   frames into fire.mp4 …`).
 - Dialog nabízí složku, kam šel poslední render; jinak složku sítě, jinak
   aktuální složku — a když do ní nejde zapisovat (program spuštěný
@@ -84,8 +84,8 @@ v ffmpeg na umělém obrázku s ostrými hranami (26,0 dB).
 ## 4. Příkazová řádka
 
 ```
-pgshader sim    NETWORK|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] ...
-pgshader render GRAPH.pgsg OUT.png|OUT.mp4 [--frames N] [--time S] [--size N] ...
+prototype sim    NETWORK|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] ...
+prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--frames N] [--time S] [--size N] ...
 ```
 
 - `sim` do videa dá každý snímek záběru (s `--every K` každý K-tý), do PNG
@@ -96,7 +96,7 @@ pgshader render GRAPH.pgsg OUT.png|OUT.mp4 [--frames N] [--time S] [--size N] ..
 - Výpis řekne, kolik snímků a jakým kodekem se zapsalo a čím se kreslilo:
 
 ```
-$ pgshader sim campfire fire.mp4 --frames 60
+$ prototype sim campfire fire.mp4 --frames 60
 wrote fire.mp4 (60 frames at 30 fps, H.264 (ffmpeg)): campfire, gas 64 x 96 x 64 cells, 60 frames (2.0 s); simulation 67.1 ms/frame, rendering 395 ms/image through EGL
 ```
 
@@ -123,7 +123,7 @@ viz [cache.md](cache.md)).
 ## 5. Když se obrázek „neuloží“
 
 - Podívejte se na oznámení ve viewportu nebo na terminál: úspěch vypíše
-  celou cestu (`pgshader: rendered /home/…/campfire.png (875 x 828)`),
+  celou cestu (`prototype: rendered /home/…/campfire.png (875 x 828)`),
   neúspěch důvod — nejde zapsat, a proč (např. `Permission denied`). Když
   ovladač při kreslení nahlásí chybu OpenGL, obrázek se uloží stejně a
   zpráva chybu připíše (`OpenGL reported error 0x…`).
@@ -138,8 +138,8 @@ viz [cache.md](cache.md)).
 |---|---|
 | `src/pg/io/Jpeg.h` | `encodeJpeg`, `writeJpeg`: baseline JPEG, 4:2:0, tabulky normy |
 | `src/pg/io/Video.h` | `openVideo` → `VideoWriter` (`add`, `finish`): AVI sám, ostatní rourou do ffmpeg; `videoExtensions`, `ffmpegAvailable`, `frameRate` |
-| `tools/pgshader/Offscreen.h` | kontext bez okna pro `render` a `sim`: EGL, nebo skryté okno GLFW |
-| `tools/pgshader/RenderJob.h` | render po snímcích na pozadí editoru, okno s průběhem a Stop |
+| `tools/prototype/Offscreen.h` | kontext bez okna pro `render` a `sim`: EGL, nebo skryté okno GLFW |
+| `tools/prototype/RenderJob.h` | render po snímcích na pozadí editoru, okno s průběhem a Stop |
 | `tests/test_video.cpp` | 5 testů: segmenty JPEG, struktura AVI a index, zlomky frekvence, chyby, dekódování přes ffmpeg |
 
 ## 7. Omezení

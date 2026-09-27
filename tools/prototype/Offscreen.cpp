@@ -57,7 +57,7 @@ bool Offscreen::create(std::string& error) {
             glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
             glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
             glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-            GLFWwindow* w = glfwCreateWindow(64, 64, "pgshader", nullptr, nullptr);
+            GLFWwindow* w = glfwCreateWindow(64, 64, "prototype", nullptr, nullptr);
             if (w) {
                 glfwMakeContextCurrent(w);
                 window_ = w;
@@ -69,7 +69,7 @@ bool Offscreen::create(std::string& error) {
                (glfwError.empty() ? std::string("GLFW could not open one") : glfwError);
     }
 #endif
-    error = why.empty() ? std::string("this pgshader was built without EGL and without the editor: it draws no picture")
+    error = why.empty() ? std::string("this prototype was built without EGL and without the editor: it draws no picture")
                         : "no OpenGL context to draw with -- " + why;
     return false;
 }

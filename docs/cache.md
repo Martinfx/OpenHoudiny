@@ -10,19 +10,19 @@ do Blenderu a do rendererů.
 
 ![Editor: snímky táboráku načtené z disku (přehled: „from fire_cache“, stavový řádek: „from disk“) a menu Simulation s Save Cache a Load Cache](img/editor-cache.png)
 
-![Snímky 40, 90 a 150 táboráku vyexportované do VDB, načtené knihovnou OpenVDB 10 (pyopenvdb) a promítnuté podél osy z: kouř (density) a plamen (flame) — mimo pgshader](img/vdb-export.png)
+![Snímky 40, 90 a 150 táboráku vyexportované do VDB, načtené knihovnou OpenVDB 10 (pyopenvdb) a promítnuté podél osy z: kouř (density) a plamen (flame) — mimo prototype](img/vdb-export.png)
 
 ## 1. Rychlý start
 
 ```bash
 # simulace jednou, snímky na disk ('-' místo OUT.png: žádný obrázek)
-./build/pgshader sim campfire_vdb - --cache cache/fire
+./build/prototype sim campfire_vdb - --cache cache/fire
 # render z cache: nic se nepočítá
-./build/pgshader sim campfire_vdb out/fire.png --from-cache cache/fire --every 10
+./build/prototype sim campfire_vdb out/fire.png --from-cache cache/fire --every 10
 # plyn jako objemy OpenVDB, soubor na snímek -- z cache, bez simulace
-./build/pgshader sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
+./build/prototype sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
 # částice vody jako body PLY s rychlostí, pěnou a barvou
-./build/pgshader sim liquid_points - --export 'out/water.$F4.ply'
+./build/prototype sim liquid_points - --export 'out/water.$F4.ply'
 ```
 
 V editoru:
@@ -58,7 +58,7 @@ cache/fire/
   v paměti 338 MB.
 - `network` je hash textu sítě **bez poloh uzlů na plátně**: posunutý uzel je
   pořád stejná síť, změněný parametr už ne. Cache jiné sítě (nebo jiné verze
-  téže) se načte, ale editor i `pgshader sim` upozorní.
+  téže) se načte, ale editor i `prototype sim` upozorní.
 - Načtené snímky platí, dokud se nezmění, co se simuluje. První taková
   změna (parametr zdroje, bypass uzlu…) je zahodí a simulace začne znovu od
   snímku 1. Změna vzhledu nebo kamery je nezahodí: cache z disku jde
@@ -127,7 +127,7 @@ pojmenovávají pyro shadery Houdini a Blenderu.
 ## 4. Příkazová řádka
 
 ```
-pgshader sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] ...
+prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] ...
              [--cache DIR] [--from-cache DIR] [--export PATH] [--export-node NODE]
 ```
 
@@ -142,12 +142,12 @@ pgshader sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--every K] ...
 `--every K` se týká jen obrázků: cache i export dostanou každý snímek.
 
 ```
-$ pgshader sim campfire_vdb - --cache cache/fire
+$ prototype sim campfire_vdb - --cache cache/fire
 campfire_vdb: simulated, gas 64 x 96 x 64 cells, 150 frames; simulation 73.7 ms/frame
 cached 150 frames in cache/fire
-$ pgshader sim campfire_vdb fire.png --from-cache cache/fire --every 50
+$ prototype sim campfire_vdb fire.png --from-cache cache/fire --every 50
 wrote fire_0150.png and 2 before it: campfire_vdb, read from cache/fire, 150 frames (5.0 s); reading 0.7 ms/frame, rendering 495 ms/image
-$ pgshader sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
+$ prototype sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
 campfire_vdb: 150 frames read from cache/fire; reading 1.2 ms/frame
 exported 150 frames of geometry, the last out/fire.0150.vdb
 ```
@@ -162,9 +162,9 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 | `src/pg/io/Vdb.h` | `formatVdb`, `writeVdb` |
 | `src/pg/io/Export.h` | `writeGeometry` podle přípony, `framePath` (`$F4`, `$F`) |
 | `src/pg/sim/Cache.h` | `formatFrame` / `parseFrame`, `writeFrame` / `readFrame`, `writeCacheInfo` / `readCacheInfo`, `networkHash` |
-| `tools/pgshader/SimRunner.h` | `adopt`: snímky z disku místo simulace, dokud nepřijde jiný svět |
-| `tools/pgshader/SimWorkspace.cpp` | menu, dialogy, uložení, načtení, export |
-| `tools/pgshader/Widgets.h` | `FileBrowser::openFolder`: výběr složky (i nové) |
+| `tools/prototype/SimRunner.h` | `adopt`: snímky z disku místo simulace, dokud nepřijde jiný svět |
+| `tools/prototype/SimWorkspace.cpp` | menu, dialogy, uložení, načtení, export |
+| `tools/prototype/Widgets.h` | `FileBrowser::openFolder`: výběr složky (i nové) |
 
 ## 6. Testy
 

@@ -1,9 +1,9 @@
-# OpenHoudiny shader graph -- the built-in node library.
+# Prototype shader graph -- the built-in node library.
 #
 # Every node the editor offers is defined here, in the same format a user
 # library uses (see src/pg/shader/NodeLibrary.h). The C++ code knows nothing
 # about any of these nodes; copy a block into your own .pgnodes file, change it,
-# and load it with `pgshader --library` or the editor's Library menu.
+# and load it with `prototype --library` or the editor's Library menu.
 #
 # Templates are written in the neutral dialect -- GLSL syntax. Each target
 # translates identifiers (vec3 -> float3, mix -> lerp, ...) into its language;

@@ -714,7 +714,7 @@ std::vector<NodeType> buildTypes() {
                  1});
     t.push_back({"camera", "Camera", "Render",
                  "The camera of the shot: where it stands, which way it looks, its lens and the size of its "
-                 "picture. Linked into the Output's Camera, it is what `pgshader sim` and Render Image render "
+                 "picture. Linked into the Output's Camera, it is what `prototype sim` and Render Image render "
                  "through, and what the viewport shows when it looks through the camera (0). It looks along "
                  "its own -z.",
                  {},
@@ -735,7 +735,7 @@ std::vector<NodeType> buildTypes() {
                  1});
     t.back().handles = {"center", "rotation", nullptr, nullptr, nullptr, nullptr};
     t.push_back({"output", "Output", "Render",
-                 "Where the network ends: what the viewport shows and `pgshader sim` renders -- every look "
+                 "Where the network ends: what the viewport shows and `prototype sim` renders -- every look "
                  "linked into it, in one scene, lit by one sun and one sky, at one frame rate -- through the "
                  "camera linked into Camera, if there is one.",
                  {{"look", "Looks", PinType::Look, true}, {"camera", "Camera", PinType::Camera}},

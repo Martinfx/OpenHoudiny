@@ -978,7 +978,7 @@ void ShaderWorkspace::menus() {
             startValidation();
             bottomTab_ = 1;
         }
-        ImGui::SetItemTooltip("Compiles the graph for every target, like `pgshader check`.");
+        ImGui::SetItemTooltip("Compiles the graph for every target, like `prototype check`.");
         ImGui::EndMenu();
     }
 }
@@ -996,7 +996,7 @@ void ShaderWorkspace::helpMenu() {
     ImGui::TextUnformatted("Ctrl+R                         reload the node libraries");
     ImGui::Separator();
     ImGui::TextDisabled("The same from the command line:");
-    ImGui::TextUnformatted("  pgshader list | gen | check | render ...     pgshader help");
+    ImGui::TextUnformatted("  prototype list | gen | check | render ...     prototype help");
 }
 
 void ShaderWorkspace::popups() {

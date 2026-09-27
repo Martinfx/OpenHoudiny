@@ -1,6 +1,6 @@
 # Geometrie v síti: uzly jako SOP v Houdini
 
-Síť simulace (editor `pgshader`, soubory `.pgsim`) má kategorii
+Síť simulace (editor `prototype`, soubory `.pgsim`) má kategorii
 **Geometry**: uzly, které geometrii vyrábějí a upravují — krychle, koule,
 mřížka, rozházené body, transformace, kopie na body, wrangle… Počítá je
 geometrické jádro (`src/pg/core`, viz [ARCHITECTURE.md](../ARCHITECTURE.md)),
@@ -22,14 +22,14 @@ stejné, na kterém stojí `pgdemo`. Geometrie se:
 ## 1. Rychlý start
 
 ```bash
-./build/pgshader --example liquid_points      # částice vody jako body, wrangle je barví
-./build/pgshader --example scatter_fire       # oheň z bodů rozházených po mřížce
-./build/pgshader --example rock_garden        # kameny z kopií koule, déšť na nich
-./build/pgshader sim rock_garden rocks.png    # bez okna: poslední snímek do PNG
-./build/pgshader sim liquid_points out/p.png --every 5 --set look.surface=on
+./build/prototype --example liquid_points      # částice vody jako body, wrangle je barví
+./build/prototype --example scatter_fire       # oheň z bodů rozházených po mřížce
+./build/prototype --example rock_garden        # kameny z kopií koule, déšť na nich
+./build/prototype sim rock_garden rocks.png    # bez okna: poslední snímek do PNG
+./build/prototype sim liquid_points out/p.png --every 5 --set look.surface=on
 ```
 
-`pgshader sim` kreslí i zobrazenou geometrii. Síť, která nic nesimuluje
+`prototype sim` kreslí i zobrazenou geometrii. Síť, která nic nesimuluje
 (jen geometrie, bez uzlu Output), vykreslí zobrazenou geometrii s pohledem
 nastaveným na ni.
 
@@ -80,7 +80,7 @@ length noise fit vec3`. Typ nového atributu se odvodí z pravé strany.
 
 Každý geometrický uzel má na pravém konci praporek. Klik na něj (nebo **R**
 nad sítí) z uzlu udělá **zobrazený**: jeho geometrie je ve viewportu,
-v renderech a v `pgshader sim`. Klik na praporek zobrazeného uzlu zobrazení
+v renderech a v `prototype sim`. Klik na praporek zobrazeného uzlu zobrazení
 vypne. Zobrazený je vždy nanejvýš jeden uzel; nově přidaný geometrický uzel
 dostane praporek, když není zobrazené nic — nebo když navazuje na ten
 zobrazený (přidaný tažením spoje z jeho výstupu), jako další krok řetězce.
@@ -157,7 +157,7 @@ geometrie (třeba Transform, nebo střed krychle). Souhrn uzlu ukáže „shape 
 
 **Liquid Points**, **Rain Points** a **Gas Volume** mají vstup ze
 simulace (Liquid, Rain, Gas) a na výstupu geometrii snímku, který je právě
-vidět: v editoru z cache snímků, v `pgshader sim` ze snímku právě
+vidět: v editoru z cache snímků, v `prototype sim` ze snímku právě
 spočítaného. Za nimi jdou libovolné geometrické uzly — wrangle, color,
 blast… — a výsledek se zobrazí nebo prohlíží v tabulce.
 

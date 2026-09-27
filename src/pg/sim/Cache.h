@@ -4,7 +4,7 @@
 // of what they are. Written once, they are played and rendered again without
 // simulating -- with another look or camera, on another machine -- and read
 // by the nodes that bring a simulation back as geometry (the editor's Save
-// Cache and Load Cache, `pgshader sim --cache` and `--from-cache`).
+// Cache and Load Cache, `prototype sim --cache` and `--from-cache`).
 //
 //   <folder>/cache.txt            "pgcache 1", frames N, fps F, network HASH
 //   <folder>/frame.0001.pgframe   binary, little-endian, as sim::Frame holds it:
