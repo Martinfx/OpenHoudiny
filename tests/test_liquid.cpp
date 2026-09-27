@@ -384,6 +384,48 @@ TEST(liquid_frames_hold_how_fast_the_water_goes) {
     CHECK(f.flowAt(Vec3(-5.0f, 0.03f, 0.03f)) == f.flowAt(Vec3(-0.49f, 0.03f, 0.03f)));
 }
 
+TEST(liquid_wind_carries_spray_and_leaves_a_pond_level) {
+    // A breeze over a pond, a few drops falling through it: the drops go
+    // with the wind, the pond does not heap up against the far wall --
+    // air, a thousandth as heavy as water, pushes on its surface alone.
+    LiquidScene s = tank(Vec3(1.5f, 1.5f, 1.0f), 24, block(Vec3(0.0f, 0.1f, 0.0f), Vec3(1.5f, 0.2f, 1.0f)));
+    WaterSource drops = block(Vec3(-0.4f, 1.3f, 0.0f), Vec3(0.08f, 0.08f, 0.08f));
+    s.sources.push_back(drops);
+    Force wind;
+    wind.kind = ForceKind::Wind;
+    wind.speed = 3.0f;
+    wind.strength = 2.0f;
+    s.forces.push_back(wind);
+    LiquidSolver sim(s);
+    // Falling: the drops take the wind's speed, as fast as it pulls.
+    for (int f = 0; f < 12; ++f) sim.step();
+    float spraySpeed = 0.0f;
+    int spray = 0;
+    for (size_t i = 0; i < sim.particleCount(); ++i) {
+        if (sim.positions()[i].y < 0.4f) continue;
+        spraySpeed += sim.velocities()[i].x;
+        ++spray;
+    }
+    CHECK(spray > 0);
+    const float pulled = wind.speed * (1.0f - std::exp(-wind.strength * 12.0f / 30.0f));
+    if (spray > 0) CHECK(spraySpeed / static_cast<float>(spray) > 0.8f * pulled);
+    // Seconds on: the pond as deep at its two ends -- the mean height of the
+    // water within 20 cm of each wall, half its depth.
+    for (int f = 12; f < 60; ++f) sim.step();
+    double upwind = 0.0, downwind = 0.0;
+    int up = 0, down = 0;
+    for (const Vec3& p : sim.positions()) {
+        if (p.y > 0.4f) continue;
+        if (p.x < -0.55f) upwind += p.y, ++up;
+        if (p.x > 0.55f) downwind += p.y, ++down;
+    }
+    CHECK(up > 0 && down > 0);
+    upwind /= std::max(up, 1);
+    downwind /= std::max(down, 1);
+    CHECK(std::fabs(upwind - 0.1) < 0.01);
+    CHECK(std::fabs(downwind - upwind) < 0.005);  // level: not the 25 cm a pushed pond heaps up
+}
+
 TEST(liquid_is_bitwise_identical_across_thread_counts) {
     ThreadCountGuard guard;
     LiquidScene s = tank(Vec3(1.2f, 1.0f, 0.6f), 24, block(Vec3(-0.35f, 0.25f, 0.0f), Vec3(0.5f, 0.5f, 0.6f)));

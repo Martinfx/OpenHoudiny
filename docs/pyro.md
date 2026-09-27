@@ -678,8 +678,11 @@ Jeden podkrok ([`src/pg/sim/Liquid.h`](../src/pg/sim/Liquid.h)):
    (trilineární váhy). Z částic se spočítá i hladina: vzdálenost ke kouli
    kolem váženého průměru okolních částic (Zhu a Bridson). Buňka, jejíž
    střed je pod hladinou, je voda.
-3. **síly** — gravitace, pak síly sítě. Vítr fouká jen na hladinu a do
-   tříště.
+3. **síly** — gravitace, pak síly sítě. Vítr unáší tříšť: vodu, která
+   letí a má kolem sebe málo částic (v krychli 3 × 3 × 3 buněk méně než
+   12, plná buňka jich má 8), táhne k rychlosti větru plnou silou.
+   S vodou samotnou skoro nehne: vzduch je tisíckrát lehčí a tlačí jen na
+   hladinu, takže vánek nad rybníkem nechá hladinu rovnou.
 4. **tlak** — dělá vodu nestlačitelnou. Ve vzduchu je tlak nula, stěnou
    tělesa nic neproteče.
 5. **na částice** — každá částice přičte, o kolik se rychlost mřížky v jejím
@@ -784,7 +787,7 @@ Rain je řešič i vzhled najednou a sám je vrstvou Outputu. Do jeho Forces
 patří vítr, případně turbulence, vír, atraktor nebo odpor, do Colliders
 objekty, na které prší. Když Output kreslí i vodu, kapky dopadají na její
 hladinu. Stejný vítr se připojí do Pyro Solveru, Liquid Solveru i do deště:
-kouř, voda i kapky pak jdou po stejném větru.
+kouř, tříšť vody i kapky pak jdou po stejném větru.
 
 | uzel | parametry |
 |---|---|
@@ -847,8 +850,8 @@ rychlost(p, t) = d · speed · (1 + gusts · (2 · šum(0,8 · (t − p·d / spe
 kde `d` je směr větru. Tak je to i ve skutečnosti, náraz je vzduch, který
 přiletí. Kouř se ve frontě ohne nejdřív na návětrné straně a déšť se šikmí
 postupně, jak fronta prochází mrakem. Stejná funkce
-([`Shared.h`](../src/pg/sim/Shared.h), `windAt`) pohání plyn, vodu (tu jen
-u hladiny) i déšť.
+([`Shared.h`](../src/pg/sim/Shared.h), `windAt`) pohání plyn, tříšť vody
+i déšť.
 
 ### Jak se déšť kreslí
 
@@ -987,23 +990,26 @@ déšť se nahlásí; kamera se dívá, kam je natočená (i s jiným „nahoru�
 kolmo dolů), objektiv 38 mm má 35° a 12 mm pravý úhel, kamera je jedna na
 Output a patří do souboru.
 
-[`tests/test_liquid.cpp`](../tests/test_liquid.cpp) (10 testů): tlak
+[`tests/test_liquid.cpp`](../tests/test_liquid.cpp) (13 testů): tlak
 s volnou hladinou konverguje do 30 iterací a reziduum sedí i přepočítané
 z operátoru; stojatá voda zůstane stát a tlak na dně je `g × hloubka`;
 protržená přehrada doteče ke stěně a neztratí jedinou částici; koule vody
 padá volným pádem (rychlost `g t` na procento); zdroj `fill` naplní tvar
 osmi částicemi na buňku jednou, `flow` teče jen ve svém čase a tam, kam
 míří; voda se nedostane do tělesa a steče z něj; otevřenými stranami
-odteče; snímek nese hladinu (uvnitř záporná vzdálenost, venku kladná,
-o buňku na buňku); bitově stejný výsledek na 1 a na 4 vláknech i s tělesem
-a turbulencí; nesmyslné vstupy se opraví.
+odteče; částice drží svá čísla; snímek nese hladinu (uvnitř záporná
+vzdálenost, venku kladná, o buňku na buňku) i rychlost vody na mřížce
+řešiče (u vody, nad ní nula); vítr unáší padající kapky a rybník nechá
+rovný (starý vítr na hladině odfoukal vodu k jedné stěně); bitově stejný
+výsledek na 1 a na 4 vláknech i s tělesem a turbulencí; nesmyslné vstupy
+se opraví.
 
-[`tests/test_rain.cpp`](../tests/test_rain.cpp) (8 testů): vzduch pod
+[`tests/test_rain.cpp`](../tests/test_rain.cpp) (9 testů): vzduch pod
 mrakem je od prvního kroku plný kapek až k zemi a dopadá jich přesně tolik,
 kolik říká `rate` (na 2 %); kapky padají svou rychlostí a ve větru se šikmí
 (3 m po větru na 7 m pádu); fronty nárazů putují s větrem a mění jen jeho
 sílu, ne směr; kapky nezůstanou v objektu a kapičky od něj odletí nahoru;
-do vody dopadne, co má, pod hladinu nic neproletí a vlnky zůstanou
+kapky i kapičky drží svá čísla; do vody dopadne, co má, pod hladinu nic neproletí a vlnky zůstanou
 vlnkami; déšť začne a skončí včas a pozdní začne u mraku; bitově stejný
 výsledek na 1 a na 4 vláknech (s vodou, větrem, turbulencí a objektem);
 nesmyslné vstupy se opraví.

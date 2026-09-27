@@ -15,8 +15,9 @@
 //                 signed distance to the water's surface from the particles
 //                 round it (Zhu and Bridson's averaged spheres): the cells
 //                 inside are the water;
-//   3. forces     gravity, then the scene's forces -- a wind blows on the
-//                 surface and the spray only;
+//   3. forces     gravity, then the scene's forces -- a wind carries the
+//                 spray, and barely moves the body of the water: air, a
+//                 thousandth as heavy, pushes on its surface alone;
 //   4. project    the pressure that keeps the water's volume, 0 at its
 //                 surface, nothing flowing into solids (FreeSurface.h):
 //                 water falls, splashes, piles up and flows round objects;
@@ -186,6 +187,8 @@ private:
     void emit();
     void toGrid();
     void addForces(float dt);
+    /// Particles in the 3 x 3 x 3 cells round each cell.
+    std::vector<float> crowdOfCells() const;
     void project(float dt);
     /// Carries the velocity of the valid faces out to their neighbours, a
     /// layer of faces at a time.

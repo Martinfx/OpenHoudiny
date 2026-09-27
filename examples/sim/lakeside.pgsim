@@ -1,7 +1,7 @@
 pgsim 1
 # A shot: a campfire on the bank of a pond, in the rain. The gusts that lay
-# the flames over and carry the smoke away also ruffle the pond and slant
-# the rain; the drops ring the water and splash off the ground, and the
+# the flames over and carry the smoke away also slant the rain and carry
+# the spray off; the drops ring the water and splash off the ground, and the
 # ground shines wet. The pond is sunk into the ground: blocks as high as the
 # bank round it. Rendered through the camera, low over the water.
 node 1 object 1 bank 0 0

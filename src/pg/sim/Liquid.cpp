@@ -35,6 +35,13 @@ constexpr int kMaxIterations = 80;
 constexpr int kExtrapolation = 4;
 /// Seconds foam takes to fade to a third.
 constexpr float kFoamLife = 0.8f;
+/// How much a wind moves the body of the water, for what it moves spray:
+/// air, a thousandth as heavy, pushes on its surface alone.
+constexpr float kWindOnWater = 1.2e-3f;
+/// Particles in the 3 x 3 x 3 cells round one (a full cell holds 8): below
+/// the first, spray the wind carries; above the second, the body of the
+/// water.
+constexpr float kSprayCrowd = 12.0f, kBodyCrowd = 40.0f;
 
 /// How much of the segment between two corners is inside (distance < 0).
 float insideFraction(float a, float b) {
@@ -683,23 +690,65 @@ void LiquidSolver::addForces(float dt) {
     pg::parallelFor(vel_[1].size(), 16384, [&](size_t begin, size_t end) {
         for (size_t f = begin; f < end; ++f) vy[f] -= fall;
     });
+    std::vector<float> crowd;  // made when a wind needs it
     for (size_t f = 0; f < scene_.forces.size(); ++f) {
         const Force& force = scene_.forces[f];
         const uint32_t seed = force.seed * 7919u + scene_.solver.seed * 31u;
         if (force.kind == ForceKind::Wind) {
-            // Wind blows on the surface and on what flies: the faces within a
-            // cell and a half of the air.
+            // Wind drags what flies -- spray, drops torn off -- towards its
+            // own speed, as air drags a droplet; the body of the water it
+            // hardly moves, so a breeze over a pond leaves it level. Spray
+            // is water with few particles round it.
+            if (crowd.empty()) crowd = crowdOfCells();
             detail::addForce(force, seed, domain_, time_, dt, vel_, noise_[f], [&](int a, int i, int j, int k) {
                 const int at = a == 0 ? i : a == 1 ? j : k;
-                float outer = -kHuge;
-                if (at > 0) outer = std::max(outer, phi_.at(i - (a == 0), j - (a == 1), k - (a == 2)));
-                if (at < n_[a]) outer = std::max(outer, phi_.at(i, j, k));
-                return outer > -1.5f * h ? 1.0f : 0.0f;
+                float outer = -kHuge, most = 0.0f;
+                if (at > 0) {
+                    const size_t c = phi_.index(i - (a == 0), j - (a == 1), k - (a == 2));
+                    outer = std::max(outer, phi_.data()[c]);
+                    most = std::max(most, crowd[c]);
+                }
+                if (at < n_[a]) {
+                    const size_t c = phi_.index(i, j, k);
+                    outer = std::max(outer, phi_.data()[c]);
+                    most = std::max(most, crowd[c]);
+                }
+                if (outer <= -1.5f * h) return 0.0f;  // deep in the water
+                const float spray = 1.0f - detail::smoothstep(kSprayCrowd, kBodyCrowd, most);
+                return spray + (1.0f - spray) * kWindOnWater;
             });
         } else {
             detail::addForce(force, seed, domain_, time_, dt, vel_, noise_[f], [](int, int, int, int) { return 1.0f; });
         }
     }
+}
+
+std::vector<float> LiquidSolver::crowdOfCells() const {
+    const int nx = n_[0], ny = n_[1], nz = n_[2];
+    const size_t cells = static_cast<size_t>(nx) * static_cast<size_t>(ny) * static_cast<size_t>(nz);
+    std::vector<float> a(cells), b(cells);
+    for (size_t c = 0; c < cells; ++c) a[c] = static_cast<float>(cellStart_[c + 1] - cellStart_[c]);
+    // The sum over three cells along each axis in turn.
+    const size_t stride[3] = {1, static_cast<size_t>(nx), static_cast<size_t>(nx) * static_cast<size_t>(ny)};
+    for (int axis = 0; axis < 3; ++axis) {
+        const std::vector<float>& from = axis == 1 ? b : a;
+        std::vector<float>& to = axis == 1 ? a : b;
+        pg::parallelFor(static_cast<size_t>(nz), 1, [&](size_t begin, size_t end) {
+            for (int k = static_cast<int>(begin); k < static_cast<int>(end); ++k) {
+                for (int j = 0; j < ny; ++j) {
+                    for (int i = 0; i < nx; ++i) {
+                        const int at[3] = {i, j, k};
+                        const size_t c = static_cast<size_t>(i) + stride[1] * static_cast<size_t>(j) + stride[2] * static_cast<size_t>(k);
+                        float sum = from[c];
+                        if (at[axis] > 0) sum += from[c - stride[axis]];
+                        if (at[axis] < n_[axis] - 1) sum += from[c + stride[axis]];
+                        to[c] = sum;
+                    }
+                }
+            }
+        });
+    }
+    return b;
 }
 
 void LiquidSolver::project(float dt) {

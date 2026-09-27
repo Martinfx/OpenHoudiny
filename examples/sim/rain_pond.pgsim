@@ -1,8 +1,8 @@
 pgsim 1
 # Rain on a pond: every drop rings the water, and the stone throws up spray
-# where they hit it. A gusting breeze slants them and ruffles the surface;
-# round the pond the floor is wet and shines with the sky. The camera looks
-# low over the water.
+# where they hit it. A gusting breeze slants them and carries the spray off;
+# the pond stays level -- air hardly moves water. Round the pond the floor
+# is wet and shines with the sky. The camera looks low over the water.
 node 1 water_source 1 pond 0 0
   param center 0 0.1 0
   param size 1.6 0.2 1.2
