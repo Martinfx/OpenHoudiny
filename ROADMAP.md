@@ -101,8 +101,9 @@ předchozí hotový, zdokumentovaný a otestovaný (ASan, UBSan, TSan, libc++).
   primitivy, rohy i celou geometrií; čtení jiných prvků a hledání sousedů
   (`point()`, `nearpoints()`); tvorba a mazání bodů a primitiv;
   celočíselné atributy; pole jako výsledky dotazů; posuvníky z `ch()`.
-- **Výrazy v parametrech:** `$F`, `$T`, matematika a odkazy
-  `ch("../uzel/parametr")`, se sledováním závislostí a času.
+- ✅ **Výrazy v parametrech** ([docs/animation.md §6](docs/animation.md#6-výrazy)):
+  `$F`, `$T`, matematika a odkazy `ch("../uzel/parametr")`, se sledováním
+  závislostí a času; tlačítko fx v editoru, `--set` na příkazové řádce.
 - **Subnety a digital assets:** kus sítě zabalený do uzlu s vybranými
   parametry, uložený do knihovny a použitelný znovu; instance sledují
   definici, definice má verzi.

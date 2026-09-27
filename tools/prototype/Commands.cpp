@@ -30,7 +30,8 @@
 // frame, or every frame into a video, with the renderer of the editor's
 // viewport. --set changes a
 // parameter first: NODE.PARAM=VALUE, or PARAM=VALUE when a single node has
-// that parameter. --cache DIR writes every frame to a folder, and
+// that parameter; a VALUE that is not a value is an expression ($F, ch()),
+// and NODE.PARAM.x=... sets one component of a vector. --cache DIR writes every frame to a folder, and
 // --from-cache DIR reads them from one instead of simulating (pg/sim/Cache.h);
 // --export PATH writes the displayed geometry of every frame -- or that of
 // --export-node -- to .ply, .obj or .vdb files, $F4 in PATH the frame
@@ -38,6 +39,8 @@
 // alone, which need no OpenGL.
 //
 #include "Commands.h"
+
+#include "pg/lang/Lang.h"
 #include "Offscreen.h"
 
 #ifdef PG_CAN_RENDER
@@ -576,7 +579,43 @@ bool applySetting(const std::string& assignment, pg::sim::Network& net, std::str
         }
     }
     std::string why;
+    // center.y=... : a component, as a number or an expression.
+    if (param.size() > 2 && param[param.size() - 2] == '.' && !net.paramDef(node, param)) {
+        const std::string base = param.substr(0, param.size() - 2);
+        const pg::sim::ParamDef* d = net.paramDef(node, base);
+        const int c = param.back() - 'x';
+        if (!d || c < 0 || c > 2 || (d->kind != pg::sim::ParamKind::Vector && d->kind != pg::sim::ParamKind::Color)) {
+            error = name + ": no such parameter";
+            return false;
+        }
+        if (pg::lang::isNumber(value)) {
+            pg::sim::ParamValue v = net.param(node, base);
+            v[static_cast<size_t>(c)] = static_cast<float>(std::strtod(value.c_str(), nullptr));
+            net.setExpression(node, param, "");
+            return net.setParam(node, base, v);
+        }
+        net.setExpression(node, param, value);
+        why = net.expressionError(node, param);
+        if (!why.empty()) {
+            net.setExpression(node, param, "");
+            error = name + ": " + why;
+            return false;
+        }
+        return true;
+    }
     if (!net.setParam(node, param, value, &why)) {
+        // Not a value: an expression, for a number or a vector.
+        const pg::sim::ParamDef* d = net.paramDef(node, param);
+        const bool numeric = d && (d->kind == pg::sim::ParamKind::Float || d->kind == pg::sim::ParamKind::Int ||
+                                   d->kind == pg::sim::ParamKind::Vector || d->kind == pg::sim::ParamKind::Color);
+        if (numeric) {
+            const std::vector<std::string> chans = pg::sim::Network::channels(*d);
+            for (const std::string& ch : chans) net.setExpression(node, ch, value);
+            const std::string e = net.expressionError(node, chans.front());
+            if (e.empty()) return true;
+            for (const std::string& ch : chans) net.setExpression(node, ch, "");
+            why += " -- and as an expression: " + e;
+        }
         error = name + ": " + why;
         return false;
     }
@@ -988,7 +1027,9 @@ void printUsage(std::FILE* out) {
                  "                   ask for a view round the scene. --cache writes every frame to DIR;\n"
                  "                   --from-cache reads them from there instead of simulating; --export writes\n"
                  "                   the displayed geometry of every frame, PATH with $F4 for the frame:\n"
-                 "                   .ply points, .obj polygons, .vdb volumes. '-' for OUT.png: no pictures\n"
+                 "                   .ply points, .obj polygons, .vdb volumes. '-' for OUT.png: no pictures.\n"
+                 "                   --set takes an expression too: 'fire.center.x=sin($T*6)*0.3',\n"
+                 "                   'box1.sizex=ch(\"../base/sizex\")*2', 'fire.center={0, $F*0.01, 0}'\n"
                  "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"
                  "  prototype pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
                  "  prototype help\n");

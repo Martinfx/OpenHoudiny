@@ -193,6 +193,22 @@ int keyButton(const char* id, int state, const char* tooltip) {
     return clicked;
 }
 
+bool exprButton(const char* id, bool active, const char* tooltip) {
+    const float side = ImGui::GetFrameHeight();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::PushID(id);
+    const bool clicked = ImGui::InvisibleButton("##expr", ImVec2(side * 0.9f, side));
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered && tooltip && *tooltip) ImGui::SetTooltip("%s", tooltip);
+    ImGui::PopID();
+    const ImU32 color = active ? IM_COL32(150, 210, 255, 255) : hovered ? IM_COL32(255, 255, 255, 170) : IM_COL32(255, 255, 255, 55);
+    const char* text = "fx";
+    const ImVec2 size = ImGui::CalcTextSize(text);
+    ImGui::GetWindowDrawList()->AddText(ImVec2(at.x + (side * 0.9f - size.x) * 0.5f, at.y + (side - size.y) * 0.5f), color, text);
+    ImGui::SetCursorScreenPos(at);
+    return clicked;
+}
+
 bool sliderFloat(const char* id, float& v, float min, float max, const char* format) {
     // Past the ends when typed (Ctrl + click): a slider's range is where it
     // is useful, not a limit.

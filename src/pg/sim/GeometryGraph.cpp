@@ -161,50 +161,67 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
         const NodeType* t = findNodeType(n.type);
         if (!t || !t->core || nodes_.count(n.id)) continue;
         pg::Node* made = graph_.create(t->core, "n" + std::to_string(n.id));
-        if (made) nodes_[n.id] = {made, n.type, false, 0, {}, {}};
+        if (made) {
+            Mirror m;
+            m.node = made;
+            m.type = n.type;
+            nodes_[n.id] = std::move(m);
+        }
     }
 
-    // The parameters, set -- only those that changed dirty anything.
+    // The parameters, set -- only those that changed dirty anything. One
+    // that changes with the frame -- keys, or an expression of $F or of a
+    // parameter that changes -- is bound as an expression of the core,
+    // evaluated on a copy of the network as it is now.
+    std::shared_ptr<const Network> snapshot;
     for (auto& [id, m] : nodes_) {
         const Node& n = *net.node(id);
         // The type's parameters and those the node's snippet asks for.
         const std::vector<const ParamDef*> defs = net.params(id);
         m.bypass = n.bypass;
         m.file.clear();
+        std::vector<std::string> varying;
+        for (const ParamDef* d : defs) {
+            if (!isText(d->kind) && net.varies(id, d->name)) varying.push_back(d->name);
+        }
+        // An expression may read another node, which may have changed.
+        const bool reads = !varying.empty() && !n.exprs.empty();
+        const bool rebind = varying != m.varying || n.keys != m.keys || n.exprs != m.exprs ||
+                            (reads && net.revision() != m.revision);
+        if (rebind && !varying.empty() && !snapshot) snapshot = std::make_shared<const Network>(net);
         m.node->editParams([&](ParamSet& p) {
             bool changed = false;
-            // Animated parameters: their keys, as expressions of the frame.
-            if (n.keys != m.keys) {
+            if (rebind) {
                 changed = true;
                 for (const ParamDef* dp : defs) {
                     const ParamDef& d = *dp;
                     const std::string name = d.name;
+                    p.setExpression(name, {});
+                    for (const char* c : {".x", ".y", ".z"}) p.setExpression(name + c, {});
+                    if (std::find(varying.begin(), varying.end(), name) == varying.end()) continue;
                     const bool vector = d.kind == ParamKind::Vector || d.kind == ParamKind::Color;
-                    const auto it = n.keys.find(name);
-                    if (it == n.keys.end()) {
-                        p.setExpression(name, {});
-                        for (const char* c : {".x", ".y", ".z"}) p.setExpression(name + c, {});
-                        continue;
-                    }
-                    const std::vector<Key> keys = it->second;
-                    const ParamKind kind = d.kind;
                     if (!vector) {
-                        p.setExpression(name, [keys, kind](const CookContext& ctx) {
-                            return static_cast<double>(evaluate(keys, static_cast<float>(ctx.frame), kind)[0]);
+                        p.setExpression(name, [snapshot, id = id, name](const CookContext& ctx) {
+                            return static_cast<double>(snapshot->valueAt(id, name, static_cast<float>(ctx.frame))[0]);
                         });
                         continue;
                     }
                     for (size_t c = 0; c < 3; ++c) {
-                        p.setExpression(name + (c == 0 ? ".x" : c == 1 ? ".y" : ".z"), [keys, kind, c](const CookContext& ctx) {
-                            return static_cast<double>(evaluate(keys, static_cast<float>(ctx.frame), kind)[c]);
-                        });
+                        p.setExpression(name + (c == 0 ? ".x" : c == 1 ? ".y" : ".z"),
+                                        [snapshot, id = id, name, c](const CookContext& ctx) {
+                                            return static_cast<double>(snapshot->valueAt(id, name, static_cast<float>(ctx.frame))[c]);
+                                        });
                     }
                 }
+                m.varying = varying;
                 m.keys = n.keys;
+                m.exprs = n.exprs;
+                m.revision = net.revision();
             }
             for (const ParamDef* dp : defs) {
                 const ParamDef& d = *dp;
-                const ParamValue v = net.param(id, d.name);
+                // An expression that does not change is a value: frame 1's, as any.
+                const ParamValue v = net.hasExpression(id, d.name) ? net.valueAt(id, d.name, 1.0f) : net.param(id, d.name);
                 const std::string name = d.name;
                 switch (d.kind) {
                     case ParamKind::Float: changed |= p.setFloat(name, v[0]); break;

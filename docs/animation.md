@@ -101,7 +101,48 @@ Solveru, uzavřené stěny nádrže, počet snímků a snímková frekvence v Ou
 Tvar z geometrie (vstup Shape) je statický — geometrie se bere ve snímku 1;
 pohyblivou překážku udělej z objektu s vlastním tvarem nebo modelem OBJ.
 
-## 6. Jak to funguje
+## 6. Výrazy
+
+Místo klíčů může parametr řídit **výraz** — stejný jazyk jako wrangle
+([wrangle.md](wrangle.md)), jen jeden výraz: `$F * 0.1`, `sin($T * 6) *
+0.3`, `ch("../base/sizex") * 2`, `fit($F, 1, 100, 0, 5)`, `rand($F)`.
+Výraz má každá složka vektoru zvlášť (`center.y`), anebo všechny stejný
+vektorový výraz: `{0, $F * 0.01, 0}`.
+
+- **V editoru:** tlačítko **fx** vedle kosočtverce klíče přepne parametr na
+  textová pole (u vektoru tři). Co se do nich napíše, je výraz; obyčejné
+  číslo je hodnota. Pod poli je, co výraz dává v aktuálním snímku, nebo
+  červeně, co je na něm špatně. Další klik na **fx** výrazy smaže a
+  parametr si nechá hodnotu, kterou měl.
+- **Proměnné:** `$F` snímek (celé číslo), `$FF` snímek jako desetinné
+  číslo, `$T` čas v sekundách (`$F / $FPS`), `$FPS` snímková frekvence
+  z Output.
+- **Jiné parametry:** `ch("sizex")` parametr téhož uzlu, `ch("../box1/sizex")`
+  parametr uzlu *box1*; složka vektoru jako `size.y` nebo `sizey`;
+  `chv("../box1/size")` celý vektor, `chs()` text. Čtou se ve stejném
+  snímku, takže výraz nad animovaným parametrem se mění s ním.
+- **Kdy se přepočítá:** výraz, který nečte čas ani nic, co se v čase mění,
+  je obyčejná hodnota — přepočítá se, jen když se změní, co čte. Výraz s
+  `$F` nebo nad animovaným parametrem dělá z uzlu časově závislý: simulace
+  ho bere snímek po snímku jako klíče, geometrie se vaří pro každý snímek.
+- **Chyby:** výraz, který se nedá přečíst nebo spočítat, parametr nemění
+  (platí jeho hodnota) a editor řekne proč. Výrazy, které čtou jeden
+  druhý dokola, jsou chyba („round in a loop“), ne zamrznutí.
+- **Výraz vítězí** nad klíči i hodnotou; hodnotu parametr drží pro chvíli,
+  kdy se výraz smaže.
+- **V souboru** je řádek `expr KANÁL "TEXT"` pod klíči uzlu:
+
+```
+node 1 pyro_source 2 fire 0 0
+  param fuel 14
+  expr center.x "sin($T * 6) * 0.3"
+```
+
+- **Z příkazové řádky:** `--set` bere i výraz:
+  `prototype sim campfire fire.mp4 --set 'fire.center.x=sin($T*6)*0.3'`,
+  `--set 'fire.center={0, $F*0.01, 0}'`.
+
+## 7. Jak to funguje
 
 ### Síť snímek po snímku
 
@@ -145,7 +186,7 @@ výraz jádra (klíče vyhodnocené ve snímku vaření). Uzel je tím časově
 závislý a cache jádra drží jeho geometrii pro každý snímek zvlášť — návrat
 na už uvařený snímek nic nepočítá.
 
-## 7. Omezení
+## 8. Omezení
 
 - Změna klíče spustí celou simulaci znovu (jako každá změna scény).
 - Překážka, která se hýbe rychleji než o buňku za krok, může „proskočit“
@@ -153,4 +194,6 @@ na už uvařený snímek nic nepočítá.
   zmizí.
 - Tvar z geometrie a změna tvaru (koule → krychle) se neanimuje plynule.
 - Nejsou křivkové editory (graf křivek) ani klíče na jednotlivých složkách
-  vektoru — klíč nese celou hodnotu.
+  vektoru — klíč nese celou hodnotu (výraz ale složku zvlášť mít může).
+- Výraz nevidí geometrii jiného uzlu (Houdini má `npoints()`, `bbox()`
+  v cestě): čte parametry, čas a vlastní čísla.

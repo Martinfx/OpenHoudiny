@@ -1533,7 +1533,11 @@ bool Network::resetParam(int id, std::string_view name) {
     Node* n = node(id);
     if (!n) return false;
     const std::string key(name);
-    if (n->params.erase(key) + n->texts.erase(key) + n->keys.erase(key) > 0) ++revision_;
+    size_t erased = n->params.erase(key) + n->texts.erase(key) + n->keys.erase(key);
+    if (const ParamDef* d = def(*n, name)) {
+        for (const std::string& ch : channels(*d)) erased += n->exprs.erase(ch);
+    }
+    if (erased > 0) ++revision_;
     return true;
 }
 
@@ -1541,17 +1545,301 @@ bool Network::isDefault(int id, std::string_view name) const {
     const Node* n = node(id);
     const std::string key(name);
     return !n || (n->params.find(key) == n->params.end() && n->texts.find(key) == n->texts.end() &&
-                  n->keys.find(key) == n->keys.end());
+                  n->keys.find(key) == n->keys.end() && !hasExpression(id, name));
 }
 
-ParamValue Network::valueAt(int id, std::string_view name, float frame) const {
-    const Node* n = node(id);
-    if (n) {
-        const auto it = n->keys.find(std::string(name));
-        const ParamDef* d = def(*n, name);
-        if (it != n->keys.end() && d) return evaluate(it->second, frame, d->kind);
+// --- expressions -------------------------------------------------------------------
+
+namespace {
+
+constexpr int kDeepest = 16;  ///< expressions that refer on further than this go round in a loop
+
+struct Parsed {
+    std::shared_ptr<const lang::Expression> expr;
+    std::string error;
+};
+
+/// An expression, parsed once for all networks and threads.
+Parsed parsedExpression(const std::string& text) {
+    static std::mutex mu;
+    static std::map<std::string, Parsed> cache;
+    std::lock_guard<std::mutex> lock(mu);
+    const auto it = cache.find(text);
+    if (it != cache.end()) return it->second;
+    if (cache.size() > 4096) cache.clear();
+    Parsed p;
+    std::unique_ptr<lang::Expression> e = lang::Expression::parse(text, p.error);
+    p.expr = std::shared_ptr<const lang::Expression>(std::move(e));
+    if (p.expr && p.expr->type() == lang::Type::String) {
+        p.expr.reset();
+        p.error = "a number was expected, not text";
     }
-    return param(id, name);
+    cache[text] = p;
+    return p;
+}
+
+/// The parameters whose expressions this thread is evaluating: one that
+/// asks for its own value, round others, is in a loop.
+thread_local std::vector<std::pair<int, std::string>> evaluating;
+
+struct Evaluating {
+    Evaluating(int id, std::string name) { evaluating.emplace_back(id, std::move(name)); }
+    ~Evaluating() { evaluating.pop_back(); }
+    Evaluating(const Evaluating&) = delete;
+    Evaluating& operator=(const Evaluating&) = delete;
+};
+
+bool beingEvaluated(int id, const std::string& name) {
+    return std::find(evaluating.begin(), evaluating.end(), std::make_pair(id, name)) != evaluating.end();
+}
+
+/// "center.y" -> "center", 1; "sizex" -> "sizex", -1.
+std::pair<std::string, int> splitChannel(std::string_view channel) {
+    if (channel.size() > 2 && channel[channel.size() - 2] == '.') {
+        const char c = channel.back();
+        if (c == 'x' || c == 'y' || c == 'z') return {std::string(channel.substr(0, channel.size() - 2)), c - 'x'};
+    }
+    return {std::string(channel), -1};
+}
+
+}  // namespace
+
+/// What an expression on a parameter reads: the frame, and the parameters
+/// of this node and of the others, each at the same frame.
+class ExpressionHost : public lang::Host {
+public:
+    ExpressionHost(const Network& net, const Node& node, float frame, int depth)
+        : net_(net), node_(node), frame_(frame), depth_(depth) {}
+
+    bool variable(std::string_view name, double& out) const override {
+        double fps = 30.0;
+        for (const Node& n : net_.nodes()) {
+            if (n.type == "output") fps = std::max(1.0, static_cast<double>(net_.param(n.id, "fps")[0]));
+        }
+        if (name == "F") out = std::round(frame_);
+        else if (name == "FF") out = frame_;
+        else if (name == "T") out = frame_ / fps;
+        else if (name == "FPS") out = fps;
+        else return false;
+        return true;
+    }
+
+    bool channel(std::string_view path, int component, double& out, std::string& error) const override {
+        const Node* target = nullptr;
+        const ParamDef* d = nullptr;
+        int c = component;
+        if (!resolve(path, target, d, c, error)) return false;
+        if (isText(d->kind)) {
+            error = "'" + std::string(path) + "' is text: chs() reads it";
+            return false;
+        }
+        if (depth_ >= kDeepest || beingEvaluated(target->id, d->name)) {
+            error = "expressions that refer to each other round in a loop (" + target->name + "/" + d->name + ")";
+            return false;
+        }
+        std::string inner;
+        const ParamValue v = net_.valueAtDepth(target->id, d->name, frame_, depth_ + 1, &inner);
+        if (!inner.empty()) {
+            error = inner;
+            return false;
+        }
+        const bool vector = d->kind == ParamKind::Vector || d->kind == ParamKind::Color;
+        out = v[vector ? static_cast<size_t>(std::clamp(c, 0, 2)) : 0];
+        return true;
+    }
+
+    bool channelText(std::string_view path, std::string& out, std::string& error) const override {
+        const Node* target = nullptr;
+        const ParamDef* d = nullptr;
+        int c = 0;
+        if (!resolve(path, target, d, c, error)) return false;
+        if (!isText(d->kind)) {
+            error = "'" + std::string(path) + "' is not text";
+            return false;
+        }
+        out = net_.text(target->id, d->name);
+        return true;
+    }
+
+    /// "sizex", "../box1/sizex", "box1/center.y", "box1/centery": the node
+    /// and its parameter -- and the component, when the path names one.
+    bool resolve(std::string_view path, const Node*& target, const ParamDef*& d, int& component, std::string& error) const {
+        std::string p(path);
+        while (p.rfind("../", 0) == 0) p = p.substr(3);
+        if (p.rfind("./", 0) == 0) p = p.substr(2);
+        target = &node_;
+        std::string param = p;
+        if (const size_t slash = p.rfind('/'); slash != std::string::npos) {
+            const std::string nodeName = p.substr(0, slash);
+            param = p.substr(slash + 1);
+            target = net_.named(nodeName);
+            if (!target) {
+                error = "no node '" + nodeName + "'";
+                return false;
+            }
+        }
+        d = net_.def(*target, param);
+        if (!d) {
+            // A component: center.y, or centery.
+            auto [base, c] = splitChannel(param);
+            if (c < 0 && param.size() > 1) {
+                const char last = param.back();
+                if (last == 'x' || last == 'y' || last == 'z') {
+                    base = param.substr(0, param.size() - 1);
+                    c = last - 'x';
+                }
+            }
+            const ParamDef* b = c >= 0 ? net_.def(*target, base) : nullptr;
+            if (b && (b->kind == ParamKind::Vector || b->kind == ParamKind::Color)) {
+                d = b;
+                component = c;
+            }
+        }
+        if (!d) {
+            error = target->name + " has no parameter '" + param + "'";
+            return false;
+        }
+        return true;
+    }
+
+private:
+    const Network& net_;
+    const Node& node_;
+    float frame_;
+    int depth_;
+};
+
+std::vector<std::string> Network::channels(const ParamDef& d) {
+    if (isText(d.kind)) return {};
+    if (d.kind == ParamKind::Vector || d.kind == ParamKind::Color) {
+        const std::string n = d.name;
+        return {n + ".x", n + ".y", n + ".z"};
+    }
+    return {d.name};
+}
+
+std::string Network::expression(int id, std::string_view channel) const {
+    const Node* n = node(id);
+    if (!n) return {};
+    const auto it = n->exprs.find(std::string(channel));
+    return it == n->exprs.end() ? std::string() : it->second;
+}
+
+bool Network::setExpression(int id, std::string_view channel, std::string_view text) {
+    Node* n = node(id);
+    if (!n) return false;
+    const auto [base, c] = splitChannel(channel);
+    const ParamDef* d = def(*n, base);
+    if (!d || isText(d->kind)) return false;
+    const bool vector = d->kind == ParamKind::Vector || d->kind == ParamKind::Color;
+    if (vector != (c >= 0)) return false;  // a vector by its components, a number by its name
+    std::string t(text);
+    while (!t.empty() && std::isspace(static_cast<unsigned char>(t.back()))) t.pop_back();
+    while (!t.empty() && std::isspace(static_cast<unsigned char>(t.front()))) t.erase(t.begin());
+    const std::string key(channel);
+    const auto it = n->exprs.find(key);
+    if (t.empty()) {
+        if (it == n->exprs.end()) return true;
+        n->exprs.erase(it);
+    } else {
+        if (it != n->exprs.end() && it->second == t) return true;
+        n->exprs[key] = t;
+    }
+    ++revision_;
+    return true;
+}
+
+bool Network::hasExpression(int id, std::string_view name) const {
+    const Node* n = node(id);
+    if (!n || n->exprs.empty()) return false;
+    const ParamDef* d = def(*n, name);
+    if (!d) return false;
+    for (const std::string& ch : channels(*d)) {
+        if (n->exprs.count(ch)) return true;
+    }
+    return false;
+}
+
+std::string Network::expressionError(int id, std::string_view channel, float frame) const {
+    const Node* n = node(id);
+    if (!n) return {};
+    const auto it = n->exprs.find(std::string(channel));
+    if (it == n->exprs.end()) return {};
+    const Parsed p = parsedExpression(it->second);
+    if (!p.expr) return p.error;
+    const Evaluating guard(id, splitChannel(channel).first);
+    const ExpressionHost host(*this, *n, frame, 0);
+    std::string error;
+    double v = 0.0;
+    if (!p.expr->evalFloat(host, v, error)) return error;
+    return {};
+}
+
+ParamValue Network::valueAt(int id, std::string_view name, float frame) const { return valueAtDepth(id, name, frame, 0); }
+
+ParamValue Network::valueAtDepth(int id, std::string_view name, float frame, int depth, std::string* failure) const {
+    const Node* n = node(id);
+    if (!n) return {};
+    const ParamDef* d = def(*n, name);
+    ParamValue v = param(id, name);
+    if (!d) return v;
+    const auto k = n->keys.find(std::string(name));
+    if (k != n->keys.end()) v = evaluate(k->second, frame, d->kind);
+    if (n->exprs.empty() || isText(d->kind)) return v;
+    const std::vector<std::string> chans = channels(*d);
+    bool any = false;
+    const Evaluating guard(id, d->name);
+    for (size_t c = 0; c < chans.size(); ++c) {
+        const auto it = n->exprs.find(chans[c]);
+        if (it == n->exprs.end()) continue;
+        const Parsed p = parsedExpression(it->second);
+        if (!p.expr) {  // does not parse: the value stands
+            if (failure && failure->empty()) *failure = n->name + "/" + chans[c] + ": " + p.error;
+            continue;
+        }
+        const ExpressionHost host(*this, *n, frame, depth);
+        std::string error;
+        const lang::Type type = p.expr->type();
+        bool ok = false;
+        if (type == lang::Type::Vec2 || type == lang::Type::Vec3 || type == lang::Type::Vec4) {
+            Vec3 x;
+            if ((ok = p.expr->evalVector(host, x, error))) v[c] = x[static_cast<int>(c)];
+        } else {
+            double x = 0.0;
+            if ((ok = p.expr->evalFloat(host, x, error) && std::isfinite(x))) v[c] = static_cast<float>(x);
+        }
+        any = any || ok;
+        if (!ok && failure && failure->empty()) *failure = error.empty() ? n->name + "/" + chans[c] + ": not a number" : error;
+    }
+    return any ? keep(*d, v) : v;
+}
+
+bool Network::varies(int id, std::string_view name) const { return variesDepth(id, name, 0); }
+
+bool Network::variesDepth(int id, std::string_view name, int depth) const {
+    const Node* n = node(id);
+    if (!n) return false;
+    if (n->keys.count(std::string(name))) return true;
+    if (n->exprs.empty() || depth > kDeepest) return false;
+    const ParamDef* d = def(*n, name);
+    if (!d) return false;
+    for (const std::string& ch : channels(*d)) {
+        const auto it = n->exprs.find(ch);
+        if (it == n->exprs.end()) continue;
+        const Parsed p = parsedExpression(it->second);
+        if (!p.expr) continue;
+        if (p.expr->readsTime()) return true;
+        // It varies when what it reads does.
+        const ExpressionHost host(*this, *n, 1.0f, depth);
+        for (const lang::Channel& c : p.expr->channels()) {
+            const Node* target = nullptr;
+            const ParamDef* td = nullptr;
+            int comp = 0;
+            std::string error;
+            if (host.resolve(c.name, target, td, comp, error) && variesDepth(target->id, td->name, depth + 1)) return true;
+        }
+    }
+    return false;
 }
 
 bool Network::setKey(int id, std::string_view name, float frame, const ParamValue& value, Interp interp) {
@@ -1612,7 +1900,13 @@ const std::vector<Key>* Network::keys(int id, std::string_view name) const {
 }
 
 bool Network::anyAnimated() const {
-    return std::any_of(nodes_.begin(), nodes_.end(), [](const Node& n) { return !n.keys.empty(); });
+    for (const Node& n : nodes_) {
+        if (!n.keys.empty()) return true;
+        for (const auto& [channel, text] : n.exprs) {
+            if (varies(n.id, splitChannel(channel).first)) return true;
+        }
+    }
+    return false;
 }
 
 bool Network::setParamAt(int id, std::string_view name, float frame, const ParamValue& value) {
@@ -1714,6 +2008,15 @@ std::string Network::save() const {
             };
             for (const ParamDef& d : t->params) keysOf(d);
             for (const ParamDef& d : n.spares) keysOf(d);
+            // The expressions, channel by channel in the same order.
+            auto exprsOf = [&](const ParamDef& d) {
+                for (const std::string& ch : channels(d)) {
+                    const auto it = n.exprs.find(ch);
+                    if (it != n.exprs.end()) out += "  expr " + ch + ' ' + quotedPath(it->second) + '\n';
+                }
+            };
+            for (const ParamDef& d : t->params) exprsOf(d);
+            for (const ParamDef& d : n.spares) exprsOf(d);
         } else {
             // A type this program does not know: its values as they came.
             for (const auto& [name, v] : n.params) {
@@ -1754,6 +2057,7 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
         std::string name, value;
         float frame = 1.0f;
         Interp interp = Interp::Smooth;
+        bool expr = false;
     };
     std::vector<PendingValue> spareValues;
     bool header = false;
@@ -1882,6 +2186,21 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
             else keys.insert(at, {frame, v, interp});
             continue;
         }
+        if (w[0] == "expr") {
+            // expr CHANNEL "TEXT" -- set once every parameter is known
+            if (!current) return fail(lineNo, "an expr belongs to the node above it, and there is none");
+            if (w.size() < 3) return fail(lineNo, "an expr line is: expr PARAM \"EXPRESSION\"");
+            std::string text;
+            const std::string_view value = line.substr(static_cast<size_t>(w[2].data() - line.data()));
+            if (!unquoted(value, text)) {
+                warn(lineNo, current->name + ": an expression with a quote that is not closed; dropped");
+                continue;
+            }
+            PendingValue pv{lineNo, current->id, false, std::string(w[1]), text};
+            pv.expr = true;
+            spareValues.push_back(std::move(pv));
+            continue;
+        }
         if (w[0] == "bypass") {
             if (!current) return fail(lineNo, "bypass belongs to the node above it, and there is none");
             current->bypass = true;
@@ -1921,6 +2240,12 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
     for (Node& n : net.nodes_) syncSpares(n);
     for (const PendingValue& p : spareValues) {
         Node* n = net.node(p.node);
+        if (p.expr) {
+            if (!n || !net.setExpression(n->id, p.name, p.value)) {
+                warn(p.line, (n ? n->name : std::string("?")) + " has no parameter " + p.name + " to drive; expression dropped");
+            }
+            continue;
+        }
         const ParamDef* d = n ? net.def(*n, p.name) : nullptr;
         if (!d) {
             const NodeType* t = n ? findNodeType(n->type) : nullptr;
@@ -2121,7 +2446,13 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
 
     // What cannot be animated is said.
     for (const Node& n : nodes_) {
-        for (const auto& [name, keys] : n.keys) {
+        std::set<std::string> changing;
+        for (const auto& [name, keys] : n.keys) changing.insert(name);
+        for (const auto& [channel, text] : n.exprs) {
+            const std::string name = splitChannel(channel).first;
+            if (varies(n.id, name)) changing.insert(name);
+        }
+        for (const std::string& name : changing) {
             const bool fixed = (n.type == "pyro_solver" && (name == "size" || name == "resolution")) ||
                                (n.type == "liquid_solver" && (name == "size" || name == "resolution" || name == "closed_sides")) ||
                                (n.type == "output" && (name == "frames" || name == "fps"));

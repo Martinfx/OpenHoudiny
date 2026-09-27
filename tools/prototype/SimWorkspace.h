@@ -32,6 +32,7 @@
 #include "pg/sim/Network.h"
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 
@@ -92,6 +93,8 @@ private:
     void nodeMenu(int node);
     int addNode(const std::string& type, ImVec2 at, const PinRef* pending);
     void duplicate(const std::vector<int>& nodes);
+    /// A parameter as expressions, one field a channel, with what they give.
+    void expressionFields(int id, const sim::ParamDef& p, const sim::ParamValue& now);
     void removeNodes(const std::vector<int>& nodes);
     void toggleBypass(const std::vector<int>& nodes);
 
@@ -235,6 +238,9 @@ private:
 
     sim::Network net_;
     sim::GeometryGraph geometry_;          ///< the geometry nodes, cooked
+    /// Parameters shown as expressions ("node.param"), though they may have
+    /// none yet: fx was clicked.
+    std::set<std::string> exprMode_;
     std::map<int, std::string> cookWarnings_;  ///< what each warned about, cooking
     std::map<int, std::string> cookLogs_;      ///< what each printed, cooking
     std::map<int, std::string> cookErrors_;  ///< what went wrong cooking each

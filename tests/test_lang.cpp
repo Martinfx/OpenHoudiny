@@ -540,3 +540,130 @@ TEST(lang_primitive_and_detail_wrangles_in_a_network) {
     CHECK_EQ(out->primitiveCount(), 5u + 1u);  // the box without its bottom, and the line
     CHECK(out->primitives().find("Cd") != nullptr);
 }
+
+// --- expressions on parameters ------------------------------------------------------------------
+
+TEST(expressions_drive_parameters_frame_by_frame_and_read_each_other) {
+    sim::Network net;
+    const int a = net.add("box");
+    const int b = net.add("box");
+    CHECK(net.rename(a, "box1"));
+    CHECK(net.setParam(a, "size", sim::ParamValue{2.0f, 3.0f, 4.0f}));
+    CHECK(net.setExpression(b, "center.y", "$F * 0.1"));
+    CHECK_NEAR(net.valueAt(b, "center", 5.0f)[1], 0.5, 1e-6);
+    CHECK_NEAR(net.valueAt(b, "center", 5.0f)[0], 0.0, 1e-6);  // the other components keep their values
+    CHECK(net.varies(b, "center"));
+    CHECK(net.anyAnimated());
+
+    // Another node's parameter, a whole vector or one component of it.
+    CHECK(net.setExpression(b, "size.x", "ch(\"../box1/sizey\") * 2"));
+    CHECK(net.setExpression(b, "size.y", "ch(\"box1/size.z\")"));
+    CHECK(net.setExpression(b, "size.z", "chv(\"../box1/size\").x"));
+    CHECK_EQ(net.valueAt(b, "size", 1.0f)[0], 6.0f);
+    CHECK_EQ(net.valueAt(b, "size", 1.0f)[1], 4.0f);
+    CHECK_EQ(net.valueAt(b, "size", 1.0f)[2], 2.0f);
+    CHECK(!net.varies(b, "size"));
+    CHECK(net.setKey(a, "size", 1.0f, sim::ParamValue{1.0f, 1.0f, 1.0f}));
+    CHECK(net.setKey(a, "size", 11.0f, sim::ParamValue{1.0f, 11.0f, 1.0f}));
+    CHECK(net.varies(b, "size"));  // it reads a parameter that is animated
+    CHECK_NEAR(net.valueAt(b, "size", 6.0f)[0], 12.0, 1e-4);
+
+    // Kept within the parameter's limits; an int is whole.
+    CHECK(net.setExpression(b, "divisions", "2.6 + $F"));
+    CHECK_EQ(net.valueAt(b, "divisions", 1.0f)[0], 4.0f);
+    CHECK(net.setExpression(b, "divisions", "-50"));
+    CHECK_EQ(net.valueAt(b, "divisions", 1.0f)[0], 1.0f);
+
+    // Not a parameter to drive; a text parameter; a number by a component.
+    CHECK(!net.setExpression(b, "nosuch", "1"));
+    CHECK(!net.setExpression(b, "divisions.x", "1"));
+    CHECK(!net.setExpression(b, "size", "1"));
+}
+
+TEST(expressions_that_are_wrong_say_so_and_keep_the_value) {
+    sim::Network net;
+    const int a = net.add("sphere");
+    const int b = net.add("sphere");
+    CHECK(net.rename(a, "one"));
+    CHECK(net.rename(b, "two"));
+    CHECK(net.setParam(a, "radius", sim::ParamValue{0.7f, 0.0f, 0.0f}));
+    CHECK(net.setExpression(a, "radius", "1 +"));
+    CHECK(!net.expressionError(a, "radius").empty());
+    CHECK_EQ(net.valueAt(a, "radius", 1.0f)[0], 0.7f);
+    CHECK(net.setExpression(a, "radius", "ch(\"../nobody/radius\")"));
+    CHECK(net.expressionError(a, "radius").find("nobody") != std::string::npos);
+
+    // Two that read each other: a loop, said, not a hang.
+    CHECK(net.setExpression(a, "radius", "ch(\"../two/radius\") + 1"));
+    CHECK(net.setExpression(b, "radius", "ch(\"../one/radius\") + 1"));
+    CHECK(net.expressionError(a, "radius").find("loop") != std::string::npos);
+    CHECK(std::isfinite(net.valueAt(a, "radius", 1.0f)[0]));
+}
+
+TEST(expressions_go_to_the_file_and_back_and_reset_takes_them_off) {
+    sim::Network net;
+    const int w = net.add("point_wrangle");
+    CHECK(net.setText(w, "snippet", "@P.y += ch(\"lift\");"));
+    CHECK(net.setExpression(w, "lift", "sin($T * 2) * 0.5"));
+    const int s = net.add("sphere");
+    CHECK(net.setExpression(s, "center.x", "ch(\"../point_wrangle1/lift\") + \"x\" == \"y\""));
+    const std::string text = net.save();
+    CHECK(text.find("  expr lift \"sin($T * 2) * 0.5\"") != std::string::npos);
+    sim::Network back;
+    std::string error;
+    std::vector<std::string> warnings;
+    CHECK(sim::Network::load(text, back, error, &warnings));
+    CHECK(warnings.empty());
+    CHECK_EQ(back.expression(w, "lift"), std::string("sin($T * 2) * 0.5"));
+    CHECK_EQ(back.expression(s, "center.x"), net.expression(s, "center.x"));
+    CHECK_EQ(back.save(), text);
+    CHECK(!back.isDefault(w, "lift"));
+    CHECK(back.resetParam(w, "lift"));
+    CHECK(back.expression(w, "lift").empty());
+    CHECK(back.isDefault(w, "lift"));
+}
+
+TEST(expressions_drive_the_geometry_and_what_is_simulated) {
+    sim::Network net;
+    const int a = net.add("box");
+    const int b = net.add("box");
+    CHECK(net.rename(a, "base"));
+    CHECK(net.setParam(a, "size", sim::ParamValue{2.0f, 1.0f, 1.0f}));
+    CHECK(net.setExpression(b, "size.x", "ch(\"../base/sizex\") * 2"));
+    CHECK(net.setExpression(b, "center.y", "$F * 0.25"));
+    sim::GeometryGraph geo;
+    geo.sync(net);
+    auto width = [](const GeometryPtr& g) {
+        float lo = 1e9f, hi = -1e9f;
+        for (const Vec3& p : g->positions()) {
+            lo = std::min(lo, p.x);
+            hi = std::max(hi, p.x);
+        }
+        return hi - lo;
+    };
+    auto lowest = [](const GeometryPtr& g) {
+        float lo = 1e9f;
+        for (const Vec3& p : g->positions()) lo = std::min(lo, p.y);
+        return lo;
+    };
+    CHECK_NEAR(width(geo.cook(b, 1)), 4.0, 1e-5);
+    CHECK_NEAR(lowest(geo.cook(b, 4)), 1.0 - 0.5, 1e-5);  // centre 1, a box 1 high
+    CHECK(net.setParam(a, "size", sim::ParamValue{3.0f, 1.0f, 1.0f}));
+    geo.sync(net);
+    CHECK_NEAR(width(geo.cook(b, 1)), 6.0, 1e-5);
+
+    // A simulation takes it frame by frame, as it takes keys.
+    sim::Network smoke;
+    std::string error;
+    CHECK(sim::Network::example("smoke", smoke));
+    int source = 0;
+    for (const sim::Node& n : smoke.nodes()) {
+        if (n.type == "pyro_source") source = n.id;
+    }
+    CHECK(source != 0);
+    CHECK(smoke.setExpression(source, "center.x", "$F * 0.01"));
+    const sim::Compiled c = smoke.compile();
+    CHECK(c.ok);
+    CHECK(c.world.animation.frames != nullptr);
+    CHECK_NEAR(c.worldAt(10).gas.emitters.front().center.x, 0.1, 1e-5);
+}

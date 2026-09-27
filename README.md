@@ -23,7 +23,8 @@ okna.
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání
   geometrie; posuvníky z `ch()`
 - **[docs/animation.md](docs/animation.md)** — klíčové snímky na libovolném
-  parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda
+  parametru, výrazy v parametrech (`$F`, `ch("../box1/sizex")`), pohyblivé
+  překážky, jejichž pohyb převezme plyn i voda
 - **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
   body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
   Houdini, Blender a renderery
@@ -79,7 +80,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 208 testů: 59 jádro, 23 jazyk wrangle, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 212 testů: 59 jádro, 27 jazyk wrangle a výrazy, 25 shader graf, 85 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť

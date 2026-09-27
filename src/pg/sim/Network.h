@@ -193,6 +193,11 @@ struct Node {
     /// chv("dir") -- besides those of its type: made from the snippet each
     /// time it changes, not written to files (their values are).
     std::vector<ParamDef> spares;
+    /// Parameters driven by an expression -- "$F * 0.1",
+    /// "ch(\"../box1/sizex\") * 2" -- by channel: "sizex" for a number,
+    /// "center.y" for a component of a vector. An expression wins over the
+    /// value and the keys.
+    std::map<std::string, std::string> exprs;
 };
 
 struct Link {
@@ -328,6 +333,27 @@ public:
     /// The frames that have a key of any parameter of node `id` -- of every
     /// node, for 0 -- in order, each once.
     std::vector<float> keyFrames(int id = 0) const;
+    // --- expressions ----------------------------------------------------------------------
+    /// The channels of a parameter: {"sizex"} for a number, {"center.x",
+    /// "center.y", "center.z"} for a vector or a colour; none for text.
+    static std::vector<std::string> channels(const ParamDef& d);
+    /// The expression on `channel` of node `id`; empty if none.
+    std::string expression(int id, std::string_view channel) const;
+    /// Drives `channel` by `text` -- $F, $T, $FPS, ch("../node/param"), and
+    /// everything else a wrangle's expressions have; an empty text takes it
+    /// off. An expression that does not parse is kept: expressionError()
+    /// says what is wrong, and the parameter keeps its value meanwhile.
+    /// False for an unknown node or channel.
+    bool setExpression(int id, std::string_view channel, std::string_view text);
+    /// True if a channel of parameter `name` has an expression.
+    bool hasExpression(int id, std::string_view name) const;
+    /// What is wrong with the expression on `channel` at `frame`; empty if
+    /// nothing (or no expression).
+    std::string expressionError(int id, std::string_view channel, float frame = 1.0f) const;
+    /// True when the parameter changes from frame to frame: it has keys, or
+    /// an expression that reads the time or a parameter that changes.
+    bool varies(int id, std::string_view name) const;
+
     /// A File, Text or Code parameter: the text set, else its default.
     std::string text(int id, std::string_view name) const;
     /// False for an unknown node or a parameter that is not text.
@@ -376,6 +402,11 @@ private:
                           bool quiet) const;
     int indexOf(int id) const;
     const ParamDef* def(const Node& n, std::string_view name) const;
+    /// valueAt() at `depth` expressions down; what went wrong with them in
+    /// `error`, if one is given.
+    ParamValue valueAtDepth(int id, std::string_view name, float frame, int depth, std::string* error = nullptr) const;
+    bool variesDepth(int id, std::string_view name, int depth) const;
+    friend class ExpressionHost;
     /// Makes Node::spares what the node's snippet asks for. True if they changed.
     static bool syncSpares(Node& n);
     /// Turns the nodes of old types (Legacy in Network.cpp) into the types

@@ -50,6 +50,9 @@ bool resetButton(const char* id, bool visible);
 /// no key at this frame, 2 a key at this frame. Returns 1 for a click, 2 for
 /// a right click, 0 for none.
 int keyButton(const char* id, int state, const char* tooltip);
+/// "fx" after a parameter's key: lit when the parameter is driven by an
+/// expression. True when clicked.
+bool exprButton(const char* id, bool active, const char* tooltip);
 
 bool sliderFloat(const char* id, float& v, float min, float max, const char* format);
 bool sliderInt(const char* id, int& v, int min, int max);

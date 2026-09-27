@@ -1,5 +1,7 @@
 #include "SimWorkspace.h"
 
+#include "pg/lang/Lang.h"
+
 #include "pg/gl/Png.h"
 #include "pg/io/Export.h"
 #include "pg/io/Video.h"
@@ -780,6 +782,72 @@ void SimWorkspace::nodeMenu(int id) {
     }
 }
 
+void SimWorkspace::expressionFields(int id, const sim::ParamDef& p, const sim::ParamValue& now) {
+    // One field a channel: the expression, or the value while there is none.
+    const std::vector<std::string> chans = sim::Network::channels(p);
+    const float x0 = ImGui::GetCursorScreenPos().x;  // what they give goes under them
+    const float total = ImGui::GetContentRegionAvail().x;
+    const float gap = theme::px(3.0f);
+    const float w = (total - gap * static_cast<float>(chans.size() - 1)) / static_cast<float>(chans.size());
+    std::string errors;
+    for (size_t c = 0; c < chans.size(); ++c) {
+        if (c) ImGui::SameLine(0.0f, gap);
+        const std::string& ch = chans[c];
+        const std::string key = std::to_string(id) + "." + ch;
+        std::string expr = net_.expression(id, ch);
+        char number[32];
+        std::snprintf(number, sizeof number, "%g", static_cast<double>(now[c]));
+        std::string value = editKey_ == key ? editText_ : expr.empty() ? std::string(number) : expr;
+        ImGui::PushID(ch.c_str());
+        ImGui::SetNextItemWidth(w);
+        ImGui::PushFont(theme::fonts().mono, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, expr.empty() ? theme::vec(theme::kTextDim) : ImVec4(0.6f, 0.83f, 1.0f, 1.0f));
+        ImGui::InputText("##e", &value);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        if (ImGui::IsItemActive()) {
+            editKey_ = key;
+            editText_ = value;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            // A plain number is a value; anything else an expression.
+            if (value.empty() || lang::isNumber(value)) {
+                net_.setExpression(id, ch, "");
+                if (!value.empty()) {
+                    sim::ParamValue v = net_.param(id, p.name);
+                    v[c] = static_cast<float>(std::strtod(value.c_str(), nullptr));
+                    net_.setParam(id, p.name, v);
+                }
+            } else {
+                net_.setExpression(id, ch, value);
+            }
+            editKey_.clear();
+        } else if (!ImGui::IsItemActive() && editKey_ == key) {
+            editKey_.clear();
+        }
+        if (!expr.empty()) ImGui::SetItemTooltip("%s = %g", expr.c_str(), static_cast<double>(now[c]));
+        ImGui::PopID();
+        const std::string e = net_.expressionError(id, ch, static_cast<float>(current_));
+        if (!e.empty()) errors += (errors.empty() ? "" : "\n") + ch + ": " + e;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(x0, ImGui::GetCursorScreenPos().y));
+    if (!errors.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kRed));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(errors.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    } else if (net_.hasExpression(id, p.name)) {
+        std::string shown = "=";
+        for (size_t c = 0; c < chans.size(); ++c) {
+            char buf[32];
+            std::snprintf(buf, sizeof buf, " %g", static_cast<double>(now[c]));
+            shown += buf;
+        }
+        ImGui::TextDisabled("%s at frame %d", shown.c_str(), current_);
+    }
+}
+
 void SimWorkspace::duplicate(const std::vector<int>& nodes) {
     std::map<int, int> copies;
     for (int id : nodes) {
@@ -802,6 +870,7 @@ void SimWorkspace::duplicate(const std::vector<int>& nodes) {
         for (const auto& [name, keys] : original.keys) {
             for (const sim::Key& k : keys) net_.setKey(copy, name, k.frame, k.value, k.interp);
         }
+        for (const auto& [channel, text] : original.exprs) net_.setExpression(copy, channel, text);
         net_.setBypass(copy, original.bypass);
         // In the world too, beside the original rather than inside it.
         const sim::Handles& h = sim::findNodeType(original.type)->handles;
@@ -1057,6 +1126,30 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                     }
                 }
             }
+            // fx: the value as an expression -- $F, ch("../node/param") ...
+            const bool numeric = p.kind == sim::ParamKind::Float || p.kind == sim::ParamKind::Int ||
+                                 p.kind == sim::ParamKind::Vector || p.kind == sim::ParamKind::Color;
+            const std::string modeKey = std::to_string(id) + "." + p.name;
+            bool exprMode = numeric && (net_.hasExpression(id, p.name) || exprMode_.count(modeKey));
+            if (numeric) {
+                const ImVec2 row = ImGui::GetCursorScreenPos();
+                ImGui::SetCursorScreenPos(ImVec2(row.x + ImGui::GetFrameHeight() * 0.8f, row.y));
+                if (ui::exprButton("fx", exprMode,
+                                   exprMode ? "Driven by an expression: click to go back to a value (the one it has now)"
+                                            : "Drive it by an expression: $F, $T, ch(\"../box1/sizex\") * 2 ...")) {
+                    if (exprMode) {
+                        const sim::ParamValue now = net_.valueAt(id, p.name, frame);
+                        for (const std::string& ch : sim::Network::channels(p)) net_.setExpression(id, ch, "");
+                        net_.setParam(id, p.name, now);
+                        exprMode_.erase(modeKey);
+                        exprMode = false;
+                    } else {
+                        exprMode_.insert(modeKey);
+                        exprMode = true;
+                    }
+                }
+                ImGui::SetCursorScreenPos(row);
+            }
             ui::rowLabel(p.label, changed, helpFor(p).c_str());
             if (ui::resetButton("reset", changed)) {
                 net_.resetParam(id, p.name);
@@ -1072,6 +1165,12 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
             }
             bool edited = false;
             const std::string format = formatFor(p);
+            if (exprMode) {
+                expressionFields(id, p, v);
+                if (tinted) ImGui::PopStyleColor(3);
+                ImGui::PopID();
+                continue;
+            }
             switch (p.kind) {
                 case sim::ParamKind::Float: edited = ui::sliderFloat("##v", v[0], p.min, p.max, format.c_str()); break;
                 case sim::ParamKind::Int: {

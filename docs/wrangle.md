@@ -125,7 +125,9 @@ Dělení nulou dává nulu, ne nekonečno.
 ### Parametry a čas
 
 `ch("name")` (také `chf`), `chi`, `chv`, `chs` čtou parametr uzlu, který kód
-sám vytvořil (viz výše). `$F` je číslo snímku, `$T` čas v sekundách, `$FPS`
+sám vytvořil (viz výše). Tentýž jazyk počítá i **výrazy v parametrech**
+libovolného uzlu — `$F * 0.1`, `ch("../box1/sizex") * 2` — viz
+[animation.md §6](animation.md#6-výrazy). `$F` je číslo snímku, `$T` čas v sekundách, `$FPS`
 snímková frekvence. Uzel, který čte `$F`, `@Time` nebo animovaný parametr,
 se počítá znovu na každém snímku; ostatní jen při změně.
 
@@ -206,4 +208,4 @@ se počítá znovu na každém snímku; ostatní jen při změně.
 | `src/pg/lang/Builtins.cpp`, `BuiltinsGeo.cpp` | vestavěné funkce |
 | `src/pg/core/Spatial.h` | k-d strom bodů a sousednost (hrany, primitiva bodu) |
 | `src/pg/nodes/Wrangle.cpp` | uzel: Run Over, Group, čtyři vstupy, `ch()` z parametrů uzlu |
-| `tests/test_lang.cpp` | 23 testů jazyka, uzlu a parametrů z `ch()` v síti |
+| `tests/test_lang.cpp` | 27 testů: jazyk, uzel, parametry z `ch()` v síti, výrazy v parametrech |

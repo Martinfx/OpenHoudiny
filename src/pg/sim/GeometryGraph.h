@@ -81,6 +81,9 @@ private:
         int input = 0;       ///< for a bypassed node: what comes into it, 0 if nothing
         std::string file;    ///< the file it reads, if any: looked at again at each sync
         std::map<std::string, std::vector<Key>> keys;  ///< the animated parameters, as last bound
+        std::map<std::string, std::string> exprs;      ///< the expressions, as last bound
+        std::vector<std::string> varying;              ///< the parameters bound as expressions of the core
+        uint64_t revision = 0;                         ///< the network's, when they were
     };
     /// Follows bypassed nodes up to the one whose output counts.
     int resolve(int id) const;
