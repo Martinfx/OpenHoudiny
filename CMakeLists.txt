@@ -155,6 +155,7 @@ add_library(pgsim
   src/pg/sim/Pyro.cpp
   src/pg/sim/Scene.cpp
   src/pg/sim/Shape.cpp
+  src/pg/sim/World.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp
 )
 target_link_libraries(pgsim PUBLIC pgcore)

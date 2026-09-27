@@ -10,13 +10,13 @@ node 2 object 1 ball 0 192
   param size 0.4 0.4 0.4
 node 3 turbulence 1 turbulence 0 96
   param strength 2.5
-node 4 pyro_solver 1 solver 250 76
+node 4 pyro_solver 2 solver 250 76
   param weight 0.08
   param vorticity 0.9
   param cooling 0.5
   param smoke_decay 0.03
-node 5 volume_look 1 look 490 76
-node 6 output 1 output 720 76
+node 5 volume_look 2 look 490 76
+node 6 output 2 output 720 76
 link 1.source -> 4.sources
 link 3.force -> 4.forces
 link 2.collider -> 4.colliders

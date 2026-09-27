@@ -17,18 +17,18 @@ SimRunner::~SimRunner() {
     if (thread_.joinable()) thread_.join();
 }
 
-void SimRunner::set(const sim::Scene& scene, int frames) {
+void SimRunner::set(const sim::World& world, int frames) {
     {
         std::lock_guard<std::mutex> lock(mu_);
-        const sim::Scene safe = scene.sanitized();
-        if (!started_ || !(safe == scene_)) {
+        const sim::World safe = world.sanitized();
+        if (!started_ || !(safe == world_)) {
             started_ = true;
-            scene_ = safe;
+            world_ = safe;
             fresh_ = true;
             cache_.clear();
             bytes_ = 0;
             ++generation_;
-            domain_ = safe.solver.domain();
+            domain_ = safe.hasGas ? safe.gas.solver.domain() : sim::Domain();
         }
         frames_ = std::max(1, frames);
         if (static_cast<int>(cache_.size()) > frames_) {
@@ -103,29 +103,29 @@ sim::Domain SimRunner::domain() const {
 bool SimRunner::advance() {
     unsigned generation = 0;
     bool restart = false;
-    sim::Scene scene;
+    sim::World world;
     {
         std::lock_guard<std::mutex> lock(mu_);
         const bool more = fresh_ || static_cast<int>(cache_.size()) < frames_;
         if (!running_ || hold_ || !more || bytes_ >= budget_) return false;
         if (fresh_) {
-            scene = scene_;
+            world = world_;
             restart = true;
             fresh_ = false;
         }
         generation = generation_;
     }
-    // A new scene: from the start, with a solver made off the lock -- it
+    // A new world: from the start, with a solver made off the lock -- it
     // allocates the grids, which takes a moment.
-    if (restart) solver_ = std::make_unique<sim::PyroSolver>(scene);
+    if (restart) solver_ = std::make_unique<sim::WorldSolver>(world);
     if (!solver_) return false;
     const auto t0 = std::chrono::steady_clock::now();
     solver_->step();
-    auto f = std::make_shared<sim::Frame>(sim::capture(*solver_));
+    auto f = std::make_shared<sim::Frame>(solver_->capture());
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     f->stepMs = ms;
     std::lock_guard<std::mutex> lock(mu_);
-    // The scene changed while this frame was simulated: it belongs to no one.
+    // The world changed while this frame was simulated: it belongs to no one.
     if (generation != generation_ || fresh_) return true;
     bytes_ += f->bytes();
     cache_.push_back(std::move(f));

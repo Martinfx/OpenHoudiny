@@ -7,13 +7,13 @@ node 1 pyro_source 2 chimney 0 0
   param flicker 0.15
 node 2 turbulence 1 turbulence 0 96
   param strength 3.5
-node 3 pyro_solver 1 solver 250 28
+node 3 pyro_solver 2 solver 250 28
   param weight 0.08
   param vorticity 0.9
   param cooling 0.6
   param smoke_decay 0.03
-node 4 volume_look 1 look 490 28
-node 5 output 1 output 720 28
+node 4 volume_look 2 look 490 28
+node 5 output 2 output 720 28
 link 1.source -> 3.sources
 link 2.force -> 3.forces
 link 3.gas -> 4.gas

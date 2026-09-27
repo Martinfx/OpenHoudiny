@@ -4,6 +4,7 @@
 //
 #include "pg/sim/Network.h"
 #include "pg/sim/Pyro.h"
+#include "pg/sim/World.h"
 
 #include "test_framework.h"
 
@@ -184,7 +185,7 @@ TEST(sim_network_files_read_back_the_same) {
     net.connect(wind, "force", ids[1], "forces");
     net.setBypass(wind, true);
     net.setParam(ids[0], "motion", "sway");
-    net.setParam(ids[2], "floor", "off");
+    net.setParam(ids[3], "floor", "off");
     net.rename(ids[0], "vent");
 
     const std::string text = net.save();
@@ -203,7 +204,7 @@ TEST(sim_network_files_read_back_the_same) {
     CHECK(Network::load(text, back, error, &warnings));
     CHECK(warnings.empty());
     CHECK_EQ(back.save(), text);
-    CHECK(back.compile().scene == net.compile().scene);
+    CHECK(back.compile().world == net.compile().world);
     CHECK(back.compile().look == net.compile().look);
     // New nodes do not take the ids of the loaded ones.
     CHECK(back.add("drag") > wind);
@@ -258,10 +259,11 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     Network net = chain(ids);
     net.setParam(ids[0], "center", "0.1 0.2 0.3");
     net.setParam(ids[0], "motion", "circle");
-    net.setParam(ids[1], "fps", "24");
+    net.setParam(ids[3], "fps", "24");
     net.setParam(ids[1], "resolution", "40");
     net.setParam(ids[1], "closed_floor", "off");
-    net.setParam(ids[2], "light_elevation", "90");
+    net.setParam(ids[3], "light_elevation", "90");
+    net.setParam(ids[2], "smoke_density", "7");
     net.setParam(ids[3], "frames", "48");
     const int box = net.add("object");
     net.setParam(box, "shape", "box");
@@ -279,7 +281,9 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     CHECK(!c.errors());
     CHECK_EQ(c.frames, 48);
     CHECK_EQ(c.solver, ids[1]);
-    const Scene& s = c.scene;
+    CHECK(c.world.hasGas);
+    CHECK(std::fabs(c.world.timeStep - 1.0f / 24.0f) < 1e-7f);
+    const Scene& s = c.world.gas;
     CHECK_EQ(s.solver.resolution, 40);
     CHECK(!s.solver.closedFloor);
     CHECK(std::fabs(s.solver.timeStep - 1.0f / 24.0f) < 1e-7f);
@@ -295,14 +299,15 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     CHECK(s.forces[1].kind == ForceKind::Drag);
     CHECK_EQ(s.colliders.size(), size_t(1));
     CHECK(s.colliders[0].shape == Shape::Box);
-    CHECK(std::fabs(c.look.lightDirection().y - 1.0f) < 1e-6f);
+    CHECK(std::fabs(c.look.lightDirection().y - 1.0f) < 1e-6f);  // the Output's sun
+    CHECK_EQ(c.look.smokeDensity, 7.0f);                         // the Volume Look's smoke
     CHECK(c.isActive(vortex) && c.isActive(box) && c.isActive(ids[3]));
 
     // Bypassed: out of the scene, and dimmed -- a node that feeds nothing too.
     net.setBypass(vortex, true);
     const int loose = net.add("turbulence");
     c = net.compile();
-    CHECK_EQ(c.scene.forces.size(), size_t(1));
+    CHECK_EQ(c.world.gas.forces.size(), size_t(1));
     CHECK(!c.isActive(vortex));
     CHECK(!c.isActive(loose));
 }
@@ -350,6 +355,16 @@ TEST(sim_network_says_what_is_missing) {
 
     const int second = net.add("output");
     CHECK(mentions(net.compile(), second, "Another Output"));
+    CHECK(net.remove(second));
+
+    // Two looks of gas: the first is drawn, the second said so.
+    const int look2 = net.add("volume_look");
+    CHECK(net.connect(ids[1], "gas", look2, "gas"));
+    CHECK(net.connect(look2, "look", ids[3], "look"));
+    c = net.compile();
+    CHECK(c.ok);
+    CHECK_EQ(c.lookNode, ids[2]);
+    CHECK(mentions(c, look2, "Another Volume Look"));
 }
 
 TEST(sim_network_examples_match_the_presets) {
@@ -358,8 +373,8 @@ TEST(sim_network_examples_match_the_presets) {
     Network fire, smoke;
     CHECK(Network::example("campfire", fire));
     CHECK(Network::example("smoke", smoke));
-    CHECK(withoutNodes(fire.compile().scene) == Scene::fire());
-    CHECK(withoutNodes(smoke.compile().scene) == Scene::smoke());
+    CHECK(withoutNodes(fire.compile().world.gas) == Scene::fire());
+    CHECK(withoutNodes(smoke.compile().world.gas) == Scene::smoke());
 }
 
 TEST(sim_network_examples_all_run) {
@@ -373,11 +388,12 @@ TEST(sim_network_examples_all_run) {
         const Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);  // where their meshes are
         CHECK(c.ok);
         for (const Problem& p : c.problems) ::testing::fail(__FILE__, __LINE__, name + ": " + p.message);
-        Scene scene = c.scene;
-        scene.solver.resolution = 16;
-        PyroSolver sim(scene);
+        World world = c.world;
+        world.gas.solver.resolution = 16;
+        WorldSolver sim(world);
         for (int f = 0; f < 3; ++f) sim.step();
-        CHECK(std::isfinite(sim.density().sum()));
+        CHECK_EQ(sim.frame(), 3);
+        if (sim.gas()) CHECK(std::isfinite(sim.gas()->density().sum()));
     }
 }
 
@@ -431,11 +447,11 @@ TEST(sim_network_files_of_earlier_versions_load_upgraded) {
 
     const Compiled c = net.compile();
     CHECK(c.ok);
-    CHECK_EQ(c.scene.emitters.size(), size_t(2));
-    CHECK(c.scene.emitters[0].size == Vec3(0.3f));
-    CHECK(c.scene.emitters[1].shape == Shape::Box);
-    CHECK_EQ(c.scene.colliders.size(), size_t(1));  // the wall is bypassed
-    CHECK(c.scene.colliders[0].center == Vec3(0.0f, 0.6f, 0.0f));
+    CHECK_EQ(c.world.gas.emitters.size(), size_t(2));
+    CHECK(c.world.gas.emitters[0].size == Vec3(0.3f));
+    CHECK(c.world.gas.emitters[1].shape == Shape::Box);
+    CHECK_EQ(c.world.gas.colliders.size(), size_t(1));  // the wall is bypassed
+    CHECK(c.world.gas.colliders[0].center == Vec3(0.0f, 0.6f, 0.0f));
     CHECK_EQ(c.solids.size(), size_t(1));
 
     // Saved, it is a file of the new types -- which reads back the same.
@@ -446,6 +462,92 @@ TEST(sim_network_files_of_earlier_versions_load_upgraded) {
     Network again;
     CHECK(Network::load(saved, again, error, &warnings));
     CHECK_EQ(again.save(), saved);
+}
+
+TEST(sim_network_light_and_frame_rate_move_to_the_output) {
+    // Version 1 kept the frame rate on the Pyro Solver and the sun, the sky
+    // and the image on the Volume Look; they are the Output's now, where
+    // they are read as they were set.
+    const char* text =
+        "pgsim 1\n"
+        "node 1 pyro_source 2 fire 0 0\n"
+        "node 2 pyro_solver 1 solver 300 0\n"
+        "  param fps 24\n"
+        "  param resolution 64\n"
+        "node 3 volume_look 1 look 500 0\n"
+        "  param smoke_density 12\n"
+        "  param light_elevation 60\n"
+        "  param sky_color 0.2 0.3 0.4\n"
+        "  param floor off\n"
+        "node 4 output 1 output 700 0\n"
+        "  param frames 90\n"
+        "link 1.source -> 2.sources\n"
+        "link 2.gas -> 3.gas\n"
+        "link 3.look -> 4.look\n";
+    Network net;
+    std::string error;
+    std::vector<std::string> warnings;
+    CHECK(Network::load(text, net, error, &warnings));
+    CHECK(warnings.empty());
+    for (int id = 2; id <= 4; ++id) CHECK_EQ(net.node(id)->version, findNodeType(net.node(id)->type)->version);
+    CHECK(net.isDefault(2, "resolution") == false);
+    CHECK_EQ(net.value(4, "fps"), 24.0f);
+    CHECK_EQ(net.value(4, "frames"), 90.0f);
+    CHECK_EQ(net.value(4, "light_elevation"), 60.0f);
+    CHECK(net.param(4, "sky_color") == (ParamValue{0.2f, 0.3f, 0.4f}));
+    CHECK_EQ(net.value(4, "floor"), 0.0f);
+    CHECK_EQ(net.value(3, "smoke_density"), 12.0f);
+    const Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK(std::fabs(c.world.timeStep - 1.0f / 24.0f) < 1e-7f);
+    CHECK_EQ(c.look.lightElevation, 60.0f);
+    CHECK(!c.look.floor);
+    CHECK_EQ(c.look.smokeDensity, 12.0f);
+
+    // Saved, the look and the solver hold none of it any more.
+    const std::string saved = net.save();
+    CHECK(saved.find("node 2 pyro_solver 2 solver 300 0\n  param resolution 64\nnode") != std::string::npos);
+    CHECK(saved.find("node 3 volume_look 2 look 500 0\n  param smoke_density 12\nnode") != std::string::npos);
+    CHECK(saved.find("node 4 output 2 output 700 0\n  param frames 90\n  param fps 24\n") != std::string::npos);
+
+    // A look that feeds no Output has nowhere to put its sun: it is dropped.
+    Network loose;
+    CHECK(Network::load("pgsim 1\nnode 1 volume_look 1 look 0 0\n  param exposure 2\n", loose, error, &warnings));
+    CHECK(loose.node(1)->params.empty());
+}
+
+TEST(sim_world_steps_every_part_at_one_frame_rate) {
+    World w;
+    CHECK(!w.any());
+    w.timeStep = 1.0f / 25.0f;
+    w.hasGas = true;
+    w.gas = Scene::smoke();
+    w.gas.solver.resolution = 16;
+    w.gas.solver.timeStep = 0.5f;  // the World's is the one
+    WorldSolver sim(w);
+    CHECK(sim.gas() != nullptr);
+    CHECK_EQ(sim.world().gas.solver.timeStep, 1.0f / 25.0f);
+    for (int i = 0; i < 5; ++i) sim.step();
+    CHECK_EQ(sim.frame(), 5);
+    CHECK(std::fabs(sim.time() - 0.2f) < 1e-6f);
+    CHECK(std::fabs(sim.gas()->time() - 0.2f) < 1e-5f);
+    const Frame f = sim.capture();
+    CHECK_EQ(f.number, 5);
+    CHECK(std::fabs(f.time - 0.2f) < 1e-6f);
+    CHECK(!f.empty());
+
+    // Nothing to simulate: frames still count, and hold no gas.
+    WorldSolver empty{World()};
+    empty.step();
+    CHECK(!empty.gas());
+    CHECK_EQ(empty.capture().number, 1);
+    CHECK(empty.capture().empty());
+    // A time step no one could want is kept in bounds.
+    World odd;
+    odd.timeStep = -1.0f;
+    CHECK(odd.sanitized().timeStep > 0.0f);
+    odd.timeStep = std::nanf("");
+    CHECK(std::isfinite(odd.sanitized().timeStep));
 }
 
 TEST(sim_network_objects_are_in_the_scene_linked_or_not) {
@@ -462,30 +564,30 @@ TEST(sim_network_objects_are_in_the_scene_linked_or_not) {
     CHECK(c.solids[0].body.rotation == Vec3(0.0f, 45.0f, 10.0f));
     CHECK(c.solids[0].color == Vec3(0.6f, 0.3f, 0.2f));
     CHECK_EQ(c.solids[0].body.node, rock);
-    CHECK(c.scene.colliders.empty());
+    CHECK(c.world.gas.colliders.empty());
     CHECK(c.isActive(rock));
 
     // Linked into the solver's Colliders: the gas goes round it.
     CHECK(net.connect(rock, "collider", ids[1], "colliders"));
     c = net.compile();
-    CHECK_EQ(c.scene.colliders.size(), size_t(1));
-    CHECK(c.scene.colliders[0] == c.solids[0].body);
+    CHECK_EQ(c.world.gas.colliders.size(), size_t(1));
+    CHECK(c.world.gas.colliders[0] == c.solids[0].body);
 
-    // A new colour is no new scene: nothing is simulated again.
-    const Scene before = c.scene;
+    // A new colour is no new world: nothing is simulated again.
+    const World before = c.world;
     net.setParam(rock, "color", "0.1 0.5 0.9");
-    CHECK(net.compile().scene == before);
+    CHECK(net.compile().world == before);
     CHECK(!(net.compile().solids == c.solids));
 
     // Bypassed: gone from the scene and the picture.
     net.setBypass(rock, true);
     c = net.compile();
-    CHECK(c.solids.empty() && c.scene.colliders.empty() && !c.isActive(rock));
+    CHECK(c.solids.empty() && c.world.gas.colliders.empty() && !c.isActive(rock));
 
     // A turned source turns its jet.
     net.setParam(ids[0], "rotation", "0 0 90");
     net.setParam(ids[0], "velocity", "0 1 0");
-    const Emitter e = net.compile().scene.emitters[0];
+    const Emitter e = net.compile().world.gas.emitters[0];
     const Vec3 jet = e.shapeAt(0.0f).turn().apply(e.velocity);
     CHECK(std::fabs(jet.x + 1.0f) < 1e-6f && std::fabs(jet.y) < 1e-6f);
 }
@@ -534,7 +636,7 @@ TEST(sim_network_objects_can_be_meshes_from_files) {
     CHECK_EQ(c.solids.size(), size_t(1));
     CHECK(c.solids[0].body.shape == Shape::Mesh && c.solids[0].body.mesh);
     CHECK_EQ(c.solids[0].body.mesh->mesh().triangles.size(), size_t(4));
-    CHECK(c.scene.colliders[0].mesh == c.solids[0].body.mesh);  // one mesh, read once
+    CHECK(c.world.gas.colliders[0].mesh == c.solids[0].body.mesh);  // one mesh, read once
     CHECK(!mentions(c, rock, "mesh"));
     // From elsewhere the file is not there: said, and its box stands in.
     c = net.compile((dir / "elsewhere").string());

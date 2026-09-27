@@ -39,6 +39,7 @@
 //
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
+#include "pg/sim/World.h"
 
 #include <array>
 #include <cstdint>
@@ -160,10 +161,12 @@ struct Problem {
 
 /// What a network compiles to.
 struct Compiled {
-    /// True when an Output is reached from a Pyro Solver: there is something
-    /// to simulate. False with the errors in `problems` that say why not.
+    /// True when the Output is reached from a solver: there is something to
+    /// simulate. False with the errors in `problems` that say why not.
     bool ok = false;
-    Scene scene;
+    /// What is simulated: the gas (world.gas, when world.hasGas), at the
+    /// Output's frame rate.
+    World world;
     Look look;
     /// Every object of the network, bypassed ones aside, as it is drawn --
     /// whether a solver collides with it or not.
@@ -173,7 +176,7 @@ struct Compiled {
     /// The nodes that take part in what is simulated, by id, sorted: the
     /// editor dims the others.
     std::vector<int> active;
-    int output = 0, lookNode = 0, solver = 0;  ///< their ids, 0 if none
+    int output = 0, lookNode = 0, solver = 0;  ///< the Output, the Volume Look, the Pyro Solver; 0 if none
 
     bool errors() const;
     bool isActive(int node) const;

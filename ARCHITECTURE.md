@@ -331,12 +331,13 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Mesh       modely z OBJ: pole vzdáleností (SDF), paprsky, cache souborů
                  Scene      co se simuluje: doména, zdroje, síly, překážky, objekty
                  Pyro       simulace kouře a ohně
-                 Network    síť uzlů simulace, formát .pgsim, překlad na Scene + Look
+                 World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
+                 Network    síť uzlů simulace, formát .pgsim, překlad na World + Look
                  Frame      snímek v poloviční přesnosti: cache a vykreslování
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
                  Volume     objemové vykreslování simulace: podlaha, objekty, vodítka
-tests/           50 testů proti invariantům + 25 pro shader graf + 45 pro simulaci, objekty a modely
+tests/           50 testů proti invariantům + 25 pro shader graf + 47 pro simulaci, objekty a modely
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,

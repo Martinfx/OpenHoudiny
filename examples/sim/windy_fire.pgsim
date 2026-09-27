@@ -14,16 +14,16 @@ node 2 wind 1 wind 0 96
   param gusts 0.6
 node 3 turbulence 1 turbulence 0 192
   param strength 4
-node 4 pyro_solver 1 solver 250 76
+node 4 pyro_solver 2 solver 250 76
   param size 2.2 1.4 1
   param buoyancy 0.9
   param vorticity 0.9
   param cooling 1.5
-node 5 volume_look 1 look 490 76
+node 5 volume_look 2 look 490 76
   param smoke_color 0.24 0.23 0.22
   param smoke_density 16
   param fire_light 3
-node 6 output 1 output 720 76
+node 6 output 2 output 720 76
 link 1.source -> 4.sources
 link 2.force -> 4.forces
 link 3.force -> 4.forces

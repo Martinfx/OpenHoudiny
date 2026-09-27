@@ -14,7 +14,7 @@ node 2 turbulence 1 turbulence 0 96
   param strength 6
   param scale 0.12
   param speed 2
-node 3 pyro_solver 1 solver 250 28
+node 3 pyro_solver 2 solver 250 28
   param size 2.4 3 2.4
   param substeps 2
   param buoyancy 0.8
@@ -26,11 +26,11 @@ node 3 pyro_solver 1 solver 250 28
   param flame_life 0.15
   param cooling 0.8
   param smoke_decay 0.05
-node 4 volume_look 1 look 490 28
+node 4 volume_look 2 look 490 28
   param smoke_color 0.16 0.15 0.14
   param smoke_density 22
   param fire_light 3
-node 5 output 1 output 720 28
+node 5 output 2 output 720 28
   param frames 60
 link 1.source -> 3.sources
 link 2.force -> 3.forces

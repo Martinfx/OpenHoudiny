@@ -9,8 +9,7 @@
 // one while the thread adds the next.
 //
 #include "pg/sim/Frame.h"
-#include "pg/sim/Pyro.h"
-#include "pg/sim/Scene.h"
+#include "pg/sim/World.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -30,9 +29,9 @@ public:
     SimRunner(const SimRunner&) = delete;
     SimRunner& operator=(const SimRunner&) = delete;
 
-    /// What to simulate, and how many frames. Another scene throws the
+    /// What to simulate, and how many frames. Another world throws the
     /// frames away and starts again; only another count keeps them.
-    void set(const sim::Scene& scene, int frames);
+    void set(const sim::World& world, int frames);
     /// Simulate ahead or not.
     void setRunning(bool on);
     bool running() const { return running_; }
@@ -53,7 +52,7 @@ public:
     double stepMs() const;
     /// Bumped whenever the frames are thrown away.
     unsigned generation() const;
-    /// The grid of the scene being simulated.
+    /// The grid of the gas being simulated; the default when there is none.
     sim::Domain domain() const;
 
     /// Synchronous mode: simulates one frame, if there is one to simulate.
@@ -71,9 +70,9 @@ private:
     bool quit_ = false;
 
     // Guarded by mu_.
-    sim::Scene scene_;
+    sim::World world_;
     bool started_ = false;  // set() was called
-    bool fresh_ = false;    // scene_ differs from what the solver runs
+    bool fresh_ = false;    // world_ differs from what the solver runs
     int frames_ = 0;
     std::vector<std::shared_ptr<const sim::Frame>> cache_;
     size_t bytes_ = 0, budget_ = size_t(1536) << 20;
@@ -83,7 +82,7 @@ private:
 
     std::atomic<bool> running_{true};
     std::atomic<bool> hold_{false};
-    std::unique_ptr<sim::PyroSolver> solver_;  // the thread's (or the caller's in synchronous mode)
+    std::unique_ptr<sim::WorldSolver> solver_;  // the thread's (or the caller's in synchronous mode)
 };
 
 }  // namespace pg::editor

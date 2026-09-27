@@ -188,6 +188,115 @@ std::vector<ParamDef> legacyColliderParams(bool sphere) {
     return p;
 }
 
+// --- the solver, the looks, the output -------------------------------------------------
+
+/// The Pyro Solver's parameters; version 1 had the frame rate, which is the
+/// Output's now.
+std::vector<ParamDef> pyroSolverParams(bool withFrameRate) {
+    std::vector<ParamDef> p = {{"size", "Size", "Domain", K::Vector, {1.0f, 1.5f, 1.0f}, 0.1f, 5.0f, 0.1f, 20.0f, "m",
+           "Width, height and depth of the box the gas lives in. It stands on the floor, centred."},
+          {"resolution", "Resolution", "Domain", K::Int, {96.0f, 0.0f, 0.0f}, 16.0f, 256.0f, 16.0f, 256.0f, "",
+           "Cells along the longest side. Twice as many: finer detail, and eight times the work."},
+          {"closed_floor", "Closed Floor", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "A floor the gas cannot pass. Off, the bottom is open like the sides and the top."},
+          {"fps", "Frame Rate", "Time", K::Float, {30.0f, 0.0f, 0.0f}, 10.0f, 120.0f, 1.0f, 10000.0f, "fps",
+           "Frames a second. Each frame moves the gas on by 1/fps seconds."},
+          {"substeps", "Substeps", "Time", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
+           "Steps a frame is split into: for fast gas, explosions."},
+          {"pressure_cycles", "Pressure Cycles", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
+           "Rounds of the pressure solver each step. More keeps the gas from squeezing together."},
+          seed("Time", "Another number, other turbulence and flicker."),
+          {"buoyancy", "Buoyancy", "Motion", K::Float, {1.0f, 0.0f, 0.0f}, -2.0f, 5.0f, -kBig, kBig, "",
+           "How strongly heat lifts the gas."},
+          {"weight", "Smoke Weight", "Motion", K::Float, {0.05f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
+           "How strongly smoke weighs the gas down."},
+          {"vorticity", "Swirl", "Motion", K::Float, {0.6f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, kBig, "",
+           "Brings back the small swirls a coarse grid smooths away (vorticity confinement)."},
+          {"burn_rate", "Burn Rate", "Combustion", K::Float, {10.0f, 0.0f, 0.0f}, 0.0f, 40.0f, 0.0f, kBig, "1/s",
+           "How fast fuel burns."},
+          {"heat_release", "Heat", "Combustion", K::Float, {2.5f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
+           "Heat from each unit of fuel burnt."},
+          {"soot_release", "Soot", "Combustion", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
+           "Smoke from each unit of fuel burnt."},
+          {"expansion", "Expansion", "Combustion", K::Float, {0.8f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
+           "How much burning gas swells: the push of an explosion."},
+          {"flame_life", "Flame Life", "Combustion", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, kBig, "s",
+           "How long a flame shows once its fuel has burnt."},
+          {"cooling", "Cooling", "Dissipation", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "1/s",
+           "How fast heat fades."},
+          {"smoke_decay", "Smoke Decay", "Dissipation", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "1/s",
+           "How fast smoke thins out."}};
+    if (!withFrameRate) {
+        p.erase(std::remove_if(p.begin(), p.end(), [](const ParamDef& d) { return std::string(d.name) == "fps"; }), p.end());
+    }
+    return p;
+}
+
+/// Version 1 of the Volume Look had the light as well; the look of the gas
+/// is what is left.
+const char* const kEnvironment[] = {"light_azimuth", "light_elevation", "light_color", "light_intensity",
+                                    "sky_color",     "sky_intensity",   "exposure",    "floor"};
+
+std::vector<ParamDef> legacyVolumeLookParams() {
+    return {{"smoke_color", "Color", "Smoke", K::Color, {0.75f, 0.75f, 0.77f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of smoke in light: pale for steam, dark for soot."},
+          {"smoke_density", "Density", "Smoke", K::Float, {20.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, kBig, "",
+           "How much light it stops: thin haze to thick soot."},
+          {"occlusion", "Occlusion", "Smoke", K::Float, {3.0f, 0.0f, 0.0f}, 0.0f, 20.0f, 0.0f, kBig, "",
+           "How much thick smoke around darkens the light of the sky."},
+          {"flame_intensity", "Intensity", "Fire", K::Float, {30.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, kBig, "",
+           "How brightly the fire glows."},
+          {"flame_start", "Glow From", "Fire", K::Float, {0.3f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
+           "Temperature where the gas starts to glow red."},
+          {"flame_range", "White At", "Fire", K::Float, {4.0f, 0.0f, 0.0f}, 0.1f, 20.0f, 0.1f, kBig, "",
+           "How much hotter than that it glows yellow-white."},
+          {"fire_light", "Fire Light", "Fire", K::Float, {2.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
+           "How much the fire lights the smoke around it."},
+          {"light_azimuth", "Sun Around", "Light", K::Float, {169.0f, 0.0f, 0.0f}, 0.0f, 360.0f, -kBig, kBig,
+           "\xc2\xb0", "Where the sun is, round the vertical."},
+          {"light_elevation", "Sun Height", "Light", K::Float, {38.0f, 0.0f, 0.0f}, -10.0f, 90.0f, -90.0f, 90.0f,
+           "\xc2\xb0", "How high the sun is above the horizon."},
+          {"light_color", "Sun Color", "Light", K::Color, {1.0f, 0.95f, 0.88f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of sunlight."},
+          {"light_intensity", "Sun", "Light", K::Float, {2.2f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
+           "How bright the sun is."},
+          {"sky_color", "Sky Color", "Light", K::Color, {0.55f, 0.65f, 0.8f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of the light from the sky."},
+          {"sky_intensity", "Sky", "Light", K::Float, {0.25f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
+           "How bright the sky is."},
+          {"exposure", "Exposure", "Image", K::Float, {1.0f, 0.0f, 0.0f}, 0.05f, 8.0f, 0.01f, 100.0f, "",
+           "How bright the whole image is."},
+          {"floor", "Floor", "Image", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "Draw the floor, with the shadow of the smoke and the glow of the fire on it."}};
+}
+
+bool isEnvironment(const char* name) {
+    return std::any_of(std::begin(kEnvironment), std::end(kEnvironment), [&](const char* e) { return std::string(e) == name; });
+}
+
+std::vector<ParamDef> volumeLookParams() {
+    std::vector<ParamDef> p = legacyVolumeLookParams();
+    p.erase(std::remove_if(p.begin(), p.end(), [](const ParamDef& d) { return isEnvironment(d.name); }), p.end());
+    return p;
+}
+
+std::vector<ParamDef> outputParams() {
+    std::vector<ParamDef> p = {
+        {"frames", "Frames", "Output", K::Int, {150.0f, 0.0f, 0.0f}, 1.0f, 1000.0f, 1.0f, 100000.0f, "",
+         "How many frames to simulate: the length of the timeline."},
+        {"fps", "Frame Rate", "Output", K::Float, {30.0f, 0.0f, 0.0f}, 10.0f, 120.0f, 1.0f, 10000.0f, "fps",
+         "Frames a second. Each frame moves every simulation on by 1/fps seconds."}};
+    // The sun, the sky and the image, as the Volume Look had them.
+    for (ParamDef d : legacyVolumeLookParams()) {
+        if (!isEnvironment(d.name)) continue;
+        const std::string name = d.name;
+        d.section = name == "exposure" || name == "floor" ? "Image" : name.rfind("sky", 0) == 0 ? "Sky" : "Sun";
+        if (name == "floor") d.help = "Draw the floor, with the shadows and the glow of the fire on it.";
+        p.push_back(d);
+    }
+    return p;
+}
+
 std::vector<NodeType> buildTypes() {
     std::vector<NodeType> t;
 
@@ -290,83 +399,25 @@ std::vector<NodeType> buildTypes() {
           {"forces", "Forces", PinType::Force, true},
           {"colliders", "Colliders", PinType::Collider, true}},
          {{"gas", "Gas", PinType::Gas}},
-         {{"size", "Size", "Domain", K::Vector, {1.0f, 1.5f, 1.0f}, 0.1f, 5.0f, 0.1f, 20.0f, "m",
-           "Width, height and depth of the box the gas lives in. It stands on the floor, centred."},
-          {"resolution", "Resolution", "Domain", K::Int, {96.0f, 0.0f, 0.0f}, 16.0f, 256.0f, 16.0f, 256.0f, "",
-           "Cells along the longest side. Twice as many: finer detail, and eight times the work."},
-          {"closed_floor", "Closed Floor", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-           "A floor the gas cannot pass. Off, the bottom is open like the sides and the top."},
-          {"fps", "Frame Rate", "Time", K::Float, {30.0f, 0.0f, 0.0f}, 10.0f, 120.0f, 1.0f, 10000.0f, "fps",
-           "Frames a second. Each frame moves the gas on by 1/fps seconds."},
-          {"substeps", "Substeps", "Time", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
-           "Steps a frame is split into: for fast gas, explosions."},
-          {"pressure_cycles", "Pressure Cycles", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
-           "Rounds of the pressure solver each step. More keeps the gas from squeezing together."},
-          seed("Time", "Another number, other turbulence and flicker."),
-          {"buoyancy", "Buoyancy", "Motion", K::Float, {1.0f, 0.0f, 0.0f}, -2.0f, 5.0f, -kBig, kBig, "",
-           "How strongly heat lifts the gas."},
-          {"weight", "Smoke Weight", "Motion", K::Float, {0.05f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
-           "How strongly smoke weighs the gas down."},
-          {"vorticity", "Swirl", "Motion", K::Float, {0.6f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, kBig, "",
-           "Brings back the small swirls a coarse grid smooths away (vorticity confinement)."},
-          {"burn_rate", "Burn Rate", "Combustion", K::Float, {10.0f, 0.0f, 0.0f}, 0.0f, 40.0f, 0.0f, kBig, "1/s",
-           "How fast fuel burns."},
-          {"heat_release", "Heat", "Combustion", K::Float, {2.5f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
-           "Heat from each unit of fuel burnt."},
-          {"soot_release", "Soot", "Combustion", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
-           "Smoke from each unit of fuel burnt."},
-          {"expansion", "Expansion", "Combustion", K::Float, {0.8f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
-           "How much burning gas swells: the push of an explosion."},
-          {"flame_life", "Flame Life", "Combustion", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, kBig, "s",
-           "How long a flame shows once its fuel has burnt."},
-          {"cooling", "Cooling", "Dissipation", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "1/s",
-           "How fast heat fades."},
-          {"smoke_decay", "Smoke Decay", "Dissipation", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "1/s",
-           "How fast smoke thins out."}}});
+         pyroSolverParams(false),
+         2});
 
     // --- render ---------------------------------------------------------------------
     t.push_back(
         {"volume_look", "Volume Look", "Render",
-         "How the gas is drawn: smoke that stops and scatters light, fire that glows, the sun and the sky. "
-         "Changing it draws the frames again -- nothing is simulated again.",
+         "How the gas is drawn: smoke that stops and scatters light, fire that glows. Changing it draws "
+         "the frames again -- nothing is simulated again. The sun and the sky are the Output's.",
          {{"gas", "Gas", PinType::Gas}},
          {{"look", "Look", PinType::Look}},
-         {{"smoke_color", "Color", "Smoke", K::Color, {0.75f, 0.75f, 0.77f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-           "The colour of smoke in light: pale for steam, dark for soot."},
-          {"smoke_density", "Density", "Smoke", K::Float, {20.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, kBig, "",
-           "How much light it stops: thin haze to thick soot."},
-          {"occlusion", "Occlusion", "Smoke", K::Float, {3.0f, 0.0f, 0.0f}, 0.0f, 20.0f, 0.0f, kBig, "",
-           "How much thick smoke around darkens the light of the sky."},
-          {"flame_intensity", "Intensity", "Fire", K::Float, {30.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, kBig, "",
-           "How brightly the fire glows."},
-          {"flame_start", "Glow From", "Fire", K::Float, {0.3f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
-           "Temperature where the gas starts to glow red."},
-          {"flame_range", "White At", "Fire", K::Float, {4.0f, 0.0f, 0.0f}, 0.1f, 20.0f, 0.1f, kBig, "",
-           "How much hotter than that it glows yellow-white."},
-          {"fire_light", "Fire Light", "Fire", K::Float, {2.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
-           "How much the fire lights the smoke around it."},
-          {"light_azimuth", "Sun Around", "Light", K::Float, {169.0f, 0.0f, 0.0f}, 0.0f, 360.0f, -kBig, kBig,
-           "\xc2\xb0", "Where the sun is, round the vertical."},
-          {"light_elevation", "Sun Height", "Light", K::Float, {38.0f, 0.0f, 0.0f}, -10.0f, 90.0f, -90.0f, 90.0f,
-           "\xc2\xb0", "How high the sun is above the horizon."},
-          {"light_color", "Sun Color", "Light", K::Color, {1.0f, 0.95f, 0.88f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-           "The colour of sunlight."},
-          {"light_intensity", "Sun", "Light", K::Float, {2.2f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
-           "How bright the sun is."},
-          {"sky_color", "Sky Color", "Light", K::Color, {0.55f, 0.65f, 0.8f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-           "The colour of the light from the sky."},
-          {"sky_intensity", "Sky", "Light", K::Float, {0.25f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
-           "How bright the sky is."},
-          {"exposure", "Exposure", "Image", K::Float, {1.0f, 0.0f, 0.0f}, 0.05f, 8.0f, 0.01f, 100.0f, "",
-           "How bright the whole image is."},
-          {"floor", "Floor", "Image", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-           "Draw the floor, with the shadow of the smoke and the glow of the fire on it."}}});
+         volumeLookParams(),
+         2});
     t.push_back({"output", "Output", "Render",
-                 "Where the network ends: what the viewport shows and `pgshader sim` renders.",
-                 {{"look", "Look", PinType::Look}},
+                 "Where the network ends: what the viewport shows and `pgshader sim` renders -- every look "
+                 "linked into it, in one scene, lit by one sun and one sky, at one frame rate.",
+                 {{"look", "Looks", PinType::Look, true}},
                  {},
-                 {{"frames", "Frames", "Output", K::Int, {150.0f, 0.0f, 0.0f}, 1.0f, 1000.0f, 1.0f, 100000.0f, "",
-                   "How many frames to simulate: the length of the timeline."}}});
+                 outputParams(),
+                 2});
 
     for (NodeType& type : t) {
         const std::string c = type.category;
@@ -490,8 +541,21 @@ ParamValue keep(const ParamDef& def, ParamValue v) {
 /// type that replaced it.
 struct Legacy {
     NodeType type;          ///< name, the parameters, `version`: the files up to it
-    void (*upgrade)(Node& node);
+    /// Turns `node` into its successor; `nodes` and `links` are the rest of
+    /// the file, for what moved to another node.
+    void (*upgrade)(Node& node, std::vector<Node>& nodes, const std::vector<Link>& links);
 };
+
+/// The node of `type` that `from`'s output `pin` leads to, if any.
+Node* fedBy(std::vector<Node>& nodes, const std::vector<Link>& links, int from, const char* pin, const char* type) {
+    for (const Link& l : links) {
+        if (l.from != from || l.output != pin) continue;
+        for (Node& n : nodes) {
+            if (n.id == l.to && n.type == type) return &n;
+        }
+    }
+    return nullptr;
+}
 
 /// Every value of `node` under the parameters of `type`: the ones set, the
 /// rest at the defaults of that type.
@@ -518,7 +582,7 @@ const std::vector<Legacy>& legacyTypes();
 
 /// Sphere Source, Box Source (version 1) -> Pyro Source: the shape a choice,
 /// a sphere's radius half its size.
-void upgradeSource(Node& node) {
+void upgradeSource(Node& node, std::vector<Node>&, const std::vector<Link>&) {
     const bool box = node.type == "box_source";
     const NodeType* old = nullptr;
     for (const Legacy& l : legacyTypes()) {
@@ -534,7 +598,7 @@ void upgradeSource(Node& node) {
 }
 
 /// Sphere Collider, Box Collider (version 1) -> Object.
-void upgradeCollider(Node& node) {
+void upgradeCollider(Node& node, std::vector<Node>&, const std::vector<Link>&) {
     const bool box = node.type == "box_collider";
     const NodeType* old = nullptr;
     for (const Legacy& l : legacyTypes()) {
@@ -549,9 +613,41 @@ void upgradeCollider(Node& node) {
     become(node, *findNodeType("object"), v);
 }
 
+/// Volume Look 1 -> 2: the light, the sky and the image went to the Output
+/// it feeds; those set move there.
+void upgradeVolumeLook(Node& node, std::vector<Node>& nodes, const std::vector<Link>& links) {
+    Node* out = fedBy(nodes, links, node.id, "look", "output");
+    for (const char* name : kEnvironment) {
+        const auto it = node.params.find(name);
+        if (it == node.params.end()) continue;
+        if (out) out->params[name] = it->second;
+        node.params.erase(it);
+    }
+    node.version = 2;
+}
+
+/// Pyro Solver 1 -> 2: the frame rate went to the Output its gas reaches,
+/// through a look.
+void upgradePyroSolver(Node& node, std::vector<Node>& nodes, const std::vector<Link>& links) {
+    const auto it = node.params.find("fps");
+    if (it != node.params.end()) {
+        Node* look = fedBy(nodes, links, node.id, "gas", "volume_look");
+        Node* out = look ? fedBy(nodes, links, look->id, "look", "output") : nullptr;
+        if (out) out->params["fps"] = it->second;
+        node.params.erase(it);
+    }
+    node.version = 2;
+}
+
+/// Output 1 -> 2: its Looks take several; the rest came from the others.
+void upgradeOutput(Node& node, std::vector<Node>&, const std::vector<Link>&) { node.version = 2; }
+
 const std::vector<Legacy>& legacyTypes() {
     static const std::vector<Legacy> types = [] {
         std::vector<Legacy> l;
+        l.push_back({{"pyro_solver", "Pyro Solver", "Simulation", "", {}, {}, pyroSolverParams(true), 1}, upgradePyroSolver});
+        l.push_back({{"volume_look", "Volume Look", "Render", "", {}, {}, legacyVolumeLookParams(), 1}, upgradeVolumeLook});
+        l.push_back({{"output", "Output", "Render", "", {}, {}, {outputParams().front()}, 1}, upgradeOutput});
         const std::vector<PinDef> source = {{"source", "Source", PinType::Source}};
         const std::vector<PinDef> collider = {{"collider", "Collider", PinType::Collider}};
         l.push_back({{"sphere_source", "Sphere Source", "Sources", "", {}, source, legacySourceParams(true), 1},
@@ -1126,9 +1222,8 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
 }
 
 void Network::upgrade(const std::vector<Link>& links) {
-    (void)links;
     for (Node& n : nodes_) {
-        if (const Legacy* l = legacyType(n.type, n.version)) l->upgrade(n);
+        if (const Legacy* l = legacyType(n.type, n.version)) l->upgrade(n, nodes_, links);
     }
 }
 
@@ -1219,172 +1314,192 @@ Compiled Network::compile(const std::string& folder) const {
         const std::vector<Link> in = linksInto(n.id, input);
         return in.empty() ? nullptr : node(in.front().from);
     };
-    const Node* look = upstream(*output, "look");
-    if (!look) {
-        problem(L::Error, output->id, "Nothing to show: link a Volume Look into Look.");
-        return done();
-    }
-    c.lookNode = look->id;
-    c.active.push_back(look->id);
+    // The sun, the sky, the image and the frame rate: the Output's, for all.
+    c.world.timeStep = 1.0f / std::max(f(*output, "fps"), 1.0f);
     Look& k = c.look;
-    k.smokeColor = v3(*look, "smoke_color");
-    k.smokeDensity = f(*look, "smoke_density");
-    k.occlusion = f(*look, "occlusion");
-    k.flameIntensity = f(*look, "flame_intensity");
-    k.flameStart = f(*look, "flame_start");
-    k.flameRange = f(*look, "flame_range");
-    k.fireLight = f(*look, "fire_light");
-    k.lightAzimuth = f(*look, "light_azimuth");
-    k.lightElevation = f(*look, "light_elevation");
-    k.lightColor = v3(*look, "light_color");
-    k.lightIntensity = f(*look, "light_intensity");
-    k.skyColor = v3(*look, "sky_color");
-    k.skyIntensity = f(*look, "sky_intensity");
-    k.exposure = f(*look, "exposure");
-    k.floor = f(*look, "floor") != 0.0f;
+    k.lightAzimuth = f(*output, "light_azimuth");
+    k.lightElevation = f(*output, "light_elevation");
+    k.lightColor = v3(*output, "light_color");
+    k.lightIntensity = f(*output, "light_intensity");
+    k.skyColor = v3(*output, "sky_color");
+    k.skyIntensity = f(*output, "sky_intensity");
+    k.exposure = f(*output, "exposure");
+    k.floor = f(*output, "floor") != 0.0f;
 
-    const Node* solver = upstream(*look, "gas");
-    if (!solver) {
-        problem(L::Error, look->id, "No gas to draw: link a Pyro Solver into Gas.");
-        return done();
-    }
-    c.solver = solver->id;
-    c.active.push_back(solver->id);
-    SolverSettings& s = c.scene.solver;
-    s.size = v3(*solver, "size");
-    s.resolution = whole(*solver, "resolution");
-    s.closedFloor = f(*solver, "closed_floor") != 0.0f;
-    s.timeStep = 1.0f / std::max(f(*solver, "fps"), 1.0f);
-    s.substeps = whole(*solver, "substeps");
-    s.pressureCycles = whole(*solver, "pressure_cycles");
-    s.seed = static_cast<uint32_t>(whole(*solver, "seed"));
-    s.buoyancy = f(*solver, "buoyancy");
-    s.weight = f(*solver, "weight");
-    s.vorticity = f(*solver, "vorticity");
-    s.burnRate = f(*solver, "burn_rate");
-    s.heatRelease = f(*solver, "heat_release");
-    s.sootRelease = f(*solver, "soot_release");
-    s.expansion = f(*solver, "expansion");
-    s.flameLife = f(*solver, "flame_life");
-    s.cooling = f(*solver, "cooling");
-    s.smokeDecay = f(*solver, "smoke_decay");
-    c.ok = true;
+    // The gas of a Pyro Solver: its settings, and what feeds it.
+    auto compileGas = [&](const Node* solver) {
+        c.world.hasGas = true;
+        SolverSettings& s = c.world.gas.solver;
+        s.size = v3(*solver, "size");
+        s.resolution = whole(*solver, "resolution");
+        s.closedFloor = f(*solver, "closed_floor") != 0.0f;
+        s.timeStep = c.world.timeStep;
+        s.substeps = whole(*solver, "substeps");
+        s.pressureCycles = whole(*solver, "pressure_cycles");
+        s.seed = static_cast<uint32_t>(whole(*solver, "seed"));
+        s.buoyancy = f(*solver, "buoyancy");
+        s.weight = f(*solver, "weight");
+        s.vorticity = f(*solver, "vorticity");
+        s.burnRate = f(*solver, "burn_rate");
+        s.heatRelease = f(*solver, "heat_release");
+        s.sootRelease = f(*solver, "soot_release");
+        s.expansion = f(*solver, "expansion");
+        s.flameLife = f(*solver, "flame_life");
+        s.cooling = f(*solver, "cooling");
+        s.smokeDecay = f(*solver, "smoke_decay");
 
-    // What feeds the solver, in the order it was linked. Bypassed nodes stay
-    // out; so do nodes of a type this program does not know (reported above).
-    auto feeding = [&](const char* input) {
-        std::vector<const Node*> out;
-        for (const Link& l : linksInto(solver->id, input)) {
-            const Node* n = node(l.from);
-            if (n && !n->bypass && findNodeType(n->type)) out.push_back(n);
+        // What feeds the solver, in the order it was linked. Bypassed nodes stay
+        // out; so do nodes of a type this program does not know (reported above).
+        auto feeding = [&](const char* input) {
+            std::vector<const Node*> out;
+            for (const Link& l : linksInto(solver->id, input)) {
+                const Node* n = node(l.from);
+                if (n && !n->bypass && findNodeType(n->type)) out.push_back(n);
+            }
+            return out;
+        };
+        for (const Node* n : feeding("sources")) {
+            Emitter e;
+            e.shape = static_cast<Shape>(whole(*n, "shape"));
+            e.center = v3(*n, "center");
+            e.rotation = v3(*n, "rotation");
+            e.size = v3(*n, "size");
+            e.mesh = meshOf(*n);
+            e.fuel = f(*n, "fuel");
+            e.smoke = f(*n, "smoke");
+            e.heat = f(*n, "heat");
+            e.velocity = v3(*n, "velocity");
+            e.flicker = f(*n, "flicker");
+            e.flickerSize = f(*n, "flicker_size");
+            e.seed = static_cast<uint32_t>(whole(*n, "seed"));
+            e.start = f(*n, "start");
+            e.end = f(*n, "end");
+            e.motion = static_cast<Motion>(whole(*n, "motion"));
+            e.motionSize = f(*n, "motion_size");
+            e.motionPeriod = f(*n, "motion_period");
+            e.node = n->id;
+            c.world.gas.emitters.push_back(e);
+            c.active.push_back(n->id);
         }
-        return out;
-    };
-    for (const Node* n : feeding("sources")) {
-        Emitter e;
-        e.shape = static_cast<Shape>(whole(*n, "shape"));
-        e.center = v3(*n, "center");
-        e.rotation = v3(*n, "rotation");
-        e.size = v3(*n, "size");
-        e.mesh = meshOf(*n);
-        e.fuel = f(*n, "fuel");
-        e.smoke = f(*n, "smoke");
-        e.heat = f(*n, "heat");
-        e.velocity = v3(*n, "velocity");
-        e.flicker = f(*n, "flicker");
-        e.flickerSize = f(*n, "flicker_size");
-        e.seed = static_cast<uint32_t>(whole(*n, "seed"));
-        e.start = f(*n, "start");
-        e.end = f(*n, "end");
-        e.motion = static_cast<Motion>(whole(*n, "motion"));
-        e.motionSize = f(*n, "motion_size");
-        e.motionPeriod = f(*n, "motion_period");
-        e.node = n->id;
-        c.scene.emitters.push_back(e);
-        c.active.push_back(n->id);
-    }
-    for (const Node* n : feeding("forces")) {
-        Force force;
-        force.node = n->id;
-        const std::string& t = n->type;
-        if (const ParamDef* d = findNodeType(t)->param("mask")) force.mask = static_cast<Mask>(whole(*n, d->name));
-        if (t == "turbulence") {
-            force.kind = ForceKind::Turbulence;
-            force.strength = f(*n, "strength");
-            force.scale = f(*n, "scale");
-            force.speed = f(*n, "speed");
-            force.seed = static_cast<uint32_t>(whole(*n, "seed"));
-        } else if (t == "wind") {
-            force.kind = ForceKind::Wind;
-            force.direction = v3(*n, "direction");
-            force.speed = f(*n, "speed");
-            force.strength = f(*n, "strength");
-            force.gusts = f(*n, "gusts");
-            force.seed = static_cast<uint32_t>(whole(*n, "seed"));
-        } else if (t == "vortex") {
-            force.kind = ForceKind::Vortex;
-            force.center = v3(*n, "center");
-            force.direction = v3(*n, "axis");
-            force.radius = f(*n, "radius");
-            force.height = f(*n, "height");
-            force.speed = f(*n, "speed");
-            force.lift = f(*n, "lift");
-            force.suction = f(*n, "suction");
-            force.strength = f(*n, "strength");
-        } else if (t == "attractor") {
-            force.kind = ForceKind::Attractor;
-            force.center = v3(*n, "center");
-            force.radius = f(*n, "radius");
-            force.strength = f(*n, "strength");
-        } else if (t == "drag") {
-            force.kind = ForceKind::Drag;
-            force.strength = f(*n, "strength");
-        } else {
-            continue;
+        for (const Node* n : feeding("forces")) {
+            Force force;
+            force.node = n->id;
+            const std::string& t = n->type;
+            if (const ParamDef* d = findNodeType(t)->param("mask")) force.mask = static_cast<Mask>(whole(*n, d->name));
+            if (t == "turbulence") {
+                force.kind = ForceKind::Turbulence;
+                force.strength = f(*n, "strength");
+                force.scale = f(*n, "scale");
+                force.speed = f(*n, "speed");
+                force.seed = static_cast<uint32_t>(whole(*n, "seed"));
+            } else if (t == "wind") {
+                force.kind = ForceKind::Wind;
+                force.direction = v3(*n, "direction");
+                force.speed = f(*n, "speed");
+                force.strength = f(*n, "strength");
+                force.gusts = f(*n, "gusts");
+                force.seed = static_cast<uint32_t>(whole(*n, "seed"));
+            } else if (t == "vortex") {
+                force.kind = ForceKind::Vortex;
+                force.center = v3(*n, "center");
+                force.direction = v3(*n, "axis");
+                force.radius = f(*n, "radius");
+                force.height = f(*n, "height");
+                force.speed = f(*n, "speed");
+                force.lift = f(*n, "lift");
+                force.suction = f(*n, "suction");
+                force.strength = f(*n, "strength");
+            } else if (t == "attractor") {
+                force.kind = ForceKind::Attractor;
+                force.center = v3(*n, "center");
+                force.radius = f(*n, "radius");
+                force.strength = f(*n, "strength");
+            } else if (t == "drag") {
+                force.kind = ForceKind::Drag;
+                force.strength = f(*n, "strength");
+            } else {
+                continue;
+            }
+            c.world.gas.forces.push_back(force);
+            c.active.push_back(n->id);
         }
-        c.scene.forces.push_back(force);
-        c.active.push_back(n->id);
-    }
-    for (const Node* n : feeding("colliders")) {
-        c.scene.colliders.push_back(colliderOf(*n));
-        c.active.push_back(n->id);
-    }
+        for (const Node* n : feeding("colliders")) {
+            c.world.gas.colliders.push_back(colliderOf(*n));
+            c.active.push_back(n->id);
+        }
 
-    // Things that run but will not do what was meant.
-    const Domain domain = c.scene.sanitized().solver.domain();
-    const Vec3 lo = domain.origin(), hi = domain.origin() + domain.size();
-    auto overlaps = [&](const Vec3& a, const Vec3& b) {
-        return a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y && a.z < hi.z && b.z > lo.z;
-    };
-    if (c.scene.emitters.empty()) {
-        problem(L::Warning, solver->id, "No sources: nothing will appear. Link a source into Sources.");
-    }
-    for (const Emitter& e : c.scene.emitters) {
-        Vec3 a, b;
-        e.shapeAt(0.0f).bounds(a, b);
-        a = a - e.shapeAt(0.0f).center();
-        b = b - e.shapeAt(0.0f).center();
-        Vec3 reach;
-        if (e.motion == Motion::Circle) reach = Vec3(e.motionSize, 0.0f, e.motionSize);
-        if (e.motion == Motion::Sway) reach = Vec3(e.motionSize, 0.0f, 0.0f);
-        if (!overlaps(e.center + a - reach, e.center + b + reach)) {
-            problem(L::Warning, e.node, "Outside the solver's domain: none of its gas gets in.");
+        // Things that run but will not do what was meant.
+        const Domain domain = c.world.gas.sanitized().solver.domain();
+        const Vec3 lo = domain.origin(), hi = domain.origin() + domain.size();
+        auto overlaps = [&](const Vec3& a, const Vec3& b) {
+            return a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y && a.z < hi.z && b.z > lo.z;
+        };
+        if (c.world.gas.emitters.empty()) {
+            problem(L::Warning, solver->id, "No sources: nothing will appear. Link a source into Sources.");
         }
-        if (e.fuel <= 0.0f && e.smoke <= 0.0f && e.heat <= 0.0f) {
-            problem(L::Warning, e.node, "Adds nothing: give it fuel, smoke or heat.");
-        }
-        for (const Collider& col : c.scene.colliders) {
-            if (col.contains(e.center)) {
-                problem(L::Warning, e.node, "Inside a collider: no gas comes out of a solid.");
-                break;
+        for (const Emitter& e : c.world.gas.emitters) {
+            Vec3 a, b;
+            e.shapeAt(0.0f).bounds(a, b);
+            a = a - e.shapeAt(0.0f).center();
+            b = b - e.shapeAt(0.0f).center();
+            Vec3 reach;
+            if (e.motion == Motion::Circle) reach = Vec3(e.motionSize, 0.0f, e.motionSize);
+            if (e.motion == Motion::Sway) reach = Vec3(e.motionSize, 0.0f, 0.0f);
+            if (!overlaps(e.center + a - reach, e.center + b + reach)) {
+                problem(L::Warning, e.node, "Outside the solver's domain: none of its gas gets in.");
+            }
+            if (e.fuel <= 0.0f && e.smoke <= 0.0f && e.heat <= 0.0f) {
+                problem(L::Warning, e.node, "Adds nothing: give it fuel, smoke or heat.");
+            }
+            for (const Collider& col : c.world.gas.colliders) {
+                if (col.contains(e.center)) {
+                    problem(L::Warning, e.node, "Inside a collider: no gas comes out of a solid.");
+                    break;
+                }
             }
         }
+        for (const Collider& col : c.world.gas.colliders) {
+            Vec3 a, b;
+            col.instance().bounds(a, b);
+            if (!overlaps(a, b)) problem(L::Warning, col.node, "Outside the solver's domain: nothing to collide with.");
+        }
+    };
+
+    // Each look linked into the Output is a layer of the picture -- and of
+    // what is simulated.
+    const std::vector<Link> layers = linksInto(output->id, "look");
+    if (layers.empty()) {
+        problem(L::Error, output->id, "Nothing to show: link a Volume Look into Looks.");
+        return done();
     }
-    for (const Collider& col : c.scene.colliders) {
-        Vec3 a, b;
-        col.instance().bounds(a, b);
-        if (!overlaps(a, b)) problem(L::Warning, col.node, "Outside the solver's domain: nothing to collide with.");
+    for (const Link& layer : layers) {
+        const Node* look = node(layer.from);
+        if (!look || !findNodeType(look->type)) continue;
+        if (look->type == "volume_look") {
+            if (c.lookNode) {
+                problem(L::Warning, look->id, "Another Volume Look: only " + node(c.lookNode)->name + " is drawn.");
+                continue;
+            }
+            c.lookNode = look->id;
+            c.active.push_back(look->id);
+            k.smokeColor = v3(*look, "smoke_color");
+            k.smokeDensity = f(*look, "smoke_density");
+            k.occlusion = f(*look, "occlusion");
+            k.flameIntensity = f(*look, "flame_intensity");
+            k.flameStart = f(*look, "flame_start");
+            k.flameRange = f(*look, "flame_range");
+            k.fireLight = f(*look, "fire_light");
+            const Node* solver = upstream(*look, "gas");
+            if (!solver) {
+                problem(L::Error, look->id, "No gas to draw: link a Pyro Solver into Gas.");
+                continue;
+            }
+            c.solver = solver->id;
+            c.active.push_back(solver->id);
+            compileGas(solver);
+        }
     }
+    c.ok = c.world.any();
     return done();
 }
 

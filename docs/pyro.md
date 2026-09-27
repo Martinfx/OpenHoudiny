@@ -287,7 +287,7 @@ palivo), nebo jen kde je kouř.
 | sekce | parametry |
 |---|---|
 | Domain | `size` (šířka, výška, hloubka v metrech; stojí na podlaze), `resolution` (buněk podél nejdelší strany, 16–256), `closed_floor` |
-| Time | `fps`, `substeps`, `pressure_cycles`, `seed` |
+| Time | `substeps`, `pressure_cycles`, `seed` (snímková frekvence je společná, v uzlu Output) |
 | Motion | `buoyancy`, `weight` (tíha kouře), `vorticity` (víry, které hrubá mřížka rozmaže) |
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |
 | Dissipation | `cooling`, `smoke_decay` |
@@ -295,10 +295,18 @@ palivo), nebo jen kde je kouř.
 **Volume Look** (Render): barva a hustota kouře, `occlusion`; jas ohně,
 teplota, kde začne žhnout (`flame_start`) a kde žhne do běla
 (`flame_range`), `fire_light` (jak oheň svítí na kouř, podlahu a
-překážky); slunce (`light_azimuth`, `light_elevation`, barva, jas),
-obloha, `exposure`, `floor`. Jeho změna simulaci nespouští znovu.
+překážky). Jeho změna simulaci nespouští znovu.
 
-**Output** (Render): `frames`, délka časové osy.
+**Output** (Render): konec sítě a společné prostředí celé scény. Vstup
+Looks bere libovolný počet vrstev (vzhled plynu, vody, deště); všechny se
+simulují jednou snímkovou frekvencí a kreslí do jednoho obrazu.
+
+| sekce | parametry |
+|---|---|
+| Output | `frames` (délka časové osy), `fps` (snímků za sekundu pro všechny řešiče) |
+| Sun | `light_azimuth`, `light_elevation`, `light_color`, `light_intensity` |
+| Sky | `sky_color`, `sky_intensity` |
+| Image | `exposure`, `floor` |
 
 ### Soubor .pgsim
 
@@ -315,10 +323,11 @@ node 1 pyro_source 2 fire 0 0        # id, typ, verze typu, jméno, x y v editor
   param flicker 0.7
 node 2 turbulence 1 turbulence 0 96
   param strength 3.5
-node 3 pyro_solver 1 solver 250 28
+node 3 pyro_solver 2 solver 250 28
   param buoyancy 0.9
-node 4 volume_look 1 look 490 28
-node 5 output 1 output 720 28
+node 4 volume_look 2 look 490 28
+node 5 output 2 output 720 28
+  param fps 24
 link 1.source -> 3.sources
 link 2.force -> 3.forces
 link 3.gas -> 4.gas
@@ -334,9 +343,11 @@ přečetl.
 Soubory starších verzí se načtou: uzel si nese verzi svého typu a zastaralý
 typ se při načtení převede na nástupce. Sphere Source a Box Source se stanou
 Pyro Source s tvarem koule nebo kvádru (poloměr se převede na velikost),
-Sphere Collider a Box Collider se stanou Object. Uložený soubor už má nové
-typy. Test hlídá, že příklady jsou přesně v tom tvaru, v jakém je program
-uloží.
+Sphere Collider a Box Collider se stanou Object. Pyro Solver verze 1 měl
+`fps` a Volume Look verze 1 slunce, oblohu, `exposure` a `floor`; při
+načtení se přestěhují do uzlu Output, do kterého vedou (vzhled, který do
+žádného Outputu nevede, je zahodí). Uložený soubor už má nové typy. Test
+hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 
 ### Příklady
 
@@ -617,14 +628,17 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
-[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (14 testů):
+[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (16 testů):
 tabulka typů uzlů je konzistentní (a každá výchozí hodnota se zapíše a
 přečte zpět stejně), jména a spoje, meze parametrů včetně čísel, která
 se čtou stejně s každou standardní knihovnou, soubory tam a zpět, co se ze
 souboru zachová, kompilace do scény a vzhledu, problémy sítě, příklady
 dávají `Scene::fire()` a `Scene::smoke()`, všechny příklady běží a jsou
 přesně v uloženém tvaru, soubory starších verzí se převedou, objekty jsou
-ve scéně připojené i nepřipojené a nová barva nic nesimuluje znovu.
+ve scéně připojené i nepřipojené a nová barva nic nesimuluje znovu;
+`fps` a světlo ze souborů verze 1 se přestěhují do Outputu; svět
+(`WorldSolver`) krokuje všechny řešiče jednou frekvencí a druhý vzhled
+plynu se nahlásí.
 
 [`tests/test_shapes.cpp`](../tests/test_shapes.cpp) (5 testů): rotace na
 úhly a zpět (i přes 180° a v gimbal locku), uvnitř a vně, vzdálenosti, kde

@@ -33,17 +33,17 @@ node 5 object 1 column 0 384
 node 6 object 1 ball 0 480
   param center 0.45 0.15 0.45
   param color 0.32 0.5 0.72
-node 7 pyro_solver 1 solver 250 76
+node 7 pyro_solver 2 solver 250 76
   param size 1.4 2 1.4
   param buoyancy 1.4
   param weight 0.06
   param vorticity 0.9
   param cooling 0.3
   param smoke_decay 0.04
-node 8 volume_look 1 look 490 76
+node 8 volume_look 2 look 490 76
   param smoke_color 0.78 0.78 0.8
   param smoke_density 16
-node 9 output 1 output 720 76
+node 9 output 2 output 720 76
   param frames 180
 link 1.source -> 7.sources
 link 2.force -> 7.forces

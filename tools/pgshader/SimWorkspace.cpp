@@ -106,7 +106,7 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return std::to_string(d.cells[0]) + " \xc3\x97 " + std::to_string(d.cells[1]) + " \xc3\x97 " +
                std::to_string(d.cells[2]) + " cells";
     }
-    if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames";
+    if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames" + dot + number(v("fps")) + " fps";
     (void)c;
     return {};
 }
@@ -272,7 +272,7 @@ void SimWorkspace::recompile() {
     compiledRevision_ = net_.revision();
     const sim::Look before = compiled_.look;
     compiled_ = net_.compile(folder());
-    if (compiled_.ok) runner_->set(compiled_.scene, compiled_.frames);
+    if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
     if (!(compiled_.look == before)) viewDirty_ = true;
     renderer_.look = compiled_.look;
     renderer_.setSolids(compiled_.solids);
@@ -295,7 +295,7 @@ void SimWorkspace::update(float dt) {
     // Playback at the network's frame rate, never past what is simulated.
     const int cached = runner_->cached();
     if (playing_ && compiled_.ok) {
-        const double frameTime = compiled_.scene.solver.timeStep;
+        const double frameTime = compiled_.world.timeStep;
         clock_ += synchronous_ ? frameTime : static_cast<double>(dt);
         while (clock_ >= frameTime) {
             clock_ -= frameTime;
@@ -837,18 +837,19 @@ void SimWorkspace::networkOverview() {
              "to the Output.");
     ImGui::Spacing();
     if (ui::section("Simulation")) {
-        if (compiled_.ok) {
-            const sim::Domain dm = compiled_.scene.sanitized().solver.domain();
+        if (compiled_.ok && compiled_.world.hasGas) {
+            const sim::Scene& gas = compiled_.world.gas;
+            const sim::Domain dm = gas.sanitized().solver.domain();
             const Vec3 sz = dm.size();
             ImGui::Text("Domain      %.2f \xc3\x97 %.2f \xc3\x97 %.2f m", static_cast<double>(sz.x), static_cast<double>(sz.y),
                         static_cast<double>(sz.z));
             ImGui::Text("Cells       %d \xc3\x97 %d \xc3\x97 %d  (%.1f million)", dm.cells[0], dm.cells[1], dm.cells[2],
                         static_cast<double>(dm.cellCount()) / 1e6);
             ImGui::Text("Frames      %d at %.0f fps  (%.1f s)", compiled_.frames,
-                        1.0 / static_cast<double>(compiled_.scene.solver.timeStep),
-                        compiled_.frames * static_cast<double>(compiled_.scene.solver.timeStep));
-            ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", compiled_.scene.emitters.size(),
-                        compiled_.scene.forces.size(), compiled_.scene.colliders.size());
+                        1.0 / static_cast<double>(compiled_.world.timeStep),
+                        compiled_.frames * static_cast<double>(compiled_.world.timeStep));
+            ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", gas.emitters.size(),
+                        gas.forces.size(), gas.colliders.size());
             ImGui::Text("Cache       %d frames, %.0f MB", runner_->cached(),
                         static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
             if (runner_->stepMs() > 0.0) ImGui::Text("Step        %.0f ms", runner_->stepMs());
@@ -881,7 +882,8 @@ void SimWorkspace::updateGuides() {
     guidesRevision_ = net_.revision();
     guidesSelection_ = chosen;
     gl::Lines lines;
-    if (guides_) lines = gl::sceneGuides(compiled_.ok ? &compiled_.scene : nullptr, compiled_.solids, chosen, compiled_.solver);
+    const sim::Scene* gas = compiled_.ok && compiled_.world.hasGas ? &compiled_.world.gas : nullptr;
+    if (guides_) lines = gl::sceneGuides(gas, compiled_.solids, chosen, compiled_.solver);
     renderer_.setLines(lines);
     guideLines_ = std::move(lines);
     viewDirty_ = true;
@@ -930,7 +932,7 @@ void SimWorkspace::bottom(ImVec2 size) {
     s.simulating = runner_->busy();
     s.playing = playing_;
     s.loop = loop_;
-    s.fps = compiled_.ok ? 1.0f / compiled_.scene.solver.timeStep : 30.0f;
+    s.fps = compiled_.ok ? 1.0f / compiled_.world.timeStep : 30.0f;
     const ui::TimelineActions a = ui::timeline("timeline", s);
     if (a.togglePlay) playing_ = !playing_;
     if (a.toStart) current_ = 1;

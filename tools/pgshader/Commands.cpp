@@ -37,7 +37,7 @@
 #include "pg/gl/Volume.h"
 #endif
 #include "pg/sim/Network.h"
-#include "pg/sim/Pyro.h"
+#include "pg/sim/World.h"
 
 #include <algorithm>
 #include <atomic>
@@ -576,7 +576,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      n ? n->name.c_str() : "", n ? ": " : "", p.message.c_str());
     }
     if (!c.ok) return 1;
-    if (o.resolution > 0) c.scene.solver.resolution = o.resolution;
+    if (o.resolution > 0) c.world.gas.solver.resolution = o.resolution;
     const int frames = o.frames > 0 ? o.frames : c.frames;
     if (o.every > frames) {
         std::fprintf(stderr, "%s: --every %d is more than the %d frames: no frame would be written\n", cmd, o.every,
@@ -610,12 +610,14 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         std::fprintf(stderr, "%s: the driver rejected the volume shader:\n%s\n", cmd, log.c_str());
         return 1;
     }
-    sim::PyroSolver solver(c.scene);
+    sim::WorldSolver solver(c.world);
+    const sim::World& world = solver.world();
+    const sim::Domain domain = world.hasGas ? world.gas.solver.domain() : sim::Domain();
     volume.look = c.look;
-    volume.setDomain(solver.domain());
+    volume.setDomain(domain);
     volume.setSolids(c.solids);
-    if (o.guides) volume.setLines(gl::sceneGuides(&solver.scene(), c.solids, {}));
-    volume.orbit = gl::VolumeRenderer::viewOf(solver.domain());
+    if (o.guides) volume.setLines(gl::sceneGuides(world.hasGas ? &world.gas : nullptr, c.solids, {}));
+    volume.orbit = gl::VolumeRenderer::viewOf(domain);
     if (o.yawSet) volume.orbit.yaw = o.yaw;
     if (o.pitchSet) volume.orbit.pitch = o.pitch;
     if (o.distance > 0.0f) volume.orbit.distance = o.distance;
@@ -633,7 +635,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         simulating += ms(t);
         if (o.every > 0 ? f % o.every != 0 : f != frames) continue;
         t = Clock::now();
-        volume.setFrame(sim::capture(solver));
+        volume.setFrame(solver.capture());
         volume.render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
         const std::vector<uint8_t> pixels = volume.readPixels(2);
         rendering += ms(t);
@@ -647,7 +649,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     std::printf("wrote %s%s: %s, %d x %d x %d cells, %d frames (%.1f s); simulation %.1f ms/frame, "
                 "rendering %.0f ms/image (%s)\n",
                 last.c_str(), images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "",
-                network.c_str(), solver.nx(), solver.ny(), solver.nz(), frames, solver.time(), simulating / frames,
+                network.c_str(), domain.cells[0], domain.cells[1], domain.cells[2], frames, solver.time(), simulating / frames,
                 rendering / std::max(images, 1), reinterpret_cast<const char*>(api.GetString(gl::RENDERER)));
     return 0;
 #else

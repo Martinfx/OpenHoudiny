@@ -32,16 +32,16 @@ node 5 object 1 rock 0 384
   param rotation 0 30 0
   param size 0.5 0.2 0.42
   param color 0.46 0.43 0.4
-node 6 pyro_solver 1 solver 250 76
+node 6 pyro_solver 2 solver 250 76
   param size 2.4 1.4 1.4
   param weight 0.04
   param vorticity 0.9
   param cooling 0.4
   param smoke_decay 0.06
-node 7 volume_look 1 look 490 76
+node 7 volume_look 2 look 490 76
   param smoke_color 0.8 0.8 0.82
   param smoke_density 14
-node 8 output 1 output 720 76
+node 8 output 2 output 720 76
   param frames 180
 link 1.source -> 6.sources
 link 2.force -> 6.forces

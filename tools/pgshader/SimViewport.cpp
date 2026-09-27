@@ -72,7 +72,7 @@ bool SimWorkspace::placeOf(int id, Vec3& center, sim::Rotation& frame) const {
     } else {
         // The wind blows everywhere: its handle is where its arrows are drawn,
         // over the middle of the domain.
-        const sim::Domain dm = compiled_.ok ? compiled_.scene.sanitized().solver.domain() : runner_->domain();
+        const sim::Domain dm = compiled_.ok && compiled_.world.hasGas ? compiled_.world.gas.sanitized().solver.domain() : runner_->domain();
         center = Vec3(0.0f, 0.6f * dm.size().y, 0.0f);
     }
     frame = h.rotation ? sim::Rotation::fromEuler(v3(net_.param(id, h.rotation)))
@@ -211,8 +211,8 @@ int SimWorkspace::pickAt(const ViewCamera& cam, ImVec2 mouse) const {
             node = s.body.node;
         }
     }
-    if (compiled_.ok) {
-        for (const sim::Emitter& e : compiled_.scene.emitters) {
+    if (compiled_.ok && compiled_.world.hasGas) {
+        for (const sim::Emitter& e : compiled_.world.gas.emitters) {
             float t = 0.0f;
             Vec3 n;
             if (e.shapeAt(0.0f).intersect(o, d, 0.0f, t, n) && t < best) {
@@ -298,7 +298,7 @@ int SimWorkspace::ensurePyroChain() {
     }
     if (!output) output = net_.add("output", 720.0f, 40.0f);
     net_.connect(solver, "gas", look, "gas");
-    if (net_.linksInto(output, "look").empty()) net_.connect(look, "look", output, "look");
+    net_.connect(look, "look", output, "look");  // one layer more of the picture
     // The objects already there are in its way.
     for (const sim::Node& n : std::vector<sim::Node>(net_.nodes())) {
         if (n.type == "object") net_.connect(n.id, "collider", solver, "colliders");
@@ -350,7 +350,7 @@ int SimWorkspace::addToScene(const std::string& kind, const Vec3& at) {
         if (kind != force) continue;
         id = net_.add(force, slot.x, slot.y);
         if (kind == "vortex" || kind == "attractor") {
-            const sim::Domain dm = compiled_.ok ? compiled_.scene.sanitized().solver.domain() : runner_->domain();
+            const sim::Domain dm = compiled_.ok && compiled_.world.hasGas ? compiled_.world.gas.sanitized().solver.domain() : runner_->domain();
             net_.setParam(id, "center", pv(Vec3(at.x, 0.5f * dm.size().y, at.z)));
         }
         linkIntoSolvers(id, "force", "forces");
@@ -466,8 +466,8 @@ void SimWorkspace::frameSelection() {
         s.body.instance().bounds(a, b);
         grow(a, b);
     }
-    if (compiled_.ok) {
-        for (const sim::Emitter& e : compiled_.scene.emitters) {
+    if (compiled_.ok && compiled_.world.hasGas) {
+        for (const sim::Emitter& e : compiled_.world.gas.emitters) {
             if (!chosen.count(e.node)) continue;
             Vec3 a, b;
             e.shapeAt(0.0f).bounds(a, b);
@@ -645,7 +645,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     const int w = std::max(16, static_cast<int>(avail.x)), hh = std::max(16, static_cast<int>(avail.y));
     // The camera frames the domain when a network opens and when the
     // domain's size changes -- not for another resolution.
-    const Vec3 box = compiled_.ok ? compiled_.scene.solver.size : framedSize_;
+    const Vec3 box = compiled_.ok && compiled_.world.hasGas ? compiled_.world.gas.solver.size : framedSize_;
     const bool resized = std::fabs(box.x - framedSize_.x) + std::fabs(box.y - framedSize_.y) +
                              std::fabs(box.z - framedSize_.z) > 1e-4f;
     if (!framed_ || resized) {
