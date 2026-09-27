@@ -147,6 +147,7 @@ configure_file(${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp.tmp
                ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp COPYONLY)
 
 add_library(pgsim
+  src/pg/sim/Camera.cpp
   src/pg/sim/Frame.cpp
   src/pg/sim/FreeSurface.cpp
   src/pg/sim/Grid.cpp

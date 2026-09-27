@@ -44,6 +44,7 @@ Icon typeIcon(const sim::NodeType* t) {
     if (name == "output") return Icon::Output;
     if (name == "water_source") return Icon::Drop;
     if (name == "rain") return Icon::Rain;
+    if (name == "camera") return Icon::Camera;
     return categoryIcon(t->category);
 }
 
@@ -51,6 +52,7 @@ Icon typeIcon(const sim::NodeType* t) {
 ImU32 typeColor(const sim::NodeType& t) {
     if (std::string(t.name) == "water_source") return IM_COL32(40, 108, 172, 255);
     if (std::string(t.name) == "rain") return IM_COL32(88, 106, 140, 255);
+    if (std::string(t.name) == "camera") return IM_COL32(96, 98, 108, 255);
     return categoryColor(t.category);
 }
 
@@ -63,6 +65,7 @@ ImU32 pinColor(sim::PinType t) {
         case sim::PinType::Look: return IM_COL32(110, 210, 135, 255);
         case sim::PinType::Water: return IM_COL32(64, 170, 250, 255);
         case sim::PinType::Liquid: return IM_COL32(40, 120, 230, 255);
+        case sim::PinType::Camera: return IM_COL32(205, 208, 216, 255);
     }
     return IM_COL32_WHITE;
 }
@@ -145,6 +148,10 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return s;
     }
     if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames" + dot + number(v("fps")) + " fps";
+    if (t == "camera") {
+        return number(v("focal")) + " mm" + dot + std::to_string(static_cast<int>(v("width"))) + times +
+               std::to_string(static_cast<int>(v("height")));
+    }
     (void)c;
     return {};
 }
@@ -219,6 +226,7 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     recompile();
     current_ = 1;
     playing_ = true;
+    throughCamera_ = false;
     framed_ = false;
     viewDirty_ = true;
 }
@@ -910,6 +918,12 @@ void SimWorkspace::networkOverview() {
                     ImGui::Text("Drops       %zu  (%zu droplets)", f->rain.dropCount(), f->rain.dropletCount());
                 }
             }
+            if (compiled_.hasCamera) {
+                const sim::Camera& cam = compiled_.camera;
+                const sim::Node* n = net_.node(cam.node);
+                ImGui::Text("Camera      %s  %.0f mm  %d \xc3\x97 %d", n ? n->name.c_str() : "", static_cast<double>(cam.focal),
+                            cam.width, cam.height);
+            }
             ImGui::Text("Frames      %d at %.0f fps  (%.1f s)", compiled_.frames,
                         1.0 / static_cast<double>(compiled_.world.timeStep),
                         compiled_.frames * static_cast<double>(compiled_.world.timeStep));
@@ -946,8 +960,10 @@ void SimWorkspace::updateGuides() {
     guidesSelection_ = chosen;
     gl::Lines lines;
     if (guides_) {
+        // Not the camera looked through: its lines would start at the eye.
+        const sim::Camera* camera = compiled_.hasCamera && !throughCamera_ ? &compiled_.camera : nullptr;
         lines = gl::sceneGuides(compiled_.ok ? &compiled_.world : nullptr, compiled_.solids, chosen, compiled_.solver,
-                                compiled_.liquidSolver, compiled_.rain);
+                                compiled_.liquidSolver, compiled_.rain, camera);
     }
     renderer_.setLines(lines);
     guideLines_ = std::move(lines);
@@ -955,12 +971,9 @@ void SimWorkspace::updateGuides() {
 }
 
 void SimWorkspace::drawGnomon(ImDrawList* d, ImVec2 corner) const {
-    const gl::Orbit& o = renderer_.orbit;
-    float eye[3];
-    o.eye(eye);
-    const Vec3 forward = normalize(Vec3(o.target[0] - eye[0], o.target[1] - eye[1], o.target[2] - eye[2]));
-    const Vec3 right = normalize(cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
-    const Vec3 up = cross(right, forward);
+    float f[3], r[3], u[3];
+    renderer_.orbit.axes(f, r, u);
+    const Vec3 forward(f[0], f[1], f[2]), right(r[0], r[1], r[2]), up(u[0], u[1], u[2]);
     const float len = theme::px(22.0f);
     const ImVec2 c(corner.x + theme::px(34.0f), corner.y - theme::px(34.0f));
     struct Axis {
@@ -1109,8 +1122,16 @@ void SimWorkspace::menus() {
             guides_ = !guides_;
             guidesRevision_ = ~0ull;
         }
-        if (ImGui::MenuItem("Frame the Domain", "double click")) framed_ = false;
+        if (ImGui::MenuItem("Frame the Domain", "double click")) {
+            setThroughCamera(false);
+            framed_ = false;
+        }
         if (ImGui::MenuItem("Frame the Network", "F")) canvas_.frame();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Look Through the Camera", "0", throughCamera_, compiled_.hasCamera)) {
+            setThroughCamera(!throughCamera_);
+        }
+        if (ImGui::MenuItem("Camera from View", "Ctrl+Alt+0")) cameraFromView();
         ImGui::EndMenu();
     }
 }
@@ -1133,6 +1154,7 @@ void SimWorkspace::helpMenu() {
     ImGui::TextUnformatted("Middle / Shift+left drag  pan");
     ImGui::TextUnformatted("Right drag, wheel         zoom");
     ImGui::TextUnformatted("Double click              frame what is clicked, or the domain");
+    ImGui::TextUnformatted("0, Ctrl+Alt+0             look through the camera, camera from view");
     ImGui::Separator();
     ImGui::TextDisabled("Timeline");
     ImGui::TextUnformatted("Space  Home  End  Left  Right");
@@ -1148,7 +1170,7 @@ void SimWorkspace::popups() {
     switch (fileAction_) {
         case FileAction::Open: open(chosen); break;
         case FileAction::SaveAs: save(chosen); break;
-        case FileAction::Image: renderImage(chosen, std::max(viewWidth_, 64), std::max(viewHeight_, 64)); break;
+        case FileAction::Image: renderImage(chosen); break;
         case FileAction::Frames: renderFrames(chosen); break;
         case FileAction::MeshFile:
             if (net_.setText(fileNode_, fileParam_, chosen)) {
@@ -1213,11 +1235,38 @@ void SimWorkspace::selectNode(const std::string& name) {
 
 // --- images -----------------------------------------------------------------------------------------
 
-bool SimWorkspace::renderImage(const std::string& path, int width, int height) {
-    // Twice the size, averaged down.
+void SimWorkspace::shotSize(int& width, int& height) const {
+    width = compiled_.hasCamera ? compiled_.camera.width : std::max(viewWidth_, 64);
+    height = compiled_.hasCamera ? compiled_.camera.height : std::max(viewHeight_, 64);
+}
+
+void SimWorkspace::renderShot(int width, int height) {
+    // Through the camera, as it sees -- or as the viewport does -- without
+    // the guides and the selection's highlight; twice the size, to be
+    // averaged down.
+    const gl::Orbit view = renderer_.orbit;
+    if (compiled_.hasCamera) renderer_.orbit = gl::orbitThrough(compiled_.camera, focusOf(compiled_.camera));
+    renderer_.setLines({});
+    renderer_.setHighlight({}, 0);
     renderer_.render(width * 2, height * 2);
-    const std::vector<uint8_t> pixels = renderer_.readPixels(2);
+    renderer_.orbit = view;
+    // Both back on the next frame.
+    guidesRevision_ = ~0ull;
+    highlightedHover_ = -1;
     viewDirty_ = true;
+}
+
+float SimWorkspace::focusOf(const sim::Camera& camera) const {
+    const sim::Domain box = sceneBox();
+    const Vec3 middle = box.origin() + box.size() * 0.5f;
+    return std::max(dot(middle - camera.position, camera.forward()), 0.5f);
+}
+
+bool SimWorkspace::renderImage(const std::string& path) {
+    int width = 0, height = 0;
+    shotSize(width, height);
+    renderShot(width, height);
+    const std::vector<uint8_t> pixels = renderer_.readPixels(2);
     if (!gl::writePng(path, width, height, 3, pixels)) {
         setMessage(path + ": cannot write it", true);
         return false;
@@ -1230,14 +1279,15 @@ bool SimWorkspace::renderFrames(const std::string& folder) {
     std::error_code ec;
     fs::create_directories(folder, ec);
     const int cached = runner_->cached();
-    const int width = std::max(viewWidth_, 64), height = std::max(viewHeight_, 64);
+    int width = 0, height = 0;
+    shotSize(width, height);
     const std::string stem = example_.empty() ? (path_.empty() ? "frame" : fs::path(path_).stem().string()) : example_;
     int written = 0;
     for (int f = 1; f <= cached; ++f) {
         const auto frame = runner_->frame(f);
         if (!frame) break;
         renderer_.setFrame(*frame);
-        renderer_.render(width * 2, height * 2);
+        renderShot(width, height);
         char name[64];
         std::snprintf(name, sizeof name, "_%04d.png", f);
         if (!gl::writePng((fs::path(folder) / (stem + name)).string(), width, height, 3, renderer_.readPixels(2))) break;

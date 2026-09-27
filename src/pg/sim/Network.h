@@ -40,6 +40,7 @@
 //   node 2 pyro_solver 1 solver 320 80
 //   link 1.source -> 2.sources          # an output to an input
 //
+#include "pg/sim/Camera.h"
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
 #include "pg/sim/World.h"
@@ -54,7 +55,7 @@
 namespace pg::sim {
 
 /// What flows along a link. An output links only to an input of its type.
-enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid };
+enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid, Camera };
 const char* pinTypeName(PinType type);
 
 struct PinDef {
@@ -182,6 +183,10 @@ struct Compiled {
     int output = 0, lookNode = 0, solver = 0;  ///< the Output, the Volume Look, the Pyro Solver; 0 if none
     int waterLook = 0, liquidSolver = 0;       ///< the Water Look, the Liquid Solver; 0 if none
     int rain = 0;                              ///< the Rain; 0 if none
+    /// The camera the Output renders through (its node in camera.node), if
+    /// one is linked into it: otherwise the renders frame the scene.
+    bool hasCamera = false;
+    Camera camera;
 
     bool errors() const;
     bool isActive(int node) const;

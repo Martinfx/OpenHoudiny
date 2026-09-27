@@ -35,7 +35,9 @@ struct ViewCamera {
     float aspect = 1.0f;
     ImVec2 lo, size;          ///< the viewport's rectangle on screen
 
-    static ViewCamera of(const gl::Orbit& orbit, float fovyDegrees, ImVec2 lo, ImVec2 size);
+    /// What `orbit` sees -- its axes, roll and field of view -- in the
+    /// rectangle `lo`, `size` of the screen.
+    static ViewCamera of(const gl::Orbit& orbit, ImVec2 lo, ImVec2 size);
     /// The ray under a point of the screen: from the eye, of unit length.
     void ray(ImVec2 screen, Vec3& origin, Vec3& dir) const;
     /// Where a world point lands on screen; false when it is behind the eye.

@@ -1,0 +1,106 @@
+pgsim 1
+# A shot: a campfire on the bank of a pond, in the rain. The gusts that lay
+# the flames over and carry the smoke away also ruffle the pond and slant
+# the rain; the drops ring the water and splash off the ground, and the
+# ground shines wet. The pond is sunk into the ground: blocks as high as the
+# bank round it. Rendered through the camera, low over the water.
+node 1 object 1 bank 0 0
+  param shape box
+  param center -1.5 0.12 0
+  param size 3 0.24 6
+  param color 0.1 0.09 0.08
+node 2 object 1 near_bank 0 96
+  param shape box
+  param center 1.5 0.12 1.8
+  param size 3 0.24 2.4
+  param color 0.1 0.09 0.08
+node 3 object 1 far_bank 0 192
+  param shape box
+  param center 1.5 0.12 -1.8
+  param size 3 0.24 2.4
+  param color 0.1 0.09 0.08
+node 4 object 1 end_bank 0 288
+  param shape box
+  param center 2.05 0.12 0
+  param size 1.9 0.24 1.2
+  param color 0.1 0.09 0.08
+node 5 object 1 log 0 384
+  param shape cylinder
+  param center -0.35 0.285 0
+  param rotation 0 30 90
+  param size 0.09 0.45 0.09
+  param color 0.13 0.085 0.055
+node 6 object 1 stone 0 480
+  param center -0.1 0.3 0.4
+  param size 0.2 0.14 0.18
+  param color 0.12 0.118 0.115
+node 7 pyro_source 2 fire 0 576
+  param center -0.35 0.34 0
+  param size 0.3 0.1 0.3
+  param fuel 18
+  param heat 1
+  param velocity 0 0.4 0
+  param flicker 0.8
+node 8 water_source 1 pond 0 672
+  param center 0.55 0.09 0
+  param size 1.1 0.18 1.2
+node 9 wind 1 gusts 0 768
+  param direction 1 0 -0.6
+  param speed 1.2
+  param strength 1.2
+  param gusts 0.6
+node 10 turbulence 1 turbulence 0 864
+  param strength 4
+node 11 pyro_solver 2 fire_solver 250 40
+  param size 2.2 1.5 1.6
+  param buoyancy 0.9
+  param vorticity 0.9
+  param cooling 1.5
+node 12 volume_look 2 smoke 490 40
+  param smoke_color 0.22 0.21 0.2
+  param smoke_density 18
+  param fire_light 3.5
+node 13 liquid_solver 1 pond_solver 250 200
+  param size 2.2 0.5 1.2
+node 14 water_look 1 water 490 200
+  param color 0.06 0.2 0.22
+  param clarity 0.8
+node 15 rain 1 rain 490 340
+  param center 0 3 0
+  param size 4 0.5 3.5
+  param rate 1500
+  param speed 8
+node 16 camera 1 camera 720 300
+  param center 1.35 0.55 1.45
+  param rotation -4.49 49.35 0
+  param focal 30
+node 17 output 2 output 720 120
+  param frames 120
+  param light_intensity 0.6
+  param sky_color 0.5 0.54 0.6
+  param sky_intensity 0.5
+link 7.source -> 11.sources
+link 1.collider -> 11.colliders
+link 5.collider -> 11.colliders
+link 6.collider -> 11.colliders
+link 1.collider -> 13.colliders
+link 2.collider -> 13.colliders
+link 3.collider -> 13.colliders
+link 4.collider -> 13.colliders
+link 1.collider -> 15.colliders
+link 2.collider -> 15.colliders
+link 3.collider -> 15.colliders
+link 4.collider -> 15.colliders
+link 5.collider -> 15.colliders
+link 6.collider -> 15.colliders
+link 8.water -> 13.sources
+link 9.force -> 11.forces
+link 10.force -> 11.forces
+link 9.force -> 13.forces
+link 9.force -> 15.forces
+link 11.gas -> 12.gas
+link 13.liquid -> 14.liquid
+link 12.look -> 17.look
+link 14.look -> 17.look
+link 15.look -> 17.look
+link 16.camera -> 17.camera

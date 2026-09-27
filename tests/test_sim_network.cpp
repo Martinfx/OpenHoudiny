@@ -8,6 +8,7 @@
 
 #include "test_framework.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -417,6 +418,93 @@ TEST(sim_network_rain_is_a_layer_of_the_output) {
 
     // Saved and read back, the same.
     const std::string text = net.save();
+    Network back;
+    std::vector<std::string> warnings;
+    CHECK(Network::load(text, back, error, &warnings));
+    CHECK(warnings.empty());
+    CHECK_EQ(back.save(), text);
+}
+
+TEST(sim_camera_looks_where_it_is_turned) {
+    auto near = [](const Vec3& a, const Vec3& b) { return length(a - b) < 1e-4f; };
+    Camera c;
+    c.rotation = Vec3();
+    CHECK(near(c.forward(), Vec3(0.0f, 0.0f, -1.0f)));
+    CHECK(near(c.up(), Vec3(0.0f, 1.0f, 0.0f)));
+    CHECK(near(c.right(), Vec3(1.0f, 0.0f, 0.0f)));
+    // The default one looks at the middle of the floor, level.
+    const Camera d;
+    const Vec3 at = normalize(Vec3(0.0f, 0.45f, 0.0f) - d.position);
+    CHECK(dot(d.forward(), at) > 0.999f);
+    CHECK(std::fabs(d.right().y) < 1e-4f && d.up().y > 0.9f);
+    // Turned to look along any way, with any up: it does.
+    const Vec3 ways[] = {{1, 0, 0}, {0.3f, -0.8f, 0.2f}, {-2, 1, -3}, {0, 0, 1}, {0.01f, -1, 0}};
+    const Vec3 ups[] = {{0, 1, 0}, {0.2f, 1, 0.1f}, {1, 0.3f, 0}};
+    for (const Vec3& way : ways) {
+        for (const Vec3& up : ups) {
+            Camera t;
+            t.rotation = Camera::rotationFor(way, up, Vec3(10.0f, -20.0f, 5.0f));
+            CHECK(near(t.forward(), normalize(way)));
+            const Vec3 level = normalize(up - t.forward() * dot(up, t.forward()));
+            if (length(cross(normalize(way), normalize(up))) > 0.05f) CHECK(dot(t.up(), level) > 0.9999f);
+        }
+    }
+    // Straight down: a picture all the same.
+    Camera down;
+    down.rotation = Camera::rotationFor(Vec3(0.0f, -1.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f));
+    CHECK(near(down.forward(), Vec3(0.0f, -1.0f, 0.0f)));
+    CHECK(std::isfinite(down.rotation.x) && std::fabs(dot(down.up(), down.forward())) < 1e-4f);
+    const Camera looking = Camera::lookingAt(Vec3(0.0f, 2.0f, 5.0f), Vec3(0.0f, 2.0f, 0.0f));
+    CHECK(near(looking.rotation, Vec3()));
+    // The lens: 38 mm is some 35 degrees high, 12 mm a right angle.
+    CHECK(std::fabs(d.fovY() - 35.05f) < 0.05f);
+    Camera wide;
+    wide.focal = 12.0f;
+    CHECK(std::fabs(wide.fovY() - 90.0f) < 1e-3f);
+    CHECK(std::fabs(d.aspect() - 16.0f / 9.0f) < 1e-6f);
+    Camera bad;
+    bad.focal = std::nanf("");
+    bad.width = 0;
+    bad.position = Vec3(std::nanf(""), 1.0f, 1.0f);
+    const Camera safe = bad.sanitized();
+    CHECK_EQ(safe.focal, Camera().focal);
+    CHECK_EQ(safe.width, 16);
+    CHECK(std::isfinite(safe.position.x));
+}
+
+TEST(sim_network_camera_is_the_outputs) {
+    int ids[4];
+    Network net = chain(ids);
+    Compiled c = net.compile();
+    CHECK(c.ok && !c.hasCamera);
+    const int cam = net.add("camera", 560, 200);
+    CHECK(net.setParam(cam, "center", "0 1 4"));
+    CHECK(net.setParam(cam, "rotation", "-5 0 0"));
+    CHECK(net.setParam(cam, "focal", "50"));
+    CHECK(net.setParam(cam, "width", "1920"));
+    CHECK(net.setParam(cam, "height", "1080"));
+    std::string error;
+    CHECK(!net.connect(cam, "camera", ids[3], "look", &error));  // a camera is no look
+    CHECK(net.connect(cam, "camera", ids[3], "camera"));
+    c = net.compile();
+    CHECK(c.ok && !c.errors());
+    CHECK(c.hasCamera);
+    CHECK_EQ(c.camera.node, cam);
+    CHECK(c.camera.position == Vec3(0.0f, 1.0f, 4.0f));
+    CHECK(c.camera.rotation == Vec3(-5.0f, 0.0f, 0.0f));
+    CHECK_EQ(c.camera.focal, 50.0f);
+    CHECK_EQ(c.camera.width, 1920);
+    CHECK_EQ(c.camera.height, 1080);
+    CHECK(c.isActive(cam));
+    // One camera: a second one linked takes its place.
+    const int other = net.add("camera");
+    CHECK(net.connect(other, "camera", ids[3], "camera"));
+    CHECK_EQ(net.linksInto(ids[3], "camera").size(), size_t(1));
+    CHECK_EQ(net.compile().camera.node, other);
+    CHECK(!net.compile().isActive(cam));
+    // Saved and read back, the same.
+    const std::string text = net.save();
+    CHECK(text.find("param focal 50") != std::string::npos);
     Network back;
     std::vector<std::string> warnings;
     CHECK(Network::load(text, back, error, &warnings));

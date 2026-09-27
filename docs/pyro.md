@@ -6,13 +6,16 @@ protože to vyplývá z rovnic proudění: teplo stoupá, víry se stáčejí,
 palivo hoří, plyn se rozpíná a obtéká překážky. Voda padá, tříští se,
 vzdouvá se ve vlnách a drží svůj objem ([§5](#5-voda)). Déšť padá z mraku,
 vítr ho v nárazech šikmí, odstřikuje od objektů a na vodě dělá kroužky
-([§6](#6-déšť-a-vítr)). Simulace se skládá
+([§6](#6-déšť-a-vítr)). Kamera záběru určuje, odkud se renderuje
+([§2](#kamera-a-záběr)). Simulace se skládá
 z **uzlů**: zdroje, síly a překážky vedou do řešičů, ty do vzhledů a vzhledy
 na výstup. Shaderové efekty
 z [shader-graph.md §6](shader-graph.md#6-efekty-oheň-a-kouř) pohyb jen
 předstírají šumem na jedné ploše.
 
 ![Táborák, exploze a tornádo, rozlišení 96](img/pyro.gif)
+
+![Záběry kamerou: táborák u jezírka v dešti (lakeside) a táborák v bouřce (storm)](img/vfx.png)
 
 ![Editor: síť Simulation s tornádem, vybraný uzel Vortex a jeho vodítka ve viewportu](img/editor-sim.png)
 
@@ -47,6 +50,8 @@ Obsah:
 # bez okna: poslední snímek, nebo každý k-tý jako očíslovanou sekvenci
 ./build/pgshader sim campfire fire.png
 ./build/pgshader sim examples/sim/explosion.pgsim out/boom.png --every 2
+./build/pgshader sim lakeside shot.png    # záběr kamerou sítě, 1280 × 720
+./build/pgshader sim lakeside out/shot.png --every 1   # celý záběr, snímek po snímku
 ./build/pgshader sim tornado t.png --set vortex.speed=3 --set solver.resolution=128
 ./build/pgshader sim --list               # vestavěné příklady
 
@@ -64,6 +69,10 @@ stačí softwarový ovladač, třeba Mesa llvmpipe. Se `--every K` uloží sním
 K, 2K, 3K… a pojmenuje je číslem snímku (`boom_0002.png`, `boom_0004.png`,
 …). Proto je v příkladu pro ffmpeg `glob`: čísla netvoří souvislou řadu.
 `--guides` do obrázku nakreslí vodítka: doménu, zdroje a síly.
+
+Má-li síť kameru připojenou do Outputu, `sim` renderuje jejím pohledem a
+v rozlišení jejího obrazu (`--size` ho přepíše). `--yaw`, `--pitch` a
+`--distance` kameru obejdou a ukážou scénu z oběžné dráhy kolem ní.
 
 Starší `pgshader pyro OUT.png --preset fire` pořád funguje: spustí příklad
 (`fire` je táborák).
@@ -161,7 +170,39 @@ i s vzhledem a výstupem. Síly se připojí do Forces řešičů i deště.
 drahou pohybu), víry a atraktory, šipky větru, mrak deště se šipkami, kudy
 kapky padají, obrys vybraných objektů. Každá síla se kreslí jednou, i když
 působí ve více řešičích.
-Ikona fotoaparátu uloží snímek jako PNG ve dvojnásobném rozlišení.
+Ikona fotoaparátu uloží snímek jako PNG.
+
+### Kamera a záběr
+
+![Editor: pohled kamerou záběru jezírka v dešti, rámeček obrazu 1280 × 720 a parametry kamery](img/editor-camera.png)
+
+Kamera (uzel **Camera**) je záběr: odkud se na scénu dívá, jakým
+objektivem a jak velký je obraz. Připojená do vstupu **Camera** uzlu
+Output určuje, co renderuje `pgshader sim` i **File › Render Image** a
+**Render Frames**. Bez kamery se renderuje pohled viewportu.
+
+| akce | jak |
+|---|---|
+| přidat kameru | **Shift+A › Shot › Camera**: vidí to, co právě viewport, a připojí se do Outputu |
+| dívat se kamerou | **0** (i na numerické klávesnici), tlačítko s okem v hlavičce viewportu |
+| kamera z pohledu | **Ctrl+Alt+0**: kamera se přesune a natočí tak, aby viděla, co viewport; objektiv a obraz jí zůstanou |
+| posunout, natočit | vybrat jehlan kamery kliknutím, gizmo **W** a **E** |
+| odejít z kamery | táhnout nebo kolečko ve viewportu, **F**, dvojklik |
+
+Při pohledu kamerou ukazuje viewport rámeček obrazu v poměru stran kamery
+(u 1280 × 720 je to 16 : 9) a kolem něj ztmavené okolí. Nahoře je jméno
+kamery, ohnisková vzdálenost a rozlišení. Pohyb myší pohled kamery opustí,
+kamera zůstane, kde byla. Tak se záběr ladí stejně jako v Blenderu: najít
+pohled, **Ctrl+Alt+0**, zkontrolovat **0**.
+
+Objektiv je jako u full frame fotoaparátu (snímač 24 mm vysoký): vertikální
+zorný úhel je `2 · atan(12 / focal)`. 38 mm dá 35° jako viewport,
+24 mm je širokoúhlý, 85 mm portrét, 200 mm teleobjektiv, který zplošťuje
+hloubku. Kamera se dívá podél své osy −z, rotace je jako u objektů (stupně
+kolem x, pak y, pak z).
+
+Render je bez vodítek a bez zvýraznění výběru, ve dvojnásobném rozlišení
+zprůměrovaném dolů (vyhlazení hran).
 
 ### Časová osa a cache
 
@@ -184,8 +225,9 @@ tažení, **Space**, **Home**, **End**, šipky) pak nic nepočítají znovu.
 
 **Ctrl+N/O/S**, **Ctrl+Shift+S**, příklady v **File › Examples**. Otevřený
 příklad se ukládá přes Save As. **File › Render Image** uloží snímek,
-**Render Frames** všechny spočítané snímky do složky. Dialog souborů ukazuje
-složky a soubory dané přípony a cestu jde napsat.
+**Render Frames** všechny spočítané snímky do složky, obojí kamerou, pokud
+síť nějakou má. Dialog souborů ukazuje složky a soubory dané přípony a
+cestu jde napsat.
 
 **Ctrl+Z / Ctrl+Shift+Z** vrací celé stavy sítě. Tah posuvníkem nebo uzlem
 je jeden krok, ne sto.
@@ -197,13 +239,15 @@ je jeden krok, ne sto.
 [Turbulence] ───Force────┼──▶ [Pyro Solver] ──Gas──▶ [Volume Look] ──Look──┐
 [Object] ───────Collider─┘                                                 │
 [Water Source] ─Water──────▶ [Liquid Solver] ─Liquid─▶ [Water Look] ──Look──┼──▶ [Output]
-[Wind] ─────────Force──────▶ [Rain] ───────────────────────────────Look──┘
+[Wind] ─────────Force──────▶ [Rain] ───────────────────────────────Look──┘      ▲
+[Camera] ──────────────────────────────────────────────────────────────Camera───┘
 ```
 
 Piny mají typ a barvu: **Source** oranžová, **Force** tyrkysová,
 **Collider** modrá, **Gas** fialová, **Look** zelená, **Water** a
-**Liquid** modré (voda, [§5](#5-voda)). Déšť ([§6](#6-déšť-a-vítr)) je
-řešič a vzhled v jednom: jeho výstup je rovnou vrstva Outputu. Výstup jde jen do
+**Liquid** modré (voda, [§5](#5-voda)), **Camera** světle šedá (záběr,
+[§2](#kamera-a-záběr)). Déšť ([§6](#6-déšť-a-vítr)) je řešič a vzhled
+v jednom: jeho výstup je rovnou vrstva Outputu. Výstup jde jen do
 vstupu stejného typu. Vstupy řešiče Sources, Forces a Colliders berou
 libovolný počet spojů (kreslí se jako obdélníček místo kolečka). Síly se
 použijí v pořadí, v jakém byly připojené. Simuluje se jen to, co vede na
@@ -313,7 +357,8 @@ překážky). Jeho změna simulaci nespouští znovu.
 
 **Output** (Render): konec sítě a společné prostředí celé scény. Vstup
 Looks bere libovolný počet vrstev (vzhled plynu, vody, deště); všechny se
-simulují jednou snímkovou frekvencí a kreslí do jednoho obrazu.
+simulují jednou snímkovou frekvencí a kreslí do jednoho obrazu. Vstup
+Camera bere jednu kameru: pohled, kterým se renderuje.
 
 | sekce | parametry |
 |---|---|
@@ -321,6 +366,14 @@ simulují jednou snímkovou frekvencí a kreslí do jednoho obrazu.
 | Sun | `light_azimuth`, `light_elevation`, `light_color`, `light_intensity` |
 | Sky | `sky_color`, `sky_intensity` |
 | Image | `exposure`, `floor` |
+
+**Camera** (Render): záběr ([§2](#kamera-a-záběr)).
+
+| sekce | parametry |
+|---|---|
+| Camera | `center` (kde stojí), `rotation` (stupně kolem x: sklon, pak y: otočení, pak z; při nule se dívá podél −z, vodorovně) |
+| Lens | `focal` (ohnisková vzdálenost v mm, full frame) |
+| Image | `width`, `height` (rozlišení renderu, zároveň poměr stran rámečku) |
 
 ### Soubor .pgsim
 
@@ -381,8 +434,9 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `dam_break` | voda: blok vody v rohu nádrže se protrhne, oteče sloup, vyšplhá po protější stěně a přelévá se |
 | `waterfall` | voda z pramene na římse padá na šikmou desku, stéká po ní a plní bazén |
 | `splash` | koule vody dopadne do bazénu: korunka tříště, pak se dutina zavře a vystřelí sloupec (Worthingtonův výtrysk) |
-| `rain_pond` | déšť na jezírku: kroužky na hladině, odstřiky od kamene, vánek v nárazech a mokrá podlaha |
-| `storm` | táborák v bouřce: nárazy větru kladou plameny a strhávají kouř, déšť se šikmí ve stejném větru a odstřikuje od polen |
+| `rain_pond` | déšť na jezírku: kroužky na hladině, odstřiky od kamene, vánek v nárazech a mokrá podlaha; kamera nízko nad vodou |
+| `storm` | táborák v bouřce: nárazy větru kladou plameny a strhávají kouř, déšť se šikmí ve stejném větru a odstřikuje od polen; kamera nízko u ohně |
+| `lakeside` | záběr: táborák na břehu jezírka v dešti. Kouř, voda, déšť, vítr a objekty v jedné síti (17 uzlů), jezírko zapuštěné do terénu z kvádrů, kamera nízko nad vodou |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.
@@ -836,6 +890,11 @@ Co je v obraze:
   otevřených stěn a u stropu plynule mizí, jinak by hlava kouřového sloupce
   u stropu vypadala jako useknutá poklicí.
 
+Pohled je oběžná dráha kolem bodu (otočení, sklon, vzdálenost) se zorným
+úhlem a náklonem kolem směru pohledu. Kamera sítě se na ni převede
+(`gl::orbitThrough`) a zpět (`gl::cameraFrom`), takže viewport, render
+v editoru i `pgshader sim` počítají pohled stejně.
+
 Voda se kreslí v témže průchodu ([§5](#jak-se-voda-kreslí)). Déšť přijde
 až po něm: čáry kapek se kreslí přes obraz s hloubkovým testem, takže je
 schová objekt, který je blíž.
@@ -887,7 +946,7 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
-[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (18 testů):
+[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (20 testů):
 tabulka typů uzlů je konzistentní (a každá výchozí hodnota se zapíše a
 přečte zpět stejně), jména a spoje, meze parametrů včetně čísel, která
 se čtou stejně s každou standardní knihovnou, soubory tam a zpět, co se ze
@@ -900,7 +959,9 @@ ve scéně připojené i nepřipojené a nová barva nic nesimuluje znovu;
 plynu se nahlásí; uzly vody se přeloží do světa i vzhledu, kouř a voda
 v jednom Outputu běží spolu a co chybí, se nahlásí; déšť je vrstva
 Outputu s větrem a překážkami, mrak pod podlahou, nulová hustota a druhý
-déšť se nahlásí.
+déšť se nahlásí; kamera se dívá, kam je natočená (i s jiným „nahoru“ a
+kolmo dolů), objektiv 38 mm má 35° a 12 mm pravý úhel, kamera je jedna na
+Output a patří do souboru.
 
 [`tests/test_liquid.cpp`](../tests/test_liquid.cpp) (10 testů): tlak
 s volnou hladinou konverguje do 30 iterací a reziduum sedí i přepočítané
@@ -1024,7 +1085,11 @@ to stojí. Oproti produkci:
    objekty. Vlnky jsou mřížka výšek nad hladinou, kterou řešič vody nevidí.
    Produkce dělá déšť z částic stejně, ale kapky jsou tam i součástí FLIP,
    jakmile dopadnou, a mokrost se maluje do textur objektů.
-9. **Simulace není uzel geometrické sítě.** Další krok je uzel
+9. **Render je náhled.** Raymarching v OpenGL s jedním rozptylem, bez
+   hloubky ostrosti a bez pohybové neostrosti plynu a vody (neostré jsou
+   jen kapky deště). Produkce renderuje tytéž objemy path tracingem
+   (Karma, Arnold, RenderMan) a skládá vrstvy v kompozici (Nuke).
+10. **Simulace není uzel geometrické sítě.** Další krok je uzel
    `pyrosolver`: cook engine jádra už zná časovou závislost a cache
    snímků ([ARCHITECTURE.md §4.3](../ARCHITECTURE.md#43-čas-jako-dimenze-závislosti)).
 

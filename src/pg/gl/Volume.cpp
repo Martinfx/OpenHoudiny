@@ -525,6 +525,31 @@ vec3 shade(vec3 p, vec3 n, vec3 albedo) {
     return albedo * (u_light * sun * ndl + sky + fireGlow(p, n));
 }
 
+// What a wet or shiny surface reflects along r: the sky -- brighter
+// overhead -- above the horizon, the floor below it.
+vec3 environment(vec3 r) {
+    if (r.y < 0.0) return vec3(0.075) * (u_light * max(u_lightDir.y, 0.0) * 0.6 + u_sky);
+    return u_sky * (1.4 + 2.2 * r.y) + u_light * 0.04;
+}
+
+// --- rain: what it wets -----------------------------------------------------------
+uniform float u_wet;             // how wet the rain makes things, 0 to 1
+uniform vec2 u_wetMin, u_wetMax; // where it rains: wet there, drying off a little way out
+
+float wetAt(vec2 q) {
+    vec2 out_ = max(max(u_wetMin - q, q - u_wetMax), vec2(0.0));
+    return u_wet * (1.0 - smoothstep(0.0, 0.35, length(out_)));
+}
+
+// Wet, a surface is darker and shines with the sky: what that adds to
+// `lit`, seen along `view` at p with normal n -- where the rain falls on it.
+vec3 wetten(vec3 lit, vec3 p, vec3 n, vec3 view) {
+    float wet = u_wet > 0.0 ? wetAt(p.xz) * smoothstep(0.1, 0.7, n.y) : 0.0;
+    if (wet <= 0.0) return lit;
+    float f = 0.02 + 0.98 * pow(1.0 - clamp(-dot(view, n), 0.0, 1.0), 5.0);
+    return lit * (1.0 - 0.5 * wet) + environment(reflect(view, n)) * (f * wet * 0.8);
+}
+
 // An object: as shade(), with a soft highlight of the sun, and the rim of a
 // selected (or hovered) one in the colour of the selection.
 vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) {
@@ -533,7 +558,7 @@ vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) {
     float sun = ndl > 0.0 ? sunAt(p + n * 2e-3) : 0.0;
     vec3 sky = u_sky * (0.6 + 0.4 * n.y);
     vec3 half_ = normalize(u_lightDir - view);
-    vec3 c = albedo * (u_light * sun * ndl + sky + fireGlow(p, n)) +
+    vec3 c = wetten(albedo * (u_light * sun * ndl + sky + fireGlow(p, n)), p, n, view) +
              u_light * sun * 0.12 * pow(max(dot(n, half_), 0.0), 40.0) * ndl;
     float mark = u_solidE[i].w;
     if (mark > 0.5) {
@@ -555,18 +580,11 @@ vec3 floorAlbedo(vec2 q, vec2 width) {
     return vec3(0.075 + lines);
 }
 
-// --- rain: ripples on the water, a wet floor ------------------------------------
+// --- rain: ripples on the water ---------------------------------------------------
 uniform bool u_hasRipples;
 uniform sampler2D u_ripples;   // heights of the rings the drops make, world units
 uniform vec2 u_rippleMin, u_rippleSize;
 uniform float u_rippleCell;
-uniform float u_wet;           // how wet the floor is, 0 to 1
-uniform vec2 u_wetMin, u_wetMax; // where it rains: wet there, drying off a little way out
-
-float wetAt(vec2 q) {
-    vec2 out_ = max(max(u_wetMin - q, q - u_wetMax), vec2(0.0));
-    return u_wet * (1.0 - smoothstep(0.0, 0.35, length(out_)));
-}
 
 // How the ripples tilt the water at p: their height's slope along x and z.
 vec2 rippleSlope(vec3 p) {
@@ -577,13 +595,6 @@ vec2 rippleSlope(vec3 p) {
     float hx = textureLod(u_ripples, uv + e, 0.0).r - textureLod(u_ripples, uv - e, 0.0).r;
     float hz = textureLod(u_ripples, uv + f, 0.0).r - textureLod(u_ripples, uv - f, 0.0).r;
     return vec2(hx, hz) / (2.0 * u_rippleCell);
-}
-
-// What the water reflects along r: the sky -- brighter overhead -- above the
-// horizon, the floor below it.
-vec3 environment(vec3 r) {
-    if (r.y < 0.0) return vec3(0.075) * (u_light * max(u_lightDir.y, 0.0) * 0.6 + u_sky);
-    return u_sky * (1.4 + 2.2 * r.y) + u_light * 0.04;
 }
 
 // What is seen through the water along d from p, just inside it: the floor
@@ -674,13 +685,8 @@ void main() {
         float away = length(floorPoint.xz - u_floorCenter.xz) / u_floorRadius;
         cover = 1.0 - smoothstep(0.35, 1.0, away);
         if (cover > 0.0) {
-            // Wet, it is darker and shines with the sky.
-            float wet = u_wet > 0.0 ? wetAt(floorPoint.xz) : 0.0;
-            surface = shade(floorPoint, vec3(0.0, 1.0, 0.0), floorAlbedo(floorPoint.xz, pixel) * (1.0 - 0.5 * wet));
-            if (wet > 0.0) {
-                float f = 0.02 + 0.98 * pow(1.0 - clamp(-dir.y, 0.0, 1.0), 5.0);
-                surface += environment(reflect(dir, vec3(0.0, 1.0, 0.0))) * (f * wet * 0.8);
-            }
+            vec3 up = vec3(0.0, 1.0, 0.0);
+            surface = wetten(shade(floorPoint, up, floorAlbedo(floorPoint.xz, pixel)), floorPoint, up, dir);
         }
     }
     // The water, in front of it all.
@@ -831,13 +837,15 @@ void main() {
     vec2 along = dot(dp, dp) > 1e-6 ? normalize(dp) : vec2(0.0, 1.0);
     vec4 p = mix(t, h, a_corner.x);
     // A droplet is some half the size of a drop.
-    float cover = u_cover * (droplet > 0.5 ? 0.5 : 1.0) / (0.5 * (h.w + t.w));
-    float w = u_width * clamp(cover, 1.0, 4.0);
+    float depth = 0.5 * (h.w + t.w);
+    float cover = u_cover * (droplet > 0.5 ? 0.5 : 1.0) / depth;
+    float w = u_width * clamp(cover, 1.0, 3.0);
     // Half a pixel past each end: a drop seen head on is still a dot.
     p.xy += (across * (0.5 * w * a_corner.y) + along * (a_corner.x - 0.5)) * u_pixel * p.w;
     gl_Position = p;
     v_along = a_corner.x;
-    v_alpha = clamp(cover, 0.12, 1.0);
+    // One just in front of the lens would be out of focus: a blur, faint.
+    v_alpha = clamp(cover, 0.12, 1.0) * smoothstep(0.15, 0.7, depth);
 }
 )";
 
@@ -1045,7 +1053,7 @@ sim::Domain sceneDomain(const sim::World& world) {
 }
 
 Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
-                  int domainNode, int waterNode, int rainNode) {
+                  int domainNode, int waterNode, int rainNode, const sim::Camera* camera) {
     Lines lines;
     const sim::Scene* gas = world && world->hasGas ? &world->gas : nullptr;
     const sim::Scene scene = gas ? *gas : sim::Scene();
@@ -1166,6 +1174,23 @@ Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids
                 lines.arrow(from, from + fall * reach, c.data());
             }
         }
+    }
+    // The camera: a pyramid from where it stands to its picture, 40 cm out,
+    // and a triangle over the picture's top.
+    if (camera) {
+        lines.owner = camera->node;
+        const auto c = colour(0.85f, 0.85f, 0.9f, camera->node);
+        const float out = 0.4f, h = out * std::tan(0.5f * camera->fovY() * kPi / 180.0f), w = h * camera->aspect();
+        const Vec3 p = camera->position, f = camera->forward() * out, r = camera->right() * w, u = camera->up() * h;
+        const Vec3 corners[4] = {p + f - r - u, p + f + r - u, p + f + r + u, p + f - r + u};
+        for (int i = 0; i < 4; ++i) {
+            lines.segment(p, corners[i], c.data());
+            lines.segment(corners[i], corners[(i + 1) % 4], c.data());
+        }
+        const Vec3 top = p + f + u;
+        lines.segment(top - r * 0.4f + u * 0.12f, top + u * 0.5f, c.data());
+        lines.segment(top + u * 0.5f, top + r * 0.4f + u * 0.12f, c.data());
+        lines.segment(top + r * 0.4f + u * 0.12f, top - r * 0.4f + u * 0.12f, c.data());
     }
     // The selected objects, outlined a hair outside their surface.
     const std::array<float, 4> outline = {1.0f, 0.6f, 0.25f, 0.9f};
@@ -1417,7 +1442,7 @@ void VolumeRenderer::drawRain(int width, int height, const Vec3& eye) {
     const float line = std::max(1.0f, 1.3f * static_cast<float>(height) / 600.0f);
     gl_.Uniform1f(location(rainProgram_, "u_width"), line);
     // A drop 2.5 mm across is as wide as that line this far off.
-    const float pixelAt1m = 2.0f * std::tan(0.5f * kFovY * kPi / 180.0f) / static_cast<float>(height);
+    const float pixelAt1m = 2.0f * std::tan(0.5f * orbit.fovY * kPi / 180.0f) / static_cast<float>(height);
     gl_.Uniform1f(location(rainProgram_, "u_cover"), 0.0025f / (pixelAt1m * line));
     gl_.Uniform3f(location(rainProgram_, "u_color"), c.x, c.y, c.z);
     gl_.Uniform1f(location(rainProgram_, "u_opacity"), s.rainOpacity);
@@ -1747,6 +1772,38 @@ void VolumeRenderer::ensureTarget(int width, int height) {
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
 }
 
+Orbit orbitThrough(const sim::Camera& camera, float distance) {
+    constexpr float kDegrees = 180.0f / kPi;
+    const Vec3 f = camera.forward();
+    Orbit o;
+    // The orbit's eye is its target back along the view: pitch and yaw
+    // from where the camera looks.
+    o.pitch = std::asin(std::clamp(-f.y, -1.0f, 1.0f)) * kDegrees;
+    o.yaw = std::atan2(-f.x, -f.z) * kDegrees;
+    o.distance = std::max(distance, 0.01f);
+    const Vec3 target = camera.position + f * o.distance;
+    o.target[0] = target.x;
+    o.target[1] = target.y;
+    o.target[2] = target.z;
+    o.fovY = camera.fovY();
+    // The roll: how far the camera's right is turned from the level one.
+    float level[3], right[3], up[3];
+    o.axes(level, right, up);
+    const Vec3 r = camera.right();
+    o.roll = std::atan2(dot(r, Vec3(up[0], up[1], up[2])), dot(r, Vec3(right[0], right[1], right[2]))) * kDegrees;
+    return o;
+}
+
+sim::Camera cameraFrom(const Orbit& orbit, sim::Camera camera) {
+    float eye[3], forward[3], right[3], up[3];
+    orbit.eye(eye);
+    orbit.axes(forward, right, up);
+    camera.position = Vec3(eye[0], eye[1], eye[2]);
+    camera.rotation = sim::Camera::rotationFor(Vec3(forward[0], forward[1], forward[2]), Vec3(up[0], up[1], up[2]),
+                                               camera.rotation);
+    return camera;
+}
+
 Orbit VolumeRenderer::viewOf(const sim::Domain& domain) {
     const Vec3 size = domain.size();
     Orbit o;
@@ -1763,15 +1820,15 @@ Orbit VolumeRenderer::viewOf(const sim::Domain& domain) {
 void VolumeRenderer::render(int width, int height) {
     ensureTarget(width, height);
     updateLighting();
+    // The camera: where it is, and the directions of the screen's axes.
+    float eye[3], towards[3], across[3], upwards[3];
+    orbit.eye(eye);
+    orbit.axes(towards, across, upwards);
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    viewProjection_ = multiply(perspective(orbit.fovY, aspect, kNear, kFar), lookAlong(eye, towards, upwards));
     // The meshes first, into their own buffer, seen by the same camera.
     const bool meshes = anyMesh_ && meshProgram_;
-    if (meshes) {
-        float at[3];
-        orbit.eye(at);
-        viewProjection_ = multiply(perspective(kFovY, static_cast<float>(width) / static_cast<float>(height), kNear, kFar),
-                                   lookAt(at, orbit.target));
-        renderMeshes(width, height, Vec3(at[0], at[1], at[2]));
-    }
+    if (meshes) renderMeshes(width, height, Vec3(eye[0], eye[1], eye[2]));
     gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
     gl_.Viewport(0, 0, width, height);
     gl_.ColorMask(1, 1, 1, 1);
@@ -1783,17 +1840,9 @@ void VolumeRenderer::render(int width, int height) {
         return;
     }
 
-    // The camera: where it is, and the directions of the screen's axes.
-    float eye[3];
-    orbit.eye(eye);
-    const Vec3 e(eye[0], eye[1], eye[2]), target(orbit.target[0], orbit.target[1], orbit.target[2]);
-    const Vec3 forward = normalize(target - e);
-    Vec3 right = normalize(cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
-    if (length(right) < 0.5f) right = Vec3(1.0f, 0.0f, 0.0f);
-    const Vec3 up = cross(right, forward);
-    const float tanHalf = std::tan(kFovY * kPi / 360.0f);
-    const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    viewProjection_ = multiply(perspective(kFovY, aspect, kNear, kFar), lookAt(eye, orbit.target));
+    const Vec3 e(eye[0], eye[1], eye[2]), forward(towards[0], towards[1], towards[2]);
+    const Vec3 right(across[0], across[1], across[2]), up(upwards[0], upwards[1], upwards[2]);
+    const float tanHalf = std::tan(orbit.fovY * kPi / 360.0f);
 
     const sim::Look& s = look;
     const Vec3 light = normalize(s.lightDirection());

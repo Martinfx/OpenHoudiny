@@ -88,8 +88,25 @@ private:
     std::shared_ptr<const sim::Frame> frameToShow() const;
     void updateGuides();
     void drawGnomon(ImDrawList* d, ImVec2 corner) const;
-    bool renderImage(const std::string& path, int width, int height);
+    /// The size of a render: the camera's picture, or the viewport's.
+    void shotSize(int& width, int& height) const;
+    /// Draws what a render shows -- through the camera, if there is one --
+    /// at twice `width` x `height`, the viewport's view kept.
+    void renderShot(int width, int height);
+    /// How far in front of `camera` the middle of the scene is: where an
+    /// orbit through it turns round.
+    float focusOf(const sim::Camera& camera) const;
+    bool renderImage(const std::string& path);
     bool renderFrames(const std::string& folder);
+
+    // --- the camera (SimViewport.cpp) ---------------------------------------------------
+    /// Looks through the Output's camera, or stops.
+    void setThroughCamera(bool on);
+    /// The Output's camera moved and turned to see what the viewport sees;
+    /// one made if there is none.
+    void cameraFromView();
+    /// A camera that sees what the viewport sees, linked into the Output.
+    int addCamera();
 
     // --- selecting, the gizmo, adding to the scene (SimViewport.cpp) --------------------
     /// A node the gizmo moves, with its values when a drag began.
@@ -175,6 +192,8 @@ private:
     uint64_t guidesRevision_ = ~0ull;
     Vec3 framedSize_;  ///< the domain the camera was framed for, world units
     bool framed_ = false;
+    bool throughCamera_ = false;  ///< the viewport looks through the Output's camera
+    ImVec2 gateLo_, gateHi_;      ///< the camera's picture in the viewport, while it does
 
     gl::Lines guideLines_;       ///< the guides drawn, for picking
     Gizmo gizmo_;

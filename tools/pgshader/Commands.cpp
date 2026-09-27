@@ -588,10 +588,17 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
 #ifdef PG_HAVE_EGL
     namespace gl = pg::gl;
-    // Tall for a plume, wide for a scene wider than it is high.
+    // Through the network's camera, at the size of its picture -- unless
+    // the command line asks for a view round the scene. Without a camera:
+    // tall for a plume, wide for a scene wider than it is high.
+    const bool throughCamera = c.hasCamera && !(o.yawSet || o.pitchSet || o.distance > 0.0f);
     const Vec3 extent = gl::sceneDomain(c.world).size();
     int width = extent.y >= std::max(extent.x, extent.z) ? 400 : 640;
     int height = extent.y >= std::max(extent.x, extent.z) ? 600 : 400;
+    if (throughCamera) {
+        width = c.camera.width;
+        height = c.camera.height;
+    }
     if (!o.sizeText.empty()) {
         const size_t x = o.sizeText.find('x');
         width = std::atoi(o.sizeText.c_str());
@@ -622,11 +629,20 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     volume.look = c.look;
     volume.setDomain(domain);
     volume.setSolids(c.solids);
-    if (o.guides) volume.setLines(gl::sceneGuides(&world, c.solids, {}, c.solver, c.liquidSolver, c.rain));
-    volume.orbit = gl::VolumeRenderer::viewOf(gl::sceneDomain(world));
-    if (o.yawSet) volume.orbit.yaw = o.yaw;
-    if (o.pitchSet) volume.orbit.pitch = o.pitch;
-    if (o.distance > 0.0f) volume.orbit.distance = o.distance;
+    if (o.guides) {
+        volume.setLines(gl::sceneGuides(&world, c.solids, {}, c.solver, c.liquidSolver, c.rain,
+                                        c.hasCamera && !throughCamera ? &c.camera : nullptr));
+    }
+    const sim::Domain box = gl::sceneDomain(world);
+    if (throughCamera) {
+        const Vec3 middle = box.origin() + box.size() * 0.5f;
+        volume.orbit = gl::orbitThrough(c.camera, std::max(dot(middle - c.camera.position, c.camera.forward()), 0.5f));
+    } else {
+        volume.orbit = gl::VolumeRenderer::viewOf(box);
+        if (o.yawSet) volume.orbit.yaw = o.yaw;
+        if (o.pitchSet) volume.orbit.pitch = o.pitch;
+        if (o.distance > 0.0f) volume.orbit.distance = o.distance;
+    }
 
     using Clock = std::chrono::steady_clock;
     auto ms = [](Clock::time_point since) {
@@ -666,6 +682,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     if (world.hasRain) {
         what += ", rain " + std::to_string(solver.rain()->drops().size()) + " drops, " +
                 std::to_string(solver.rain()->droplets().size()) + " droplets";
+    }
+    if (throughCamera) {
+        const sim::Node* n = net.node(c.camera.node);
+        what += ", through " + (n ? n->name : std::string("the camera"));
     }
     std::printf("wrote %s%s: %s%s, %d frames (%.1f s); simulation %.1f ms/frame, rendering %.0f ms/image (%s)\n",
                 last.c_str(), images > 1 ? (" and " + std::to_string(images - 1) + " before it").c_str() : "",
@@ -724,7 +744,9 @@ void printUsage(std::FILE* out) {
                  "                  [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                  [--set NODE.PARAM=VALUE]...\n"
                  "                  simulates a network of nodes and renders its last frame; --every K renders\n"
-                 "                  frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...)\n"
+                 "                  frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
+                 "                  through the network's camera at its size, unless --yaw, --pitch or --distance\n"
+                 "                  ask for a view round the scene\n"
                  "  pgshader sim --list    the examples it carries: campfire, smoke, ...\n"
                  "  pgshader pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
                  "  pgshader help\n");

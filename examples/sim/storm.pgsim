@@ -1,7 +1,8 @@
 pgsim 1
 # A campfire in a rainstorm: the gusts lay the flames over and tear the smoke
 # away; the rain slants in the same wind, splashes off the logs and the
-# stones and darkens the floor. The sun is behind the clouds.
+# stones and darkens the floor. The sun is behind the clouds; the camera is
+# low, by the fire.
 node 1 pyro_source 2 fire 0 0
   param center -0.3 0.14 0
   param size 0.36 0.14 0.36
@@ -52,6 +53,10 @@ node 10 output 2 output 720 120
   param light_intensity 0.6
   param sky_color 0.5 0.54 0.6
   param sky_intensity 0.5
+node 11 camera 1 camera 720 300
+  param center 1.4 0.45 1.9
+  param rotation -4.54 40.97 0
+  param focal 32
 link 1.source -> 7.sources
 link 2.collider -> 7.colliders
 link 3.collider -> 7.colliders
@@ -65,3 +70,4 @@ link 6.force -> 7.forces
 link 7.gas -> 8.gas
 link 8.look -> 10.look
 link 9.look -> 10.look
+link 11.camera -> 10.camera

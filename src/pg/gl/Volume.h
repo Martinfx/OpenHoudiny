@@ -41,6 +41,7 @@
 #include "pg/core/Types.h"
 #include "pg/gl/Camera.h"
 #include "pg/gl/Gl.h"
+#include "pg/sim/Camera.h"
 #include "pg/sim/Frame.h"
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
@@ -84,14 +85,20 @@ struct Lines {
 };
 
 /// The guides of a world: the domains of the gas and the water, their
-/// sources, the forces, the rain's cloud, and the outlines of the objects
-/// among `selected`. Those of the nodes in `selected` stand out. The
-/// domains' boxes belong to `gasNode` and `waterNode`, the cloud to
+/// sources, the forces, the rain's cloud, the camera, and the outlines of
+/// the objects among `selected`. Those of the nodes in `selected` stand out.
+/// The domains' boxes belong to `gasNode` and `waterNode`, the cloud to
 /// `rainNode`: a click on one picks its node.
 Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
-                  int gasNode = 0, int waterNode = 0, int rainNode = 0);
+                  int gasNode = 0, int waterNode = 0, int rainNode = 0, const sim::Camera* camera = nullptr);
 /// A box that holds every domain of `world`: what a camera should show.
 sim::Domain sceneDomain(const sim::World& world);
+/// The view through `camera`: an orbit round the point `distance` in front
+/// of it, with its lens and its roll.
+Orbit orbitThrough(const sim::Camera& camera, float distance);
+/// `camera` moved and turned to see what `orbit` sees; its lens and picture
+/// as they were.
+sim::Camera cameraFrom(const Orbit& orbit, sim::Camera camera);
 
 class VolumeRenderer {
 public:

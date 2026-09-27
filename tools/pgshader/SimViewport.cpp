@@ -509,6 +509,13 @@ bool SimWorkspace::sceneMenu(const Vec3& at) {
           IM_COL32(64, 170, 250, 255));
     items("Weather", {{"rain", "Rain", Icon::Rain}, {"rainstorm", "Rainstorm", Icon::Rain}},
           IM_COL32(150, 172, 210, 255));
+    ImGui::SeparatorText("Shot");
+    if (iconItem(Icon::Camera, IM_COL32(205, 208, 216, 255), "Camera")) {
+        addCamera();
+        setThroughCamera(true);
+        added = true;
+    }
+    ImGui::SetItemTooltip("A camera that sees what the view sees, into the Output: renders go through it");
     items("Forces",
           {{"wind", "Wind", Icon::Wind}, {"vortex", "Vortex", Icon::Vortex}, {"turbulence", "Turbulence", Icon::Force},
            {"attractor", "Attractor", Icon::Attractor}, {"drag", "Drag", Icon::Force}},
@@ -561,9 +568,64 @@ int SimWorkspace::addMesh(const std::string& path, const Vec3& at) {
     return id;
 }
 
+// --- the shot's camera --------------------------------------------------------------------
+
+void SimWorkspace::setThroughCamera(bool on) {
+    if (on && !compiled_.hasCamera) {
+        setMessage("No camera: Shift+A > Camera adds one that sees what the view sees", true);
+        on = false;
+    }
+    if (on == throughCamera_) return;
+    throughCamera_ = on;
+    if (!on) {
+        // The viewport's own lens again, the horizon level.
+        renderer_.orbit.roll = 0.0f;
+        renderer_.orbit.fovY = gl::VolumeRenderer::kFovY;
+    }
+    guidesRevision_ = ~0ull;  // its frustum: hidden while looked through
+    viewDirty_ = true;
+}
+
+int SimWorkspace::addCamera() {
+    // Beside the Output, which it goes into.
+    int output = 0;
+    for (const sim::Node& n : net_.nodes()) {
+        if (n.type == "output" && !output) output = n.id;
+    }
+    ImVec2 at(490.0f, 40.0f);
+    if (const sim::Node* out = net_.node(output)) at = ImVec2(out->x, out->y + 150.0f);
+    const int id = net_.add("camera", at.x, at.y);
+    if (!output) output = net_.add("output", 720.0f, 40.0f);
+    net_.connect(id, "camera", output, "camera");
+    const sim::Camera c = gl::cameraFrom(renderer_.orbit, sim::Camera());
+    net_.setParam(id, "center", pv(c.position));
+    net_.setParam(id, "rotation", pv(c.rotation));
+    canvas_.select(id);
+    canvas_.reveal(id);
+    recompile();
+    const sim::Node* n = net_.node(id);
+    setMessage("Added " + (n ? n->name : std::string("a camera")) +
+               ": renders go through it; 0 looks through it, Ctrl+Alt+0 moves it to the view");
+    return id;
+}
+
+void SimWorkspace::cameraFromView() {
+    if (!compiled_.hasCamera || !net_.node(compiled_.camera.node)) {
+        addCamera();
+        return;
+    }
+    const int id = compiled_.camera.node;
+    const sim::Camera c = gl::cameraFrom(renderer_.orbit, compiled_.camera);
+    net_.setParam(id, "center", pv(c.position));
+    net_.setParam(id, "rotation", pv(c.rotation));
+    recompile();
+    setMessage(net_.node(id)->name + " sees what the view sees");
+}
+
 // --- the camera frames the selection ----------------------------------------------------
 
 void SimWorkspace::frameSelection() {
+    setThroughCamera(false);
     Vec3 lo(1e30f), hi(-1e30f);
     bool any = false;
     auto grow = [&](const Vec3& a, const Vec3& b) {
@@ -626,7 +688,7 @@ void SimWorkspace::frameSelection() {
     const float radius = std::max(0.5f * length(hi - lo), 0.05f);
     gl::Orbit& o = renderer_.orbit;
     for (int k = 0; k < 3; ++k) o.target[k] = middle[k];
-    o.distance = std::clamp(1.15f * radius / std::sin(gl::VolumeRenderer::kFovY * 3.14159265f / 360.0f), 0.2f, 200.0f);
+    o.distance = std::clamp(1.15f * radius / std::sin(o.fovY * 3.14159265f / 360.0f), 0.2f, 200.0f);
     framed_ = true;
     viewDirty_ = true;
 }
@@ -696,6 +758,11 @@ void SimWorkspace::viewMenu() {
         canvas_.clearSelection();
     }
     if (iconItem(Icon::Bypass, theme::kTextDim, "Bypass", "B") && !chosen.empty()) toggleBypass(chosen);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Look Through the Camera", "0", throughCamera_, compiled_.hasCamera)) {
+        setThroughCamera(!throughCamera_);
+    }
+    if (ImGui::MenuItem("Camera from View", "Ctrl+Alt+0")) cameraFromView();
     if (iconItem(Icon::Frame, theme::kTextDim, "Frame", "F")) frameSelection();
     ImGui::Separator();
     if (iconItem(Icon::Select, tool_ == GizmoMode::Select ? theme::kAccent : theme::kTextDim, "Select", "Q")) tool_ = GizmoMode::Select;
@@ -726,8 +793,10 @@ void SimWorkspace::viewKeys(bool overView) {
     }
     if (!overView || gizmo_.dragging()) return;
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
+    const bool zero = ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false);
     if (io.KeyCtrl) {
         if (ImGui::IsKeyPressed(ImGuiKey_D, false) && !chosen.empty()) duplicate(chosen);
+        if (io.KeyAlt && zero) cameraFromView();
         return;
     }
     if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
@@ -741,6 +810,7 @@ void SimWorkspace::viewKeys(bool overView) {
     if (ImGui::IsKeyPressed(ImGuiKey_E, false)) tool_ = GizmoMode::Rotate;
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) tool_ = GizmoMode::Scale;
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameSelection();
+    if (zero) setThroughCamera(!throughCamera_);
     if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !chosen.empty()) toggleBypass(chosen);
     if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_X, false) ||
          ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) &&
@@ -761,7 +831,16 @@ void SimWorkspace::viewport(ImVec2 size) {
         files_.open("Render image", {".png"}, true, (example_.empty() ? std::string("frame") : example_) + ".png");
         fileAction_ = FileAction::Image;
     }
-    if (ui::headerButton(h, "home", Icon::Viewport, "Frame the domain")) framed_ = false;
+    if (ui::headerButton(h, "home", Icon::Viewport, "Frame the domain")) {
+        setThroughCamera(false);
+        framed_ = false;
+    }
+    if (ui::headerButton(h, "through", Icon::Eye,
+                         compiled_.hasCamera ? "Look through the camera (0)" : "Look through the camera (0): add one first, "
+                                                                                "Shift+A > Camera",
+                         throughCamera_, compiled_.hasCamera)) {
+        setThroughCamera(!throughCamera_);
+    }
     if (ui::headerButton(h, "guides", Icon::Guides, "Guides: the domain, sources, forces (G)", guides_)) {
         guides_ = !guides_;
         guidesRevision_ = ~0ull;
@@ -784,8 +863,28 @@ void SimWorkspace::viewport(ImVec2 size) {
     const ImVec2 lo = ImGui::GetCursorScreenPos();
     const ImVec2 hi(lo.x + static_cast<float>(w), lo.y + static_cast<float>(hh));
     const ImGuiIO& io = ImGui::GetIO();
-    ViewCamera cam = ViewCamera::of(renderer_.orbit, gl::VolumeRenderer::kFovY, lo,
-                                    ImVec2(static_cast<float>(w), static_cast<float>(hh)));
+    // Through the camera: its view, its picture (the gate) as big as the
+    // viewport allows, the rest of the view round it.
+    if (throughCamera_ && !compiled_.hasCamera) setThroughCamera(false);
+    if (throughCamera_) {
+        const sim::Camera& c = compiled_.camera;
+        const float fw = static_cast<float>(w), fh = static_cast<float>(hh);
+        float gw = fw, gh = fh;
+        if (fw / fh > c.aspect()) gw = fh * c.aspect();
+        else gh = fw / c.aspect();
+        gl::Orbit through = gl::orbitThrough(c, focusOf(c));
+        through.fovY = 2.0f * std::atan(std::tan(c.fovY() * 3.14159265f / 360.0f) * fh / gh) * 180.0f / 3.14159265f;
+        const gl::Orbit& now = renderer_.orbit;
+        if (through.yaw != now.yaw || through.pitch != now.pitch || through.distance != now.distance ||
+            through.roll != now.roll || through.fovY != now.fovY || through.target[0] != now.target[0] ||
+            through.target[1] != now.target[1] || through.target[2] != now.target[2]) {
+            renderer_.orbit = through;
+            viewDirty_ = true;
+        }
+        gateLo_ = ImVec2(lo.x + 0.5f * (fw - gw), lo.y + 0.5f * (fh - gh));
+        gateHi_ = ImVec2(gateLo_.x + gw, gateLo_.y + gh);
+    }
+    ViewCamera cam = ViewCamera::of(renderer_.orbit, lo, ImVec2(static_cast<float>(w), static_cast<float>(hh)));
     camera_ = cam;
     auto within = [](ImVec2 p, ImVec2 a, ImVec2 b) { return p.x >= a.x && p.y >= a.y && p.x < b.x && p.y < b.y; };
     const bool onTools = within(io.MousePos, toolsLo_, toolsHi_);
@@ -821,6 +920,23 @@ void SimWorkspace::viewport(ImVec2 size) {
                viewReleased = ImGui::IsItemDeactivated();
     ImDrawList* d = ImGui::GetWindowDrawList();
     d->PushClipRect(lo, hi, true);
+    if (throughCamera_) {
+        // Outside the camera's picture, dimmed; its frame, and what it is.
+        const ImU32 dim = IM_COL32(6, 6, 8, 160);
+        d->AddRectFilled(lo, ImVec2(hi.x, gateLo_.y), dim);
+        d->AddRectFilled(ImVec2(lo.x, gateHi_.y), hi, dim);
+        d->AddRectFilled(ImVec2(lo.x, gateLo_.y), ImVec2(gateLo_.x, gateHi_.y), dim);
+        d->AddRectFilled(ImVec2(gateHi_.x, gateLo_.y), ImVec2(hi.x, gateHi_.y), dim);
+        d->AddRect(gateLo_, gateHi_, IM_COL32(225, 226, 232, 170), 0.0f, 0, theme::px(1.0f));
+        const sim::Camera& c = compiled_.camera;
+        const sim::Node* n = net_.node(c.node);
+        char label[128];
+        std::snprintf(label, sizeof label, "%s  \xc2\xb7  %.0f mm  \xc2\xb7  %d \xc3\x97 %d", n ? n->name.c_str() : "camera",
+                      static_cast<double>(c.focal), c.width, c.height);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        const float pad = theme::px(8.0f);
+        d->AddText(ImVec2(gateHi_.x - ts.x - pad, gateLo_.y + pad), IM_COL32(225, 226, 232, 210), label);
+    }
 
     // The gizmo, on what is selected.
     const std::vector<int> moving = movable();
@@ -858,6 +974,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     if (viewActive && !gizmoOwnsMouse_) {
         const ImVec2 dlt = io.MouseDelta;
         if (dlt.x != 0.0f || dlt.y != 0.0f) {
+            setThroughCamera(false);  // moving the view leaves the camera where it is
             if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyShift)) {
                 // Pan: move what the camera looks at, in the plane of the screen.
                 const float k = o.distance * 0.0018f;
@@ -873,6 +990,7 @@ void SimWorkspace::viewport(ImVec2 size) {
         }
     }
     if (viewHovered && io.MouseWheel != 0.0f) {
+        setThroughCamera(false);
         o.distance = std::clamp(o.distance * std::pow(0.88f, io.MouseWheel), 0.2f, 200.0f);
         viewDirty_ = true;
     }
@@ -891,8 +1009,12 @@ void SimWorkspace::viewport(ImVec2 size) {
         }
     }
     if (viewHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !gizmoOwnsMouse_) {
-        if (pickAt(cam, io.MousePos)) frameSelection();
-        else framed_ = false;
+        if (pickAt(cam, io.MousePos)) {
+            frameSelection();
+        } else {
+            setThroughCamera(false);
+            framed_ = false;
+        }
     }
     // A right click that did not drag: the menu.
     if (viewHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&

@@ -514,10 +514,33 @@ std::vector<NodeType> buildTypes() {
                   {"foam", "Foam", "Water", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
                    "How white the spray and the foam of fast water are drawn. 0: none."}},
                  1});
+    t.push_back({"camera", "Camera", "Render",
+                 "The camera of the shot: where it stands, which way it looks, its lens and the size of its "
+                 "picture. Linked into the Output's Camera, it is what `pgshader sim` and Render Image render "
+                 "through, and what the viewport shows when it looks through the camera (0). It looks along "
+                 "its own -z.",
+                 {},
+                 {{"camera", "Camera", PinType::Camera}},
+                 {{"center", "Position", "Camera", K::Vector, {3.0f, 1.3f, 3.8f}, -10.0f, 10.0f, -kBig, kBig, "m",
+                   "Where the camera stands."},
+                  {"rotation", "Rotation", "Camera", K::Vector, {-10.0f, 38.0f, 0.0f}, -180.0f, 180.0f, -kBig, kBig,
+                   "\xc2\xb0",
+                   "Degrees about x (tilt), then y (pan), then z. At 0 it looks along -z, level."},
+                  {"focal", "Focal Length", "Lens", K::Float, {38.0f, 0.0f, 0.0f}, 12.0f, 200.0f, 1.0f, 5000.0f, "mm",
+                   "The lens, as on a full frame camera: 24 mm wide angle, 38 mm some 35\xc2\xb0 of view, 85 mm "
+                   "a portrait, 200 mm a long lens that flattens the depth."},
+                  {"width", "Width", "Image", K::Int, {1280.0f, 0.0f, 0.0f}, 16.0f, 3840.0f, 16.0f, 8192.0f, "px",
+                   "The picture's width: with the height, its shape (the frame in the viewport) and the size "
+                   "renders are made at."},
+                  {"height", "Height", "Image", K::Int, {720.0f, 0.0f, 0.0f}, 16.0f, 2160.0f, 16.0f, 8192.0f, "px",
+                   "The picture's height."}},
+                 1});
+    t.back().handles = {"center", "rotation", nullptr, nullptr, nullptr, nullptr};
     t.push_back({"output", "Output", "Render",
                  "Where the network ends: what the viewport shows and `pgshader sim` renders -- every look "
-                 "linked into it, in one scene, lit by one sun and one sky, at one frame rate.",
-                 {{"look", "Looks", PinType::Look, true}},
+                 "linked into it, in one scene, lit by one sun and one sky, at one frame rate -- through the "
+                 "camera linked into Camera, if there is one.",
+                 {{"look", "Looks", PinType::Look, true}, {"camera", "Camera", PinType::Camera}},
                  {},
                  outputParams(),
                  2});
@@ -788,6 +811,7 @@ const char* pinTypeName(PinType type) {
         case PinType::Look: return "look";
         case PinType::Water: return "water";
         case PinType::Liquid: return "liquid";
+        case PinType::Camera: return "camera";
     }
     return "?";
 }
@@ -1430,6 +1454,19 @@ Compiled Network::compile(const std::string& folder) const {
     k.skyIntensity = f(*output, "sky_intensity");
     k.exposure = f(*output, "exposure");
     k.floor = f(*output, "floor") != 0.0f;
+    // The camera of the shot.
+    if (const Node* cam = upstream(*output, "camera")) {
+        Camera& m = c.camera;
+        m.position = v3(*cam, "center");
+        m.rotation = v3(*cam, "rotation");
+        m.focal = f(*cam, "focal");
+        m.width = whole(*cam, "width");
+        m.height = whole(*cam, "height");
+        m.node = cam->id;
+        m = m.sanitized();
+        c.hasCamera = true;
+        c.active.push_back(cam->id);
+    }
 
     // What feeds a solver's input, in the order it was linked. Bypassed nodes
     // stay out; so do nodes of a type this program does not know (reported
