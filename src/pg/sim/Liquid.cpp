@@ -177,7 +177,7 @@ LiquidScene LiquidScene::sanitized() const {
     const LiquidSettings ds;
     LiquidScene s = *this;
     LiquidSettings& v = s.solver;
-    v.size = fix(v.size, 0.1f, 20.0f, ds.size);
+    v.size = fix(v.size, 0.1f, 1000.0f, ds.size);
     v.resolution = std::clamp(v.resolution, 16, 256);
     v.timeStep = fix(v.timeStep, 1e-4f, 1.0f, ds.timeStep);
     v.substeps = std::clamp(v.substeps, 1, 16);

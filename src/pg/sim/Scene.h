@@ -36,6 +36,9 @@ struct Emitter {
     /// The gas leaves the source at least this fast, along the source's own
     /// axes: turn the source and its jet turns with it.
     Vec3 velocity{0.0f, 0.5f, 0.0f};
+    /// 1/s: the gas in it swells this fast -- pushed out on all sides, as
+    /// the air a collapsing building squeezes out. 0: it does not.
+    float expansion = 0.0f;
     float flicker = 0.0f;           ///< 0 steady, 1 strongly flickering
     float flickerSize = 0.07f;      ///< size of the patches that flicker together
     float start = 0.0f;             ///< seconds

@@ -68,7 +68,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Jádro | COW atributy, cook engine s verzemi a cache, časová závislost, deterministický paralelismus, per-element jazyk (interpret) | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Shader graf | Uzly z textu, čtyři cíle (GLSL, GLSL ES, Vulkan, HLSL), editor s náhledem | [docs/shader-graph.md](docs/shader-graph.md) |
 | Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; z uzlů, deterministicky na libovolném počtu vláken | [docs/pyro.md](docs/pyro.md) |
-| Destrukce | Voronoi Fracture, tuhá tělesa nad Jolt s lepidlem, které se trhá, úlomky do vody a plynu, prach; demolice budovy jako video | [docs/destruction.md](docs/destruction.md) |
+| Destrukce | Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení, drť, prach hnaný vytlačeným vzduchem; odstřel věžáku jako video | [docs/destruction.md](docs/destruction.md) |
 | Geometrie v editoru | 28 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
@@ -141,17 +141,20 @@ hash a hlídá to test.
   a bitově stejně na 1 i 4 vláknech.
 - ✅ **RBD Solver** ([docs/destruction.md §2](docs/destruction.md#2-rbd-solver))
   nad Jolt Physics 5.6 (MIT, `CROSS_PLATFORM_DETERMINISTIC`, jedno vlákno):
-  kusy jako konvexní obaly s hustotou, lepidlo jako pevné spoje mezi kusy
-  se společnou řeznou plochou, které se nad `glue` newtonů utrhnou a
-  vyfouknou prach; klíčované objekty jako kinematické překážky; podlaha.
+  kusy jako konvexní obaly s hustotou; slepené kusy jsou jedno těleso
+  (compound), které náraz silnější než `glue` (kPa krát plocha spoje)
+  rozlomí, a síla jde dál na další spoje; nálože, drcení na prach, drť;
+  klíčované objekty jako kinematické překážky; podlaha.
 - ✅ **Úlomky dál:** solver v Outputu se kreslí sám (barvy `Cd`, barva
   řezu); uzel RBD Pieces je vrací jako geometrii s `v`; výstup Collider
   dá kusy jako pohyblivé síťové překážky vodě, plynu a dešti; výstup Dust
-  je zdroj kouře; snímky s polohami kusů jdou do cache (formát 2).
+  je zdroj prachu, který se rozpíná vzduchem vytlačeným zřícením; stíny
+  geometrie a kusů; snímky s polohami kusů a drtí jdou do cache (formát 3).
 
-**Hotovo, když:** budova z kroku 1 se zřítí do vody a zvedne prach — celé
-jako video, deterministicky. ✅ Příklad **demolition**: budova z assetu
-Building u bazénu, demoliční koule s klíči; `prototype sim demolition
+**Hotovo, když:** budova se zřítí a zvedne prach — celé jako video,
+deterministicky. ✅ Příklad **demolition**: odstřel čtrnáctipatrového
+věžáku v bloku domů — nálože v přízemí, věž se sesune do svého půdorysu,
+patra se drtí a oblak prachu se valí ulicemi; `prototype sim demolition
 out.mp4` dá video a snímky jsou bitově stejné při každém běhu (test na
 1 a 4 vláknech i mezi dvěma řešiči).
 

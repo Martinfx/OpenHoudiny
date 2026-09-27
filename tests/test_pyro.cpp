@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <memory>
 
 using namespace pg;
 using namespace pg::sim;
@@ -509,6 +510,56 @@ TEST(pyro_frames_keep_the_gas_as_half_floats) {
         }
     }
     CHECK(worst < 1e-3);
+}
+
+TEST(pyro_a_swelling_source_pushes_the_gas_out) {
+    // A source that swells -- the air a collapse squeezes out -- pushes the
+    // gas away on all sides: out along the floor, where it cannot go down.
+    // Cold smoke from the same source, not swelling, stays about where it
+    // was let out.
+    auto run = [](float expansion) {
+        Scene s = small(Scene::smoke(), 32);
+        s.forces.clear();
+        s.solver.vorticity = 0.0f;
+        Emitter& e = s.emitters[0];
+        e.heat = 0.0f;
+        e.flicker = 0.0f;
+        e.velocity = Vec3();
+        e.size = Vec3(0.5f);
+        e.expansion = expansion;
+        auto sim = std::make_unique<PyroSolver>(s);
+        for (int f = 0; f < 20; ++f) sim->step();
+        return sim;
+    };
+    // How far from the source's axis the smoke is, on average.
+    auto reach = [](const PyroSolver& sim) {
+        const Grid& g = sim.density();
+        double mass = 0.0, moment = 0.0;
+        for (int k = 0; k < g.nz(); ++k) {
+            for (int j = 0; j < g.ny(); ++j) {
+                for (int i = 0; i < g.nx(); ++i) {
+                    const Vec3 p = sim.worldAt(i + 0.5f, j + 0.5f, k + 0.5f);
+                    mass += g.at(i, j, k);
+                    moment += g.at(i, j, k) * std::hypot(p.x, p.z);
+                }
+            }
+        }
+        return mass > 0.0 ? moment / mass : 0.0;
+    };
+    const auto still = run(0.0f), swelling = run(6.0f);
+    CHECK(still->density().sum() > 0.0 && swelling->density().sum() > 0.0);
+    CHECK(reach(*swelling) > 1.5 * reach(*still));
+    // Beside the source, at its height, the gas flows away from it.
+    const PyroSolver& sim = *swelling;
+    const float out = 0.4f / sim.cellSize(), y = 0.12f / sim.cellSize();
+    float v[3];
+    sim.velocityAt(sim.nx() * 0.5f + out, y, sim.nz() * 0.5f, v);
+    CHECK(v[0] > 0.05f);
+    sim.velocityAt(sim.nx() * 0.5f - out, y, sim.nz() * 0.5f, v);
+    CHECK(v[0] < -0.05f);
+    sim.velocityAt(sim.nx() * 0.5f, y, sim.nz() * 0.5f + out, v);
+    CHECK(v[2] > 0.05f);
+    CHECK(finite(sim));
 }
 
 TEST(pyro_burning_gas_thins_out_as_it_swells) {

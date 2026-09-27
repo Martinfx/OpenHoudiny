@@ -795,6 +795,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
 #endif
     // Simulated only when the frames do not come from a cache.
     std::unique_ptr<sim::WorldSolver> solver;
+    std::shared_ptr<const sim::RigidLayout> adoptedLayout;  // the pieces' bodies, for frames read back
     if (o.fromCache.empty()) solver = std::make_unique<sim::WorldSolver>(c.world);
     const sim::World world = c.world.sanitized();
 #ifdef PG_CAN_RENDER
@@ -864,7 +865,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 return 1;
             }
             read->number = f;  // the file's name says which it is
-            sim::adoptPieces(*read, world.rigid);
+            sim::adoptPieces(*read, world.rigid, &adoptedLayout);
             current = std::move(read);
         }
         simulating += ms(t);

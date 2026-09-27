@@ -1,72 +1,474 @@
 pgsim 1
-# Demolition: a building from the asset Building, broken into Voronoi
-# pieces and glued back together by the RBD Solver, standing by a pool. A
-# wrecking ball (its place keyed) swings through it: the glue tears where it
-# hits, the pieces tumble into the water and splash, and every joint that
-# breaks puffs dust into the Pyro Solver. prototype sim demolition out.mp4
-node 1 building 1 house 0 0
-  param floors 4
-  param width 2.4
-  param depth 1.8
-  param balconies 0
-  param wall 0.8 0.72 0.62
-node 2 transform 1 by_the_pool 230 0
-  param t -3.4 0 0
-node 3 voronoi_fracture 1 fracture 460 0
-  param count 36
-  param seed 3
-node 4 rbd_solver 1 rbd 690 40
-  param density 1800
-  param friction 0.7
+# A tower brought down by charges, in a city block, at the end of the day.
+# The tower is built of blocks -- slabs, walls round the windows, columns --
+# broken by a Voronoi Fracture round points that crowd where the charges
+# are, and glued back by the RBD Solver where the pieces touch. At one
+# second the charges go off: the columns inside, then the walls of the
+# lowest floors; the tower drops into its footprint, crushing itself floor
+# by floor, and the dust of every broken joint, knock and crushed wall
+# rolls out into the streets, pushed by the air the falling floors squeeze
+# out (the Pyro Solver, the pieces and the houses in its way).
+# prototype sim demolition out.mp4 renders it through the camera -- a slow
+# push in from the air.
+node 1 detail_wrangle 1 tower 0 0
+  param snippet "// A tower as it is built: a slab for each floor, the walls between them --\n// piers, sills and lintels round the windows -- four columns inside, a\n// parapet on the roof. Every block a box of its own, touching the next face\n// to face: what the Voronoi Fracture cuts, and what the RBD Solver glues\n// where they touch. Faces on the outside in plaster, the slabs' edges in\n// concrete, the rest -- in the rooms, in the windows -- in the shade.\nvoid block(vector lo; vector hi; vector outside; vector inside; int fl; int kind; float hw; float hd) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));  // -x\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));  // +x\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));  // -y\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));  // +y\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));  // -z\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));  // +z\n    int out[] = {0, 0, 0, 0, 0, 0};\n    out[0] = lo.x <= -hw + 0.001;\n    out[1] = hi.x >= hw - 0.001;\n    out[4] = lo.z <= -hd + 0.001;\n    out[5] = hi.z >= hd - 0.001;\n    out[3] = kind == 3 || kind == 4;  // the parapet's top and the roof\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"Cd\", f[k], out[k] ? outside : inside);\n        setprimattrib(0, \"floor\", f[k], fl);\n        setprimattrib(0, \"kind\", f[k], kind);\n    }\n}\n\n// A block of wall `side` (0 front +z, 1 back, 2 left -x, 3 right), from u0\n// to u1 along it, y0 to y1 up it.\nvoid wall(int side; float u0; float u1; float y0; float y1; float t; vector outside; vector inside; int fl; float hw; float hd) {\n    if (side == 0) block(set(u0, y0, hd - t), set(u1, y1, hd), outside, inside, fl, 1, hw, hd);\n    if (side == 1) block(set(u0, y0, -hd), set(u1, y1, -hd + t), outside, inside, fl, 1, hw, hd);\n    if (side == 2) block(set(-hw, y0, u0), set(-hw + t, y1, u1), outside, inside, fl, 1, hw, hd);\n    if (side == 3) block(set(hw - t, y0, u0), set(hw, y1, u1), outside, inside, fl, 1, hw, hd);\n}\n\nint floors = max(chi(\"floors\"), 1);\nfloat fh = max(ch(\"floor_height\"), 2.0);\nfloat hw = ch(\"width\") / 2;\nfloat hd = ch(\"depth\") / 2;\nfloat slab = ch(\"slab\");\nfloat t = ch(\"wall\");\nfloat bay = max(ch(\"bay\"), 1.0);\nfloat win = ch(\"window\");\nfloat sill = ch(\"sill\");\nfloat head = ch(\"head\");\nvector plaster = chv(\"plaster\");\nvector concrete = chv(\"concrete\");\nvector shade = chv(\"interior\");\nfor (int fl = 0; fl < floors; fl++) {\n    float y0 = fl * fh;\n    block(set(-hw, y0, -hd), set(hw, y0 + slab, hd), concrete, shade, fl, 0, hw, hd);\n    float a = y0 + slab;\n    float b = y0 + fh;\n    // The walls: the front and the back their full width, the sides between them.\n    for (int side = 0; side < 4; side++) {\n        float u0 = side < 2 ? -hw : -hd + t;\n        float u1 = side < 2 ? hw : hd - t;\n        int n = max(1, int(rint((u1 - u0) / bay)));\n        float bw = (u1 - u0) / n;\n        float pier = max(bw - win, 0.4) / 2;\n        for (int k = 0; k < n; k++) {\n            float s = u0 + k * bw;\n            wall(side, s, s + pier, a, b, t, plaster, shade, fl, hw, hd);\n            wall(side, s + pier, s + bw - pier, a, a + sill, t, plaster, shade, fl, hw, hd);\n            wall(side, s + pier, s + bw - pier, a + head, b, t, plaster, shade, fl, hw, hd);\n            wall(side, s + bw - pier, s + bw, a, b, t, plaster, shade, fl, hw, hd);\n        }\n    }\n    // The columns inside.\n    for (int c = 0; c < 4; c++) {\n        float x = (c & 1 ? 1 : -1) * hw / 2;\n        float z = (c & 2 ? 1 : -1) * hd / 2;\n        block(set(x - 0.35, a, z - 0.35), set(x + 0.35, b, z + 0.35), shade, shade, fl, 2, hw, hd);\n    }\n}\n// The roof, and the parapet round it.\nfloat top = floors * fh;\nblock(set(-hw, top, -hd), set(hw, top + slab, hd), concrete, shade, floors, 4, hw, hd);\nfloat py = top + slab;\nblock(set(-hw, py, hd - t), set(hw, py + 1.0, hd), plaster, shade, floors, 3, hw, hd);\nblock(set(-hw, py, -hd), set(hw, py + 1.0, -hd + t), plaster, shade, floors, 3, hw, hd);\nblock(set(-hw, py, -hd + t), set(-hw + t, py + 1.0, hd - t), plaster, shade, floors, 3, hw, hd);\nblock(set(hw - t, py, -hd + t), set(hw, py + 1.0, hd - t), plaster, shade, floors, 3, hw, hd);"
+  param floors 14
+  param floor_height 3
+  param width 14
+  param depth 12
+  param slab 0.3
+  param wall 0.3
+  param bay 2
+  param window 1.3
+  param sill 0.9
+  param head 2.25
+  param plaster 0.78 0.74 0.68
+  param concrete 0.6 0.58 0.55
+  param interior 0.33 0.31 0.29
+node 2 detail_wrangle 1 seeds 0 130
+  param snippet "// Where the tower breaks: points in each of its blocks, as many as the\n// block holds cells of Size -- smaller low down, where the charges are, and\n// a little random, so that no two floors break alike.\nfloat size = ch(\"size\");\nfloat low = ch(\"low_size\");\nfloat lowTop = ch(\"low_top\");\nint blocks = nprimitives(1) / 6;\nfor (int k = 0; k < blocks; k++) {\n    vector lo = set(1e9, 1e9, 1e9);\n    vector hi = set(-1e9, -1e9, -1e9);\n    for (int f = 0; f < 6; f++) {\n        foreach (int pt; primpoints(1, k * 6 + f)) {\n            vector p = point(1, \"P\", pt);\n            lo = set(min(lo.x, p.x), min(lo.y, p.y), min(lo.z, p.z));\n            hi = set(max(hi.x, p.x), max(hi.y, p.y), max(hi.z, p.z));\n        }\n    }\n    vector s = hi - lo;\n    float c = lo.y < lowTop ? low : size;\n    float n = s.x * s.y * s.z / (c * c * c);\n    int count = int(floor(n + rand(k * 7 + 3)));\n    for (int i = 0; i < count; i++) {\n        vector r = set(rand(k * 131 + i * 3), rand(k * 131 + i * 3 + 1), rand(k * 131 + i * 3 + 2));\n        addpoint(0, lo + s * (0.1 + 0.8 * r));\n    }\n}"
+  param size 1.6
+  param low_size 0.9
+  param low_top 9
+node 3 voronoi_fracture 1 fracture 250 60
+node 4 primitive_wrangle 1 charges 480 60
+  param snippet "// The charges. The columns inside go first, then the walls of the lowest\n// floors, a floor after the other: blown to dust (vanish) -- what holds the\n// tower up is gone, and it drops into its own footprint. The slabs between\n// them come loose (release) and the blast kicks them out. The slab on the\n// ground stays where it is.\nfloat fire = ch(\"fire\");\nfloat push = ch(\"push\");\nint charged = chi(\"floors_charged\");\ni@active = 1;\nf@glue = 1;\nf@release = 0;\ni@vanish = 0;\nv@kick = set(0, 0, 0);\n// What a falling floor lands on turns to dust: the walls and the columns\n// crush easily, the slabs only under a hard blow -- the rest of them piles up.\nf@crush = i@kind == 0 || i@kind == 4 ? ch(\"crush_slabs\") : ch(\"crush\");\nif (i@floor == 0 && i@kind == 0) {\n    i@active = 0;\n} else if (i@floor < charged) {\n    vector away = set(@P.x, 0, @P.z);\n    float delay = (i@kind == 2 ? 0 : 0.12) + 0.1 * i@floor + 0.04 * rand(i@piece);\n    f@release = fire + delay;\n    i@vanish = i@kind != 0;\n    v@kick = normalize(away) * push * (0.3 + 0.7 * rand(i@piece + 17));\n}"
+  param fire 1
+  param push 5
+  param floors_charged 2
+  param crush_slabs 6
+  param crush 1.5
+node 5 rbd_solver 1 rbd 710 60
+  param density 2400
+  param friction 0.8
   param bounce 0.05
-  param glue 80000
+  param glue 150
   param substeps 3
-  param dust 2
-  param dust_size 0.4
-  param inside_color 0.62 0.58 0.52
-node 5 object 1 wrecking_ball 460 160
-  param size 0.9 0.9 0.9
-  param color 0.2 0.2 0.22
-  key center 1 smooth -7 2.6 0.3
-  key center 22 smooth -3.2 2.3 0.3
-  key center 45 smooth -1.2 2.2 0.3
-  key center 80 smooth -6 2.8 0.3
-node 6 water_source 1 pool 460 300
-  param center 0 0.2 0
-  param size 4.4 0.4 4.6
-node 7 liquid_solver 1 water 690 300
-  param size 4.4 1.6 4.6
-  param resolution 72
-node 8 water_look 1 water_look 920 300
-  param foam 0.5
-node 9 pyro_solver 2 dust 690 450
-  param size 10 5 5
-  param buoyancy 0.4
-  param vorticity 0.3
-  param cooling 2
-  param smoke_decay 0.15
-node 10 volume_look 2 dust_look 920 450
-  param smoke_color 0.6 0.55 0.48
-  param smoke_density 12
-node 11 output 2 output 1150 200
-  param frames 110
-node 12 camera 1 camera 1150 340
-  param center 1.6 2.4 8.6
-  param rotation -11 24 0
-  param focal 30
-link 1.geometry -> 2.geometry
-link 2.geometry -> 3.geometry
-link 3.geometry -> 4.pieces
-link 5.collider -> 4.colliders
-link 4.collider -> 7.colliders
-link 4.dust -> 9.sources
-link 6.water -> 7.sources
-link 7.liquid -> 8.liquid
-link 9.gas -> 10.gas
-link 4.look -> 11.look
-link 8.look -> 11.look
-link 10.look -> 11.look
-link 12.camera -> 11.camera
+  param impact_dust 3
+  param dust_size 2.5
+  param debris 0.05
+  param air 3
+  param inside_color 0.64 0.61 0.56
+node 6 building 1 west 0 330
+  param floor_height 3.2
+  param width 20
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.72 0.62 0.5
+node 7 transform 1 at_west 230 330
+  param t -32 0 2
+node 8 building 1 east 0 440
+  param floors 8
+  param floor_height 3.2
+  param width 18
+  param depth 18
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.62 0.64 0.68
+node 9 transform 1 at_east 230 440
+  param t 33 0 -1
+node 10 building 1 north 0 550
+  param floors 5
+  param floor_height 3.2
+  param width 26
+  param depth 14
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.55 0.3 0.24
+node 11 transform 1 at_north 230 550
+  param t 2 0 -31
+node 12 building 1 northwest 0 660
+  param floors 7
+  param floor_height 3.2
+  param width 18
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.8 0.78 0.74
+node 13 transform 1 at_northwest 230 660
+  param t -32 0 -31
+node 14 building 1 northeast 0 770
+  param floors 4
+  param floor_height 3.2
+  param width 18
+  param depth 14
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.5 0.28 0.22
+node 15 transform 1 at_northeast 230 770
+  param t 33 0 -32
+node 16 building 1 south 0 880
+  param floors 3
+  param floor_height 3.2
+  param width 24
+  param depth 14
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.7 0.66 0.58
+node 17 transform 1 at_south 230 880
+  param t 1 0 31
+node 18 building 1 southeast 0 990
+  param floors 4
+  param floor_height 3.2
+  param width 18
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.64 0.6 0.55
+node 19 transform 1 at_southeast 230 990
+  param t 33 0 32
+node 20 building 1 southwest 0 1100
+  param floors 3
+  param floor_height 3.2
+  param width 20
+  param depth 14
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.52 0.34 0.28
+node 21 transform 1 at_southwest 230 1100
+  param t -32 0 32
+node 22 building 1 far_north 0 1210
+  param floors 9
+  param floor_height 3.2
+  param width 24
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.74 0.7 0.62
+node 23 transform 1 at_far_north 230 1210
+  param t 1 0 -64
+node 24 building 1 far_northwest 0 1320
+  param floor_height 3.2
+  param width 20
+  param depth 18
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.56 0.36 0.28
+node 25 transform 1 at_far_northwest 230 1320
+  param t -32 0 -64
+node 26 building 1 far_northeast 0 1430
+  param floors 7
+  param floor_height 3.2
+  param width 20
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.66 0.68 0.7
+node 27 transform 1 at_far_northeast 230 1430
+  param t 34 0 -64
+node 28 building 1 corner_northwest 0 1540
+  param floors 10
+  param floor_height 3.2
+  param width 20
+  param depth 18
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.78 0.76 0.72
+node 29 transform 1 at_corner_northwest 230 1540
+  param t -65 0 -64
+node 30 building 1 corner_northeast 0 1650
+  param floors 5
+  param floor_height 3.2
+  param width 18
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.6 0.52 0.44
+node 31 transform 1 at_corner_northeast 230 1650
+  param t 66 0 -63
+node 32 building 1 far_west 0 1760
+  param floors 8
+  param floor_height 3.2
+  param width 20
+  param depth 18
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.68 0.6 0.5
+node 33 transform 1 at_far_west 230 1760
+  param t -65 0 2
+node 34 building 1 far_west_north 0 1870
+  param floors 5
+  param floor_height 3.2
+  param width 18
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.5 0.32 0.26
+node 35 transform 1 at_far_west_north 230 1870
+  param t -65 0 -31
+node 36 building 1 far_west_south 0 1980
+  param floors 4
+  param floor_height 3.2
+  param width 20
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.72 0.7 0.66
+node 37 transform 1 at_far_west_south 230 1980
+  param t -65 0 33
+node 38 building 1 far_east_north 0 2090
+  param floor_height 3.2
+  param width 18
+  param depth 18
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.72 0.66 0.56
+node 39 transform 1 at_far_east_north 230 2090
+  param t 66 0 -31
+node 40 building 1 far_south_west 0 2200
+  param floors 3
+  param floor_height 3.2
+  param width 20
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.62 0.58 0.52
+node 41 transform 1 at_far_south_west 230 2200
+  param t -32 0 64
+node 42 building 1 corner_southwest 0 2310
+  param floors 5
+  param floor_height 3.2
+  param width 20
+  param depth 16
+  param bay 3.2
+  param frame 0.35
+  param recess -0.3
+  param balconies 0
+  param wall 0.54 0.34 0.27
+node 43 transform 1 at_corner_southwest 230 2310
+  param t -65 0 64
+node 44 box 1 kerb_west 460 330
+  param size 26 0.15 22
+  param center -32 0.075 2
+node 45 box 1 kerb_east 460 440
+  param size 24 0.15 24
+  param center 33 0.075 -1
+node 46 box 1 kerb_north 460 550
+  param size 32 0.15 20
+  param center 2 0.075 -31
+node 47 box 1 kerb_northwest 460 660
+  param size 24 0.15 22
+  param center -32 0.075 -31
+node 48 box 1 kerb_northeast 460 770
+  param size 24 0.15 20
+  param center 33 0.075 -32
+node 49 box 1 kerb_south 460 880
+  param size 30 0.15 20
+  param center 1 0.075 31
+node 50 box 1 kerb_southeast 460 990
+  param size 24 0.15 22
+  param center 33 0.075 32
+node 51 box 1 kerb_southwest 460 1100
+  param size 26 0.15 20
+  param center -32 0.075 32
+node 52 box 1 kerb_far_north 460 1210
+  param size 30 0.15 22
+  param center 1 0.075 -64
+node 53 box 1 kerb_far_northwest 460 1320
+  param size 26 0.15 24
+  param center -32 0.075 -64
+node 54 box 1 kerb_far_northeast 460 1430
+  param size 26 0.15 22
+  param center 34 0.075 -64
+node 55 box 1 kerb_corner_northwest 460 1540
+  param size 26 0.15 24
+  param center -65 0.075 -64
+node 56 box 1 kerb_corner_northeast 460 1650
+  param size 24 0.15 22
+  param center 66 0.075 -63
+node 57 box 1 kerb_far_west 460 1760
+  param size 26 0.15 24
+  param center -65 0.075 2
+node 58 box 1 kerb_far_west_north 460 1870
+  param size 24 0.15 22
+  param center -65 0.075 -31
+node 59 box 1 kerb_far_west_south 460 1980
+  param size 26 0.15 22
+  param center -65 0.075 33
+node 60 box 1 kerb_far_east_north 460 2090
+  param size 24 0.15 24
+  param center 66 0.075 -31
+node 61 box 1 kerb_far_south_west 460 2200
+  param size 26 0.15 22
+  param center -32 0.075 64
+node 62 box 1 kerb_corner_southwest 460 2310
+  param size 26 0.15 22
+  param center -65 0.075 64
+node 63 box 1 kerb_tower 460 2420
+  param size 20 0.15 18
+  param center 0 -0.06 0
+node 64 color 1 pavement 690 330
+  param color 0.46 0.45 0.43
+  param class primitive
+node 65 merge 1 city 920 330
+  display
+node 66 turbulence 1 billows 710 240
+  param scale 2.5
+  param speed 0.4
+node 67 pyro_solver 2 dust 940 120
+  param size 90 48 90
+  param resolution 176
+  param buoyancy 0.15
+  param weight 0.3
+  param vorticity 4
+  param cooling 1.5
+  param smoke_decay 0.01
+node 68 volume_look 2 dust_look 1170 120
+  param smoke_color 0.76 0.66 0.53
+  param occlusion 2
+node 69 object 1 in_west 940 330
+  param shape box
+  param center -32 9.4 2
+  param size 19 18.8 15
+  param color 0.5 0.5 0.5
+node 70 object 1 in_east 940 440
+  param shape box
+  param center 33 12.6 -1
+  param size 17 25.2 17
+  param color 0.5 0.5 0.5
+node 71 object 1 in_north 940 550
+  param shape box
+  param center 2 7.8 -31
+  param size 25 15.6 13
+  param color 0.5 0.5 0.5
+node 72 object 1 in_northwest 940 660
+  param shape box
+  param center -32 11 -31
+  param size 17 22 15
+  param color 0.5 0.5 0.5
+node 73 object 1 in_northeast 940 770
+  param shape box
+  param center 33 6.2 -32
+  param size 17 12.4 13
+  param color 0.5 0.5 0.5
+node 74 object 1 in_south 940 880
+  param shape box
+  param center 1 4.6 31
+  param size 23 9.2 13
+  param color 0.5 0.5 0.5
+node 75 object 1 in_southeast 940 990
+  param shape box
+  param center 33 6.2 32
+  param size 17 12.4 15
+  param color 0.5 0.5 0.5
+node 76 object 1 in_southwest 940 1100
+  param shape box
+  param center -32 4.6 32
+  param size 19 9.2 13
+  param color 0.5 0.5 0.5
+node 77 output 2 output 1400 60
+  param frames 180
+  param light_azimuth 212
+  param light_elevation 21
+  param light_color 1 0.78 0.55
+  param light_intensity 4.2
+  param sky_color 0.6 0.66 0.78
+  param sky_intensity 0.6
+  param ground_color 0.2 0.2 0.2
+  param grid off
+node 78 camera 1 camera 1400 200
+  param focal 32
+  key center 1 smooth 60 75 80
+  key center 180 smooth 50 64 67
+  key rotation 1 smooth -35.2 36.9 0
+  key rotation 180 smooth -34.9 36.7 0
+link 1.geometry -> 2.input1
+link 1.geometry -> 3.geometry
+link 2.geometry -> 3.points
+link 3.geometry -> 4.geometry
+link 4.geometry -> 5.pieces
+link 6.geometry -> 7.geometry
+link 7.geometry -> 65.geometry
+link 8.geometry -> 9.geometry
+link 9.geometry -> 65.geometry
+link 10.geometry -> 11.geometry
+link 11.geometry -> 65.geometry
+link 12.geometry -> 13.geometry
+link 13.geometry -> 65.geometry
+link 14.geometry -> 15.geometry
+link 15.geometry -> 65.geometry
+link 16.geometry -> 17.geometry
+link 17.geometry -> 65.geometry
+link 18.geometry -> 19.geometry
+link 19.geometry -> 65.geometry
+link 20.geometry -> 21.geometry
+link 21.geometry -> 65.geometry
+link 22.geometry -> 23.geometry
+link 23.geometry -> 65.geometry
+link 24.geometry -> 25.geometry
+link 25.geometry -> 65.geometry
+link 26.geometry -> 27.geometry
+link 27.geometry -> 65.geometry
+link 28.geometry -> 29.geometry
+link 29.geometry -> 65.geometry
+link 30.geometry -> 31.geometry
+link 31.geometry -> 65.geometry
+link 32.geometry -> 33.geometry
+link 33.geometry -> 65.geometry
+link 34.geometry -> 35.geometry
+link 35.geometry -> 65.geometry
+link 36.geometry -> 37.geometry
+link 37.geometry -> 65.geometry
+link 38.geometry -> 39.geometry
+link 39.geometry -> 65.geometry
+link 40.geometry -> 41.geometry
+link 41.geometry -> 65.geometry
+link 42.geometry -> 43.geometry
+link 43.geometry -> 65.geometry
+link 63.geometry -> 64.geometry
+link 64.geometry -> 65.geometry
+link 5.dust -> 67.sources
+link 5.collider -> 67.colliders
+link 66.force -> 67.forces
+link 69.collider -> 67.colliders
+link 70.collider -> 67.colliders
+link 71.collider -> 67.colliders
+link 72.collider -> 67.colliders
+link 73.collider -> 67.colliders
+link 74.collider -> 67.colliders
+link 75.collider -> 67.colliders
+link 76.collider -> 67.colliders
+link 67.gas -> 68.gas
+link 5.look -> 77.look
+link 68.look -> 77.look
+link 78.camera -> 77.camera
 definition building
 | pgsim 1
 | asset building 1 "Building"

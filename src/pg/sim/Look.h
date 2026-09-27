@@ -54,6 +54,8 @@ struct Look {
     // Image
     float exposure = 1.0f;
     bool floor = true;            ///< a floor the gas stands on, with its shadow
+    Vec3 groundColor{0.075f, 0.075f, 0.075f};  ///< the floor's colour
+    bool grid = true;             ///< lines on the floor every 10 cm and every metre
 
     /// Unit vector towards the light.
     Vec3 lightDirection() const {

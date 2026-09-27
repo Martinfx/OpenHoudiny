@@ -260,6 +260,7 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     Network net = chain(ids);
     net.setParam(ids[0], "center", "0.1 0.2 0.3");
     net.setParam(ids[0], "motion", "circle");
+    net.setParam(ids[0], "expansion", "2.5");
     net.setParam(ids[3], "fps", "24");
     net.setParam(ids[1], "resolution", "40");
     net.setParam(ids[1], "closed_floor", "off");
@@ -292,6 +293,7 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     CHECK(s.emitters[0].center == Vec3(0.1f, 0.2f, 0.3f));
     CHECK(s.emitters[0].motion == Motion::Circle);
     CHECK_EQ(s.emitters[0].smoke, 4.0f);
+    CHECK_EQ(s.emitters[0].expansion, 2.5f);
     CHECK_EQ(s.emitters[0].node, ids[0]);
     CHECK_EQ(s.forces.size(), size_t(2));
     CHECK(s.forces[0].kind == ForceKind::Vortex);  // in the order they were linked

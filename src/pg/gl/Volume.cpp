@@ -478,16 +478,44 @@ float waterShade(vec3 p, bool onSurface) {
     return exp(-0.4 * dot(u_waterSigma, vec3(1.0 / 3.0)) * depth);
 }
 
-// Sunlight at p: blocked by the solids, dimmed by the water and the smoke.
+// The shadows of the displayed geometry and the pieces: the share of the
+// sun's disc that reaches p past them, from their map seen from the sun --
+// nine samples round the point, soft at the edge.
+uniform bool u_hasGeoShadow;
+uniform sampler2D u_geoShadow;
+uniform mat4 u_lightViewProj;
+uniform float u_geoShadowTexel;  // a texel of the map, in its units (0 to 1)
+uniform float u_geoShadowBias;   // how much nearer the sun a caster must be, in its depth (0 to 1)
+
+float geoLit(vec3 p) {
+    if (!u_hasGeoShadow) return 1.0;
+    vec4 c = u_lightViewProj * vec4(p, 1.0);
+    vec3 q = c.xyz * 0.5 + 0.5;
+    if (any(lessThan(q.xy, vec2(0.0))) || any(greaterThan(q.xy, vec2(1.0)))) return 1.0;
+    float depth = min(q.z, 1.0) - u_geoShadowBias;
+    float lit = 0.0;
+    for (int j = -1; j <= 1; ++j) {
+        for (int i = -1; i <= 1; ++i) {
+            float d = textureLod(u_geoShadow, q.xy + vec2(float(i), float(j)) * u_geoShadowTexel, 0.0).r;
+            lit += depth <= d ? 1.0 : 0.0;
+        }
+    }
+    return lit / 9.0;
+}
+
+// Sunlight at p: blocked by the solids and the geometry, dimmed by the
+// water and the smoke.
 float sunThrough(vec3 p, bool onWater) {
     vec3 n;
     int which;
     if (hitSolid(p, u_lightDir, 1e-3, n, which) < 1e29 || meshShadow(p, u_lightDir)) return 0.0;
-    float light = waterShade(p, onWater);
+    float lit = geoLit(p);
+    if (lit <= 0.0) return 0.0;
+    float light = waterShade(p, onWater) * lit;
     if (!u_hasGas) return light;
     vec2 span = boxSpan(p, u_lightDir, u_boxMin, u_boxMin + u_boxSize);
     float t0 = max(span.x, 0.0), t1 = span.y;
-    if (t1 <= t0) return 1.0;
+    if (t1 <= t0) return light;
     float dt = max((t1 - t0) / 48.0, 2.0 * u_step);
     float depth = 0.0;
     for (float t = t0 + 0.5 * dt; t < t1; t += dt) {
@@ -571,16 +599,20 @@ vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark) {
 
 vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) { return shadeSurface(p, n, view, u_solidE[i].rgb, u_solidE[i].w); }
 
-// The floor: grey, a line every 10 cm and a stronger one every metre, each
-// as thin as the pixels allow and gone where they would crowd.
+// The floor: the ground's colour, and -- with the grid -- a line every
+// 10 cm and a stronger one every metre, each as thin as the pixels allow
+// and gone where they would crowd.
+uniform vec3 u_ground;
+uniform bool u_grid;
 vec3 floorAlbedo(vec2 q, vec2 width) {
+    if (!u_grid) return u_ground;
     vec2 w = max(width, vec2(1e-6));
     vec2 minor = abs(fract(q * 10.0 - 0.5) - 0.5) / (w * 10.0);
     vec2 major = abs(fract(q - 0.5) - 0.5) / w;
     float crowd = clamp(1.0 - max(w.x, w.y) * 10.0 / 0.35, 0.0, 1.0);
     float lines = 0.025 * (1.0 - min(min(minor.x, minor.y), 1.0)) * crowd +
                   0.06 * (1.0 - min(min(major.x, major.y), 1.0)) * clamp(1.0 - max(w.x, w.y) / 0.35, 0.0, 1.0);
-    return vec3(0.075 + lines);
+    return u_ground + vec3(lines);
 }
 
 // --- rain: ripples on the water ---------------------------------------------------
@@ -834,6 +866,19 @@ void main() {
     vec3 c = floor(clamp(v_color, 0.0, 1.0) * 255.0 + 0.5);
     o_g = vec4(n.z >= 0.0 ? n.xy : octWrap(n.xy), -1.0 - (c.r + c.g * 256.0 + c.b * 65536.0), length(view));
 }
+)";
+
+// The displayed geometry and the pieces, seen from the sun: how far along
+// its light each pixel's nearest triangle is, 0 to 1 -- what they shadow.
+const char* kGeoShadowVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+uniform mat4 u_lightViewProj;
+void main() { gl_Position = u_lightViewProj * vec4(a_position, 1.0); }
+)";
+
+const char* kGeoShadowFragment = R"(#version 330 core
+out vec4 o_depth;
+void main() { o_depth = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0); }
 )";
 
 // The displayed geometry's loose points: round dots, shaded as little balls,
@@ -1284,9 +1329,12 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 
 VolumeRenderer::~VolumeRenderer() {
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
-                     dotProgram_}) {
+                     dotProgram_, geoShadowProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
+    if (geoShadowFbo_) gl_.DeleteFramebuffers(1, &geoShadowFbo_);
+    if (geoShadowTex_) gl_.DeleteTextures(1, &geoShadowTex_);
+    if (geoShadowDepth_) gl_.DeleteRenderbuffers(1, &geoShadowDepth_);
     for (GLuint a : {geoVao_, dotVao_, curveVao_}) {
         if (a) gl_.DeleteVertexArrays(1, &a);
     }
@@ -1331,14 +1379,15 @@ bool VolumeRenderer::init(std::string& log) {
     const GLuint rain = meshes ? buildProgram(gl_, kRainVertex, kRainFragment, log) : 0;
     const GLuint geo = rain ? buildProgram(gl_, kGeoVertex, kGeoFragment, log) : 0;
     const GLuint dots = geo ? buildProgram(gl_, kDotVertex, kDotFragment, log) : 0;
-    if (!dots) {
-        for (GLuint p : {view, shadow, glow, lines, meshes, rain, geo}) {
+    const GLuint geoShadow = dots ? buildProgram(gl_, kGeoShadowVertex, kGeoShadowFragment, log) : 0;
+    if (!geoShadow) {
+        for (GLuint p : {view, shadow, glow, lines, meshes, rain, geo, dots}) {
             if (p) gl_.DeleteProgram(p);
         }
         return false;
     }
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
-                     dotProgram_}) {
+                     dotProgram_, geoShadowProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
     program_ = view;
@@ -1349,7 +1398,9 @@ bool VolumeRenderer::init(std::string& log) {
     rainProgram_ = rain;
     geoProgram_ = geo;
     dotProgram_ = dots;
+    geoShadowProgram_ = geoShadow;
     lightingDirty_ = true;
+    geoShadowDirty_ = true;
     return true;
 }
 
@@ -1714,8 +1765,94 @@ void VolumeRenderer::uploadGeometry() {
     upload(dotVao_, dotBuffer_, d.dots, {{0, 3}, {1, 3}, {2, 1}});
     upload(curveVao_, curveBuffer_, d.lines, {{0, 3}, {1, 4}});
     geoVertices_ = static_cast<GLsizei>(d.triangles.size() / 9);
+    geoShadowDirty_ = true;
     dots_ = static_cast<GLsizei>(d.dotCount());
     curveVertices_ = static_cast<GLsizei>(d.lines.size() / 7);
+}
+
+void VolumeRenderer::updateGeoShadow(const Vec3& light) {
+    if (!geoShadowProgram_ || geoVertices_ == 0 || !hasGeoBounds_) {
+        hasGeoShadow_ = false;
+        return;
+    }
+    if (!geoShadowDirty_ && hasGeoShadow_ && light == geoShadowLight_) return;
+    geoShadowDirty_ = false;
+    geoShadowLight_ = light;
+    const int size = kGeoShadowSize;
+    if (!geoShadowFbo_) {
+        gl_.GenTextures(1, &geoShadowTex_);
+        gl_.BindTexture(TEXTURE_2D, geoShadowTex_);
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(0x822E), size, size, 0, RED, FLOAT, nullptr);  // R32F
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, 0x2600);  // NEAREST: the samples filter it
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, 0x2600);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, 0x812F);      // CLAMP_TO_EDGE
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, 0x812F);
+        gl_.BindTexture(TEXTURE_2D, 0);
+        gl_.GenRenderbuffers(1, &geoShadowDepth_);
+        gl_.BindRenderbuffer(RENDERBUFFER, geoShadowDepth_);
+        gl_.RenderbufferStorage(RENDERBUFFER, DEPTH_COMPONENT24, size, size);
+        gl_.BindRenderbuffer(RENDERBUFFER, 0);
+        gl_.GenFramebuffers(1, &geoShadowFbo_);
+        gl_.BindFramebuffer(FRAMEBUFFER, geoShadowFbo_);
+        gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, geoShadowTex_, 0);
+        gl_.FramebufferRenderbuffer(FRAMEBUFFER, DEPTH_ATTACHMENT, RENDERBUFFER, geoShadowDepth_);
+        const bool complete = gl_.CheckFramebufferStatus(FRAMEBUFFER) == FRAMEBUFFER_COMPLETE;
+        gl_.BindFramebuffer(FRAMEBUFFER, 0);
+        if (!complete) {
+            gl_.DeleteFramebuffers(1, &geoShadowFbo_);
+            geoShadowFbo_ = 0;
+            geoShadowProgram_ = 0;  // no shadows of geometry on this GPU
+            hasGeoShadow_ = false;
+            return;
+        }
+    }
+    // The sun's view: along its light, square onto the box round the geometry.
+    const Vec3 f = -light;
+    const Vec3 up = std::fabs(f.y) > 0.99f ? Vec3(1.0f, 0.0f, 0.0f) : Vec3(0.0f, 1.0f, 0.0f);
+    const Vec3 sx = normalize(cross(f, up)), sy = cross(sx, f);
+    Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 c(i & 1 ? geoHi_.x : geoLo_.x, i & 2 ? geoHi_.y : geoLo_.y, i & 4 ? geoHi_.z : geoLo_.z);
+        const Vec3 q(dot(c, sx), dot(c, sy), dot(c, f));
+        for (int a = 0; a < 3; ++a) {
+            lo[a] = std::min(lo[a], q[a]);
+            hi[a] = std::max(hi[a], q[a]);
+        }
+    }
+    const float margin = 0.02f * std::max({hi.x - lo.x, hi.y - lo.y, 1e-3f});
+    for (int a = 0; a < 3; ++a) {
+        lo[a] -= margin;
+        hi[a] += margin;
+    }
+    const float ax = 2.0f / (hi.x - lo.x), ay = 2.0f / (hi.y - lo.y), az = 2.0f / (hi.z - lo.z);
+    Mat4 m{};
+    m[0] = sx.x * ax; m[4] = sx.y * ax; m[8] = sx.z * ax; m[12] = -lo.x * ax - 1.0f;
+    m[1] = sy.x * ay; m[5] = sy.y * ay; m[9] = sy.z * ay; m[13] = -lo.y * ay - 1.0f;
+    m[2] = f.x * az;  m[6] = f.y * az;  m[10] = f.z * az; m[14] = -lo.z * az - 1.0f;
+    m[15] = 1.0f;
+    lightViewProj_ = m;
+    // Two texels of it, as a depth: what a surface may be off its own triangles.
+    const float texel = std::max(hi.x - lo.x, hi.y - lo.y) / static_cast<float>(size);
+    geoShadowBias_ = 2.5f * texel / (hi.z - lo.z) + 1e-4f;
+
+    gl_.BindFramebuffer(FRAMEBUFFER, geoShadowFbo_);
+    gl_.Viewport(0, 0, size, size);
+    gl_.ColorMask(1, 1, 1, 1);
+    gl_.DepthMask(1);
+    gl_.ClearColor(1.0f, 1.0f, 1.0f, 1.0f);  // nothing in the way: as far as can be
+    gl_.Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
+    gl_.Enable(DEPTH_TEST);
+    gl_.DepthFunc(LESS);
+    gl_.Disable(BLEND);
+    gl_.Disable(CULL_FACE);
+    gl_.UseProgram(geoShadowProgram_);
+    gl_.UniformMatrix4fv(location(geoShadowProgram_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
+    gl_.BindVertexArray(geoVao_);
+    gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
+    gl_.BindVertexArray(0);
+    gl_.UseProgram(0);
+    gl_.BindFramebuffer(FRAMEBUFFER, 0);
+    hasGeoShadow_ = true;
 }
 
 bool VolumeRenderer::geometryBounds(Vec3& lo, Vec3& hi) const {
@@ -2012,6 +2149,8 @@ void VolumeRenderer::render(int width, int height) {
     orbit.axes(towards, across, upwards);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     viewProjection_ = multiply(perspective(orbit.fovY, aspect, kNear, kFar), lookAlong(eye, towards, upwards));
+    // The shadows of the geometry: its map from the sun, when it or the sun moved.
+    updateGeoShadow(normalize(look.lightDirection()));
     // The meshes first, into their own buffer, seen by the same camera.
     const bool meshes = (anyMesh_ || geoVertices_ > 0) && meshProgram_;
     if (meshes) renderMeshes(width, height, Vec3(eye[0], eye[1], eye[2]));
@@ -2061,8 +2200,23 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform1f(location(program_, "u_exposure"), s.exposure);
     gl_.Uniform1f(location(program_, "u_step"), 0.6f * domain_.voxel);
     gl_.Uniform1i(location(program_, "u_floor"), s.floor ? 1 : 0);
+    gl_.Uniform3f(location(program_, "u_ground"), s.groundColor.x, s.groundColor.y, s.groundColor.z);
+    gl_.Uniform1i(location(program_, "u_grid"), s.grid ? 1 : 0);
+    // The shadows of the geometry, from their map.
+    const bool geoShadow = hasGeoShadow_ && geoVertices_ > 0;
+    gl_.Uniform1i(location(program_, "u_hasGeoShadow"), geoShadow ? 1 : 0);
+    gl_.UniformMatrix4fv(location(program_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
+    gl_.Uniform1f(location(program_, "u_geoShadowTexel"), 1.0f / static_cast<float>(kGeoShadowSize));
+    gl_.Uniform1f(location(program_, "u_geoShadowBias"), geoShadowBias_);
+    gl_.ActiveTexture(TEXTURE10);
+    gl_.BindTexture(TEXTURE_2D, geoShadow ? geoShadowTex_ : 0);
+    gl_.Uniform1i(location(program_, "u_geoShadow"), 10);
     gl_.Uniform3f(location(program_, "u_floorCenter"), 0.0f, 0.0f, 0.0f);
-    gl_.Uniform1f(location(program_, "u_floorRadius"), std::max(4.0f, 2.5f * std::max(size.x, size.z)));
+    // The floor fades out far away: past the domain, past the geometry, as far as the eye is off.
+    float reach = 2.5f * std::max(size.x, size.z);
+    if (hasGeoBounds_) reach = std::max(reach, 2.5f * std::max(geoHi_.x - geoLo_.x, geoHi_.z - geoLo_.z));
+    reach = std::max(reach, 3.0f * length(e));
+    gl_.Uniform1f(location(program_, "u_floorRadius"), std::max(4.0f, reach));
     gl_.Uniform3i(location(program_, "u_glowDims"), glowSize_[0], glowSize_[1], glowSize_[2]);
     const float block = static_cast<float>(glowBlock_) * domain_.voxel;
     gl_.Uniform3f(location(program_, "u_glowCell"), block, block, block);
@@ -2143,6 +2297,8 @@ void VolumeRenderer::render(int width, int height) {
     gl_.ActiveTexture(TEXTURE8);
     gl_.BindTexture(TEXTURE_3D, 0);
     gl_.ActiveTexture(TEXTURE9);
+    gl_.BindTexture(TEXTURE_2D, 0);
+    gl_.ActiveTexture(TEXTURE10);
     gl_.BindTexture(TEXTURE_2D, 0);
     gl_.ActiveTexture(TEXTURE3);
     gl_.BindTexture(TEXTURE_2D, 0);

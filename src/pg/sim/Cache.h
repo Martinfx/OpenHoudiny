@@ -11,6 +11,7 @@
 //                                 the gas as half floats (runs of zeros
 //                                 packed), the water, the particles, the
 //                                 rain, the poses of the rigid bodies
+//                                 and their grit
 //
 // The network's hash says whether a cache belongs to the network at hand.
 // The pieces of the rigid bodies at rest are not in the files -- they are
@@ -42,10 +43,11 @@ std::string formatFrame(const Frame& frame);
 bool parseFrame(std::string_view data, Frame& frame, std::string& error);
 
 /// Gives a frame read back the pieces of the rigid bodies at rest: the
-/// world's, when the frame's poses are theirs -- as many as there are
-/// pieces. Otherwise the frame's rigid bodies stay without geometry, and
-/// nothing is drawn of them.
-void adoptPieces(Frame& frame, const RigidScene& scene);
+/// world's, when the frame's poses are theirs -- as many as the pieces make
+/// bodies. Otherwise the frame's rigid bodies stay without geometry, and
+/// nothing is drawn of them. `memo`, if given, keeps the bodies worked out
+/// from one frame to the next.
+void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo = nullptr);
 
 /// "<folder>/frame.0007.pgframe"
 std::string frameFile(const std::string& folder, int number);

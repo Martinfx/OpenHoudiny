@@ -194,6 +194,9 @@ private:
     void drawGeometry(int width, int height);
     /// The displayed geometry and the pieces, as they are drawn, to the GPU.
     void uploadGeometry();
+    /// Their map from the sun -- `light` towards it -- for the shadows they
+    /// cast: drawn again when they or the sun moved.
+    void updateGeoShadow(const Vec3& light);
 
     const Api& gl_;
     GLuint program_ = 0, shadowProgram_ = 0, glowProgram_ = 0, lineProgram_ = 0;
@@ -231,6 +234,13 @@ private:
     GLuint meshProgram_ = 0;
     // The displayed geometry: triangles (position, normal, colour), dots
     // (position, colour, radius), lines (as guide lines are).
+    // The shadows the geometry casts: its depth seen from the sun.
+    static constexpr int kGeoShadowSize = 2048;
+    GLuint geoShadowProgram_ = 0, geoShadowFbo_ = 0, geoShadowTex_ = 0, geoShadowDepth_ = 0;
+    bool geoShadowDirty_ = true, hasGeoShadow_ = false;
+    Vec3 geoShadowLight_;
+    Mat4 lightViewProj_{};
+    float geoShadowBias_ = 0.0f;
     GeometryPtr geometry_, pieces_;
     sim::DisplayGeometry shownDisplay_, piecesDisplay_;  // what each is drawn as
     GLuint geoProgram_ = 0, dotProgram_ = 0;

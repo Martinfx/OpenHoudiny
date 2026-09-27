@@ -62,17 +62,25 @@ void WorldSolver::step() {
         gas.solver.timeStep = world_.timeStep;
         if (rigid_ && rigid.intoGas) gas.colliders.insert(gas.colliders.end(), pieces.begin(), pieces.end());
         if (rigid_ && rigid.dustIntoGas) {
-            // Where the glue broke: a puff of dust, fading.
-            for (const auto& [at, left] : rigid_->dust()) {
+            // Where the glue broke and pieces knocked: a puff of dust,
+            // fading, carried the way the pieces went -- barely warm: it
+            // rolls out along the ground more than it rises, pushed by the
+            // air the crushing squeezes out.
+            for (const RigidDust& d : rigid_->dust()) {
+                if (d.amount <= 0.0f) continue;
                 Emitter e;
                 e.shape = Shape::Sphere;
-                e.center = at;
-                e.size = Vec3(1.0f, 1.0f, 1.0f) * rigid.solver.dustSize;
+                e.center = d.at;
+                e.size = Vec3(1.0f, 1.0f, 1.0f) * d.size;
                 e.fuel = 0.0f;
-                e.smoke = rigid.solver.dust * left * 4.0f;
-                e.heat = 0.1f * left;
-                e.velocity = Vec3();
-                e.flicker = 0.0f;
+                e.smoke = 4.0f * d.amount;
+                e.heat = 0.02f * d.amount;
+                e.velocity = d.velocity;
+                e.expansion = d.expansion;
+                // In clumps, not an even ball: the lumps a cloud of dust
+                // billows in.
+                e.flicker = 1.0f;
+                e.flickerSize = 0.35f * d.size;
                 e.node = rigid.node;
                 gas.emitters.push_back(e);
             }

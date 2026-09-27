@@ -333,7 +333,7 @@ TEST(liquid_scenes_out_of_range_are_made_safe) {
     CHECK(safe.solver.resolution <= 256);
     CHECK(safe.solver.timeStep > 0.0f);
     CHECK(safe.solver.flip >= 0.0f && safe.solver.flip <= 1.0f);
-    CHECK(safe.solver.size.x > 0.0f && safe.solver.size.z <= 20.0f);
+    CHECK(safe.solver.size.x > 0.0f && safe.solver.size.z <= 1000.0f);
     CHECK(safe.sources[0].size.x > 0.0f);
     CHECK(std::isfinite(safe.sources[0].velocity.x) && safe.sources[0].velocity.y <= 1000.0f);
     // And it runs.

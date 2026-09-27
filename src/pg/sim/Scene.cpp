@@ -96,7 +96,7 @@ Scene Scene::sanitized() const {
     const SolverSettings ds;
     Scene s = *this;
     SolverSettings& v = s.solver;
-    v.size = fix(v.size, 0.1f, 20.0f, ds.size);
+    v.size = fix(v.size, 0.1f, 1000.0f, ds.size);
     v.resolution = std::clamp(v.resolution, 16, 256);
     v.timeStep = fix(v.timeStep, 1e-4f, 1.0f, ds.timeStep);
     v.substeps = std::clamp(v.substeps, 1, 16);
@@ -121,6 +121,7 @@ Scene Scene::sanitized() const {
         e.smoke = fix(e.smoke, 0.0f, kHuge, 0.0f);
         e.heat = fix(e.heat, 0.0f, kHuge, 0.0f);
         e.velocity = fix(e.velocity, -kHuge, kHuge, Vec3());
+        e.expansion = fix(e.expansion, 0.0f, kHuge, 0.0f);
         e.flicker = fix(e.flicker, 0.0f, 2.0f, 0.0f);
         e.flickerSize = fix(e.flickerSize, 0.005f, kHuge, de.flickerSize);
         e.start = fix(e.start, 0.0f, kHuge, 0.0f);

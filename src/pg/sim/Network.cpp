@@ -111,6 +111,9 @@ std::vector<ParamDef> pyroSourceParams() {
     p.push_back({"velocity", "Velocity", "Emission", K::Vector, {0.0f, 0.5f, 0.0f}, -2.0f, 2.0f, -kBig, kBig, "m/s",
                  "The gas leaves the source at least this fast, along the source's own axes: turn the source "
                  "and the jet turns with it."});
+    p.push_back({"expansion", "Expansion", "Emission", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "1/s",
+                 "How fast the gas in the source swells: it is pushed out on all sides -- a blast, or the air a "
+                 "collapse squeezes out. 0: it does not."});
     p.push_back({"flicker", "Flicker", "Noise", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
                  "How much the output flickers: 0 steady, 1 strongly -- what makes flames lick."});
     p.push_back({"flicker_size", "Flicker Size", "Noise", K::Float, {0.07f, 0.0f, 0.0f}, 0.01f, 0.3f, 0.005f, kBig,
@@ -223,7 +226,7 @@ std::vector<ParamDef> legacyColliderParams(bool sphere) {
 /// The Pyro Solver's parameters; version 1 had the frame rate, which is the
 /// Output's now.
 std::vector<ParamDef> pyroSolverParams(bool withFrameRate) {
-    std::vector<ParamDef> p = {{"size", "Size", "Domain", K::Vector, {1.0f, 1.5f, 1.0f}, 0.1f, 5.0f, 0.1f, 20.0f, "m",
+    std::vector<ParamDef> p = {{"size", "Size", "Domain", K::Vector, {1.0f, 1.5f, 1.0f}, 0.1f, 5.0f, 0.1f, 1000.0f, "m",
            "Width, height and depth of the box the gas lives in. It stands on the floor, centred."},
           {"resolution", "Resolution", "Domain", K::Int, {96.0f, 0.0f, 0.0f}, 16.0f, 256.0f, 16.0f, 256.0f, "",
            "Cells along the longest side. Twice as many: finer detail, and eight times the work."},
@@ -324,6 +327,10 @@ std::vector<ParamDef> outputParams() {
         if (name == "floor") d.help = "Draw the floor, with the shadows and the glow of the fire on it.";
         p.push_back(d);
     }
+    p.push_back({"ground_color", "Ground Color", "Image", K::Color, {0.075f, 0.075f, 0.075f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                 "The colour of the floor: dark asphalt, pale concrete, dusty earth."});
+    p.push_back({"grid", "Grid", "Image", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                 "Lines on the floor every 10 cm and every metre, to judge sizes by. Off for a shot."});
     return p;
 }
 
@@ -753,7 +760,7 @@ std::vector<NodeType> buildTypes() {
           {"forces", "Forces", PinType::Force, true},
           {"colliders", "Colliders", PinType::Collider, true}},
          {{"liquid", "Liquid", PinType::Liquid}},
-         {{"size", "Size", "Domain", K::Vector, {2.0f, 1.0f, 1.2f}, 0.1f, 5.0f, 0.1f, 20.0f, "m",
+         {{"size", "Size", "Domain", K::Vector, {2.0f, 1.0f, 1.2f}, 0.1f, 5.0f, 0.1f, 1000.0f, "m",
            "Width, height and depth of the box the water lives in. It stands on the floor, centred."},
           {"resolution", "Resolution", "Domain", K::Int, {64.0f, 0.0f, 0.0f}, 16.0f, 192.0f, 16.0f, 256.0f, "",
            "Cells along the longest side; eight particles fill a cell. Twice as many: finer splashes, and "
@@ -775,9 +782,12 @@ std::vector<NodeType> buildTypes() {
         {"rbd_solver", "RBD Solver", "Simulation",
          "Rigid bodies: the pieces of something broken -- a Voronoi Fracture's -- fall, knock into each other, "
          "into the floor and into the objects linked into Colliders (a keyed one is a wrecking ball), glued to "
-         "the pieces they touch until a pull harder than Glue tears them apart, puffing dust. Link it into the "
-         "Output's Looks: it is simulated and drawn. Its Collider into a Liquid, Pyro Solver or Rain: they go "
-         "round the pieces; its Dust into a Pyro Solver's Sources: the dust is smoke.",
+         "the pieces they touch -- one body with them -- until a knock harder than Glue breaks them apart, "
+         "puffing dust and throwing grit. Attributes of the pieces set them apart: density, v, w, active (0: "
+         "it stays), glue, release -- the seconds when a charge breaks its joints -- with kick and vanish "
+         "(blown to dust), and crush (crushed to dust by a hard knock). Link it into the Output's Looks: it is "
+         "simulated and drawn. Its Collider into a Liquid, Pyro Solver or Rain: they go round the pieces; its "
+         "Dust into a Pyro Solver's Sources: the dust is smoke, pushed out by the air the pieces squeeze out.",
          {{"pieces", "Pieces", PinType::Geometry}, {"colliders", "Colliders", PinType::Collider, true}},
          {{"look", "Look", PinType::Look},
           {"rigid", "Rigid", PinType::Rigid},
@@ -796,15 +806,24 @@ std::vector<NodeType> buildTypes() {
            "m/s\xc2\xb2", "How hard the pieces are pulled down."},
           {"floor", "Floor", "Physics", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "A floor at height 0 that the pieces land on. Off, they fall for ever."},
-          {"glue", "Glue", "Glue", K::Float, {20000.0f, 0.0f, 0.0f}, 0.0f, 200000.0f, 0.0f, 1e12f, "N",
-           "How hard two pieces that touch hold together: a joint pulled harder than this, in newtons, breaks "
-           "for good. 0: no glue -- the pieces fall apart at once. A piece of a tonne weighs some 10000 N."},
+          {"glue", "Glue", "Glue", K::Float, {500.0f, 0.0f, 0.0f}, 0.0f, 5000.0f, 0.0f, 1e9f, "kPa",
+           "How hard the faces where two pieces touch hold together: kilonewtons a square metre. Glued pieces "
+           "move as one body; a knock harder than a joint holds breaks it for good, and half of it goes on to "
+           "the joints beyond. 0: no glue -- the pieces fall apart at once. A piece's attribute glue makes its "
+           "joints stronger or weaker; release breaks them at a time -- a charge."},
           {"substeps", "Substeps", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
            "Steps of the solver a frame: more for fast pieces and tall stacks, which then stand steadier."},
           {"dust", "Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
            "Smoke a joint gives off as it breaks, into the Pyro Solver its Dust is linked into."},
+          {"impact_dust", "Impact Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
+           "Smoke a hard knock gives off -- a piece landing, two pieces crashing together."},
           {"dust_size", "Puff Size", "Dust", K::Float, {0.3f, 0.0f, 0.0f}, 0.05f, 2.0f, 0.01f, 100.0f, "m",
            "How big a puff of dust is."},
+          {"debris", "Debris", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 100.0f, "",
+           "Grit a break or a knock throws out: small stones that fly, land and lie. 0: none."},
+          {"air", "Air Push", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "The air the pieces squeeze out as they crush and knock: it swells the puffs and pushes the dust "
+           "out along the ground. 1: as much as they would; 0: none."},
           {"color", "Color", "Look", K::Color, {0.62f, 0.6f, 0.57f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "The colour of the pieces where they have no Cd of their own."},
           {"inside_color", "Inside Color", "Look", K::Color, {0.5f, 0.47f, 0.43f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
@@ -2951,6 +2970,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     k.skyIntensity = f(*output, "sky_intensity");
     k.exposure = f(*output, "exposure");
     k.floor = f(*output, "floor") != 0.0f;
+    k.groundColor = v3(*output, "ground_color");
+    k.grid = f(*output, "grid") != 0.0f;
     // The camera of the shot.
     if (const Node* cam = upstream(*output, "camera")) {
         Camera& m = c.camera;
@@ -3049,10 +3070,13 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.bounce = f(*solver, "bounce");
         s.gravity = Vec3(0.0f, -f(*solver, "gravity"), 0.0f);
         s.floor = f(*solver, "floor") != 0.0f;
-        s.glue = f(*solver, "glue");
+        s.glue = f(*solver, "glue") * 1000.0f;  // kPa
         s.substeps = whole(*solver, "substeps");
         s.dust = f(*solver, "dust");
         s.dustSize = f(*solver, "dust_size");
+        s.impactDust = f(*solver, "impact_dust");
+        s.debris = f(*solver, "debris");
+        s.air = f(*solver, "air");
         s.timeStep = c.world.timeStep;
         r.attribute = text(solver->id, "attribute");
         r.node = solver->id;
@@ -3137,6 +3161,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             e.smoke = f(*n, "smoke");
             e.heat = f(*n, "heat");
             e.velocity = v3(*n, "velocity");
+            e.expansion = f(*n, "expansion");
             e.flicker = f(*n, "flicker");
             e.flickerSize = f(*n, "flicker_size");
             e.seed = static_cast<uint32_t>(whole(*n, "seed"));

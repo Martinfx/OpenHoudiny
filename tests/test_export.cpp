@@ -510,7 +510,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 3;
+    newer[8] = 4;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

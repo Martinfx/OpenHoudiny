@@ -2135,6 +2135,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
     const int count = std::min(info.frames, std::max(1, compiled_.frames));
     std::vector<std::shared_ptr<const sim::Frame>> frames;
     frames.reserve(static_cast<size_t>(count));
+    std::shared_ptr<const sim::RigidLayout> layout;  // the pieces' bodies, once for all frames
     for (int f = 1; f <= count; ++f) {
         auto frame = std::make_shared<sim::Frame>();
         if (!sim::readFrame(folder, f, *frame, error)) {
@@ -2142,7 +2143,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
             return false;
         }
         frame->number = f;
-        sim::adoptPieces(*frame, compiled_.world.rigid);
+        sim::adoptPieces(*frame, compiled_.world.rigid, &layout);
         frames.push_back(std::move(frame));
     }
     runner_->adopt(compiled_.world, compiled_.frames, std::move(frames));

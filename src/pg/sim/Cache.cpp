@@ -15,7 +15,7 @@ namespace pg::sim {
 namespace {
 
 constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
-constexpr uint32_t kVersion = 2;  // 2: the rigid bodies after the rain
+constexpr uint32_t kVersion = 3;  // 2: the rigid bodies after the rain; 3: and their grit
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -267,6 +267,9 @@ std::string formatFrame(const Frame& f) {
         out.vec3(p.velocity);
         out.vec3(p.spin);
     }
+    out.floats(b.debris);  // version 3
+    out.u64(b.vanished.size());
+    for (const uint32_t k : b.vanished) out.u32(k);
     return std::move(out.bytes);
 }
 
@@ -322,6 +325,11 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
             p.velocity = in.vec3();
             p.spin = in.vec3();
         }
+        if (version >= 3) {
+            in.floats(b.debris);
+            b.vanished.resize(in.count(4));
+            for (uint32_t& k : b.vanished) k = in.u32();
+        }
     }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
@@ -330,20 +338,23 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     // What is drawn from it indexes these by the sizes it gives.
     if ((!w.cells.empty() && w.cells.size() != 2 * w.domain.cellCount()) ||
         (!w.whiteness.empty() && w.whiteness.size() != w.positions.size()) || r.drops.size() % 6 != 0 ||
-        r.droplets.size() % 6 != 0) {
+        r.droplets.size() % 6 != 0 || f.rigid.debris.size() % 4 != 0) {
         error = "the frame's parts do not fit their grids";
         return false;
     }
     return true;
 }
 
-void adoptPieces(Frame& frame, const RigidScene& scene) {
+void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo) {
     RigidFrame& b = frame.rigid;
     if (b.poses.empty() || !scene.pieces) return;
-    int count = 0;
-    pieceOfPrimitives(*scene.pieces, b.attribute.empty() ? scene.attribute : b.attribute, count);
-    if (static_cast<size_t>(count) != b.poses.size()) return;  // another geometry: not these pieces
+    const std::string& attribute = b.attribute.empty() ? scene.attribute : b.attribute;
+    std::shared_ptr<const RigidLayout> layout = memo ? *memo : nullptr;
+    if (!layout || layout->bodyOf.size() != scene.pieces->primitiveCount()) layout = rigidLayout(*scene.pieces, attribute);
+    if (memo) *memo = layout;
+    if (static_cast<size_t>(layout->bodies) != b.poses.size()) return;  // another geometry: not these pieces
     b.pieces = scene.pieces;
+    b.layout = layout;
     if (b.attribute.empty()) b.attribute = scene.attribute;
 }
 

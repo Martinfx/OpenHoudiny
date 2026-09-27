@@ -198,6 +198,9 @@ void PyroSolver::emit(float dt) {
     const float h = domain_.voxel;
     const Vec3 origin = domain_.origin();
     const int n[3] = {nx_, ny_, nz_};
+    // What swells this step: the sources ask for it here, the burning adds
+    // its own (combust).
+    expansion_.fill(0.0f);
     for (const Emitter& e : scene_.emitters) {
         if (!e.activeAt(time_)) continue;
         // How much of the source is at a world point: 1 inside, easing to 0
@@ -232,6 +235,7 @@ void PyroSolver::emit(float dt) {
             fuel_.at(i, j, k) += e.fuel * amount;
             density_.at(i, j, k) += e.smoke * amount;
             temperature_.at(i, j, k) += e.heat * amount;
+            expansion_.at(i, j, k) += e.expansion * w;
         });
 
         // Push the gas the source's way -- along its own axes -- and across it
@@ -385,7 +389,7 @@ void PyroSolver::combust(float dt) {
         temperature_.data()[c] += burnt * s.heatRelease;
         density_.data()[c] += burnt * s.sootRelease;
         flame_.data()[c] += burnt;
-        expansion_.data()[c] = burnt * s.expansion / dt;
+        expansion_.data()[c] += burnt * s.expansion / dt;
     });
 }
 

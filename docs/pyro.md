@@ -458,7 +458,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
-| `demolition` | destrukce: budova z assetu Building rozřezaná na kusy, slepená RBD Solverem a sražená demoliční koulí do bazénu; prach z přetržených spojů jde do Pyro Solveru ([destruction.md](destruction.md)) |
+| `demolition` | destrukce: odstřel věžáku mezi domy — nálože v přízemí, věž se zřítí do svého půdorysu a patra se drtí; prach z nárazů, drcení a přetržených spojů žene vytlačený vzduch do ulic ([destruction.md](destruction.md)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `prototype sim campfire` proto funguje bez souborů vedle.

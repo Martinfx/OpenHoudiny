@@ -18,6 +18,7 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -123,13 +124,27 @@ TEST(rigid_pieces_fall_and_come_to_rest_on_the_floor) {
     CHECK(v != nullptr && v->type() == AttrType::Vec3);
 }
 
-TEST(rigid_glue_holds_the_pieces_together_and_breaks_under_a_pull) {
+TEST(rigid_glue_holds_as_built_and_breaks_under_what_comes_on_top) {
     // A beam that hangs over the edge of a table -- most of it on the table,
-    // so that it does not tip: glued, it holds; loose, the part over the
-    // edge falls.
-    auto beam = [](float glue) {
+    // so that it does not tip -- and, above its end, a small weight that
+    // falls onto it.
+    auto beam = [](float glue, bool weight) {
         RigidScene scene;
-        scene.pieces = fracturedBox(Vec3(0.0f, 1.05f, 0.0f), Vec3(2.0f, 0.1f, 0.2f), 10, 3);
+        auto geo = std::make_shared<Geometry>(*fracturedBox(Vec3(0.0f, 1.05f, 0.0f), Vec3(2.0f, 0.1f, 0.2f), 10, 3));
+        if (weight) {
+            registerBuiltinNodes();
+            Graph g;
+            pg::Node* box = g.create("box", "weight");
+            box->setInt("divisions", 1);
+            box->setVec3("size", Vec3(0.2f, 0.2f, 0.2f));
+            box->setVec3("center", Vec3(0.8f, 2.4f, 0.0f));
+            CookEngine engine;
+            Geometry w = *engine.cook(*box, CookContext{});
+            auto a = w.primitives().create("piece", AttrType::Int).write<int32_t>();
+            std::fill(a.begin(), a.end(), 100);
+            geo->append(w);
+        }
+        scene.pieces = geo;
         scene.solver.glue = glue;
         scene.solver.floor = false;
         Collider table;
@@ -140,38 +155,39 @@ TEST(rigid_glue_holds_the_pieces_together_and_breaks_under_a_pull) {
         scene.colliders.push_back(table);
         return scene;
     };
-    RigidSolver glued(beam(1e9f));
-    CHECK(glued.error().empty());
-    RigidFrame start = glued.capture();
-    CHECK(start.joints > 0u);
-    for (int i = 0; i < 60; ++i) glued.step();
-    RigidFrame held = glued.capture();
-    CHECK_EQ(held.broken, 0u);
-    Vec3 lo, hi;
-    bounds(*posedPieces(held), lo, hi);
-    CHECK(lo.y > 0.8f);  // the whole beam stays up, held by the glued part on the table
-
-    RigidSolver loose(beam(0.0f));
-    for (int i = 0; i < 60; ++i) loose.step();
-    RigidFrame fallen = loose.capture();
-    CHECK_EQ(fallen.joints, 0u);
-    bounds(*posedPieces(fallen), lo, hi);
-    CHECK(lo.y < -1.0f);  // the pieces over the edge are gone down
-
-    // Weak glue: the weight of the overhang tears it, and dust puffs where
-    // it broke.
-    RigidSolver weak(beam(50.0f));
+    auto lowest = [](const RigidSolver& s) {
+        Vec3 lo, hi;
+        RigidFrame f = s.capture();
+        // The beam's pieces only: the weight is the last body.
+        f.poses.back() = RigidPose();
+        bounds(*posedPieces(f), lo, hi);
+        return lo.y;
+    };
+    // Weak glue: as built, it stands -- the overhang too.
+    RigidSolver weak(beam(50.0f, false));
     CHECK(weak.capture().joints > 0u);
+    for (int i = 0; i < 60; ++i) weak.step();
+    CHECK_EQ(weak.capture().broken, 0u);
+    CHECK(lowest(weak) > 0.9f);
+    // ... until the weight lands on it: torn where it broke, dust puffs.
+    RigidSolver hit(beam(50.0f, true));
     bool puffed = false;
     for (int i = 0; i < 60; ++i) {
-        weak.step();
-        puffed = puffed || !weak.dust().empty();
+        hit.step();
+        puffed = puffed || !hit.dust().empty();
     }
-    RigidFrame torn = weak.capture();
-    CHECK(torn.broken > 0u);
+    CHECK(hit.capture().broken > 0u);
     CHECK(puffed);
-    bounds(*posedPieces(torn), lo, hi);
-    CHECK(lo.y < -1.0f);
+    CHECK(lowest(hit) < 0.0f);
+    // Strong glue: the weight bounces off, the beam holds -- in one piece.
+    RigidSolver strong(beam(1e9f, true));
+    for (int i = 0; i < 60; ++i) strong.step();
+    CHECK_EQ(strong.capture().broken, 0u);
+    // No glue: the part over the edge falls.
+    RigidSolver loose(beam(0.0f, false));
+    for (int i = 0; i < 60; ++i) loose.step();
+    CHECK_EQ(loose.capture().joints, 0u);
+    CHECK(lowest(loose) < -1.0f);
 }
 
 TEST(rigid_a_keyed_object_knocks_the_pieces_over) {
@@ -179,7 +195,7 @@ TEST(rigid_a_keyed_object_knocks_the_pieces_over) {
     // the wall goes.
     RigidScene scene;
     scene.pieces = fracturedBox(Vec3(0.0f, 0.5f, 0.0f), Vec3(1.0f, 1.0f, 0.2f), 12, 5);
-    scene.solver.glue = 2000.0f;
+    scene.solver.glue = 20000.0f;
     Collider ball;
     ball.shape = Shape::Sphere;
     ball.center = Vec3(0.0f, 0.5f, 3.0f);
@@ -224,7 +240,7 @@ TEST(rigid_frames_are_the_same_on_any_thread_count_and_from_solver_to_solver) {
     ThreadCountGuard guard;
     RigidScene scene;
     scene.pieces = fracturedBox(Vec3(0.3f, 1.5f, -0.2f), Vec3(1.0f, 0.8f, 0.6f), 9, 2);
-    scene.solver.glue = 300.0f;
+    scene.solver.glue = 3000.0f;
     auto frames = [&](unsigned threads) {
         TaskPool::instance().setThreadCount(threads);
         RigidSolver solver(scene);
@@ -281,17 +297,25 @@ TEST(rigid_pieces_are_posed_and_drawn_in_their_colours) {
     CHECK(length(v[0] - Vec3(1.0f, 0.0f, 0.0f)) < 1e-5f);
     CHECK(length(v[4] - cross(Vec3(0.0f, 1.0f, 0.0f), Q[4])) < 1e-5f);
 
-    // Drawn: the first face keeps its Cd, the cut face gets the inside colour.
+    // Drawn: the first face keeps its Cd, the cut face gets the inside
+    // colour -- on the corners, so that each face has its own.
     const GeometryPtr drawn = drawnPieces(f, Vec3(0.5f), Vec3(0.2f, 0.3f, 0.4f), "inside");
-    const auto dc = drawn->primitives().find("Cd")->read<Vec3>();
+    CHECK(drawn->primitives().find("Cd") == nullptr);
+    const auto dc = drawn->vertices().find("Cd")->read<Vec3>();
     CHECK(dc[0] == Vec3(1.0f, 0.0f, 0.0f));
-    CHECK(dc[1] == Vec3(0.2f, 0.3f, 0.4f));
+    CHECK(dc[3] == Vec3(0.2f, 0.3f, 0.4f));
     // No Cd of its own: the colour given.
     geo->primitives().erase("Cd");
     const GeometryPtr plain = drawnPieces(f, Vec3(0.5f), Vec3(0.2f, 0.3f, 0.4f), "inside");
-    const auto pc = plain->primitives().find("Cd")->read<Vec3>();
+    const auto pc = plain->vertices().find("Cd")->read<Vec3>();
     CHECK(pc[0] == Vec3(0.5f));
-    CHECK(pc[1] == Vec3(0.2f, 0.3f, 0.4f));
+    CHECK(pc[4] == Vec3(0.2f, 0.3f, 0.4f));
+    // Grit: loose points of its size, in a shade of the inside.
+    RigidFrame gritty = f;
+    gritty.debris = {0.5f, 0.1f, 0.5f, 0.04f, 1.0f, 0.0f, 1.0f, 0.1f};
+    const GeometryPtr withGrit = drawnPieces(gritty, Vec3(0.5f), Vec3(0.2f, 0.3f, 0.4f), "inside");
+    CHECK_EQ(withGrit->pointCount(), geo->pointCount() + 2);
+    CHECK(withGrit->points().find("pscale")->read<float>()[7] == 0.05f);
     // Point colours: the corners take them, the cut face's corners the inside colour.
     auto pcd = geo->points().create("Cd", AttrType::Vec3).write<Vec3>();
     for (size_t i = 0; i < 6; ++i) pcd[i] = Vec3(0.0f, 0.0f, static_cast<float>(i));
@@ -364,6 +388,7 @@ TEST(rigid_solver_is_a_node_of_the_network) {
     CHECK(net.connect(rbd, "look", output, "look"));
     CHECK(net.setParam(rbd, "glue", "500"));
     CHECK(net.setParam(rbd, "gravity", "5"));
+    CHECK(net.setParam(rbd, "air", "2"));
     CHECK(net.setParam(rbd, "color", "1 0 0"));
     CHECK(net.setText(rbd, "inside_group", "cut"));
     // The Rigid output links only to a Rigid input.
@@ -378,8 +403,9 @@ TEST(rigid_solver_is_a_node_of_the_network) {
     CHECK_EQ(c.rigid, rbd);
     CHECK(c.world.rigid.pieces != nullptr);
     CHECK_EQ(pieceCount(*c.world.rigid.pieces), 6);
-    CHECK_EQ(c.world.rigid.solver.glue, 500.0f);
+    CHECK_EQ(c.world.rigid.solver.glue, 500000.0f);  // kPa
     CHECK(c.world.rigid.solver.gravity == Vec3(0.0f, -5.0f, 0.0f));
+    CHECK_EQ(c.world.rigid.solver.air, 2.0f);
     CHECK_EQ(c.world.rigid.colliders.size(), 1u);
     CHECK_EQ(c.world.rigid.node, rbd);
     CHECK(!c.world.rigid.intoWater && !c.world.rigid.intoGas && !c.world.rigid.dustIntoGas);
@@ -520,4 +546,194 @@ TEST(rigid_solver_says_what_is_wrong) {
     for (const Problem& p : c.problems) fromSim = fromSim || (p.node == rbd && p.message.find("come from a simulation") != std::string::npos);
     CHECK(fromSim);
     CHECK(c.world.rigid.pieces == nullptr);
+}
+
+namespace {
+
+/// A closed box of `size` at `center`, its primitives in piece `piece`.
+Geometry boxPiece(Vec3 center, Vec3 size, int32_t piece) {
+    registerBuiltinNodes();
+    Graph g;
+    pg::Node* box = g.create("box", "box");
+    box->setInt("divisions", 1);
+    box->setVec3("size", size);
+    box->setVec3("center", center);
+    CookEngine engine;
+    Geometry out = *engine.cook(*box, CookContext{});
+    auto a = out.primitives().create("piece", AttrType::Int).write<int32_t>();
+    std::fill(a.begin(), a.end(), piece);
+    return out;
+}
+
+GeometryPtr together(std::initializer_list<Geometry> parts) {
+    auto out = std::make_shared<Geometry>();
+    for (const Geometry& g : parts) out->append(g);
+    return out;
+}
+
+}  // namespace
+
+TEST(rigid_bodies_are_parts_that_touch_and_glue_where_faces_meet) {
+    // Two boxes side by side, half their faces against each other.
+    const GeometryPtr two = together({boxPiece(Vec3(0.0f, 0.5f, 0.0f), Vec3(1.0f), 0),
+                                      boxPiece(Vec3(1.0f, 0.5f, 0.5f), Vec3(1.0f), 1)});
+    auto L = rigidLayout(*two, "piece");
+    CHECK_EQ(L->bodies, 2);
+    CHECK_EQ(L->contacts.size(), 1u);
+    const RigidLayout::Contact& c = L->contacts.front();
+    CHECK(std::fabs(c.area - 0.5f) < 1e-4f);
+    CHECK(length(c.normal - Vec3(1.0f, 0.0f, 0.0f)) < 1e-4f);
+    CHECK(length(c.at - Vec3(0.5f, 0.5f, 0.25f)) < 1e-3f);
+    // One piece: one body of two parts -- it collides as both.
+    const GeometryPtr one = together({boxPiece(Vec3(0.0f, 0.5f, 0.0f), Vec3(1.0f), 0),
+                                      boxPiece(Vec3(1.0f, 0.5f, 0.5f), Vec3(1.0f), 0)});
+    L = rigidLayout(*one, "piece");
+    CHECK_EQ(L->bodies, 1);
+    CHECK_EQ(L->parts[0].size(), 2u);
+    CHECK(L->contacts.empty());
+    // Apart, though of one piece: two bodies.
+    const GeometryPtr apart = together({boxPiece(Vec3(0.0f, 0.5f, 0.0f), Vec3(1.0f), 0),
+                                        boxPiece(Vec3(3.0f, 0.5f, 0.0f), Vec3(1.0f), 0)});
+    L = rigidLayout(*apart, "piece");
+    CHECK_EQ(L->bodies, 2);
+    // Only an edge in common: no glue.
+    const GeometryPtr edge = together({boxPiece(Vec3(0.0f, 0.5f, 0.0f), Vec3(1.0f), 0),
+                                       boxPiece(Vec3(1.0f, 1.5f, 0.0f), Vec3(1.0f), 1)});
+    CHECK(rigidLayout(*edge, "piece")->contacts.empty());
+
+    // An L of one piece falls as one body, its two parts together.
+    RigidScene scene;
+    scene.pieces = together({boxPiece(Vec3(0.0f, 2.5f, 0.0f), Vec3(1.0f), 0),
+                             boxPiece(Vec3(1.0f, 2.5f, 0.0f), Vec3(1.0f), 0),
+                             boxPiece(Vec3(1.0f, 3.5f, 0.0f), Vec3(1.0f), 0)});
+    RigidSolver solver(scene);
+    CHECK_EQ(solver.pieceCount(), 1u);
+    for (int i = 0; i < 90; ++i) solver.step();
+    Vec3 lo, hi;
+    bounds(*posedPieces(solver.capture()), lo, hi);
+    CHECK(lo.y > -0.05f && lo.y < 0.1f);  // on the floor, not through it
+}
+
+TEST(rigid_charges_break_the_glue_on_time_and_kick_the_pieces) {
+    // A column of three glued boxes; a charge in the middle one at 0.5 s.
+    Geometry low = boxPiece(Vec3(0.0f, 0.5f, 0.0f), Vec3(1.0f), 0);
+    Geometry middle = boxPiece(Vec3(0.0f, 1.5f, 0.0f), Vec3(1.0f), 1);
+    Geometry top = boxPiece(Vec3(0.0f, 2.5f, 0.0f), Vec3(1.0f), 2);
+    {
+        auto r = middle.primitives().create("release", AttrType::Float).write<float>();
+        std::fill(r.begin(), r.end(), 0.5f);
+        auto k = middle.primitives().create("kick", AttrType::Vec3).write<Vec3>();
+        std::fill(k.begin(), k.end(), Vec3(6.0f, 0.0f, 0.0f));
+        // The foundation stays where it is; the others move (a merge fills
+        // what a geometry lacks with 0: all of them say).
+        for (Geometry* g : {&low, &middle, &top}) {
+            auto a = g->primitives().create("active", AttrType::Int).write<int32_t>();
+            std::fill(a.begin(), a.end(), g == &low ? 0 : 1);
+        }
+    }
+    RigidScene scene;
+    scene.pieces = together({low, middle, top});
+    scene.solver.glue = 1e7f;
+    scene.dustIntoGas = true;
+    RigidSolver solver(scene);
+    RigidFrame f = solver.capture();
+    CHECK_EQ(f.joints, 2u);
+    for (int i = 0; i < 12; ++i) solver.step();
+    f = solver.capture();
+    CHECK_EQ(f.broken, 0u);  // standing, glued
+    CHECK(fastest(f) < 0.01f);
+    bool puffed = false;
+    for (int i = 0; i < 6; ++i) {
+        solver.step();
+        puffed = puffed || !solver.dust().empty();
+    }
+    f = solver.capture();
+    CHECK_EQ(f.broken, 2u);  // the charge went off
+    CHECK(puffed);
+    CHECK(f.poses[1].velocity.x > 1.0f);  // kicked out
+    for (int i = 0; i < 60; ++i) solver.step();
+    f = solver.capture();
+    CHECK(f.poses[1].apply(Vec3(0.0f, 1.5f, 0.0f)).x > 0.5f);
+    CHECK(f.poses[0].position == Vec3());  // the foundation did not move
+    // The top came down: a knock, dust, grit.
+    CHECK(f.poses[2].apply(Vec3(0.0f, 2.5f, 0.0f)).y < 1.6f);
+    CHECK(!f.debris.empty());
+    CHECK_EQ(f.debris.size() % 4, 0u);
+}
+
+TEST(rigid_knocks_puff_dust_and_throw_grit) {
+    RigidScene scene;
+    scene.pieces = together({boxPiece(Vec3(0.0f, 4.0f, 0.0f), Vec3(1.0f), 0)});
+    scene.dustIntoGas = true;
+    RigidSolver solver(scene);
+    bool puffed = false;
+    for (int i = 0; i < 30; ++i) {
+        solver.step();
+        if (!solver.dust().empty()) puffed = true;
+    }
+    CHECK(puffed);
+    const RigidFrame f = solver.capture();
+    CHECK(!f.debris.empty());
+    // The grit lands and lies on the floor.
+    RigidSolver later(scene);
+    for (int i = 0; i < 120; ++i) later.step();
+    const RigidFrame rest = later.capture();
+    for (size_t i = 0; i + 3 < rest.debris.size(); i += 4) CHECK(rest.debris[i + 1] < 0.2f);
+    // No grit wanted: none.
+    scene.solver.debris = 0.0f;
+    RigidSolver clean(scene);
+    for (int i = 0; i < 30; ++i) clean.step();
+    CHECK(clean.capture().debris.empty());
+}
+
+TEST(rigid_knocks_squeeze_out_the_air_that_swells_the_dust) {
+    // A box lands hard: the air under it is squeezed out, and the puff of its
+    // knock swells -- the gas pushes the dust out along the floor.
+    RigidScene scene;
+    scene.pieces = together({boxPiece(Vec3(0.0f, 4.0f, 0.0f), Vec3(1.0f), 0)});
+    scene.dustIntoGas = true;
+    auto most = [](RigidScene s) {
+        RigidSolver solver(s);
+        float swell = -1.0f;
+        for (int i = 0; i < 30; ++i) {
+            solver.step();
+            for (const RigidDust& d : solver.dust()) swell = std::max(swell, d.expansion);
+        }
+        return swell;
+    };
+    const float swell = most(scene);
+    CHECK(swell > 0.0f);
+    CHECK(swell <= 20.0f);  // kept to what the gas takes
+    // No air: the puffs are dust alone.
+    scene.solver.air = 0.0f;
+    CHECK_EQ(most(scene), 0.0f);
+    // Out of range: made safe.
+    scene.solver.air = -1.0f;
+    CHECK_EQ(scene.sanitized().solver.air, 0.0f);
+}
+
+TEST(rigid_heavier_pieces_by_attribute) {
+    // A light box and a heavy one on a see-saw of glue: the heavy one wins.
+    Geometry light = boxPiece(Vec3(-1.0f, 2.5f, 0.0f), Vec3(1.0f), 0);
+    Geometry heavy = boxPiece(Vec3(1.0f, 2.5f, 0.0f), Vec3(1.0f), 1);
+    Geometry beam = boxPiece(Vec3(0.0f, 1.5f, 0.0f), Vec3(4.0f, 1.0f, 1.0f), 2);
+    auto d = heavy.primitives().create("density", AttrType::Float).write<float>();
+    std::fill(d.begin(), d.end(), 8000.0f);
+    RigidScene scene;
+    scene.pieces = together({light, heavy, beam});
+    scene.solver.glue = 1e9f;
+    Collider pivot;
+    pivot.shape = Shape::Box;
+    pivot.center = Vec3(0.0f, 0.5f, 0.0f);
+    pivot.size = Vec3(0.2f, 1.0f, 2.0f);
+    pivot.node = 9;
+    scene.colliders.push_back(pivot);
+    RigidSolver solver(scene);
+    for (int i = 0; i < 45; ++i) solver.step();
+    const GeometryPtr posed = posedPieces(solver.capture());
+    Vec3 lo, hi;
+    bounds(*posed, lo, hi);
+    // Tipped towards +x: the heavy end is down.
+    const RigidPose& p = solver.capture().poses[1];
+    CHECK(p.apply(Vec3(1.0f, 2.5f, 0.0f)).y < 2.0f);
 }

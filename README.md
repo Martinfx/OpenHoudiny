@@ -32,9 +32,9 @@ okna.
   body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
   Houdini, Blender a renderery
 - **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi
-  Fracture, tuhá tělesa nad Jolt Physics s lepidlem, které se pod silou
-  trhá, úlomky jako překážky vody a plynu, prach z přetržených spojů;
-  demolice budovy z assetu jako video
+  Fracture, tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
+  které nárazy lámou, nálože, drcení na prach, drť, vzduch vytlačený
+  zřícením, který žene prach do ulic; odstřel věžáku ve městě jako video
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem
@@ -87,7 +87,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 242 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 10 tuhá tělesa, 25 shader graf, 86 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
+./build/pgtests            # 248 testů: 59 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 15 tuhá tělesa, 25 shader graf, 87 simulace, voda, déšť, geometrie, animace, 11 cache a export, 5 video
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -199,14 +199,17 @@ a vypíše její hash — stejný na 1 i 4 vláknech.
 **Destrukce**: **Voronoi Fracture** rozřeže uzavřené těleso na kusy
 (řezy rovinami s víčky, kusy dohromady jsou přesně původní těleso) a
 **RBD Solver** nad [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
-z nich udělá tuhá tělesa: konvexní obaly s hmotou, slepené pevnými spoji
-tam, kde sdílejí řeznou plochu; spoj tažený větší silou než `glue` se
-utrhne a vyfoukne prach. Klíčované objekty jsou kinematické překážky
-(demoliční koule), kusy jdou jako pohyblivé překážky do vody, plynu
-i deště, prach do Pyro Solveru, a uzel RBD Pieces je vrací jako geometrii
-s rychlostí `v`. Jolt běží v jednom vlákně a deterministicky: stejné
-snímky při každém běhu, snímky do cache. Příklad **demolition**: budova
-z assetu se pod koulí sesype do bazénu.
+z nich udělá tuhá tělesa: konvexní obaly s hmotou; kusy slepené tam, kde
+se dotýkají plochou, jsou jedno těleso, dokud je náraz silnější než
+lepidlo (`glue` v kPa) nerozlomí. Nálože (`release`, `kick`, `vanish`)
+lepidlo v daný čas přetrhnou, kusy s `crush` se pod padajícími patry
+rozdrtí na prach, nárazy sypou drť a vytlačený vzduch žene prach do ulic.
+Klíčované objekty jsou kinematické překážky, kusy jdou jako pohyblivé
+překážky do vody, plynu i deště, prach do Pyro Solveru, a uzel RBD Pieces
+je vrací jako geometrii s rychlostí `v`. Jolt běží v jednom vlákně
+a deterministicky: stejné snímky při každém běhu, snímky do cache.
+Příklad **demolition**: odstřel čtrnáctipatrového věžáku v bloku domů
+za zlatého světla.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo
