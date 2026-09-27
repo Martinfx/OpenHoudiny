@@ -149,6 +149,13 @@ AttributeArray& AttributeSet::create(const std::string& name, AttrType type) {
     return ins->second;
 }
 
+AttributeArray& AttributeSet::assign(const std::string& name, const AttributeArray& array) {
+    AttributeArray& a = attrs_[name];
+    a = array;
+    if (a.size() != elementCount_) a.resize(elementCount_);
+    return a;
+}
+
 bool AttributeSet::erase(const std::string& name) {
     return attrs_.erase(name) > 0;
 }

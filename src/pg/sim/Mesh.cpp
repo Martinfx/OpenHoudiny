@@ -1,8 +1,12 @@
 #include "pg/sim/Mesh.h"
 
+#include "pg/io/Obj.h"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -11,49 +15,6 @@
 
 namespace pg::sim {
 namespace {
-
-/// A number as C writes it -- "-1.5e3" -- whatever the locale says a
-/// decimal point is. Advances `s` past it; false if there is none.
-bool readNumber(const char*& s, const char* end, float& out) {
-    const char* p = s;
-    while (p < end && (*p == ' ' || *p == '\t')) ++p;
-    bool negative = false;
-    if (p < end && (*p == '-' || *p == '+')) negative = *p++ == '-';
-    double value = 0.0;
-    bool digits = false;
-    while (p < end && *p >= '0' && *p <= '9') {
-        value = value * 10.0 + (*p++ - '0');
-        digits = true;
-    }
-    if (p < end && *p == '.') {
-        ++p;
-        double scale = 0.1;
-        while (p < end && *p >= '0' && *p <= '9') {
-            value += (*p++ - '0') * scale;
-            scale *= 0.1;
-            digits = true;
-        }
-    }
-    if (!digits) return false;
-    if (p < end && (*p == 'e' || *p == 'E')) {
-        const char* q = p + 1;
-        bool negativeExponent = false;
-        if (q < end && (*q == '-' || *q == '+')) negativeExponent = *q++ == '-';
-        int exponent = 0;
-        bool any = false;
-        while (q < end && *q >= '0' && *q <= '9') {
-            exponent = std::min(exponent * 10 + (*q++ - '0'), 400);
-            any = true;
-        }
-        if (any) {
-            value *= std::pow(10.0, negativeExponent ? -exponent : exponent);
-            p = q;
-        }
-    }
-    out = static_cast<float>(negative ? -value : value);
-    s = p;
-    return std::isfinite(out);
-}
 
 /// The point of triangle abc nearest p (Ericson, Real-Time Collision
 /// Detection, 5.1.5): which of the regions round the triangle p is in.
@@ -114,59 +75,27 @@ void TriangleMesh::bounds(Vec3& lo, Vec3& hi) const {
 }
 
 bool parseObj(std::string_view text, TriangleMesh& out, std::string& error) {
-    TriangleMesh m;
-    std::vector<uint32_t> face;
-    size_t pos = 0;
-    int line = 0;
-    while (pos < text.size()) {
-        const size_t end = std::min(text.find('\n', pos), text.size());
-        std::string_view l = text.substr(pos, end - pos);
-        pos = end + 1;
-        ++line;
-        if (const size_t hash = l.find('#'); hash != std::string_view::npos) l = l.substr(0, hash);
-        while (!l.empty() && (l.back() == '\r' || l.back() == ' ' || l.back() == '\t')) l.remove_suffix(1);
-        while (!l.empty() && (l.front() == ' ' || l.front() == '\t')) l.remove_prefix(1);
-        if (l.size() < 2 || (l[1] != ' ' && l[1] != '\t')) continue;  // vn, vt, usemtl, o, g, s ...
-        const char* s = l.data() + 2;
-        const char* e = l.data() + l.size();
-        if (l[0] == 'v') {
-            Vec3 p;
-            if (!readNumber(s, e, p.x) || !readNumber(s, e, p.y) || !readNumber(s, e, p.z)) {
-                error = "line " + std::to_string(line) + ": a vertex is three numbers";
-                return false;
-            }
-            m.positions.push_back(p);
-        } else if (l[0] == 'f') {
-            face.clear();
-            const long count = static_cast<long>(m.positions.size());
-            while (s < e) {
-                while (s < e && (*s == ' ' || *s == '\t')) ++s;
-                if (s >= e) break;
-                // The vertex is the first number of a/b/c.
-                char* stop = nullptr;
-                const long ref = std::strtol(s, &stop, 10);
-                if (stop == s) {
-                    error = "line " + std::to_string(line) + ": a face lists vertex numbers";
-                    return false;
-                }
-                const long index = ref < 0 ? count + ref : ref - 1;
-                if (ref == 0 || index < 0 || index >= count) {
-                    error = "line " + std::to_string(line) + ": no vertex " + std::to_string(ref);
-                    return false;
-                }
-                face.push_back(static_cast<uint32_t>(index));
-                s = stop;
-                while (s < e && *s != ' ' && *s != '\t') ++s;  // the /b/c
-            }
-            for (size_t i = 1; i + 1 < face.size(); ++i) m.triangles.push_back({face[0], face[i], face[i + 1]});
-        }
-    }
+    Geometry geo;
+    if (!io::parseObj(text, geo, error)) return false;
+    TriangleMesh m = triangulate(geo);
     if (m.triangles.empty()) {
         error = "no faces";
         return false;
     }
     out = std::move(m);
     return true;
+}
+
+TriangleMesh triangulate(const Geometry& geo) {
+    TriangleMesh m;
+    const auto P = geo.positions();
+    m.positions.assign(P.begin(), P.end());
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        if (!geo.primitiveClosed(prim)) continue;
+        const auto face = geo.primitivePoints(prim);
+        for (size_t i = 1; i + 1 < face.size(); ++i) m.triangles.push_back({face[0], face[i], face[i + 1]});
+    }
+    return m;
 }
 
 bool readObj(const std::string& path, TriangleMesh& out, std::string& error) {
@@ -266,15 +195,67 @@ void MeshShape::bake() {
     }
 
     // 3. Inside or outside: along each axis, crossings counted from the
-    // low side; odd is inside. The rays are moved off the grid lines by a
-    // hair, so that they do not run exactly through the vertices of a mesh
-    // made on the same round numbers. Two votes of three win.
+    // low side, for each shell -- the triangles joined through corners at
+    // the same place -- on its own; inside an odd number of times is inside
+    // it, and inside any shell is inside. So shells that overlap -- balls
+    // round points, copies, merged shapes -- fill their overlap too. The rays
+    // are moved off the grid lines by a hair, so that they do not run
+    // exactly through the vertices of a mesh made on the same round numbers.
+    // Two votes of three win.
+    std::vector<uint32_t> shell(tris.size(), 0);
+    uint32_t shells = 0;
+    {
+        // Corners at the same place are one corner.
+        std::vector<uint32_t> order(pos.size());
+        for (uint32_t i = 0; i < order.size(); ++i) order[i] = i;
+        auto bitsOf = [&](uint32_t i) {
+            std::array<uint32_t, 3> b{};
+            for (int a = 0; a < 3; ++a) {
+                const float x = pos[i][a] + 0.0f;  // -0 is 0
+                std::memcpy(&b[static_cast<size_t>(a)], &x, sizeof x);
+            }
+            return b;
+        };
+        std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+            const auto ba = bitsOf(a), bb = bitsOf(b);
+            return ba != bb ? ba < bb : a < b;
+        });
+        std::vector<uint32_t> same(pos.size());
+        for (size_t i = 0; i < order.size(); ++i) {
+            same[order[i]] = i > 0 && bitsOf(order[i]) == bitsOf(order[i - 1]) ? same[order[i - 1]] : order[i];
+        }
+        std::vector<uint32_t> parent(pos.size());
+        for (uint32_t i = 0; i < parent.size(); ++i) parent[i] = i;
+        auto root = [&](uint32_t i) {
+            while (parent[i] != i) i = parent[i] = parent[parent[i]];
+            return i;
+        };
+        for (const auto& t : tris) {
+            const uint32_t a = root(same[t[0]]);
+            for (int c = 1; c < 3; ++c) {
+                const uint32_t b = root(same[t[static_cast<size_t>(c)]]);
+                if (a != b) parent[std::max(a, b)] = std::min(a, b);
+            }
+        }
+        std::vector<uint32_t> number(pos.size(), ~0u);
+        for (size_t t = 0; t < tris.size(); ++t) {
+            uint32_t& n = number[root(same[tris[t][0]])];
+            if (n == ~0u) n = shells++;
+            shell[t] = n;
+        }
+    }
+    struct Crossing {
+        uint32_t ray;   ///< iu + n[u] * iv
+        int32_t at;     ///< the first grid point past it
+        uint32_t shell;
+    };
+    std::vector<Crossing> crossings;
+    std::vector<uint8_t> odd(shells, 0);
     std::vector<uint8_t> votes(total, 0);
-    std::vector<int> crossings(total);
     for (int ax = 0; ax < 3; ++ax) {
         const int u = (ax + 1) % 3, v = (ax + 2) % 3;
         const float offU = 1.13e-4f * cell_, offV = 2.71e-4f * cell_;
-        std::fill(crossings.begin(), crossings.end(), 0);
+        crossings.clear();
         auto at = [&](int ia, int iu, int iv) {
             int ijk[3];
             ijk[ax] = ia;
@@ -282,7 +263,8 @@ void MeshShape::bake() {
             ijk[v] = iv;
             return index(ijk[0], ijk[1], ijk[2]);
         };
-        for (const auto& t : tris) {
+        for (size_t ti = 0; ti < tris.size(); ++ti) {
+            const auto& t = tris[ti];
             const Vec3 &a = pos[t[0]], &b = pos[t[1]], &c = pos[t[2]];
             const float au = a[u], av = a[v], bu = b[u], bv = b[v], cu = c[u], cv = c[v];
             const float area = (bu - au) * (cv - av) - (bv - av) * (cu - au);
@@ -301,20 +283,32 @@ void MeshShape::bake() {
                     const bool inside = (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f) || (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f);
                     if (!inside) continue;
                     const float x = (w0 * a[ax] + w1 * b[ax] + w2 * c[ax]) / (w0 + w1 + w2);
-                    // The first grid point past the crossing.
                     const int ia = std::max(0, static_cast<int>(std::ceil((x - lo_[ax]) / cell_)));
-                    if (ia < n_[ax]) ++crossings[at(ia, iu, iv)];
+                    if (ia < n_[ax]) {
+                        crossings.push_back({static_cast<uint32_t>(iu + n_[u] * iv), ia, shell[ti]});
+                    }
                 }
             }
         }
+        std::sort(crossings.begin(), crossings.end(), [](const Crossing& p, const Crossing& q) {
+            return p.ray != q.ray ? p.ray < q.ray : p.at < q.at;
+        });
+        size_t next = 0;
         for (int iv = 0; iv < n_[v]; ++iv) {
             for (int iu = 0; iu < n_[u]; ++iu) {
-                int count = 0;
+                const uint32_t ray = static_cast<uint32_t>(iu + n_[u] * iv);
+                const size_t first = next;
+                int in = 0;  // shells we are inside of
                 for (int ia = 0; ia < n_[ax]; ++ia) {
+                    for (; next < crossings.size() && crossings[next].ray == ray && crossings[next].at == ia; ++next) {
+                        uint8_t& o = odd[crossings[next].shell];
+                        o ^= 1;
+                        in += o ? 1 : -1;
+                    }
                     const size_t id = at(ia, iu, iv);
-                    count += crossings[id];
-                    votes[id] = static_cast<uint8_t>(votes[id] + (count & 1));
+                    votes[id] = static_cast<uint8_t>(votes[id] + (in > 0 ? 1 : 0));
                 }
+                for (size_t e = first; e < next; ++e) odd[crossings[e].shell] = 0;
             }
         }
     }
@@ -407,6 +401,49 @@ std::shared_ptr<const MeshShape> loadMesh(const std::string& path, std::string& 
     auto shape = std::make_shared<MeshShape>(std::move(mesh), 48);
     shape->path = path;
     cache[key] = {size, time, shape};
+    return shape;
+}
+
+std::shared_ptr<const MeshShape> meshFromGeometry(const Geometry& geo, float radius) {
+    uint64_t key = geo.hash();
+    uint32_t bits = 0;
+    std::memcpy(&bits, &radius, sizeof bits);
+    key ^= static_cast<uint64_t>(bits) * 0x9e3779b97f4a7c15ull;
+    static std::mutex mu;
+    static std::map<uint64_t, std::weak_ptr<const MeshShape>> cache;
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        const auto it = cache.find(key);
+        if (it != cache.end()) {
+            if (auto kept = it->second.lock()) return kept;
+        }
+    }
+    TriangleMesh mesh = triangulate(geo);
+    if (mesh.triangles.empty()) {
+        // Points: an icosahedron round each.
+        const size_t n = std::min(geo.pointCount(), kMaxShapePoints);
+        if (n == 0) return nullptr;
+        const float g = 0.5f * (1.0f + std::sqrt(5.0f));
+        const Vec3 corner[12] = {{-1, g, 0}, {1, g, 0}, {-1, -g, 0}, {1, -g, 0}, {0, -1, g}, {0, 1, g},
+                                 {0, -1, -g}, {0, 1, -g}, {g, 0, -1}, {g, 0, 1}, {-g, 0, -1}, {-g, 0, 1}};
+        const uint32_t face[20][3] = {{0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11}, {1, 5, 9}, {5, 11, 4},
+                                      {11, 10, 2}, {10, 7, 6}, {7, 1, 8}, {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8},
+                                      {3, 8, 9}, {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1}};
+        const auto P = geo.positions();
+        const AttributeArray* pscale = geo.points().find("pscale");
+        const bool sized = pscale && pscale->type() == AttrType::Float;
+        const float unit = 1.0f / length(corner[0]);
+        mesh = TriangleMesh();
+        for (size_t i = 0; i < n; ++i) {
+            const float r = std::max(sized ? pscale->read<float>()[i] : radius, 1e-4f);
+            const uint32_t base = static_cast<uint32_t>(mesh.positions.size());
+            for (const Vec3& c : corner) mesh.positions.push_back(P[i] + c * (r * unit));
+            for (const auto& f : face) mesh.triangles.push_back({base + f[0], base + f[1], base + f[2]});
+        }
+    }
+    auto shape = std::make_shared<MeshShape>(std::move(mesh), 64);
+    std::lock_guard<std::mutex> lock(mu);
+    cache[key] = shape;
     return shape;
 }
 

@@ -1,0 +1,47 @@
+pgsim 1
+# Rain on a rock garden: a Sphere copied onto points scattered over a Grid --
+# each copy as big as its point's pscale, which a wrangle sets from noise --
+# squashed by a Transform, is the shape of one object: the rocks. The rain
+# lands on them and splashes off each one; the floor round them is wet.
+node 1 grid 1 ground 0 0
+  param sizex 1.6
+  param sizez 1.2
+node 2 scatter 1 scatter 0 110
+  param count 14
+  param seed 7
+node 3 point_wrangle 1 sizes 0 220
+  param snippet "@pscale = 0.6 + 0.9 * abs(noise(@P * 2.5))"
+node 4 sphere 1 pebble 250 0
+  param radius 0.12
+  param center 0 0 0
+  param rows 10
+  param columns 16
+node 5 copy_to_points 1 copies 250 160
+node 6 transform 1 squash 250 280
+  param s 1 0.55 1
+node 7 object 1 rocks 500 280
+  param color 0.2 0.19 0.18
+node 8 wind 1 breeze 500 400
+  param direction 1 0 0.2
+  param speed 1
+  param gusts 0.4
+node 9 rain 1 rain 750 300
+  param size 2.2 0.2 1.8
+node 10 output 2 output 980 300
+  param frames 90
+  param light_intensity 1.4
+  param sky_intensity 0.5
+node 11 camera 1 camera 980 450
+  param center 1.3 0.75 1.6
+  param rotation -18 39 0
+  param focal 30
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 4.geometry -> 5.geometry
+link 3.geometry -> 5.points
+link 5.geometry -> 6.geometry
+link 6.geometry -> 7.shape
+link 7.collider -> 9.colliders
+link 8.force -> 9.forces
+link 9.look -> 10.look
+link 11.camera -> 10.camera

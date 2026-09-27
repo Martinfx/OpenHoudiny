@@ -35,7 +35,7 @@ void WorldSolver::step() {
 Frame WorldSolver::capture() const {
     Frame f;
     if (gas_) f = sim::capture(*gas_);
-    if (water_) f.water = sim::capture(*water_);
+    if (water_) f.water = sim::capture(*water_, world_.keepParticles);
     if (rain_) f.rain = sim::capture(*rain_);
     f.number = frame_;
     f.time = time_;

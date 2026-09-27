@@ -26,6 +26,9 @@ struct World {
     LiquidScene water;               ///< the Liquid Solver's, when hasWater
     bool hasRain = false;
     RainScene rain;                  ///< the Rain's, when hasRain
+    /// Frames keep the water's particles: something makes points of them
+    /// (Liquid Points). They cost some 19 bytes a particle a frame.
+    bool keepParticles = false;
 
     /// True when there is anything to simulate.
     bool any() const { return hasGas || hasWater || hasRain; }

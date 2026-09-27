@@ -1,6 +1,7 @@
 #include "pg/core/Geometry.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace pg {
@@ -79,11 +80,78 @@ size_t Group::memberCount() const {
     return n;
 }
 
+// --- Volume ----------------------------------------------------------------
+
+float Volume::at(int i, int j, int k) const {
+    if (!values || i < 0 || j < 0 || k < 0 || i >= res[0] || j >= res[1] || k >= res[2]) return 0.0f;
+    return (*values)[static_cast<size_t>(i) +
+                     static_cast<size_t>(res[0]) * (static_cast<size_t>(j) + static_cast<size_t>(res[1]) * static_cast<size_t>(k))];
+}
+
+float Volume::sample(const Vec3& p) const {
+    if (!values || voxel <= 0.0f) return 0.0f;
+    // In voxel units, from the middle of voxel 0.
+    float g[3];
+    int c[3];
+    float f[3];
+    for (int a = 0; a < 3; ++a) {
+        g[a] = (p[a] - origin[a]) / voxel - 0.5f;
+        if (g[a] < -0.5f || g[a] > static_cast<float>(res[a]) - 0.5f) return 0.0f;
+        const float fl = std::floor(g[a]);
+        c[a] = static_cast<int>(fl);
+        f[a] = g[a] - fl;
+    }
+    // The nearest voxel stands in for one past the edge.
+    auto v = [&](int i, int j, int k) {
+        return at(std::clamp(i, 0, res[0] - 1), std::clamp(j, 0, res[1] - 1), std::clamp(k, 0, res[2] - 1));
+    };
+    const float x00 = v(c[0], c[1], c[2]) + (v(c[0] + 1, c[1], c[2]) - v(c[0], c[1], c[2])) * f[0];
+    const float x10 = v(c[0], c[1] + 1, c[2]) + (v(c[0] + 1, c[1] + 1, c[2]) - v(c[0], c[1] + 1, c[2])) * f[0];
+    const float x01 = v(c[0], c[1], c[2] + 1) + (v(c[0] + 1, c[1], c[2] + 1) - v(c[0], c[1], c[2] + 1)) * f[0];
+    const float x11 = v(c[0], c[1] + 1, c[2] + 1) + (v(c[0] + 1, c[1] + 1, c[2] + 1) - v(c[0], c[1] + 1, c[2] + 1)) * f[0];
+    const float y0 = x00 + (x10 - x00) * f[1], y1 = x01 + (x11 - x01) * f[1];
+    return y0 + (y1 - y0) * f[2];
+}
+
+Volume Volume::make(std::string name, const Vec3& origin, float voxel, int nx, int ny, int nz,
+                    std::vector<float> data) {
+    Volume v;
+    v.name = std::move(name);
+    v.origin = origin;
+    v.voxel = voxel;
+    v.res[0] = std::max(nx, 0);
+    v.res[1] = std::max(ny, 0);
+    v.res[2] = std::max(nz, 0);
+    data.resize(v.count(), 0.0f);
+    v.values = std::make_shared<const std::vector<float>>(std::move(data));
+    return v;
+}
+
 // --- Geometry --------------------------------------------------------------
 
 Geometry::Geometry() : topo_(std::make_shared<Topology>()) {
     // P is mandatory. Every node may assume it exists.
     points_.create("P", AttrType::Vec3);
+    // The detail is one element: the geometry itself.
+    detail_.setElementCount(1);
+}
+
+const std::vector<Volume>& Geometry::volumes() const {
+    static const std::vector<Volume> none;
+    return volumes_ ? *volumes_ : none;
+}
+
+void Geometry::addVolume(Volume volume) {
+    if (!volumes_) volumes_ = std::make_shared<std::vector<Volume>>();
+    else if (volumes_.use_count() > 1) volumes_ = std::make_shared<std::vector<Volume>>(*volumes_);
+    volumes_->push_back(std::move(volume));
+}
+
+const Volume* Geometry::findVolume(const std::string& name) const {
+    for (const Volume& v : volumes()) {
+        if (v.name == name) return &v;
+    }
+    return nullptr;
 }
 
 Geometry::Topology& Geometry::topologyForWrite() {
@@ -168,11 +236,10 @@ void Geometry::append(const Geometry& other) {
     vertices_.append(other.vertices_);
     primitives_.append(other.primitives_);
 
-    // Detail attributes: ours win, theirs are added only if we lack them.
+    // Detail attributes: ours win, theirs are added -- with their values --
+    // only if we lack them.
     for (const auto& [name, attr] : other.detail_) {
-        if (!detail_.contains(name)) {
-            detail_.create(name, attr.type());
-        }
+        if (!detail_.contains(name)) detail_.assign(name, attr);
     }
 
     Topology& t = topologyForWrite();
@@ -186,6 +253,8 @@ void Geometry::append(const Geometry& other) {
         t.primCount.push_back(o.primCount[i]);
         t.primClosed.push_back(o.primClosed[i]);
     }
+
+    for (const Volume& v : other.volumes()) addVolume(v);
 
     for (auto& [name, g] : groups_) {
         g.resize(elementCount(g.classOf()));
@@ -321,6 +390,16 @@ uint64_t Geometry::hash() const {
         hashU64(h, m.size());
         if (!m.empty()) hashBytes(h, m.data(), m.size());
     }
+
+    hashU64(h, volumeCount());
+    for (const Volume& v : volumes()) {
+        hashBytes(h, v.name.data(), v.name.size());
+        hashU64(h, v.name.size());
+        hashBytes(h, &v.origin, sizeof(Vec3));
+        hashBytes(h, &v.voxel, sizeof(float));
+        hashBytes(h, v.res, sizeof(v.res));
+        if (v.values && !v.values->empty()) hashBytes(h, v.values->data(), v.values->size() * sizeof(float));
+    }
     return h;
 }
 
@@ -331,6 +410,7 @@ size_t Geometry::memoryUsage() const {
     bytes += t.vertexPoint.size() * sizeof(uint32_t);
     bytes += t.primStart.size() * sizeof(uint32_t) * 2 + t.primClosed.size();
     for (const auto& [name, g] : groups_) bytes += g.size();
+    for (const Volume& v : volumes()) bytes += v.values ? v.values->size() * sizeof(float) : 0;
     return bytes;
 }
 

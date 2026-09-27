@@ -16,7 +16,7 @@
 // A mesh keeps the units and the place of its file; a Shape::Mesh placed in
 // the world (Shape.h) maps the box round it onto the shape's size.
 //
-#include "pg/core/Types.h"
+#include "pg/core/Geometry.h"
 
 #include <array>
 #include <cstdint>
@@ -35,12 +35,13 @@ struct TriangleMesh {
     void bounds(Vec3& lo, Vec3& hi) const;
 };
 
-/// OBJ text: vertices (`v`) and faces (`f`, any of `a`, `a/b`, `a//c`,
-/// `a/b/c`, negative counting from the end), polygons cut into fans of
-/// triangles. Normals, texture coordinates, materials, groups: skipped.
-/// False, with the line, for a face that names a vertex not there.
+/// OBJ text (pg/io/Obj.h) as triangles: polygons cut into fans. False,
+/// with the line, for a face that names a vertex not there, or for no faces.
 bool parseObj(std::string_view text, TriangleMesh& out, std::string& error);
 bool readObj(const std::string& path, TriangleMesh& out, std::string& error);
+/// The closed polygons of `geo`, cut into fans of triangles; the points as
+/// they are.
+TriangleMesh triangulate(const Geometry& geo);
 
 class MeshShape {
 public:
@@ -89,5 +90,14 @@ private:
 /// file -- the same path, size and time of change -- gives the same mesh.
 /// Null, with why, if the file cannot be read or has no triangles.
 std::shared_ptr<const MeshShape> loadMesh(const std::string& path, std::string& error);
+
+/// The most points meshFromGeometry() puts a ball round.
+inline constexpr size_t kMaxShapePoints = 20000;
+
+/// A mesh of the closed polygons of `geo`, baked -- or, with no polygons, of
+/// a ball round each point (its pscale the radius, else `radius`), the first
+/// kMaxShapePoints of them. Baked once while anyone holds it: the same
+/// geometry, by content, gives the same mesh. Null for geometry with neither.
+std::shared_ptr<const MeshShape> meshFromGeometry(const Geometry& geo, float radius = 0.05f);
 
 }  // namespace pg::sim

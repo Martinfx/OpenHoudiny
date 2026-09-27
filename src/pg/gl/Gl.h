@@ -33,7 +33,8 @@ using GLsizeiptr = std::ptrdiff_t;
 
 inline constexpr GLbitfield COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x0100;
 inline constexpr GLenum DEPTH_TEST = 0x0B71, CULL_FACE = 0x0B44, LESS = 0x0201;
-inline constexpr GLenum LINES = 0x0001, TRIANGLES = 0x0004, LEQUAL = 0x0203, ALWAYS = 0x0207;
+inline constexpr GLenum POINTS = 0x0000, LINES = 0x0001, TRIANGLES = 0x0004, LEQUAL = 0x0203, ALWAYS = 0x0207;
+inline constexpr GLenum PROGRAM_POINT_SIZE = 0x8642;
 inline constexpr GLenum BLEND = 0x0BE2, ONE = 1, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303;
 inline constexpr GLenum UNSIGNED_BYTE = 0x1401, UNSIGNED_INT = 0x1405, FLOAT = 0x1406, HALF_FLOAT = 0x140B;
 inline constexpr GLenum ARRAY_BUFFER = 0x8892, ELEMENT_ARRAY_BUFFER = 0x8893, STATIC_DRAW = 0x88E4;

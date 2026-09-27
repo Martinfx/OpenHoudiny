@@ -1,6 +1,7 @@
 #include "Theme.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <initializer_list>
@@ -559,6 +560,29 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
         case Icon::Copy:
             d->AddRect(P(-0.8f, -0.4f), P(0.35f, 0.85f), col, 0.12f * s, 0, t);
             d->AddRect(P(-0.35f, -0.85f), P(0.8f, 0.35f), col, 0.12f * s, 0, t);
+            break;
+        case Icon::Geometry: {  // a cube, its top lit
+            const ImVec2 top[4] = {P(0.0f, -0.85f), P(0.8f, -0.45f), P(0.0f, -0.05f), P(-0.8f, -0.45f)};
+            d->AddConvexPolyFilled(top, 4, shade(col, 0.25f));
+            const ImVec2 left[4] = {P(-0.8f, -0.45f), P(0.0f, -0.05f), P(0.0f, 0.85f), P(-0.8f, 0.45f)};
+            d->AddConvexPolyFilled(left, 4, col);
+            const ImVec2 right[4] = {P(0.0f, -0.05f), P(0.8f, -0.45f), P(0.8f, 0.45f), P(0.0f, 0.85f)};
+            d->AddConvexPolyFilled(right, 4, shade(col, -0.3f));
+            break;
+        }
+        case Icon::Points:  // a scatter of dots
+            for (const auto& [x, y, r] : {std::array<float, 3>{-0.55f, -0.5f, 0.2f}, {0.35f, -0.65f, 0.16f},
+                                          {0.0f, -0.05f, 0.22f}, {-0.6f, 0.45f, 0.16f}, {0.6f, 0.2f, 0.2f},
+                                          {0.2f, 0.65f, 0.15f}}) {
+                d->AddCircleFilled(P(x, y), r * s, col);
+            }
+            break;
+        case Icon::Table:  // a grid with a header row
+            d->AddRectFilled(P(-0.85f, -0.75f), P(0.85f, -0.35f), col, 0.1f * s);
+            d->AddRect(P(-0.85f, -0.75f), P(0.85f, 0.75f), col, 0.1f * s, 0, t);
+            line(-0.85f, 0.2f, 0.85f, 0.2f);
+            line(-0.25f, -0.35f, -0.25f, 0.75f);
+            line(0.3f, -0.35f, 0.3f, 0.75f);
             break;
     }
 }

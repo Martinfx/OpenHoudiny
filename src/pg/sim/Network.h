@@ -54,8 +54,10 @@
 
 namespace pg::sim {
 
+class GeometryGraph;
+
 /// What flows along a link. An output links only to an input of its type.
-enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid, Camera };
+enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid, Camera, Geometry, Rain };
 const char* pinTypeName(PinType type);
 
 struct PinDef {
@@ -73,7 +75,12 @@ enum class ParamKind : uint8_t {
     Color,   ///< three numbers, 0 to 1
     Choice,  ///< one of `choices`; the value is its index
     File,    ///< a path, text (Node::texts); files write it in quotes; `choices` are the extensions
+    Text,    ///< a line of text (Node::texts): a name, a group
+    Code,    ///< lines of text (Node::texts): a snippet of the per-element language
 };
+
+/// File, Text and Code: parameters whose value is text, kept in Node::texts.
+inline bool isText(ParamKind kind) { return kind == ParamKind::File || kind == ParamKind::Text || kind == ParamKind::Code; }
 
 /// A parameter's value: one number, or three for vectors and colours.
 using ParamValue = std::array<float, 3>;
@@ -90,6 +97,7 @@ struct ParamDef {
     const char* help;
     std::vector<const char*> choices = {};  ///< Choice: the names, as files and the command line write them
     std::vector<const char*> choiceLabels = {};  ///< ... and as the editor shows them
+    const char* text = "";  ///< File, Text, Code: the default
 };
 
 /// The parameters of a node that the viewport's gizmo moves, turns and
@@ -108,15 +116,20 @@ struct Handles {
 struct NodeType {
     const char* name;      ///< "pyro_source"
     const char* label;     ///< "Pyro Source"
-    const char* category;  ///< "Objects", "Sources", "Forces", "Simulation", "Render"
+    const char* category;  ///< "Geometry", "Objects", "Sources", "Forces", "Simulation", "Render"
     const char* help;
     std::vector<PinDef> inputs;
     std::vector<PinDef> outputs;
     std::vector<ParamDef> params;
     int version = 1;
-    /// Objects, sources and forces can be bypassed: left out, kept in place.
+    /// Objects, sources, forces and geometry nodes can be bypassed: left out
+    /// -- a geometry node passes its first input on -- kept in place.
     bool bypassable = false;
     Handles handles = {};
+    /// A geometry node: the type of the core's cook engine (pg/nodes) that
+    /// does its work, or of a node that brings a simulation back as geometry
+    /// (GeometryGraph.h). Null for the rest.
+    const char* core = nullptr;
 
     const ParamDef* param(std::string_view name) const;
     const PinDef* input(std::string_view name) const;
@@ -143,8 +156,11 @@ struct Node {
     std::string name;     ///< unique in the network: what --set NAME.param=value names
     float x = 0.0f, y = 0.0f;  ///< where the editor shows it
     bool bypass = false;
+    /// A geometry node whose geometry the viewport shows, and renders draw:
+    /// at most one in a network.
+    bool display = false;
     std::map<std::string, ParamValue> params;  ///< the values set; the rest are defaults
-    std::map<std::string, std::string> texts;  ///< File parameters set; the rest are empty
+    std::map<std::string, std::string> texts;  ///< File, Text and Code parameters set; the rest are defaults
 };
 
 struct Link {
@@ -187,6 +203,8 @@ struct Compiled {
     /// one is linked into it: otherwise the renders frame the scene.
     bool hasCamera = false;
     Camera camera;
+    /// The geometry node whose geometry is shown (Network::displayed()); 0 if none.
+    int display = 0;
 
     bool errors() const;
     bool isActive(int node) const;
@@ -232,11 +250,16 @@ public:
     bool setParam(int id, std::string_view name, std::string_view text, std::string* error = nullptr);
     bool resetParam(int id, std::string_view name);
     bool isDefault(int id, std::string_view name) const;
-    /// A File parameter: the path set, else empty.
+    /// A File, Text or Code parameter: the text set, else its default.
     std::string text(int id, std::string_view name) const;
-    /// False for an unknown node or a parameter that is not a File.
+    /// False for an unknown node or a parameter that is not text.
     bool setText(int id, std::string_view name, std::string_view value);
     bool setBypass(int id, bool on);
+    /// Shows the geometry of node `id` -- 0: none -- in the viewport and the
+    /// renders. False for a node that is not a geometry node.
+    bool setDisplay(int id);
+    /// The node whose geometry is shown; 0 if none.
+    int displayed() const;
 
     std::string save() const;
     /// Replaces `out` with the network in `text`. Unknown node types are kept,
@@ -246,8 +269,11 @@ public:
                      std::vector<std::string>* warnings = nullptr);
 
     /// `folder`: where the network's file is -- a relative path of a File
-    /// parameter (a mesh) is read from there.
-    Compiled compile(const std::string& folder = {}) const;
+    /// parameter (a mesh) is read from there. `geometry`: where the geometry
+    /// nodes cook -- the editor keeps one, so that only what changed cooks
+    /// again; without one they cook afresh. Geometry linked into a Shape is
+    /// taken at frame 1.
+    Compiled compile(const std::string& folder = {}, GeometryGraph* geometry = nullptr) const;
 
     /// Bumped by every edit -- all but moving a node, which goes through
     /// node() and changes nothing a simulation sees.

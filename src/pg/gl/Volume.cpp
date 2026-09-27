@@ -1,5 +1,7 @@
 #include "pg/gl/Volume.h"
 
+#include "pg/sim/Display.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -551,22 +553,23 @@ vec3 wetten(vec3 lit, vec3 p, vec3 n, vec3 view) {
 }
 
 // An object: as shade(), with a soft highlight of the sun, and the rim of a
-// selected (or hovered) one in the colour of the selection.
-vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) {
-    vec3 albedo = u_solidE[i].rgb;
+// selected (or hovered) one in the colour of the selection -- `mark` 1 for
+// hovered, 2 for selected.
+vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark) {
     float ndl = max(dot(n, u_lightDir), 0.0);
     float sun = ndl > 0.0 ? sunAt(p + n * 2e-3) : 0.0;
     vec3 sky = u_sky * (0.6 + 0.4 * n.y);
     vec3 half_ = normalize(u_lightDir - view);
     vec3 c = wetten(albedo * (u_light * sun * ndl + sky + fireGlow(p, n)), p, n, view) +
              u_light * sun * 0.12 * pow(max(dot(n, half_), 0.0), 40.0) * ndl;
-    float mark = u_solidE[i].w;
     if (mark > 0.5) {
         float rim = pow(1.0 - abs(dot(n, view)), 2.0);
         c += vec3(1.0, 0.36, 0.08) * rim * (mark > 1.5 ? 1.4 : 0.6) + vec3(0.06, 0.025, 0.005) * (mark > 1.5 ? 1.0 : 0.0);
     }
     return c;
 }
+
+vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) { return shadeSurface(p, n, view, u_solidE[i].rgb, u_solidE[i].w); }
 
 // The floor: grey, a line every 10 cm and a stronger one every metre, each
 // as thin as the pixels allow and gone where they would crowd.
@@ -665,12 +668,24 @@ void main() {
     vec3 normal;
     int which;
     float tSolid = hitSolid(u_eye, dir, 0.0, normal, which);
+    // The meshes' buffer: a solid's index, or -- below 0 -- the displayed
+    // geometry's colour, 8 bits a channel.
+    bool displayed = false;
+    vec3 displayColor = vec3(0.0);
     if (u_hasMeshes) {
         vec4 g = texelFetch(u_meshG, ivec2(gl_FragCoord.xy), 0);
         if (g.w > 0.0 && g.w < tSolid) {
             tSolid = g.w;
             normal = octDecode(g.xy);
-            which = int(g.z + 0.5);
+            displayed = g.z < -0.5;
+            if (displayed) {
+                float code = -g.z - 1.0;
+                float b = floor(code / 65536.0);
+                float gr = floor((code - b * 65536.0) / 256.0);
+                displayColor = vec3(code - b * 65536.0 - gr * 256.0, gr, b) / 255.0;
+            } else {
+                which = int(g.z + 0.5);
+            }
         }
     }
     vec3 surface = vec3(0.0);
@@ -678,7 +693,8 @@ void main() {
     float tEnd = 1e30;
     if (tSolid < tFloor && tSolid < 1e29) {
         tEnd = tSolid;
-        surface = shadeSolid(u_eye + dir * tSolid, normal, dir, which);
+        surface = displayed ? shadeSurface(u_eye + dir * tSolid, normal, dir, displayColor, 0.0)
+                            : shadeSolid(u_eye + dir * tSolid, normal, dir, which);
         cover = 1.0;
     } else if (u_floor && down) {
         tEnd = tFloor;
@@ -789,6 +805,73 @@ void main() {
 }
 )";
 
+// The displayed geometry's triangles, into the same buffer as the meshes:
+// its colour in place of a solid's index, as a number below 0.
+const char* kGeoVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec3 a_color;
+uniform mat4 u_viewProj;
+out vec3 v_world, v_normal, v_color;
+void main() {
+    v_world = a_position;
+    v_normal = a_normal;
+    v_color = a_color;
+    gl_Position = u_viewProj * vec4(a_position, 1.0);
+}
+)";
+
+const char* kGeoFragment = R"(#version 330 core
+in vec3 v_world, v_normal, v_color;
+out vec4 o_g;
+uniform vec3 u_eye;
+vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
+void main() {
+    vec3 view = v_world - u_eye;
+    vec3 n = dot(v_normal, v_normal) > 1e-20 ? normalize(v_normal) : -normalize(view);
+    if (dot(n, view) > 0.0) n = -n;  // both sides
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec3 c = floor(clamp(v_color, 0.0, 1.0) * 255.0 + 0.5);
+    o_g = vec4(n.z >= 0.0 ? n.xy : octWrap(n.xy), -1.0 - (c.r + c.g * 256.0 + c.b * 65536.0), length(view));
+}
+)";
+
+// The displayed geometry's loose points: round dots, shaded as little balls,
+// as wide as their pscale where they have one -- else a few pixels.
+const char* kDotVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_color;
+layout(location = 2) in float a_radius;
+uniform mat4 u_viewProj;
+uniform float u_pixelsPerUnit;  // pixels a world unit spans 1 unit in front of the eye
+uniform float u_dot;            // pixels across a dot with no size
+out vec3 v_color;
+void main() {
+    gl_Position = u_viewProj * vec4(a_position, 1.0);
+    float px = a_radius > 0.0 ? 2.0 * a_radius * u_pixelsPerUnit / max(gl_Position.w, 1e-4) : u_dot;
+    gl_PointSize = clamp(px, 1.5, 64.0);
+    v_color = a_color;
+}
+)";
+
+const char* kDotFragment = R"(#version 330 core
+in vec3 v_color;
+out vec4 o_color;
+uniform vec3 u_lightView;  // towards the sun, in the eye's frame: x right, y up, z back at the eye
+uniform vec3 u_light, u_sky;
+uniform float u_exposure;
+vec3 toneMap(vec3 x) { return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+void main() {
+    vec2 q = gl_PointCoord * 2.0 - 1.0;
+    q.y = -q.y;
+    float r2 = dot(q, q);
+    if (r2 > 1.0) discard;
+    vec3 n = vec3(q, sqrt(1.0 - r2));
+    vec3 lit = v_color * (u_light * max(dot(n, u_lightView), 0.0) + u_sky * (0.7 + 0.5 * n.y));
+    o_color = vec4(pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), 1.0);
+}
+)";
+
 const char* kLineVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec4 a_color;
@@ -876,35 +959,13 @@ Vec3 toScreen(const Vec3& x) {
 /// vertex that bend less than 60 degrees from its own: round things come
 /// out round, a box keeps its edges.
 std::vector<float> meshVertices(const sim::TriangleMesh& m) {
-    const size_t faces = m.triangles.size(), verts = m.positions.size();
-    std::vector<Vec3> faceNormal(faces);  // as long as twice the area: bigger faces count more
-    for (size_t f = 0; f < faces; ++f) {
-        const auto& t = m.triangles[f];
-        faceNormal[f] = cross(m.positions[t[1]] - m.positions[t[0]], m.positions[t[2]] - m.positions[t[0]]);
-    }
-    // The faces round each vertex, packed.
-    std::vector<uint32_t> start(verts + 1, 0), around(faces * 3);
-    for (const auto& t : m.triangles) {
-        for (const uint32_t v : t) ++start[v + 1];
-    }
-    for (size_t v = 0; v < verts; ++v) start[v + 1] += start[v];
-    std::vector<uint32_t> fill(start.begin(), start.end() - 1);
-    for (size_t f = 0; f < faces; ++f) {
-        for (const uint32_t v : m.triangles[f]) around[fill[v]++] = static_cast<uint32_t>(f);
-    }
-    const float crease = std::cos(60.0f * kPi / 180.0f);
+    const std::vector<Vec3> normals = sim::cornerNormals(m.positions, m.triangles);
     std::vector<float> out;
-    out.reserve(faces * 18);
-    for (size_t f = 0; f < faces; ++f) {
-        const Vec3 own = normalize(faceNormal[f]);
-        for (const uint32_t v : m.triangles[f]) {
-            Vec3 sum;
-            for (uint32_t k = start[v]; k < start[v + 1]; ++k) {
-                const Vec3& other = faceNormal[around[k]];
-                if (dot(normalize(other), own) >= crease) sum += other;
-            }
-            const Vec3 n = length(sum) > 0.0f ? normalize(sum) : own;
-            const Vec3& p = m.positions[v];
+    out.reserve(m.triangles.size() * 18);
+    for (size_t f = 0; f < m.triangles.size(); ++f) {
+        for (size_t c = 0; c < 3; ++c) {
+            const Vec3& p = m.positions[m.triangles[f][c]];
+            const Vec3& n = normals[f * 3 + c];
             out.insert(out.end(), {p.x, p.y, p.z, n.x, n.y, n.z});
         }
     }
@@ -1222,8 +1283,15 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 }
 
 VolumeRenderer::~VolumeRenderer() {
-    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_}) {
+    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
+                     dotProgram_}) {
         if (p) gl_.DeleteProgram(p);
+    }
+    for (GLuint a : {geoVao_, dotVao_, curveVao_}) {
+        if (a) gl_.DeleteVertexArrays(1, &a);
+    }
+    for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_}) {
+        if (b) gl_.DeleteBuffers(1, &b);
     }
     if (rainVao_) gl_.DeleteVertexArrays(1, &rainVao_);
     if (rainBuffer_) gl_.DeleteBuffers(1, &rainBuffer_);
@@ -1261,13 +1329,16 @@ bool VolumeRenderer::init(std::string& log) {
     const GLuint lines = glow ? buildProgram(gl_, kLineVertex, kLineFragment, log) : 0;
     const GLuint meshes = lines ? buildProgram(gl_, kMeshVertex, kMeshFragment, log) : 0;
     const GLuint rain = meshes ? buildProgram(gl_, kRainVertex, kRainFragment, log) : 0;
-    if (!rain) {
-        for (GLuint p : {view, shadow, glow, lines, meshes}) {
+    const GLuint geo = rain ? buildProgram(gl_, kGeoVertex, kGeoFragment, log) : 0;
+    const GLuint dots = geo ? buildProgram(gl_, kDotVertex, kDotFragment, log) : 0;
+    if (!dots) {
+        for (GLuint p : {view, shadow, glow, lines, meshes, rain, geo}) {
             if (p) gl_.DeleteProgram(p);
         }
         return false;
     }
-    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_}) {
+    for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
+                     dotProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
     program_ = view;
@@ -1276,6 +1347,8 @@ bool VolumeRenderer::init(std::string& log) {
     lineProgram_ = lines;
     meshProgram_ = meshes;
     rainProgram_ = rain;
+    geoProgram_ = geo;
+    dotProgram_ = dots;
     lightingDirty_ = true;
     return true;
 }
@@ -1576,9 +1649,101 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
         gl_.BindVertexArray(gpu->vao);
         gl_.DrawArrays(TRIANGLES, 0, gpu->vertices);
     }
+    if (geoVertices_ > 0 && geoProgram_) {
+        gl_.UseProgram(geoProgram_);
+        gl_.UniformMatrix4fv(location(geoProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.Uniform3f(location(geoProgram_, "u_eye"), eye.x, eye.y, eye.z);
+        gl_.BindVertexArray(geoVao_);
+        gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
+    }
     gl_.BindVertexArray(0);
     gl_.UseProgram(0);
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
+}
+
+void VolumeRenderer::setGeometry(const GeometryPtr& geometry) {
+    if (geometry == geometry_) return;
+    geometry_ = geometry;
+    const sim::DisplayGeometry d = geometry ? sim::displayOf(*geometry) : sim::DisplayGeometry();
+    hasGeoBounds_ = d.lo.x <= d.hi.x;
+    geoLo_ = d.lo;
+    geoHi_ = d.hi;
+    // Each array into its buffer, with the layout of its attributes: {location, floats}.
+    auto upload = [&](GLuint& vao, GLuint& buffer, const std::vector<float>& data, std::initializer_list<std::pair<int, int>> layout) {
+        if (!vao) {
+            gl_.GenVertexArrays(1, &vao);
+            gl_.GenBuffers(1, &buffer);
+        }
+        int stride = 0;
+        for (const auto& [where, floats] : layout) stride += floats;
+        gl_.BindVertexArray(vao);
+        gl_.BindBuffer(ARRAY_BUFFER, buffer);
+        gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data(), STATIC_DRAW);
+        int offset = 0;
+        for (const auto& [where, floats] : layout) {
+            gl_.EnableVertexAttribArray(static_cast<GLuint>(where));
+            gl_.VertexAttribPointer(static_cast<GLuint>(where), floats, FLOAT, 0, stride * static_cast<GLsizei>(sizeof(float)),
+                                    reinterpret_cast<const void*>(static_cast<size_t>(offset) * sizeof(float)));
+            offset += floats;
+        }
+        gl_.BindVertexArray(0);
+        gl_.BindBuffer(ARRAY_BUFFER, 0);
+    };
+    upload(geoVao_, geoBuffer_, d.triangles, {{0, 3}, {1, 3}, {2, 3}});
+    upload(dotVao_, dotBuffer_, d.dots, {{0, 3}, {1, 3}, {2, 1}});
+    upload(curveVao_, curveBuffer_, d.lines, {{0, 3}, {1, 4}});
+    geoVertices_ = static_cast<GLsizei>(d.triangles.size() / 9);
+    dots_ = static_cast<GLsizei>(d.dotCount());
+    curveVertices_ = static_cast<GLsizei>(d.lines.size() / 7);
+}
+
+bool VolumeRenderer::geometryBounds(Vec3& lo, Vec3& hi) const {
+    if (!geometry_ || !hasGeoBounds_) return false;
+    lo = geoLo_;
+    hi = geoHi_;
+    return true;
+}
+
+void VolumeRenderer::drawGeometry(int width, int height) {
+    if ((dots_ == 0 || !dotProgram_) && (curveVertices_ == 0 || !lineProgram_)) return;
+    gl_.Enable(DEPTH_TEST);
+    gl_.DepthFunc(LEQUAL);
+    if (dots_ > 0 && dotProgram_) {
+        const sim::Look& s = look;
+        float towards[3], across[3], upwards[3];
+        orbit.axes(towards, across, upwards);
+        const Vec3 light = normalize(s.lightDirection());
+        const Vec3 f(towards[0], towards[1], towards[2]), r(across[0], across[1], across[2]), u(upwards[0], upwards[1], upwards[2]);
+        gl_.DepthMask(1);
+        gl_.Enable(PROGRAM_POINT_SIZE);
+        gl_.UseProgram(dotProgram_);
+        gl_.UniformMatrix4fv(location(dotProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+        const float tanHalf = std::tan(orbit.fovY * kPi / 360.0f);
+        gl_.Uniform1f(location(dotProgram_, "u_pixelsPerUnit"), 0.5f * static_cast<float>(height) / tanHalf);
+        gl_.Uniform1f(location(dotProgram_, "u_dot"), std::max(3.0f, 3.0f * static_cast<float>(height) / 700.0f));
+        gl_.Uniform3f(location(dotProgram_, "u_lightView"), dot(light, r), dot(light, u), -dot(light, f));
+        gl_.Uniform3f(location(dotProgram_, "u_light"), s.lightColor.x * s.lightIntensity, s.lightColor.y * s.lightIntensity,
+                      s.lightColor.z * s.lightIntensity);
+        gl_.Uniform3f(location(dotProgram_, "u_sky"), s.skyColor.x * s.skyIntensity, s.skyColor.y * s.skyIntensity,
+                      s.skyColor.z * s.skyIntensity);
+        gl_.Uniform1f(location(dotProgram_, "u_exposure"), s.exposure);
+        gl_.BindVertexArray(dotVao_);
+        gl_.DrawArrays(POINTS, 0, dots_);
+        gl_.Disable(PROGRAM_POINT_SIZE);
+    }
+    if (curveVertices_ > 0 && lineProgram_) {
+        gl_.DepthMask(0);
+        gl_.Enable(BLEND);
+        gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
+        gl_.UseProgram(lineProgram_);
+        gl_.UniformMatrix4fv(location(lineProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.BindVertexArray(curveVao_);
+        gl_.DrawArrays(LINES, 0, curveVertices_);
+        gl_.Disable(BLEND);
+    }
+    gl_.BindVertexArray(0);
+    gl_.DepthMask(1);
+    (void)width;
 }
 
 void VolumeRenderer::setHighlight(const std::vector<int>& selected, int hovered) {
@@ -1827,7 +1992,7 @@ void VolumeRenderer::render(int width, int height) {
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     viewProjection_ = multiply(perspective(orbit.fovY, aspect, kNear, kFar), lookAlong(eye, towards, upwards));
     // The meshes first, into their own buffer, seen by the same camera.
-    const bool meshes = anyMesh_ && meshProgram_;
+    const bool meshes = (anyMesh_ || geoVertices_ > 0) && meshProgram_;
     if (meshes) renderMeshes(width, height, Vec3(eye[0], eye[1], eye[2]));
     gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
     gl_.Viewport(0, 0, width, height);
@@ -1901,7 +2066,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.ActiveTexture(TEXTURE8);
     gl_.BindTexture(TEXTURE_3D, hasWater_ ? water_ : 0);
     gl_.Uniform1i(location(program_, "u_water"), 8);
-    gl_.Uniform1i(location(program_, "u_hasWater"), hasWater_ ? 1 : 0);
+    gl_.Uniform1i(location(program_, "u_hasWater"), hasWater_ && s.waterSurface ? 1 : 0);
     {
         const Vec3 lo = waterDomain_.origin(), extent = waterDomain_.size();
         gl_.Uniform3f(location(program_, "u_waterMin"), lo.x, lo.y, lo.z);
@@ -1930,6 +2095,7 @@ void VolumeRenderer::render(int width, int height) {
 
     gl_.BindVertexArray(vao_);
     gl_.DrawArrays(TRIANGLES, 0, 3);
+    drawGeometry(width, height);
     drawRain(width, height, e);
 
     // The guide lines, behind the solids where they pass behind them.

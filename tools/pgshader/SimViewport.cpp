@@ -86,6 +86,8 @@ std::vector<int> SimWorkspace::movable() const {
     for (const int id : canvas_.selection()) {
         const sim::Node* n = net_.node(id);
         const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+        // Shaped by geometry: its own place is not used -- the geometry's nodes move it.
+        if (t && t->input("shape") && !net_.linksInto(id, "shape").empty()) continue;
         if (t && t->handles.any()) out.push_back(id);
     }
     return out;
@@ -666,6 +668,12 @@ void SimWorkspace::frameSelection() {
             grow(Vec3(c.x - half.x, 0.0f, c.z - half.z), c + half);
             continue;
         }
+        if (n && n->display) {
+            // The geometry shown.
+            Vec3 a, b;
+            if (renderer_.geometryBounds(a, b)) grow(a, b);
+            continue;
+        }
         if (!n || n->type == "object" || n->type == "pyro_source" || n->type == "water_source") continue;
         Vec3 c;
         sim::Rotation f;
@@ -675,13 +683,22 @@ void SimWorkspace::frameSelection() {
         grow(c - Vec3(r), c + Vec3(r));
     }
     if (!any) {
-        // Nothing selected: the domains and every object.
-        const sim::Domain dm = sceneBox();
-        grow(dm.origin(), dm.origin() + dm.size());
+        // Nothing selected: the domains, every object and the geometry
+        // shown -- only that, when nothing is simulated.
+        if (compiled_.ok) {
+            const sim::Domain dm = sceneBox();
+            grow(dm.origin(), dm.origin() + dm.size());
+        }
         for (const sim::Solid& s : compiled_.solids) {
             Vec3 a, b;
             s.body.instance().bounds(a, b);
             grow(a, b);
+        }
+        Vec3 a, b;
+        if (renderer_.geometryBounds(a, b)) grow(a, b);
+        if (!any) {
+            const sim::Domain dm = sceneBox();
+            grow(dm.origin(), dm.origin() + dm.size());
         }
     }
     const Vec3 middle = (lo + hi) * 0.5f;
@@ -856,6 +873,15 @@ void SimWorkspace::viewport(ImVec2 size) {
                              std::fabs(box.z - framedSize_.z) > 1e-4f;
     if (!framed_ || resized) {
         renderer_.orbit = gl::VolumeRenderer::viewOf(dm);
+        // Nothing simulated: the geometry shown, if there is some.
+        Vec3 glo, ghi;
+        if (!(compiled_.ok && compiled_.world.any()) && renderer_.geometryBounds(glo, ghi)) {
+            const Vec3 middle = (glo + ghi) * 0.5f;
+            gl::Orbit& o = renderer_.orbit;
+            for (int k = 0; k < 3; ++k) o.target[k] = middle[k];
+            o.distance = std::clamp(1.15f * std::max(0.5f * length(ghi - glo), 0.05f) / std::sin(o.fovY * 3.14159265f / 360.0f),
+                                    0.2f, 200.0f);
+        }
         framedSize_ = box;
         framed_ = true;
         viewDirty_ = true;

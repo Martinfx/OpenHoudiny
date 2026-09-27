@@ -4,6 +4,11 @@
 // network on the canvas, the selected node's parameters, the viewport with
 // the gas on its floor, and the timeline over the cache of frames.
 //
+// Geometry nodes cook in a GeometryGraph of the workspace's own (SimGeometry.cpp):
+// only what changed cooks again. The node with the display flag shows in
+// the viewport; the spreadsheet shows a node's points, vertices, primitives,
+// detail and volumes.
+//
 // The simulation runs on a thread of its own (SimRunner) and keeps its frames:
 // play and scrub them without simulating again. A change that alters what is
 // simulated -- a source, a force, the solver -- starts it again from frame 1
@@ -15,8 +20,10 @@
 #include "Workspace.h"
 
 #include "pg/gl/Volume.h"
+#include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
 
+#include <map>
 #include <memory>
 #include <string>
 
@@ -83,6 +90,16 @@ private:
     // --- parameters --------------------------------------------------------------------
     void nodeParameters(const sim::Node& node, const sim::NodeType& type);
     void networkOverview();
+
+    // --- geometry (SimGeometry.cpp) ------------------------------------------------------
+    /// Syncs the geometry graph with the network and cooks the displayed
+    /// node at the frame on screen, for the viewport; notes cook errors.
+    void updateGeometry();
+    /// Geometry node `id`'s geometry at the frame on screen; null for a
+    /// node that is not one.
+    GeometryPtr geometryOf(int id);
+    /// The spreadsheet: the current node's geometry, or the displayed one's.
+    void spreadsheet();
 
     // --- the viewport -------------------------------------------------------------------
     std::shared_ptr<const sim::Frame> frameToShow() const;
@@ -161,6 +178,11 @@ private:
     void viewKeys(bool overView);
 
     sim::Network net_;
+    sim::GeometryGraph geometry_;          ///< the geometry nodes, cooked
+    std::map<int, std::string> cookErrors_;  ///< what went wrong cooking each
+    bool sheet_ = false;                   ///< the parameters panel shows the spreadsheet
+    int sheetClass_ = 0;                   ///< points, vertices, primitives, detail, volumes
+    std::string editKey_, editText_;       ///< a text parameter being typed: "id.name", and its text
     std::string path_;       ///< empty: never saved
     std::string example_;    ///< the example it came from, if any
     std::string savedText_;  ///< as on disk, or as the example came

@@ -281,6 +281,10 @@ tlustý `size.y`, modelu se na `size` natáhne jeho obalový kvádr. Různé
 velikosti tvar protáhnou, z koule je elipsoid. Změna barvy simulaci
 nespouští znovu.
 
+Objekt, zdroj kouře i zdroj vody mají vstup **Shape**: geometrie v něm
+(z uzlů kategorie Geometry — krychle, koule, kopie na body, soubor OBJ…)
+je jejich tvarem místo vlastního. Podrobně v [geometry.md](geometry.md).
+
 #### Modely z OBJ
 
 ![Příklad arch: kamenný oblouk a kámen ze souborů OBJ, vybraný oblouk s gizmem a cestou k souboru](img/editor-mesh.png)
@@ -437,6 +441,9 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `rain_pond` | déšť na jezírku: kroužky na hladině, odstřiky od kamene, vánek v nárazech a mokrá podlaha; kamera nízko nad vodou |
 | `storm` | táborák v bouřce: nárazy větru kladou plameny a strhávají kouř, déšť se šikmí ve stejném větru a odstřikuje od polen; kamera nízko u ohně |
 | `lakeside` | záběr: táborák na břehu jezírka v dešti. Kouř, voda, déšť, vítr a objekty v jedné síti (17 uzlů), jezírko zapuštěné do terénu z kvádrů, kamera nízko nad vodou |
+| `scatter_fire` | geometrie jako zdroj: body rozházené po mřížce, wrangle jim dá velikost, na každém plamínek; koule z uzlu Sphere visí v kouři ([geometry.md](geometry.md)) |
+| `liquid_points` | simulace zpátky jako geometrie: částice vody z Liquid Points, wrangle je barví podle rychlosti, tabulka atributů je ukáže |
+| `rock_garden` | geometrie jako překážka: koule zkopírovaná na rozházené body a zmáčknutá je tvarem kamenů, na které prší |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `pgshader sim campfire` proto funguje bez souborů vedle.
@@ -636,7 +643,7 @@ připojit do obou řešičů najednou.
 |---|---|
 | **Water Source** (Sources) | `shape`, `file`, `center`, `rotation`, `size` jako u objektu; `mode`: `fill` naplní tvar vodou jednou, když zdroj začne (blok vody, bazén), `flow` z něj vodu vylévá (hadice, fontána, pramen); `velocity` rychlost vytékající vody v osách zdroje; `seed`; `start`, `end` |
 | **Liquid Solver** (Simulation) | Domain: `size`, `resolution` (buněk podél nejdelší strany, 16 až 256), `closed_sides` (nádrž se stěnami; vypnuté: voda přetéká okraji a mizí); Motion: `gravity`, `flip` (Splash: 1 živá, stříkající voda, 0 hladká a hustá; běžně 0,9 až 0,98); Time: `substeps`, `seed` |
-| **Water Look** (Render) | `color` (barva hluboké vody), `clarity` (jak daleko je do vody vidět, v metrech), `foam` (jak bílá je pěna a tříšť) |
+| **Water Look** (Render) | `color` (barva hluboké vody), `clarity` (jak daleko je do vody vidět, v metrech), `foam` (jak bílá je pěna a tříšť), `surface` (kreslit hladinu; vypnutá: voda se simuluje, vidět jsou jen její částice přes Liquid Points) |
 
 Ve viewportu se voda přidá přes **Shift+A → Water**: *Block of Water*,
 *Fountain*, *Hose*. Když ještě chybí řešič vody, vznikne i s Water Look

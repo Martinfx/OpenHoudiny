@@ -1,0 +1,271 @@
+#include "pg/sim/GeometryGraph.h"
+
+#include "pg/sim/Network.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <tuple>
+#include <vector>
+
+namespace pg::sim {
+
+namespace fs = std::filesystem;
+
+void FrameNode::setFrame(int number, std::shared_ptr<const Frame> frame) {
+    // Cooked before from another frame -- simulated again, or not yet then:
+    // what was made of any frame is out of date.
+    const auto it = seen_.find(number);
+    const bool same = it == seen_.end() || (it->second.any ? frame && it->second.frame.lock() == frame : !frame);
+    if (!same) {
+        seen_.clear();
+        bumpVersion();
+    }
+    seen_[number] = {frame, frame != nullptr};
+    frame_ = std::move(frame);
+}
+
+namespace {
+
+/// The particles of the water: points with their velocity v and foam.
+class LiquidPointsNode : public FrameNode {
+public:
+    explicit LiquidPointsNode(std::string name) : FrameNode("liquid_points", std::move(name)) { setInputCount(0); }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
+        auto geo = std::make_shared<Geometry>();
+        if (!frame_) return geo;
+        const WaterFrame& w = frame_->water;
+        const size_t n = w.positions.size();
+        geo->addPoints(n);
+        std::copy(w.positions.begin(), w.positions.end(), geo->positionsForWrite().begin());
+        auto v = geo->points().create("v", AttrType::Vec3).write<Vec3>();
+        auto foam = geo->points().create("foam", AttrType::Float).write<float>();
+        for (size_t i = 0; i < n && 3 * i + 2 < w.velocities.size(); ++i) {
+            v[i] = Vec3(fromHalf(w.velocities[3 * i]), fromHalf(w.velocities[3 * i + 1]), fromHalf(w.velocities[3 * i + 2]));
+            foam[i] = i < w.whiteness.size() ? static_cast<float>(w.whiteness[i]) / 255.0f : 0.0f;
+        }
+        return geo;
+    }
+};
+
+/// The drops of the rain -- and the droplets of its splashes -- as points
+/// with their velocity v; droplets marked by droplet 1.
+class RainPointsNode : public FrameNode {
+public:
+    explicit RainPointsNode(std::string name) : FrameNode("rain_points", std::move(name)) {
+        setInputCount(0);
+        params_.setBool("droplets", true);
+    }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
+        auto geo = std::make_shared<Geometry>();
+        if (!frame_) return geo;
+        const RainFrame& r = frame_->rain;
+        const bool droplets = params_.getBool("droplets", true);
+        const size_t drops = r.dropCount(), splashes = droplets ? r.dropletCount() : 0;
+        geo->addPoints(drops + splashes);
+        auto P = geo->positionsForWrite();
+        auto v = geo->points().create("v", AttrType::Vec3).write<Vec3>();
+        auto mark = geo->points().create("droplet", AttrType::Int).write<int32_t>();
+        auto fill = [&](const std::vector<float>& from, size_t count, size_t at, int32_t kind) {
+            for (size_t i = 0; i < count; ++i) {
+                const float* p = from.data() + 6 * i;
+                P[at + i] = Vec3(p[0], p[1], p[2]);
+                v[at + i] = Vec3(p[3], p[4], p[5]);
+                mark[at + i] = kind;
+            }
+        };
+        fill(r.drops, drops, 0, 0);
+        fill(r.droplets, splashes, drops, 1);
+        return geo;
+    }
+};
+
+/// The gas as volumes -- density (smoke), temperature and flame -- on the
+/// solver's grid.
+class GasVolumeNode : public FrameNode {
+public:
+    explicit GasVolumeNode(std::string name) : FrameNode("gas_volume", std::move(name)) { setInputCount(0); }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
+        auto geo = std::make_shared<Geometry>();
+        if (!frame_ || frame_->fields.empty()) return geo;
+        const Domain& d = frame_->domain;
+        const size_t n = d.cellCount();
+        if (frame_->fields.size() < 3 * n) return geo;
+        const char* names[3] = {"density", "temperature", "flame"};
+        for (int channel = 0; channel < 3; ++channel) {
+            std::vector<float> values(n);
+            for (size_t c = 0; c < n; ++c) values[c] = fromHalf(frame_->fields[3 * c + static_cast<size_t>(channel)]);
+            geo->addVolume(Volume::make(names[channel], d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2],
+                                        std::move(values)));
+        }
+        return geo;
+    }
+};
+
+/// "12345:1690000000": what says a file changed -- its size and the time it
+/// last did; empty for a file that is not there.
+std::string stampOf(const std::string& path) {
+    std::error_code ec;
+    const auto size = fs::file_size(path, ec);
+    if (ec) return {};
+    const auto time = fs::last_write_time(path, ec);
+    if (ec) return {};
+    return std::to_string(size) + ":" + std::to_string(time.time_since_epoch().count());
+}
+
+}  // namespace
+
+void registerSimGeometryNodes() {
+    static const bool once = [] {
+        auto& r = NodeRegistry::instance();
+        r.add("liquid_points", [](const std::string& n) { return std::make_unique<LiquidPointsNode>(n); });
+        r.add("rain_points", [](const std::string& n) { return std::make_unique<RainPointsNode>(n); });
+        r.add("gas_volume", [](const std::string& n) { return std::make_unique<GasVolumeNode>(n); });
+        return true;
+    }();
+    (void)once;
+}
+
+GeometryGraph::GeometryGraph() { registerSimGeometryNodes(); }
+
+GeometryGraph::~GeometryGraph() = default;
+
+void GeometryGraph::sync(const Network& net, const std::string& folder) {
+    if (&net == synced_ && net.revision() == revision_ && folder == folder_) {
+        // The network is the same; a file it reads may not be.
+        for (auto& [id, m] : nodes_) {
+            if (m.file.empty()) continue;
+            m.node->editParams([&](ParamSet& p) { return p.setString("stamp", stampOf(m.file)); });
+        }
+        return;
+    }
+    synced_ = &net;
+    revision_ = net.revision();
+    folder_ = folder;
+
+    // Gone, or of another type now: out of the graph.
+    for (auto it = nodes_.begin(); it != nodes_.end();) {
+        const Node* n = net.node(it->first);
+        if (n && n->type == it->second.type) {
+            ++it;
+            continue;
+        }
+        graph_.remove(it->second.node->name());
+        it = nodes_.erase(it);
+    }
+    // New: made.
+    for (const Node& n : net.nodes()) {
+        const NodeType* t = findNodeType(n.type);
+        if (!t || !t->core || nodes_.count(n.id)) continue;
+        pg::Node* made = graph_.create(t->core, "n" + std::to_string(n.id));
+        if (made) nodes_[n.id] = {made, n.type, false, 0, {}};
+    }
+
+    // The parameters, set -- only those that changed dirty anything.
+    for (auto& [id, m] : nodes_) {
+        const Node& n = *net.node(id);
+        const NodeType& t = *findNodeType(n.type);
+        m.bypass = n.bypass;
+        m.file.clear();
+        m.node->editParams([&](ParamSet& p) {
+            bool changed = false;
+            for (const ParamDef& d : t.params) {
+                const ParamValue v = net.param(id, d.name);
+                const std::string name = d.name;
+                switch (d.kind) {
+                    case ParamKind::Float: changed |= p.setFloat(name, v[0]); break;
+                    case ParamKind::Int:
+                    case ParamKind::Choice: changed |= p.setInt(name, static_cast<int>(v[0])); break;
+                    case ParamKind::Toggle: changed |= p.setBool(name, v[0] != 0.0f); break;
+                    case ParamKind::Vector:
+                    case ParamKind::Color: changed |= p.setVec3(name, Vec3(v[0], v[1], v[2])); break;
+                    case ParamKind::Text:
+                    case ParamKind::Code: changed |= p.setString(name, net.text(id, d.name)); break;
+                    case ParamKind::File: {
+                        std::string path = net.text(id, d.name);
+                        if (!path.empty() && !folder.empty() && fs::path(path).is_relative()) {
+                            path = (fs::path(folder) / path).lexically_normal().string();
+                        }
+                        changed |= p.setString(name, path);
+                        changed |= p.setString("stamp", path.empty() ? std::string() : stampOf(path));
+                        m.file = path;
+                        break;
+                    }
+                }
+            }
+            return changed;
+        });
+    }
+
+    // The wiring: each geometry input in the order of its pins, and of the
+    // links into a pin that takes several. First what goes in, for every
+    // node -- a bypassed one passes it on -- then the links, around them.
+    std::vector<std::tuple<int, size_t, int>> wiring;  // node, input, from
+    for (auto& [id, m] : nodes_) {
+        m.input = 0;
+        const NodeType& t = *findNodeType(net.node(id)->type);
+        std::vector<int> sources;
+        bool geometryPins = false;
+        for (const PinDef& pin : t.inputs) {
+            if (pin.type != PinType::Geometry) continue;
+            geometryPins = true;
+            const std::vector<Link> in = net.linksInto(id, pin.name);
+            if (pin.many) {
+                for (const Link& l : in) sources.push_back(l.from);
+            } else {
+                sources.push_back(in.empty() ? 0 : in.front().from);
+            }
+            if (m.input == 0 && !in.empty()) m.input = in.front().from;
+        }
+        const size_t count = std::max<size_t>(sources.size(), geometryPins ? 1 : 0);
+        if (m.node->inputCount() != count) m.node->setInputCount(count);
+        for (size_t i = 0; i < count; ++i) wiring.emplace_back(id, i, i < sources.size() ? sources[i] : 0);
+    }
+    // Unwired first, then wired: turning A -> B into B -> A must not look
+    // like a loop halfway through.
+    std::vector<std::tuple<pg::Node*, size_t, pg::Node*>> changes;
+    for (const auto& [id, index, from] : wiring) {
+        const auto src = nodes_.find(resolve(from));
+        pg::Node* source = src != nodes_.end() ? src->second.node : nullptr;
+        pg::Node* node = nodes_.at(id).node;
+        if (node->input(index) != source) changes.emplace_back(node, index, source);
+    }
+    for (const auto& [node, index, source] : changes) node->setInput(index, nullptr);
+    for (const auto& [node, index, source] : changes) {
+        if (source) node->setInput(index, source);
+    }
+}
+
+int GeometryGraph::resolve(int id) const {
+    // A bypassed node passes on what comes into it -- and so on up.
+    for (int hops = 0; hops < 10000; ++hops) {
+        const auto it = nodes_.find(id);
+        if (it == nodes_.end()) return 0;
+        if (!it->second.bypass) return id;
+        id = it->second.input;
+    }
+    return 0;
+}
+
+GeometryPtr GeometryGraph::cook(int id, int frame, float timeStep) {
+    if (!nodes_.count(id)) return nullptr;
+    const int shown = resolve(id);
+    const auto it = nodes_.find(shown);
+    if (it == nodes_.end()) return std::make_shared<Geometry>();  // bypassed, and nothing comes in
+    // The simulation's frame into the nodes that read it.
+    std::shared_ptr<const Frame> f = frames_ ? frames_(frame) : nullptr;
+    for (auto& [nid, m] : nodes_) {
+        if (auto* reads = dynamic_cast<FrameNode*>(m.node)) reads->setFrame(frame, f);
+    }
+    const double dt = std::max(timeStep, 1e-6f);
+    return engine_.cook(*it->second.node, CookContext{static_cast<double>(frame) * dt, frame, 1.0 / dt});
+}
+
+std::string GeometryGraph::error(int id) const {
+    const auto it = nodes_.find(id);
+    return it == nodes_.end() ? std::string() : it->second.node->cookError();
+}
+
+}  // namespace pg::sim

@@ -139,6 +139,9 @@ public:
     /// Creates the attribute, or returns the existing one if the type matches.
     /// A type mismatch replaces the attribute.
     AttributeArray& create(const std::string& name, AttrType type);
+    /// The attribute becomes `array` -- sharing its buffer, copy-on-write --
+    /// resized to this set's element count.
+    AttributeArray& assign(const std::string& name, const AttributeArray& array);
 
     bool erase(const std::string& name);
     bool contains(const std::string& name) const { return find(name) != nullptr; }

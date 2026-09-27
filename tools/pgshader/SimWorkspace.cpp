@@ -22,6 +22,7 @@ namespace {
 using theme::Icon;
 
 ImU32 categoryColor(const std::string& c) {
+    if (c == "Geometry") return IM_COL32(148, 74, 110, 255);
     if (c == "Objects") return IM_COL32(70, 98, 150, 255);
     if (c == "Sources") return IM_COL32(178, 86, 44, 255);
     if (c == "Forces") return IM_COL32(38, 124, 134, 255);
@@ -31,6 +32,7 @@ ImU32 categoryColor(const std::string& c) {
 }
 
 Icon categoryIcon(const std::string& c) {
+    if (c == "Geometry") return Icon::Geometry;
     if (c == "Objects") return Icon::Collider;
     if (c == "Sources") return Icon::Source;
     if (c == "Forces") return Icon::Force;
@@ -45,6 +47,12 @@ Icon typeIcon(const sim::NodeType* t) {
     if (name == "water_source") return Icon::Drop;
     if (name == "rain") return Icon::Rain;
     if (name == "camera") return Icon::Camera;
+    if (name == "sphere") return Icon::Sphere;
+    if (name == "box") return Icon::Box;
+    if (name == "tube") return Icon::Cylinder;
+    if (name == "scatter" || name == "point_cloud" || name == "liquid_points" || name == "rain_points") return Icon::Points;
+    if (name == "point_wrangle") return Icon::Code;
+    if (name == "file") return Icon::File;
     return categoryIcon(t->category);
 }
 
@@ -66,6 +74,8 @@ ImU32 pinColor(sim::PinType t) {
         case sim::PinType::Water: return IM_COL32(64, 170, 250, 255);
         case sim::PinType::Liquid: return IM_COL32(40, 120, 230, 255);
         case sim::PinType::Camera: return IM_COL32(205, 208, 216, 255);
+        case sim::PinType::Geometry: return IM_COL32(236, 150, 190, 255);
+        case sim::PinType::Rain: return IM_COL32(150, 172, 210, 255);
     }
     return IM_COL32_WHITE;
 }
@@ -82,9 +92,15 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
     const std::string dot = " \xc2\xb7 ";
     const std::string& t = n.type;
     const std::string times = " \xc3\x97 ";
-    auto shapeOf = [&]() { return std::string(sim::shapeName(static_cast<sim::Shape>(static_cast<int>(v("shape"))))); };
+    // The shape: the geometry linked into Shape, else its own.
+    const std::vector<sim::Link> shaped = net.linksInto(n.id, "shape");
+    const sim::Node* geometry = shaped.empty() ? nullptr : net.node(shaped.front().from);
+    auto shapeOf = [&]() {
+        if (geometry) return "shape of " + geometry->name;
+        return std::string(sim::shapeName(static_cast<sim::Shape>(static_cast<int>(v("shape")))));
+    };
     if (t == "pyro_source") {
-        std::string s = v("shape") != 0.0f ? shapeOf() : "";
+        std::string s = v("shape") != 0.0f || geometry ? shapeOf() : "";
         for (const char* p : {"fuel", "smoke", "heat"}) {
             if (v(p) > 0.0f) s += (s.empty() ? "" : dot) + std::string(p) + " " + number(v(p));
         }
@@ -103,6 +119,7 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return s;
     }
     if (t == "attractor" || t == "drag") return "strength " + number(v("strength"));
+    if (t == "object" && geometry) return shapeOf();
     if (t == "object" && static_cast<sim::Shape>(static_cast<int>(v("shape"))) == sim::Shape::Mesh) {
         const std::string file = net.text(n.id, "file");
         return "mesh" + dot + (file.empty() ? std::string("no file") : fs::path(file).filename().string());
@@ -152,6 +169,18 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return number(v("focal")) + " mm" + dot + std::to_string(static_cast<int>(v("width"))) + times +
                std::to_string(static_cast<int>(v("height")));
     }
+    if (t == "scatter" || t == "point_cloud") return std::to_string(static_cast<int>(v("count"))) + " points";
+    if (t == "box") {
+        const sim::ParamValue s = net.param(n.id, "size");
+        return number(s[0]) + times + number(s[1]) + times + number(s[2]) + " m";
+    }
+    if (t == "sphere") return "radius " + number(v("radius")) + " m";
+    if (t == "tube") return "radius " + number(v("radius")) + dot + number(v("height")) + " m";
+    if (t == "file") {
+        const std::string file = net.text(n.id, "file");
+        return file.empty() ? std::string("no file") : fs::path(file).filename().string();
+    }
+    if (t == "attribute_create") return "@" + net.text(n.id, "name");
     (void)c;
     return {};
 }
@@ -191,6 +220,8 @@ SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
     : renderer_(gl), runner_(std::make_unique<SimRunner>(synchronous)), synchronous_(synchronous) {
     if (!renderer_.init(rendererLog_)) rendererLog_ = "The driver rejected the volume shader:\n" + rendererLog_;
     else rendererLog_.clear();
+    // Liquid Points and the like read the frames the runner keeps.
+    geometry_.setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     if (!openExample("campfire")) newNetwork();
 }
 
@@ -317,7 +348,7 @@ void SimWorkspace::recompile() {
     if (net_.revision() == compiledRevision_) return;
     compiledRevision_ = net_.revision();
     const sim::Look before = compiled_.look;
-    compiled_ = net_.compile(folder());
+    compiled_ = net_.compile(folder(), &geometry_);
     if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
     if (!(compiled_.look == before)) viewDirty_ = true;
     renderer_.look = compiled_.look;
@@ -369,6 +400,7 @@ void SimWorkspace::update(float dt) {
         viewDirty_ = true;
     }
     if (!shown_) renderer_.setDomain(runner_->domain());
+    updateGeometry();
     updateGuides();
 }
 
@@ -443,13 +475,27 @@ std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
             }
         }
         c.bypassed = n.bypass;
+        c.displayable = t && t->core;
+        c.displayed = n.display;
         c.dimmed = !compiled_.isActive(n.id);
         for (const sim::Problem& p : compiled_.problems) {
             if (p.node != n.id) continue;
             c.problem = std::max(c.problem, p.level == sim::Problem::Level::Error ? 2 : 1);
             c.problemText += (c.problemText.empty() ? "" : "\n") + p.message;
         }
+        if (const auto e = cookErrors_.find(n.id); e != cookErrors_.end()) {
+            c.problem = 2;
+            c.problemText += (c.problemText.empty() ? "" : "\n") + e->second;
+        }
         c.summary = summaryOf(net_, n, compiled_);
+        if (n.display) {
+            if (const GeometryPtr& g = renderer_.geometry()) {
+                const std::string dot = " \xc2\xb7 ";
+                c.summary = std::to_string(g->pointCount()) + " points" +
+                            (g->primitiveCount() ? dot + std::to_string(g->primitiveCount()) + " prims" : std::string()) +
+                            (g->volumeCount() ? dot + std::to_string(g->volumeCount()) + " volumes" : std::string());
+            }
+        }
         out.push_back(std::move(c));
     }
     return out;
@@ -504,6 +550,7 @@ CanvasModel SimWorkspace::canvasModel() {
     m.remove = [this](const std::vector<int>& nodes) { removeNodes(nodes); };
     m.duplicate = [this](const std::vector<int>& nodes) { duplicate(nodes); };
     m.toggleBypass = [this](const std::vector<int>& nodes) { toggleBypass(nodes); };
+    m.toggleDisplay = [this](int node) { net_.setDisplay(net_.displayed() == node ? 0 : node); };
     m.addMenu = [this](ImVec2 at, const PinRef* pending) { return addMenu(at, pending); };
     m.nodeMenu = [this](int node) { nodeMenu(node); };
     return m;
@@ -512,6 +559,12 @@ CanvasModel SimWorkspace::canvasModel() {
 int SimWorkspace::addNode(const std::string& type, ImVec2 at, const PinRef* pending) {
     const int id = net_.add(type, std::round(at.x - 24.0f), std::round(at.y - 14.0f));
     if (!id) return 0;
+    // A geometry node shows when nothing does -- or when it goes on from the
+    // one that does, as the next step of a chain.
+    const sim::NodeType* added = sim::findNodeType(type);
+    if (added && added->core && (!net_.displayed() || (pending && pending->output && pending->node == net_.displayed()))) {
+        net_.setDisplay(id);
+    }
     if (pending) {
         const sim::Node* other = net_.node(pending->node);
         const sim::NodeType* ot = other ? sim::findNodeType(other->type) : nullptr;
@@ -723,9 +776,26 @@ void SimWorkspace::parameters(ImVec2 size) {
     const int id = canvas_.current();
     const sim::Node* n = net_.node(id);
     const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
-    ui::PanelHeader h = ui::panelHeader(Icon::Parameters, "Parameters", t ? t->label : nullptr);
-    if (n && t && t->bypassable) {
+    ui::PanelHeader h = sheet_ ? ui::panelHeader(Icon::Table, "Spreadsheet", t && t->core ? t->label : nullptr)
+                               : ui::panelHeader(Icon::Parameters, "Parameters", t ? t->label : nullptr);
+    if (ui::headerButton(h, "sheet", Icon::Table, "The geometry spreadsheet: the points, vertices, primitives, detail "
+                                                  "and volumes of the selected geometry node -- or of the displayed one",
+                         sheet_)) {
+        sheet_ = !sheet_;
+    }
+    if (n && t && t->bypassable && !sheet_) {
         if (ui::headerButton(h, "bypass", Icon::Bypass, "Bypass: leave the node out (B)", n->bypass)) toggleBypass({id});
+    }
+    if (n && t && t->core && !sheet_) {
+        if (ui::headerButton(h, "display", Icon::Eye, "Display flag: show its geometry in the viewport (R)", n->display)) {
+            net_.setDisplay(n->display ? 0 : id);
+        }
+    }
+    if (sheet_) {
+        ImGui::BeginChild("sheet", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+        spreadsheet();
+        ImGui::EndChild();
+        return;
     }
     ImGui::BeginChild("params", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     if (n && t) nodeParameters(*n, *t);
@@ -775,13 +845,34 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
     }
+    if (const auto e = cookErrors_.find(id); e != cookErrors_.end()) {
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetTextLineHeight();
+        theme::drawIcon(ImGui::GetWindowDrawList(), Icon::Error, ImVec2(q.x + h * 0.5f, q.y + h * 0.5f), h * 0.9f, theme::kRed);
+        ImGui::SetCursorScreenPos(ImVec2(q.x + h * 1.4f, q.y));
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kRed));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(e->second.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    }
     if (node.bypass) {
         ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(IM_COL32(230, 200, 90, 255)));
-        ImGui::TextUnformatted("Bypassed: left out of the simulation.");
+        ImGui::TextUnformatted(type.core ? "Bypassed: what comes in goes on unchanged."
+                                         : "Bypassed: left out of the simulation.");
         ImGui::PopStyleColor();
     }
     if (!compiled_.isActive(id) && !node.bypass) {
-        ui::note("Not linked to the Output: it takes no part.");
+        ui::note(type.core ? "Not displayed, and not the shape of anything: it takes no part."
+                           : "Not linked to the Output: it takes no part.");
+    }
+    if (type.input("shape")) {
+        const std::vector<sim::Link> shaped = net_.linksInto(id, "shape");
+        if (const sim::Node* g = shaped.empty() ? nullptr : net_.node(shaped.front().from)) {
+            ui::note(("Its shape is the geometry of " + g->name +
+                      ", as it is at frame 1. Its own shape, place and size below stand in only when that is empty.")
+                         .c_str());
+        }
     }
 
     // The parameters, section by section, in the order of the table.
@@ -847,6 +938,34 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                         fileParam_ = p.name;
                     }
                     ImGui::SetItemTooltip("Browse for an OBJ file");
+                    break;
+                }
+                case sim::ParamKind::Text:
+                case sim::ParamKind::Code: {
+                    // Typed into a buffer of our own; applied when the field is let go.
+                    const std::string key = std::to_string(id) + "." + p.name;
+                    std::string value = editKey_ == key ? editText_ : net_.text(id, p.name);
+                    if (p.kind == sim::ParamKind::Code) {
+                        ImGui::PushFont(theme::fonts().mono, 0.0f);
+                        const float lines = std::clamp(static_cast<float>(std::count(value.begin(), value.end(), '\n') + 2), 4.0f, 16.0f);
+                        ImGui::InputTextMultiline("##v", &value, ImVec2(-1.0f, ImGui::GetTextLineHeight() * lines + theme::px(8.0f)),
+                                                  ImGuiInputTextFlags_AllowTabInput);
+                        ImGui::PopFont();
+                    } else {
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::InputText("##v", &value);
+                    }
+                    if (ImGui::IsItemActive()) {
+                        editKey_ = key;
+                        editText_ = value;
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        net_.setText(id, p.name, value);
+                        editKey_.clear();
+                    } else if (!ImGui::IsItemActive() && editKey_ == key) {
+                        editKey_.clear();
+                    }
+                    if (p.kind == sim::ParamKind::Code) ui::note("Applied when you click away.");
                     break;
                 }
                 case sim::ParamKind::Choice: {

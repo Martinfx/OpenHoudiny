@@ -90,8 +90,20 @@ float WaterFrame::foam(int i, int j, int k) const {
     return static_cast<float>(cells[2 * cell + 1]) / 255.0f;
 }
 
-WaterFrame capture(const LiquidSolver& sim) {
+WaterFrame capture(const LiquidSolver& sim, bool particles) {
     WaterFrame w;
+    if (particles) {
+        const size_t n = sim.particleCount();
+        w.positions = sim.positions();
+        w.velocities.resize(3 * n);
+        w.whiteness.resize(n);
+        const auto& v = sim.velocities();
+        const auto& white = sim.foam();
+        for (size_t i = 0; i < n; ++i) {
+            for (int a = 0; a < 3; ++a) w.velocities[3 * i + static_cast<size_t>(a)] = toHalf(v[i][a]);
+            w.whiteness[i] = static_cast<uint8_t>(std::lround(std::clamp(white[i], 0.0f, 1.0f) * 255.0f));
+        }
+    }
     const Domain& d = sim.domain();
     for (int a = 0; a < 3; ++a) w.domain.cells[a] = 2 * d.cells[a];
     w.domain.voxel = 0.5f * d.voxel;

@@ -11,6 +11,9 @@ node-based, nedestruktivní, headless-first.
   z uzlů (jako Pyro a FLIP v Houdini): editor se sítí uzlů, objekty a gizmo
   ve viewportu, proudění na 3D mřížce, multigrid, voda z částic, déšť ve
   větru, objemové vykreslování, hladina s odrazy a lomem a kamera záběru
+- **[docs/geometry.md](docs/geometry.md)** — geometrie v téže síti (uzly
+  jako SOP v Houdini): display flag, viewport, tabulka atributů, geometrie
+  jako tvar překážek a zdrojů, simulace zpátky jako body a objemy
 
 > **Jméno je zatím placeholder.** Název `OpenHoudiny` je zaměnitelně podobný
 > registrované ochranné známce SideFX; jmenný prostor v kódu je proto neutrální
@@ -57,7 +60,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 144 testů: 50 jádro, 25 shader graf, 69 simulace, voda, déšť, objekty a modely
+./build/pgtests            # 163 testů: 59 jádro, 25 shader graf, 79 simulace, voda, déšť, objekty, geometrie
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/pgshader                                  # editor: simulace z uzlů, táborák (výchozí)
@@ -67,6 +70,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ./build/pgshader sim campfire fire.png            # simulace bez okna, do PNG
 ./build/pgshader sim explosion out/boom.png --every 2 --set charge.fuel=80
 ./build/pgshader sim lakeside shot.png                # záběr kamerou: oheň, voda, déšť, vítr
+./build/pgshader --example rock_garden            # geometrie v síti: kameny z kopií koule, déšť
+./build/pgshader sim liquid_points points.png     # částice vody jako body obarvené wranglem
 ./build/pgshader help                             # příkazy: list, gen, check, render, sim
 ```
 
@@ -88,8 +93,9 @@ snippet čte `@Time`.
 
 ## Stav
 
-Hotovo a otestováno: COW geometrie, cook engine, časová závislost, LRU cache,
-deterministický paralelismus, per-element jazyk, 10 typů uzlů, 50 testů
+Hotovo a otestováno: COW geometrie s objemy, cook engine, časová závislost,
+LRU cache, deterministický paralelismus, per-element jazyk, 19 typů uzlů
+(generátory, primitiva, scatter, copy to points, OBJ…), 59 testů jádra
 (čisté pod ASan, UBSan i ThreadSanitizerem).
 
 Vedle geometrie je síť druhého typu: **shader graf** s knihovnou uzlů
@@ -116,15 +122,24 @@ editor se jí dívá (s rámečkem obrazu) a render i `pgshader sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
 vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a patnácti příklady. Ve viewportu se
+se simulací ve vlastním vlákně, undo/redo a osmnácti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
 velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
 objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
 sítě.
 
+**Geometrie** žije ve stejné síti jako simulace, jako SOP v Houdini: krychle,
+koule, válec, mřížka, soubor OBJ, scatter, copy to points, transform, merge,
+wrangle a další. Počítá ji geometrické jádro inkrementálně — tah posuvníkem
+přepočítá jen uzly za ním. Uzel s *display flagem* je ve viewportu (polygony
+v barvách `Cd`, body, čáry, objemy) a tabulka atributů ukáže body, rohy,
+primitiva, detail i objemy. Geometrie může být tvarem překážky, zdroje kouře
+nebo vody, a simulace se vracejí jako geometrie: částice vody, kapky deště
+a mřížky plynu jako body a objemy pro další uzly.
+
 Vědomě chybí: I/O (USD, Alembic, VDB), JIT, packed primitives, digital assets,
-serializace scény, Python vazby, GUI pro geometrii, simulace těles a
-látek. Podrobně v [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
+Python vazby, simulace těles a látek. Podrobně v
+[ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
 
 ## Licence
 

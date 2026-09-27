@@ -309,16 +309,19 @@ projektu.
 ```
 src/pg/core/     Types      vektory, matice, typy atributů
                  Attribute  AttributeArray (COW), AttributeSet
-                 Geometry   kontejner, topologie, skupiny, hash
+                 Geometry   kontejner, topologie, skupiny, objemy, hash
                  Parallel   deterministické chunkování, thread pool
                  Node       uzel, parametry, verzování, registry
                  Graph      vlastnictví uzlů
                  CookEngine pull evaluace, LRU cache
 src/pg/nodes/    Generators grid, line, pointcloud
+                 Primitives box, sphere, tube (uzavřené, stěny ven)
                  Modifiers  transform, merge, switch, null,
                             attribcreate, groupbox, blast
+                 Surface    file (OBJ), scatter, normal, copytopoints, color
                  Expression per-element jazyk
                  Wrangle    uzel pointwrangle
+src/pg/io/       Obj        čtení a zápis OBJ (body, polygony, čáry)
 src/pg/shader/   Types      typy shader grafu a jejich převody
                  NodeLibrary definice uzlů z textu (builtin.pgnodes)
                  ShaderGraph instance uzlů, spoje, formát .pgsg
@@ -337,22 +340,30 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Camera     kamera záběru: poloha, rotace, objektiv, rozlišení
                  Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
                  World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
-                 Network    síť uzlů simulace, formát .pgsim, překlad na World + Look
+                 Network    síť uzlů simulace i geometrie, formát .pgsim, překlad na World + Look
+                 GeometryGraph  geometrické uzly sítě jako graf jádra: synchronizace,
+                            inkrementální vaření, simulace zpátky jako body a objemy
+                 Display    geometrie pro viewport: trojúhelníky s barvou, tečky, čáry
                  Frame      snímek: plyn v poloviční přesnosti, hladina vody po bajtech, kapky
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
-                 Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť, vodítka
-tests/           50 testů proti invariantům + 25 pro shader graf + 69 pro simulaci, vodu, déšť, objekty a modely
+                 Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť,
+                            zobrazená geometrie, vodítka
+tests/           59 testů jádra (invarianty, SOP uzly) + 25 pro shader graf + 79 pro simulaci,
+                 vodu, déšť, objekty, modely a geometrii v síti
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/pgshader/  pgshader — editor se dvěma sítěmi, simulací (výchozí) a shadery,
                  na společném plátně uzlů; viewport s výběrem a gizmem
-                 (SimViewport, Gizmo); příkazy list/gen/check/render/sim
+                 (SimViewport, Gizmo), zobrazená geometrie a tabulka atributů
+                 (SimGeometry); příkazy list/gen/check/render/sim
 examples/        grafy shaderů, ukázková uživatelská knihovna, sítě simulace
 ```
 
 Shader graf je popsaný zvlášť v [docs/shader-graph.md](docs/shader-graph.md),
-simulace kouře a ohně v [docs/pyro.md](docs/pyro.md).
+simulace kouře a ohně v [docs/pyro.md](docs/pyro.md), geometrie v síti
+editoru (uzly jako SOP, display flag, tabulka atributů, geometrie jako tvar
+simulací) v [docs/geometry.md](docs/geometry.md).
 
 Jmenný prostor `pg` je placeholder — jméno je výstup fáze 0 roadmapy.
 
@@ -373,13 +384,15 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Detekce cyklů při zapojování |
 | ✅ | Deterministický `parallelFor` / `parallelReduce`, thread pool |
 | ✅ | Per-element jazyk: parser, typová inference, vazba na sloty |
-| ✅ | 10 typů uzlů, obsahový hash, export OBJ, headless CLI |
-| ✅ | 50 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
+| ✅ | 19 typů uzlů (box, sphere, tube, scatter, copy to points, file…), obsahový hash, čtení i zápis OBJ, headless CLI |
+| ✅ | Objemy v geometrii (husté mřížky hodnot, COW) |
+| ✅ | 163 testů · čisté pod ASan, UBSan i **ThreadSanitizerem** |
 | ✅ | Shader graf: uzly z textu, 4 cíle, editor; každý uzel ověřený glslangem a spirv-val |
 | ✅ | Simulace kouře a ohně z uzlů: zdroje, síly, překážky; MAC mřížka, multigrid, bitově stejná na 1 i 4 vláknech; editor a `pgshader sim` |
 | ✅ | Voda (FLIP): tlak s volnou hladinou (CG s multigridem, ghost fluid, stěny zakryté tělesy), bitově stejná na 1 i 4 vláknech; hladina s odrazy a lomem |
 | ✅ | Déšť a vítr: kapky z mraku, nárazy větru putující s větrem, odstřiky od objektů, vlnky na vodě (vlnová rovnice), mokrá podlaha; bitově stejné na 1 i 4 vláknech |
 | ✅ | Kamera záběru: pohled kamerou v editoru s rámečkem obrazu, kamera z pohledu, render a sekvence kamerou (editor i `pgshader sim`) |
+| ✅ | Geometrie v síti editoru: SOP uzly vařené jádrem inkrementálně, display flag, viewport, **geometry spreadsheet**; geometrie jako tvar překážek a zdrojů, simulace zpátky jako body a objemy |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)
 
@@ -396,9 +409,8 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 ### Není v prototypu (vědomě)
 
 I/O (USD, Alembic, VDB) · JIT · packed primitives a out-of-core · digital
-assets · serializace scény a migrace verzí · Python vazby · GUI pro geometrii ·
-booleany, subdivize, geometrické dotazy · simulace těles a látek ·
-řídké mřížky (VDB) a simulace na GPU
+assets · Python vazby · booleany, subdivize, geometrické dotazy · simulace
+těles a látek · řídké mřížky (VDB) a simulace na GPU
 
 ---
 

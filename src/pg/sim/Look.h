@@ -26,6 +26,7 @@ struct Look {
     Vec3 waterColor{0.1f, 0.42f, 0.5f};  ///< the colour water takes on where it is deep
     float waterClarity = 1.5f;    ///< metres: how far one sees into it
     float foam = 1.0f;            ///< how white foam and spray are drawn; 0 not at all
+    bool waterSurface = true;     ///< the surface is drawn; off, the water is simulated unseen
 
     // Rain
     Vec3 rainColor{0.75f, 0.8f, 0.9f};

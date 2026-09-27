@@ -86,8 +86,18 @@ std::vector<std::string> ParamSet::names() const {
 
 // --- Node ------------------------------------------------------------------
 
+namespace {
+
+/// A version no node has had yet.
+uint64_t freshVersion() {
+    static std::atomic<uint64_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+}  // namespace
+
 Node::Node(std::string typeName, std::string name)
-    : typeName_(std::move(typeName)), name_(std::move(name)) {}
+    : typeName_(std::move(typeName)), name_(std::move(name)), version_(freshVersion()) {}
 
 Node::~Node() {
     // Leave no dangling back-edges if a node outlives its neighbours.
@@ -150,7 +160,7 @@ void Node::bumpVersion() {
     while (!stack.empty()) {
         Node* n = stack.back();
         stack.pop_back();
-        n->version_.fetch_add(1, std::memory_order_acq_rel);
+        n->version_.store(freshVersion(), std::memory_order_release);
         for (Node* out : n->outputs_) {
             if (out && seen.insert(out).second) stack.push_back(out);
         }

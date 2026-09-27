@@ -36,6 +36,7 @@
 #include "pg/gl/Preview.h"
 #include "pg/gl/Volume.h"
 #endif
+#include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
 #include "pg/sim/World.h"
 
@@ -569,13 +570,24 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             return 1;
         }
     }
-    sim::Compiled c = net.compile(folder);
+    // The geometry nodes cook here: shapes for the simulations, and the
+    // displayed node's geometry for the pictures -- from the frame just
+    // simulated, for the nodes that bring a simulation back.
+    sim::GeometryGraph geometry;
+    std::shared_ptr<const sim::Frame> current;
+    geometry.setFrames([&](int f) { return current && current->number == f ? current : nullptr; });
+    sim::Compiled c = net.compile(folder, &geometry);
+    geometry.sync(net, folder);
+    // Geometry alone -- nothing simulated -- is drawn all the same.
+    const bool geometryOnly = !c.ok && c.display != 0;
     for (const sim::Problem& p : c.problems) {
         const sim::Node* n = net.node(p.node);
+        if (geometryOnly && p.level == sim::Problem::Level::Error) continue;
         std::fprintf(stderr, "%s: %s%s%s%s\n", cmd, p.level == sim::Problem::Level::Error ? "error: " : "warning: ",
                      n ? n->name.c_str() : "", n ? ": " : "", p.message.c_str());
     }
-    if (!c.ok) return 1;
+    if (!c.ok && !geometryOnly) return 1;
+    if (geometryOnly) c.frames = 1;
     if (o.resolution > 0) {
         c.world.gas.solver.resolution = o.resolution;
         c.world.water.solver.resolution = o.resolution;
@@ -633,12 +645,30 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         volume.setLines(gl::sceneGuides(&world, c.solids, {}, c.solver, c.liquidSolver, c.rain,
                                         c.hasCamera && !throughCamera ? &c.camera : nullptr));
     }
-    const sim::Domain box = gl::sceneDomain(world);
+    sim::Domain box = gl::sceneDomain(world);
+    // Geometry alone: the view frames it.
+    bool framed = false;
+    Vec3 middle;
+    if (geometryOnly) {
+        Vec3 lo, hi;
+        volume.setGeometry(geometry.cook(c.display, 1, world.timeStep));
+        if (volume.geometryBounds(lo, hi)) {
+            const Vec3 size = hi - lo;
+            box = sim::Domain::ofBox(Vec3(std::max(size.x, 0.1f), std::max(size.y, 0.1f), std::max(size.z, 0.1f)), 16);
+            middle = (lo + hi) * 0.5f;
+            framed = true;
+        }
+    }
     if (throughCamera) {
         const Vec3 middle = box.origin() + box.size() * 0.5f;
         volume.orbit = gl::orbitThrough(c.camera, std::max(dot(middle - c.camera.position, c.camera.forward()), 0.5f));
     } else {
         volume.orbit = gl::VolumeRenderer::viewOf(box);
+        if (framed) {
+            volume.orbit.target[0] = middle.x;
+            volume.orbit.target[1] = middle.y;
+            volume.orbit.target[2] = middle.z;
+        }
         if (o.yawSet) volume.orbit.yaw = o.yaw;
         if (o.pitchSet) volume.orbit.pitch = o.pitch;
         if (o.distance > 0.0f) volume.orbit.distance = o.distance;
@@ -657,7 +687,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         simulating += ms(t);
         if (o.every > 0 ? f % o.every != 0 : f != frames) continue;
         t = Clock::now();
-        volume.setFrame(solver.capture());
+        current = std::make_shared<const sim::Frame>(solver.capture());
+        if (!geometryOnly) volume.setFrame(*current);
+        if (c.display) {
+            volume.setGeometry(geometry.cook(c.display, f, world.timeStep));
+            const std::string why = geometry.error(c.display);
+            if (!why.empty()) std::fprintf(stderr, "%s: %s: %s\n", cmd, net.node(c.display)->name.c_str(), why.c_str());
+        }
         volume.render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
         const std::vector<uint8_t> pixels = volume.readPixels(2);
         rendering += ms(t);

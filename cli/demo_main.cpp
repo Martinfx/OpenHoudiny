@@ -9,10 +9,10 @@
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
+#include "pg/io/Obj.h"
 
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <string>
 
 using namespace pg;
@@ -63,24 +63,6 @@ void printSpreadsheet(const Geometry& geo, size_t maxRows) {
     if (geo.pointCount() > rows) {
         std::printf("  ... %zu more points\n", geo.pointCount() - rows);
     }
-}
-
-bool writeObj(const Geometry& geo, const std::string& path) {
-    std::ofstream out(path);
-    if (!out) return false;
-
-    out << "# written by the procedural geometry core prototype\n";
-    auto P = geo.positions();
-    for (const Vec3& p : P) out << "v " << p.x << ' ' << p.y << ' ' << p.z << '\n';
-
-    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
-        auto pts = geo.primitivePoints(prim);
-        if (pts.size() < 2) continue;
-        out << (geo.primitiveClosed(prim) ? "f" : "l");
-        for (uint32_t idx : pts) out << ' ' << (idx + 1);  // OBJ is 1-based
-        out << '\n';
-    }
-    return true;
 }
 
 }  // namespace
@@ -151,10 +133,11 @@ int main(int argc, char** argv) {
 
     printSpreadsheet(*result, 8);
 
-    if (writeObj(*result, objPath)) {
+    std::string error;
+    if (io::writeObj(*result, objPath, error)) {
         std::printf("\nwrote %s\n", objPath.c_str());
     } else {
-        std::printf("\ncould not write %s\n", objPath.c_str());
+        std::printf("\n%s\n", error.c_str());
         return 1;
     }
     return 0;

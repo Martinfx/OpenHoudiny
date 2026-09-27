@@ -233,6 +233,11 @@ Tohle je první bod, kdy má smysl ukázat to ven a hledat první uživatele —
 
 > **Geometry spreadsheet není „nice to have".** Bez něj je procedurální graf černá
 > skříňka a uživatelé to vzdají. Patří do stejné úrovně priority jako viewport.
+>
+> **Prototyp:** editor `pgshader` má geometrické uzly ve stejné síti jako simulace,
+> display flag a virtualizovanou tabulku atributů (body, rohy, primitiva, detail,
+> objemy) — plynulou i na 280 tisících částic vody za běhu simulace
+> ([docs/geometry.md](docs/geometry.md)). Kritérium 20 M řádků je pro Qt verzi.
 
 ---
 

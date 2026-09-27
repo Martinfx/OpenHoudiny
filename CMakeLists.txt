@@ -35,6 +35,9 @@ add_library(pgcore
   src/pg/nodes/Modifiers.cpp
   src/pg/nodes/Expression.cpp
   src/pg/nodes/Wrangle.cpp
+  src/pg/nodes/Primitives.cpp
+  src/pg/nodes/Surface.cpp
+  src/pg/io/Obj.cpp
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
@@ -150,6 +153,8 @@ add_library(pgsim
   src/pg/sim/Camera.cpp
   src/pg/sim/Frame.cpp
   src/pg/sim/FreeSurface.cpp
+  src/pg/sim/Display.cpp
+  src/pg/sim/GeometryGraph.cpp
   src/pg/sim/Grid.cpp
   src/pg/sim/Liquid.cpp
   src/pg/sim/Mesh.cpp
@@ -202,6 +207,7 @@ if(PG_BUILD_GUI)
     tools/pgshader/Gizmo.cpp
     tools/pgshader/NodeCanvas.cpp
     tools/pgshader/ShaderWorkspace.cpp
+    tools/pgshader/SimGeometry.cpp
     tools/pgshader/SimRunner.cpp
     tools/pgshader/SimViewport.cpp
     tools/pgshader/SimWorkspace.cpp
@@ -297,10 +303,12 @@ add_executable(pgtests
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp
+  tests/test_sim_geometry.cpp
   tests/test_shapes.cpp
   tests/test_mesh.cpp
   tests/test_liquid.cpp
   tests/test_rain.cpp
+  tests/test_sops.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")

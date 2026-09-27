@@ -24,6 +24,8 @@ public:
     Node* add(std::unique_ptr<Node> node);
 
     Node* find(const std::string& name) const;
+    /// Unwires and deletes the node. False if there is none of that name.
+    bool remove(const std::string& name);
     std::vector<Node*> nodes() const;
     size_t size() const { return nodes_.size(); }
     void clear();

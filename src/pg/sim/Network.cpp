@@ -1,5 +1,7 @@
 #include "pg/sim/Network.h"
 
+#include "pg/sim/GeometryGraph.h"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -323,12 +325,203 @@ std::vector<ParamDef> outputParams() {
 std::vector<NodeType> buildTypes() {
     std::vector<NodeType> t;
 
+    // --- geometry -----------------------------------------------------------------------
+    // Nodes that make and change geometry, as the SOPs of Houdini do: each is
+    // a node of the core's cook engine (pg/nodes, `core` names it), cooked
+    // lazily -- only what changed cooks again. Their parameters carry the
+    // names the core's nodes read.
+    const std::vector<PinDef> in = {{"geometry", "Geometry", PinType::Geometry}};
+    const std::vector<PinDef> out = {{"geometry", "Geometry", PinType::Geometry}};
+    auto vec = [](const char* name, const char* label, const char* section, Vec3 v, float lo, float hi,
+                  const char* unit, const char* help) {
+        return ParamDef{name, label, section, K::Vector, {v.x, v.y, v.z}, lo, hi, -kBig, kBig, unit, help};
+    };
+    auto text = [](const char* name, const char* label, const char* section, const char* byDefault, const char* help) {
+        ParamDef d{name, label, section, K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help};
+        d.text = byDefault;
+        return d;
+    };
+    auto geometry = [&](const char* name, const char* label, const char* core, const char* help,
+                        std::vector<PinDef> inputs, std::vector<ParamDef> params, Handles handles = {}) {
+        t.push_back({name, label, "Geometry", help, std::move(inputs), out, std::move(params), 1});
+        t.back().core = core;
+        t.back().handles = handles;
+    };
+
+    geometry("box", "Box", "box",
+             "A box of six faces turned outward, each cut into quads that share their points.",
+             {},
+             {vec("size", "Size", "Box", Vec3(1.0f, 1.0f, 1.0f), 0.01f, 5.0f, "m", "Width, height and depth."),
+              vec("center", "Center", "Box", Vec3(0.0f, 0.5f, 0.0f), -5.0f, 5.0f, "m",
+                  "Its middle. Half its height up stands it on the floor."),
+              {"divisions", "Divisions", "Box", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 20.0f, 1.0f, 100.0f, "",
+               "How many quads each face is cut into along each side."}},
+             {"center", nullptr, nullptr, "size", nullptr, nullptr});
+    geometry("sphere", "Sphere", "sphere",
+             "A sphere of quads, and triangles at the poles: rows from pole to pole, columns round it.",
+             {},
+             {{"radius", "Radius", "Sphere", K::Float, {0.5f, 0.0f, 0.0f}, 0.01f, 5.0f, 0.0f, kBig, "m", "How big it is."},
+              vec("center", "Center", "Sphere", Vec3(0.0f, 0.5f, 0.0f), -5.0f, 5.0f, "m", "Its middle."),
+              {"rows", "Rows", "Sphere", K::Int, {12.0f, 0.0f, 0.0f}, 3.0f, 64.0f, 3.0f, 1000.0f, "",
+               "Bands from pole to pole."},
+              {"columns", "Columns", "Sphere", K::Int, {24.0f, 0.0f, 0.0f}, 3.0f, 128.0f, 3.0f, 1000.0f, "",
+               "Faces round it."}},
+             {"center", nullptr, nullptr, nullptr, "radius", nullptr});
+    geometry("tube", "Tube", "tube",
+             "A tube standing along y: quads round it and up it, closed at the ends by a polygon each.",
+             {},
+             {{"radius", "Radius", "Tube", K::Float, {0.3f, 0.0f, 0.0f}, 0.01f, 5.0f, 0.0f, kBig, "m", "How thick."},
+              {"height", "Height", "Tube", K::Float, {1.0f, 0.0f, 0.0f}, 0.01f, 5.0f, 0.0f, kBig, "m", "How tall."},
+              vec("center", "Center", "Tube", Vec3(0.0f, 0.5f, 0.0f), -5.0f, 5.0f, "m", "Its middle."),
+              {"columns", "Columns", "Tube", K::Int, {24.0f, 0.0f, 0.0f}, 3.0f, 128.0f, 3.0f, 1000.0f, "",
+               "Faces round it."},
+              {"rows", "Rows", "Tube", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 64.0f, 1.0f, 1000.0f, "", "Faces up it."},
+              {"caps", "Caps", "Tube", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "A polygon over each end: closed, it has an inside."}},
+             {"center", nullptr, nullptr, nullptr, "radius", "height"});
+    geometry("grid", "Grid", "grid",
+             "A flat grid of quads on the floor: rows along z, columns along x. Displaced by a wrangle it is "
+             "a terrain.",
+             {},
+             {{"sizex", "Size X", "Grid", K::Float, {2.0f, 0.0f, 0.0f}, 0.1f, 20.0f, 0.0f, kBig, "m", "Along x."},
+              {"sizez", "Size Z", "Grid", K::Float, {2.0f, 0.0f, 0.0f}, 0.1f, 20.0f, 0.0f, kBig, "m", "Along z."},
+              {"rows", "Rows", "Grid", K::Int, {10.0f, 0.0f, 0.0f}, 2.0f, 200.0f, 2.0f, 10000.0f, "",
+               "Points along z."},
+              {"cols", "Columns", "Grid", K::Int, {10.0f, 0.0f, 0.0f}, 2.0f, 200.0f, 2.0f, 10000.0f, "",
+               "Points along x."},
+              vec("center", "Center", "Grid", Vec3(), -5.0f, 5.0f, "m", "Its middle.")},
+             {"center", nullptr, nullptr, nullptr, nullptr, nullptr});
+    geometry("line", "Line", "line", "An open polyline: points from the origin along a direction.",
+             {},
+             {vec("origin", "Origin", "Line", Vec3(), -5.0f, 5.0f, "m", "Where it starts."),
+              vec("direction", "Direction", "Line", Vec3(1.0f, 0.0f, 0.0f), -1.0f, 1.0f, "", "Which way it goes."),
+              {"length", "Length", "Line", K::Float, {1.0f, 0.0f, 0.0f}, 0.01f, 10.0f, 0.0f, kBig, "m", "How long."},
+              {"points", "Points", "Line", K::Int, {10.0f, 0.0f, 0.0f}, 2.0f, 100.0f, 2.0f, 100000.0f, "",
+               "How many points along it."}},
+             {"origin", nullptr, "direction", nullptr, nullptr, nullptr});
+    geometry("point_cloud", "Point Cloud", "pointcloud",
+             "Loose points scattered in a cube, the same for the same seed.",
+             {},
+             {{"count", "Count", "Points", K::Int, {1000.0f, 0.0f, 0.0f}, 0.0f, 100000.0f, 0.0f, 1e7f, "",
+               "How many points."},
+              seed("Points", "Another number, other places."),
+              {"size", "Size", "Points", K::Float, {1.0f, 0.0f, 0.0f}, 0.01f, 10.0f, 0.0f, kBig, "m",
+               "The side of the cube they are in."},
+              vec("center", "Center", "Points", Vec3(0.0f, 0.5f, 0.0f), -5.0f, 5.0f, "m", "The cube's middle.")},
+             {"center", nullptr, nullptr, nullptr, nullptr, nullptr});
+    {
+        ParamDef f = file("An OBJ file: its points, polygons and lines. A relative path is read from the "
+                          "network's folder; a file that changes is read again.");
+        f.section = "File";
+        geometry("file", "File", "file", "Geometry from an OBJ file -- from Blender, Houdini, Maya, anywhere.",
+                 {}, {f});
+    }
+    geometry("transform", "Transform", "transform",
+             "Moves, turns and sizes what comes in: scale, then rotate, then translate. Only the positions "
+             "(and normals) are written; every other attribute is shared, not copied.",
+             in,
+             {vec("t", "Translate", "Transform", Vec3(), -5.0f, 5.0f, "m", "How far it moves."),
+              vec("r", "Rotate", "Transform", Vec3(), -180.0f, 180.0f, "\xc2\xb0",
+                  "Degrees about x, then y, then z, about the origin."),
+              vec("s", "Scale", "Transform", Vec3(1.0f, 1.0f, 1.0f), 0.0f, 5.0f, "", "How much larger along x, y, z."),
+              {"scale", "Uniform Scale", "Transform", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, -kBig, kBig, "",
+               "How much larger, all ways."}},
+             {"t", "r", nullptr, "s", nullptr, nullptr});
+    t.push_back({"merge", "Merge", "Geometry",
+                 "Everything linked into it, one after the other: points, primitives, attributes (missing ones "
+                 "filled with zeros), groups and volumes.",
+                 {{"geometry", "Geometry", PinType::Geometry, true}}, out, {}, 1});
+    t.back().core = "merge";
+    t.push_back({"switch", "Switch", "Geometry", "One of the geometries linked into it: the one at Index, counting from 0.",
+                 {{"geometry", "Geometry", PinType::Geometry, true}}, out,
+                 {{"index", "Index", "Switch", K::Int, {0.0f, 0.0f, 0.0f}, 0.0f, 9.0f, 0.0f, 1000.0f, "",
+                   "Which input, from 0."}},
+                 1});
+    t.back().core = "switch";
+    geometry("attribute_create", "Attribute Create", "attribcreate",
+             "An attribute of one value everywhere: a number or a vector, on the points, the corners, the "
+             "primitives or the whole geometry.",
+             in,
+             {text("name", "Name", "Attribute", "mass", "What it is called: @name in a wrangle."),
+              {"class", "Class", "Attribute", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 3.0f, "",
+               "What it belongs to.", {"detail", "point", "vertex", "primitive"},
+               {"Detail", "Point", "Vertex", "Primitive"}},
+              {"vector", "Vector", "Attribute", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Three numbers rather than one."},
+              {"value", "Value", "Attribute", K::Float, {1.0f, 0.0f, 0.0f}, -10.0f, 10.0f, -kBig, kBig, "",
+               "Its value, for a number."},
+              vec("vvalue", "Vector Value", "Attribute", Vec3(), -10.0f, 10.0f, "", "Its value, for a vector.")});
+    geometry("color", "Color", "color", "A colour, Cd, on every point or every primitive: how the viewport draws it.",
+             in,
+             {{"color", "Color", "Color", K::Color, {0.9f, 0.45f, 0.2f}, 0.0f, 1.0f, 0.0f, 1.0f, "", "The colour."},
+              {"class", "Class", "Color", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "On the points, or on the primitives.", {"point", "primitive"}, {"Point", "Primitive"}}});
+    geometry("group_box", "Group by Box", "groupbox",
+             "A group of the points inside a box: what Blast deletes, or keeps.",
+             in,
+             {text("name", "Group", "Group", "selected", "The group's name."),
+              vec("min", "Min", "Group", Vec3(-0.5f, 0.0f, -0.5f), -5.0f, 5.0f, "m", "The box's lowest corner."),
+              vec("max", "Max", "Group", Vec3(0.5f, 1.0f, 0.5f), -5.0f, 5.0f, "m", "The box's highest corner.")});
+    geometry("blast", "Blast", "blast",
+             "Deletes the points of a group, and the primitives they were part of -- or, inverted, keeps only them.",
+             in,
+             {text("group", "Group", "Blast", "selected", "Which group."),
+              {"invert", "Keep", "Blast", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Keep the group and delete the rest."}});
+    {
+        ParamDef snippet{"snippet", "Snippet", "Wrangle", K::Code, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+                         "What happens to every point, in the per-element language: @P.y = noise(@P * 2.0) * 0.3; "
+                         "@Cd = vec3(1.0, 0.5, 0.2);  Reads and writes any point attribute (@name), @ptnum, "
+                         "@numpt, @Time, @Frame. Functions: sin cos abs sqrt floor pow min max clamp length noise "
+                         "fit vec3. An attribute it writes that is not there is made -- a number or a vector, "
+                         "as the right side is."};
+        geometry("point_wrangle", "Point Wrangle", "pointwrangle",
+                 "Runs a snippet over every point: move them, colour them, make attributes. Reading @Time, it "
+                 "changes every frame.",
+                 in, {snippet});
+    }
+    geometry("normal", "Normal", "normal",
+             "Point normals, N: the faces round each point, the larger ones counting more. The viewport "
+             "shades by them; Copy to Points turns copies up along them.",
+             in, {});
+    geometry("scatter", "Scatter", "scatter",
+             "Points over the surface, as many to a square metre everywhere; each with the normal of its face "
+             "and the attributes of the corners round it, blended.",
+             in,
+             {{"count", "Count", "Scatter", K::Int, {1000.0f, 0.0f, 0.0f}, 1.0f, 20000.0f, 0.0f, 1e7f, "",
+               "How many points."},
+              seed("Scatter", "Another number, other places.")});
+    t.push_back({"copy_to_points", "Copy to Points", "Geometry",
+                 "A copy of Geometry on every point of Points: moved there, sized by the point's pscale, its "
+                 "+y turned to the point's N. The points' other attributes -- a colour -- go onto their copy.",
+                 {{"geometry", "Geometry", PinType::Geometry}, {"points", "Points", PinType::Geometry}}, out,
+                 {{"scale", "Scale", "Copy", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
+                   "Every copy this much larger, on top of pscale."},
+                  {"align", "Align to N", "Copy", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "Turn each copy's +y to its point's normal."}},
+                 1});
+    t.back().core = "copytopoints";
+    geometry("null", "Null", "null", "What comes in, unchanged: a name to point at, an end to display.", in, {});
+    // What the simulations make, as geometry: at the frame shown.
+    geometry("liquid_points", "Liquid Points", "liquid_points",
+             "The particles of a Liquid Solver at the frame: points with their velocity v and foam -- to "
+             "colour, to copy drops onto, to export.",
+             {{"liquid", "Liquid", PinType::Liquid}}, {});
+    geometry("rain_points", "Rain Points", "rain_points",
+             "The drops of a Rain at the frame: points with their velocity v.",
+             {{"rain", "Rain", PinType::Rain}},
+             {{"droplets", "Droplets", "Rain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The droplets of the splashes too, with droplet 1."}});
+    geometry("gas_volume", "Gas Volume", "gas_volume",
+             "The gas of a Pyro Solver at the frame, as volumes: density (smoke), temperature and flame.",
+             {{"gas", "Gas", PinType::Gas}}, {});
+
     // --- objects ----------------------------------------------------------------------
     t.push_back({"object", "Object", "Objects",
                  "A solid in the scene: a ball, a box, a column, a cone, a ring. It is drawn and casts shadows; "
                  "linked into a solver's Colliders, what the solver simulates goes round it. Move, turn and size "
-                 "it in the viewport: W, E, R.",
-                 {},
+                 "it in the viewport: W, E, R. Geometry linked into Shape is its shape instead, where it is.",
+                 {{"shape", "Shape", PinType::Geometry}},
                  {{"collider", "Collider", PinType::Collider}},
                  objectParams(),
                  1});
@@ -338,16 +531,18 @@ std::vector<NodeType> buildTypes() {
     t.push_back({"pyro_source", "Pyro Source", "Sources",
                  "A shape that gives off fuel, smoke and heat, and pushes the gas its way. Fuel makes fire; "
                  "smoke and heat without fuel make a column of smoke. A ball for a campfire, a box for a burning "
-                 "log or a vent, a ring for a gas burner.",
-                 {},
+                 "log or a vent, a ring for a gas burner. Geometry linked into Shape is its shape instead: "
+                 "polygons, or points -- a ball round each.",
+                 {{"shape", "Shape", PinType::Geometry}},
                  {{"source", "Source", PinType::Source}},
                  pyroSourceParams(),
                  2});
     t.back().handles = {"center", "rotation", nullptr, "size", nullptr, nullptr};
     t.push_back({"water_source", "Water Source", "Sources",
                  "A shape the water comes from: filled once -- a block of water, a pool -- or pouring water out "
-                 "at its velocity -- a hose, a fountain, a waterfall.",
-                 {},
+                 "at its velocity -- a hose, a fountain, a waterfall. Geometry linked into Shape is its shape "
+                 "instead.",
+                 {{"shape", "Shape", PinType::Geometry}},
                  {{"water", "Water", PinType::Water}},
                  waterSourceParams(),
                  1});
@@ -473,7 +668,7 @@ std::vector<NodeType> buildTypes() {
                  "ringing the water's surface -- and the floor gets wet. It is drawn as it falls: link it into "
                  "the Output's Looks.",
                  {{"forces", "Forces", PinType::Force, true}, {"colliders", "Colliders", PinType::Collider, true}},
-                 {{"look", "Look", PinType::Look}},
+                 {{"look", "Look", PinType::Look}, {"rain", "Rain", PinType::Rain}},
                  {{"center", "Position", "Cloud", K::Vector, {0.0f, 2.5f, 0.0f}, -2.0f, 5.0f, -kBig, kBig, "m",
                    "The middle of the cloud: y is how high the drops start."},
                   {"size", "Size", "Cloud", K::Vector, {3.0f, 0.5f, 3.0f}, 0.1f, 10.0f, 0.01f, 100.0f, "m",
@@ -512,7 +707,10 @@ std::vector<NodeType> buildTypes() {
                   {"clarity", "Clarity", "Water", K::Float, {1.5f, 0.0f, 0.0f}, 0.05f, 10.0f, 0.01f, kBig, "m",
                    "How far one sees into it: murky to crystal clear."},
                   {"foam", "Foam", "Water", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
-                   "How white the spray and the foam of fast water are drawn. 0: none."}},
+                   "How white the spray and the foam of fast water are drawn. 0: none."},
+                  {"surface", "Surface", "Water", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "Draw the water's surface. Off, the water is simulated all the same, and only what the "
+                   "network shows of it is seen -- its particles through Liquid Points."}},
                  1});
     t.push_back({"camera", "Camera", "Render",
                  "The camera of the shot: where it stands, which way it looks, its lens and the size of its "
@@ -547,7 +745,7 @@ std::vector<NodeType> buildTypes() {
 
     for (NodeType& type : t) {
         const std::string c = type.category;
-        type.bypassable = c == "Objects" || c == "Sources" || c == "Forces";
+        type.bypassable = c == "Objects" || c == "Sources" || c == "Forces" || c == "Geometry";
     }
     return t;
 }
@@ -582,12 +780,19 @@ bool parseNumber(std::string_view text, float& out) {
     return true;
 }
 
-/// "a \"b\" c" -- a path in quotes, as files write it.
+/// "a \"b\" c" -- text in quotes, as files write it: a quote and a
+/// backslash after a backslash, a line break as \n, a tab as \t -- all of a
+/// snippet on one line.
 std::string quotedPath(std::string_view text) {
     std::string out = "\"";
     for (const char c : text) {
-        if (c == '"' || c == '\\') out += '\\';
-        out += c;
+        if (c == '\n') out += "\\n";
+        else if (c == '\t') out += "\\t";
+        else if (c == '\r') out += "\\r";
+        else {
+            if (c == '"' || c == '\\') out += '\\';
+            out += c;
+        }
     }
     return out + '"';
 }
@@ -604,7 +809,8 @@ bool unquoted(std::string_view text, std::string& out) {
     for (size_t i = 1; i < text.size(); ++i) {
         const char c = text[i];
         if (c == '\\' && i + 1 < text.size()) {
-            out += text[++i];
+            const char e = text[++i];
+            out += e == 'n' ? '\n' : e == 't' ? '\t' : e == 'r' ? '\r' : e;
         } else if (c == '"') {
             return i + 1 == text.size();  // nothing after the closing quote
         } else {
@@ -642,7 +848,7 @@ std::vector<std::string_view> splitWords(std::string_view s) {
 }
 
 ParamValue keep(const ParamDef& def, ParamValue v) {
-    if (def.kind == K::File) return def.value;  // its value is text
+    if (isText(def.kind)) return def.value;  // its value is text
     const int n = def.kind == K::Vector || def.kind == K::Color ? 3 : 1;
     for (int i = 0; i < 3; ++i) {
         if (i >= n) {
@@ -812,6 +1018,8 @@ const char* pinTypeName(PinType type) {
         case PinType::Water: return "water";
         case PinType::Liquid: return "liquid";
         case PinType::Camera: return "camera";
+        case PinType::Geometry: return "geometry";
+        case PinType::Rain: return "rain";
     }
     return "?";
 }
@@ -850,7 +1058,7 @@ const NodeType* findNodeType(std::string_view name) {
 }
 
 const std::vector<const char*>& nodeCategories() {
-    static const std::vector<const char*> c = {"Objects", "Sources", "Forces", "Simulation", "Render"};
+    static const std::vector<const char*> c = {"Geometry", "Objects", "Sources", "Forces", "Simulation", "Render"};
     return c;
 }
 
@@ -863,7 +1071,9 @@ std::string formatParam(const ParamDef& def, const ParamValue& v) {
         }
         case K::Vector:
         case K::Color: return formatNumber(v[0]) + ' ' + formatNumber(v[1]) + ' ' + formatNumber(v[2]);
-        case K::File: return "\"\"";  // the text is the node's, not the value's
+        case K::File:
+        case K::Text:
+        case K::Code: return "\"\"";  // the text is the node's, not the value's
         case K::Float:
         case K::Int: break;
     }
@@ -874,7 +1084,9 @@ bool parseParam(const ParamDef& def, std::string_view text, ParamValue& out, std
     const std::vector<std::string_view> w = splitWords(text);
     ParamValue v = def.value;
     switch (def.kind) {
-        case K::File: {
+        case K::File:
+        case K::Text:
+        case K::Code: {
             std::string path;
             if (!unquoted(text, path)) break;
             out = v;
@@ -923,6 +1135,8 @@ bool parseParam(const ParamDef& def, std::string_view text, ParamValue& out, std
     }
     switch (def.kind) {
         case K::File: error = std::string(def.name) + " is a path, in quotes if it has spaces"; break;
+        case K::Text:
+        case K::Code: error = std::string(def.name) + " is text, in quotes if it has spaces"; break;
         case K::Toggle: error = std::string(def.name) + " is on or off"; break;
         case K::Vector:
         case K::Color: error = std::string(def.name) + " wants three numbers, like 0 1 0"; break;
@@ -1036,6 +1250,19 @@ bool Network::canConnect(int from, std::string_view output, int to, std::string_
     for (const Link& l : links_) {
         if (l.from == from && l.output == output && l.to == to && l.input == input) return fail("already linked");
     }
+    // No loops: what `to` leads to must not lead back to `from`.
+    std::vector<int> stack{to}, seen{to};
+    while (!stack.empty()) {
+        const int n = stack.back();
+        stack.pop_back();
+        if (n == from) return fail("that would make a loop: " + b->name + " leads to " + a->name + " already");
+        for (const Link& l : links_) {
+            if (l.from == n && std::find(seen.begin(), seen.end(), l.to) == seen.end()) {
+                seen.push_back(l.to);
+                stack.push_back(l.to);
+            }
+        }
+    }
     return true;
 }
 
@@ -1101,7 +1328,7 @@ bool Network::setParam(int id, std::string_view name, std::string_view text, std
         }
         return false;
     }
-    if (d->kind == K::File) {
+    if (isText(d->kind)) {
         std::string path;
         if (!unquoted(text, path)) {
             if (error) *error = std::string(name) + ": a quote is not closed";
@@ -1122,18 +1349,21 @@ std::string Network::text(int id, std::string_view name) const {
     const Node* n = node(id);
     if (!n) return {};
     const auto it = n->texts.find(std::string(name));
-    return it != n->texts.end() ? it->second : std::string();
+    if (it != n->texts.end()) return it->second;
+    const NodeType* t = findNodeType(n->type);
+    const ParamDef* d = t ? t->param(name) : nullptr;
+    return d && d->text ? d->text : std::string();
 }
 
 bool Network::setText(int id, std::string_view name, std::string_view value) {
     Node* n = node(id);
     const NodeType* t = n ? findNodeType(n->type) : nullptr;
     const ParamDef* d = t ? t->param(name) : nullptr;
-    if (!d || d->kind != K::File) return false;
+    if (!d || !isText(d->kind)) return false;
+    const std::string before = text(id, name);
+    // Kept only when it differs from the default, as a number is.
     const std::string key(name);
-    const auto it = n->texts.find(key);
-    const std::string before = it != n->texts.end() ? it->second : std::string();
-    if (value.empty()) n->texts.erase(key);
+    if (value == (d->text ? d->text : "")) n->texts.erase(key);
     else n->texts[key] = std::string(value);
     if (before != value) ++revision_;
     return true;
@@ -1149,6 +1379,29 @@ bool Network::resetParam(int id, std::string_view name) {
 bool Network::isDefault(int id, std::string_view name) const {
     const Node* n = node(id);
     return !n || (n->params.find(std::string(name)) == n->params.end() && n->texts.find(std::string(name)) == n->texts.end());
+}
+
+bool Network::setDisplay(int id) {
+    if (id != 0) {
+        const Node* n = node(id);
+        const NodeType* t = n ? findNodeType(n->type) : nullptr;
+        if (!t || !t->core) return false;
+    }
+    bool changed = false;
+    for (Node& n : nodes_) {
+        const bool on = n.id == id;
+        changed = changed || n.display != on;
+        n.display = on;
+    }
+    if (changed) ++revision_;
+    return true;
+}
+
+int Network::displayed() const {
+    for (const Node& n : nodes_) {
+        if (n.display) return n.id;
+    }
+    return 0;
 }
 
 bool Network::setBypass(int id, bool on) {
@@ -1172,7 +1425,7 @@ std::string Network::save() const {
         if (t) {
             // In the order of the type's table: the order the editor shows.
             for (const ParamDef& d : t->params) {
-                if (d.kind == K::File) {
+                if (isText(d.kind)) {
                     const auto text = n.texts.find(d.name);
                     if (text != n.texts.end()) out += std::string("  param ") + d.name + ' ' + quotedPath(text->second) + '\n';
                     continue;
@@ -1188,6 +1441,7 @@ std::string Network::save() const {
             }
         }
         if (n.bypass) out += "  bypass\n";
+        if (n.display) out += "  display\n";
     }
     for (const Link& l : links_) {
         out += "link " + std::to_string(l.from) + '.' + l.output + " -> " + std::to_string(l.to) + '.' + l.input + '\n';
@@ -1282,11 +1536,11 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
                 warn(lineNo, current->name + " (" + t->label + ") has no parameter " + name + "; dropped");
                 continue;
             }
-            if (d->kind == K::File) {
+            if (isText(d->kind)) {
                 std::string path;
                 if (!unquoted(value, path)) {
-                    warn(lineNo, current->name + ": " + name + " has a quote that is not closed; left empty");
-                } else if (!path.empty()) {
+                    warn(lineNo, current->name + ": " + name + " has a quote that is not closed; left at the default");
+                } else if (path != (d->text ? d->text : "")) {
                     current->texts[name] = path;
                 }
                 continue;
@@ -1303,6 +1557,17 @@ bool Network::load(std::string_view text, Network& out, std::string& error, std:
         if (w[0] == "bypass") {
             if (!current) return fail(lineNo, "bypass belongs to the node above it, and there is none");
             current->bypass = true;
+            continue;
+        }
+        if (w[0] == "display") {
+            if (!current) return fail(lineNo, "display belongs to the node above it, and there is none");
+            const NodeType* t = findNodeType(current->type);
+            if (!t || !t->core) {
+                warn(lineNo, current->name + " has no geometry to display; the flag is left off");
+                continue;
+            }
+            for (Node& other : net.nodes_) other.display = false;  // one at a time: the last one says
+            current->display = true;
             continue;
         }
         if (w[0] == "link") {
@@ -1364,7 +1629,7 @@ bool Compiled::errors() const {
 
 bool Compiled::isActive(int node) const { return std::binary_search(active.begin(), active.end(), node); }
 
-Compiled Network::compile(const std::string& folder) const {
+Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) const {
     Compiled c;
     auto problem = [&](Problem::Level level, int node, std::string message) {
         c.problems.push_back({level, node, std::move(message)});
@@ -1396,18 +1661,109 @@ Compiled Network::compile(const std::string& folder) const {
         meshes[n.id] = mesh;
         return mesh;
     };
+    // Geometry linked into a Shape: cooked at frame 1, the first time one is
+    // asked for -- in the editor's graph, or in one of our own.
+    std::unique_ptr<GeometryGraph> own;
+    GeometryGraph* cooker = nullptr;
+    float firstStep = 1.0f / 30.0f;
+    for (const Node& n : nodes_) {
+        if (n.type == "output") {
+            firstStep = 1.0f / std::max(param(n.id, "fps")[0], 1.0f);
+            break;
+        }
+    }
+    // Whether geometry comes from a simulation: something upstream brings one back.
+    auto fromSimulation = [&](int id) {
+        std::vector<int> stack{id}, seen{id};
+        while (!stack.empty()) {
+            const Node* n = node(stack.back());
+            stack.pop_back();
+            if (!n) continue;
+            if (n->type == "liquid_points" || n->type == "rain_points" || n->type == "gas_volume") return true;
+            for (const Link& l : links_) {
+                if (l.to == n->id && std::find(seen.begin(), seen.end(), l.from) == seen.end()) {
+                    seen.push_back(l.from);
+                    stack.push_back(l.from);
+                }
+            }
+        }
+        return false;
+    };
+    std::map<int, std::shared_ptr<const MeshShape>> shapes;
+    auto geometryShape = [&](const Node& n) -> std::shared_ptr<const MeshShape> {
+        const std::vector<Link> in = linksInto(n.id, "shape");
+        if (in.empty()) return nullptr;
+        if (const auto it = shapes.find(n.id); it != shapes.end()) return it->second;
+        if (!cooker) {
+            if (!geometry) own = std::make_unique<GeometryGraph>();
+            cooker = geometry ? geometry : own.get();
+            cooker->sync(*this, folder);
+        }
+        std::shared_ptr<const MeshShape> mesh;
+        const GeometryPtr geo = cooker->cook(in.front().from, 1, firstStep);
+        const std::string error = cooker->error(in.front().from);
+        if (!error.empty()) problem(L::Warning, in.front().from, error);
+        if (fromSimulation(in.front().from)) {
+            problem(L::Warning, n.id, "Its shape comes from a simulation, which has not run when shapes are made: "
+                                      "its own shape stands in.");
+        } else if (geo) {
+            mesh = meshFromGeometry(*geo);
+            if (!mesh) problem(L::Warning, n.id, "The geometry linked into Shape is empty: its own shape stands in.");
+            else if (geo->primitiveCount() == 0 && geo->pointCount() > kMaxShapePoints) {
+                problem(L::Warning, n.id, "More than " + std::to_string(kMaxShapePoints) +
+                                              " points: balls round the first " + std::to_string(kMaxShapePoints) +
+                                              " only.");
+            }
+        }
+        shapes[n.id] = mesh;
+        return mesh;
+    };
+    // Where a shape is: its own parameters -- or the geometry's, where it is.
+    struct Placement {
+        Shape shape;
+        Vec3 center, rotation, size;
+        std::shared_ptr<const MeshShape> mesh;
+    };
+    auto placementOf = [&](const Node& n) {
+        if (auto mesh = geometryShape(n)) return Placement{Shape::Mesh, mesh->center(), Vec3(), mesh->half() * 2.0f, mesh};
+        return Placement{static_cast<Shape>(whole(n, "shape")), v3(n, "center"), v3(n, "rotation"), v3(n, "size"), meshOf(n)};
+    };
     auto colliderOf = [&](const Node& n) {
         Collider col;
-        col.shape = static_cast<Shape>(whole(n, "shape"));
-        col.center = v3(n, "center");
-        col.rotation = v3(n, "rotation");
-        col.size = v3(n, "size");
-        col.mesh = meshOf(n);
+        const Placement p = placementOf(n);
+        col.shape = p.shape;
+        col.center = p.center;
+        col.rotation = p.rotation;
+        col.size = p.size;
+        col.mesh = p.mesh;
         col.node = n.id;
         return col;
     };
     // Every return goes through here: `active` is searched, so sorted.
+    c.display = displayed();
     auto done = [&]() {
+        // What feeds geometry that takes part -- into a shape, or shown --
+        // takes part too.
+        std::vector<int> stack = c.active;
+        if (c.display) stack.push_back(c.display);
+        std::vector<int> seen = stack;
+        while (!stack.empty()) {
+            const int id = stack.back();
+            stack.pop_back();
+            const Node* to = node(id);
+            const NodeType* t = to ? findNodeType(to->type) : nullptr;
+            if (!t) continue;
+            for (const Link& l : links_) {
+                if (l.to != id) continue;
+                const PinDef* pin = t->input(l.input);
+                if (!pin || pin->type != PinType::Geometry) continue;
+                if (std::find(seen.begin(), seen.end(), l.from) != seen.end()) continue;
+                seen.push_back(l.from);
+                stack.push_back(l.from);
+                c.active.push_back(l.from);
+            }
+        }
+        if (c.display) c.active.push_back(c.display);
         std::sort(c.active.begin(), c.active.end());
         c.active.erase(std::unique(c.active.begin(), c.active.end()), c.active.end());
         return c;
@@ -1556,11 +1912,12 @@ Compiled Network::compile(const std::string& folder) const {
 
         for (const Node* n : feeding(solver, "sources")) {
             Emitter e;
-            e.shape = static_cast<Shape>(whole(*n, "shape"));
-            e.center = v3(*n, "center");
-            e.rotation = v3(*n, "rotation");
-            e.size = v3(*n, "size");
-            e.mesh = meshOf(*n);
+            const Placement p = placementOf(*n);
+            e.shape = p.shape;
+            e.center = p.center;
+            e.rotation = p.rotation;
+            e.size = p.size;
+            e.mesh = p.mesh;
             e.fuel = f(*n, "fuel");
             e.smoke = f(*n, "smoke");
             e.heat = f(*n, "heat");
@@ -1631,11 +1988,12 @@ Compiled Network::compile(const std::string& folder) const {
         s.seed = static_cast<uint32_t>(whole(*solver, "seed"));
         for (const Node* n : feeding(solver, "sources")) {
             WaterSource w;
-            w.shape = static_cast<Shape>(whole(*n, "shape"));
-            w.center = v3(*n, "center");
-            w.rotation = v3(*n, "rotation");
-            w.size = v3(*n, "size");
-            w.mesh = meshOf(*n);
+            const Placement p = placementOf(*n);
+            w.shape = p.shape;
+            w.center = p.center;
+            w.rotation = p.rotation;
+            w.size = p.size;
+            w.mesh = p.mesh;
             w.mode = static_cast<WaterMode>(whole(*n, "mode"));
             w.velocity = v3(*n, "velocity");
             w.seed = static_cast<uint32_t>(whole(*n, "seed"));
@@ -1752,6 +2110,7 @@ Compiled Network::compile(const std::string& folder) const {
             k.waterColor = v3(*look, "color");
             k.waterClarity = f(*look, "clarity");
             k.foam = f(*look, "foam");
+            k.waterSurface = f(*look, "surface") != 0.0f;
             const Node* solver = upstream(*look, "liquid");
             if (!solver) {
                 problem(L::Error, look->id, "No water to draw: link a Liquid Solver into Liquid.");
@@ -1760,6 +2119,23 @@ Compiled Network::compile(const std::string& folder) const {
             c.liquidSolver = solver->id;
             c.active.push_back(solver->id);
             compileWater(solver);
+        }
+    }
+    // The nodes that bring a simulation back as geometry: from what is simulated.
+    for (const Node& n : nodes_) {
+        if (n.bypass) continue;
+        const char* input = n.type == "liquid_points" ? "liquid" : n.type == "rain_points" ? "rain" : n.type == "gas_volume" ? "gas" : nullptr;
+        if (!input) continue;
+        const Node* from = upstream(n, input);
+        const int simulated = n.type == "liquid_points" ? c.liquidSolver : n.type == "rain_points" ? c.rain : c.solver;
+        if (!from) {
+            problem(L::Warning, n.id, std::string("Nothing comes in: link a ") +
+                                          (n.type == "liquid_points" ? "Liquid Solver" : n.type == "rain_points" ? "Rain" : "Pyro Solver") +
+                                          " into it.");
+        } else if (from->id != simulated) {
+            problem(L::Warning, n.id, from->name + " is not simulated -- it does not reach the Output -- so this is empty.");
+        } else if (n.type == "liquid_points") {
+            c.world.keepParticles = true;
         }
     }
     c.ok = c.world.any();

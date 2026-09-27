@@ -2,13 +2,14 @@
 //
 // The geometry container.
 //
-// Invariant I3: there is exactly ONE geometry type. Polygons, open curves and
-// loose points all live in this container and every node accepts it. Splitting
-// into MeshGeometry / CurveGeometry is what destroys composability, so it is
-// not done here and must not be done later.
+// Invariant I3: there is exactly ONE geometry type. Polygons, open curves,
+// loose points and volumes all live in this container and every node accepts
+// it. Splitting into MeshGeometry / CurveGeometry is what destroys
+// composability, so it is not done here and must not be done later.
 //
 // Copying a Geometry copies no element data: the attribute buffers, the
-// topology and the group masks are all shared and clone on first write.
+// topology, the group masks and the volumes are all shared and clone on first
+// write.
 //
 #include "pg/core/Attribute.h"
 
@@ -47,6 +48,34 @@ private:
 
     std::shared_ptr<std::vector<uint8_t>> mask_;
     AttrClass class_ = AttrClass::Point;
+};
+
+/// A dense grid of values -- a smoke's density, a temperature -- as a gas
+/// simulation keeps its fields. Voxel (i, j, k) is the cube from
+/// origin + (i, j, k) * voxel to one voxel further; its value is the one at
+/// its middle. The values are immutable once made: geometries share them,
+/// and a volume that changes is a new one.
+struct Volume {
+    std::string name;
+    Vec3 origin;
+    float voxel = 1.0f;
+    int res[3] = {0, 0, 0};
+    std::shared_ptr<const std::vector<float>> values;  ///< x fastest, then y, then z
+
+    size_t count() const {
+        return static_cast<size_t>(res[0]) * static_cast<size_t>(res[1]) * static_cast<size_t>(res[2]);
+    }
+    Vec3 size() const {
+        return {voxel * static_cast<float>(res[0]), voxel * static_cast<float>(res[1]), voxel * static_cast<float>(res[2])};
+    }
+    /// The value of voxel (i, j, k); 0 outside the grid.
+    float at(int i, int j, int k) const;
+    /// Trilinear between the voxels' middles at a world point; 0 outside.
+    float sample(const Vec3& p) const;
+    /// A volume of nx x ny x nz voxels holding `data` (x fastest); zeros
+    /// where `data` is short.
+    static Volume make(std::string name, const Vec3& origin, float voxel, int nx, int ny, int nz,
+                       std::vector<float> data = {});
 };
 
 class Geometry {
@@ -111,6 +140,17 @@ public:
     /// Sorted, for order-stable traversal.
     std::vector<std::string> groupNames() const;
 
+    // --- volumes ------------------------------------------------------------
+    //
+    // Not primitives: a volume has no points and no corners. They come in the
+    // order they were added; two may share a name.
+
+    const std::vector<Volume>& volumes() const;
+    size_t volumeCount() const { return volumes_ ? volumes_->size() : 0; }
+    void addVolume(Volume volume);
+    /// The first volume of that name, or null.
+    const Volume* findVolume(const std::string& name) const;
+
     // --- whole-geometry operations ------------------------------------------
 
     /// Keeps only the points selected by `keep` (size == pointCount) and drops
@@ -141,6 +181,7 @@ private:
     AttributeSet primitives_;
     std::map<std::string, Group> groups_;
     std::shared_ptr<Topology> topo_;
+    std::shared_ptr<std::vector<Volume>> volumes_;  ///< null: none
 };
 
 using GeometryPtr = std::shared_ptr<const Geometry>;

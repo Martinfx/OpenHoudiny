@@ -61,7 +61,7 @@ NodeCanvas::Layout NodeCanvas::layoutOf(const CanvasNode& n) const {
     for (const CanvasPin& p : n.outputs) out = std::max(out, textWidth(f.regular, kFont, p.label));
     const float head = 34.0f + textWidth(f.bold, kFont, n.title) +
                        (n.subtitle.empty() ? 0.0f : 10.0f + textWidth(f.regular, kSmallFont, n.subtitle)) +
-                       (n.problem ? 26.0f : 12.0f);
+                       (n.problem ? 26.0f : 12.0f) + (n.displayable ? 20.0f : 0.0f);
     const float pins = in + out + 4.0f * kPad + (in > 0.0f && out > 0.0f ? 24.0f : 0.0f);
     const float summary = n.summary.empty() ? 0.0f : textWidth(f.regular, kSmallFont, n.summary) + 2.0f * kPad;
     l.width = std::ceil(std::max({kMinWidth, head, pins, summary}));
@@ -199,6 +199,16 @@ void NodeCanvas::layOut(const std::vector<CanvasNode>& nodes, const std::vector<
     }
 }
 
+bool NodeCanvas::flagRect(const CanvasNode& n, ImVec2& lo, ImVec2& hi) const {
+    if (!n.displayable) return false;
+    const float s = scaleOf(zoom_);
+    const Layout l = layoutOf(n);
+    const ImVec2 corner = toScreen(ImVec2(n.x + l.width, n.y));
+    lo = ImVec2(corner.x - 17.0f * s, corner.y + 4.0f * s);
+    hi = ImVec2(corner.x - 5.0f * s, corner.y + (kHeader - 4.0f) * s);
+    return true;
+}
+
 void NodeCanvas::drawGrid(ImDrawList* d, ImVec2 lo, ImVec2 hi) const {
     const float s = scaleOf(zoom_);
     auto lines = [&](float step, ImU32 col) {
@@ -263,13 +273,24 @@ void NodeCanvas::drawNode(ImDrawList* d, const CanvasNode& n, bool selected, boo
         d->AddText(f.regular, kSmallFont * s, ImVec2(x, cy - kSmallFont * 0.5f * s),
                    theme::fade(IM_COL32(255, 255, 255, 150), a), n.subtitle.c_str());
     }
+    // The display flag at the right end: blue when on.
+    const float flag = n.displayable ? 20.0f * s : 0.0f;
+    ImVec2 flo, fhi;
+    if (flagRect(n, flo, fhi)) {
+        if (n.displayed) {
+            d->AddRectFilled(flo, fhi, IM_COL32(58, 148, 255, 255), 3.0f * s);
+            d->AddRect(flo, fhi, IM_COL32(180, 215, 255, 255), 3.0f * s, 0, 1.0f);
+        } else {
+            d->AddRect(flo, fhi, theme::fade(IM_COL32(255, 255, 255, hovered ? 120 : 55), a), 3.0f * s, 0, 1.2f * s);
+        }
+    }
     if (n.bypassed) {
-        theme::drawIcon(d, theme::Icon::Bypass, ImVec2(hi.x - 14.0f * s - (n.problem ? 20.0f * s : 0.0f), cy),
+        theme::drawIcon(d, theme::Icon::Bypass, ImVec2(hi.x - 14.0f * s - flag - (n.problem ? 20.0f * s : 0.0f), cy),
                         13.0f * s, IM_COL32(255, 220, 90, 255));
     }
     if (n.problem) {
         theme::drawIcon(d, n.problem == 2 ? theme::Icon::Error : theme::Icon::Warning,
-                        ImVec2(hi.x - 14.0f * s, cy), 15.0f * s, n.problem == 2 ? theme::kRed : theme::kYellow);
+                        ImVec2(hi.x - 14.0f * s - flag, cy), 15.0f * s, n.problem == 2 ? theme::kRed : theme::kYellow);
     }
 
     // Pins and their labels.
@@ -490,6 +511,10 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
                         linkFrom_ = {in.front().from, in.front().fromPin, true};
                     }
                 }
+            } else if (ImVec2 flo, fhi; hoverNode && find(hoverNode) && flagRect(*find(hoverNode), flo, fhi) &&
+                       mouse.x >= flo.x - 2.0f && mouse.x <= fhi.x + 2.0f && mouse.y >= flo.y - 2.0f &&
+                       mouse.y <= fhi.y + 2.0f) {
+                if (model.toggleDisplay) model.toggleDisplay(hoverNode);
             } else if (hoverNode) {
                 drag_ = Drag::Nodes;
                 pressedNode_ = hoverNode;
@@ -636,6 +661,10 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
         if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !ctrl && !chosen.empty() && model.toggleBypass) {
             model.toggleBypass(chosen);
         }
+        // Under the mouse only: over the viewport, R is its scale tool.
+        if (underMouse && ImGui::IsKeyPressed(ImGuiKey_R, false) && !ctrl && current_ && model.toggleDisplay) {
+            if (const CanvasNode* n = find(current_); n && n->displayable) model.toggleDisplay(current_);
+        }
     }
 
     // --- drawing --------------------------------------------------------------------------
@@ -681,9 +710,18 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
     if (drag_ == Drag::Link && hot && !hotAccepts && !dropWhy_.empty()) ImGui::SetTooltip("%s", dropWhy_.c_str());
     else if (drag_ == Drag::None && hoverNode && hovered) {
         const CanvasNode* n = find(hoverNode);
-        if (n && n->problem && !n->problemText.empty()) {
+        ImVec2 flo, fhi;
+        const bool onFlag = n && flagRect(*n, flo, fhi) && mouse.x >= flo.x - 2.0f && mouse.x <= fhi.x + 2.0f &&
+                            mouse.y >= flo.y - 2.0f && mouse.y <= fhi.y + 2.0f;
+        if (onFlag) {
+            ImGui::SetTooltip(n->displayed ? "Displayed: its geometry shows in the viewport. Click (or R) to hide it."
+                                           : "Display flag: show this node's geometry in the viewport (R)");
+        } else if (n && n->problem && !n->problemText.empty()) {
+            const float flag = n->displayable ? 20.0f * s : 0.0f;
             const ImVec2 corner = toScreen(ImVec2(n->x + layoutOf(*n).width, n->y));
-            if (mouse.x > corner.x - 28.0f * s && mouse.y < corner.y + kHeader * s) ImGui::SetTooltip("%s", n->problemText.c_str());
+            if (mouse.x > corner.x - 28.0f * s - flag && mouse.y < corner.y + kHeader * s) {
+                ImGui::SetTooltip("%s", n->problemText.c_str());
+            }
         }
     }
 

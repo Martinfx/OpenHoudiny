@@ -66,6 +66,7 @@ enum class Icon {
     Select, Move, Rotate, Scale, World, Local, Magnet, Frame,  // viewport tools
     Sphere, Box, Cylinder, Cone, Torus,              // shapes
     Wind, Vortex, Attractor, Drop, Rain, Trash, Copy,
+    Geometry, Points, Table,                         // geometry
 };
 
 /// `icon` in a square `size` wide, centred on `center`.

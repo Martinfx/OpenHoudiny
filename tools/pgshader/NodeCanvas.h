@@ -14,7 +14,8 @@
 //   middle drag, Alt + left drag    pan;   wheel: zoom round the mouse
 //   right click / Tab           add a node;  right click on a node: its menu
 //   F: frame the selection (or all),  L: lay it out,  Delete / X: remove,
-//   Ctrl+D: duplicate,  B: bypass,  Ctrl+A: select all
+//   Ctrl+D: duplicate,  B: bypass,  R: the display flag,  Ctrl+A: select all
+//   left click on the flag at a node's right end: the display flag
 //
 #include "Theme.h"
 
@@ -43,6 +44,8 @@ struct CanvasNode {
     float x = 0.0f, y = 0.0f;      ///< world units, top left
     std::vector<CanvasPin> inputs, outputs;
     bool bypassed = false;
+    bool displayable = false;      ///< has a display flag
+    bool displayed = false;        ///< the flag is on: its geometry shows
     bool dimmed = false;           ///< takes no part in the result
     int problem = 0;               ///< 0 none, 1 a warning, 2 an error
     std::string problemText;
@@ -71,6 +74,8 @@ struct CanvasModel {
     std::function<void(const std::vector<int>& nodes)> remove;
     std::function<void(const std::vector<int>& nodes)> duplicate;
     std::function<void(const std::vector<int>& nodes)> toggleBypass;
+    /// The display flag of `node` clicked (or R pressed on it).
+    std::function<void(int node)> toggleDisplay;
     /// The add menu, drawn inside the canvas's popup: `at` in world units,
     /// `pending` the pin a link was dragged from, if any. True when it added
     /// a node -- the popup closes.
@@ -108,6 +113,8 @@ private:
     ImVec2 toScreen(ImVec2 world) const;
     ImVec2 toWorld(ImVec2 screen) const;
     ImVec2 pinPosition(const CanvasNode& n, int pin, bool output) const;  // world
+    /// The display flag of a node that has one, on screen.
+    bool flagRect(const CanvasNode& n, ImVec2& lo, ImVec2& hi) const;
     void drawGrid(ImDrawList* d, ImVec2 lo, ImVec2 hi) const;
     void drawNode(ImDrawList* d, const CanvasNode& n, bool selected, bool hovered, const PinRef* hot,
                   bool hotAccepts) const;

@@ -30,9 +30,17 @@ struct WaterFrame {
     std::vector<uint8_t> cells;
     size_t particles = 0;  ///< the solver's, when the frame was taken
     double litres = 0.0;
+    /// The particles themselves, when the world keeps them
+    /// (World::keepParticles): where each is, how fast it goes (half floats,
+    /// three a particle) and how white (0 to 255).
+    std::vector<Vec3> positions;
+    std::vector<uint16_t> velocities;
+    std::vector<uint8_t> whiteness;
 
     bool empty() const { return cells.empty(); }
-    size_t bytes() const { return cells.size(); }
+    size_t bytes() const {
+        return cells.size() + positions.size() * sizeof(Vec3) + velocities.size() * sizeof(uint16_t) + whiteness.size();
+    }
     /// The distance at cell (i, j, k), world units, below 0 in the water.
     float distance(int i, int j, int k) const;
     /// The foam there, 0 to 1.
@@ -77,8 +85,9 @@ struct Frame {
 
 /// The solver's gas as a frame.
 Frame capture(const PyroSolver& sim);
-/// The solver's water, as a frame holds it.
-WaterFrame capture(const LiquidSolver& sim);
+/// The solver's water, as a frame holds it -- and its particles, when
+/// `particles` is set.
+WaterFrame capture(const LiquidSolver& sim, bool particles = false);
 /// The rain, as a frame holds it.
 RainFrame capture(const RainSolver& sim);
 

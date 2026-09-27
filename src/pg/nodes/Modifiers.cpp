@@ -32,6 +32,7 @@ public:
         params_.setVec3("t", Vec3(0, 0, 0));
         params_.setVec3("r", Vec3(0, 0, 0));
         params_.setVec3("s", Vec3(1, 1, 1));
+        params_.setFloat("scale", 1.0f);  // uniform, on top of s
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
@@ -39,7 +40,7 @@ public:
 
         const Vec3 t = params_.evalVec3("t", ctx, Vec3(0, 0, 0));
         const Vec3 r = params_.evalVec3("r", ctx, Vec3(0, 0, 0));
-        const Vec3 s = params_.evalVec3("s", ctx, Vec3(1, 1, 1));
+        const Vec3 s = params_.evalVec3("s", ctx, Vec3(1, 1, 1)) * params_.evalFloat("scale", ctx, 1.0f);
         const Mat4 m = Mat4::scale(s) * Mat4::rotate(r) * Mat4::translate(t);
 
         auto P = geo->positionsForWrite();
@@ -206,6 +207,8 @@ void registerBuiltinNodes() {
         registerGeneratorNodes();
         registerModifierNodes();
         registerWrangleNodes();
+        registerPrimitiveNodes();
+        registerSurfaceNodes();
         return true;
     }();
     (void)once;

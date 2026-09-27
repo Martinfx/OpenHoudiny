@@ -7,6 +7,10 @@
 // cook cache keys on (node, version, frame), so stale entries simply stop being
 // found. No explicit cache invalidation walk, and no way to forget one.
 //
+// Versions come from one counter for the whole process: no two nodes ever
+// have the same version, so a node made where a deleted one lived cannot find
+// the deleted one's cache entries.
+//
 #include "pg/core/Geometry.h"
 
 #include <atomic>
@@ -140,6 +144,11 @@ public:
     GeometryPtr cookInstrumented(const CookContext& ctx,
                                  std::span<const GeometryPtr> inputs);
 
+    /// What went wrong the last time this node cooked -- a snippet that does
+    /// not parse, a file that is not there -- or empty. The node still cooks
+    /// to something (its input, or nothing), so the graph downstream runs.
+    virtual std::string cookError() const { return {}; }
+
 protected:
     ParamSet params_;
 
@@ -148,7 +157,7 @@ private:
     std::string name_;
     std::vector<Node*> inputs_;
     std::vector<Node*> outputs_;
-    std::atomic<uint64_t> version_{1};
+    std::atomic<uint64_t> version_;
     std::atomic<uint64_t> cookCount_{0};
 };
 

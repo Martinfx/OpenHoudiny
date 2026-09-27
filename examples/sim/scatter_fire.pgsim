@@ -1,0 +1,45 @@
+pgsim 1
+# Fire from geometry: a Grid is scattered with points, each given a size
+# (pscale) by a wrangle -- bigger near the middle -- and the points are the
+# shape of the fire: a flame on each, like embers. They are displayed, dark
+# red; a ball of rock made by a Sphere node hangs in the smoke.
+node 1 grid 1 ground 0 0
+  param sizex 1.2
+  param sizez 1.2
+  param center 0 0.02 0
+node 2 scatter 1 scatter 0 110
+  param count 90
+  param seed 3
+node 3 point_wrangle 1 sizes 0 220
+  param snippet "@pscale = 0.05 - 0.035 * clamp(length(@P) / 0.6, 0, 1); @Cd = vec3(0.3, 0.07, 0.02)"
+  display
+node 4 pyro_source 2 flames 250 180
+  param fuel 20
+  param heat 1.5
+  param flicker 0.5
+node 5 sphere 1 rock_shape 0 330
+  param radius 0.18
+  param center 0.1 0.95 0.05
+node 6 object 1 rock 250 330
+  param color 0.16 0.15 0.14
+node 7 turbulence 1 turbulence 250 450
+node 8 pyro_solver 2 solver 500 200
+  param size 1.4 1.8 1.4
+  param buoyancy 0.9
+  param vorticity 0.9
+  param cooling 1.4
+node 9 volume_look 2 look 740 200
+  param smoke_color 0.22 0.2 0.19
+  param smoke_density 22
+  param fire_light 3
+node 10 output 2 output 960 200
+  param frames 90
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.shape
+link 4.source -> 8.sources
+link 5.geometry -> 6.shape
+link 6.collider -> 8.colliders
+link 7.force -> 8.forces
+link 8.gas -> 9.gas
+link 9.look -> 10.look

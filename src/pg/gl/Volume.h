@@ -21,6 +21,9 @@
 //            as long as they fall in a share of a frame (motion blur), after
 //            the rest, hidden where something is in front of them; rings on
 //            the water; a floor that the rain makes wet -- darker and shining;
+//   geometry the network's displayed node (sim/Display.h): its polygons in
+//            its colours, lit as the objects are; its points as dots, its
+//            polylines as lines, its volumes as dots where they are not empty;
 //   gas      marched front to back through the domain, up to the first solid:
 //            smoke absorbs what is behind it and scatters light towards the
 //            eye -- sunlight where it is not in shadow, mostly forwards, so
@@ -38,6 +41,7 @@
 //
 // Needs a current OpenGL 3.3 core context.
 //
+#include "pg/core/Geometry.h"
 #include "pg/core/Types.h"
 #include "pg/gl/Camera.h"
 #include "pg/gl/Gl.h"
@@ -126,6 +130,12 @@ public:
     void setHighlight(const std::vector<int>& selected, int hovered);
     /// Guide lines, drawn over the rest.
     void setLines(const Lines& lines);
+    /// Geometry drawn with the scene: the network's displayed node. Null:
+    /// none. The same geometry again costs nothing.
+    void setGeometry(const GeometryPtr& geometry);
+    const GeometryPtr& geometry() const { return geometry_; }
+    /// The box round the geometry drawn; false when there is none.
+    bool geometryBounds(Vec3& lo, Vec3& hi) const;
 
     /// Draws into the offscreen framebuffer at `width` x `height` pixels.
     void render(int width, int height);
@@ -173,6 +183,8 @@ private:
     /// The meshes rasterised: normal, which solid and distance per pixel,
     /// for the pass that shades everything.
     void renderMeshes(int width, int height, const Vec3& eye);
+    /// The displayed geometry's dots and lines, over what the main pass drew.
+    void drawGeometry(int width, int height);
 
     const Api& gl_;
     GLuint program_ = 0, shadowProgram_ = 0, glowProgram_ = 0, lineProgram_ = 0;
@@ -208,6 +220,14 @@ private:
     };
     std::vector<MeshGpu> meshes_;  // one per mesh in use, whoever uses it
     GLuint meshProgram_ = 0;
+    // The displayed geometry: triangles (position, normal, colour), dots
+    // (position, colour, radius), lines (as guide lines are).
+    GeometryPtr geometry_;
+    GLuint geoProgram_ = 0, dotProgram_ = 0;
+    GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
+    GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;
+    Vec3 geoLo_, geoHi_;
+    bool hasGeoBounds_ = false;
     GLuint gFbo_ = 0, gTex_ = 0, gDepth_ = 0;
     int gWidth_ = 0, gHeight_ = 0;
     bool anyMesh_ = false;

@@ -17,6 +17,7 @@ public:
         params_.setInt("cols", 10);
         params_.setFloat("sizex", 1.0f);
         params_.setFloat("sizez", 1.0f);
+        params_.setVec3("center", Vec3(0, 0, 0));
     }
 
     GeometryPtr cookNode(const CookContext& ctx,
@@ -25,6 +26,7 @@ public:
         const int cols = std::max(2, params_.getInt("cols", 10));
         const float sx = params_.evalFloat("sizex", ctx, 1.0f);
         const float sz = params_.evalFloat("sizez", ctx, 1.0f);
+        const Vec3 center = params_.evalVec3("center", ctx, Vec3(0, 0, 0));
 
         auto geo = std::make_shared<Geometry>();
         geo->addPoints(static_cast<size_t>(rows) * cols);
@@ -35,20 +37,21 @@ public:
         parallelFor(static_cast<size_t>(rows), 16, [&](size_t r0, size_t r1) {
             for (size_t r = r0; r < r1; ++r) {
                 for (int c = 0; c < cols; ++c) {
-                    P[r * cols + c] = Vec3(-sx * 0.5f + dx * static_cast<float>(c),
-                                           0.0f,
-                                           -sz * 0.5f + dz * static_cast<float>(r));
+                    P[r * cols + c] = center + Vec3(-sx * 0.5f + dx * static_cast<float>(c),
+                                                    0.0f,
+                                                    -sz * 0.5f + dz * static_cast<float>(r));
                 }
             }
         });
 
+        // Anticlockwise seen from above: the faces face up (+y).
         uint32_t quad[4];
         for (int r = 0; r + 1 < rows; ++r) {
             for (int c = 0; c + 1 < cols; ++c) {
                 quad[0] = static_cast<uint32_t>(r * cols + c);
-                quad[1] = static_cast<uint32_t>(r * cols + c + 1);
+                quad[1] = static_cast<uint32_t>((r + 1) * cols + c);
                 quad[2] = static_cast<uint32_t>((r + 1) * cols + c + 1);
-                quad[3] = static_cast<uint32_t>((r + 1) * cols + c);
+                quad[3] = static_cast<uint32_t>(r * cols + c + 1);
                 geo->addPrimitive(std::span<const uint32_t>(quad, 4), true);
             }
         }
@@ -56,26 +59,31 @@ public:
     }
 };
 
-/// Open polyline along +X.
+/// Open polyline from `origin` along `direction` (+X unless set).
 class LineNode : public Node {
 public:
     explicit LineNode(std::string name) : Node("line", std::move(name)) {
         setInputCount(0);
         params_.setInt("points", 10);
         params_.setFloat("length", 1.0f);
+        params_.setVec3("origin", Vec3(0, 0, 0));
+        params_.setVec3("direction", Vec3(1, 0, 0));
     }
 
     GeometryPtr cookNode(const CookContext& ctx,
                          std::span<const GeometryPtr>) override {
         const int n = std::max(2, params_.getInt("points", 10));
         const float len = params_.evalFloat("length", ctx, 1.0f);
+        const Vec3 origin = params_.evalVec3("origin", ctx, Vec3(0, 0, 0));
+        Vec3 dir = normalize(params_.evalVec3("direction", ctx, Vec3(1, 0, 0)));
+        if (length(dir) < 0.5f) dir = Vec3(1, 0, 0);
 
         auto geo = std::make_shared<Geometry>();
         geo->addPoints(static_cast<size_t>(n));
         auto P = geo->positionsForWrite();
         std::vector<uint32_t> idx(static_cast<size_t>(n));
         for (int i = 0; i < n; ++i) {
-            P[i] = Vec3(len * static_cast<float>(i) / static_cast<float>(n - 1), 0.0f, 0.0f);
+            P[i] = origin + dir * (len * static_cast<float>(i) / static_cast<float>(n - 1));
             idx[i] = static_cast<uint32_t>(i);
         }
         geo->addPrimitive(idx, false);
@@ -92,6 +100,7 @@ public:
         params_.setInt("count", 1000);
         params_.setInt("seed", 0);
         params_.setFloat("size", 1.0f);
+        params_.setVec3("center", Vec3(0, 0, 0));
     }
 
     GeometryPtr cookNode(const CookContext& ctx,
@@ -99,6 +108,7 @@ public:
         const size_t n = static_cast<size_t>(std::max(0, params_.getInt("count", 1000)));
         const uint32_t seed = static_cast<uint32_t>(params_.getInt("seed", 0));
         const float size = params_.evalFloat("size", ctx, 1.0f);
+        const Vec3 center = params_.evalVec3("center", ctx, Vec3(0, 0, 0));
 
         auto geo = std::make_shared<Geometry>();
         geo->addPoints(n);
@@ -115,7 +125,7 @@ public:
                     x ^= x >> 16;
                     return static_cast<float>(x) * (1.0f / 4294967296.0f) - 0.5f;
                 };
-                P[i] = Vec3(h(1) * size, h(2) * size, h(3) * size);
+                P[i] = center + Vec3(h(1) * size, h(2) * size, h(3) * size);
             }
         });
         return geo;
