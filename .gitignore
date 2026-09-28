@@ -4,3 +4,5 @@ out.obj
 *.a
 compile_commands.json
 .cache/
+out/
+__pycache__/

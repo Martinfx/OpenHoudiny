@@ -187,8 +187,12 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   v Houdini) a objem na polygony (Convert Volume): surface nets, uzavřená
   síť s rychlostí z mřížky řešiče (cache formát 5) a pěnou
   ([docs/geometry.md](docs/geometry.md#povrch-vody-liquid-surface-a-convert-volume)).
-- **Python API** (`import pg`): stavba sítě, parametry, vaření a simulace
-  ze skriptu; atributy jako pole numpy bez kopie.
+- ✅ **Python API** (`import pg`, [docs/python.md](docs/python.md)): stavba
+  sítě, parametry, výrazy a klíče, vaření a simulace ze skriptu; atributy,
+  topologie, objemy i data snímků jako pole numpy bez kopie; cache, USD,
+  render přes `prototype`; `as_code()` napíše síť jako Python. Scéna
+  z kroku 2 postavená čistě z Pythonu:
+  [examples/python/demolition.py](examples/python/demolition.py).
 - **Farma**: ✅ rozsah snímků (`--start`, `--end`) pro render i export
   z cache; simulace přerušená uprostřed jde dopočítat z uloženého stavu.
 - ✅ **EXR**: náhledový render do lineárního EXR s hloubkou, vektory pohybu

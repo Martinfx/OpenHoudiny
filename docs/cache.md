@@ -144,8 +144,9 @@ prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--start N] [--every 
 | `--cache DIR` | každý snímek do složky `DIR` (vytvoří ji), nakonec `cache.txt` |
 | `--from-cache DIR` | snímky čte ze složky místo simulace; `--frames N` jich vezme nejvýš N |
 | `--start N`, `--end N` | obrázky a export jen od snímku N (do `--end`, což je totéž co `--frames`) — díl záběru pro jeden stroj farmy; cache se čte od N, simulace ale začíná snímkem 1 a do cache jde každý snímek |
-| `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. Výjimka: `.usda` bez `$F` je celý záběr v jednom souboru ([usd.md](usd.md)). |
+| `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. Výjimka: `.usda` bez `$F` je celý záběr jako jedna scéna, to, co se mění, v souborech po snímcích vedle ní ([usd.md](usd.md)). |
 | `--export-node NODE` | geometrie uzlu `NODE` místo zobrazeného |
+| `--folder DIR` | relativní cesty sítě (meshe, soubory OBJ) čte z `DIR`, ne ze složky jejího souboru — pro síť uloženou jinam, jak to dělá `Network.render` v Pythonu ([python.md](python.md)) |
 | `-` místo `OUT.png` | žádný obrázek, jen cache a export — funguje i v buildu bez EGL |
 
 `--every K` se týká jen obrázků: cache i export dostanou každý snímek.

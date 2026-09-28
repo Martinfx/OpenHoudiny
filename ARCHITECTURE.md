@@ -16,7 +16,7 @@ Související dokumenty: [ROADMAP.md](ROADMAP.md) — cíl, co je hotové a dal�
 ┌─────────────────────────────────────────────────────────────┐
 │  Editor (Dear ImGui)  uzly · viewport · parametry · tabulka │   hotovo
 ├─────────────────────────────────────────────────────────────┤
-│  CLI / headless cook               Python API (nanobind)    │   hotovo · krok 3
+│  CLI / headless cook               Python API (pybind11)    │   hotovo
 ├─────────────────────────────────────────────────────────────┤
 │  Uzly: geometrie · simulace · I/O · digital assets          │   hotovo · kroky 1–2
 ├─────────────────────────────────────────────────────────────┤
@@ -318,6 +318,7 @@ studia musí smět psát proprietární uzly.
 | Materiály | MaterialX, OSL | Apache 2.0 / BSD |
 | Threading | Intel TBB | Apache 2.0 |
 | Rigid body | **Jolt Physics** (krok 2, hotovo: [docs/destruction.md](docs/destruction.md)) | MIT |
+| Python vazby | **pybind11** (krok 3, hotovo: [docs/python.md](docs/python.md)) | BSD |
 | JIT | LLVM ORC | Apache 2.0 + LLVM ex. |
 | GUI | Qt 6 | LGPL (dynamicky linkovat) |
 
@@ -459,6 +460,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Destrukce: Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení na prach, drť, vytlačený vzduch žene prach ([docs/destruction.md](docs/destruction.md)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
+| ✅ | **Python API** `import pg` (pybind11): sítě, parametry, výrazy a klíče, vaření a simulace ze skriptu; atributy a data snímků jako pole numpy bez kopie (buffer protocol nad sdílenou pamětí jádra); cache, USD, render přes `prototype`; síť jako Python (`as_code()`) ([docs/python.md](docs/python.md)) |
 | ✅ | Render do **EXR** bez knihovny: lineární světlo, hloubka, vektory pohybu, masky; čte ho OpenEXR 3.5 ([docs/render.md](docs/render.md)) |
 | ✅ | Video: AVI s Motion JPEG bez závislostí (vlastní kodér JPEG), MP4/MOV/MKV (H.264), WebM (VP9) a GIF přes ffmpeg; v editoru render na pozadí s průběhem, z příkazové řádky `sim OUT.mp4` a `render OUT.mp4`; ověřeno dekódováním v ffmpeg |
 
@@ -478,7 +480,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 ### Není v prototypu (vědomě)
 
 I/O (čtení USD, Alembic; VDB jen zápis hustých mřížek) · JIT · packed primitives a out-of-core ·
-Python vazby · booleany, geometrické dotazy (xyzdist, primuv) · simulace
+Python uvnitř sítě (Python SOP) · booleany, geometrické dotazy (xyzdist, primuv) · simulace
 látek · řídké mřížky (VDB) a simulace na GPU
 
 ---

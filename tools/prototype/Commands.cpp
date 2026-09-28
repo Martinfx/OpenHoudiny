@@ -132,6 +132,9 @@ struct Options {
     int frame = 0;      ///< --frame: the one frame cooked; 0: frame 1
     int threads = 0;    ///< --threads: how many; 0: all there are
     bool hash = false;  ///< --hash: print the geometry's content hash
+    /// --folder: where the network's relative paths (meshes) are read from,
+    /// rather than beside its file -- for a network saved elsewhere (Python).
+    std::string folder;
 };
 
 int usage() {
@@ -198,6 +201,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--frame") { if (!nextInt(o.frame)) return false; }
         else if (a == "--threads") { if (!nextInt(o.threads)) return false; }
         else if (a == "--hash") o.hash = true;
+        else if (a == "--folder") { if (!next(o.folder)) return false; }
         else if (a.size() > 1 && a[0] == '-') return false;  // "-" alone: sim with no pictures
         else o.positional.push_back(a);
     }
@@ -686,6 +690,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
+    if (!o.folder.empty()) folder = o.folder;
     for (const std::string& assignment : o.sets) {
         if (!applySetting(assignment, net, error)) {
             std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
@@ -1095,6 +1100,7 @@ int cook(const Options& o) {
         std::fprintf(stderr, "cook: %s\n", error.c_str());
         return 1;
     }
+    if (!o.folder.empty()) folder = o.folder;
     for (const std::string& s : o.sets) {
         if (!applySetting(s, net, error)) {
             std::fprintf(stderr, "cook: %s\n", error.c_str());
@@ -1211,6 +1217,7 @@ void printUsage(std::FILE* out) {
                  "                   --start N: pictures and export from frame N on (a farm's share of a shot);\n"
                  "                   --end N is --frames N. A simulation still starts at frame 1; a cache is\n"
                  "                   read from N.\n"
+                 "                   --folder DIR: the network's relative paths (meshes) are read from DIR.\n"
                  "                   --set takes an expression too: 'fire.center.x=sin($T*6)*0.3',\n"
                  "                   'box1.sizex=ch(\"../base/sizex\")*2', 'fire.center={0, $F*0.01, 0}'\n"
                  "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"

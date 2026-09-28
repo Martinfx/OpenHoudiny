@@ -36,6 +36,9 @@ okna.
   které nárazy lámou, nálože, drcení na prach, drť, vzduch vytlačený
   zřícením, který žene prach do ulic; odstřel věžáku ve městě a zřícení
   zdi z pohledu od země jako videa
+- **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
+  parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
+  cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)
 - **[docs/usd.md](docs/usd.md)** — celý záběr do USD pro Houdini, Blender
   a renderery: geometrie, kusy jako tělesa v pohybu, drť, povrch vody,
   déšť, prach jako VDB, kamera, slunce a obloha; co se mění každý snímek,
@@ -76,11 +79,14 @@ ctest --test-dir build --output-on-failure
 ```
 
 Výchozí build obsahuje editor: při konfiguraci stáhne Dear ImGui a GLFW,
-pokud v systému není (`sudo apt install libglfw3-dev`). Bez editoru nemá
-build žádné externí závislosti, stačí C++20 a standardní knihovna:
+pokud v systému není (`sudo apt install libglfw3-dev`). Když najde vývojové
+soubory Pythonu (`python3-dev`), stáhne pybind11 a postaví i modul `pg` do
+`build/python` ([docs/python.md](docs/python.md)); jiný Python vybere
+`-DPython3_EXECUTABLE=…`. Bez editoru a bez Pythonu nemá build žádné
+externí závislosti kromě Jolt, stačí C++20 a standardní knihovna:
 
 ```bash
-cmake -S . -B build -DPG_BUILD_GUI=OFF
+cmake -S . -B build -DPG_BUILD_GUI=OFF -DPG_BUILD_PYTHON=OFF
 ```
 
 Se sanitizery:
@@ -94,6 +100,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 
 ```bash
 ./build/pgtests            # 271 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 92 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 USD, 3 EXR, 5 video
+ctest --test-dir build -R python                   # 16 testů modulu pg (Python)
+PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
@@ -255,8 +263,15 @@ vektory pohybu `forward.u/v` (kusy podle své rychlosti, vše podle kamery)
 a masky podlahy, geometrie, kusů, objektů, vody a kouře
 ([docs/render.md](docs/render.md#4-exr-pro-compositing)).
 
+**Python**: modul `pg` postaví síť, nastaví parametry, uvaří geometrii
+a simuluje ze skriptu; atributy, topologie, objemy i částice a tělesa
+snímků jsou pole numpy nad pamětí jádra, bez kopie. Záběr jde ze skriptu
+do cache, do USD i do obrazu, a `net.as_code()` vypíše síť jako Python,
+který ji postaví znovu — tak vznikla scéna z kroku 2 postavená čistě
+z Pythonu ([docs/python.md](docs/python.md)).
+
 Vědomě chybí (zatím): čtení USD, Alembic, čtení VDB, JIT, packed primitives,
-Python vazby, simulace těles a látek — pořadí v
+Python uvnitř sítě (Python SOP), simulace látek — pořadí v
 [ROADMAP.md §4](ROADMAP.md#4-další-kroky). Podrobně v
 [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
 

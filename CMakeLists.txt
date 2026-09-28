@@ -23,6 +23,23 @@ endif()
 option(PG_SANITIZE "Build with address+undefined sanitizers" OFF)
 option(PG_SANITIZE_THREAD "Build with the thread sanitizer" OFF)
 option(PG_WITH_JOLT "Rigid bodies with Jolt Physics (MIT), fetched; OFF: the RBD Solver says it is not built in" ON)
+option(PG_BUILD_PYTHON "Build the Python module pg (fetches pybind11); needs Python's development files" ON)
+
+# The Python module (import pg, docs/python.md) is the libraries in a shared
+# library: they are built position-independent for it. Not with the
+# sanitizers: a sanitized library does not load into a plain Python.
+if(PG_BUILD_PYTHON AND (PG_SANITIZE OR PG_SANITIZE_THREAD))
+  set(PG_BUILD_PYTHON OFF)
+endif()
+if(PG_BUILD_PYTHON)
+  find_package(Python3 COMPONENTS Interpreter Development.Module)
+  if(Python3_FOUND)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  else()
+    message(STATUS "The Python module is left out: no Python development files (python3-dev)")
+    set(PG_BUILD_PYTHON OFF)
+  endif()
+endif()
 
 add_library(pgcore
   src/pg/core/Types.cpp
@@ -385,6 +402,62 @@ if(PG_BUILD_GUI)
   target_link_libraries(prototype PRIVATE pgpreview glfw ${CMAKE_DL_LIBS})
 endif()
 
+# --- Python -------------------------------------------------------------------
+#
+# The module pg: networks, geometry as numpy arrays, simulations, caches and
+# USD from a script (docs/python.md). build/python is what goes on the
+# PYTHONPATH: pg/__init__.py and the extension _pg beside it. pybind11 is
+# fetched; to build offline, point FETCHCONTENT_SOURCE_DIR_PYBIND11 at a
+# checkout.
+if(PG_BUILD_PYTHON)
+  include(FetchContent)
+  # For the Python found above, the one the tests run: pybind11's own search
+  # could find another.
+  set(PYBIND11_FINDPYTHON ON)
+  set(Python_EXECUTABLE ${Python3_EXECUTABLE})
+  FetchContent_Declare(pybind11
+    GIT_REPOSITORY https://github.com/pybind/pybind11.git
+    GIT_TAG v2.13.6
+    GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(pybind11)
+  if(NOT COMMAND pybind11_add_module)
+    # Offline (FETCHCONTENT_FULLY_DISCONNECTED) and no checkout given.
+    message(WARNING "The Python module is left out: pybind11 could not be fetched; "
+                    "set FETCHCONTENT_SOURCE_DIR_PYBIND11 to a checkout of it")
+    set(PG_BUILD_PYTHON OFF)
+  endif()
+endif()
+if(PG_BUILD_PYTHON)
+  set(PG_PYTHON_DIR ${CMAKE_CURRENT_BINARY_DIR}/python/pg)
+  pybind11_add_module(_pg MODULE
+    src/python/Module.cpp
+    src/python/PyGeometry.cpp
+    src/python/PyNetwork.cpp
+    src/python/PySimulation.cpp)
+  target_link_libraries(_pg PRIVATE pgsim)
+  target_include_directories(_pg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/python)
+  target_compile_definitions(_pg PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
+  set_target_properties(_pg PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PG_PYTHON_DIR})
+  if(NOT MSVC)
+    target_compile_options(_pg PRIVATE -Wall -Wextra)
+  endif()
+  # Only the libraries the module uses. With libc++ on Linux the driver adds
+  # libgcc_s after LLVM's unwinder (libc++abi's); both in the module's scope,
+  # libgcc_s would bind its own calls to the other one, and the first
+  # exception of a libstdc++ module imported after pg -- pxr's -- crashes.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(_pg PRIVATE -Wl,--as-needed)
+  endif()
+  # The package's Python side beside the module, and where the programs are:
+  # prototype draws the pictures (Network.render).
+  configure_file(src/python/pg/__init__.py ${PG_PYTHON_DIR}/__init__.py COPYONLY)
+  file(GENERATE OUTPUT ${PG_PYTHON_DIR}/_build.py CONTENT
+"# Written by CMake: where this build's programs and examples are.
+PROTOTYPE = r'$<TARGET_FILE:prototype>'
+EXAMPLES = r'${CMAKE_CURRENT_SOURCE_DIR}/examples'
+")
+endif()
+
 # --- tests -----------------------------------------------------------------
 enable_testing()
 add_executable(pgtests
@@ -420,6 +493,11 @@ target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_
 add_test(NAME pgtests COMMAND pgtests)
 # The commands work in every build, with or without the editor.
 add_test(NAME prototype_list COMMAND prototype list)
+# The Python module, from a script as a user would (tests/python).
+if(PG_BUILD_PYTHON)
+  add_test(NAME python COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tests/python -v)
+  set_tests_properties(python PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python")
+endif()
 
 # Compiles every example graph, and every output of every library node in both
 # stages, for every target with glslangValidator; SPIR-V goes through spirv-val.

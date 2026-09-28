@@ -134,6 +134,15 @@ public:
     /// Point index of vertex (corner) `vertex`.
     uint32_t vertexPoint(size_t vertex) const;
 
+    /// The whole topology at once -- each corner's point; each primitive's
+    /// first corner, its corner count, whether it is closed -- for what
+    /// reads it all (another program, Python) rather than a primitive at a
+    /// time. Valid until the topology changes.
+    std::span<const uint32_t> vertexPoints() const { return topology().vertexPoint; }
+    std::span<const uint32_t> primitiveStarts() const { return topology().primStart; }
+    std::span<const uint32_t> primitiveSizes() const { return topology().primCount; }
+    std::span<const uint8_t> primitiveClosedFlags() const { return topology().primClosed; }
+
     // --- groups -------------------------------------------------------------
 
     Group* findGroup(const std::string& name);
