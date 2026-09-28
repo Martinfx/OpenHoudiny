@@ -1,5 +1,6 @@
 #include "pg/sim/Rigid.h"
 
+#include "pg/core/Spatial.h"
 #include "pg/nodes/Rebuild.h"
 #include "pg/sim/Mesh.h"
 #include "pg/sim/Shape.h"
@@ -148,6 +149,28 @@ std::vector<Vec3> rigidPositions(const Geometry& pieces) {
     }
     return out;
 }
+
+namespace {
+
+/// A number of an attribute of body `k`: on its first primitive, else that
+/// one's first point; `fallback` when neither has it.
+float numberOf(const Geometry& geo, const RigidLayout& L, int k, const char* name, float fallback) {
+    const uint32_t prim = L.prims[static_cast<size_t>(k)].front();
+    auto read = [](const AttributeArray* a, size_t i, float& out) {
+        if (!a || i >= a->size()) return false;
+        if (a->type() == AttrType::Float) out = a->read<float>()[i];
+        else if (a->type() == AttrType::Int) out = static_cast<float>(a->read<int32_t>()[i]);
+        else return false;
+        return true;
+    };
+    float out = fallback;
+    if (read(geo.primitives().find(name), prim, out)) return out;
+    const auto c = geo.primitivePoints(prim);
+    if (!c.empty() && read(geo.points().find(name), c[0], out)) return out;
+    return fallback;
+}
+
+}  // namespace
 
 // --- The layout: bodies, and where they touch ----------------------------------------
 
@@ -576,6 +599,221 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
         L.contacts.push_back(c);
     }
     return out;
+}
+
+// --- The glue: joints between the bodies, and the network of them ----------------------
+
+namespace {
+
+/// A number of attribute `a` of element `i`, Int or Float; `fallback` where
+/// it has none.
+float numberAt(const AttributeArray* a, size_t i, float fallback) {
+    if (!a || i >= a->size()) return fallback;
+    if (a->type() == AttrType::Float) return a->read<float>()[i];
+    if (a->type() == AttrType::Int) return static_cast<float>(a->read<int32_t>()[i]);
+    return fallback;
+}
+
+/// How a joint of `strength` (a share of the Glue) is drawn: green as the
+/// Glue holds, yellow weaker -- a sixteenth or less all yellow -- blue
+/// stronger, grey where it holds nothing.
+Vec3 jointColor(float strength) {
+    if (!(strength > 0.0f)) return Vec3(0.45f, 0.45f, 0.45f);
+    const float t = std::clamp(std::log2(strength) / 4.0f, -1.0f, 1.0f);
+    const Vec3 held(0.3f, 0.85f, 0.35f), weak(1.0f, 0.85f, 0.15f), strong(0.25f, 0.55f, 1.0f);
+    return t < 0.0f ? held + (weak - held) * (-t) : held + (strong - held) * t;
+}
+
+constexpr Vec3 kBrokenJoint(1.0f, 0.15f, 0.1f);
+
+}  // namespace
+
+std::shared_ptr<const RigidGlue> rigidGlue(const Geometry& pieces, const RigidLayout& L, const std::string& attribute,
+                                           const Geometry* network) {
+    auto out = std::make_shared<RigidGlue>();
+    RigidGlue& g = *out;
+    const size_t bodies = static_cast<size_t>(std::max(L.bodies, 0));
+    if (bodies == 0 || L.prims.size() < bodies || L.parts.size() < bodies) return out;
+
+    // Each body: the middle of its box; the piece it is -- the value of the
+    // attribute, Int, on the primitives or else the points, as
+    // pieceOfPrimitives has it, else the piece's number -- and which of
+    // that piece's bodies.
+    const std::vector<Vec3> P = rigidPositions(pieces);
+    int count = 0;
+    const std::vector<int32_t> number = pieceOfPrimitives(pieces, attribute, count);
+    const AttributeArray* onPrims = pieces.primitives().find(attribute);
+    const AttributeArray* onPoints = pieces.points().find(attribute);
+    if (onPrims && onPrims->type() != AttrType::Int) onPrims = nullptr;
+    if (onPoints && onPoints->type() != AttrType::Int) onPoints = nullptr;
+    g.centres.resize(bodies);
+    g.piece.resize(bodies);
+    g.part.resize(bodies);
+    std::map<int32_t, int32_t> parts;
+    for (size_t k = 0; k < bodies; ++k) {
+        Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+        bool any = false;
+        for (const std::vector<uint32_t>& part : L.parts[k]) {
+            for (const uint32_t i : part) {
+                for (int a = 0; a < 3; ++a) {
+                    lo[a] = std::min(lo[a], P[i][a]);
+                    hi[a] = std::max(hi[a], P[i][a]);
+                }
+                any = true;
+            }
+        }
+        g.centres[k] = any ? (lo + hi) * 0.5f : Vec3();
+        const uint32_t prim = L.prims[k].front();
+        int32_t value = number[prim];
+        if (onPrims) {
+            value = onPrims->read<int32_t>()[prim];
+        } else if (onPoints) {
+            const auto c = pieces.primitivePoints(prim);
+            if (!c.empty()) value = onPoints->read<int32_t>()[c[0]];
+        }
+        g.piece[k] = value;
+        g.part[k] = parts[value]++;
+    }
+
+    // Without a network: where bodies touch, as strong as their attributes say.
+    if (!network) {
+        std::vector<float> glue(bodies), clusterGlue(bodies);
+        std::vector<int> cluster(bodies);
+        for (size_t k = 0; k < bodies; ++k) {
+            const int body = static_cast<int>(k);
+            glue[k] = std::max(numberOf(pieces, L, body, "glue", 1.0f), 0.0f);
+            cluster[k] = static_cast<int>(std::lround(numberOf(pieces, L, body, "cluster", 0.0f)));
+            clusterGlue[k] = std::max(numberOf(pieces, L, body, "clusterglue", 1.0f), 0.0f);
+        }
+        g.joints.reserve(L.contacts.size());
+        for (const RigidLayout::Contact& c : L.contacts) {
+            const size_t a = static_cast<size_t>(c.a), b = static_cast<size_t>(c.b);
+            RigidJoint j;
+            j.a = c.a;
+            j.b = c.b;
+            j.at = c.at;
+            j.area = c.area;
+            j.strength = std::min(glue[a], glue[b]);
+            // Inside one chunk (RBD Cluster): as many times as strong as the
+            // weaker of the two says.
+            if (cluster[a] > 0 && cluster[a] == cluster[b]) j.strength *= std::min(clusterGlue[a], clusterGlue[b]);
+            g.joints.push_back(j);
+        }
+        return out;
+    }
+
+    // With one: its lines, from the body of the first point to that of the
+    // last -- the one whose piece the point names, else the nearest.
+    std::map<std::pair<int, int>, const RigidLayout::Contact*> touching;
+    for (const RigidLayout::Contact& c : L.contacts) touching[{c.a, c.b}] = &c;
+    const size_t np = network->pointCount();
+    std::vector<int32_t> bodyOfPoint(np, -1);
+    const AttributeArray* names = network->points().find(attribute);
+    if (names && names->type() != AttrType::Int && names->type() != AttrType::Float) names = nullptr;
+    if (names) {
+        std::map<std::pair<int32_t, int32_t>, int32_t> bodyOf;
+        for (size_t k = 0; k < bodies; ++k) bodyOf.emplace(std::make_pair(g.piece[k], g.part[k]), static_cast<int32_t>(k));
+        const AttributeArray* part = network->points().find("part");
+        for (size_t i = 0; i < np; ++i) {
+            const auto key = std::make_pair(static_cast<int32_t>(std::lround(numberAt(names, i, -1.0f))),
+                                            static_cast<int32_t>(std::lround(numberAt(part, i, 0.0f))));
+            if (const auto it = bodyOf.find(key); it != bodyOf.end()) bodyOfPoint[i] = it->second;
+        }
+    } else {
+        const PointTree tree(g.centres);
+        const auto NP = network->positions();
+        for (size_t i = 0; i < np; ++i) bodyOfPoint[i] = tree.nearest(NP[i]);
+    }
+    const AttributeArray* strength = network->primitives().find("strength");
+    const AttributeArray* area = network->primitives().find("area");
+    for (size_t prim = 0; prim < network->primitiveCount(); ++prim) {
+        const auto c = network->primitivePoints(prim);
+        int a = c.size() < 2 ? -1 : bodyOfPoint[c.front()], b = c.size() < 2 ? -1 : bodyOfPoint[c.back()];
+        if (a < 0 || b < 0 || a == b) {
+            ++g.skipped;
+            continue;
+        }
+        if (a > b) std::swap(a, b);
+        const auto touch = touching.find({a, b});
+        RigidJoint j;
+        j.a = a;
+        j.b = b;
+        j.at = touch != touching.end() ? touch->second->at
+                                       : (g.centres[static_cast<size_t>(a)] + g.centres[static_cast<size_t>(b)]) * 0.5f;
+        j.area = numberAt(area, prim, 0.0f);
+        // None given -- or a merge's 0 -- the faces they share; a hand's
+        // breadth square where they share none.
+        if (!(j.area > 0.0f)) j.area = touch != touching.end() ? touch->second->area : 0.01f;
+        j.strength = numberAt(strength, prim, 1.0f);
+        g.joints.push_back(j);
+    }
+    return out;
+}
+
+std::shared_ptr<Geometry> rigidNetwork(const RigidGlue& g, const std::string& attribute) {
+    auto geo = std::make_shared<Geometry>();
+    const size_t bodies = g.centres.size();
+    geo->addPoints(bodies);
+    auto P = geo->positionsForWrite();
+    std::copy(g.centres.begin(), g.centres.end(), P.begin());
+    if (!attribute.empty() && g.piece.size() == bodies) {
+        auto piece = geo->points().create(attribute, AttrType::Int).write<int32_t>();
+        std::copy(g.piece.begin(), g.piece.end(), piece.begin());
+    }
+    if (g.part.size() == bodies && std::any_of(g.part.begin(), g.part.end(), [](int32_t p) { return p != 0; })) {
+        auto part = geo->points().create("part", AttrType::Int).write<int32_t>();
+        std::copy(g.part.begin(), g.part.end(), part.begin());
+    }
+    for (const RigidJoint& j : g.joints) {
+        const uint32_t ends[2] = {static_cast<uint32_t>(j.a), static_cast<uint32_t>(j.b)};
+        geo->addPrimitive(ends, false);
+    }
+    auto strength = geo->primitives().create("strength", AttrType::Float).write<float>();
+    auto area = geo->primitives().create("area", AttrType::Float).write<float>();
+    auto cd = geo->primitives().create("Cd", AttrType::Vec3).write<Vec3>();
+    for (size_t i = 0; i < g.joints.size(); ++i) {
+        strength[i] = g.joints[i].strength;
+        area[i] = g.joints[i].area;
+        cd[i] = jointColor(g.joints[i].strength);
+    }
+    return geo;
+}
+
+std::shared_ptr<Geometry> rigidNetwork(const RigidFrame& f) {
+    if (!f.glue) return std::make_shared<Geometry>();
+    const RigidGlue& g = *f.glue;
+    std::shared_ptr<Geometry> geo = rigidNetwork(g, f.attribute);
+    // The bodies where they are, moving as they do.
+    const size_t bodies = g.centres.size();
+    const bool posed = f.poses.size() == bodies;
+    {
+        auto P = geo->positionsForWrite();
+        auto v = geo->points().create("v", AttrType::Vec3).write<Vec3>();
+        for (size_t k = 0; k < bodies && posed; ++k) {
+            P[k] = f.poses[k].apply(g.centres[k]);
+            v[k] = f.poses[k].velocityAt(g.centres[k]);
+        }
+    }
+    // The joints that held: what became of each, and where it was.
+    const bool known = f.jointState.size() == g.joints.size() && f.jointTime.size() == g.joints.size();
+    std::vector<uint8_t> keep(g.joints.size(), 1);
+    {
+        auto broken = geo->primitives().create("broken", AttrType::Int).write<int32_t>();
+        auto time = geo->primitives().create("time", AttrType::Float).write<float>();
+        auto at = geo->primitives().create("at", AttrType::Vec3).write<Vec3>();
+        auto cd = geo->primitives().create("Cd", AttrType::Vec3).write<Vec3>();
+        for (size_t i = 0; i < g.joints.size(); ++i) {
+            const RigidJoint& j = g.joints[i];
+            const uint8_t state = known ? f.jointState[i] : RigidFrame::kJointHolds;
+            keep[i] = state != RigidFrame::kJointNone;
+            broken[i] = state == RigidFrame::kJointBroken ? 1 : 0;
+            time[i] = broken[i] ? f.jointTime[i] : -1.0f;
+            at[i] = posed ? f.poses[static_cast<size_t>(j.a)].apply(j.at) : j.at;
+            if (broken[i]) cd[i] = kBrokenJoint;
+        }
+    }
+    if (std::find(keep.begin(), keep.end(), 0) != keep.end()) geo->deletePrimitives(keep, false);
+    return geo;
 }
 
 // --- The bars: where each runs through which body ---------------------------------------
@@ -1305,24 +1543,6 @@ uint64_t splitmix(uint64_t& state) {
     return z ^ (z >> 31);
 }
 
-/// A number of an attribute of body `k`: on its first primitive, else that
-/// one's first point; `fallback` when neither has it.
-float numberOf(const Geometry& geo, const RigidLayout& L, int k, const char* name, float fallback) {
-    const uint32_t prim = L.prims[static_cast<size_t>(k)].front();
-    auto read = [](const AttributeArray* a, size_t i, float& out) {
-        if (!a || i >= a->size()) return false;
-        if (a->type() == AttrType::Float) out = a->read<float>()[i];
-        else if (a->type() == AttrType::Int) out = static_cast<float>(a->read<int32_t>()[i]);
-        else return false;
-        return true;
-    };
-    float out = fallback;
-    if (read(geo.primitives().find(name), prim, out)) return out;
-    const auto c = geo.primitivePoints(prim);
-    if (!c.empty() && read(geo.points().find(name), c[0], out)) return out;
-    return fallback;
-}
-
 Vec3 vectorOf(const Geometry& geo, const RigidLayout& L, int k, const char* name, const Vec3& fallback) {
     const uint32_t prim = L.prims[static_cast<size_t>(k)].front();
     auto read = [](const AttributeArray* a, size_t i, Vec3& out) {
@@ -1390,10 +1610,13 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         float area = 0.0f;
         float strength = 0.0f; ///< newtons it holds
         bool broken = false;
+        size_t joint = 0;      ///< the joint of the glue it is (RigidGlue)
     };
     std::vector<Edge> edges;
     std::vector<std::vector<int>> edgesOf;  ///< each piece's
     size_t broken = 0;
+    std::vector<uint8_t> jointState;        ///< what became of each joint of the glue (RigidFrame)
+    std::vector<float> jointTime;           ///< ... and when those that broke did
     struct Cluster {
         JPH::BodyID id;
         std::vector<int> pieces;       ///< in order
@@ -1604,6 +1827,8 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         if (e.broken) return;
         e.broken = true;
         ++broken;
+        jointState[e.joint] = RigidFrame::kJointBroken;
+        jointTime[e.joint] = time;
         dirty.push_back(e.a);
         dirty.push_back(e.b);
         const int k = pieces[static_cast<size_t>(e.a)].cluster >= 0 ? e.a : e.b;
@@ -2090,6 +2315,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     m.settings = s;
     const Geometry* geo = scene_.pieces.get();
     layout_ = geo ? rigidLayout(*geo, scene_.attribute) : std::make_shared<RigidLayout>();
+    glue_ = geo ? rigidGlue(*geo, *layout_, scene_.attribute, scene_.constraints.get()) : std::make_shared<RigidGlue>();
     const RigidLayout& L = *layout_;
     const size_t count = static_cast<size_t>(L.bodies);
     // Room for a body a piece -- as the glue breaks -- a still body a
@@ -2113,8 +2339,6 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
-    std::vector<float> glueOf(count, 1.0f), clusterGlueOf(count, 1.0f);
-    std::vector<int> clusterOf(count, 0);
     for (size_t k = 0; k < count; ++k) {
         const int body = static_cast<int>(k);
         Impl::Piece& piece = m.pieces[k];
@@ -2150,9 +2374,6 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         piece.glass = numberOf(*geo, L, body, "glass", 0.0f) >= 0.5f;
         piece.size = piece.hulls.empty() ? 0.0f : std::max(length(hi - lo), 0.01f);
         piece.centre = piece.hulls.empty() ? Vec3() : (lo + hi) * 0.5f;
-        glueOf[k] = std::max(numberOf(*geo, L, body, "glue", 1.0f), 0.0f);
-        clusterOf[k] = static_cast<int>(std::lround(numberOf(*geo, L, body, "cluster", 0.0f)));
-        clusterGlueOf[k] = std::max(numberOf(*geo, L, body, "clusterglue", 1.0f), 0.0f);
         if (piece.hulls.empty()) piece.gone = true;  // nothing to it
         if (meshes && !piece.hulls.empty()) {
             // Its triangles at rest, for the water and the gas.
@@ -2185,28 +2406,31 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         }
     }
 
-    // The glue: where pieces touch face to face, as strong as the faces are big.
+    // The glue: where pieces touch face to face, as strong as the faces are
+    // big -- or the joints of the network linked in.
     m.edgesOf.resize(count);
+    const RigidGlue& glue = *glue_;
+    m.jointState.assign(glue.joints.size(), RigidFrame::kJointNone);
+    m.jointTime.assign(glue.joints.size(), 0.0f);
     if (s.glue > 0.0f) {
-        for (const RigidLayout::Contact& c : L.contacts) {
-            const Impl::Piece& a = m.pieces[static_cast<size_t>(c.a)];
-            const Impl::Piece& b = m.pieces[static_cast<size_t>(c.b)];
+        for (size_t i = 0; i < glue.joints.size(); ++i) {
+            const RigidJoint& j = glue.joints[i];
+            const Impl::Piece& a = m.pieces[static_cast<size_t>(j.a)];
+            const Impl::Piece& b = m.pieces[static_cast<size_t>(j.b)];
             if (a.gone || b.gone || (!a.moves && !b.moves)) continue;
-            const size_t ia = static_cast<size_t>(c.a), ib = static_cast<size_t>(c.b);
-            float strength = s.glue * c.area * std::min(glueOf[ia], glueOf[ib]);
-            // Inside one chunk (RBD Cluster): as many times as strong as the
-            // weaker of the two says.
-            if (clusterOf[ia] > 0 && clusterOf[ia] == clusterOf[ib]) strength *= std::min(clusterGlueOf[ia], clusterGlueOf[ib]);
-            if (strength <= 0.0f) continue;
+            const float strength = s.glue * j.area * j.strength;
+            if (!(strength > 0.0f)) continue;
             Impl::Edge e;
-            e.a = c.a;
-            e.b = c.b;
-            e.at = c.at;
-            e.area = c.area;
+            e.a = j.a;
+            e.b = j.b;
+            e.at = j.at;
+            e.area = j.area;
             e.strength = strength;
-            m.edgesOf[static_cast<size_t>(c.a)].push_back(static_cast<int>(m.edges.size()));
-            m.edgesOf[static_cast<size_t>(c.b)].push_back(static_cast<int>(m.edges.size()));
+            e.joint = i;
+            m.edgesOf[static_cast<size_t>(j.a)].push_back(static_cast<int>(m.edges.size()));
+            m.edgesOf[static_cast<size_t>(j.b)].push_back(static_cast<int>(m.edges.size()));
             m.edges.push_back(e);
+            m.jointState[i] = RigidFrame::kJointHolds;
         }
     }
 
@@ -2474,6 +2698,9 @@ RigidFrame RigidSolver::capture() const {
     }
     f.joints = m.edges.size();
     f.broken = m.broken;
+    f.glue = glue_;
+    f.jointState = m.jointState;
+    f.jointTime = m.jointTime;
     f.rebar = m.rebar;
     f.rebarState = m.barState;
     return f;
@@ -2530,6 +2757,8 @@ struct RigidSolver::Impl {};
 
 RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     layout_ = scene_.pieces ? rigidLayout(*scene_.pieces, scene_.attribute) : std::make_shared<RigidLayout>();
+    glue_ = scene_.pieces ? rigidGlue(*scene_.pieces, *layout_, scene_.attribute, scene_.constraints.get())
+                          : std::make_shared<RigidGlue>();
     error_ = "this build has no rigid bodies: it was built without Jolt (PG_WITH_JOLT=OFF)";
 }
 RigidSolver::~RigidSolver() = default;
@@ -2541,6 +2770,7 @@ RigidFrame RigidSolver::capture() const {
     f.pieces = scene_.pieces;
     f.layout = layout_;
     f.attribute = scene_.attribute;
+    f.glue = glue_;
     return f;
 }
 std::vector<Collider> RigidSolver::colliders() const { return {}; }

@@ -402,13 +402,16 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Liquid     voda: FLIP -- částice nesou vodu, mřížka drží její objem
                  FreeSurface tlak kapaliny s volnou hladinou: CG s multigridem, ghost fluid
                  Rain       déšť: kapky z mraku ve větru, odstřiky, vlnky na hladině
+                 Rigid      tuhá tělesa nad Jolt: tělesa a dotyky kusů (rigidLayout), lepidlo
+                            jako síť vazeb (rigidGlue, rigidNetwork), výztuž, drť a prach
                  Camera     kamera záběru: poloha, rotace, objektiv, rozlišení
                  Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
                  World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
                  Network    síť uzlů simulace i geometrie, formát .pgsim, klíčové snímky,
                             překlad na World + Look (snímek po snímku, když je co animovat)
                  GeometryGraph  geometrické uzly sítě jako graf jádra: synchronizace,
-                            inkrementální vaření, simulace zpátky jako body a objemy
+                            inkrementální vaření, simulace zpátky jako body a objemy,
+                            síť vazeb z kusů (RBD Constraints)
                  Cooker     geometrie vařená na vlastním vlákně: požadavek (síť, snímek, uzly),
                             přerušení rozpracovaného, úrovně assetů se vstupy instance
                  ForEach    smyčky For-Each: kusy, primitivy, body, počet, zpětná vazba;
@@ -487,6 +490,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Beton: Concrete Fracture — nestejné kusy, nejmenší kolem nárazu, odprýsklé rohy, hrubé lomy lícující z obou stran; RBD Solver simuluje rovný řez (`proxy`) a kreslí detail; `spread` a `rings` drží škodu u místa nárazu, kusy přilepené k základu stojí; sekundární lámání: RBD Cluster seskupí kusy do ker, které se rozpadnou až při tvrdém dopadu ([docs/destruction.md §2](docs/destruction.md#2-concrete-fracture)) |
 | ✅ | Výztuž: uzel Rebar (síť ve zdi, armokoš s třmínky v trámu, natočené podle bloku); RBD Solver drží kusy na prutech plastickými vazbami Joltu (tření v šesti směrech), prut povolí podle oceli nebo kotvení, vytahuje se, ohýbá a trhá; stav prutů ve snímku a cache (verze 6), kreslení trubkami, USD `/World/rebar` ([docs/destruction.md §2](docs/destruction.md#výztuž-rebar)) |
 | ✅ | Sklo: Glass Fracture (radiální a soustředné trhliny kolem místa úderu); tabule je celá, dokud jí nepraskne spoj; skleněná drť a desetina prachu (cache verze 7); renderer kreslí sklo průhledné — dvě vrstvy, Fresnel obou stěn, odraz oblohy a slunce, zabarvení podle cesty sklem; USD materiál skla a trhliny viditelné od prasknutí ([docs/destruction.md §2](docs/destruction.md#sklo-glass-fracture)) |
+| ✅ | Síť vazeb jako geometrie: RBD Constraints udělá z kusů bod na těleso a čáru na spoj (`strength` jako násobek Glue, `area`, barva podle pevnosti); zeslabená, smazaná nebo nakreslená síť zapojená do Constraints RBD Solveru je lepidlem; RBD Pieces vrátí síť snímku s `broken` a `time`, stav spojů ve snímku a cache (verze 8) ([docs/destruction.md §3](docs/destruction.md#síť-vazeb-rbd-constraints)) |
 | ✅ | Cihly: Brick Wall vyzdí zeď z cihel ve vazbě (běhounová, anglická, vlámská, stack) s maltou, omítkou a otvory s rovným ostěním; každá cihla jeden kus, rozlomené cihly jako dvě poloviny jedné kry; RBD Solver má maltu jako lepidlo, zeď se rozpadá ve spárách; příklady `brick_wall` (koule proti cihlové zdi s oknem) a `concrete_column` (odstřel železobetonového sloupu, holý armokoš) ([docs/destruction.md §2](docs/destruction.md#cihly-brick-wall)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |

@@ -707,6 +707,17 @@ std::vector<NodeType> buildTypes() {
                "How many times as strong the glue inside a chunk is as the glue between chunks: 1 as strong -- "
                "no chunks; the higher, the harder a knock must be to break a chunk up."},
               text("attribute", "Piece Attribute", "Cluster", "piece", "What says which piece a primitive is of.")});
+    geometry("rbd_constraints", "RBD Constraints", "rbd_constraints",
+             "The glue between the pieces as geometry -- Houdini's constraint network: a point at the middle of "
+             "each piece, with the piece it is; a line for each joint, where two pieces touch face to face, with "
+             "strength -- a share of the RBD Solver's Glue: 1 as it holds, 0.1 a tenth, 0 nothing -- area (m\xc2\xb2 "
+             "of the faces) and Cd: green as the Glue holds, yellow weaker, blue stronger. Weaken it, delete lines, "
+             "draw new ones with the geometry nodes -- a wrangle over where the lines are -- and link it into the "
+             "solver's Constraints: its lines are then the joints. The pieces' glue, cluster and clusterglue make "
+             "the strength here.",
+             in,
+             {text("attribute", "Piece Attribute", "Pieces", "piece",
+                   "What says which piece a primitive is of -- as the RBD Solver's Piece Attribute.")});
     geometry("glass_fracture", "Glass Fracture", "glassfracture",
              "A pane of glass broken as glass breaks where it is struck: cracks straight out from Impact and "
              "cracks round it from one to the next -- a spider's web, slivers at the middle, shards growing wider "
@@ -869,7 +880,13 @@ std::vector<NodeType> buildTypes() {
                "from frame to frame."},
               {"rebar", "Rebar", "Rigid", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "The bars in the pieces too, where the pieces have taken them: an open polyline for each stretch "
-               "of a bar in one piece, torn apart at a tear, with width -- its diameter -- and v."}});
+               "of a bar in one piece, torn apart at a tear, with width -- its diameter -- and v."},
+              {"output", "Output", "Rigid", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "What it gives. Pieces: the pieces. Constraints: the glue between them as a network, as RBD "
+               "Constraints makes it, where the pieces are -- a point at each one's middle, with v; a line for "
+               "each joint that held, broken 1 where it broke, at time (seconds; -1 where it holds), at where "
+               "its faces touched, red where broken.",
+               {"pieces", "constraints"}, {"Pieces", "Constraints"}}});
 
     // --- objects ----------------------------------------------------------------------
     t.push_back({"object", "Object", "Objects",
@@ -1017,13 +1034,16 @@ std::vector<NodeType> buildTypes() {
          "it stays), glue, release -- the seconds when a charge breaks its joints -- with kick and vanish "
          "(blown to dust), crush (crushed to dust by a hard knock), and cluster with clusterglue -- RBD Cluster's "
          "chunks, glued stronger inside. Steel bars linked into Rebar -- a Rebar node's -- hold the pieces they "
-         "run through once the glue breaks: they bend, pull out of small pieces and tear. Link it into the "
+         "run through once the glue breaks: they bend, pull out of small pieces and tear. A network linked into "
+         "Constraints -- RBD Constraints', edited -- is the glue instead: its lines are the joints, as strong as "
+         "their strength says. Link it into the "
          "Output's Looks: it is "
          "simulated and drawn. Its Collider into a Liquid, Pyro Solver or Rain: they go round the pieces; its "
          "Dust into a Pyro Solver's Sources: the dust is smoke, pushed out by the air the pieces squeeze out.",
          {{"pieces", "Pieces", PinType::Geometry},
           {"colliders", "Colliders", PinType::Collider, true},
-          {"rebar", "Rebar", PinType::Geometry}},
+          {"rebar", "Rebar", PinType::Geometry},
+          {"constraints", "Constraints", PinType::Geometry}},
          {{"look", "Look", PinType::Look},
           {"rigid", "Rigid", PinType::Rigid},
           {"collider", "Collider", PinType::Collider},
@@ -2943,11 +2963,46 @@ struct Network::CompileMemo {
     std::map<int, std::shared_ptr<const MeshShape>> shapes;  // from geometry, by node
     std::map<int, std::shared_ptr<const Geometry>> pieces;   // an RBD Solver's, by node
     std::map<int, std::shared_ptr<const Geometry>> rebar;    // ... and its bars
+    std::map<int, std::shared_ptr<const Geometry>> constraints;  // ... and its network of glue
     std::unique_ptr<GeometryGraph> own;
     GeometryGraph* cooker = nullptr;
 };
 
 namespace {
+
+/// How many lines of a network of glue join a piece that `pieces` does not
+/// have: an end whose point names -- in `attribute` -- a piece none of them
+/// is. None where its points name no pieces: those go to the nearest.
+size_t strayJoints(const Geometry& network, const Geometry* pieces, const std::string& attribute) {
+    const AttributeArray* names = network.points().find(attribute);
+    if (!pieces || !names || (names->type() != AttrType::Int && names->type() != AttrType::Float)) return 0;
+    // The pieces there are, as the solver numbers them (pieceOfPrimitives).
+    std::set<int32_t> have;
+    if (const AttributeArray* a = pieces->primitives().find(attribute); a && a->type() == AttrType::Int) {
+        for (const int32_t v : a->read<int32_t>()) have.insert(v);
+    } else if (const AttributeArray* b = pieces->points().find(attribute); b && b->type() == AttrType::Int) {
+        const auto v = b->read<int32_t>();
+        for (size_t p = 0; p < pieces->primitiveCount(); ++p) {
+            const auto c = pieces->primitivePoints(p);
+            if (!c.empty()) have.insert(v[c[0]]);
+        }
+    } else {
+        int count = 0;
+        pieceOfPrimitives(*pieces, attribute, count);
+        for (int i = 0; i < count; ++i) have.insert(i);
+    }
+    auto named = [&](uint32_t point) {
+        const int32_t v = names->type() == AttrType::Int ? names->read<int32_t>()[point]
+                                                         : static_cast<int32_t>(std::lround(names->read<float>()[point]));
+        return have.count(v) > 0;
+    };
+    size_t lost = 0;
+    for (size_t prim = 0; prim < network.primitiveCount(); ++prim) {
+        const auto c = network.primitivePoints(prim);
+        if (c.size() < 2 || !named(c.front()) || !named(c.back())) ++lost;
+    }
+    return lost;
+}
 
 /// How far and which way a rotation turns into the next in `dt`: the axis,
 /// as long as radians per second.
@@ -3480,6 +3535,39 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                     r.rebar = geo;
                 }
                 memo.rebar[solver->id] = r.rebar;
+            }
+        }
+        // The network of glue: cooked once a compile, as the pieces are.
+        const std::vector<Link> network = linksInto(solver->id, "constraints");
+        if (!network.empty()) {
+            if (const auto it = memo.constraints.find(solver->id); it != memo.constraints.end()) {
+                r.constraints = it->second;
+            } else {
+                startCooker();
+                const GeometryPtr geo = cooker->cook(network.front().from, 1, firstStep);
+                const std::string error = cooker->error(network.front().from);
+                if (!error.empty()) problem(L::Warning, network.front().from, error);
+                if (fromSimulation(network.front().from)) {
+                    problem(L::Warning, solver->id, "Its constraints come from a simulation, which has not run when "
+                                                    "they are taken: the glue is where the pieces touch.");
+                } else if (!geo) {
+                    // Not cooked -- its error said why: the glue is where the pieces touch.
+                } else if (geo->primitiveCount() == 0) {
+                    // No lines: no joints -- the pieces hold nothing, as with Glue 0.
+                    r.constraints = geo;
+                    problem(L::Warning, solver->id, "The network linked into Constraints has no lines: the pieces "
+                                                    "are not glued.");
+                } else {
+                    r.constraints = geo;
+                    // Its points name pieces: those that are not in Pieces join nothing.
+                    const size_t lost = strayJoints(*geo, r.pieces.get(), r.attribute);
+                    if (lost > 0) {
+                        problem(L::Warning, solver->id,
+                                std::to_string(lost) + " of the lines of Constraints join pieces that are not in "
+                                "Pieces: they are left out.");
+                    }
+                }
+                memo.constraints[solver->id] = r.constraints;
             }
         }
         for (const Node* n : feeding(solver, "colliders")) {

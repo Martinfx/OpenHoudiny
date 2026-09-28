@@ -61,8 +61,10 @@ cache/fire/
   a od verze 6 co se stalo s výztuží — bajt na každý úsek prutu v kusu:
   prut z kusu vyšel, prut je za ním přetržený ([destruction.md](destruction.md#výztuž-rebar)), a od
   verze 7 která drť je skleněná a kterým tělesům praskl spoj — podle toho se
-  kreslí trhliny skla ([destruction.md](destruction.md#sklo-glass-fracture)); klidová geometrie
-  kusů i pruty jsou v síti a snímek načtený z disku je dostane od ní. Binárně, little-endian,
+  kreslí trhliny skla ([destruction.md](destruction.md#sklo-glass-fracture)) —, a od verze 8 co se
+  stalo s každým spojem lepidla a kdy praskl (bajt a číslo na spoj; [síť
+  vazeb](destruction.md#síť-vazeb-rbd-constraints)); klidová geometrie kusů, pruty i síť vazeb jsou
+  v síti uzlů a snímek načtený z disku je dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
   část domény, takže 150 snímků mřížky 64 × 96 × 64 má na disku 63 MB,

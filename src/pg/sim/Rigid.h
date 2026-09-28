@@ -28,6 +28,11 @@
 //              break puffs dust and throws out grit
 //   colliders  the floor, and the objects linked in: still, or keyed --
 //              those push what is in their way
+//   network    the glue as geometry (RigidGlue; RBD Constraints makes it,
+//              RBD Pieces gives it back from a frame): a point a body, a
+//              line a joint, its strength a share of Glue. Linked in, its
+//              lines are the joints -- weakened, deleted, drawn where no
+//              faces touch -- in place of those the solver finds
 //   rebar      steel bars in the pieces (RigidRebar): where the glue has
 //              broken, a bar still joins the pieces it runs through, one to
 //              the next, as hard as it holds there -- the steel yields, or
@@ -130,6 +135,10 @@ struct RigidScene {
     /// width (on the primitives, else the points; 12 mm without it). Null:
     /// none. Compared by pointer, as the pieces are.
     std::shared_ptr<const Geometry> rebar;
+    /// The glue as a network (rigidNetwork): its lines are the joints, in
+    /// place of those found where the pieces touch. Null: those. Compared
+    /// by pointer, as the pieces are.
+    std::shared_ptr<const Geometry> constraints;
     std::vector<Collider> colliders;   ///< the objects: still, or moving (velocity, spin)
     bool intoGas = false;              ///< the pieces are colliders of the gas
     bool intoWater = false;            ///< ... of the water
@@ -166,6 +175,47 @@ struct RigidLayout {
 /// The bodies of `pieces`, numbered in the order of their first primitives.
 /// Faces touch where they lie in one plane, facing each other, and overlap.
 std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& pieces, const std::string& attribute);
+
+/// A joint of glue between two bodies of a layout.
+struct RigidJoint {
+    int a = 0, b = 0;       ///< the bodies, a < b
+    Vec3 at;                ///< where their faces touch, at rest; halfway between them where none do
+    float area = 0.0f;      ///< of those faces, square metres
+    /// How strong it is, as a share of the solver's Glue: it holds Glue x
+    /// area x strength newtons. 0 or less: nothing.
+    float strength = 1.0f;
+};
+
+/// The glue of a geometry's bodies -- Houdini's constraint network: where
+/// each body is and which piece it is, and the joints between them.
+struct RigidGlue {
+    std::vector<Vec3> centres;    ///< each body's at rest: the middle of its box, as the proxy has it
+    std::vector<int32_t> piece;   ///< the piece each is: the value of the attribute, else its number 0, 1, ...
+    std::vector<int32_t> part;    ///< which of its piece's bodies it is: 0, 1, ... in the order of the bodies
+    std::vector<RigidJoint> joints;
+    size_t skipped = 0;           ///< lines of the network that join no two bodies of these
+};
+
+/// The glue of `pieces`, laid out as `layout` has them. Without `network`:
+/// a joint where two bodies touch face to face, its strength the weaker of
+/// their attributes glue (1 without), times the weaker clusterglue where
+/// both are of one cluster. With it: its lines (rigidNetwork), each from
+/// its first point's body to its last's -- the body whose piece the point
+/// names in `attribute` (and part, 0 without), or the nearest where the
+/// points name none -- with its attributes strength (1 without) and area
+/// (square metres; without, or 0, the faces the two share, else 0.01).
+/// The same every time for the same geometry.
+std::shared_ptr<const RigidGlue> rigidGlue(const Geometry& pieces, const RigidLayout& layout,
+                                           const std::string& attribute, const Geometry* network = nullptr);
+
+/// The glue as geometry, the network RBD Constraints makes: a point for each
+/// body at its centre, with the piece it is in `attribute` (and part, where
+/// a piece is several bodies); an open line for each joint, from the one's
+/// point to the other's, with strength, area and Cd -- green as the Glue
+/// holds, yellow weaker, blue stronger, grey none. Edited -- a line deleted,
+/// weakened, drawn between two pieces -- it is linked into the solver's
+/// Constraints.
+std::shared_ptr<Geometry> rigidNetwork(const RigidGlue& glue, const std::string& attribute);
 
 /// Steel bars in the pieces: where each runs through which body.
 struct RigidRebar {
@@ -233,6 +283,15 @@ struct RigidFrame {
     /// attribute glass is 1 or more. Empty: none is.
     std::vector<uint8_t> debrisGlass;
     size_t joints = 0, broken = 0;                 ///< the glue: how many joints, how many broken so far
+    /// The joints of the glue, at rest -- the scene's -- null where not known:
+    /// a frame read back, until adoptPieces gives it them.
+    std::shared_ptr<const RigidGlue> glue;
+    /// What became of each of them: kJointHolds; kJointBroken -- at
+    /// jointTime, seconds; kJointNone -- it never held: no Glue, both pieces
+    /// still, a piece with nothing to it, no strength. Empty: not known.
+    std::vector<uint8_t> jointState;
+    std::vector<float> jointTime;
+    static constexpr uint8_t kJointHolds = 0, kJointBroken = 1, kJointNone = 2;
     std::shared_ptr<const RigidRebar> rebar;       ///< the bars in the pieces, at rest; null: none
     /// What became of each station of a bar: kRebarLoose the bar slid out
     /// of its body, kRebarTorn the bar tore after it. Empty: all as built.
@@ -241,10 +300,20 @@ struct RigidFrame {
 
     bool empty() const { return poses.empty(); }
     size_t bytes() const {
-        return poses.size() * sizeof(RigidPose) + (debris.size() + debrisVelocity.size()) * sizeof(float) +
-               (debrisIds.size() + unglued.size()) * sizeof(uint32_t) + rebarState.size() + debrisGlass.size();
+        return poses.size() * sizeof(RigidPose) +
+               (debris.size() + debrisVelocity.size() + jointTime.size()) * sizeof(float) +
+               (debrisIds.size() + unglued.size()) * sizeof(uint32_t) + rebarState.size() + debrisGlass.size() +
+               jointState.size();
     }
 };
+
+/// The glue of `f` as a network (as rigidNetwork(glue) has it) where the
+/// bodies are: a point at each body's centre, moved and turned with it,
+/// with its velocity v; a line for each joint that held -- broken 1 where it
+/// has broken, at time (seconds; -1 where it holds), at where its faces
+/// touched, gone with the first body -- red where broken. None where the
+/// frame knows no glue.
+std::shared_ptr<Geometry> rigidNetwork(const RigidFrame& f);
 
 /// The attribute glass of primitive `p` (of an attribute glass, Int or
 /// Float, or null): 1 a face of glass, 2 a face of a crack in it -- what
@@ -324,6 +393,8 @@ public:
     /// How many bodies it simulates.
     size_t pieceCount() const;
     const std::shared_ptr<const RigidLayout>& layout() const { return layout_; }
+    /// Its joints, at rest: those of the network linked in, else where the pieces touch.
+    const std::shared_ptr<const RigidGlue>& glue() const { return glue_; }
     RigidFrame capture() const;
     /// The pieces as colliders of the water and the gas: meshes that move.
     std::vector<Collider> colliders() const;
@@ -336,6 +407,7 @@ private:
     struct Impl;
     RigidScene scene_;
     std::shared_ptr<const RigidLayout> layout_;
+    std::shared_ptr<const RigidGlue> glue_;
     std::unique_ptr<Impl> impl_;
     std::string error_;
 };

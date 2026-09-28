@@ -1,0 +1,106 @@
+pgsim 1
+# A crack where the shot wants it: the glue as geometry, weakened along a
+# line. RBD Constraints makes the network of the wall's glue -- a point in
+# each piece, a line for each joint, green -- and the wrangle crack takes a
+# fiftieth of the strength from the joints across a line drawn corner to
+# corner up the wall, yellow. Linked into the RBD Solver's Constraints, the
+# network is the glue: the wrecking ball knocks out the corner above the line
+# and the wall cracks right along it -- up to the far corner, where the part
+# above the crack stays sitting on it -- while the rest, glued as hard as
+# ever, stands. Unlink Constraints: the ball breaks the wall round where it
+# lands. The RBD Pieces joints gives the network back at the frame, the
+# joints that broke red; display it to watch them go. prototype sim
+# constraint_network out.mp4 renders it through the camera, a slow push in.
+node 1 box 1 wall 0 0
+  param size 5 3 0.3
+  param center 0 1.7 0
+node 2 concrete_fracture 1 concrete 230 0
+  param count 140
+node 3 primitive_wrangle 1 moving 460 0
+  param snippet "// The wall's pieces move. A Merge fills an attribute a geometry lacks\n// with 0 -- set on the pieces, active is set on all of them.\ni@active = 1;"
+node 4 box 1 plinth 0 130
+  param size 5.6 0.2 0.7
+  param center 0 0.1 0
+node 5 primitive_wrangle 1 foundation 230 130
+  param snippet "// The plinth the wall stands on: a piece of its own that does not move,\n// the wall's foot glued to it.\ni@piece = 1000;\ni@active = 0;"
+node 6 merge 1 pieces 690 60
+node 15 rbd_constraints 1 glue 920 -60
+node 16 primitive_wrangle 1 crack 1150 -60
+  param snippet "// The crack the shot wants: the line from From to To up the wall. A joint\n// whose pieces lie on either side of it -- its ends, in the wall's plane\n// -- holds Weaken times as hard, and shows yellow.\nvector a = chv(\"from\"), b = chv(\"to\");\nvector p0 = point(0, \"P\", primpoint(0, @primnum, 0));\nvector p1 = point(0, \"P\", primpoint(0, @primnum, 1));\nfloat s0 = (b.x - a.x) * (p0.y - a.y) - (b.y - a.y) * (p0.x - a.x);\nfloat s1 = (b.x - a.x) * (p1.y - a.y) - (b.y - a.y) * (p1.x - a.x);\nif (s0 * s1 < 0) {\n    f@strength *= ch(\"weaken\");\n    v@Cd = set(1, 0.85, 0.15);\n}"
+  param from -2.6 0.25 0
+  param to 2.6 3.25 0
+  param weaken 0.02
+node 7 object 1 ball 460 260
+  param size 1.1 1.1 1.1
+  param color 0.16 0.16 0.17
+  key center 1 smooth -1.4 5.4 -4.6
+  key center 10 smooth -1.4 3.2 -2.1
+  key center 18 smooth -1.4 2.5 -0.5
+  key center 26 smooth -1.4 2.6 1.3
+  key center 40 smooth -1.4 4 3.6
+  key center 54 smooth -1.4 5.6 5.6
+node 8 rbd_solver 1 rbd 1380 60
+  param density 2400
+  param friction 0.7
+  param bounce 0.15
+  param glue 1000
+  param spread 0.35
+  param substeps 4
+  param dust 1.2
+  param impact_dust 1.2
+  param dust_size 0.35
+  param air 1.5
+  param color 0.38 0.37 0.355
+  param inside_color 0.48 0.46 0.43
+node 17 rbd_pieces 1 joints 1610 -60
+  param output constraints
+node 9 turbulence 1 swirl 1380 230
+  param strength 1.2
+  param scale 0.8
+node 10 pyro_solver 2 dust 1610 140
+  param size 10 4.5 10
+  param resolution 112
+  param buoyancy 0.15
+  param weight 0.25
+  param vorticity 3
+  param smoke_decay 0.4
+node 11 volume_look 2 dust_look 1840 140
+  param smoke_color 0.66 0.63 0.58
+  param smoke_density 7
+  param occlusion 1
+node 12 output 2 output 2070 60
+  param frames 90
+  param light_azimuth 145
+  param light_elevation 30
+  param light_color 1 0.9 0.78
+  param light_intensity 2.8
+  param sky_intensity 0.45
+  param exposure 0.8
+  param ground_color 0.13 0.125 0.12
+  param grid off
+  param sky_behind on
+node 13 camera 1 camera 2070 220
+  param focal 32
+  key center 1 smooth 1.2 1.9 7.8
+  key center 90 smooth 1 1.8 6.9
+  key rotation 1 smooth -4 8 0
+  key rotation 90 smooth -4 8 0
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 4.geometry -> 5.geometry
+link 3.geometry -> 6.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 8.pieces
+link 6.geometry -> 15.geometry
+link 15.geometry -> 16.geometry
+link 16.geometry -> 8.constraints
+link 7.collider -> 8.colliders
+link 8.rigid -> 17.rigid
+link 8.dust -> 10.sources
+link 8.collider -> 10.colliders
+link 7.collider -> 10.colliders
+link 9.force -> 10.forces
+link 10.gas -> 11.gas
+link 8.look -> 12.look
+link 11.look -> 12.look
+link 13.camera -> 12.camera

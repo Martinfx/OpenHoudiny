@@ -136,21 +136,42 @@ public:
 };
 
 /// The pieces of the rigid bodies where they are at the frame, with the
-/// velocity v of each point; the grit and the bars, when asked for.
+/// velocity v of each point; the grit and the bars, when asked for -- or the
+/// glue between them, as a network (output 1).
 class RbdPiecesNode : public FrameNode {
 public:
     explicit RbdPiecesNode(std::string name) : FrameNode("rbd_pieces", std::move(name)) {
         setInputCount(0);
         params_.setBool("grit", false);
         params_.setBool("rebar", false);
+        params_.setInt("output", 0);  // 0 pieces, 1 constraints
     }
 
     GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
         if (!frame_ || frame_->rigid.empty()) return std::make_shared<Geometry>();
+        if (params_.getInt("output", 0) == 1) return rigidNetwork(frame_->rigid);
         std::shared_ptr<Geometry> geo = posedPieces(frame_->rigid);
         if (params_.getBool("rebar", false)) geo->append(*rebarBars(frame_->rigid));
         if (params_.getBool("grit", false)) appendGrit(*geo, frame_->rigid);
         return geo;
+    }
+};
+
+/// The glue between the pieces as a network (rigidNetwork): a point at each
+/// body's middle, a line for each joint, its strength a share of the RBD
+/// Solver's Glue.
+class RbdConstraintsNode : public pg::Node {
+public:
+    explicit RbdConstraintsNode(std::string name) : pg::Node("rbd_constraints", std::move(name)) {
+        setInputCount(1);
+        params_.setString("attribute", "piece");
+    }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr> in) override {
+        if (in.empty() || !in[0] || in[0]->primitiveCount() == 0) return std::make_shared<Geometry>();
+        const std::string attribute = params_.getString("attribute", "piece");
+        const auto layout = rigidLayout(*in[0], attribute);
+        return rigidNetwork(*rigidGlue(*in[0], *layout, attribute), attribute);
     }
 };
 
@@ -178,6 +199,7 @@ void registerSimGeometryNodes() {
         r.add("rain_points", [](const std::string& n) { return std::make_unique<RainPointsNode>(n); });
         r.add("gas_volume", [](const std::string& n) { return std::make_unique<GasVolumeNode>(n); });
         r.add("rbd_pieces", [](const std::string& n) { return std::make_unique<RbdPiecesNode>(n); });
+        r.add("rbd_constraints", [](const std::string& n) { return std::make_unique<RbdConstraintsNode>(n); });
         return true;
     }();
     (void)once;

@@ -251,8 +251,15 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   s pahýly přetržených prutů, do USD jako křivky s tloušťkou. Oba betonové
   příklady mají výztuž: trám se přes kvádr přehne a visí na ní, ze zdi
   visí kusy kolem díry.
-- **Síť vazeb jako geometrie:** lepidlo, výztuž, klouby jako primitiva,
-  která jde vidět, malovat a upravovat; pevnost z atributů.
+- ✅ **Síť vazeb jako geometrie:** uzel **RBD Constraints**
+  ([docs/destruction.md §3](docs/destruction.md#síť-vazeb-rbd-constraints))
+  udělá z lepidla bod na těleso a čáru na spoj s `strength` (násobek Glue),
+  `area` a barvou podle pevnosti. Síť upravená běžnými uzly — zeslabená,
+  smazaná, dokreslená mezi kusy, které se nedotýkají — jde do Constraints
+  RBD Solveru a je lepidlem. RBD Pieces vrátí síť snímku s `broken` a
+  `time` (stav spojů ve snímku a cache). Příklad **constraint_network**:
+  zeď praskne po čáře, kterou chce záběr. Zbývají výztuž a klouby
+  (*Hard*, *Cone Twist*, měkké vazby) jako primitiva sítě.
 - ✅ **Sekundární lámání:** kus se rozpadne až při nárazu — uzel **RBD
   Cluster** ([docs/destruction.md §2](docs/destruction.md#kry-a-sekundární-lámání-rbd-cluster))
   seskupí jemné kusy do ker s pevnějším lepidlem uvnitř (`cluster`,

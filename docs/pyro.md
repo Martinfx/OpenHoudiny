@@ -464,6 +464,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `concrete_drop` | železobeton a sekundární lámání: trám s armokošem praskne přes kvádr, přehne se a visí na výztuži — RBD Cluster, lepidlo uvnitř ker třicetkrát pevnější, Rebar ([destruction.md](destruction.md#výztuž-rebar)) |
 | `glass_window` | sklo: míč vyletí oknem, zpomaleně (120 snímků za sekundu) — Glass Fracture, pavučina prasklin až v okamžiku úderu, střepy a jiskřící drť, průhledné sklo s odrazy ([destruction.md](destruction.md#sklo-glass-fracture)) |
 | `brick_wall` | cihly: demoliční koule prorazí cihlovou zeď domu v anglické vazbě — Brick Wall, malta jako lepidlo, zeď praská ve spárách, díra stupňovitá po vrstvách, některé cihly se rozlomí vedví; okno vedle díry se sklem zůstane celé ([destruction.md](destruction.md#cihly-brick-wall)) |
+| `constraint_network` | síť vazeb: RBD Constraints udělá z lepidla betonové zdi geometrii, wrangle zeslabí spoje přes čáru z rohu do rohu — koule vylomí roh a zeď praskne přesně po čáře, zbytek stojí; RBD Pieces vrací síť snímku s prasklými spoji ([destruction.md](destruction.md#síť-vazeb-rbd-constraints)) |
 | `concrete_column` | železobeton: odstřel sloupu v půlce výšky — Concrete Fracture a armokoš (Rebar), beton kolem nálože se rozletí a zmizí v prachu, zůstane holý koš a na něm visí kusy betonu ([destruction.md](destruction.md#sedmý-příklad-odstřel-železobetonového-sloupu)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do

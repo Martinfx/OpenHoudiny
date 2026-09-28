@@ -2175,6 +2175,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
     frames.reserve(static_cast<size_t>(count));
     std::shared_ptr<const sim::RigidLayout> layout;  // the pieces' bodies, once for all frames
     std::shared_ptr<const sim::RigidRebar> bars;      // ... and the bars in them
+    std::shared_ptr<const sim::RigidGlue> glue;       // ... and the joints of their glue
     for (int f = 1; f <= count; ++f) {
         auto frame = std::make_shared<sim::Frame>();
         if (!sim::readFrame(folder, f, *frame, error)) {
@@ -2182,7 +2183,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
             return false;
         }
         frame->number = f;
-        sim::adoptPieces(*frame, compiled_.world.rigid, &layout, &bars);
+        sim::adoptPieces(*frame, compiled_.world.rigid, &layout, &bars, &glue);
         frames.push_back(std::move(frame));
     }
     runner_->adopt(compiled_.world, compiled_.frames, std::move(frames));

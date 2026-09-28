@@ -1,4 +1,4 @@
-# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo, výztuž, sklo a prach
+# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo a síť vazeb, výztuž, sklo a prach
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
 (**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
@@ -10,7 +10,10 @@ ohýbají, vytahují se z malých kusů a trhají se. Sklo (**Glass Fracture**)
 praská tak, jak sklo praská: paprsky z místa úderu a kruhy kolem něj; do
 nárazu zůstane tabule celá a renderer ji kreslí průhlednou, s odrazy
 oblohy a slunce. Cihlovou zeď (**Brick Wall**) vyzdí cihlu po cihle ve
-vazbě, s maltou a omítkou, a zeď se pak rozpadá ve spárách.
+vazbě, s maltou a omítkou, a zeď se pak rozpadá ve spárách. Lepidlo je
+i geometrie (**RBD Constraints**, síť vazeb jako v Houdini): bod na kus,
+čára na spoj. Zeslabené, smazané nebo nově nakreslené čáry určí, kde se
+věc zlomí.
 Nálože přetrhnou lepidlo v daný čas, nárazy ho lámou dál, padající patra
 drtí stěny na prach, úlomky sypou drť a vzduch, který zřícení vytlačí, žene
 oblak prachu do ulic (**Pyro Solver**). Všechno je deterministické: stejná
@@ -523,7 +526,10 @@ Uzel **RBD Solver** (Simulation) dělá z kusů tuhá tělesa. Vstup **Pieces**
 je geometrie s atributem `piece` (Voronoi Fracture; bez atributu je kusem
 každá souvislá část), **Colliders** jsou objekty, do kterých kusy narážejí —
 stojící i klíčované, **Rebar** jsou ocelové pruty v kusech (uzel Rebar,
-nebo jakékoli lomené čáry s `width`). Výstupy:
+nebo jakékoli lomené čáry s `width`) a **Constraints** je síť vazeb
+(RBD Constraints, upravená): její čáry jsou spoje místo těch, které
+solver najde tam, kde se kusy dotýkají ([níže](#síť-vazeb-rbd-constraints)).
+Výstupy:
 
 | Výstup | Typ | Kam |
 |---|---|---|
@@ -574,6 +580,105 @@ prvního primitiva) řeknou, čím se kus liší:
 
 Jako v Houdini doplní Merge atribut, který jedné geometrii chybí, nulou:
 `active` a `glue` je proto potřeba nastavit všem kusům, ne jen některým.
+
+### Síť vazeb: RBD Constraints
+
+Lepidlo mezi kusy jde vidět a upravit jako obyčejná geometrie. Houdini
+tomu říká *constraint network*. Uzel **RBD Constraints** (Geometry) ji
+udělá z kusů přesně tak, jak by lepidlo našel solver
+([`rigidGlue`, `rigidNetwork` v `Rigid.cpp`](../src/pg/sim/Rigid.cpp)):
+
+- **Bod** za každé těleso, uprostřed jeho kvádru (podle `proxy`, má-li
+  ho). Nese `piece`, číslo kusu (hodnotu atributu kusů, bez něj pořadí
+  kusu). Kus z několika těles, jejichž části se nedotýkají, má bod za
+  každé a navíc `part` (0, 1, … v pořadí těles).
+- **Čára** za každý spoj, tedy za každé dvě tělesa, která se dotýkají
+  plochou. Vede od bodu jednoho tělesa k bodu druhého a nese:
+  - `strength` — pevnost jako násobek `glue` solveru: 1 drží jako Glue,
+    0,1 desetinou, 0 nic. Spočítá se z atributů kusů: slabší `glue` ze
+    dvou, uvnitř kry krát menší `clusterglue`;
+  - `area` — plocha spoje v m²;
+  - `Cd` — zelená drží jako Glue, žlutá slaběji (šestnáctina a méně
+    úplně žlutě), modrá pevněji, šedá nedrží nic.
+
+Spoj unese Glue × `area` × `strength` newtonů. Síť jde upravovat běžnými
+uzly a pak se zapojí do **Constraints** RBD Solveru — její čáry jsou pak
+spoji:
+
+```
+f@strength *= 0.1;                        // Primitive Wrangle: všude desetina
+if (@P.y > 2) f@strength = 0;             // nad dvěma metry nic (@P je střed čáry)
+if (@P.x > 0) removeprim(0, @primnum, 0); // vpravo žádné spoje
+int a = addpoint(0, {0, 2, 0});           // Detail Wrangle: spoj, kde se nic nedotýká
+int b = addpoint(0, {0, 1.6, 0});
+setpointattrib(0, "piece", a, 1);
+setpointattrib(0, "piece", b, 2);
+addprim(0, "polyline", a, b);
+```
+
+Solver bere každé primitivum sítě jako spoj od tělesa jeho prvního bodu
+k tělesu posledního. Těleso určí `piece` bodu (a `part`), a kde body
+`piece` nemají, nejbližší střed tělesa. Chybí-li `strength`, je 1.
+Chybí-li `area` (nebo je 0, jak ji doplní Merge), vezme se plocha, kterou
+se tělesa dotýkají, a kde se nedotýkají, 0,01 m² (čtverec o straně dlaň).
+Čára, jejíž konce nejsou dva kusy z Pieces, se vynechá a kompilace to
+ohlásí. Dvě čáry mezi týmiž kusy jsou dva spoje, které musí prasknout oba.
+Kusy spojené čarou se lepí v jedno těleso, i když se nedotýkají.
+
+**RBD Pieces** s `output` *Constraints* vrátí síť daného snímku, tak jak
+ji solver vzal:
+
+- body se pohybují s tělesy a mají rychlost `v`;
+- každý spoj, který držel, má `broken` 1, pokud praskl, a `time`,
+  sekundu, kdy se to stalo (−1 u spojů, které drží);
+- `at` je místo, kde se plochy dotýkaly, posunuté s prvním tělesem;
+- přetržené spoje jsou červené;
+- spoje, které nikdy nedržely (Glue 0, oba kusy stojí, `strength` 0),
+  ve výstupu nejsou.
+
+Síť se tak dá použít na ladění — kudy trhlina vedla — i jako zdroj
+efektů v místech a časech, kdy spoje praskaly. Co se stalo s kterým
+spojem, nesou snímky i cache (verze 8). V Pythonu to vrátí
+`frame.rigid.network()`, `joint_state` (0 drží, 1 praskl, 2 nikdy
+nedržel) a `joint_time`.
+
+| Parametr | Význam |
+|---|---|
+| `attribute` | Co říká, ke kterému kusu primitivum patří — jako u RBD Solveru |
+
+### Osmý příklad: trhlina, kudy ji chce záběr
+
+![Síť vazeb zdi: zelené spoje, žlutý pás oslabených podél diagonály; koule vylomí roh nad ní; ve snímku 42 drží jen spoje pod trhlinou; zeď praskla přesně po čáře](img/constraint-network.jpg)
+
+```
+./build/prototype sim constraint_network trhlina.mp4   # 90 snímků (3 s)
+```
+
+Příklad **constraint_network** ([examples/sim/constraint_network.pgsim](../examples/sim/constraint_network.pgsim))
+je betonová zeď 5 × 3 × 0,3 m na soklu, rozbitá Concrete Fracture na 140
+kusů a 75 úlomků z rohů. RBD Constraints z nich udělá síť vazeb (216 bodů,
+795 čar). Wrangle `crack` vezme 75 spojům přes čáru z levého dolního do
+pravého horního rohu 98 % pevnosti (`weaken 0,02`) a obarví je žlutě;
+spoj leží přes čáru, když jsou jeho konce na opačných stranách. Síť jde
+do Constraints RBD Solveru (`glue 1000`, `spread 0,35`).
+
+Klíčovaná koule narazí zezadu do levého horního rohu. Roh nad čárou
+vylomí, zeď praskne přesně po čáře až do protějšího rohu a díl nad
+trhlinou tam zůstane ležet na prasklině. Zbytek, slepený stejně pevně
+jako dřív, stojí. Bez sítě (odpojte Constraints) rozbije koule zeď kolem
+místa, kam dopadla, a trhlina vede jinudy. Uzel `joints` (RBD Pieces,
+*Constraints*) vrací síť každého snímku: když ho zobrazíte, uvidíte
+praskat spoje.
+
+```
+[wall] ─▶ [Concrete Fracture] ─▶ [moving] ─┐
+[plinth] ─▶ [foundation] ──────────────────┴▶ [pieces] ─┬─────────────────Pieces─┐
+                                  [RBD Constraints] ◀───┘                        │
+                                          └─▶ [crack] ─Constraints───────────────┤
+[ball] ─Collider─▶ Colliders ────────────────────────────────────────────────────┴▶ [RBD Solver] ─Look─▶ [Output] ◀─ [camera]
+                                                                                     │ Rigid ─▶ [joints]
+                                                                                     │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look]
+```
 
 ### Jak to funguje
 
@@ -765,8 +870,9 @@ je polovina velikosti zrnka, `v` jeho rychlost a `id` jeho číslo — každé
 zrnko dostane při vyhození své a drží ho, dokud je ve scéně, takže renderer
 podle něj zrnko sleduje a rozmaže pohybem. Se zapnutým `rebar` přidá
 pruty tak, jak je kusy vzaly: lomenou čáru za každý úsek prutu v jednom
-kusu (u přetržení se čára rozdělí) s `width`, průměrem prutu, a `v`. Bez
-snímku (před simulací) je prázdný.
+kusu (u přetržení se čára rozdělí) s `width`, průměrem prutu, a `v`.
+S `output` *Constraints* vrátí místo kusů síť vazeb snímku
+([§3](#síť-vazeb-rbd-constraints)). Bez snímku (před simulací) je prázdný.
 
 **Voda, plyn a déšť.** Výstup Collider dá každý kus jako překážku typu
 síť (`MeshShape` z jeho trojúhelníků), posunutou a otočenou tam, kde kus
@@ -941,6 +1047,39 @@ v `tests/python/test_pg.py`:
   a žádnou na líci, poloviny cihel jdou po dvou s `clusterglue` a zeď
   v RBD Solveru stojí.
 
+`tests/test_constraints.cpp` (7 testů), `frames_of_version_7_still_read_without_what_became_of_the_joints`
+v `tests/test_export.cpp` a `test_the_glue_as_a_network` v `tests/python/test_pg.py`:
+
+- síť dvanácti kusů má bod za těleso ve středu jeho kvádru s číslem
+  kusu a čáru za každý dotyk. Pevnost je slabší `glue` ze dvou, uvnitř
+  kry desetkrát víc, plocha je plocha dotyku a barvy odpovídají
+  pevnosti. Uzel dá totéž co `rigidNetwork` a pokaždé stejně. Kus ze
+  dvou těles má dva body, `part` 0 a 1;
+- síť zapojená beze změny lepí přesně jako kusy samy: stejné pózy,
+  spoje, prasklé spoje i časy. Kolik spojů prasklo, tolik jich má stav
+  *prasklý* a čas uvnitř simulace;
+- trám přes hranu stolu stojí. Se smazanými čarami přes hranu přepadne
+  převislá část vcelku (všechna její tělesa v jedné póze) a zbytek zůstane
+  na stole, aniž by cokoli prasklo. Se `strength` 0 místo smazání dopadne
+  totéž a ty spoje nikdy nedržely;
+- závaží pět centimetrů pod hákem bez sítě spadne. S nakreslenou čarou
+  visí, a to jak podle `piece`, tak podle nejbližšího středu, jako spoj
+  0,01 m² v polovině mezi nimi. S pevností 0 spadne a čára k neexistujícímu
+  kusu se vynechá;
+- síť snímku má body tam, kam se posunuly středy těles, s jejich
+  rychlostí a čarou za každý spoj, který držel. Prasklé mají `broken` 1,
+  čas a červenou barvu, ostatní čas −1. Snímek bez lepidla nemá nic;
+- stav spojů projde cache a `adoptPieces` a síť je stejná. Síť jiného
+  světa s méně čarami se nepřevezme;
+- v síti uzlů: zeslabená síť se přeloží do scény, RBD Pieces vrátí síť
+  snímku a čáry ke kusům mimo Pieces se ohlásí. Příklad má přes 300 čar,
+  z nich desítky zeslabených (ne víc než pětina);
+- snímek verze 7 se přečte bez stavu spojů a nesedí-li čas na každý
+  spoj, snímek se odmítne;
+- Python: trám přes stůl s nezeslabenou sítí stojí, bez spojů přes hranu
+  přepadne. Snímek řekne, které spoje nikdy nedržely, a síť snímku je
+  stejná z RBD Pieces i z `frame.rigid.network()`.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -997,6 +1136,11 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   cihly. Vazby jsou čtyři pravidelné. Nároží a zazubení dvou zdí se
   nepropojí (každá zeď je jedna Brick Wall) a překlad nad oknem je třeba
   postavit zvlášť.
+- **Síť vazeb je jen lepidlo.** Čára je spoj, který drží, dokud ho
+  náraz nepřetrhne. Klouby, pružiny a měkké vazby (v Houdini *Hard*,
+  *Cone Twist*, *Soft*) tu nejsou a výztuž zůstává zvlášť (Rebar).
+  Náraz jde sítí dál i přes spoje, které praskly (`spread`); oslabená
+  čára tedy určí, kde se zlomí, ne kam až náraz dosáhne.
 - **Jeden RBD Solver** v síti; kusy dvou solverů do sebe nenarážejí.
 
 ---

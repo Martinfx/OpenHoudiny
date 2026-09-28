@@ -897,6 +897,18 @@ class _Rigid:
         """The pieces where they are, with the velocity v of each point."""
         return Geometry(self._f.pieces())
 
+    def network(self):
+        """The glue as a network where the bodies are -- as RBD Pieces gives it
+        with output Constraints: a point at each body's middle, with v; a line
+        for each joint that held, broken 1 where it broke, at time (seconds;
+        -1 where it holds), red where broken."""
+        return Geometry(self._f.network())
+
+    joint_state = property(lambda self: _array(self._f.joint_state()),
+                           doc="for each joint of the glue: 0 it holds, 1 it broke, 2 it never held")
+    joint_time = property(lambda self: _array(self._f.joint_time()),
+                          doc="when each joint broke, seconds (0 for those that did not)")
+
     def rebar(self):
         """The steel bars where the pieces have taken them: a polyline for each
         stretch of a bar in one piece -- torn apart at a tear -- with the point

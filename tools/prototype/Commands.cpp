@@ -837,6 +837,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     std::unique_ptr<sim::WorldSolver> solver;
     std::shared_ptr<const sim::RigidLayout> adoptedLayout;  // the pieces' bodies, for frames read back
     std::shared_ptr<const sim::RigidRebar> adoptedRebar;    // ... and the bars in them
+    std::shared_ptr<const sim::RigidGlue> adoptedGlue;      // ... and the joints of their glue
     if (o.fromCache.empty()) solver = std::make_unique<sim::WorldSolver>(c.world);
     const sim::World world = c.world.sanitized();
 #ifdef PG_CAN_RENDER
@@ -908,7 +909,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 return 1;
             }
             read->number = f;  // the file's name says which it is
-            sim::adoptPieces(*read, world.rigid, &adoptedLayout, &adoptedRebar);
+            sim::adoptPieces(*read, world.rigid, &adoptedLayout, &adoptedRebar, &adoptedGlue);
             current = std::move(read);
         }
         simulating += ms(t);

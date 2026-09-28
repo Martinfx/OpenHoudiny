@@ -479,6 +479,55 @@ class Simulations(unittest.TestCase):
         self.assertEqual(rigid.broken, 0)
         self.assertLess(float(np.abs(rigid.translations).max()), 0.01)
 
+    def test_the_glue_as_a_network(self):
+        # A beam of pieces lying across a table's edge, its glue as a network:
+        # as it is, the beam stands; its lines across the edge weakened to
+        # nothing, the part over the edge tips off. The frame gives the network
+        # back, and what became of each joint.
+        def run(weaken):
+            net = pg.Network()
+            beam = net.add("box", size=(2, 0.1, 0.2), center=(0, 1.05, 0))
+            pieces = net.add("voronoi_fracture", count=10, seed=3)
+            glue = net.add("rbd_constraints")
+            edge = net.add("primitive_wrangle", snippet=(
+                'vector p0 = point(0, "P", primpoint(0, @primnum, 0));\n'
+                'vector p1 = point(0, "P", primpoint(0, @primnum, 1));\n'
+                'if ((p0.x - 0.2) * (p1.x - 0.2) < 0) f@strength *= %g;' % weaken))
+            rbd = net.add("rbd_solver", glue=1000, floor=False)
+            table = net.add("object", shape="box", center=(-0.7, 0.5, 0), size=(1.8, 1, 1))
+            out = net.add("output", frames=40)
+            back = net.add("rbd_pieces", output="constraints")
+            beam.connect(pieces)
+            net.connect(pieces, glue)
+            glue.connect(edge)
+            net.connect(pieces, rbd, input="pieces")
+            net.connect(edge, rbd, input="constraints")
+            net.connect(table, rbd, input="colliders")
+            net.connect(rbd, out)
+            net.connect(rbd, back)
+            self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+            sim = net.simulate()
+            for f in sim.run(40):
+                pass
+            return edge.geometry(), sim.current.rigid, sim.geometry(back)
+
+        network, stood, joints = run(1.0)
+        self.assertEqual(network.point_count, 10)
+        self.assertGreater(network.primitive_count, 8)
+        self.assertTrue((network.prims["strength"] == 1).all())
+        self.assertTrue((network.prims["area"] > 0).all())
+        self.assertGreater(float(stood.centres[:, 1].min()), 0.9)
+        self.assertEqual(joints.primitive_count, stood.joints)
+        self.assertEqual(int(joints.prims["broken"].sum()), 0)
+        self.assertTrue((joints.prims["time"] == -1).all())
+        network, fell, joints = run(0.0)
+        across = int((network.prims["strength"] == 0).sum())
+        self.assertGreater(across, 0)
+        self.assertLess(float(fell.centres[:, 1].min()), 0.5)
+        self.assertEqual(int((fell.joint_state == 2).sum()), across)  # they never held
+        self.assertEqual(joints.primitive_count, network.primitive_count - across)
+        self.assertEqual(fell.network().primitive_count, joints.primitive_count)
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

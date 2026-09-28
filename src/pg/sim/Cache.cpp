@@ -18,7 +18,7 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 2: the rigid bodies after the rain; 3: and their grit; 4: the particles'
 // numbers -- the water's, the drops', the droplets', the grit's -- and how
 // fast the grit goes; 5: how fast the water goes, on the solver's grid.
-constexpr uint32_t kVersion = 7;
+constexpr uint32_t kVersion = 8;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -291,6 +291,8 @@ std::string formatFrame(const Frame& f) {
     out.bytesOf(b.rebarState);  // version 6: what became of the bars
     out.bytesOf(b.debrisGlass);  // version 7: which grit is glass, which bodies came loose
     out.words(b.unglued);
+    out.bytesOf(b.jointState);  // version 8: what became of each joint of the glue, and when
+    out.floats(b.jointTime);
     return std::move(out.bytes);
 }
 
@@ -365,6 +367,10 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         in.bytesOf(f.rigid.debrisGlass);
         in.words(f.rigid.unglued);
     }
+    if (version >= 8) {
+        in.bytesOf(f.rigid.jointState);
+        in.floats(f.rigid.jointTime);
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -378,7 +384,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         r.droplets.size() % 6 != 0 || b.debris.size() % 4 != 0 || !fits(w.ids.size(), w.positions.size()) ||
         !fits(r.dropIds.size(), r.dropCount()) || !fits(r.dropletIds.size(), r.dropletCount()) ||
         !fits(b.debrisIds.size(), b.debris.size() / 4) || !fits(b.debrisVelocity.size(), 3 * (b.debris.size() / 4)) ||
-        !fits(b.debrisGlass.size(), b.debris.size() / 4)) {
+        !fits(b.debrisGlass.size(), b.debris.size() / 4) || b.jointTime.size() != b.jointState.size()) {
         error = "the frame's parts do not fit their grids";
         return false;
     }
@@ -386,7 +392,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
 }
 
 void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo,
-                 std::shared_ptr<const RigidRebar>* rebarMemo) {
+                 std::shared_ptr<const RigidRebar>* rebarMemo, std::shared_ptr<const RigidGlue>* glueMemo) {
     RigidFrame& b = frame.rigid;
     if (b.poses.empty() || !scene.pieces) return;
     const std::string& attribute = b.attribute.empty() ? scene.attribute : b.attribute;
@@ -397,6 +403,17 @@ void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const Ri
     b.pieces = scene.pieces;
     b.layout = layout;
     if (b.attribute.empty()) b.attribute = scene.attribute;
+    // The joints of the glue, where the frame says what became of as many
+    // as the world's pieces -- and its network -- make.
+    b.glue = nullptr;
+    if (!b.jointState.empty()) {
+        std::shared_ptr<const RigidGlue> glue = glueMemo ? *glueMemo : nullptr;
+        if (!glue || glue->centres.size() != b.poses.size()) {
+            glue = rigidGlue(*scene.pieces, *layout, b.attribute, scene.constraints.get());
+        }
+        if (glueMemo) *glueMemo = glue;
+        if (glue->joints.size() == b.jointState.size()) b.glue = glue;
+    }
     // The bars, where the frame says what became of them -- as many
     // stations as the world's bars make in these pieces.
     b.rebar = nullptr;

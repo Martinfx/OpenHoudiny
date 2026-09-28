@@ -83,6 +83,7 @@ struct PySimulation {
     FramePtr current;
     std::shared_ptr<const sim::RigidLayout> adopted;  // the pieces' bodies, for frames read back
     std::shared_ptr<const sim::RigidRebar> adoptedBars;  // ... and the bars in them
+    std::shared_ptr<const sim::RigidGlue> adoptedGlue;   // ... and the joints of their glue
     int frame = 0, cached = 0;
     py::list problems;
 
@@ -124,7 +125,7 @@ struct PySimulation {
             }
             if (!ok) throw Error(error);
             read->number = next;  // the file's name says which it is
-            sim::adoptPieces(*read, world.rigid, &adopted, &adoptedBars);
+            sim::adoptPieces(*read, world.rigid, &adopted, &adoptedBars, &adoptedGlue);
             current = std::move(read);
         } else {
             py::gil_scoped_release release;
@@ -284,6 +285,15 @@ void bindSimulation(py::module_& m) {
         .def("pieces", [](const PyFrame& p) {
             if (p.f->rigid.empty() || !p.f->rigid.pieces) return PyGeometry();
             return PyGeometry(sim::posedPieces(p.f->rigid));
+        })
+        .def("network", [](const PyFrame& p) { return PyGeometry(sim::rigidNetwork(p.f->rigid)); })
+        .def("joint_state", [](const PyFrame& p) {
+            const auto& v = p.f->rigid.jointState;
+            return rows(p.f, v.data(), v.size(), 1);
+        })
+        .def("joint_time", [](const PyFrame& p) {
+            const auto& v = p.f->rigid.jointTime;
+            return rows(p.f, v.data(), v.size(), 1);
         })
         .def("rebar", [](const PyFrame& p) { return PyGeometry(sim::rebarBars(p.f->rigid)); })
         .def("rebar_state", [](const PyFrame& p) {
