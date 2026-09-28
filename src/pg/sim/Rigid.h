@@ -46,6 +46,10 @@
 //   crush     f   a knock more than this many times as hard as its glue
 //                 holds crushes it to dust: the walls a falling floor lands
 //                 on. 0: never
+//   cluster   i   the chunk it is of (RBD Cluster), 0 none: its joints to
+//                 pieces of the same chunk are ...
+//   clusterglue f ... this much as strong (the weaker of two) -- a chunk
+//                 comes off whole and breaks up where it lands hard
 //
 // As in Houdini, a merge fills an attribute a geometry lacks with 0: set
 // active and glue on all the pieces, not on some.

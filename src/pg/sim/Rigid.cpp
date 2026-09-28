@@ -1392,7 +1392,8 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
-    std::vector<float> glueOf(count, 1.0f);
+    std::vector<float> glueOf(count, 1.0f), clusterGlueOf(count, 1.0f);
+    std::vector<int> clusterOf(count, 0);
     for (size_t k = 0; k < count; ++k) {
         const int body = static_cast<int>(k);
         Impl::Piece& piece = m.pieces[k];
@@ -1428,6 +1429,8 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         piece.size = piece.hulls.empty() ? 0.0f : std::max(length(hi - lo), 0.01f);
         piece.centre = piece.hulls.empty() ? Vec3() : (lo + hi) * 0.5f;
         glueOf[k] = std::max(numberOf(*geo, L, body, "glue", 1.0f), 0.0f);
+        clusterOf[k] = static_cast<int>(std::lround(numberOf(*geo, L, body, "cluster", 0.0f)));
+        clusterGlueOf[k] = std::max(numberOf(*geo, L, body, "clusterglue", 1.0f), 0.0f);
         if (piece.hulls.empty()) piece.gone = true;  // nothing to it
         if (meshes && !piece.hulls.empty()) {
             // Its triangles at rest, for the water and the gas.
@@ -1467,7 +1470,11 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
             const Impl::Piece& a = m.pieces[static_cast<size_t>(c.a)];
             const Impl::Piece& b = m.pieces[static_cast<size_t>(c.b)];
             if (a.gone || b.gone || (!a.moves && !b.moves)) continue;
-            const float strength = s.glue * c.area * std::min(glueOf[static_cast<size_t>(c.a)], glueOf[static_cast<size_t>(c.b)]);
+            const size_t ia = static_cast<size_t>(c.a), ib = static_cast<size_t>(c.b);
+            float strength = s.glue * c.area * std::min(glueOf[ia], glueOf[ib]);
+            // Inside one chunk (RBD Cluster): as many times as strong as the
+            // weaker of the two says.
+            if (clusterOf[ia] > 0 && clusterOf[ia] == clusterOf[ib]) strength *= std::min(clusterGlueOf[ia], clusterGlueOf[ib]);
             if (strength <= 0.0f) continue;
             Impl::Edge e;
             e.a = c.a;

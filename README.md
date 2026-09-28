@@ -107,8 +107,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 302 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 8 beton, 25 shader graf, 92 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
-ctest --test-dir build -R python                   # 38 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgtests            # 305 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+ctest --test-dir build -R python                   # 39 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
@@ -228,7 +228,9 @@ a vypíše její hash — stejný na 1 i 4 vláknech.
 (řezy rovinami s víčky, kusy dohromady jsou přesně původní těleso),
 **Concrete Fracture** ho rozláme jako beton — nestejné kusy, nejmenší
 kolem místa nárazu, odprýsklé rohy, hrubé lomy, které do sebe dál
-přesně zapadají, a pod nimi rovný řez (`proxy`) pro simulaci — a
+přesně zapadají, a pod nimi rovný řez (`proxy`) pro simulaci —
+**RBD Cluster** seskupí kusy do ker s pevnějším lepidlem uvnitř, které se
+rozpadnou až při tvrdém dopadu (sekundární lámání), a
 **RBD Solver** nad [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
 z nich udělá tuhá tělesa: konvexní obaly s hmotou; kusy slepené tam, kde
 se dotýkají plochou, jsou jedno těleso, dokud je náraz silnější než
@@ -244,7 +246,9 @@ za zlatého světla; příklad **wall_collapse**: průčelí cihlového domu
 vyletí do ulice a kusy se kutálejí ke kameře těsně nad asfaltem, v prachu
 proti slunci; příklad **concrete_wall**: demoliční koule prorazí
 betonovou zeď na soklu (`rings` drží škodu kolem koule, zbytek zdi
-stojí) a z díry se sypou kry s hrubými lomy, úlomky a prach.
+stojí) a z díry se sypou kry s hrubými lomy, úlomky a prach; příklad
+**concrete_drop**: betonový trám se zlomí přes kvádr a jeho poloviny se
+rozpadnou na kry, až dopadnou.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

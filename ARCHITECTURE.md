@@ -360,6 +360,7 @@ src/pg/nodes/    Generators grid, line, pointcloud
                  Fracture   voronoifracture: buňky bodů jako řezy s víčky
                  Concrete   concretefracture: nestejné buňky, hrubé lomy stejné z obou
                             stran trhliny, odprýsklé rohy, rovný řez v atributu proxy
+                 Cluster    rbdcluster: kusy do ker (k-means++, Lloyd), lepidlo uvnitř pevnější
 src/pg/io/       Obj        čtení a zápis OBJ (body, polygony, čáry)
                  Ply        body s atributy a polygony do PLY a zpátky (ASCII i binárně)
                  Vdb        objemy do OpenVDB bez knihovny: řídký strom 5-4-3, soubor verze 224
@@ -473,7 +474,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Animace: klíče na libovolném parametru (Smooth/Linear/Step), síť snímek po snímku, pohyblivé překážky s rychlostí i rotací v okrajových podmínkách plynu i vody, animované parametry geometrie jako výrazy jádra |
 | ✅ | Cache simulace na disku (editor i `prototype sim`), export geometrie snímek po snímku: PLY s atributy, **OpenVDB** (ověřeno čtením v OpenVDB 10: voxely i součty sedí s mřížkou simulace), OBJ |
 | ✅ | Destrukce: Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení na prach, drť, vytlačený vzduch žene prach ([docs/destruction.md](docs/destruction.md)) |
-| ✅ | Beton: Concrete Fracture — nestejné kusy, nejmenší kolem nárazu, odprýsklé rohy, hrubé lomy lícující z obou stran; RBD Solver simuluje rovný řez (`proxy`) a kreslí detail; `spread` a `rings` drží škodu u místa nárazu, kusy přilepené k základu stojí ([docs/destruction.md §2](docs/destruction.md#2-concrete-fracture)) |
+| ✅ | Beton: Concrete Fracture — nestejné kusy, nejmenší kolem nárazu, odprýsklé rohy, hrubé lomy lícující z obou stran; RBD Solver simuluje rovný řez (`proxy`) a kreslí detail; `spread` a `rings` drží škodu u místa nárazu, kusy přilepené k základu stojí; sekundární lámání: RBD Cluster seskupí kusy do ker, které se rozpadnou až při tvrdém dopadu ([docs/destruction.md §2](docs/destruction.md#2-concrete-fracture)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
 | ✅ | **Čtení USD** bez knihovny: `.usda`, `.usdc` (verze 0.4.0–0.10.0), `.usdz`; scéna složená jako v USD (sublayers, reference, payloady, varianty, třídy, value clips); kamera z matchmove (USD Camera) a geometrie (USD Import) v metrech s Y nahoru; transformace, skládání i geometrie sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)) |

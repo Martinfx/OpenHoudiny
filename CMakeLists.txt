@@ -64,6 +64,7 @@ add_library(pgcore
   src/pg/nodes/Topology.cpp
   src/pg/nodes/Fracture.cpp
   src/pg/nodes/Concrete.cpp
+  src/pg/nodes/Cluster.cpp
   src/pg/nodes/Rebuild.cpp
   src/pg/nodes/Volumes.cpp
   src/pg/nodes/Usd.cpp

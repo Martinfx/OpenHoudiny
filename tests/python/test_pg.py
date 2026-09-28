@@ -360,6 +360,20 @@ class Simulations(unittest.TestCase):
         self.assertEqual(rigid.broken, 0)
         self.assertLess(float(np.abs(rigid.translations).max()), 0.01)
 
+    @needs_numpy
+    def test_rbd_cluster_groups_pieces_into_chunks(self):
+        net = pg.Network()
+        box = net.add("box", size=(3, 0.4, 0.4))
+        pieces = net.add("voronoi_fracture", count=20)
+        chunks = net.add("rbd_cluster", count=3, strength=12)
+        box.connect(pieces).connect(chunks)
+        geo = chunks.geometry()
+        cluster, piece = geo.prims["cluster"], geo.prims["piece"]
+        self.assertEqual(sorted(set(cluster.tolist())), [1, 2, 3])
+        self.assertTrue(np.all(geo.prims["clusterglue"] == 12))
+        for p in set(piece.tolist()):
+            self.assertEqual(len(set(cluster[piece == p].tolist())), 1)  # a piece is in one chunk
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

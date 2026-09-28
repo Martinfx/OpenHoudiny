@@ -228,7 +228,14 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   soklu. Zbývá sklo paprskovitě a dřevo na třísky podél vláken.
 - **Síť vazeb jako geometrie:** lepidlo, pružné vazby (ohýbaná výztuž),
   klouby; pevnost z atributů, kterou jde malovat a upravovat.
-- **Sekundární lámání:** kus se rozpadne až při nárazu.
+- ✅ **Sekundární lámání:** kus se rozpadne až při nárazu — uzel **RBD
+  Cluster** ([docs/destruction.md §2](docs/destruction.md#kry-a-sekundární-lámání-rbd-cluster))
+  seskupí jemné kusy do ker s pevnějším lepidlem uvnitř (`cluster`,
+  `clusterglue`, k-means++ a Lloyd přes těžiště kusů): věc se rozpadne na
+  kry a kra se rozbije, až když tvrdě dopadne. Jako v Houdini jsou kusy
+  nařezané předem; lámání podle místa nárazu za běhu zbývá. Příklad
+  **concrete_drop**: trám se zlomí přes kvádr a poloviny se rozpadnou na
+  kry, až dopadnou.
 - **Úlomky jako částice:** body z čerstvých lomových ploch, částicový
   solver, instancované tvary kamínků; stopy prachu za letícími kusy.
 - **Usměrněná simulace:** kusy sledují animaci, síly je vedou — režisér

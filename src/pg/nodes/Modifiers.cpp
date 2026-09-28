@@ -220,6 +220,7 @@ void registerBuiltinNodes() {
         registerTopologyNodes();
         registerFractureNodes();
         registerConcreteNodes();
+        registerClusterNodes();
         registerVolumeNodes();
         registerUsdNodes();
         return true;

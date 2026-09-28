@@ -693,6 +693,20 @@ std::vector<NodeType> buildTypes() {
                "How long the triangles of a rough face are at most: smaller is finer, and heavier to draw."},
               text("attribute", "Piece Attribute", "Fracture", "piece", "What each piece's number is called."),
               text("insidegroup", "Inside Group", "Fracture", "inside", "The faces made where it was cut.")});
+    geometry("rbd_cluster", "RBD Cluster", "rbdcluster",
+             "The pieces of a fracture grouped into Count chunks of about one size -- each piece in the chunk "
+             "whose middle is nearest -- the glue between the pieces of one chunk Strength times as strong as "
+             "between chunks. The RBD Solver breaks a thing into chunks first, and a chunk breaks up only where a "
+             "hard knock lands on it -- when it lands. The pieces carry cluster (1 and up) and clusterglue.",
+             in,
+             {{"count", "Count", "Cluster", K::Int, {8.0f, 0.0f, 0.0f}, 1.0f, 50.0f, 1.0f, 100000.0f, "",
+               "How many chunks."},
+              {"seed", "Seed", "Cluster", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, 1e6f, "",
+               "Another number: the chunks elsewhere."},
+              {"strength", "Strength", "Cluster", K::Float, {5.0f, 0.0f, 0.0f}, 1.0f, 20.0f, 0.0f, 1e6f, "",
+               "How many times as strong the glue inside a chunk is as the glue between chunks: 1 as strong -- "
+               "no chunks; the higher, the harder a knock must be to break a chunk up."},
+              text("attribute", "Piece Attribute", "Cluster", "piece", "What says which piece a primitive is of.")});
     geometry("convert_volume", "Convert Volume", "convertvolume",
              "The surface of a volume as polygons: where its values cross Iso, a closed mesh of quads turned "
              "outward, with normals N -- closed where the volume ends. Smoke from a Gas Volume, a distance "
@@ -904,7 +918,8 @@ std::vector<NodeType> buildTypes() {
          "the pieces they touch -- one body with them -- until a knock harder than Glue breaks them apart, "
          "puffing dust and throwing grit. Attributes of the pieces set them apart: density, v, w, active (0: "
          "it stays), glue, release -- the seconds when a charge breaks its joints -- with kick and vanish "
-         "(blown to dust), and crush (crushed to dust by a hard knock). Link it into the Output's Looks: it is "
+         "(blown to dust), crush (crushed to dust by a hard knock), and cluster with clusterglue -- RBD Cluster's "
+         "chunks, glued stronger inside. Link it into the Output's Looks: it is "
          "simulated and drawn. Its Collider into a Liquid, Pyro Solver or Rain: they go round the pieces; its "
          "Dust into a Pyro Solver's Sources: the dust is smoke, pushed out by the air the pieces squeeze out.",
          {{"pieces", "Pieces", PinType::Geometry}, {"colliders", "Colliders", PinType::Collider, true}},

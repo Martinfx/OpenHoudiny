@@ -199,6 +199,60 @@ stojí. Prach z lomů a nárazů nese Pyro Solver.
 [ball] ─Collider─▶ Colliders ──────────────────────────────────┘ │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look] ─┘
 ```
 
+### Kry a sekundární lámání: RBD Cluster
+
+Skutečný beton se nerozsype na drobky najednou: odlomí se velké kry a ty se
+rozpadnou, až když samy tvrdě dopadnou. Uzel **RBD Cluster** (Geometry) to
+připraví tak, jak to dělá Houdini: jemné kusy z fracture seskupí do `count`
+ker a lepidlo uvnitř kry je `strength`-krát pevnější než mezi krami
+([`src/pg/nodes/Cluster.cpp`](../src/pg/nodes/Cluster.cpp)):
+
+- **Střed kusu** je těžiště jeho objemu (z `proxy`, má-li ho; divergence
+  přes vějíře stěn), u otevřené plochy průměr bodů.
+- **Středy ker**: první náhodně, každý další daleko od vybraných
+  (k-means++), pak osmkrát posunuté do těžiště kusů, které k nim mají
+  nejblíž, vážené objemem (Lloyd) — kry zhruba stejně velké a spíš kulaté
+  než protáhlé. Pro stejný `seed` vždy stejné.
+- **Kusy** dostanou číslo kry, ke které mají nejblíž: atribut `cluster`
+  (primitiva i body, 1 a výš v pořadí kusů, 0 žádná) a `clusterglue`
+  (`strength`).
+
+RBD Solver spoji dvou kusů téže kry (`cluster` nad 0 a stejný) vynásobí
+pevnost menší z jejich `clusterglue`. Náraz tak nejdřív láme spoje mezi
+krami — věc se rozpadne na kry — a kru rozbije až úder, který přemůže i
+její pevnější lepidlo: dopad z výšky, náraz jiné kry. Kry se tedy lámou
+znovu až za letu a při dopadu, přestože kusy jsou nařezané předem.
+
+| Parametr | Význam |
+|---|---|
+| `count` | Kolik ker (nejvýš tolik, kolik je kusů) |
+| `seed` | Jiné číslo, jiné kry |
+| `strength` | Kolikrát pevnější je lepidlo uvnitř kry než mezi krami; 1 žádné kry |
+| `attribute` | Atribut s číslem kusu (`piece`) |
+
+### Čtvrtý příklad: trám přes kvádr
+
+![Betonový trám se zlomí přes kvádr a poloviny se rozpadnou na kry](img/concrete-drop.jpg)
+
+```
+./build/prototype sim concrete_drop tram.mp4      # 60 snímků (2 s)
+```
+
+Příklad **concrete_drop** ([examples/sim/concrete_drop.pgsim](../examples/sim/concrete_drop.pgsim)):
+betonový trám 3 × 0,4 × 0,4 m padá z jeřábu nad záběrem (`v` ve wrangle
+`falling`, šest metrů za sekundu) napříč na betonový kvádr. Concrete
+Fracture ho rozláme na 150 kusů velkých jako dlaň, RBD Cluster je seskupí
+do čtrnácti ker s lepidlem uvnitř třicetkrát pevnějším (`glue 1000`,
+`spread 0,3`). Trám se o kvádr zlomí v půli a tam se i rozdrtí, poloviny
+spadnou po stranách a teprve na zemi se rozpadnou na kry — každá kra
+zůstane celá, kromě míst, kde ji úder rozdrtil. Prach z lomů a dopadů nese
+Pyro Solver.
+
+```
+[beam] ─▶ [Concrete Fracture] ─▶ [RBD Cluster] ─▶ [Transform] ─▶ [falling] ─Pieces─▶ [RBD Solver] ─Look──▶ [Output]
+[block] ─Collider─▶ Colliders ─────────────────────────────────────────────────────────┘ │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look]
+```
+
 ---
 
 ## 3. RBD Solver
@@ -248,6 +302,8 @@ prvního primitiva) řeknou, čím se kus liší:
 | `kick` | v | … a přičte se mu tahle rychlost |
 | `vanish` | i | 1: při odpálení zmizí, rozmetaný na prach a drť, jako nálož rozdrtí sloup |
 | `crush` | f | Náraz víc než tolikrát silnější, než kolik drží jeho lepidlo, ho rozdrtí na prach: stěny, na které dopadne patro. 0: nikdy |
+| `cluster` | i | Kra, do které kus patří (RBD Cluster); 0: žádná |
+| `clusterglue` | f | Spoje mezi kusy téže kry jsou tolikrát pevnější (platí menší ze dvou) |
 
 Jako v Houdini doplní Merge atribut, který jedné geometrii chybí, nulou:
 `active` a `glue` je proto potřeba nastavit všem kusům, ne jen některým.
@@ -431,8 +487,8 @@ a testy expanze v `tests/test_pyro.cpp`:
   soubor tam a zpět; kusy do vody, plynu a deště a prach jako zdroj;
   chyby (bez kusů, druhý solver, kusy ze simulace).
 
-`tests/test_concrete.cpp` (8 testů) a `test_concrete_breaks_rough_over_a_plain_proxy`
-v `tests/python/test_pg.py`:
+`tests/test_concrete.cpp` (10 testů), `test_concrete_breaks_rough_over_a_plain_proxy`
+a `test_rbd_cluster_groups_pieces_into_chunks` v `tests/python/test_pg.py`:
 
 - kusy betonu jsou uzavřené a jejich objemy dají objem tělesa — s hrubými
   lomy i v proxy (na 2·10⁻⁴ m³ z 1,8); nic nevyčnívá z tělesa, vnější
@@ -451,7 +507,14 @@ v `tests/python/test_pg.py`:
 - klíčovaná koule do zdi na základu: s `spread 0,5` spadne celá zeď,
   s `rings 1` nebo nízkým `spread` praskne míň a konce zdi stojí přesně,
   kde stály; hodnoty mimo rozsah se srovnají;
-- Concrete Fracture a `spread`, `rings` v síti: překlad, soubor tam a zpět.
+- Concrete Fracture a `spread`, `rings` v síti: překlad, soubor tam a zpět;
+- RBD Cluster: každý kus v jedné kře, kry 1 až `count` a všechny použité,
+  body s krou svého kusu, na dlouhém trámu je každá kra souvislý úsek;
+  stejně při každém vaření, jiný `seed` jiné kry, bez atributu `piece` beze
+  změny;
+- trám ze dvou ker shozený koncem napřed: s lepidlem uvnitř ker
+  tisíckrát pevnějším se zlomí mezi nimi a každá kra dopadne celá (všechna
+  její tělesa v jedné poloze); se stejně pevným se rozpadnou i kry.
 
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).

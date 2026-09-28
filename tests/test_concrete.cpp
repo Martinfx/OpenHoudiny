@@ -6,6 +6,8 @@
 // the RBD Solver with them (src/pg/sim/Rigid.h): simulated as the proxy
 // has them -- glued where the plain cuts meet, standing as built -- drawn
 // rough, and knocked apart no further than Spread and Rings let a knock go.
+// RBD Cluster (src/pg/nodes/Cluster.cpp): pieces grouped into chunks whose
+// glue inside is stronger -- they land whole, or break up where they land.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -21,6 +23,7 @@
 #include <functional>
 #include <map>
 #include <numeric>
+#include <set>
 #include <unordered_map>
 
 using namespace pg;
@@ -514,4 +517,137 @@ TEST(concrete_fracture_and_rings_in_a_network) {
     std::string error;
     CHECK(Network::load(text, again, error));
     CHECK_EQ(again.save(), text);
+}
+
+TEST(rbd_cluster_groups_the_pieces_into_chunks) {
+    auto chunks = [](int count, int seed) {
+        return concrete(Vec3(4.0f, 0.4f, 0.4f), Vec3(0.0f, 0.2f, 0.0f), [](pg::Node& n) {
+            n.setInt("count", 40);
+            n.setFloat("chips", 0.2f);
+        }, "rbdcluster", [count, seed](pg::Node& c) {
+            c.setInt("count", count);
+            c.setInt("seed", seed);
+            c.setFloat("strength", 7.0f);
+        });
+    };
+    const GeometryPtr geo = chunks(4, 1);
+    const auto cluster = geo->primitives().find("cluster")->read<int32_t>();
+    const auto glue = geo->primitives().find("clusterglue")->read<float>();
+    const auto pointCluster = geo->points().find("cluster")->read<int32_t>();
+    const auto piece = geo->primitives().find("piece")->read<int32_t>();
+    // Each piece in one chunk, the chunks 1 to 4 and all of them used, the
+    // points in their pieces' chunks, Strength everywhere.
+    std::map<int32_t, int32_t> chunkOf;
+    std::set<int32_t> used;
+    for (size_t prim = 0; prim < geo->primitiveCount(); ++prim) {
+        CHECK(cluster[prim] >= 1 && cluster[prim] <= 4);
+        const auto [it, fresh] = chunkOf.emplace(piece[prim], cluster[prim]);
+        CHECK_EQ(it->second, cluster[prim]);
+        used.insert(cluster[prim]);
+        CHECK_EQ(glue[prim], 7.0f);
+        for (const uint32_t pt : geo->primitivePoints(prim)) CHECK_EQ(pointCluster[pt], cluster[prim]);
+    }
+    CHECK_EQ(used.size(), 4u);
+    // Along a long beam each chunk is a stretch of it: the middles of one
+    // chunk's pieces do not reach in among another's.
+    const auto proxy = geo->points().find("proxy")->read<Vec3>();
+    std::map<int32_t, std::pair<float, float>> span;  // chunk: lowest and highest x of its pieces' middles
+    const auto byPiece = primsOfPieces(*geo);
+    for (size_t k = 0; k < byPiece.size(); ++k) {
+        float x = 0.0f;
+        int n = 0;
+        for (const uint32_t prim : byPiece[k]) {
+            for (const uint32_t pt : geo->primitivePoints(prim)) {
+                x += proxy[pt].x;
+                ++n;
+            }
+        }
+        x /= static_cast<float>(n);
+        const int32_t c = cluster[byPiece[k].front()];
+        auto [it, fresh] = span.emplace(c, std::make_pair(x, x));
+        it->second.first = std::min(it->second.first, x);
+        it->second.second = std::max(it->second.second, x);
+    }
+    std::vector<std::pair<float, float>> order;
+    for (const auto& [c, r] : span) order.push_back(r);
+    std::sort(order.begin(), order.end());
+    for (size_t i = 1; i < order.size(); ++i) CHECK(order[i - 1].second < order[i].first + 0.3f);
+    // The same every time; another seed, other chunks; no more chunks than pieces.
+    CHECK_EQ(chunks(4, 1)->hash(), geo->hash());
+    CHECK(chunks(4, 2)->hash() != geo->hash());
+    const GeometryPtr each = chunks(1000, 1);
+    std::set<int32_t> all;
+    for (const int32_t c : each->primitives().find("cluster")->read<int32_t>()) all.insert(c);
+    CHECK_EQ(all.size(), byPiece.size());
+    // Without pieces, left as it is.
+    registerBuiltinNodes();
+    Graph g;
+    pg::Node* box = g.create("box", "plain");
+    pg::Node* rbd = g.create("rbdcluster", "cluster");
+    rbd->setInput(0, box);
+    CookEngine engine;
+    CHECK(engine.cook(*rbd, CookContext{})->primitives().find("cluster") == nullptr);
+}
+
+TEST(rigid_chunks_hold_together_or_break_up_where_they_land) {
+    // A beam of Voronoi pieces in two chunks, dropped end first. With the
+    // glue inside a chunk a thousand times as strong as between them, the
+    // beam breaks where the chunks meet and each lands whole; as strong,
+    // the chunks break up too.
+    auto drop = [](float strength, std::vector<int32_t>& chunkOfBody) {
+        registerBuiltinNodes();
+        Graph g;
+        pg::Node* box = g.create("box", "beam");
+        box->setVec3("size", Vec3(4.0f, 0.4f, 0.4f));
+        pg::Node* fracture = g.create("voronoifracture", "fracture");
+        fracture->setInt("count", 24);
+        fracture->setInt("seed", 3);
+        fracture->setInput(0, box);
+        pg::Node* chunks = g.create("rbdcluster", "chunks");
+        chunks->setInt("count", 2);
+        chunks->setFloat("strength", strength);
+        chunks->setInput(0, fracture);
+        pg::Node* tilt = g.create("transform", "tilt");
+        tilt->setVec3("t", Vec3(0.0f, 3.0f, 0.0f));
+        tilt->setVec3("r", Vec3(0.0f, 0.0f, 30.0f));
+        tilt->setInput(0, chunks);
+        CookEngine engine;
+        RigidScene scene;
+        scene.pieces = engine.cook(*tilt, CookContext{});
+        scene.solver.glue = 20000.0f;
+        const auto layout = rigidLayout(*scene.pieces, "piece");
+        const auto cluster = scene.pieces->primitives().find("cluster")->read<int32_t>();
+        chunkOfBody.clear();
+        for (int b = 0; b < layout->bodies; ++b) chunkOfBody.push_back(cluster[layout->prims[static_cast<size_t>(b)].front()]);
+        RigidSolver solver(scene);
+        for (int i = 0; i < 60; ++i) solver.step();
+        return solver.capture();
+    };
+    // The ways each chunk's bodies are posed: one, it is whole.
+    auto same = [](const RigidPose& p, const RigidPose& q) {
+        return length(p.position - q.position) < 1e-4f && std::fabs(p.rotation.x - q.rotation.x) < 1e-4f &&
+               std::fabs(p.rotation.y - q.rotation.y) < 1e-4f && std::fabs(p.rotation.z - q.rotation.z) < 1e-4f &&
+               std::fabs(p.rotation.w - q.rotation.w) < 1e-4f;
+    };
+    auto poses = [&](const RigidFrame& f, const std::vector<int32_t>& chunkOfBody) {
+        std::map<int32_t, std::vector<RigidPose>> seen;
+        for (size_t b = 0; b < f.poses.size(); ++b) {
+            std::vector<RigidPose>& list = seen[chunkOfBody[b]];
+            const RigidPose& p = f.poses[b];
+            if (std::none_of(list.begin(), list.end(), [&](const RigidPose& q) { return same(p, q); })) list.push_back(p);
+        }
+        return seen;
+    };
+    std::vector<int32_t> chunkOfBody;
+    const RigidFrame strong = drop(1000.0f, chunkOfBody);
+    CHECK(strong.broken > 0u);
+    const auto whole = poses(strong, chunkOfBody);
+    CHECK_EQ(whole.size(), 2u);
+    for (const auto& [c, list] : whole) CHECK_EQ(list.size(), size_t(1));
+    // ... and apart from each other.
+    CHECK(!same(whole.begin()->second.front(), whole.rbegin()->second.front()));
+    const RigidFrame weak = drop(1.0f, chunkOfBody);
+    const auto broken = poses(weak, chunkOfBody);
+    CHECK(std::any_of(broken.begin(), broken.end(), [](const auto& e) { return e.second.size() > 1; }));
+    CHECK(weak.broken > strong.broken);
 }
