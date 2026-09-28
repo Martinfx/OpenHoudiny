@@ -430,8 +430,10 @@ public:
     /// How parameter `param` of node `id` is promoted; null if it is not.
     const Promotion* promotion(int id, std::string_view param) const;
 
-    /// Bumped by every edit -- all but moving a node, which goes through
-    /// node() and changes nothing a simulation sees.
+    /// A new number at every edit -- all but moving a node, which goes
+    /// through node() and changes nothing a simulation sees. Numbers are
+    /// never given out twice, whichever network is edited or loaded: a
+    /// network loaded into the one an editor has open is not taken for it.
     uint64_t revision() const { return revision_; }
 
     /// The examples the program carries with it -- the same networks as the
@@ -459,6 +461,8 @@ private:
     /// Turns the nodes of old types (Legacy in Network.cpp) into the types
     /// that replaced them.
     void upgrade(const std::vector<Link>& links);
+    /// A revision no network has had.
+    static uint64_t nextRevision();
 
     std::vector<Node> nodes_;
     std::vector<Link> links_;

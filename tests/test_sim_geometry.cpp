@@ -260,6 +260,32 @@ TEST(sim_geometry_graph_cooks_only_what_changed) {
     CHECK(g.cook(12345, 1) == nullptr);
 }
 
+TEST(sim_geometry_graph_follows_another_network_loaded_where_one_was) {
+    // The editor opens an example into the network it has open. Loaded from
+    // text, both are a fresh network each: the graph must see the new one,
+    // whose node 1 is another box -- not keep what it cooked of the old.
+    Network net;
+    std::string error;
+    CHECK(Network::load("pgsim 1\nnode 1 box 1 small 0 0\n  param size 1 1 1\n", net, error));
+    GeometryGraph g;
+    g.sync(net);
+    Vec3 lo, hi;
+    boundsOf(*g.cook(1, 1), lo, hi);
+    CHECK(near(hi - lo, Vec3(1.0f, 1.0f, 1.0f)));
+    Network other;
+    CHECK(Network::load("pgsim 1\nnode 1 box 1 big 0 0\n  param size 3 3 3\n", other, error));
+    net = other;
+    CHECK(net.revision() != 0u);
+    g.sync(net);
+    boundsOf(*g.cook(1, 1), lo, hi);
+    CHECK(near(hi - lo, Vec3(3.0f, 3.0f, 3.0f)));
+    // No two networks share a revision: each edit gets a new one.
+    Network a, b;
+    const int ia = a.add("box"), ib = b.add("box");
+    CHECK(ia == ib);
+    CHECK(a.revision() != b.revision());
+}
+
 TEST(sim_geometry_files_are_read_again_when_they_change) {
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / "pg_test_geometry_file";

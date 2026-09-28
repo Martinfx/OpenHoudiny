@@ -6,6 +6,7 @@
 #include "pg/lang/Lang.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -1595,7 +1596,7 @@ int Network::add(std::string_view type, float x, float y) {
     n.x = x;
     n.y = y;
     nodes_.push_back(std::move(n));
-    ++revision_;
+    revision_ = nextRevision();
     return nodes_.back().id;
 }
 
@@ -1605,7 +1606,7 @@ bool Network::remove(int id) {
     std::erase_if(asset_.promoted, [&](const Promotion& p) { return p.node == nodes_[static_cast<size_t>(i)].name; });
     nodes_.erase(nodes_.begin() + i);
     std::erase_if(links_, [&](const Link& l) { return l.from == id || l.to == id; });
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -1625,14 +1626,14 @@ bool Network::rename(int id, std::string_view name, std::string* error) {
         if (p.node == n->name) p.node = name;
     }
     n->name = name;
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
 void Network::setAsset(AssetInfo info) {
     if (info == asset_) return;
     asset_ = std::move(info);
-    ++revision_;
+    revision_ = nextRevision();
 }
 
 bool Network::promote(int id, std::string_view param, bool on) {
@@ -1644,7 +1645,7 @@ bool Network::promote(int id, std::string_view param, bool on) {
     if (!on) {
         if (it == asset_.promoted.end()) return true;
         asset_.promoted.erase(it);
-        ++revision_;
+        revision_ = nextRevision();
         return true;
     }
     if (it != asset_.promoted.end()) return true;
@@ -1657,7 +1658,7 @@ bool Network::promote(int id, std::string_view param, bool on) {
         for (int k = 2; taken(name = std::string(param) + std::to_string(k)); ++k) {}
     }
     asset_.promoted.push_back({n->name, std::string(param), name, {}});
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -1715,7 +1716,7 @@ bool Network::connect(int from, std::string_view output, int to, std::string_vie
     const PinDef* in = findNodeType(node(to)->type)->input(input);
     if (!in->many) std::erase_if(links_, [&](const Link& l) { return l.to == to && l.input == input; });
     links_.push_back({from, std::string(output), to, std::string(input)});
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -1723,7 +1724,7 @@ bool Network::disconnect(const Link& link) {
     const auto it = std::find(links_.begin(), links_.end(), link);
     if (it == links_.end()) return false;
     links_.erase(it);
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -1847,7 +1848,7 @@ bool Network::setParam(int id, std::string_view name, const ParamValue& value) {
     // changes, and a default that improves reaches the networks that kept it.
     if (v == d->value) n->params.erase(key);
     else n->params[key] = v;
-    if (v != before) ++revision_;
+    if (v != before) revision_ = nextRevision();
     return true;
 }
 
@@ -1899,7 +1900,7 @@ bool Network::setText(int id, std::string_view name, std::string_view value) {
     bool changed = before != value;
     // A snippet asks for its own parameters.
     if (changed && name == "snippet" && syncSpares(*n)) changed = true;
-    if (changed) ++revision_;
+    if (changed) revision_ = nextRevision();
     return true;
 }
 
@@ -1911,7 +1912,7 @@ bool Network::resetParam(int id, std::string_view name) {
     if (const ParamDef* d = def(*n, name)) {
         for (const std::string& ch : channels(*d)) erased += n->exprs.erase(ch);
     }
-    if (erased > 0) ++revision_;
+    if (erased > 0) revision_ = nextRevision();
     return true;
 }
 
@@ -2119,7 +2120,7 @@ bool Network::setExpression(int id, std::string_view channel, std::string_view t
         if (it != n->exprs.end() && it->second == t) return true;
         n->exprs[key] = t;
     }
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -2230,7 +2231,7 @@ bool Network::setKey(int id, std::string_view name, float frame, const ParamValu
     } else {
         keys.insert(at, key);
     }
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -2250,7 +2251,7 @@ bool Network::removeKey(int id, std::string_view name, float frame) {
     } else {
         keys.erase(at);
     }
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -2262,7 +2263,7 @@ bool Network::clearKeys(int id, std::string_view name, float frame) {
     const ParamValue v = valueAt(id, name, frame);
     n->keys.erase(it);
     setParam(id, name, v);
-    ++revision_;
+    revision_ = nextRevision();
     return true;
 }
 
@@ -2321,7 +2322,7 @@ bool Network::setDisplay(int id) {
         changed = changed || n.display != on;
         n.display = on;
     }
-    if (changed) ++revision_;
+    if (changed) revision_ = nextRevision();
     return true;
 }
 
@@ -2337,7 +2338,7 @@ bool Network::setBypass(int id, bool on) {
     if (!n) return false;
     if (n->bypass != on) {
         n->bypass = on;
-        ++revision_;
+        revision_ = nextRevision();
     }
     return true;
 }
@@ -2769,9 +2770,14 @@ bool Network::load(std::string_view whole, Network& out, std::string& error, std
         if (warnings) warnings->push_back("the promoted " + p.node + "." + p.param + " is not there; dropped");
         return true;
     });
-    net.revision_ = out.revision_ + 1;
+    net.revision_ = nextRevision();
     out = std::move(net);
     return true;
+}
+
+uint64_t Network::nextRevision() {
+    static std::atomic<uint64_t> last{0};
+    return last.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 void Network::upgrade(const std::vector<Link>& links) {
