@@ -141,7 +141,7 @@ struct UsdExport::Impl {
     std::vector<int> bodyFrames;
     std::vector<std::vector<std::array<float, 7>>> motion;
     std::vector<int> gone;
-    Vec3 gritColor;
+    Vec3 gritColor, rebarColor;
 
     // The gas: a file a frame, and the box it fills.
     std::vector<std::pair<int, std::string>> gasFiles, gasExtent;
@@ -217,6 +217,41 @@ struct UsdExport::Impl {
         fields.push_back({"float[]", "widths", usda::interpolation("vertex"), usda::numbers(size)});
         sample(layer, "/World/grit", "Points", f, std::move(fields));
         scene.grow(box);
+    }
+
+    /// The bars at frame f, where the pieces have taken them: a linear curve
+    /// for each stretch of one, as thick as it is, and how fast each point
+    /// goes. False if there are none.
+    bool sampleRebar(usda::Stage& layer, int f, const RigidFrame& r) {
+        const std::shared_ptr<Geometry> bars = rebarBars(r);
+        if (bars->primitiveCount() == 0) return false;
+        const auto P = bars->positions();
+        const AttributeArray* wa = bars->points().find("width");
+        const AttributeArray* va = bars->points().find("v");
+        std::vector<Vec3> at, v;
+        std::vector<float> widths;
+        std::vector<int32_t> counts;
+        usda::Bounds box;
+        float widest = 0.0f;
+        for (size_t prim = 0; prim < bars->primitiveCount(); ++prim) {
+            const auto c = bars->primitivePoints(prim);
+            counts.push_back(static_cast<int32_t>(c.size()));
+            for (const uint32_t q : c) {
+                at.push_back(P[q]);
+                box.grow(P[q]);
+                v.push_back(va ? va->read<Vec3>()[q] : Vec3());
+                widths.push_back(wa ? wa->read<float>()[q] : 0.012f);
+                widest = std::max(widest, widths.back());
+            }
+        }
+        sample(layer, "/World/rebar", "BasisCurves", f,
+               {{"int[]", "curveVertexCounts", "", usda::integers(counts)},
+                {"float3[]", "extent", "", box.extent(0.5f * widest)},
+                {"point3f[]", "points", "", usda::tuples(at)},
+                {"vector3f[]", "velocities", "", usda::tuples(v)},
+                {"float[]", "widths", usda::interpolation("vertex"), usda::numbers(widths)}});
+        scene.grow(box);
+        return true;
     }
 
     /// The water's surface at frame f; its colour is the stage's.
@@ -301,7 +336,7 @@ struct UsdExport::Impl {
             if (c.type == "Mesh") q.setUniform("token", "subdivisionScheme", usda::quoted("none"));
             if (c.type == "BasisCurves") {
                 q.setUniform("token", "type", usda::quoted("linear"));
-                q.set("float[]", "widths", "[0.01]").metadata = usda::interpolation("constant");
+                if (!c.declared.count("widths")) q.set("float[]", "widths", "[0.01]").metadata = usda::interpolation("constant");
             }
         }
         return p;
@@ -327,6 +362,7 @@ struct UsdExport::Impl {
         drawn = drawnPieces(rest, look.piecesColor, look.piecesInside, look.insideGroup);
         insideGroup = look.insideGroup;
         gritColor = look.piecesInside * 0.9f;
+        rebarColor = look.rebarColor;
         const auto P = drawn->positions();
         middles.assign(static_cast<size_t>(layout->bodies), Vec3());
         for (int b = 0; b < layout->bodies; ++b) {
@@ -347,7 +383,7 @@ UsdExport::UsdExport(std::string path, std::string geometryName, float fps) : im
     impl_->fps = fps > 0.0f ? fps : 30.0f;
     impl_->geometryName = usda::identifier(geometryName.empty() ? "geometry" : geometryName);
     // Not the name of another prim of the stage.
-    for (const char* taken : {"Looks", "pieces", "grit", "water", "rain", "gas", "camera", "sun", "sky", "ground"}) {
+    for (const char* taken : {"Looks", "pieces", "grit", "rebar", "water", "rain", "gas", "camera", "sun", "sky", "ground"}) {
         if (impl_->geometryName == taken) impl_->geometryName += "_geometry";
     }
     const fs::path p(impl_->path);
@@ -422,6 +458,12 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
         if (!r.debris.empty()) {
             m.sampleGrit(layer, f, r);
             Impl::ClipSet& set = m.clipSets["/World/grit"];
+            set.frames.push_back(f);
+            set.present.push_back(f);
+            named = true;
+        }
+        if (r.rebar && m.sampleRebar(layer, f, r)) {
+            Impl::ClipSet& set = m.clipSets["/World/rebar"];
             set.frames.push_back(f);
             set.present.push_back(f);
             named = true;
@@ -599,6 +641,13 @@ usda::Stage UsdExport::stage() const {
         grit.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&m.gritColor, 1))).metadata =
             usda::interpolation("constant");
         grit.relate("material:binding", kSurface);
+    }
+    if (m.clipSets.count("/World/rebar")) {
+        Prim& bars = m.clippedPrim(world, "/World/rebar", "BasisCurves", m.clipSets.at("/World/rebar").present);
+        bars.metadata.push_back(kBinding);
+        bars.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&m.rebarColor, 1))).metadata =
+            usda::interpolation("constant");
+        bars.relate("material:binding", kSurface);
     }
     if (m.clipSets.count("/World/water")) {
         Prim& water = m.clippedPrim(world, "/World/water", "Mesh", m.clipSets.at("/World/water").present);

@@ -192,7 +192,7 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            a.rigid.broken == b.rigid.broken && a.rigid.poses == b.rigid.poses && a.rigid.debris == b.rigid.debris &&
            a.rigid.vanished == b.rigid.vanished && w.ids == x.ids && r.dropIds == s.dropIds &&
            r.dropletIds == s.dropletIds && a.rigid.debrisIds == b.rigid.debrisIds &&
-           a.rigid.debrisVelocity == b.rigid.debrisVelocity && w.flow == x.flow;
+           a.rigid.debrisVelocity == b.rigid.debrisVelocity && w.flow == x.flow && a.rigid.rebarState == b.rigid.rebarState;
 }
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
@@ -248,6 +248,7 @@ sim::Frame madeUpFrame() {
     f.rigid.debrisVelocity = {0.0f, -1.0f, 0.0f, 0.5f, 0.0f, 0.0f};
     f.rigid.debrisIds = {40, 41};
     f.rigid.vanished = {1};
+    f.rigid.rebarState = {0, 1, 2, 0};  // a bar out of one piece, torn after the next
     f.rain.rippleOrigin = {-1.0f, 0.2f, -1.0f};
     f.rain.rippleCell = 0.05f;
     f.rain.rippleCells[0] = 4;
@@ -524,8 +525,9 @@ TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
     f.rigid.debrisIds.clear();
     f.rigid.debrisVelocity.clear();
     f.water.flow.clear();
+    f.rigid.rebarState.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 6 * 8);  // the five counts and version 5's, all 0
+    bytes.resize(bytes.size() - 7 * 8);  // the five counts, version 5's and version 6's, all 0
     bytes[8] = 3;
     sim::Frame back;
     std::string error;
@@ -542,8 +544,9 @@ TEST(frames_of_version_4_still_read_without_the_waters_flow) {
     // As version 4 wrote it: without the flow at the end.
     sim::Frame f = madeUpFrame();
     f.water.flow.clear();
+    f.rigid.rebarState.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 8);  // its count, 0
+    bytes.resize(bytes.size() - 2 * 8);  // its count, 0, and version 6's
     bytes[8] = 4;
     sim::Frame back;
     std::string error;
@@ -557,6 +560,21 @@ TEST(frames_of_version_4_still_read_without_the_waters_flow) {
     CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
 }
 
+TEST(frames_of_version_5_still_read_without_what_became_of_the_bars) {
+    // As version 5 wrote it: without the bars' state at the end -- all of
+    // them as built, as a frame without bars has them.
+    sim::Frame f = madeUpFrame();
+    f.rigid.rebarState.clear();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - 8);  // its count, 0
+    bytes[8] = 5;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.rigid.rebarState.empty());
+}
+
 TEST(frames_that_are_not_what_they_say_are_refused) {
     const std::string bytes = sim::formatFrame(madeUpFrame());
     sim::Frame f;
@@ -567,7 +585,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 6;
+    newer[8] = 7;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

@@ -460,7 +460,7 @@ void SimWorkspace::updatePieces() {
     if (f == piecesFrame_ && (!f || key == piecesKey_)) return;
     piecesFrame_ = f;
     piecesKey_ = key;
-    renderer_.setPieces(f ? sim::drawnPieces(f->rigid, look.piecesColor, look.piecesInside, look.insideGroup) : nullptr);
+    renderer_.setPieces(f ? sim::drawnPieces(f->rigid, look.piecesColor, look.piecesInside, look.insideGroup, look.rebarColor) : nullptr);
     viewDirty_ = true;
 }
 
@@ -2174,6 +2174,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
     std::vector<std::shared_ptr<const sim::Frame>> frames;
     frames.reserve(static_cast<size_t>(count));
     std::shared_ptr<const sim::RigidLayout> layout;  // the pieces' bodies, once for all frames
+    std::shared_ptr<const sim::RigidRebar> bars;      // ... and the bars in them
     for (int f = 1; f <= count; ++f) {
         auto frame = std::make_shared<sim::Frame>();
         if (!sim::readFrame(folder, f, *frame, error)) {
@@ -2181,7 +2182,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
             return false;
         }
         frame->number = f;
-        sim::adoptPieces(*frame, compiled_.world.rigid, &layout);
+        sim::adoptPieces(*frame, compiled_.world.rigid, &layout, &bars);
         frames.push_back(std::move(frame));
     }
     runner_->adopt(compiled_.world, compiled_.frames, std::move(frames));

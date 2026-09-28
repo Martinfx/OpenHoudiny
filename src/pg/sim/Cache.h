@@ -45,9 +45,12 @@ bool parseFrame(std::string_view data, Frame& frame, std::string& error);
 /// Gives a frame read back the pieces of the rigid bodies at rest: the
 /// world's, when the frame's poses are theirs -- as many as the pieces make
 /// bodies. Otherwise the frame's rigid bodies stay without geometry, and
-/// nothing is drawn of them. `memo`, if given, keeps the bodies worked out
-/// from one frame to the next.
-void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo = nullptr);
+/// nothing is drawn of them. The bars in them too (RigidFrame::rebar), when
+/// the frame says what became of as many stretches of bar as the world's
+/// bars make. `memo` and `rebarMemo`, if given, keep the bodies and the
+/// bars worked out from one frame to the next.
+void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo = nullptr,
+                 std::shared_ptr<const RigidRebar>* rebarMemo = nullptr);
 
 /// "<folder>/frame.0007.pgframe"
 std::string frameFile(const std::string& folder, int number);

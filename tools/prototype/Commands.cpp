@@ -836,6 +836,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     // Simulated only when the frames do not come from a cache.
     std::unique_ptr<sim::WorldSolver> solver;
     std::shared_ptr<const sim::RigidLayout> adoptedLayout;  // the pieces' bodies, for frames read back
+    std::shared_ptr<const sim::RigidRebar> adoptedRebar;    // ... and the bars in them
     if (o.fromCache.empty()) solver = std::make_unique<sim::WorldSolver>(c.world);
     const sim::World world = c.world.sanitized();
 #ifdef PG_CAN_RENDER
@@ -907,7 +908,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 return 1;
             }
             read->number = f;  // the file's name says which it is
-            sim::adoptPieces(*read, world.rigid, &adoptedLayout);
+            sim::adoptPieces(*read, world.rigid, &adoptedLayout, &adoptedRebar);
             current = std::move(read);
         }
         simulating += ms(t);
@@ -946,7 +947,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             volume->setFrame(*current);
             const sim::Look& k = volume->look;
             volume->setPieces(k.pieces && !current->rigid.empty()
-                                  ? sim::drawnPieces(current->rigid, k.piecesColor, k.piecesInside, k.insideGroup)
+                                  ? sim::drawnPieces(current->rigid, k.piecesColor, k.piecesInside, k.insideGroup, k.rebarColor)
                                   : nullptr);
         }
         // Animated: the look, the objects and the camera of this frame.

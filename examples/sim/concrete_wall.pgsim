@@ -9,9 +9,12 @@ pgsim 1
 # rough; the ball -- keyed, unstoppable -- would break all the glue at
 # once, so Rings keeps a knock to the two rings of pieces round those it
 # lands on: it punches a hole, chunks and spalls fly out and tumble, and
-# the rest of the wall stands. The glue that breaks and every hard knock
-# puff dust, which the Pyro Solver carries. prototype sim concrete_wall
-# out.mp4 renders it through the camera, a slow push in.
+# the rest of the wall stands. A mesh of steel runs through it -- the Rebar
+# node's, bars 20 cm apart both ways near each face: the pieces round the
+# hole hang on the bars, bent into it, and those the ball takes with it
+# tear them. The glue that breaks and every hard knock puff dust, which
+# the Pyro Solver carries. prototype sim concrete_wall out.mp4 renders it
+# through the camera, a slow push in.
 node 1 box 1 wall 0 0
   param size 5 3 0.3
   param center 0 1.7 0
@@ -77,6 +80,7 @@ node 12 output 2 output 1610 60
   param ground_color 0.13 0.125 0.12
   param grid off
   param sky_behind on
+node 14 rebar 1 rebar 230 -130
 node 13 camera 1 camera 1610 220
   param focal 34
   key center 1 smooth 4.6 1.5 6.4
@@ -84,6 +88,8 @@ node 13 camera 1 camera 1610 220
   key rotation 1 smooth -2 36 0
   key rotation 90 smooth -2 35 0
 link 1.geometry -> 2.geometry
+link 1.geometry -> 14.geometry
+link 14.geometry -> 8.rebar
 link 2.geometry -> 3.geometry
 link 4.geometry -> 5.geometry
 link 3.geometry -> 6.geometry

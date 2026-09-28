@@ -65,6 +65,7 @@ add_library(pgcore
   src/pg/nodes/Fracture.cpp
   src/pg/nodes/Concrete.cpp
   src/pg/nodes/Cluster.cpp
+  src/pg/nodes/Rebar.cpp
   src/pg/nodes/Rebuild.cpp
   src/pg/nodes/Volumes.cpp
   src/pg/nodes/Usd.cpp
@@ -488,6 +489,7 @@ add_executable(pgtests
   tests/test_topology.cpp
   tests/test_rigid.cpp
   tests/test_concrete.cpp
+  tests/test_rebar.cpp
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp

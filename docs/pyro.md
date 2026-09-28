@@ -460,8 +460,8 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
 | `demolition` | destrukce: odstřel věžáku mezi domy — nálože v přízemí, věž se zřítí do svého půdorysu a patra se drtí; prach z nárazů, drcení a přetržených spojů žene vytlačený vzduch do ulic ([destruction.md](destruction.md)) |
 | `wall_collapse` | destrukce zblízka: průčelí cihlového domu vyletí do ulice, kusy se kutálejí ke kameře těsně nad asfaltem a prach prosvítí nízké slunce ([destruction.md](destruction.md)) |
-| `concrete_wall` | beton: demoliční koule prorazí zeď na soklu — Concrete Fracture s hrubými lomy a odprýsklými rohy, `rings 2` drží škodu kolem koule, prach z lomů ([destruction.md](destruction.md#2-concrete-fracture)) |
-| `concrete_drop` | sekundární lámání: betonový trám se zlomí přes kvádr a poloviny se rozpadnou na kry, až dopadnou — RBD Cluster, lepidlo uvnitř ker třicetkrát pevnější ([destruction.md](destruction.md#kry-a-sekundární-lámání-rbd-cluster)) |
+| `concrete_wall` | železobeton: demoliční koule prorazí zeď na soklu — Concrete Fracture s hrubými lomy a odprýsklými rohy, síť prutů (Rebar), na které kusy kolem díry visí, `rings 2` drží škodu kolem koule, prach z lomů ([destruction.md](destruction.md#2-concrete-fracture)) |
+| `concrete_drop` | železobeton a sekundární lámání: trám s armokošem praskne přes kvádr, přehne se a visí na výztuži — RBD Cluster, lepidlo uvnitř ker třicetkrát pevnější, Rebar ([destruction.md](destruction.md#výztuž-rebar)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `prototype sim campfire` proto funguje bez souborů vedle.

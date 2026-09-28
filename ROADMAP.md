@@ -226,8 +226,18 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   *Iterations*), shluky přilepené k základu stojí, kde byly postavené, a
   příklad **concrete_wall**: demoliční koule prorazí betonovou zeď na
   soklu. Zbývá sklo paprskovitě a dřevo na třísky podél vláken.
-- **Síť vazeb jako geometrie:** lepidlo, pružné vazby (ohýbaná výztuž),
-  klouby; pevnost z atributů, kterou jde malovat a upravovat.
+- ✅ **Výztuž:** uzel **Rebar** ([docs/destruction.md §2](docs/destruction.md#výztuž-rebar))
+  položí do zdi síť a do trámu armokoš s třmínky, natočené, jak blok
+  leží; RBD Solver pruty (i nakreslené, lomené čáry s `width`) projde
+  kusy a spojí kusy, které už lepidlo nedrží, plastickými vazbami: prut
+  drží, co unese ocel nebo kotvení betonem (`rebar_strength`, `bond`),
+  pak povolí a zůstane ohnutý, vytahuje se z krátkých konců a přetrhne se
+  protažený o `stretch`. Kreslí se jako ocelové trubky ohnuté mezi kusy
+  s pahýly přetržených prutů, do USD jako křivky s tloušťkou. Oba betonové
+  příklady mají výztuž: trám se přes kvádr přehne a visí na ní, ze zdi
+  visí kusy kolem díry.
+- **Síť vazeb jako geometrie:** lepidlo, výztuž, klouby jako primitiva,
+  která jde vidět, malovat a upravovat; pevnost z atributů.
 - ✅ **Sekundární lámání:** kus se rozpadne až při nárazu — uzel **RBD
   Cluster** ([docs/destruction.md §2](docs/destruction.md#kry-a-sekundární-lámání-rbd-cluster))
   seskupí jemné kusy do ker s pevnějším lepidlem uvnitř (`cluster`,
@@ -243,7 +253,8 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
 - **Tuhá tělesa na více vláknech**, deterministicky.
 
 **Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu
-a sekundární lámání a desetkrát víc kusů za stejný čas na snímek.
+a sekundární lámání a desetkrát víc kusů za stejný čas na snímek. Beton,
+výztuž a sekundární lámání jsou; sklo a stopy prachu zbývají.
 
 ### Krok 5 — Měřítko
 

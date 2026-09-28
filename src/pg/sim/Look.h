@@ -50,6 +50,7 @@ struct Look {
     Vec3 piecesColor{0.62f, 0.6f, 0.57f};   ///< where they have no Cd of their own
     Vec3 piecesInside{0.5f, 0.47f, 0.43f};  ///< the faces a fracture cut
     std::string insideGroup = "inside";     ///< ... the group they are in
+    Vec3 rebarColor{0.3f, 0.25f, 0.21f};    ///< the bars in them
 
     // Light
     float lightAzimuth = 169.0f;  ///< degrees round the vertical, from +x towards +z

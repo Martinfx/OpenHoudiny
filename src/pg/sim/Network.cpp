@@ -707,6 +707,27 @@ std::vector<NodeType> buildTypes() {
                "How many times as strong the glue inside a chunk is as the glue between chunks: 1 as strong -- "
                "no chunks; the higher, the harder a knock must be to break a chunk up."},
               text("attribute", "Piece Attribute", "Cluster", "piece", "What says which piece a primitive is of.")});
+    geometry("rebar", "Rebar", "rebar",
+             "Steel bars inside a block of concrete, as they are laid before it is poured: a mesh both ways near "
+             "each face of a wall or a slab, or bars along a beam or a column with stirrups round them. The block "
+             "is the input's box, turned as it lies -- the block itself, or the pieces of its fracture. Link it "
+             "into the RBD Solver's Rebar: the bars hold the pieces once the concrete cracks, bend, pull out of "
+             "small pieces and tear. Open polylines, width their diameter.",
+             in,
+             {{"layout", "Layout", "Rebar", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+               "Auto: a mesh when the block's thinnest side is under half the next -- a wall, a slab -- else a "
+               "cage -- a beam, a column.",
+               {"auto", "mesh", "cage"}, {"Auto", "Mesh", "Cage"}},
+              {"spacing", "Spacing", "Rebar", K::Float, {0.2f, 0.0f, 0.0f}, 0.05f, 1.0f, 0.01f, kBig, "m",
+               "How far apart the bars are at most -- and the stirrups along a cage."},
+              {"cover", "Cover", "Rebar", K::Float, {0.035f, 0.0f, 0.0f}, 0.0f, 0.1f, 0.0f, kBig, "m",
+               "The concrete over the bars, and past their ends."},
+              {"diameter", "Diameter", "Rebar", K::Float, {0.012f, 0.0f, 0.0f}, 0.006f, 0.04f, 0.0001f, kBig, "m",
+               "How thick a bar is: 8 to 32 mm."},
+              {"layers", "Layers", "Rebar", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 2.0f, 1.0f, 2.0f, "",
+               "For a mesh: 2 a layer near each face, 1 one in the middle."},
+              {"stirrup", "Stirrup Diameter", "Rebar", K::Float, {0.008f, 0.0f, 0.0f}, 0.0f, 0.02f, 0.0f, kBig, "m",
+               "How thick the stirrups round a cage are. 0: none."}});
     geometry("convert_volume", "Convert Volume", "convertvolume",
              "The surface of a volume as polygons: where its values cross Iso, a closed mesh of quads turned "
              "outward, with normals N -- closed where the volume ends. Smoke from a Gas Volume, a distance "
@@ -772,7 +793,10 @@ std::vector<NodeType> buildTypes() {
              {{"rigid", "Rigid", PinType::Rigid}},
              {{"grit", "Grit", "Rigid", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "The grit too: points as wide as a bit is (pscale), with its velocity v and id -- the same number "
-               "from frame to frame."}});
+               "from frame to frame."},
+              {"rebar", "Rebar", "Rigid", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The bars in the pieces too, where the pieces have taken them: an open polyline for each stretch "
+               "of a bar in one piece, torn apart at a tear, with width -- its diameter -- and v."}});
 
     // --- objects ----------------------------------------------------------------------
     t.push_back({"object", "Object", "Objects",
@@ -919,10 +943,14 @@ std::vector<NodeType> buildTypes() {
          "puffing dust and throwing grit. Attributes of the pieces set them apart: density, v, w, active (0: "
          "it stays), glue, release -- the seconds when a charge breaks its joints -- with kick and vanish "
          "(blown to dust), crush (crushed to dust by a hard knock), and cluster with clusterglue -- RBD Cluster's "
-         "chunks, glued stronger inside. Link it into the Output's Looks: it is "
+         "chunks, glued stronger inside. Steel bars linked into Rebar -- a Rebar node's -- hold the pieces they "
+         "run through once the glue breaks: they bend, pull out of small pieces and tear. Link it into the "
+         "Output's Looks: it is "
          "simulated and drawn. Its Collider into a Liquid, Pyro Solver or Rain: they go round the pieces; its "
          "Dust into a Pyro Solver's Sources: the dust is smoke, pushed out by the air the pieces squeeze out.",
-         {{"pieces", "Pieces", PinType::Geometry}, {"colliders", "Colliders", PinType::Collider, true}},
+         {{"pieces", "Pieces", PinType::Geometry},
+          {"colliders", "Colliders", PinType::Collider, true},
+          {"rebar", "Rebar", PinType::Geometry}},
          {{"look", "Look", PinType::Look},
           {"rigid", "Rigid", PinType::Rigid},
           {"collider", "Collider", PinType::Collider},
@@ -954,6 +982,18 @@ std::vector<NodeType> buildTypes() {
            "the pieces next to them, 2 the ones next to those... A keyed object is unstoppable -- it would "
            "break a whole wall at once -- with 1 or 2 it punches a hole. 0: as far as Spread carries it. "
            "Houdini's Propagate Iterations."},
+          {"rebar_strength", "Steel Strength", "Rebar", K::Float, {500.0f, 0.0f, 0.0f}, 200.0f, 800.0f, 1.0f, 1e5f,
+           "MPa",
+           "How hard the steel of the bars holds before it yields: 500 for today's bars. A 12 mm bar holds some "
+           "57 kN pulled; bent, it bends and stays bent. Pulled further, it stretches, and tears."},
+          {"bond", "Bond", "Rebar", K::Float, {5.0f, 0.0f, 0.0f}, 0.0f, 15.0f, 0.0f, 1e4f, "MPa",
+           "How hard the concrete grips a bar, along its surface: a piece the bar runs 20 cm through holds it "
+           "with some 38 kN. On each side of a crack the pieces that hold the bar anchor it together; where "
+           "that is less than the steel holds -- near the end of a bar, or of a torn one -- the bar slides out "
+           "of them and the concrete falls off it, elsewhere the steel yields. 0: the bars hold nothing."},
+          {"stretch", "Stretch", "Rebar", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 0.5f, 0.0f, 100.0f, "",
+           "How much longer a bar gets before it tears, as a share of what of it yields: 0.1 a tenth -- of the "
+           "bar bare between two pieces and twenty times its diameter."},
           {"substeps", "Substeps", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
            "Steps of the solver a frame: more for fast pieces and tall stacks, which then stand steadier."},
           {"dust", "Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
@@ -972,7 +1012,9 @@ std::vector<NodeType> buildTypes() {
           {"inside_color", "Inside Color", "Look", K::Color, {0.5f, 0.47f, 0.43f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "The colour of the faces the fracture cut: what was inside."},
           text("inside_group", "Inside Group", "Look", "inside",
-               "The group of those faces -- a Voronoi Fracture's Inside Group.")},
+               "The group of those faces -- a Voronoi Fracture's Inside Group."),
+          {"rebar_color", "Rebar Color", "Look", K::Color, {0.3f, 0.25f, 0.21f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of the bars: steel gone brown with rust."}},
          1});
 
     // --- render ---------------------------------------------------------------------
@@ -2827,6 +2869,7 @@ struct Network::CompileMemo {
     std::map<int, std::shared_ptr<const MeshShape>> meshes;  // from files, by node
     std::map<int, std::shared_ptr<const MeshShape>> shapes;  // from geometry, by node
     std::map<int, std::shared_ptr<const Geometry>> pieces;   // an RBD Solver's, by node
+    std::map<int, std::shared_ptr<const Geometry>> rebar;    // ... and its bars
     std::unique_ptr<GeometryGraph> own;
     GeometryGraph* cooker = nullptr;
 };
@@ -2961,7 +3004,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
             const bool fixed = (n.type == "pyro_solver" && (name == "size" || name == "resolution")) ||
                                (n.type == "liquid_solver" && (name == "size" || name == "resolution" || name == "closed_sides")) ||
                                (n.type == "output" && (name == "frames" || name == "fps")) ||
-                               (n.type == "rbd_solver" && name != "color" && name != "inside_color");
+                               (n.type == "rbd_solver" && name != "color" && name != "inside_color" && name != "rebar_color");
             if (fixed) {
                 c.problems.push_back({Problem::Level::Warning, n.id,
                                       "'" + name + "' cannot change as the simulation runs: its value at frame 1 holds."});
@@ -3303,6 +3346,9 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.glue = f(*solver, "glue") * 1000.0f;  // kPa
         s.spread = f(*solver, "spread");
         s.rings = whole(*solver, "rings");
+        s.rebarStrength = f(*solver, "rebar_strength") * 1e6f;  // MPa
+        s.bond = f(*solver, "bond") * 1e6f;
+        s.stretch = f(*solver, "stretch");
         s.substeps = whole(*solver, "substeps");
         s.dust = f(*solver, "dust");
         s.dustSize = f(*solver, "dust_size");
@@ -3341,6 +3387,27 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 }
             }
             piecesMemo[solver->id] = r.pieces;
+        }
+        // The bars: cooked once a compile, as the pieces are.
+        const std::vector<Link> bars = linksInto(solver->id, "rebar");
+        if (!bars.empty()) {
+            if (const auto it = memo.rebar.find(solver->id); it != memo.rebar.end()) {
+                r.rebar = it->second;
+            } else {
+                startCooker();
+                const GeometryPtr geo = cooker->cook(bars.front().from, 1, firstStep);
+                const std::string error = cooker->error(bars.front().from);
+                if (!error.empty()) problem(L::Warning, bars.front().from, error);
+                if (fromSimulation(bars.front().from)) {
+                    problem(L::Warning, solver->id, "Its bars come from a simulation, which has not run when the "
+                                                    "bars are taken: no bars.");
+                } else if (!geo || geo->primitiveCount() == 0) {
+                    problem(L::Warning, solver->id, "The geometry linked into Rebar has no lines: no bars.");
+                } else {
+                    r.rebar = geo;
+                }
+                memo.rebar[solver->id] = r.rebar;
+            }
         }
         for (const Node* n : feeding(solver, "colliders")) {
             if (n->type == "rbd_solver") {
@@ -3590,6 +3657,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             k.pieces = true;
             k.piecesColor = v3(*look, "color");
             k.piecesInside = v3(*look, "inside_color");
+            k.rebarColor = v3(*look, "rebar_color");
             k.insideGroup = text(look->id, "inside_group");
         } else if (look->type == "water_look") {
             if (c.waterLook) {

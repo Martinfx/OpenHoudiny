@@ -136,17 +136,19 @@ public:
 };
 
 /// The pieces of the rigid bodies where they are at the frame, with the
-/// velocity v of each point.
+/// velocity v of each point; the grit and the bars, when asked for.
 class RbdPiecesNode : public FrameNode {
 public:
     explicit RbdPiecesNode(std::string name) : FrameNode("rbd_pieces", std::move(name)) {
         setInputCount(0);
         params_.setBool("grit", false);
+        params_.setBool("rebar", false);
     }
 
     GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
         if (!frame_ || frame_->rigid.empty()) return std::make_shared<Geometry>();
         std::shared_ptr<Geometry> geo = posedPieces(frame_->rigid);
+        if (params_.getBool("rebar", false)) geo->append(*rebarBars(frame_->rigid));
         if (params_.getBool("grit", false)) appendGrit(*geo, frame_->rigid);
         return geo;
     }

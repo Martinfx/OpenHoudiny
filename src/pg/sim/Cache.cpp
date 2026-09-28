@@ -18,7 +18,7 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 2: the rigid bodies after the rain; 3: and their grit; 4: the particles'
 // numbers -- the water's, the drops', the droplets', the grit's -- and how
 // fast the grit goes; 5: how fast the water goes, on the solver's grid.
-constexpr uint32_t kVersion = 5;
+constexpr uint32_t kVersion = 6;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -288,6 +288,7 @@ std::string formatFrame(const Frame& f) {
     out.words(b.debrisIds);
     out.floats(b.debrisVelocity);
     out.halves(w.flow);  // version 5
+    out.bytesOf(b.rebarState);  // version 6: what became of the bars
     return std::move(out.bytes);
 }
 
@@ -357,6 +358,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         in.floats(f.rigid.debrisVelocity);
     }
     if (version >= 5) in.halves(w.flow, 3 * w.flowDomain().cellCount());
+    if (version >= 6) in.bytesOf(f.rigid.rebarState);
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -376,7 +378,8 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     return true;
 }
 
-void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo) {
+void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo,
+                 std::shared_ptr<const RigidRebar>* rebarMemo) {
     RigidFrame& b = frame.rigid;
     if (b.poses.empty() || !scene.pieces) return;
     const std::string& attribute = b.attribute.empty() ? scene.attribute : b.attribute;
@@ -387,6 +390,14 @@ void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const Ri
     b.pieces = scene.pieces;
     b.layout = layout;
     if (b.attribute.empty()) b.attribute = scene.attribute;
+    // The bars, where the frame says what became of them -- as many
+    // stations as the world's bars make in these pieces.
+    b.rebar = nullptr;
+    if (!scene.rebar || b.rebarState.empty()) return;
+    std::shared_ptr<const RigidRebar> bars = rebarMemo ? *rebarMemo : nullptr;
+    if (!bars) bars = rigidRebar(*scene.pieces, *layout, *scene.rebar);
+    if (rebarMemo) *rebarMemo = bars;
+    if (bars->stations.size() == b.rebarState.size()) b.rebar = bars;
 }
 
 std::string frameFile(const std::string& folder, int number) {

@@ -55,10 +55,12 @@ cache/fire/
   polohy, otočení a rychlosti kusů tuhých těles, od verze 3 i drť a kusy,
   které se rozprášily ([destruction.md](destruction.md)), od verze 4
   číslo každé částice — vody, kapky, kapičky, zrnka drti —, stejné ze
-  snímku na snímek, a rychlost drti, a od verze 5 rychlost vody na mřížce
+  snímku na snímek, a rychlost drti, od verze 5 rychlost vody na mřížce
   řešiče (ve vodě a asi dvě buňky kolem hladiny, dál nuly), ze které má
-  povrch vody `v` pro rozmazání pohybem ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)); klidová geometrie
-  kusů je v síti a snímek načtený z disku ji dostane od ní. Binárně, little-endian,
+  povrch vody `v` pro rozmazání pohybem ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)),
+  a od verze 6 co se stalo s výztuží — bajt na každý úsek prutu v kusu:
+  prut z kusu vyšel, prut je za ním přetržený ([destruction.md](destruction.md#výztuž-rebar)); klidová geometrie
+  kusů i pruty jsou v síti a snímek načtený z disku je dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
   část domény, takže 150 snímků mřížky 64 × 96 × 64 má na disku 63 MB,

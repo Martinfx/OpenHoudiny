@@ -28,6 +28,17 @@
 //              break puffs dust and throws out grit
 //   colliders  the floor, and the objects linked in: still, or keyed --
 //              those push what is in their way
+//   rebar      steel bars in the pieces (RigidRebar): where the glue has
+//              broken, a bar still joins the pieces it runs through, one to
+//              the next, as hard as it holds there -- the steel yields, or
+//              the bond of the pieces that anchor it on one side of the
+//              crack gives, when that holds less. Pulled harder, it gives:
+//              the pieces part and the bar shows between them; bent, it
+//              stays bent. Where the bond gives -- near the end of a bar,
+//              or of a torn one -- the bar slides out of the pieces, one
+//              after another, and the concrete falls off it; where the
+//              steel does, it stretches, and tears a tenth longer (stretch)
+//              over what of it yields
 //
 // Attributes of the pieces -- on the primitives, else the points; a body
 // takes those of its first primitive -- set them apart:
@@ -85,6 +96,15 @@ struct RigidSettings {
     /// loose, however hard it is: 1 the pieces next to them. 0: as far as
     /// spread carries it.
     int rings = 0;
+    /// Pascals the steel of the bars (RigidScene::rebar) yields at: a bar
+    /// d across holds fy pi d^2 / 4 pulled, fy d^3 / 6 bent.
+    float rebarStrength = 500e6f;
+    /// Pascals its bond with the concrete holds along a bar's surface: a
+    /// piece it runs l through anchors it with bond pi d l.
+    float bond = 5e6f;
+    /// How much longer a bar gets before it tears, as a share of what of
+    /// it yields: its bare length and twenty times its diameter.
+    float stretch = 0.1f;
     Vec3 gravity{0.0f, -9.81f, 0.0f};
     int substeps = 2;                 ///< steps of the solver a frame
     bool floor = true;                ///< a floor at y = 0
@@ -106,6 +126,10 @@ struct RigidScene {
     /// another simulation.
     std::shared_ptr<const Geometry> pieces;
     std::string attribute = "piece";   ///< what says which piece a primitive is of
+    /// Steel bars in the pieces: polylines, their diameter the attribute
+    /// width (on the primitives, else the points; 12 mm without it). Null:
+    /// none. Compared by pointer, as the pieces are.
+    std::shared_ptr<const Geometry> rebar;
     std::vector<Collider> colliders;   ///< the objects: still, or moving (velocity, spin)
     bool intoGas = false;              ///< the pieces are colliders of the gas
     bool intoWater = false;            ///< ... of the water
@@ -143,6 +167,35 @@ struct RigidLayout {
 /// Faces touch where they lie in one plane, facing each other, and overlap.
 std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& pieces, const std::string& attribute);
 
+/// Steel bars in the pieces: where each runs through which body.
+struct RigidRebar {
+    struct Bar {
+        std::vector<Vec3> points;   ///< where it runs, at rest
+        std::vector<float> along;   ///< how far along it each point is, metres
+        float width = 0.012f;       ///< its diameter, metres
+        uint32_t first = 0, count = 0;  ///< its stations
+    };
+    /// A stretch of a bar inside one body, in the order along the bar;
+    /// none where it runs outside them all.
+    struct Station {
+        int32_t body = 0;
+        float in = 0.0f, out = 0.0f;  ///< how far along the bar it goes into the body, and out of it
+    };
+    std::vector<Bar> bars;
+    std::vector<Station> stations;
+
+    /// The point `s` metres along `bar`, and the way it runs there.
+    static Vec3 at(const Bar& bar, float s);
+    static Vec3 tangent(const Bar& bar, float s);
+};
+
+/// Where the bars `bars` -- polylines, a closed one round to its first
+/// point again -- run through the bodies of `pieces` (laid out as `layout`
+/// has them): through the convex parts the solver collides, as the proxy
+/// has them. A stretch shorter than half the bar's diameter -- a corner
+/// grazed -- is none.
+std::shared_ptr<const RigidRebar> rigidRebar(const Geometry& pieces, const RigidLayout& layout, const Geometry& bars);
+
 /// A body where it is: its rest points p go to position + rotate(p).
 struct RigidPose {
     Vec3 position;
@@ -174,11 +227,16 @@ struct RigidFrame {
     std::vector<float> debrisVelocity;
     std::vector<uint32_t> debrisIds;
     size_t joints = 0, broken = 0;                 ///< the glue: how many joints, how many broken so far
+    std::shared_ptr<const RigidRebar> rebar;       ///< the bars in the pieces, at rest; null: none
+    /// What became of each station of a bar: kRebarLoose the bar slid out
+    /// of its body, kRebarTorn the bar tore after it. Empty: all as built.
+    std::vector<uint8_t> rebarState;
+    static constexpr uint8_t kRebarLoose = 1, kRebarTorn = 2;
 
     bool empty() const { return poses.empty(); }
     size_t bytes() const {
         return poses.size() * sizeof(RigidPose) + (debris.size() + debrisVelocity.size()) * sizeof(float) +
-               debrisIds.size() * sizeof(uint32_t);
+               debrisIds.size() * sizeof(uint32_t) + rebarState.size();
     }
 };
 
@@ -193,10 +251,17 @@ size_t appendGrit(Geometry& geo, const RigidFrame& f);
 
 /// How the solver's look draws the pieces: posed, their faces in the colour
 /// Cd they have -- `color` where they have none -- and those of the group
-/// `insideGroup`, the faces a fracture cut, in `inside`; and the grit, as
-/// points of its size in the colour of the inside, a shade darker.
+/// `insideGroup`, the faces a fracture cut, in `inside`; the bars in them
+/// (rebarBars) as tubes in `steel`; and the grit, as points of its size in
+/// the colour of the inside, a shade darker.
 std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, const Vec3& inside,
-                                      const std::string& insideGroup);
+                                      const std::string& insideGroup, const Vec3& steel = Vec3(0.3f, 0.25f, 0.21f));
+
+/// The bars of `f` where the pieces have taken them: a polyline for each
+/// stretch of a bar that is in one piece -- torn off at a tear -- held by the
+/// pieces it runs through and bent between them where they parted; the
+/// point attributes width (its diameter) and v. None in a frame without bars.
+std::shared_ptr<Geometry> rebarBars(const RigidFrame& f);
 
 /// Where the solver has the points of `pieces`: their proxy -- the plain
 /// cut, for rough concrete (Concrete Fracture) -- where they carry one, else

@@ -15,6 +15,7 @@ void registerTopologyNodes();
 void registerFractureNodes();
 void registerConcreteNodes();
 void registerClusterNodes();
+void registerRebarNodes();
 void registerVolumeNodes();
 void registerUsdNodes();
 

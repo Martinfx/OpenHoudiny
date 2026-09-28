@@ -1,10 +1,12 @@
 pgsim 1
-# Secondary fracture: a concrete beam dropped across a block. The Concrete
-# Fracture breaks it into pieces a hand across; the RBD Cluster groups them
-# into fourteen chunks, the glue inside a chunk thirty times as strong
-# as between chunks. The beam snaps over the block, crushed where it struck;
-# its halves fall off and break up into their chunks where they land hard,
-# and a chunk breaks into its pieces only where a knock crushes it. The
+# Reinforced concrete, and secondary fracture: a concrete beam dropped
+# across a block. The Concrete Fracture breaks it into pieces a hand
+# across; the RBD Cluster groups them into fourteen chunks, the glue inside
+# a chunk thirty times as strong as between chunks; the Rebar node lays a
+# cage of steel in it -- eight bars along it, stirrups round them. The beam
+# cracks over the block, crushed where it struck, but the bars hold it
+# together: it folds over the block and its halves hang down on them, the
+# bars torn where the fold opens widest and bent where they held. The
 # broken glue and the knocks puff dust into the Pyro Solver. prototype sim
 # concrete_drop out.mp4 renders it through the camera.
 node 1 box 1 beam 0 0
@@ -66,6 +68,7 @@ node 10 output 2 output 1610 60
   param ground_color 0.13 0.125 0.12
   param grid off
   param sky_behind on
+node 13 rebar 1 rebar 690 -160
 node 11 camera 1 camera 1610 220
   param focal 35
   key center 1 smooth 1.7 1.2 4.1
@@ -77,6 +80,8 @@ link 2.geometry -> 3.geometry
 link 3.geometry -> 4.geometry
 link 4.geometry -> 12.geometry
 link 12.geometry -> 6.pieces
+link 4.geometry -> 13.geometry
+link 13.geometry -> 6.rebar
 link 5.collider -> 6.colliders
 link 6.dust -> 8.sources
 link 6.collider -> 8.colliders

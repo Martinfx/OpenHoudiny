@@ -893,6 +893,17 @@ class _Rigid:
         """The pieces where they are, with the velocity v of each point."""
         return Geometry(self._f.pieces())
 
+    def rebar(self):
+        """The steel bars where the pieces have taken them: a polyline for each
+        stretch of a bar in one piece -- torn apart at a tear -- with the point
+        attributes width and v. Empty without bars."""
+        return Geometry(self._f.rebar())
+
+    rebar_state = property(lambda self: _array(self._f.rebar_state()),
+                           doc="for each stretch of a bar in a body: 1 the bar slid out of it, 2 it tore after it")
+    rebar_stations = property(lambda self: self._f.rebar_stations(),
+                              doc="(body, in, out, bar) of each stretch of a bar in a body, metres along the bar")
+
 
 class Simulation:
     """A network simulated a frame at a time -- or read from a cache. It

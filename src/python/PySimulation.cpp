@@ -82,6 +82,7 @@ struct PySimulation {
     std::unique_ptr<sim::WorldSolver> solver;
     FramePtr current;
     std::shared_ptr<const sim::RigidLayout> adopted;  // the pieces' bodies, for frames read back
+    std::shared_ptr<const sim::RigidRebar> adoptedBars;  // ... and the bars in them
     int frame = 0, cached = 0;
     py::list problems;
 
@@ -123,7 +124,7 @@ struct PySimulation {
             }
             if (!ok) throw Error(error);
             read->number = next;  // the file's name says which it is
-            sim::adoptPieces(*read, world.rigid, &adopted);
+            sim::adoptPieces(*read, world.rigid, &adopted, &adoptedBars);
             current = std::move(read);
         } else {
             py::gil_scoped_release release;
@@ -278,6 +279,24 @@ void bindSimulation(py::module_& m) {
         .def("pieces", [](const PyFrame& p) {
             if (p.f->rigid.empty() || !p.f->rigid.pieces) return PyGeometry();
             return PyGeometry(sim::posedPieces(p.f->rigid));
+        })
+        .def("rebar", [](const PyFrame& p) { return PyGeometry(sim::rebarBars(p.f->rigid)); })
+        .def("rebar_state", [](const PyFrame& p) {
+            const auto& v = p.f->rigid.rebarState;
+            return rows(p.f, v.data(), v.size(), 1);
+        })
+        .def("rebar_stations", [](const PyFrame& p) {
+            // body, in, out and the bar of each station
+            py::list out;
+            if (!p.f->rigid.rebar) return out;
+            const sim::RigidRebar& r = *p.f->rigid.rebar;
+            for (size_t b = 0; b < r.bars.size(); ++b) {
+                for (uint32_t s = r.bars[b].first; s < r.bars[b].first + r.bars[b].count; ++s) {
+                    const sim::RigidRebar::Station& st = r.stations[s];
+                    out.append(py::make_tuple(st.body, st.in, st.out, b));
+                }
+            }
+            return out;
         })
         // --- files
         .def("save", [](const PyFrame& p, const std::string& folder) {

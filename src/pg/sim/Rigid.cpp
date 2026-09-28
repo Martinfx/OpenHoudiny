@@ -32,6 +32,7 @@
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Body/BodyLockMulti.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
@@ -50,6 +51,9 @@ RigidScene RigidScene::sanitized() const {
     s.glue = std::clamp(finite(s.glue, d.glue), 0.0f, 1e15f);
     s.spread = std::clamp(finite(s.spread, d.spread), 0.0f, 1.0f);
     s.rings = std::clamp(s.rings, 0, 1 << 20);
+    s.rebarStrength = std::clamp(finite(s.rebarStrength, d.rebarStrength), 1e6f, 1e11f);
+    s.bond = std::clamp(finite(s.bond, d.bond), 0.0f, 1e10f);
+    s.stretch = std::clamp(finite(s.stretch, d.stretch), 0.0f, 100.0f);
     for (int a = 0; a < 3; ++a) s.gravity[a] = std::clamp(finite(s.gravity[a], 0.0f), -1000.0f, 1000.0f);
     s.substeps = std::clamp(s.substeps, 1, 16);
     s.dust = std::clamp(finite(s.dust, d.dust), 0.0f, 1000.0f);
@@ -574,6 +578,203 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
     return out;
 }
 
+// --- The bars: where each runs through which body ---------------------------------------
+
+Vec3 RigidRebar::at(const Bar& bar, float s) {
+    const size_t n = bar.points.size();
+    if (n == 0) return {};
+    if (n == 1) return bar.points[0];
+    const auto it = std::upper_bound(bar.along.begin(), bar.along.end(), s);
+    size_t i = it == bar.along.begin() ? 0 : static_cast<size_t>(it - bar.along.begin()) - 1;
+    i = std::min(i, n - 2);
+    const float len = bar.along[i + 1] - bar.along[i];
+    const float t = len > 0.0f ? std::clamp((s - bar.along[i]) / len, 0.0f, 1.0f) : 0.0f;
+    return bar.points[i] + (bar.points[i + 1] - bar.points[i]) * t;
+}
+
+Vec3 RigidRebar::tangent(const Bar& bar, float s) {
+    const size_t n = bar.points.size();
+    if (n < 2) return Vec3(1.0f, 0.0f, 0.0f);
+    const auto it = std::upper_bound(bar.along.begin(), bar.along.end(), s);
+    size_t i = it == bar.along.begin() ? 0 : static_cast<size_t>(it - bar.along.begin()) - 1;
+    i = std::min(i, n - 2);
+    return normalize(bar.points[i + 1] - bar.points[i]);
+}
+
+namespace {
+
+/// A convex part of a body as the planes round it: inside is behind them all.
+struct Hull {
+    int32_t body = 0;
+    std::vector<Vec3> n;
+    std::vector<float> d;
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    Vec3 middle;
+};
+
+}  // namespace
+
+std::shared_ptr<const RigidRebar> rigidRebar(const Geometry& pieces, const RigidLayout& L, const Geometry& bars) {
+    auto out = std::make_shared<RigidRebar>();
+    RigidRebar& R = *out;
+    // The bars: each polyline -- a closed one round to its first point again.
+    const auto B = bars.positions();
+    const AttributeArray* primWidth = bars.primitives().find("width");
+    const AttributeArray* pointWidth = bars.points().find("width");
+    auto read = [](const AttributeArray* a, size_t i, float& o) {
+        if (!a || i >= a->size()) return false;
+        if (a->type() == AttrType::Float) o = a->read<float>()[i];
+        else if (a->type() == AttrType::Int) o = static_cast<float>(a->read<int32_t>()[i]);
+        else return false;
+        return true;
+    };
+    for (size_t prim = 0; prim < bars.primitiveCount(); ++prim) {
+        const auto c = bars.primitivePoints(prim);
+        if (c.size() < 2) continue;
+        RigidRebar::Bar bar;
+        bool finite = true;
+        for (const uint32_t q : c) {
+            const Vec3 p = B[q];
+            finite = finite && std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+            if (!bar.points.empty() && length(p - bar.points.back()) < 1e-6f) continue;
+            bar.points.push_back(p);
+        }
+        if (!finite) continue;
+        if (bars.primitiveClosed(prim) && bar.points.size() >= 3 && length(bar.points.front() - bar.points.back()) >= 1e-6f) {
+            bar.points.push_back(bar.points.front());
+        }
+        if (bar.points.size() < 2) continue;
+        bar.along.push_back(0.0f);
+        for (size_t i = 1; i < bar.points.size(); ++i) bar.along.push_back(bar.along.back() + length(bar.points[i] - bar.points[i - 1]));
+        float w = 0.012f;
+        if (!read(primWidth, prim, w)) read(pointWidth, c[0], w);
+        bar.width = std::isfinite(w) ? std::clamp(w, 1e-4f, 1.0f) : 0.012f;
+        R.bars.push_back(std::move(bar));
+    }
+    if (R.bars.empty() || L.bodies == 0) return out;
+
+    // The parts, as the solver collides them -- convex -- as planes: those of
+    // their faces, as the proxy has them, facing away from their middles.
+    const std::vector<Vec3> P = rigidPositions(pieces);
+    std::vector<int32_t> partOf(pieces.pointCount(), -1);
+    std::vector<Hull> hulls;
+    Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+    for (int k = 0; k < L.bodies; ++k) {
+        for (const std::vector<uint32_t>& part : L.parts[static_cast<size_t>(k)]) {
+            if (part.empty()) continue;
+            Hull h;
+            h.body = k;
+            for (const uint32_t pt : part) {
+                partOf[pt] = static_cast<int32_t>(hulls.size());
+                h.middle += P[pt];
+                for (int a = 0; a < 3; ++a) {
+                    h.lo[a] = std::min(h.lo[a], P[pt][a]);
+                    h.hi[a] = std::max(h.hi[a], P[pt][a]);
+                }
+            }
+            h.middle = h.middle * (1.0f / static_cast<float>(part.size()));
+            for (int a = 0; a < 3; ++a) {
+                lo[a] = std::min(lo[a], h.lo[a]);
+                hi[a] = std::max(hi[a], h.hi[a]);
+            }
+            hulls.push_back(std::move(h));
+        }
+    }
+    const float diag = std::max(length(hi - lo), 1e-3f);
+    const float eps = 1e-5f * diag;
+    for (size_t prim = 0; prim < pieces.primitiveCount(); ++prim) {
+        const auto c = pieces.primitivePoints(prim);
+        if (c.size() < 3 || !pieces.primitiveClosed(prim) || partOf[c[0]] < 0) continue;
+        Hull& h = hulls[static_cast<size_t>(partOf[c[0]])];
+        Vec3 n, mid;
+        for (size_t i = 0; i < c.size(); ++i) {
+            const Vec3& a = P[c[i]];
+            const Vec3& b = P[c[(i + 1) % c.size()]];
+            n += Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+            mid += a;
+        }
+        // Faces of next to no area -- a rough face's triangles squashed on the
+        // proxy -- say nothing of which way they face.
+        if (0.5f * length(n) < 1e-8f * diag * diag) continue;
+        n = normalize(n);
+        float d = dot(n, mid * (1.0f / static_cast<float>(c.size())));
+        if (dot(n, h.middle) - d > 0.0f) {
+            n = -n;
+            d = -d;
+        }
+        bool known = false;
+        for (size_t j = 0; j < h.n.size() && !known; ++j) known = dot(n, h.n[j]) > 0.99999f && std::fabs(d - h.d[j]) < eps;
+        if (known) continue;
+        h.n.push_back(n);
+        h.d.push_back(d);
+    }
+
+    // Each bar through them: the stretch of each segment inside each part
+    // (clipped by its planes), in order along the bar, those of one body
+    // one after the other made one.
+    struct Span {
+        float in, out;
+        int32_t body;
+    };
+    for (RigidRebar::Bar& bar : R.bars) {
+        std::vector<Span> spans;
+        for (size_t i = 0; i + 1 < bar.points.size(); ++i) {
+            const Vec3 p0 = bar.points[i], p1 = bar.points[i + 1];
+            const float len = bar.along[i + 1] - bar.along[i];
+            Vec3 slo, shi;
+            for (int a = 0; a < 3; ++a) {
+                slo[a] = std::min(p0[a], p1[a]) - eps;
+                shi[a] = std::max(p0[a], p1[a]) + eps;
+            }
+            for (const Hull& h : hulls) {
+                if (h.n.size() < 4) continue;  // not closed round
+                bool apart = false;
+                for (int a = 0; a < 3 && !apart; ++a) apart = h.lo[a] > shi[a] || h.hi[a] < slo[a];
+                if (apart) continue;
+                float t0 = 0.0f, t1 = 1.0f;
+                for (size_t j = 0; j < h.n.size() && !apart; ++j) {
+                    const float a = dot(h.n[j], p0) - h.d[j], b = dot(h.n[j], p1) - h.d[j];
+                    if (a > eps && b > eps) apart = true;
+                    else if (a > eps) t0 = std::max(t0, a / (a - b));
+                    else if (b > eps) t1 = std::min(t1, a / (a - b));
+                    apart = apart || t0 >= t1;
+                }
+                if (apart || (t1 - t0) * len <= 1e-6f) continue;
+                spans.push_back({bar.along[i] + t0 * len, bar.along[i] + t1 * len, h.body});
+            }
+        }
+        std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) {
+            return a.in < b.in || (a.in == b.in && (a.body < b.body || (a.body == b.body && a.out < b.out)));
+        });
+        std::vector<RigidRebar::Station> list;
+        for (Span sp : spans) {
+            if (!list.empty()) {
+                RigidRebar::Station& last = list.back();
+                if (sp.body == last.body && sp.in <= last.out + eps) {
+                    last.out = std::max(last.out, sp.out);
+                    continue;
+                }
+                // Overlapping another body -- a bar along a face both have:
+                // from where that one ends.
+                sp.in = std::max(sp.in, last.out);
+                if (sp.out <= sp.in) continue;
+            }
+            list.push_back({sp.body, sp.in, sp.out});
+        }
+        bar.first = static_cast<uint32_t>(R.stations.size());
+        for (const RigidRebar::Station& st : list) {
+            if (st.out - st.in < 0.5f * bar.width) continue;  // a corner grazed
+            if (!R.stations.empty() && R.stations.size() > bar.first && R.stations.back().body == st.body) {
+                R.stations.back().out = st.out;
+                continue;
+            }
+            R.stations.push_back(st);
+        }
+        bar.count = static_cast<uint32_t>(R.stations.size()) - bar.first;
+    }
+    return out;
+}
+
 // --- Posed, and drawn ------------------------------------------------------------------
 
 namespace {
@@ -678,8 +879,172 @@ std::shared_ptr<Geometry> apart(const Geometry& geo, const Group& cut) {
 
 }  // namespace
 
+std::shared_ptr<Geometry> rebarBars(const RigidFrame& f) {
+    auto out = std::make_shared<Geometry>();
+    if (!f.rebar) return out;
+    const RigidRebar& R = *f.rebar;
+    std::vector<Vec3> points, velocities;
+    std::vector<float> widths;
+    std::vector<std::vector<uint32_t>> lines;
+    auto state = [&](size_t s) -> uint8_t { return s < f.rebarState.size() ? f.rebarState[s] : 0; };
+    auto pose = [&](int32_t body) {
+        return body >= 0 && static_cast<size_t>(body) < f.poses.size() ? f.poses[static_cast<size_t>(body)] : RigidPose{};
+    };
+    auto turned = [](const RigidPose& p, const Vec3& v) { return p.apply(v) - p.position; };
+    auto holds = [&](size_t s) {
+        return !(state(s) & RigidFrame::kRebarLoose) &&
+               !std::binary_search(f.vanished.begin(), f.vanished.end(), static_cast<uint32_t>(R.stations[s].body));
+    };
+    for (const RigidRebar::Bar& bar : R.bars) {
+        const float total = bar.along.empty() ? 0.0f : bar.along.back();
+        // A torn end sticks out of the piece: the steel came loose of the
+        // concrete round the crack and necked before it broke.
+        const float stub = std::max(8.0f * bar.width, 0.05f);
+        size_t start = bar.first;
+        float from = 0.0f;
+        while (start < bar.first + bar.count) {
+            // A run: the stations up to a tear, and the bar round them.
+            size_t stop = start;
+            while (stop + 1 < bar.first + bar.count && !(state(stop) & RigidFrame::kRebarTorn)) ++stop;
+            const bool torn = (state(stop) & RigidFrame::kRebarTorn) && stop + 1 < bar.first + bar.count;
+            const float to = torn ? 0.5f * (R.stations[stop].out + R.stations[stop + 1].in) : total;
+            std::vector<size_t> held;
+            for (size_t s = start; s <= stop; ++s) {
+                if (holds(s)) held.push_back(s);
+            }
+            if (!held.empty()) {
+                std::vector<uint32_t> line;
+                auto add = [&](const Vec3& p, const Vec3& v) {
+                    if (!line.empty() && length(p - points[line.back()]) < 1e-5f) return;
+                    line.push_back(static_cast<uint32_t>(points.size()));
+                    points.push_back(p);
+                    velocities.push_back(v);
+                    widths.push_back(bar.width);
+                };
+                // The bar from `a` to `b` along it, as `body` holds it.
+                auto rigid = [&](int32_t body, float a, float b) {
+                    const RigidPose q = pose(body);
+                    const Vec3 ra = RigidRebar::at(bar, a);
+                    add(q.apply(ra), q.velocityAt(ra));
+                    for (size_t i = 0; i < bar.points.size(); ++i) {
+                        if (bar.along[i] > a && bar.along[i] < b) add(q.apply(bar.points[i]), q.velocityAt(bar.points[i]));
+                    }
+                    const Vec3 rb = RigidRebar::at(bar, b);
+                    add(q.apply(rb), q.velocityAt(rb));
+                };
+                const RigidRebar::Station& first = R.stations[held.front()];
+                const float head = start > bar.first ? std::max(from, 0.0f) : 0.0f;
+                rigid(first.body, std::min(head, first.in), first.in);
+                for (size_t h = 0; h < held.size(); ++h) {
+                    const RigidRebar::Station& st = R.stations[held[h]];
+                    rigid(st.body, st.in, st.out);
+                    if (h + 1 == held.size()) break;
+                    // Bare between two pieces: bent from the one to the other.
+                    const RigidRebar::Station& next = R.stations[held[h + 1]];
+                    const RigidPose qa = pose(st.body), qb = pose(next.body);
+                    const Vec3 ra = RigidRebar::at(bar, st.out), rb = RigidRebar::at(bar, next.in);
+                    const Vec3 pa = qa.apply(ra), pb = qb.apply(rb);
+                    const float chord = length(pb - pa), span = next.in - st.out;
+                    const float reach = std::max(span, chord);
+                    const Vec3 ta = turned(qa, RigidRebar::tangent(bar, st.out)) * reach;
+                    const Vec3 tb = turned(qb, RigidRebar::tangent(bar, next.in)) * reach;
+                    const Vec3 va = qa.velocityAt(ra), vb = qb.velocityAt(rb);
+                    const int n = std::clamp(static_cast<int>(std::ceil(reach / 0.04f)), 1, 24);
+                    for (int i = 1; i < n; ++i) {
+                        const float t = static_cast<float>(i) / static_cast<float>(n), t2 = t * t, t3 = t2 * t;
+                        const Vec3 p = pa * (2.0f * t3 - 3.0f * t2 + 1.0f) + ta * (t3 - 2.0f * t2 + t) +
+                                       pb * (-2.0f * t3 + 3.0f * t2) + tb * (t3 - t2);
+                        add(p, va + (vb - va) * t);
+                    }
+                }
+                const RigidRebar::Station& last = R.stations[held.back()];
+                rigid(last.body, last.out, torn ? std::max(to, last.out + stub) : std::max(to, last.out));
+                if (line.size() >= 2) lines.push_back(std::move(line));
+            }
+            // The next run starts at the tear, a stub before the piece it
+            // goes into.
+            from = torn ? std::min(to, R.stations[stop + 1].in - stub) : total;
+            start = stop + 1;
+        }
+    }
+    out->addPoints(points.size());
+    auto P = out->positionsForWrite();
+    std::copy(points.begin(), points.end(), P.begin());
+    auto v = out->points().create("v", AttrType::Vec3).write<Vec3>();
+    std::copy(velocities.begin(), velocities.end(), v.begin());
+    auto w = out->points().create("width", AttrType::Float).write<float>();
+    std::copy(widths.begin(), widths.end(), w.begin());
+    for (const std::vector<uint32_t>& line : lines) out->addPrimitive(line, false);
+    return out;
+}
+
+namespace {
+
+/// The polylines of `bars` added to `geo` as tubes as thick as their width,
+/// six-sided: their points and quads, the points moving as v says, the
+/// corners' Cd `steel`.
+void appendTubes(Geometry& geo, const Geometry& bars, const Vec3& steel) {
+    constexpr int kSides = 6;
+    const auto C = bars.positions();
+    const AttributeArray* wa = bars.points().find("width");
+    const AttributeArray* va = bars.points().find("v");
+    std::vector<Vec3> ring, ringV, ringN;
+    std::vector<std::array<uint32_t, 4>> quads;
+    for (size_t prim = 0; prim < bars.primitiveCount(); ++prim) {
+        const auto c = bars.primitivePoints(prim);
+        if (c.size() < 2) continue;
+        const uint32_t base = static_cast<uint32_t>(geo.pointCount() + ring.size());
+        Vec3 normal;
+        for (size_t i = 0; i < c.size(); ++i) {
+            const Vec3 back = C[c[i > 0 ? i - 1 : 0]], ahead = C[c[i + 1 < c.size() ? i + 1 : i]];
+            Vec3 t = normalize(ahead - back);
+            if (length(t) < 0.5f) t = Vec3(1.0f, 0.0f, 0.0f);
+            // Carried along the bar, square to it: the tube does not twist.
+            if (i == 0) normal = cross(t, std::fabs(t.x) < 0.6f ? Vec3(1.0f, 0.0f, 0.0f) : Vec3(0.0f, 1.0f, 0.0f));
+            normal = normalize(normal - t * dot(normal, t));
+            if (length(normal) < 0.5f) normal = normalize(cross(t, std::fabs(t.x) < 0.6f ? Vec3(1.0f, 0.0f, 0.0f) : Vec3(0.0f, 1.0f, 0.0f)));
+            const Vec3 side = cross(t, normal);
+            const float r = 0.5f * (wa && wa->type() == AttrType::Float ? wa->read<float>()[c[i]] : 0.012f);
+            const Vec3 vel = va && va->type() == AttrType::Vec3 ? va->read<Vec3>()[c[i]] : Vec3();
+            for (int k = 0; k < kSides; ++k) {
+                const float a = 6.2831853f * static_cast<float>(k) / static_cast<float>(kSides);
+                const Vec3 out = normal * std::cos(a) + side * std::sin(a);
+                ring.push_back(C[c[i]] + out * r);
+                ringN.push_back(out);
+                ringV.push_back(vel);
+            }
+            if (i == 0) continue;
+            const uint32_t now = base + static_cast<uint32_t>(i * kSides), was = now - kSides;
+            for (uint32_t k = 0; k < kSides; ++k) {
+                const uint32_t k1 = (k + 1) % kSides;
+                quads.push_back({was + k, was + k1, now + k1, now + k});
+            }
+        }
+    }
+    if (quads.empty()) return;
+    const size_t first = geo.addPoints(ring.size());
+    auto P = geo.positionsForWrite();
+    std::copy(ring.begin(), ring.end(), P.begin() + static_cast<long>(first));
+    if (AttributeArray* v = geo.points().find("v"); v && v->type() == AttrType::Vec3) {
+        auto w = v->write<Vec3>();
+        std::copy(ringV.begin(), ringV.end(), w.begin() + static_cast<long>(first));
+    }
+    if (AttributeArray* n = geo.points().find("N"); n && n->type() == AttrType::Vec3) {
+        auto w = n->write<Vec3>();
+        std::copy(ringN.begin(), ringN.end(), w.begin() + static_cast<long>(first));
+    }
+    const size_t corners = geo.vertexCount();
+    for (const auto& q : quads) geo.addPrimitive(q, true);
+    if (AttributeArray* cd = geo.vertices().find("Cd"); cd && cd->type() == AttrType::Vec3) {
+        auto w = cd->write<Vec3>();
+        std::fill(w.begin() + static_cast<long>(corners), w.end(), steel);
+    }
+}
+
+}  // namespace
+
 std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, const Vec3& inside,
-                                      const std::string& insideGroup) {
+                                      const std::string& insideGroup, const Vec3& steel) {
     std::shared_ptr<Geometry> geo = posedPieces(f);
     const Group* cut = insideGroup.empty() ? nullptr : geo->findGroup(insideGroup);
     if (cut && cut->classOf() != AttrClass::Primitive) cut = nullptr;
@@ -718,6 +1083,8 @@ std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, co
     geo->detail().erase("Cd");
     auto cd = geo->vertices().create("Cd", AttrType::Vec3).write<Vec3>();
     std::copy(corners.begin(), corners.end(), cd.begin());
+    // The bars, where the pieces have taken them.
+    if (f.rebar) appendTubes(*geo, *rebarBars(f), steel);
     // The grit: loose points, as big as it is, in the colour of a cut.
     const size_t first = appendGrit(*geo, f);
     if (geo->pointCount() > first) {
@@ -907,6 +1274,13 @@ Vec3 vectorOf(const Geometry& geo, const RigidLayout& L, int k, const char* name
 // standing on it. Charges break a piece's joints at a time. Pieces that do
 // not move (active 0) are still bodies of their own; a cluster glued to one
 // is held there by a joint as long as the glue between them lasts.
+//
+// The bars (rebar) join the bodies the glue no longer does: a joint of
+// Jolt's with all six ways free and friction on each -- the steel's pull on
+// the three ways it moves, its bending on the three it turns -- so that a
+// bar holds all it can and gives beyond that, and stays as it was given:
+// plastic. How far it has given is kept by where its ends are: pulled
+// longer than it is, it slid out of a piece -- or stretched -- by as much.
 struct RigidSolver::Impl : public JPH::ContactListener {
     JPH::TempAllocatorImplWithMallocFallback temp{64 * 1024 * 1024};
     JPH::JobSystemSingleThreaded jobs{JPH::cMaxPhysicsJobs};
@@ -984,6 +1358,19 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         uint32_t body[2] = {0, 0}; ///< the bodies, by Jolt's index
     };
     std::vector<Knock> knocks;
+    // The bars: where each runs through which piece, and what became of each
+    // stretch of one -- slid out of its piece, torn after it -- how far it
+    // has slid out of its piece so far, how much longer the bar after it got.
+    std::shared_ptr<const RigidRebar> rebar;
+    std::vector<uint8_t> barState;
+    std::vector<float> slid, longer;
+    struct Link {
+        uint32_t bar = 0, from = 0, to = 0;       ///< stations of the bar that hold it, one and the next
+        JPH::Ref<JPH::SixDOFConstraint> joint;    ///< between their bodies; null while those are one
+        JPH::BodyID a, b;                         ///< ... those bodies
+        float span = 0.0f;                        ///< metres of the bar between them, at rest
+    };
+    std::vector<Link> links;
     uint64_t random = 0x2545F4914F6CDD1Dull;
     float time = 0.0f;
     float gritScale = 1.0f;  ///< grit as big as the scene's dust: a town's is stones, a model's sand
@@ -1313,6 +1700,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         const Vec3 velocity = ours(bi.GetLinearVelocity(old.id)), spin = ours(bi.GetAngularVelocity(old.id));
         for (const auto& a : old.anchors) physics.RemoveConstraint(a);
         old.anchors.clear();
+        unjoin(old.id);
         bi.RemoveBody(old.id);
         bi.DestroyBody(old.id);
         old.alive = false;
@@ -1358,6 +1746,256 @@ struct RigidSolver::Impl : public JPH::ContactListener {
             bi.SetPositionAndRotation(c.id, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EActivation::DontActivate);
             bi.SetLinearAndAngularVelocity(c.id, JPH::Vec3::sZero(), JPH::Vec3::sZero());
         }
+    }
+
+    // --- The bars ---
+
+    /// Newtons a bar holds pulled -- the steel yields -- and newton metres bent.
+    float steelPull(const RigidRebar::Bar& bar) const { return settings.rebarStrength * 0.7853982f * bar.width * bar.width; }
+    float steelBend(const RigidRebar::Bar& bar) const {
+        return settings.rebarStrength * bar.width * bar.width * bar.width / 6.0f;
+    }
+    /// Newtons the bond of station `s` holds its bar with: along what of
+    /// the bar is still in its piece.
+    float bondAt(uint32_t s, const RigidRebar::Bar& bar) const {
+        const RigidRebar::Station& st = rebar->stations[s];
+        return settings.bond * 3.1415927f * bar.width * std::max(st.out - st.in - slid[s], 0.0f);
+    }
+    /// Newtons the bar is held with from station `s` on away from a link --
+    /// `dir` -1 back along the bar, +1 on -- by the bond of all the pieces
+    /// that hold it there, up to a tear or its end: each passes the pull on
+    /// to the next. Counted until it is `enough`.
+    float anchorage(uint32_t s, int dir, const RigidRebar::Bar& bar, float enough) const {
+        float total = 0.0f;
+        for (int64_t i = s; i >= bar.first && i < static_cast<int64_t>(bar.first + bar.count); i += dir) {
+            const uint32_t u = static_cast<uint32_t>(i);
+            if (dir < 0 && u < s && (barState[u] & RigidFrame::kRebarTorn)) break;
+            if (holds(u)) total += bondAt(u, bar);
+            if (total >= enough) break;
+            if (dir > 0 && (barState[u] & RigidFrame::kRebarTorn)) break;
+        }
+        return total;
+    }
+    /// Whether the bar is still in the piece of station `s`.
+    bool holds(uint32_t s) const {
+        return !(barState[s] & RigidFrame::kRebarLoose) && !pieces[static_cast<size_t>(rebar->stations[s].body)].gone;
+    }
+    /// The body piece `k` is in: its cluster's, or its own still one.
+    JPH::BodyID bodyAt(int k) const {
+        const Piece& p = pieces[static_cast<size_t>(k)];
+        if (p.gone) return JPH::BodyID();
+        return p.moves ? bodyOf(k) : still[static_cast<size_t>(k)];
+    }
+    /// Which way a direction of piece `k` at rest points now.
+    Vec3 turnNow(int k, const Vec3& v) const {
+        const JPH::BodyID id = bodyOf(k);
+        if (id.IsInvalid()) return v;
+        return ours(physics.GetBodyInterfaceNoLock().GetRotation(id) * jolt(v));
+    }
+    /// The gap between two stations of a link nearest its middle: where it tears.
+    uint32_t middle(const Link& l) const {
+        const std::vector<RigidRebar::Station>& st = rebar->stations;
+        const float mid = 0.5f * (st[l.from].out + st[l.to].in);
+        uint32_t best = l.from;
+        float nearest = 1e30f;
+        for (uint32_t s = l.from; s < l.to; ++s) {
+            const float d = std::fabs(0.5f * (st[s].out + st[s + 1].in) - mid);
+            if (d < nearest) {
+                nearest = d;
+                best = s;
+            }
+        }
+        return best;
+    }
+    /// How hard link `l` holds: all it can taut -- the steel, or the bond
+    /// that anchors the bar less, on one side or the other -- slack only
+    /// what bends it straight.
+    void setHold(Link& l, float needed, float free) {
+        const RigidRebar::Bar& bar = rebar->bars[l.bar];
+        const float steel = steelPull(bar), bend = steelBend(bar);
+        const float hold = std::min({steel, anchorage(l.from, -1, bar, steel), anchorage(l.to, 1, bar, steel)});
+        const bool slack = needed < free - 0.5f * bar.width;
+        const float pull = slack ? std::min(hold, 2.0f * bend / std::max(free, bar.width)) : hold;
+        const float turn = bend * std::min(1.0f, hold / std::max(steel, 1e-6f));
+        using Axis = JPH::SixDOFConstraintSettings::EAxis;
+        for (int a = 0; a < 3; ++a) {
+            l.joint->SetMaxFriction(static_cast<Axis>(Axis::TranslationX + a), pull);
+            l.joint->SetMaxFriction(static_cast<Axis>(Axis::RotationX + a), turn);
+        }
+    }
+    /// Where link `l` leaves its first station's piece and goes into its
+    /// last's, now; how much bar there is between those; how far apart they
+    /// are along the bar; and how much bar it takes to join them. The bar
+    /// yields over twenty times its diameter round a crack as well: moved
+    /// apart along the bar, it takes as much more; moved aside, it bends
+    /// into an S along that and takes less.
+    void ends(const Link& l, Vec3& pa, Vec3& pb, float& free, float& along, float& needed) const {
+        const RigidRebar::Bar& bar = rebar->bars[l.bar];
+        const RigidRebar::Station &A = rebar->stations[l.from], &B = rebar->stations[l.to];
+        pa = whereNow(A.body, RigidRebar::at(bar, A.out));
+        pb = whereNow(B.body, RigidRebar::at(bar, B.in));
+        free = l.span + slid[l.from] + slid[l.to];
+        for (uint32_t s = l.from; s < l.to; ++s) free += longer[s];
+        Vec3 axis = normalize(turnNow(A.body, RigidRebar::tangent(bar, A.out)) + turnNow(B.body, RigidRebar::tangent(bar, B.in)));
+        if (length(axis) < 0.5f) axis = normalize(pb - pa);
+        const Vec3 d = pb - pa;
+        const float yields = 20.0f * bar.width;
+        along = std::max(dot(d, axis), -0.5f * yields);
+        const float aside = length(d - axis * dot(d, axis));
+        needed = std::sqrt((yields + along) * (yields + along) + aside * aside) - yields;
+    }
+    /// A joint for link `l` between its bodies -- none while they are one,
+    /// or neither moves.
+    JPH::Ref<JPH::SixDOFConstraint> join(Link& l) {
+        if (l.a.IsInvalid() || l.b.IsInvalid() || l.a == l.b) return nullptr;
+        JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        if (bi.GetMotionType(l.a) != JPH::EMotionType::Dynamic && bi.GetMotionType(l.b) != JPH::EMotionType::Dynamic) {
+            return nullptr;
+        }
+        Vec3 pa, pb;
+        float free = 0.0f, along = 0.0f, needed = 0.0f;
+        ends(l, pa, pb, free, along, needed);
+        Vec3 axis = pb - pa;
+        if (length(axis) < 1e-4f) axis = turnNow(rebar->stations[l.from].body, RigidRebar::tangent(rebar->bars[l.bar], rebar->stations[l.from].out));
+        axis = normalize(axis);
+        if (length(axis) < 0.5f) axis = Vec3(1.0f, 0.0f, 0.0f);
+        const Vec3 side = normalize(cross(axis, std::fabs(axis.x) < 0.6f ? Vec3(1.0f, 0.0f, 0.0f) : Vec3(0.0f, 1.0f, 0.0f)));
+        JPH::SixDOFConstraintSettings js;  // all six ways free: friction alone holds them
+        js.mSpace = JPH::EConstraintSpace::WorldSpace;
+        js.mPosition1 = jolt(pa);
+        js.mPosition2 = jolt(pb);
+        js.mAxisX1 = js.mAxisX2 = jolt(axis);
+        js.mAxisY1 = js.mAxisY2 = jolt(side);
+        const std::array<JPH::BodyID, 2> pair{l.a, l.b};
+        JPH::BodyLockMultiWrite lock(physics.GetBodyLockInterfaceNoLock(), pair.data(), 2);
+        JPH::Body* a = lock.GetBody(0);
+        JPH::Body* b = lock.GetBody(1);
+        if (!a || !b) return nullptr;
+        l.joint = static_cast<JPH::SixDOFConstraint*>(js.Create(*a, *b));
+        setHold(l, needed, free);
+        physics.AddConstraint(l.joint);
+        return l.joint;
+    }
+    /// The joints of the bars on body `id` gone with it.
+    void unjoin(const JPH::BodyID& id) {
+        for (Link& l : links) {
+            if (!l.joint || (l.a != id && l.b != id)) continue;
+            physics.RemoveConstraint(l.joint);
+            l.joint = nullptr;
+        }
+    }
+    /// The links of the bars as they are now: between the stations of each
+    /// that hold it, one and the next -- none across a tear -- with a joint
+    /// where their pieces are apart; the joints that join the same bodies
+    /// as before kept.
+    void relinkBars() {
+        const std::vector<RigidRebar::Station>& st = rebar->stations;
+        // A piece gone -- crushed, blown to dust -- lets go of its bars.
+        for (size_t s = 0; s < st.size(); ++s) {
+            if (pieces[static_cast<size_t>(st[s].body)].gone) barState[s] |= RigidFrame::kRebarLoose;
+        }
+        std::map<std::pair<uint32_t, uint32_t>, size_t> had;
+        for (size_t i = 0; i < links.size(); ++i) had[{links[i].from, links[i].to}] = i;
+        std::vector<uint8_t> kept(links.size(), 0);
+        std::vector<Link> next;
+        for (uint32_t b = 0; b < rebar->bars.size(); ++b) {
+            const RigidRebar::Bar& bar = rebar->bars[b];
+            int64_t prev = -1;
+            for (uint32_t s = bar.first; s < bar.first + bar.count; ++s) {
+                if (holds(s)) {
+                    if (prev >= 0) {
+                        Link l;
+                        l.bar = b;
+                        l.from = static_cast<uint32_t>(prev);
+                        l.to = s;
+                        l.span = std::max(st[s].in - st[l.from].out, 0.0f);
+                        next.push_back(l);
+                    }
+                    prev = s;
+                }
+                if (barState[s] & RigidFrame::kRebarTorn) prev = -1;
+            }
+        }
+        for (Link& l : next) {
+            l.a = bodyAt(st[l.from].body);
+            l.b = bodyAt(st[l.to].body);
+            if (const auto it = had.find({l.from, l.to}); it != had.end()) {
+                const Link& old = links[it->second];
+                if (old.joint && old.a == l.a && old.b == l.b) {
+                    l.joint = old.joint;
+                    kept[it->second] = 1;
+                    continue;
+                }
+            }
+            join(l);
+        }
+        for (size_t i = 0; i < links.size(); ++i) {
+            if (links[i].joint && !kept[i]) physics.RemoveConstraint(links[i].joint);
+        }
+        links = std::move(next);
+    }
+    /// The bar is out of the piece of station `s`, at `at`: the concrete
+    /// falls off it in a puff of dust.
+    void comeOut(uint32_t s, const Vec3& at) {
+        barState[s] |= RigidFrame::kRebarLoose;
+        const RigidRebar::Station& st = rebar->stations[s];
+        const float l = st.out - st.in;
+        const Vec3 v = velocityAt(st.body, at);
+        puff(at, v * 0.5f, settings.dustSize * 0.8f, settings.dust * std::clamp(l * 3.0f, 0.2f, 1.2f));
+        throwGrit(at, v, static_cast<int>(std::lround(settings.debris * std::clamp(l * 20.0f, 2.0f, 8.0f))), 1.5f, 0.05f);
+    }
+    /// How the bars took the step. One pulled longer than it is between two
+    /// pieces gives where it holds least. Where the bond anchors it harder
+    /// than the steel holds on both sides, the steel stretches; else, pulled
+    /// along it, it slides out of the side anchored less -- out of the piece
+    /// at the link once it has slid as far as it ran through it, then out of
+    /// the next -- and pulled aside, it bends there. Stretched or bent
+    /// Stretch over what of it yields, it tears -- at the face of the side
+    /// that holds it less: that one goes with a stub of it, the other keeps
+    /// the rest. Then how hard each holds from now on. True if a bar tore or
+    /// came out of a piece.
+    bool strain() {
+        bool changed = false;
+        const std::vector<RigidRebar::Station>& st = rebar->stations;
+        for (Link& l : links) {
+            if (!l.joint || !holds(l.from) || !holds(l.to)) continue;
+            const RigidRebar::Bar& bar = rebar->bars[l.bar];
+            Vec3 pa, pb;
+            float free = 0.0f, along = 0.0f, needed = 0.0f;
+            ends(l, pa, pb, free, along, needed);
+            const float excess = needed - free;
+            if (excess > 0.0f) {
+                const float steel = steelPull(bar);
+                const float anchorA = anchorage(l.from, -1, bar, 4.0f * steel), anchorB = anchorage(l.to, 1, bar, 4.0f * steel);
+                const bool aWeaker = anchorA <= anchorB;
+                const uint32_t face = aWeaker ? l.from : l.to - 1;  // the gap at the weaker side's face
+                float bent = excess;
+                if (std::min(anchorA, anchorB) < steel) {
+                    const uint32_t weak = aWeaker ? l.from : l.to;
+                    const float slide = std::min(std::max(along - free, 0.0f), excess);
+                    bent -= slide;
+                    slid[weak] += slide;
+                    if (slid[weak] >= st[weak].out - st[weak].in) {
+                        comeOut(weak, weak == l.from ? pa : pb);
+                        changed = true;
+                        continue;
+                    }
+                }
+                if (bent > 0.0f) {
+                    longer[face] += bent;
+                    float stretched = 0.0f;
+                    for (uint32_t s = l.from; s < l.to; ++s) stretched += longer[s];
+                    if (stretched > settings.stretch * (l.span + 20.0f * bar.width)) {
+                        barState[face] |= RigidFrame::kRebarTorn;
+                        changed = true;
+                        continue;
+                    }
+                }
+                free = needed;
+            }
+            setHold(l, needed, free);
+        }
+        return changed;
     }
 };
 
@@ -1525,6 +2163,15 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         m.makeCluster(group, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), m.pieces[static_cast<size_t>(group.front())].centre,
                       v, w, m.still);
     }
+    // The bars: where each runs through which piece; joints where the pieces
+    // they run through are apart from the start.
+    if (scene_.rebar && scene_.rebar->primitiveCount() > 0) {
+        m.rebar = rigidRebar(*geo, L, *scene_.rebar);
+        m.barState.assign(m.rebar->stations.size(), 0);
+        m.slid.assign(m.rebar->stations.size(), 0.0f);
+        m.longer.assign(m.rebar->stations.size(), 0.0f);
+        m.relinkBars();
+    }
     m.physics.OptimizeBroadPhase();
 }
 
@@ -1569,6 +2216,7 @@ void RigidSolver::step() {
         std::sort(torn.begin(), torn.end());
         torn.erase(std::unique(torn.begin(), torn.end()), torn.end());
         for (const int c : torn) m.split(c, hit, m.still);
+        if (m.rebar) m.relinkBars();
     };
 
     // The charges that go off now: their pieces' joints break; a piece blown
@@ -1612,6 +2260,11 @@ void RigidSolver::step() {
     m.knocks.clear();
     m.physics.Update(dt, substeps, &m.temp, &m.jobs);
     m.time += dt;
+    // The bars take the step: those that gave slid out of their pieces, or
+    // tore; their links again, and those again, until all hold.
+    if (m.rebar) {
+        for (int pass = 0; pass < 64 && m.strain(); ++pass) m.relinkBars();
+    }
 
     // The knocks break the glue where they land. How hard: what it took to
     // change how the body moved -- its momentum now against before, gravity
@@ -1726,6 +2379,8 @@ RigidFrame RigidSolver::capture() const {
     }
     f.joints = m.edges.size();
     f.broken = m.broken;
+    f.rebar = m.rebar;
+    f.rebarState = m.barState;
     return f;
 }
 

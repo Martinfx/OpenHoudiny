@@ -273,7 +273,7 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
     const usda::Stage s = usd.stage();
     // As the look draws them: the faces the fracture cut have points of their own.
     const sim::Look look;
-    const GeometryPtr drawn = sim::drawnPieces(last.rigid, look.piecesColor, look.piecesInside, look.insideGroup);
+    const GeometryPtr drawn = sim::drawnPieces(last.rigid, look.piecesColor, look.piecesInside, look.insideGroup, look.rebarColor);
     const auto Q = drawn->positions();
     for (int b = 0; b < layout->bodies; ++b) {
         char name[16];

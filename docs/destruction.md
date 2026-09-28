@@ -1,10 +1,12 @@
-# Destrukce: Voronoi a Concrete Fracture, tuhá tělesa, lepidlo a prach
+# Destrukce: Voronoi a Concrete Fracture, tuhá tělesa, lepidlo, výztuž a prach
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
 (**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
 beton: nestejné kusy, hrubé lomy, odprýsklé rohy), kusy dostanou hmotu a
 slepí se k sobě (**RBD
 Solver** nad knihovnou [Jolt Physics](https://github.com/jrouwe/JoltPhysics)).
+Ocelová výztuž (**Rebar**) je drží i tam, kde lepidlo prasklo: pruty se
+ohýbají, vytahují se z malých kusů a trhají se.
 Nálože přetrhnou lepidlo v daný čas, nárazy ho lámou dál, padající patra
 drtí stěny na prach, úlomky sypou drť a vzduch, který zřícení vytlačí, žene
 oblak prachu do ulic (**Pyro Solver**). Všechno je deterministické: stejná
@@ -177,7 +179,7 @@ nerozmazalo mělké trhliny do fasády.
 
 ### Třetí příklad: betonová zeď a demoliční koule
 
-![Demoliční koule prorazí betonovou zeď: kusy s hrubými lomy a úlomky](img/concrete-wall.jpg)
+![Demoliční koule prorazí železobetonovou zeď: kusy kolem díry visí na prutech, odletující kry nesou pahýly přetržené výztuže](img/concrete-wall.jpg)
 
 ```
 ./build/prototype sim concrete_wall zed.mp4       # 90 snímků (3 s)
@@ -191,12 +193,17 @@ sebe s `active 0` a spodní kusy zdi jsou k němu přilepené.
 Klíčovaná koule proletí zdí zezadu ke kameře; RBD Solver má `rings 2`,
 takže náraz uvolní jen kusy kolem koule a dva prstence za nimi: koule
 prorazí díru, kusy a úlomky vyletí a kutálejí se ke kameře a zbytek zdi
-stojí. Prach z lomů a nárazů nese Pyro Solver.
+stojí. Zdí prochází ocelová síť (uzel Rebar: pruty 12 mm po 20 cm oběma
+směry, vrstva u každé líce — 84 prutů): kusy kolem díry na nich zůstanou
+viset, pruty mezi nimi prosvítají v trhlinách, a kry, které koule vezme
+s sebou, pruty přetrhnou a odletí s jejich pahýly. Prach z lomů a nárazů
+nese Pyro Solver.
 
 ```
-[wall] ─▶ [Concrete Fracture] ─▶ [moving] ─┐
-[plinth] ─▶ [foundation] ─────────────────┴▶ [Merge] ─Pieces─▶ [RBD Solver] ─Look──────────────▶ [Output] ◀─ [Camera]
-[ball] ─Collider─▶ Colliders ──────────────────────────────────┘ │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look] ─┘
+[wall] ─┬─▶ [Concrete Fracture] ─▶ [moving] ─┐
+        │   [plinth] ─▶ [foundation] ────────┴▶ [Merge] ─Pieces──┐
+        └─▶ [Rebar] ─Rebar───────────────────────────────────────┼▶ [RBD Solver] ─Look──────────────▶ [Output] ◀─ [Camera]
+[ball] ─Collider─▶ Colliders ────────────────────────────────────┘   │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look] ─┘
 ```
 
 ### Kry a sekundární lámání: RBD Cluster
@@ -230,9 +237,48 @@ znovu až za letu a při dopadu, přestože kusy jsou nařezané předem.
 | `strength` | Kolikrát pevnější je lepidlo uvnitř kry než mezi krami; 1 žádné kry |
 | `attribute` | Atribut s číslem kusu (`piece`) |
 
+### Výztuž: Rebar
+
+Beton skoro vždycky obsahuje ocel. Pruty drží kusy pohromadě i tam, kde
+beton praskl: prasklý trám se nerozlomí vedví, ale přehne a visí na nich;
+kusy kolem díry ve zdi zůstanou viset na síti. Uzel **Rebar** (Geometry)
+položí pruty do bloku tak, jak se kladou před betonáží
+([`src/pg/nodes/Rebar.cpp`](../src/pg/nodes/Rebar.cpp)):
+
+- **Blok** je kvádr kolem vstupu natočený tak, jak leží: kolmo na jeho
+  největší rovnou stranu (stěny, které se dívají jedním směrem, mají
+  dohromady nejvíc plochy) a v její rovině obdélník, který body obepne
+  nejtěsněji (rotující třmeny kolem jejich konvexního obalu) — nebo podle
+  os světa, když je takový kvádr stejně malý. Počítá se z `proxy`, má-li
+  ho vstup, takže vstupem může být blok i jeho kusy po Concrete Fracture,
+  otočené, jak chtějí.
+- **Síť** (`layout mesh`, pro zeď a desku — nejtenčí strana pod polovinou
+  další): pruty oběma směry po `spacing`, vrstva u každé líce (`layers 2`)
+  nebo jedna uprostřed; pruty jednoho směru leží na prutech druhého, krytí
+  `cover` od líce i za konci prutů.
+- **Armokoš** (`layout cage`, pro trám a sloup): podélné pruty po obvodu
+  průřezu — v každém rohu jeden, nejvýš `spacing` od sebe — a kolem nich
+  třmínky po `spacing` podél prvku.
+- **Výstup**: otevřené lomené čáry (třmínek končí, kde začal) s bodovým
+  atributem `width`, průměrem prutu.
+
+| Parametr | Význam |
+|---|---|
+| `layout` | Auto (síť pro zeď a desku, jinak koš), Mesh, Cage |
+| `spacing` | Největší vzdálenost prutů — a třmínků podél koše (m) |
+| `cover` | Krytí betonem nad pruty a za jejich konci (m) |
+| `diameter` | Průměr prutu (m): 8 až 32 mm |
+| `layers` | Síť: 2 vrstvy u lící, 1 uprostřed |
+| `stirrup` | Průměr třmínků (m); 0 žádné |
+
+Výstup Rebar patří do vstupu **Rebar** RBD Solveru. Výztuží může být
+jakákoli lomená čára s atributem `width` (bez něj 12 mm) — nakreslená,
+z wrangle, z jiného souboru —, stejně jako v Houdini *RBD Constraints From
+Curves*. Jak solver pruty simuluje, popisuje [§3](#jak-to-funguje).
+
 ### Čtvrtý příklad: trám přes kvádr
 
-![Betonový trám se zlomí přes kvádr a poloviny se rozpadnou na kry](img/concrete-drop.jpg)
+![Železobetonový trám se přes kvádr přehne a obě poloviny visí na výztuži](img/concrete-drop.jpg)
 
 ```
 ./build/prototype sim concrete_drop tram.mp4      # 60 snímků (2 s)
@@ -243,14 +289,18 @@ betonový trám 3 × 0,4 × 0,4 m padá z jeřábu nad záběrem (`v` ve wrangle
 `falling`, šest metrů za sekundu) napříč na betonový kvádr. Concrete
 Fracture ho rozláme na 150 kusů velkých jako dlaň, RBD Cluster je seskupí
 do čtrnácti ker s lepidlem uvnitř třicetkrát pevnějším (`glue 1000`,
-`spread 0,3`). Trám se o kvádr zlomí v půli a tam se i rozdrtí, poloviny
-spadnou po stranách a teprve na zemi se rozpadnou na kry — každá kra
-zůstane celá, kromě míst, kde ji úder rozdrtil. Prach z lomů a dopadů nese
-Pyro Solver.
+`spread 0,3`) a Rebar do něj položí armokoš: osm podélných prutů 12 mm a
+šestnáct třmínků 8 mm. Trám o kvádr praskne a tam se i rozdrtí, ale
+výztuž ho udrží pohromadě: přehne se přes kvádr a obě poloviny visí dolů
+na prutech — kde se ohyb rozevřel nejvíc, se pruty přetrhly a trčí z lomu
+jejich pahýly, jinde se ohnuly. Bez výztuže (odpojte Rebar) se trám zlomí
+vedví, poloviny spadnou po stranách a na zemi se rozpadnou na kry. Prach
+z lomů a dopadů nese Pyro Solver.
 
 ```
-[beam] ─▶ [Concrete Fracture] ─▶ [RBD Cluster] ─▶ [Transform] ─▶ [falling] ─Pieces─▶ [RBD Solver] ─Look──▶ [Output]
-[block] ─Collider─▶ Colliders ─────────────────────────────────────────────────────────┘ │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look]
+[beam] ─▶ [Concrete Fracture] ─▶ [RBD Cluster] ─▶ [Transform] ─┬─▶ [falling] ─Pieces─┐
+                                                               └─▶ [Rebar] ─Rebar────┼▶ [RBD Solver] ─Look──▶ [Output]
+[block] ─Collider─▶ Colliders ───────────────────────────────────────────────────────┘   │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look]
 ```
 
 ---
@@ -260,7 +310,8 @@ Pyro Solver.
 Uzel **RBD Solver** (Simulation) dělá z kusů tuhá tělesa. Vstup **Pieces**
 je geometrie s atributem `piece` (Voronoi Fracture; bez atributu je kusem
 každá souvislá část), **Colliders** jsou objekty, do kterých kusy narážejí —
-stojící i klíčované. Výstupy:
+stojící i klíčované, **Rebar** jsou ocelové pruty v kusech (uzel Rebar,
+nebo jakékoli lomené čáry s `width`). Výstupy:
 
 | Výstup | Typ | Kam |
 |---|---|---|
@@ -281,6 +332,9 @@ Parametry:
 | Glue | `glue` | Pevnost lepidla v kPa (kilonewtonech na metr čtvereční plochy spoje); 0 znamená bez lepidla |
 | | `spread` | Kolik nárazu jde přes spoj dál na kusy za ním: 0,5 polovina (výchozí) — tvrdý náraz láme lepidlo daleko kolem; 0 nic, uvolní se jen kusy, do kterých narazilo. V Houdini *Propagate Rate* |
 | | `rings` | Kolik prstenců kusů kolem zasažených může náraz uvolnit, ať je jakkoli silný: 1 sousedy, 2 i sousedy sousedů; 0 (výchozí) tak daleko, kam ho `spread` donese. V Houdini *Propagate Iterations* |
+| Rebar | `rebar_strength` | MPa, kdy ocel prutů teče: 500 dnešní pruty. Prut 12 mm unese v tahu asi 57 kN, ohnutý zůstane ohnutý |
+| | `bond` | MPa, jak pevně beton svírá prut po jeho povrchu: kus, kterým prut prochází 20 cm, ho drží asi 38 kN. Kusy na jedné straně trhliny prut kotví dohromady; kde drží míň než ocel — u konce prutu nebo přetrženého — prut se z nich vytahuje a beton z něj opadá, jinde teče ocel. 0: pruty nedrží nic |
+| | `stretch` | O kolik se prut protáhne, než se přetrhne, jako díl toho, co z něj teče: 0,1 desetina — holého prutu mezi dvěma kusy a dvacetinásobku průměru |
 | Time | `substeps` | Kroky řešiče na snímek: víc pro rychlé kusy a vysoké stavby |
 | Dust | `dust` | Kolik prachu dá přetržený spoj |
 | | `impact_dust` | … tvrdý náraz a rozdrcený kus |
@@ -288,6 +342,7 @@ Parametry:
 | | `debris` | Kolik drti nárazy a lomy sypou; 0 žádná |
 | | `air` | Kolik vzduchu kusy vytlačí, když se drtí a narážejí: rozpíná obláčky a žene prach po zemi; 1 kolik by vytlačily, 0 nic |
 | Look | `color`, `inside_color`, `inside_group` | Barva kusů bez vlastního `Cd`, barva řezných ploch a jejich skupina |
+| | `rebar_color` | Barva prutů: zrezivělá ocel |
 
 Atributy kusů (na primitivech, jinak na bodech; tělo bere atributy svého
 prvního primitiva) řeknou, čím se kus liší:
@@ -387,6 +442,32 @@ v průměru za 6 ms na snímek.
   animace klíčuje, a odstrčí, co jim stojí v cestě. Podlaha je statický
   kvádr pod nulou. Rychlost kusů je omezená (40 m/s, 30 rad/s), aby je
   nekonečně těžká překážka nevystřelila.
+- **Výztuž.** Pruty projde solver kusy (`rigidRebar`): každý úsek lomené
+  čáry ořízne rovinami stěn každé konvexní části (jak je má `proxy`), a
+  z průsečíků složí *stanice* — úseky prutu uvnitř jednoho tělesa, v pořadí
+  podél prutu (úsek kratší než půl průměru, jen škrtnutý roh, se nepočítá).
+  Dvě po sobě jdoucí stanice, které prut drží, spojuje *vazba*; kusy
+  jednoho shluku jsou jedno těleso a vazba mezi nimi spí. Když lepidlo
+  praskne a kusy jsou v různých tělesech, dostane vazba spoj Joltu
+  (`SixDOFConstraint`) se všemi šesti směry volnými a třením v každém:
+  v posuvu tolik, kolik prut drží v tahu, v natočení plastický moment
+  prutu (*f*<sub>y</sub> *d*³/6). Prut tak drží, co unese, za tím povolí a
+  zůstane, jak povolil — plasticky, bez pružení zpátky. Co prut drží, je
+  menší z oceli (*f*<sub>y</sub> π *d*²/4) a z **kotvení** na každé straně
+  trhliny: soudržnost `bond` × π *d* × délka prutu ve všech kusech, které
+  ho tam drží, až k přetržení nebo konci prutu. Kde se konce vazby
+  rozejdou dál, než je prutu mezi nimi (s plastickou zónou 20 *d* kolem
+  trhliny: odsunutí stranou prut ohne do S a stojí ho méně délky než tah
+  podél), prut povolí tam, kde drží nejmíň: kotví-li ho obě strany víc,
+  než drží ocel, ocel se protahuje; jinak se prut podél sebe vytahuje ze
+  strany, která ho kotví míň — z kusu u trhliny, a až z něj vyjde celý, ze
+  dalšího (beton z něj opadá v obláčku prachu) —, a stranou se ohýbá.
+  Protažený nebo ohnutý o `stretch` z toho, co teče, se přetrhne — u líce
+  strany, která ho drží míň: ta odletí s pahýlem, druhá si nechá zbytek.
+  Vazby se po každém rozpadu shluku a po každém vytažení či přetržení
+  poskládají znovu (spoje mezi stejnými tělesy zůstanou) a hned se
+  přepočítají, dokud všechny nedrží. Rozdrcený nebo rozmetaný kus pruty
+  pustí; prut pak vede holý přes místo, kde byl.
 - **Kroky.** Svět (`WorldSolver`) krokuje tuhá tělesa jako první; voda,
   plyn a déšť pak dostanou kusy tam, kde právě jsou, a plyn obláčky
   prachu jako zdroje.
@@ -410,13 +491,25 @@ drť v oblaku proti světlu tmavne. Geometrie i kusy vrhají stíny na sebe,
 na zem i do kouře (stínová mapa slunce, 2048², měkké okraje) a Output má
 barvu země, vypínač mřížky a oblohu za scénou (`sky_behind`).
 
+**Pruty** se kreslí jako šestiboké trubky své tloušťky v barvě
+`rebar_color` (`rebarBars`, `drawnPieces`): úsek prutu v kusu se s kusem
+posune a otočí, holý prut mezi dvěma kusy vede Hermitovou křivkou, která
+vychází z každého kusu směrem, kterým z něj prut vede — ohnutý tam, kde se
+kusy vůči sobě natočily —, přetržený prut končí pahýlem osminásobku
+průměru (nejméně 5 cm) a holý konec za posledním kusem, který ho drží,
+pokračuje rovně.
+
 **Do jiného rendereru.** `prototype sim demolition - --export
 demolition.usda` zapíše celý záběr jako scénu USD: každé těleso jednou
 jako tvar a pak jen jeho poloha a otočení v každém snímku, rozmetaná tělesa
 zneviditelněná, drť jako body, prach jako soubory VDB vedle, kamera,
 slunce a obloha. Blender, Houdini nebo Karma ho vyrenderují s vlastním
 světlem, rozmazáním pohybem a materiály; plochy řezu jsou `GeomSubset`
-`inside`, aby dostaly jiný materiál ([usd.md](usd.md)).
+`inside`, aby dostaly jiný materiál ([usd.md](usd.md)). Pruty jsou
+`/World/rebar`: lineární `BasisCurves` s tloušťkou (`widths` po vrcholech)
+a rychlostmi, v souboru každého snímku. V Pythonu vrátí
+`frame.rigid.rebar()` pruty snímku jako geometrii (`width`, `v`) a
+`rebar_state`, `rebar_stations`, co se s kterým úsekem stalo.
 
 **RBD Pieces** (Geometry) vrátí kusy daného snímku jako geometrii: body
 posunuté a otočené, normály otočené a rychlost každého bodu v `v` — pro
@@ -424,8 +517,10 @@ další uzly, pro export snímek po snímku (`prototype sim --export`), pro
 scatter jisker z hran. Se zapnutým `grit` přidá i drť jako body: `pscale`
 je polovina velikosti zrnka, `v` jeho rychlost a `id` jeho číslo — každé
 zrnko dostane při vyhození své a drží ho, dokud je ve scéně, takže renderer
-podle něj zrnko sleduje a rozmaže pohybem. Bez snímku (před simulací) je
-prázdný.
+podle něj zrnko sleduje a rozmaže pohybem. Se zapnutým `rebar` přidá
+pruty tak, jak je kusy vzaly: lomenou čáru za každý úsek prutu v jednom
+kusu (u přetržení se čára rozdělí) s `width`, průměrem prutu, a `v`. Bez
+snímku (před simulací) je prázdný.
 
 **Voda, plyn a déšť.** Výstup Collider dá každý kus jako překážku typu
 síť (`MeshShape` z jeho trojúhelníků), posunutou a otočenou tam, kde kus
@@ -456,7 +551,11 @@ verze 3 ([cache.md](cache.md)); starší snímky se čtou dál. Klidová
 geometrie kusů v souborech není — je v síti, která ji uvaří při překladu
 — a snímek načtený z disku ji dostane od světa, ve kterém se přehrává
 (`adoptPieces`), pokud sedí počet kusů; rozložení kusů do těl se přitom
-spočítá jednou pro celou sekvenci.
+spočítá jednou pro celou sekvenci. Od verze 6 nese snímek i stav prutů:
+bajt na každou stanici (prut z kusu vyšel, prut je za ní přetržený).
+Průběh prutů kusy se při čtení spočítá znovu z prutů a kusů světa — jednou
+pro celou sekvenci — a použije se, jen když má tolik stanic, kolik snímek
+říká.
 
 ---
 
@@ -516,6 +615,30 @@ a `test_rbd_cluster_groups_pieces_into_chunks` v `tests/python/test_pg.py`:
   tisíckrát pevnějším se zlomí mezi nimi a každá kra dopadne celá (všechna
   její tělesa v jedné poloze); se stejně pevným se rozpadnou i kry.
 
+`tests/test_rebar.cpp` (8 testů) a `test_rebar_holds_a_beam_together`
+v `tests/python/test_pg.py`:
+
+- Rebar: ve zdi 5 × 3 × 0,3 m síť 2 × (16 + 26) prutů s krytím na každé
+  straně a dvěma hloubkami u každé líce, jedna vrstva uprostřed;
+  v rozbitém a otočeném trámu 8 podélných prutů a 16 uzavřených třmínků
+  v osách trámu, s krytím; prázdný vstup nic;
+- průběh prutu kusy desky: stanice po sobě bez mezer a v různých tělesech,
+  dohromady celá délka prutu v desce, střed každé uvnitř svého kusu; prut
+  nad deskou žádné; pokaždé stejně;
+- konzola bez lepidla: bez prutů kusy spadnou, s nimi drží a stojí;
+- slabé pruty se pod kusy ohnou, kusy na nich visí a zůstanou, jak se
+  ohnuly (plasticky); stejné snímky při každém běhu;
+- kus zavěšený na prutu: ocel 500 MPa ho unese, 5 MPa se protáhne a
+  přetrhne (dva úseky prutu, každý ve svém kusu), bez vytažení;
+- prut 3 cm v těžkém kusu se z něj vytáhne (stanice volná, nic
+  přetržené), lehčí kus drží; s `bond 0` pruty nedrží nic;
+- stav prutů přes cache a `adoptPieces` (stejná geometrie prutů), jiné
+  pruty světa žádné; kreslení: šest stěn na úsek, barva oceli, tloušťka;
+- Rebar a RBD Solver v síti: překlad (`rebar_strength` a `bond` v MPa,
+  `stretch`, barva), RBD Pieces s pruty jako lomenými čarami, bez prutů
+  žádné, pruty bez čar hlášené, hodnoty mimo rozsah srovnané, soubor tam
+  a zpět.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -528,8 +651,15 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   totéž ve výchozím nastavení (Bullet, convex hull) a pro duté kusy nabízí
   konkávní rozklad.
 - **Slepené je tuhé.** Shluk slepených kusů se neprohýbá; zlomí se, nebo
-  drží. Ohyb ocelové výztuže (Houdini: soft constraints, plasticita) tu
-  není.
+  drží. Ohýbá se až výztuž mezi kusy, které lepidlo už nedrží.
+- **Výztuž je vazba, ne těleso.** Pruty nemají hmotu a do ničeho
+  nenarážejí: koule prolétne holým prutem a holý konec prutu za posledním
+  kusem, který ho drží, trčí rovně, kam se kus natočí. Plasticita je tření
+  ve vazbě (drží, nebo povolí a zůstane), ne ohyb ocelového nosníku po
+  délce; prut se neláme únavou ani ve smyku. Houdini to řeší stejně
+  (soft constraints s plasticitou), pro detail pruty jako Vellum.
+- **Rebar klade pruty do kvádru.** Síť a koš jsou pro zeď, desku, trám a
+  sloup; jiné tvary potřebují pruty nakreslené (lomené čáry s `width`).
 - **Síla nárazu je odhad.** Kolik nárazu jde přes spoje dál (`spread`) a
   kolik rychlosti si odlomená skupina ponechá, jsou pravidla, ne řešení
   napětí v konstrukci — věž padá jako skutečná, ale ne každý spoj praskne
@@ -539,8 +669,8 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   vyjde na vnější plochu, je její čára rovná (hrubost k povrchu slábne,
   aby nic nevyčnívalo). Kde řez odprýsknutí protne hrubou plochu
   sousedního kusu, zůstane na ní bod navíc (T-spoj): při kreslení z něj
-  občas problikne pixel. Úlomky jsou jen z rohů, ne z hran; výztuž,
-  kamenivo v lomu a trhliny, které se neotevřou, tu nejsou.
+  občas problikne pixel. Úlomky jsou jen z rohů, ne z hran; kamenivo
+  v lomu a trhliny, které se neotevřou, tu nejsou.
 - **Drcení na prach.** Rozdrcený kus zmizí najednou; drobení na menší
   kusy za běhu (Houdini RBD Material Fracture s omezeními) tu není —
   kusy jsou hotové předem.
@@ -564,4 +694,7 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   [Voronoi Fracture](https://www.sidefx.com/docs/houdini/nodes/sop/voronoifracture.html),
   [RBD Constraints](https://www.sidefx.com/docs/houdini/nodes/sop/rbdconstraintsfromrules.html)
   — jak destrukce vypadá v produkci: kusy, vazby s pevností, prach a
-  drobky.
+  drobky; [RBD Constraints From Curves](https://www.sidefx.com/docs/houdini/nodes/sop/rbdconstraintsfromcurves.html)
+  a měkké vazby s plasticitou — výztuž v Houdini.
+- fib: *Model Code for Concrete Structures 2010*, kap. 6.1 — soudržnost
+  prutu s betonem a jeho kotvení; odtud velikost `bond`.

@@ -374,6 +374,41 @@ class Simulations(unittest.TestCase):
         for p in set(piece.tolist()):
             self.assertEqual(len(set(cluster[piece == p].tolist())), 1)  # a piece is in one chunk
 
+    @needs_numpy
+    def test_rebar_holds_a_beam_together(self):
+        # A beam of pieces without glue across two supports: without bars
+        # its middle falls through; with a cage of them it holds.
+        def run(bars):
+            net = pg.Network()
+            beam = net.add("box", size=(2, 0.3, 0.3), center=(0, 1, 0))
+            pieces = net.add("voronoi_fracture", count=8)
+            rbd = net.add("rbd_solver", glue=0, substeps=4)
+            out = net.add("output", frames=30)
+            beam.connect(pieces)
+            net.connect(pieces, rbd, input="pieces")
+            for x in (-0.85, 0.85):
+                net.connect(net.add("object", shape="box", center=(x, 0.425, 0), size=(0.3, 0.85, 0.5)), rbd,
+                            input="colliders")
+            if bars:
+                cage = net.add("rebar")
+                beam.connect(cage)
+                net.connect(cage, rbd, input="rebar")
+                self.assertEqual(cage.geometry().primitive_count, 8 + 11)  # bars round it, stirrups along it
+            net.connect(rbd, out)
+            self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+            sim = net.simulate()
+            for f in sim.run(30):
+                pass
+            return sim.current.rigid
+        loose = run(False)
+        self.assertLess(float(loose.centres[:, 1].min()), 0.5)
+        held = run(True)
+        self.assertGreater(float(held.centres[:, 1].min()), 0.8)
+        steel = held.rebar()
+        self.assertGreater(steel.primitive_count, 0)
+        self.assertTrue(np.allclose(steel.points["width"][steel.points["width"] > 0.01], 0.012))
+        self.assertEqual(len(held.rebar_state), len(held.rebar_stations))
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()
