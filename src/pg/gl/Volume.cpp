@@ -1,6 +1,7 @@
 #include "pg/gl/Volume.h"
 
 #include "pg/io/Exr.h"
+#include "pg/io/Picture.h"
 #include "pg/sim/Display.h"
 
 #include <algorithm>
@@ -38,7 +39,7 @@ uniform vec4 u_solidB[16];     // its x axis in the world, half its size along i
 uniform vec4 u_solidC[16];     // y
 uniform vec4 u_solidD[16];     // z
 uniform vec4 u_solidE[16];     // colour, highlight: 0 none, 1 hovered, 2 selected
-uniform vec4 u_solidF[16];     // a torus's ring and tube radius
+uniform vec4 u_solidF[16];     // a torus's ring and tube radius; what it is over a plate (sim::Matte)
 
 vec3 safeDir(vec3 d) { return mix(vec3(1e-6), d, greaterThan(abs(d), vec3(1e-6))); }
 
@@ -497,9 +498,14 @@ uniform sampler2D u_geoShadow;
 uniform mat4 u_lightViewProj;
 uniform float u_geoShadowTexel;  // a texel of the map, in its units (0 to 1)
 uniform float u_geoShadowBias;   // how much nearer the sun a caster must be, in its depth (0 to 1)
+uniform float u_geoShadowLift;   // how far off a surface its shadow is looked up, world units
 
-float geoLit(vec3 p) {
+// At p, on a surface facing n: looked up that far off it, along n -- a
+// surface the sun grazes would shadow itself in stripes from its own
+// texels, however much nearer the sun a caster is asked to be.
+float geoLit(vec3 p, vec3 n) {
     if (!u_hasGeoShadow) return 1.0;
+    p += n * u_geoShadowLift;
     vec4 c = u_lightViewProj * vec4(p, 1.0);
     vec3 q = c.xyz * 0.5 + 0.5;
     if (any(lessThan(q.xy, vec2(0.0))) || any(greaterThan(q.xy, vec2(1.0)))) return 1.0;
@@ -514,13 +520,13 @@ float geoLit(vec3 p) {
     return lit / 9.0;
 }
 
-// Sunlight at p: blocked by the solids and the geometry, dimmed by the
-// water and the smoke.
-float sunThrough(vec3 p, bool onWater) {
+// Sunlight at p, a hair off a surface facing `facing`: blocked by the
+// solids and the geometry, dimmed by the water and the smoke.
+float sunThrough(vec3 p, vec3 facing, bool onWater) {
     vec3 n;
     int which;
     if (hitSolid(p, u_lightDir, 1e-3, n, which) < 1e29 || meshShadow(p, u_lightDir)) return 0.0;
-    float lit = geoLit(p);
+    float lit = geoLit(p, facing);
     if (lit <= 0.0) return 0.0;
     float light = waterShade(p, onWater) * lit;
     if (!u_hasGas) return light;
@@ -536,8 +542,8 @@ float sunThrough(vec3 p, bool onWater) {
     return light * exp(-u_extinction * depth * dt);
 }
 
-// Sunlight at a point of a solid.
-float sunAt(vec3 p) { return sunThrough(p, false); }
+// Sunlight at a point p of a solid facing n.
+float sunAt(vec3 p, vec3 n) { return sunThrough(p + n * 2e-3, n, false); }
 
 // Light the fire casts on a point of a solid facing n, from the lamp of each
 // block of the glow texture.
@@ -561,7 +567,7 @@ vec3 fireGlow(vec3 p, vec3 n) {
 
 vec3 shade(vec3 p, vec3 n, vec3 albedo) {
     float ndl = max(dot(n, u_lightDir), 0.0);
-    float sun = ndl > 0.0 ? sunAt(p + n * 2e-3) : 0.0;
+    float sun = ndl > 0.0 ? sunAt(p, n) : 0.0;
     vec3 sky = u_sky * (0.6 + 0.4 * n.y);
     return albedo * (u_light * sun * ndl + sky + fireGlow(p, n));
 }
@@ -596,7 +602,7 @@ vec3 wetten(vec3 lit, vec3 p, vec3 n, vec3 view) {
 // hovered, 2 for selected.
 vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark) {
     float ndl = max(dot(n, u_lightDir), 0.0);
-    float sun = ndl > 0.0 ? sunAt(p + n * 2e-3) : 0.0;
+    float sun = ndl > 0.0 ? sunAt(p, n) : 0.0;
     vec3 sky = u_sky * (0.6 + 0.4 * n.y);
     vec3 half_ = normalize(u_lightDir - view);
     vec3 c = wetten(albedo * (u_light * sun * ndl + sky + fireGlow(p, n)), p, n, view) +
@@ -609,6 +615,56 @@ vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark) {
 }
 
 vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) { return shadeSurface(p, n, view, u_solidE[i].rgb, u_solidE[i].w); }
+
+// --- the plate: what the camera filmed, behind it all ----------------------------
+uniform bool u_hasPlate;
+uniform sampler2D u_plate;     // in the renderer's light: a shown picture went back through the view transform
+uniform vec3 u_plateForward, u_plateRight, u_plateUp;  // the camera that filmed it
+uniform vec2 u_plateTan;       // tan of half its view, across and up
+
+// The plate along d -- false where the camera's frame does not reach.
+bool plateAt(vec3 d, out vec3 colour) {
+    colour = vec3(0.0);
+    if (!u_hasPlate) return false;
+    float z = dot(d, u_plateForward);
+    if (z <= 1e-6) return false;
+    vec2 uv = 0.5 + 0.5 * vec2(dot(d, u_plateRight), dot(d, u_plateUp)) / (z * u_plateTan);
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return false;
+    colour = textureLod(u_plate, vec2(uv.x, 1.0 - uv.y), 0.0).rgb;
+    return true;
+}
+
+// What solid i is over the plate: 0 itself, 1 a holdout, 2 a catcher.
+int matteOf(int i) { return i >= 0 && i < u_solidCount ? int(u_solidF[i].z + 0.5) : 0; }
+uniform int u_floorMatte;      // ... and what the floor is
+
+// The sun at p past the real things alone -- the holdouts and catchers --
+// as the plate saw it.
+float realSun(vec3 p) {
+    vec3 n;
+    for (int i = 0; i < u_solidCount; ++i) {
+        if (matteOf(i) != 0 && hitShape(i, p, u_lightDir, 1e-3, n) < 1e29) return 0.0;
+    }
+    if (u_meshShadows > 0 && matteOf(u_meshSolid[0]) != 0 && meshBlocks(u_sdf0, 0, p, u_lightDir)) return 0.0;
+    if (u_meshShadows > 1 && matteOf(u_meshSolid[1]) != 0 && meshBlocks(u_sdf1, 1, p, u_lightDir)) return 0.0;
+    if (u_meshShadows > 2 && matteOf(u_meshSolid[2]) != 0 && meshBlocks(u_sdf2, 2, p, u_lightDir)) return 0.0;
+    if (u_meshShadows > 3 && matteOf(u_meshSolid[3]) != 0 && meshBlocks(u_sdf3, 3, p, u_lightDir)) return 0.0;
+    return 1.0;
+}
+
+// A shadow catcher at p, facing n: the plate there, lit as the real scene
+// lit it, relit by the CG -- its shadows take the sun away, the fire adds
+// its light. What the plate is multiplied by: the light with the CG over
+// the light without it.
+vec3 catcher(vec3 p, vec3 n) {
+    float ndl = max(dot(n, u_lightDir), 0.0);
+    float sunAll = ndl > 0.0 ? sunAt(p, n) : 0.0;
+    float sunReal = ndl > 0.0 ? realSun(p + n * 2e-3) : 0.0;
+    vec3 sky = u_sky * (0.6 + 0.4 * n.y);
+    vec3 withCg = u_light * sunAll * ndl + sky + fireGlow(p, n);
+    vec3 without = u_light * sunReal * ndl + sky;
+    return withCg / max(without, vec3(1e-4));
+}
 
 // The floor: the ground's colour, and -- with the grid -- a line every
 // 10 cm and a stronger one every metre, each as thin as the pixels allow
@@ -682,7 +738,7 @@ vec3 shadeWater(vec3 p, vec3 d) {
     }
     float cosi = clamp(-dot(d, n), 0.0, 1.0);
     float fresnel = 0.02 + 0.98 * pow(1.0 - cosi, 5.0);
-    float sun = sunThrough(p + n * 2e-3, true);
+    float sun = sunThrough(p + n * 2e-3, n, true);
     // What it reflects: the sky and the sun's glint, or an object.
     vec3 r = reflect(d, n);
     vec3 reflected = environment(r) + u_light * sun * 30.0 * pow(max(dot(r, u_lightDir), 0.0), 800.0);
@@ -711,6 +767,10 @@ void main() {
     vec3 dir = normalize(u_forward + v_ndc.x * u_tanHalfFov.x * u_right + v_ndc.y * u_tanHalfFov.y * u_up);
     vec3 background = u_skyBehind ? u_exposure * skyBehind(dir)
                                   : mix(u_backgroundBottom, u_backgroundTop, clamp(v_ndc.y * 0.5 + 0.5, 0.0, 1.0));
+    // The plate, where the camera's frame is: behind it all, as it was filmed.
+    vec3 plate;
+    bool onPlate = plateAt(dir, plate);
+    if (onPlate) background = plate;
 
     // Where the ray meets the floor -- worked out for every pixel, so that
     // the grid knows how wide a pixel is there.
@@ -753,7 +813,14 @@ void main() {
     // What the surface is, for the masks: 0 nothing, 1 the floor, 2 the
     // displayed geometry, 3 the pieces, 4 an object, 5 the water.
     float surfaceClass = 0.0;
-    if (tSolid < tFloor && tSolid < 1e29) {
+    // Over the plate, a holdout or a catcher is the real thing: the plate
+    // shows there (relit, for a catcher), and what is behind it is hidden.
+    vec3 relit = vec3(1.0);
+    int matte = onPlate && !displayed ? matteOf(which) : 0;
+    if (tSolid < tFloor && tSolid < 1e29 && matte != 0) {
+        tEnd = tSolid;
+        if (matte == 2) relit = catcher(u_eye + dir * tSolid, normal);
+    } else if (tSolid < tFloor && tSolid < 1e29) {
         tEnd = tSolid;
         surface = displayed ? shadeSurface(u_eye + dir * tSolid, normal, dir, displayColor, 0.0)
                             : shadeSolid(u_eye + dir * tSolid, normal, dir, which);
@@ -765,7 +832,13 @@ void main() {
         float away = length(floorPoint.xz - u_floorCenter.xz) / u_floorRadius;
         cover = 1.0 - smoothstep(0.35, 1.0, away);
         surfaceClass = cover > 0.5 ? 1.0 : 0.0;
-        if (cover > 0.0) {
+        int floorMatte = onPlate ? u_floorMatte : 0;
+        if (floorMatte != 0) {
+            // Over the plate, the ground it was filmed on: the plate shows
+            // there, relit -- less and less where the floor fades out.
+            if (floorMatte == 2) relit = mix(vec3(1.0), catcher(floorPoint, vec3(0.0, 1.0, 0.0)), cover);
+            cover = 0.0;
+        } else if (cover > 0.0) {
             vec3 up = vec3(0.0, 1.0, 0.0);
             surface = wetten(shade(floorPoint, up, floorAlbedo(floorPoint.xz, pixel)), floorPoint, up, dir);
         }
@@ -779,6 +852,7 @@ void main() {
             cover = 1.0;
             surfaceClass = 5.0;
             fromMesh = false;
+            relit = vec3(1.0);
         }
     }
 
@@ -823,8 +897,16 @@ void main() {
             if (transmittance < 0.004) break;
         }
     }
-    vec3 colour = u_exposure * (radiance + transmittance * cover * surface) + transmittance * (1.0 - cover) * background;
-    o_color = u_linear ? vec4(colour, 1.0) : vec4(pow(toneMap(colour), vec3(1.0 / 2.2)), 1.0);
+    // The CG, and how much of the background shows through it.
+    vec3 cg = u_exposure * (radiance + transmittance * cover * surface);
+    float behind = transmittance * (1.0 - cover);
+    vec3 colour = cg + behind * relit * background;
+    if (u_linear && u_hasPlate) {
+        // For compositing over the plate: the CG alone, with how much of the pixel it covers.
+        o_color = vec4(cg, 1.0 - behind);
+    } else {
+        o_color = u_linear ? vec4(colour, 1.0) : vec4(pow(toneMap(colour), vec3(1.0 / 2.2)), 1.0);
+    }
     // The passes. The motion: of the point seen -- far off for the sky --
     // as the camera moves; a mesh's as it moves too, from its buffer.
     vec3 seen = u_eye + dir * min(tEnd, 1e5);
@@ -832,8 +914,9 @@ void main() {
     vec2 motion = (next.xy / next.w - now.xy / now.w) * 0.5 * u_viewport;
     if (fromMesh && meshAux.w > 0.0 && tEnd == tSolid) motion = meshAux.xy;
     float depth = tEnd < 1e29 && cover > 0.5 ? tEnd * dot(dir, u_forward) : -1.0;  // -1: none
-    o_aux = vec4(depth, 1.0 - transmittance, surfaceClass, 1.0);
-    o_motion = vec4(motion, 0.0, 1.0);
+    // The catchers' relighting rides along in what the passes leave free.
+    o_aux = vec4(depth, 1.0 - transmittance, surfaceClass, relit.r);
+    o_motion = vec4(motion, relit.g, relit.b);
 
     // The depth of the solid, for the guide lines drawn next.
     if (tEnd < 1e29) {
@@ -1488,7 +1571,7 @@ VolumeRenderer::~VolumeRenderer() {
     for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_, geoVelocityBuffer_}) {
         if (b) gl_.DeleteBuffers(1, &b);
     }
-    for (GLuint t : {auxTex_[0], auxTex_[1], gAux_}) {
+    for (GLuint t : {auxTex_[0], auxTex_[1], gAux_, plateTex_}) {
         if (t) gl_.DeleteTextures(1, &t);
     }
     if (rainVao_) gl_.DeleteVertexArrays(1, &rainVao_);
@@ -2030,6 +2113,9 @@ void VolumeRenderer::updateGeoShadow(const Vec3& light) {
     // Two texels of it, as a depth: what a surface may be off its own triangles.
     const float texel = std::max(hi.x - lo.x, hi.y - lo.y) / static_cast<float>(size);
     geoShadowBias_ = 2.5f * texel / (hi.z - lo.z) + 1e-4f;
+    // And a surface looks its shadow up a texel and a half off itself: past
+    // the texels it fills itself, however the sun grazes it.
+    geoShadowLift_ = 1.5f * texel;
 
     gl_.BindFramebuffer(FRAMEBUFFER, geoShadowFbo_);
     gl_.Viewport(0, 0, size, size);
@@ -2164,7 +2250,7 @@ void VolumeRenderer::setSceneUniforms(GLuint program) {
         const int node = solid.body.node;
         const bool selected = node != 0 && std::find(selected_.begin(), selected_.end(), node) != selected_.end();
         put(e, solid.color, selected ? 2.0f : node != 0 && node == hovered_ ? 1.0f : 0.0f);
-        put(f, Vec3(s.ring(), s.tube(), 0.0f), 0.0f);
+        put(f, Vec3(s.ring(), s.tube(), static_cast<float>(solid.matte)), 0.0f);
     }
     // The meshes' distance fields, on texture units 4 to 7.
     int slots = 0;
@@ -2455,6 +2541,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform1f(location(program_, "u_exposure"), s.exposure);
     gl_.Uniform1f(location(program_, "u_step"), 0.6f * domain_.voxel);
     gl_.Uniform1i(location(program_, "u_floor"), s.floor ? 1 : 0);
+    gl_.Uniform1i(location(program_, "u_floorMatte"), static_cast<int>(s.floorMatte));
     gl_.Uniform3f(location(program_, "u_ground"), s.groundColor.x, s.groundColor.y, s.groundColor.z);
     gl_.Uniform1i(location(program_, "u_grid"), s.grid ? 1 : 0);
     gl_.Uniform1i(location(program_, "u_skyBehind"), s.skyBehind ? 1 : 0);
@@ -2464,6 +2551,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.UniformMatrix4fv(location(program_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
     gl_.Uniform1f(location(program_, "u_geoShadowTexel"), 1.0f / static_cast<float>(kGeoShadowSize));
     gl_.Uniform1f(location(program_, "u_geoShadowBias"), geoShadowBias_);
+    gl_.Uniform1f(location(program_, "u_geoShadowLift"), geoShadowLift_);
     gl_.ActiveTexture(TEXTURE10);
     gl_.BindTexture(TEXTURE_2D, geoShadow ? geoShadowTex_ : 0);
     gl_.Uniform1i(location(program_, "u_geoShadow"), 10);
@@ -2531,6 +2619,17 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform2f(location(program_, "u_wetMin"), wetMin_[0], wetMin_[1]);
     gl_.Uniform2f(location(program_, "u_wetMax"), wetMax_[0], wetMax_[1]);
 
+    // The plate, on unit 12, and the camera that filmed it.
+    const bool plate = hasPlate();
+    gl_.ActiveTexture(TEXTURE0 + 12);
+    gl_.BindTexture(TEXTURE_2D, plate ? plateTex_ : 0);
+    gl_.Uniform1i(location(program_, "u_plate"), 12);
+    gl_.Uniform1i(location(program_, "u_hasPlate"), plate ? 1 : 0);
+    gl_.Uniform3f(location(program_, "u_plateForward"), plateForward_.x, plateForward_.y, plateForward_.z);
+    gl_.Uniform3f(location(program_, "u_plateRight"), plateRight_.x, plateRight_.y, plateRight_.z);
+    gl_.Uniform3f(location(program_, "u_plateUp"), plateUp_.x, plateUp_.y, plateUp_.z);
+    gl_.Uniform2f(location(program_, "u_plateTan"), plateTan_[0], plateTan_[1]);
+
     gl_.BindVertexArray(vao_);
     gl_.DrawArrays(TRIANGLES, 0, 3);
     // What is drawn over it -- the dots, the rain, the guides -- goes into
@@ -2561,6 +2660,8 @@ void VolumeRenderer::render(int width, int height) {
         gl_.DrawBuffers(3, all);
     }
 
+    gl_.ActiveTexture(TEXTURE0 + 12);
+    gl_.BindTexture(TEXTURE_2D, 0);
     gl_.ActiveTexture(TEXTURE0 + 11);
     gl_.BindTexture(TEXTURE_2D, 0);
     for (int unit = 4; unit < 4 + kMaxMeshShadows; ++unit) {
@@ -2584,6 +2685,81 @@ void VolumeRenderer::render(int width, int height) {
     gl_.UseProgram(0);
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
 }
+
+namespace {
+
+/// A value as a picture shows it back to the light that the renderer's
+/// view transform (ACES, Narkowicz's fit, then 1 / 2.2) shows as it.
+float unshown(float v) {
+    const double y = std::pow(std::clamp(static_cast<double>(v), 0.0, 1.0), 2.2);
+    const double a = 2.43 * y - 2.51, b = 0.59 * y - 0.03, c = 0.14 * y;
+    return static_cast<float>((-b - std::sqrt(std::max(b * b - 4.0 * a * c, 0.0))) / (2.0 * a));
+}
+
+}  // namespace
+
+bool VolumeRenderer::setPlate(const std::string& file, const sim::Camera& camera, std::string& error) {
+    if (file.empty()) {
+        clearPlate();
+        return true;
+    }
+    const sim::Camera c = camera.sanitized();
+    plateForward_ = c.forward();
+    plateRight_ = c.right();
+    plateUp_ = c.up();
+    const float tanHalf = std::tan(c.fovY() * kPi / 360.0f);
+    plateTan_[0] = tanHalf * c.aspect();
+    plateTan_[1] = tanHalf;
+    if (file == plateFile_ && plateTex_) {
+        plateOn_ = true;
+        return true;
+    }
+    io::Picture picture;
+    if (!io::readPicture(file, picture, error)) {
+        clearPlate();
+        return false;
+    }
+    // Into the renderer's light: a shown picture back through the view
+    // transform -- most of its values are 8 bits, k / 255, looked up.
+    static const std::array<float, 256> eight = [] {
+        std::array<float, 256> t{};
+        for (size_t k = 0; k < t.size(); ++k) t[k] = unshown(static_cast<float>(k) / 255.0f);
+        return t;
+    }();
+    for (size_t i = 0; i + 3 < picture.rgba.size(); i += 4) {
+        for (size_t k = 0; k < 3; ++k) {
+            float& v = picture.rgba[i + k];
+            if (picture.linear) {
+                v = std::isfinite(v) ? std::clamp(v, 0.0f, 65504.0f) : 0.0f;
+                continue;
+            }
+            const float level = v * 255.0f;
+            const float nearest = std::round(level);
+            v = std::fabs(level - nearest) < 1e-3f && nearest >= 0.0f && nearest <= 255.0f
+                    ? eight[static_cast<size_t>(nearest)]
+                    : unshown(v);
+        }
+    }
+    if (!plateTex_) gl_.GenTextures(1, &plateTex_);
+    gl_.ActiveTexture(TEXTURE0);
+    gl_.BindTexture(TEXTURE_2D, plateTex_);
+    gl_.PixelStorei(UNPACK_ALIGNMENT, 4);
+    gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA16F), picture.width, picture.height, 0, RGBA, FLOAT,
+                   picture.rgba.data());
+    // Pixel for pixel where it is the picture's size: the plate comes out
+    // as it went in; filtered where it is scaled.
+    const GLint filter = picture.width == c.width && picture.height == c.height ? NEAREST : LINEAR;
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, filter);
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, filter);
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
+    gl_.BindTexture(TEXTURE_2D, 0);
+    plateFile_ = file;
+    plateOn_ = true;
+    return true;
+}
+
+void VolumeRenderer::clearPlate() { plateOn_ = false; }
 
 std::vector<uint8_t> VolumeRenderer::readPixels(int factor) const {
     return readRgb(gl_, fbo_, width_, height_, factor);
@@ -2617,6 +2793,8 @@ VolumeRenderer::PassImage VolumeRenderer::readPasses(int factor) const {
     out.depth.assign(m, std::numeric_limits<float>::infinity());
     out.smoke.assign(m, 0.0f);
     out.motion.assign(2 * m, 0.0f);
+    out.plate = plateOn_;
+    if (out.plate) out.relit.assign(3 * m, 0.0f);
     for (auto& mask : out.masks) mask.assign(m, 0.0f);
     const float share = 1.0f / static_cast<float>(factor * factor);
     for (int y = 0; y < h; ++y) {
@@ -2634,6 +2812,11 @@ VolumeRenderer::PassImage VolumeRenderer::readPasses(int factor) const {
                     if (surface >= 0 && surface < static_cast<int>(Surface::Count)) out.masks[surface][o] += share;
                     out.motion[2 * o] += share * motion[4 * i] / static_cast<float>(factor);
                     out.motion[2 * o + 1] += share * motion[4 * i + 1] / static_cast<float>(factor);
+                    if (out.plate) {
+                        out.relit[3 * o] += share * aux[4 * i + 3];
+                        out.relit[3 * o + 1] += share * motion[4 * i + 2];
+                        out.relit[3 * o + 2] += share * motion[4 * i + 3];
+                    }
                 }
             }
         }
@@ -2672,6 +2855,16 @@ bool writePassesExr(const VolumeRenderer& renderer, const std::string& path, con
                                                      {Surface::Water, "mask.water"}};
     for (const auto& [surface, name] : masks) img.channels.push_back({name, true, std::move(p.masks[static_cast<int>(surface)])});
     img.channels.push_back({"mask.smoke", true, std::move(p.smoke)});
+    if (p.plate) {
+        // Over a plate the picture is the CG alone, and this what the plate
+        // is multiplied by where catchers relight it: plate x catcher x (1 - A) + RGB.
+        const char* rgb[3] = {"catcher.R", "catcher.G", "catcher.B"};
+        for (int c = 0; c < 3; ++c) {
+            io::ExrChannel ch{rgb[c], true, std::vector<float>(n)};
+            for (size_t i = 0; i < n; ++i) ch.values[i] = p.relit[3 * i + static_cast<size_t>(c)];
+            img.channels.push_back(std::move(ch));
+        }
+    }
     img.strings = {{"comments", comment}, {"owner", "Prototype"}};
     return io::writeExr(img, path, error);
 }

@@ -2,8 +2,11 @@
 camera and the layout's set (examples/usd -- centimetres, Z up, from frame
 1001). What the file holds, the camera at its first and last frame, the set
 as geometry -- and a network that burns a fire in the set, seen through the
-shot's camera.
+shot's camera over its plate (examples/usd/make_plate.py films it), where
+the set is what the plate shows: catchers of the smoke's shadow and the
+fire's light.
 
+    PYTHONPATH=build/python python3 examples/usd/make_plate.py
     PYTHONPATH=build/python python3 examples/python/matchmove.py --picture out/matchmove.png
 """
 
@@ -16,6 +19,7 @@ import pg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHOT = os.path.normpath(os.path.join(HERE, "..", "usd", "shot.usda"))
+PLATE = os.path.normpath(os.path.join(HERE, "..", "usd", "plate", "courtyard.####.jpg"))
 WALLS = "/Set/back_wall /Set/side_wall /Set/beam /Set/pillar /Set/crate_a /Set/crate_b"
 
 
@@ -49,17 +53,18 @@ def main():
         print("  ", path)
 
     # A fire in it: the walls, the beam and the crates are what the smoke
-    # goes round; the shot's camera is what renders see through.
+    # goes round; the shot's camera is what renders see through, and its
+    # plate what they go over -- where the walls are the real ones.
     net = pg.Network()
     walls = net.add("usd_import", "set", file=SHOT, prims=WALLS)
-    solid = net.add("object", "walls", color=(0.58, 0.55, 0.5))
+    solid = net.add("object", "walls", color=(0.58, 0.55, 0.5), matte="catcher")
     walls.connect(solid, input="shape")
     fire = net.add("pyro_source", "fire", fuel=14, smoke=3, heat=1, velocity=(0, 0.4, 0), flicker=0.7)
     swirl = net.add("turbulence", "turbulence", strength=3.5)
     solver = net.add("pyro_solver", "solver", size=(2.6, 2.2, 2.0), buoyancy=0.9, vorticity=0.9, cooling=1.5,
                      smoke_decay=0.04)
     look = net.add("volume_look", "look", smoke_color=(0.2, 0.19, 0.18), smoke_density=24, fire_light=3)
-    plate = net.add("usd_camera", "plate", file=SHOT, width=1280)
+    plate = net.add("usd_camera", "plate", file=SHOT, width=1280, plate=PLATE)
     out = net.add("output", "output", frames=args.frames, fps=24)
     for a, b in [(solid, solver), (fire, solver), (swirl, solver), (solver, look), (look, out)]:
         a.connect(b)

@@ -47,7 +47,7 @@ except ImportError:  # the package copied out of its build
 
 __all__ = [
     "Error", "Network", "Node", "Geometry", "Simulation", "Frame", "UsdExport", "UsdStage", "UsdPrim",
-    "node_types", "node_type", "examples", "assets", "load_assets", "run",
+    "node_types", "node_type", "examples", "assets", "load_assets", "read_picture", "write_picture", "run",
 ]
 
 
@@ -91,6 +91,24 @@ def load_assets(folder):
     """Every .pgasset of a folder; returns how many were read, and why the
     others were not."""
     return _pg.load_assets(os.fspath(folder))
+
+
+def read_picture(path):
+    """A picture file -- PNG, JPEG or OpenEXR -- read by the program's own
+    readers, the ones a plate goes through: its pixels as rows x columns x
+    RGBA floats (a numpy array where numpy is installed), and whether they
+    are linear light (EXR) or as shown, sRGB (PNG, JPEG)."""
+    pixels, linear = _pg.read_picture(os.fspath(path))
+    return _array(pixels), linear
+
+
+def write_picture(path, pixels, quality=92):
+    """Pixels to a picture file, the kind its name says -- what read_picture
+    reads: rows x columns (x 1 to 4 channels: grey, grey and alpha, RGB,
+    RGBA) of floats, or of bytes 0 to 255. PNG and JPEG get them as shown,
+    0 to 1 in 8 bits (a JPEG at `quality`, 1 to 100, and without alpha);
+    OpenEXR in linear light, as half floats."""
+    _pg.write_picture(os.fspath(path), pixels, int(quality))
 
 
 # --- nodes -------------------------------------------------------------------------------------

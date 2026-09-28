@@ -52,6 +52,9 @@ okna.
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem; EXR v lineárním světle s hloubkou, vektory
   pohybu a maskami pro compositing
+- **[docs/plate.md](docs/plate.md)** — obraz záběru (plate) za CG kamerou
+  záběru: sekvence PNG, JPEG a EXR čtené bez knihoven, holdout a shadow
+  catcher, do EXR CG s alfou a průchodem `catcher`
 
 > **Jméno.** Projekt se jmenuje **Prototype**; pracovní název byl příliš
 > podobný ochranné známce SideFX. Jmenný prostor v kódu zůstává neutrální
@@ -104,8 +107,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 287 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 92 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 zápis USD, 16 čtení USD, 3 EXR, 5 video
-ctest --test-dir build -R python                   # 25 testů modulu pg (Python); proti knihovně USD, je-li usd-core
+./build/pgtests            # 294 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 92 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+ctest --test-dir build -R python                   # 37 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
@@ -129,6 +132,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype cook street street.obj --set tower.floors=12   # geometrie bez okna, do OBJ
 ./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
 ./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)
+PYTHONPATH=build/python python3 examples/usd/make_plate.py   # plate záběru: pak hoří v natočeném dvoře
 ./build/prototype usd examples/usd/shot.usda       # co USD soubor obsahuje: vrstvy, strom, kamery, geometrie
 ./build/prototype help                             # příkazy: list, gen, check, render, sim, cook, usd
 ```
@@ -269,6 +273,15 @@ modely nebo cache jako geometrii (normály, uv, barvy, primvars, subsety
 jako skupiny) v metrech s Y nahoru, i když soubor přišel z Mayi
 v centimetrech se Z nahoru. Transformace, skládání, geometrie i value
 clips sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)).
+
+**Plate**: obraz záběru, sekvence PNG, JPEG nebo EXR, jde za CG, když se
+díváte kamerou záběru, v editoru i v renderu. Čtečky jsou vlastní, bez
+knihoven: JPEG bit po bitu jako libjpeg, PNG a EXR všech kompresí kromě DWA
+hodnota po hodnotě jako Pillow a OpenEXR. Objekty i podlaha mohou být
+skutečné věci ze záběru. **Holdout** schová CG za sebou. **Shadow
+catcher** navíc na sebe vezme stíny kouře a světlo ohně. Kde CG nic
+nemění, vyjde plate z renderu pixel po pixelu, jak do něj vešel. Do EXR jde
+CG s alfou a průchod `catcher` pro compositing ([docs/plate.md](docs/plate.md)).
 
 **Obrázky a video**: záběr jde do PNG, do očíslované sekvence nebo do videa
 — `.avi` (Motion JPEG, vlastní kodér JPEG i kontejner) bez jakékoli

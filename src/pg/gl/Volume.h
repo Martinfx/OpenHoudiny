@@ -155,6 +155,19 @@ public:
     /// pieces; false when there is none.
     bool geometryBounds(Vec3& lo, Vec3& hi) const;
 
+    /// The plate behind it all (sim::Camera::plate), filmed by `camera`: the
+    /// picture of `file` fills that camera's frame; round it -- in the
+    /// viewport -- the rest is drawn as it was. Over it, objects that are
+    /// holdouts or catchers (sim::Matte) are the real things it shows. A
+    /// picture as shown (PNG, JPEG) goes back through the renderer's view
+    /// transform, so it comes out as it went in where nothing covers it;
+    /// one in linear light (EXR) is taken as light. The same file again
+    /// costs nothing. False, with why, for a file that cannot be read: no
+    /// plate then. An empty `file`: none.
+    bool setPlate(const std::string& file, const sim::Camera& camera, std::string& error);
+    void clearPlate();
+    bool hasPlate() const { return plateOn_ && plateTex_ != 0; }
+
     /// Draws into the offscreen framebuffer at `width` x `height` pixels.
     void render(int width, int height);
 
@@ -188,6 +201,11 @@ public:
         std::vector<float> smoke;   ///< 0 to 1: how much of what is behind the smoke hides
         std::vector<float> motion;  ///< two a pixel: pixels right and up, to the next frame
         std::vector<float> masks[static_cast<int>(Surface::Count)];  ///< how much of each pixel is of each
+        /// Drawn over a plate: rgba is the CG alone, alpha how much of the
+        /// pixel it covers; and relit, three a pixel, what the plate is
+        /// multiplied by where catchers relight it (1 elsewhere).
+        bool plate = false;
+        std::vector<float> relit;
     };
     PassImage readPasses(int factor = 1) const;
 
@@ -279,6 +297,7 @@ private:
     Vec3 geoShadowLight_;
     Mat4 lightViewProj_{};
     float geoShadowBias_ = 0.0f;
+    float geoShadowLift_ = 0.0f;
     GeometryPtr geometry_, pieces_;
     sim::DisplayGeometry shownDisplay_, piecesDisplay_;  // what each is drawn as
     GLuint geoProgram_ = 0, dotProgram_ = 0;
@@ -308,6 +327,12 @@ private:
     bool lightingDirty_ = true;
     LightingKey lighting_;
     Mat4 viewProjection_{};
+    // The plate: its picture on the GPU, and the camera it fills.
+    GLuint plateTex_ = 0;
+    bool plateOn_ = false;
+    std::string plateFile_;
+    Vec3 plateForward_{0.0f, 0.0f, -1.0f}, plateRight_{1.0f, 0.0f, 0.0f}, plateUp_{0.0f, 1.0f, 0.0f};
+    float plateTan_[2] = {1.0f, 1.0f};
 };
 
 }  // namespace pg::gl

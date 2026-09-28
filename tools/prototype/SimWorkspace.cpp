@@ -1907,11 +1907,15 @@ void SimWorkspace::renderShot(int width, int height, int frame) {
     if (compiled_.hasCamera) {
         const sim::Camera& camera = compiled_.cameraAt(frame);
         renderer_.orbit = gl::orbitThrough(camera, focusOf(camera));
+        // The plate of that frame behind it.
+        std::string why;
+        if (!renderer_.setPlate(camera.plateFile(frame), camera, why)) setMessage(why, true);
     }
     renderer_.setLines({});
     renderer_.setHighlight({}, 0);
     renderer_.render(width * 2, height * 2);
     renderer_.orbit = view;
+    shownPlate_ = "\x01";  // the viewport sets its own plate again
     // Both back on the next frame.
     guidesRevision_ = ~0ull;
     highlightedHover_ = -1;

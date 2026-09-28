@@ -4,12 +4,16 @@ pgsim 1
 # whose crates reference an asset with a variant each, and a camera pushed
 # in by hand, 24 frames a second from 1001. A fire burns in the set: its
 # smoke rises against the beam, spreads under it and along the back wall.
-# Rendered through the plate's camera, it sits in the shot as filmed.
+# Through the camera it goes over the plate -- the courtyard as it was
+# filmed (examples/usd/plate, made by make_plate.py): there the walls, the
+# beam and the crates are the real ones, catchers as the floor is, which
+# hide the smoke behind them and take its shadow and the fire's light.
 node 1 usd_import 1 set 0 0
   param file "../usd/shot.usda"
   param prims "/Set/back_wall /Set/side_wall /Set/beam /Set/pillar /Set/crate_a /Set/crate_b"
 node 2 object 1 walls 0 110
   param color 0.58 0.55 0.5
+  param matte catcher
 node 3 pyro_source 2 fire 250 0
   param fuel 14
   param smoke 3
@@ -31,6 +35,7 @@ node 6 volume_look 2 look 750 60
 node 7 usd_camera 1 plate 750 200
   param file "../usd/shot.usda"
   param width 1280
+  param plate "../usd/plate/courtyard.####.jpg"
 node 8 output 2 output 1000 60
   param frames 72
   param fps 24

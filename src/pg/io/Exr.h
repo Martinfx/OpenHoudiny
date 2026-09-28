@@ -21,6 +21,7 @@
 //
 #include <array>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,6 +43,15 @@ struct ExrImage {
 
 /// The file's bytes. Channels in any order: the file has them sorted.
 std::string formatExr(const ExrImage& image);
+
+/// An OpenEXR file read (ExrRead.cpp): one part of lines of pixels,
+/// uncompressed or RLE, ZIPS, ZIP, PIZ, PXR24, B44 or B44A; half, float and
+/// uint channels, each as floats, the data window placed in the display
+/// window (the rest 0); its string and 4 x 4 matrix attributes. False, with
+/// why, for what is not read: tiles, deep data, several parts, DWAA/DWAB,
+/// subsampled channels.
+bool parseExr(std::span<const uint8_t> bytes, ExrImage& out, std::string& error);
+bool readExr(const std::string& path, ExrImage& out, std::string& error);
 /// ... written to `path`. False, with why: no picture, a channel of the
 /// wrong size, or a file that cannot be written.
 bool writeExr(const ExrImage& image, const std::string& path, std::string& error);

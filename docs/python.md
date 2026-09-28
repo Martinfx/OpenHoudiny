@@ -171,6 +171,26 @@ value clips ([usd-import.md](usd-import.md)). Knihovnu `pxr` k tomu nepotřebuje
 
 Čas `time` je time code scény; bez něj se čte snímek 1, tedy `startTimeCode`.
 
+### Obrázky
+
+Obrázky čtou a zapisují tytéž vlastní čtečky a zapisovače, kterými jde plate
+([plate.md](plate.md#5-obrázky-bez-knihoven)). Knihovny k tomu nejsou potřeba.
+
+```python
+pixels, linear = pg.read_picture("plate.1001.exr")   # řádky × sloupce × RGBA, float32
+pg.write_picture("plate.1001.jpg", pixels, quality=92)
+```
+
+- **`pg.read_picture(path)`** přečte PNG, JPEG nebo OpenEXR (pozná ho podle obsahu).
+  Vrátí pixely a `linear`: `True` pro EXR (lineární světlo), `False` pro PNG a JPEG
+  (hodnoty, jak jsou vidět, 0 až 1).
+- **`pg.write_picture(path, pixels, quality=92)`** zapíše soubor podle přípony.
+  - Pixely: řádky × sloupce, s 1 až 4 kanály (šedá, šedá a alfa, RGB, RGBA),
+    ve float32, float64, uint8 nebo uint16. Bajty znamenají 0 až 255.
+  - `.png` a `.jpg` dostanou hodnoty, jak jsou vidět, v 8 bitech. JPEG je bez alfy.
+    PNG bez alfy, když je všude 1.
+  - `.exr` dostane lineární světlo v half float.
+
 ## 6. Příklady
 
 - **[`examples/python/matchmove.py`](../examples/python/matchmove.py)** — záběr z USD:
@@ -180,6 +200,18 @@ value clips ([usd-import.md](usd-import.md)). Knihovnu `pxr` k tomu nepotřebuje
 
   ```bash
   PYTHONPATH=build/python python3 examples/python/matchmove.py --picture out/matchmove.png
+  ```
+
+  Když je natočený plate (skript níže), jde kouř přes něj a kulisa je shadow catcher.
+
+- **[`examples/usd/make_plate.py`](../examples/usd/make_plate.py)** — plate ukázkového
+  záběru ([plate.md](plate.md)):
+  - kulisa ze `shot.usda` vykreslená kamerou z matchmove přes `net.render`;
+  - „film“ v numpy: měkký objektiv, vinětace, halace, barevné ladění a zrno;
+  - `pg.read_picture` a `pg.write_picture` pro 72 JPEGů `courtyard.1001.jpg`…
+
+  ```bash
+  PYTHONPATH=build/python python3 examples/usd/make_plate.py
   ```
 
 - **[`examples/python/demolition.py`](../examples/python/demolition.py)** — scéna z kroku 2
@@ -202,7 +234,8 @@ value clips ([usd-import.md](usd-import.md)). Knihovnu `pxr` k tomu nepotřebuje
 ## 7. Jak to funguje
 
 ```
-pg/__init__.py      třídy Network, Node, Geometry, Simulation, Frame, UsdExport, UsdStage, UsdPrim (Python)
+pg/__init__.py      třídy Network, Node, Geometry, Simulation, Frame, UsdExport, UsdStage, UsdPrim (Python);
+                    read_picture, write_picture
 _pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdExport, usd::Stage
 ```
 
@@ -221,7 +254,7 @@ _pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdEx
 
 ## 8. Testy
 
-`tests/python/test_pg.py` (16 testů; `ctest -R python` spustí oba soubory):
+`tests/python/test_pg.py` (16 testů; `ctest -R python` spustí všechny tři soubory):
 - **Sítě:**
   - typy uzlů a příklady;
   - parametry všech druhů (vektor, volba podle jména, přepínač, text, kód) a chyby;
@@ -249,6 +282,17 @@ _pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdEx
   druhů, záběr z více souborů (varianty, reference, třídy, sublayer s posunem a jiným FPS,
   instanceable), geometrie ve světě, value clips i mezi snímky a 80 náhodných záběrů
   s value clips (síla vůči vrstvám, šablony, skoky v čase, manifest).
+
+`tests/python/test_picture.py` (12 testů):
+- **Čtení:** JPEG jako libjpeg, EXR v lineárním světle, co obrázek není, řekne proč.
+- **Zápis:** PNG, JPEG a EXR zpátky na hodnotu (i pole pozpátku a víc bloků deflate);
+  co zapsat nejde, řekne proč.
+- **Proti Pillow a OpenEXR** (přeskočí se bez nich): 60 náhodných JPEGů bit po bitu jako
+  libjpeg, 40 PNG na hodnotu, zapsané PNG a JPEG čte Pillow stejně, 48 EXR všech kompresí
+  jako knihovna OpenEXR.
+- **Plate přes renderer** (přeskočí se bez OpenGL): plate vyjde pixel po pixelu, i pod
+  holdoutem a catcherem; CG objekt ho zakryje a stínem ztmaví; EXR nese jen CG, alfu a
+  průchod `catcher`.
 
 ## 9. Omezení
 

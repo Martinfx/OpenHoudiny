@@ -1,5 +1,6 @@
 #include "pg/sim/Camera.h"
 
+#include "pg/io/Picture.h"
 #include "pg/sim/Shared.h"
 #include "pg/usd/Geom.h"
 
@@ -37,6 +38,10 @@ Camera Camera::lookingAt(const Vec3& position, const Vec3& target) {
     return c;
 }
 
+std::string Camera::plateFile(int frame) const {
+    return plate.empty() ? std::string() : io::sequenceFile(plate, plateFrame + frame - 1);
+}
+
 Camera Camera::sanitized() const {
     const Camera d;
     Camera c = *this;
@@ -50,7 +55,7 @@ Camera Camera::sanitized() const {
 
 bool cameraFromUsd(const std::string& file, const std::string& prim, float frame, float fps, float offset, int width,
                    int height, bool metres, Camera& out, std::string& error, std::vector<std::string>* warnings,
-                   bool* varies) {
+                   bool* varies, double* timeCode) {
     const auto stage = usd::Stage::openCached(file, error);
     if (!stage) return false;
     const usd::Stage::Prim* p = nullptr;
@@ -73,7 +78,9 @@ bool cameraFromUsd(const std::string& file, const std::string& prim, float frame
         }
     }
     usd::CameraSample s;
-    usd::cameraAt(*stage, *p, usd::timeCodeAt(*stage, frame, fps, offset), metres, s);
+    const double time = usd::timeCodeAt(*stage, frame, fps, offset);
+    if (timeCode) *timeCode = time;
+    usd::cameraAt(*stage, *p, time, metres, s);
     // Its matrix's rows: its x, y and z in the world, then where it is.
     const usd::Matrix& w = s.world;
     const Vec3 y(static_cast<float>(w.at(1, 0)), static_cast<float>(w.at(1, 1)), static_cast<float>(w.at(1, 2)));

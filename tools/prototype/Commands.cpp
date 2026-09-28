@@ -716,7 +716,9 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      n ? n->name.c_str() : "", n ? ": " : "", p.message.c_str());
     }
     if (!c.ok && !geometryOnly) return 1;
-    if (geometryOnly) c.frames = 1;
+    // Through the Output's camera, over the Output's frames -- a layout, a
+    // plate filmed of a set; else a still.
+    if (geometryOnly && !c.hasCamera) c.frames = 1;
     if (o.resolution > 0) {
         c.world.gas.solver.resolution = o.resolution;
         c.world.water.solver.resolution = o.resolution;
@@ -883,6 +885,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     };
     double simulating = 0.0, rendering = 0.0;
     int images = 0, cachedFrames = 0, exports = 0, passed = 0;  // passed: frames from --start on
+    int plateErrors = 0;
     std::string last, lastExport;
     for (int f = solver ? 1 : first; f <= frames; ++f) {
         const bool inRange = f >= first;  // before --start: simulated, cached, not drawn or exported
@@ -969,6 +972,14 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             if (volume->passes.moving) {
                 const sim::Camera& next = c.cameraAt(f + 1);
                 volume->passes.next = gl::orbitThrough(next, 1.0f);
+            }
+        }
+        // The plate behind it all, through the shot's camera.
+        if (throughCamera && !c.cameraAt(f).plate.empty()) {
+            const sim::Camera& cam = c.cameraAt(f);
+            std::string why;
+            if (!volume->setPlate(cam.plateFile(f), cam, why) && plateErrors++ < 3) {
+                std::fprintf(stderr, "%s: %s\n", cmd, why.c_str());
             }
         }
         volume->render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing

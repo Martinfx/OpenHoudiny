@@ -368,7 +368,7 @@ private:
         const uint64_t count = get<uint64_t>(at);
         if (count > b_.size() / 4 || !has(at, count * 4)) return fail("the strings do not fit the crate");
         strings_.resize(count);
-        std::memcpy(strings_.data(), b_.data() + at, count * 4);
+        if (count > 0) std::memcpy(strings_.data(), b_.data() + at, count * 4);
         for (const uint32_t s : strings_) {
             if (s >= tokens_.size()) return fail("a string that is no token");
         }

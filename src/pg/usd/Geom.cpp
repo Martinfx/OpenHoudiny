@@ -136,7 +136,7 @@ struct Builder {
             AttributeArray& dst = out->attributes(key.first).create(key.second, type);
             if (a.width == 0) {
                 std::copy_n(a.ints.begin(), n, dst.write<int32_t>().begin());
-            } else {
+            } else if (n > 0) {
                 std::memcpy(dst.rawWrite(), a.floats.data(), n * static_cast<size_t>(a.width) * sizeof(float));
             }
         }

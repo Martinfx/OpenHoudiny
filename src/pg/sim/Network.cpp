@@ -84,6 +84,15 @@ ParamDef usdFile(const char* help) {
             {".usd", ".usda", ".usdc", ".usdz"}, {}};
 }
 
+ParamDef plateFile(const char* help) {
+    return {"plate", "Plate", "Plate", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help,
+            {".exr", ".png", ".jpg", ".jpeg"}, {}};
+}
+
+ParamDef plateFrame(float byDefault, const char* help) {
+    return {"plate_frame", "Plate Frame", "Plate", K::Int, {byDefault, 0.0f, 0.0f}, 0.0f, 1100.0f, -1e6f, 1e6f, "", help};
+}
+
 ParamDef frameOffset() {
     return {"offset", "Frame Offset", "Time", K::Float, {0.0f, 0.0f, 0.0f}, -100.0f, 100.0f, -1e6f, 1e6f, "",
             "Frame 1 reads the stage's first time code (its startTimeCode, 1 when it says none), each frame after "
@@ -178,7 +187,14 @@ std::vector<ParamDef> objectParams() {
                  "Width, height and depth, along its own axes: a ball's diameter, a box's edges, a ring's width "
                  "and thickness."),
             {"color", "Color", "Look", K::Color, {0.45f, 0.45f, 0.46f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-             "Its colour. Painting it simulates nothing again."}};
+             "Its colour. Painting it simulates nothing again."},
+            {"matte", "Over the Plate", "Look", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+             "What it is when the camera has a plate. Solid: itself, drawn over the plate. Holdout: the real "
+             "thing the plate shows -- a wall, the ground -- it hides the CG behind it and the plate shows there. "
+             "Shadow Catcher: a holdout that the CG relights -- darker where it takes the sun away, brighter "
+             "where the fire lights it. With no plate, it is drawn as itself.",
+             {"solid", "holdout", "catcher"},
+             {"Solid", "Holdout", "Shadow Catcher"}}};
 }
 
 // --- the nodes of earlier versions, as their files hold them (Legacy below) ------
@@ -346,6 +362,13 @@ std::vector<ParamDef> outputParams() {
     p.push_back({"sky_behind", "Sky Behind", "Image", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                  "The sky behind everything, where the floor ends: hazy towards the horizon, glowing round the "
                  "sun -- outdoors, and smoke against the light. Off, the dark backdrop of a studio."});
+    p.push_back({"floor_matte", "Floor over the Plate", "Image", K::Choice, {2.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f,
+                 "",
+                 "What the floor is when the camera has a plate. Shadow Catcher: the ground the plate was filmed "
+                 "on -- the plate shows there, darker in the shadows of the CG, brighter where the fire lights it. "
+                 "Holdout: the plate as it is. Solid: the floor drawn over the plate.",
+                 {"solid", "holdout", "catcher"},
+                 {"Solid", "Holdout", "Shadow Catcher"}});
     return p;
 }
 
@@ -973,7 +996,13 @@ std::vector<NodeType> buildTypes() {
                    "The picture's width: with the height, its shape (the frame in the viewport) and the size "
                    "renders are made at."},
                   {"height", "Height", "Image", K::Int, {720.0f, 0.0f, 0.0f}, 16.0f, 2160.0f, 16.0f, 8192.0f, "px",
-                   "The picture's height."}},
+                   "The picture's height."},
+                  plateFile("The plate: what the camera filmed, drawn behind the CG when you look through the "
+                            "camera and in renders -- a picture (.exr, .png, .jpg) or a numbered sequence of them: "
+                            "plate.####.exr, plate.$F4.exr, plate.%04d.exr. A relative path is read from the "
+                            "network's folder."),
+                  plateFrame(1.0f, "The number of the plate's frame at frame 1: 1001 for a plate numbered from "
+                                   "1001.")},
                  1});
     t.back().handles = {"center", "rotation", nullptr, nullptr, nullptr, nullptr};
     t.push_back({"usd_camera", "USD Camera", "Render",
@@ -994,7 +1023,13 @@ std::vector<NodeType> buildTypes() {
                    "The picture's height. 0: as the film back is shaped -- width x vertical / horizontal aperture."},
                   {"metres", "Metres, Y Up", "Camera", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                    "The stage's units and up axis made the program's (metres, Y up), as USD Import does. Off: as "
-                   "the file has them."}},
+                   "the file has them."},
+                  plateFile("The plate: the footage this camera was matched to, drawn behind the CG when you "
+                            "look through the camera and in renders -- a picture (.exr, .png, .jpg) or a numbered "
+                            "sequence: plate.####.exr, plate.$F4.exr, plate.%04d.exr. A relative path is read "
+                            "from the network's folder."),
+                  plateFrame(0.0f, "The number of the plate's frame at frame 1. 0: the shot's own -- the time "
+                                   "code the camera is read at, 1001 for a shot from 1001.")},
                  1});
     t.push_back({"output", "Output", "Render",
                  "Where the network ends: what the viewport shows and `prototype sim` renders -- every look "
@@ -3027,7 +3062,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     // The objects: all of them are in the scene, drawn, whatever feeds what.
     for (const Node& n : nodes_) {
         if (n.type != "object" || n.bypass) continue;
-        c.solids.push_back({colliderOf(n), v3(n, "color")});
+        c.solids.push_back({colliderOf(n), v3(n, "color"), static_cast<Matte>(std::clamp(whole(n, "matte"), 0, 2))});
         c.active.push_back(n.id);
     }
 
@@ -3064,6 +3099,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     k.groundColor = v3(*output, "ground_color");
     k.grid = f(*output, "grid") != 0.0f;
     k.skyBehind = f(*output, "sky_behind") != 0.0f;
+    k.floorMatte = static_cast<Matte>(std::clamp(whole(*output, "floor_matte"), 0, 2));
     // The camera of the shot.
     if (const Node* cam = upstream(*output, "camera")) {
         Camera& m = c.camera;
@@ -3076,11 +3112,12 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             std::string error;
             std::vector<std::string> warnings;
             bool varies = false;
+            double timeCode = 0.0;
             if (file.empty()) {
                 problem(L::Error, cam->id, "no file: which USD file has the camera?");
             } else if (cameraFromUsd(file, text(cam->id, "prim"), frame, 1.0f / c.world.timeStep, f(*cam, "offset"),
                                      whole(*cam, "width"), whole(*cam, "height"), f(*cam, "metres") != 0.0f, m, error,
-                                     &warnings, &varies)) {
+                                     &warnings, &varies, &timeCode)) {
                 for (const std::string& w : warnings) problem(L::Warning, cam->id, w);
                 c.fileAnimation = c.fileAnimation || varies;
                 c.hasCamera = true;
@@ -3088,6 +3125,9 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 problem(L::Error, cam->id, error);
             }
             m.node = cam->id;
+            // The plate's frames follow the shot's time codes: 1001 at the frame that reads 1001.
+            m.plateFrame = whole(*cam, "plate_frame");
+            if (m.plateFrame == 0) m.plateFrame = static_cast<int>(std::lround(timeCode)) - (static_cast<int>(std::lround(frame)) - 1);
         } else {
             m.position = v3(*cam, "center");
             m.rotation = v3(*cam, "rotation");
@@ -3095,8 +3135,21 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             m.width = whole(*cam, "width");
             m.height = whole(*cam, "height");
             m.node = cam->id;
+            m.plateFrame = whole(*cam, "plate_frame");
             m = m.sanitized();
             c.hasCamera = true;
+        }
+        // The footage behind it.
+        std::string plate = text(cam->id, "plate");
+        if (!plate.empty() && !folder.empty() && std::filesystem::path(plate).is_relative()) {
+            plate = (std::filesystem::path(folder) / plate).lexically_normal().string();
+        }
+        m.plate = plate;
+        if (!plate.empty() && frame <= 1.0f) {
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(m.plateFile(1), ec)) {
+                problem(L::Warning, cam->id, "no plate at frame 1: " + m.plateFile(1) + " is not there");
+            }
         }
         c.active.push_back(cam->id);
     }

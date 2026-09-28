@@ -23,6 +23,14 @@ struct Camera {
     float focal = 38.0f;                 ///< mm
     int width = 1280, height = 720;      ///< the picture, pixels
     int node = 0;
+    /// The plate: what the camera filmed, drawn behind what it sees -- a
+    /// picture file, or a numbered sequence of them ("plate.####.exr",
+    /// io/Picture.h). Empty: none.
+    std::string plate;
+    int plateFrame = 1;  ///< the number of the plate's frame at frame 1
+
+    /// The plate's file at `frame` (frame 1 is plateFrame).
+    std::string plateFile(int frame) const;
 
     Rotation frame() const { return Rotation::fromEuler(rotation); }
     /// Where it looks, and the picture's right and up: unit vectors.
@@ -53,9 +61,9 @@ struct Camera {
 /// what its horizontal aperture and focal length say. False, with why, for
 /// a file, prim or camera that is not there. `warnings`: what it cannot be
 /// drawn with (an orthographic view, a shifted film back); `varies`:
-/// whether it moves or zooms in time.
+/// whether it moves or zooms in time; `timeCode`: the time code it was read at.
 bool cameraFromUsd(const std::string& file, const std::string& prim, float frame, float fps, float offset, int width,
                    int height, bool metres, Camera& out, std::string& error, std::vector<std::string>* warnings = nullptr,
-                   bool* varies = nullptr);
+                   bool* varies = nullptr, double* timeCode = nullptr);
 
 }  // namespace pg::sim

@@ -9,9 +9,17 @@
 //
 #include "pg/core/Types.h"
 
+#include <cstdint>
 #include <string>
 
 namespace pg::sim {
+
+/// How an object -- or the floor -- is drawn over a plate (Camera::plate):
+/// as itself, or as the real thing the plate shows. A holdout hides what is
+/// behind it and shows the plate there; a catcher does too, relit -- darker
+/// where the CG takes the sun from it, brighter where the fire lights it.
+/// With no plate, everything is drawn as itself.
+enum class Matte : uint8_t { None, Holdout, Catcher };
 
 struct Look {
     // Smoke
@@ -59,6 +67,10 @@ struct Look {
     /// The sky behind everything, where the floor ends -- hazy towards the
     /// horizon, glowing round the sun: outdoors. Off, a studio's backdrop.
     bool skyBehind = false;
+    /// The floor over a plate: the ground the plate was filmed on, which
+    /// catches the shadows and the glow of the CG -- or a holdout, or the
+    /// floor drawn as itself.
+    Matte floorMatte = Matte::Catcher;
 
     /// Unit vector towards the light.
     Vec3 lightDirection() const {

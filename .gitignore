@@ -6,3 +6,5 @@ compile_commands.json
 .cache/
 out/
 __pycache__/
+# The matchmove example's plate: made by examples/usd/make_plate.py, not kept
+examples/usd/plate/

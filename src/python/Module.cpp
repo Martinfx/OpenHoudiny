@@ -1,6 +1,7 @@
 // The extension _pg: arrays, errors, and the parts in the other files.
 #include "Bindings.h"
 
+#include "pg/io/Picture.h"
 #include "pg/nodes/Nodes.h"
 #include "pg/sim/Asset.h"
 
@@ -76,4 +77,83 @@ PYBIND11_MODULE(_pg, m) {
     bindNetwork(m);
     bindSimulation(m);
     bindUsd(m);
+    m.def(
+        "read_picture",
+        [](const std::string& path) {
+            auto picture = std::make_shared<pg::io::Picture>();
+            std::string error;
+            {
+                py::gil_scoped_release released;
+                if (!pg::io::readPicture(path, *picture, error)) picture.reset();
+            }
+            if (!picture) throw Error(error);
+            Array a;
+            a.owner = picture;
+            a.data = picture->rgba.data();
+            a.format = py::format_descriptor<float>::format();
+            a.itemsize = sizeof(float);
+            const py::ssize_t w = picture->width, h = picture->height;
+            a.shape = {h, w, 4};
+            a.strides = {w * 16, 16, 4};
+            return py::make_tuple(a, picture->linear);
+        },
+        py::arg("path"), "A PNG, JPEG or OpenEXR file: its pixels (rows x columns x RGBA floats) and whether they are linear.");
+    m.def(
+        "write_picture",
+        [](const std::string& path, py::buffer pixels, int quality) {
+            const py::buffer_info info = pixels.request();
+            if (info.ndim != 2 && info.ndim != 3) {
+                throw Error("a picture is rows x columns, or rows x columns x channels (1 to 4)");
+            }
+            const py::ssize_t h = info.shape[0], w = info.shape[1], channels = info.ndim == 3 ? info.shape[2] : 1;
+            if (channels < 1 || channels > 4) throw Error("a picture has 1 to 4 channels, not " + std::to_string(channels));
+            std::string format = info.format;
+            while (!format.empty() && std::string("@=<>!").find(format[0]) != std::string::npos) format.erase(0, 1);
+            const char kind = format.size() == 1 ? format[0] : '?';
+            const bool known = (kind == 'f' && info.itemsize == 4) || (kind == 'd' && info.itemsize == 8) ||
+                               (kind == 'B' && info.itemsize == 1) || (kind == 'H' && info.itemsize == 2);
+            if (!known) {
+                throw Error("a picture's pixels are float32, float64, uint8 or uint16 (numpy: .astype('float32')), not '" +
+                            info.format + "'");
+            }
+            // Bytes are 0 to 255 of what the picture shows, as floats are 0 to 1.
+            const double scale = kind == 'B' ? 1.0 / 255.0 : kind == 'H' ? 1.0 / 65535.0 : 1.0;
+            const auto item = [&](const char* at) -> float {
+                switch (kind) {
+                    case 'f': return *reinterpret_cast<const float*>(at);
+                    case 'd': return static_cast<float>(*reinterpret_cast<const double*>(at));
+                    case 'B': return static_cast<float>(*reinterpret_cast<const uint8_t*>(at) * scale);
+                    default: return static_cast<float>(*reinterpret_cast<const uint16_t*>(at) * scale);
+                }
+            };
+            pg::io::Picture picture;
+            picture.width = static_cast<int>(w);
+            picture.height = static_cast<int>(h);
+            picture.rgba.assign(static_cast<size_t>(w) * static_cast<size_t>(h) * 4, 1.0f);
+            const char* base = static_cast<const char*>(info.ptr);
+            for (py::ssize_t y = 0; y < h; ++y) {
+                for (py::ssize_t x = 0; x < w; ++x) {
+                    float v[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                    for (py::ssize_t c = 0; c < channels; ++c) {
+                        v[c] = item(base + y * info.strides[0] + x * info.strides[1] + (info.ndim == 3 ? c * info.strides[2] : 0));
+                    }
+                    float* out = &picture.rgba[(static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4];
+                    if (channels <= 2) {
+                        out[0] = out[1] = out[2] = v[0];  // grey, and its alpha
+                        out[3] = channels == 2 ? v[1] : 1.0f;
+                    } else {
+                        for (int c = 0; c < 4; ++c) out[c] = v[c];
+                    }
+                }
+            }
+            std::string error;
+            bool written = false;
+            {
+                py::gil_scoped_release released;
+                written = pg::io::writePicture(path, picture, quality, error);
+            }
+            if (!written) throw Error(error);
+        },
+        py::arg("path"), py::arg("pixels"), py::arg("quality") = 92,
+        "Pixels (rows x columns x 1 to 4 channels) to a PNG, JPEG or OpenEXR file, the kind its name says.");
 }

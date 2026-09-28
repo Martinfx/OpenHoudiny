@@ -365,6 +365,8 @@ private:
     Vec3 framedSize_;  ///< the domain the camera was framed for, world units
     bool framed_ = false;
     bool throughCamera_ = false;  ///< the viewport looks through the Output's camera
+    std::string shownPlate_;      ///< the plate the renderer has, through the camera
+    sim::Camera plateCamera_;     ///< and the camera it was set for
     ImVec2 gateLo_, gateHi_;      ///< the camera's picture in the viewport, while it does
 
     gl::Lines guideLines_;       ///< the guides drawn, for picking

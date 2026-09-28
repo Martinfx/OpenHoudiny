@@ -100,6 +100,11 @@ stejně, 32bitové bit po bitu.
 | `mask.floor`, `mask.geometry`, `mask.pieces`, `mask.objects`, `mask.water` | kolik z pixelu je podlaha, zobrazená geometrie, kusy RBD, objekty, voda: pokrytí z vyhlazení 2 × 2 |
 | `mask.smoke` | kolik z toho, co je za kouřem, kouř zakrývá: jeho neprůhlednost |
 
+Když má kamera **plate** (obraz záběru), je v `R`, `G`, `B` jen CG a `A`
+říká, kolik z pixelu zakrývá. Kanály `catcher.R/G/B` pak říkají, čím
+plate vynásobit tam, kde na něj CG vrhá stín nebo svítí oheň. Záběr je
+`plate × catcher × (1 − A) + RGB` ([plate.md](plate.md#4-exr-pro-compositing-nad-plate)).
+
 Jak se to počítá: renderer kreslí v režimu průchodů do 16bitových floatů
 a vedle obrazu do dvou dalších cílů (MRT). Povrchy se nejdřív rasterizují
 do G-bufferu a každý roh trojúhelníku dostane polohu teď a v příštím
@@ -125,6 +130,10 @@ prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--frames N] [--time S] [--size N] .
   než se začne simulovat: chybějící ffmpeg se ozve hned, ne po minutách.
 - `render` do videa: `--frames` snímků náhledu (výchozí 90) po 1/30 s od
   `--time`, třeba smyčka ohně nebo kouře.
+- Síť bez simulace, jen se zobrazenou geometrií, se kreslí kamerou
+  Outputu po všech jeho snímcích, když ji Output má: layout, previz nebo
+  plate natočený z kulisy ([plate.md](plate.md#6-render-jen-z-geometrie)).
+  Bez kamery je to jeden obrázek z pohledu na geometrii.
 - Výpis řekne, kolik snímků a jakým kodekem se zapsalo a čím se kreslilo:
 
 ```

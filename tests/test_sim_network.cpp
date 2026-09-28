@@ -544,7 +544,12 @@ TEST(sim_network_examples_all_run) {
         if (model) continue;
         const Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);  // where their meshes are
         CHECK(c.ok);
-        for (const Problem& p : c.problems) ::testing::fail(__FILE__, __LINE__, name + ": " + p.message);
+        for (const Problem& p : c.problems) {
+            // A plate is footage: filmed, or made (examples/usd/make_plate.py
+            // makes matchmove's), and not kept in the repository.
+            if (p.message.rfind("no plate at frame 1", 0) == 0) continue;
+            ::testing::fail(__FILE__, __LINE__, name + ": " + p.message);
+        }
         World world = c.world;
         world.gas.solver.resolution = 16;
         world.water.solver.resolution = 16;

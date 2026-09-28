@@ -8,6 +8,7 @@
 // axis: x in [-size.x/2, size.x/2], y in [0, size.y], z in [-size.z/2, size.z/2].
 //
 #include "pg/core/Types.h"
+#include "pg/sim/Look.h"
 #include "pg/sim/Mesh.h"
 #include "pg/sim/Shape.h"
 
@@ -115,12 +116,14 @@ struct Collider {
     bool operator==(const Collider&) const = default;
 };
 
-/// An object of the scene as it is drawn: its body, and its colour. Every
-/// object of a network is drawn, collided with or not; the colour is kept
-/// apart from the Collider so that painting an object simulates nothing again.
+/// An object of the scene as it is drawn: its body, its colour, and how it
+/// stands over a plate (Matte, Look.h). Every object of a network is drawn,
+/// collided with or not; the colour is kept apart from the Collider so that
+/// painting an object simulates nothing again.
 struct Solid {
     Collider body;
     Vec3 color{0.45f, 0.45f, 0.46f};
+    Matte matte = Matte::None;
 
     bool operator==(const Solid&) const = default;
 };

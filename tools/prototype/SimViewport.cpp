@@ -928,6 +928,19 @@ void SimWorkspace::viewport(ImVec2 size) {
         }
         gateLo_ = ImVec2(lo.x + 0.5f * (fw - gw), lo.y + 0.5f * (fh - gh));
         gateHi_ = ImVec2(gateLo_.x + gw, gateLo_.y + gh);
+        // The plate behind it: this frame's, filling the gate.
+        const std::string plate = c.plateFile(current_);
+        if (plate != shownPlate_ || !(c == plateCamera_)) {
+            std::string why;
+            if (!renderer_.setPlate(plate, c, why)) setMessage(why, true);
+            shownPlate_ = plate;
+            plateCamera_ = c;
+            viewDirty_ = true;
+        }
+    } else if (renderer_.hasPlate()) {
+        renderer_.clearPlate();
+        shownPlate_.clear();
+        viewDirty_ = true;
     }
     ViewCamera cam = ViewCamera::of(renderer_.orbit, lo, ImVec2(static_cast<float>(w), static_cast<float>(hh)));
     camera_ = cam;

@@ -73,6 +73,11 @@ add_library(pgcore
   src/pg/io/Export.cpp
   src/pg/io/Usda.cpp
   src/pg/io/Exr.cpp
+  src/pg/io/ExrRead.cpp
+  src/pg/io/Inflate.cpp
+  src/pg/io/Png.cpp
+  src/pg/io/JpegDecode.cpp
+  src/pg/io/Picture.cpp
   src/pg/usd/Layer.cpp
   src/pg/usd/Text.cpp
   src/pg/usd/Crate.cpp
@@ -493,6 +498,7 @@ add_executable(pgtests
   tests/test_usd.cpp
   tests/test_usd_read.cpp
   tests/test_exr.cpp
+  tests/test_picture.cpp
   tests/test_volume_mesh.cpp
   tests/test_video.cpp
 )

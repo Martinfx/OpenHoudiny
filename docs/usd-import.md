@@ -21,6 +21,7 @@ ověřené proti knihovně `usd-core` (§6).
 ```bash
 ./build/prototype usd examples/usd/shot.usda                 # co soubor obsahuje: strom, kamery, geometrie
 ./build/prototype sim matchmove out/mm.png --every 24         # oheň v kulise z USD, přes kameru z USD
+PYTHONPATH=build/python python3 examples/usd/make_plate.py    # plate záběru; pak je oheň v natočeném dvoře
 ```
 
 V editoru:
@@ -90,6 +91,9 @@ kterou se renderuje, a kterou ukáže viewport při pohledu kamerou (0).
   stran filmu, tedy Width × vertikální / horizontální clona. Super 35
   (24,89 × 14 mm) při šířce 1280 dá 720.
 - **Prim:** cesta ke kameře. Prázdné pole znamená první kameru ve scéně.
+- **Plate**, **Plate Frame:** obraz záběru za CG; jeho snímky jdou podle
+  time codes záběru, `….1001.…` ve snímku, který čte time code 1001
+  ([plate.md](plate.md)).
 
 Co kreslení prototypu neumí, nahlásí uzel jako varování:
 - ortografickou kameru nakreslí perspektivně;
@@ -271,4 +275,5 @@ Testy:
   parametru, ne `Cd` z USD.
 - **Kamera:** posun filmu, deformace objektivu a ortografická projekce se
   nekreslí.
-- **Plate:** obraz záběru (plate) jako pozadí kamery zatím chybí.
+- **Plate:** obraz záběru za CG, holdouty a shadow catchery popisuje
+  [plate.md](plate.md); plate musí být bez zkreslení objektivu.
