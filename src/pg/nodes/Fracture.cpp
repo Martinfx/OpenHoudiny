@@ -30,9 +30,8 @@ uint64_t splitmix(uint64_t& state) {
 
 float unit(uint64_t& state) { return static_cast<float>(splitmix(state) >> 40) / static_cast<float>(1ull << 24); }
 
-/// Whether `p` is inside the closed polygons of `geo`: how often a ray
-/// from it crosses them, odd inside -- a ray slightly off the axes, so that
-/// it does not run along an edge.
+}  // namespace
+
 bool insideMesh(const Geometry& geo, const Vec3& p) {
     const Vec3 dir = normalize(Vec3(1.0f, 0.1234567f, 0.0765432f));
     const auto P = geo.positions();
@@ -59,6 +58,33 @@ bool insideMesh(const Geometry& geo, const Vec3& p) {
     }
     return (crossings & 1) != 0;
 }
+
+std::shared_ptr<Geometry> voronoiCell(const GeometryPtr& mesh, const std::vector<Vec3>& seeds, size_t i,
+                                      const std::string& inside) {
+    std::vector<size_t> others(seeds.size());
+    std::iota(others.begin(), others.end(), size_t{0});
+    others.erase(others.begin() + static_cast<long>(i));
+    const Vec3 s = seeds[i];
+    std::stable_sort(others.begin(), others.end(), [&](size_t a, size_t b) {
+        return length(seeds[a] - s) < length(seeds[b] - s);
+    });
+    std::shared_ptr<Geometry> piece = std::make_shared<Geometry>(*mesh);
+    for (const size_t j : others) {
+        const Vec3 dir = s - seeds[j];
+        if (length(dir) < 1e-7f) continue;  // two seeds on one place: the first keeps it
+        const Vec3 origin = (s + seeds[j]) * 0.5f;
+        const Vec3 n = normalize(dir);
+        // All of it on this side: nothing to cut.
+        float least = 1e30f;
+        for (const Vec3& p : piece->positions()) least = std::min(least, dot(p - origin, n));
+        if (least >= 0.0f) continue;
+        piece = clipGeometry(*piece, origin, n, true, inside);
+        if (piece->primitiveCount() == 0) break;
+    }
+    return piece;
+}
+
+namespace {
 
 class VoronoiFractureNode : public Node {
 public:
@@ -88,7 +114,7 @@ public:
         parallelFor(seeds.size(), 1, [&](size_t begin, size_t end) {
             for (size_t i = begin; i < end; ++i) {
                 if (ctx.interrupted()) return;
-                cells[i] = cell(mesh, seeds, i, inside);
+                cells[i] = voronoiCell(mesh, seeds, i, inside);
             }
         });
         if (ctx.interrupted()) return nullptr;
@@ -111,33 +137,6 @@ public:
     }
 
 private:
-    /// Seed `i`'s cell of `mesh`: clipped by the plane half way to each other
-    /// seed, nearest first, where it reaches the piece left.
-    static std::shared_ptr<Geometry> cell(const GeometryPtr& mesh, const std::vector<Vec3>& seeds, size_t i,
-                                          const std::string& inside) {
-        std::vector<size_t> others(seeds.size());
-        std::iota(others.begin(), others.end(), size_t{0});
-        others.erase(others.begin() + static_cast<long>(i));
-        const Vec3 s = seeds[i];
-        std::stable_sort(others.begin(), others.end(), [&](size_t a, size_t b) {
-            return length(seeds[a] - s) < length(seeds[b] - s);
-        });
-        std::shared_ptr<Geometry> piece = std::make_shared<Geometry>(*mesh);
-        for (const size_t j : others) {
-            const Vec3 dir = s - seeds[j];
-            if (length(dir) < 1e-7f) continue;  // two seeds on one place: the first keeps it
-            const Vec3 origin = (s + seeds[j]) * 0.5f;
-            const Vec3 n = normalize(dir);
-            // All of it on this side: nothing to cut.
-            float least = 1e30f;
-            for (const Vec3& p : piece->positions()) least = std::min(least, dot(p - origin, n));
-            if (least >= 0.0f) continue;
-            piece = clipGeometry(*piece, origin, n, true, inside);
-            if (piece->primitiveCount() == 0) break;
-        }
-        return piece;
-    }
-
     /// `count` points inside `mesh`, the same for the same `seed`: drawn in
     /// the box round it, those outside drawn again.
     static std::vector<Vec3> randomInside(const Geometry& mesh, int count, uint64_t seed) {

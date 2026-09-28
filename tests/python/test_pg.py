@@ -327,6 +327,39 @@ class Simulations(unittest.TestCase):
         self.assertEqual(shown.point_count, rigid.pieces().point_count)
         self.assertIn("v", shown.points)
 
+    @needs_numpy
+    def test_concrete_breaks_rough_over_a_plain_proxy(self):
+        net = pg.Network()
+        box = net.add("box", size=(2, 1, 0.3), center=(0, 0.5, 0))
+        concrete = net.add("concrete_fracture", count=12, chips=0.3, rough=0.02)
+        rbd = net.add("rbd_solver", spread=0.3, rings=1)
+        out = net.add("output", frames=10)
+        box.connect(concrete).connect(rbd)
+        net.connect(rbd, out)  # its Look
+        self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+        self.assertEqual(rbd["rings"], 1)
+        self.assertAlmostEqual(rbd["spread"], 0.3, places=6)
+        # The cracks rough, no further than Rough along each axis; the plain
+        # cut under them in proxy; the spalls pieces of their own.
+        geo = concrete.geometry()
+        proxy = geo.points["proxy"]
+        self.assertEqual(proxy.shape, geo.P.shape)
+        moved = np.linalg.norm(geo.P - proxy, axis=1)
+        self.assertGreater(moved.max(), 0.005)
+        self.assertLessEqual(moved.max(), 0.02 * math.sqrt(3) + 1e-5)
+        chips = geo.prims["chip"] == 1
+        self.assertTrue(chips.any())
+        self.assertGreater(len(set(geo.prims["piece"][chips].tolist())), 0)
+        # Simulated as the proxy has them: glued where the plain cuts meet,
+        # nothing knocks it -- it stands.
+        sim = net.simulate()
+        for f in sim.run(10):
+            pass
+        rigid = sim.current.rigid
+        self.assertGreater(rigid.joints, 0)
+        self.assertEqual(rigid.broken, 0)
+        self.assertLess(float(np.abs(rigid.translations).max()), 0.01)
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

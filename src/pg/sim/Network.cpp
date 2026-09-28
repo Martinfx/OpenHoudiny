@@ -660,6 +660,38 @@ std::vector<NodeType> buildTypes() {
                "Another number: the points elsewhere."},
               text("attribute", "Piece Attribute", "Fracture", "piece", "What each piece's number is called."),
               text("insidegroup", "Inside Group", "Fracture", "inside", "The faces made where it was cut.")});
+    geometry("concrete_fracture", "Concrete Fracture", "concretefracture",
+             "A closed mesh broken as concrete breaks: chunks of every size -- the smallest round Impact -- "
+             "corners chipped off as flat spalls, the faces of the cracks rough, the same on both sides of each so "
+             "the pieces still fit. The plain cut stays in the point attribute proxy: the RBD Solver simulates "
+             "the pieces as the proxy has them and draws them rough. The pieces carry piece, the cut faces are "
+             "in the group Inside Group, the spalls have chip 1.",
+             {{"geometry", "Geometry", PinType::Geometry}, {"points", "Points", PinType::Geometry}},
+             {{"count", "Count", "Fracture", K::Int, {60.0f, 0.0f, 0.0f}, 1.0f, 300.0f, 0.0f, 10000.0f, "",
+               "How many pieces -- before the spalls -- when no points come in: at random inside the mesh."},
+              {"seed", "Seed", "Fracture", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, 1e6f, "",
+               "Another number: the pieces elsewhere."},
+              {"uneven", "Uneven", "Fracture", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How unlike the pieces are: 0 all about as big, 1 big chunks beside crumbs."},
+              {"impact", "Impact", "Fracture", K::Vector, {0.0f, 1.0f, 0.0f}, -10.0f, 10.0f, -kBig, kBig, "m",
+               "Where it is struck: with Focus, the pieces are smallest there."},
+              {"focus", "Focus", "Fracture", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How many more pieces round Impact: 0 none more."},
+              {"reach", "Reach", "Fracture", K::Float, {1.0f, 0.0f, 0.0f}, 0.05f, 5.0f, 0.001f, kBig, "m",
+               "How far from Impact the pieces are smaller."},
+              {"chips", "Chips", "Spalls", K::Float, {0.2f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The share of the pieces' corners chipped off: flat spalls, small pieces of their own glued on by "
+               "their face -- the first to fly off in a knock."},
+              {"chipsize", "Chip Size", "Spalls", K::Float, {0.06f, 0.0f, 0.0f}, 0.0f, 0.3f, 0.0f, kBig, "m",
+               "How deep a spall is at most."},
+              {"rough", "Rough", "Cracks", K::Float, {0.02f, 0.0f, 0.0f}, 0.0f, 0.1f, 0.0f, kBig, "m",
+               "How far the faces of the cracks go in and out, each way: 0 flat cuts."},
+              {"roughscale", "Rough Scale", "Cracks", K::Float, {0.3f, 0.0f, 0.0f}, 0.02f, 2.0f, 0.001f, kBig, "m",
+               "How far apart their bumps are; finer ones sit on them."},
+              {"detail", "Detail", "Cracks", K::Float, {0.03f, 0.0f, 0.0f}, 0.005f, 0.2f, 0.001f, kBig, "m",
+               "How long the triangles of a rough face are at most: smaller is finer, and heavier to draw."},
+              text("attribute", "Piece Attribute", "Fracture", "piece", "What each piece's number is called."),
+              text("insidegroup", "Inside Group", "Fracture", "inside", "The faces made where it was cut.")});
     geometry("convert_volume", "Convert Volume", "convertvolume",
              "The surface of a volume as polygons: where its values cross Iso, a closed mesh of quads turned "
              "outward, with normals N -- closed where the volume ends. Smoke from a Gas Volume, a distance "
@@ -894,9 +926,18 @@ std::vector<NodeType> buildTypes() {
            "A floor at height 0 that the pieces land on. Off, they fall for ever."},
           {"glue", "Glue", "Glue", K::Float, {500.0f, 0.0f, 0.0f}, 0.0f, 5000.0f, 0.0f, 1e9f, "kPa",
            "How hard the faces where two pieces touch hold together: kilonewtons a square metre. Glued pieces "
-           "move as one body; a knock harder than a joint holds breaks it for good, and half of it goes on to "
-           "the joints beyond. 0: no glue -- the pieces fall apart at once. A piece's attribute glue makes its "
-           "joints stronger or weaker; release breaks them at a time -- a charge."},
+           "move as one body; a knock harder than a joint holds breaks it for good, and Spread of it goes on "
+           "to the joints beyond. 0: no glue -- the pieces fall apart at once. A piece's attribute glue makes "
+           "its joints stronger or weaker; release breaks them at a time -- a charge."},
+          {"spread", "Spread", "Glue", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "How much of a knock goes on through a joint to the pieces beyond: 0.5 half -- a hard knock breaks "
+           "the glue far round where it lands -- 0 none: only the pieces it lands on come loose. Houdini's "
+           "Propagate Rate."},
+          {"rings", "Rings", "Glue", K::Int, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, 1000.0f, "",
+           "How many rings of pieces round those a knock lands on it can break loose, however hard it is: 1 "
+           "the pieces next to them, 2 the ones next to those... A keyed object is unstoppable -- it would "
+           "break a whole wall at once -- with 1 or 2 it punches a hole. 0: as far as Spread carries it. "
+           "Houdini's Propagate Iterations."},
           {"substeps", "Substeps", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
            "Steps of the solver a frame: more for fast pieces and tall stacks, which then stand steadier."},
           {"dust", "Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
@@ -3239,6 +3280,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.gravity = Vec3(0.0f, -f(*solver, "gravity"), 0.0f);
         s.floor = f(*solver, "floor") != 0.0f;
         s.glue = f(*solver, "glue") * 1000.0f;  // kPa
+        s.spread = f(*solver, "spread");
+        s.rings = whole(*solver, "rings");
         s.substeps = whole(*solver, "substeps");
         s.dust = f(*solver, "dust");
         s.dustSize = f(*solver, "dust_size");

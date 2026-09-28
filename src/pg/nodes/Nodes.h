@@ -2,6 +2,7 @@
 #include "pg/core/Node.h"
 
 #include <string>
+#include <vector>
 
 namespace pg {
 
@@ -12,6 +13,7 @@ void registerPrimitiveNodes();
 void registerSurfaceNodes();
 void registerTopologyNodes();
 void registerFractureNodes();
+void registerConcreteNodes();
 void registerVolumeNodes();
 void registerUsdNodes();
 
@@ -24,6 +26,17 @@ Vec3 polygonNormal(const Geometry& geo, std::span<const uint32_t> corners);
 /// on it -- in the primitive group `capGroup`, if named.
 std::shared_ptr<Geometry> clipGeometry(const Geometry& src, const Vec3& origin, const Vec3& dir, bool cap,
                                        const std::string& capGroup);
+/// Whether `p` is inside the closed polygons of `geo`: how often a ray from
+/// it crosses them, odd inside.
+bool insideMesh(const Geometry& geo, const Vec3& p);
+
+/// Seed `i`'s Voronoi cell of the closed mesh `mesh`: what of it is nearer
+/// that seed than any other -- clipped by the plane half way to each other
+/// seed, nearest first -- closed where it was cut, the cut faces in the
+/// primitive group `insideGroup`.
+std::shared_ptr<Geometry> voronoiCell(const GeometryPtr& mesh, const std::vector<Vec3>& seeds, size_t i,
+                                      const std::string& insideGroup);
+
 /// `iterations` steps of Catmull-Clark subdivision.
 std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations);
 

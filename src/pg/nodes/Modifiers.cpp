@@ -47,6 +47,14 @@ public:
         parallelFor(P.size(), 16384, [&](size_t begin, size_t end) {
             for (size_t i = begin; i < end; ++i) P[i] = m.transformPoint(P[i]);
         });
+        // A proxy -- where the pieces of rough concrete are simulated -- is a
+        // place too.
+        if (AttributeArray* proxy = geo->points().find("proxy"); proxy && proxy->type() == AttrType::Vec3) {
+            auto Q = proxy->write<Vec3>();
+            parallelFor(Q.size(), 16384, [&](size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i) Q[i] = m.transformPoint(Q[i]);
+            });
+        }
 
         if (AttributeArray* nAttr = geo->points().find("N");
             nAttr && nAttr->type() == AttrType::Vec3) {
@@ -211,6 +219,7 @@ void registerBuiltinNodes() {
         registerSurfaceNodes();
         registerTopologyNodes();
         registerFractureNodes();
+        registerConcreteNodes();
         registerVolumeNodes();
         registerUsdNodes();
         return true;

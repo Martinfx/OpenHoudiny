@@ -141,7 +141,7 @@ hash a hlídá to test.
   s víčky (Clip), kusy uzavřené a dohromady přesně původní těleso; `piece`
   na primitivech i bodech, řezné plochy ve skupině `inside`; paralelně
   a bitově stejně na 1 i 4 vláknech.
-- ✅ **RBD Solver** ([docs/destruction.md §2](docs/destruction.md#2-rbd-solver))
+- ✅ **RBD Solver** ([docs/destruction.md §3](docs/destruction.md#3-rbd-solver))
   nad Jolt Physics 5.6 (MIT, `CROSS_PLATFORM_DETERMINISTIC`, jedno vlákno):
   kusy jako konvexní obaly s hustotou; slepené kusy jsou jedno těleso
   (compound), které náraz silnější než `glue` (kPa krát plocha spoje)
@@ -216,9 +216,16 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
 
 ### Krok 4 — Destrukce pro produkci
 
-- **Lámání podle materiálu:** beton na hrudy s odštípnutými hranami, sklo
-  paprskovitě, dřevo na třísky podél vláken; šum na lomových plochách;
-  zjednodušené tvary pro simulaci a detailní pro render.
+- **Lámání podle materiálu:** ✅ beton — uzel **Concrete Fracture**
+  ([docs/destruction.md §2](docs/destruction.md#2-concrete-fracture)):
+  nestejné kusy, nejmenší kolem místa nárazu, odprýsklé rohy jako
+  samostatné úlomky, hrubé lomové plochy (vektorový šum, na obou stranách
+  trhliny týž, kusy dál přesně lícují) a pod nimi rovný řez v atributu
+  `proxy`: RBD Solver simuluje proxy a kreslí detail. K tomu u lepidla
+  `spread` a `rings` (jak daleko náraz láme — Houdini *Propagate Rate* a
+  *Iterations*), shluky přilepené k základu stojí, kde byly postavené, a
+  příklad **concrete_wall**: demoliční koule prorazí betonovou zeď na
+  soklu. Zbývá sklo paprskovitě a dřevo na třísky podél vláken.
 - **Síť vazeb jako geometrie:** lepidlo, pružné vazby (ohýbaná výztuž),
   klouby; pevnost z atributů, kterou jde malovat a upravovat.
 - **Sekundární lámání:** kus se rozpadne až při nárazu.

@@ -1,0 +1,100 @@
+pgsim 1
+# A wrecking ball through a concrete wall. The Concrete Fracture breaks the
+# wall as concrete breaks: small pieces round where the ball strikes and
+# big slabs further off, corners chipped off as flat spalls, the faces of
+# the cracks rough -- the same bumps on both sides of each, so the wall
+# stands whole until it is struck. It stands on a plinth, a piece of its
+# own that does not move, its foot glued to it. The RBD Solver simulates
+# the plain cut under the rough one (the pieces' proxy) and draws them
+# rough; the ball -- keyed, unstoppable -- would break all the glue at
+# once, so Rings keeps a knock to the two rings of pieces round those it
+# lands on: it punches a hole, chunks and spalls fly out and tumble, and
+# the rest of the wall stands. The glue that breaks and every hard knock
+# puff dust, which the Pyro Solver carries. prototype sim concrete_wall
+# out.mp4 renders it through the camera, a slow push in.
+node 1 box 1 wall 0 0
+  param size 5 3 0.3
+  param center 0 1.7 0
+node 2 concrete_fracture 1 concrete 230 0
+  param count 90
+  param uneven 0.6
+  param impact 0 1.6 -0.15
+  param focus 0.8
+  param chips 0.25
+  param chipsize 0.07
+node 3 primitive_wrangle 1 moving 460 0
+  param snippet "// The wall's pieces move. A Merge fills an attribute a geometry lacks\n// with 0 -- set on the pieces, active is set on all of them.\ni@active = 1;"
+node 4 box 1 plinth 0 130
+  param size 5.6 0.2 0.7
+  param center 0 0.1 0
+node 5 primitive_wrangle 1 foundation 230 130
+  param snippet "// The plinth the wall stands on: a piece of its own -- numbered past\n// the wall's -- that does not move. The pieces at the wall's foot touch\n// it face to face: they are glued to it, held where they are.\ni@piece = 1000;\ni@active = 0;"
+node 6 merge 1 pieces 690 60
+node 7 object 1 ball 460 260
+  param size 1.1 1.1 1.1
+  param color 0.16 0.16 0.17
+  key center 1 smooth 0 4.8 -4.6
+  key center 10 smooth 0 2.6 -2.1
+  key center 18 smooth 0 1.65 -0.5
+  key center 26 smooth 0 1.7 1.3
+  key center 40 smooth 0 3.1 3.6
+  key center 54 smooth 0 4.7 5.6
+node 8 rbd_solver 1 rbd 920 60
+  param density 2400
+  param friction 0.7
+  param bounce 0.15
+  param glue 1000
+  param rings 2
+  param substeps 4
+  param dust 2
+  param impact_dust 2
+  param dust_size 0.35
+  param air 1.5
+  param color 0.38 0.37 0.355
+  param inside_color 0.48 0.46 0.43
+node 9 turbulence 1 swirl 920 230
+  param strength 1.2
+  param scale 0.8
+node 10 pyro_solver 2 dust 1150 140
+  param size 10 4.5 10
+  param resolution 112
+  param buoyancy 0.15
+  param weight 0.25
+  param vorticity 3
+  param smoke_decay 0.15
+node 11 volume_look 2 dust_look 1380 140
+  param smoke_color 0.66 0.63 0.58
+  param smoke_density 12
+  param occlusion 1
+node 12 output 2 output 1610 60
+  param frames 90
+  param light_azimuth 145
+  param light_elevation 30
+  param light_color 1 0.9 0.78
+  param light_intensity 2.8
+  param sky_intensity 0.45
+  param exposure 0.8
+  param ground_color 0.13 0.125 0.12
+  param grid off
+  param sky_behind on
+node 13 camera 1 camera 1610 220
+  param focal 34
+  key center 1 smooth 4.6 1.5 6.4
+  key center 90 smooth 3.8 1.4 5.3
+  key rotation 1 smooth -2 36 0
+  key rotation 90 smooth -2 35 0
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 4.geometry -> 5.geometry
+link 3.geometry -> 6.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 8.pieces
+link 7.collider -> 8.colliders
+link 8.dust -> 10.sources
+link 8.collider -> 10.colliders
+link 7.collider -> 10.colliders
+link 9.force -> 10.forces
+link 10.gas -> 11.gas
+link 8.look -> 12.look
+link 11.look -> 12.look
+link 13.camera -> 12.camera

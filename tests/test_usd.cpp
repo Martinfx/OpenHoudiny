@@ -271,8 +271,10 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
     CHECK_EQ(usd.bodies(), layout->bodies);
     CHECK_EQ(usd.frames(), 20);
     const usda::Stage s = usd.stage();
-    const GeometryPtr posed = sim::posedPieces(last.rigid);
-    const auto Q = posed->positions();
+    // As the look draws them: the faces the fracture cut have points of their own.
+    const sim::Look look;
+    const GeometryPtr drawn = sim::drawnPieces(last.rigid, look.piecesColor, look.piecesInside, look.insideGroup);
+    const auto Q = drawn->positions();
     for (int b = 0; b < layout->bodies; ++b) {
         char name[16];
         std::snprintf(name, sizeof name, "body_%04d", b);
@@ -291,12 +293,13 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
         CHECK(mesh != nullptr);
         if (!mesh) continue;
         const std::vector<Vec3> local = parseTuples(attribute(*mesh, "points")->value);
-        // The mesh's points are the body's, in the order its faces first
-        // use them; moved and turned they are where the pieces are posed.
+        // The mesh's points are the body's as they are drawn, in the order
+        // its faces first use them; moved and turned they are where the
+        // pieces are posed.
         std::vector<uint32_t> source;
         std::set<uint32_t> seen;
         for (const uint32_t prim : layout->prims[static_cast<size_t>(b)]) {
-            for (const uint32_t p : scene.pieces->primitivePoints(prim)) {
+            for (const uint32_t p : drawn->primitivePoints(prim)) {
                 if (seen.insert(p).second) source.push_back(p);
             }
         }

@@ -8,6 +8,7 @@
 // blended by them alike: numbers weighted, integers and strings from the
 // heaviest. So the nodes know nothing of the attributes they carry.
 #include "pg/nodes/Nodes.h"
+#include "pg/nodes/Rebuild.h"
 
 #include "pg/core/Parallel.h"
 #include "pg/core/Spatial.h"
@@ -22,151 +23,6 @@
 
 namespace pg {
 namespace {
-
-// --- blending -----------------------------------------------------------------------------------
-
-/// New elements, each a weighted sum of old ones: the terms of element e are
-/// index/weight[start[e], start[e + 1]).
-struct Blends {
-    std::vector<uint32_t> start{0};
-    std::vector<uint32_t> index;
-    std::vector<float> weight;
-
-    size_t size() const { return start.size() - 1; }
-    void one(uint32_t i) {
-        index.push_back(i);
-        weight.push_back(1.0f);
-        start.push_back(static_cast<uint32_t>(index.size()));
-    }
-    /// (1 - t) a + t b.
-    void two(uint32_t a, uint32_t b, float t) {
-        std::vector<std::pair<uint32_t, float>> terms = {{a, 1.0f - t}, {b, t}};
-        add(terms);
-    }
-    /// Terms naming the same element are summed.
-    void add(std::vector<std::pair<uint32_t, float>>& terms) {
-        std::sort(terms.begin(), terms.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-        for (size_t i = 0; i < terms.size();) {
-            const uint32_t at = terms[i].first;
-            float w = 0.0f;
-            while (i < terms.size() && terms[i].first == at) w += terms[i++].second;
-            index.push_back(at);
-            weight.push_back(w);
-        }
-        start.push_back(static_cast<uint32_t>(index.size()));
-    }
-    void none() { start.push_back(static_cast<uint32_t>(index.size())); }
-    /// The term with the most weight, the first of equals; -1 for none.
-    int64_t heaviest(size_t e) const {
-        int64_t best = -1;
-        float w = -1.0f;
-        for (uint32_t k = start[e]; k < start[e + 1]; ++k) {
-            if (weight[k] > w) {
-                w = weight[k];
-                best = index[k];
-            }
-        }
-        return best;
-    }
-};
-
-int floatsOf(AttrType t) {
-    switch (t) {
-        case AttrType::Float: return 1;
-        case AttrType::Vec2: return 2;
-        case AttrType::Vec3: return 3;
-        case AttrType::Vec4: return 4;
-        default: return 0;
-    }
-}
-
-/// The attributes of `from` for elements blended from its own.
-AttributeSet blended(const AttributeSet& from, const Blends& b) {
-    AttributeSet out;
-    out.setElementCount(b.size());
-    std::vector<uint32_t> pick(b.size(), 0);
-    for (size_t e = 0; e < b.size(); ++e) pick[e] = static_cast<uint32_t>(std::max<int64_t>(b.heaviest(e), 0));
-    for (const std::string& name : from.names()) {
-        const AttributeArray& a = *from.find(name);
-        const int k = floatsOf(a.type());
-        if (k == 0) {
-            // Integers and strings: the heaviest term's, its string table shared.
-            if (a.size() == 0) out.create(name, a.type());
-            else out.assign(name, a.gather(pick));
-            continue;
-        }
-        AttributeArray& o = out.create(name, a.type());
-        const float* src = reinterpret_cast<const float*>(a.rawRead());
-        float* dst = reinterpret_cast<float*>(o.rawWrite());
-        for (size_t e = 0; e < b.size(); ++e) {
-            float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            for (uint32_t t = b.start[e]; t < b.start[e + 1]; ++t) {
-                if (b.index[t] >= a.size()) continue;
-                const float* v = src + static_cast<size_t>(b.index[t]) * static_cast<size_t>(k);
-                for (int c = 0; c < k; ++c) acc[c] += b.weight[t] * v[c];
-            }
-            for (int c = 0; c < k; ++c) dst[e * static_cast<size_t>(k) + static_cast<size_t>(c)] = acc[c];
-        }
-    }
-    return out;
-}
-
-/// The attributes of `from` gathered: element e is from's `source[e]`.
-AttributeSet gathered(const AttributeSet& from, std::span<const uint32_t> source) {
-    AttributeSet out = from;
-    if (from.elementCount() == 0) {
-        out.setElementCount(source.size());
-        return out;
-    }
-    out.gather(source);
-    return out;
-}
-
-/// The groups of `src` onto `dst`, whose points are `points` blended from
-/// src's (members where every term is one) and whose primitives are
-/// `prims` gathered from src's.
-void carryGroups(const Geometry& src, Geometry& dst, const Blends& points, std::span<const uint32_t> prims) {
-    for (const std::string& name : src.groupNames()) {
-        const Group* g = src.findGroup(name);
-        if (g->classOf() == AttrClass::Point) {
-            Group& o = dst.createGroup(name, AttrClass::Point);
-            for (size_t e = 0; e < points.size(); ++e) {
-                bool all = points.start[e + 1] > points.start[e];
-                for (uint32_t t = points.start[e]; t < points.start[e + 1] && all; ++t) all = g->contains(points.index[t]);
-                if (all) o.set(e, true);
-            }
-        } else if (g->classOf() == AttrClass::Primitive) {
-            Group& o = dst.createGroup(name, AttrClass::Primitive);
-            for (size_t e = 0; e < prims.size(); ++e) {
-                if (g->contains(prims[e])) o.set(e, true);
-            }
-        }
-    }
-}
-
-/// A geometry of `pointCount` points and the primitives `faces` (point
-/// lists, `closed`), its attributes from `src`: points blended, vertices
-/// blended, primitives gathered by `sourcePrim`; groups carried; detail and
-/// volumes kept.
-std::shared_ptr<Geometry> rebuild(const Geometry& src, const Blends& points, const std::vector<std::vector<uint32_t>>& faces,
-                                  const std::vector<uint8_t>& closed, const Blends& vertices,
-                                  const std::vector<uint32_t>& sourcePrim) {
-    auto out = std::make_shared<Geometry>();
-    out->addPoints(points.size());
-    for (size_t f = 0; f < faces.size(); ++f) out->addPrimitive(faces[f], closed[f] != 0);
-    out->points() = blended(src.points(), points);
-    out->vertices() = blended(src.vertices(), vertices);
-    out->primitives() = gathered(src.primitives(), sourcePrim);
-    out->detail() = src.detail();
-    carryGroups(src, *out, points, sourcePrim);
-    for (const Volume& v : src.volumes()) out->addVolume(v);
-    return out;
-}
-
-uint64_t edgeKey(uint32_t a, uint32_t b) {
-    if (a > b) std::swap(a, b);
-    return (static_cast<uint64_t>(a) << 32) | b;
-}
 
 /// The words of a list of attribute names: "Cd v" -> {"Cd", "v"}.
 std::vector<std::string> words(const std::string& text) {
@@ -1000,13 +856,41 @@ public:
                 isCap.push_back(1);
                 for (size_t i = 0; i < faces.back().size(); ++i) vertices.none();
             };
+            // A cap is cut the same way from either side of the plane: its
+            // loops taken round the normal that points the way of its
+            // largest component, each from its first point in x, y, z. Two
+            // cuts along one plane from its two sides -- a spall and what it
+            // came off -- make caps of the same triangles, turned round.
+            Vec3 across = -dir;
+            int big = 0;
+            for (int a = 1; a < 3; ++a) {
+                if (std::fabs(across[a]) > std::fabs(across[big])) big = a;
+            }
+            if (across[big] < 0.0f) across = -across;
+            const bool turned = dot(across, dir) > 0.0f;  // the caps face -dir, the other way
+            const Plane2 canon(across);
+            auto onCanon = [&](uint32_t pt) { return canon.at(at[pt]); };
+            auto before = [&](uint32_t a, uint32_t b) {
+                const Vec3 &p = at[a], &q = at[b];
+                return p.x != q.x ? p.x < q.x : p.y != q.y ? p.y < q.y : p.z < q.z;
+            };
+            auto canonical = [&](std::vector<uint32_t> loop) {
+                if (turned) std::reverse(loop.begin(), loop.end());
+                size_t first = 0;
+                for (size_t i = 1; i < loop.size(); ++i) {
+                    if (before(loop[i], loop[first])) first = i;
+                }
+                std::rotate(loop.begin(), loop.begin() + static_cast<long>(first), loop.end());
+                return loop;
+            };
             for (size_t o = 0; o < loops.size(); ++o) {
                 if (loops[o].area <= 0.0) continue;
                 std::vector<std::vector<uint32_t>> holes;
-                for (const size_t h : holesOf[o]) holes.push_back(loops[h].points);
-                std::vector<uint32_t> poly = holes.empty() ? loops[o].points : bridgeHoles(loops[o].points, holes, toPlane);
+                for (const size_t h : holesOf[o]) holes.push_back(canonical(loops[h].points));
+                const std::vector<uint32_t> outer = canonical(loops[o].points);
+                std::vector<uint32_t> poly = holes.empty() ? outer : bridgeHoles(outer, holes, onCanon);
                 std::vector<P2> q;
-                for (const uint32_t pt : poly) q.push_back(toPlane(pt));
+                for (const uint32_t pt : poly) q.push_back(onCanon(pt));
                 // Convex, and no holes: one face; else triangles.
                 bool convex = holes.empty();
                 double scale = 1e-30;
@@ -1015,10 +899,14 @@ public:
                     if (cross2(q[(i + q.size() - 1) % q.size()], q[i], q[(i + 1) % q.size()]) < -1e-12 * scale * scale) convex = false;
                 }
                 if (convex) {
+                    if (turned) std::reverse(poly.begin(), poly.end());
                     addCap(std::move(poly), loops[o].prim);
                     continue;
                 }
-                for (const auto& t : triangulate(poly, q)) addCap({poly[t[0]], poly[t[1]], poly[t[2]]}, loops[o].prim);
+                for (const auto& t : triangulate(poly, q)) {
+                    if (turned) addCap({poly[t[0]], poly[t[2]], poly[t[1]]}, loops[o].prim);
+                    else addCap({poly[t[0]], poly[t[1]], poly[t[2]]}, loops[o].prim);
+                }
             }
         }
         isCap.resize(faces.size(), 0);

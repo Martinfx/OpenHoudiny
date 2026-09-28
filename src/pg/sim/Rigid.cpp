@@ -1,5 +1,6 @@
 #include "pg/sim/Rigid.h"
 
+#include "pg/nodes/Rebuild.h"
 #include "pg/sim/Mesh.h"
 #include "pg/sim/Shape.h"
 #include "pg/sim/Shared.h"
@@ -47,6 +48,8 @@ RigidScene RigidScene::sanitized() const {
     s.friction = std::clamp(finite(s.friction, d.friction), 0.0f, 10.0f);
     s.bounce = std::clamp(finite(s.bounce, d.bounce), 0.0f, 1.0f);
     s.glue = std::clamp(finite(s.glue, d.glue), 0.0f, 1e15f);
+    s.spread = std::clamp(finite(s.spread, d.spread), 0.0f, 1.0f);
+    s.rings = std::clamp(s.rings, 0, 1 << 20);
     for (int a = 0; a < 3; ++a) s.gravity[a] = std::clamp(finite(s.gravity[a], 0.0f), -1000.0f, 1000.0f);
     s.substeps = std::clamp(s.substeps, 1, 16);
     s.dust = std::clamp(finite(s.dust, d.dust), 0.0f, 1000.0f);
@@ -125,6 +128,20 @@ std::vector<int32_t> pieceOfPrimitives(const Geometry& pieces, const std::string
         roots[p] = c.empty() ? -1 - static_cast<int32_t>(p) : static_cast<int32_t>(uf.find(c[0]));
     }
     number(roots);
+    return out;
+}
+
+std::vector<Vec3> rigidPositions(const Geometry& pieces) {
+    const auto P = pieces.positions();
+    std::vector<Vec3> out(P.begin(), P.end());
+    const AttributeArray* proxy = pieces.points().find("proxy");
+    if (!proxy || proxy->type() != AttrType::Vec3 || proxy->size() != out.size()) return out;
+    const auto Q = proxy->read<Vec3>();
+    for (size_t i = 0; i < out.size(); ++i) {
+        // Merged with pieces that had none, a point has a proxy of 0: its own place.
+        if (Q[i] == Vec3() && length(out[i]) > 1e-3f) continue;
+        out[i] = Q[i];
+    }
     return out;
 }
 
@@ -261,6 +278,104 @@ double overlapArea(const Face& f, const Face& g, Vec3& sum) {
     return area;
 }
 
+/// The closed polygons `prims` of a part, those that lie in one plane side
+/// by side made one: the ring of points round them, the points where it
+/// only runs straight on left out. Where they do not make one ring -- a
+/// hole, two islands -- each stays as it is.
+std::vector<std::vector<uint32_t>> planeOutlines(const Geometry& geo, const std::vector<Vec3>& P,
+                                                 const std::vector<uint32_t>& prims, float eps) {
+    struct Plane {
+        Vec3 n;
+        double d = 0.0;
+        std::vector<uint32_t> prims;
+    };
+    std::vector<Plane> planes;
+    for (const uint32_t p : prims) {
+        const auto c = geo.primitivePoints(p);
+        if (c.size() < 3 || !geo.primitiveClosed(p)) continue;
+        Vec3 n, mid;
+        for (size_t i = 0; i < c.size(); ++i) {
+            const Vec3& a = P[c[i]];
+            const Vec3& b = P[c[(i + 1) % c.size()]];
+            n += Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+            mid += a;
+        }
+        if (length(n) * 0.5f < 1e-12f) continue;
+        n = normalize(n);
+        const double d = static_cast<double>(dot(n, mid * (1.0f / static_cast<float>(c.size()))));
+        Plane* found = nullptr;
+        for (Plane& q : planes) {
+            if (dot(q.n, n) > 0.99995f && std::fabs(q.d - d) <= static_cast<double>(eps)) {
+                found = &q;
+                break;
+            }
+        }
+        if (!found) {
+            planes.push_back({n, d, {}});
+            found = &planes.back();
+        }
+        found->prims.push_back(p);
+    }
+    std::vector<std::vector<uint32_t>> out;
+    auto alone = [&](const Plane& q) {
+        for (const uint32_t p : q.prims) {
+            const auto c = geo.primitivePoints(p);
+            out.emplace_back(c.begin(), c.end());
+        }
+    };
+    for (const Plane& q : planes) {
+        if (q.prims.size() == 1) {
+            alone(q);
+            continue;
+        }
+        // The edges no two of them share run round them.
+        std::map<std::pair<uint32_t, uint32_t>, int> edges;
+        for (const uint32_t p : q.prims) {
+            const auto c = geo.primitivePoints(p);
+            for (size_t i = 0; i < c.size(); ++i) ++edges[{c[i], c[(i + 1) % c.size()]}];
+        }
+        std::map<uint32_t, uint32_t> next;
+        bool simple = true;
+        size_t rim = 0;
+        for (const auto& [e, count] : edges) {
+            if (edges.count({e.second, e.first})) continue;
+            if (count != 1 || !next.emplace(e.first, e.second).second) simple = false;
+            ++rim;
+        }
+        std::vector<uint32_t> ring;
+        if (simple && rim >= 3) {
+            const uint32_t start = next.begin()->first;
+            uint32_t at = start;
+            do {
+                ring.push_back(at);
+                const auto it = next.find(at);
+                if (it == next.end()) break;
+                at = it->second;
+            } while (at != start && ring.size() <= rim);
+            simple = at == start && ring.size() == rim;
+        }
+        if (!simple) {
+            alone(q);
+            continue;
+        }
+        // Points where the ring runs straight on are no corners.
+        std::vector<uint32_t> corners;
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const Vec3& a = P[ring[(i + ring.size() - 1) % ring.size()]];
+            const Vec3& b = P[ring[i]];
+            const Vec3& c = P[ring[(i + 1) % ring.size()]];
+            const Vec3 u = b - a, v = c - b;
+            if (length(cross(u, v)) > 1e-5f * length(u) * length(v)) corners.push_back(ring[i]);
+        }
+        if (corners.size() < 3) {
+            alone(q);
+            continue;
+        }
+        out.push_back(std::move(corners));
+    }
+    return out;
+}
+
 }  // namespace
 
 std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::string& attribute) {
@@ -271,7 +386,7 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
     if (nprims == 0) return out;
     int pieceCount = 0;
     const std::vector<int32_t> piece = pieceOfPrimitives(geo, attribute, pieceCount);
-    const auto P = geo.positions();
+    const std::vector<Vec3> P = rigidPositions(geo);
 
     // The parts: the primitives of a piece that share points.
     UnionFind prims(nprims);
@@ -332,22 +447,22 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
     // the whole across.
     const double minArea = static_cast<double>(1e-4f * diag) * static_cast<double>(1e-4f * diag);
 
-    // The faces, part by part.
+    // The faces, part by part: those that lie side by side in one plane --
+    // a cut face of rough concrete, as its proxy has it, is hundreds of
+    // triangles -- as the one polygon round them.
     std::vector<Face> faces;
     std::vector<uint32_t> firstFace(parts.size() + 1, 0);
     for (size_t k = 0; k < parts.size(); ++k) {
         firstFace[k] = static_cast<uint32_t>(faces.size());
-        for (const uint32_t p : parts[k].prims) {
-            const auto c = geo.primitivePoints(p);
-            if (c.size() < 3 || !geo.primitiveClosed(p)) continue;
+        for (const std::vector<uint32_t>& ring : planeOutlines(geo, P, parts[k].prims, eps)) {
             Face f;
             f.part = static_cast<uint32_t>(k);
             Vec3 n, mid;
             f.lo = Vec3(1e30f, 1e30f, 1e30f);
             f.hi = Vec3(-1e30f, -1e30f, -1e30f);
-            for (size_t i = 0; i < c.size(); ++i) {
-                const Vec3& a = P[c[i]];
-                const Vec3& b = P[c[(i + 1) % c.size()]];
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const Vec3& a = P[ring[i]];
+                const Vec3& b = P[ring[(i + 1) % ring.size()]];
                 n += Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));  // Newell
                 mid += a;
                 f.corners.push_back(a);
@@ -358,7 +473,7 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
             }
             if (length(n) * 0.5f < 1e-12f) continue;
             f.normal = normalize(n);
-            f.d = static_cast<double>(dot(f.normal, mid * (1.0f / static_cast<float>(c.size()))));
+            f.d = static_cast<double>(dot(f.normal, mid * (1.0f / static_cast<float>(ring.size()))));
             faces.push_back(std::move(f));
         }
     }
@@ -481,6 +596,7 @@ std::shared_ptr<Geometry> posedPieces(const RigidFrame& f) {
             if (pointBody[c] < 0) pointBody[c] = layout->bodyOf[p];
         }
     }
+    geo->points().erase("proxy");  // the rest's, not where the pieces are now
     auto v = geo->points().create("v", AttrType::Vec3).write<Vec3>();
     auto P = geo->positionsForWrite();
     AttributeArray* nAttr = geo->points().find("N");
@@ -526,14 +642,54 @@ bool isColor(const AttributeArray* a) {
     return a && (a->type() == AttrType::Vec3 || a->type() == AttrType::Vec4 || a->type() == AttrType::Float) && a->size() > 0;
 }
 
+/// `geo` with the points the primitives of `cut` share with the others made
+/// two: one for each side, the same in all else.
+std::shared_ptr<Geometry> apart(const Geometry& geo, const Group& cut) {
+    const size_t np = geo.pointCount(), nprims = geo.primitiveCount();
+    std::vector<uint8_t> use(np, 0);
+    for (size_t p = 0; p < nprims; ++p) {
+        const uint8_t bit = cut.contains(p) ? 1 : 2;
+        for (const uint32_t pt : geo.primitivePoints(p)) use[pt] |= bit;
+    }
+    Blends points;
+    for (uint32_t i = 0; i < np; ++i) points.one(i);
+    std::vector<uint32_t> twin(np, 0);
+    for (uint32_t i = 0; i < np; ++i) {
+        if (use[i] != 3) continue;
+        twin[i] = static_cast<uint32_t>(points.size());
+        points.one(i);
+    }
+    if (points.size() == np) return std::make_shared<Geometry>(geo);
+    std::vector<std::vector<uint32_t>> faces(nprims);
+    std::vector<uint8_t> closed(nprims);
+    std::vector<uint32_t> source(nprims);
+    Blends vertices;
+    for (size_t p = 0; p < nprims; ++p) {
+        const auto c = geo.primitivePoints(p);
+        const bool isCut = cut.contains(p);
+        faces[p].reserve(c.size());
+        for (const uint32_t pt : c) faces[p].push_back(isCut && use[pt] == 3 ? twin[pt] : pt);
+        closed[p] = geo.primitiveClosed(p) ? 1 : 0;
+        source[p] = static_cast<uint32_t>(p);
+        for (size_t k = 0; k < c.size(); ++k) vertices.one(static_cast<uint32_t>(geo.primitiveVertexStart(p) + k));
+    }
+    return rebuild(geo, points, faces, closed, vertices, source);
+}
+
 }  // namespace
 
 std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, const Vec3& inside,
                                       const std::string& insideGroup) {
     std::shared_ptr<Geometry> geo = posedPieces(f);
-    const size_t nprims = geo->primitiveCount();
     const Group* cut = insideGroup.empty() ? nullptr : geo->findGroup(insideGroup);
     if (cut && cut->classOf() != AttrClass::Primitive) cut = nullptr;
+    // A crack at a shallow angle to the face it breaks would be shaded
+    // smooth into it: the points where the cut faces meet the others, twice.
+    if (cut) {
+        geo = apart(*geo, *cut);
+        cut = geo->findGroup(insideGroup);
+    }
+    const size_t nprims = geo->primitiveCount();
     // The colour of every corner -- the corner's own, the point's, the
     // face's, the whole's -- so that a cut face can differ from the face
     // beside it, and the grit's points can have a colour of their own.
@@ -618,8 +774,6 @@ constexpr int kPuffLife = 8;
 constexpr size_t kMaxPuffs = 400;
 constexpr size_t kMaxGrit = 40000;
 constexpr float kMaxSwell = 20.0f;  // 1/s: the most a puff swells
-/// How much of a knock goes on from a piece to the pieces glued to it.
-constexpr float kSpread = 0.5f;
 /// How much of the speed it had before a knock a body keeps when the glue
 /// under it broke: it was crushing what broke off, not standing on it.
 constexpr float kCarry = 0.985f;
@@ -794,6 +948,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         std::vector<int> pieces;       ///< in order
         std::vector<int> subPiece;     ///< for each sub-shape of its compound, the piece
         std::vector<JPH::Ref<JPH::Constraint>> anchors;  ///< to the still pieces it is glued to
+        std::vector<int> heldBy;       ///< ... those pieces, in order
         bool alive = false;
         float mass = 0.0f;             ///< kilograms
         Vec3 before, beforeSpin;       ///< its velocity before the step, at its centre of mass
@@ -892,6 +1047,15 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         k.impulse = inverse > 0.0f ? (1.0f + settings.bounce) * speed / inverse : 0.0f;
         whoIs(b1, m.mSubShapeID1, k.cluster[0], k.piece[0]);
         whoIs(b2, m.mSubShapeID2, k.cluster[1], k.piece[1]);
+        // A body pressed on the still piece it is glued to -- a keyed
+        // object pushing the wall on its foundation -- knocks nothing: they
+        // are one, as the pieces of a body are.
+        for (int side = 0; side < 2; ++side) {
+            const int c = k.cluster[side], still = k.piece[1 - side];
+            if (c < 0 || k.cluster[1 - side] >= 0 || still < 0) continue;
+            const std::vector<int>& held = clusters[static_cast<size_t>(c)].heldBy;
+            if (std::binary_search(held.begin(), held.end(), still)) return;
+        }
         k.body[0] = b1.GetID().GetIndex();
         k.body[1] = b2.GetID().GetIndex();
         // How big what knocked is: the smaller of two pieces -- a sliver puffs no dust.
@@ -1001,11 +1165,17 @@ struct RigidSolver::Impl : public JPH::ContactListener {
     }
 
     /// A knock of `force` newtons on piece `k`: the joints it cannot hold
-    /// break; half of it goes on through those that hold, and so on.
+    /// break; some of it (spread) goes on through them to the pieces
+    /// beyond, and so on -- no further than rings of pieces, when set.
     void spread(int k, float force, std::vector<float>& felt) {
-        std::vector<std::pair<int, float>> queue{{k, force}};
+        struct Felt {
+            int piece;
+            float force;
+            int ring;  // how many joints from where it landed
+        };
+        std::vector<Felt> queue{{k, force, 0}};
         for (size_t at = 0; at < queue.size(); ++at) {
-            const auto [q, f] = queue[at];
+            const auto [q, f, ring] = queue[at];
             if (f <= felt[static_cast<size_t>(q)]) continue;
             felt[static_cast<size_t>(q)] = f;
             for (const int ei : edgesOf[static_cast<size_t>(q)]) {
@@ -1018,9 +1188,10 @@ struct RigidSolver::Impl : public JPH::ContactListener {
                     Piece& p = pieces[static_cast<size_t>(q)];
                     if (p.crush > 0.0f && p.moves && !p.gone && f > p.crush * e.strength) crumble(q);
                 }
-                // What broke it went on through it -- half of it.
-                const float on = f * kSpread;
-                if (on > felt[static_cast<size_t>(other)] && on > 1e-3f * e.strength) queue.push_back({other, on});
+                // What broke it went on through it -- some of it.
+                if (settings.rings > 0 && ring >= settings.rings) continue;
+                const float on = f * settings.spread;
+                if (on > felt[static_cast<size_t>(other)] && on > 1e-3f * e.strength) queue.push_back({other, on, ring + 1});
             }
         }
     }
@@ -1087,6 +1258,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         }
         std::sort(held.begin(), held.end());
         held.erase(std::unique(held.begin(), held.end()), held.end());
+        c.heldBy = held;
         for (const int s : held) {
             const JPH::BodyID still = stillBodies[static_cast<size_t>(s)];
             if (still.IsInvalid()) continue;
@@ -1147,6 +1319,13 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         const Vec3 before = old.before, beforeSpin = old.beforeSpin;
         for (const int k : old.pieces) pieces[static_cast<size_t>(k)].cluster = -1;
         for (const auto& [root, group] : groups) {
+            // Still glued to a still piece: where it was built, not moving
+            // -- whatever pushed it in the step (a keyed object, as
+            // unstoppable as the still piece is unmovable) pushed in vain.
+            if (held(group)) {
+                makeCluster(group, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), centre, Vec3(), Vec3(), stillBodies);
+                continue;
+            }
             // What was mostly struck stops as the step stopped it; the rest
             // goes on, most of its speed kept.
             size_t struck = 0;
@@ -1155,6 +1334,29 @@ struct RigidSolver::Impl : public JPH::ContactListener {
             const Vec3 v = velocity + (before - velocity) * keep;
             const Vec3 w = spin + (beforeSpin - spin) * keep;
             makeCluster(group, position, rotation, centre, v, w, stillBodies);
+        }
+    }
+
+    /// Whether any of `members` is glued to a still piece.
+    bool held(const std::vector<int>& members) const {
+        for (const int k : members) {
+            for (const int ei : edgesOf[static_cast<size_t>(k)]) {
+                const Edge& e = edges[static_cast<size_t>(ei)];
+                if (!e.broken && !pieces[static_cast<size_t>(e.a == k ? e.b : e.a)].moves) return true;
+            }
+        }
+        return false;
+    }
+
+    /// The bodies glued to still pieces back where they were built, still:
+    /// the joint holds them, but a keyed object -- infinitely heavy --
+    /// pushes against it as hard as it must, and a step can give a little.
+    void settleHeld() {
+        JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        for (const Cluster& c : clusters) {
+            if (!c.alive || c.anchors.empty()) continue;
+            bi.SetPositionAndRotation(c.id, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EActivation::DontActivate);
+            bi.SetLinearAndAngularVelocity(c.id, JPH::Vec3::sZero(), JPH::Vec3::sZero());
         }
     }
 };
@@ -1184,9 +1386,9 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     }
     JPH::BodyInterface& bi = m.physics.GetBodyInterfaceNoLock();
 
-    // The pieces: the hull of each part, where it rests; what their
-    // attributes say.
-    const auto P = geo->positions();
+    // The pieces: the hull of each part, where it rests -- as their proxy
+    // has it, when they carry one; what their attributes say.
+    const std::vector<Vec3> P = rigidPositions(*geo);
     const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
@@ -1417,7 +1619,10 @@ void RigidSolver::step() {
     std::vector<float> took(m.clusters.size(), 0.0f);
     for (size_t c = 0; c < m.clusters.size(); ++c) {
         const Impl::Cluster& cl = m.clusters[c];
-        if (!cl.alive || knocksOn[c] == 0) continue;
+        // A body held by a still piece does not move: how the step moved
+        // it -- a keyed object pushing it against its foundation -- is not a
+        // knock to share among all that touches it.
+        if (!cl.alive || knocksOn[c] == 0 || !cl.anchors.empty()) continue;
         const Vec3 change = ours(bi.GetLinearVelocity(cl.id)) - cl.before - s.gravity * dt;
         took[c] = cl.mass * length(change) / static_cast<float>(knocksOn[c]);
     }
@@ -1435,6 +1640,7 @@ void RigidSolver::step() {
         }
     }
     mend();
+    m.settleHeld();
 
     // The knocks: the hardest first, dust and grit where they were.
     std::sort(m.knocks.begin(), m.knocks.end(), [](const Impl::Knock& a, const Impl::Knock& b) {

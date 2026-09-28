@@ -11,18 +11,21 @@
 //              parts that do not touch -- each part colliding as its convex
 //              hull, so a piece of many parts (a cluster of Voronoi cells, a
 //              corner of wall and floor) keeps its shape; as heavy as its
-//              volume at its density
+//              volume at its density. Pieces with a point attribute proxy
+//              (Concrete Fracture's: the plain cut under the rough one) are
+//              simulated as the proxy has them and drawn as they are
 //   glue       where two bodies touch face to face, a joint as strong as the
 //              faces are big: Glue a square metre. Glued, pieces are one
 //              body, as rigid as a single piece -- as built, it stands;
 //              glued to a still piece, it is held where it is. A knock
 //              breaks the joints of the piece it lands on that hold less
 //              than it -- how hard: what it took to change how the body
-//              moved, or to stop the two things -- and half of it goes on
-//              through to the pieces beyond, breaking what holds less
-//              there, and so on. What is still glued goes on as a body of
-//              its own, as it moved. A break puffs dust and throws out
-//              grit
+//              moved, or to stop the two things -- and some of it (spread:
+//              half) goes on through to the pieces beyond, breaking what
+//              holds less there, and so on -- no further than rings of
+//              pieces round where it landed, when that is set. What is
+//              still glued goes on as a body of its own, as it moved. A
+//              break puffs dust and throws out grit
 //   colliders  the floor, and the objects linked in: still, or keyed --
 //              those push what is in their way
 //
@@ -70,6 +73,14 @@ struct RigidSettings {
     /// Pascals: how hard a knock a square metre of glued face holds.
     /// 0: no glue.
     float glue = 500000.0f;
+    /// How much of a knock goes on through a joint to the pieces beyond:
+    /// 0.5 half -- a hard knock breaks the glue far round where it lands --
+    /// 0 none: only the pieces it lands on come loose.
+    float spread = 0.5f;
+    /// How many rings of pieces round those a knock lands on it can break
+    /// loose, however hard it is: 1 the pieces next to them. 0: as far as
+    /// spread carries it.
+    int rings = 0;
     Vec3 gravity{0.0f, -9.81f, 0.0f};
     int substeps = 2;                 ///< steps of the solver a frame
     bool floor = true;                ///< a floor at y = 0
@@ -182,6 +193,12 @@ size_t appendGrit(Geometry& geo, const RigidFrame& f);
 /// points of its size in the colour of the inside, a shade darker.
 std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, const Vec3& inside,
                                       const std::string& insideGroup);
+
+/// Where the solver has the points of `pieces`: their proxy -- the plain
+/// cut, for rough concrete (Concrete Fracture) -- where they carry one, else
+/// where they are. A point with a proxy of 0, merged from pieces that had
+/// none, is where it is.
+std::vector<Vec3> rigidPositions(const Geometry& pieces);
 
 /// For each primitive of `pieces`, which piece it is of -- 0, 1, ... in the
 /// order of the values of `attribute` (on the primitives, else the points),

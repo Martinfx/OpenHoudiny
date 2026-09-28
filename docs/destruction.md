@@ -1,7 +1,9 @@
-# Destrukce: Voronoi Fracture, tuhá tělesa, lepidlo a prach
+# Destrukce: Voronoi a Concrete Fracture, tuhá tělesa, lepidlo a prach
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
-(**Voronoi Fracture**), kusy dostanou hmotu a slepí se k sobě (**RBD
+(**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
+beton: nestejné kusy, hrubé lomy, odprýsklé rohy), kusy dostanou hmotu a
+slepí se k sobě (**RBD
 Solver** nad knihovnou [Jolt Physics](https://github.com/jrouwe/JoltPhysics)).
 Nálože přetrhnou lepidlo v daný čas, nárazy ho lámou dál, padající patra
 drtí stěny na prach, úlomky sypou drť a vzduch, který zřícení vytlačí, žene
@@ -115,7 +117,91 @@ Clip).
 
 ---
 
-## 2. RBD Solver
+## 2. Concrete Fracture
+
+Voronoi Fracture řeže rovinami: kusy jsou čisté konvexní mnohostěny se
+stejně velkými buňkami a rovnými lomy — na zblízka to vypadá jako
+rozřezané, ne rozbité. Beton se láme jinak: velké kry vedle drobků,
+nejmenší kusy tam, kam přišla rána, olámané hrany a rohy a lomové plochy
+hrubé, zrnité. Uzel **Concrete Fracture** (Geometry) to dělá ve čtyřech
+krocích ([`src/pg/nodes/Concrete.cpp`](../src/pg/nodes/Concrete.cpp)):
+
+1. **Body.** `count` bodů uvnitř tělesa (nebo body ze vstupu **Points**),
+   rozmístěných nerovnoměrně: hustota bodů je exp(4 · `uneven` · šum)
+   krát (1 + 15 · `focus` · Gauss kolem `impact` o poloměru `reach`) —
+   velké kry i drť, nejjemněji kolem místa nárazu. Body se losují
+   zamítáním podle hustoty, pro stejný `seed` vždy stejně.
+2. **Buňky.** Voronoiova buňka každého bodu, stejně jako Voronoi
+   Fracture (paralelně, složené v pořadí bodů).
+3. **Hrubé lomy.** Řezné plochy se rozdělí na trojúhelníky nejvýš
+   `detail` dlouhé a každý jejich bod se posune o `rough` · b(p), kde b
+   je hladký vektorový 3D šum (tři oktávy Perlinova šumu, každá složka
+   stlačená `tanh` do ±1) s hrbolky `roughscale` od sebe. Posun závisí
+   jen na místě, ne na normále (ta má na druhé straně trhliny opačné
+   znaménko): na obou stranách je týž šum v týchž bodech a triangulace
+   je kanonická (vějíř z lexikograficky nejmenšího bodu, dělení hran
+   v polovině se stejnou volbou úhlopříčky na obou stranách), takže kusy
+   do sebe dál přesně zapadají — spoj sedí na 3·10⁻⁶ m. K vnějšímu
+   povrchu hrubost plynule slábne (smoothstep na vzdálenosti 2 · `rough`),
+   takže nic z tělesa nevyčnívá a vnější plochy zůstanou, jak byly.
+4. **Odprýsknutí.** Podíl `chips` rohů buněk (bodů, kde se potkají
+   aspoň tři stěny) se ořízne nakloněnou rovinou hlubokou nejvýš
+   `chipsize`: plochý úlomek, samostatný kus přilepený svou plochou
+   (atribut primitiva `chip` = 1). Řez jde hrubým kusem, takže úlomek
+   má hrubé lomy jako kus, ze kterého odprýskl. Řez, který by vzal
+   kusu střed nebo úlomek větší než trojnásobek `chipsize`, se zahodí.
+   Víčko řezu se na úlomku i na kusu rozdělí na tytéž trojúhelníky
+   (Clip dělí víčka stejně z obou stran roviny), takže v proxy — kde
+   víčko není rovinné — lícují a lepí se celou plochou.
+
+| Parametr | Význam |
+|---|---|
+| `count`, `seed` | Kolik kusů před odprýsknutím, když nepřijdou body; jiné číslo, jiné kusy |
+| `uneven` | Jak nestejné jsou kusy: 0 všechny zhruba stejné, 1 velké kry vedle drobků |
+| `impact`, `focus`, `reach` | Kam přišla rána, kolik víc kusů kolem ní (0 žádné) a jak daleko (m) |
+| `chips`, `chipsize` | Podíl olámaných rohů a nejvyšší hloubka úlomku (m) |
+| `rough`, `roughscale`, `detail` | Jak daleko jdou lomy dovnitř a ven (m, 0 rovné řezy), jak daleko od sebe jsou hrbolky a jak dlouhé jsou nejvýš trojúhelníky lomů |
+| `attribute`, `insidegroup` | Atribut s číslem kusu (`piece`) a skupina řezných ploch (`inside`) |
+
+**Proxy pro simulaci.** Hrubý kus má tisíce trojúhelníků a není konvexní.
+Každý bod si proto v bodovém atributu `proxy` nese, kde byl před
+zdrsněním — rovný řez pod hrubým. RBD Solver kusy s `proxy` simuluje tak,
+jak je má proxy: konvexní obaly z rovných řezů, hmota z nich, spoje tam,
+kde se rovné řezy dotýkají plochou (sousední stěny v jedné rovině se
+nejdřív sloučí, aby spoj našel i plochu rozdělenou na trojúhelníky), a
+kreslí je hrubé. Stejně to dělá produkce: simulační proxy a renderová
+geometrie na ni navázaná. Transform posune i `proxy`, RBD Pieces ho
+zahodí (kusy v pohybu už jsou jen hrubé). Při kreslení se body řezných
+ploch oddělí od vnějších ploch, aby vyhlazování normál (hrana nad 60°)
+nerozmazalo mělké trhliny do fasády.
+
+### Třetí příklad: betonová zeď a demoliční koule
+
+![Demoliční koule prorazí betonovou zeď: kusy s hrubými lomy a úlomky](img/concrete-wall.jpg)
+
+```
+./build/prototype sim concrete_wall zed.mp4       # 90 snímků (3 s)
+```
+
+Příklad **concrete_wall** ([examples/sim/concrete_wall.pgsim](../examples/sim/concrete_wall.pgsim)):
+zeď 5 × 3 × 0,3 m na betonovém soklu, rozbitá Concrete Fracture na 90 kusů
+(nejmenší kolem místa, kam udeří koule) a 61 úlomků z rohů — 151 kusů,
+380 tisíc trojúhelníků, uvařených za necelou sekundu. Sokl je kus sám pro
+sebe s `active 0` a spodní kusy zdi jsou k němu přilepené.
+Klíčovaná koule proletí zdí zezadu ke kameře; RBD Solver má `rings 2`,
+takže náraz uvolní jen kusy kolem koule a dva prstence za nimi: koule
+prorazí díru, kusy a úlomky vyletí a kutálejí se ke kameře a zbytek zdi
+stojí. Prach z lomů a nárazů nese Pyro Solver.
+
+```
+[wall] ─▶ [Concrete Fracture] ─▶ [moving] ─┐
+[plinth] ─▶ [foundation] ─────────────────┴▶ [Merge] ─Pieces─▶ [RBD Solver] ─Look──────────────▶ [Output] ◀─ [Camera]
+[ball] ─Collider─▶ Colliders ──────────────────────────────────┘ │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look] ─┘
+```
+
+---
+
+## 3. RBD Solver
 
 Uzel **RBD Solver** (Simulation) dělá z kusů tuhá tělesa. Vstup **Pieces**
 je geometrie s atributem `piece` (Voronoi Fracture; bez atributu je kusem
@@ -139,6 +225,8 @@ Parametry:
 | | `gravity` | m/s², dolů |
 | | `floor` | Podlaha v nule; bez ní kusy padají pořád |
 | Glue | `glue` | Pevnost lepidla v kPa (kilonewtonech na metr čtvereční plochy spoje); 0 znamená bez lepidla |
+| | `spread` | Kolik nárazu jde přes spoj dál na kusy za ním: 0,5 polovina (výchozí) — tvrdý náraz láme lepidlo daleko kolem; 0 nic, uvolní se jen kusy, do kterých narazilo. V Houdini *Propagate Rate* |
+| | `rings` | Kolik prstenců kusů kolem zasažených může náraz uvolnit, ať je jakkoli silný: 1 sousedy, 2 i sousedy sousedů; 0 (výchozí) tak daleko, kam ho `spread` donese. V Houdini *Propagate Iterations* |
 | Time | `substeps` | Kroky řešiče na snímek: víc pro rychlé kusy a vysoké stavby |
 | Dust | `dust` | Kolik prachu dá přetržený spoj |
 | | `impact_dust` | … tvrdý náraz a rozdrcený kus |
@@ -192,15 +280,32 @@ v průměru za 6 ms na snímek.
   statická tělesa a shluk k nim přilepený drží pevný spoj
   (`FixedConstraint`). Tak to dělá i Houdini (Bullet) s lepidlem: slepené
   kusy simuluje jako jedno těleso a rozdělí je až při nárazu.
+- **Přilepené k základu stojí, kde byly postavené.** Klíčovaná překážka
+  má nekonečnou hmotu a základ také, takže spoj mezi nimi v kroku řešiče
+  trochu povolí. Shluk přilepený ke kusu s `active 0` se proto po každém
+  kroku vrátí tam, kde byl postavený, a nehýbe se; kontakt se základem,
+  ke kterému je přilepený, není náraz (jsou jedno, jako kusy jednoho
+  tělesa) a jeho „změna pohybu“ se nepočítá do nárazů ostatních věcí,
+  které se ho v tom kroku dotknou — jinak by koule, která do zdi strká,
+  přetrhla spoje i tam, kde do zdi jen ťukne padající úlomek.
 - **Nárazy.** Z každého kontaktu (nového i trvajícího) solver pozná,
   jak silně to bouchlo: co bylo třeba ke změně pohybu tělesa (hybnost
   po kroku proti hybnosti před ním, bez gravitace, rozdělená mezi místa
   nárazu), a aspoň co je třeba k zastavení obou věcí proti sobě — jako
   síla za krok řešiče. Síla přetrhne spoje zasaženého kusu, které drží
-  méně, a polovina jde dál na kusy za nimi (i přes spoje, které právě
-  praskly), kde zase přetrhne, co drží méně než ona, a tak dál do
-  ztracena. Kus s `crush`, do kterého narazí víc než `crush`-krát tolik,
+  méně, a její díl `spread` (polovina) jde dál na kusy za nimi (i přes
+  spoje, které právě praskly), kde zase přetrhne, co drží méně než ona,
+  a tak dál do ztracena — nebo nejvýš `rings` prstenců kusů od místa
+  nárazu. Kus s `crush`, do kterého narazí víc než `crush`-krát tolik,
   kolik drží jeho lepidlo, se rozdrtí: zmizí v obláčku prachu a drti.
+- **Nezastavitelná překážka.** Klíčovaný objekt má nekonečnou hmotu, takže
+  „zastavit obě věci proti sobě“ znamená zastavit celý slepený shluk: koule
+  do stojící zdi (10,8 t) rychlostí 6 m/s udeří silou kolem 9 MN, stokrát
+  víc, než drží spoj, a s polovinou nárazu na každý další prstenec by
+  praskla celá zeď najednou. `rings` 1–2 udrží škodu kolem koule: prorazí
+  díru a zbytek zdi stojí. Houdini s animovaným statickým objektem a
+  lepidlem řeší totéž (Propagate Iterations, pevnější lepidlo dál od
+  nárazu).
 - **Rozpad.** Když ve shluku prasknou spoje, rozpadne se na skupiny, které
   drží pohromadě, a každá jde dál jako samostatné těleso. Skupina, která
   se odlomila, si ponechá 98,5 % rychlosti, kterou měla před nárazem —
@@ -232,7 +337,7 @@ v průměru za 6 ms na snímek.
 
 ---
 
-## 3. Úlomky dál: kreslení, geometrie, voda, plyn, prach
+## 4. Úlomky dál: kreslení, geometrie, voda, plyn, prach
 
 **Kreslení.** Solver zapojený do Outputu se kreslí sám: každý snímek se
 kusy posunou a otočí tam, kam dopadly (`drawnPieces`), s barvou `Cd`, kterou
@@ -286,7 +391,7 @@ tlaku a plyn, který se rozpíná, ředí.
 
 ---
 
-## 4. Snímky a cache
+## 5. Snímky a cache
 
 Snímek (`sim::Frame`) nese k plynu, vodě a dešti i `RigidFrame`: polohy,
 rychlosti a otáčení kusů, seznam kusů, které zmizely, drť (poloha a
@@ -299,7 +404,7 @@ spočítá jednou pro celou sekvenci.
 
 ---
 
-## 5. Ověřování
+## 6. Ověřování
 
 `tests/test_rigid.cpp` (15 testů), `tests/test_topology.cpp` (fracture)
 a testy expanze v `tests/test_pyro.cpp`:
@@ -326,12 +431,34 @@ a testy expanze v `tests/test_pyro.cpp`:
   soubor tam a zpět; kusy do vody, plynu a deště a prach jako zdroj;
   chyby (bez kusů, druhý solver, kusy ze simulace).
 
+`tests/test_concrete.cpp` (8 testů) a `test_concrete_breaks_rough_over_a_plain_proxy`
+v `tests/python/test_pg.py`:
+
+- kusy betonu jsou uzavřené a jejich objemy dají objem tělesa — s hrubými
+  lomy i v proxy (na 2·10⁻⁴ m³ z 1,8); nic nevyčnívá z tělesa, vnější
+  plochy se nepohnou a lomy se posunou nejvýš o `rough` v každé ose;
+- bez odprýsknutí je každý trojúhelník každé trhliny trojúhelníkem
+  sousedního kusu, bod po bodu (sloučené na 10⁻⁵ m), obrácený;
+- úlomky jsou celé kusy s `chip 1`, každý s plochou, kterou odprýskl, a
+  nejvýš trojnásobkem `chipsize` přes úhlopříčku; bez nich je kusů `count`;
+- kolem `impact` je kusů aspoň třikrát víc než na druhém konci zdi;
+  stejný hash na 1 i 4 vláknech, jiný `seed` jiné kusy;
+- Transform posune i `proxy`; `rigidPositions` vezme proxy, a kde proxy
+  chybí (merge s kvádrem), body;
+- zeď z hrubých kusů se slepí tolik plochy, kolik mají trhliny v proxy
+  (na 2 %), stojí a nic nepraskne; RBD Pieces zahodí `proxy` a kreslení
+  oddělí body řezných ploch od vnějších;
+- klíčovaná koule do zdi na základu: s `spread 0,5` spadne celá zeď,
+  s `rings 1` nebo nízkým `spread` praskne míň a konce zdi stojí přesně,
+  kde stály; hodnoty mimo rozsah se srovnají;
+- Concrete Fracture a `spread`, `rings` v síti: překlad, soubor tam a zpět.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
 ---
 
-## 6. Omezení a co dělá produkce
+## 7. Omezení a co dělá produkce
 
 - **Konvexní obaly.** Každá část kusu naráží svým konvexním obalem:
   prohnutá část (rám okna) naráží větším tvarem, než vypadá. Houdini dělá
@@ -340,10 +467,17 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
 - **Slepené je tuhé.** Shluk slepených kusů se neprohýbá; zlomí se, nebo
   drží. Ohyb ocelové výztuže (Houdini: soft constraints, plasticita) tu
   není.
-- **Síla nárazu je odhad.** Kolik nárazu jde přes spoje dál (polovina) a
+- **Síla nárazu je odhad.** Kolik nárazu jde přes spoje dál (`spread`) a
   kolik rychlosti si odlomená skupina ponechá, jsou pravidla, ne řešení
   napětí v konstrukci — věž padá jako skutečná, ale ne každý spoj praskne
-  tam, kde by praskl beton.
+  tam, kde by praskl beton. `rings` počítá kusy, ne metry: přes velké kry
+  dosáhne náraz dál než přes drobky kolem místa rány.
+- **Lomy betonu.** Hrubé jsou jen řezné plochy uvnitř tělesa; kde trhlina
+  vyjde na vnější plochu, je její čára rovná (hrubost k povrchu slábne,
+  aby nic nevyčnívalo). Kde řez odprýsknutí protne hrubou plochu
+  sousedního kusu, zůstane na ní bod navíc (T-spoj): při kreslení z něj
+  občas problikne pixel. Úlomky jsou jen z rohů, ne z hran; výztuž,
+  kamenivo v lomu a trhliny, které se neotevřou, tu nejsou.
 - **Drcení na prach.** Rozdrcený kus zmizí najednou; drobení na menší
   kusy za běhu (Houdini RBD Material Fracture s omezeními) tu není —
   kusy jsou hotové předem.
@@ -356,7 +490,7 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
 ---
 
-## 7. Odkazy
+## 8. Odkazy
 
 - J. Rouwe: [Jolt Physics](https://jrouwe.github.io/JoltPhysics/) —
   architektura, determinismus, vazby.
