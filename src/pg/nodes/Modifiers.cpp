@@ -223,6 +223,7 @@ void registerBuiltinNodes() {
         registerClusterNodes();
         registerRebarNodes();
         registerGlassNodes();
+        registerBrickNodes();
         registerVolumeNodes();
         registerUsdNodes();
         return true;

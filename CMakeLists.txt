@@ -67,6 +67,7 @@ add_library(pgcore
   src/pg/nodes/Cluster.cpp
   src/pg/nodes/Rebar.cpp
   src/pg/nodes/Glass.cpp
+  src/pg/nodes/Bricks.cpp
   src/pg/nodes/Rebuild.cpp
   src/pg/nodes/Volumes.cpp
   src/pg/nodes/Usd.cpp
@@ -492,6 +493,7 @@ add_executable(pgtests
   tests/test_concrete.cpp
   tests/test_rebar.cpp
   tests/test_glass.cpp
+  tests/test_bricks.cpp
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp

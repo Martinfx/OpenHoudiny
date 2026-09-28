@@ -226,6 +226,13 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   *Iterations*), shluky přilepené k základu stojí, kde byly postavené, a
   příklad **concrete_wall**: demoliční koule prorazí betonovou zeď na
   soklu. Zbývá dřevo na třísky podél vláken.
+- ✅ **Cihly:** uzel **Brick Wall** ([docs/destruction.md §2](docs/destruction.md#cihly-brick-wall))
+  vyzdí zeď z cihel ve vazbě (běhounová, anglická, vlámská, stack), každou
+  cihlu s maltou a omítkou jako jeden kus, s rovným ostěním u otvorů;
+  malta je lepidlo, takže zeď praská ve spárách, a rozlomené cihly jsou
+  dvě poloviny jedné kry. Příklad **brick_wall**: demoliční koule prorazí
+  cihlovou zeď domu vedle okna; příklad **concrete_column**: odstřel
+  železobetonového sloupu, po kterém zůstane holý armokoš.
 - ✅ **Sklo:** uzel **Glass Fracture** ([docs/destruction.md §2](docs/destruction.md#sklo-glass-fracture))
   rozláme tabule paprsky z místa úderu a oblouky kolem něj (pavučina:
   střípky uprostřed, dlouhé střepy dál, rozvětvení); tabule je celá, dokud

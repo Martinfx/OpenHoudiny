@@ -19,6 +19,7 @@ void registerConcreteNodes();
 void registerClusterNodes();
 void registerRebarNodes();
 void registerGlassNodes();
+void registerBrickNodes();
 void registerVolumeNodes();
 void registerUsdNodes();
 

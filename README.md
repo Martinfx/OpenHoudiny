@@ -107,8 +107,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 324 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 15 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
-ctest --test-dir build -R python                   # 41 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgtests            # 331 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 15 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+ctest --test-dir build -R python                   # 42 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
@@ -234,7 +234,9 @@ rozpadnou až při tvrdém dopadu (sekundární lámání), **Rebar** položí d
 zdi síť a do trámu armokoš ocelových prutů, na kterých kusy visí i po
 prasknutí lepidla — pruty se ohýbají, vytahují a trhají —, **Glass
 Fracture** rozláme tabuli skla paprsky a kruhy kolem místa úderu (celá
-zůstane, dokud nepraskne, a renderer ji kreslí průhlednou s odrazy), a
+zůstane, dokud nepraskne, a renderer ji kreslí průhlednou s odrazy),
+**Brick Wall** vyzdí zeď z cihel ve vazbě s maltou, omítkou a otvory
+(rozpadá se ve spárách, některé cihly se rozlomí vedví), a
 **RBD Solver** nad [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
 z nich udělá tuhá tělesa: konvexní obaly s hmotou; kusy slepené tam, kde
 se dotýkají plochou, jsou jedno těleso, dokud je náraz silnější než
@@ -252,7 +254,10 @@ proti slunci; příklad **concrete_wall**: demoliční koule prorazí
 betonovou zeď na soklu (`rings` drží škodu kolem koule, zbytek zdi
 stojí) a z díry se sypou kry s hrubými lomy, úlomky a prach; příklad
 **concrete_drop**: betonový trám se zlomí přes kvádr a jeho poloviny se
-rozpadnou na kry, až dopadnou.
+rozpadnou na kry, až dopadnou; příklad **brick_wall**: demoliční koule
+prorazí cihlovou zeď domu vedle okna, díra je stupňovitá po vrstvách a
+okno zůstane celé; příklad **concrete_column**: nálož v půlce
+železobetonového sloupu obnaží armokoš a kusy betonu na něm visí.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

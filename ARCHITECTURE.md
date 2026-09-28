@@ -366,6 +366,10 @@ src/pg/nodes/    Generators grid, line, pointcloud
                  Glass      glassfracture: tabule jako sklo — radiální a soustředné trhliny
                             (výseče, rozvětvení), buňky vyříznuté rovinami kolmými na tabuli;
                             glass 1 plochy, 2 trhliny, Cd barva skla
+                 Bricks     brickwall: zeď z cihel ve vazbě (běhounová, anglická, vlámská,
+                            stack), vrstvy podél úseků uvnitř vstupu (otvory), každá cihla
+                            s maltou a omítkou jeden kus; rozlomené cihly jako dvě poloviny
+                            jedné kry (cluster, clusterglue)
 src/pg/io/       Obj        čtení a zápis OBJ (body, polygony, čáry)
                  Ply        body s atributy a polygony do PLY a zpátky (ASCII i binárně)
                  Vdb        objemy do OpenVDB bez knihovny: řídký strom 5-4-3, soubor verze 224
@@ -483,6 +487,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Beton: Concrete Fracture — nestejné kusy, nejmenší kolem nárazu, odprýsklé rohy, hrubé lomy lícující z obou stran; RBD Solver simuluje rovný řez (`proxy`) a kreslí detail; `spread` a `rings` drží škodu u místa nárazu, kusy přilepené k základu stojí; sekundární lámání: RBD Cluster seskupí kusy do ker, které se rozpadnou až při tvrdém dopadu ([docs/destruction.md §2](docs/destruction.md#2-concrete-fracture)) |
 | ✅ | Výztuž: uzel Rebar (síť ve zdi, armokoš s třmínky v trámu, natočené podle bloku); RBD Solver drží kusy na prutech plastickými vazbami Joltu (tření v šesti směrech), prut povolí podle oceli nebo kotvení, vytahuje se, ohýbá a trhá; stav prutů ve snímku a cache (verze 6), kreslení trubkami, USD `/World/rebar` ([docs/destruction.md §2](docs/destruction.md#výztuž-rebar)) |
 | ✅ | Sklo: Glass Fracture (radiální a soustředné trhliny kolem místa úderu); tabule je celá, dokud jí nepraskne spoj; skleněná drť a desetina prachu (cache verze 7); renderer kreslí sklo průhledné — dvě vrstvy, Fresnel obou stěn, odraz oblohy a slunce, zabarvení podle cesty sklem; USD materiál skla a trhliny viditelné od prasknutí ([docs/destruction.md §2](docs/destruction.md#sklo-glass-fracture)) |
+| ✅ | Cihly: Brick Wall vyzdí zeď z cihel ve vazbě (běhounová, anglická, vlámská, stack) s maltou, omítkou a otvory s rovným ostěním; každá cihla jeden kus, rozlomené cihly jako dvě poloviny jedné kry; RBD Solver má maltu jako lepidlo, zeď se rozpadá ve spárách; příklady `brick_wall` (koule proti cihlové zdi s oknem) a `concrete_column` (odstřel železobetonového sloupu, holý armokoš) ([docs/destruction.md §2](docs/destruction.md#cihly-brick-wall)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
 | ✅ | **Čtení USD** bez knihovny: `.usda`, `.usdc` (verze 0.4.0–0.10.0), `.usdz`; scéna složená jako v USD (sublayers, reference, payloady, varianty, třídy, value clips); kamera z matchmove (USD Camera) a geometrie (USD Import) v metrech s Y nahoru; transformace, skládání i geometrie sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)) |

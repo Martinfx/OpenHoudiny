@@ -1,4 +1,4 @@
-# Destrukce: Voronoi, Concrete a Glass Fracture, tuhá tělesa, lepidlo, výztuž, sklo a prach
+# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo, výztuž, sklo a prach
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
 (**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
@@ -9,7 +9,8 @@ Ocelová výztuž (**Rebar**) je drží i tam, kde lepidlo prasklo: pruty se
 ohýbají, vytahují se z malých kusů a trhají se. Sklo (**Glass Fracture**)
 praská tak, jak sklo praská: paprsky z místa úderu a kruhy kolem něj; do
 nárazu zůstane tabule celá a renderer ji kreslí průhlednou, s odrazy
-oblohy a slunce.
+oblohy a slunce. Cihlovou zeď (**Brick Wall**) vyzdí cihlu po cihle ve
+vazbě, s maltou a omítkou, a zeď se pak rozpadá ve spárách.
 Nálože přetrhnou lepidlo v daný čas, nárazy ho lámou dál, padající patra
 drtí stěny na prach, úlomky sypou drť a vzduch, který zřícení vytlačí, žene
 oblak prachu do ulic (**Pyro Solver**). Všechno je deterministické: stejná
@@ -375,6 +376,144 @@ jen drť, a Pyro Solver tu proto není.
 [frame_*]×4 ─▶ [Merge] ─▶ [frame] ──────┴▶ [pieces] ─Pieces─▶ [RBD Solver] ─Look─▶ [Output] ◀─ [camera]
 [wall_*]×4, [room_*]×4, [ball] ─Collider─▶ Colliders ─────────────┘
 ```
+
+### Cihly: Brick Wall
+
+Cihlová zeď se neláme jako beton. Praská ve spárách, protože malta je
+slabší než cihla: vypadávají celé cihly a kusy zdiva, díra je stupňovitá
+podle vrstev a cihla se rozlomí, jen když ji náraz přemůže. Uzel **Brick
+Wall** (Geometry) zeď vyzdí tak, jak ji zdí zedník: vrstvu po vrstvě ve
+vazbě, každou cihlu na maltovém loži se spárou na konci. Každá cihla
+i s maltou kolem je jeden kus
+([`src/pg/nodes/Bricks.cpp`](../src/pg/nodes/Bricks.cpp)):
+
+- **Zeď** je vstup — uzavřené těleso jakéhokoli obrysu, i z několika
+  kvádrů, které se dotýkají — a stojí tak, jak stojí vstup. Osy se berou
+  z kvádru kolem vstupu (`fitBox`): výška je osa nejbližší svislé,
+  tloušťka tenčí ze zbylých dvou a délka ta třetí. Líc je strana ke
+  `front`. Vrstev je tolik, kolik se jich vejde na výšku (`height` +
+  `joint`); ložné spáry se o chlup ztenčí nebo ztloustnou, aby výšku
+  vyplnily přesně. Napříč se položí tolik řad běhounů (`width` + `joint`),
+  kolik se vejde do tloušťky bez omítky.
+- **Vazba** (`bond`) určuje, kde se cihly sousedních vrstev překrývají:
+  - *Stretcher* (běhounová): každá vrstva je o půl cihly dál než ta pod ní.
+  - *English* (anglická): vrstva vazáků přes celou tloušťku, pak vrstva
+    běhounů posunutá o čtvrt cihly.
+  - *Flemish* (vlámská, gotická): vazák a běhoun se střídají v každé
+    vrstvě a každý vazák leží nad středem běhounu.
+  - *Stack*: spára nad spárou.
+  - *Auto*: běhounová pro zeď z jedné řady cihel, jinak anglická.
+- **Otvory**: každá vrstva se klade podél úseků, kde přímka středem zdi
+  vede uvnitř vstupu. U otvoru se cihly zkrátí a ostění je rovné. Kousek
+  kratší než polovina šířky cihly se přidá k cihle vedle.
+- **Cihly**: každá je uzavřený kvádr i s maltou — ložnou spárou pod
+  sebou, styčnou spárou na konci a podélnou spárou za sebou, je-li za ní
+  další řada. K tomu omítka (`plaster`) na líci zdi před ní. Takový kvádr
+  je jeden kus:
+  - `piece` nese jeho číslo;
+  - `Cd` je barva cihly (každá o odstín jiná, `variation`), malty nebo
+    omítky, podle toho, co na dané ploše je.
+
+  Kusy dohromady dají přesně objem vstupu.
+- **Rozlomené cihly** (`broken`): tento podíl cihel, které jsou aspoň
+  o polovinu delší než široké, se rozřízne napříč na dvě poloviny. Obě
+  poloviny tvoří jednu kru (`cluster`, `clusterglue` = `strength`).
+  Lepidlo je proto drží `strength`-krát pevněji než malta. Tvrdý náraz
+  je rozlomí a plochy lomu mají barvu cihly uvnitř (světlejší a teplejší).
+
+Lepidlem (`glue`) RBD Solveru je malta. Každá cihla naráží jedním
+konvexním obalem, tedy svým kvádrem. Náhodná čísla bere každá cihla ze
+svého místa ve zdi (vrstva, úsek, pořadí v něm, řada), takže změna jedné
+cihly — třeba zkrácené u otvoru — nezmění ostatní.
+
+| Parametr | Význam |
+|---|---|
+| `bond` | Vazba: Auto, Stretcher, English, Flemish, Stack |
+| `length`, `width`, `height` | Rozměry cihly (m): 250 × 120 × 65 mm |
+| `joint` | Tloušťka spáry (m): 10 mm |
+| `front` | Směr, kterým se dívá líc zdi |
+| `plaster` | Tloušťka omítky (m); 0 znamená bez omítky |
+| `plastersides` | Omítka na obou stranách, jen na líci (`front`), jen na rubu (`back`) |
+| `color`, `variation` | Barva cihel a jak moc se cihla od cihly liší (0–1) |
+| `mortar`, `plastercolor` | Barva malty a omítky |
+| `broken` | Podíl cihel rozříznutých na dvě poloviny (0–1) |
+| `strength` | Kolikrát pevněji drží poloviny než malta |
+| `seed` | Jiné číslo, jiné odstíny a jiné rozlomené cihly |
+| `attribute` | Atribut s číslem kusu (`piece`) |
+
+Zeď 5,2 × 3 m s oknem (příklad níže) dá 1689 kusů: 1496 cihel, z toho
+193 rozlomených na poloviny. Je to 77 tisíc trojúhelníků za setiny
+sekundy. Stejná síť dá stejnou zeď při každém vaření a na libovolném
+počtu vláken.
+
+### Šestý příklad: demoliční koule a cihlová zeď
+
+![Demoliční koule prorazí cihlovou zeď domu: stupňovitá díra ve spárách, celé i rozlomené cihly letí ke kameře, okno vedle zůstane celé](img/brick-wall.jpg)
+
+```
+./build/prototype sim brick_wall zed.mp4          # 90 snímků (3 s)
+```
+
+Příklad **brick_wall** ([examples/sim/brick_wall.pgsim](../examples/sim/brick_wall.pgsim))
+je obvodová zeď domu: 5,2 × 3 m, tloušťka jedné cihly (dvě řady běhounů)
+v anglické vazbě, uvnitř omítnutá. Stojí na betonovém soklu, který se
+nehýbe (`active 0`). Ve zdi je okno 1,3 × 1,2 m s bílým rámem a
+tabulí skla (Glass Fracture, 238 střepů). Vstupem jsou čtyři kvádry kolem
+okna a Brick Wall z nich vyzdí zeď s rovným ostěním.
+
+Klíčovaná koule o průměru 1,1 m se zhoupne zezadu skrz zeď ke kameře.
+Lepidlo je jen malta (`glue 150`, tedy 150 kPa), takže zeď praská ve
+spárách. Výsledek:
+
+- díra je stupňovitá po vrstvách;
+- celé cihly letí a kutálejí se, některé se rozlomí vedví (poloviny drží
+  `strength 8`) a na okraji díry visí kusy zdiva, které malta ještě drží;
+- `rings 4` pustí náraz jen na čtyři prstence cihel kolem koule, takže
+  okno vedle díry zůstane celé, i se sklem;
+- prach z malty a cihel nese Pyro Solver.
+
+```
+[wall_*]×4 ─▶ [Merge] ─▶ [Brick Wall] ─▶ [moving] ─┐
+[pane] ─▶ [Glass Fracture] ─▶ [glass_pieces] ─────┤
+[frame_*]×4 ─▶ [Merge] ─▶ [frame] ────────────────┤
+[plinth] ─▶ [foundation] ─────────────────────────┴▶ [pieces] ─Pieces─▶ [RBD Solver] ─Look──────────────▶ [Output] ◀─ [camera]
+[ball] ─Collider─▶ Colliders ─────────────────────────────────────────────┘  │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look] ─┘
+```
+
+### Sedmý příklad: odstřel železobetonového sloupu
+
+![Nálož v půlce sloupu: beton kolem ní se rozletí a zmizí v prachu, zůstane holý armokoš a na něm visí kusy betonu](img/concrete-column.jpg)
+
+```
+./build/prototype sim concrete_column sloup.mp4   # 90 snímků (3 s)
+```
+
+Příklad **concrete_column** ([examples/sim/concrete_column.pgsim](../examples/sim/concrete_column.pgsim))
+je železobetonový sloup 0,4 × 0,4 × 3 m v betonovém rámu. Stojí na
+stropní desce a nese trám; deska i trám jsou kusy, které se nehýbou.
+
+- **Kusy**: Concrete Fracture rozláme sloup na 170 kusů, nejmenších kolem
+  nálože, a 131 úlomků z rohů.
+- **Výztuž**: Rebar do sloupu položí armokoš, osm prutů 20 mm po obvodu
+  a 21 třmínků 10 mm po 15 cm.
+- **Nálož**: v 0,6 s ji odpálí wrangle `charge`. Beton do 35 cm od ní
+  se uvolní (`release`): 85 % ho zmizí v prachu (`vanish`) a zbytek
+  odletí do stran (`kick`).
+- **Co zbude**: pruty drží, co už nedrží lepidlo (`glue 1000`,
+  `rings 2`). Horní část sloupu visí z trámu a stojí na koši, na prutech
+  visí kusy betonu a kde byla nálož, je koš holý. Po betonu zbude jen
+  ocel — tak vypadá skutečný sloup po odstřelu. Prach nese Pyro Solver.
+
+```
+[column] ─┬─▶ [Concrete Fracture] ─▶ [charge] ─┐
+          │   [floor] ─▶ [floor_piece] ────────┤
+          │   [beam] ─▶ [beam_piece] ──────────┴▶ [pieces] ─Pieces─┐
+          └─▶ [Rebar] ─Rebar───────────────────────────────────────┼▶ [RBD Solver] ─Look──────────────▶ [Output] ◀─ [camera]
+[column_left], [column_right] ─Collider─▶ Colliders ───────────────┘   │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look] ─┘
+```
+
+Pro srovnání je v příkladu **concrete_wall** železobetonová zeď: síť
+prutů místo koše a koule místo nálože.
 
 ---
 
@@ -771,6 +910,37 @@ v `tests/test_usd.cpp` a `test_glass_breaks_as_glass` v `tests/python/test_pg.py
   s vazbou na něj, bez `inside`, síť `cracks` neviditelná do snímku, kdy
   tabule praskla, `primvars:glass` u drti.
 
+`tests/test_bricks.cpp` (7 testů) a `test_brick_wall_is_laid_in_its_bond_and_stands_on_its_mortar`
+v `tests/python/test_pg.py`:
+
+- cihly všech vazeb jsou uzavřené, otočené ven a dají objem zdi (na
+  10⁻⁶ m³); každá plocha má barvu malty nebo odstín cihly; zeď z jedné
+  řady je v běhounové vazbě s cihlami přes celou tloušťku; prázdný vstup
+  nedá nic;
+- vazby:
+  - běhounová: 16 vrstev, každá styčná spára o půl cihly od spár
+    vrstvy pod ní;
+  - stack: spára nad spárou;
+  - anglická: 8 vrstev vazáků (13 cm) a 8 vrstev běhounů (26 cm),
+    vazáky přes celou tloušťku, běhouny ve dvou řadách;
+  - vlámská: vazák a běhoun se v každé vrstvě střídají;
+- zeď kolem okna: kusy jsou uzavřené, dají objem zdi bez otvoru a
+  v otvoru nic není;
+- omítka na obou lících: všechny plochy líců mají barvu omítky a bez
+  rozlomených cihel chybí `cluster`; s `broken 1` je každá dost dlouhá
+  cihla ve dvou polovinách jedné kry s `clusterglue` = `strength` a
+  plochy lomu mají barvu cihly uvnitř;
+- zeď otočená o 37° má stejně kusů, stejný objem a vodorovné vrstvy;
+  stejný hash na 1 i 4 vláknech, jiný `seed` jiná zeď;
+- zeď na soklu stojí, jak je vyzděná: nic nepraskne a nic se nepohne.
+  Koule skrz ni ji rozbije ve spárách; s pevností polovin 1 se cihly
+  rozlomí víc než čtyřikrát častěji než s pevností 1000;
+- příklady v síti: **brick_wall** (sklo, kry, přes 1500 kusů, sokl a rám)
+  a **concrete_column** (8 prutů a 21 třmínků);
+- Python: zeď ve vlámské vazbě s omítkou na rubu má barvu omítky na rubu
+  a žádnou na líci, poloviny cihel jdou po dvou s `clusterglue` a zeď
+  v RBD Solveru stojí.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -821,6 +991,12 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   rozsype na kostičky (to udělá Voronoi Fracture s mnoha body), tu nejsou.
   Celá pavučina se objeví najednou, ne tak, jak se trhlina šíří
   (1500 m/s — za zlomek snímku).
+- **Cihly jsou kvádry.** Cihla se láme jen napříč vedví, na poloviny
+  připravené předem (`broken`). Rozdrcená cihla, odštípnuté hrany a
+  malta, která by se drolila zvlášť, tu nejsou: spára je součástí kusu
+  cihly. Vazby jsou čtyři pravidelné. Nároží a zazubení dvou zdí se
+  nepropojí (každá zeď je jedna Brick Wall) a překlad nad oknem je třeba
+  postavit zvlášť.
 - **Jeden RBD Solver** v síti; kusy dvou solverů do sebe nenarážejí.
 
 ---

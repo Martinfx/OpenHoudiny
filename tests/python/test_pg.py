@@ -436,6 +436,49 @@ class Simulations(unittest.TestCase):
         self.assertEqual(len(landed.grit_glass), len(landed.grit))
         self.assertTrue((landed.grit_glass == 1).all())
 
+    def test_brick_wall_is_laid_in_its_bond_and_stands_on_its_mortar(self):
+        # A wall of bricks in Flemish bond, plastered at the back, a brick in
+        # two cut in two: each brick a piece with its mortar, the halves of
+        # one a cluster held Strength times as hard.
+        net = pg.Network()
+        wall = net.add("box", size=(2.08, 1.2, 0.265), center=(0, 0.6, 0))
+        bricks = net.add("brick_wall", bond="flemish", plaster=0.015, plastersides="back", broken=0.5, strength=10,
+                         plastercolor=(0.9, 0.1, 0.2))
+        rbd = net.add("rbd_solver", glue=150, substeps=4)
+        out = net.add("output", frames=10)
+        wall.connect(bricks)
+        net.connect(bricks, rbd, input="pieces")
+        net.connect(rbd, out)
+        self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+        self.assertEqual(bricks["bond"], "flemish")
+        geo = bricks.geometry()
+        piece = geo.prims["piece"]
+        self.assertGreater(len(set(piece.tolist())), 200)
+        # The back -- z = -0.1325 -- is all plaster; the front none.
+        P = geo.P
+        cd = geo.prims["Cd"]
+        back = [i for i in range(geo.primitive_count) if all(abs(P[p][2] + 0.1325) < 1e-5 for p in geo.primitive(i))]
+        front = [i for i in range(geo.primitive_count) if all(abs(P[p][2] - 0.1325) < 1e-5 for p in geo.primitive(i))]
+        self.assertGreater(len(back), 100)
+        self.assertTrue(np.allclose(cd[back], (0.9, 0.1, 0.2)))
+        self.assertFalse(np.isclose(cd[front], (0.9, 0.1, 0.2)).all(axis=1).any())
+        cluster, glue = geo.prims["cluster"], geo.prims["clusterglue"]
+        halves = {}
+        for c, p in zip(cluster.tolist(), piece.tolist()):
+            if c > 0:
+                halves.setdefault(c, set()).add(p)
+        self.assertGreater(len(halves), 20)
+        self.assertTrue(all(len(h) == 2 for h in halves.values()))
+        self.assertTrue((glue[cluster > 0] == 10).all())
+        # Glued on its mortar, nothing knocks it: it stands.
+        sim = net.simulate()
+        for f in sim.run(10):
+            pass
+        rigid = sim.current.rigid
+        self.assertGreater(rigid.joints, 0)
+        self.assertEqual(rigid.broken, 0)
+        self.assertLess(float(np.abs(rigid.translations).max()), 0.01)
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

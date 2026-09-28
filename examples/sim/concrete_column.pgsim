@@ -1,0 +1,118 @@
+pgsim 1
+# A reinforced concrete column blown at mid-height, its steel left bare.
+# The column stands in a concrete frame -- on a floor slab, under a beam,
+# both pieces that do not move -- broken by a Concrete Fracture into pieces
+# smallest round the charge; the Rebar node lays a cage in it: eight bars
+# of 20 mm up it, stirrups of 10 mm round them every 15 cm. At 0.6 s the
+# charge goes off: the concrete within 35 cm of it comes loose (release),
+# most of it blown to dust (vanish), the rest kicked out. The bars hold
+# what the glue no longer does: the column above still hangs from the beam
+# and stands on the cage, chunks of concrete hang on the bars, and the cage
+# is bare where the charge was. The dust, the Pyro Solver's, thins out in
+# the low sun. prototype sim concrete_column out.mp4 renders it through the
+# camera, a slow push in.
+node 1 box 1 column 0 0
+  param size 0.4 3 0.4
+  param center 0 1.75 0
+node 2 concrete_fracture 1 concrete 230 0
+  param count 170
+  param uneven 0.6
+  param impact 0 1.75 0
+  param focus 1
+  param chips 0.25
+  param chipsize 0.05
+node 3 primitive_wrangle 1 charge 460 0
+  param snippet "// The charge, round the middle of the column: at Fire seconds what is\n// within Reach of Height comes loose (release) -- Dust of it blown to dust\n// (vanish), the rest kicked out, away from the middle and a little up.\nfloat fire = ch(\"fire\");\ni@active = 1;\nv@Cd = set(0.5, 0.49, 0.47);\nif (abs(@P.y - ch(\"height\")) < ch(\"reach\")) {\n    vector away = set(@P.x, 0, @P.z);\n    f@release = fire + 0.03 * rand(i@piece);\n    i@vanish = rand(i@piece + 5) < ch(\"dust\");\n    v@kick = normalize(away) * ch(\"push\") * (0.4 + 0.6 * rand(i@piece + 17)) + set(0, 1, 0);\n}"
+  param fire 0.6
+  param height 1.75
+  param reach 0.35
+  param dust 0.85
+  param push 6
+node 14 rebar 1 cage 230 -130
+  param layout cage
+  param spacing 0.15
+  param diameter 0.02
+  param stirrup 0.01
+node 4 box 1 floor 0 130
+  param size 8 0.25 5
+  param center 0 0.125 0
+node 5 primitive_wrangle 1 floor_piece 230 130
+  param snippet "// The floor slab: a piece that does not move, the column's foot glued to it.\ni@piece = 1000;\ni@active = 0;\nv@Cd = set(0.3, 0.295, 0.285);"
+node 15 box 1 beam 0 200
+  param size 7 0.5 0.4
+  param center 0 3.5 0
+node 16 primitive_wrangle 1 beam_piece 230 200
+  param snippet "// The beam: a piece that does not move, the column's head glued to it.\ni@piece = 1001;\ni@active = 0;\nv@Cd = set(0.5, 0.49, 0.47);"
+node 17 object 1 column_left 460 400
+  param shape box
+  param center -3 1.75 0
+  param size 0.4 3 0.4
+  param color 0.5 0.49 0.47
+node 18 object 1 column_right 460 470
+  param shape box
+  param center 3 1.75 0
+  param size 0.4 3 0.4
+  param color 0.5 0.49 0.47
+node 6 merge 1 pieces 690 60
+node 8 rbd_solver 1 rbd 920 60
+  param density 2400
+  param friction 0.7
+  param bounce 0.15
+  param glue 1000
+  param rings 2
+  param substeps 4
+  param dust 0.6
+  param impact_dust 0.6
+  param dust_size 0.25
+  param air 1.2
+  param color 0.5 0.49 0.47
+  param inside_color 0.6 0.58 0.54
+node 9 turbulence 1 swirl 920 230
+  param strength 1
+  param scale 0.6
+node 10 pyro_solver 2 dust 1150 140
+  param size 6 4 6
+  param buoyancy 0.15
+  param weight 0.25
+  param vorticity 3
+  param smoke_decay 0.8
+node 11 volume_look 2 dust_look 1380 140
+  param smoke_color 0.66 0.64 0.6
+  param smoke_density 4
+  param occlusion 1
+node 12 output 2 output 1610 60
+  param frames 90
+  param light_azimuth 126
+  param light_elevation 25
+  param light_color 1 0.86 0.7
+  param light_intensity 2.5
+  param sky_intensity 0.35
+  param exposure 0.78
+  param ground_color 0.12 0.115 0.11
+  param grid off
+  param sky_behind on
+node 13 camera 1 camera 1610 220
+  param focal 30
+  key center 1 smooth 1.8 1.75 3.56
+  key center 90 smooth 0.9 1.75 1.78
+  key rotation 1 smooth 0 27 0
+  key rotation 90 smooth 0 27 0
+link 1.geometry -> 2.geometry
+link 1.geometry -> 14.geometry
+link 14.geometry -> 8.rebar
+link 2.geometry -> 3.geometry
+link 3.geometry -> 6.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 15.geometry -> 16.geometry
+link 16.geometry -> 6.geometry
+link 6.geometry -> 8.pieces
+link 17.collider -> 8.colliders
+link 18.collider -> 8.colliders
+link 8.dust -> 10.sources
+link 8.collider -> 10.colliders
+link 9.force -> 10.forces
+link 10.gas -> 11.gas
+link 8.look -> 12.look
+link 11.look -> 12.look
+link 13.camera -> 12.camera

@@ -735,6 +735,51 @@ std::vector<NodeType> buildTypes() {
               text("attribute", "Piece Attribute", "Glass", "piece", "What each shard's number is called."),
               text("insidegroup", "Inside Group", "Glass", "inside", "The faces of the cracks.")},
              {"impact", nullptr, nullptr, nullptr, nullptr, nullptr});
+    geometry("brick_wall", "Brick Wall", "brickwall",
+             "A wall laid of bricks as a bricklayer lays it: course on course in a bond, each brick on its bed of "
+             "mortar with a joint at its end, filling the input -- a solid of any outline, openings and all, "
+             "standing as it stands -- with plaster on its faces where there is some. Each brick is a piece with "
+             "its mortar -- piece, Cd -- Broken of them cut in two, the halves one cluster held Strength times "
+             "as hard as the mortar. Link them into an RBD Solver: its Glue is the mortar's.",
+             in,
+             {{"bond", "Bond", "Bricks", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 4.0f, "",
+               "Where the bricks of each course break joint with those below. Stretcher: each course half a "
+               "brick on. English: a course of headers -- bricks across the wall -- then one of stretchers. "
+               "Flemish: header and stretcher in turn in every course. Stack: joint over joint. Auto: Stretcher "
+               "for a wall one brick's width thick, else English.",
+               {"auto", "stretcher", "english", "flemish", "stack"}, {"Auto", "Stretcher", "English", "Flemish", "Stack"}},
+              {"length", "Length", "Bricks", K::Float, {0.25f, 0.0f, 0.0f}, 0.1f, 0.6f, 0.01f, kBig, "m",
+               "How long a brick is: 250 mm (290 the Czech full brick). A header is half of it and its joint."},
+              {"width", "Width", "Bricks", K::Float, {0.12f, 0.0f, 0.0f}, 0.05f, 0.4f, 0.005f, kBig, "m",
+               "How wide a brick is: the wall has as many leaves of them across as fit its thickness."},
+              {"height", "Height", "Bricks", K::Float, {0.065f, 0.0f, 0.0f}, 0.04f, 0.3f, 0.005f, kBig, "m",
+               "How high a brick is -- a course with its bed; the beds give a little so that the courses fill "
+               "the wall's height."},
+              {"joint", "Joint", "Bricks", K::Float, {0.01f, 0.0f, 0.0f}, 0.0f, 0.03f, 0.0f, 0.1f, "m",
+               "How thick the mortar is between bricks."},
+              vec("front", "Front", "Bricks", Vec3(0.0f, 0.0f, 1.0f), -1.0f, 1.0f, "",
+                  "Which way the wall's front faces: the face that way is the front."),
+              {"plaster", "Plaster", "Plaster", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 0.05f, 0.0f, 0.2f, "m",
+               "How thick the plaster on the wall's faces is, part of the wall's thickness. 0: bare brick."},
+              {"plastersides", "Plaster Sides", "Plaster", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+               "Which faces are plastered.", {"both", "front", "back"}, {"Both", "Front", "Back"}},
+              {"color", "Brick Color", "Look", K::Color, {0.46f, 0.18f, 0.11f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour of the bricks, as Cd."},
+              {"variation", "Variation", "Look", K::Float, {0.35f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How much the bricks differ in shade -- lighter, darker, warmer -- one from the next."},
+              {"mortar", "Mortar Color", "Look", K::Color, {0.52f, 0.5f, 0.47f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour of the mortar."},
+              {"plastercolor", "Plaster Color", "Look", K::Color, {0.86f, 0.83f, 0.77f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour of the plaster."},
+              {"broken", "Broken", "Break", K::Float, {0.3f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The share of the bricks -- of those half as long again as they are wide -- that can break: cut "
+               "in two across, the halves held together Strength times as hard as the mortar holds a brick -- a "
+               "hard knock breaks them. 0: none breaks."},
+              {"strength", "Strength", "Break", K::Float, {8.0f, 0.0f, 0.0f}, 1.0f, 50.0f, 0.0f, kBig, "",
+               "How many times harder a brick holds than the mortar round it (the halves' clusterglue)."},
+              {"seed", "Seed", "Break", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, 1e6f, "",
+               "Another number: other shades, other bricks broken."},
+              text("attribute", "Piece Attribute", "Bricks", "piece", "What each brick's number is called.")});
     geometry("rebar", "Rebar", "rebar",
              "Steel bars inside a block of concrete, as they are laid before it is poured: a mesh both ways near "
              "each face of a wall or a slab, or bars along a beam or a column with stirrups round them. The block "
