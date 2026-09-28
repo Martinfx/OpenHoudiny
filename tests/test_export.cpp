@@ -192,7 +192,8 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            a.rigid.broken == b.rigid.broken && a.rigid.poses == b.rigid.poses && a.rigid.debris == b.rigid.debris &&
            a.rigid.vanished == b.rigid.vanished && w.ids == x.ids && r.dropIds == s.dropIds &&
            r.dropletIds == s.dropletIds && a.rigid.debrisIds == b.rigid.debrisIds &&
-           a.rigid.debrisVelocity == b.rigid.debrisVelocity && w.flow == x.flow && a.rigid.rebarState == b.rigid.rebarState;
+           a.rigid.debrisVelocity == b.rigid.debrisVelocity && w.flow == x.flow && a.rigid.rebarState == b.rigid.rebarState &&
+           a.rigid.debrisGlass == b.rigid.debrisGlass && a.rigid.unglued == b.rigid.unglued;
 }
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
@@ -247,6 +248,8 @@ sim::Frame madeUpFrame() {
     f.rigid.debris = {0.0f, 0.1f, 0.2f, 0.05f, 1.0f, 0.0f, 1.0f, 0.02f};  // two bits of grit
     f.rigid.debrisVelocity = {0.0f, -1.0f, 0.0f, 0.5f, 0.0f, 0.0f};
     f.rigid.debrisIds = {40, 41};
+    f.rigid.debrisGlass = {0, 1};  // the second a chip of glass
+    f.rigid.unglued = {0, 2};
     f.rigid.vanished = {1};
     f.rigid.rebarState = {0, 1, 2, 0};  // a bar out of one piece, torn after the next
     f.rain.rippleOrigin = {-1.0f, 0.2f, -1.0f};
@@ -476,7 +479,7 @@ TEST(frames_round_trip_through_their_files) {
     empty.domain.cells[0] = empty.domain.cells[1] = empty.domain.cells[2] = 64;
     empty.fields.assign(3 * empty.domain.cellCount(), 0);
     const std::string small = sim::formatFrame(empty);
-    CHECK(small.size() < 300);
+    CHECK(small.size() < 320);
     CHECK(sim::parseFrame(small, back, error));
     CHECK(sameFrame(empty, back));
 
@@ -526,8 +529,10 @@ TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
     f.rigid.debrisVelocity.clear();
     f.water.flow.clear();
     f.rigid.rebarState.clear();
+    f.rigid.debrisGlass.clear();
+    f.rigid.unglued.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 7 * 8);  // the five counts, version 5's and version 6's, all 0
+    bytes.resize(bytes.size() - 9 * 8);  // the five counts, version 5's, 6's and 7's two, all 0
     bytes[8] = 3;
     sim::Frame back;
     std::string error;
@@ -545,8 +550,10 @@ TEST(frames_of_version_4_still_read_without_the_waters_flow) {
     sim::Frame f = madeUpFrame();
     f.water.flow.clear();
     f.rigid.rebarState.clear();
+    f.rigid.debrisGlass.clear();
+    f.rigid.unglued.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 2 * 8);  // its count, 0, and version 6's
+    bytes.resize(bytes.size() - 4 * 8);  // its count, 0, and version 6's and 7's two
     bytes[8] = 4;
     sim::Frame back;
     std::string error;
@@ -565,14 +572,38 @@ TEST(frames_of_version_5_still_read_without_what_became_of_the_bars) {
     // them as built, as a frame without bars has them.
     sim::Frame f = madeUpFrame();
     f.rigid.rebarState.clear();
+    f.rigid.debrisGlass.clear();
+    f.rigid.unglued.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 8);  // its count, 0
+    bytes.resize(bytes.size() - 3 * 8);  // its count, 0, and version 7's two
     bytes[8] = 5;
     sim::Frame back;
     std::string error;
     CHECK(sim::parseFrame(bytes, back, error));
     CHECK(sameFrame(f, back));
     CHECK(back.rigid.rebarState.empty());
+}
+
+TEST(frames_of_version_6_still_read_without_which_grit_is_glass) {
+    // As version 6 wrote it: without the glass and the bodies come loose at
+    // the end -- none of the grit glass, none loose, as a frame without glass
+    // or glue has it.
+    sim::Frame f = madeUpFrame();
+    f.rigid.debrisGlass.clear();
+    f.rigid.unglued.clear();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - 2 * 8);  // their counts, 0
+    bytes[8] = 6;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.rigid.debrisGlass.empty());
+    CHECK(back.rigid.unglued.empty());
+    // Glass that is not one a bit of grit is refused.
+    sim::Frame wrong = madeUpFrame();
+    wrong.rigid.debrisGlass.push_back(1);
+    CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
 }
 
 TEST(frames_that_are_not_what_they_say_are_refused) {
@@ -585,7 +616,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 7;
+    newer[8] = 8;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

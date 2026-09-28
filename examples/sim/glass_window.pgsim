@@ -1,0 +1,130 @@
+pgsim 1
+# A ball through a window, in slow motion: 120 frames a second. Glass
+# Fracture breaks the pane as glass breaks where it is struck -- cracks
+# running out straight from the blow and rings of them round it: slivers
+# at the middle, long shards further out. The pane sits in a wooden frame,
+# a piece of its own that does not move, its edges glued to it; round it a
+# wall, a dark room behind. The ball -- keyed, unstoppable -- comes out of
+# the room; Rings lets it break the six rings of shards round where it
+# lands: it punches a hole, slivers and chips of glass fly out with it and
+# glint in the sun, shards fall to the ground and lie there. Glass is whole
+# until it breaks: the pane shows no crack until the ball is there, then
+# the whole web of them. It throws no dust, only chips that glitter. The
+# renderer draws it clear -- tinted, the sky and the sun off its faces, the
+# edges of its shards green. prototype sim glass_window out.mp4 renders it
+# through the camera, 150 frames at 120 a second; ffmpeg -r 30 -i
+# out_%04d.png plays pictures of it (--every 1) four times slower.
+node 1 box 1 pane 0 0
+  param size 1.2 1.5 0.008
+  param center 0 1.45 0
+node 2 glass_fracture 1 glass 230 0
+  param impact 0.12 1.6 0
+node 3 primitive_wrangle 1 moving 460 0
+  param snippet "// The shards move. A Merge fills an attribute a geometry lacks with 0 --\n// set on them, active is set on all the pieces.\ni@active = 1;"
+node 4 box 1 frame_top 0 130
+  param size 1.36 0.08 0.1
+  param center 0 2.24 0
+node 5 box 1 frame_bottom 0 200
+  param size 1.36 0.08 0.1
+  param center 0 0.66 0
+node 6 box 1 frame_left 0 270
+  param size 0.08 1.5 0.1
+  param center -0.64 1.45 0
+node 7 box 1 frame_right 0 340
+  param size 0.08 1.5 0.1
+  param center 0.64 1.45 0
+node 8 merge 1 frame_parts 230 230
+node 9 primitive_wrangle 1 frame 460 230
+  param snippet "// The frame: a piece of its own -- numbered past the shards -- that does\n// not move, painted white. The shards at the pane's edge touch it face\n// to face: glued to it, they stay in it.\ni@piece = 1000;\ni@active = 0;\nv@Cd = set(0.86, 0.85, 0.8);"
+node 10 merge 1 pieces 690 60
+node 11 object 1 wall_left 460 400
+  param shape box
+  param center -2.09 1.7 0
+  param size 2.82 3.4 0.3
+  param color 0.62 0.57 0.5
+node 12 object 1 wall_right 460 470
+  param shape box
+  param center 2.09 1.7 0
+  param size 2.82 3.4 0.3
+  param color 0.62 0.57 0.5
+node 13 object 1 wall_below 460 540
+  param shape box
+  param center 0 0.31 0
+  param size 1.36 0.62 0.3
+  param color 0.62 0.57 0.5
+node 14 object 1 wall_above 460 610
+  param shape box
+  param center 0 2.84 0
+  param size 1.36 1.12 0.3
+  param color 0.62 0.57 0.5
+node 15 object 1 room_back 460 680
+  param shape box
+  param center 0 1.7 -4
+  param size 7 3.4 0.2
+  param color 0.13 0.12 0.11
+node 16 object 1 room_roof 460 750
+  param shape box
+  param center 0 3.3 -2
+  param size 7 0.2 4.2
+  param color 0.13 0.12 0.11
+node 17 object 1 room_left 460 820
+  param shape box
+  param center -3.5 1.7 -2
+  param size 0.2 3.4 4.2
+  param color 0.13 0.12 0.11
+node 18 object 1 room_right 460 890
+  param shape box
+  param center 3.5 1.7 -2
+  param size 0.2 3.4 4.2
+  param color 0.13 0.12 0.11
+node 19 object 1 ball 690 400
+  param size 0.22 0.22 0.22
+  param color 0.55 0.1 0.08
+  key center 1 linear 0.35 1.72 -3.9
+  key center 40 linear 0.12 1.6 0
+  key center 120 linear -0.352 1.354 8
+node 20 rbd_solver 1 rbd 920 60
+  param density 2500
+  param friction 0.4
+  param bounce 0.2
+  param glue 3000
+  param rings 6
+  param substeps 4
+  param dust 0.3
+  param impact_dust 0.3
+node 21 output 2 output 1150 60
+  param fps 120
+  param light_azimuth 145
+  param light_elevation 32
+  param light_color 1 0.92 0.8
+  param light_intensity 3
+  param sky_intensity 0.5
+  param exposure 0.85
+  param ground_color 0.16 0.155 0.15
+  param grid off
+  param sky_behind on
+node 22 camera 1 camera 1150 220
+  param center 1.8 1.25 2.6
+  param rotation 1 33 0
+  param focal 24
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 10.geometry
+link 4.geometry -> 8.geometry
+link 5.geometry -> 8.geometry
+link 6.geometry -> 8.geometry
+link 7.geometry -> 8.geometry
+link 8.geometry -> 9.geometry
+link 9.geometry -> 10.geometry
+link 10.geometry -> 20.pieces
+link 11.collider -> 20.colliders
+link 12.collider -> 20.colliders
+link 13.collider -> 20.colliders
+link 14.collider -> 20.colliders
+link 15.collider -> 20.colliders
+link 16.collider -> 20.colliders
+link 17.collider -> 20.colliders
+link 18.collider -> 20.colliders
+link 19.collider -> 20.colliders
+link 20.look -> 21.look
+link 22.camera -> 21.camera

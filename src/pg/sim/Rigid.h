@@ -219,6 +219,9 @@ struct RigidFrame {
     std::string attribute;
     std::vector<RigidPose> poses;                  ///< body by body
     std::vector<uint32_t> vanished;                ///< the bodies blown to dust, in order
+    /// The bodies a joint of which has broken -- come loose from one they
+    /// were glued to, whether they have moved from it or not -- in order.
+    std::vector<uint32_t> unglued;
     /// The grit in the air and on the ground: x, y, z and size (metres
     /// across), one after the other; how fast each bit goes (three floats
     /// a bit) and its own number -- the same from frame to frame, as long as
@@ -226,6 +229,9 @@ struct RigidFrame {
     std::vector<float> debris;
     std::vector<float> debrisVelocity;
     std::vector<uint32_t> debrisIds;
+    /// 1 where a bit of the grit is a chip of glass -- from a piece whose
+    /// attribute glass is 1 or more. Empty: none is.
+    std::vector<uint8_t> debrisGlass;
     size_t joints = 0, broken = 0;                 ///< the glue: how many joints, how many broken so far
     std::shared_ptr<const RigidRebar> rebar;       ///< the bars in the pieces, at rest; null: none
     /// What became of each station of a bar: kRebarLoose the bar slid out
@@ -236,17 +242,33 @@ struct RigidFrame {
     bool empty() const { return poses.empty(); }
     size_t bytes() const {
         return poses.size() * sizeof(RigidPose) + (debris.size() + debrisVelocity.size()) * sizeof(float) +
-               debrisIds.size() * sizeof(uint32_t) + rebarState.size();
+               (debrisIds.size() + unglued.size()) * sizeof(uint32_t) + rebarState.size() + debrisGlass.size();
     }
 };
 
+/// The attribute glass of primitive `p` (of an attribute glass, Int or
+/// Float, or null): 1 a face of glass, 2 a face of a crack in it -- what
+/// Glass Fracture gives them; 0 where it has none.
+float glassOf(const AttributeArray* glass, size_t p);
+
+/// Glass is whole until it breaks. For each body of `f` (its layout), 1
+/// where it is of a pane of glass still whole: glass pieces -- primitives
+/// whose glass is 1 or more -- that touch others at rest, none of whose
+/// glue has broken (unglued), none of which has come away from the others
+/// or is gone. Its cracks, the faces whose glass is 2, are not there yet.
+/// Empty when there is no glass, or no pose: a frame of the pieces at rest
+/// keeps all their faces.
+std::vector<uint8_t> wholePanes(const RigidFrame& f);
+
 /// The pieces of `f` where it puts them: points and normals moved and
-/// turned, and each point's velocity in v; those blown to dust gone.
+/// turned, and each point's velocity in v; those blown to dust gone, and
+/// the cracks of the panes of glass still whole (wholePanes).
 std::shared_ptr<Geometry> posedPieces(const RigidFrame& f);
 
 /// The grit of `f` added to `geo` as points: pscale half as wide as a bit
 /// is, its velocity v and its number id -- where the frame has them (a frame
-/// cached before version 4 has neither). The first point added is returned.
+/// cached before version 4 has neither) -- and glass 1 for a chip of glass,
+/// where there are any. The first point added is returned.
 size_t appendGrit(Geometry& geo, const RigidFrame& f);
 
 /// How the solver's look draws the pieces: posed, their faces in the colour

@@ -1,4 +1,4 @@
-# Destrukce: Voronoi a Concrete Fracture, tuhá tělesa, lepidlo, výztuž a prach
+# Destrukce: Voronoi, Concrete a Glass Fracture, tuhá tělesa, lepidlo, výztuž, sklo a prach
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
 (**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
@@ -6,7 +6,10 @@ beton: nestejné kusy, hrubé lomy, odprýsklé rohy), kusy dostanou hmotu a
 slepí se k sobě (**RBD
 Solver** nad knihovnou [Jolt Physics](https://github.com/jrouwe/JoltPhysics)).
 Ocelová výztuž (**Rebar**) je drží i tam, kde lepidlo prasklo: pruty se
-ohýbají, vytahují se z malých kusů a trhají se.
+ohýbají, vytahují se z malých kusů a trhají se. Sklo (**Glass Fracture**)
+praská tak, jak sklo praská: paprsky z místa úderu a kruhy kolem něj; do
+nárazu zůstane tabule celá a renderer ji kreslí průhlednou, s odrazy
+oblohy a slunce.
 Nálože přetrhnou lepidlo v daný čas, nárazy ho lámou dál, padající patra
 drtí stěny na prach, úlomky sypou drť a vzduch, který zřícení vytlačí, žene
 oblak prachu do ulic (**Pyro Solver**). Všechno je deterministické: stejná
@@ -303,6 +306,76 @@ z lomů a dopadů nese Pyro Solver.
 [block] ─Collider─▶ Colliders ───────────────────────────────────────────────────────┘   │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look]
 ```
 
+### Sklo: Glass Fracture
+
+Sklo se neláme jako beton. Z místa úderu se rozběhnou rovné trhliny
+(**radiální**) a mezi nimi se otevřou oblouky kolem něj (**soustředné**):
+pavučina, uprostřed tenké střípky, dál od středu delší a širší střepy.
+Uzel **Glass Fracture** (Geometry) tabuli rozláme přesně takhle
+([`src/pg/nodes/Glass.cpp`](../src/pg/nodes/Glass.cpp)):
+
+- **Tabule** je vstup — plochý uzavřený objekt jakéhokoli obrysu — ležící
+  tak, jak leží: jeho kvádr (stejný jako u Rebar, `fitBox`) má nejtenčí
+  směr napříč tabulí a pavučina leží v rovině druhých dvou, kolem `impact`
+  promítnutého do střední roviny tabule.
+- **Paprsky**: `radials` trhlin z místa úderu v rovnoměrných úhlech, každá
+  pootočená nejvýš o `jitter` odstupu k další.
+- **Kruhy**: mezi dvěma paprsky vede tětiva, první `first` od středu,
+  každá další `growth`-krát dál — v každé výseči zvlášť, takže kruhy na
+  paprscích nenavazují (jako ve skutečném skle, kde soustředná trhlina
+  končí na radiální). Výseč, jejíž tětiva je `split`-krát delší, než je
+  kruh hluboký, se rozvětví: z bodu na tětivě vede další paprsek ven.
+  Za `rings` kruhy (nebo za okrajem tabule) vedou střepy až k okraji.
+- **Střepy**: každá buňka pavučiny (konvexní) vyřízne z tabule kus
+  rovinami svých stran kolmými na tabuli a zavře ho; nové plochy jsou ve
+  skupině `insidegroup`. Primitiva nesou `piece`, `glass` — 1 plochy
+  tabule, 2 plochy trhlin — a `Cd`, barvu skla (`tint`). Podle `glass`
+  pozná RBD Solver, renderer i export, že jde o sklo.
+
+| Parametr | Význam |
+|---|---|
+| `impact` | Kde do tabule udeří (promítne se do její roviny) |
+| `radials` | Počet radiálních trhlin (3–256) |
+| `first` | Poloměr prvního kruhu (m) |
+| `growth` | Kolikrát dál je každý další kruh |
+| `rings` | Počet kruhů; za posledním vedou střepy k okraji |
+| `jitter` | Nepravidelnost úhlů a poloměrů (0–1) |
+| `split` | Výseč širší než `split` × hloubka kruhu se rozvětví; 0 nikdy |
+| `seed` | Jiné číslo, jiná pavučina |
+| `tint` | Barva skla (`Cd`): zelenkavá jako okenní sklo |
+| `attribute`, `insidegroup` | Atribut kusu a skupina ploch trhlin |
+
+Tabule 1,2 × 1,5 m s výchozími hodnotami dá kolem 250 střepů za desetiny
+sekundy; stejná síť dá stejné střepy na jednom i čtyřech vláknech.
+
+### Pátý příklad: míč oknem
+
+![Míč prorazí okno: pavučina prasklin v okamžiku úderu, střepy a skleněná drť letí ven, zbytek tabule zůstane v rámu](img/glass-window.jpg)
+
+```
+./build/prototype sim glass_window okno.mp4       # 150 snímků, 120 za sekundu
+./build/prototype sim glass_window okno.png --every 1 && ffmpeg -r 30 -i okno_%04d.png zpomalene.mp4
+```
+
+Příklad **glass_window** ([examples/sim/glass_window.pgsim](../examples/sim/glass_window.pgsim)):
+míč vyletí z tmavé místnosti oknem ven, zpomaleně — simulace běží 120
+snímků za sekundu a přehrání obrázků třicet za sekundu je čtyřikrát
+zpomalí. Tabule 1,2 × 1,5 m o tloušťce 8 mm sedí v bílém rámu (kus
+s `active 0`, ke kterému jsou krajní střepy přilepené) ve zdi z objektů.
+Glass Fracture ji rozláme kolem místa, kam míč udeří. Míč je klíčovaný a
+nezastavitelný a `rings 6` pustí náraz šest prstenců střepů daleko:
+prorazí díru, drobné střípky a skleněná drť letí s ním ven a jiskří na
+slunci, delší střepy kolem díry vypadnou a zůstanou ležet pod oknem.
+Dokud míč nedorazí, je tabule celá — žádná prasklina, jen odraz oblohy a
+míč za sklem; v okamžiku úderu se objeví celá pavučina. Sklo nedělá prach,
+jen drť, a Pyro Solver tu proto není.
+
+```
+[pane] ─▶ [Glass Fracture] ─▶ [moving] ─┐
+[frame_*]×4 ─▶ [Merge] ─▶ [frame] ──────┴▶ [pieces] ─Pieces─▶ [RBD Solver] ─Look─▶ [Output] ◀─ [camera]
+[wall_*]×4, [room_*]×4, [ball] ─Collider─▶ Colliders ─────────────┘
+```
+
 ---
 
 ## 3. RBD Solver
@@ -468,6 +541,19 @@ v průměru za 6 ms na snímek.
   poskládají znovu (spoje mezi stejnými tělesy zůstanou) a hned se
   přepočítají, dokud všechny nedrží. Rozdrcený nebo rozmetaný kus pruty
   pustí; prut pak vede holý přes místo, kde byl.
+- **Sklo.** Kus, jehož primitiva mají `glass` 1 nebo víc, je skleněný.
+  Fyzika je stejná jako u ostatních kusů (hustotu, lepidlo a tření dá
+  solver), liší se to, co z něj vypadne: lom a náraz skla vyfoukne
+  desetinu prachu (drcení pětinu) a sype menší drť, která je skleněná
+  (`debrisGlass`). Snímek navíc nese, kterým tělesům praskl některý spoj
+  (`unglued`). **Tabule je celá, dokud se nerozbije**: skleněné kusy, které
+  se v klidu dotýkají, tvoří tabuli, a dokud žádnému z nich nepraskl spoj,
+  žádný se od ostatních nepohnul a žádný nezmizel, nemá tabule trhliny —
+  plochy `glass 2` se nekreslí a neexportují (`wholePanes`, `posedPieces`).
+  Sklo je průhledné, takže jinak by byla pavučina vidět už před úderem;
+  jakmile tabule praskne, objeví se celá najednou, i ve střepech, které
+  zůstaly v rámu. Samotný střep (bez skleněného souseda) tabulí není a
+  jeho řezné plochy jsou jeho hrany.
 - **Kroky.** Svět (`WorldSolver`) krokuje tuhá tělesa jako první; voda,
   plyn a déšť pak dostanou kusy tam, kde právě jsou, a plyn obláčky
   prachu jako zdroje.
@@ -491,6 +577,22 @@ drť v oblaku proti světlu tmavne. Geometrie i kusy vrhají stíny na sebe,
 na zem i do kouře (stínová mapa slunce, 2048², měkké okraje) a Output má
 barvu země, vypínač mřížky a oblohu za scénou (`sky_behind`).
 
+**Sklo** se kreslí průhledné (`Volume.cpp`). Trojúhelníky s `glass`
+nejdou do vyrovnávací paměti neprůhledných ploch, ale do dvou vlastních
+vrstev: nejbližší plocha skla přivrácená k oku a za ní — odloupnutá od
+první (*depth peeling*) — další. Odvrácené plochy jsou tam, kde paprsek
+ze skla vychází, takže každý střep dá jednu vrstvu. Hlavní průchod pak
+na paprsku až k neprůhledné ploše složí vrstvu po vrstvě: tenká tabule
+odráží z obou svých stěn (Fresnel se Schlickovou aproximací, *F*₀ = 0,04,
+odraz dvou stěn 2*F*/(1 + *F*)) oblohu tak, jak je vidět za scénou, zemi
+pod horizontem, objekty scény a lesk slunce; co propustí, zabarví podle
+cesty sklem — šikmo víc než kolmo. Plochou trhliny se paprsek dívá podél
+tabule, přes mnohem víc skla: tmavší a zelenější, s jasem, který tabule
+k lomu přivede. Prošlé světlo zabarví i kouř a povrch za sklem. Skleněná
+drť jsou ploché třísky o třech až pěti stranách, průhledné, s odrazem
+oblohy a zábleskem slunce, které se v letu naklápějí — jiskří. Sklo
+nevrhá stín; hloubka a masky průchodů jsou plochy za ním.
+
 **Pruty** se kreslí jako šestiboké trubky své tloušťky v barvě
 `rebar_color` (`rebarBars`, `drawnPieces`): úsek prutu v kusu se s kusem
 posune a otočí, holý prut mezi dvěma kusy vede Hermitovou křivkou, která
@@ -505,11 +607,16 @@ jako tvar a pak jen jeho poloha a otočení v každém snímku, rozmetaná těle
 zneviditelněná, drť jako body, prach jako soubory VDB vedle, kamera,
 slunce a obloha. Blender, Houdini nebo Karma ho vyrenderují s vlastním
 světlem, rozmazáním pohybem a materiály; plochy řezu jsou `GeomSubset`
-`inside`, aby dostaly jiný materiál ([usd.md](usd.md)). Pruty jsou
+`inside`, aby dostaly jiný materiál ([usd.md](usd.md)). Skleněné plochy
+jsou `GeomSubset` `glass` s materiálem `/World/Looks/glass` (čirý,
+hladký, IOR 1,5), trhliny skla samostatná síť `cracks`, neviditelná do
+snímku, kdy tabule praskla, a drť nese `primvars:glass`. Pruty jsou
 `/World/rebar`: lineární `BasisCurves` s tloušťkou (`widths` po vrcholech)
 a rychlostmi, v souboru každého snímku. V Pythonu vrátí
 `frame.rigid.rebar()` pruty snímku jako geometrii (`width`, `v`) a
-`rebar_state`, `rebar_stations`, co se s kterým úsekem stalo.
+`rebar_state`, `rebar_stations`, co se s kterým úsekem stalo;
+`grit_glass` řekne, která drť je skleněná, a `unglued`, kterým tělesům
+praskl spoj.
 
 **RBD Pieces** (Geometry) vrátí kusy daného snímku jako geometrii: body
 posunuté a otočené, normály otočené a rychlost každého bodu v `v` — pro
@@ -555,7 +662,8 @@ spočítá jednou pro celou sekvenci. Od verze 6 nese snímek i stav prutů:
 bajt na každou stanici (prut z kusu vyšel, prut je za ní přetržený).
 Průběh prutů kusy se při čtení spočítá znovu z prutů a kusů světa — jednou
 pro celou sekvenci — a použije se, jen když má tolik stanic, kolik snímek
-říká.
+říká. Verze 7 přidala, která drť je skleněná, a tělesa, kterým praskl
+spoj; snímky verze 6 se čtou bez nich (žádné sklo, nic nepraskle).
 
 ---
 
@@ -639,6 +747,30 @@ v `tests/python/test_pg.py`:
   žádné, pruty bez čar hlášené, hodnoty mimo rozsah srovnané, soubor tam
   a zpět.
 
+`tests/test_glass.cpp` (8 testů), `usd_export_glass_is_glass_and_its_cracks_come_when_it_breaks`
+v `tests/test_usd.cpp` a `test_glass_breaks_as_glass` v `tests/python/test_pg.py`:
+
+- střepy tabule 1,2 × 1,5 m jsou uzavřené, otočené ven a dají její objem
+  i obě její plochy (na 10⁻⁶ m³ a 10⁻⁴ m²); `glass 2` mají právě plochy
+  ze skupiny trhlin, `Cd` je barva skla;
+- u místa úderu jsou střepy víc než dvacetkrát menší než půl metru od
+  něj; víc paprsků dá víc střepů, míň kruhů míň;
+- v nakloněné a otočené tabuli jsou všechny trhliny kolmé na tabuli a
+  nejmenší střepy u místa úderu;
+- stejný hash na 1 i 4 vláknech a při každém vaření, jiný `seed` jiná
+  pavučina;
+- kreslení: sklo zvlášť od ostatních trojúhelníků, plochá normála podle
+  pořadí rohů, barva skla, druh 1 a 2; skleněná tříska jako tečka se
+  záporným poloměrem;
+- tabule posunutá a otočená celá je celá (žádná trhlina); střep o
+  milimetr vedle, zmizelý kus nebo prasklý spoj ukáže všechny; bez póz
+  (klid) zůstanou všechny plochy; samotný střep nemá tabuli;
+- tabule shozená na zem: v pádu celá, po dopadu praskne, drť je skleněná
+  a prachu je desetina toho, co z kamene; kreslení se skleněnou drtí;
+- příklad v síti: rám není sklo; USD: materiál skla, podmnožiny `glass`
+  s vazbou na něj, bez `inside`, síť `cracks` neviditelná do snímku, kdy
+  tabule praskla, `primvars:glass` u drti.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -679,6 +811,16 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   produkčních simulací s desetinásobným rozlišením.
 - **Jednosměrné vazby.** Kusy tlačí vodu a plyn, ale voda je nenadnáší a
   kouř je nebrzdí; kinematické překážky mají nekonečnou hmotu.
+- **Sklo bez lomu světla.** Tenká tabule posune obraz za sebou jen
+  nepatrně, a renderer ho proto neposouvá; silné sklo, čočky a kaustiky
+  nejsou. Vrstvy jsou dvě — za třetím střepem v zákrytu je vidět rovnou
+  to, co je za ním — a drť za sklem se kreslí přes něj, nezabarvená.
+  Sklo nevrhá stín.
+- **Trhliny skla jsou rovné.** Paprsky a oblouky jsou roviny kolmé na
+  tabuli; lasturový lom, jemné třísky z hran a tvrzené sklo, které se
+  rozsype na kostičky (to udělá Voronoi Fracture s mnoha body), tu nejsou.
+  Celá pavučina se objeví najednou, ne tak, jak se trhlina šíří
+  (1500 m/s — za zlomek snímku).
 - **Jeden RBD Solver** v síti; kusy dvou solverů do sebe nenarážejí.
 
 ---
@@ -698,3 +840,10 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   a měkké vazby s plasticitou — výztuž v Houdini.
 - fib: *Model Code for Concrete Structures 2010*, kap. 6.1 — soudržnost
   prutu s betonem a jeho kotvení; odtud velikost `bond`.
+- R. C. Bradt: *The Fractography and Crack Patterns of Broken Glass*
+  (Journal of Failure Analysis and Prevention, 2011) — radiální a
+  soustředné trhliny kolem místa úderu.
+- C. Schlick: *An Inexpensive BRDF Model for Physically-based Rendering*
+  (Computer Graphics Forum, 1994) — aproximace Fresnelova odrazu;
+  C. Everitt: *Interactive Order-Independent Transparency* (NVIDIA, 2001)
+  — vrstvy průhledných ploch odloupnuté jedna od druhé.

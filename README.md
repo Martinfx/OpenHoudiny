@@ -107,8 +107,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 314 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 8 výztuž, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 14 cache a export, 9 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
-ctest --test-dir build -R python                   # 40 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgtests            # 324 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 15 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+ctest --test-dir build -R python                   # 41 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
@@ -232,7 +232,9 @@ přesně zapadají, a pod nimi rovný řez (`proxy`) pro simulaci —
 **RBD Cluster** seskupí kusy do ker s pevnějším lepidlem uvnitř, které se
 rozpadnou až při tvrdém dopadu (sekundární lámání), **Rebar** položí do
 zdi síť a do trámu armokoš ocelových prutů, na kterých kusy visí i po
-prasknutí lepidla — pruty se ohýbají, vytahují a trhají —, a
+prasknutí lepidla — pruty se ohýbají, vytahují a trhají —, **Glass
+Fracture** rozláme tabuli skla paprsky a kruhy kolem místa úderu (celá
+zůstane, dokud nepraskne, a renderer ji kreslí průhlednou s odrazy), a
 **RBD Solver** nad [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
 z nich udělá tuhá tělesa: konvexní obaly s hmotou; kusy slepené tam, kde
 se dotýkají plochou, jsou jedno těleso, dokud je náraz silnější než

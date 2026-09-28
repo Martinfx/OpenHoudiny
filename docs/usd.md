@@ -49,10 +49,13 @@ Kde scénu otevřít:
 /World                     Xform, výchozí prim
   /Looks/surface           Material: UsdPreviewSurface, barva z displayColor
   /Looks/water, /rain      Material: voda (průhledná, hladká, ior 1,33), déšť
+  /Looks/glass             Material: sklo (čiré, hladké, ior 1,5), je-li v kusech
   /<uzel>                  zobrazená geometrie: mesh, curves, points
   /pieces/body_0000 …      tělesa RBD Solveru: Xform (translate, orient)
       /mesh                  … nad tvarem tělesa kolem jeho středu
           /inside            GeomSubset: plochy, které vyřízl lom
+          /glass             GeomSubset: plochy skla, s materiálem skla
+      /cracks                … trhliny skla: neviditelné do snímku, kdy tabule praskla
   /grit                    Points: drť                        ┐
   /water                   Mesh: povrch vody                  │ hodnoty ze
   /rain/drops              Points: kapky                      │ souborů po
@@ -157,13 +160,16 @@ Soubory po snímcích jsou vedle scény a cesty jsou relativní: složku
 - **Materiál:** jeden `UsdPreviewSurface`, který bere barvu z `displayColor`
   (`UsdPrimvarReader_float3`). Plochy řezu jsou `GeomSubset` s rodinou
   `materialBind`, takže jim jde v Houdini nebo Blenderu přiřadit vlastní materiál (beton, cihla).
+  Plochy skla (primitiva s `glass`) mají vlastní podmnožinu `glass` s materiálem
+  `/World/Looks/glass`; trhliny skla jsou síť `cracks` vedle `mesh`, neviditelná,
+  dokud je tabule celá, a skleněná drť má `primvars:glass` 1.
 
 ## 5. Ověření
 
 Scény jsme ověřili Pixarovou knihovnou `usd-core` 26.08. Ta je jen v prostředí,
 kde se ověřovalo, prototype ji nepotřebuje.
 
-- **Validátory USD:** pro `wall_collapse`, `demolition`, `rain_pond` i `liquid_points` hlásí
+- **Validátory USD:** pro `wall_collapse`, `demolition`, `rain_pond`, `liquid_points` i `glass_window` hlásí
   všech 28 validátorů 0 nálezů (schémata, metadata stage, rodiny GeomSubset, vazba
   materiálu, stínovače).
 - **Soubory po snímcích:** knihovna složí hodnoty z vrstev tak, jak jsou ve snímcích:

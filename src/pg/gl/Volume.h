@@ -143,12 +143,15 @@ public:
     /// Guide lines, drawn over the rest.
     void setLines(const Lines& lines);
     /// Geometry drawn with the scene: the network's displayed node. Null:
-    /// none. The same geometry again costs nothing.
+    /// none. The same geometry again costs nothing. Its glass -- primitives
+    /// whose attribute glass is 1 or more (sim::DisplayGeometry) -- is
+    /// clear: tinted, reflecting the sky and the sun off both of a pane's
+    /// faces, the more the flatter it is seen; it casts no shadow.
     void setGeometry(const GeometryPtr& geometry);
     const GeometryPtr& geometry() const { return geometry_; }
     /// The pieces of an RBD Solver, as its look draws them (sim::drawnPieces),
     /// drawn with the displayed geometry -- their loose points, the grit, as
-    /// chips of stone. Null: none.
+    /// chips of stone, or of glass. Null: none.
     void setPieces(const GeometryPtr& pieces);
     const GeometryPtr& pieces() const { return pieces_; }
     /// The box round the geometry drawn -- the displayed node's and the
@@ -250,6 +253,10 @@ private:
     void drawGeometry(int width, int height);
     /// The displayed geometry and the pieces, as they are drawn, to the GPU.
     void uploadGeometry();
+    /// The faces of the glass turned to the eye, the nearest two at each
+    /// pixel, one after the other (depth peeling): for the pass that shades
+    /// everything, as the meshes are.
+    void renderGlass(int width, int height, const Vec3& eye);
     /// Their map from the sun -- `light` towards it -- for the shadows they
     /// cast: drawn again when they or the sun moved.
     void updateGeoShadow(const Vec3& light);
@@ -306,6 +313,12 @@ private:
     GLsizei gritDots_ = 0;  // the last of the dots: the pieces' loose points, their grit
     GLsizei shownVertices_ = 0;   // the first of the triangles: the displayed geometry's, then the pieces'
     GLuint geoVelocityBuffer_ = 0;  // the triangles' corners' velocities (attribute 3), when they have any
+    // The glass: its triangles (position, normal, tint, kind), and the
+    // nearest two of its faces turned to the eye at each pixel.
+    GLuint glassProgram_ = 0, glassVao_ = 0, glassBuffer_ = 0;
+    GLsizei glassVertices_ = 0;
+    GLuint glassFbo_ = 0, glassTex_[2] = {0, 0}, glassDepth_ = 0;
+    int glassWidth_ = 0, glassHeight_ = 0;
     // The passes: the targets beside the picture, and the meshes' motion.
     GLuint auxTex_[2] = {0, 0};
     bool targetPasses_ = false;

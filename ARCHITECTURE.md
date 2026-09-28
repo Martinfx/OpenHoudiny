@@ -363,6 +363,9 @@ src/pg/nodes/    Generators grid, line, pointcloud
                  Cluster    rbdcluster: kusy do ker (k-means++, Lloyd), lepidlo uvnitř pevnější
                  Rebar      rebar: pruty do bloku natočeného podle největší stěny a rotujících
                             třmenů — síť ve zdi, armokoš s třmínky v trámu; width průměr
+                 Glass      glassfracture: tabule jako sklo — radiální a soustředné trhliny
+                            (výseče, rozvětvení), buňky vyříznuté rovinami kolmými na tabuli;
+                            glass 1 plochy, 2 trhliny, Cd barva skla
 src/pg/io/       Obj        čtení a zápis OBJ (body, polygony, čáry)
                  Ply        body s atributy a polygony do PLY a zpátky (ASCII i binárně)
                  Vdb        objemy do OpenVDB bez knihovny: řídký strom 5-4-3, soubor verze 224
@@ -415,7 +418,8 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
                  Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť,
-                            zobrazená geometrie, vodítka
+                            zobrazená geometrie, vodítka; sklo jako dvě odloupnuté vrstvy
+                            přivrácených ploch (depth peeling), složené s plynem na paprsku
 tests/           59 testů jádra (invarianty, SOP uzly) + 27 pro jazyk a výrazy + 7 pro
                  digital assets + 10 pro topologii, smyčky a vaření na pozadí + 25 pro shader graf + 86 pro simulaci, vodu, déšť, objekty,
                  modely, geometrii v síti a animaci + 11 pro cache a export + 5 pro JPEG a video
@@ -478,6 +482,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Destrukce: Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení na prach, drť, vytlačený vzduch žene prach ([docs/destruction.md](docs/destruction.md)) |
 | ✅ | Beton: Concrete Fracture — nestejné kusy, nejmenší kolem nárazu, odprýsklé rohy, hrubé lomy lícující z obou stran; RBD Solver simuluje rovný řez (`proxy`) a kreslí detail; `spread` a `rings` drží škodu u místa nárazu, kusy přilepené k základu stojí; sekundární lámání: RBD Cluster seskupí kusy do ker, které se rozpadnou až při tvrdém dopadu ([docs/destruction.md §2](docs/destruction.md#2-concrete-fracture)) |
 | ✅ | Výztuž: uzel Rebar (síť ve zdi, armokoš s třmínky v trámu, natočené podle bloku); RBD Solver drží kusy na prutech plastickými vazbami Joltu (tření v šesti směrech), prut povolí podle oceli nebo kotvení, vytahuje se, ohýbá a trhá; stav prutů ve snímku a cache (verze 6), kreslení trubkami, USD `/World/rebar` ([docs/destruction.md §2](docs/destruction.md#výztuž-rebar)) |
+| ✅ | Sklo: Glass Fracture (radiální a soustředné trhliny kolem místa úderu); tabule je celá, dokud jí nepraskne spoj; skleněná drť a desetina prachu (cache verze 7); renderer kreslí sklo průhledné — dvě vrstvy, Fresnel obou stěn, odraz oblohy a slunce, zabarvení podle cesty sklem; USD materiál skla a trhliny viditelné od prasknutí ([docs/destruction.md §2](docs/destruction.md#sklo-glass-fracture)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
 | ✅ | **Čtení USD** bez knihovny: `.usda`, `.usdc` (verze 0.4.0–0.10.0), `.usdz`; scéna složená jako v USD (sublayers, reference, payloady, varianty, třídy, value clips); kamera z matchmove (USD Camera) a geometrie (USD Import) v metrech s Y nahoru; transformace, skládání i geometrie sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)) |

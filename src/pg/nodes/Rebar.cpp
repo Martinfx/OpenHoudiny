@@ -56,23 +56,9 @@ std::vector<D2> hull2(std::vector<D2> p) {
     return h;
 }
 
-/// A box turned as `axis` say, round points.
-struct Block {
-    std::array<Vec3, 3> axis{Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f)};
-    std::array<double, 3> lo{0.0, 0.0, 0.0}, hi{0.0, 0.0, 0.0};  ///< how far along each axis the points go
-
-    double size(int a) const { return hi[static_cast<size_t>(a)] - lo[static_cast<size_t>(a)]; }
-    double volume() const { return size(0) * size(1) * size(2); }
-    /// The point `along` each axis from the box's middle.
-    Vec3 at(const std::array<double, 3>& along) const {
-        Vec3 p;
-        for (size_t a = 0; a < 3; ++a) p += axis[a] * static_cast<float>(0.5 * (lo[a] + hi[a]) + along[a]);
-        return p;
-    }
-};
-
-Block blockAlong(const std::vector<Vec3>& P, const std::array<Vec3, 3>& axis) {
-    Block b;
+/// The box turned as `axis` say round the points `P`.
+OrientedBox blockAlong(const std::vector<Vec3>& P, const std::array<Vec3, 3>& axis) {
+    OrientedBox b;
     b.axis = axis;
     b.lo = {1e300, 1e300, 1e300};
     b.hi = {-1e300, -1e300, -1e300};
@@ -87,9 +73,16 @@ Block blockAlong(const std::vector<Vec3>& P, const std::array<Vec3, 3>& axis) {
     return b;
 }
 
-/// The box round the points `P` of `geo`, turned as it lies.
-Block fit(const Geometry& geo, const std::vector<Vec3>& P) {
-    const Block world = blockAlong(P, {Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f)});
+}  // namespace
+
+Vec3 OrientedBox::at(const std::array<double, 3>& along) const {
+    Vec3 p;
+    for (size_t a = 0; a < 3; ++a) p += axis[a] * static_cast<float>(0.5 * (lo[a] + hi[a]) + along[a]);
+    return p;
+}
+
+OrientedBox fitBox(const Geometry& geo, const std::vector<Vec3>& P) {
+    const OrientedBox world = blockAlong(P, {Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f)});
     // The faces, as the way they face -- one way or the other -- and how big.
     struct Side {
         std::array<double, 3> n;
@@ -168,9 +161,24 @@ Block fit(const Geometry& geo, const std::vector<Vec3>& P) {
         }
     }
     const Vec3 a = normalize(u * static_cast<float>(along[0]) + v * static_cast<float>(along[1]));
-    const Block turned = blockAlong(P, {a, cross(n, a), n});
+    const OrientedBox turned = blockAlong(P, {a, cross(n, a), n});
     return turned.volume() < world.volume() * (1.0 - 1e-4) ? turned : world;
 }
+
+std::vector<Vec3> proxyPositions(const Geometry& geo) {
+    const auto Pin = geo.positions();
+    std::vector<Vec3> P(Pin.begin(), Pin.end());
+    if (const AttributeArray* proxy = geo.points().find("proxy");
+        proxy && proxy->type() == AttrType::Vec3 && proxy->size() == P.size()) {
+        const auto Q = proxy->read<Vec3>();
+        for (size_t i = 0; i < P.size(); ++i) {
+            if (!(Q[i] == Vec3() && length(P[i]) > 1e-3f)) P[i] = Q[i];
+        }
+    }
+    return P;
+}
+
+namespace {
 
 /// `n` places evenly from -half to half: the middle for one.
 std::vector<double> spaced(double half, int n) {
@@ -203,16 +211,7 @@ public:
         const GeometryPtr src = in.empty() ? nullptr : in[0];
         if (!src || src->pointCount() == 0) return out;
         // As the proxy has it, where there is one.
-        const auto Pin = src->positions();
-        std::vector<Vec3> P(Pin.begin(), Pin.end());
-        if (const AttributeArray* proxy = src->points().find("proxy");
-            proxy && proxy->type() == AttrType::Vec3 && proxy->size() == P.size()) {
-            const auto Q = proxy->read<Vec3>();
-            for (size_t i = 0; i < P.size(); ++i) {
-                if (!(Q[i] == Vec3() && length(P[i]) > 1e-3f)) P[i] = Q[i];
-            }
-        }
-        const Block block = fit(*src, P);
+        const OrientedBox block = fitBox(*src, proxyPositions(*src));
         // Its sides, thinnest first.
         std::array<int, 3> order{0, 1, 2};
         std::sort(order.begin(), order.end(), [&](int a, int b) {

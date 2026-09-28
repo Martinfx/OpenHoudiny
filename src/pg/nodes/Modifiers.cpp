@@ -222,6 +222,7 @@ void registerBuiltinNodes() {
         registerConcreteNodes();
         registerClusterNodes();
         registerRebarNodes();
+        registerGlassNodes();
         registerVolumeNodes();
         registerUsdNodes();
         return true;

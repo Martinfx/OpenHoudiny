@@ -1,6 +1,8 @@
 #pragma once
 #include "pg/core/Node.h"
 
+#include <array>
+
 #include <string>
 #include <vector>
 
@@ -16,6 +18,7 @@ void registerFractureNodes();
 void registerConcreteNodes();
 void registerClusterNodes();
 void registerRebarNodes();
+void registerGlassNodes();
 void registerVolumeNodes();
 void registerUsdNodes();
 
@@ -31,6 +34,27 @@ std::shared_ptr<Geometry> clipGeometry(const Geometry& src, const Vec3& origin, 
 /// Whether `p` is inside the closed polygons of `geo`: how often a ray from
 /// it crosses them, odd inside.
 bool insideMesh(const Geometry& geo, const Vec3& p);
+
+/// A box round points, turned as it lies: its three axes -- unit, square to
+/// each other -- and how far along each the points go.
+struct OrientedBox {
+    std::array<Vec3, 3> axis{Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f)};
+    std::array<double, 3> lo{0.0, 0.0, 0.0}, hi{0.0, 0.0, 0.0};
+
+    double size(int a) const { return hi[static_cast<size_t>(a)] - lo[static_cast<size_t>(a)]; }
+    double volume() const { return size(0) * size(1) * size(2); }
+    /// The point `along` each axis from the box's middle.
+    Vec3 at(const std::array<double, 3>& along) const;
+};
+/// The box round the points `P` of `geo`, turned as it lies (its polygons
+/// say how): square to its biggest flat side -- the faces that face one way
+/// or the other, the most area together -- and in the plane of that side
+/// the rectangle round the points that fits them closest (rotating calipers
+/// round their hull); along the world's axes when that box is as small.
+OrientedBox fitBox(const Geometry& geo, const std::vector<Vec3>& P);
+/// The points of `geo` where its proxy has them (Concrete Fracture's plain
+/// cut, under the rough one), where it carries one.
+std::vector<Vec3> proxyPositions(const Geometry& geo);
 
 /// Seed `i`'s Voronoi cell of the closed mesh `mesh`: what of it is nearer
 /// that seed than any other -- clipped by the plane half way to each other

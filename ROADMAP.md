@@ -225,7 +225,15 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   `spread` a `rings` (jak daleko náraz láme — Houdini *Propagate Rate* a
   *Iterations*), shluky přilepené k základu stojí, kde byly postavené, a
   příklad **concrete_wall**: demoliční koule prorazí betonovou zeď na
-  soklu. Zbývá sklo paprskovitě a dřevo na třísky podél vláken.
+  soklu. Zbývá dřevo na třísky podél vláken.
+- ✅ **Sklo:** uzel **Glass Fracture** ([docs/destruction.md §2](docs/destruction.md#sklo-glass-fracture))
+  rozláme tabule paprsky z místa úderu a oblouky kolem něj (pavučina:
+  střípky uprostřed, dlouhé střepy dál, rozvětvení); tabule je celá, dokud
+  jí nepraskne spoj — pak se objeví celá pavučina. Sklo dělá desetinu
+  prachu a skleněnou drť. Renderer ho kreslí průhledné (dvě vrstvy ploch,
+  Fresnel obou stěn tabule, odraz oblohy a slunce, zelené hrany střepů),
+  do USD jde s materiálem skla a trhlinami viditelnými od prasknutí.
+  Příklad **glass_window**: míč vyletí oknem, zpomaleně.
 - ✅ **Výztuž:** uzel **Rebar** ([docs/destruction.md §2](docs/destruction.md#výztuž-rebar))
   položí do zdi síť a do trámu armokoš s třmínky, natočené, jak blok
   leží; RBD Solver pruty (i nakreslené, lomené čáry s `width`) projde
@@ -254,7 +262,7 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
 
 **Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu
 a sekundární lámání a desetkrát víc kusů za stejný čas na snímek. Beton,
-výztuž a sekundární lámání jsou; sklo a stopy prachu zbývají.
+výztuž, sklo a sekundární lámání jsou; stopy prachu zbývají.
 
 ### Krok 5 — Měřítko
 

@@ -784,7 +784,65 @@ std::shared_ptr<const RigidLayout> layoutOf(const RigidFrame& f, const Geometry&
     return rigidLayout(geo, f.attribute);
 }
 
+/// wholePanes() with the bodies of `rest`, the frame's pieces, in `layout`.
+std::vector<uint8_t> wholePanes(const RigidFrame& f, const Geometry& rest, const RigidLayout& layout) {
+    const AttributeArray* attr = rest.primitives().find("glass");
+    if (!attr || f.poses.empty()) return {};
+    const size_t bodies = static_cast<size_t>(layout.bodies);
+    std::vector<uint8_t> glass(bodies, 0);
+    for (size_t p = 0; p < layout.bodyOf.size(); ++p) {
+        const int32_t b = layout.bodyOf[p];
+        if (b >= 0 && static_cast<size_t>(b) < bodies && glassOf(attr, p) >= 0.5f) glass[static_cast<size_t>(b)] = 1;
+    }
+    // The panes: the glass bodies that touch, one to the next.
+    std::vector<size_t> root(bodies);
+    std::iota(root.begin(), root.end(), size_t{0});
+    auto find = [&](size_t b) {
+        while (root[b] != b) b = root[b] = root[root[b]];
+        return b;
+    };
+    auto both = [&](const RigidLayout::Contact& c) {
+        return static_cast<size_t>(c.a) < bodies && static_cast<size_t>(c.b) < bodies && glass[static_cast<size_t>(c.a)] &&
+               glass[static_cast<size_t>(c.b)];
+    };
+    // A pane of one piece has no cracks: the faces a fracture cut of it are
+    // its edges.
+    std::vector<uint8_t> pane(bodies, 0);
+    for (const RigidLayout::Contact& c : layout.contacts) {
+        if (!both(c)) continue;
+        root[find(static_cast<size_t>(c.a))] = find(static_cast<size_t>(c.b));
+        pane[static_cast<size_t>(c.a)] = pane[static_cast<size_t>(c.b)] = 1;
+    }
+    // Broken where two pieces that touched have come apart, or one is gone.
+    std::vector<uint8_t> broken(bodies, 0);
+    for (const RigidLayout::Contact& c : layout.contacts) {
+        if (!both(c) || static_cast<size_t>(c.a) >= f.poses.size() || static_cast<size_t>(c.b) >= f.poses.size()) continue;
+        const Vec3 a = f.poses[static_cast<size_t>(c.a)].apply(c.at), b = f.poses[static_cast<size_t>(c.b)].apply(c.at);
+        if (length(a - b) > 1e-4f + 1e-5f * length(c.at)) broken[find(static_cast<size_t>(c.a))] = 1;
+    }
+    for (const std::vector<uint32_t>* list : {&f.vanished, &f.unglued}) {
+        for (const uint32_t b : *list) {
+            if (b < bodies && glass[b]) broken[find(b)] = 1;
+        }
+    }
+    std::vector<uint8_t> whole(bodies, 0);
+    for (size_t b = 0; b < bodies; ++b) whole[b] = pane[b] && !broken[find(b)];
+    return whole;
+}
+
 }  // namespace
+
+float glassOf(const AttributeArray* glass, size_t p) {
+    if (!glass || p >= glass->size()) return 0.0f;
+    if (glass->type() == AttrType::Int) return static_cast<float>(glass->read<int32_t>()[p]);
+    if (glass->type() == AttrType::Float) return glass->read<float>()[p];
+    return 0.0f;
+}
+
+std::vector<uint8_t> wholePanes(const RigidFrame& f) {
+    if (!f.pieces || f.poses.empty()) return {};
+    return wholePanes(f, *f.pieces, *layoutOf(f, *f.pieces));
+}
 
 std::shared_ptr<Geometry> posedPieces(const RigidFrame& f) {
     if (!f.pieces) return std::make_shared<Geometry>();
@@ -814,10 +872,17 @@ std::shared_ptr<Geometry> posedPieces(const RigidFrame& f) {
         P[i] = pose.apply(P[i]);
         if (!N.empty()) N[i] = pose.apply(N[i]) - pose.position;
     }
-    if (!f.vanished.empty()) {
+    // Blown to dust: gone. And glass is whole until it breaks: a pane none
+    // of whose pieces has come away from the others has no cracks yet --
+    // the faces of them, glass 2, are not there.
+    const std::vector<uint8_t> whole = wholePanes(f, *f.pieces, *layout);
+    if (!f.vanished.empty() || std::find(whole.begin(), whole.end(), 1) != whole.end()) {
+        const AttributeArray* glass = geo->primitives().find("glass");
         std::vector<uint8_t> keep(geo->primitiveCount(), 1);
         for (size_t p = 0; p < keep.size(); ++p) {
-            keep[p] = !std::binary_search(f.vanished.begin(), f.vanished.end(), static_cast<uint32_t>(layout->bodyOf[p]));
+            const auto body = static_cast<uint32_t>(layout->bodyOf[p]);
+            const bool uncracked = body < whole.size() && whole[body] && glassOf(glass, p) >= 1.5f;
+            keep[p] = !uncracked && !std::binary_search(f.vanished.begin(), f.vanished.end(), body);
         }
         geo->deletePrimitives(keep, true);
     }
@@ -1041,6 +1106,9 @@ void appendTubes(Geometry& geo, const Geometry& bars, const Vec3& steel) {
     }
 }
 
+/// The tint of a chip of glass.
+constexpr Vec3 kGlassChip(0.86f, 0.94f, 0.92f);
+
 }  // namespace
 
 std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, const Vec3& inside,
@@ -1062,11 +1130,13 @@ std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, co
     const AttributeArray* pointCd = geo->points().find("Cd");
     const AttributeArray* primCd = geo->primitives().find("Cd");
     const AttributeArray* detailCd = geo->detail().find("Cd");
+    // Glass keeps its tint on the faces of its cracks: they are glass too.
+    const AttributeArray* glass = geo->primitives().find("glass");
     std::vector<Vec3> corners(geo->vertexCount(), color);
     for (size_t p = 0; p < nprims; ++p) {
         const auto c = geo->primitivePoints(p);
         const size_t start = geo->primitiveVertexStart(p);
-        const bool isCut = cut && cut->contains(p);
+        const bool isCut = cut && cut->contains(p) && glassOf(glass, p) < 0.5f;
         for (size_t i = 0; i < c.size(); ++i) {
             const size_t at = start + i;
             Vec3& out = corners[at];
@@ -1089,7 +1159,9 @@ std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, co
     const size_t first = appendGrit(*geo, f);
     if (geo->pointCount() > first) {
         auto pc = geo->points().create("Cd", AttrType::Vec3).write<Vec3>();
-        for (size_t i = first; i < pc.size(); ++i) pc[i] = inside * 0.9f;
+        for (size_t i = first; i < pc.size(); ++i) {
+            pc[i] = f.debrisGlass.size() == pc.size() - first && f.debrisGlass[i - first] ? kGlassChip : inside * 0.9f;
+        }
     }
     return geo;
 }
@@ -1115,6 +1187,10 @@ size_t appendGrit(Geometry& geo, const RigidFrame& f) {
     if (f.debrisIds.size() == grit) {
         auto id = geo.points().create("id", AttrType::Int).write<int32_t>();
         for (size_t i = 0; i < grit; ++i) id[first + i] = static_cast<int32_t>(f.debrisIds[i]);
+    }
+    if (f.debrisGlass.size() == grit) {
+        auto glass = geo.points().create("glass", AttrType::Int).write<int32_t>();
+        for (size_t i = 0; i < grit; ++i) glass[first + i] = f.debrisGlass[i] ? 1 : 0;
     }
     return first;
 }
@@ -1301,6 +1377,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         bool vanish = false;                    ///< blown to dust when released
         float crush = 0.0f;                     ///< crushed to dust by a knock this many times its glue; 0: never
         bool released = false, gone = false;
+        bool glass = false;                     ///< of glass: little dust, and its grit glitters
         float size = 0.1f;                      ///< how big it is across, metres
         Vec3 centre;                            ///< the middle of its box, at rest
     };
@@ -1345,6 +1422,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         float size = 0.03f;
         uint32_t id = 0;  ///< its own number, from the first thrown: the same as long as it is there
         bool resting = false;
+        bool glass = false;  ///< a chip of glass
     };
     std::vector<Grit> grit;
     uint32_t gritThrown = 0;  ///< how many bits so far: the next one's number
@@ -1487,13 +1565,15 @@ struct RigidSolver::Impl : public JPH::ContactListener {
     float squeezed(float size, float speed) const { return settings.air * 0.35f * size * size * speed; }
 
     /// `count` bits of grit from `at`, flying off at about `speed` round `base`.
-    void throwGrit(const Vec3& at, const Vec3& base, int count, float speed, float spread) {
+    /// ... chips of glass, smaller, for `glass`.
+    void throwGrit(const Vec3& at, const Vec3& base, int count, float speed, float spread, bool glass = false) {
         for (int i = 0; i < count; ++i) {
             Grit g;
             g.p = at + inBall() * spread;
             g.v = base + inBall() * speed;
-            g.size = (0.02f + 0.08f * unit() * unit()) * gritScale;
+            g.size = (0.02f + 0.08f * unit() * unit()) * gritScale * (glass ? 0.5f : 1.0f);
             g.id = gritThrown++;
+            g.glass = glass;
             grit.push_back(g);
         }
     }
@@ -1530,10 +1610,12 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         const Vec3 at = whereNow(k, e.at);
         const Vec3 v = velocityAt(k, at);
         const RigidSettings& s = settings;
+        // Glass breaks clean: a little glass dust, and glittering chips.
+        const bool glass = pieces[static_cast<size_t>(e.a)].glass || pieces[static_cast<size_t>(e.b)].glass;
         const float size = s.dustSize * std::clamp(std::sqrt(e.area) * 1.5f, 0.6f, 2.5f);
-        puff(at, v * 0.5f, size, s.dust * dustScale * std::clamp(e.area * 4.0f, 0.3f, 2.0f));
+        puff(at, v * 0.5f, size, s.dust * dustScale * std::clamp(e.area * 4.0f, 0.3f, 2.0f) * (glass ? 0.1f : 1.0f));
         const int count = static_cast<int>(std::lround(s.debris * std::clamp(e.area * 24.0f, 2.0f, 10.0f)));
-        throwGrit(at, v, count, 2.5f, std::sqrt(e.area) * 0.3f);
+        throwGrit(at, v, count, 2.5f, std::sqrt(e.area) * 0.3f, glass);
     }
 
     /// Piece `k` crushed to dust: gone, in a burst of it, and grit.
@@ -1545,10 +1627,10 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         dirty.push_back(k);
         for (const int ei : edgesOf[static_cast<size_t>(k)]) snap(edges[static_cast<size_t>(ei)], 0.5f);
         const RigidSettings& s = settings;
-        puff(middle, v * 0.5f, s.dustSize * std::clamp(p.size, 1.0f, 3.0f), 2.0f * s.impactDust,
+        puff(middle, v * 0.5f, s.dustSize * std::clamp(p.size, 1.0f, 3.0f), 2.0f * s.impactDust * (p.glass ? 0.2f : 1.0f),
              squeezed(p.size, length(v)));
         throwGrit(middle, v, static_cast<int>(std::lround(std::clamp(16.0f * p.size, 4.0f, 30.0f) * s.debris)), 3.0f,
-                  0.3f * p.size);
+                  0.3f * p.size, p.glass);
     }
 
     /// A knock of `force` newtons on piece `k`: the joints it cannot hold
@@ -1942,7 +2024,8 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         const float l = st.out - st.in;
         const Vec3 v = velocityAt(st.body, at);
         puff(at, v * 0.5f, settings.dustSize * 0.8f, settings.dust * std::clamp(l * 3.0f, 0.2f, 1.2f));
-        throwGrit(at, v, static_cast<int>(std::lround(settings.debris * std::clamp(l * 20.0f, 2.0f, 8.0f))), 1.5f, 0.05f);
+        throwGrit(at, v, static_cast<int>(std::lround(settings.debris * std::clamp(l * 20.0f, 2.0f, 8.0f))), 1.5f, 0.05f,
+                  pieces[static_cast<size_t>(st.body)].glass);
     }
     /// How the bars took the step. One pulled longer than it is between two
     /// pieces gives where it holds least. Where the bond anchors it harder
@@ -2064,6 +2147,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         piece.kick = vectorOf(*geo, L, body, "kick", Vec3());
         piece.vanish = numberOf(*geo, L, body, "vanish", 0.0f) != 0.0f;
         piece.crush = std::max(numberOf(*geo, L, body, "crush", 0.0f), 0.0f);
+        piece.glass = numberOf(*geo, L, body, "glass", 0.0f) >= 0.5f;
         piece.size = piece.hulls.empty() ? 0.0f : std::max(length(hi - lo), 0.01f);
         piece.centre = piece.hulls.empty() ? Vec3() : (lo + hi) * 0.5f;
         glueOf[k] = std::max(numberOf(*geo, L, body, "glue", 1.0f), 0.0f);
@@ -2236,11 +2320,11 @@ void RigidSolver::step() {
             m.puff(middle, v * 0.6f, s.dustSize * std::clamp(p.size, 1.0f, 3.0f), 3.0f * s.dust,
                    m.squeezed(p.size, std::max(length(v), 5.0f)));
             m.throwGrit(middle, v, static_cast<int>(std::lround(std::clamp(30.0f * p.size, 8.0f, 60.0f) * s.debris)), 5.0f,
-                        0.3f * p.size);
+                        0.3f * p.size, p.glass);
         } else {
             kicked.push_back(static_cast<int>(k));
             m.puff(middle, p.kick * 0.5f, s.dustSize * std::clamp(p.size, 1.0f, 3.0f), 2.0f * s.dust);
-            m.throwGrit(middle, p.kick, static_cast<int>(std::lround(12.0f * s.debris)), 4.0f, 0.25f * p.size);
+            m.throwGrit(middle, p.kick, static_cast<int>(std::lround(12.0f * s.debris)), 4.0f, 0.25f * p.size, p.glass);
         }
     }
     mend();
@@ -2315,10 +2399,12 @@ void RigidSolver::step() {
         const float hard = std::clamp((k.speed - kKnockSpeed) / 6.0f, 0.0f, 1.5f);
         const float big = std::clamp(k.size / (2.0f * s.dustSize), 0.0f, 1.0f);  // a pebble puffs little
         if (big < 0.05f) continue;
-        m.puff(k.at, k.velocity * 0.5f, s.dustSize * (0.8f + 0.6f * hard), s.impactDust * (0.3f + hard) * big,
-               m.squeezed(k.size, k.speed - kKnockSpeed));
+        bool glass = false;
+        for (const int q : k.piece) glass = glass || (q >= 0 && m.pieces[static_cast<size_t>(q)].glass);
+        m.puff(k.at, k.velocity * 0.5f, s.dustSize * (0.8f + 0.6f * hard),
+               s.impactDust * (0.3f + hard) * big * (glass ? 0.1f : 1.0f), m.squeezed(k.size, k.speed - kKnockSpeed));
         m.throwGrit(k.at, k.velocity * 0.5f + k.normal * (0.5f * k.speed * 0.3f),
-                    static_cast<int>(std::lround(s.debris * (2.0f + 6.0f * hard) * big)), 0.4f * k.speed, 0.05f);
+                    static_cast<int>(std::lround(s.debris * (2.0f + 6.0f * hard) * big)), 0.4f * k.speed, 0.05f, glass);
     }
     // No more than so many puffs: the oldest go first.
     if (m.puffs.size() > kMaxPuffs) m.puffs.erase(m.puffs.begin(), m.puffs.end() - static_cast<long>(kMaxPuffs));
@@ -2372,10 +2458,19 @@ RigidFrame RigidSolver::capture() const {
     f.debris.reserve(m.grit.size() * 4);
     f.debrisVelocity.reserve(m.grit.size() * 3);
     f.debrisIds.reserve(m.grit.size());
+    const bool glassy = std::any_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& q) { return q.glass; });
     for (const Impl::Grit& q : m.grit) {
         f.debris.insert(f.debris.end(), {q.p.x, q.p.y, q.p.z, q.size});
         f.debrisVelocity.insert(f.debrisVelocity.end(), {q.v.x, q.v.y, q.v.z});
         f.debrisIds.push_back(q.id);
+        if (glassy) f.debrisGlass.push_back(q.glass ? 1 : 0);
+    }
+    std::vector<uint8_t> loose(m.pieces.size(), 0);
+    for (const Impl::Edge& e : m.edges) {
+        if (e.broken) loose[static_cast<size_t>(e.a)] = loose[static_cast<size_t>(e.b)] = 1;
+    }
+    for (size_t k = 0; k < loose.size(); ++k) {
+        if (loose[k]) f.unglued.push_back(static_cast<uint32_t>(k));
     }
     f.joints = m.edges.size();
     f.broken = m.broken;

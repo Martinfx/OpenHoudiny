@@ -707,6 +707,34 @@ std::vector<NodeType> buildTypes() {
                "How many times as strong the glue inside a chunk is as the glue between chunks: 1 as strong -- "
                "no chunks; the higher, the harder a knock must be to break a chunk up."},
               text("attribute", "Piece Attribute", "Cluster", "piece", "What says which piece a primitive is of.")});
+    geometry("glass_fracture", "Glass Fracture", "glassfracture",
+             "A pane of glass broken as glass breaks where it is struck: cracks straight out from Impact and "
+             "cracks round it from one to the next -- a spider's web, slivers at the middle, shards growing wider "
+             "further out, a crack branching off where a shard grows too wide. The input is the pane -- any "
+             "outline, lying any way -- the shards are cut square through it, closed, with piece, glass (1 the "
+             "pane's faces, 2 the cracks') and Cd the tint: link them into an RBD Solver; they are drawn as glass.",
+             in,
+             {vec("impact", "Impact", "Glass", Vec3(0.0f, 1.0f, 0.0f), -5.0f, 5.0f, "m",
+                  "Where it is struck: the middle of the web, on the pane."),
+              {"radials", "Radials", "Glass", K::Int, {14.0f, 0.0f, 0.0f}, 3.0f, 40.0f, 3.0f, 256.0f, "",
+               "How many cracks run out from Impact."},
+              {"first", "First Ring", "Glass", K::Float, {0.04f, 0.0f, 0.0f}, 0.005f, 0.3f, 0.0001f, kBig, "m",
+               "How far from Impact the first crack round it runs: the slivers at the middle."},
+              {"growth", "Growth", "Glass", K::Float, {1.45f, 0.0f, 0.0f}, 1.1f, 3.0f, 1.05f, 100.0f, "",
+               "How many times further out each next crack round it runs: the shards grow as they go out."},
+              {"rings", "Rings", "Glass", K::Int, {10.0f, 0.0f, 0.0f}, 1.0f, 20.0f, 1.0f, 200.0f, "",
+               "How many cracks round it at most; past them the shards run to the edge of the pane."},
+              {"jitter", "Jitter", "Glass", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How unevenly the cracks run: 0 a perfect web; the rings then do not line up across a crack."},
+              {"split", "Split", "Glass", K::Float, {1.1f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 100.0f, "",
+               "A crack branches off where a shard is this many times as wide as it is deep. 0: never."},
+              {"seed", "Seed", "Glass", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, 1e6f, "",
+               "Another number: other cracks."},
+              {"tint", "Tint", "Glass", K::Color, {0.82f, 0.9f, 0.88f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour the glass gives what is seen through it -- the pale green of window glass -- as Cd."},
+              text("attribute", "Piece Attribute", "Glass", "piece", "What each shard's number is called."),
+              text("insidegroup", "Inside Group", "Glass", "inside", "The faces of the cracks.")},
+             {"impact", nullptr, nullptr, nullptr, nullptr, nullptr});
     geometry("rebar", "Rebar", "rebar",
              "Steel bars inside a block of concrete, as they are laid before it is poured: a mesh both ways near "
              "each face of a wall or a slab, or bars along a beam or a column with stirrups round them. The block "

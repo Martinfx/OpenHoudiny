@@ -462,6 +462,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `wall_collapse` | destrukce zblízka: průčelí cihlového domu vyletí do ulice, kusy se kutálejí ke kameře těsně nad asfaltem a prach prosvítí nízké slunce ([destruction.md](destruction.md)) |
 | `concrete_wall` | železobeton: demoliční koule prorazí zeď na soklu — Concrete Fracture s hrubými lomy a odprýsklými rohy, síť prutů (Rebar), na které kusy kolem díry visí, `rings 2` drží škodu kolem koule, prach z lomů ([destruction.md](destruction.md#2-concrete-fracture)) |
 | `concrete_drop` | železobeton a sekundární lámání: trám s armokošem praskne přes kvádr, přehne se a visí na výztuži — RBD Cluster, lepidlo uvnitř ker třicetkrát pevnější, Rebar ([destruction.md](destruction.md#výztuž-rebar)) |
+| `glass_window` | sklo: míč vyletí oknem, zpomaleně (120 snímků za sekundu) — Glass Fracture, pavučina prasklin až v okamžiku úderu, střepy a jiskřící drť, průhledné sklo s odrazy ([destruction.md](destruction.md#sklo-glass-fracture)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `prototype sim campfire` proto funguje bez souborů vedle.

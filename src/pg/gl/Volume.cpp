@@ -763,6 +763,49 @@ vec3 shadeWater(vec3 p, vec3 d) {
     return c;
 }
 
+// --- glass ---------------------------------------------------------------------
+uniform bool u_hasGlass;
+// The nearest face of glass turned to the eye, and the next: the normal
+// (octahedral), the tint as a number -- below 0 on the face of a crack --
+// and the distance (< 0: none).
+uniform sampler2D u_glass0, u_glass1;
+
+// What glass reflects along r: the sky as it shows behind it all, or the
+// ground, lit by the sun and the sky.
+vec3 glassSky(vec3 r) {
+    if (r.y < 0.0 && u_floor) return u_ground * (u_light * max(u_lightDir.y, 0.0) + u_sky);
+    return u_skyBehind ? skyBehind(r) : environment(r);
+}
+
+// A face of glass at p, facing n, seen along d, of the tint `tint`: the
+// light it sends to the eye -- what it reflects -- and in `through` how
+// much of what is behind it it lets through. A pane is a thin slab: light
+// comes off both of its faces, and what goes through is tinted on its way,
+// the more the flatter it goes. Into the face of a crack the view runs
+// along the pane, through far more glass: dark and green -- and bright with
+// the light the pane carries to its broken edge.
+vec3 shadeGlass(vec3 p, vec3 n, vec3 d, vec3 tint, bool crack, out vec3 through) {
+    float cosi = clamp(-dot(d, n), 0.0, 1.0);
+    float f = 0.04 + 0.96 * pow(1.0 - cosi, 5.0);
+    float r = 2.0 * f / (1.0 + f);  // off both faces, and back and forth between them
+    float sun = sunThrough(p + n * 2e-3, n, false);
+    vec3 rd = reflect(d, n);
+    vec3 reflected = glassSky(rd) + u_light * sun * 25.0 * pow(max(dot(rd, u_lightDir), 0.0), 600.0);
+    vec3 sn;
+    int which;
+    float ts = hitSolid(p + n * 1e-3, rd, 0.0, sn, which);
+    if (ts < 1e29) reflected = shadeSolid(p + n * 1e-3 + rd * ts, sn, rd, which);
+    if (crack) {
+        vec3 deep = tint * tint;
+        through = (1.0 - r) * deep * deep * 0.5;
+        return r * reflected + (1.0 - r) * deep * deep * (u_sky * 0.8 + u_light * sun * 0.1);
+    }
+    // How far through the pane, in its thicknesses: bent into it (n = 1.5).
+    float cost = sqrt(1.0 - (1.0 - cosi * cosi) / 2.25);
+    through = (1.0 - r) * pow(mix(vec3(1.0), tint, 0.35), vec3(1.0 / cost));
+    return r * reflected;
+}
+
 void main() {
     vec3 dir = normalize(u_forward + v_ndc.x * u_tanHalfFov.x * u_right + v_ndc.y * u_tanHalfFov.y * u_up);
     vec3 background = u_skyBehind ? u_exposure * skyBehind(dir)
@@ -856,6 +899,29 @@ void main() {
         }
     }
 
+    // The glass in front of where the ray stops -- the nearest two of its
+    // faces turned to the eye: what each sends back, and what it lets
+    // through of what is behind it, the gas and the surface.
+    float glassT[2] = float[2](1e30, 1e30);
+    vec3 glassLight[2] = vec3[2](vec3(0.0), vec3(0.0));
+    vec3 glassThrough[2] = vec3[2](vec3(1.0), vec3(1.0));
+    if (u_hasGlass) {
+        ivec2 at = ivec2(gl_FragCoord.xy);
+        vec4 layers[2] = vec4[2](texelFetch(u_glass0, at, 0), texelFetch(u_glass1, at, 0));
+        for (int k = 0; k < 2; ++k) {
+            vec4 g = layers[k];
+            if (g.w <= 0.0 || g.w >= tEnd) break;
+            float code = abs(g.z) - 1.0;
+            float b = floor(code / 65536.0);
+            float gr = floor((code - b * 65536.0) / 256.0);
+            vec3 tint = vec3(code - b * 65536.0 - gr * 256.0, gr, b) / 255.0;
+            glassT[k] = g.w;
+            glassLight[k] = shadeGlass(u_eye + dir * g.w, octDecode(g.xy), dir, tint, g.z < 0.0, glassThrough[k]);
+        }
+    }
+    int nextGlass = 0;
+    vec3 glassPass = vec3(1.0);  // what the glass the ray came through lets through
+
     vec3 radiance = vec3(0.0);
     float transmittance = 1.0;
     if (u_hasGas) {
@@ -869,7 +935,14 @@ void main() {
         float start = tNear + u_step * ign(gl_FragCoord.xy);
         int steps = int(clamp(ceil((tFar - start) / u_step), 0.0, 4096.0));
         for (int i = 0; i < steps; ++i) {
-            vec3 uvw = (u_eye + dir * (start + float(i) * u_step) - u_boxMin) / u_boxSize;
+            float t = start + float(i) * u_step;
+            // The glass on the way here.
+            while (nextGlass < 2 && glassT[nextGlass] <= t) {
+                radiance += transmittance * glassPass * glassLight[nextGlass];
+                glassPass *= glassThrough[nextGlass];
+                ++nextGlass;
+            }
+            vec3 uvw = (u_eye + dir * t - u_boxMin) / u_boxSize;
             // Each sample moved by up to half a cell: a ray running along a
             // layer of cells would see the interpolation between them as
             // stripes; this way it is fine noise that anti-aliasing averages.
@@ -892,18 +965,23 @@ void main() {
             vec3 source = u_albedo * lit * sigma + emitted;
             // The step integrated exactly: what it adds is dimmed by itself too.
             float a = exp(-sigma * u_step);
-            radiance += transmittance * (sigma > 1e-4 ? source * (1.0 - a) / sigma : source * u_step);
+            radiance += transmittance * glassPass * (sigma > 1e-4 ? source * (1.0 - a) / sigma : source * u_step);
             transmittance *= a;
             if (transmittance < 0.004) break;
         }
     }
+    // The glass past the gas, or where there is none.
+    for (; nextGlass < 2 && glassT[nextGlass] < 1e29; ++nextGlass) {
+        radiance += transmittance * glassPass * glassLight[nextGlass];
+        glassPass *= glassThrough[nextGlass];
+    }
     // The CG, and how much of the background shows through it.
-    vec3 cg = u_exposure * (radiance + transmittance * cover * surface);
-    float behind = transmittance * (1.0 - cover);
+    vec3 cg = u_exposure * (radiance + transmittance * glassPass * cover * surface);
+    vec3 behind = transmittance * (1.0 - cover) * glassPass;
     vec3 colour = cg + behind * relit * background;
     if (u_linear && u_hasPlate) {
         // For compositing over the plate: the CG alone, with how much of the pixel it covers.
-        o_color = vec4(cg, 1.0 - behind);
+        o_color = vec4(cg, 1.0 - dot(behind, vec3(1.0 / 3.0)));
     } else {
         o_color = u_linear ? vec4(colour, 1.0) : vec4(pow(toneMap(colour), vec3(1.0 / 2.2)), 1.0);
     }
@@ -1024,11 +1102,58 @@ out vec4 o_depth;
 void main() { o_depth = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0); }
 )";
 
+// The faces of the glass turned to the eye, into a buffer as the meshes go
+// into theirs: the normal, the tint -- as a number, below 0 on the face of
+// a crack -- and how far along the ray. Drawn twice: the nearest face, and
+// then, peeled off it, the nearest behind that. A face turned away is where
+// a ray leaves a piece of glass, not where it comes into one.
+const char* kGlassVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec3 a_color;
+layout(location = 3) in float a_kind;  // 1 a face of the pane, 2 of a crack
+uniform mat4 u_viewProj;
+out vec3 v_world, v_normal, v_color;
+flat out float v_kind;
+void main() {
+    v_world = a_position;
+    v_normal = a_normal;
+    v_color = a_color;
+    v_kind = a_kind;
+    gl_Position = u_viewProj * vec4(a_position, 1.0);
+}
+)";
+
+const char* kGlassFragment = R"(#version 330 core
+in vec3 v_world, v_normal, v_color;
+flat in float v_kind;
+out vec4 o_g;
+uniform vec3 u_eye;
+uniform bool u_peel;         // the second layer: only what is behind the first
+uniform sampler2D u_first;   // the first
+vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
+void main() {
+    vec3 view = v_world - u_eye;
+    if (dot(v_normal, view) >= 0.0) discard;
+    float far = length(view);
+    if (u_peel) {
+        float first = texelFetch(u_first, ivec2(gl_FragCoord.xy), 0).w;
+        if (first < 0.0 || far <= first * (1.0 + 1e-5) + 1e-5) discard;
+    }
+    vec3 n = normalize(v_normal);
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec3 c = floor(clamp(v_color, 0.0, 1.0) * 255.0 + 0.5);
+    float code = 1.0 + c.r + c.g * 256.0 + c.b * 65536.0;
+    o_g = vec4(n.z >= 0.0 ? n.xy : octWrap(n.xy), v_kind > 1.5 ? -code : code, far);
+}
+)";
+
 // The displayed geometry's loose points: round dots, shaded as little balls,
 // as wide as their pscale where they have one -- else a few pixels. The
 // pieces' -- their grit -- are chips of stone instead, each of a shape and a
-// shade of its own. In the gas -- grit in the dust -- the smoke between the
-// eye and a dot hides it, and the smoke between it and the sun shades it.
+// shade of its own; chips of glass -- a radius below 0 -- clear, glinting as
+// they tumble. In the gas -- grit in the dust -- the smoke between the eye
+// and a dot hides it, and the smoke between it and the sun shades it.
 const char* kDotVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_color;
@@ -1038,14 +1163,17 @@ uniform float u_pixelsPerUnit;  // pixels a world unit spans 1 unit in front of 
 uniform float u_dot;            // pixels across a dot with no size
 out vec3 v_color;
 out vec3 v_world;
-flat out uint v_seed;  // a chip's: from its size, which it keeps as it flies
+flat out uint v_seed;    // a chip's: from its size, which it keeps as it flies
+flat out float v_glass;  // 1 for a chip of glass
 void main() {
     gl_Position = u_viewProj * vec4(a_position, 1.0);
-    float px = a_radius > 0.0 ? 2.0 * a_radius * u_pixelsPerUnit / max(gl_Position.w, 1e-4) : u_dot;
+    float radius = abs(a_radius);
+    float px = radius > 0.0 ? 2.0 * radius * u_pixelsPerUnit / max(gl_Position.w, 1e-4) : u_dot;
     gl_PointSize = clamp(px, 1.5, 64.0);
     v_color = a_color;
     v_world = a_position;
-    v_seed = floatBitsToUint(a_radius);
+    v_seed = floatBitsToUint(radius);
+    v_glass = a_radius < 0.0 ? 1.0 : 0.0;
 }
 )";
 
@@ -1053,6 +1181,7 @@ const char* kDotFragment = R"(#version 330 core
 in vec3 v_color;
 in vec3 v_world;
 flat in uint v_seed;
+flat in float v_glass;
 out vec4 o_color;
 uniform bool u_chips;      // chips of stone, not balls
 uniform bool u_linear;     // light as it is: no tone curve, no gamma
@@ -1079,14 +1208,14 @@ float random(uint k) {  // the chip's k-th number, 0 to 1
     h ^= h >> 16;
     return float(h >> 8) / 16777216.0;
 }
-// A chip of stone as big as the dot: the planes of five to seven breaks cut
-// it out -- which way each faces and how far from the middle it is come from
-// the chip's numbers -- and each is a face of it, leaning away from the eye
-// from a top off the middle, where a face is turned to the eye. It turns as
-// it flies. False outside it.
-bool chip(vec2 q, out vec3 n) {
+// A chip of stone as big as the dot: the planes of `least` to two more
+// breaks cut it out -- which way each faces and how far from the middle it
+// is come from the chip's numbers -- and each is a face of it, leaning away
+// from the eye from a top off the middle, where a face is turned to the eye.
+// It turns as it flies. False outside it.
+bool chip(vec2 q, int least, out vec3 n) {
     float turn = 6.2832 * random(0u) + dot(v_world, vec3(2.3, 1.7, 2.9));
-    int breaks = 5 + int(random(1u) * 3.0);
+    int breaks = least + int(random(1u) * 3.0);
     float sector = 6.2832 / float(breaks);
     vec2 top = vec2(random(2u), random(3u)) * 0.36 - 0.18;
     float nearest = 0.0, facing = 0.0;
@@ -1118,11 +1247,20 @@ void main() {
     if (r2 > 1.0) discard;
     vec3 n = vec3(q, sqrt(1.0 - r2));
     vec3 color = v_color;
+    bool glass = v_glass > 0.5;
     if (u_chips) {
-        if (!chip(q, n)) discard;
-        // Stones are not all of a colour: lighter and darker, some greyer.
-        float grey = dot(v_color, vec3(0.3, 0.5, 0.2));
-        color = mix(v_color, vec3(grey), 0.4 * random(40u)) * (0.7 + 0.55 * random(41u));
+        // Glass breaks into slivers of three to five sides.
+        if (!chip(q, glass ? 3 : 5, n)) discard;
+        if (glass) {
+            // ... flat: the whole of one a face, tilting as it tumbles.
+            vec2 tilt = 0.8 * vec2(sin(dot(v_world, vec3(3.1, 1.3, 2.2)) + 6.2832 * random(7u)),
+                                   cos(dot(v_world, vec3(1.7, 2.9, 1.1)) + 6.2832 * random(8u)));
+            n = normalize(vec3(tilt, 1.0));
+        } else {
+            // Stones are not all of a colour: lighter and darker, some greyer.
+            float grey = dot(v_color, vec3(0.3, 0.5, 0.2));
+            color = mix(v_color, vec3(grey), 0.4 * random(40u)) * (0.7 + 0.55 * random(41u));
+        }
     }
     // The smoke: what of the sun gets here, how much the sky is hidden, and
     // how much of the dot the smoke in front lets through.
@@ -1143,7 +1281,17 @@ void main() {
         seen = exp(-u_extinction * smoke * length(d) / float(steps));
     }
     vec3 lit = color * (u_light * sun * max(dot(n, u_lightView), 0.0) + u_sky * sky * (0.7 + 0.5 * n.y));
-    o_color = vec4(u_linear ? u_exposure * lit : pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), seen);
+    float alpha = seen;
+    if (glass) {
+        // Glass: what is behind it shows through, tinted; it sends back the
+        // sky, more of it the flatter it is seen, and the sun off a face
+        // turned just so.
+        float f = 0.04 + 0.96 * pow(1.0 - clamp(n.z, 0.0, 1.0), 5.0);
+        float glint = pow(max(dot(n, normalize(u_lightView + vec3(0.0, 0.0, 1.0))), 0.0), 240.0);
+        lit = color * u_sky * sky * (1.0 + 2.0 * f) + u_light * sun * glint * 6.0;
+        alpha = clamp(0.1 + 0.6 * f + glint, 0.0, 1.0) * seen;
+    }
+    o_color = vec4(u_linear ? u_exposure * lit : pow(toneMap(u_exposure * lit), vec3(1.0 / 2.2)), alpha);
 }
 )";
 
@@ -1559,9 +1707,16 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 
 VolumeRenderer::~VolumeRenderer() {
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
-                     dotProgram_, geoShadowProgram_}) {
+                     dotProgram_, geoShadowProgram_, glassProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
+    if (glassFbo_) gl_.DeleteFramebuffers(1, &glassFbo_);
+    for (GLuint t : glassTex_) {
+        if (t) gl_.DeleteTextures(1, &t);
+    }
+    if (glassDepth_) gl_.DeleteRenderbuffers(1, &glassDepth_);
+    if (glassVao_) gl_.DeleteVertexArrays(1, &glassVao_);
+    if (glassBuffer_) gl_.DeleteBuffers(1, &glassBuffer_);
     if (geoShadowFbo_) gl_.DeleteFramebuffers(1, &geoShadowFbo_);
     if (geoShadowTex_) gl_.DeleteTextures(1, &geoShadowTex_);
     if (geoShadowDepth_) gl_.DeleteRenderbuffers(1, &geoShadowDepth_);
@@ -1613,14 +1768,15 @@ bool VolumeRenderer::init(std::string& log) {
     const GLuint geo = rain ? buildProgram(gl_, kGeoVertex, kGeoFragment, log) : 0;
     const GLuint dots = geo ? buildProgram(gl_, kDotVertex, kDotFragment, log) : 0;
     const GLuint geoShadow = dots ? buildProgram(gl_, kGeoShadowVertex, kGeoShadowFragment, log) : 0;
-    if (!geoShadow) {
-        for (GLuint p : {view, shadow, glow, lines, meshes, rain, geo, dots}) {
+    const GLuint glass = geoShadow ? buildProgram(gl_, kGlassVertex, kGlassFragment, log) : 0;
+    if (!glass) {
+        for (GLuint p : {view, shadow, glow, lines, meshes, rain, geo, dots, geoShadow}) {
             if (p) gl_.DeleteProgram(p);
         }
         return false;
     }
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
-                     dotProgram_, geoShadowProgram_}) {
+                     dotProgram_, geoShadowProgram_, glassProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
     program_ = view;
@@ -1632,6 +1788,7 @@ bool VolumeRenderer::init(std::string& log) {
     geoProgram_ = geo;
     dotProgram_ = dots;
     geoShadowProgram_ = geoShadow;
+    glassProgram_ = glass;
     lightingDirty_ = true;
     geoShadowDirty_ = true;
     return true;
@@ -1968,6 +2125,61 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
 }
 
+void VolumeRenderer::renderGlass(int width, int height, const Vec3& eye) {
+    if (!glassFbo_) {
+        gl_.GenFramebuffers(1, &glassFbo_);
+        gl_.GenTextures(2, glassTex_);
+        gl_.GenRenderbuffers(1, &glassDepth_);
+    }
+    if (width != glassWidth_ || height != glassHeight_) {
+        glassWidth_ = width;
+        glassHeight_ = height;
+        for (const GLuint t : glassTex_) {
+            gl_.BindTexture(TEXTURE_2D, t);
+            gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), width, height, 0, RGBA, FLOAT, nullptr);
+            gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, 0x2600);  // NEAREST: each pixel its own
+            gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, 0x2600);
+        }
+        gl_.BindTexture(TEXTURE_2D, 0);
+        gl_.BindRenderbuffer(RENDERBUFFER, glassDepth_);
+        gl_.RenderbufferStorage(RENDERBUFFER, DEPTH_COMPONENT24, width, height);
+        gl_.BindRenderbuffer(RENDERBUFFER, 0);
+        gl_.BindFramebuffer(FRAMEBUFFER, glassFbo_);
+        gl_.FramebufferRenderbuffer(FRAMEBUFFER, DEPTH_ATTACHMENT, RENDERBUFFER, glassDepth_);
+    }
+    gl_.BindFramebuffer(FRAMEBUFFER, glassFbo_);
+    gl_.Viewport(0, 0, width, height);
+    gl_.Enable(DEPTH_TEST);
+    gl_.DepthFunc(LESS);
+    gl_.DepthMask(1);
+    gl_.ColorMask(1, 1, 1, 1);
+    gl_.Disable(BLEND);
+    gl_.Disable(CULL_FACE);
+    gl_.UseProgram(glassProgram_);
+    gl_.UniformMatrix4fv(location(glassProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+    gl_.Uniform3f(location(glassProgram_, "u_eye"), eye.x, eye.y, eye.z);
+    gl_.Uniform1i(location(glassProgram_, "u_first"), 13);
+    gl_.BindVertexArray(glassVao_);
+    const GLenum buffer = COLOR_ATTACHMENT0;
+    // The nearest face, then the nearest behind it: the first layer read
+    // on unit 13 while the second is drawn.
+    for (int layer = 0; layer < 2; ++layer) {
+        gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, glassTex_[layer], 0);
+        gl_.DrawBuffers(1, &buffer);
+        gl_.ClearColor(0.0f, 0.0f, 0.0f, -1.0f);  // w < 0: no glass here
+        gl_.Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
+        gl_.Uniform1i(location(glassProgram_, "u_peel"), layer);
+        gl_.ActiveTexture(TEXTURE0 + 13);
+        gl_.BindTexture(TEXTURE_2D, layer == 1 ? glassTex_[0] : 0);
+        gl_.DrawArrays(TRIANGLES, 0, glassVertices_);
+    }
+    gl_.BindTexture(TEXTURE_2D, 0);
+    gl_.ActiveTexture(TEXTURE0);
+    gl_.BindVertexArray(0);
+    gl_.UseProgram(0);
+    gl_.BindFramebuffer(FRAMEBUFFER, 0);
+}
+
 void VolumeRenderer::setGeometry(const GeometryPtr& geometry) {
     if (geometry == geometry_) return;
     geometry_ = geometry;
@@ -1989,6 +2201,7 @@ void VolumeRenderer::uploadGeometry() {
     d.triangles.insert(d.triangles.end(), p.triangles.begin(), p.triangles.end());
     d.dots.insert(d.dots.end(), p.dots.begin(), p.dots.end());
     d.lines.insert(d.lines.end(), p.lines.begin(), p.lines.end());
+    d.glass.insert(d.glass.end(), p.glass.begin(), p.glass.end());
     for (int a = 0; a < 3; ++a) {
         d.lo[a] = std::min(d.lo[a], p.lo[a]);
         d.hi[a] = std::max(d.hi[a], p.hi[a]);
@@ -2042,6 +2255,8 @@ void VolumeRenderer::uploadGeometry() {
     shownVertices_ = static_cast<GLsizei>(shownDisplay_.triangles.size() / 9);
     upload(dotVao_, dotBuffer_, d.dots, {{0, 3}, {1, 3}, {2, 1}});
     upload(curveVao_, curveBuffer_, d.lines, {{0, 3}, {1, 4}});
+    upload(glassVao_, glassBuffer_, d.glass, {{0, 3}, {1, 3}, {2, 3}, {3, 1}});
+    glassVertices_ = static_cast<GLsizei>(d.glassCount() * 3);
     geoVertices_ = static_cast<GLsizei>(d.triangles.size() / 9);
     geoShadowDirty_ = true;
     dots_ = static_cast<GLsizei>(d.dotCount());
@@ -2495,6 +2710,9 @@ void VolumeRenderer::render(int width, int height) {
     // The meshes first, into their own buffer, seen by the same camera.
     const bool meshes = (anyMesh_ || geoVertices_ > 0) && meshProgram_;
     if (meshes) renderMeshes(width, height, Vec3(eye[0], eye[1], eye[2]));
+    // ... and the glass into its own, as two layers.
+    const bool glass = glassVertices_ > 0 && glassProgram_;
+    if (glass) renderGlass(width, height, Vec3(eye[0], eye[1], eye[2]));
     gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
     gl_.Viewport(0, 0, width, height);
     gl_.ColorMask(1, 1, 1, 1);
@@ -2629,6 +2847,14 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform3f(location(program_, "u_plateRight"), plateRight_.x, plateRight_.y, plateRight_.z);
     gl_.Uniform3f(location(program_, "u_plateUp"), plateUp_.x, plateUp_.y, plateUp_.z);
     gl_.Uniform2f(location(program_, "u_plateTan"), plateTan_[0], plateTan_[1]);
+    // The glass, on units 13 and 14: its nearest face turned to the eye, and the next.
+    for (int layer = 0; layer < 2; ++layer) {
+        gl_.ActiveTexture(TEXTURE0 + 13 + static_cast<GLenum>(layer));
+        gl_.BindTexture(TEXTURE_2D, glass ? glassTex_[layer] : 0);
+    }
+    gl_.Uniform1i(location(program_, "u_glass0"), 13);
+    gl_.Uniform1i(location(program_, "u_glass1"), 14);
+    gl_.Uniform1i(location(program_, "u_hasGlass"), glass ? 1 : 0);
 
     gl_.BindVertexArray(vao_);
     gl_.DrawArrays(TRIANGLES, 0, 3);
@@ -2660,10 +2886,10 @@ void VolumeRenderer::render(int width, int height) {
         gl_.DrawBuffers(3, all);
     }
 
-    gl_.ActiveTexture(TEXTURE0 + 12);
-    gl_.BindTexture(TEXTURE_2D, 0);
-    gl_.ActiveTexture(TEXTURE0 + 11);
-    gl_.BindTexture(TEXTURE_2D, 0);
+    for (int unit = 11; unit <= 14; ++unit) {
+        gl_.ActiveTexture(TEXTURE0 + static_cast<GLenum>(unit));
+        gl_.BindTexture(TEXTURE_2D, 0);
+    }
     for (int unit = 4; unit < 4 + kMaxMeshShadows; ++unit) {
         gl_.ActiveTexture(TEXTURE0 + static_cast<GLenum>(unit));
         gl_.BindTexture(TEXTURE_3D, 0);

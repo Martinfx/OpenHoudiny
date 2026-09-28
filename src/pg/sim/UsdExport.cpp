@@ -26,6 +26,7 @@ namespace {
 
 const Vec3 kGrey(0.72f, 0.72f, 0.74f);  // what the viewport draws what has no colour in
 const char* const kSurface = "</World/Looks/surface>";
+const char* const kGlass = "</World/Looks/glass>";
 const char* const kWaterLook = "</World/Looks/water>";
 const char* const kRainLook = "</World/Looks/rain>";
 const char* const kBinding = "prepend apiSchemas = [\"MaterialBindingAPI\"]";
@@ -141,6 +142,9 @@ struct UsdExport::Impl {
     std::vector<int> bodyFrames;
     std::vector<std::vector<std::array<float, 7>>> motion;
     std::vector<int> gone;
+    /// The frame each body's pane of glass broke at -- its cracks there from
+    /// then on (wholePanes); INT_MAX while it is whole.
+    std::vector<int> cracked;
     Vec3 gritColor, rebarColor;
 
     // The gas: a file a frame, and the box it fills.
@@ -195,7 +199,8 @@ struct UsdExport::Impl {
     }
 
     /// The grit at frame f: a point a bit, as wide as it is, with its
-    /// velocity and its number where the frame has them.
+    /// velocity and its number where the frame has them, and the primvar
+    /// glass -- 1 for a chip of glass -- where any bit is one.
     void sampleGrit(usda::Stage& layer, int f, const RigidFrame& r) {
         const size_t n = r.debris.size() / 4;
         std::vector<Vec3> at, v;
@@ -215,6 +220,10 @@ struct UsdExport::Impl {
         fields.push_back({"point3f[]", "points", "", usda::tuples(at)});
         if (moving) fields.push_back({"vector3f[]", "velocities", "", usda::tuples(v)});
         fields.push_back({"float[]", "widths", usda::interpolation("vertex"), usda::numbers(size)});
+        if (r.debrisGlass.size() == n && n > 0) {
+            std::vector<uint32_t> glass(r.debrisGlass.begin(), r.debrisGlass.end());
+            fields.push_back({"int[]", "primvars:glass", usda::interpolation("vertex"), idList(glass)});
+        }
         sample(layer, "/World/grit", "Points", f, std::move(fields));
         scene.grow(box);
     }
@@ -375,6 +384,7 @@ struct UsdExport::Impl {
         }
         motion.assign(middles.size(), {});
         gone.assign(middles.size(), INT_MAX);
+        cracked.assign(middles.size(), INT_MAX);
     }
 };
 
@@ -454,6 +464,10 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
         }
         for (const uint32_t v : r.vanished) {
             if (v < m.gone.size()) m.gone[v] = std::min(m.gone[v], f);
+        }
+        const std::vector<uint8_t> whole = wholePanes(r);
+        for (size_t b = 0; b < m.cracked.size(); ++b) {
+            if (b >= whole.size() || !whole[b]) m.cracked[b] = std::min(m.cracked[b], f);
         }
         if (!r.debris.empty()) {
             m.sampleGrit(layer, f, r);
@@ -576,6 +590,19 @@ usda::Stage UsdExport::stage() const {
         };
         if (m.clipSets.count("/World/water")) plain("water", look.waterColor, 0.35f, 0.02f, 1.33f);
         if (m.clipSets.count("/World/rain")) plain("rain", look.rainColor, look.rainOpacity, 0.05f, 1.33f);
+        // Glass: clear and smooth, bending light as glass does, of the tint
+        // its faces have.
+        if (m.drawn && m.drawn->primitives().find("glass")) {
+            Prim& glass = looks.child("Material", "glass");
+            glass.set("token", "outputs:surface.connect", "</World/Looks/glass/shader.outputs:surface>");
+            Prim& sh = glass.child("Shader", "shader");
+            sh.setUniform("token", "info:id", usda::quoted("UsdPreviewSurface"));
+            sh.set("color3f", "inputs:diffuseColor.connect", "</World/Looks/surface/color.outputs:result>");
+            sh.set("float", "inputs:ior", "1.5");
+            sh.set("float", "inputs:opacity", "0.1");
+            sh.set("float", "inputs:roughness", "0.02");
+            sh.set("token", "outputs:surface", "");
+        }
     }
 
     // The displayed geometry: once, when it never changes; else from the
@@ -599,6 +626,7 @@ usda::Stage UsdExport::stage() const {
         pieces.relate("material:binding", kSurface);
         const Group* inside = m.drawn->findGroup(m.insideGroup);
         if (inside && inside->classOf() != AttrClass::Primitive) inside = nullptr;
+        const AttributeArray* glass = m.drawn->primitives().find("glass");
         // body_0000, body_0001...: as many digits as the last needs, at least four.
         const size_t digits = std::max<size_t>(4, std::to_string(m.middles.size()).size());
         for (size_t b = 0; b < m.middles.size(); ++b) {
@@ -619,18 +647,61 @@ usda::Stage UsdExport::stage() const {
                 usda::Attribute& seen = body.set("token", "visibility", "");
                 seen.samples = {{m.first, usda::quoted("inherited")}, {m.gone[b], usda::quoted("invisible")}};
             }
-            usda::MeshText shape = usda::meshText(*m.drawn, m.layout->prims[b], m.middles[b], inside, local);
+            // Its faces; the cracks of glass -- faces whose glass is 2 -- apart,
+            // there once its pane has broken.
+            std::vector<uint32_t> faces, cracks;
+            std::vector<int32_t> glassy;  // the faces of glass, numbered as the Mesh has them
+            int32_t shown = 0;  // the faces the Mesh has: closed, of three corners or more (meshText)
+            for (const uint32_t p : m.layout->prims[b]) {
+                const float kind = glassOf(glass, p);
+                if (kind >= 1.5f) {
+                    cracks.push_back(p);
+                    continue;
+                }
+                faces.push_back(p);
+                if (!m.drawn->primitiveClosed(p) || m.drawn->primitivePoints(p).size() < 3) continue;
+                if (kind >= 0.5f) glassy.push_back(shown);
+                ++shown;
+            }
+            usda::MeshText shape = usda::meshText(*m.drawn, faces, m.middles[b], inside, local);
             shape.primvars.clear();  // the shape at rest: nothing of it moves
             shape.velocities.clear();
+            // What is glass is glass, cut or not.
+            std::erase_if(shape.inside, [&](int32_t i) { return std::binary_search(glassy.begin(), glassy.end(), i); });
             Prim mesh = usda::meshPrim("mesh", {{m.first, shape}});
-            if (!shape.inside.empty()) {
+            if (!shape.inside.empty() || !glassy.empty()) {
                 mesh.setUniform("token", "subsetFamily:materialBind:familyType", usda::quoted("nonOverlapping"));
+            }
+            if (!shape.inside.empty()) {
                 Prim& cut = mesh.child("GeomSubset", "inside");
                 cut.setUniform("token", "elementType", usda::quoted("face"));
                 cut.setUniform("token", "familyName", usda::quoted("materialBind"));
                 cut.set("int[]", "indices", usda::integers(shape.inside));
             }
+            if (!glassy.empty()) {
+                Prim& clear = mesh.child("GeomSubset", "glass");
+                clear.metadata.push_back(kBinding);
+                clear.setUniform("token", "elementType", usda::quoted("face"));
+                clear.setUniform("token", "familyName", usda::quoted("materialBind"));
+                clear.set("int[]", "indices", usda::integers(glassy));
+                clear.relate("material:binding", kGlass);
+            }
             body.children.push_back(std::move(mesh));
+            if (!cracks.empty()) {
+                usda::MeshText lines = usda::meshText(*m.drawn, cracks, m.middles[b], nullptr, local);
+                lines.primvars.clear();
+                lines.velocities.clear();
+                Prim crack = usda::meshPrim("cracks", {{m.first, lines}});
+                crack.metadata.push_back(kBinding);
+                crack.relate("material:binding", kGlass);
+                if (m.cracked[b] == INT_MAX) {
+                    crack.set("token", "visibility", usda::quoted("invisible"));
+                } else if (m.cracked[b] > m.first) {
+                    usda::Attribute& seen = crack.set("token", "visibility", "");
+                    seen.samples = {{m.first, usda::quoted("invisible")}, {m.cracked[b], usda::quoted("inherited")}};
+                }
+                body.children.push_back(std::move(crack));
+            }
         }
     }
 

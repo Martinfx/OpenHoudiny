@@ -90,6 +90,15 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots) {
         return detailColor;
     };
 
+    // Glass: the primitives whose attribute glass is 1 or more.
+    const AttributeArray* glassAttr = geo.primitives().find("glass");
+    auto glassOf = [&](size_t prim) -> float {
+        if (!glassAttr || prim >= glassAttr->size()) return 0.0f;
+        if (glassAttr->type() == AttrType::Int) return static_cast<float>(glassAttr->read<int32_t>()[prim]);
+        if (glassAttr->type() == AttrType::Float) return glassAttr->read<float>()[prim];
+        return 0.0f;
+    };
+
     // Polygons: a fan across each, the corners remembered for their colour.
     std::vector<std::array<uint32_t, 3>> tris;
     std::vector<std::array<size_t, 3>> corners;  // the vertex of each corner
@@ -132,28 +141,43 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots) {
         d.triangles.reserve(tris.size() * 27);
         if (moving) d.velocities.reserve(tris.size() * 9);
         for (size_t t = 0; t < tris.size(); ++t) {
+            const float kind = glassOf(owner[t]);
             for (int c = 0; c < 3; ++c) {
                 const uint32_t p = tris[t][static_cast<size_t>(c)];
                 Vec3 n = pointNormals ? N->read<Vec3>()[p] : normals[t * 3 + static_cast<size_t>(c)];
                 const Vec3 col = cornerColor(owner[t], corners[t][static_cast<size_t>(c)], p);
+                grow(d, P[p]);
+                if (kind >= 0.5f) {
+                    // Glass is flat: each face its own normal, as its corners
+                    // go round -- which way it faces tells where a ray comes
+                    // into a piece of it.
+                    const Vec3& a = P[tris[t][0]];
+                    const Vec3 f = normalize(cross(P[tris[t][1]] - a, P[tris[t][2]] - a));
+                    if (length(f) > 0.5f) n = f;
+                    d.glass.insert(d.glass.end(), {P[p].x, P[p].y, P[p].z, n.x, n.y, n.z, col.x, col.y, col.z,
+                                                   kind >= 1.5f ? 2.0f : 1.0f});
+                    continue;
+                }
                 d.triangles.insert(d.triangles.end(), {P[p].x, P[p].y, P[p].z, n.x, n.y, n.z, col.x, col.y, col.z});
                 if (moving) {
                     const Vec3 w = v->read<Vec3>()[p];
                     d.velocities.insert(d.velocities.end(), {w.x, w.y, w.z});
                 }
-                grow(d, P[p]);
             }
         }
     }
 
-    // Loose points: dots.
+    // Loose points: dots -- glass chips as wide, their radius below 0.
     const AttributeArray* pscale = geo.points().find("pscale");
     const bool sized = pscale && pscale->type() == AttrType::Float && pscale->size() == points;
+    const AttributeArray* chips = geo.points().find("glass");
+    const bool glassy = chips && chips->type() == AttrType::Int && chips->size() == points;
     for (size_t p = 0; p < points; ++p) {
         if (used[p]) continue;
         Vec3 c;
         if (!colorOf(geo.points(), p, c)) c = detailColor;
-        const float r = sized ? std::max(pscale->read<float>()[p], 0.0f) : 0.0f;
+        float r = sized ? std::max(pscale->read<float>()[p], 0.0f) : 0.0f;
+        if (glassy && chips->read<int32_t>()[p] > 0 && r > 0.0f) r = -r;
         put(d.dots, P[p], c);
         d.dots.push_back(r);
         grow(d, P[p]);

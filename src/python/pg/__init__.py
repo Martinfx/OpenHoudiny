@@ -882,9 +882,13 @@ class _Rigid:
     translations = property(lambda self: _array(self._f.body_translations()),
                             doc="the pose's move: a point p at rest is now at rotate(p) + translation, (B, 3)")
     vanished = property(lambda self: list(self._f.vanished()), doc="the bodies blown to dust")
+    unglued = property(lambda self: list(self._f.unglued()),
+                       doc="the bodies a joint of which has broken: come loose from one they were glued to")
     grit = property(lambda self: _array(self._f.grit()), doc="x, y, z, size of each bit, (N, 4)")
     grit_velocities = property(lambda self: _array(self._f.grit_velocities()))
     grit_ids = property(lambda self: _array(self._f.grit_ids()))
+    grit_glass = property(lambda self: _array(self._f.grit_glass()),
+                          doc="1 for each bit that is a chip of glass; empty when none is")
     body_count = property(lambda self: self._f.body_count)
     joints = property(lambda self: self._f.joints)
     broken = property(lambda self: self._f.broken)

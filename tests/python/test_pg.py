@@ -409,6 +409,33 @@ class Simulations(unittest.TestCase):
         self.assertTrue(np.allclose(steel.points["width"][steel.points["width"] > 0.01], 0.012))
         self.assertEqual(len(held.rebar_state), len(held.rebar_stations))
 
+    def test_glass_breaks_as_glass(self):
+        # A pane dropped flat: whole as it falls -- no crack drawn -- broken
+        # where it lands, throwing chips of glass.
+        net = pg.Network()
+        pane = net.add("box", size=(0.5, 0.01, 0.5), center=(0, 0.4, 0))
+        glass = net.add("glass_fracture", impact=(0.05, 0.4, 0), radials=6, rings=3)
+        rbd = net.add("rbd_solver", density=2500, glue=30, substeps=4)
+        out = net.add("output", frames=30)
+        pane.connect(glass)
+        net.connect(glass, rbd, input="pieces")
+        net.connect(rbd, out)
+        self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+        shards = glass.geometry()
+        kinds = shards.prims["glass"]
+        self.assertEqual(sorted(set(kinds.tolist())), [1, 2])
+        cracks = int((kinds == 2).sum())
+        sim = net.simulate()
+        frames = [f.rigid for f in sim.run(30)]
+        falling, landed = frames[3], frames[-1]
+        self.assertEqual(falling.unglued, [])
+        self.assertEqual(int((falling.pieces().prims["glass"] == 2).sum()), 0)
+        self.assertGreater(len(landed.unglued), 0)
+        self.assertEqual(int((landed.pieces().prims["glass"] == 2).sum()), cracks)
+        self.assertGreater(len(landed.grit), 0)
+        self.assertEqual(len(landed.grit_glass), len(landed.grit))
+        self.assertTrue((landed.grit_glass == 1).all())
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

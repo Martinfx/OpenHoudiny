@@ -311,6 +311,79 @@ TEST(usd_export_moves_and_turns_each_body_as_the_pieces_are_posed) {
     }
 }
 
+TEST(usd_export_glass_is_glass_and_its_cracks_come_when_it_breaks) {
+    CHECK(sim::rigidAvailable());
+    // A pane dropped flat onto the floor: whole as it falls, broken where it lands.
+    registerBuiltinNodes();
+    Graph g;
+    pg::Node* box = g.create("box", "pane");
+    box->setVec3("size", Vec3(0.5f, 0.01f, 0.5f));
+    box->setVec3("center", Vec3(0.0f, 0.4f, 0.0f));
+    pg::Node* glass = g.create("glassfracture", "glass");
+    glass->setInput(0, box);
+    glass->setVec3("impact", Vec3(0.05f, 0.4f, 0.0f));
+    glass->setInt("radials", 6);
+    glass->setInt("rings", 3);
+    CookEngine engine;
+    sim::RigidScene scene;
+    scene.pieces = engine.cook(*glass, CookContext{});
+    scene.solver.glue = 30e3f;
+    scene.solver.substeps = 4;
+    sim::RigidSolver solver(scene);
+    CHECK(solver.error().empty());
+    TempFolder dir("usd_glass");
+    sim::UsdExport usd(dir / "shot.usda");
+    std::string error;
+    int broke = 0;
+    bool chips = false;
+    for (int f = 1; f <= 30; ++f) {
+        solver.step();
+        sim::Frame frame;
+        frame.number = f;
+        frame.rigid = solver.capture();
+        if (!broke && frame.rigid.broken > 0) broke = f;
+        chips = chips || !frame.rigid.debrisGlass.empty();
+        CHECK(usd.add(frame, nullptr, nullptr, sim::Look(), error));
+    }
+    CHECK(broke > 1);
+    CHECK(chips);
+    CHECK(usd.finish(error));
+    const usda::Stage s = usd.stage();
+    // A material of glass, and each body's faces of glass bound to it --
+    // no faces of it "inside", cut as they are.
+    CHECK(find(s, {"World", "Looks", "glass"}) != nullptr);
+    CHECK(usd.bodies() > 5);
+    for (int b = 0; b < usd.bodies(); ++b) {
+        char name[16];
+        std::snprintf(name, sizeof name, "body_%04d", b);
+        const usda::Prim* faces = find(s, {"World", "pieces", name, "mesh", "glass"});
+        CHECK(faces != nullptr);
+        if (faces) {
+            CHECK(std::find(faces->relationships.begin(), faces->relationships.end(),
+                            std::make_pair(std::string("material:binding"), std::string("</World/Looks/glass>"))) !=
+                  faces->relationships.end());
+        }
+        CHECK(find(s, {"World", "pieces", name, "mesh", "inside"}) == nullptr);
+        // Its cracks: a mesh of their own, there from when the pane broke.
+        const usda::Prim* cracks = find(s, {"World", "pieces", name, "cracks"});
+        CHECK(cracks != nullptr);
+        if (!cracks) continue;
+        const usda::Attribute* seen = attribute(*cracks, "visibility");
+        CHECK(seen != nullptr);
+        if (!seen) continue;
+        CHECK_EQ(valueAt(*seen, 1), std::string("\"invisible\""));
+        CHECK_EQ(valueAt(*seen, broke), std::string("\"inherited\""));
+    }
+    // The chips of glass say so.
+    const std::string layers = fileText(dir / "shot.usda");
+    CHECK(layers.find("def Material \"glass\"") != std::string::npos);
+    bool marked = false;
+    for (const auto& entry : fs::directory_iterator(dir.path / "shot_frames")) {
+        marked = marked || fileText(entry.path().string()).find("int[] primvars:glass") != std::string::npos;
+    }
+    CHECK(marked);
+}
+
 TEST(usd_export_the_grit_carries_its_numbers_and_velocities) {
     // A block blown to dust throws grit: each frame's bits -- with the
     // numbers and velocities the frame has for them -- in the frame's layer,

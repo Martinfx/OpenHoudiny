@@ -18,7 +18,7 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 2: the rigid bodies after the rain; 3: and their grit; 4: the particles'
 // numbers -- the water's, the drops', the droplets', the grit's -- and how
 // fast the grit goes; 5: how fast the water goes, on the solver's grid.
-constexpr uint32_t kVersion = 6;
+constexpr uint32_t kVersion = 7;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -289,6 +289,8 @@ std::string formatFrame(const Frame& f) {
     out.floats(b.debrisVelocity);
     out.halves(w.flow);  // version 5
     out.bytesOf(b.rebarState);  // version 6: what became of the bars
+    out.bytesOf(b.debrisGlass);  // version 7: which grit is glass, which bodies came loose
+    out.words(b.unglued);
     return std::move(out.bytes);
 }
 
@@ -359,6 +361,10 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     }
     if (version >= 5) in.halves(w.flow, 3 * w.flowDomain().cellCount());
     if (version >= 6) in.bytesOf(f.rigid.rebarState);
+    if (version >= 7) {
+        in.bytesOf(f.rigid.debrisGlass);
+        in.words(f.rigid.unglued);
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -371,7 +377,8 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         (!w.whiteness.empty() && w.whiteness.size() != w.positions.size()) || r.drops.size() % 6 != 0 ||
         r.droplets.size() % 6 != 0 || b.debris.size() % 4 != 0 || !fits(w.ids.size(), w.positions.size()) ||
         !fits(r.dropIds.size(), r.dropCount()) || !fits(r.dropletIds.size(), r.dropletCount()) ||
-        !fits(b.debrisIds.size(), b.debris.size() / 4) || !fits(b.debrisVelocity.size(), 3 * (b.debris.size() / 4))) {
+        !fits(b.debrisIds.size(), b.debris.size() / 4) || !fits(b.debrisVelocity.size(), 3 * (b.debris.size() / 4)) ||
+        !fits(b.debrisGlass.size(), b.debris.size() / 4)) {
         error = "the frame's parts do not fit their grids";
         return false;
     }

@@ -264,6 +264,7 @@ void bindSimulation(py::module_& m) {
             return rows(p.f, v.empty() ? nullptr : &v[0].spin.x, v.size(), 3, sizeof(sim::RigidPose));
         })
         .def("vanished", [](const PyFrame& p) { return p.f->rigid.vanished; })
+        .def("unglued", [](const PyFrame& p) { return p.f->rigid.unglued; })
         .def("grit", [](const PyFrame& p) {
             const auto& v = p.f->rigid.debris;
             return rows(p.f, v.data(), v.size() / 4, 4);
@@ -274,6 +275,10 @@ void bindSimulation(py::module_& m) {
         })
         .def("grit_ids", [](const PyFrame& p) {
             const auto& v = p.f->rigid.debrisIds;
+            return rows(p.f, v.data(), v.size(), 1);
+        })
+        .def("grit_glass", [](const PyFrame& p) {
+            const auto& v = p.f->rigid.debrisGlass;
             return rows(p.f, v.data(), v.size(), 1);
         })
         .def("pieces", [](const PyFrame& p) {

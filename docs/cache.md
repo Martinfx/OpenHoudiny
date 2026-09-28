@@ -59,7 +59,9 @@ cache/fire/
   řešiče (ve vodě a asi dvě buňky kolem hladiny, dál nuly), ze které má
   povrch vody `v` pro rozmazání pohybem ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)),
   a od verze 6 co se stalo s výztuží — bajt na každý úsek prutu v kusu:
-  prut z kusu vyšel, prut je za ním přetržený ([destruction.md](destruction.md#výztuž-rebar)); klidová geometrie
+  prut z kusu vyšel, prut je za ním přetržený ([destruction.md](destruction.md#výztuž-rebar)), a od
+  verze 7 která drť je skleněná a kterým tělesům praskl spoj — podle toho se
+  kreslí trhliny skla ([destruction.md](destruction.md#sklo-glass-fracture)); klidová geometrie
   kusů i pruty jsou v síti a snímek načtený z disku je dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
