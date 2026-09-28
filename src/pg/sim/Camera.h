@@ -12,6 +12,9 @@
 //
 #include "pg/sim/Shape.h"
 
+#include <string>
+#include <vector>
+
 namespace pg::sim {
 
 struct Camera {
@@ -41,5 +44,18 @@ struct Camera {
     Camera sanitized() const;
     bool operator==(const Camera&) const = default;
 };
+
+/// The camera of a USD file at the program's frame `frame` (at `fps`; see
+/// usd::timeCodeAt for `offset`): prim `prim` of the stage, its first
+/// camera when empty. Placed as the file places it -- in metres, Y up,
+/// with `metres` -- its lens fitted to a picture `width` wide and `height`
+/// high (0: as its film back is shaped): what it sees from side to side is
+/// what its horizontal aperture and focal length say. False, with why, for
+/// a file, prim or camera that is not there. `warnings`: what it cannot be
+/// drawn with (an orthographic view, a shifted film back); `varies`:
+/// whether it moves or zooms in time.
+bool cameraFromUsd(const std::string& file, const std::string& prim, float frame, float fps, float offset, int width,
+                   int height, bool metres, Camera& out, std::string& error, std::vector<std::string>* warnings = nullptr,
+                   bool* varies = nullptr);
 
 }  // namespace pg::sim

@@ -154,7 +154,33 @@ simulace čte snímky z cache.
   Relativní cesty sítě (meshe) čte z `net.folder` přes novou volbu `--folder`. Program se najde
   podle sestavení, nebo podle proměnné `PG_PROTOTYPE`, jinak na `PATH`.
 
+### Čtení USD
+
+`pg.UsdStage("shot.usd")` otevře soubor `.usd`, `.usda`, `.usdc` nebo `.usdz` vlastní
+čtečkou programu a složí ho jako USD: sublayers, reference, payloady, varianty,
+value clips ([usd-import.md](usd-import.md)). Knihovnu `pxr` k tomu nepotřebuje.
+
+| Co | Jak |
+|---|---|
+| scéna | `.up_axis`, `.meters_per_unit`, `.start_time_code`, `.end_time_code`, `.time_codes_per_second`, `.default_prim`, `.files` (načtené vrstvy), `.warnings` |
+| primy | `stage.prims()` (definované; `all=True` i over, class a neaktivní), `stage.prims(type="Mesh")`, `stage.prim("/Set/beam")` |
+| prim | `.path`, `.type`, `.children`, `.properties()`, `.get("points", time)`, `.varies(name)`, `.sample_times(name)`, `.targets(rel)`, `.metadata("kind")`, `.world(time)`, `.local(time)` (matice 4 × 4, řádky) |
+| kamera | `stage.cameras()`, `stage.camera(path=None, time=None)`: matice ve světě v metrech s Y nahoru, ohnisko, clony a jejich posun, clipping, zda se hýbe |
+| geometrie | `stage.geometry(time, prims=["/Set"], proxy=False, metres=True)` → `pg.Geometry`, jako uzel USD Import; co nešlo přečíst, je v `stage.notes` |
+| čas | `stage.time_code(frame, fps)`: který time code čte snímek prototypu (jako uzly USD Import a USD Camera) |
+
+Čas `time` je time code scény; bez něj se čte snímek 1, tedy `startTimeCode`.
+
 ## 6. Příklady
+
+- **[`examples/python/matchmove.py`](../examples/python/matchmove.py)** — záběr z USD:
+  - co soubor obsahuje, jeho kamera v prvním a posledním snímku;
+  - kulisa jako geometrie a její rozměry z polí numpy;
+  - síť s uzly USD Import a USD Camera, kouř z ohně v kulise, obrázek přes kameru záběru.
+
+  ```bash
+  PYTHONPATH=build/python python3 examples/python/matchmove.py --picture out/matchmove.png
+  ```
 
 - **[`examples/python/demolition.py`](../examples/python/demolition.py)** — scéna z kroku 2
   (odstřel věžáku ve městě) postavená čistě z Pythonu:
@@ -176,8 +202,8 @@ simulace čte snímky z cache.
 ## 7. Jak to funguje
 
 ```
-pg/__init__.py      třídy Network, Node, Geometry, Simulation, Frame, UsdExport (Python)
-_pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdExport
+pg/__init__.py      třídy Network, Node, Geometry, Simulation, Frame, UsdExport, UsdStage, UsdPrim (Python)
+_pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdExport, usd::Stage
 ```
 
 - **Pole bez kopie:** `_pg.Array` je objekt s buffer protocolem (PEP 3118). Nese ukazatel
@@ -195,7 +221,7 @@ _pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdEx
 
 ## 8. Testy
 
-`tests/python/test_pg.py` (16 testů; `ctest -R python`):
+`tests/python/test_pg.py` (16 testů; `ctest -R python` spustí oba soubory):
 - **Sítě:**
   - typy uzlů a příklady;
   - parametry všech druhů (vektor, volba podle jména, přepínač, text, kód) a chyby;
@@ -215,6 +241,14 @@ _pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdEx
   - kusy RBD: body v klidu posunuté pózou sedí na `pieces()`;
   - záběr do USD, ověřený knihovnou `pxr`, když je nainstalovaná.
 - **Obraz:** obrázek přes `prototype` (přeskočí se, když tu OpenGL není).
+
+`tests/python/test_usd.py` (9 testů):
+- **Ukázkový záběr:** scéna ze tří vrstev, kamera v metrech s Y nahoru, kulisa jako
+  geometrie, síť `matchmove` přes kameru záběru.
+- **Proti knihovně USD** (přeskočí se bez `usd-core` a numpy): náhodné transformace všech
+  druhů, záběr z více souborů (varianty, reference, třídy, sublayer s posunem a jiným FPS,
+  instanceable), geometrie ve světě, value clips i mezi snímky a 80 náhodných záběrů
+  s value clips (síla vůči vrstvám, šablony, skoky v čase, manifest).
 
 ## 9. Omezení
 

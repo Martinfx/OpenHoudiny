@@ -75,4 +75,5 @@ PYBIND11_MODULE(_pg, m) {
     bindGeometry(m);
     bindNetwork(m);
     bindSimulation(m);
+    bindUsd(m);
 }

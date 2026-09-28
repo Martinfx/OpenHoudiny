@@ -1,0 +1,943 @@
+#include "pg/usd/Geom.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <map>
+
+namespace pg::usd {
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+bool xformable(const std::string& type) {
+    static const char* const kNot[] = {"",          "Scope",          "Material",      "Shader",     "NodeGraph",
+                                       "GeomSubset", "SkelAnimation",  "BlendShape",    "RenderSettings",
+                                       "RenderProduct", "RenderVar",   "RenderPass",    "Backdrop"};
+    for (const char* t : kNot) {
+        if (type == t) return false;
+    }
+    return true;
+}
+
+/// A number of the file as an index below `n`; `n` for one that is not
+/// (negative, too large, NaN).
+size_t indexBelow(double x, size_t n) { return x >= 0.0 && x < static_cast<double>(n) ? static_cast<size_t>(x) : n; }
+
+/// A count of the file, at most `most`; `most + 1` for one above it (or NaN).
+size_t countUpTo(double x, size_t most) {
+    if (x <= 0.0) return 0;
+    return x <= static_cast<double>(most) ? static_cast<size_t>(x) : most + 1;
+}
+
+bool under(const std::string& path, const std::string& root) {
+    if (root.empty() || root == "/") return true;
+    return path == root || (path.size() > root.size() && path.compare(0, root.size(), root) == 0 && path[root.size()] == '/');
+}
+
+std::string opType(const std::string& name) {
+    // xformOp:rotateXYZ:suffix -> rotateXYZ
+    const size_t a = name.find(':');
+    if (a == std::string::npos) return {};
+    const size_t b = name.find(':', a + 1);
+    return name.substr(a + 1, b == std::string::npos ? std::string::npos : b - a - 1);
+}
+
+Matrix opMatrix(const Stage& stage, const Stage::Prim& prim, const std::string& name, double time) {
+    const Value v = stage.value(prim, name, time);
+    const std::string type = opType(name);
+    const std::vector<double>& n = v.numbers;
+    if (!v.isNumbers()) return {};
+    if (type == "translate" && n.size() >= 3) return Matrix::translate(n[0], n[1], n[2]);
+    if (type == "scale" && n.size() >= 3) return Matrix::scale(n[0], n[1], n[2]);
+    if (type == "rotateX" && !n.empty()) return Matrix::rotate(0, n[0]);
+    if (type == "rotateY" && !n.empty()) return Matrix::rotate(1, n[0]);
+    if (type == "rotateZ" && !n.empty()) return Matrix::rotate(2, n[0]);
+    if (type.size() == 9 && type.rfind("rotate", 0) == 0 && n.size() >= 3) {
+        // rotateXYZ: about x first, then y, then z -- Rx Ry Rz for rows.
+        Matrix m;
+        for (int k = 0; k < 3; ++k) {
+            const int axis = type[6 + static_cast<size_t>(k)] - 'X';
+            if (axis < 0 || axis > 2) return {};
+            m = m * Matrix::rotate(axis, n[static_cast<size_t>(axis)]);
+        }
+        return m;
+    }
+    if (type == "orient" && n.size() >= 4) return Matrix::orient(n[0], n[1], n[2], n[3]);
+    if (type == "transform" && n.size() >= 16) {
+        Matrix m;
+        std::copy(n.begin(), n.begin() + 16, m.m.begin());
+        return m;
+    }
+    return {};
+}
+
+// --- Building geometry ------------------------------------------------------------------------
+
+/// Everything read, gathered into one geometry: points and primitives as
+/// they come, attributes by name -- zeros where a prim has none -- and the
+/// prims' paths once each.
+struct Builder {
+    Geometry geo;
+    struct Attr {
+        AttrClass cls;
+        int width;        ///< 1..4 floats; 0: an int
+        std::vector<float> floats;
+        std::vector<int32_t> ints;
+        size_t count = 0;  ///< elements filled
+    };
+    std::map<std::pair<AttrClass, std::string>, Attr> attrs;
+    std::vector<int32_t> paths;  ///< per primitive
+    std::vector<std::string> pathTable;
+    std::map<std::string, std::vector<uint32_t>> groups;
+    std::vector<std::string>* notes = nullptr;
+
+    size_t elements(AttrClass c) const {
+        switch (c) {
+            case AttrClass::Point: return geo.pointCount();
+            case AttrClass::Vertex: return geo.vertexCount();
+            case AttrClass::Primitive: return geo.primitiveCount();
+            default: return 1;
+        }
+    }
+
+    /// The attribute, its elements up to `start` filled (zeros where earlier
+    /// prims had none); null when its name is taken by another width.
+    Attr* attr(AttrClass cls, const std::string& name, int width, size_t start) {
+        auto [it, fresh] = attrs.try_emplace({cls, name}, Attr{cls, width, {}, {}, 0});
+        Attr& a = it->second;
+        if (!fresh && a.width != width) {
+            if (notes) notes->push_back("'" + name + "' is " + std::to_string(width) + " numbers here but " +
+                                        std::to_string(a.width) + " elsewhere: left out here");
+            return nullptr;
+        }
+        pad(a, start);
+        return &a;
+    }
+    static void pad(Attr& a, size_t count) {
+        if (a.count >= count) return;
+        if (a.width == 0) a.ints.resize(count, 0);
+        else a.floats.resize(count * static_cast<size_t>(a.width), 0.0f);
+        a.count = count;
+    }
+
+    std::shared_ptr<Geometry> finish() {
+        auto out = std::make_shared<Geometry>(std::move(geo));
+        for (auto& [key, a] : attrs) {
+            const size_t n = out->elementCount(key.first);
+            pad(a, n);
+            const AttrType type = a.width == 0 ? AttrType::Int
+                                  : a.width == 1 ? AttrType::Float
+                                  : a.width == 2 ? AttrType::Vec2
+                                  : a.width == 3 ? AttrType::Vec3
+                                                 : AttrType::Vec4;
+            AttributeArray& dst = out->attributes(key.first).create(key.second, type);
+            if (a.width == 0) {
+                std::copy_n(a.ints.begin(), n, dst.write<int32_t>().begin());
+            } else {
+                std::memcpy(dst.rawWrite(), a.floats.data(), n * static_cast<size_t>(a.width) * sizeof(float));
+            }
+        }
+        if (!pathTable.empty()) {
+            AttributeArray& p = out->primitives().create("path", AttrType::String);
+            for (const std::string& s : pathTable) p.addString(s);
+            paths.resize(out->primitiveCount(), 0);
+            std::copy(paths.begin(), paths.end(), p.write<int32_t>().begin());
+        }
+        for (const auto& [name, members] : groups) {
+            Group& g = out->createGroup(name, AttrClass::Primitive);
+            g.resize(out->primitiveCount());
+            for (const uint32_t m : members) g.set(m, true);
+        }
+        return out;
+    }
+};
+
+/// A group's name from a prim's: letters, digits and _.
+std::string groupName(const std::string& name) {
+    std::string out;
+    for (const char c : name) out += (std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '_';
+    if (out.empty() || std::isdigit(static_cast<unsigned char>(out[0]))) out = "_" + out;
+    return out;
+}
+
+/// What one prim adds: where its points, corners and primitives start, and
+/// how its corners and faces map to the file's (for face-varying and
+/// uniform values).
+struct Piece {
+    size_t points = 0, vertices = 0, prims = 0;
+    size_t sourcePoints = 0, sourceFaces = 0, sourceCorners = 0;
+    std::vector<uint32_t> faceOf;    ///< per primitive added: the file's face
+    std::vector<uint32_t> cornerOf;  ///< per corner added: the file's corner
+};
+
+struct Reader {
+    const Stage& stage;
+    const ImportOptions& options;
+    double time;
+    Matrix conversion;
+    Builder& out;
+    std::vector<std::string>* notes;
+
+    void note(const Stage::Prim& prim, const std::string& why) {
+        if (notes) notes->push_back(prim.path + ": " + why);
+    }
+
+    Matrix worldOf(const Stage::Prim& prim) const {
+        const Matrix w = worldTransform(stage, prim, time);
+        return options.metresYUp ? w * conversion : w;
+    }
+
+    /// The normals' matrix: the inverse transpose of the linear part.
+    static Matrix normalMatrix(const Matrix& w) {
+        Matrix linear = w;
+        linear.at(3, 0) = linear.at(3, 1) = linear.at(3, 2) = 0.0;
+        const Matrix inv = linear.inverse();
+        Matrix t;
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) t.at(r, c) = inv.at(c, r);
+        }
+        return t;
+    }
+
+    void addPoints(const std::vector<double>& p, const Matrix& w) {
+        const size_t n = p.size() / 3;
+        const size_t first = out.geo.addPoints(n);
+        std::span<Vec3> P = out.geo.positionsForWrite();
+        for (size_t i = 0; i < n; ++i) {
+            double o[3];
+            w.transformPoint(&p[i * 3], o);
+            P[first + i] = Vec3(static_cast<float>(o[0]), static_cast<float>(o[1]), static_cast<float>(o[2]));
+        }
+    }
+
+    void pathOf(const Stage::Prim& prim, const Piece& piece) {
+        if (!options.pathAttribute) return;
+        out.paths.resize(piece.prims, 0);
+        const int32_t index = static_cast<int32_t>(out.pathTable.size());
+        out.pathTable.push_back(prim.path);
+        out.paths.resize(out.geo.primitiveCount(), index);
+    }
+
+    /// A primvar -- its values, expanded by its indices -- onto what the prim
+    /// added: constant and uniform on its primitives, vertex and varying on
+    /// its points, faceVarying on its corners.
+    void primvar(const Stage::Prim& prim, const Piece& piece, const std::string& attrName, const std::string& name,
+                 const std::string& defaultInterpolation, int kind) {
+        // kind: 0 plain, 1 normal, 2 velocity, 3 uv
+        Value v = stage.value(prim, attrName, time);
+        if (!v.isNumbers() || v.numbers.empty()) return;
+        const Property* spec = stage.property(prim, attrName);
+        std::string how = defaultInterpolation;
+        if (spec) {
+            if (const Value* i = spec->meta("interpolation"); i && !i->text().empty()) how = i->text();
+            if (const Value* e = spec->meta("elementSize"); e && e->number(1.0) > 1.0) {
+                note(prim, attrName + " has elements of several values: left out");
+                return;
+            }
+        }
+        const Value indices = stage.value(prim, attrName + ":indices", time);
+        const size_t size = v.size();
+        const int width = v.width;
+        if (width > 4 || (kind == 3 && width < 2)) {
+            note(prim, attrName + " is " + std::to_string(width) + " numbers an element: left out");
+            return;
+        }
+        auto element = [&](size_t k) -> size_t {
+            if (indices.isNumbers() && !indices.numbers.empty()) {
+                if (k >= indices.numbers.size()) return size;
+                return indexBelow(indices.numbers[k], size);
+            }
+            return k;
+        };
+        const size_t count = indices.isNumbers() && !indices.numbers.empty() ? indices.numbers.size() : size;
+        AttrClass cls;
+        size_t start, n;
+        std::vector<uint32_t> source;  // per element added: the value's element
+        const bool pointsOnly = out.geo.primitiveCount() == piece.prims;
+        if (pointsOnly && (how == "constant" || how == "uniform")) {
+            // Points have no primitives: one value for them all.
+            cls = AttrClass::Point;
+            start = piece.points;
+            n = out.geo.pointCount() - start;
+            source.assign(n, 0);
+            if (count < 1 || how == "uniform") return;
+        } else if (how == "constant") {
+            cls = AttrClass::Primitive;
+            start = piece.prims;
+            n = out.geo.primitiveCount() - start;
+            source.assign(n, 0);
+            if (count < 1) return;
+        } else if (how == "uniform") {
+            cls = AttrClass::Primitive;
+            start = piece.prims;
+            n = out.geo.primitiveCount() - start;
+            if (count != piece.sourceFaces) {
+                note(prim, attrName + ": " + std::to_string(count) + " values for " + std::to_string(piece.sourceFaces) + " faces");
+                return;
+            }
+            source = piece.faceOf;
+        } else if (how == "faceVarying") {
+            cls = AttrClass::Vertex;
+            start = piece.vertices;
+            n = out.geo.vertexCount() - start;
+            if (count != piece.sourceCorners) {
+                note(prim, attrName + ": " + std::to_string(count) + " values for " + std::to_string(piece.sourceCorners) + " corners");
+                return;
+            }
+            source = piece.cornerOf;
+        } else {  // vertex, varying
+            cls = AttrClass::Point;
+            start = piece.points;
+            n = out.geo.pointCount() - start;
+            if (count != piece.sourcePoints) {
+                note(prim, attrName + ": " + std::to_string(count) + " values for " + std::to_string(piece.sourcePoints) + " points");
+                return;
+            }
+            source.resize(n);
+            for (size_t i = 0; i < n; ++i) source[i] = static_cast<uint32_t>(i);
+        }
+        const bool integral = v.type == "int" || v.type == "uint" || v.type == "int64" || v.type == "uint64" ||
+                              v.type == "uchar" || v.type == "bool";
+        const int outWidth = kind == 3 ? 3 : (integral && width == 1 ? 0 : width);
+        Builder::Attr* a = out.attr(cls, name, outWidth, start);
+        if (!a) return;
+        const Matrix w = kind == 1 ? normalMatrix(worldOf(prim)) : worldOf(prim);
+        Builder::pad(*a, start + n);
+        for (size_t i = 0; i < n; ++i) {
+            const size_t e = element(source[i]);
+            if (e >= size) continue;
+            const double* x = &v.numbers[e * static_cast<size_t>(width)];
+            if (outWidth == 0) {
+                a->ints[start + i] = static_cast<int32_t>(x[0]);
+                continue;
+            }
+            float* dst = &a->floats[(start + i) * static_cast<size_t>(outWidth)];
+            if (kind == 3) {
+                dst[0] = static_cast<float>(x[0]);
+                dst[1] = static_cast<float>(x[1]);
+                dst[2] = width > 2 ? static_cast<float>(x[2]) : 0.0f;
+            } else if ((kind == 1 || kind == 2) && width == 3) {
+                double o[3];
+                w.transformDirection(x, o);
+                if (kind == 1) {
+                    const double len = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+                    if (len > 0.0) o[0] /= len, o[1] /= len, o[2] /= len;
+                }
+                for (int k = 0; k < 3; ++k) dst[k] = static_cast<float>(o[k]);
+            } else {
+                for (int k = 0; k < width; ++k) dst[k] = static_cast<float>(x[k]);
+            }
+        }
+    }
+
+    /// Every primvar of the prim onto what it added.
+    void primvars(const Stage::Prim& prim, const Piece& piece, bool mesh) {
+        const std::vector<std::string> names = stage.propertyNames(prim);
+        const bool primvarNormals = std::find(names.begin(), names.end(), "primvars:normals") != names.end();
+        for (const std::string& n : names) {
+            if (n.size() > 8 && n.compare(n.size() - 8, 8, ":indices") == 0) continue;
+            if (n == "normals" && mesh && !primvarNormals) {
+                primvar(prim, piece, n, "N", "vertex", 1);
+            } else if (n == "velocities") {
+                primvar(prim, piece, n, "v", "vertex", 2);
+            } else if (n.rfind("primvars:", 0) == 0) {
+                const std::string base = n.substr(9);
+                const Property* p = stage.property(prim, n);
+                if (!p || p->relationship) continue;
+                if (base == "normals") primvar(prim, piece, n, "N", "vertex", 1);
+                else if (base == "displayColor") primvar(prim, piece, n, "Cd", "constant", 0);
+                else if (base == "displayOpacity") primvar(prim, piece, n, "Alpha", "constant", 0);
+                else if (base == "st") primvar(prim, piece, n, "uv", "constant", 3);
+                else {
+                    std::string name = base;
+                    std::replace(name.begin(), name.end(), ':', '_');
+                    primvar(prim, piece, n, name, "constant", 0);
+                }
+            }
+        }
+    }
+
+    Piece begin() const {
+        Piece p;
+        p.points = out.geo.pointCount();
+        p.vertices = out.geo.vertexCount();
+        p.prims = out.geo.primitiveCount();
+        return p;
+    }
+
+    void mesh(const Stage::Prim& prim) {
+        const Value P = stage.value(prim, "points", time);
+        const Value counts = stage.value(prim, "faceVertexCounts", time);
+        const Value indices = stage.value(prim, "faceVertexIndices", time);
+        if (!P.isNumbers() || P.width != 3 || P.numbers.empty()) {
+            note(prim, "a mesh without points");
+            return;
+        }
+        const Matrix w = worldOf(prim);
+        Piece piece = begin();
+        const size_t points = P.numbers.size() / 3;
+        piece.sourcePoints = points;
+        addPoints(P.numbers, w);
+        const bool left = stage.value(prim, "orientation", time).text() == "leftHanded";
+        const bool flip = left != (w.determinant3() < 0.0);
+        std::vector<char> hole;
+        const Value holes = stage.value(prim, "holeIndices", time);
+        const size_t faces = counts.numbers.size();
+        hole.assign(faces, 0);
+        for (const double h : holes.numbers) {
+            if (const size_t f = indexBelow(h, faces); f < faces) hole[f] = 1;
+        }
+        size_t corner = 0, bad = 0;
+        std::vector<uint32_t> ring;
+        for (size_t f = 0; f < faces; ++f) {
+            const size_t c = countUpTo(counts.numbers[f], indices.numbers.size() - corner);
+            if (corner + c > indices.numbers.size()) {
+                note(prim, "fewer face vertex indices than the faces need");
+                break;
+            }
+            bool ok = c >= 3 && !hole[f];
+            ring.clear();
+            for (size_t k = 0; k < c && ok; ++k) {
+                const size_t i = indexBelow(indices.numbers[corner + (flip ? c - 1 - k : k)], points);
+                if (i >= points) ok = false;
+                else ring.push_back(static_cast<uint32_t>(piece.points + i));
+            }
+            if (ok) {
+                out.geo.addPrimitive(ring, true);
+                piece.faceOf.push_back(static_cast<uint32_t>(f));
+                for (size_t k = 0; k < c; ++k) piece.cornerOf.push_back(static_cast<uint32_t>(corner + (flip ? c - 1 - k : k)));
+            } else if (!hole[f] && c >= 3) {
+                ++bad;
+            }
+            corner += c;
+        }
+        if (bad) note(prim, std::to_string(bad) + " faces name points that are not there: left out");
+        piece.sourceFaces = faces;
+        piece.sourceCorners = corner;
+        primvars(prim, piece, true);
+        pathOf(prim, piece);
+        if (options.subsets) subsets(prim, piece);
+    }
+
+    void subsets(const Stage::Prim& prim, const Piece& piece) {
+        for (const Stage::Prim* child : prim.children) {
+            if (child->type != "GeomSubset" || !child->defined) continue;
+            const std::string element = stage.value(*child, "elementType", time).text();
+            if (!element.empty() && element != "face") continue;
+            const Value indices = stage.value(*child, "indices", time);
+            std::vector<uint32_t>& members = out.groups[groupName(child->name)];
+            // The file's faces to ours.
+            std::vector<int64_t> ours(piece.sourceFaces, -1);
+            for (size_t k = 0; k < piece.faceOf.size(); ++k) ours[piece.faceOf[k]] = static_cast<int64_t>(piece.prims + k);
+            for (const double i : indices.numbers) {
+                if (const size_t f = indexBelow(i, ours.size()); f < ours.size() && ours[f] >= 0) {
+                    members.push_back(static_cast<uint32_t>(ours[f]));
+                }
+            }
+        }
+    }
+
+    /// Widths as pscale -- half a width, as large as the transform makes it.
+    void widths(const Stage::Prim& prim, const Piece& piece, const Matrix& w) {
+        const Value widths = stage.value(prim, "widths", time);
+        if (!widths.isNumbers() || widths.numbers.empty()) return;
+        const double s = std::cbrt(std::abs(w.determinant3()));
+        const size_t n = out.geo.pointCount() - piece.points;
+        Builder::Attr* a = out.attr(AttrClass::Point, "pscale", 1, piece.points);
+        if (!a) return;
+        Builder::pad(*a, piece.points + n);
+        const bool each = widths.numbers.size() == piece.sourcePoints;
+        for (size_t i = 0; i < n; ++i) {
+            a->floats[piece.points + i] = static_cast<float>(0.5 * s * widths.numbers[each ? i : 0]);
+        }
+    }
+
+    void pointsPrim(const Stage::Prim& prim) {
+        const Value P = stage.value(prim, "points", time);
+        if (!P.isNumbers() || P.width != 3) {
+            note(prim, "points without positions");
+            return;
+        }
+        const Matrix w = worldOf(prim);
+        Piece piece = begin();
+        piece.sourcePoints = P.numbers.size() / 3;
+        addPoints(P.numbers, w);
+        widths(prim, piece, w);
+        const Value ids = stage.value(prim, "ids", time);
+        if (ids.isNumbers() && ids.numbers.size() == piece.sourcePoints) {
+            if (Builder::Attr* a = out.attr(AttrClass::Point, "id", 0, piece.points)) {
+                Builder::pad(*a, piece.points + piece.sourcePoints);
+                for (size_t i = 0; i < piece.sourcePoints; ++i) a->ints[piece.points + i] = static_cast<int32_t>(ids.numbers[i]);
+            }
+        }
+        primvars(prim, piece, false);
+    }
+
+    void curves(const Stage::Prim& prim) {
+        const Value P = stage.value(prim, "points", time);
+        const Value counts = stage.value(prim, "curveVertexCounts", time);
+        if (!P.isNumbers() || P.width != 3) {
+            note(prim, "curves without points");
+            return;
+        }
+        const Matrix w = worldOf(prim);
+        Piece piece = begin();
+        const size_t points = P.numbers.size() / 3;
+        piece.sourcePoints = points;
+        addPoints(P.numbers, w);
+        const bool periodic = stage.value(prim, "wrap", time).text() == "periodic";
+        size_t at = 0;
+        std::vector<uint32_t> ring;
+        for (size_t c = 0; c < counts.numbers.size(); ++c) {
+            const size_t n = countUpTo(counts.numbers[c], points - at);
+            if (at + n > points) break;
+            ring.clear();
+            for (size_t k = 0; k < n; ++k) ring.push_back(static_cast<uint32_t>(piece.points + at + k));
+            if (n >= 2) {
+                out.geo.addPrimitive(ring, periodic && n >= 3);
+                piece.faceOf.push_back(static_cast<uint32_t>(c));
+                for (size_t k = 0; k < n; ++k) piece.cornerOf.push_back(static_cast<uint32_t>(at + k));
+            }
+            at += n;
+        }
+        piece.sourceFaces = counts.numbers.size();
+        piece.sourceCorners = at;
+        widths(prim, piece, w);
+        primvars(prim, piece, false);
+        pathOf(prim, piece);
+    }
+
+    // --- Implicit shapes ---------------------------------------------------------------
+
+    double number(const Stage::Prim& prim, const char* name, double fallback) {
+        const Value v = stage.value(prim, name, time);
+        return v.isNumbers() && !v.numbers.empty() ? v.numbers[0] : fallback;
+    }
+
+    /// A shape made along +z, turned to its axis (a turn, not a mirror).
+    static void toAxis(std::vector<double>& p, const std::string& axis) {
+        for (size_t i = 0; i + 2 < p.size(); i += 3) {
+            const double x = p[i], y = p[i + 1], z = p[i + 2];
+            if (axis == "X") p[i] = z, p[i + 1] = x, p[i + 2] = y;
+            else if (axis == "Y") p[i] = y, p[i + 1] = z, p[i + 2] = x;
+        }
+    }
+
+    /// A surface of revolution about z: rings of (radius, z) from the
+    /// bottom up, `segments` round; a ring of radius 0 is one point.
+    static void revolve(const std::vector<std::pair<double, double>>& rings, int segments, std::vector<double>& p,
+                        std::vector<std::vector<uint32_t>>& faces) {
+        std::vector<std::vector<uint32_t>> ids;
+        for (const auto& [r, z] : rings) {
+            std::vector<uint32_t> ring;
+            if (r <= 0.0) {
+                ring.assign(static_cast<size_t>(segments), static_cast<uint32_t>(p.size() / 3));
+                p.insert(p.end(), {0.0, 0.0, z});
+            } else {
+                for (int s = 0; s < segments; ++s) {
+                    const double a = 2.0 * kPi * s / segments;
+                    ring.push_back(static_cast<uint32_t>(p.size() / 3));
+                    p.insert(p.end(), {r * std::cos(a), r * std::sin(a), z});
+                }
+            }
+            ids.push_back(std::move(ring));
+        }
+        for (size_t k = 0; k + 1 < ids.size(); ++k) {
+            const auto& lo = ids[k];
+            const auto& hi = ids[k + 1];
+            for (int s = 0; s < segments; ++s) {
+                const size_t a = static_cast<size_t>(s), b = static_cast<size_t>((s + 1) % segments);
+                std::vector<uint32_t> f{lo[a], lo[b], hi[b], hi[a]};
+                f.erase(std::unique(f.begin(), f.end()), f.end());
+                if (f.size() > 1 && f.front() == f.back()) f.pop_back();
+                if (f.size() >= 3) faces.push_back(std::move(f));
+            }
+        }
+        // Caps where the rings end with a radius.
+        if (!rings.empty() && rings.front().first > 0.0) {
+            std::vector<uint32_t> cap(ids.front().rbegin(), ids.front().rend());
+            faces.push_back(cap);
+        }
+        if (!rings.empty() && rings.back().first > 0.0) faces.push_back(ids.back());
+    }
+
+    void implicit(const Stage::Prim& prim) {
+        std::vector<double> p;
+        std::vector<std::vector<uint32_t>> faces;
+        const std::string& t = prim.type;
+        if (t == "Cube") {
+            const double h = number(prim, "size", 2.0) * 0.5;
+            for (int i = 0; i < 8; ++i) p.insert(p.end(), {i & 1 ? h : -h, i & 2 ? h : -h, i & 4 ? h : -h});
+            faces = {{0, 4, 6, 2}, {1, 3, 7, 5}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 2, 3, 1}, {4, 5, 7, 6}};
+        } else if (t == "Sphere") {
+            const double r = number(prim, "radius", 1.0);
+            std::vector<std::pair<double, double>> rings;
+            for (int k = 0; k <= 16; ++k) {
+                const double a = -kPi / 2 + kPi * k / 16;
+                rings.emplace_back(k == 0 || k == 16 ? 0.0 : r * std::cos(a), r * std::sin(a));
+            }
+            revolve(rings, 32, p, faces);
+        } else if (t == "Cylinder" || t == "Cone" || t == "Capsule") {
+            const bool capsule = t == "Capsule";
+            const double r = number(prim, "radius", capsule ? 0.5 : 1.0);
+            const double h = number(prim, "height", capsule ? 1.0 : 2.0) * 0.5;
+            std::vector<std::pair<double, double>> rings;
+            if (t == "Cylinder") {
+                rings = {{r, -h}, {r, h}};
+            } else if (t == "Cone") {
+                rings = {{r, -h}, {0.0, h}};
+            } else {
+                for (int k = 0; k <= 8; ++k) {
+                    const double a = -kPi / 2 + (kPi / 2) * k / 8;
+                    rings.emplace_back(k == 0 ? 0.0 : r * std::cos(a), -h + r * std::sin(a));
+                }
+                for (int k = 0; k <= 8; ++k) {
+                    const double a = (kPi / 2) * k / 8;
+                    rings.emplace_back(k == 8 ? 0.0 : r * std::cos(a), h + r * std::sin(a));
+                }
+            }
+            revolve(rings, 32, p, faces);
+            toAxis(p, stage.value(prim, "axis", time).text().empty() ? "Z" : stage.value(prim, "axis", time).text());
+        } else if (t == "Plane") {
+            const double w = number(prim, "width", 2.0) * 0.5, l = number(prim, "length", 2.0) * 0.5;
+            p = {-w, -l, 0.0, w, -l, 0.0, w, l, 0.0, -w, l, 0.0};
+            faces = {{0, 1, 2, 3}};
+            toAxis(p, stage.value(prim, "axis", time).text().empty() ? "Z" : stage.value(prim, "axis", time).text());
+        }
+        const Matrix w = worldOf(prim);
+        Piece piece = begin();
+        piece.sourcePoints = p.size() / 3;
+        addPoints(p, w);
+        const bool flip = w.determinant3() < 0.0;
+        size_t corners = 0;
+        for (size_t f = 0; f < faces.size(); ++f) {
+            std::vector<uint32_t> ring;
+            for (const uint32_t i : faces[f]) ring.push_back(static_cast<uint32_t>(piece.points + i));
+            if (flip) std::reverse(ring.begin(), ring.end());
+            out.geo.addPrimitive(ring, true);
+            piece.faceOf.push_back(static_cast<uint32_t>(f));
+            corners += ring.size();
+        }
+        piece.sourceFaces = faces.size();
+        piece.sourceCorners = corners;
+        // Only what does not depend on the shape's own points: constant and
+        // uniform (per face) primvars read here.
+        primvars(prim, piece, false);
+        pathOf(prim, piece);
+    }
+};
+
+const char* const kGeometryTypes[] = {"Mesh", "Points", "BasisCurves", "Cube", "Sphere", "Cylinder", "Cone", "Capsule", "Plane"};
+
+bool isGeometry(const std::string& type) {
+    for (const char* t : kGeometryTypes) {
+        if (type == t) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+// --- Matrices ----------------------------------------------------------------------------------
+
+Matrix Matrix::operator*(const Matrix& o) const {
+    Matrix r;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double s = 0.0;
+            for (int k = 0; k < 4; ++k) s += at(i, k) * o.at(k, j);
+            r.at(i, j) = s;
+        }
+    }
+    return r;
+}
+
+Matrix Matrix::inverse() const {
+    double a[4][8];
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            a[r][c] = at(r, c);
+            a[r][c + 4] = r == c ? 1.0 : 0.0;
+        }
+    }
+    for (int c = 0; c < 4; ++c) {
+        int pivot = c;
+        for (int r = c + 1; r < 4; ++r) {
+            if (std::abs(a[r][c]) > std::abs(a[pivot][c])) pivot = r;
+        }
+        if (std::abs(a[pivot][c]) < 1e-300) return {};
+        if (pivot != c) {
+            for (int k = 0; k < 8; ++k) std::swap(a[c][k], a[pivot][k]);
+        }
+        const double d = a[c][c];
+        for (int k = 0; k < 8; ++k) a[c][k] /= d;
+        for (int r = 0; r < 4; ++r) {
+            if (r == c) continue;
+            const double f = a[r][c];
+            if (f == 0.0) continue;
+            for (int k = 0; k < 8; ++k) a[r][k] -= f * a[c][k];
+        }
+    }
+    Matrix out;
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) out.at(r, c) = a[r][c + 4];
+    }
+    return out;
+}
+
+double Matrix::determinant3() const {
+    return at(0, 0) * (at(1, 1) * at(2, 2) - at(1, 2) * at(2, 1)) - at(0, 1) * (at(1, 0) * at(2, 2) - at(1, 2) * at(2, 0)) +
+           at(0, 2) * (at(1, 0) * at(2, 1) - at(1, 1) * at(2, 0));
+}
+
+void Matrix::transformPoint(const double in[3], double out[3]) const {
+    double w = in[0] * at(0, 3) + in[1] * at(1, 3) + in[2] * at(2, 3) + at(3, 3);
+    if (w == 0.0) w = 1.0;
+    for (int c = 0; c < 3; ++c) out[c] = (in[0] * at(0, c) + in[1] * at(1, c) + in[2] * at(2, c) + at(3, c)) / w;
+}
+
+void Matrix::transformDirection(const double in[3], double out[3]) const {
+    for (int c = 0; c < 3; ++c) out[c] = in[0] * at(0, c) + in[1] * at(1, c) + in[2] * at(2, c);
+}
+
+Matrix Matrix::translate(double x, double y, double z) {
+    Matrix m;
+    m.at(3, 0) = x;
+    m.at(3, 1) = y;
+    m.at(3, 2) = z;
+    return m;
+}
+
+Matrix Matrix::scale(double x, double y, double z) {
+    Matrix m;
+    m.at(0, 0) = x;
+    m.at(1, 1) = y;
+    m.at(2, 2) = z;
+    return m;
+}
+
+Matrix Matrix::rotate(int axis, double degrees) {
+    const double a = degrees * kPi / 180.0, c = std::cos(a), s = std::sin(a);
+    Matrix m;
+    const int i = (axis + 1) % 3, j = (axis + 2) % 3;
+    m.at(i, i) = c;
+    m.at(i, j) = s;
+    m.at(j, i) = -s;
+    m.at(j, j) = c;
+    return m;
+}
+
+Matrix Matrix::orient(double x, double y, double z, double w) {
+    Matrix m;
+    m.at(0, 0) = 1.0 - 2.0 * (y * y + z * z);
+    m.at(0, 1) = 2.0 * (x * y + z * w);
+    m.at(0, 2) = 2.0 * (z * x - y * w);
+    m.at(1, 0) = 2.0 * (x * y - z * w);
+    m.at(1, 1) = 1.0 - 2.0 * (z * z + x * x);
+    m.at(1, 2) = 2.0 * (y * z + x * w);
+    m.at(2, 0) = 2.0 * (z * x + y * w);
+    m.at(2, 1) = 2.0 * (y * z - x * w);
+    m.at(2, 2) = 1.0 - 2.0 * (y * y + x * x);
+    return m;
+}
+
+// --- Transforms --------------------------------------------------------------------------------
+
+double timeCodeAt(const Stage& stage, double frame, double fps, double offset) {
+    const double start = stage.rootLayer().meta("startTimeCode") ? stage.startTimeCode() : 1.0;
+    const double rate = fps > 0.0 ? stage.timeCodesPerSecond() / fps : 1.0;
+    return start + (frame - 1.0 + offset) * rate;
+}
+
+Matrix localTransform(const Stage& stage, const Stage::Prim& prim, double time, bool* resets) {
+    if (resets) *resets = false;
+    Matrix m;
+    if (!xformable(prim.type)) return m;
+    const Value order = stage.value(prim, "xformOpOrder", time);
+    if (!order.isStrings()) return m;
+    // The last op first: p x op[n-1] x ... x op[0].
+    for (size_t k = order.strings.size(); k-- > 0;) {
+        std::string name = order.strings[k];
+        if (name == "!resetXformStack!") {
+            if (resets) *resets = true;
+            continue;
+        }
+        const bool invert = name.rfind("!invert!", 0) == 0;
+        if (invert) name = name.substr(8);
+        const Matrix op = opMatrix(stage, prim, name, time);
+        m = m * (invert ? op.inverse() : op);
+    }
+    return m;
+}
+
+Matrix worldTransform(const Stage& stage, const Stage::Prim& prim, double time) {
+    bool resets = false;
+    Matrix m = localTransform(stage, prim, time, &resets);
+    if (!resets && prim.parent && prim.parent->parent) m = m * worldTransform(stage, *prim.parent, time);
+    return m;
+}
+
+bool transformVaries(const Stage& stage, const Stage::Prim& prim) {
+    for (const Stage::Prim* p = &prim; p && p->parent; p = p->parent) {
+        if (!xformable(p->type)) continue;
+        if (stage.varies(*p, "xformOpOrder")) return true;
+        const Value order = stage.value(*p, "xformOpOrder", 0.0);
+        bool resets = false;
+        for (std::string name : order.strings) {
+            if (name == "!resetXformStack!") {
+                resets = true;
+                continue;
+            }
+            if (name.rfind("!invert!", 0) == 0) name = name.substr(8);
+            if (stage.varies(*p, name)) return true;
+        }
+        if (resets) break;
+    }
+    return false;
+}
+
+Matrix toMetresYUp(const Stage& stage) {
+    const double s = stage.metersPerUnit();
+    Matrix m = Matrix::scale(s, s, s);
+    if (stage.zUp()) {
+        Matrix turn;  // x stays; y to -z; z to y
+        turn.at(1, 1) = 0.0;
+        turn.at(1, 2) = -1.0;
+        turn.at(2, 1) = 1.0;
+        turn.at(2, 2) = 0.0;
+        m = turn * m;
+    }
+    return m;
+}
+
+bool visible(const Stage& stage, const Stage::Prim& prim, double time) {
+    for (const Stage::Prim* p = &prim; p && p->parent; p = p->parent) {
+        if (stage.value(*p, "visibility", time).text() == "invisible") return false;
+    }
+    return true;
+}
+
+std::string purpose(const Stage& stage, const Stage::Prim& prim) {
+    for (const Stage::Prim* p = &prim; p && p->parent; p = p->parent) {
+        const Value v = stage.value(*p, "purpose", 0.0);
+        if (!v.text().empty()) return v.text();
+    }
+    return "default";
+}
+
+// --- Geometry ----------------------------------------------------------------------------------
+
+std::vector<const Stage::Prim*> geometryPrims(const Stage& stage, const ImportOptions& options) {
+    std::vector<const Stage::Prim*> out;
+    for (const auto& owned : stage.prims()) {
+        const Stage::Prim& p = *owned;
+        if (!p.defined || !isGeometry(p.type)) continue;
+        bool inside = options.roots.empty();
+        for (const std::string& r : options.roots) inside = inside || under(p.path, r);
+        if (!inside) continue;
+        const std::string use = purpose(stage, p);
+        if ((use == "render" && !options.render) || (use == "proxy" && !options.proxy) ||
+            (use == "guide" && !options.guide)) {
+            continue;
+        }
+        out.push_back(&p);
+    }
+    return out;
+}
+
+std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const ImportOptions& options,
+                                         std::vector<std::string>* skipped) {
+    Builder builder;
+    builder.notes = skipped;
+    Reader reader{stage, options, time, toMetresYUp(stage), builder, skipped};
+    for (const Stage::Prim* p : geometryPrims(stage, options)) {
+        if (!visible(stage, *p, time)) continue;
+        if (p->type == "Mesh") reader.mesh(*p);
+        else if (p->type == "Points") reader.pointsPrim(*p);
+        else if (p->type == "BasisCurves") reader.curves(*p);
+        else reader.implicit(*p);
+    }
+    if (skipped) {
+        for (const auto& owned : stage.prims()) {
+            const Stage::Prim& p = *owned;
+            if (!p.defined) continue;
+            if (p.type == "PointInstancer" || p.type == "NurbsPatch" || p.type == "NurbsCurves" || p.type == "Volume" ||
+                p.type == "HermiteCurves" || p.type == "TetMesh") {
+                bool inside = options.roots.empty();
+                for (const std::string& r : options.roots) inside = inside || under(p.path, r);
+                if (inside) skipped->push_back(p.path + ": a " + p.type + " is not read");
+            }
+        }
+    }
+    return builder.finish();
+}
+
+bool geometryVaries(const Stage& stage, const ImportOptions& options) {
+    for (const Stage::Prim* p : geometryPrims(stage, options)) {
+        if (!p->clips.empty() || transformVaries(stage, *p)) return true;
+        for (const std::string& name : stage.propertyNames(*p)) {
+            if (stage.varies(*p, name)) return true;
+        }
+        for (const Stage::Prim* a = p; a && a->parent; a = a->parent) {
+            if (stage.varies(*a, "visibility")) return true;
+        }
+        for (const Stage::Prim* c : p->children) {
+            if (c->type == "GeomSubset" && stage.varies(*c, "indices")) return true;
+        }
+    }
+    return false;
+}
+
+// --- Cameras -----------------------------------------------------------------------------------
+
+bool cameraAt(const Stage& stage, const Stage::Prim& prim, double time, bool metresYUp, CameraSample& out) {
+    if (prim.type != "Camera") return false;
+    out = CameraSample{};
+    out.world = worldTransform(stage, prim, time);
+    if (metresYUp) out.world = out.world * toMetresYUp(stage);
+    auto number = [&](const char* name, double fallback) {
+        const Value v = stage.value(prim, name, time);
+        return v.isNumbers() && !v.numbers.empty() ? v.numbers[0] : fallback;
+    };
+    out.focalLength = number("focalLength", out.focalLength);
+    out.horizontalAperture = number("horizontalAperture", out.horizontalAperture);
+    out.verticalAperture = number("verticalAperture", out.verticalAperture);
+    out.horizontalApertureOffset = number("horizontalApertureOffset", 0.0);
+    out.verticalApertureOffset = number("verticalApertureOffset", 0.0);
+    out.focusDistance = number("focusDistance", 0.0);
+    out.fStop = number("fStop", 0.0);
+    const Value clip = stage.value(prim, "clippingRange", time);
+    if (clip.isNumbers() && clip.numbers.size() >= 2) {
+        out.nearClip = clip.numbers[0];
+        out.farClip = clip.numbers[1];
+    }
+    if (metresYUp) {
+        out.nearClip *= stage.metersPerUnit();
+        out.farClip *= stage.metersPerUnit();
+        out.focusDistance *= stage.metersPerUnit();
+    }
+    out.orthographic = stage.value(prim, "projection", time).text() == "orthographic";
+    return true;
+}
+
+bool cameraVaries(const Stage& stage, const Stage::Prim& prim) {
+    if (transformVaries(stage, prim)) return true;
+    for (const char* name : {"focalLength", "horizontalAperture", "verticalAperture", "horizontalApertureOffset",
+                             "verticalApertureOffset", "clippingRange", "focusDistance", "fStop"}) {
+        if (stage.varies(prim, name)) return true;
+    }
+    return false;
+}
+
+std::vector<const Stage::Prim*> cameras(const Stage& stage) {
+    std::vector<const Stage::Prim*> out;
+    for (const auto& p : stage.prims()) {
+        if (p->defined && p->type == "Camera") out.push_back(p.get());
+    }
+    return out;
+}
+
+}  // namespace pg::usd

@@ -307,9 +307,9 @@ void bindSimulation(py::module_& m) {
         })
         .def_property_readonly("displayed", [](const PySimulation& s) { return s.compiled.display; })
         .def("geometry", [](PySimulation& s, int id) { return PyGeometry(s.cook(id)); })
-        .def("camera", [](const PySimulation& s) -> py::object {
+        .def("camera", [](const PySimulation& s, int frame) -> py::object {
             if (!s.compiled.hasCamera) return py::none();
-            const sim::Camera& c = s.compiled.cameraAt(std::max(s.frame, 1));
+            const sim::Camera& c = s.compiled.cameraAt(frame > 0 ? frame : std::max(s.frame, 1));
             py::dict out;
             out["position"] = tupleOf(c.position);
             out["rotation"] = tupleOf(c.rotation);
@@ -317,7 +317,7 @@ void bindSimulation(py::module_& m) {
             out["width"] = c.width;
             out["height"] = c.height;
             return out;
-        })
+        }, py::arg("frame") = 0)
         .def("write_cache_info", [](const PySimulation& s, const std::string& folder) {
             sim::CacheInfo info;
             info.frames = s.frame;

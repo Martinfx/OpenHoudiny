@@ -79,6 +79,18 @@ ParamDef file(const char* help) {
     return {"file", "File", "Shape", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help, {".obj"}, {}};
 }
 
+ParamDef usdFile(const char* help) {
+    return {"file", "File", "File", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help,
+            {".usd", ".usda", ".usdc", ".usdz"}, {}};
+}
+
+ParamDef frameOffset() {
+    return {"offset", "Frame Offset", "Time", K::Float, {0.0f, 0.0f, 0.0f}, -100.0f, 100.0f, -1e6f, 1e6f, "",
+            "Frame 1 reads the stage's first time code (its startTimeCode, 1 when it says none), each frame after "
+            "it as far on as the stage's time codes per second and the Output's frame rate make it. This moves "
+            "it by as many frames."};
+}
+
 ParamDef position(Vec3 at, const char* help) {
     return {"center", "Position", "Transform", K::Vector, {at.x, at.y, at.z}, -1.0f, 1.0f, -kBig, kBig, "m", help};
 }
@@ -430,6 +442,31 @@ std::vector<NodeType> buildTypes() {
         f.section = "File";
         geometry("file", "File", "file", "Geometry from an OBJ file -- from Blender, Houdini, Maya, anywhere.",
                  {}, {f});
+    }
+    {
+        auto toggle = [](const char* name, const char* label, bool on, const char* help) {
+            return ParamDef{name, label, "Import", K::Toggle, {on ? 1.0f : 0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "", help};
+        };
+        geometry("usd_import", "USD Import", "usdimport",
+                 "Geometry from a USD file -- a set, a scan, props, a cache from Houdini, Maya or Blender -- as its "
+                 "stage composes it: sublayers, references, payloads, variants. Meshes with their normals, uv, "
+                 "colours and primvars; curves; points; the implicit shapes as polygons; each primitive's prim in "
+                 "`path`, a mesh's subsets as groups. Animated, it is read at each frame.",
+                 {},
+                 {usdFile("A USD file: .usd, .usda, .usdc or .usdz. A relative path is read from the network's "
+                          "folder; a file that changes is read again."),
+                  text("prims", "Prims", "Import", "",
+                       "Which prims to read, with all that is under them: paths separated by spaces "
+                       "(/World/set /World/props). Empty: the whole stage."),
+                  frameOffset(),
+                  toggle("render", "Render", true, "Read what is only for renders (purpose render)."),
+                  toggle("proxy", "Proxy", false, "Read the light stand-ins of heavy geometry (purpose proxy)."),
+                  toggle("guide", "Guide", false, "Read what only guides the eye (purpose guide)."),
+                  toggle("metres", "Metres, Y Up", true,
+                         "The stage's units and up axis made the program's: metres -- metersPerUnit; centimetres "
+                         "when the stage says none -- and Y up. Off: as the file has them."),
+                  toggle("subsets", "Subsets as Groups", true, "A mesh's subsets of faces as primitive groups of their names."),
+                  toggle("path", "Path Attribute", true, "Each primitive's prim, as the text attribute path.")});
     }
     geometry("transform", "Transform", "transform",
              "Moves, turns and sizes what comes in: scale, then rotate, then translate. Only the positions "
@@ -939,6 +976,26 @@ std::vector<NodeType> buildTypes() {
                    "The picture's height."}},
                  1});
     t.back().handles = {"center", "rotation", nullptr, nullptr, nullptr, nullptr};
+    t.push_back({"usd_camera", "USD Camera", "Render",
+                 "A camera from a USD file -- a matchmove's, a layout's -- where it stands, which way it looks and "
+                 "its lens at each frame, as the file has them. Linked into the Output's Camera, it is what renders "
+                 "look through: the effect sits in the shot the plate was filmed in.",
+                 {},
+                 {{"camera", "Camera", PinType::Camera}},
+                 {usdFile("A USD file with the camera: .usd, .usda, .usdc or .usdz. A relative path is read from the "
+                          "network's folder."),
+                  {"prim", "Prim", "Camera", K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+                   "The camera's prim: /World/cam. Empty: the stage's first camera."},
+                  frameOffset(),
+                  {"width", "Width", "Image", K::Int, {1920.0f, 0.0f, 0.0f}, 16.0f, 3840.0f, 16.0f, 8192.0f, "px",
+                   "The picture's width. The lens is fitted to it: what the camera sees from side to side is what "
+                   "its film back (horizontal aperture) and focal length say."},
+                  {"height", "Height", "Image", K::Int, {0.0f, 0.0f, 0.0f}, 0.0f, 2160.0f, 0.0f, 8192.0f, "px",
+                   "The picture's height. 0: as the film back is shaped -- width x vertical / horizontal aperture."},
+                  {"metres", "Metres, Y Up", "Camera", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "The stage's units and up axis made the program's (metres, Y up), as USD Import does. Off: as "
+                   "the file has them."}},
+                 1});
     t.push_back({"output", "Output", "Render",
                  "Where the network ends: what the viewport shows and `prototype sim` renders -- every look "
                  "linked into it, in one scene, lit by one sun and one sky, at one frame rate -- through the "
@@ -2706,7 +2763,7 @@ Vec3 spinBetween(const Vec3& fromDegrees, const Vec3& toDegrees, float dt) {
 Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) const {
     CompileMemo memo;
     Compiled c = compileFrame(folder, geometry, 1.0f, memo, false);
-    if (!anyAnimated()) return c;
+    if (!anyAnimated() && !c.fileAnimation) return c;
 
     // Animated: the network at every frame.
     const int count = std::max(1, c.frames);
@@ -2733,6 +2790,14 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
         w.water.solver.closedSides = c.world.water.solver.closedSides;
         track->push_back(std::move(w));
         c.poses.push_back({std::move(at.look), std::move(at.solids), at.camera});
+    }
+    // A camera from a file turns as the file says; of the angles that say
+    // it, those nearest the frame before -- no flips from 180 to -180.
+    if (const Node* cam = node(c.camera.node); cam && cam->type == "usd_camera") {
+        for (size_t k = 1; k < c.poses.size(); ++k) {
+            Camera& now = c.poses[k].camera;
+            now.rotation = Camera::rotationFor(now.forward(), now.up(), c.poses[k - 1].camera.rotation);
+        }
     }
     // How what is animated moves: from each frame to the next, the one
     // before it -- frame 1 as frame 2 will find it.
@@ -3002,14 +3067,37 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     // The camera of the shot.
     if (const Node* cam = upstream(*output, "camera")) {
         Camera& m = c.camera;
-        m.position = v3(*cam, "center");
-        m.rotation = v3(*cam, "rotation");
-        m.focal = f(*cam, "focal");
-        m.width = whole(*cam, "width");
-        m.height = whole(*cam, "height");
-        m.node = cam->id;
-        m = m.sanitized();
-        c.hasCamera = true;
+        if (cam->type == "usd_camera") {
+            // A matchmove's camera, at this frame, from its file.
+            std::string file = text(cam->id, "file");
+            if (!file.empty() && !folder.empty() && std::filesystem::path(file).is_relative()) {
+                file = (std::filesystem::path(folder) / file).lexically_normal().string();
+            }
+            std::string error;
+            std::vector<std::string> warnings;
+            bool varies = false;
+            if (file.empty()) {
+                problem(L::Error, cam->id, "no file: which USD file has the camera?");
+            } else if (cameraFromUsd(file, text(cam->id, "prim"), frame, 1.0f / c.world.timeStep, f(*cam, "offset"),
+                                     whole(*cam, "width"), whole(*cam, "height"), f(*cam, "metres") != 0.0f, m, error,
+                                     &warnings, &varies)) {
+                for (const std::string& w : warnings) problem(L::Warning, cam->id, w);
+                c.fileAnimation = c.fileAnimation || varies;
+                c.hasCamera = true;
+            } else {
+                problem(L::Error, cam->id, error);
+            }
+            m.node = cam->id;
+        } else {
+            m.position = v3(*cam, "center");
+            m.rotation = v3(*cam, "rotation");
+            m.focal = f(*cam, "focal");
+            m.width = whole(*cam, "width");
+            m.height = whole(*cam, "height");
+            m.node = cam->id;
+            m = m.sanitized();
+            c.hasCamera = true;
+        }
         c.active.push_back(cam->id);
     }
 

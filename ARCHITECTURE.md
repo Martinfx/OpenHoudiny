@@ -362,6 +362,13 @@ src/pg/io/       Obj        čtení a zápis OBJ (body, polygony, čáry)
                  Export     geometrie podle přípony (.ply, .obj, .vdb), sekvence ($F4)
                  Jpeg       baseline JPEG: YCbCr 4:2:0, tabulky normy, AAN DCT
                  Video      video po snímcích: AVI s Motion JPEG sám, .mp4/.webm/.gif rourou do ffmpeg
+src/pg/usd/      Layer      vrstva USD: hodnoty, specy primů a vlastností, list edits, varianty;
+                            soubor i soubor v balíčku .usdz
+                 Text       parser .usda
+                 Crate      čtečka .usdc: LZ4, celočíselné kódování USD, tabulky, hodnoty všech typů
+                 Stage      skládání scény (indexy primů, síla názorů LIVRPS), hodnoty v čase,
+                            interpolace, value clips
+                 Geom       transformace z xformOps, jednotky a osa, geometrie a kamery ze scény
 src/pg/shader/   Types      typy shader grafu a jejich převody
                  NodeLibrary definice uzlů z textu (builtin.pgnodes)
                  ShaderGraph instance uzlů, spoje, formát .pgsg
@@ -460,6 +467,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Destrukce: Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení na prach, drť, vytlačený vzduch žene prach ([docs/destruction.md](docs/destruction.md)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
+| ✅ | **Čtení USD** bez knihovny: `.usda`, `.usdc` (verze 0.4.0–0.10.0), `.usdz`; scéna složená jako v USD (sublayers, reference, payloady, varianty, třídy, value clips); kamera z matchmove (USD Camera) a geometrie (USD Import) v metrech s Y nahoru; transformace, skládání i geometrie sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)) |
 | ✅ | **Python API** `import pg` (pybind11): sítě, parametry, výrazy a klíče, vaření a simulace ze skriptu; atributy a data snímků jako pole numpy bez kopie (buffer protocol nad sdílenou pamětí jádra); cache, USD, render přes `prototype`; síť jako Python (`as_code()`) ([docs/python.md](docs/python.md)) |
 | ✅ | Render do **EXR** bez knihovny: lineární světlo, hloubka, vektory pohybu, masky; čte ho OpenEXR 3.5 ([docs/render.md](docs/render.md)) |
 | ✅ | Video: AVI s Motion JPEG bez závislostí (vlastní kodér JPEG), MP4/MOV/MKV (H.264), WebM (VP9) a GIF přes ffmpeg; v editoru render na pozadí s průběhem, z příkazové řádky `sim OUT.mp4` a `render OUT.mp4`; ověřeno dekódováním v ffmpeg |
@@ -479,7 +487,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 
 ### Není v prototypu (vědomě)
 
-I/O (čtení USD, Alembic; VDB jen zápis hustých mřížek) · JIT · packed primitives a out-of-core ·
+I/O (materiály a PointInstancer z USD, Alembic; VDB jen zápis hustých mřížek) · JIT · packed primitives a out-of-core ·
 Python uvnitř sítě (Python SOP) · booleany, geometrické dotazy (xyzdist, primuv) · simulace
 látek · řídké mřížky (VDB) a simulace na GPU
 

@@ -64,6 +64,7 @@ add_library(pgcore
   src/pg/nodes/Topology.cpp
   src/pg/nodes/Fracture.cpp
   src/pg/nodes/Volumes.cpp
+  src/pg/nodes/Usd.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/Jpeg.cpp
@@ -72,6 +73,11 @@ add_library(pgcore
   src/pg/io/Export.cpp
   src/pg/io/Usda.cpp
   src/pg/io/Exr.cpp
+  src/pg/usd/Layer.cpp
+  src/pg/usd/Text.cpp
+  src/pg/usd/Crate.cpp
+  src/pg/usd/Stage.cpp
+  src/pg/usd/Geom.cpp
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
@@ -433,7 +439,8 @@ if(PG_BUILD_PYTHON)
     src/python/Module.cpp
     src/python/PyGeometry.cpp
     src/python/PyNetwork.cpp
-    src/python/PySimulation.cpp)
+    src/python/PySimulation.cpp
+    src/python/PyUsd.cpp)
   target_link_libraries(_pg PRIVATE pgsim)
   target_include_directories(_pg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/python)
   target_compile_definitions(_pg PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
@@ -484,12 +491,14 @@ add_executable(pgtests
   tests/test_sops.cpp
   tests/test_export.cpp
   tests/test_usd.cpp
+  tests/test_usd_read.cpp
   tests/test_exr.cpp
   tests/test_volume_mesh.cpp
   tests/test_video.cpp
 )
 target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
-target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
+target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim"
+                                           PG_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 add_test(NAME pgtests COMMAND pgtests)
 # The commands work in every build, with or without the editor.
 add_test(NAME prototype_list COMMAND prototype list)

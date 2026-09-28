@@ -222,7 +222,7 @@ Testy jsou v `tests/test_usd.cpp` (9):
   z dílů zatím nic neposkládá.
 - **Objekty z uzlu Object** (koule, kvádry) se neexportují. Jsou to překážky
   simulace, ne to, co se renderuje. Kdo je chce vidět, zobrazí je jako geometrii.
-- **USD se zatím jen zapisuje.** Čtení (kamera z matchmove, modely z jiných
-  programů) je další bod kroku 3.
+- **Čtení** (kamera z matchmove, kulisa a modely z jiných programů, zpětné
+  načtení vlastního exportu) popisuje [usd-import.md](usd-import.md).
 - **Světla nemají fyzikální jednotky.** Sílu slunce a oblohy je potřeba
   v rendereru doladit.

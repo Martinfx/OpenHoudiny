@@ -177,8 +177,13 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   tam, kde se něco mění. Co je velké a v každém snímku jiné, jde do
   souboru pro každý snímek (value clips), takže záběr libovolné délky se
   nemusí vejít do paměti.
-- **USD — čtení**: geometrie a kamera z jiných programů (kamera
-  z matchmove) jako uzel sítě.
+- ✅ **USD — čtení** (bez knihovny; [docs/usd-import.md](docs/usd-import.md)):
+  `.usda`, `.usdc` (verze 0.4.0 až 0.10.0) i `.usdz`, scéna složená jako
+  v USD — sublayers, reference a payloady s posunem času, varianty, třídy,
+  value clips; uzel USD Camera dá Outputu kameru z matchmove snímek po
+  snímku, USD Import kulisu a modely jako geometrii v metrech s Y nahoru;
+  `prototype usd`, `pg.UsdStage`. Ověřeno proti knihovně USD; ukázka
+  [examples/sim/matchmove.pgsim](examples/sim/matchmove.pgsim).
 - ✅ **`v` a stabilní `id`** u všech částic (drť, voda, déšť): z nich
   renderery počítají rozmazání pohybem a instancování. Nesou je snímky
   (cache formát 4), uzly Liquid Points, Rain Points a RBD Pieces (`grit`)

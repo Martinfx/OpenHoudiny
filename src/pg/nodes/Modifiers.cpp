@@ -212,6 +212,7 @@ void registerBuiltinNodes() {
         registerTopologyNodes();
         registerFractureNodes();
         registerVolumeNodes();
+        registerUsdNodes();
         return true;
     }();
     (void)once;

@@ -73,6 +73,8 @@
 #include "pg/sim/Network.h"
 #include "pg/sim/UsdExport.h"
 #include "pg/sim/World.h"
+#include "pg/usd/Geom.h"
+#include "pg/usd/Stage.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1162,6 +1164,69 @@ int cook(const Options& o) {
     return 0;
 }
 
+// --- usd ---------------------------------------------------------------------------
+
+/// What a USD file composes to, as the program reads it: the stage's units,
+/// axes and time, its layers, its prims as a tree, its cameras, and what
+/// USD Import makes of it at a frame.
+int usdInfo(const Options& o) {
+    if (o.positional.size() != 1) return usage();
+    const std::string& path = o.positional[0];
+    std::string error;
+    const auto stage = usd::Stage::open(path, error);
+    if (!stage) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    std::printf("%s: %s up, %g m a unit", path.c_str(), stage->zUp() ? "Z" : "Y", stage->metersPerUnit());
+    if (stage->hasTimeRange()) std::printf(", time codes %g to %g", stage->startTimeCode(), stage->endTimeCode());
+    std::printf(" at %g a second", stage->timeCodesPerSecond());
+    if (!stage->defaultPrim().empty()) std::printf("; default prim %s", stage->defaultPrim().c_str());
+    std::printf("\n");
+    const std::vector<std::string> files = stage->files();
+    std::printf("%zu %s:", files.size(), files.size() == 1 ? "layer" : "layers");
+    for (const std::string& f : files) std::printf(" %s", fs::path(f).filename().string().c_str());
+    std::printf("\n");
+    for (const std::string& w : stage->warnings()) std::printf("warning: %s\n", w.c_str());
+    size_t shown = 0;
+    for (const auto& owned : stage->prims()) {
+        const usd::Stage::Prim& p = *owned;
+        if (p.path == "/") continue;
+        int depth = 0;
+        for (const usd::Stage::Prim* a = p.parent; a && a->parent; a = a->parent) ++depth;
+        if (++shown > 400) {
+            std::printf("  ... %zu prims in all\n", stage->prims().size() - 1);
+            break;
+        }
+        std::string flags;
+        if (p.specifier == usd::Specifier::Class) flags += " class";
+        else if (p.specifier == usd::Specifier::Over) flags += " over";
+        if (!p.active) flags += " inactive";
+        for (const usd::Stage::Opinion& op : p.opinions) {
+            for (const auto& [set, variant] : op.spec->variantSelections) {
+                if (flags.find("{" + set + "=") == std::string::npos) flags += " {" + set + "=" + variant + "}";
+            }
+        }
+        std::printf("  %s%s%s%s%s\n", std::string(static_cast<size_t>(depth) * 2, ' ').c_str(), p.name.c_str(),
+                    p.type.empty() ? "" : ("  " + p.type).c_str(), flags.empty() ? "" : "  [", flags.empty() ? "" : (flags.substr(1) + "]").c_str());
+    }
+    const double time = usd::timeCodeAt(*stage, o.frame > 0 ? o.frame : 1, stage->timeCodesPerSecond());
+    for (const usd::Stage::Prim* c : usd::cameras(*stage)) {
+        usd::CameraSample s;
+        usd::cameraAt(*stage, *c, time, true, s);
+        std::printf("camera %s: %g mm lens, film back %g x %g, at (%.3f, %.3f, %.3f) m%s\n", c->path.c_str(),
+                    s.focalLength, s.horizontalAperture, s.verticalAperture, s.world.at(3, 0), s.world.at(3, 1),
+                    s.world.at(3, 2), usd::cameraVaries(*stage, *c) ? ", moving" : "");
+    }
+    std::vector<std::string> notes;
+    const auto geo = usd::importGeometry(*stage, time, usd::ImportOptions{}, &notes);
+    std::printf("time code %g: %zu points, %zu primitives from %zu prims%s\n", time, geo->pointCount(),
+                geo->primitiveCount(), usd::geometryPrims(*stage, usd::ImportOptions{}).size(),
+                usd::geometryVaries(*stage, usd::ImportOptions{}) ? ", changing in time" : "");
+    for (size_t i = 0; i < notes.size() && i < 10; ++i) std::printf("  %s\n", notes[i].c_str());
+    return 0;
+}
+
 /// The command of the earlier versions: an example by --preset.
 int pyro(const Options& o) {
     if (o.positional.size() != 1) return usage();
@@ -1173,7 +1238,7 @@ int pyro(const Options& o) {
 
 bool isCommand(const std::string& word) {
     return word == "list" || word == "gen" || word == "check" || word == "render" || word == "sim" ||
-           word == "pyro" || word == "cook";
+           word == "pyro" || word == "cook" || word == "usd";
 }
 
 void printUsage(std::FILE* out) {
@@ -1228,6 +1293,10 @@ void printUsage(std::FILE* out) {
                  "                   and writes it by OUT's extension, $F4 in OUT for the frame; '-' writes nothing.\n"
                  "                   Says what it made and how long it took; --hash its content hash, the same\n"
                  "                   on any number of --threads\n"
+                 "  prototype usd    FILE.usd|.usda|.usdc|.usdz [--frame N]\n"
+                 "                   what a USD file composes to, read by the program's own reader: units, up\n"
+                 "                   axis, time codes, layers, the prims as a tree, cameras, and what USD Import\n"
+                 "                   makes of it at frame N (1: the stage's first time code)\n"
                  "  prototype help\n");
 }
 
@@ -1317,6 +1386,7 @@ int runCommand(int argc, char** argv) {
     if (o.command == "sim") return simCommand(o);
     if (o.command == "cook") return cook(o);
     if (o.command == "pyro") return pyro(o);
+    if (o.command == "usd") return usdInfo(o);
     return render(o, lib);
 }
 

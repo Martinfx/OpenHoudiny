@@ -85,5 +85,6 @@ void bindArray(py::module_& m);
 void bindGeometry(py::module_& m);
 void bindNetwork(py::module_& m);
 void bindSimulation(py::module_& m);
+void bindUsd(py::module_& m);
 
 }  // namespace pg::python

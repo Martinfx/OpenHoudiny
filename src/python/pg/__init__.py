@@ -18,7 +18,8 @@ attributes come as numpy arrays over the core's own memory -- read only,
 as the core shares it between geometries; set_attribute() and the tables'
 item assignment copy new values in. A Simulation steps a network frame by
 frame (or reads the frames back from a cache); UsdExport writes the shot to
-USD as it goes. Pictures and videos are drawn by the program `prototype`
+USD as it goes, and UsdStage reads USD -- a matchmove's camera, a set --
+with the program's own reader. Pictures and videos are drawn by the program `prototype`
 (Network.render), so the module itself needs no OpenGL.
 
 Without numpy the arrays are memoryviews of the same memory.
@@ -45,7 +46,7 @@ except ImportError:  # the package copied out of its build
     _build = None
 
 __all__ = [
-    "Error", "Network", "Node", "Geometry", "Simulation", "Frame", "UsdExport",
+    "Error", "Network", "Node", "Geometry", "Simulation", "Frame", "UsdExport", "UsdStage", "UsdPrim",
     "node_types", "node_type", "examples", "assets", "load_assets", "run",
 ]
 
@@ -928,10 +929,10 @@ class Simulation:
             id = self.network._id(node)
         return Geometry(self._s.geometry(id))
 
-    def camera(self):
-        """The Output's camera at the current frame -- position, rotation
-        (degrees about x, y, z), focal (mm), width, height -- or None."""
-        return self._s.camera()
+    def camera(self, frame=None):
+        """The Output's camera at the current frame (or `frame`) -- position,
+        rotation (degrees about x, y, z), focal (mm), width, height -- or None."""
+        return self._s.camera(frame or 0)
 
     def cache(self, folder, frames=None):
         """Simulates on, writing each frame to a cache folder (and cache.txt)."""
@@ -996,3 +997,146 @@ class UsdExport:
         if kind is None:
             self.finish()
         return False
+
+
+class UsdPrim:
+    """A prim of a UsdStage: its path, type, and its values at a time."""
+
+    def __init__(self, stage, path, type, defined, active, specifier):
+        self.stage = stage
+        self.path = path
+        self.type = type
+        self.defined = defined
+        self.active = active
+        self.specifier = specifier
+
+    @property
+    def name(self):
+        return self.path.rsplit("/", 1)[-1]
+
+    @property
+    def children(self):
+        return [self.stage.prim(p) for p in self.stage._s.children(self.path)]
+
+    def properties(self):
+        """The names of its attributes and relationships."""
+        return self.stage._s.property_names(self.path)
+
+    def get(self, name, time=None):
+        """An attribute's value at `time` (a time code; frame 1's when None)
+        -- numbers, tuples, lists of them, text -- or None where it has none."""
+        return self.stage._s.value(self.path, name, self.stage._time(time))
+
+    def varies(self, name):
+        return self.stage._s.varies(self.path, name)
+
+    def sample_times(self, name):
+        """The time codes an attribute has samples at, in order -- value
+        clips' too; empty for one that holds a single value."""
+        return self.stage._s.sample_times(self.path, name)
+
+    def targets(self, name):
+        """A relationship's targets, as paths of the stage."""
+        return self.stage._s.targets(self.path, name)
+
+    def metadata(self, key):
+        return self.stage._s.metadata(self.path, key)
+
+    def world(self, time=None):
+        """Its transform to the world at `time`, 4 x 4, rows (p x M), in the
+        stage's own units and axes."""
+        m = self.stage._s.world(self.path, self.stage._time(time))
+        return _np.array(m) if _np is not None else m
+
+    def local(self, time=None):
+        m, resets = self.stage._s.local(self.path, self.stage._time(time))
+        return _np.array(m) if _np is not None else m
+
+    def __repr__(self):
+        return f"<pg.UsdPrim {self.path} {self.type or '(no type)'}>"
+
+
+class UsdStage:
+    """A USD file (.usd, .usda, .usdc, .usdz) as the stage it composes to --
+    sublayers, references, payloads, variants, value clips -- read by the
+    program's own reader: no pxr needed.
+
+        stage = pg.UsdStage("shot.usd")
+        cam = stage.camera()                  # the first camera, frame 1
+        set_ = stage.geometry(prims=["/World/set"])
+    """
+
+    def __init__(self, path):
+        self.path = os.fspath(path)
+        self._s = _pg.UsdStage.open(self.path)
+        self.notes = []  # what the last geometry() did not read, and why
+
+    meters_per_unit = property(lambda self: self._s.meters_per_unit)
+    up_axis = property(lambda self: self._s.up_axis)
+    start_time_code = property(lambda self: self._s.start_time_code)
+    end_time_code = property(lambda self: self._s.end_time_code)
+    has_time_range = property(lambda self: self._s.has_time_range)
+    time_codes_per_second = property(lambda self: self._s.time_codes_per_second)
+    default_prim = property(lambda self: self._s.default_prim)
+    warnings = property(lambda self: self._s.warnings)
+    files = property(lambda self: self._s.files)
+
+    def _time(self, time):
+        return self.time_code(1) if time is None else float(time)
+
+    def time_code(self, frame, fps=None, offset=0.0):
+        """The time code the program's frame `frame` reads (USD Import, USD
+        Camera): frame 1 is the start time code, frames at `fps` (the
+        stage's own time codes per second when None)."""
+        start = self.start_time_code if self.has_time_range else 1.0
+        rate = self.time_codes_per_second / fps if fps else 1.0
+        return start + (frame - 1 + offset) * rate
+
+    def prims(self, type=None, all=False):
+        """Its prims in the order of the tree: the defined ones (all=True:
+        overs, classes and inactive ones too), of `type` when given."""
+        out = []
+        for path, t, defined, active, spec in self._s.prims():
+            if (all or defined) and (type is None or t == type):
+                out.append(UsdPrim(self, path, t, defined, active, spec))
+        return out
+
+    def prim(self, path):
+        for p, t, defined, active, spec in self._s.prims():
+            if p == path:
+                return UsdPrim(self, p, t, defined, active, spec)
+        raise Error(f"no prim {path} on the stage")
+
+    def cameras(self):
+        return [self.prim(p) for p in self._s.cameras()]
+
+    def camera(self, path=None, time=None, metres=True):
+        """A camera's world matrix (rows; metres, Y up unless metres=False),
+        focal length, apertures and their offsets, clipping range, focus
+        distance, f-stop, whether it is orthographic and whether it moves."""
+        if path is None:
+            cams = self._s.cameras()
+            if not cams:
+                raise Error(f"no camera in {self.path}")
+            path = cams[0]
+        c = self._s.camera(path, self._time(time), metres)
+        if _np is not None:
+            c["world"] = _np.array(c["world"])
+        c["path"] = path
+        return c
+
+    def geometry(self, time=None, prims=(), render=True, proxy=False, guide=False, metres=True,
+                 subsets=True, path_attribute=True):
+        """Its geometry at `time`, in the world -- what USD Import makes of it:
+        meshes, curves, points, the implicit shapes as polygons, under
+        `prims` (all when empty). What it could not read is in self.notes."""
+        g, notes = self._s.geometry(self._time(time), list(prims), render, proxy, guide, metres, subsets,
+                                    path_attribute)
+        self.notes = notes
+        return Geometry(g)
+
+    def geometry_varies(self, prims=(), render=True, proxy=False, guide=False):
+        return self._s.geometry_varies(list(prims), render, proxy, guide)
+
+    def __repr__(self):
+        return f"<pg.UsdStage {self.path}>"

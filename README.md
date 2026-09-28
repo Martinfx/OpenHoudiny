@@ -43,6 +43,11 @@ okna.
   a renderery: geometrie, kusy jako tělesa v pohybu, drť, povrch vody,
   déšť, prach jako VDB, kamera, slunce a obloha; co se mění každý snímek,
   v souboru pro každý snímek (value clips)
+- **[docs/usd-import.md](docs/usd-import.md)** — čtení USD bez knihovny
+  (`.usda`, `.usdc`, `.usdz`): scéna složená jako v USD (sublayers,
+  reference, payloady, varianty, třídy, value clips), kamera z matchmove
+  jako kamera záběru, kulisa a modely jako geometrie v síti; ověřené proti
+  knihovně USD
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem; EXR v lineárním světle s hloubkou, vektory
@@ -99,8 +104,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 271 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 92 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 USD, 3 EXR, 5 video
-ctest --test-dir build -R python                   # 16 testů modulu pg (Python)
+./build/pgtests            # 287 testů: 62 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 25 shader graf, 92 simulace, voda, déšť, geometrie, animace, 13 cache a export, 9 zápis USD, 16 čtení USD, 3 EXR, 5 video
+ctest --test-dir build -R python                   # 25 testů modulu pg (Python); proti knihovně USD, je-li usd-core
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
@@ -123,7 +128,9 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype --example street                 # ulice ze tří digital assetů Building
 ./build/prototype cook street street.obj --set tower.floors=12   # geometrie bez okna, do OBJ
 ./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
-./build/prototype help                             # příkazy: list, gen, check, render, sim, cook
+./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)
+./build/prototype usd examples/usd/shot.usda       # co USD soubor obsahuje: vrstvy, strom, kamery, geometrie
+./build/prototype help                             # příkazy: list, gen, check, render, sim, cook, usd
 ```
 
 `pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,
@@ -252,6 +259,17 @@ hned, jak snímek přijde, a scéna ho skládá (USD value clips) — záběr
 libovolné délky se nemusí vejít do paměti. Ověřeno Pixarovou knihovnou,
 všechny validátory bez nálezu ([docs/usd.md](docs/usd.md)).
 
+**Čtení USD**: záběr od ostatních oddělení jde do sítě bez knihovny USD,
+z textu `.usda`, binárního `.usdc` (všechny verze od 0.4.0) i balíčku
+`.usdz`, složený jako v USD: sublayers s posunem času, reference
+a payloady, varianty (výběr záběru přebije výchozí volbu assetu), třídy,
+value clips. Uzel **USD Camera** dá Outputu kameru z matchmove, snímek po
+snímku, s objektivem napasovaným na film. **USD Import** přinese kulisu,
+modely nebo cache jako geometrii (normály, uv, barvy, primvars, subsety
+jako skupiny) v metrech s Y nahoru, i když soubor přišel z Mayi
+v centimetrech se Z nahoru. Transformace, skládání, geometrie i value
+clips sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)).
+
 **Obrázky a video**: záběr jde do PNG, do očíslované sekvence nebo do videa
 — `.avi` (Motion JPEG, vlastní kodér JPEG i kontejner) bez jakékoli
 závislosti, `.mp4`, `.mov`, `.mkv`, `.webm` a `.gif` přes ffmpeg. Editor
@@ -270,7 +288,7 @@ do cache, do USD i do obrazu, a `net.as_code()` vypíše síť jako Python,
 který ji postaví znovu — tak vznikla scéna z kroku 2 postavená čistě
 z Pythonu ([docs/python.md](docs/python.md)).
 
-Vědomě chybí (zatím): čtení USD, Alembic, čtení VDB, JIT, packed primitives,
+Vědomě chybí (zatím): materiály a instance z USD, Alembic, čtení VDB, JIT, packed primitives,
 Python uvnitř sítě (Python SOP), simulace látek — pořadí v
 [ROADMAP.md §4](ROADMAP.md#4-další-kroky). Podrobně v
 [ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).

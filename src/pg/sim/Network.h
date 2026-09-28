@@ -272,6 +272,9 @@ struct Compiled {
     /// one is linked into it: otherwise the renders frame the scene.
     bool hasCamera = false;
     Camera camera;
+    /// Something read from a file changes with the frames -- a USD Camera's
+    /// camera: what is drawn is compiled at every frame, as when animated.
+    bool fileAnimation = false;
     /// The geometry node whose geometry is shown (Network::displayed()); 0 if none.
     int display = 0;
 

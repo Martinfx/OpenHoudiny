@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    defaultPrim = "Set"
+    doc = "The matchmove example: the courtyard set and the plate camera."
+    endTimeCode = 1072
+    framesPerSecond = 24
+    metersPerUnit = 0.01
+    startTimeCode = 1001
+    subLayers = [
+        @./camera.usda@,
+        @./courtyard.usda@
+    ]
+    timeCodesPerSecond = 24
+    upAxis = "Z"
+)
+

@@ -1,0 +1,83 @@
+#usda 1.0
+(
+    defaultPrim = "Set"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "Set" (
+    kind = "assembly"
+)
+{
+    def Mesh "ground"
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 8, 7, 1, 2, 9, 8, 2, 3, 10, 9, 3, 4, 11, 10, 4, 5, 12, 11, 5, 6, 13, 12, 7, 8, 15, 14, 8, 9, 16, 15, 9, 10, 17, 16, 10, 11, 18, 17, 11, 12, 19, 18, 12, 13, 20, 19, 14, 15, 22, 21, 15, 16, 23, 22, 16, 17, 24, 23, 17, 18, 25, 24, 18, 19, 26, 25, 19, 20, 27, 26, 21, 22, 29, 28, 22, 23, 30, 29, 23, 24, 31, 30, 24, 25, 32, 31, 25, 26, 33, 32, 26, 27, 34, 33, 28, 29, 36, 35, 29, 30, 37, 36, 30, 31, 38, 37, 31, 32, 39, 38, 32, 33, 40, 39, 33, 34, 41, 40, 35, 36, 43, 42, 36, 37, 44, 43, 37, 38, 45, 44, 38, 39, 46, 45, 39, 40, 47, 46, 40, 41, 48, 47]
+        point3f[] points = [(-300, -300, 0), (-200, -300, 0), (-100, -300, 0), (0, -300, 0), (100, -300, 0), (200, -300, 0), (300, -300, 0), (-300, -200, 0), (-200, -200, 0), (-100, -200, 0), (0, -200, 0), (100, -200, 0), (200, -200, 0), (300, -200, 0), (-300, -100, 0), (-200, -100, 0), (-100, -100, 0), (0, -100, 0), (100, -100, 0), (200, -100, 0), (300, -100, 0), (-300, 0, 0), (-200, 0, 0), (-100, 0, 0), (0, 0, 0), (100, 0, 0), (200, 0, 0), (300, 0, 0), (-300, 100, 0), (-200, 100, 0), (-100, 100, 0), (0, 100, 0), (100, 100, 0), (200, 100, 0), (300, 100, 0), (-300, 200, 0), (-200, 200, 0), (-100, 200, 0), (0, 200, 0), (100, 200, 0), (200, 200, 0), (300, 200, 0), (-300, 300, 0), (-200, 300, 0), (-100, 300, 0), (0, 300, 0), (100, 300, 0), (200, 300, 0), (300, 300, 0)]
+        color3f[] primvars:displayColor = [(0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37), (0.5, 0.48, 0.45), (0.42, 0.4, 0.37)] (
+            interpolation = "uniform"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Cube "back_wall"
+    {
+        color3f[] primvars:displayColor = [(0.62, 0.58, 0.52)]
+        double size = 1
+        float3 xformOp:scale = (300, 20, 250)
+        double3 xformOp:translate = (0, 100, 125)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "side_wall"
+    {
+        color3f[] primvars:displayColor = [(0.6, 0.56, 0.5)]
+        double size = 1
+        float3 xformOp:scale = (20, 200, 250)
+        double3 xformOp:translate = (-140, -0, 125)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "beam"
+    {
+        color3f[] primvars:displayColor = [(0.35, 0.25, 0.17)]
+        double size = 1
+        float3 xformOp:scale = (260, 30, 20)
+        double3 xformOp:translate = (0, -0, 170)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "pillar"
+    {
+        color3f[] primvars:displayColor = [(0.6, 0.56, 0.5)]
+        double size = 1
+        float3 xformOp:scale = (25, 25, 170)
+        double3 xformOp:translate = (120, -0, 85)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Xform "crate_a" (
+        prepend references = @./crate.usda@
+        variants = {
+            string size = "small"
+        }
+    )
+    {
+        float xformOp:rotateZ = 17
+        double3 xformOp:translate = (75, -60, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+    }
+
+    def Xform "crate_b" (
+        prepend references = @./crate.usda@
+        variants = {
+            string size = "large"
+        }
+    )
+    {
+        float xformOp:rotateZ = -8
+        double3 xformOp:translate = (-80, -65, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+    }
+}
+
