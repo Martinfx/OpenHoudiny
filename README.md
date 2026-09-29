@@ -35,8 +35,9 @@ okna.
   Fracture, tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
   které nárazy lámou, nálože, drcení na prach, drť jako částice, které
   narážejí do kusů a zůstávají na nich ležet, prach za letícími kusy,
-  vzduch vytlačený zřícením, který žene prach do ulic; odstřel věžáku ve
-  městě a zřícení zdi z pohledu od země jako videa
+  vzduch vytlačený zřícením, který žene prach do ulic, pád řízený
+  animací (Guide); odstřel věžáku ve městě a zřícení zdi z pohledu od
+  země jako videa
 - **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
   parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
   cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)
@@ -108,8 +109,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 349 testů: 63 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 17 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
-ctest --test-dir build -R python                   # 44 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgtests            # 357 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 17 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+ctest --test-dir build -R python                   # 45 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgdemo out.obj --frames 24
@@ -164,7 +165,7 @@ snippet čte `@Time`, a `ch("radius")` mu přidá posuvník. Jazyk popisuje
 Hotovo a otestováno: COW geometrie s objemy, cook engine, časová závislost,
 LRU cache, deterministický paralelismus, 28 typů uzlů (generátory,
 primitiva, scatter, copy to points, OBJ, extrude, subdivide, clip, objem
-na polygony…), 63 testů jádra (čisté pod ASan,
+na polygony…), 65 testů jádra (čisté pod ASan,
 UBSan i ThreadSanitizerem). **Wrangle** je jazyk jako VEX: typy, proměnné,
 cykly, funkce, pole, řetězce, matice; běží nad body, primitivy, rohy nebo
 jednou nad celou geometrií, čte sousedy a další vstupy, staví a maže
@@ -250,7 +251,10 @@ rozdrtí na prach, nárazy sypou drť a vytlačený vzduch žene prach do ulic.
 Drť jsou částice: vylétá z okraje plochy, kde praskl spoj, vzduch ji
 brzdí a točí se, naráží do kusů i překážek, zůstane ležet na schodu nebo
 na kusu a jede s ním; za utrženými kusy se táhne prach (`trail`) a RBD
-Pieces dá drť jako body s `orient` pro Copy to Points.
+Pieces dá drť jako body s `orient` pro Copy to Points. Pád jde režírovat:
+animace kusů (klíčovaný Transform kolem Pivotu) zapojená do **Guide**
+RBD Solveru vede kusy, kam je chce záběr, a pustí je, když praskne
+lepidlo, když uplyne čas nebo když je něco zastaví dál než `guide_reach`.
 Klíčované objekty jsou kinematické překážky, kusy jdou jako pohyblivé
 překážky do vody, plynu i deště, prach do Pyro Solveru, a uzel RBD Pieces
 je vrací jako geometrii s rychlostí `v`. Jolt běží v jednom vlákně
@@ -269,7 +273,8 @@ okno zůstane celé; příklad **concrete_column**: nálož v půlce
 příklad **constraint_network**: síť vazeb zeslabená podél čáry — koule
 vylomí roh zdi a zeď praskne přesně po ní; příklad **debris_stairs**:
 podetnutý betonový sloup se skácí ze schodů a drť zůstane ležet na
-stupních.
+stupních; příklad **guided_fall**: odstřelený komín padne podle Guide
+přesně do ulice mezi dva domy a na silnici se rozlomí.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

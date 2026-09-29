@@ -2138,16 +2138,16 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         if (angle > 1e-6f) q.turn = (JPH::Quat::sRotation(jolt(normalize(q.spin)), angle) * q.turn).Normalized();
     }
 
-    /// Where the guide has the body `c` at the end of the step: the turn and
-    /// the place taking its pieces' points at rest nearest to the guide's,
-    /// the body's own turn now where the search starts. False without a
-    /// guide.
     /// Where the guide has a piece's points on average.
     Vec3 guidedMiddle(const Piece& p) const {
         const size_t k = static_cast<size_t>(p.guidePiece);
         return guide && k < guide->pieces.size() ? guide->pieces[k].apply(p.middle) : p.middle;
     }
 
+    /// Where the guide has the body `c` at the end of the step: the turn and
+    /// the place taking its pieces' points at rest nearest to the guide's,
+    /// the body's own turn now where the search starts. False without a
+    /// guide.
     bool guidedPose(const Cluster& c, JPH::Quat& turn, Vec3& place) const {
         if (!guide) return false;
         // Its pieces' points -- by their count, middles and spreads -- at

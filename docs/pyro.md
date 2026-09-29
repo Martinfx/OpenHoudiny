@@ -467,6 +467,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `constraint_network` | síť vazeb: RBD Constraints udělá z lepidla betonové zdi geometrii, wrangle zeslabí spoje přes čáru z rohu do rohu — koule vylomí roh a zeď praskne přesně po čáře, zbytek stojí; RBD Pieces vrací síť snímku s prasklými spoji ([destruction.md](destruction.md#síť-vazeb-rbd-constraints)) |
 | `debris_stairs` | drť jako částice: nálož podetne betonový sloup na podestě, sloup se skácí ze schodů a rozlomí; drť skáče po schodech a zůstává ležet na stupních, za odhozenými kusy se táhne prach (`trail`) ([destruction.md](destruction.md#drť-jako-částice)) |
 | `concrete_column` | železobeton: odstřel sloupu v půlce výšky — Concrete Fracture a armokoš (Rebar), beton kolem nálože se rozletí a zmizí v prachu, zůstane holý koš a na něm visí kusy betonu ([destruction.md](destruction.md#sedmý-příklad-odstřel-železobetonového-sloupu)) |
+| `guided_fall` | usměrněná simulace: odstřel betonového komínu do ulice — klíčovaný Transform kolem hrany zářezu je Guide RBD Solveru, komín padne přesně mezi dva domy a na silnici se volně rozlomí (`guide_let_go`, `guide_reach`) ([destruction.md](destruction.md#usměrněná-simulace-guide)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `prototype sim campfire` proto funguje bez souborů vedle.

@@ -195,8 +195,12 @@ na které uživatel zapomene.
 
 ### 4.4 Cache
 
-LRU s tvrdým paměťovým stropem. Položka větší než celý rozpočet se stejně vrátí
-(jinak by velký výsledek nešel nikdy dodat).
+LRU s tvrdým paměťovým stropem (výchozí 2 GB). Položka větší než celý rozpočet
+se stejně vrátí (jinak by velký výsledek nešel nikdy dodat). Když je cache plná,
+jdou nejdřív výsledky, které potřebuje jen jeden snímek (časově závislé), od
+nejstaršího; časově nezávislé až po nich. Jinak by animovaný uzel pod těžkou
+geometrií (milion bodů rozbitého betonu) v každém snímku vytlačil tu geometrii
+a každý snímek by ji cookoval znovu — osmdesátkrát pomaleji.
 
 > **Známý nedostatek:** položce se účtuje `Geometry::memoryUsage()`, což počítá
 > i buffery sdílené s jinou položkou cache. Je to tedy **horní odhad**. Přesné
@@ -404,7 +408,9 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Rain       déšť: kapky z mraku ve větru, odstřiky, vlnky na hladině
                  Rigid      tuhá tělesa nad Jolt: tělesa a dotyky kusů (rigidLayout), lepidlo
                             jako síť vazeb (rigidGlue, rigidNetwork), výztuž, drť jako
-                            částice (narážejí, leží, jedou s kusy), prach a jeho stopy
+                            částice (narážejí, leží, jedou s kusy), prach a jeho stopy,
+                            Guide jako póza každého kusu (rigidGuide), ke které solver
+                            vede slepená tělesa
                  Camera     kamera záběru: poloha, rotace, objektiv, rozlišení
                  Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
                  World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
@@ -494,6 +500,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Síť vazeb jako geometrie: RBD Constraints udělá z kusů bod na těleso a čáru na spoj (`strength` jako násobek Glue, `area`, barva podle pevnosti); zeslabená, smazaná nebo nakreslená síť zapojená do Constraints RBD Solveru je lepidlem; RBD Pieces vrátí síť snímku s `broken` a `time`, stav spojů ve snímku a cache (verze 8) ([docs/destruction.md §3](docs/destruction.md#síť-vazeb-rbd-constraints)) |
 | ✅ | Cihly: Brick Wall vyzdí zeď z cihel ve vazbě (běhounová, anglická, vlámská, stack) s maltou, omítkou a otvory s rovným ostěním; každá cihla jeden kus, rozlomené cihly jako dvě poloviny jedné kry; RBD Solver má maltu jako lepidlo, zeď se rozpadá ve spárách; příklady `brick_wall` (koule proti cihlové zdi s oknem) a `concrete_column` (odstřel železobetonového sloupu, holý armokoš) ([docs/destruction.md §2](docs/destruction.md#cihly-brick-wall)) |
 | ✅ | Drť jako částice: vylétá z okraje plochy prasklého spoje, vzduch ji brzdí, točí se, naráží do kusů, překážek i podlahy (paprsky v Joltu), zůstává ležet a jede s kusem, na kterém leží; stopy prachu za utrženými kusy (`trail`); natočení (`orient`) ve snímcích, cache verze 9, RBD Pieces, Pythonu a USD, Copy to Points podle něj natáčí ([docs/destruction.md §3](docs/destruction.md#drť-jako-částice)) |
+| ✅ | Usměrněná simulace: Guide RBD Solveru (kusy posunuté a natočené, třeba klíčovaný Transform kolem Pivotu) vede slepená tělesa do pózy, která jejich body nejlépe položí na body Guide; síla, doba, dosah a puštění při prasknutí lepidla; atribut `guide`; z Guide se v každém snímku bere jen póza kusu; příklad `guided_fall` ([docs/destruction.md §3](docs/destruction.md#usměrněná-simulace-guide)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
 | ✅ | **Čtení USD** bez knihovny: `.usda`, `.usdc` (verze 0.4.0–0.10.0), `.usdz`; scéna složená jako v USD (sublayers, reference, payloady, varianty, třídy, value clips); kamera z matchmove (USD Camera) a geometrie (USD Import) v metrech s Y nahoru; transformace, skládání i geometrie sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)) |

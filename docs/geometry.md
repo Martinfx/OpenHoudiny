@@ -43,7 +43,7 @@ nastaveným na ni.
 | **Line** | Otevřená lomená čára bodů |
 | **Point Cloud** | Volné body v krychli, stejné pro stejné seed |
 | **File** | Body, polygony a čáry ze souboru OBJ; relativní cesta od složky sítě; soubor, který se změní, se načte znovu |
-| **Transform** | Posun, rotace, měřítko po osách a celkové |
+| **Transform** | Posun, rotace, měřítko po osách a celkové; rotace a měřítko kolem bodu **Pivot** (třeba hrany, přes kterou se věc převrací) |
 | **Merge** | Spojí geometrie ve vstupu, který bere libovolně spojů — v pořadí spojů |
 | **Switch** | Pustí dál jeden ze vstupů podle indexu |
 | **Attribute Create** | Atribut jedné hodnoty (číslo nebo vektor) na bodech, rozích, primitivech nebo celé geometrii |

@@ -278,8 +278,18 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   podle něj natočí kamínky. Příklad **debris_stairs**: podetnutý sloup se
   skácí ze schodů a drť zůstane na stupních. Zbývá USD `PointInstancer`
   s tvary kamínků a drť, která do sebe naráží a hromadí se.
-- **Usměrněná simulace:** kusy sledují animaci, síly je vedou — režisér
-  chce konkrétní průběh pádu.
+- ✅ **Usměrněná simulace:** Guide RBD Solveru ([docs/destruction.md §3](docs/destruction.md#usměrněná-simulace-guide))
+  je animace kusů, tytéž body posunuté a natočené (klíčovaný Transform
+  kolem Pivotu, wrangle podle `@Time`). Solver v každém kroku vede každé
+  slepené těleso do pózy, která jeho body nejlépe položí na body Guide:
+  s `guide_strength` 1 přesně, s menší se opožďuje. Gravitaci vyruší,
+  kusy dál narážejí. Pustí je po `guide_until`, když praskne lepidlo
+  (`guide_let_go`) nebo když je něco zastaví dál než `guide_reach`.
+  Atribut `guide` řekne, jak moc Guide vede který kus. Z Guide se
+  v každém snímku bere jen póza každého kusu (pár bajtů na kus). Příklad
+  **guided_fall**: odstřelený komín padne podle klíčů přesně do ulice mezi
+  dva domy a na silnici se volně rozlomí. Zbývá vedení silou nebo pružnou
+  vazbou místo rychlosti a Guide, který kusy deformuje.
 - **Tuhá tělesa na více vláknech**, deterministicky.
 
 **Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu

@@ -1,4 +1,4 @@
-# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo a síť vazeb, výztuž, sklo, drť a prach
+# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo a síť vazeb, výztuž, sklo, drť a prach, usměrněná simulace
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
 (**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
@@ -18,7 +18,9 @@ Nálože přetrhnou lepidlo v daný čas, nárazy ho lámou dál, padající pat
 drtí stěny na prach, úlomky sypou drť a vzduch, který zřícení vytlačí, žene
 oblak prachu do ulic (**Pyro Solver**). Drť jsou částice: vylétá z lomů,
 naráží do kusů a zůstává na nich ležet, a za utrženými kusy se táhne
-prach. Všechno je deterministické: stejná síť dá stejné snímky na jednom
+prach. Pád jde i režírovat: animace kusů (třeba klíčovaný Transform)
+zapojená do **Guide** RBD Solveru je vede tam, kam je chce záběr, a kusy
+přitom dál narážejí a lámou se. Všechno je deterministické: stejná síť dá stejné snímky na jednom
 i na čtyřech vláknech a při každém dalším spuštění.
 
 ![Odstřel věžáku: oblak prachu se valí mezi domy](img/demolition.png)
@@ -530,6 +532,9 @@ stojící i klíčované, **Rebar** jsou ocelové pruty v kusech (uzel Rebar,
 nebo jakékoli lomené čáry s `width`) a **Constraints** je síť vazeb
 (RBD Constraints, upravená): její čáry jsou spoje místo těch, které
 solver najde tam, kde se kusy dotýkají ([níže](#síť-vazeb-rbd-constraints)).
+**Guide** jsou kusy tak, jak se mají pohybovat: tytéž body ve stejném
+pořadí, posunuté a natočené (klíčovaný Transform, wrangle s `@Time`);
+solver k nim kusy vede ([níže](#usměrněná-simulace-guide)).
 Výstupy:
 
 | Výstup | Typ | Kam |
@@ -554,6 +559,10 @@ Parametry:
 | Rebar | `rebar_strength` | MPa, kdy ocel prutů teče: 500 dnešní pruty. Prut 12 mm unese v tahu asi 57 kN, ohnutý zůstane ohnutý |
 | | `bond` | MPa, jak pevně beton svírá prut po jeho povrchu: kus, kterým prut prochází 20 cm, ho drží asi 38 kN. Kusy na jedné straně trhliny prut kotví dohromady; kde drží míň než ocel — u konce prutu nebo přetrženého — prut se z nich vytahuje a beton z něj opadá, jinde teče ocel. 0: pruty nedrží nic |
 | | `stretch` | O kolik se prut protáhne, než se přetrhne, jako díl toho, co z něj teče: 0,1 desetina — holého prutu mezi dvěma kusy a dvacetinásobku průměru |
+| Guide | `guide_strength` | Jak silně Guide kusy vede: 1 v každém kroku přesně tam, kde je má; méně je měkčí tah, který se za ním opožďuje; 0 vůbec. Kusy přitom dál narážejí. Klíčovaná k nule předá kusy simulaci postupně |
+| | `guide_until` | Sekundy, po kterých Guide už nevede nic a kusy jdou svou cestou; 0 (výchozí) pořád |
+| | `guide_reach` | Metry, o které se těleso smí vzdálit od místa, kde ho Guide má (zastavila ho zem nebo to, do čeho narazilo), než půjde svou cestou; 0 (výchozí) jakkoli daleko |
+| | `guide_let_go` | Kus, kterému praskne spoj, jde svou cestou: co Guide shodí, se tam, kde dopadne, volně rozpadne (výchozí zapnuto) |
 | Time | `substeps` | Kroky řešiče na snímek: víc pro rychlé kusy a vysoké stavby |
 | Dust | `dust` | Kolik prachu dá přetržený spoj |
 | | `impact_dust` | … tvrdý náraz a rozdrcený kus |
@@ -579,6 +588,7 @@ prvního primitiva) řeknou, čím se kus liší:
 | `crush` | f | Náraz víc než tolikrát silnější, než kolik drží jeho lepidlo, ho rozdrtí na prach: stěny, na které dopadne patro. 0: nikdy |
 | `cluster` | i | Kra, do které kus patří (RBD Cluster); 0: žádná |
 | `clusterglue` | f | Spoje mezi kusy téže kry jsou tolikrát pevnější (platí menší ze dvou) |
+| `guide` | f | Jak moc ho Guide vede, 0 až 1 (bez atributu 1); 0: vůbec |
 
 Jako v Houdini doplní Merge atribut, který jedné geometrii chybí, nulou:
 `active` a `glue` je proto potřeba nastavit všem kusům, ne jen některým.
@@ -757,6 +767,94 @@ vyjde jako body s `orient` a Copy to Points na ně zkopíruje kamínky.
                                                                                           └─▶ [Volume Look] ─Look─▶ [Output]
 ```
 
+### Usměrněná simulace: Guide
+
+Záběr často chce, aby věc padla přesně tak, jak ji nakreslil: komín mezi
+dva domy, zeď na auto, věž na stranu, kde je volno. Čistá simulace to
+trefí jen náhodou. **Guide** RBD Solveru je animace kusů a solver kusy
+vede za ní. V Houdini je to řízená (*guided*) simulace RBD: animovaná
+geometrie je cíl a tělesa ho sledují, dokud je fyzika nepustí
+([`steer`, `letGo`, `rigidGuide` v `Rigid.cpp`](../src/pg/sim/Rigid.cpp)).
+
+- **Co je Guide.** Kusy z Pieces, jen posunuté a natočené: tytéž body ve
+  stejném pořadí. Nejčastěji je to klíčovaný Transform za kusy (jeho
+  **Pivot** otáčí kolem daného bodu, třeba kolem hrany zářezu), wrangle,
+  který body posouvá podle `@Time`, nebo cokoli jiného, co počet a pořadí
+  bodů zachová. Když má Guide jiný počet bodů, kompilace to ohlásí a kusy
+  nevede nic. Mění-li se Guide v čase, cookuje se v každém snímku. Solver
+  si z něj ale nechá jen pózu každého kusu (pár bajtů na kus a snímek),
+  ne celou geometrii.
+- **Jak vede.** Slepené kusy jsou jedno těleso. V každém kroku solver
+  najde, kde ho Guide chce mít na konci kroku: pózu tuhého tělesa, která
+  jeho body nejlépe položí na body Guide. Rychlost a otáčení tělesa pak
+  nastaví tak, aby tam krokem došlo. S `guide_strength` 1 tam dojde celé,
+  s menší jen o díl cesty, takže se za Guide opožďuje jako na pružině.
+  Gravitaci solver vyruší v takové míře, v jaké kusy vede. Narážet kusy
+  nepřestanou: když je Guide pošle do domu, o dům se zastaví.
+- **Kdy pustí.** Kus jde svou cestou, když uplyne `guide_until`, když mu
+  praskne spoj (se zapnutým `guide_let_go`: co se ulomí, padá samo, a věc
+  se při dopadu volně rozpadne) nebo když se těleso od Guide vzdálí víc
+  než o `guide_reach`, protože ho zastavila zem nebo to, do čeho narazilo.
+  Puštěný kus už Guide znovu nechytí.
+- **Co vede.** Jen to, co se hýbe. Kusy s `active 0` stojí, a stojí i
+  těleso k nim přilepené. Stavbu na základu je proto potřeba od základu
+  uvolnit: náloží (`release`), nebo základem s `glue 0`. Atribut `guide`
+  (0 až 1) řekne, jak moc Guide vede který kus. Když ho má jen část kusů
+  spojených Mergem, ostatní dostanou 0 a Guide je nepovede.
+- `guide_strength` jde klíčovat. Stažená k nule předá kusy simulaci
+  postupně.
+
+### Desátý příklad: komín do ulice
+
+![Nálož vylomí zářez u paty komínu a komín se naklání do ulice; padá mezi dva domy; na silnici se rozlomí; trosky leží v ulici mezi domy](img/guided-fall.jpg)
+
+```
+./build/prototype sim guided_fall komin.mp4   # 130 snímků (4,3 s)
+```
+
+Příklad **guided_fall** ([examples/sim/guided_fall.pgsim](../examples/sim/guided_fall.pgsim))
+je odstřel betonového komínu 1,4 × 14 × 1,4 m do ulice mezi dvoupatrovými
+domy:
+
+- **Komín** rozbije Concrete Fracture na 170 kusů. Wrangle `charge`
+  nastaví všem kusům `active` a `glue` 1 a v 0,4 s odpálí nálož u paty.
+  Spoje dolních kusů se přetrhnou a na straně, kam má komín padnout,
+  nálož vylomí zářez: 80 % kusů tam rozmetá na prach a drť, zbytek odhodí.
+- **Sokl** pod komínem je kus, který stojí a není ke komínu přilepený
+  (`glue 0`). Komín na něm jen stojí a drží ho Guide.
+- **Guide** je Transform `fall` za kusy. Otáčí je kolem hrany zářezu
+  (Pivot 0; 0,4; 0,7) s klíči po čtyřech snímcích od 12. do 88. snímku,
+  tak jak padá tyč dlouhá 14,4 m. Na konci je otočí o 8° napříč ulicí.
+  Komín ho sleduje dolů a do ulice mezi domy dopadne tam, kam ukazují
+  klíče.
+- **Dopad.** Na silnici praskají spoje a každý kus, kterému praskl spoj,
+  jde svou cestou (Let Go When Broken). Pustí se i to, co zem zastaví dál
+  než 1,5 m od Guide (`guide_reach`). Komín se rozlomí na kry a kusy a
+  sype drť a prach.
+- **Domy** jsou čtyři assety **Building** (dvě patra, okna, dveře do
+  ulice), natočené a posunuté Transformem. Uvnitř každého je Object,
+  kvádr, do kterého narážejí kusy i prach. Silnice a obrubníky jsou také
+  Objecty. Pyro Solver (18 × 10 × 40 m) z prachu dělá oblak.
+
+Klíče jde změnit: komín pak padne později, pomaleji nebo víc natočený,
+tak, jak klíče řeknou. Bez Guide (odpojte ho) zůstane komín po odpálení
+nálože stát na zbytku paty a jen se pomalu naklání: za 4,3 s záběru se
+jeho vršek posune asi o 3 m. Kdy a kam padne, by pak rozhodla až
+simulace.
+
+```
+[chimney] ─▶ [Concrete Fracture] ─▶ [charge] ──┐
+[plinth] ─▶ [foundation] ──────────────────────┴▶ [pieces] ─┬──────────Pieces─┐
+                                                            └▶ [fall] ──Guide─┤
+[in_left] … [in_right_far], [road], [kerb_left], [kerb_right] ─Colliders──────┴▶ [RBD Solver] ─Look─▶ [Output] ◀─ [camera]
+                                                                                 │ Dust, Collider ─▶ [Pyro Solver] ◀─Forces─ [Turbulence]
+                                                                                                    └─▶ [Volume Look] ─Look─▶ [Output]
+[left] ─▶ [at_left] ──────────┐
+[right] ─▶ [at_right] ────────┤
+[left_far] ─▶ [at_left_far] ──┼▶ [street]   (zobrazená: domy)
+[right_far] ─▶ [at_right_far] ┘
+```
+
 ### Jak to funguje
 
 [`src/pg/sim/Rigid.h`](../src/pg/sim/Rigid.h) obaluje Jolt Physics 5.6
@@ -880,6 +978,19 @@ v průměru za 6 ms na snímek.
   jakmile tabule praskne, objeví se celá najednou, i ve střepech, které
   zůstaly v rámu. Samotný střep (bez skleněného souseda) tabulí není a
   jeho řezné plochy jsou jeho hrany.
+- **Guide.** Z geometrie Guide si solver v každém snímku vezme pózu
+  každého kusu (`rigidGuide`): otočení a posun, které body kusu v klidu
+  nejlépe položí na jeho body v Guide. Otočení je rotační část kovarianční
+  matice posunutých bodů proti klidovým, hledaná iterací podle Müllera,
+  Bendera, Chentaneze a Macklina (2016). Co je v každém snímku stejné (ke
+  kterému kusu bod patří, středy kusů v klidu), se spočítá jednou za
+  kompilaci (`RigidGuideRest`). Těleso z víc kusů dostane pózu, která
+  nejlépe sedí na body všech jeho kusů. Stačí k tomu počet bodů, střed a
+  rozptyl každého kusu, body se znovu neprocházejí. Před krokem solver
+  nastaví rychlost a otáčení tělesa tak, aby krokem došlo do cíle, a
+  přidá sílu proti gravitaci (`steer`). Ani tu rychlost, ani tu sílu
+  nepočítá do nárazů, jinak by vedení samo lámalo spoje. Po kroku pustí,
+  co pustit má (`letGo`).
 - **Kroky.** Svět (`WorldSolver`) krokuje tuhá tělesa jako první; voda,
   plyn a déšť pak dostanou kusy tam, kde právě jsou, a plyn obláčky
   prachu jako zdroje.
@@ -1201,6 +1312,45 @@ v `tests/test_export.cpp`, natočení drti v `tests/test_usd.cpp` a
 - Python: drť leží na desce a na zemi, ne v desce, `grit_orient` má
   jednotkové kvaterniony a RBD Pieces je nese jako `orient`.
 
+`tests/test_guide.cpp` (6 testů), `sops_transform_turns_and_sizes_about_its_pivot`
+v `tests/test_sops.cpp`, `what_one_frame_needs_is_evicted_before_what_every_frame_needs`
+v `tests/test_cache.cpp` a `test_the_guide_leads_the_pieces_where_it_has_them`
+v `tests/python/test_pg.py`:
+
+- kvádr na podlaze, jehož Guide je o dva metry vedle, o metr výš a
+  otočený o čtvrt otáčky, je s plnou silou do několika kroků tam, kde ho
+  Guide má (na 2 cm). Drží se tam proti gravitaci (na 1 cm, rychlostí pod
+  5 cm/s) a zůstane tam. Bez Guide zůstane na podlaze. Geometrie s jinými
+  body není Guide. Póza, kterou si solver z Guide nechá, položí body kusu
+  na body Guide na desetinu milimetru;
+- Guide, který obíhá kruh o průměru metr a přitom se otáčí: s plnou silou
+  ho kvádr drží na centimetr, s pětinovou silou zůstává víc než dvakrát
+  dál, ale pořád za ním (méně než půl metru);
+- s `guide_until` 0,5 s drží Guide kvádr dva metry nad zemí a pak kvádr
+  spadne. Guide, který kvádr vede pod podlahu: podlaha ho zastaví, a
+  s dosahem (`guide_reach`) půl metru ho Guide pustí. Když pak Guide
+  vystoupá, kvádr už za ním nejde; bez dosahu ano;
+- dva slepené kvádry drží Guide metr nad zemí a nálož v třetině sekundy
+  přetrhne spoj. S `guide_let_go` oba spadnou, bez něj zůstanou tam, kde
+  je Guide má;
+- kvádr s atributem `guide` 1 Guide zvedne (na centimetr), s `guide` 0
+  zůstane na podlaze a kus s `active 0` se nepohne. Hodnoty parametrů
+  mimo rozsah se srovnají;
+- v síti uzlů: Transform kusů klíčovaný o dva metry nahoru přes dvacet
+  snímků se přeloží do scény i se silou, dobou, dosahem a pouštěním.
+  Guide se vezme v každém snímku (šest kusů o dva metry výš, neotočených)
+  a kusy vystoupají s ním. Guide s jiným počtem bodů se ohlásí a nevede
+  nic. Guide posouvaný wranglem podle `@Time` se bere v každém snímku,
+  i když není klíčované nic;
+- Transform otočí a zvětší kolem svého Pivotu;
+- cook cache vyhodí dřív to, co potřebuje jen jeden snímek, než to, co
+  potřebují všechny (časově nezávislý výsledek nad animovaným uzlem).
+  Když ji přeplní jen časově nezávislé výsledky, vyhodí nejdéle nepoužitý;
+- Python: kvádr, kterého Guide (klíčovaný Transform) zvedne o dva metry a
+  otočí o čtvrt otáčky, je tam na 2 cm a otočený stejně; s `guide_until`
+  třetina sekundy vyletí dál vzhůru, jak ho Guide vedl, a spadne zpátky
+  na podlahu.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -1270,6 +1420,15 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   se v letu otáčejí po svém: natočení ze simulace jde do RBD Pieces, Copy
   to Points a USD, ne do okna. USD nese drť jako body
   (`Points` s `primvars:orient`), ne jako `PointInstancer` s kamínky.
+- **Guide vede tělesa, ne body.** Z Guide se bere jen tuhá póza každého
+  kusu. Kus, který se v Guide deformuje (ohýbá, natahuje), sleduje, jak
+  nejlépe umí, tvar ale nezmění. Guide musí mít tytéž body ve stejném
+  pořadí, jako mají kusy. Vede tak, že v každém kroku nastaví rychlost,
+  ne pružnou vazbou ani silou. S plnou silou tedy těleso nemá vlastní
+  setrvačnost a jde přesně podle klíčů, a když do něčeho narazí, tlačí se
+  dál k cíli, dokud ho nepustí `guide_reach`. Puštěný kus už Guide znovu
+  nechytí. Těleso přilepené ke kusu s `active 0` stojí, i když ho Guide
+  vede.
 - **Jeden RBD Solver** v síti; kusy dvou solverů do sebe nenarážejí.
 
 ---
@@ -1289,6 +1448,10 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   a měkké vazby s plasticitou — výztuž v Houdini.
 - fib: *Model Code for Concrete Structures 2010*, kap. 6.1 — soudržnost
   prutu s betonem a jeho kotvení; odtud velikost `bond`.
+- M. Müller, J. Bender, N. Chentanez, M. Macklin: *A Robust Method to
+  Extract the Rotational Part of Deformations* (Motion in Games, 2016) —
+  otočení, které nejlépe položí klidové body na posunuté; odtud póza
+  každého kusu z Guide.
 - R. C. Bradt: *The Fractography and Crack Patterns of Broken Glass*
   (Journal of Failure Analysis and Prevention, 2011) — radiální a
   soustředné trhliny kolem místa úderu.

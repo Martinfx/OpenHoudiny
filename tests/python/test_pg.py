@@ -568,6 +568,37 @@ class Simulations(unittest.TestCase):
         self.assertIn("orient", points.points)
         self.assertTrue(np.array_equal(points.points["orient"][-len(grit):], turn))
 
+    def test_the_guide_leads_the_pieces_where_it_has_them(self):
+        # A box on the floor and a Transform of it keyed from where it stands
+        # to two metres up, turned a quarter round, over twenty frames: the
+        # RBD Solver's Guide. Ten frames on the box is there -- the middle
+        # of its box two metres up, turned as the guide turns it -- and stays;
+        # with the guide done after a third of a second it flies on up as it
+        # was led, and falls back to the floor.
+        def run(until, frames):
+            net = pg.Network()
+            box = net.add("box", size=(1, 1, 1), center=(0, 0.5, 0))
+            lift = net.add("transform")
+            lift.key("t", 1, (0, 0, 0), "linear").key("t", 20, (0, 2, 0), "linear")
+            lift.key("r", 1, (0, 0, 0), "linear").key("r", 20, (0, 90, 0), "linear")
+            rbd = net.add("rbd_solver", guide_until=until)
+            out = net.add("output", frames=frames)
+            net.connect(box, rbd, input="pieces")
+            box.connect(lift)
+            net.connect(lift, rbd, input="guide")
+            net.connect(rbd, out)
+            self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+            sim = net.simulate()
+            for f in sim.run(frames):
+                pass
+            return sim.current.rigid
+        led = run(0, 30)
+        self.assertTrue(np.allclose(led.centres[0], (0, 2.5, 0), atol=0.02))
+        quarter = np.array([0, np.sqrt(0.5), 0, np.sqrt(0.5)])
+        self.assertGreater(abs(float(np.dot(led.rotations[0], quarter))), 0.999)
+        dropped = run(1 / 3, 60)
+        self.assertLess(abs(float(dropped.centres[0][1]) - 0.5), 0.02)
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()
