@@ -816,7 +816,9 @@ Příklad **guided_fall** ([examples/sim/guided_fall.pgsim](../examples/sim/guid
 je odstřel betonového komínu 1,4 × 14 × 1,4 m do ulice mezi dvoupatrovými
 domy:
 
-- **Komín** rozbije Concrete Fracture na 170 kusů. Wrangle `charge`
+- **Komín** rozbije Concrete Fracture na 170 kusů s hrubými lomy
+  po 8 cm (`detail 0,08`). Komín je vidět z dvaceti metrů, jemnější detail
+  by jen zdržoval (3 cm: přes dva miliony trojúhelníků). Wrangle `charge`
   nastaví všem kusům `active` a `glue` 1 a v 0,4 s odpálí nálož u paty.
   Spoje dolních kusů se přetrhnou a na straně, kam má komín padnout,
   nálož vylomí zářez: 80 % kusů tam rozmetá na prach a drť, zbytek odhodí.
@@ -875,7 +877,12 @@ v průměru za 6 ms na snímek.
   leží v jedné rovině proti sobě a překrývají se (průnik mnohoúhelníků
   Sutherland–Hodgman, plocha triangulací). Spoj je tak pevný, jak velká
   je společná plocha: `glue` × plocha, krát atribut `glue` slabšího kusu.
-  Plošky menší než (10⁻⁴ × úhlopříčka)² se nelepí.
+  Plošky menší než (10⁻⁴ × úhlopříčka)² se nelepí. Plochy dvou částí se
+  porovnávají jen tam, kde se jejich obaly překrývají, zametáním podél
+  nejdelší strany překryvu. Hrubý lom, jehož trojúhelníky se nespojí
+  v jeden mnohoúhelník (potkávají se v T-spojích), je tisíce plošek na
+  část; porovnat každou s každou u komínu z dvou milionů trojúhelníků
+  trvalo dvě minuty, takhle to trvá sekundy.
 - **Slepené kusy jsou jedno těleso.** Kusy spojené neporušenými spoji
   tvoří shluk (cluster) a ten je v Joltu jedno těleso složené z obalů
   všech svých kusů (`StaticCompoundShape`) — tuhé jako jeden kus, takže

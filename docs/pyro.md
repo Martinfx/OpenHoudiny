@@ -114,7 +114,9 @@ Klávesy patří panelu pod myší, jako v Houdini. Hlavička uzlu má barvu
 kategorie, pod názvem je shrnutí toho, co uzel dělá (`fuel 14 · heat 1`).
 Uzel, který nevede na výstup, je tlumený. Problém ukáže červený nebo žlutý
 odznak; tooltip nad ním řekne, co je špatně. Při velkém oddálení se texty
-schovají a zůstanou jen tvary a barvy.
+na uzlech schovají a jméno uzlu se píše pod ním malým, ale čitelným
+písmem jako v Houdini. Síť s desítkami uzlů, kterou editor po otevření
+celou vměstná do panelu, tak pořád ukazuje, co je co.
 
 ### Parametry
 

@@ -661,6 +661,22 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
         }
         return true;
     };
+    // Two parts' faces that may meet: those near where the parts' boxes
+    // overlap, swept along its longest side. A rough face whose triangles
+    // make no one polygon is thousands of faces; every one against every
+    // one of the other part's took minutes.
+    struct Near {
+        float lo, hi;
+        uint32_t face;
+        bool second;
+    };
+    std::vector<Near> sweep;
+    struct Hit {
+        uint32_t fa, fb;
+        double area;
+        Vec3 sum;
+    };
+    std::vector<Hit> hits;
     for (size_t oi = 0; oi < order.size(); ++oi) {
         const uint32_t i = order[oi];
         for (size_t oj = oi + 1; oj < order.size(); ++oj) {
@@ -668,10 +684,32 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
             if (parts[j].lo.x > parts[i].hi.x + eps) break;
             if (!boxesMeet(parts[i].lo, parts[i].hi, parts[j].lo, parts[j].hi)) continue;
             const uint32_t a = std::min(i, j), b = std::max(i, j);
-            Touch t;
-            for (uint32_t fa = firstFace[a]; fa < firstFace[a + 1]; ++fa) {
-                const Face& f = faces[fa];
-                for (uint32_t fb = firstFace[b]; fb < firstFace[b + 1]; ++fb) {
+            Vec3 olo, ohi;
+            for (int ax = 0; ax < 3; ++ax) {
+                olo[ax] = std::max(parts[a].lo[ax], parts[b].lo[ax]) - 2.0f * eps;
+                ohi[ax] = std::min(parts[a].hi[ax], parts[b].hi[ax]) + 2.0f * eps;
+            }
+            int axis = 0;
+            for (int ax = 1; ax < 3; ++ax) {
+                if (ohi[ax] - olo[ax] > ohi[axis] - olo[axis]) axis = ax;
+            }
+            sweep.clear();
+            for (const uint32_t part : {a, b}) {
+                for (uint32_t k = firstFace[part]; k < firstFace[part + 1]; ++k) {
+                    const Face& f = faces[k];
+                    if (boxesMeet(f.lo, f.hi, olo, ohi)) sweep.push_back({f.lo[axis], f.hi[axis], k, part == b});
+                }
+            }
+            std::sort(sweep.begin(), sweep.end(), [](const Near& x, const Near& y) {
+                return x.lo < y.lo || (x.lo == y.lo && x.face < y.face);
+            });
+            hits.clear();
+            for (size_t x = 0; x < sweep.size(); ++x) {
+                for (size_t y = x + 1; y < sweep.size() && sweep[y].lo <= sweep[x].hi + eps; ++y) {
+                    if (sweep[x].second == sweep[y].second) continue;
+                    const uint32_t fa = sweep[x].second ? sweep[y].face : sweep[x].face;
+                    const uint32_t fb = sweep[x].second ? sweep[x].face : sweep[y].face;
+                    const Face& f = faces[fa];
                     const Face& g = faces[fb];
                     if (dot(f.normal, g.normal) > -0.9995f) continue;
                     if (std::fabs(f.d + g.d) > static_cast<double>(eps)) continue;
@@ -679,10 +717,18 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
                     Vec3 sum;
                     const double area = overlapArea(f, g, sum);
                     if (area <= 0.0) continue;
-                    t.area += area;
-                    t.sum += sum;
-                    t.normal += f.normal * static_cast<float>(area);
+                    hits.push_back({fa, fb, area, sum});
                 }
+            }
+            // Summed in the order of the faces, as face against face would.
+            std::sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) {
+                return x.fa < y.fa || (x.fa == y.fa && x.fb < y.fb);
+            });
+            Touch t;
+            for (const Hit& h : hits) {
+                t.area += h.area;
+                t.sum += h.sum;
+                t.normal += faces[h.fa].normal * static_cast<float>(h.area);
             }
             if (t.area > 0.0) touches[{a, b}] = t;
         }

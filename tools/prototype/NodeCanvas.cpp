@@ -268,6 +268,16 @@ void NodeCanvas::drawNode(ImDrawList* d, const CanvasNode& n, bool selected, boo
         d->AddText(f.bold, kFont * s, ImVec2(lo.x + 30.0f * s, titleY), theme::fade(IM_COL32(255, 255, 255, 245), a),
                    n.title.c_str());
     }
+    if (!words) {
+        // Too far out for the text on it: its name under it, small but
+        // readable -- as Houdini writes it beside a node -- so a whole
+        // network fitted into the panel still says what is what.
+        const float size = theme::px(11.0f);
+        const float w = textWidth(f.bold, size, n.title);
+        const ImVec2 at(std::floor((lo.x + hi.x - w) * 0.5f), std::floor(hi.y + 3.0f * theme::px(1.0f)));
+        d->AddText(f.bold, size, at + ImVec2(1.0f, 1.0f), theme::fade(IM_COL32(0, 0, 0, 170), a), n.title.c_str());
+        d->AddText(f.bold, size, at, theme::fade(IM_COL32(228, 230, 236, 255), a), n.title.c_str());
+    }
     if (labels && !n.subtitle.empty()) {
         const float x = lo.x + (40.0f + textWidth(f.bold, kFont, n.title)) * s;
         d->AddText(f.regular, kSmallFont * s, ImVec2(x, cy - kSmallFont * 0.5f * s),
