@@ -270,6 +270,24 @@ class Simulations(unittest.TestCase):
         # The camera of the shot, at this frame.
         self.assertEqual(sim.camera()["focal"], 32.0)
 
+    def test_a_checkpoint_goes_on_to_the_bit_and_a_preview_is_coarser(self):
+        net = pg.Network.example("campfire")
+        straight = net.simulate(preview=0.5)
+        list(straight.run(8))
+        state = straight.save_state()
+        self.assertIsInstance(state, bytes)
+        resumed = net.simulate(preview=0.5)
+        resumed.load_state(state)
+        self.assertEqual(resumed.frame, 8)
+        for _ in range(4):
+            a, b = straight.step(), resumed.step()
+            self.assertEqual(a.number, b.number)
+            self.assertTrue(np.array_equal(a.gas(), b.gas()))
+        # Another grid does not take it.
+        with self.assertRaises(pg.Error):
+            net.simulate().load_state(state)
+        self.assertLess(straight.current.gas().size, net.simulate().step().gas().size)
+
     def test_frames_to_a_cache_and_back(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

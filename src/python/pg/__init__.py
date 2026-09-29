@@ -406,10 +406,11 @@ class Network:
         the last cook cooks again."""
         return Geometry(self._net.cook(self._id(node), int(frame)))
 
-    def simulate(self, cache=None):
+    def simulate(self, cache=None, preview=1.0):
         """A Simulation of the network as it is now; `cache`: read its frames
-        from a cache folder instead of simulating."""
-        return Simulation(self, cache=cache)
+        from a cache folder instead of simulating; `preview`: the gas and the
+        water on grids that much as fine (0.5: half), to work on quickly."""
+        return Simulation(self, cache=cache, preview=preview)
 
     def layout(self, spacing=(240.0, 120.0)):
         """Places the nodes for the editor: each a column further right than
@@ -927,9 +928,9 @@ class Simulation:
     """A network simulated a frame at a time -- or read from a cache. It
     takes the network as it is when made; later changes do not reach it."""
 
-    def __init__(self, network, cache=None):
+    def __init__(self, network, cache=None, preview=1.0):
         self.network = network
-        self._s = _pg.Simulation(network._net, os.fspath(cache) if cache else "")
+        self._s = _pg.Simulation(network._net, os.fspath(cache) if cache else "", float(preview))
 
     @property
     def frame(self):
@@ -958,6 +959,17 @@ class Simulation:
     def step(self):
         """On to the next frame; returns it."""
         return Frame(self._s.step())
+
+    def save_state(self):
+        """A checkpoint: all it takes to go on from this frame as if it had
+        never stopped, as bytes -- to a file, to another machine."""
+        return self._s.save_state()
+
+    def load_state(self, state):
+        """Goes on from a checkpoint save_state() gave, of the same network,
+        in a simulation that has not stepped yet: the next step is the frame
+        after it. The pieces of an RBD Solver are stepped there again."""
+        self._s.load_state(bytes(state))
 
     def run(self, frames=None):
         """Steps up to frame `frames` (the Output's count), yielding each frame."""

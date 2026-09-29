@@ -30,7 +30,8 @@ okna.
   překážky, jejichž pohyb převezme plyn i voda
 - **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
   body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
-  Houdini, Blender a renderery
+  Houdini, Blender a renderery; bake na pozadí s průběhem, zrušením
+  a pokračováním z checkpointu, náhled v polovičním rozlišení
 - **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi
   Fracture, tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
   které nárazy lámou, nálože, drcení na prach, drť jako částice, které
@@ -109,8 +110,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 366 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 98 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
-ctest --test-dir build -R python                   # 45 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgtests            # 376 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 98 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 10 checkpointy, bake a náhled, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+ctest --test-dir build -R python                   # 46 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna
@@ -293,7 +294,12 @@ lopatka víří kouř, letící pochodeň nechává stopu.
 **Cache a export**: snímky simulace jdou na disk a zpátky (editor:
 Simulation › Save/Load Cache, `prototype sim --cache` a `--from-cache`) —
 přehrají se, vykreslí a vyexportují bez nového počítání; nuly se
-nezapisují, 150 snímků táboráku má 63 MB. Geometrie kteréhokoli uzlu jde
+nezapisují, 150 snímků táboráku má 63 MB. **Bake to Disk** spočítá záběr
+v plném rozlišení v samostatném procesu; editor zůstane volný, přehrává
+snímky z disku, jak přibývají, a ukazuje průběh a odhad do konce. Každých
+10 snímků se uloží celý stav simulace (checkpoint), takže přerušený bake
+pokračuje, kde skončil, bitově stejně jako nepřerušený. **Preview
+Resolution** mezitím počítá plyn a vodu v polovičním rozlišení na ladění. Geometrie kteréhokoli uzlu jde
 ven snímek po snímku: body s atributy do PLY, objemy do OpenVDB (vlastní
 zapisovač bez knihovny, soubory ověřené čtením v OpenVDB 10), polygony do
 OBJ. Celý záběr jde do **USD** jako jedna scéna `.usda` (`--export

@@ -88,7 +88,109 @@ cache/fire/
   buněk, částic, vlnek), neprojde. Poškozený soubor tak renderer nepošle
   mimo pole.
 
-## 3. Export
+## 3. Bake na pozadí, checkpointy a náhled
+
+Velká simulace (prach odstřelu v 576 buňkách: 6 s na snímek, 19 minut na
+záběr) se nepočítá v okně editoru. Jako Save to Disk in Background
+v Houdini ji spočítá samostatný proces rovnou na disk, editor zůstane volný
+a snímky přehrává, jak přibývají.
+
+![Editor během bake: v přehledu průběh 77 / 150, čas snímku, odhad do konce a checkpoint na snímku 70; ve stavovém řádku „baking 77 / 150, 26 s left“; snímky se přehrávají z disku](img/editor-bake.jpg)
+
+V editoru, menu **Simulation**:
+
+- **Preview Resolution** — plyn a voda na mřížkách polovičního rozlišení
+  (táborák 32 × 48 × 32 místo 64 × 96 × 64, krok 63 ms místo ~400 ms).
+  Na ladění zdrojů, sil a načasování. Přehled ukáže „Preview — grids half
+  as fine“, stavový řádek „preview“. Bake je vždy v plném rozlišení.
+- **Bake to Disk…** — složka (výchozí `<síť>_bake`) a v ní celý záběr
+  v plném rozlišení: editor zapíše síť do `network.pgsim` a spustí
+  `prototype sim network.pgsim - --cache SLOŽKA --checkpoint 10` jako
+  samostatný proces (výstup jde do `bake.log`). V přehledu je průběh,
+  čas snímku, odhad do konce, snímek posledního checkpointu a tlačítko
+  **Cancel Bake**; stavový řádek ukazuje „baking 77 / 150, 26 s left“.
+  Snímky se přehrávají z disku, jak přibývají. Na konci přijde oznámení
+  s odkazem na složku. Zavřený editor bake nezastaví.
+- **Cancel Bake** — proces skončí. Hotové snímky zůstanou i s posledním
+  checkpointem.
+- **Resume Bake** — pokračuje přerušený bake (zrušený, spadlý, vypnutý
+  stroj) od posledního checkpointu, ne od začátku. Nabídne se, jen když
+  checkpoint ve složce patří téže síti.
+
+**Přehrávání z disku.** Load Cache i bake čtou snímky až ve chvíli, kdy
+jsou potřeba. V paměti drží nejvýš tolik, kolik dovolí Cache Size; nejdéle
+nepoužité snímky uvolní. Cache větší než paměť se tak dá přehrát
+a scrubovat. Dřív se načítala celá.
+
+**Checkpoint** (`checkpoint.pgstate`) je celý stav simulace
+(`WorldSolver::saveState`), ne snímek v poloviční přesnosti:
+
+- plyn: pole ve floatech, aktivní dlaždice, buňky a stěny překážek;
+- voda: částice, jejich čísla, mřížky rychlosti, vzdálenosti a tlaku
+  (tlak je první odhad dalšího řešení), počitadla;
+- déšť: kapky, kapičky, vlnky na hladině.
+
+Tuhá tělesa v checkpointu nejsou. Jsou vázaná jednosměrně (plyn, voda
+a déšť jdou kolem nich, ne naopak) a jejich krok je proti plynu levný.
+Při obnovení se proto spočítají znovu od snímku 1 do snímku checkpointu:
+kusy, jejich prach a scény, které dávají ostatním. Pak se načte zbytek.
+Pokračování je **bitově stejné** jako simulace, která se nezastavila:
+ověřeno na řídkém i hustém plynu, zdroji v pohybu, vodě, dešti na vodě
+a odstřelu s prachem (testy) i na bake, který editor zrušil a znovu spustil
+(150 souborů snímků shodných podle `cmp`).
+
+Checkpoint se přepisuje každých K snímků (`--checkpoint K`, editor bere
+10) a po dokončení se smaže, protože je velký. U prachu v 576 buňkách
+drží ~24 milionů aktivních buněk × 9 polí, tedy necelý 1 GB.
+
+`cache.txt` se během bake přepisuje po každém snímku a řekne, kam bake
+došel:
+
+```
+pgcache 1
+frames 43
+fps 30
+network a5878458fd369a86
+of 150            # kolik snímků bake dělá; chybí, když je hotový
+ms 75.1           # průměrný čas snímku
+checkpoint 40     # snímek, jehož stav je v checkpoint.pgstate
+```
+
+Starší čtení neznámé řádky přeskočí. Každý soubor (snímek, `cache.txt`,
+checkpoint) se zapíše vedle sebe jako `.part` a pak se přejmenuje. Kdo
+složku čte během bake, najde každý soubor celý, nebo žádný. Proces zabitý
+uprostřed zápisu nechá hotové snímky platné.
+
+Z příkazové řádky:
+
+```bash
+# bake s checkpointem každých 10 snímků
+./build/prototype sim demolition - --cache bake/demo --checkpoint 10
+# ... přerušený: pokračuje od posledního checkpointu
+./build/prototype sim demolition - --cache bake/demo --checkpoint 10 --resume
+# rychlý náhled: plyn a voda na mřížkách polovičního rozlišení
+./build/prototype sim demolition preview.mp4 --preview 0.5
+```
+
+```
+$ prototype sim campfire - --cache bk2 --frames 60 --checkpoint 10   # zabitý na snímku 43
+$ cat bk2/cache.txt
+... frames 43 / of 60 / ms 75.1 / checkpoint 40
+$ prototype sim campfire - --cache bk2 --frames 60 --checkpoint 10 --resume
+resumed at frame 40 from bk2/checkpoint.pgstate (0.0 s)
+campfire: simulated, gas 64 x 96 x 64 cells, 60 frames, from frame 41; simulation 160.4 ms/frame
+```
+
+V Pythonu totéž pro vlastní farmu:
+
+```python
+sim = net.simulate(preview=0.5)          # náhled
+state = sim.save_state()                 # bytes: checkpoint
+later = net.simulate(preview=0.5)
+later.load_state(state)                  # další step() je snímek po checkpointu
+```
+
+## 4. Export
 
 | přípona | co zapíše | kdo to čte |
 |---|---|---|
@@ -142,16 +244,20 @@ i ve snímku cache).
 Gas Volume dává mřížky `density`, `temperature` a `flame`: tak je
 pojmenovávají pyro shadery Houdini a Blenderu.
 
-## 4. Příkazová řádka
+## 5. Příkazová řádka
 
 ```
 prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--start N] [--every K] ...
-             [--cache DIR] [--from-cache DIR] [--export PATH] [--export-node NODE]
+             [--cache DIR [--checkpoint K] [--resume]] [--from-cache DIR] [--export PATH] [--export-node NODE]
+             [--preview F]
 ```
 
 | přepínač | co dělá |
 |---|---|
-| `--cache DIR` | každý snímek do složky `DIR` (vytvoří ji), nakonec `cache.txt` |
+| `--cache DIR` | každý snímek do složky `DIR` (vytvoří ji); `cache.txt` po každém snímku říká, kam došel |
+| `--checkpoint K` | s `--cache`: každých K snímků celý stav simulace do `DIR/checkpoint.pgstate` |
+| `--resume` | s `--cache`: pokračuje od checkpointu ve složce (téže sítě); snímky před ním už na disku jsou |
+| `--preview F` | plyn a voda na mřížkách F-krát tak jemných (0.5: poloviční rozlišení, nejméně 16 buněk) |
 | `--from-cache DIR` | snímky čte ze složky místo simulace; `--frames N` jich vezme nejvýš N |
 | `--start N`, `--end N` | obrázky a export jen od snímku N (do `--end`, což je totéž co `--frames`) — díl záběru pro jeden stroj farmy; cache se čte od N, simulace ale začíná snímkem 1 a do cache jde každý snímek |
 | `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. Výjimka: `.usda` bez `$F` je celý záběr jako jedna scéna, to, co se mění, v souborech po snímcích vedle ní ([usd.md](usd.md)). |
@@ -183,19 +289,22 @@ exported 150 frames of geometry, the last out/fire.0150.vdb
 
 Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 
-## 5. V kódu
+## 6. V kódu
 
 | soubor | co dělá |
 |---|---|
 | `src/pg/io/Ply.h` | `formatPly`, `writePly`, `parsePly`, `readPly` |
 | `src/pg/io/Vdb.h` | `formatVdb`, `writeVdb` |
 | `src/pg/io/Export.h` | `writeGeometry` podle přípony, `framePath` (`$F4`, `$F`) |
-| `src/pg/sim/Cache.h` | `formatFrame` / `parseFrame`, `writeFrame` / `readFrame`, `writeCacheInfo` / `readCacheInfo`, `networkHash` |
-| `tools/prototype/SimRunner.h` | `adopt`: snímky z disku místo simulace, dokud nepřijde jiný svět |
+| `src/pg/sim/Cache.h` | `formatFrame` / `parseFrame`, `writeFrame` / `readFrame`, `writeCacheInfo` / `readCacheInfo` (i průběh bake), `networkHash`, `writeCheckpoint` / `readCheckpoint`, `writeWhole` (zápis přes `.part`) |
+| `src/pg/sim/State.h` | `StateWriter` / `StateReader`: stav řešiče jako bajty, čtení hlídá každou délku |
+| `src/pg/sim/World.h` | `WorldSolver::saveState` / `loadState` (tělesa se spočítají znovu), `preview` |
+| `tools/prototype/SimRunner.h` | `stream`: snímky čtené z disku podle potřeby, nejdéle nepoužité uvolní; `refresh` najde nové od bake; `adopt`: snímky v paměti |
+| `tools/prototype/Bake.h` | proces bake (`posix_spawn`), průběh, odhad, zrušení, `canResume` |
 | `tools/prototype/SimWorkspace.cpp` | menu, dialogy, uložení, načtení, export |
 | `tools/prototype/Widgets.h` | `FileBrowser::openFolder`: výběr složky (i nové) |
 
-## 6. Testy
+## 7. Testy
 
 `tests/test_export.cpp`, 13 testů:
 
@@ -217,7 +326,15 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 - složka cache s `cache.txt` (fps 30, ne 29.999998) a hash sítě bez poloh
   uzlů.
 
-## 7. Omezení
+`tests/test_state.cpp`, 10 testů: pokračování z checkpointu bitově stejné
+jako nepřerušená simulace (řídký a hustý plyn, zdroj v pohybu, voda, déšť
+na vodě, odstřel s prachem; každý snímek po obnovení porovnaný jako bajty
+cache), odmítnutí stavu jiné mřížky, jiných částí světa, useknutého kdekoli
+a stavu pro řešič, který už krokoval; náhled mění jen mřížky; `cache.txt`
+s průběhem tam a zpět; checkpoint na disku přepsaný celý. Python:
+`save_state` / `load_state` a `preview` (`tests/python/test_pg.py`).
+
+## 8. Omezení
 
 - VDB se jen zapisuje, a jen husté float mřížky. Rychlost plynu (`vel`)
   snímek nedrží, takže ve VDB není a renderer z ní motion blur neudělá.
@@ -225,8 +342,13 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
   povrch (Liquid Surface, v USD `/World/water`).
 - Uvnitř VDB není komprese (zip, blosc): soubory jsou větší, než by zapsal
   Houdini.
-- Cache drží, co editor ukazuje (poloviční přesnost), ne stav řešiče. Ze
-  snímku 80 v cache tedy nejde simulovat dál, a načtená cache se proto
-  nedopočítává.
+- Snímek cache drží, co editor ukazuje (poloviční přesnost), ne stav
+  řešiče: dál se simuluje jen z checkpointu, a ten je jen jeden, poslední.
+  Načtená cache bez checkpointu se nedopočítává.
+- Checkpoint je stav tohoto buildu: jiná verze formátu se odmítne, ne
+  převede. Tuhá tělesa se při obnovení počítají znovu od začátku, u tisíců
+  kusů to trvá (odstřel: desítky sekund).
+- Bake běží na tomtéž stroji jako editor (proces, ne fronta farmy)
+  a jen na Linuxu (`/proc/self/exe`, `posix_spawn`).
 - PLY čte jen prvky `vertex` a `face`, ostatní přeskočí.
-- Alembic a USD chybí.
+- Alembic chybí.

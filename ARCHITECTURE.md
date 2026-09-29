@@ -416,7 +416,10 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                             vede slepená tělesa; Jolt na vláknech, nárazy seřazené
                  Camera     kamera záběru: poloha, rotace, objektiv, rozlišení
                  Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
-                 World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
+                 World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku;
+                            checkpoint (saveState/loadState: plyn, voda a déšť se načtou,
+                            tělesa se spočítají znovu) a náhled na hrubších mřížkách
+                 State      stav řešiče jako bajty a zpět; čtení hlídá každou délku
                  Network    síť uzlů simulace i geometrie, formát .pgsim, klíčové snímky,
                             překlad na World + Look (snímek po snímku, když je co animovat)
                  GeometryGraph  geometrické uzly sítě jako graf jádra: synchronizace,
@@ -439,17 +442,21 @@ src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                             přivrácených ploch (depth peeling), složené s plynem na paprsku
 tests/           59 testů jádra (invarianty, SOP uzly) + 27 pro jazyk a výrazy + 7 pro
                  digital assets + 10 pro topologii, smyčky a vaření na pozadí + 25 pro shader graf + 86 pro simulaci, vodu, déšť, objekty,
-                 modely, geometrii v síti a animaci + 11 pro cache a export + 5 pro JPEG a video
+                 modely, geometrii v síti a animaci + 11 pro cache a export + 10 pro checkpointy
+                 a náhled + 5 pro JPEG a video
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/prototype/  prototype — editor se dvěma sítěmi, simulací (výchozí) a shadery,
                  na společném plátně uzlů; viewport s výběrem a gizmem
                  (SimViewport, Gizmo), zobrazená geometrie a tabulka atributů
                  (SimGeometry); digital assets: vstup dovnitř a zpět, Make Asset,
-                 promote (SimAssets); cache na disk a export (SimRunner::adopt, menu); render
+                 promote (SimAssets); cache na disk a export (SimRunner: snímky v paměti
+                 i čtené z disku podle potřeby, menu); bake na pozadí jako vlastní proces
+                 s průběhem, zrušením a pokračováním z checkpointu (Bake); render
                  sekvencí a videa po snímcích s průběhem (RenderJob); kontext bez okna
                  pro příkazy (Offscreen: EGL, jinak skryté okno GLFW);
-                 příkazy list/gen/check/render/sim (sim --cache/--from-cache/--export, video)
+                 příkazy list/gen/check/render/sim (sim --cache/--from-cache/--export, video,
+                 --checkpoint/--resume/--preview)
                  a cook (geometrie bez simulace do souboru, hash pro determinismus)
 examples/        grafy shaderů, ukázková uživatelská knihovna, sítě simulace, assety (assets/)
 ```

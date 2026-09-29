@@ -87,7 +87,8 @@ struct PySimulation {
     int frame = 0, cached = 0;
     py::list problems;
 
-    PySimulation(const PyNetwork& from, const std::string& readFrom) : net(from.net), folder(from.folder), cache(readFrom) {
+    PySimulation(const PyNetwork& from, const std::string& readFrom, float preview)
+        : net(from.net), folder(from.folder), cache(readFrom) {
         graph.setFrames([this](int f) { return current && current->number == f ? current : nullptr; });
         compiled = net.compile(folder, &graph);
         graph.sync(net, folder);
@@ -99,6 +100,8 @@ struct PySimulation {
             problems.append(py::make_tuple(p.level == sim::Problem::Level::Error ? "error" : "warning", p.node, p.message));
         }
         if (!compiled.ok) throw Error(errors.empty() ? "nothing to simulate: link a solver into the Output" : errors);
+        if (!(preview > 0.0f && preview <= 1.0f)) throw Error("preview is a fraction above 0, at most 1");
+        compiled.world = sim::preview(compiled.world, preview);
         world = compiled.world.sanitized();
         if (!cache.empty()) {
             sim::CacheInfo info;
@@ -342,8 +345,10 @@ void bindSimulation(py::module_& m) {
         });
 
     py::class_<PySimulation>(m, "Simulation", "A network simulated -- or read from a cache -- a frame at a time.")
-        .def(py::init([](const PyNetwork& net, const std::string& cache) { return new PySimulation(net, cache); }),
-             py::arg("network"), py::arg("cache") = "")
+        .def(py::init([](const PyNetwork& net, const std::string& cache, float preview) {
+                 return new PySimulation(net, cache, preview);
+             }),
+             py::arg("network"), py::arg("cache") = "", py::arg("preview") = 1.0f)
         .def("step", [](PySimulation& s) { return PyFrame{s.step()}; })
         .def_property_readonly("frame", [](const PySimulation& s) { return s.frame; })
         .def_property_readonly("frames", &PySimulation::frames)
@@ -366,6 +371,34 @@ void bindSimulation(py::module_& m) {
             out["height"] = c.height;
             return out;
         }, py::arg("frame") = 0)
+        .def("save_state", [](const PySimulation& s) {
+            if (!s.solver) throw Error("frames read from a cache have no state to save");
+            std::string state;
+            {
+                py::gil_scoped_release release;
+                state = s.solver->saveState();
+            }
+            return py::bytes(state);
+        }, "All it takes to go on from this frame as if it had never stopped: a checkpoint (bytes).")
+        .def("load_state", [](PySimulation& s, const py::bytes& bytes) {
+            if (!s.solver) throw Error("frames read from a cache take no state");
+            if (s.frame != 0) throw Error("a state goes into a simulation that has not stepped yet");
+            const std::string state = bytes;
+            std::string error;
+            bool ok = false;
+            {
+                py::gil_scoped_release release;
+                ok = s.solver->loadState(state, error);
+                if (ok) s.current = std::make_shared<const sim::Frame>(s.solver->capture());
+            }
+            if (!ok) {
+                // Of no use now: a fresh one takes its place.
+                s.solver = std::make_unique<sim::WorldSolver>(s.compiled.world);
+                s.current.reset();
+                throw Error(error);
+            }
+            s.frame = s.solver->frame();
+        }, py::arg("state"), "Goes on from a state save_state() gave, of the same network: the next step is the frame after it.")
         .def("write_cache_info", [](const PySimulation& s, const std::string& folder) {
             sim::CacheInfo info;
             info.frames = s.frame;

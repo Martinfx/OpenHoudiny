@@ -198,8 +198,12 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   render přes `prototype`; `as_code()` napíše síť jako Python. Scéna
   z kroku 2 postavená čistě z Pythonu:
   [examples/python/demolition.py](examples/python/demolition.py).
-- **Farma**: ✅ rozsah snímků (`--start`, `--end`) pro render i export
-  z cache; simulace přerušená uprostřed jde dopočítat z uloženého stavu.
+- ✅ **Farma**: rozsah snímků (`--start`, `--end`) pro render i export
+  z cache. Simulace přerušená uprostřed jde dopočítat z checkpointu
+  (`--checkpoint K`, `--resume`, v Pythonu `save_state` / `load_state`)
+  bitově stejně. V editoru je bake na pozadí s průběhem, zrušením
+  a pokračováním a náhled v polovičním rozlišení
+  ([docs/cache.md](docs/cache.md#3-bake-na-pozadí-checkpointy-a-náhled)).
 - ✅ **EXR**: náhledový render do lineárního EXR s hloubkou, vektory pohybu
   a maskami — pro previs a compositing ([docs/render.md](docs/render.md#4-exr-pro-compositing)).
 - ✅ **Plate** ([docs/plate.md](docs/plate.md)): obraz záběru (sekvence PNG,
@@ -212,7 +216,11 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
 **Hotovo, když:** scéna z kroku 2 jde postavit a spočítat čistě
 z Pythonu; výsledek se otevře v Blenderu a v usdview jako USD (kusy, drť,
 prach, kamera, světlo) a render v Cycles sedí na náš náhled; simulace
-přerušená uprostřed jde dopočítat z cache bitově stejně.
+přerušená uprostřed jde dopočítat z cache bitově stejně. To poslední je
+**splněno**. Bake zabitý na snímku 43 pokračoval od checkpointu na snímku
+40 a všech 60 snímků vyšlo bajt po bajtu stejně jako u nepřerušeného běhu.
+Bake zrušený v editoru na snímku 50 a obnovený dal 150 stejných snímků.
+Testy to ověřují pro plyn, vodu, déšť i odstřel s prachem.
 
 ### Krok 4 — Destrukce pro produkci
 
