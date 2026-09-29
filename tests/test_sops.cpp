@@ -262,6 +262,39 @@ TEST(sops_copies_turn_by_orient) {
     }
 }
 
+TEST(sops_transform_turns_and_sizes_about_its_pivot) {
+    // A box turned a quarter about y through a pivot at its corner, and
+    // doubled: the corner stays where it is, the rest turns round it.
+    Graph g;
+    CookEngine engine;
+    Node* box = g.create("box", "box");
+    box->setVec3("size", Vec3(1.0f, 1.0f, 1.0f));
+    box->setVec3("center", Vec3(0.5f, 0.5f, 0.5f));  // from the origin to (1, 1, 1)
+    Node* turn = g.create("transform", "turn");
+    turn->setInput(0, box);
+    turn->setVec3("r", Vec3(0.0f, 90.0f, 0.0f));
+    turn->setVec3("p", Vec3(1.0f, 0.0f, 1.0f));
+    turn->setFloat("scale", 2.0f);
+    turn->setVec3("t", Vec3(0.0f, 3.0f, 0.0f));
+    const GeometryPtr from = engine.cook(*box, CookContext{});
+    const GeometryPtr to = engine.cook(*turn, CookContext{});
+    CHECK_EQ(to->pointCount(), from->pointCount());
+    const auto a = from->positions(), b = to->positions();
+    for (size_t i = 0; i < a.size(); ++i) {
+        // Doubled from the pivot, a quarter about y (x -> -z), then moved up.
+        const Vec3 d = (a[i] - Vec3(1.0f, 0.0f, 1.0f)) * 2.0f;
+        CHECK(near(b[i], Vec3(1.0f, 3.0f, 1.0f) + Vec3(d.z, d.y, -d.x), 1e-4f));
+    }
+    // Without a pivot: about the origin, as before.
+    turn->setVec3("p", Vec3(0.0f, 0.0f, 0.0f));
+    const GeometryPtr plain = engine.cook(*turn, CookContext{});
+    const auto c = plain->positions();
+    for (size_t i = 0; i < a.size(); ++i) {
+        const Vec3 d = a[i] * 2.0f;
+        CHECK(near(c[i], Vec3(0.0f, 3.0f, 0.0f) + Vec3(d.z, d.y, -d.x), 1e-4f));
+    }
+}
+
 TEST(sops_obj_files_go_in_and_out) {
     // Polygons stay polygons, lines are open; negative corners count back.
     const char* text = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 2 0 0\n"

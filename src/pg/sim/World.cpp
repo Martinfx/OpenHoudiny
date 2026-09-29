@@ -45,7 +45,10 @@ void WorldSolver::step() {
     const World& now = world_.at(frame_ + 1);
     // The pieces first: where they fall to, the water and the gas go round.
     if (rigid_) {
-        if (animated) rigid_->setColliders(now.rigid.colliders);
+        if (animated) {
+            rigid_->setColliders(now.rigid.colliders);
+            rigid_->setGuide(now.rigid.guide, now.rigid.solver.guideStrength);
+        }
         rigid_->step();
     }
     const RigidScene& rigid = world_.rigid;

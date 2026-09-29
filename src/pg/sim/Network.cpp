@@ -493,15 +493,18 @@ std::vector<NodeType> buildTypes() {
                   toggle("path", "Path Attribute", true, "Each primitive's prim, as the text attribute path.")});
     }
     geometry("transform", "Transform", "transform",
-             "Moves, turns and sizes what comes in: scale, then rotate, then translate. Only the positions "
-             "(and normals) are written; every other attribute is shared, not copied.",
+             "Moves, turns and sizes what comes in: scale, then rotate -- both about the pivot -- then "
+             "translate. Only the positions (and normals) are written; every other attribute is shared, not "
+             "copied.",
              in,
              {vec("t", "Translate", "Transform", Vec3(), -5.0f, 5.0f, "m", "How far it moves."),
               vec("r", "Rotate", "Transform", Vec3(), -180.0f, 180.0f, "\xc2\xb0",
-                  "Degrees about x, then y, then z, about the origin."),
+                  "Degrees about x, then y, then z, about the pivot."),
               vec("s", "Scale", "Transform", Vec3(1.0f, 1.0f, 1.0f), 0.0f, 5.0f, "", "How much larger along x, y, z."),
               {"scale", "Uniform Scale", "Transform", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, -kBig, kBig, "",
-               "How much larger, all ways."}},
+               "How much larger, all ways."},
+              vec("p", "Pivot", "Transform", Vec3(), -5.0f, 5.0f, "m",
+                  "The point it turns and sizes about -- the foot of a tower that is to topple.")},
              {"t", "r", nullptr, "s", nullptr, nullptr});
     t.push_back({"merge", "Merge", "Geometry",
                  "Everything linked into it, one after the other: points, primitives, attributes (missing ones "
@@ -1037,14 +1040,17 @@ std::vector<NodeType> buildTypes() {
          "chunks, glued stronger inside. Steel bars linked into Rebar -- a Rebar node's -- hold the pieces they "
          "run through once the glue breaks: they bend, pull out of small pieces and tear. A network linked into "
          "Constraints -- RBD Constraints', edited -- is the glue instead: its lines are the joints, as strong as "
-         "their strength says. Link it into the "
+         "their strength says. A guide linked into Guide -- the pieces, moved as the shot wants them to go -- "
+         "leads them: they follow it until its time is up, their glue breaks or something stops them further "
+         "from it than Reach; a piece's attribute guide says how much it leads that one. Link it into the "
          "Output's Looks: it is "
          "simulated and drawn. Its Collider into a Liquid, Pyro Solver or Rain: they go round the pieces; its "
          "Dust into a Pyro Solver's Sources: the dust is smoke, pushed out by the air the pieces squeeze out.",
          {{"pieces", "Pieces", PinType::Geometry},
           {"colliders", "Colliders", PinType::Collider, true},
           {"rebar", "Rebar", PinType::Geometry},
-          {"constraints", "Constraints", PinType::Geometry}},
+          {"constraints", "Constraints", PinType::Geometry},
+          {"guide", "Guide", PinType::Geometry}},
          {{"look", "Look", PinType::Look},
           {"rigid", "Rigid", PinType::Rigid},
           {"collider", "Collider", PinType::Collider},
@@ -1088,6 +1094,18 @@ std::vector<NodeType> buildTypes() {
           {"stretch", "Stretch", "Rebar", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 0.5f, 0.0f, 100.0f, "",
            "How much longer a bar gets before it tears, as a share of what of it yields: 0.1 a tenth -- of the "
            "bar bare between two pieces and twenty times its diameter."},
+          {"guide_strength", "Strength", "Guide", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "How hard the guide steers the pieces: 1 onto where it has them at every step, less a softer pull "
+           "that lags behind, 0 not at all. They still knock into things. Keyed down, it hands them over to "
+           "the simulation bit by bit."},
+          {"guide_until", "Until", "Guide", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, 1e6f, "s",
+           "Seconds after which the guide leads nothing: the pieces go their own way. 0: all along."},
+          {"guide_reach", "Reach", "Guide", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1e6f, "m",
+           "How far a body may be from where the guide has it -- stopped by the ground, or by what it hit -- "
+           "before it goes its own way. 0: however far."},
+          {"guide_let_go", "Let Go When Broken", "Guide", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "A piece whose glue breaks goes its own way: what the guide throws down breaks up freely where it "
+           "lands."},
           {"substeps", "Substeps", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
            "Steps of the solver a frame: more for fast pieces and tall stacks, which then stand steadier."},
           {"dust", "Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
@@ -3037,7 +3055,7 @@ Vec3 spinBetween(const Vec3& fromDegrees, const Vec3& toDegrees, float dt) {
 Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) const {
     CompileMemo memo;
     Compiled c = compileFrame(folder, geometry, 1.0f, memo, false);
-    if (!anyAnimated() && !c.fileAnimation) return c;
+    if (!anyAnimated() && !c.fileAnimation && !c.guideMoves) return c;
 
     // Animated: the network at every frame.
     const int count = std::max(1, c.frames);
@@ -3490,6 +3508,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.debris = f(*solver, "debris");
         s.trail = f(*solver, "trail");
         s.air = f(*solver, "air");
+        s.guideStrength = f(*solver, "guide_strength");
+        s.guideUntil = f(*solver, "guide_until");
+        s.guideReach = f(*solver, "guide_reach");
+        s.guideLetGo = f(*solver, "guide_let_go") != 0.0f;
         s.timeStep = c.world.timeStep;
         r.attribute = text(solver->id, "attribute");
         r.node = solver->id;
@@ -3575,6 +3597,29 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                     }
                 }
                 memo.constraints[solver->id] = r.constraints;
+            }
+        }
+        // The guide: the pieces moved as they are to go -- cooked at this
+        // frame; where it moves with time, the network is taken frame by frame.
+        const std::vector<Link> guides = linksInto(solver->id, "guide");
+        if (!guides.empty()) {
+            startCooker();
+            const int from = guides.front().from;
+            const GeometryPtr geo = cooker->cook(from, static_cast<int>(std::lround(frame)), firstStep);
+            const std::string error = cooker->error(from);
+            if (!error.empty()) problem(L::Warning, from, error);
+            if (fromSimulation(from)) {
+                problem(L::Warning, solver->id, "Its guide comes from a simulation, which has not run when the guide "
+                                                "is taken: nothing leads the pieces.");
+            } else if (geo && r.pieces && geo->pointCount() != r.pieces->pointCount()) {
+                problem(L::Warning, solver->id,
+                        "The guide has " + std::to_string(geo->pointCount()) + " points, the pieces " +
+                            std::to_string(r.pieces->pointCount()) +
+                            ": it must be the pieces moved -- as many points, in the same order. Nothing leads them.");
+            } else if (geo) {
+                r.guide = geo;
+                const pg::Node* core = cooker->coreNode(from);
+                if (core && cooker->engine().isTimeDependent(*core)) c.guideMoves = true;
             }
         }
         for (const Node* n : feeding(solver, "colliders")) {

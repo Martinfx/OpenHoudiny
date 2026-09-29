@@ -52,6 +52,13 @@
 //              after another, and the concrete falls off it; where the
 //              steel does, it stretches, and tears a tenth longer (stretch)
 //              over what of it yields
+//   guide      the pieces as they are to move: the same points, moved --
+//              animated as the shot wants it. Each step a body is steered
+//              to where the guide has it at the end of the step -- the
+//              nearest a rigid body comes to its pieces' points there -- as
+//              hard as the strength says; it still knocks into things. A
+//              piece goes its own way after a time, when its glue breaks,
+//              or when it is further from the guide than a reach
 //
 // Attributes of the pieces -- on the primitives, else the points; a body
 // takes those of its first primitive -- set them apart:
@@ -74,6 +81,7 @@
 //                 pieces of the same chunk are ...
 //   clusterglue f ... this much as strong (the weaker of two) -- a chunk
 //                 comes off whole and breaks up where it lands hard
+//   guide     f   how much the guide leads it, 0 to 1; 0: not at all
 //
 // As in Houdini, a merge fills an attribute a geometry lacks with 0: set
 // active and glue on all the pieces, not on some.
@@ -132,6 +140,16 @@ struct RigidSettings {
     /// The air the pieces squeeze out as they crush and knock -- it pushes
     /// the dust out along the ground: 1 as much as they would, 0 none.
     float air = 1.0f;
+    /// How hard the guide steers the bodies: 1 onto where it has them at
+    /// every step, less a softer pull that lags behind; 0 not at all.
+    float guideStrength = 1.0f;
+    /// Seconds after which the guide leads nothing; 0: all along.
+    float guideUntil = 0.0f;
+    /// Metres a body may be from where the guide has it -- stopped by
+    /// something, say -- before it goes its own way; 0: however far.
+    float guideReach = 0.0f;
+    /// A piece whose glue breaks goes its own way.
+    bool guideLetGo = true;
     float timeStep = 1.0f / 30.0f;    ///< seconds a frame (the World's)
 
     bool operator==(const RigidSettings&) const = default;
@@ -151,6 +169,11 @@ struct RigidScene {
     /// place of those found where the pieces touch. Null: those. Compared
     /// by pointer, as the pieces are.
     std::shared_ptr<const Geometry> constraints;
+    /// The pieces as they are to move: the same points, in the same order,
+    /// moved -- where they are to be at the end of the first step. Null, or
+    /// not as many points as the pieces: nothing leads them. Compared by
+    /// pointer.
+    std::shared_ptr<const Geometry> guide;
     std::vector<Collider> colliders;   ///< the objects: still, or moving (velocity, spin)
     bool intoGas = false;              ///< the pieces are colliders of the gas
     bool intoWater = false;            ///< ... of the water
@@ -405,6 +428,9 @@ public:
 
     /// Where the objects are to be at the end of the next step.
     void setColliders(const std::vector<Collider>& colliders);
+    /// Where the guide has the pieces at the end of the next step, and how
+    /// hard it steers them then (RigidSettings::guideStrength).
+    void setGuide(std::shared_ptr<const Geometry> guide, float strength);
     void step();
 
     const RigidScene& scene() const { return scene_; }

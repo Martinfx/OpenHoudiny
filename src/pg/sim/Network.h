@@ -275,6 +275,9 @@ struct Compiled {
     /// Something read from a file changes with the frames -- a USD Camera's
     /// camera: what is drawn is compiled at every frame, as when animated.
     bool fileAnimation = false;
+    /// The guide of the RBD Solver changes with the frames -- keyed, or a
+    /// wrangle reading the time: it is taken at every frame, as when animated.
+    bool guideMoves = false;
     /// The geometry node whose geometry is shown (Network::displayed()); 0 if none.
     int display = 0;
 

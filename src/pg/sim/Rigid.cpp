@@ -68,6 +68,9 @@ RigidScene RigidScene::sanitized() const {
     s.debris = std::clamp(finite(s.debris, d.debris), 0.0f, 100.0f);
     s.trail = std::clamp(finite(s.trail, d.trail), 0.0f, 100.0f);
     s.air = std::clamp(finite(s.air, d.air), 0.0f, 100.0f);
+    s.guideStrength = std::clamp(finite(s.guideStrength, d.guideStrength), 0.0f, 1.0f);
+    s.guideUntil = std::clamp(finite(s.guideUntil, d.guideUntil), 0.0f, 1e6f);
+    s.guideReach = std::clamp(finite(s.guideReach, d.guideReach), 0.0f, 1e6f);
     s.timeStep = std::clamp(finite(s.timeStep, d.timeStep), 1e-4f, 1.0f);
     detail::sanitize(r.colliders);
     return r;
@@ -1524,6 +1527,31 @@ JPH::Quat quaternionOf(const Rotation& r) {
     return m.GetQuaternion().Normalized();
 }
 
+/// The turn that takes points at rest nearest to where they have been
+/// moved, as a rigid body can: `spread` sums, over the points, where each
+/// is moved to from the middle of those times where it rests from theirs
+/// -- (moved - middle)(rest - middle)^T, column by column. From `from` on,
+/// turned the way the spread still asks until it asks nothing more (Müller,
+/// Bender, Chentanez and Macklin 2016: the rotational part of a
+/// deformation).
+JPH::Quat bestTurn(const Vec3 spread[3], JPH::QuatArg from) {
+    JPH::Quat q = from.Normalized();
+    for (int i = 0; i < 32; ++i) {
+        const Vec3 axes[3] = {ours(q * JPH::Vec3::sAxisX()), ours(q * JPH::Vec3::sAxisY()), ours(q * JPH::Vec3::sAxisZ())};
+        Vec3 spin;
+        float along = 0.0f;
+        for (int c = 0; c < 3; ++c) {
+            spin += cross(axes[c], spread[c]);
+            along += dot(axes[c], spread[c]);
+        }
+        spin = spin * (1.0f / (std::fabs(along) + 1e-20f));
+        const float angle = length(spin);
+        if (!(angle > 1e-7f)) break;
+        q = (JPH::Quat::sRotation(jolt(spin * (1.0f / angle)), angle) * q).Normalized();
+    }
+    return q;
+}
+
 Rotation rotationOf(JPH::QuatArg q) {
     Rotation r;
     r.x = ours(q * JPH::Vec3::sAxisX());
@@ -1633,8 +1661,15 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         bool glass = false;                     ///< of glass: little dust, and its grit glitters
         float size = 0.1f;                      ///< how big it is across, metres
         Vec3 centre;                            ///< the middle of its box, at rest
+        float guideWeight = 1.0f;               ///< how much the guide leads it (attribute guide)
+        bool guided = false;                    ///< the guide still leads it
+        std::vector<uint32_t> points;           ///< its points, in the pieces' geometry
+        Vec3 middle;                            ///< ... where they are on average, at rest
     };
     std::vector<Piece> pieces;
+    std::vector<Vec3> rest;                     ///< the pieces' points, at rest
+    std::shared_ptr<const Geometry> guide;      ///< where the next step is to take them; null: nowhere
+    float guideStrength = 1.0f;                 ///< how hard, this step
     std::vector<JPH::BodyID> still;             ///< each still piece's body
     std::vector<int> dirty;                     ///< pieces whose glue broke: their clusters come apart
     struct Edge {
@@ -1660,6 +1695,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         bool alive = false;
         float mass = 0.0f;             ///< kilograms
         Vec3 before, beforeSpin;       ///< its velocity before the step, at its centre of mass
+        float lift = 0.0f;             ///< how much of gravity the guide held off this step
     };
     std::vector<Cluster> clusters;
     struct Object {
@@ -1997,6 +2033,123 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         }
         const float angle = length(q.spin) * dt;
         if (angle > 1e-6f) q.turn = (JPH::Quat::sRotation(jolt(normalize(q.spin)), angle) * q.turn).Normalized();
+    }
+
+    /// Where the guide has the body `c` at the end of the step: the turn and
+    /// the place taking its pieces' points at rest nearest to the guide's,
+    /// the body's own turn now where the search starts. False without a
+    /// guide.
+    bool guidedPose(const Cluster& c, JPH::Quat& turn, Vec3& place) const {
+        if (!guide) return false;
+        const std::span<const Vec3> G = guide->positions();
+        double from[3] = {0.0, 0.0, 0.0}, to[3] = {0.0, 0.0, 0.0};
+        size_t count = 0;
+        for (const int k : c.pieces) {
+            for (const uint32_t i : pieces[static_cast<size_t>(k)].points) {
+                for (int a = 0; a < 3; ++a) {
+                    from[a] += rest[i][a];
+                    to[a] += G[i][a];
+                }
+                ++count;
+            }
+        }
+        if (count == 0) return false;
+        const Vec3 restMiddle(static_cast<float>(from[0] / count), static_cast<float>(from[1] / count),
+                              static_cast<float>(from[2] / count));
+        const Vec3 guideMiddle(static_cast<float>(to[0] / count), static_cast<float>(to[1] / count),
+                               static_cast<float>(to[2] / count));
+        double spread[3][3] = {};
+        for (const int k : c.pieces) {
+            for (const uint32_t i : pieces[static_cast<size_t>(k)].points) {
+                const Vec3 a = G[i] - guideMiddle, b = rest[i] - restMiddle;
+                for (int col = 0; col < 3; ++col) {
+                    for (int row = 0; row < 3; ++row) spread[col][row] += static_cast<double>(a[row]) * b[col];
+                }
+            }
+        }
+        Vec3 columns[3];
+        for (int col = 0; col < 3; ++col) {
+            columns[col] = Vec3(static_cast<float>(spread[col][0]), static_cast<float>(spread[col][1]),
+                                static_cast<float>(spread[col][2]));
+        }
+        turn = bestTurn(columns, physics.GetBodyInterfaceNoLock().GetRotation(c.id));
+        place = guideMiddle - ours(turn * jolt(restMiddle));
+        return true;
+    }
+
+    /// Steers the bodies the guide leads to where it has them at the end of
+    /// the step: their velocity and spin -- as much of the way there as its
+    /// strength and their pieces' weights say -- are those the step takes
+    /// them there with, and as much of gravity is held off them. They still
+    /// knock into things. A body held by a still piece is left where it is.
+    void steer(float dt) {
+        for (Cluster& c : clusters) c.lift = 0.0f;
+        if (!guide || guideStrength <= 0.0f) return;
+        JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        for (Cluster& c : clusters) {
+            if (!c.alive || !c.anchors.empty() || c.pieces.empty()) continue;
+            float weight = 0.0f;
+            for (const int k : c.pieces) {
+                const Piece& p = pieces[static_cast<size_t>(k)];
+                if (p.guided) weight += p.guideWeight;
+            }
+            const float pull = guideStrength * weight / static_cast<float>(c.pieces.size());
+            if (pull <= 0.0f) continue;
+            JPH::Quat turn;
+            Vec3 place;
+            if (!guidedPose(c, turn, place)) continue;
+            // Its centre of mass now, and where the guide has it.
+            const JPH::Quat now = bi.GetRotation(c.id);
+            const Vec3 com = ours(bi.GetCenterOfMassPosition(c.id));
+            const Vec3 local = ours(now.Conjugated() * jolt(com - ours(bi.GetPosition(c.id))));
+            const Vec3 there = place + ours(turn * jolt(local));
+            const Vec3 go = (there - com) * (1.0f / dt);
+            // The turn from now to there, the short way, over the step.
+            JPH::Quat d = (turn * now.Conjugated()).Normalized();
+            if (d.GetW() < 0.0f) d = -d;
+            JPH::Vec3 axis;
+            float angle = 0.0f;
+            d.GetAxisAngle(axis, angle);
+            const Vec3 spin = angle > 1e-7f ? ours(axis) * (angle / dt) : Vec3();
+            const Vec3 v = ours(bi.GetLinearVelocity(c.id)), w = ours(bi.GetAngularVelocity(c.id));
+            bi.SetLinearVelocity(c.id, jolt(clampLength(v + (go - v) * pull, kMaxSpeed)));
+            bi.SetAngularVelocity(c.id, jolt(clampLength(w + (spin - w) * pull, kMaxSpin)));
+            // Held up as much as it is led: over the step, it keeps the
+            // velocity it was given.
+            bi.AddForce(c.id, jolt(settings.gravity * (-c.mass * pull)));
+            bi.ActivateBody(c.id);
+            c.lift = pull;
+        }
+    }
+
+    /// Lets go the pieces the guide no longer leads: all of them after its
+    /// time; a piece whose glue broke, when it lets those go; the pieces of a
+    /// body further from where the guide has them than its reach.
+    void letGo() {
+        const RigidSettings& s = settings;
+        const bool over = s.guideUntil > 0.0f && time >= s.guideUntil - 1e-6f;
+        for (Piece& p : pieces) {
+            if (p.guided && (over || p.gone || (s.guideLetGo && p.looseAt >= 0.0f))) p.guided = false;
+        }
+        if (!guide || s.guideReach <= 0.0f) return;
+        const std::span<const Vec3> G = guide->positions();
+        for (const Cluster& c : clusters) {
+            if (!c.alive) continue;
+            bool far = false;
+            for (const int k : c.pieces) {
+                const Piece& p = pieces[static_cast<size_t>(k)];
+                if (!p.guided || p.points.empty()) continue;
+                Vec3 there;
+                for (const uint32_t i : p.points) there += G[i];
+                there = there * (1.0f / static_cast<float>(p.points.size()));
+                if (length(whereNow(k, p.middle) - there) > s.guideReach) {
+                    far = true;
+                    break;
+                }
+            }
+            if (!far) continue;
+            for (const int k : c.pieces) pieces[static_cast<size_t>(k)].guided = false;
+        }
     }
 
     /// Dust behind the pieces come loose not long ago, flying fast -- what the
@@ -2584,6 +2737,8 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     // The pieces: the hull of each part, where it rests -- as their proxy
     // has it, when they carry one; what their attributes say.
     const std::vector<Vec3> P = rigidPositions(*geo);
+    const std::span<const Vec3> at = geo->positions();
+    m.rest.assign(at.begin(), at.end());
     const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
@@ -2623,6 +2778,11 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         piece.size = piece.hulls.empty() ? 0.0f : std::max(length(hi - lo), 0.01f);
         piece.centre = piece.hulls.empty() ? Vec3() : (lo + hi) * 0.5f;
         if (piece.hulls.empty()) piece.gone = true;  // nothing to it
+        // Its points, as a guide moves them, and where they are on average.
+        piece.guideWeight = std::clamp(numberOf(*geo, L, body, "guide", 1.0f), 0.0f, 1.0f);
+        for (const std::vector<uint32_t>& part : L.parts[k]) piece.points.insert(piece.points.end(), part.begin(), part.end());
+        std::sort(piece.points.begin(), piece.points.end());
+        piece.points.erase(std::unique(piece.points.begin(), piece.points.end()), piece.points.end());
         if (meshes && !piece.hulls.empty()) {
             // Its triangles at rest, for the water and the gas.
             Geometry one;
@@ -2729,6 +2889,14 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         m.longer.assign(m.rebar->stations.size(), 0.0f);
         m.relinkBars();
     }
+    // The guide: what it leads -- the pieces that move, as much as they say.
+    setGuide(scene_.guide, s.guideStrength);
+    for (Impl::Piece& p : m.pieces) {
+        Vec3 sum;
+        for (const uint32_t i : p.points) sum += m.rest[i];
+        p.middle = p.points.empty() ? p.centre : sum * (1.0f / static_cast<float>(p.points.size()));
+        p.guided = m.guide && p.moves && !p.gone && p.guideWeight > 0.0f;
+    }
     m.physics.OptimizeBroadPhase();
 }
 
@@ -2747,6 +2915,14 @@ void RigidSolver::setColliders(const std::vector<Collider>& colliders) {
                              quaternionOf(Rotation::fromEuler(c.rotation)), dt);
         }
     }
+}
+
+void RigidSolver::setGuide(std::shared_ptr<const Geometry> guide, float strength) {
+    Impl& m = *impl_;
+    // The pieces' points, moved: as many of them -- else it guides nothing.
+    const bool fits = guide && guide->pointCount() == m.rest.size() && !m.rest.empty();
+    m.guide = fits ? std::move(guide) : nullptr;
+    m.guideStrength = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
 }
 
 void RigidSolver::step() {
@@ -2807,6 +2983,9 @@ void RigidSolver::step() {
         bi.SetLinearVelocity(id, bi.GetLinearVelocity(id) + jolt(m.pieces[static_cast<size_t>(k)].kick));
         bi.ActivateBody(id);
     }
+    // The guide steers what it leads -- before the step, so what the step
+    // does to them is a knock, and its pull is not.
+    m.steer(dt);
 
     // The step, and how each body moved before it.
     for (Impl::Cluster& c : m.clusters) {
@@ -2840,7 +3019,7 @@ void RigidSolver::step() {
         // it -- a keyed object pushing it against its foundation -- is not a
         // knock to share among all that touches it.
         if (!cl.alive || knocksOn[c] == 0 || !cl.anchors.empty()) continue;
-        const Vec3 change = ours(bi.GetLinearVelocity(cl.id)) - cl.before - s.gravity * dt;
+        const Vec3 change = ours(bi.GetLinearVelocity(cl.id)) - cl.before - s.gravity * (dt * (1.0f - cl.lift));
         took[c] = cl.mass * length(change) / static_cast<float>(knocksOn[c]);
     }
     std::vector<float> felt(m.pieces.size(), 0.0f);
@@ -2858,6 +3037,7 @@ void RigidSolver::step() {
     }
     mend();
     m.settleHeld();
+    m.letGo();
 
     // The knocks: the hardest first, dust and grit where they were.
     std::sort(m.knocks.begin(), m.knocks.end(), [](const Impl::Knock& a, const Impl::Knock& b) {
@@ -3005,6 +3185,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
 RigidSolver::~RigidSolver() = default;
 size_t RigidSolver::pieceCount() const { return 0; }
 void RigidSolver::setColliders(const std::vector<Collider>&) {}
+void RigidSolver::setGuide(std::shared_ptr<const Geometry>, float) {}
 void RigidSolver::step() {}
 RigidFrame RigidSolver::capture() const {
     RigidFrame f;
