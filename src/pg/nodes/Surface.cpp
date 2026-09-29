@@ -219,9 +219,10 @@ Vec3 turnUpTo(const Vec3& n, const Vec3& v) {
 }
 
 /// A copy of the first input on every point of the second: moved there,
-/// sized by the point's `pscale` (times `scale`), its +y turned to the
-/// point's normal when `align` is on. The points' other attributes go onto
-/// their copy's points.
+/// sized by the point's `pscale` (times `scale`), turned by the point's
+/// `orient` -- a unit quaternion x, y, z, w -- where it has one, else its +y
+/// turned to the point's normal when `align` is on. The points' other
+/// attributes go onto their copy's points.
 class CopyToPointsNode : public Node {
 public:
     explicit CopyToPointsNode(std::string name) : Node("copytopoints", std::move(name)) {
@@ -269,7 +270,7 @@ public:
         std::vector<uint32_t> owner(copies * tp);
         for (size_t c = 0; c < copies; ++c) std::fill(owner.begin() + static_cast<long>(c * tp), owner.begin() + static_cast<long>((c + 1) * tp), static_cast<uint32_t>(c));
         for (const std::string& name : pts->points().names()) {
-            if (name == "P" || name == "N" || name == "pscale") continue;
+            if (name == "P" || name == "N" || name == "pscale" || name == "orient") continue;
             out->points().assign(name, pts->points().find(name)->gather(owner));
         }
 
@@ -279,8 +280,10 @@ public:
         const auto at = pts->positions();
         const AttributeArray* pscaleAttr = pts->points().find("pscale");
         const AttributeArray* normalAttr = pts->points().find("N");
+        const AttributeArray* orientAttr = pts->points().find("orient");
         const bool hasScale = pscaleAttr && pscaleAttr->type() == AttrType::Float;
-        const bool hasNormal = align && normalAttr && normalAttr->type() == AttrType::Vec3;
+        const bool hasOrient = orientAttr && orientAttr->type() == AttrType::Vec4;
+        const bool hasNormal = !hasOrient && align && normalAttr && normalAttr->type() == AttrType::Vec3;
         AttributeArray* nOut = out->points().find("N");
         const bool turnNormals = nOut && nOut->type() == AttrType::Vec3;
         auto P = out->positionsForWrite();
@@ -289,6 +292,23 @@ public:
         parallelFor(copies, 256, [&](size_t begin, size_t end) {
             for (size_t c = begin; c < end; ++c) {
                 const float s = scale * (hasScale ? pscaleAttr->read<float>()[c] : 1.0f);
+                if (hasOrient) {
+                    // q v q* for the unit quaternion: v + 2 w (u x v) + 2 u x (u x v).
+                    const Vec4 q = orientAttr->read<Vec4>()[c];
+                    const float n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+                    const float k = n > 1e-12f ? 1.0f / n : 0.0f;
+                    const Vec3 u(q.x * k, q.y * k, q.z * k);
+                    const float w = n > 1e-12f ? q.w * k : 1.0f;
+                    auto turned = [&](const Vec3& v) {
+                        const Vec3 t = cross(u, v) * 2.0f;
+                        return v + t * w + cross(u, t);
+                    };
+                    for (size_t i = c * tp; i < (c + 1) * tp; ++i) {
+                        P[i] = at[c] + turned(P[i] * s);
+                        if (turnNormals) N[i] = turned(N[i]);
+                    }
+                    continue;
+                }
                 const Vec3 up = hasNormal ? normalize(normalAttr->read<Vec3>()[c]) : Vec3(0.0f, 1.0f, 0.0f);
                 const bool turn = hasNormal && length(up) > 0.5f;
                 for (size_t i = c * tp; i < (c + 1) * tp; ++i) {

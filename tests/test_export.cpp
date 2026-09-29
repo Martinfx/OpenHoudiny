@@ -194,7 +194,8 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            r.dropletIds == s.dropletIds && a.rigid.debrisIds == b.rigid.debrisIds &&
            a.rigid.debrisVelocity == b.rigid.debrisVelocity && w.flow == x.flow && a.rigid.rebarState == b.rigid.rebarState &&
            a.rigid.debrisGlass == b.rigid.debrisGlass && a.rigid.unglued == b.rigid.unglued &&
-           a.rigid.jointState == b.rigid.jointState && a.rigid.jointTime == b.rigid.jointTime;
+           a.rigid.jointState == b.rigid.jointState && a.rigid.jointTime == b.rigid.jointTime &&
+           a.rigid.debrisOrient == b.rigid.debrisOrient;
 }
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
@@ -250,6 +251,7 @@ sim::Frame madeUpFrame() {
     f.rigid.debrisVelocity = {0.0f, -1.0f, 0.0f, 0.5f, 0.0f, 0.0f};
     f.rigid.debrisIds = {40, 41};
     f.rigid.debrisGlass = {0, 1};  // the second a chip of glass
+    f.rigid.debrisOrient = {0.0f, 0.0f, 0.0f, 1.0f, 0.5f, -0.5f, 0.5f, 0.5f};  // as it lands, and turned
     f.rigid.unglued = {0, 2};
     f.rigid.vanished = {1};
     f.rigid.rebarState = {0, 1, 2, 0};  // a bar out of one piece, torn after the next
@@ -482,7 +484,7 @@ TEST(frames_round_trip_through_their_files) {
     empty.domain.cells[0] = empty.domain.cells[1] = empty.domain.cells[2] = 64;
     empty.fields.assign(3 * empty.domain.cellCount(), 0);
     const std::string small = sim::formatFrame(empty);
-    CHECK(small.size() < 320);
+    CHECK(small.size() < 330);
     CHECK(sim::parseFrame(small, back, error));
     CHECK(sameFrame(empty, back));
 
@@ -536,8 +538,9 @@ TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
     f.rigid.unglued.clear();
     f.rigid.jointState.clear();
     f.rigid.jointTime.clear();
+    f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 11 * 8);  // the five counts, version 5's, 6's, 7's two and 8's two, all 0
+    bytes.resize(bytes.size() - 12 * 8);  // the five counts, version 5's, 6's, 7's two, 8's two and 9's, all 0
     bytes[8] = 3;
     sim::Frame back;
     std::string error;
@@ -559,8 +562,9 @@ TEST(frames_of_version_4_still_read_without_the_waters_flow) {
     f.rigid.unglued.clear();
     f.rigid.jointState.clear();
     f.rigid.jointTime.clear();
+    f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 6 * 8);  // its count, 0, and version 6's, 7's two and 8's two
+    bytes.resize(bytes.size() - 7 * 8);  // its count, 0, and version 6's, 7's two, 8's two and 9's
     bytes[8] = 4;
     sim::Frame back;
     std::string error;
@@ -583,8 +587,9 @@ TEST(frames_of_version_5_still_read_without_what_became_of_the_bars) {
     f.rigid.unglued.clear();
     f.rigid.jointState.clear();
     f.rigid.jointTime.clear();
+    f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 5 * 8);  // its count, 0, and version 7's and 8's two
+    bytes.resize(bytes.size() - 6 * 8);  // its count, 0, and version 7's and 8's two and 9's
     bytes[8] = 5;
     sim::Frame back;
     std::string error;
@@ -602,8 +607,9 @@ TEST(frames_of_version_6_still_read_without_which_grit_is_glass) {
     f.rigid.unglued.clear();
     f.rigid.jointState.clear();
     f.rigid.jointTime.clear();
+    f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 4 * 8);  // their counts, 0, and version 8's two
+    bytes.resize(bytes.size() - 5 * 8);  // their counts, 0, and version 8's two and 9's
     bytes[8] = 6;
     sim::Frame back;
     std::string error;
@@ -623,8 +629,9 @@ TEST(frames_of_version_7_still_read_without_what_became_of_the_joints) {
     sim::Frame f = madeUpFrame();
     f.rigid.jointState.clear();
     f.rigid.jointTime.clear();
+    f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - 2 * 8);  // their counts, 0
+    bytes.resize(bytes.size() - 3 * 8);  // their counts, 0, and version 9's
     bytes[8] = 7;
     sim::Frame back;
     std::string error;
@@ -634,6 +641,25 @@ TEST(frames_of_version_7_still_read_without_what_became_of_the_joints) {
     // A time for each joint, or refused.
     sim::Frame wrong = madeUpFrame();
     wrong.rigid.jointTime.pop_back();
+    CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
+}
+
+TEST(frames_of_version_8_still_read_without_how_the_grit_is_turned) {
+    // As version 8 wrote it: without the grit's turns at the end -- not
+    // known, as a frame without grit has them.
+    sim::Frame f = madeUpFrame();
+    f.rigid.debrisOrient.clear();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - 8);  // its count, 0
+    bytes[8] = 8;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.rigid.debrisOrient.empty());
+    // A turn for each bit, or refused.
+    sim::Frame wrong = madeUpFrame();
+    wrong.rigid.debrisOrient.resize(4);
     CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
 }
 
@@ -647,7 +673,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 9;
+    newer[8] = 10;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

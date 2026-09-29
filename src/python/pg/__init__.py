@@ -887,6 +887,8 @@ class _Rigid:
     grit = property(lambda self: _array(self._f.grit()), doc="x, y, z, size of each bit, (N, 4)")
     grit_velocities = property(lambda self: _array(self._f.grit_velocities()))
     grit_ids = property(lambda self: _array(self._f.grit_ids()))
+    grit_orient = property(lambda self: _array(self._f.grit_orient()),
+                           doc="how each bit is turned: unit quaternions x, y, z, w, (N, 4)")
     grit_glass = property(lambda self: _array(self._f.grit_glass()),
                           doc="1 for each bit that is a chip of glass; empty when none is")
     body_count = property(lambda self: self._f.body_count)

@@ -1,0 +1,90 @@
+pgsim 1
+# Debris as particles: a concrete column on the landing of a flight of
+# stairs, its foot blown out on the side of the steps, tips over down them
+# and breaks where it lands. The grit is particles of their own: thrown off
+# the faces that crack -- where a joint breaks, off the rim of its face --
+# they fly turning, slowed by the air, knock into the pieces and the
+# stairs, bounce down the steps and lie still on the treads, riding a piece
+# they landed on until it moves again. Behind the chunks that came loose and
+# fly fast, a trail of dust: the RBD Solver's Trail. How each bit is turned
+# is kept -- RBD Pieces gives it as orient on the grit's points, Copy to
+# Points turns what it copies onto them the same way, USD writes it. The
+# stairs are a Detail Wrangle: Steps, Rise, Run and Width under the snippet.
+# prototype sim debris_stairs out.mp4 renders it through the camera.
+node 1 detail_wrangle 1 stairs 0 300
+  param snippet "// Stairs up to a landing: a box a block, each from the ground up -- solid.\nvoid block(vector c; vector size) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, c + set(i & 1 ? 0.5 : -0.5, i & 2 ? 0.5 : -0.5, i & 4 ? 0.5 : -0.5) * size));\n    }\n    addprim(0, \"poly\", p[0], p[4], p[6], p[2]);\n    addprim(0, \"poly\", p[1], p[3], p[7], p[5]);\n    addprim(0, \"poly\", p[0], p[1], p[5], p[4]);\n    addprim(0, \"poly\", p[2], p[6], p[7], p[3]);\n    addprim(0, \"poly\", p[0], p[2], p[3], p[1]);\n    addprim(0, \"poly\", p[4], p[5], p[7], p[6]);\n}\n\nint steps = chi(\"steps\");\nfloat rise = ch(\"rise\"), run = ch(\"run\"), width = ch(\"width\");\nfloat top = rise * (steps + 1);\nblock(set(0, top * 0.5, -2.2), set(width, top, 2));  // the landing, 2 m deep\nfor (int s = 1; s <= steps; s++) {\n    float h = top - rise * s;\n    block(set(0, h * 0.5, -1.2 + run * (s - 0.5)), set(width, h, run));\n}"
+  param steps 7
+  param rise 0.18
+  param run 0.3
+  param width 4
+node 2 primitive_wrangle 1 stone 230 300
+  param snippet "// The stairs: a piece a block -- six faces each -- that does not move, not\n// glued to the column that stands on the landing.\ni@piece = 1000 + @primnum / 6;\ni@active = 0;\nf@glue = 0;\nv@Cd = set(0.44, 0.43, 0.41);"
+node 3 box 1 column 0 0
+  param size 0.9 3.6 0.9
+  param center 0 3.24 -2.3
+node 4 concrete_fracture 1 concrete 230 0
+  param count 110
+  param uneven 0.6
+  param impact 0 1.7 -1.8
+  param focus 0.6
+  param chips 0.25
+node 5 primitive_wrangle 1 charge 460 0
+  param snippet "// The column's pieces move and are glued: a Merge fills an attribute a\n// geometry lacks with 0, and the stairs have glue 0.\ni@active = 1;\nf@glue = 1;\nv@Cd = set(0.66, 0.6, 0.52);\n// The charge: the foot of the column on the side of the steps is blown out\n// -- most of it gone, the rest thrown down the stairs. Standing on the back\n// of its foot alone, the column tips over down them.\nif (@P.y < 2.2 && @P.z > -2.6) {\n    f@release = 0.4 + 0.03 * rand(i@piece);\n    i@vanish = rand(i@piece + 3) < 0.6;\n    v@kick = set(0, 0.5, 4) * (0.5 + rand(i@piece + 9));\n}"
+node 6 merge 1 pieces 690 150
+node 7 rbd_solver 1 rbd 920 150
+  param density 2400
+  param friction 0.8
+  param bounce 0.15
+  param glue 300
+  param spread 0.3
+  param substeps 4
+  param dust 1.5
+  param impact_dust 1.8
+  param debris 1.5
+  param trail 1.5
+  param air 1.2
+  param color 0.6 0.58 0.55
+  param inside_color 0.66 0.64 0.6
+node 8 turbulence 1 swirl 920 330
+  param strength 1
+  param scale 0.8
+node 9 pyro_solver 2 dust 1150 230
+  param size 8 5 9
+  param buoyancy 0.15
+  param weight 0.25
+  param vorticity 3
+  param smoke_decay 0.3
+node 10 volume_look 2 dust_look 1380 230
+  param smoke_color 0.68 0.66 0.62
+  param smoke_density 10
+  param occlusion 1
+node 11 output 2 output 1610 150
+  param frames 110
+  param light_azimuth 130
+  param light_elevation 32
+  param light_color 1 0.9 0.78
+  param light_intensity 2.8
+  param sky_intensity 0.45
+  param exposure 0.8
+  param ground_color 0.13 0.125 0.12
+  param grid off
+  param sky_behind on
+node 12 camera 1 camera 1610 330
+  param focal 30
+  key center 1 smooth 6.4 2.9 5.8
+  key center 110 smooth 5 2.4 5.4
+  key rotation 1 smooth -5 47 0
+  key rotation 110 smooth -8 45 0
+link 1.geometry -> 2.geometry
+link 3.geometry -> 4.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 2.geometry -> 6.geometry
+link 6.geometry -> 7.pieces
+link 7.dust -> 9.sources
+link 7.collider -> 9.colliders
+link 8.force -> 9.forces
+link 9.gas -> 10.gas
+link 7.look -> 11.look
+link 10.look -> 11.look
+link 12.camera -> 11.camera

@@ -17,8 +17,11 @@ namespace {
 constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 2: the rigid bodies after the rain; 3: and their grit; 4: the particles'
 // numbers -- the water's, the drops', the droplets', the grit's -- and how
-// fast the grit goes; 5: how fast the water goes, on the solver's grid.
-constexpr uint32_t kVersion = 8;
+// fast the grit goes; 5: how fast the water goes, on the solver's grid;
+// 6: what became of the bars; 7: which grit is glass, which bodies came
+// unglued; 8: what became of each joint of the glue; 9: how each bit of
+// grit is turned.
+constexpr uint32_t kVersion = 9;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -293,6 +296,10 @@ std::string formatFrame(const Frame& f) {
     out.words(b.unglued);
     out.bytesOf(b.jointState);  // version 8: what became of each joint of the glue, and when
     out.floats(b.jointTime);
+    // Version 9: how each bit of grit is turned, in half floats.
+    std::vector<uint16_t> turned(b.debrisOrient.size());
+    for (size_t i = 0; i < turned.size(); ++i) turned[i] = toHalf(b.debrisOrient[i]);
+    out.halves(turned);
     return std::move(out.bytes);
 }
 
@@ -371,6 +378,20 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         in.bytesOf(f.rigid.jointState);
         in.floats(f.rigid.jointTime);
     }
+    if (version >= 9) {
+        std::vector<uint16_t> turned;
+        in.halves(turned, 4 * (f.rigid.debris.size() / 4));
+        f.rigid.debrisOrient.resize(turned.size());
+        for (size_t i = 0; i < turned.size(); ++i) f.rigid.debrisOrient[i] = fromHalf(turned[i]);
+        // In half floats a turn is a little longer or shorter: of unit length again.
+        for (size_t i = 0; i + 3 < f.rigid.debrisOrient.size(); i += 4) {
+            float* q = f.rigid.debrisOrient.data() + i;
+            const float n = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+            if (n > 0.0f) {
+                for (int k = 0; k < 4; ++k) q[k] /= n;
+            }
+        }
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -384,7 +405,8 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         r.droplets.size() % 6 != 0 || b.debris.size() % 4 != 0 || !fits(w.ids.size(), w.positions.size()) ||
         !fits(r.dropIds.size(), r.dropCount()) || !fits(r.dropletIds.size(), r.dropletCount()) ||
         !fits(b.debrisIds.size(), b.debris.size() / 4) || !fits(b.debrisVelocity.size(), 3 * (b.debris.size() / 4)) ||
-        !fits(b.debrisGlass.size(), b.debris.size() / 4) || b.jointTime.size() != b.jointState.size()) {
+        !fits(b.debrisGlass.size(), b.debris.size() / 4) || b.jointTime.size() != b.jointState.size() ||
+        !fits(b.debrisOrient.size(), 4 * (b.debris.size() / 4))) {
         error = "the frame's parts do not fit their grids";
         return false;
     }

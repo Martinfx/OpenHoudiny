@@ -453,6 +453,22 @@ TEST(usd_export_the_grit_carries_its_numbers_and_velocities) {
         const float* w = last.rigid.debrisVelocity.data() + 3 * i;
         CHECK(near(v[i], Vec3(w[0], w[1], w[2]), 1e-5f));
     }
+    // ... and how each is turned: a stone copied onto a bit turns so.
+    const usda::Attribute* orient = attribute(*grit, "primvars:orient");
+    CHECK(orient && orient->type == "quatf[]");
+    const size_t turned = layer.find("quatf[] primvars:orient.timeSamples");
+    CHECK(turned != std::string::npos);
+    if (turned == std::string::npos) return;
+    const size_t row = layer.find("12: ", turned);
+    const std::string line = layer.substr(row, layer.find('\n', row) - row);
+    std::vector<Vec4> q;
+    for (size_t at = line.find('('); at != std::string::npos; at = line.find('(', at + 1)) q.push_back(parseQuat(line.substr(at)));
+    CHECK_EQ(q.size(), bits);
+    for (size_t i = 0; i < q.size() && i < bits; ++i) {
+        const float* w = last.rigid.debrisOrient.data() + 4 * i;
+        CHECK(std::fabs(q[i].x - w[0]) < 1e-5f && std::fabs(q[i].y - w[1]) < 1e-5f && std::fabs(q[i].z - w[2]) < 1e-5f &&
+              std::fabs(q[i].w - w[3]) < 1e-5f);
+    }
 }
 
 TEST(usd_export_writes_the_gas_beside_the_stage_a_file_a_frame) {

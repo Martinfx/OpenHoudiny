@@ -442,6 +442,14 @@ TEST(rigid_solver_is_a_node_of_the_network) {
         CHECK(gritty->points().find("pscale") && gritty->points().find("id"));
         const auto id = gritty->points().find("id")->read<int32_t>();
         CHECK_EQ(static_cast<uint32_t>(id[back->pointCount()]), frame->rigid.debrisIds[0]);
+        // How each bit is turned: orient, as the frame has it.
+        const AttributeArray* orient = gritty->points().find("orient");
+        CHECK(orient && orient->type() == AttrType::Vec4);
+        if (orient) {
+            const Vec4 q = orient->read<Vec4>()[back->pointCount() + bits - 1];
+            const float* w = frame->rigid.debrisOrient.data() + 4 * (bits - 1);
+            CHECK(q.x == w[0] && q.y == w[1] && q.z == w[2] && q.w == w[3]);
+        }
     }
     CHECK(net.setParam(pieces, "grit", "0"));
     graph.sync(net);

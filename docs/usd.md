@@ -82,7 +82,7 @@ pond_gas/pond_gas.0001.vdb …   prach, je-li
 | geometrie | Zobrazený uzel podle svého jména (`street`, `city`). Uzavřené polygony jsou Mesh bez subdivize, otevřené čáry lineární BasisCurves a volné body Points. Body mají šířku podle `pscale`, `v` jako `velocities` a `id` jako `ids`; `v` meshe jsou také `velocities`. Ostatní atributy bodů (čísla, celá čísla, vektory, třeba `foam`) jdou jako primvars (`primvars:foam`). Geometrie, která se nemění, je ve scéně jednou; když se změní, je v souborech snímků, ve kterých se změnila. |
 | barva | `Cd` rohu, bodu, primitiva nebo celé geometrie jako `displayColor`. Zapíše se jednou pro celý objekt, jednou na plochu, nebo jednou na roh, podle toho, jak se barva mění. |
 | tělesa | Tvar tělesa (barvy jako v náhledu) se zapíše **jednou**, posunutý do středu tělesa. Každý snímek pak jen `translate` a `orient`. Rozmetané těleso má od toho snímku `visibility = invisible`. |
-| drť | Body se šířkou podle velikosti zrnka, v barvě řezu o odstín tmavší, s rychlostí (`velocities`) a číslem (`ids`). Číslo dostane zrnko při vyhození a drží ho, dokud je ve scéně, takže ho renderer sleduje ze snímku na snímek a rozmaže pohybem. Cache starší než formát 4 čísla ani rychlosti nemá. Než první zrnko vyletí, je drť neviditelná. |
+| drť | Body se šířkou podle velikosti zrnka, v barvě řezu o odstín tmavší, s rychlostí (`velocities`), číslem (`ids`) a natočením (`primvars:orient`, `quatf[]` po bodech). Číslo dostane zrnko při vyhození a drží ho, dokud je ve scéně, takže ho renderer sleduje ze snímku na snímek a rozmaže pohybem. Podle natočení natočí instancer kamínek, který na zrnko postaví. Cache starší než formát 4 čísla ani rychlosti nemá, starší než formát 9 natočení. Než první zrnko vyletí, je drť neviditelná. |
 | voda | Povrch vody jako uzavřená síť čtyřúhelníků, stejný jako z uzlu Liquid Surface ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)): hladké normály, `velocities` z rychlosti vody (cache od formátu 5), `primvars:foam` (0 až 1) pro bílou pěnu, vlnky od deště na hladině. Uzavřená i u dna a stěn, aby jí renderer lámal světlo. Materiál `water`: barva z Water Looku, průhlednost 0,35, drsnost 0,02, index lomu 1,33. Když Water Look povrch skrývá (Surface vypnuté), voda se nezapíše. |
 | déšť | Kapky a kapičky odstřiků jako dvoje Points s číslem (`ids`) a rychlostí (`velocities`); kapka je široká 2 mm, kapička 1 mm. Renderer s motion blurem z nich podle rychlosti udělá čáry, jako je kreslí náhled. Materiál `rain`: barva a průhlednost z Looku deště. |
 | prach | Každý snímek zapíše jeden VDB soubor do složky `<jméno>_gas/` vedle scény. Cesty jsou relativní, takže složka jde přesunout spolu se scénou. |
@@ -169,13 +169,15 @@ Soubory po snímcích jsou vedle scény a cesty jsou relativní: složku
 Scény jsme ověřili Pixarovou knihovnou `usd-core` 26.08. Ta je jen v prostředí,
 kde se ověřovalo, prototype ji nepotřebuje.
 
-- **Validátory USD:** pro `wall_collapse`, `demolition`, `rain_pond`, `liquid_points` i `glass_window` hlásí
+- **Validátory USD:** pro `wall_collapse`, `demolition`, `rain_pond`, `liquid_points`, `glass_window` i `debris_stairs` hlásí
   všech 28 validátorů 0 nálezů (schémata, metadata stage, rodiny GeomSubset, vazba
   materiálu, stínovače).
 - **Soubory po snímcích:** knihovna složí hodnoty z vrstev tak, jak jsou ve snímcích:
   povrch vody `rain_pond` má ve snímku 24 37 173 bodů s normálami, rychlostmi a pěnou,
   kapky svá čísla; mezi snímky se extent interpoluje, body se drží. Drť `wall_collapse`
   je neviditelná, dokud nevyletí první zrnko, a pak má v každém snímku svá zrnka.
+  Drť `debris_stairs` má v každém snímku tolik `primvars:orient` (`quatf[]`, po vrcholech),
+  kolik má bodů, a všechny jsou jednotkové kvaterniony.
 - **Tělesa:** body těles přepočítané knihovnou do světa (`ComputeLocalToWorldTransform`)
   sedí na kusy, které vrací `posedPieces`.
   - Medián odchylky je 1e-6 m, tedy přesnost floatu.
@@ -195,7 +197,7 @@ Testy jsou v `tests/test_usd.cpp` (9):
 - scéna zapsaná prim po primu s časovými vzorky, přesně daný text;
 - geometrie do `.usda` podle přípony;
 - tělesa posunutá a otočená přesně jako `posedPieces`;
-- drť s čísly a rychlostmi ze snímku ve vrstvě snímku, zapsané hned, jak snímek přišel;
+- drť s čísly, rychlostmi a natočením ze snímku ve vrstvě snímku, zapsané hned, jak snímek přišel;
 - prach jako soubory VDB vedle scény;
 - ohnisko v desetinách jednotky a slunce tam, kde ho má Look;
 - to, co se nemění, zapsané jednou, geometrie, která se hýbe, ve vrstvách snímků, kde se

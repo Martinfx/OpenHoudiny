@@ -585,8 +585,9 @@ std::vector<NodeType> buildTypes() {
                "How many points."},
               seed("Scatter", "Another number, other places.")});
     t.push_back({"copy_to_points", "Copy to Points", "Geometry",
-                 "A copy of Geometry on every point of Points: moved there, sized by the point's pscale, its "
-                 "+y turned to the point's N. The points' other attributes -- a colour -- go onto their copy.",
+                 "A copy of Geometry on every point of Points: moved there, sized by the point's pscale, turned "
+                 "by its orient -- a quaternion, as RBD Pieces gives the grit -- else its +y turned to the point's "
+                 "N. The points' other attributes -- a colour -- go onto their copy.",
                  {{"geometry", "Geometry", PinType::Geometry}, {"points", "Points", PinType::Geometry}}, out,
                  {{"scale", "Scale", "Copy", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
                    "Every copy this much larger, on top of pscale."},
@@ -1096,7 +1097,12 @@ std::vector<NodeType> buildTypes() {
           {"dust_size", "Puff Size", "Dust", K::Float, {0.3f, 0.0f, 0.0f}, 0.05f, 2.0f, 0.01f, 100.0f, "m",
            "How big a puff of dust is."},
           {"debris", "Debris", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 100.0f, "",
-           "Grit a break or a knock throws out: small stones that fly, land and lie. 0: none."},
+           "Grit a break or a knock throws out: small stones that fly out of the cracks, tumbling, knock into "
+           "the pieces, the objects and the floor, bounce off and come to rest -- riding on a piece that moves "
+           "until it throws them off. 0: none."},
+          {"trail", "Trail", "Dust", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "Dust the pieces that came loose leave behind them as they fly fast -- for a second and a half after "
+           "they broke off, the more the bigger and the faster they are. 0: none."},
           {"air", "Air Push", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
            "The air the pieces squeeze out as they crush and knock: it swells the puffs and pushes the dust "
            "out along the ground. 1: as much as they would; 0: none."},
@@ -3482,6 +3488,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.dustSize = f(*solver, "dust_size");
         s.impactDust = f(*solver, "impact_dust");
         s.debris = f(*solver, "debris");
+        s.trail = f(*solver, "trail");
         s.air = f(*solver, "air");
         s.timeStep = c.world.timeStep;
         r.attribute = text(solver->id, "attribute");

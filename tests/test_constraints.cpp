@@ -348,6 +348,8 @@ TEST(rbd_constraints_drawn_between_pieces_that_do_not_touch_hold_them) {
         if (held.glue && held.glue->joints.size() == 1) {
             CHECK_EQ(held.glue->joints[0].area, 0.01f);
             CHECK(length(held.glue->joints[0].at - Vec3(0.0f, 1.8f, 0.0f)) < 1e-5f);
+            // Across it: from the hook's middle to the weight's.
+            CHECK(length(held.glue->joints[0].normal - Vec3(0.0f, -1.0f, 0.0f)) < 1e-5f);
         }
     }
     // Of no strength, or naming a piece there is not: nothing holds.

@@ -227,6 +227,41 @@ TEST(sops_copies_land_on_points) {
     CHECK(std::fabs((hi.y - lo.y) - 0.4f * 3.0f) < 1e-4f);
 }
 
+TEST(sops_copies_turn_by_orient) {
+    // A point's orient -- a unit quaternion x, y, z, w -- turns its copy,
+    // over its normal: a stone copied onto grit turns as the bit does.
+    Graph g;
+    CookEngine engine;
+    Node* box = g.create("box", "box");
+    box->setVec3("size", Vec3(0.2f, 0.4f, 0.2f));
+    Node* dots = g.create("line", "dots");
+    dots->setInt("points", 2);
+    dots->setFloat("length", 2.0f);
+    // A quarter turn about x -- +y onto +z -- and half a turn about z, not
+    // of unit length; both with a normal that would turn them otherwise.
+    Node* turn = g.create("pointwrangle", "turn");
+    turn->setInput(0, dots);
+    turn->setString("snippet",
+                    "@N = set(1.0, 0.0, 0.0);\n"
+                    "if (@ptnum == 0) p@orient = set(0.7071068, 0.0, 0.0, 0.7071068);\n"
+                    "else p@orient = set(0.0, 0.0, 2.0, 0.0);");
+    Node* copy = g.create("copytopoints", "copy");
+    copy->setInput(0, box);
+    copy->setInput(1, turn);
+    const GeometryPtr geo = engine.cook(*copy, CookContext{});
+    const GeometryPtr shape = engine.cook(*box, CookContext{});
+    const size_t n = shape->pointCount();
+    CHECK_EQ(geo->pointCount(), 2 * n);
+    CHECK(!geo->points().contains("orient"));
+    const auto P = geo->positions();
+    const auto from = shape->positions();
+    for (size_t i = 0; i < n; ++i) {
+        const Vec3 p = from[i];
+        CHECK(near(P[i], Vec3(p.x, -p.z, p.y), 1e-5f));                     // about x
+        CHECK(near(P[n + i], Vec3(2.0f - p.x, -p.y, p.z), 1e-5f));          // about z, at the second point
+    }
+}
+
 TEST(sops_obj_files_go_in_and_out) {
     // Polygons stay polygons, lines are open; negative corners count back.
     const char* text = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 2 0 0\n"

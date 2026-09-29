@@ -25,7 +25,12 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollidePointResult.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -61,6 +66,7 @@ RigidScene RigidScene::sanitized() const {
     s.impactDust = std::clamp(finite(s.impactDust, d.impactDust), 0.0f, 1000.0f);
     s.dustSize = std::clamp(finite(s.dustSize, d.dustSize), 0.01f, 100.0f);
     s.debris = std::clamp(finite(s.debris, d.debris), 0.0f, 100.0f);
+    s.trail = std::clamp(finite(s.trail, d.trail), 0.0f, 100.0f);
     s.air = std::clamp(finite(s.air, d.air), 0.0f, 100.0f);
     s.timeStep = std::clamp(finite(s.timeStep, d.timeStep), 1e-4f, 1.0f);
     detail::sanitize(r.colliders);
@@ -692,6 +698,7 @@ std::shared_ptr<const RigidGlue> rigidGlue(const Geometry& pieces, const RigidLa
             j.a = c.a;
             j.b = c.b;
             j.at = c.at;
+            j.normal = c.normal;
             j.area = c.area;
             j.strength = std::min(glue[a], glue[b]);
             // Inside one chunk (RBD Cluster): as many times as strong as the
@@ -738,8 +745,10 @@ std::shared_ptr<const RigidGlue> rigidGlue(const Geometry& pieces, const RigidLa
         RigidJoint j;
         j.a = a;
         j.b = b;
-        j.at = touch != touching.end() ? touch->second->at
-                                       : (g.centres[static_cast<size_t>(a)] + g.centres[static_cast<size_t>(b)]) * 0.5f;
+        const Vec3 ca = g.centres[static_cast<size_t>(a)], cb = g.centres[static_cast<size_t>(b)];
+        j.at = touch != touching.end() ? touch->second->at : (ca + cb) * 0.5f;
+        j.normal = touch != touching.end() ? touch->second->normal
+                   : length(cb - ca) > 1e-9f ? normalize(cb - ca) : Vec3(0.0f, 1.0f, 0.0f);
         j.area = numberAt(area, prim, 0.0f);
         // None given -- or a merge's 0 -- the faces they share; a hand's
         // breadth square where they share none.
@@ -1426,6 +1435,13 @@ size_t appendGrit(Geometry& geo, const RigidFrame& f) {
         auto id = geo.points().create("id", AttrType::Int).write<int32_t>();
         for (size_t i = 0; i < grit; ++i) id[first + i] = static_cast<int32_t>(f.debrisIds[i]);
     }
+    if (f.debrisOrient.size() == 4 * grit) {
+        auto orient = geo.points().create("orient", AttrType::Vec4).write<Vec4>();
+        for (size_t i = 0; i < grit; ++i) {
+            const float* q = f.debrisOrient.data() + 4 * i;
+            orient[first + i] = Vec4(q[0], q[1], q[2], q[3]);
+        }
+    }
     if (f.debrisGlass.size() == grit) {
         auto glass = geo.points().create("glass", AttrType::Int).write<int32_t>();
         for (size_t i = 0; i < grit; ++i) glass[first + i] = f.debrisGlass[i] ? 1 : 0;
@@ -1460,6 +1476,22 @@ constexpr float kMaxSwell = 20.0f;  // 1/s: the most a puff swells
 constexpr float kCarry = 0.985f;
 /// Marks the user data of a still piece's body, above its number.
 constexpr uint64_t kStillTag = 1ull << 62;
+/// Grit: how hard the air holds a bit back -- as a stone of 2400 kg/m^3,
+/// its drag a pull of 1.5e-4 v^2 / r (m/s^2), a chip of glass three times
+/// as hard -- how much of the way it went into what it knocks into it keeps
+/// bouncing off, and of the way along it; how slowly it must come in to lie
+/// still, and how fast what it lies on must go to throw it off. m/s.
+constexpr float kGritDrag = 1.5e-4f;
+constexpr float kGritBounce = 0.25f;
+constexpr float kGritSlide = 0.55f;
+constexpr float kGritRest = 0.35f;
+constexpr float kGritRide = 1.0f;
+constexpr float kGritSpin = 40.0f;  ///< radians a second: the fastest a bit tumbles
+/// Dust trails: how long after a piece came loose, how fast it must fly,
+/// and how many a step at most -- the fastest.
+constexpr float kTrailTime = 1.5f;
+constexpr float kTrailSpeed = 2.5f;
+constexpr size_t kMaxTrails = 32;
 
 /// `v` no longer than `limit`.
 Vec3 clampLength(const Vec3& v, float limit) {
@@ -1588,6 +1620,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
 
     struct Piece {
         std::vector<JPH::ShapeRefC> hulls;      ///< its parts, where they rest
+        float looseAt = -1.0f;                  ///< seconds: when a joint of it first broke; below 0 never
         bool moves = true;                      ///< active: else a still body of its own
         int cluster = -1;                       ///< the body it is in; -1: gone, or none
         std::shared_ptr<const MeshShape> mesh;  ///< at rest, for the water and the gas; null if not wanted
@@ -1607,6 +1640,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
     struct Edge {
         int a = 0, b = 0;      ///< the pieces it glues
         Vec3 at;               ///< where their faces touch, at rest
+        Vec3 normal;           ///< across them, from a to b, at rest
         float area = 0.0f;
         float strength = 0.0f; ///< newtons it holds
         bool broken = false;
@@ -1646,6 +1680,14 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         uint32_t id = 0;  ///< its own number, from the first thrown: the same as long as it is there
         bool resting = false;
         bool glass = false;  ///< a chip of glass
+        bool free = false;   ///< out of the pieces it came from: it knocks into things
+        JPH::Quat turn = JPH::Quat::sIdentity();  ///< how it is turned
+        Vec3 spin;           ///< the axis it tumbles about, as long as radians a second
+        /// What it lies on, when that can move -- it rides on it -- and where
+        /// it lies, which way is up and how it is turned there, in its frame.
+        JPH::BodyID on;
+        Vec3 local, localUp;
+        JPH::Quat localTurn = JPH::Quat::sIdentity();
     };
     std::vector<Grit> grit;
     uint32_t gritThrown = 0;  ///< how many bits so far: the next one's number
@@ -1672,6 +1714,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         float span = 0.0f;                        ///< metres of the bar between them, at rest
     };
     std::vector<Link> links;
+    JPH::BodyID floorBody;  ///< the floor's, if there is one
     uint64_t random = 0x2545F4914F6CDD1Dull;
     float time = 0.0f;
     float gritScale = 1.0f;  ///< grit as big as the scene's dust: a town's is stones, a model's sand
@@ -1787,18 +1830,213 @@ struct RigidSolver::Impl : public JPH::ContactListener {
     /// its cross-section -- about a third of its diagonal squared -- as fast.
     float squeezed(float size, float speed) const { return settings.air * 0.35f * size * size * speed; }
 
+    /// A bit of grit, a chip of glass for `glass`: its size -- a few
+    /// centimetres, as big as the scene's dust says -- its number, how it is
+    /// turned and how it tumbles, flying at `speed`.
+    Grit newGrit(bool glass, float speed) {
+        Grit g;
+        g.size = (0.02f + 0.08f * unit() * unit()) * gritScale * (glass ? 0.5f : 1.0f);
+        g.id = gritThrown++;
+        g.glass = glass;
+        // One draw after another: the order of a call's arguments is the
+        // compiler's to choose.
+        const float x = unit() - 0.5f, y = unit() - 0.5f, z = unit() - 0.5f, w = unit() - 0.5f + 1e-3f;
+        g.turn = JPH::Quat(x, y, z, w).Normalized();
+        g.spin = clampLength(inBall() * (speed / std::max(g.size, 0.01f)), kGritSpin);
+        return g;
+    }
+
     /// `count` bits of grit from `at`, flying off at about `speed` round `base`.
     /// ... chips of glass, smaller, for `glass`.
     void throwGrit(const Vec3& at, const Vec3& base, int count, float speed, float spread, bool glass = false) {
         for (int i = 0; i < count; ++i) {
-            Grit g;
+            Grit g = newGrit(glass, speed);
             g.p = at + inBall() * spread;
             g.v = base + inBall() * speed;
-            g.size = (0.02f + 0.08f * unit() * unit()) * gritScale * (glass ? 0.5f : 1.0f);
-            g.id = gritThrown++;
-            g.glass = glass;
             grit.push_back(g);
         }
+    }
+
+    /// `count` bits of grit out of a crack: from the rim of a face `radius`
+    /// across round `at` -- `normal` across it -- flying out in its plane at
+    /// about `speed` as the pieces part, a little across it, round `base`.
+    /// `side` 1 or -1: only that way across it moves -- the other side
+    /// stands still -- and the grit starts and goes that way; 0 either way.
+    void throwFromFace(const Vec3& at, const Vec3& normal, float radius, const Vec3& base, int count, float speed,
+                       bool glass, float side) {
+        const Vec3 t1 = normalize(cross(normal, std::fabs(normal.x) < 0.9f ? Vec3(1.0f, 0.0f, 0.0f) : Vec3(0.0f, 1.0f, 0.0f)));
+        const Vec3 t2 = cross(normal, t1);
+        for (int i = 0; i < count; ++i) {
+            Grit g = newGrit(glass, speed);
+            // Within the rim of a disc as big as the face -- the most of a
+            // square face's middle.
+            const float a = 6.2831853f * unit(), rim = 0.6f + 0.3f * unit(), off = unit() - 0.5f;
+            const float fast = 0.4f + 0.6f * unit(), across = unit() - 0.5f;
+            const Vec3 out = t1 * std::cos(a) + t2 * std::sin(a), wobble = inBall();
+            const float start = side != 0.0f ? 0.005f * side : 0.01f * off;
+            const float away = side != 0.0f ? std::fabs(across) * side : across;
+            g.p = at + out * (radius * rim) + normal * start;
+            g.v = base + out * (speed * fast) + normal * (0.5f * speed * away) + wobble * (0.2f * speed);
+            grit.push_back(g);
+        }
+    }
+
+    /// What grit knocks into: where, which way the face goes out there, how
+    /// fast what it is moves there, and whether it can move.
+    struct GritHit {
+        Vec3 at, normal, velocity;
+        JPH::BodyID body;
+        bool moves = false;
+    };
+
+    /// The first face grit at `p` moving by `step` goes into -- one it comes
+    /// out of, from inside a piece, it goes through -- of what stands still
+    /// alone (the still pieces, the floor) for `stillOnly`.
+    bool gritHits(const Vec3& p, const Vec3& step, GritHit& out, bool stillOnly) const {
+        if (dot(step, step) < 1e-14f) return false;
+        const JPH::RRayCast ray{jolt(p), jolt(step)};
+        JPH::RayCastSettings settings;
+        settings.mTreatConvexAsSolid = false;
+        settings.SetBackFaceMode(JPH::EBackFaceMode::IgnoreBackFaces);
+        JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> hit;
+        const JPH::SpecifiedObjectLayerFilter still(Layers::still);
+        const JPH::ObjectLayerFilter all;
+        physics.GetNarrowPhaseQuery().CastRay(ray, settings, hit, {}, stillOnly ? static_cast<const JPH::ObjectLayerFilter&>(still) : all);
+        if (!hit.HadHit()) return false;
+        const JPH::BodyLockRead lock(physics.GetBodyLockInterfaceNoLock(), hit.mHit.mBodyID);
+        if (!lock.Succeeded()) return false;
+        const JPH::Body& body = lock.GetBody();
+        const JPH::RVec3 at = ray.GetPointOnRay(hit.mHit.mFraction);
+        out.at = ours(at);
+        out.normal = ours(body.GetWorldSpaceSurfaceNormal(hit.mHit.mSubShapeID2, at));
+        out.velocity = ours(body.GetPointVelocity(at));
+        out.body = hit.mHit.mBodyID;
+        out.moves = !body.IsStatic();
+        return true;
+    }
+
+    /// Whether `p` is inside a piece or an object -- the floor aside.
+    bool inside(const Vec3& p) const {
+        JPH::AnyHitCollisionCollector<JPH::CollidePointCollector> hit;
+        const JPH::IgnoreSingleBodyFilter notFloor(floorBody);
+        physics.GetNarrowPhaseQuery().CollidePoint(jolt(p), hit, {}, {}, notFloor);
+        return hit.HadHit();
+    }
+
+    /// A step of `dt` of a bit of grit: through the air, held back by it the
+    /// more the smaller it is; off what it knocks into -- bouncing, taking
+    /// on how that moves -- and at rest where it comes in slowly onto
+    /// something under it, riding on it if that moves until it moves fast
+    /// or tips. Tumbling as it flies and bounces.
+    void moveGrit(Grit& q, float dt) {
+        const float r = 0.5f * q.size;
+        if (q.resting) {
+            if (q.on.IsInvalid()) return;  // on what never moves
+            const JPH::BodyLockRead lock(physics.GetBodyLockInterfaceNoLock(), q.on);
+            bool off = !lock.Succeeded() || !lock.GetBody().IsInBroadPhase();
+            if (!off) {
+                const JPH::Body& b = lock.GetBody();
+                const JPH::Quat turn = b.GetRotation();
+                q.p = ours(b.GetPosition() + turn * jolt(q.local));
+                q.v = ours(b.GetPointVelocity(jolt(q.p)));
+                q.turn = (turn * q.localTurn).Normalized();
+                off = length(q.v) > kGritRide || (turn * jolt(q.localUp)).GetY() < 0.5f;
+            }
+            if (off) {
+                q.resting = false;
+                q.on = JPH::BodyID();
+            }
+            return;
+        }
+        q.v += settings.gravity * dt;
+        const float drag = kGritDrag * (q.glass ? 3.0f : 1.0f) * length(q.v) / std::max(r, 1e-3f);
+        q.v = q.v * (1.0f / (1.0f + drag * dt));
+        const Vec3 step = q.v * dt;
+        // Still in the pieces it came out of, it goes through what moves --
+        // those pieces among it -- until it is out; not through what stands.
+        GritHit hit;
+        if (gritHits(q.p, step, hit, !q.free) && dot(q.v - hit.velocity, hit.normal) < 0.0f) {
+            // Off it: a quarter of the way it came in, a half of the way along.
+            const Vec3 rel = q.v - hit.velocity;
+            const Vec3 in = hit.normal * dot(rel, hit.normal), along = rel - in;
+            q.v = hit.velocity - in * kGritBounce + along * kGritSlide;
+            q.p = hit.at + hit.normal * std::max(r, 1e-3f);
+            q.spin = clampLength(cross(hit.normal, along) * (kGritSlide / std::max(r, 1e-3f)), kGritSpin);
+            if (length(q.v - hit.velocity) < kGritRest && hit.normal.y > 0.5f) {
+                q.resting = true;
+                q.spin = Vec3();
+                q.v = hit.velocity;
+                q.on = JPH::BodyID();
+                const JPH::BodyLockRead lock(physics.GetBodyLockInterfaceNoLock(), hit.body);
+                if (hit.moves && lock.Succeeded()) {
+                    const JPH::Body& b = lock.GetBody();
+                    const JPH::Quat back = b.GetRotation().Conjugated();
+                    q.on = hit.body;
+                    q.local = ours(back * (jolt(q.p) - b.GetPosition()));
+                    q.localUp = ours(back * jolt(hit.normal));
+                    q.localTurn = back * q.turn;
+                }
+            }
+        } else {
+            q.p += step;
+        }
+        if (!q.free) q.free = !inside(q.p);
+        // Come through the floor -- out of a crack at its foot -- onto it.
+        if (settings.floor && q.p.y < r) {
+            q.p.y = r;
+            if (q.v.y < 0.0f) q.v.y = -kGritBounce * q.v.y;
+            q.v.x *= kGritSlide;
+            q.v.z *= kGritSlide;
+            q.free = true;
+            if (length(q.v) < kGritRest) {
+                q.v = Vec3();
+                q.spin = Vec3();
+                q.resting = true;
+                q.on = JPH::BodyID();
+            }
+        }
+        const float angle = length(q.spin) * dt;
+        if (angle > 1e-6f) q.turn = (JPH::Quat::sRotation(jolt(normalize(q.spin)), angle) * q.turn).Normalized();
+    }
+
+    /// Dust behind the pieces come loose not long ago, flying fast -- what the
+    /// air takes off their broken faces -- the more the bigger and faster,
+    /// fading as they fly on; the fastest few a step.
+    void trailDust(float dt) {
+        struct Trail {
+            float amount;
+            Vec3 at, velocity;
+            float size;
+        };
+        std::vector<Trail> trails;
+        const JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        for (const Cluster& c : clusters) {
+            if (!c.alive) continue;
+            float since = 1e30f, size = 0.0f;
+            for (const int k : c.pieces) {
+                const Piece& p = pieces[static_cast<size_t>(k)];
+                if (p.looseAt >= 0.0f) since = std::min(since, time - p.looseAt);
+                size = std::max(size, p.size);
+            }
+            if (since > kTrailTime) continue;
+            const Vec3 v = ours(bi.GetLinearVelocity(c.id));
+            const float speed = length(v);
+            if (speed < kTrailSpeed) continue;
+            const float amount = settings.trail * 0.5f * std::clamp(speed / 8.0f, 0.3f, 1.5f) * (1.0f - since / kTrailTime) *
+                                 std::clamp(size, 0.3f, 2.0f);
+            // No smaller than the dust of a knock: a wisp thinner than the
+            // gas's cells would barely reach them.
+            trails.push_back({amount, ours(bi.GetCenterOfMassPosition(c.id)) - v * (0.5f * dt), v * 0.15f,
+                              settings.dustSize * std::clamp(1.5f * size, 0.8f, 2.0f)});
+        }
+        std::sort(trails.begin(), trails.end(), [](const Trail& a, const Trail& b) {
+            if (a.amount != b.amount) return a.amount > b.amount;
+            if (a.at.x != b.at.x) return a.at.x < b.at.x;
+            if (a.at.y != b.at.y) return a.at.y < b.at.y;
+            return a.at.z < b.at.z;
+        });
+        if (trails.size() > kMaxTrails) trails.resize(kMaxTrails);
+        for (const Trail& t : trails) puff(t.at, t.velocity, t.size, t.amount);
     }
 
     /// The body piece `k` is in, if it moves with one.
@@ -1834,13 +2072,23 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         const int k = pieces[static_cast<size_t>(e.a)].cluster >= 0 ? e.a : e.b;
         const Vec3 at = whereNow(k, e.at);
         const Vec3 v = velocityAt(k, at);
+        for (const int piece : {e.a, e.b}) {
+            float& loose = pieces[static_cast<size_t>(piece)].looseAt;
+            if (loose < 0.0f) loose = time;
+        }
         const RigidSettings& s = settings;
         // Glass breaks clean: a little glass dust, and glittering chips.
         const bool glass = pieces[static_cast<size_t>(e.a)].glass || pieces[static_cast<size_t>(e.b)].glass;
         const float size = s.dustSize * std::clamp(std::sqrt(e.area) * 1.5f, 0.6f, 2.5f);
         puff(at, v * 0.5f, size, s.dust * dustScale * std::clamp(e.area * 4.0f, 0.3f, 2.0f) * (glass ? 0.1f : 1.0f));
+        // The grit out of the crack, from the rim of the face that broke.
         const int count = static_cast<int>(std::lround(s.debris * std::clamp(e.area * 24.0f, 2.0f, 10.0f)));
-        throwGrit(at, v, count, 2.5f, std::sqrt(e.area) * 0.3f, glass);
+        const Vec3 normal = whereNow(k, e.at + e.normal) - at;
+        // Off a piece that stands still -- the normal goes from a to b --
+        // the grit comes out on the side that moves.
+        const float side = !pieces[static_cast<size_t>(e.a)].moves ? 1.0f : !pieces[static_cast<size_t>(e.b)].moves ? -1.0f : 0.0f;
+        throwFromFace(at, length(normal) > 1e-6f ? normalize(normal) : Vec3(0.0f, 1.0f, 0.0f),
+                      std::sqrt(e.area / 3.14159265f), v, count, 2.5f, glass, side);
     }
 
     /// Piece `k` crushed to dust: gone, in a burst of it, and grit.
@@ -2424,6 +2672,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
             e.a = j.a;
             e.b = j.b;
             e.at = j.at;
+            e.normal = j.normal;
             e.area = j.area;
             e.strength = strength;
             e.joint = i;
@@ -2440,7 +2689,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
                                         JPH::Quat::sIdentity(), JPH::EMotionType::Static, Layers::still);
         floor.mFriction = s.friction;
         floor.mRestitution = s.bounce;
-        bi.CreateAndAddBody(floor, JPH::EActivation::DontActivate);
+        m.floorBody = bi.CreateAndAddBody(floor, JPH::EActivation::DontActivate);
     }
     // The objects: they move as they are keyed, and push what is in the way.
     for (const Collider& c : scene_.colliders) {
@@ -2633,24 +2882,14 @@ void RigidSolver::step() {
     // No more than so many puffs: the oldest go first.
     if (m.puffs.size() > kMaxPuffs) m.puffs.erase(m.puffs.begin(), m.puffs.end() - static_cast<long>(kMaxPuffs));
 
-    // The grit flies, lands, bounces and lies still.
-    const Vec3 g = s.gravity;
-    for (Impl::Grit& q : m.grit) {
-        if (q.resting) continue;
-        q.v += g * dt;
-        q.p += q.v * dt;
-        const float r = 0.5f * q.size;
-        if (s.floor && q.p.y < r) {
-            q.p.y = r;
-            if (q.v.y < 0.0f) q.v.y = -0.25f * q.v.y;
-            q.v.x *= 0.55f;
-            q.v.z *= 0.55f;
-            if (length(q.v) < 0.35f) {
-                q.v = Vec3();
-                q.resting = true;
-            }
-        }
+    // Dust behind what flies off.
+    if (s.trail > 0.0f) {
+        m.trailDust(dt);
+        if (m.puffs.size() > kMaxPuffs) m.puffs.erase(m.puffs.begin(), m.puffs.end() - static_cast<long>(kMaxPuffs));
     }
+
+    // The grit flies, knocks into things, bounces and lies still.
+    for (Impl::Grit& q : m.grit) m.moveGrit(q, dt);
     m.grit.erase(std::remove_if(m.grit.begin(), m.grit.end(), [](const Impl::Grit& q) { return q.p.y < -100.0f; }),
                  m.grit.end());
     if (m.grit.size() > kMaxGrit) m.grit.erase(m.grit.begin(), m.grit.end() - static_cast<long>(kMaxGrit));
@@ -2683,10 +2922,12 @@ RigidFrame RigidSolver::capture() const {
     f.debrisVelocity.reserve(m.grit.size() * 3);
     f.debrisIds.reserve(m.grit.size());
     const bool glassy = std::any_of(m.grit.begin(), m.grit.end(), [](const Impl::Grit& q) { return q.glass; });
+    f.debrisOrient.reserve(m.grit.size() * 4);
     for (const Impl::Grit& q : m.grit) {
         f.debris.insert(f.debris.end(), {q.p.x, q.p.y, q.p.z, q.size});
         f.debrisVelocity.insert(f.debrisVelocity.end(), {q.v.x, q.v.y, q.v.z});
         f.debrisIds.push_back(q.id);
+        f.debrisOrient.insert(f.debrisOrient.end(), {q.turn.GetX(), q.turn.GetY(), q.turn.GetZ(), q.turn.GetW()});
         if (glassy) f.debrisGlass.push_back(q.glass ? 1 : 0);
     }
     std::vector<uint8_t> loose(m.pieces.size(), 0);

@@ -1,4 +1,4 @@
-# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo a síť vazeb, výztuž, sklo a prach
+# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo a síť vazeb, výztuž, sklo, drť a prach
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
 (**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
@@ -16,9 +16,10 @@ i geometrie (**RBD Constraints**, síť vazeb jako v Houdini): bod na kus,
 věc zlomí.
 Nálože přetrhnou lepidlo v daný čas, nárazy ho lámou dál, padající patra
 drtí stěny na prach, úlomky sypou drť a vzduch, který zřícení vytlačí, žene
-oblak prachu do ulic (**Pyro Solver**). Všechno je deterministické: stejná
-síť dá stejné snímky na jednom i na čtyřech vláknech a při každém dalším
-spuštění.
+oblak prachu do ulic (**Pyro Solver**). Drť jsou částice: vylétá z lomů,
+naráží do kusů a zůstává na nich ležet, a za utrženými kusy se táhne
+prach. Všechno je deterministické: stejná síť dá stejné snímky na jednom
+i na čtyřech vláknech a při každém dalším spuštění.
 
 ![Odstřel věžáku: oblak prachu se valí mezi domy](img/demolition.png)
 
@@ -557,7 +558,8 @@ Parametry:
 | Dust | `dust` | Kolik prachu dá přetržený spoj |
 | | `impact_dust` | … tvrdý náraz a rozdrcený kus |
 | | `dust_size` | Jak velký je obláček (m) |
-| | `debris` | Kolik drti nárazy a lomy sypou; 0 žádná |
+| | `debris` | Kolik drti lomy a nárazy sypou; drť jsou částice, které narážejí do kusů a zůstávají na nich ležet ([níže](#drť-jako-částice)); 0 žádná |
+| | `trail` | Prach za utrženými kusy: první sekundu a půl za kusem, který letí rychleji než 2,5 m/s, zůstává stopa prachu — tím víc, čím je větší a rychlejší; 0 (výchozí) žádná |
 | | `air` | Kolik vzduchu kusy vytlačí, když se drtí a narážejí: rozpíná obláčky a žene prach po zemi; 1 kolik by vytlačily, 0 nic |
 | Look | `color`, `inside_color`, `inside_group` | Barva kusů bez vlastního `Cd`, barva řezných ploch a jejich skupina |
 | | `rebar_color` | Barva prutů: zrezivělá ocel |
@@ -680,6 +682,81 @@ praskat spoje.
                                                                                      │ Dust ─▶ [Pyro Solver] ─▶ [Volume Look]
 ```
 
+### Drť jako částice
+
+Drť jsou drobné kamínky (u skla střípky), které RBD Solver simuluje jako
+částice vedle kusů. V Houdini je to *debris*: Debris Source a POP Solver
+nad kusy z RBD. Každý kousek má polohu, rychlost, velikost, číslo a
+natočení ([`moveGrit`, `throwFromFace` v `Rigid.cpp`](../src/pg/sim/Rigid.cpp)):
+
+- **Odkud.** Z lomu: když praskne spoj, vylétnou kousky z okraje plochy,
+  po které se kusy držely. Letí v její rovině a trochu napříč, rychlostí,
+  jakou se kusy rozcházejí. Kolik jich je, dává plocha spoje (2 až 10
+  na `debris`). Další přidají nárazy (tím víc, čím tvrdší), drcení a
+  nálož, která kus rozmetá.
+- **Let.** Kousek padá, vzduch ho brzdí a točí se. Malé brzdí víc než
+  velké: odpor je jako u kamínku 2400 kg/m³, zpomalení 1,5·10⁻⁴ *v*²/*r*,
+  u skla trojnásobné.
+- **Nárazy.** Dokud je kousek uvnitř kusů, ze kterých vylétl, prochází
+  tím, co se hýbe; do toho, co stojí (kusy s `active 0`, podlaha), naráží
+  hned, takže nepropadne schody ani základem. Z lomu u stojícího kusu
+  vylétne na straně, která se hýbe. Venku naráží do kusů, překážek i
+  podlahy (každý krok paprsek v Joltu). Odrazí se čtvrtinou rychlosti
+  kolmo k ploše a zachová si polovinu rychlosti podél ní, převezme pohyb
+  toho, do čeho narazil, a roztočí se. Kde dopadne pomaleji než 0,35 m/s
+  na plochu, která míří nahoru, zůstane ležet: na schodu, na římse, na
+  kusu.
+- **Jízda.** Leží-li kousek na něčem, co se hýbe (kus, klíčovaná
+  překážka), jede s tím a otáčí se s tím. Když se to rozjede rychleji než
+  1 m/s, nakloní o víc než 60° nebo zmizí, kousek se pustí a letí dál sám.
+- **Stopy prachu** (`trail`). Kus, který se utrhl před méně než sekundou
+  a půl a letí rychleji než 2,5 m/s, za sebou nechává prach. Čím je větší
+  a rychlejší, tím víc, a čím déle letí, tím méně. V jednom kroku nejvýš
+  32 kusů, ty nejsilnější.
+
+Drť nesou snímky, cache (natočení od verze 9), **RBD Pieces** se zapnutým
+`grit` (body s `pscale`, `v`, `id` a `orient`), Python (`grit`,
+`grit_velocities`, `grit_ids`, `grit_orient`) a USD (`primvars:orient`).
+`orient` je jednotkový kvaternion x, y, z, w jako v Houdini: **Copy to
+Points** natočí kamínek zkopírovaný na body drti přesně tak, jak se drť
+točí (`orient` má přednost před normálou). Drti je nejvýš 40 000 kousků a
+simulaci zpomalí málo (v příkladu demolition asi o 1 %).
+
+### Devátý příklad: sloup ze schodů
+
+![Nálož u paty sloupu na podestě a drť po schodech; sloup se kácí a za odhozeným kusem se táhne prach; sloup dopadne na schody a praskne; trosky pod schody a drť na stupních](img/debris-stairs.jpg)
+
+```
+./build/prototype sim debris_stairs schody.mp4   # 110 snímků (3,7 s)
+```
+
+Příklad **debris_stairs** ([examples/sim/debris_stairs.pgsim](../examples/sim/debris_stairs.pgsim))
+je betonový sloup 0,9 × 3,6 × 0,9 m na podestě schodiště:
+
+- **Schody** postaví Detail Wrangle `stairs`: sedm stupňů po 18 cm
+  výšky a 30 cm hloubky (Steps, Rise, Run a Width pod snippetem), každý
+  jako kvádr od země. Wrangle `stone` z nich udělá kusy, které se nehýbou
+  a nejsou ke sloupu přilepené (`glue 0`).
+- **Sloup** rozbije Concrete Fracture na 110 kusů. Wrangle `charge` mu
+  nastaví `glue` 1 (Merge by ho jinak doplnil nulou podle schodů) a
+  nálož u paty na straně schodů. Za 0,4 s přetrhne spoje, 60 % kusů
+  rozmetá a zbytek odhodí po schodech. Sloup, který teď stojí jen na
+  zadní části paty, se překlopí dolů po schodech, dopadne na ně a rozlomí
+  se.
+- **Drť** z nálože a z lomů skáče po schodech a zůstává ležet na stupních.
+  Za odhozenými kusy se táhne prach (`trail 1,5`), Pyro Solver nad
+  schodištěm z něj dělá oblak.
+
+Na výstup Rigid se dá připojit RBD Pieces se zapnutým `grit`: drť pak
+vyjde jako body s `orient` a Copy to Points na ně zkopíruje kamínky.
+
+```
+[stairs] ─▶ [stone] ──────────────────────────┐
+[column] ─▶ [Concrete Fracture] ─▶ [charge] ──┴▶ [pieces] ─Pieces─▶ [RBD Solver] ─Look─▶ [Output] ◀─ [camera]
+                                                                     │ Dust, Collider ─▶ [Pyro Solver] ◀─Forces─ [Turbulence]
+                                                                                          └─▶ [Volume Look] ─Look─▶ [Output]
+```
+
 ### Jak to funguje
 
 [`src/pg/sim/Rigid.h`](../src/pg/sim/Rigid.h) obaluje Jolt Physics 5.6
@@ -742,9 +819,14 @@ v průměru za 6 ms na snímek.
   rychlostí asi 13 m/s a nezůstane stát na první hromadě.
 - **Nálože.** V čase `release` se přetrhnou všechny spoje kusu. Kus
   s `vanish` zmizí ve výbuchu prachu a drti, ostatní dostanou `kick`.
-- **Drť.** Nárazy, lomy a drcení sypou drobné kamínky: letí balisticky,
-  odrazí se od podlahy, kloužou a zůstanou ležet (nejvýš 40 000 kusů).
-  Velikost roste s `dust_size`, počet s `debris`.
+- **Drť.** Lomy, nárazy a drcení sypou drobné kamínky, které jsou
+  částicemi ([výše](#drť-jako-částice)). Z lomu vylétají z okraje plochy
+  spoje (spoj si k tomu nese normálu napříč plochou). Letí brzděné
+  vzduchem a točí se, narážejí do kusů, překážek i podlahy a zůstanou
+  ležet, případně jedou s tím, na čem leží. Je jich nejvýš 40 000,
+  velikost roste s `dust_size`, počet s `debris`.
+- **Stopy prachu.** Kusy, které se utrhly (první prasklý spoj si pamatují)
+  a letí rychle, nechávají za sebou obláčky prachu (`trail`).
 - **Prach a vytlačený vzduch.** Každý lom, náraz a rozdrcený kus vyfoukne
   obláček, který osm snímků slábne a letí polovinou rychlosti kusu;
   blízké obláčky téhož kroku se sloučí. Tvrdý náraz a drcení navíc
@@ -848,8 +930,8 @@ pokračuje rovně.
 **Do jiného rendereru.** `prototype sim demolition - --export
 demolition.usda` zapíše celý záběr jako scénu USD: každé těleso jednou
 jako tvar a pak jen jeho poloha a otočení v každém snímku, rozmetaná tělesa
-zneviditelněná, drť jako body, prach jako soubory VDB vedle, kamera,
-slunce a obloha. Blender, Houdini nebo Karma ho vyrenderují s vlastním
+zneviditelněná, drť jako body s natočením (`primvars:orient`), prach jako
+soubory VDB vedle, kamera, slunce a obloha. Blender, Houdini nebo Karma ho vyrenderují s vlastním
 světlem, rozmazáním pohybem a materiály; plochy řezu jsou `GeomSubset`
 `inside`, aby dostaly jiný materiál ([usd.md](usd.md)). Skleněné plochy
 jsou `GeomSubset` `glass` s materiálem `/World/Looks/glass` (čirý,
@@ -859,17 +941,18 @@ snímku, kdy tabule praskla, a drť nese `primvars:glass`. Pruty jsou
 a rychlostmi, v souboru každého snímku. V Pythonu vrátí
 `frame.rigid.rebar()` pruty snímku jako geometrii (`width`, `v`) a
 `rebar_state`, `rebar_stations`, co se s kterým úsekem stalo;
-`grit_glass` řekne, která drť je skleněná, a `unglued`, kterým tělesům
-praskl spoj.
+`grit_glass` řekne, která drť je skleněná, `grit_orient`, jak je který
+kousek natočený, a `unglued`, kterým tělesům praskl spoj.
 
 **RBD Pieces** (Geometry) vrátí kusy daného snímku jako geometrii: body
 posunuté a otočené, normály otočené a rychlost každého bodu v `v` — pro
 další uzly, pro export snímek po snímku (`prototype sim --export`), pro
 scatter jisker z hran. Se zapnutým `grit` přidá i drť jako body: `pscale`
-je polovina velikosti zrnka, `v` jeho rychlost a `id` jeho číslo — každé
+je polovina velikosti zrnka, `v` jeho rychlost, `id` jeho číslo — každé
 zrnko dostane při vyhození své a drží ho, dokud je ve scéně, takže renderer
-podle něj zrnko sleduje a rozmaže pohybem. Se zapnutým `rebar` přidá
-pruty tak, jak je kusy vzaly: lomenou čáru za každý úsek prutu v jednom
+podle něj zrnko sleduje a rozmaže pohybem — a `orient` jeho natočení
+(Copy to Points podle něj natočí, co na zrnko zkopíruje). Se zapnutým
+`rebar` přidá pruty tak, jak je kusy vzaly: lomenou čáru za každý úsek prutu v jednom
 kusu (u přetržení se čára rozdělí) s `width`, průměrem prutu, a `v`.
 S `output` *Constraints* vrátí místo kusů síť vazeb snímku
 ([§3](#síť-vazeb-rbd-constraints)). Bez snímku (před simulací) je prázdný.
@@ -897,8 +980,9 @@ tlaku a plyn, který se rozpíná, ředí.
 ## 5. Snímky a cache
 
 Snímek (`sim::Frame`) nese k plynu, vodě a dešti i `RigidFrame`: polohy,
-rychlosti a otáčení kusů, seznam kusů, které zmizely, drť (poloha a
-velikost), počet spojů a kolik jich prasklo. Soubor `.pgframe` je od toho
+rychlosti a otáčení kusů, seznam kusů, které zmizely, drť (poloha,
+velikost, rychlost, číslo a natočení), počet spojů a kolik jich prasklo.
+Soubor `.pgframe` je od toho
 verze 3 ([cache.md](cache.md)); starší snímky se čtou dál. Klidová
 geometrie kusů v souborech není — je v síti, která ji uvaří při překladu
 — a snímek načtený z disku ji dostane od světa, ve kterém se přehrává
@@ -908,7 +992,9 @@ bajt na každou stanici (prut z kusu vyšel, prut je za ní přetržený).
 Průběh prutů kusy se při čtení spočítá znovu z prutů a kusů světa — jednou
 pro celou sekvenci — a použije se, jen když má tolik stanic, kolik snímek
 říká. Verze 7 přidala, která drť je skleněná, a tělesa, kterým praskl
-spoj; snímky verze 6 se čtou bez nich (žádné sklo, nic nepraskle).
+spoj; snímky verze 6 se čtou bez nich (žádné sklo, nic nepraskle). Verze 8
+přidala stav spojů ([§3](#síť-vazeb-rbd-constraints)) a verze 9 natočení
+drti; snímky verze 8 se čtou s drtí bez natočení.
 
 ---
 
@@ -1080,6 +1166,41 @@ v `tests/test_export.cpp` a `test_the_glue_as_a_network` v `tests/python/test_pg
   přepadne. Snímek řekne, které spoje nikdy nedržely, a síť snímku je
   stejná z RBD Pieces i z `frame.rigid.network()`.
 
+`tests/test_debris.cpp` (8 testů), `sops_copies_turn_by_orient`
+v `tests/test_sops.cpp`, `frames_of_version_8_still_read_without_how_the_grit_is_turned`
+v `tests/test_export.cpp`, natočení drti v `tests/test_usd.cpp` a
+`test_grit_is_particles_that_lie_where_they_land` v `tests/python/test_pg.py`:
+
+- drť kvádru rozmetaného nad deskou, která se nehýbe, leží na desce
+  (81 ze 104 kousků) a za jejím okrajem na zemi, žádný kousek v desce ani
+  pod zemí. Za pět sekund jsou všechny v klidu a pak se už nepohnou ani
+  neotočí;
+- drť, která začne v kvádrech stojících na zvednuté desce (z lomu mezi
+  nimi a z odhozeného kvádru), jimi projde, ale do desky narazí: nic
+  v desce ani pod ní. Kdyby prošla i deskou, test by selhal;
+- drť na desce, kterou pomalu posune klíčovaný kvádr, jede s ní přesně
+  podle její pózy (na milimetr). Když se deska rozmetá, drť spadne na zem;
+- drť ve vzduchu zpomaluje podél země snímek po snímku, malé kousky
+  víc než velké, a natočení (jednotkový kvaternion) se v letu mění. Bez
+  gravitace letí každý kousek dál stejným směrem, jen pomaleji;
+- natočení projde cache (poloviční přesnost) na tisícinu přesně a po
+  načtení má zase jednotkovou délku;
+- nálož v dolním ze dvou slepených kvádrů přetrhne spoj a vylétne deset
+  kousků (plocha 1 m²) z okraje plochy spoje, v její rovině a ven z ní;
+  s `debris 0` žádný;
+- kvádr odhozený nahoru náloží nechává s `trail 1` za sebou prach pod
+  sebou a v ose letu, s `trail 0` žádný (když obláček nálože vyprchá), a
+  letí stejně; hodnoty mimo rozsah se srovnají;
+- spoj dvou kvádrů má normálu z prvního do druhého, stejnou i přes síť
+  vazeb; čára sítě mezi kusy, které se nedotýkají, má normálu od středu
+  ke středu;
+- Copy to Points natočí kopii podle `orient` (i nenormovaného) místo
+  podle normály; RBD Pieces dá drti `orient` ze snímku; USD zapíše
+  `primvars:orient` hodnotami snímku; snímek verze 8 se přečte bez
+  natočení;
+- Python: drť leží na desce a na zemi, ne v desce, `grit_orient` má
+  jednotkové kvaterniony a RBD Pieces je nese jako `orient`.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -1141,6 +1262,14 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   *Cone Twist*, *Soft*) tu nejsou a výztuž zůstává zvlášť (Rebar).
   Náraz jde sítí dál i přes spoje, které praskly (`spread`); oslabená
   čára tedy určí, kde se zlomí, ne kam až náraz dosáhne.
+- **Drť je bod, ne těleso.** Kousek naráží jako bod (paprsek), kusy
+  nestrká a do jiné drti nenaráží, takže se nehromadí do kopečků. Dokud
+  je uvnitř kusů, ze kterých vylétl, nenaráží do ničeho, co se hýbe.
+  Lom je pro drť kruh o ploše spoje, takže u protáhlé plochy může drť
+  vylétnout i těsně vedle ní. Okno kreslí drť jako obrázky úlomků, které
+  se v letu otáčejí po svém: natočení ze simulace jde do RBD Pieces, Copy
+  to Points a USD, ne do okna. USD nese drť jako body
+  (`Points` s `primvars:orient`), ne jako `PointInstancer` s kamínky.
 - **Jeden RBD Solver** v síti; kusy dvou solverů do sebe nenarážejí.
 
 ---

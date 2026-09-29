@@ -63,7 +63,9 @@ cache/fire/
   verze 7 která drť je skleněná a kterým tělesům praskl spoj — podle toho se
   kreslí trhliny skla ([destruction.md](destruction.md#sklo-glass-fracture)) —, a od verze 8 co se
   stalo s každým spojem lepidla a kdy praskl (bajt a číslo na spoj; [síť
-  vazeb](destruction.md#síť-vazeb-rbd-constraints)); klidová geometrie kusů, pruty i síť vazeb jsou
+  vazeb](destruction.md#síť-vazeb-rbd-constraints)), a od verze 9 jak je natočené každé zrnko drti
+  (kvaternion v poloviční přesnosti, po načtení znovu jednotkový; [drť jako částice](destruction.md#drť-jako-částice));
+  klidová geometrie kusů, pruty i síť vazeb jsou
   v síti uzlů a snímek načtený z disku je dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen

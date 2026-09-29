@@ -278,6 +278,10 @@ void bindSimulation(py::module_& m) {
             const auto& v = p.f->rigid.debrisIds;
             return rows(p.f, v.data(), v.size(), 1);
         })
+        .def("grit_orient", [](const PyFrame& p) {
+            const auto& v = p.f->rigid.debrisOrient;
+            return rows(p.f, v.data(), v.size() / 4, 4);
+        })
         .def("grit_glass", [](const PyFrame& p) {
             const auto& v = p.f->rigid.debrisGlass;
             return rows(p.f, v.data(), v.size(), 1);

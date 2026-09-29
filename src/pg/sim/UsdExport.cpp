@@ -45,6 +45,17 @@ std::string rateOf(float fps) {
     return usda::number(std::fabs(fps - std::round(fps)) < 1e-3f ? std::round(fps) : fps);
 }
 
+/// Quaternions x, y, z, w one after the other as quatf[]: [(w, x, y, z), ...].
+std::string quaternions(const std::vector<float>& q) {
+    std::string out = "[";
+    out.reserve(q.size() * 12 + 2);
+    for (size_t i = 0; i + 3 < q.size(); i += 4) {
+        if (i > 0) out += ", ";
+        out += usda::quat(Vec4(q[i], q[i + 1], q[i + 2], q[i + 3]));
+    }
+    return out + "]";
+}
+
 /// The particles' numbers as int64[]: whole, not as the int32 they would wrap to.
 std::string idList(const std::vector<uint32_t>& ids) {
     std::string out = "[";
@@ -199,8 +210,9 @@ struct UsdExport::Impl {
     }
 
     /// The grit at frame f: a point a bit, as wide as it is, with its
-    /// velocity and its number where the frame has them, and the primvar
-    /// glass -- 1 for a chip of glass -- where any bit is one.
+    /// velocity, its number and how it is turned -- the primvar orient --
+    /// where the frame has them, and the primvar glass -- 1 for a chip of
+    /// glass -- where any bit is one.
     void sampleGrit(usda::Stage& layer, int f, const RigidFrame& r) {
         const size_t n = r.debris.size() / 4;
         std::vector<Vec3> at, v;
@@ -223,6 +235,10 @@ struct UsdExport::Impl {
         if (r.debrisGlass.size() == n && n > 0) {
             std::vector<uint32_t> glass(r.debrisGlass.begin(), r.debrisGlass.end());
             fields.push_back({"int[]", "primvars:glass", usda::interpolation("vertex"), idList(glass)});
+        }
+        // How each bit is turned: a stone copied onto it turns so.
+        if (r.debrisOrient.size() == 4 * n && n > 0) {
+            fields.push_back({"quatf[]", "primvars:orient", usda::interpolation("vertex"), quaternions(r.debrisOrient)});
         }
         sample(layer, "/World/grit", "Points", f, std::move(fields));
         scene.grow(box);

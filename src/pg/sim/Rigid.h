@@ -28,6 +28,14 @@
 //              break puffs dust and throws out grit
 //   colliders  the floor, and the objects linked in: still, or keyed --
 //              those push what is in their way
+//   grit       small stones -- chips of glass -- a break throws out of the
+//              crack, from the rim of the face that broke, and a knock where
+//              it lands: they fly, the air holding the small back, tumbling;
+//              out of the pieces they came from, they knock into the pieces,
+//              the objects and the floor, bounce off -- taking on how those
+//              move -- and come to rest, riding on a piece that moves until
+//              it throws them off or tips. Pieces come loose flying fast
+//              leave dust behind them (trail)
 //   network    the glue as geometry (RigidGlue; RBD Constraints makes it,
 //              RBD Pieces gives it back from a frame): a point a body, a
 //              line a joint, its strength a share of Glue. Linked in, its
@@ -117,6 +125,10 @@ struct RigidSettings {
     float impactDust = 1.0f;          ///< ... and a hard knock
     float dustSize = 0.3f;            ///< metres: how big a puff is
     float debris = 1.0f;              ///< grit a break or a knock throws out; 0: none
+    /// Dust the pieces that came loose leave behind them as they fly fast,
+    /// for a second and a half after -- the more the bigger and the faster
+    /// they are; 0 none.
+    float trail = 0.0f;
     /// The air the pieces squeeze out as they crush and knock -- it pushes
     /// the dust out along the ground: 1 as much as they would, 0 none.
     float air = 1.0f;
@@ -180,6 +192,7 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& pieces, const std
 struct RigidJoint {
     int a = 0, b = 0;       ///< the bodies, a < b
     Vec3 at;                ///< where their faces touch, at rest; halfway between them where none do
+    Vec3 normal;            ///< across those faces, from a to b, at rest; from the one's middle to the other's where none touch
     float area = 0.0f;      ///< of those faces, square metres
     /// How strong it is, as a share of the solver's Glue: it holds Glue x
     /// area x strength newtons. 0 or less: nothing.
@@ -279,6 +292,9 @@ struct RigidFrame {
     std::vector<float> debris;
     std::vector<float> debrisVelocity;
     std::vector<uint32_t> debrisIds;
+    /// How each bit is turned -- a unit quaternion x, y, z, w a bit -- as it
+    /// tumbles. Empty in a frame cached before it was kept (version 9).
+    std::vector<float> debrisOrient;
     /// 1 where a bit of the grit is a chip of glass -- from a piece whose
     /// attribute glass is 1 or more. Empty: none is.
     std::vector<uint8_t> debrisGlass;
@@ -301,7 +317,7 @@ struct RigidFrame {
     bool empty() const { return poses.empty(); }
     size_t bytes() const {
         return poses.size() * sizeof(RigidPose) +
-               (debris.size() + debrisVelocity.size() + jointTime.size()) * sizeof(float) +
+               (debris.size() + debrisVelocity.size() + debrisOrient.size() + jointTime.size()) * sizeof(float) +
                (debrisIds.size() + unglued.size()) * sizeof(uint32_t) + rebarState.size() + debrisGlass.size() +
                jointState.size();
     }
@@ -335,9 +351,11 @@ std::vector<uint8_t> wholePanes(const RigidFrame& f);
 std::shared_ptr<Geometry> posedPieces(const RigidFrame& f);
 
 /// The grit of `f` added to `geo` as points: pscale half as wide as a bit
-/// is, its velocity v and its number id -- where the frame has them (a frame
-/// cached before version 4 has neither) -- and glass 1 for a chip of glass,
-/// where there are any. The first point added is returned.
+/// is, its velocity v, its number id and how it is turned, orient (a unit
+/// quaternion: copied onto the points, a stone turns so) -- where the frame
+/// has them (a frame cached before version 4 has neither of the first two,
+/// before version 9 no orient) -- and glass 1 for a chip of glass, where
+/// there are any. The first point added is returned.
 size_t appendGrit(Geometry& geo, const RigidFrame& f);
 
 /// How the solver's look draws the pieces: posed, their faces in the colour

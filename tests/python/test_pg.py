@@ -528,6 +528,46 @@ class Simulations(unittest.TestCase):
         self.assertEqual(joints.primitive_count, network.primitive_count - across)
         self.assertEqual(fell.network().primitive_count, joints.primitive_count)
 
+    @needs_numpy
+    def test_grit_is_particles_that_lie_where_they_land(self):
+        # A block blown to dust over a slab that does not move: the grit
+        # lies on the slab or, flown past its edge, on the floor -- none in
+        # the slab. Each bit is turned as it came to rest: a unit quaternion
+        # x, y, z, w, in the frame and on RBD Pieces' grit points as orient.
+        net = pg.Network()
+        block = net.add("box", size=(0.5, 0.5, 0.5), center=(0, 1.6, 0))
+        blow = net.add("primitive_wrangle", snippet="i@piece = 0; i@active = 1; f@release = 0.1; i@vanish = 1;")
+        slab = net.add("box", size=(3, 0.2, 3), center=(0, 1, 0))
+        still = net.add("primitive_wrangle", snippet="i@piece = 1; i@active = 0;")
+        both = net.add("merge")
+        rbd = net.add("rbd_solver", debris=4)
+        out = net.add("output", frames=90)
+        back = net.add("rbd_pieces", grit=True)
+        block.connect(blow)
+        slab.connect(still)
+        net.connect(blow, both)
+        net.connect(still, both)
+        net.connect(both, rbd, input="pieces")
+        net.connect(rbd, out)
+        net.connect(rbd, back)
+        self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+        sim = net.simulate()
+        for f in sim.run(90):
+            pass
+        rigid = sim.current.rigid
+        grit, turn = rigid.grit, rigid.grit_orient
+        self.assertGreater(len(grit), 30)
+        self.assertEqual(turn.shape, (len(grit), 4))
+        self.assertTrue(np.allclose(np.linalg.norm(turn, axis=1), 1.0, atol=1e-4))
+        x, y, z = grit[:, 0], grit[:, 1], grit[:, 2]
+        over = (np.abs(x) < 1.5) & (np.abs(z) < 1.5)
+        self.assertFalse(np.any(over & (y > 0.901) & (y < 1.099)))  # none in the slab
+        self.assertGreater(int(np.sum(over & (y > 1.099))), 10)       # on it
+        self.assertGreater(int(np.sum(y < grit[:, 3])), 0)             # on the floor
+        points = sim.geometry(back)
+        self.assertIn("orient", points.points)
+        self.assertTrue(np.array_equal(points.points["orient"][-len(grit):], turn))
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

@@ -268,15 +268,23 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   nařezané předem; lámání podle místa nárazu za běhu zbývá. Příklad
   **concrete_drop**: trám se zlomí přes kvádr a poloviny se rozpadnou na
   kry, až dopadnou.
-- **Úlomky jako částice:** body z čerstvých lomových ploch, částicový
-  solver, instancované tvary kamínků; stopy prachu za letícími kusy.
+- ✅ **Úlomky jako částice:** drť ([docs/destruction.md §3](docs/destruction.md#drť-jako-částice))
+  vylétá z okraje plochy, kde praskl spoj, v její rovině. Vzduch ji brzdí
+  (malou víc) a točí se, naráží do kusů, překážek i podlahy, odráží se a
+  zůstává ležet na schodech, na římsách i na kusech, a s kusem, na kterém
+  leží, jede, dokud se nerozjede, nenakloní nebo nezmizí. Za utrženými
+  kusy se táhne prach (`trail`). Natočení každého kousku (`orient`) jde
+  do snímků, cache (verze 9), RBD Pieces, Pythonu a USD a Copy to Points
+  podle něj natočí kamínky. Příklad **debris_stairs**: podetnutý sloup se
+  skácí ze schodů a drť zůstane na stupních. Zbývá USD `PointInstancer`
+  s tvary kamínků a drť, která do sebe naráží a hromadí se.
 - **Usměrněná simulace:** kusy sledují animaci, síly je vedou — režisér
   chce konkrétní průběh pádu.
 - **Tuhá tělesa na více vláknech**, deterministicky.
 
 **Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu
 a sekundární lámání a desetkrát víc kusů za stejný čas na snímek. Beton,
-výztuž, sklo a sekundární lámání jsou; stopy prachu zbývají.
+výztuž, sklo, sekundární lámání a stopy prachu jsou; zbývá rychlost.
 
 ### Krok 5 — Měřítko
 

@@ -53,7 +53,7 @@ nastaveným na ni.
 | **Point / Primitive / Detail Wrangle** | Kód nad každým bodem, primitivem, nebo jednou nad celou geometrií: posouvá, barví, vyrábí atributy, čte sousedy a další vstupy, staví a maže geometrii ([wrangle.md](wrangle.md)) |
 | **Normal** | Normály bodů `N`, průměr stěn kolem bodu vážený plochou |
 | **Scatter** | Body rozházené po polygonech úměrně ploše, deterministicky podle seed; barvy a další atributy se interpolují z rohů, `N` ze stěny |
-| **Copy to Points** | Kopie geometrie na každý bod druhého vstupu: velikost `pscale` × Scale, natočená +y do `N` (Align), s atributy bodu (kromě P, N, pscale) |
+| **Copy to Points** | Kopie geometrie na každý bod druhého vstupu: velikost `pscale` × Scale, natočená podle `orient` bodu (kvaternion x, y, z, w — třeba drti z RBD Pieces), jinak +y do `N` (Align), s atributy bodu (kromě P, N, pscale, orient) |
 | **Null** | Nic nemění: jméno, na které se dá ukázat, konec řetězce |
 | **Connectivity** | Očísluje souvislé kusy (primitivy, které sdílejí body, jsou jeden kus): celočíselný atribut `class` na primitivech nebo bodech, kusy od 0 v pořadí prvních primitiv |
 | **Fuse** | Body blíž než Distance spojí v jeden (uprostřed nich), primitivy je následují; co se zhroutí (trojúhelník ze dvou bodů), zmizí |

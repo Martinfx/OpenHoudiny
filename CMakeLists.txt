@@ -495,6 +495,7 @@ add_executable(pgtests
   tests/test_glass.cpp
   tests/test_bricks.cpp
   tests/test_constraints.cpp
+  tests/test_debris.cpp
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_sim_network.cpp
