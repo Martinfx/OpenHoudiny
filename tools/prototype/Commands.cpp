@@ -973,6 +973,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             spent.gas += p.gas;
             spent.water += p.water;
             spent.rain += p.rain;
+            spent.cloth += p.cloth;
             for (int s = 0; s < 8; ++s) spent.gasStages[s] += p.gasStages[s];
             if (draws || !o.cacheDir.empty() || (inRange && !o.exportPattern.empty())) {
                 current = std::make_shared<const sim::Frame>(solver->capture());
@@ -985,6 +986,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             }
             read->number = f;  // the file's name says which it is
             sim::adoptPieces(*read, world.rigid, &adoptedLayout, &adoptedRebar, &adoptedGlue);
+            sim::adoptCloth(*read, world.cloth);
             current = std::move(read);
         }
         simulating += ms(t);
@@ -1038,9 +1040,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         if (!geometryOnly) {
             volume->setFrame(*current);
             const sim::Look& k = volume->look;
-            volume->setPieces(k.pieces && !current->rigid.empty()
-                                  ? sim::drawnPieces(current->rigid, k.piecesColor, k.piecesInside, k.insideGroup, k.rebarColor)
-                                  : nullptr);
+            volume->setPieces(sim::drawnBodies(*current, k));
         }
         // Animated: the look, the objects and the camera of this frame.
         if (!c.poses.empty()) {
@@ -1205,6 +1205,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         }
         add("water", spent.water, world.hasWater);
         add("rain", spent.rain, world.hasRain);
+        add("cloth", spent.cloth, world.hasCloth);
         std::printf("%s\n", line.c_str());
     }
     if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());

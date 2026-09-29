@@ -897,6 +897,12 @@ std::vector<NodeType> buildTypes() {
                "its faces touched, red where broken.",
                {"pieces", "constraints"}, {"Pieces", "Constraints"}}});
 
+    geometry("cloth_geometry", "Cloth Geometry", "cloth_geometry",
+             "The cloth of a Cloth Solver at the frame, where it has gone: its points moved, with the velocity v "
+             "and smooth normals N of each -- to process further, to export, to show otherwise. The solver's "
+             "look draws it already.",
+             {{"cloth", "Cloth", PinType::Cloth}}, {});
+
     // --- objects ----------------------------------------------------------------------
     t.push_back({"object", "Object", "Objects",
                  "A solid in the scene: a ball, a box, a column, a cone, a ring. It is drawn and casts shadows; "
@@ -1148,6 +1154,51 @@ std::vector<NodeType> buildTypes() {
                "The group of those faces -- a Voronoi Fracture's Inside Group."),
           {"rebar_color", "Rebar Color", "Look", K::Color, {0.3f, 0.25f, 0.21f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "The colour of the bars: steel gone brown with rust."}},
+         1});
+
+    t.push_back(
+        {"cloth_solver", "Cloth Solver", "Simulation",
+         "Cloth, ropes and soft bodies (XPBD, as Houdini's Vellum): the polygons of the geometry linked into "
+         "Geometry are cloth -- their edges hold their length, the cloth its folds as Bend says -- open "
+         "polylines are ropes, and closed meshes with Pressure above 0 balloons that hold their volume. Points "
+         "whose attribute pin is 1 go where the geometry has them at each frame: animated, they carry the cloth "
+         "-- a flag on a pole, a curtain on a rail. It falls, drapes over the objects and the pieces of an RBD "
+         "Solver linked into Colliders, a Thickness away, and over itself; the wind of the Forces and the flow "
+         "of a Pyro Solver's gas blow it. Link it into the Output's Looks: it is simulated and drawn; Cloth "
+         "Geometry brings it back as geometry.",
+         {{"geometry", "Geometry", PinType::Geometry},
+          {"colliders", "Colliders", PinType::Collider, true},
+          {"forces", "Forces", PinType::Force, true}},
+         {{"look", "Look", PinType::Look}, {"cloth", "Cloth", PinType::Cloth}},
+         {{"density", "Density", "Cloth", K::Float, {0.3f, 0.0f, 0.0f}, 0.02f, 2.0f, 1e-4f, 1e4f, "kg/m\xc2\xb2",
+           "How heavy a square metre of the cloth is -- a metre of a rope: 0.1 silk, 0.3 cotton, 0.8 canvas. A "
+           "point's attribute mass, kg, in its place."},
+          {"stretch", "Stretch", "Cloth", K::Float, {10000.0f, 0.0f, 0.0f}, 100.0f, 100000.0f, 0.01f, 1e9f, "N/m",
+           "How hard an edge holds its length: 10000 cotton, barely stretching; a few hundred rubber."},
+          {"bend", "Bend", "Cloth", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 50.0f, 0.0f, 1e9f, "N/m",
+           "How hard the cloth holds its folds: 0.1 silk, 1 cotton, 10 canvas, 1000 cardboard. A rope: how hard "
+           "it keeps straight."},
+          {"pressure", "Pressure", "Cloth", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 100.0f, "",
+           "Closed meshes -- a sphere, a box -- hold this share of the volume they have at rest: 1 a balloon, a "
+           "cushion, more blows them up. 0: they are cloth like the rest."},
+          {"thickness", "Thickness", "Collisions", K::Float, {0.01f, 0.0f, 0.0f}, 0.002f, 0.1f, 1e-4f, 1.0f, "m",
+           "How far from the floor, the objects and itself the cloth stays."},
+          {"friction", "Friction", "Collisions", K::Float, {0.4f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 10.0f, "",
+           "How hard it grips what it lies on: 0 slides off, 1 stays."},
+          {"self_collision", "Self Collision", "Collisions", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "It does not pass through itself: what folds lies on itself."},
+          {"floor", "Floor", "Collisions", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "A floor at height 0."},
+          {"air_drag", "Air Drag", "Air", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "How hard the air pushes it: the wind of the Forces, the flow of a Pyro Solver's gas. 0: not at all."},
+          {"damping", "Damping", "Air", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "1/s",
+           "How fast its motion dies away of itself."},
+          {"gravity", "Gravity", "Air", K::Float, {9.81f, 0.0f, 0.0f}, 0.0f, 20.0f, -100.0f, 100.0f, "m/s\xc2\xb2",
+           "How hard it is pulled down."},
+          {"substeps", "Substeps", "Time", K::Int, {20.0f, 0.0f, 0.0f}, 5.0f, 60.0f, 1.0f, 200.0f, "",
+           "Steps a frame. More: stiffer and steadier -- fast collisions, heavy points on light ones."},
+          {"color", "Color", "Look", K::Color, {0.62f, 0.2f, 0.16f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of the cloth where it has no Cd of its own."}},
          1});
 
     // --- render ---------------------------------------------------------------------
@@ -1550,6 +1601,7 @@ const char* pinTypeName(PinType type) {
         case PinType::Geometry: return "geometry";
         case PinType::Rain: return "rain";
         case PinType::Rigid: return "rigid";
+        case PinType::Cloth: return "cloth";
     }
     return "?";
 }
@@ -3005,6 +3057,7 @@ struct Network::CompileMemo {
     std::map<int, std::shared_ptr<const Geometry>> rebar;    // ... and its bars
     std::map<int, std::shared_ptr<const Geometry>> constraints;  // ... and its network of glue
     std::map<int, RigidGuideRest> guideRest;                     // ... and its pieces as a guide reads them
+    std::map<int, std::shared_ptr<const Geometry>> cloth;    // a Cloth Solver's geometry at frame 1, by node
     std::unique_ptr<GeometryGraph> own;
     GeometryGraph* cooker = nullptr;
 };
@@ -3072,7 +3125,7 @@ Vec3 spinBetween(const Vec3& fromDegrees, const Vec3& toDegrees, float dt) {
 Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) const {
     CompileMemo memo;
     Compiled c = compileFrame(folder, geometry, 1.0f, memo, false);
-    if (!anyAnimated() && !c.fileAnimation && !c.guideMoves) return c;
+    if (!anyAnimated() && !c.fileAnimation && !c.guideMoves && !c.clothMoves) return c;
 
     // Animated: the network at every frame.
     const int count = std::max(1, c.frames);
@@ -3173,7 +3226,8 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
             const bool fixed = (n.type == "pyro_solver" && (name == "size" || name == "resolution")) ||
                                (n.type == "liquid_solver" && (name == "size" || name == "resolution" || name == "closed_sides")) ||
                                (n.type == "output" && (name == "frames" || name == "fps")) ||
-                               (n.type == "rbd_solver" && name != "color" && name != "inside_color" && name != "rebar_color");
+                               (n.type == "rbd_solver" && name != "color" && name != "inside_color" && name != "rebar_color") ||
+                               (n.type == "cloth_solver" && name != "color");
             if (fixed) {
                 c.problems.push_back({Problem::Level::Warning, n.id,
                                       "'" + name + "' cannot change as the simulation runs: its value at frame 1 holds."});
@@ -3235,7 +3289,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             stack.pop_back();
             if (!n) continue;
             if (n->type == "liquid_points" || n->type == "liquid_surface" || n->type == "rain_points" ||
-                n->type == "gas_volume" || n->type == "rbd_pieces") {
+                n->type == "gas_volume" || n->type == "rbd_pieces" || n->type == "cloth_geometry") {
                 return true;
             }
             for (const Link& l : links_) {
@@ -3659,6 +3713,77 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         return &r;
     };
 
+    // The cloth of a Cloth Solver: its settings, its geometry -- as it rests
+    // (frame 1) and at this frame, where its pins go -- and what it falls on.
+    auto compileCloth = [&](const Node* solver) -> ClothScene* {
+        ClothScene& cs = c.world.cloth;
+        if (c.cloth == solver->id) return &cs;
+        if (c.cloth) {
+            problem(L::Warning, solver->id, "Another Cloth Solver: only " + node(c.cloth)->name + " is simulated.");
+            return nullptr;
+        }
+        c.cloth = solver->id;
+        c.active.push_back(solver->id);
+        c.world.hasCloth = true;
+        ClothSettings& s = cs.solver;
+        s.density = f(*solver, "density");
+        s.stretch = f(*solver, "stretch");
+        s.bend = f(*solver, "bend");
+        s.pressure = f(*solver, "pressure");
+        s.thickness = f(*solver, "thickness");
+        s.friction = f(*solver, "friction");
+        s.selfCollision = f(*solver, "self_collision") != 0.0f;
+        s.floor = f(*solver, "floor") != 0.0f;
+        s.airDrag = f(*solver, "air_drag");
+        s.damping = f(*solver, "damping");
+        s.gravity = Vec3(0.0f, -f(*solver, "gravity"), 0.0f);
+        s.substeps = whole(*solver, "substeps");
+        s.timeStep = c.world.timeStep;
+        cs.node = solver->id;
+        const std::vector<Link> in = linksInto(solver->id, "geometry");
+        if (in.empty()) {
+            problem(L::Warning, solver->id, "No cloth: link geometry into Geometry -- a grid, a line, a sphere.");
+        } else {
+            startCooker();
+            const int from = in.front().from;
+            if (fromSimulation(from)) {
+                problem(L::Warning, solver->id, "Its geometry comes from a simulation, which has not run when the cloth "
+                                                "is taken: nothing to simulate.");
+            } else {
+                auto rest = memo.cloth.find(solver->id);
+                if (rest == memo.cloth.end()) {
+                    const GeometryPtr geo = cooker->cook(from, 1, firstStep);
+                    const std::string error = cooker->error(from);
+                    if (!error.empty()) problem(L::Warning, from, error);
+                    if (!geo || (geo->primitiveCount() == 0)) {
+                        problem(L::Warning, solver->id, "The geometry linked into Geometry has no polygons and no "
+                                                        "lines: nothing to simulate.");
+                    }
+                    rest = memo.cloth.emplace(solver->id, geo && geo->primitiveCount() > 0 ? geo : nullptr).first;
+                }
+                cs.geometry = rest->second;
+                // Where the pins are to go: the geometry at this frame, when
+                // it moves with time.
+                const pg::Node* core = cooker->coreNode(from);
+                if (cs.geometry && core && cooker->engine().isTimeDependent(*core)) {
+                    c.clothMoves = true;
+                    const GeometryPtr now = cooker->cook(from, static_cast<int>(std::lround(frame)), firstStep);
+                    if (now && now->pointCount() == cs.geometry->pointCount()) cs.target = now;
+                }
+            }
+        }
+        cs.forces = forcesOf(solver);
+        for (const Node* n : feeding(solver, "colliders")) {
+            if (n->type == "rbd_solver") {
+                if (RigidScene* r = compileRigid(n)) r->intoCloth = true;
+                continue;
+            }
+            cs.colliders.push_back(colliderOf(*n));
+            c.active.push_back(n->id);
+        }
+        return &cs;
+    };
+
     // The gas of a Pyro Solver: its settings, and what feeds it.
     auto compileGas = [&](const Node* solver) {
         c.world.hasGas = true;
@@ -3893,6 +4018,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 problem(L::Warning, look->id, "The cloud is at or below the floor: raise it, or no rain falls.");
             }
             if (r.rate <= 0.0f) problem(L::Warning, look->id, "Rate 0: no drop falls.");
+        } else if (look->type == "cloth_solver") {
+            if (!compileCloth(look)) continue;
+            k.cloth = true;
+            k.clothColor = v3(*look, "color");
         } else if (look->type == "rbd_solver") {
             if (!compileRigid(look)) continue;
             k.pieces = true;
@@ -3932,7 +4061,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                           {"liquid_surface", "liquid", c.liquidSolver, "Liquid Solver"},
                           {"rain_points", "rain", c.rain, "Rain"},
                           {"gas_volume", "gas", c.solver, "Pyro Solver"},
-                          {"rbd_pieces", "rigid", c.rigid, "RBD Solver"}};
+                          {"rbd_pieces", "rigid", c.rigid, "RBD Solver"},
+                          {"cloth_geometry", "cloth", c.cloth, "Cloth Solver"}};
     for (const Node& n : nodes_) {
         if (n.bypass) continue;
         const Back* back = nullptr;

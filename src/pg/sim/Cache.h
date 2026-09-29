@@ -14,7 +14,7 @@
 //                                 the gas as half floats (runs of zeros
 //                                 packed), the water, the particles, the
 //                                 rain, the poses of the rigid bodies
-//                                 and their grit
+//                                 and their grit, the points of the cloth
 //
 //   <folder>/checkpoint.pgstate   the state of the simulation at frame K
 //                                 (WorldSolver::saveState): a bake cut short
@@ -71,6 +71,10 @@ bool parseFrame(std::string_view data, Frame& frame, std::string& error);
 void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo = nullptr,
                  std::shared_ptr<const RigidRebar>* rebarMemo = nullptr,
                  std::shared_ptr<const RigidGlue>* glueMemo = nullptr);
+
+/// Gives a frame read back its cloth's geometry -- the scene's, when the
+/// frame has as many points; else its cloth stays without and is not drawn.
+void adoptCloth(Frame& frame, const ClothScene& scene);
 
 /// "<folder>/frame.0007.pgframe"
 std::string frameFile(const std::string& folder, int number);

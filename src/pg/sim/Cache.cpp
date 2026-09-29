@@ -23,7 +23,7 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 6: what became of the bars; 7: which grit is glass, which bodies came
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned.
-constexpr uint32_t kVersion = 10;
+constexpr uint32_t kVersion = 11;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -308,6 +308,10 @@ std::string formatFrame(const Frame& f) {
     // Version 10: a sparse gas's tiles -- the gas above holds theirs alone.
     out.u64(f.gasTiles.size());
     for (const uint32_t t : f.gasTiles) out.u32(t);
+    // Version 11: the cloth -- where each point is, and how fast it goes.
+    out.u64(f.cloth.positions.size());
+    for (const Vec3& p : f.cloth.positions) out.vec3(p);
+    out.halves(f.cloth.velocities);
     return std::move(out.bytes);
 }
 
@@ -409,6 +413,16 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         f.gasTiles.resize(in.count(4));
         for (uint32_t& t : f.gasTiles) t = in.u32();
     }
+    if (version >= 11) {
+        f.cloth.positions.resize(in.count(12));
+        for (Vec3& p : f.cloth.positions) p = in.vec3();
+        f.cloth.points = f.cloth.positions.size();
+        in.halvesAtMost(f.cloth.velocities, 3 * f.cloth.positions.size());
+        if (!f.cloth.velocities.empty() && f.cloth.velocities.size() != 3 * f.cloth.positions.size()) {
+            error = "the frame's cloth does not fit its points";
+            return false;
+        }
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -439,6 +453,12 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         return false;
     }
     return true;
+}
+
+void adoptCloth(Frame& frame, const ClothScene& scene) {
+    ClothFrame& c = frame.cloth;
+    if (c.positions.empty() || !scene.geometry || scene.geometry->pointCount() != c.positions.size()) return;
+    c.geometry = scene.geometry;
 }
 
 void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo,

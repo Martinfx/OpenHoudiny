@@ -11,6 +11,7 @@
 // Plain data, compared as a whole, as the scene of each part is: the
 // editor's runner starts again exactly when the World differs.
 //
+#include "pg/sim/Cloth.h"
 #include "pg/sim/Frame.h"
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Pyro.h"
@@ -46,6 +47,8 @@ struct World {
     RainScene rain;                  ///< the Rain's, when hasRain
     bool hasRigid = false;
     RigidScene rigid;                ///< the RBD Solver's, when hasRigid
+    bool hasCloth = false;
+    ClothScene cloth;                ///< the Cloth Solver's, when hasCloth
     /// Frames keep the water's particles: something makes points of them
     /// (Liquid Points). They cost some 19 bytes a particle a frame.
     bool keepParticles = false;
@@ -58,7 +61,7 @@ struct World {
     const World& at(int frame) const;
 
     /// True when there is anything to simulate.
-    bool any() const { return hasGas || hasWater || hasRain || hasRigid; }
+    bool any() const { return hasGas || hasWater || hasRain || hasRigid || hasCloth; }
     /// Each part sanitized (Scene::sanitized), and the one time step in each.
     World sanitized() const;
 
@@ -102,6 +105,8 @@ public:
     const RainSolver* rain() const { return rain_.get(); }
     RigidSolver* rigid() { return rigid_.get(); }
     const RigidSolver* rigid() const { return rigid_.get(); }
+    ClothSolver* cloth() { return cloth_.get(); }
+    const ClothSolver* cloth() const { return cloth_.get(); }
 
 private:
     /// What a step does before the gas, the water and the rain move: the
@@ -116,6 +121,7 @@ private:
     std::unique_ptr<LiquidSolver> water_;
     std::unique_ptr<RainSolver> rain_;
     std::unique_ptr<RigidSolver> rigid_;
+    std::unique_ptr<ClothSolver> cloth_;
     int frame_ = 0;
     float time_ = 0.0f;
     /// The water and the gas push the pieces (RigidSolver::feel): what they

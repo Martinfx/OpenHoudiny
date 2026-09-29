@@ -52,6 +52,10 @@ struct Look {
     std::string insideGroup = "inside";     ///< ... the group they are in
     Vec3 rebarColor{0.3f, 0.25f, 0.21f};    ///< the bars in them
 
+    // The cloth of a Cloth Solver (Cloth.h: drawnCloth)
+    bool cloth = false;           ///< drawn: the solver is linked into the Output
+    Vec3 clothColor{0.62f, 0.2f, 0.16f};    ///< where it has no Cd of its own
+
     // Light
     float lightAzimuth = 169.0f;  ///< degrees round the vertical, from +x towards +z
     float lightElevation = 38.0f; ///< degrees above the horizon

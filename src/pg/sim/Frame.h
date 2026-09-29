@@ -11,6 +11,7 @@
 //   rain   where each drop and droplet is and how fast it goes, and the
 //          ripples on the water.
 //
+#include "pg/sim/Cloth.h"
 #include "pg/sim/Rigid.h"
 #include "pg/sim/Scene.h"
 
@@ -103,6 +104,7 @@ struct Frame {
     WaterFrame water;     ///< empty without water
     RainFrame rain;       ///< empty without rain
     RigidFrame rigid;     ///< empty without rigid bodies
+    ClothFrame cloth;     ///< empty without cloth
     double stepMs = 0.0;  ///< how long the step to it took
     /// Where the time of that step went, milliseconds: each part -- the
     /// pieces, what goes between them and the rest (their colliders and
@@ -110,22 +112,28 @@ struct Frame {
     /// stages, as PyroSolver::Times names them. Kept in memory, not in the
     /// cache: a frame read back has none.
     struct Profile {
-        float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, water = 0.0f, rain = 0.0f;
+        float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, water = 0.0f, rain = 0.0f, cloth = 0.0f;
         float gasStages[8] = {};  ///< solids, tiles, emit, advect, combust, forces, project, dissipate
-        float total() const { return rigid + scenes + gas + water + rain; }
+        float total() const { return rigid + scenes + gas + water + rain + cloth; }
     } profile;
 
     size_t bytes() const {
         return sizeof(Frame) + fields.size() * sizeof(uint16_t) + gasTiles.size() * sizeof(uint32_t) + water.bytes() +
-               rain.bytes() + rigid.bytes();
+               rain.bytes() + rigid.bytes() + cloth.bytes();
     }
-    bool empty() const { return fields.empty() && water.empty() && rain.empty() && rigid.empty(); }
+    bool empty() const { return fields.empty() && water.empty() && rain.empty() && rigid.empty() && cloth.empty(); }
     /// The field `channel` (0 smoke, 1 temperature, 2 flame) of cell (i, j, k).
     float at(int channel, int i, int j, int k) const;
     /// The gas of every cell of the domain, as `fields` holds it when not
     /// sparse: `fields` itself, or `scratch`, made from the tiles.
     const std::vector<uint16_t>& denseFields(std::vector<uint16_t>& scratch) const;
 };
+
+struct Look;
+/// What the looks draw of a frame's bodies, as one geometry: the pieces of
+/// an RBD Solver linked into the Output (drawnPieces) and the cloth of a
+/// Cloth Solver (drawnCloth). Null when there is neither.
+std::shared_ptr<Geometry> drawnBodies(const Frame& frame, const Look& look);
 
 /// The solver's gas as a frame.
 Frame capture(const PyroSolver& sim);

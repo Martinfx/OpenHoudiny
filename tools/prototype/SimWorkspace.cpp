@@ -152,6 +152,7 @@ ImU32 pinColor(sim::PinType t) {
         case sim::PinType::Geometry: return IM_COL32(236, 150, 190, 255);
         case sim::PinType::Rain: return IM_COL32(150, 172, 210, 255);
         case sim::PinType::Rigid: return IM_COL32(214, 160, 96, 255);
+        case sim::PinType::Cloth: return IM_COL32(200, 96, 150, 255);
     }
     return IM_COL32_WHITE;
 }
@@ -461,14 +462,17 @@ void SimWorkspace::pose(int frame) {
 
 void SimWorkspace::updatePieces() {
     const sim::Look& look = renderer_.look;
-    const std::shared_ptr<const sim::Frame> f = look.pieces && levels_.empty() && shown_ && !shown_->rigid.empty() ? shown_ : nullptr;
-    char key[160];
-    std::snprintf(key, sizeof key, "%g %g %g %g %g %g %s", look.piecesColor.x, look.piecesColor.y, look.piecesColor.z,
-                  look.piecesInside.x, look.piecesInside.y, look.piecesInside.z, look.insideGroup.c_str());
+    // The pieces and the cloth, drawn with the displayed geometry.
+    const bool bodies = shown_ && ((look.pieces && !shown_->rigid.empty()) || (look.cloth && !shown_->cloth.empty()));
+    const std::shared_ptr<const sim::Frame> f = levels_.empty() && bodies ? shown_ : nullptr;
+    char key[240];
+    std::snprintf(key, sizeof key, "%g %g %g %g %g %g %s %d %g %g %g", look.piecesColor.x, look.piecesColor.y,
+                  look.piecesColor.z, look.piecesInside.x, look.piecesInside.y, look.piecesInside.z,
+                  look.insideGroup.c_str(), look.cloth ? 1 : 0, look.clothColor.x, look.clothColor.y, look.clothColor.z);
     if (f == piecesFrame_ && (!f || key == piecesKey_)) return;
     piecesFrame_ = f;
     piecesKey_ = key;
-    renderer_.setPieces(f ? sim::drawnPieces(f->rigid, look.piecesColor, look.piecesInside, look.insideGroup, look.rebarColor) : nullptr);
+    renderer_.setPieces(f ? sim::drawnBodies(*f, look) : nullptr);
     viewDirty_ = true;
 }
 
@@ -2361,6 +2365,7 @@ void SimWorkspace::profilePanel(const sim::Frame& f) {
     }
     if (compiled_.world.hasWater) bar("Water", p.water, total, false);
     if (compiled_.world.hasRain) bar("Rain", p.rain, total, false);
+    if (compiled_.world.hasCloth) bar("Cloth", p.cloth, total, false);
     ui::note("Of the whole step. Frames read from disk say nothing: a bake's time is in its bake.log.");
 }
 

@@ -51,7 +51,6 @@ node 15 liquid_solver 1 water 920 60
   param resolution 96
 node 16 water_look 1 look 1150 60
 node 17 output 2 output 1380 200
-  param frames 150
   param light_azimuth 130
   param light_elevation 40
 node 18 camera 1 camera 1380 360

@@ -159,6 +159,19 @@ public:
     }
 };
 
+/// The cloth where it has gone at the frame: its points moved, with the
+/// velocity v and smooth normals N of each.
+class ClothGeometryNode : public FrameNode {
+public:
+    explicit ClothGeometryNode(std::string name) : FrameNode("cloth_geometry", std::move(name)) { setInputCount(0); }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
+        if (!frame_ || frame_->cloth.empty()) return std::make_shared<Geometry>();
+        std::shared_ptr<Geometry> geo = posedCloth(frame_->cloth);
+        return geo ? geo : std::make_shared<Geometry>();
+    }
+};
+
 /// The glue between the pieces as a network (rigidNetwork): a point at each
 /// body's middle, a line for each joint, its strength a share of the RBD
 /// Solver's Glue.
@@ -201,6 +214,7 @@ void registerSimGeometryNodes() {
         r.add("rain_points", [](const std::string& n) { return std::make_unique<RainPointsNode>(n); });
         r.add("gas_volume", [](const std::string& n) { return std::make_unique<GasVolumeNode>(n); });
         r.add("rbd_pieces", [](const std::string& n) { return std::make_unique<RbdPiecesNode>(n); });
+        r.add("cloth_geometry", [](const std::string& n) { return std::make_unique<ClothGeometryNode>(n); });
         r.add("rbd_constraints", [](const std::string& n) { return std::make_unique<RbdConstraintsNode>(n); });
         return true;
     }();

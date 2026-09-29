@@ -1,0 +1,39 @@
+pgsim 1
+# A flag in the wind: a grid stood upright, its edge along the pole pinned
+# (a Point Wrangle sets pin), simulated by a Cloth Solver -- cloth that holds
+# its length and gives to folds -- and blown by a gusting Wind: it streams
+# out, flaps and ripples; the gusts come through it as waves.
+node 1 grid 1 cloth 0 0
+  param sizex 1.8
+  param sizez 1.2
+  param rows 25
+  param cols 37
+node 2 transform 1 upright 230 0
+  param t 0.95 2.8 0
+  param r 90 0 0
+node 3 point_wrangle 1 pins 460 0
+  param snippet "// Tied to the pole along its edge.\ni@pin = @P.x < 0.07;"
+node 4 cloth_solver 1 flag 690 0
+  param density 0.15
+  param bend 0.2
+  param color 0.72 0.12 0.1
+node 5 wind 1 wind 460 130
+  param direction 1 0 0.35
+  param speed 8
+  param gusts 0.7
+node 6 object 1 pole 460 260
+  param shape cylinder
+  param center 0 1.75 0
+  param size 0.07 3.5 0.07
+  param color 0.72 0.72 0.7
+node 7 output 2 output 920 60
+node 8 camera 1 camera 920 200
+  param center 1.6 2.3 5.2
+  param rotation 2 12 0
+  param focal 30
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.geometry
+link 5.force -> 4.forces
+link 4.look -> 7.look
+link 8.camera -> 7.camera

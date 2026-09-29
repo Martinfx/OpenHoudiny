@@ -33,6 +33,8 @@ World World::sanitized() const {
     w.rain = w.rain.sanitized();
     w.rigid.solver.timeStep = w.timeStep;
     w.rigid = w.rigid.sanitized();
+    w.cloth.solver.timeStep = w.timeStep;
+    w.cloth = w.cloth.sanitized();
     return w;
 }
 
@@ -41,6 +43,7 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     if (world_.hasWater) water_ = std::make_unique<LiquidSolver>(world_.water);
     if (world_.hasRain) rain_ = std::make_unique<RainSolver>(world_.rain);
     if (world_.hasRigid) rigid_ = std::make_unique<RigidSolver>(world_.rigid);
+    if (world_.hasCloth) cloth_ = std::make_unique<ClothSolver>(world_.cloth);
     // The water holds the pieces up and drags them, the gas blows the grit
     // and them about -- when there are any, and their share is not 0.
     if (rigid_) {
@@ -65,6 +68,11 @@ void WorldSolver::step() {
     Clock::time_point t0 = Clock::now();
     prepare();
     profile_.scenes = msSince(t0) - profile_.rigid;
+    if (cloth_) {
+        t0 = Clock::now();
+        cloth_->step();
+        profile_.cloth = msSince(t0);
+    }
     if (gas_) {
         t0 = Clock::now();
         gas_->step();
@@ -127,9 +135,22 @@ void WorldSolver::prepare() {
     const bool piecesIntoGas = rigid_ && (rigid.intoGas || rigid.dustIntoGas);
     const bool piecesIntoWater = rigid_ && rigid.intoWater;
     const bool piecesIntoRain = rigid_ && rigid.intoRain;
+    const bool piecesIntoCloth = rigid_ && rigid.intoCloth;
     // The pieces where they are now, as colliders -- once for all.
     std::vector<Collider> pieces;
-    if (rigid_ && (rigid.intoGas || piecesIntoWater || piecesIntoRain)) pieces = rigid_->colliders();
+    if (rigid_ && (rigid.intoGas || piecesIntoWater || piecesIntoRain || piecesIntoCloth)) pieces = rigid_->colliders();
+    // The cloth: its objects, the pieces where they are, where its pins go;
+    // the gas as it was at the end of the last step blows it.
+    if (cloth_) {
+        ClothScene cloth = now.cloth;
+        cloth.solver.timeStep = world_.timeStep;
+        if (piecesIntoCloth) cloth.colliders.insert(cloth.colliders.end(), pieces.begin(), pieces.end());
+        cloth_->setScene(cloth);
+        if (gas_) {
+            const PyroSolver* gas = gas_.get();
+            cloth_->setAir([gas](const Vec3& p) { return gas->flowAt(p); });
+        }
+    }
     if (gas_ && (animated || piecesIntoGas)) {
         Scene gas = now.gas;
         gas.solver.size = world_.gas.solver.size;
@@ -217,7 +238,8 @@ std::string WorldSolver::saveState() const {
     out.pod(kStateVersion);
     out.pod(static_cast<int32_t>(frame_));
     out.pod(time_);
-    const uint8_t parts = (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u);
+    const uint8_t parts =
+        (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) | (cloth_ ? 16u : 0u);
     out.pod(parts);
     out.pod(static_cast<uint64_t>(flows_.size()));
     for (const RigidFlow& f : flows_) {
@@ -228,6 +250,7 @@ std::string WorldSolver::saveState() const {
     if (gas_) gas_->saveState(out);
     if (water_) water_->saveState(out);
     if (rain_) rain_->saveState(out);
+    if (cloth_) cloth_->saveState(out);
     return out.take();
 }
 
@@ -251,7 +274,8 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
                 std::to_string(kStateVersion) + ")";
         return false;
     }
-    const uint8_t mine = (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u);
+    const uint8_t mine =
+        (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) | (cloth_ ? 16u : 0u);
     if (!in.pod(frame) || !in.pod(time) || !in.pod(parts) || frame < 0) {
         error = "the simulation state is cut short";
         return false;
@@ -287,7 +311,7 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
         time_ += world_.timeStep;
     }
     const bool read = (!gas_ || gas_->loadState(in)) && (!water_ || water_->loadState(in)) &&
-                      (!rain_ || rain_->loadState(in));
+                      (!rain_ || rain_->loadState(in)) && (!cloth_ || cloth_->loadState(in));
     if (!read || !in.done()) {
         error = "the simulation state does not fit this world: another grid, or a file cut short";
         return false;
@@ -315,6 +339,7 @@ Frame WorldSolver::capture() const {
     if (water_) f.water = sim::capture(*water_, world_.keepParticles);
     if (rain_) f.rain = sim::capture(*rain_);
     if (rigid_) f.rigid = rigid_->capture();
+    if (cloth_) f.cloth = cloth_->capture();
     f.number = frame_;
     f.time = time_;
     f.profile = profile_;

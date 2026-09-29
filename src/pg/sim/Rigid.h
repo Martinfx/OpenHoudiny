@@ -190,6 +190,7 @@ struct RigidScene {
     bool intoGas = false;              ///< the pieces are colliders of the gas
     bool intoWater = false;            ///< ... of the water
     bool intoRain = false;             ///< ... of the rain
+    bool intoCloth = false;            ///< ... of the cloth
     bool dustIntoGas = false;          ///< broken glue and knocks puff smoke into the gas
     int node = 0;
 

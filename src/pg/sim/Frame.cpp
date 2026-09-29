@@ -3,6 +3,7 @@
 #include "pg/core/Half.h"
 #include "pg/core/Parallel.h"
 #include "pg/sim/Liquid.h"
+#include "pg/sim/Look.h"
 #include "pg/sim/Pyro.h"
 #include "pg/sim/Rain.h"
 
@@ -290,6 +291,21 @@ RainFrame capture(const RainSolver& sim) {
         for (size_t i = 0; i < w.height.size(); ++i) r.ripples[i] = toHalf(w.height[i]);
     }
     return r;
+}
+
+std::shared_ptr<Geometry> drawnBodies(const Frame& frame, const Look& look) {
+    std::shared_ptr<Geometry> pieces, cloth;
+    if (look.pieces && !frame.rigid.empty()) {
+        pieces = drawnPieces(frame.rigid, look.piecesColor, look.piecesInside, look.insideGroup, look.rebarColor);
+    }
+    if (look.cloth && !frame.cloth.empty()) cloth = drawnCloth(frame.cloth, look.clothColor);
+    if (!pieces) return cloth;
+    if (cloth) {
+        auto both = std::make_shared<Geometry>(*pieces);
+        both->append(*cloth);
+        return both;
+    }
+    return pieces;
 }
 
 }  // namespace pg::sim

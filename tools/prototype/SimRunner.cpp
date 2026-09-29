@@ -144,11 +144,13 @@ std::string SimRunner::folder() const {
 std::shared_ptr<const sim::Frame> SimRunner::load(int number) const {
     std::string folder;
     sim::RigidScene rigid;
+    sim::ClothScene cloth;
     unsigned generation = 0;
     {
         std::lock_guard<std::mutex> lock(mu_);
         folder = folder_;
         rigid = world_.rigid;
+        cloth = world_.cloth;
         generation = generation_;
     }
     // One read at a time: two asking for the same frame read it once.
@@ -163,6 +165,7 @@ std::shared_ptr<const sim::Frame> SimRunner::load(int number) const {
     if (!sim::readFrame(folder, number, *frame, error)) return nullptr;
     frame->number = number;
     sim::adoptPieces(*frame, rigid, &layout_, &rebar_, &glue_);
+    sim::adoptCloth(*frame, cloth);
     std::lock_guard<std::mutex> lock(mu_);
     if (generation != generation_) return nullptr;  // another world or folder meanwhile
     read_[number] = frame;

@@ -129,6 +129,7 @@ struct PySimulation {
             if (!ok) throw Error(error);
             read->number = next;  // the file's name says which it is
             sim::adoptPieces(*read, world.rigid, &adopted, &adoptedBars, &adoptedGlue);
+            sim::adoptCloth(*read, world.cloth);
             current = std::move(read);
         } else {
             py::gil_scoped_release release;
