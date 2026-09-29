@@ -400,6 +400,19 @@ void PyroSolver::enforceWalls() {
     }
 }
 
+Vec3 PyroSolver::flowAt(const Vec3& p) const {
+    const Vec3 o = domain_.origin();
+    const float inv = 1.0f / domain_.voxel;
+    const float x = (p.x - o.x) * inv, y = (p.y - o.y) * inv, z = (p.z - o.z) * inv;
+    if (!(x >= 0.0f && y >= 0.0f && z >= 0.0f && x <= static_cast<float>(nx_) && y <= static_cast<float>(ny_) &&
+          z <= static_cast<float>(nz_))) {
+        return {};
+    }
+    float v[3];
+    velocityAt(x, y, z, v);
+    return {v[0], v[1], v[2]};
+}
+
 void PyroSolver::velocityAt(float x, float y, float z, float out[3]) const {
     out[0] = vel_[0].sample(x + 0.5f, y, z);
     out[1] = vel_[1].sample(x, y + 0.5f, z);

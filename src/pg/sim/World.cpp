@@ -41,6 +41,12 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     if (world_.hasWater) water_ = std::make_unique<LiquidSolver>(world_.water);
     if (world_.hasRain) rain_ = std::make_unique<RainSolver>(world_.rain);
     if (world_.hasRigid) rigid_ = std::make_unique<RigidSolver>(world_.rigid);
+    // The water holds the pieces up and drags them, the gas blows the grit
+    // and them about -- when there are any, and their share is not 0.
+    if (rigid_) {
+        const RigidSettings& r = world_.rigid.solver;
+        coupled_ = (water_ && (r.buoyancy > 0.0f || r.waterDrag > 0.0f)) || (gas_ && r.airDrag > 0.0f);
+    }
 }
 
 namespace {
@@ -103,6 +109,17 @@ void WorldSolver::prepare() {
             rigid_->setGuide(now.rigid.guide, now.rigid.solver.guideStrength);
         }
         const auto t0 = Clock::now();
+        if (coupled_) {
+            // The flows of this step: those it took before, when stepped
+            // again from a checkpoint; else felt now, and kept.
+            const size_t at = static_cast<size_t>(frame_);
+            if (at < flows_.size()) {
+                rigid_->setFlow(flows_[at]);
+            } else {
+                flows_.push_back(rigid_->feel(fluids()));
+                rigid_->setFlow(flows_.back());
+            }
+        }
         rigid_->step();
         profile_.rigid = msSince(t0);
     }
@@ -168,12 +185,30 @@ void WorldSolver::prepare() {
     }
 }
 
-// The state: "pgstate", a version, the frame, then each part there is --
-// the gas, the water, the rain -- as its saveState() writes it. The pieces'
-// is not: they are stepped again.
+RigidFluids WorldSolver::fluids() const {
+    RigidFluids f;
+    if (water_) {
+        auto level = std::make_shared<const WaterLevel>(water_->waterLevel());
+        const LiquidSolver* water = water_.get();
+        f.waterLevel = [level](float x, float z) { return level->at(x, z); };
+        f.waterVelocity = [water](const Vec3& p) { return water->velocityAt(p); };
+        f.waterCell = water->cellSize();
+    }
+    if (gas_) {
+        const PyroSolver* gas = gas_.get();
+        f.airVelocity = [gas](const Vec3& p) { return gas->flowAt(p); };
+        f.airCell = gas->cellSize();
+    }
+    return f;
+}
+
+// The state: "pgstate", a version, the frame; what the water and the gas
+// did to the pieces in each step so far (version 2); then each part there
+// is -- the gas, the water, the rain -- as its saveState() writes it. The
+// pieces' is not: they are stepped again, with those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
-constexpr uint32_t kStateVersion = 1;
+constexpr uint32_t kStateVersion = 2;
 }  // namespace
 
 std::string WorldSolver::saveState() const {
@@ -184,6 +219,12 @@ std::string WorldSolver::saveState() const {
     out.pod(time_);
     const uint8_t parts = (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u);
     out.pod(parts);
+    out.pod(static_cast<uint64_t>(flows_.size()));
+    for (const RigidFlow& f : flows_) {
+        out.list(f.pushes);
+        out.list(f.gritFlow);
+        out.list(f.gritWet);
+    }
     if (gas_) gas_->saveState(out);
     if (water_) water_->saveState(out);
     if (rain_) rain_->saveState(out);
@@ -219,8 +260,27 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
         error = "the simulation state is of another world: it simulates other parts";
         return false;
     }
+    // What the water and the gas did to the pieces: a step's worth each, if
+    // they push them in this world; none else.
+    uint64_t steps = 0;
+    if (!in.pod(steps) || steps > static_cast<uint64_t>(frame)) {
+        error = "the simulation state is cut short";
+        return false;
+    }
+    std::vector<RigidFlow> flows(static_cast<size_t>(steps));
+    for (RigidFlow& f : flows) {
+        if (!in.list(f.pushes) || !in.list(f.gritFlow) || !in.list(f.gritWet)) {
+            error = "the simulation state is cut short";
+            return false;
+        }
+    }
+    if (steps != (coupled_ ? static_cast<uint64_t>(frame) : 0u)) {
+        error = "the simulation state is of another world: the water and the gas push its pieces otherwise";
+        return false;
+    }
+    flows_ = std::move(flows);
     // The pieces -- and the scenes they give the rest -- to the frame, the
-    // way step() takes them there; the rest is read.
+    // way step() takes them there, with the flows they took; the rest is read.
     for (int f = 0; f < frame; ++f) {
         prepare();
         ++frame_;

@@ -1113,6 +1113,17 @@ std::vector<NodeType> buildTypes() {
            "lands."},
           {"substeps", "Substeps", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
            "Steps of the solver a frame: more for fast pieces and tall stacks, which then stand steadier."},
+          {"buoyancy", "Buoyancy", "Fluids", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 100.0f, "",
+           "How much the water of the Liquid Solver holds the pieces up: 1 as much as the water they push aside "
+           "weighs -- what is lighter than water (Density under 1000: wood) floats, rocking on the waves, the "
+           "rest sinks slower. 0: not at all."},
+          {"water_drag", "Water Drag", "Fluids", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "How hard the water carries the pieces and the grit along and slows them down: a flood sweeps them "
+           "away, grit sinks slowly. 0: not at all."},
+          {"air_drag", "Air Drag", "Fluids", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "How much of the Pyro Solver's flow carries the grit and the pieces: the dust cloud's wind, a blast. "
+           "Heavy pieces barely feel it; grit rolls out with the dust. 0: none -- still air holds the grit back "
+           "all the same."},
           {"dust", "Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
            "Smoke a joint gives off as it breaks, into the Pyro Solver its Dust is linked into."},
           {"impact_dust", "Impact Dust", "Dust", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
@@ -3518,6 +3529,9 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.guideUntil = f(*solver, "guide_until");
         s.guideReach = f(*solver, "guide_reach");
         s.guideLetGo = f(*solver, "guide_let_go") != 0.0f;
+        s.buoyancy = f(*solver, "buoyancy");
+        s.waterDrag = f(*solver, "water_drag");
+        s.airDrag = f(*solver, "air_drag");
         s.timeStep = c.world.timeStep;
         r.attribute = text(solver->id, "attribute");
         r.node = solver->id;

@@ -519,6 +519,7 @@ add_executable(pgtests
   tests/test_sops.cpp
   tests/test_export.cpp
   tests/test_state.cpp
+  tests/test_coupling.cpp
   tests/test_usd.cpp
   tests/test_usd_read.cpp
   tests/test_exr.cpp

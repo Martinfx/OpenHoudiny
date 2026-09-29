@@ -107,6 +107,8 @@ private:
     /// What a step does before the gas, the water and the rain move: the
     /// pieces stepped, and each part given its scene of the frame.
     void prepare();
+    /// The water and the gas as the pieces feel them now.
+    RigidFluids fluids() const;
 
     World world_;
     Frame::Profile profile_;  // of the last step
@@ -116,6 +118,11 @@ private:
     std::unique_ptr<RigidSolver> rigid_;
     int frame_ = 0;
     float time_ = 0.0f;
+    /// The water and the gas push the pieces (RigidSolver::feel): what they
+    /// did in each step so far, frame by frame -- a checkpoint keeps it, and
+    /// the pieces take it again when they are stepped there again.
+    bool coupled_ = false;
+    std::vector<RigidFlow> flows_;
 };
 
 }  // namespace pg::sim

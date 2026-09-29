@@ -96,6 +96,7 @@
 #include "pg/core/Geometry.h"
 #include "pg/sim/Scene.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -150,6 +151,17 @@ struct RigidSettings {
     float guideReach = 0.0f;
     /// A piece whose glue breaks goes its own way.
     bool guideLetGo = true;
+    /// How much the water holds the pieces up: 1 as much as the water they
+    /// push aside weighs (Archimedes) -- lighter than water, they float --
+    /// 0 not at all.
+    float buoyancy = 1.0f;
+    /// How hard the water carries the pieces and the grit along and slows
+    /// them: 1 as it would, 0 not at all.
+    float waterDrag = 1.0f;
+    /// How much of the gas's flow carries the grit and the pieces -- the
+    /// dust cloud's wind, a blast: 1 all of it, 0 none -- still air holds
+    /// the grit back all the same.
+    float airDrag = 1.0f;
     float timeStep = 1.0f / 30.0f;    ///< seconds a frame (the World's)
 
     bool operator==(const RigidSettings&) const = default;
@@ -447,6 +459,51 @@ struct RigidDust {
     float expansion = 0.0f;  ///< 1/s, as a source's (Emitter)
 };
 
+/// The water and the gas, as the pieces and their grit feel them: asked at
+/// world points. Either may be missing.
+struct RigidFluids {
+    /// The height of the water's surface over x, z (WaterLevel); at or below
+    /// -1e30 there is none. Null: no water.
+    std::function<float(float x, float z)> waterLevel;
+    /// How fast the water goes at a point in it.
+    std::function<Vec3(const Vec3& p)> waterVelocity;
+    /// How fast the gas goes at a point; 0 outside it. Null: no gas.
+    std::function<Vec3(const Vec3& p)> airVelocity;
+    /// Edges of the cells of the water's grid and of the gas's: how far
+    /// round a piece the flow that goes past it is looked for.
+    float waterCell = 0.1f, airCell = 0.1f;
+};
+
+/// What the water and the gas do to the pieces and the grit in the next step,
+/// worked out before it from where everything is (RigidSolver::feel). The
+/// same inputs, the same step: a checkpoint keeps them, and steps the pieces
+/// again with them, the fluids gone.
+struct RigidFlow {
+    struct Push {
+        uint32_t piece = 0;
+        Vec3 force;   ///< newtons on the piece: the water holding it up, the flows dragging it
+        Vec3 moment;  ///< newton metres: those forces' moment about the origin, sum of p x F
+    };
+    std::vector<Push> pushes;
+    /// For each bit of grit there is: the velocity of what it is in -- the
+    /// water's or the gas's -- to half a float's precision, x, y, z; and 1
+    /// where that is the water.
+    std::vector<uint16_t> gritFlow;
+    std::vector<uint8_t> gritWet;
+
+    bool empty() const { return pushes.empty() && gritFlow.empty(); }
+    bool operator==(const RigidFlow& o) const {
+        if (pushes.size() != o.pushes.size() || gritFlow != o.gritFlow || gritWet != o.gritWet) return false;
+        for (size_t i = 0; i < pushes.size(); ++i) {
+            if (pushes[i].piece != o.pushes[i].piece || !(pushes[i].force == o.pushes[i].force) ||
+                !(pushes[i].moment == o.pushes[i].moment)) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
 class RigidSolver {
 public:
     explicit RigidSolver(const RigidScene& scene);
@@ -459,6 +516,14 @@ public:
     /// Where the guide has the pieces at the end of the next step, and how
     /// hard it steers them then (RigidSettings::guideStrength).
     void setGuide(std::shared_ptr<const RigidGuide> guide, float strength);
+    /// What the water and the gas do to the pieces and the grit where they
+    /// are now: the water holds up the part of each piece under its surface
+    /// -- where it is, so a piece rights itself -- and it and the gas drag
+    /// them their way (RigidSettings::buoyancy, waterDrag, airDrag).
+    RigidFlow feel(const RigidFluids& fluids) const;
+    /// ... for the next step to take; then it is spent. Without one, only
+    /// gravity and what they knock into move them, and still air.
+    void setFlow(RigidFlow flow);
     void step();
 
     const RigidScene& scene() const { return scene_; }

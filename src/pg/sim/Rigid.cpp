@@ -1,5 +1,6 @@
 #include "pg/sim/Rigid.h"
 
+#include "pg/core/Half.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Spatial.h"
 #include "pg/nodes/Rebuild.h"
@@ -75,6 +76,9 @@ RigidScene RigidScene::sanitized() const {
     s.guideStrength = std::clamp(finite(s.guideStrength, d.guideStrength), 0.0f, 1.0f);
     s.guideUntil = std::clamp(finite(s.guideUntil, d.guideUntil), 0.0f, 1e6f);
     s.guideReach = std::clamp(finite(s.guideReach, d.guideReach), 0.0f, 1e6f);
+    s.buoyancy = std::clamp(finite(s.buoyancy, d.buoyancy), 0.0f, 100.0f);
+    s.waterDrag = std::clamp(finite(s.waterDrag, d.waterDrag), 0.0f, 100.0f);
+    s.airDrag = std::clamp(finite(s.airDrag, d.airDrag), 0.0f, 100.0f);
     s.timeStep = std::clamp(finite(s.timeStep, d.timeStep), 1e-4f, 1.0f);
     detail::sanitize(r.colliders);
     return r;
@@ -1662,6 +1666,16 @@ constexpr uint64_t kStillTag = 1ull << 62;
 /// bouncing off, and of the way along it; how slowly it must come in to lie
 /// still, and how fast what it lies on must go to throw it off. m/s.
 constexpr float kGritDrag = 1.5e-4f;
+/// The fluids: how heavy a cubic metre of water and of air is, kg; a bit of
+/// grit, of stone -- a chip of glass is a little heavier -- and what holds
+/// a piece back as it moves through water besides its drag, 1/s: the waves
+/// it makes, the water it has to move. A lattice of so many points a side
+/// through each hull feels the water (Piece::samples).
+constexpr float kWaterDensity = 1000.0f;
+constexpr float kAirDensity = 1.2f;
+constexpr float kGritDensity = 2400.0f;
+constexpr float kWaterDamping = 3.0f;
+constexpr int kHullSamples = 4;
 constexpr float kGritBounce = 0.25f;
 constexpr float kGritSlide = 0.55f;
 constexpr float kGritRest = 0.35f;
@@ -1845,9 +1859,15 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         float points = 0.0f;                    ///< how many points it has
         Vec3 middle;                            ///< where they are on average, at rest
         Vec3 scatter[3];                        ///< how they spread about it: sum (p - middle)(p - middle)^T
+        /// Where the water is felt: points inside its hulls at rest, each with
+        /// the share of its volume about it (w, cubic metres).
+        std::vector<Vec4> samples;
+        float volume = 0.0f;                    ///< cubic metres, of its hulls
+        float mass = 0.0f;                      ///< kilograms
     };
     std::vector<Piece> pieces;
     std::shared_ptr<const RigidGuide> guide;    ///< where the next step is to take them; null: nowhere
+    RigidFlow flow;                             ///< what the water and the gas do in the next step
     float guideStrength = 1.0f;                 ///< how hard, this step
     std::vector<JPH::BodyID> still;             ///< each still piece's body
     std::vector<int> dirty;                     ///< pieces whose glue broke: their clusters come apart
@@ -1875,6 +1895,7 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         float mass = 0.0f;             ///< kilograms
         Vec3 before, beforeSpin;       ///< its velocity before the step, at its centre of mass
         float lift = 0.0f;             ///< how much of gravity the guide held off this step
+        Vec3 flowed;                   ///< how much the water and the gas changed its velocity this step
     };
     std::vector<Cluster> clusters;
     struct Object {
@@ -2171,7 +2192,7 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
     /// on how that moves -- and at rest where it comes in slowly onto
     /// something under it, riding on it if that moves until it moves fast
     /// or tips. Tumbling as it flies and bounces.
-    void moveGrit(Grit& q, float dt) {
+    void moveGrit(Grit& q, float dt, const Vec3* flow = nullptr, bool wet = false) {
         const float r = 0.5f * q.size;
         if (q.resting) {
             if (q.on.IsInvalid()) return;  // on what never moves
@@ -2191,9 +2212,21 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
             }
             return;
         }
-        q.v += settings.gravity * dt;
-        const float drag = kGritDrag * (q.glass ? 3.0f : 1.0f) * length(q.v) / std::max(r, 1e-3f);
-        q.v = q.v * (1.0f / (1.0f + drag * dt));
+        if (!flow) {
+            q.v += settings.gravity * dt;
+            const float drag = kGritDrag * (q.glass ? 3.0f : 1.0f) * length(q.v) / std::max(r, 1e-3f);
+            q.v = q.v * (1.0f / (1.0f + drag * dt));
+        } else {
+            // Carried by what it is in: the gas's wind -- or the water, which
+            // holds it up by what it weighs and holds it back some eight
+            // hundred times as hard as air: it sinks, slowly.
+            const float heavy = q.glass ? kGritDensity * 1.05f : kGritDensity;
+            q.v += settings.gravity * (wet ? dt * (1.0f - kWaterDensity / heavy) : dt);
+            const Vec3 rel = q.v - *flow;
+            const float thick = wet ? settings.waterDrag * kWaterDensity / kAirDensity : 1.0f;
+            const float drag = thick * kGritDrag * (q.glass ? 3.0f : 1.0f) * length(rel) / std::max(r, 1e-3f);
+            q.v = *flow + rel * (1.0f / (1.0f + drag * dt));
+        }
         const Vec3 step = q.v * dt;
         // Still in the pieces it came out of, it goes through what moves --
         // those pieces among it -- until it is out; not through what stands.
@@ -2983,11 +3016,39 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
             const JPH::ShapeSettings::ShapeResult r = hs.Create();
             if (r.HasError()) continue;  // too flat to be a body
             piece.hulls.push_back(r.Get());
+            // Where the water is felt: a lattice through the hull's box, the
+            // points inside it -- its middle, when none is -- each with its
+            // share of the hull's volume.
+            {
+                const JPH::Shape& hull = *r.Get();
+                const JPH::AABox box = hull.GetLocalBounds();
+                const JPH::Vec3 com = hull.GetCenterOfMass();
+                std::vector<Vec3> inside;
+                for (int z = 0; z < kHullSamples; ++z) {
+                    for (int y = 0; y < kHullSamples; ++y) {
+                        for (int x = 0; x < kHullSamples; ++x) {
+                            const JPH::Vec3 t((static_cast<float>(x) + 0.5f) / kHullSamples,
+                                              (static_cast<float>(y) + 0.5f) / kHullSamples,
+                                              (static_cast<float>(z) + 0.5f) / kHullSamples);
+                            const JPH::Vec3 local = box.mMin + (box.mMax - box.mMin) * t;
+                            JPH::AnyHitCollisionCollector<JPH::CollidePointCollector> hit;
+                            hull.CollidePoint(local, JPH::SubShapeIDCreator(), hit);
+                            if (hit.HadHit()) inside.push_back(ours(local + com));
+                        }
+                    }
+                }
+                if (inside.empty()) inside.push_back(ours(com));
+                const float volume = std::max(hull.GetVolume(), 0.0f);
+                const float share = volume / static_cast<float>(inside.size());
+                for (const Vec3& q : inside) piece.samples.push_back(Vec4(q.x, q.y, q.z, share));
+                piece.volume += volume;
+            }
             for (int a = 0; a < 3; ++a) {
                 lo[a] = std::min(lo[a], plo[a]);
                 hi[a] = std::max(hi[a], phi[a]);
             }
         }
+        piece.mass = density * piece.volume;
         piece.moves = numberOf(*geo, L, body, "active", 1.0f) != 0.0f;
         piece.release = numberOf(*geo, L, body, "release", 0.0f);
         piece.kick = vectorOf(*geo, L, body, "kick", Vec3());
@@ -3212,6 +3273,23 @@ void RigidSolver::step() {
     // does to them is a knock, and its pull is not.
     m.steer(dt);
 
+    // The water and the gas: what they do to each piece pushes its body over
+    // the step -- the force at its centre of mass, and the moment about it.
+    for (Impl::Cluster& c : m.clusters) c.flowed = Vec3();
+    for (const RigidFlow::Push& push : m.flow.pushes) {
+        if (push.piece >= m.pieces.size()) continue;
+        const Impl::Piece& p = m.pieces[push.piece];
+        if (p.gone || p.cluster < 0) continue;
+        Impl::Cluster& c = m.clusters[static_cast<size_t>(p.cluster)];
+        // Held by a still piece, it stays where it was built.
+        if (!c.alive || !c.anchors.empty() || c.mass <= 0.0f) continue;
+        const Vec3 com = ours(bi.GetCenterOfMassPosition(c.id));
+        bi.AddForce(c.id, jolt(push.force));
+        bi.AddTorque(c.id, jolt(push.moment - cross(com, push.force)));
+        bi.ActivateBody(c.id);
+        c.flowed += push.force * (dt / c.mass);
+    }
+
     // The step, and how each body moved before it.
     for (Impl::Cluster& c : m.clusters) {
         if (!c.alive) continue;
@@ -3246,7 +3324,8 @@ void RigidSolver::step() {
         // it -- a keyed object pushing it against its foundation -- is not a
         // knock to share among all that touches it.
         if (!cl.alive || knocksOn[c] == 0 || !cl.anchors.empty()) continue;
-        const Vec3 change = ours(bi.GetLinearVelocity(cl.id)) - cl.before - s.gravity * (dt * (1.0f - cl.lift));
+        const Vec3 change =
+            ours(bi.GetLinearVelocity(cl.id)) - cl.before - s.gravity * (dt * (1.0f - cl.lift)) - cl.flowed;
         took[c] = cl.mass * length(change) / static_cast<float>(knocksOn[c]);
     }
     std::vector<float> felt(m.pieces.size(), 0.0f);
@@ -3298,12 +3377,149 @@ void RigidSolver::step() {
     // The grit flies, knocks into things, bounces and lies still -- each bit
     // by itself, what it reads of the bodies the same for all: on as many
     // threads as there are, the same bits.
+    // Grit thrown out this step has no flow of its own: still air.
+    const std::vector<uint16_t>& flows = m.flow.gritFlow;
+    const size_t flowing = std::min(flows.size() / 3, m.flow.gritWet.size());
     parallelFor(m.grit.size(), 256, [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) m.moveGrit(m.grit[i], dt);
+        for (size_t i = begin; i < end; ++i) {
+            if (flows.empty()) {
+                m.moveGrit(m.grit[i], dt);
+                continue;
+            }
+            const Vec3 flow = i < flowing ? Vec3(floatFromHalf(flows[3 * i]), floatFromHalf(flows[3 * i + 1]),
+                                                 floatFromHalf(flows[3 * i + 2]))
+                                          : Vec3();
+            m.moveGrit(m.grit[i], dt, &flow, i < flowing && m.flow.gritWet[i] != 0);
+        }
     });
+    m.flow = RigidFlow();  // spent
     m.grit.erase(std::remove_if(m.grit.begin(), m.grit.end(), [](const Impl::Grit& q) { return q.p.y < -100.0f; }),
                  m.grit.end());
     if (m.grit.size() > kMaxGrit) m.grit.erase(m.grit.begin(), m.grit.end() - static_cast<long>(kMaxGrit));
+}
+
+void RigidSolver::setFlow(RigidFlow flow) {
+    if (impl_) impl_->flow = std::move(flow);
+}
+
+RigidFlow RigidSolver::feel(const RigidFluids& fluids) const {
+    RigidFlow out;
+    if (!impl_) return out;
+    const Impl& m = *impl_;
+    const RigidSettings& s = scene_.solver;
+    const bool water = fluids.waterLevel && fluids.waterVelocity && (s.buoyancy > 0.0f || s.waterDrag > 0.0f);
+    const bool air = static_cast<bool>(fluids.airVelocity) && s.airDrag > 0.0f;
+    if (!water && !air) return out;
+    constexpr float kNone = -1e29f;  // at or below: no water there (WaterLevel::kNone)
+    const float dt = std::max(s.timeStep, 1e-5f);
+    const JPH::BodyInterface& bi = m.physics.GetBodyInterfaceNoLock();
+    struct Wet {
+        Vec3 at, lift, rel;
+        float c = 0.0f;  // kg/s: how hard the flow drags there
+    };
+    std::vector<Wet> wets;
+    for (size_t k = 0; k < m.pieces.size(); ++k) {
+        const Impl::Piece& p = m.pieces[k];
+        if (!p.moves || p.gone || p.samples.empty() || p.mass <= 0.0f) continue;
+        const JPH::BodyID id = m.bodyOf(static_cast<int>(k));
+        if (id.IsInvalid()) continue;
+        const JPH::Quat turn = bi.GetRotation(id);
+        const Vec3 origin = ours(bi.GetPosition(id));
+        const Vec3 com = ours(bi.GetCenterOfMassPosition(id));
+        const Vec3 v = ours(bi.GetLinearVelocity(id)), w = ours(bi.GetAngularVelocity(id));
+        const Vec3 middle = origin + ours(turn * jolt(p.centre));
+        const float reach = 0.5f * p.size;
+        // The most the flows may drag it in a step: no more than stops it
+        // against them -- steady however light it is.
+        const float most = 0.8f * p.mass / dt;
+        Vec3 force, moment;
+        if (water) {
+            // How the water flows past it: at its four sides, under the surface.
+            Vec3 flow;
+            int found = 0;
+            const float d = reach + 1.5f * fluids.waterCell;
+            const Vec3 sides[4] = {{d, 0.0f, 0.0f}, {-d, 0.0f, 0.0f}, {0.0f, 0.0f, d}, {0.0f, 0.0f, -d}};
+            for (const Vec3& side : sides) {
+                Vec3 q = middle + side;
+                const float level = fluids.waterLevel(q.x, q.z);
+                if (level <= kNone || level - fluids.waterCell < middle.y - reach) continue;
+                q.y = std::min(q.y, level - fluids.waterCell);
+                flow += fluids.waterVelocity(q);
+                ++found;
+            }
+            if (found > 0) flow = flow * (1.0f / static_cast<float>(found));
+            // Each point of it under the surface: held up by the water it
+            // pushes aside, where it is -- so the piece rights itself -- and
+            // dragged by the flow: as it pushes water out of its way, and as
+            // it makes waves.
+            wets.clear();
+            float total = 0.0f;
+            const float face = std::cbrt(p.volume * p.volume);  // how much it shows the flow, m^2
+            for (const Vec4& sample : p.samples) {
+                const Vec3 at = origin + ours(turn * jolt(Vec3(sample.x, sample.y, sample.z)));
+                const float level = fluids.waterLevel(at.x, at.z);
+                if (level <= kNone) continue;
+                const float side = std::cbrt(sample.w);
+                const float under = std::clamp((level - at.y) / std::max(side, 1e-4f) + 0.5f, 0.0f, 1.0f);
+                if (under <= 0.0f) continue;
+                const float volume = sample.w * under;
+                Wet wet;
+                wet.at = at;
+                wet.lift = s.gravity * (-kWaterDensity * volume * s.buoyancy);
+                const Vec3 here = v + cross(w, at - com);
+                wet.rel = flow - here;
+                const float share = sample.w / std::max(p.volume, 1e-9f);
+                wet.c = kWaterDensity * s.waterDrag * under *
+                        (0.5f * face * share * length(wet.rel) + kWaterDamping * sample.w);
+                total += wet.c;
+                wets.push_back(wet);
+            }
+            const float scale = total > most ? most / total : 1.0f;
+            for (const Wet& wet : wets) {
+                const Vec3 f = wet.lift + wet.rel * (wet.c * scale);
+                force += f;
+                moment += cross(wet.at, f);
+            }
+        }
+        if (air) {
+            // The gas's wind round it, at its six sides; as much of it as
+            // airDrag says.
+            Vec3 flow;
+            const float d = reach + 1.5f * fluids.airCell;
+            const Vec3 sides[6] = {{d, 0.0f, 0.0f}, {-d, 0.0f, 0.0f}, {0.0f, d, 0.0f},
+                                   {0.0f, -d, 0.0f}, {0.0f, 0.0f, d}, {0.0f, 0.0f, -d}};
+            for (const Vec3& side : sides) flow += fluids.airVelocity(middle + side);
+            flow = flow * (s.airDrag / 6.0f);
+            const Vec3 rel = flow - v;
+            const float c = std::min(0.5f * kAirDensity * std::cbrt(p.volume * p.volume) * length(rel), most);
+            const Vec3 f = rel * c;
+            force += f;
+            moment += cross(com, f);
+        }
+        if (force == Vec3() && moment == Vec3()) continue;
+        out.pushes.push_back({static_cast<uint32_t>(k), force, moment});
+    }
+    // The grit: what each bit is in, and how that flows -- to half a float,
+    // as a checkpoint keeps it, so a step taken again takes the same.
+    if (!m.grit.empty()) {
+        out.gritFlow.assign(3 * m.grit.size(), halfFromFloat(0.0f));
+        out.gritWet.assign(m.grit.size(), 0);
+        for (size_t i = 0; i < m.grit.size(); ++i) {
+            const Impl::Grit& q = m.grit[i];
+            if (q.resting) continue;
+            Vec3 flow;
+            if (water) {
+                const float level = fluids.waterLevel(q.p.x, q.p.z);
+                if (level > kNone && q.p.y < level) {
+                    flow = fluids.waterVelocity(q.p);
+                    out.gritWet[i] = 1;
+                }
+            }
+            if (!out.gritWet[i] && air) flow = fluids.airVelocity(q.p) * s.airDrag;
+            for (int a = 0; a < 3; ++a) out.gritFlow[3 * i + static_cast<size_t>(a)] = halfFromFloat(flow[a]);
+        }
+    }
+    return out;
 }
 
 RigidFrame RigidSolver::capture() const {
@@ -3417,6 +3633,8 @@ RigidSolver::~RigidSolver() = default;
 size_t RigidSolver::pieceCount() const { return 0; }
 void RigidSolver::setColliders(const std::vector<Collider>&) {}
 void RigidSolver::setGuide(std::shared_ptr<const RigidGuide>, float) {}
+RigidFlow RigidSolver::feel(const RigidFluids&) const { return {}; }
+void RigidSolver::setFlow(RigidFlow) {}
 void RigidSolver::step() {}
 RigidFrame RigidSolver::capture() const {
     RigidFrame f;

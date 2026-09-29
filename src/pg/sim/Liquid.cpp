@@ -929,6 +929,112 @@ Vec3 LiquidSolver::sampleVelocity(const Grid* vel, const Vec3& g) const {
 
 Vec3 LiquidSolver::velocityAt(const Vec3& p) const { return sampleVelocity(vel_, toCells(p)); }
 
+float WaterLevel::at(float x, float z) const {
+    if (height.empty() || cell <= 0.0f) return kNone;
+    // Column centres at whole numbers.
+    const float gx = (x - origin.x) / cell - 0.5f, gz = (z - origin.z) / cell - 0.5f;
+    if (gx < -0.5f || gz < -0.5f || gx > static_cast<float>(nx) - 0.5f || gz > static_cast<float>(nz) - 0.5f) return kNone;
+    const int i0 = std::clamp(static_cast<int>(std::floor(gx)), 0, nx - 1), k0 = std::clamp(static_cast<int>(std::floor(gz)), 0, nz - 1);
+    const int i1 = std::min(i0 + 1, nx - 1), k1 = std::min(k0 + 1, nz - 1);
+    const float fx = std::clamp(gx - static_cast<float>(i0), 0.0f, 1.0f), fz = std::clamp(gz - static_cast<float>(k0), 0.0f, 1.0f);
+    // Between the columns that have water: one without is left out, not
+    // taken as a level far below.
+    float sum = 0.0f, weight = 0.0f;
+    const int is[2] = {i0, i1}, ks[2] = {k0, k1};
+    const float wx[2] = {1.0f - fx, fx}, wz[2] = {1.0f - fz, fz};
+    for (int b = 0; b < 2; ++b) {
+        for (int a = 0; a < 2; ++a) {
+            const float h = height[static_cast<size_t>(is[a]) + static_cast<size_t>(nx) * static_cast<size_t>(ks[b])];
+            const float w = wx[a] * wz[b];
+            if (h <= kNone || w <= 0.0f) continue;
+            sum += h * w;
+            weight += w;
+        }
+    }
+    return weight > 1e-6f ? sum / weight : kNone;
+}
+
+WaterLevel LiquidSolver::waterLevel() const {
+    const int nx = n_[0], ny = n_[1], nz = n_[2];
+    const float h = domain_.voxel;
+    const Vec3 o = domain_.origin();
+    WaterLevel level;
+    level.origin = o;
+    level.cell = h;
+    level.nx = nx;
+    level.nz = nz;
+    level.height.assign(static_cast<size_t>(nx) * static_cast<size_t>(nz), WaterLevel::kNone);
+    // Covered: a column whose water has a solid on it -- a floating piece.
+    std::vector<uint8_t> covered(level.height.size(), 0);
+    const float* phi = phi_.data();
+    pg::parallelFor(static_cast<size_t>(nz), 4, [&](size_t begin, size_t end) {
+        for (size_t kk = begin; kk < end; ++kk) {
+            const int k = static_cast<int>(kk);
+            for (int i = 0; i < nx; ++i) {
+                // Up from the floor: past what is not water, then through
+                // the water -- and the solids in it -- to the first air.
+                int j = 0, top = -1;
+                while (j < ny && phi[phi_.index(i, j, k)] >= 0.0f) ++j;
+                for (; j < ny; ++j) {
+                    const size_t c = phi_.index(i, j, k);
+                    if (phi[c] < 0.0f) top = j;
+                    else if (!solidCell_[c]) break;
+                }
+                if (top < 0) continue;
+                const size_t col = static_cast<size_t>(i) + static_cast<size_t>(nx) * kk;
+                const size_t c = phi_.index(i, top, k);
+                if (top + 1 < ny && solidCell_[phi_.index(i, top + 1, k)]) {
+                    covered[col] = 1;
+                    continue;
+                }
+                // Where the surface crosses between the top cell and the one above.
+                float y = static_cast<float>(top) + 0.5f;
+                if (top + 1 < ny) {
+                    const float a = phi[c], b = phi[phi_.index(i, top + 1, k)];
+                    y += std::clamp(a / (a - b), 0.0f, 1.0f);
+                } else {
+                    y += 0.5f;
+                }
+                level.height[col] = o.y + y * h;
+            }
+        }
+    });
+    // A covered column takes the level round it: passes that each give it
+    // the mean of its neighbours that have one, until none is left or none
+    // has any.
+    std::vector<float> next;
+    for (int pass = 0; pass < nx + nz; ++pass) {
+        next = level.height;
+        bool left = false, filled = false;
+        for (int k = 0; k < nz; ++k) {
+            for (int i = 0; i < nx; ++i) {
+                const size_t col = static_cast<size_t>(i) + static_cast<size_t>(nx) * static_cast<size_t>(k);
+                if (!covered[col] || level.height[col] > WaterLevel::kNone) continue;
+                float sum = 0.0f;
+                int count = 0;
+                const int di[4] = {-1, 1, 0, 0}, dk[4] = {0, 0, -1, 1};
+                for (int d = 0; d < 4; ++d) {
+                    const int a = i + di[d], b = k + dk[d];
+                    if (a < 0 || b < 0 || a >= nx || b >= nz) continue;
+                    const float v = level.height[static_cast<size_t>(a) + static_cast<size_t>(nx) * static_cast<size_t>(b)];
+                    if (v <= WaterLevel::kNone) continue;
+                    sum += v;
+                    ++count;
+                }
+                if (count > 0) {
+                    next[col] = sum / static_cast<float>(count);
+                    filled = true;
+                } else {
+                    left = true;
+                }
+            }
+        }
+        level.height.swap(next);
+        if (!left || !filled) break;
+    }
+    return level;
+}
+
 void LiquidSolver::toParticles(float dt) {
     const float flip = scene_.solver.flip;
     const float h = domain_.voxel;

@@ -30,7 +30,9 @@ struct Failure {
 
 [[noreturn]] void fail(const char* file, int line, const std::string& msg);
 
-int runAll();
+/// Runs the tests -- those whose names hold one of `only`, when it is not
+/// empty -- and says how they went; 0 when none failed.
+int runAll(const std::vector<std::string>& only = {});
 
 template <class T>
 concept Streamable = requires(std::ostream& os, const T& v) { os << v; };

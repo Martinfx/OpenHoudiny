@@ -120,6 +120,24 @@ struct LiquidScene {
     bool operator==(const LiquidScene&) const = default;
 };
 
+/// The height of the water's surface over the floor plan of a liquid's
+/// grid: a value a column of cells, at its middle -- world y of the top of
+/// the body of water in it (spray above it aside). Where a solid lies on the
+/// water -- a floating piece -- the level is that round it: what the piece
+/// floats in, not where it pushed the water down to.
+struct WaterLevel {
+    static constexpr float kNone = -1e30f;  ///< no water in the column
+    Vec3 origin;             ///< the corner at the least x and z (y unused)
+    float cell = 0.0f;       ///< edge of a column, world units
+    int nx = 0, nz = 0;
+    std::vector<float> height;  ///< x fastest; kNone where there is no water
+
+    bool empty() const { return height.empty(); }
+    /// The level at a world point's x and z: interpolated between the
+    /// columns that have water; kNone where none about it has.
+    float at(float x, float z) const;
+};
+
 class LiquidSolver {
 public:
     explicit LiquidSolver(const LiquidScene& scene = LiquidScene::damBreak());
@@ -188,6 +206,9 @@ public:
     Vec3 worldAt(float x, float y, float z) const;
     /// The grid's velocity at a world point, interpolated from the faces.
     Vec3 velocityAt(const Vec3& p) const;
+    /// The height of the water's surface, column by column (WaterLevel),
+    /// as the particles were at the start of the last substep.
+    WaterLevel waterLevel() const;
     float maxSpeed() const;
 
 private:

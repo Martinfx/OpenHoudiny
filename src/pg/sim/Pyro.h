@@ -91,6 +91,8 @@ public:
     size_t activeCells() const { return cells_->activeCells(); }
     /// The velocity at a position in cell units, interpolated from the faces.
     void velocityAt(float x, float y, float z, float out[3]) const;
+    /// ... at a world point; still air outside the domain.
+    Vec3 flowAt(const Vec3& p) const;
 
     int nx() const { return nx_; }
     int ny() const { return ny_; }
