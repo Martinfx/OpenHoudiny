@@ -67,8 +67,11 @@ public:
 
 private:
     /// Face coefficients and the diagonal of one level -- only with solids.
+    /// The finest level's faces are open or not: a bit each, the six of a
+    /// cell in a byte (open), not grids of faces (a).
     struct Operator {
         SparseGrid a[3];  // (nx+1) x ny x nz faces along x, and so on
+        std::vector<uint8_t> open;  // bit 2a: the face below along a, 2a + 1: above
         SparseGrid diagonal;
     };
     /// Which stored cells of a level count, one byte each, as data() has them.
@@ -87,6 +90,9 @@ private:
     void computeResidual(const SparseGrid& p, const SparseGrid& b, const Counts& on, const Operator& op, float h,
                          SparseGrid& r) const;
     void prolongAdd(const SparseGrid& coarse, SparseGrid& fine, const Counts& on) const;
+    /// The coefficient of face (i, j, k) along `axis` of a level whose cells
+    /// are p's, and whose operator is `op`.
+    static float faceOf(const SparseGrid& p, const Operator& op, int axis, int i, int j, int k);
 
     bool closed_[6] = {false, false, false, false, false, false};
     SparseGrid solid_;    // a copy of the mask, empty without solids

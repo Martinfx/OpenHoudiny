@@ -43,6 +43,21 @@ PG_HOT_INLINE void neighbours(const SparseGrid& p, int i, int j, int k, size_t c
     if (k < p.nz() - 1) sum += z < kLast ? d[c + kSlab] : p.at(i, j, k + 1); else diagonal += closed[5] ? -1.0f : 1.0f;
 }
 
+/// With solids, on the finest level: the neighbours inside the grid behind
+/// open faces -- what weightedSum() adds, 1 x or 0 x each.
+PG_HOT_INLINE float openSum(const SparseGrid& p, uint8_t open, int i, int j, int k, size_t c) {
+    const float* d = p.data();
+    const int x = i & kLast, y = j & kLast, z = k & kLast;
+    float sum = 0.0f;
+    if (i > 0 && (open & 1)) sum += x > 0 ? d[c - 1] : p.at(i - 1, j, k);
+    if (i < p.nx() - 1 && (open & 2)) sum += x < kLast ? d[c + 1] : p.at(i + 1, j, k);
+    if (j > 0 && (open & 4)) sum += y > 0 ? d[c - kRow] : p.at(i, j - 1, k);
+    if (j < p.ny() - 1 && (open & 8)) sum += y < kLast ? d[c + kRow] : p.at(i, j + 1, k);
+    if (k > 0 && (open & 16)) sum += z > 0 ? d[c - kSlab] : p.at(i, j, k - 1);
+    if (k < p.nz() - 1 && (open & 32)) sum += z < kLast ? d[c + kSlab] : p.at(i, j, k + 1);
+    return sum;
+}
+
 /// With solids: the neighbours inside the grid, each weighted by the face
 /// between. (The ghosts beyond the sides are in the diagonal.)
 PG_HOT_INLINE float weightedSum(const SparseGrid& p, const SparseGrid* a, int i, int j, int k, size_t c) {
@@ -138,23 +153,39 @@ void PoissonSolver::build(const SparseGrid& fine, float h) {
     const bool solids = solids_ && solid_.nx() == fine.nx() && solid_.ny() == fine.ny() && solid_.nz() == fine.nz() &&
                         solid_.tiles() == fine.tiles();
 
-    // The finest faces: blocked by a solid on either side, or a wall.
+    // The finest faces: blocked by a solid on either side, or a wall. Each
+    // cell's six in a byte; the diagonal as diagonals() makes it.
     fineOp_ = Operator{};
     if (solids) {
         const int n[3] = {fine.nx(), fine.ny(), fine.nz()};
-        for (int a = 0; a < 3; ++a) {
-            SparseGrid& faces = fineOp_.a[a];
-            faces = SparseGrid(Tiles::faces(*tiles_, a));
-            forEachCounted(faces.tiles(), [&](int i, int j, int k, size_t c) {
-                const int f = a == 0 ? i : a == 1 ? j : k;  // face f: between cells f-1 and f
-                const int bi = i - (a == 0), bj = j - (a == 1), bk = k - (a == 2);
-                const bool behind = f > 0 && solid_.at(bi, bj, bk) > 0.5f;
-                const bool ahead = f < n[a] && solid_.at(i, j, k) > 0.5f;
-                const bool wall = (f == 0 && closed_[2 * a]) || (f == n[a] && closed_[2 * a + 1]);
-                faces.data()[c] = behind || ahead || wall ? 0.0f : 1.0f;
-            });
-        }
-        fineOp_.diagonal = diagonals(fineOp_.a, tiles_, fineOn_);
+        auto open = [&](int a, int i, int j, int k) {
+            const int f = a == 0 ? i : a == 1 ? j : k;  // face f: between cells f-1 and f
+            const int bi = i - (a == 0), bj = j - (a == 1), bk = k - (a == 2);
+            const bool behind = f > 0 && solid_.at(bi, bj, bk) > 0.5f;
+            const bool ahead = f < n[a] && solid_.at(i, j, k) > 0.5f;
+            const bool wall = (f == 0 && closed_[2 * a]) || (f == n[a] && closed_[2 * a + 1]);
+            return !(behind || ahead || wall);
+        };
+        fineOp_.open.assign(fine.size(), 0);
+        fineOp_.diagonal = SparseGrid(tiles_);
+        forEachCounted(*tiles_, [&](int i, int j, int k, size_t c) {
+            if (!fineOn_[c]) return;
+            uint8_t bits = 0;
+            float a[6];
+            for (int axis = 0; axis < 3; ++axis) {
+                const bool below = open(axis, i, j, k);
+                const bool above = open(axis, i + (axis == 0), j + (axis == 1), k + (axis == 2));
+                bits |= static_cast<uint8_t>((below ? 1 : 0) << (2 * axis));
+                bits |= static_cast<uint8_t>((above ? 1 : 0) << (2 * axis + 1));
+                a[2 * axis] = below ? 1.0f : 0.0f;
+                a[2 * axis + 1] = above ? 1.0f : 0.0f;
+            }
+            fineOp_.open[c] = bits;
+            float s = a[0] * (i == 0 ? 2.0f : 1.0f) + a[1] * (i == n[0] - 1 ? 2.0f : 1.0f);
+            s += a[2] * (j == 0 ? 2.0f : 1.0f) + a[3] * (j == n[1] - 1 ? 2.0f : 1.0f);
+            s += a[4] * (k == 0 ? 2.0f : 1.0f) + a[5] * (k == n[2] - 1 ? 2.0f : 1.0f);
+            fineOp_.diagonal.data()[c] = s;
+        });
     }
 
     coarse_.clear();
@@ -189,7 +220,7 @@ void PoissonSolver::build(const SparseGrid& fine, float h) {
             for (int a = 0; a < 3; ++a) {
                 SparseGrid& faces = level.op.a[a];
                 faces = SparseGrid(Tiles::faces(*tiles, a));
-                const SparseGrid& fineFaces = op->a[a];
+                const Operator& finerOp = *op;
                 forEachCounted(faces.tiles(), [&](int i, int j, int k, size_t c) {
                     float sum = 0.0f;
                     for (int q = 0; q < 4; ++q) {
@@ -197,7 +228,7 @@ void PoissonSolver::build(const SparseGrid& fine, float h) {
                         const int fi = a == 0 ? 2 * i : 2 * i + u;
                         const int fj = a == 1 ? 2 * j : 2 * j + (a == 0 ? u : w);
                         const int fk = a == 2 ? 2 * k : 2 * k + w;
-                        sum += fineFaces.at(fi, fj, fk);
+                        sum += faceOf(finer, finerOp, a, fi, fj, fk);
                     }
                     faces.data()[c] = 0.25f * sum;
                 });
@@ -215,6 +246,7 @@ void PoissonSolver::relax(SparseGrid& p, const SparseGrid& b, const Counts& on, 
                           int sweeps, float omega) const {
     const float h2 = h * h;
     const bool weighted = op.diagonal.shared() != nullptr;
+    const bool bits = !op.open.empty();
     float* v = p.data();
     const float* rhs = b.data();
     for (int s = 0; s < sweeps; ++s) {
@@ -227,7 +259,8 @@ void PoissonSolver::relax(SparseGrid& p, const SparseGrid& b, const Counts& on, 
                         v[c] = 0.0f;
                         return;
                     }
-                    v[c] += omega * ((weightedSum(p, op.a, i, j, k, c) - h2 * rhs[c]) / d - v[c]);
+                    const float sum = bits ? openSum(p, op.open[c], i, j, k, c) : weightedSum(p, op.a, i, j, k, c);
+                    v[c] += omega * ((sum - h2 * rhs[c]) / d - v[c]);
                 } else {
                     float sum, diagonal;
                     neighbours(p, i, j, k, c, closed_, sum, diagonal);
@@ -242,11 +275,13 @@ void PoissonSolver::computeResidual(const SparseGrid& p, const SparseGrid& b, co
                                     float h, SparseGrid& r) const {
     const float invH2 = 1.0f / (h * h);
     const bool weighted = op.diagonal.shared() != nullptr;
+    const bool bits = !op.open.empty();
     forEachCounted(p.tiles(), [&](int i, int j, int k, size_t c) {
         if (!on[c]) return;
         if (weighted) {
             const float d = op.diagonal.data()[c];
-            r.data()[c] = d <= 0.0f ? 0.0f : b.data()[c] - (weightedSum(p, op.a, i, j, k, c) - d * p.data()[c]) * invH2;
+            const float sum = bits ? openSum(p, op.open[c], i, j, k, c) : weightedSum(p, op.a, i, j, k, c);
+            r.data()[c] = d <= 0.0f ? 0.0f : b.data()[c] - (sum - d * p.data()[c]) * invH2;
         } else {
             float sum, diagonal;
             neighbours(p, i, j, k, c, closed_, sum, diagonal);
@@ -335,9 +370,24 @@ double PoissonSolver::residual(const SparseGrid& p, const SparseGrid& b, float h
     return cells ? sum / static_cast<double>(cells) : 0.0;
 }
 
+float PoissonSolver::faceOf(const SparseGrid& p, const Operator& op, int axis, int i, int j, int k) {
+    if (op.open.empty()) return op.a[axis].at(i, j, k);
+    // The cell above the face has it as its face below; else the cell below,
+    // as its face above.
+    const int n = axis == 0 ? p.nx() : axis == 1 ? p.ny() : p.nz();
+    const int f = axis == 0 ? i : axis == 1 ? j : k;
+    if (f < n && p.stored(i, j, k)) {
+        const size_t c = p.index(i, j, k);
+        if (op.diagonal.shared() && (op.open[c] >> (2 * axis) & 1)) return 1.0f;
+        if (f == 0) return 0.0f;
+    }
+    const int bi = i - (axis == 0), bj = j - (axis == 1), bk = k - (axis == 2);
+    if (f > 0 && p.stored(bi, bj, bk)) return (op.open[p.index(bi, bj, bk)] >> (2 * axis + 1) & 1) ? 1.0f : 0.0f;
+    return 0.0f;
+}
+
 float PoissonSolver::faceOpen(int axis, int i, int j, int k) const {
-    const SparseGrid& a = fineOp_.a[axis];
-    if (a.shared()) return a.at(i, j, k);
+    if (!fineOp_.open.empty()) return faceOf(fineResidual_, fineOp_, axis, i, j, k);
     const int f = axis == 0 ? i : axis == 1 ? j : k;
     const int n = dims_[axis];
     if (f == 0) return closed_[2 * axis] ? 0.0f : 1.0f;

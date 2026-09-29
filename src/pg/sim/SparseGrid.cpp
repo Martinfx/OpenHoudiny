@@ -85,10 +85,20 @@ size_t Tiles::activeCells() const {
 
 SparseGrid::SparseGrid(int nx, int ny, int nz, float value)
     : tiles_(std::make_shared<const Tiles>(nx, ny, nz)),
-      data_(tiles_->stored().size() * Tiles::kCells, value) {}
+      data_(tiles_->stored().size() * Tiles::kCells, value) {
+    cache();
+}
 
 SparseGrid::SparseGrid(std::shared_ptr<const Tiles> tiles)
-    : tiles_(std::move(tiles)), data_(tiles_->stored().size() * Tiles::kCells, 0.0f) {}
+    : tiles_(std::move(tiles)), data_(tiles_->stored().size() * Tiles::kCells, 0.0f) {
+    cache();
+}
+
+void SparseGrid::cache() {
+    slots_ = tiles_ ? tiles_->slot_.data() : nullptr;
+    tx_ = tiles_ ? static_cast<size_t>(tiles_->tilesX()) : 0u;
+    txy_ = tiles_ ? tx_ * static_cast<size_t>(tiles_->tilesY()) : 0u;
+}
 
 float SparseGrid::clamped(int i, int j, int k) const {
     return at(std::clamp(i, 0, nx() - 1), std::clamp(j, 0, ny() - 1), std::clamp(k, 0, nz() - 1));
@@ -125,7 +135,7 @@ float SparseGrid::sample(float x, float y, float z, bool zeroOutside, float& lo,
     float c000, c100, c010, c110, c001, c101, c011, c111;
     if ((i & kLast) + di <= kLast && (j & kLast) + dj <= kLast && (k & kLast) + dk <= kLast) {
         // The eight in one tile: one look in the table.
-        const int32_t s = tiles_->slot(tiles_->tileOf(i, j, k));
+        const int32_t s = slotOf(i, j, k);
         if (s < 0) {
             lo = hi = 0.0f;
             return 0.0f;
@@ -211,6 +221,7 @@ void SparseGrid::retile(std::shared_ptr<const Tiles> tiles) {
     }
     tiles_ = std::move(tiles);
     data_ = std::move(next);
+    cache();
 }
 
 Grid SparseGrid::dense() const {

@@ -96,6 +96,7 @@ private:
     std::vector<uint8_t> state_;
     std::vector<int32_t> slot_;
     std::vector<uint32_t> stored_;
+    friend class SparseGrid;
 };
 
 class SparseGrid {
@@ -113,12 +114,18 @@ public:
     const std::shared_ptr<const Tiles>& shared() const { return tiles_; }
 
     /// Is cell (i, j, k) stored (its tile is), and does it count?
-    bool stored(int i, int j, int k) const { return tiles_->slot(tiles_->tileOf(i, j, k)) >= 0; }
+    bool stored(int i, int j, int k) const { return slotOf(i, j, k) >= 0; }
+    /// Where the tile of cell (i, j, k) is stored, -1 when it is not: the
+    /// table looked up directly, without going through the Tiles.
+    int32_t slotOf(int i, int j, int k) const {
+        return slots_[static_cast<size_t>(i >> Tiles::kLog) + tx_ * static_cast<size_t>(j >> Tiles::kLog) +
+                      txy_ * static_cast<size_t>(k >> Tiles::kLog)];
+    }
     bool has(int i, int j, int k) const { return tiles_->has(i, j, k); }
     /// Where a stored cell's value is in data(): the same in every grid of
     /// these Tiles.
     size_t index(int i, int j, int k) const {
-        return static_cast<size_t>(tiles_->slot(tiles_->tileOf(i, j, k))) * Tiles::kCells + local(i, j, k);
+        return static_cast<size_t>(slotOf(i, j, k)) * Tiles::kCells + local(i, j, k);
     }
     static size_t local(int i, int j, int k) {
         return static_cast<size_t>(i & (Tiles::kSide - 1)) +
@@ -127,7 +134,7 @@ public:
     }
     /// The value of a cell inside the grid; 0 where it is not stored.
     float at(int i, int j, int k) const {
-        const int32_t s = tiles_->slot(tiles_->tileOf(i, j, k));
+        const int32_t s = slotOf(i, j, k);
         return s < 0 ? 0.0f : data_[static_cast<size_t>(s) * Tiles::kCells + local(i, j, k)];
     }
     /// A stored cell's value, to write. (Not an overload of at(): a read in a
@@ -158,8 +165,13 @@ public:
     Grid dense() const;
 
 private:
+    /// The table and its strides, from tiles_.
+    void cache();
+
     std::shared_ptr<const Tiles> tiles_;
     std::vector<float> data_;
+    const int32_t* slots_ = nullptr;
+    size_t tx_ = 0, txy_ = 0;
 };
 
 /// f(i, j, k, index) for every cell of `tiles` that counts, in parallel,

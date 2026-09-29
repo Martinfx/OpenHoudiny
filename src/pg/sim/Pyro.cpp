@@ -86,8 +86,7 @@ void PyroSolver::retile(std::shared_ptr<const Tiles> cells) {
     for (SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &pressure_}) g->retile(cells_);
     // The rest is made again each step, or by updateSolids().
     for (SparseGrid* g : {&solid_, &back_[0], &back_[1], &back_[2], &forward_[0], &forward_[1], &forward_[2],
-                          &predicted_, &lo_, &hi_, &corrected_, &expansion_, &divergence_, &centre_[0], &centre_[1],
-                          &centre_[2], &curl_[0], &curl_[1], &curl_[2], &curlLength_}) {
+                          &predicted_, &hi_, &corrected_, &expansion_, &divergence_}) {
         *g = SparseGrid(cells_);
     }
     solidCells_.clear();
@@ -516,10 +515,12 @@ void PyroSolver::advectVelocity(int axis, float cells) {
 void PyroSolver::advectScalar(SparseGrid& field) {
     // MacCormack: advect, advect the result back, correct by half the error
     // that round trip shows, clamp to what the first step interpolated from.
+    // (The pressure's right-hand side is free until project(): the lows.)
+    SparseGrid& lows = divergence_;
     forEachCounted(*cells_, [&](int, int, int, size_t c) {
         float lo, hi;
         predicted_.data()[c] = field.sample(back_[0].data()[c], back_[1].data()[c], back_[2].data()[c], true, lo, hi);
-        lo_.data()[c] = lo;
+        lows.data()[c] = lo;
         hi_.data()[c] = hi;
     });
     const float nx = static_cast<float>(nx_), ny = static_cast<float>(ny_), nz = static_cast<float>(nz_);
@@ -534,7 +535,7 @@ void PyroSolver::advectScalar(SparseGrid& field) {
         }
         const float roundTrip = predicted_.sample(fx, fy, fz);
         const float v = predicted_.data()[c] + 0.5f * (field.data()[c] - roundTrip);
-        corrected_.data()[c] = std::clamp(v, lo_.data()[c], hi_.data()[c]);
+        corrected_.data()[c] = std::clamp(v, lows.data()[c], hi_.data()[c]);
     });
     std::swap(field, corrected_);
 }
@@ -581,12 +582,15 @@ void PyroSolver::addForces(float dt) {
 
 void PyroSolver::addVorticity(float dt) {
     // Vorticity confinement: find the swirls, push along them. Worked out at
-    // the cell centres, then spread to the faces.
+    // the cell centres, then spread to the faces -- in advect's scratch.
     const float h = domain_.voxel;
+    SparseGrid* centre = back_;
+    SparseGrid* curl = forward_;
+    SparseGrid& curlLength = predicted_;
     forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
-        centre_[0].data()[c] = 0.5f * (vel_[0].at(i, j, k) + vel_[0].at(i + 1, j, k));
-        centre_[1].data()[c] = 0.5f * (vel_[1].at(i, j, k) + vel_[1].at(i, j + 1, k));
-        centre_[2].data()[c] = 0.5f * (vel_[2].at(i, j, k) + vel_[2].at(i, j, k + 1));
+        centre[0].data()[c] = 0.5f * (vel_[0].at(i, j, k) + vel_[0].at(i + 1, j, k));
+        centre[1].data()[c] = 0.5f * (vel_[1].at(i, j, k) + vel_[1].at(i, j + 1, k));
+        centre[2].data()[c] = 0.5f * (vel_[2].at(i, j, k) + vel_[2].at(i, j, k + 1));
     });
     // Neighbours along each axis, kept inside the grid; the differences are
     // over the distance between them.
@@ -608,30 +612,30 @@ void PyroSolver::addVorticity(float dt) {
         const Around n = around(i, j, k);
         // d(component a)/d(axis b)
         auto d = [&](int a, int b) {
-            return (value(centre_[a], n.plus[b]) - value(centre_[a], n.minus[b])) * n.scale[b];
+            return (value(centre[a], n.plus[b]) - value(centre[a], n.minus[b])) * n.scale[b];
         };
         const float wx = d(2, 1) - d(1, 2);
         const float wy = d(0, 2) - d(2, 0);
         const float wz = d(1, 0) - d(0, 1);
-        curl_[0].data()[c] = wx;
-        curl_[1].data()[c] = wy;
-        curl_[2].data()[c] = wz;
-        curlLength_.data()[c] = std::sqrt(wx * wx + wy * wy + wz * wz);
+        curl[0].data()[c] = wx;
+        curl[1].data()[c] = wy;
+        curl[2].data()[c] = wz;
+        curlLength.data()[c] = std::sqrt(wx * wx + wy * wy + wz * wz);
     });
-    // The force, at the centres: centre_ is free again.
+    // The force, at the centres: `centre` is free again.
     const float strength = scene_.solver.vorticity * h;
     forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
         const Around n = around(i, j, k);
         float g[3];
         for (int b = 0; b < 3; ++b) {
-            g[b] = (value(curlLength_, n.plus[b]) - value(curlLength_, n.minus[b])) * n.scale[b];
+            g[b] = (value(curlLength, n.plus[b]) - value(curlLength, n.minus[b])) * n.scale[b];
         }
         const float len = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) + 1e-6f;
         const float gx = g[0] / len, gy = g[1] / len, gz = g[2] / len;
-        const float wx = curl_[0].data()[c], wy = curl_[1].data()[c], wz = curl_[2].data()[c];
-        centre_[0].data()[c] = strength * (gy * wz - gz * wy);
-        centre_[1].data()[c] = strength * (gz * wx - gx * wz);
-        centre_[2].data()[c] = strength * (gx * wy - gy * wx);
+        const float wx = curl[0].data()[c], wy = curl[1].data()[c], wz = curl[2].data()[c];
+        centre[0].data()[c] = strength * (gy * wz - gz * wy);
+        centre[1].data()[c] = strength * (gz * wx - gx * wz);
+        centre[2].data()[c] = strength * (gx * wy - gy * wx);
     });
     for (int a = 0; a < 3; ++a) {
         const int n = a == 0 ? nx_ : a == 1 ? ny_ : nz_;
@@ -640,11 +644,11 @@ void PyroSolver::addVorticity(float dt) {
             const int f = a == 0 ? i : a == 1 ? j : k;  // face f is between cells f-1 and f
             float force = 0.0f, count = 0.0f;
             if (f > 0) {
-                force += centre_[a].at(i - (a == 0), j - (a == 1), k - (a == 2));
+                force += centre[a].at(i - (a == 0), j - (a == 1), k - (a == 2));
                 count += 1.0f;
             }
             if (f < n) {
-                force += centre_[a].at(i, j, k);
+                force += centre[a].at(i, j, k);
                 count += 1.0f;
             }
             vel.data()[c] += dt * force / count;

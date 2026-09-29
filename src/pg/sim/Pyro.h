@@ -153,12 +153,13 @@ private:
     std::vector<size_t> solidCells_;   // where the solid cells are in the fields
     std::vector<size_t> blocked_[3];   // faces next to or inside a solid, per axis
     std::vector<float> blockedVel_[3]; // ... and the velocity a moving solid gives each (0 when none moves)
+    // Scratch, shared by the stages, which run one after another: advect's
+    // are the swirls' (addVorticity) and the pressure's right-hand side.
     SparseGrid back_[3], forward_[3];  // where each cell's gas came from / goes to, cell units
-    SparseGrid predicted_, lo_, hi_, corrected_;
+    SparseGrid predicted_, hi_, corrected_;
     SparseGrid expansion_;             // divergence the burning asks for, 1/s
     SparseGrid pressure_, divergence_;
     PoissonSolver poisson_;
-    SparseGrid centre_[3], curl_[3], curlLength_;
     std::vector<std::array<Grid, 3>> noise_;  // a turbulence force's coarse lattices
     int frame_ = 0;
     float time_ = 0.0f;
