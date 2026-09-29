@@ -225,12 +225,14 @@ std::shared_ptr<Geometry> VoronoiCells::cut(size_t i, std::shared_ptr<Geometry> 
 
 std::shared_ptr<Geometry> VoronoiCells::cell(size_t i, const std::string& inside) const {
     if (i >= seeds_.size()) return std::make_shared<Geometry>();
-    // One part: all of it is cut.
-    if (parts_.size() <= 1) return cut(i, std::make_shared<Geometry>(*mesh_), inside);
+    // All of the mesh cut: when it is one part, and when nothing of it is
+    // in the cell -- a seed outside it -- which the cell then is as it was.
+    auto whole = [&] { return cut(i, std::make_shared<Geometry>(*mesh_), inside); };
+    if (parts_.size() <= 1) return whole();
     // The cell in the box round the mesh -- a handful of faces: which parts
     // of the mesh it reaches.
     const std::shared_ptr<Geometry> hull = cut(i, std::make_shared<Geometry>(*box_), "");
-    if (hull->primitiveCount() == 0) return hull;
+    if (hull->primitiveCount() == 0) return whole();
     Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
     for (const Vec3& p : hull->positions()) {
         for (int a = 0; a < 3; ++a) {
@@ -247,38 +249,35 @@ std::shared_ptr<Geometry> VoronoiCells::cell(size_t i, const std::string& inside
         ++reached;
         prims.insert(prims.end(), part.prims.begin(), part.prims.end());
     }
-    std::shared_ptr<Geometry> piece;
-    if (reached == parts_.size()) {
-        piece = std::make_shared<Geometry>(*mesh_);
-    } else {
-        // Those parts alone -- their points and primitives in the order they
-        // had, so that what is cut of them is cut as it was of the whole.
-        std::sort(prims.begin(), prims.end());
-        const Geometry& g = *mesh_;
-        std::vector<uint32_t> index(g.pointCount(), ~0u);
-        for (const uint32_t p : prims) {
-            for (const uint32_t q : g.primitivePoints(p)) index[q] = 0;
-        }
-        Blends points, vertices;
-        for (size_t q = 0; q < index.size(); ++q) {
-            if (index[q] == ~0u) continue;
-            index[q] = static_cast<uint32_t>(points.size());
-            points.one(static_cast<uint32_t>(q));
-        }
-        std::vector<std::vector<uint32_t>> faces;
-        std::vector<uint8_t> closed;
-        for (const uint32_t p : prims) {
-            const auto c = g.primitivePoints(p);
-            std::vector<uint32_t> face(c.size());
-            for (size_t k = 0; k < c.size(); ++k) face[k] = index[c[k]];
-            faces.push_back(std::move(face));
-            closed.push_back(g.primitiveClosed(p) ? 1 : 0);
-            const uint32_t v0 = static_cast<uint32_t>(g.primitiveVertexStart(p));
-            for (size_t k = 0; k < c.size(); ++k) vertices.one(v0 + static_cast<uint32_t>(k));
-        }
-        piece = rebuild(g, points, faces, closed, vertices, prims);
+    if (reached == 0 || reached == parts_.size()) return whole();
+    // Those parts alone -- their points and primitives in the order they
+    // had, so that what is cut of them is cut as it was of the whole.
+    std::sort(prims.begin(), prims.end());
+    const Geometry& g = *mesh_;
+    std::vector<uint32_t> index(g.pointCount(), ~0u);
+    for (const uint32_t p : prims) {
+        for (const uint32_t q : g.primitivePoints(p)) index[q] = 0;
     }
-    return cut(i, piece, inside);
+    Blends points, vertices;
+    for (size_t q = 0; q < index.size(); ++q) {
+        if (index[q] == ~0u) continue;
+        index[q] = static_cast<uint32_t>(points.size());
+        points.one(static_cast<uint32_t>(q));
+    }
+    std::vector<std::vector<uint32_t>> faces;
+    std::vector<uint8_t> closed;
+    for (const uint32_t p : prims) {
+        const auto c = g.primitivePoints(p);
+        std::vector<uint32_t> face(c.size());
+        for (size_t k = 0; k < c.size(); ++k) face[k] = index[c[k]];
+        faces.push_back(std::move(face));
+        closed.push_back(g.primitiveClosed(p) ? 1 : 0);
+        const uint32_t v0 = static_cast<uint32_t>(g.primitiveVertexStart(p));
+        for (size_t k = 0; k < c.size(); ++k) vertices.one(v0 + static_cast<uint32_t>(k));
+    }
+    const std::shared_ptr<Geometry> piece = rebuild(g, points, faces, closed, vertices, prims);
+    const std::shared_ptr<Geometry> cell = cut(i, piece, inside);
+    return cell->primitiveCount() > 0 ? cell : whole();
 }
 
 namespace {

@@ -297,6 +297,12 @@ if(PG_WITH_JOLT)
   get_target_property(PG_JOLT_INCLUDES Jolt INTERFACE_INCLUDE_DIRECTORIES)
   set_target_properties(Jolt PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PG_JOLT_INCLUDES}")
   target_link_libraries(pgsim PRIVATE Jolt)
+  # Jolt's jobs run on threads of its own and sync through its atomics:
+  # under the thread sanitizer it is built with it too, or the sanitizer
+  # does not see them and reports races that are not.
+  if(PG_SANITIZE_THREAD)
+    target_compile_options(Jolt PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
+  endif()
   target_compile_definitions(pgsim PRIVATE PG_HAVE_JOLT)
 endif()
 
