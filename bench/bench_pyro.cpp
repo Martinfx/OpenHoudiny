@@ -18,7 +18,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -117,6 +119,20 @@ bool bench(int resolution, int frames) {
                 100.0 * t.solids / t.total(), 100.0 * t.emit / t.total(), 100.0 * t.advect / t.total(),
                 100.0 * t.combust / t.total(), 100.0 * t.forces / t.total(), 100.0 * t.project / t.total(),
                 100.0 * t.dissipate / t.total());
+    // What the run came to, as one number: a change meant to be only faster
+    // must leave it as it is.
+    uint64_t print = 1469598103934665603ull;
+    auto mix = [&](const sim::Grid& g) {
+        for (const float v : g.values()) {
+            uint32_t b;
+            std::memcpy(&b, &v, sizeof b);
+            print = (print ^ b) * 1099511628211ull;
+        }
+    };
+    mix(gas.density());
+    mix(gas.temperature());
+    for (int a = 0; a < 3; ++a) mix(gas.velocity(a));
+    std::printf("  fingerprint of the last frame: %016llx\n", static_cast<unsigned long long>(print));
     std::printf("  memory held at most: %.0f MB\n", peakMb());
     return true;
 }

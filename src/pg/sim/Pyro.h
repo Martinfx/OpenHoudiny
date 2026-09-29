@@ -110,7 +110,6 @@ private:
     /// Zero velocity on every face the gas cannot flow through: at solids,
     /// and at the floor when it is closed.
     void enforceWalls();
-    bool faceBlocked(int axis, int i, int j, int k) const;
     void advectScalar(Grid& field);
     void advectVelocity(int axis, float cells);
     /// The velocity at face (i, j, k) of component `axis`: its own value, and

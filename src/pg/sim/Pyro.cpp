@@ -78,56 +78,68 @@ Vec3 PyroSolver::worldAt(float x, float y, float z) const {
 
 void PyroSolver::updateSolids() {
     Clock::time_point t0 = Clock::now();
-    solid_.fill(0.0f);
-    anySolid_ = false;
-    if (!scene_.colliders.empty()) {
-        // A cell is solid when its centre is inside a collider; the box round
-        // each collider skips the cells far from it.
-        struct Solid {
-            ShapeInstance shape;
-            Vec3 lo, hi;
-        };
-        std::vector<Solid> solids;
-        for (const Collider& c : scene_.colliders) {
-            Solid s{c.instance(), {}, {}};
-            s.shape.bounds(s.lo, s.hi);
-            solids.push_back(s);
+    // Only the cells the colliders took last time need clearing, and only the
+    // cells in a collider's box testing: the pieces of a demolition are small
+    // against the domain, and there are hundreds of them.
+    for (const size_t c : solidCells_) solid_.data()[c] = 0.0f;
+    solidCells_.clear();
+    const float h = domain_.voxel;
+    const Vec3 origin = domain_.origin();
+    const int n[3] = {nx_, ny_, nz_};
+    for (size_t c = 0; c < scene_.colliders.size(); ++c) {
+        // A cell is solid when its centre is inside a collider -- the first
+        // one that has it: solid_ holds 1 + the collider's index, which one
+        // it is, for its velocity.
+        const ShapeInstance shape = scene_.colliders[c].instance();
+        Vec3 lo, hi;
+        shape.bounds(lo, hi);
+        int from[3], to[3];
+        for (int a = 0; a < 3; ++a) {
+            // The cells whose centres may be in the box, and one more each side.
+            from[a] = std::clamp(static_cast<int>(std::floor((lo[a] - origin[a]) / h - 0.5f)) - 1, 0, n[a]);
+            to[a] = std::clamp(static_cast<int>(std::ceil((hi[a] - origin[a]) / h - 0.5f)) + 2, 0, n[a]);
         }
-        // solid_ holds 1 + the collider's index: which one it is, for its velocity.
-        forEachCell(solid_, [&](int i, int j, int k) {
+        const float mark = 1.0f + static_cast<float>(c);
+        forEachIn(from[0], to[0], from[1], to[1], from[2], to[2], [&](int i, int j, int k) {
+            float& cell = solid_.at(i, j, k);
+            if (cell > 0.5f) return;
             const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
                                    static_cast<float>(k) + 0.5f);
-            for (size_t c = 0; c < solids.size(); ++c) {
-                const Solid& s = solids[c];
-                if (p.x < s.lo.x || p.y < s.lo.y || p.z < s.lo.z || p.x > s.hi.x || p.y > s.hi.y || p.z > s.hi.z) {
-                    continue;
-                }
-                if (s.shape.contains(p)) {
-                    solid_.at(i, j, k) = 1.0f + static_cast<float>(c);
-                    return;
+            if (p.x < lo.x || p.y < lo.y || p.z < lo.z || p.x > hi.x || p.y > hi.y || p.z > hi.z) return;
+            if (shape.contains(p)) cell = mark;
+        });
+        for (int k = from[2]; k < to[2]; ++k) {
+            for (int j = from[1]; j < to[1]; ++j) {
+                for (int i = from[0]; i < to[0]; ++i) {
+                    if (solid_.at(i, j, k) == mark) solidCells_.push_back(solid_.index(i, j, k));
                 }
             }
-        });
-        const std::vector<float>& s = solid_.values();
-        anySolid_ = std::any_of(s.begin(), s.end(), [](float v) { return v > 0.5f; });
+        }
     }
-    // The solid cells and the faces they block, listed once: the walls are
-    // enforced several times a step, by walking these short lists.
-    solidCells_.clear();
+    std::sort(solidCells_.begin(), solidCells_.end());
+    anySolid_ = !solidCells_.empty();
+    // The faces the solids block -- the six of each solid cell -- and the
+    // floor's when it is closed, listed once: the walls are enforced several
+    // times a step, by walking these short lists.
     for (int a = 0; a < 3; ++a) blocked_[a].clear();
     if (anySolid_) {
-        for (size_t c = 0; c < solid_.size(); ++c) {
-            if (solid_.data()[c] > 0.5f) solidCells_.push_back(c);
-        }
         for (int a = 0; a < 3; ++a) {
             const Grid& v = vel_[a];
-            for (int k = 0; k < v.nz(); ++k) {
-                for (int j = 0; j < v.ny(); ++j) {
-                    for (int i = 0; i < v.nx(); ++i) {
-                        if (faceBlocked(a, i, j, k)) blocked_[a].push_back(v.index(i, j, k));
-                    }
+            std::vector<size_t>& faces = blocked_[a];
+            for (const size_t c : solidCells_) {
+                const int i = static_cast<int>(c % static_cast<size_t>(nx_));
+                const int j = static_cast<int>((c / static_cast<size_t>(nx_)) % static_cast<size_t>(ny_));
+                const int k = static_cast<int>(c / (static_cast<size_t>(nx_) * static_cast<size_t>(ny_)));
+                faces.push_back(v.index(i, j, k));
+                faces.push_back(v.index(i + (a == 0), j + (a == 1), k + (a == 2)));
+            }
+            if (a == 1 && scene_.solver.closedFloor) {
+                for (int k = 0; k < nz_; ++k) {
+                    for (int i = 0; i < nx_; ++i) faces.push_back(v.index(i, 0, k));
                 }
             }
+            std::sort(faces.begin(), faces.end());
+            faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
         }
     }
     // What a moving solid gives the faces it blocks: its velocity there,
@@ -165,15 +177,6 @@ void PyroSolver::updateSolids() {
     }
     enforceWalls();
     lap(t0, times_.solids);
-}
-
-bool PyroSolver::faceBlocked(int axis, int i, int j, int k) const {
-    const int f = axis == 0 ? i : axis == 1 ? j : k;  // face f: between cells f-1 and f
-    const int n = axis == 0 ? nx_ : axis == 1 ? ny_ : nz_;
-    if (axis == 1 && f == 0 && scene_.solver.closedFloor) return true;
-    if (!anySolid_) return false;
-    if (f > 0 && solid_.at(i - (axis == 0), j - (axis == 1), k - (axis == 2)) > 0.5f) return true;
-    return f < n && solid_.at(i, j, k) > 0.5f;
 }
 
 void PyroSolver::enforceWalls() {
