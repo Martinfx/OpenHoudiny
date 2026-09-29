@@ -1119,7 +1119,72 @@ S `output` *Constraints* vrátí místo kusů síť vazeb snímku
 síť (`MeshShape` z jeho trojúhelníků), posunutou a otočenou tam, kde kus
 je, s jeho rychlostí a otáčením: voda se před kusem hrne a za ním táhne
 brázdu, kouř kusy obtéká a padající kusy ho strhávají s sebou, déšť od
-nich odstřikuje. Vazba je jednosměrná — voda ani plyn kusy nebrzdí.
+nich odstřikuje.
+
+**Obousměrně: voda a plyn tlačí kusy.** Parametry RBD Solveru v sekci
+*Fluids*:
+
+- **Buoyancy** (1): voda nadnáší kusy váhou vody, kterou vytlačí
+  (Archimédův zákon). Co je lehčí než voda (Density pod 1000, dřevo),
+  plave, těžší klesá pomaleji než vzduchem.
+- **Water Drag** (1): voda kusy i drť unáší a brzdí.
+- **Air Drag** (1): proud Pyro Solveru unáší drť a kusy, třeba vítr
+  z oblaku prachu nebo tlaková vlna.
+
+Nula vazbu vypne. Zbytek je obrácený směr: přes výstup Collider jdou
+voda a plyn kolem kusů, jak se pohybují.
+
+Jak to počítá (`RigidSolver::feel`, `Rigid.cpp`):
+
+- **Vzorkovací body.** Každý konvexní obal kusu dostane při stavbě mřížku
+  4 × 4 × 4 bodů. Zůstanou ty uvnitř obalu a každý nese svůj díl objemu.
+- **Výška hladiny.** Každý snímek se změří nad každým sloupcem mřížky
+  vody (`LiquidSolver::waterLevel`): odspodu vodou a kusy v ní až po první
+  vzduch, takže cákance nad hladinou se nepočítají. Kde na vodě leží kus,
+  vezme se hladina kolem něj. Částice pod plovoucím kusem totiž končí na
+  jeho spodku, ne na hladině.
+- **Vztlak.** Bod pod hladinou dostane vztlak svého objemu. V pásmu
+  velikosti bodu kolem hladiny se ponořená část mění plynule, takže kus
+  nepřeskakuje. Vztlak působí v bodě, a proto dává i moment: nakloněná
+  deska se narovná a bedna se na vlnách kolébá.
+- **Odpor.** Proud vody se měří po stranách kusu, těsně vedle něj pod
+  hladinou. Rychlost vody uvnitř kusu je rychlost kusu samotného (je
+  pro vodu překážkou), proto se měří vedle. Odpor každého bodu má
+  kvadratickou část (voda, kterou kus odtlačí) a lineární, 3/s (vlny,
+  které kus dělá). Houpání tak po několika sekundách ustane.
+- **Stabilita.** Odpor za krok nikdy nezastaví kus víc, než by ho
+  zastavil proti proudu. To drží výpočet stabilní i u lehkého dřeva.
+- **Drť.** Kousek drti nese rychlost toho, v čem je, a táhne ho k ní.
+  Ve vodě ho voda nadnáší (kámen 2 400 kg/m³ tam váží o 42 % méně) a brzdí
+  zhruba 830krát víc než vzduch. Kámen o 3 cm tak klesá asi 0,8 m/s
+  jako štěrk. Ve vzduchu ho unáší plyn. Kamínky o centimetru ale vítr
+  6 m/s skoro nepohne: fyzika, ne chyba. Nese je až tlaková vlna.
+
+Síly se spočítají **před krokem** ze stavu vody a plynu na konci
+předchozího snímku a projdou krokem jako vstup (`RigidFlow`). Dvě věci
+z toho plynou:
+
+- Náraz, podle kterého praská lepidlo, se od síly vody a plynu očistí,
+  takže vlna kus sama nerozlepí.
+- Checkpoint si vstupy všech kroků uloží. Při obnovení se trosky
+  přepočítají s nimi, bez vody a plynu, a pokračování je bitově stejné
+  ([cache.md](cache.md#3-bake-na-pozadí-checkpointy-a-náhled)).
+
+Nula ve všech třech parametrech dá bitově tytéž kusy jako svět bez vody.
+
+### Jedenáctý příklad: povodeň na dvoře
+
+`flood_crates`: hráz se protrhne na konci dvora 8 × 4 m a voda se přes
+něj přežene.
+
+- **Bedny** (dřevo, 350 kg/m³, tedy duté) se zvednou, stoh se převrhne.
+  Bedny se kolébají na vlnách a proud je unáší ke zdi a zpátky.
+- **Betonové bloky** (2 400 kg/m³) zůstanou stát a voda se o ně láme.
+
+Voda má mřížku 96 × 24 × 48, 115 tisíc částic, 108 ms na snímek.
+Příkaz `prototype sim flood_crates out.mp4` záběr vyrenderuje kamerou.
+
+![Povodeň na dvoře, snímky 30, 60, 90 a 150: vlna zvedne bedny a převrhne stoh, na konci plavou bedny rozptýlené po dvoře a betonové bloky stojí](img/flood-crates.jpg)
 
 **Prach.** Výstup Dust do Sources Pyro Solveru: každý obláček je koule
 velikosti obláčku, která dává kouř `4 × síla`, jen trochu tepla (prach
@@ -1405,6 +1470,23 @@ v `tests/python/test_pg.py`:
   třetina sekundy vyletí dál vzhůru, jak ho Guide vedl, a spadne zpátky
   na podlahu.
 
+`tests/test_coupling.cpp` (7 testů), voda a plyn tlačí kusy:
+
+- deska 80 × 20 × 40 cm na klidné hladině se ponoří na centimetr přesně
+  tak hluboko, kolik váží: do půlky při 500 kg/m³, do čtvrtiny při 250;
+  a zůstane v klidu;
+- beton ve vodě klesá, ale pomaleji než vzduchem;
+- deska puštěná nakloněná o 30° se narovná;
+- kus těžký jako voda nabere v proudu 2 m/s rychlost proudu, bez Water
+  Drag proud míjí;
+- tlaková vlna 20 m/s unáší drť, s Air Drag 0 letí drť bitově jako ve
+  stojícím vzduchu, ve vodě drť klesá rychlostí štěrku (do 1,5 m/s);
+- celá smyčka v nádrži FLIP: dřevěná bedna plave ponořená do půlky, betonová
+  leží na dně;
+- checkpoint světa, kde voda tlačí kusy, pokračuje bitově stejně a do
+  světa bez té vazby se nenačte; se všemi třemi parametry na 0 padají kusy
+  bitově stejně jako bez vody.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -1437,6 +1519,13 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   sousedního kusu, zůstane na ní bod navíc (T-spoj): při kreslení z něj
   občas problikne pixel. Úlomky jsou jen z rohů, ne z hran; kamenivo
   v lomu a trhliny, které se neotevřou, tu nejsou.
+- **Voda a kusy: hladina, ne tlak.** Vztlak se počítá z výšky hladiny
+  nad každým sloupcem, ne z tlaku, který vodu obtéká kolem kusu. Pod
+  převisem nebo v zatopené místnosti nad hladinou tedy neplatí. Kus nemá
+  přidanou hmotu (vodu, kterou musí rozhýbat). Vazba přes tlak by byla
+  přesnější, ale u lehkých těles se v krocích řešiče rozkmitá; Houdini ji
+  proto dává jako *feedback* s mírou. Tenký film vody, který zůstane na
+  horní ploše kusu, nesteče (známá slabina FLIP) a kreslí se jako pěna.
 - **Drcení na prach.** Rozdrcený kus zmizí najednou; drobení na menší
   kusy za běhu (Houdini RBD Material Fracture s omezeními) tu není —
   kusy jsou hotové předem.

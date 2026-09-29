@@ -38,8 +38,9 @@ okna.
   které nárazy lámou, nálože, drcení na prach, drť jako částice, které
   narážejí do kusů a zůstávají na nich ležet, prach za letícími kusy,
   vzduch vytlačený zřícením, který žene prach do ulic, pád řízený
-  animací (Guide); odstřel věžáku ve městě a zřícení zdi z pohledu od
-  země jako videa
+  animací (Guide), trosky ve vodě a v plynu (dřevo plave a proud ho
+  unáší, drť nese tlaková vlna); odstřel věžáku ve městě a zřícení zdi
+  z pohledu od země jako videa, povodeň na dvoře s plovoucími bednami
 - **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
   parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
   cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)
@@ -111,7 +112,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 377 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 98 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 11 checkpointy, bake, náhled a profil, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+./build/pgtests            # 384 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 7 trosky ve vodě a v plynu, 25 shader graf, 98 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 11 checkpointy, bake, náhled a profil, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
 ctest --test-dir build -R python                   # 46 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše

@@ -350,8 +350,10 @@ Seřazeno podle poměru hodnota / náklad:
 
 1. **XPBD solver** — látky, měkká tělesa, granuláty (obdoba Vellum). Jeden
    solver pokryje široké spektrum.
-2. **Vazby mezi řešiči** — voda uhasí oheň, úlomky a déšť v kouři, déšť
-   přidá vodu do bazénu.
+2. **Vazby mezi řešiči** — ✅ trosky ve vodě a v plynu: voda je nadnáší
+   a unáší, proud plynu unáší drť, obousměrně s vodou i plynem, které jdou
+   kolem kusů ([destruction.md](docs/destruction.md#jedenáctý-příklad-povodeň-na-dvoře)).
+   Zbývá: voda uhasí oheň, déšť v kouři, déšť přidá vodu do bazénu.
 3. **Render pro finální obraz** — path tracing objemů a povrchů
    s vícenásobným rozptylem, materiály a textury, rozmazání pohybem
    a hloubka ostrosti, průchody (AOV) do EXR, barevná správa OCIO/ACES.

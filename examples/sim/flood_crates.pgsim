@@ -1,0 +1,78 @@
+pgsim 1
+# A flood: a dam breaks at the end of a yard and the water sweeps through
+# it. The wooden crates -- lighter than water -- float up, rock on the waves
+# and are carried off, the stack toppling; the concrete blocks, heavy, stay
+# where they stand and the water breaks round them. Both ways: the water
+# holds the crates up and drags them (the RBD Solver's Buoyancy and Water
+# Drag), and goes round them as they move (its Collider in the Liquid
+# Solver). prototype sim flood_crates out.mp4 renders it through the camera.
+node 1 water_source 1 dam 0 0
+  param center -3.25 0.7 0
+  param size 1.5 1.4 4
+node 2 box 1 crate_a 0 140
+  param size 0.5 0.5 0.5
+  param center 0.2 0.25 -0.9
+node 3 box 1 crate_b 0 200
+  param size 0.5 0.5 0.5
+  param center 0.22 0.77 -0.88
+node 4 box 1 crate_c 0 260
+  param size 0.5 0.5 0.5
+  param center 0.18 1.29 -0.9
+node 5 box 1 crate_d 0 320
+  param size 0.5 0.5 0.5
+  param center 0.5 0.25 0.5
+node 6 box 1 crate_e 0 380
+  param size 0.6 0.4 0.4
+  param center -0.4 0.2 0.9
+node 7 merge 1 crates 230 260
+node 8 primitive_wrangle 1 wood 460 260
+  param snippet "// Wooden crates: hollow, lighter than water -- a third as heavy.\nf@density = 350;\nv@Cd = set(0.6, 0.45, 0.28);"
+node 9 box 1 block_a 0 460
+  param size 0.6 0.6 0.6
+  param center 1.7 0.3 -0.2
+node 10 box 1 block_b 0 520
+  param size 0.6 0.6 0.6
+  param center 1.8 0.3 0.8
+node 11 merge 1 blocks 230 490
+node 12 primitive_wrangle 1 concrete 460 490
+  param snippet "// Concrete: two and a half times as heavy as water -- it stays.\nf@density = 2400;\nv@Cd = set(0.5, 0.49, 0.47);"
+node 13 merge 1 pieces 690 380
+node 14 rbd_solver 1 rbd 920 380
+  param density 350
+  param friction 0.5
+  param glue 0
+  param substeps 3
+  param dust 0
+  param impact_dust 0
+  param debris 0
+  param inside_color 0.6 0.45 0.28
+node 15 liquid_solver 1 water 920 60
+  param size 8 2 4
+  param resolution 96
+node 16 water_look 1 look 1150 60
+node 17 output 2 output 1380 200
+  param frames 150
+  param light_azimuth 130
+  param light_elevation 40
+node 18 camera 1 camera 1380 360
+  param center 4.2 3.2 5.2
+  param rotation -26 38 0
+  param focal 24
+link 1.water -> 15.sources
+link 2.geometry -> 7.geometry
+link 3.geometry -> 7.geometry
+link 4.geometry -> 7.geometry
+link 5.geometry -> 7.geometry
+link 6.geometry -> 7.geometry
+link 7.geometry -> 8.geometry
+link 9.geometry -> 11.geometry
+link 10.geometry -> 11.geometry
+link 11.geometry -> 12.geometry
+link 8.geometry -> 13.geometry
+link 12.geometry -> 13.geometry
+link 13.geometry -> 14.pieces
+link 14.collider -> 15.colliders
+link 15.liquid -> 16.liquid
+link 16.look -> 17.look
+link 14.look -> 17.look
+link 18.camera -> 17.camera
