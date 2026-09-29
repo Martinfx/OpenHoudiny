@@ -8,9 +8,11 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <vector>
 
 using namespace pg;
 using namespace pg::sim;
@@ -408,21 +410,26 @@ TEST(pyro_is_bitwise_identical_across_thread_counts) {
     s.colliders.push_back(c);
 
     ThreadCountGuard guard;
-    auto run = [&](unsigned threads) {
-        TaskPool::instance().setThreadCount(threads);
-        PyroSolver sim(s);
-        for (int f = 0; f < 12; ++f) sim.step();
-        return sim;
-    };
-    const PyroSolver one = run(1);
-    const PyroSolver four = run(4);
-    CHECK(sameBits(one.density(), four.density()));
-    CHECK(sameBits(one.temperature(), four.temperature()));
-    CHECK(sameBits(one.fuel(), four.fuel()));
-    CHECK(sameBits(one.flame(), four.flame()));
-    for (int a = 0; a < 3; ++a) CHECK(sameBits(one.velocity(a), four.velocity(a)));
-    CHECK(one.density().sum() > 0.0);
-    CHECK(finite(one));
+    // Sparse -- the tiles taken on and let go the same way too -- and dense.
+    for (const bool sparse : {true, false}) {
+        s.solver.sparse = sparse;
+        auto run = [&](unsigned threads) {
+            TaskPool::instance().setThreadCount(threads);
+            PyroSolver sim(s);
+            for (int f = 0; f < 12; ++f) sim.step();
+            return sim;
+        };
+        const PyroSolver one = run(1);
+        const PyroSolver four = run(4);
+        CHECK(one.tiles() == four.tiles());
+        CHECK(sameBits(one.density(), four.density()));
+        CHECK(sameBits(one.temperature(), four.temperature()));
+        CHECK(sameBits(one.fuel(), four.fuel()));
+        CHECK(sameBits(one.flame(), four.flame()));
+        for (int a = 0; a < 3; ++a) CHECK(sameBits(one.velocity(a), four.velocity(a)));
+        CHECK(one.density().sum() > 0.0);
+        CHECK(finite(one));
+    }
 }
 
 TEST(pyro_a_new_domain_resets_the_simulation) {
@@ -587,4 +594,124 @@ TEST(pyro_burning_gas_thins_out_as_it_swells) {
     size_t burning = 0;
     for (const float v : sim.flame().values()) burning += v > 0.01f;
     CHECK(burning < sim.flame().size() / 5);
+}
+
+// --- sparse ------------------------------------------------------------------------
+
+TEST(pyro_sparse_grids_sample_as_dense_grids_do) {
+    // Every tile kept: the same numbers at every point, inside a tile, across
+    // tiles and past the sides -- the bounds of the MacCormack limiter too.
+    const int n[3] = {20, 12, 17};
+    Grid dense(n[0], n[1], n[2]);
+    SparseGrid sparse(n[0], n[1], n[2]);
+    uint32_t h = 12345u;
+    auto next = [&] {
+        h = h * 1664525u + 1013904223u;
+        return static_cast<float>(h >> 8) / static_cast<float>(1u << 24);
+    };
+    for (int k = 0; k < n[2]; ++k) {
+        for (int j = 0; j < n[1]; ++j) {
+            for (int i = 0; i < n[0]; ++i) dense.ref(i, j, k) = sparse.ref(i, j, k) = next() * 4.0f - 1.0f;
+        }
+    }
+    for (int t = 0; t < 4000; ++t) {
+        const float x = next() * 24.0f - 2.0f, y = next() * 16.0f - 2.0f, z = next() * 21.0f - 2.0f;
+        for (const bool zero : {false, true}) {
+            float lo0, hi0, lo1, hi1;
+            const float a = dense.sample(x, y, z, zero, lo0, hi0), b = sparse.sample(x, y, z, zero, lo1, hi1);
+            CHECK(a == b && lo0 == lo1 && hi0 == hi1);
+        }
+    }
+    CHECK_EQ(dense.max(), sparse.max());
+    CHECK_EQ(dense.sum(), sparse.sum());
+    const Grid back = sparse.dense();
+    CHECK(back.values() == dense.values());
+}
+
+TEST(pyro_sparse_grids_keep_only_their_tiles) {
+    // 24 x 16 x 8 cells: 3 x 2 x 1 tiles, the first and the last kept.
+    std::vector<uint8_t> state(6, Tiles::Off);
+    state[0] = state[5] = Tiles::Whole;
+    auto tiles = std::make_shared<const Tiles>(24, 16, 8, state, -1);
+    CHECK_EQ(tiles->stored().size(), 2u);
+    CHECK_EQ(tiles->activeCells(), 2u * 512u);
+    SparseGrid g(tiles);
+    CHECK_EQ(g.size(), 2u * 512u);
+    g.ref(3, 4, 5) = 2.0f;    // tile 0
+    g.ref(20, 12, 1) = 7.0f;  // tile 5
+    CHECK(!g.stored(10, 3, 3));
+    CHECK_EQ(g.at(10, 3, 3), 0.0f);  // not kept: still, empty air
+    CHECK_EQ(g.max(), 7.0f);
+    CHECK_EQ(g.sum(), 9.0);
+    // Onto other tiles: what both keep stays, the rest starts at 0.
+    std::vector<uint8_t> other(6, Tiles::Off);
+    other[1] = other[5] = Tiles::Whole;
+    g.retile(std::make_shared<const Tiles>(24, 16, 8, other, -1));
+    CHECK(!g.stored(3, 4, 5));
+    CHECK_EQ(g.at(20, 12, 1), 7.0f);
+    CHECK_EQ(g.at(10, 3, 3), 0.0f);
+    // The faces along x of tile 0's cells: its own, and the first layer of
+    // the tile after it -- the far faces of its last cells.
+    const std::shared_ptr<const Tiles> faces = Tiles::faces(*tiles, 0);
+    CHECK_EQ(faces->nx(), 25);
+    CHECK(faces->has(0, 0, 0) && faces->has(7, 0, 0) && faces->has(8, 0, 0));
+    CHECK(!faces->has(9, 0, 0));
+    CHECK(faces->has(16, 8, 0) && faces->has(24, 8, 0));  // tile 5's, and past the side
+    CHECK_EQ(faces->activeCells(), 2u * 512u + 2u * 64u);
+}
+
+TEST(pyro_sparse_pressure_holds_zero_round_the_gas) {
+    // A box of tiles in the middle of a larger grid: the equation solved in
+    // it, the still air round it at p = 0 -- as a solve on the box alone
+    // with open sides all round, give or take the half cell where the
+    // pressure reaches 0.
+    const int n = 48;
+    std::vector<uint8_t> state(6 * 6 * 6, Tiles::Off);
+    for (int c = 2; c < 4; ++c) {
+        for (int b = 2; b < 4; ++b) {
+            for (int a = 2; a < 4; ++a) state[static_cast<size_t>(a + 6 * (b + 6 * c))] = Tiles::Whole;
+        }
+    }
+    auto tiles = std::make_shared<const Tiles>(n, n, n, state, -1);
+    SparseGrid b(tiles), p(tiles);
+    forEachCounted(*tiles, [&](int i, int j, int k, size_t c) {
+        const float dx = i - 24.0f, dy = j - 24.0f, dz = k - 24.0f;
+        b.data()[c] = std::exp(-(dx * dx + dy * dy + dz * dz) / 20.0f);
+    });
+    PoissonSolver solver;
+    solver.setBoundary(PoissonBoundary{});
+    const float h = 1.0f / n;
+    solver.solve(p, b, h, 1);
+    const double first = solver.residual(p, b, h);
+    solver.solve(p, b, h, 4);
+    CHECK(solver.residual(p, b, h) < first * 0.01);
+    CHECK(p.at(24, 24, 24) < 0.0f);  // a source: the pressure dips round it
+    CHECK_EQ(p.at(4, 4, 4), 0.0f);   // outside the tiles
+}
+
+TEST(pyro_sparse_smoke_stays_where_its_gas_is) {
+    // A column of smoke in a wide domain, sparse and dense: most of the
+    // domain never worked on, and the smoke where the dense solver has it.
+    Scene s = small(Scene::smoke(), 64);
+    s.solver.size = Vec3(4.0f, 1.5f, 4.0f);
+    s.solver.sparse = false;
+    PyroSolver dense(s);
+    s.solver.sparse = true;
+    PyroSolver sparse(s);
+    size_t most = 0;
+    for (int f = 0; f < 30; ++f) {
+        dense.step();
+        sparse.step();
+        most = std::max(most, sparse.activeCells());
+    }
+    CHECK(most < sparse.domain().cellCount() / 3);
+    const double a = dense.density().sum(), b = sparse.density().sum();
+    CHECK(b > 0.99 * a && b < 1.01 * a);
+    CHECK(std::fabs(centreOf(dense, dense.density(), 1) - centreOf(sparse, sparse.density(), 1)) < 0.01);
+    // Where there is no gas left, the tiles go.
+    Scene gone = s;
+    gone.emitters.clear();
+    PyroSolver empty(gone);
+    for (int f = 0; f < 3; ++f) empty.step();
+    CHECK_EQ(empty.activeCells(), 0u);
 }

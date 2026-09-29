@@ -64,7 +64,9 @@ cache/fire/
   kreslí trhliny skla ([destruction.md](destruction.md#sklo-glass-fracture)) —, a od verze 8 co se
   stalo s každým spojem lepidla a kdy praskl (bajt a číslo na spoj; [síť
   vazeb](destruction.md#síť-vazeb-rbd-constraints)), a od verze 9 jak je natočené každé zrnko drti
-  (kvaternion v poloviční přesnosti, po načtení znovu jednotkový; [drť jako částice](destruction.md#drť-jako-částice));
+  (kvaternion v poloviční přesnosti, po načtení znovu jednotkový; [drť jako částice](destruction.md#drť-jako-částice)),
+  a od verze 10 řídký plyn: jen dlaždice 8 × 8 × 8 buněk, ve kterých nějaký
+  je, a jejich čísla na konci snímku ([pyro.md](pyro.md#řídká-mřížka-počítá-se-jen-tam-kde-je-plyn));
   klidová geometrie kusů, pruty i síť vazeb jsou
   v síti uzlů a snímek načtený z disku je dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.

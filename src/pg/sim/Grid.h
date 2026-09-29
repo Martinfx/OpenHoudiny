@@ -7,8 +7,8 @@
 // Positions passed to sample() are in the same cell units, so the grid spans
 // [0, nx] x [0, ny] x [0, nz].
 //
-// Dense, not sparse: a prototype of what production keeps in OpenVDB, where
-// only the cells near smoke are stored. The interface is the part that stays.
+// Dense: every cell stored. What the solvers keep where the gas is alone is
+// SparseGrid (SparseGrid.h), with the same cells, positions and sampling.
 //
 #include <cstddef>
 #include <vector>

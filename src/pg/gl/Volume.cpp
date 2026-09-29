@@ -270,11 +270,14 @@ void main() {
         o_light = vec4(0.0);
         return;
     }
-    // Through the smoke towards the light, half a step first: a cell does
-    // not shade itself.
+    // Through the smoke towards the light, half a step first -- a cell does
+    // not shade itself -- give or take half a step, different in each cell:
+    // started alike, the steps of neighbouring cells fall on the smoke alike
+    // and show as rings round every billow of a fine grid.
     float far = boxSpan(p, u_lightDir, u_boxMin, u_boxMin + u_boxSize).y;
     float depth = 0.0;
-    for (float t = 0.5 * u_step; t < far; t += u_step) {
+    float jitter = fract(52.9829189 * fract(dot(vec3(gl_FragCoord.xy, u_layer), vec3(0.06711056, 0.00583715, 0.03752))));
+    for (float t = jitter * u_step; t < far; t += u_step) {
         vec3 q = (p + u_lightDir * t - u_boxMin) / u_boxSize;
         depth += textureLod(u_fields, q, 1.0).r * fadeAt(q);
     }

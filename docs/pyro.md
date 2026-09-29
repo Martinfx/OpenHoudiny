@@ -365,7 +365,7 @@ palivo), nebo jen kde je kouř.
 
 | sekce | parametry |
 |---|---|
-| Domain | `size` (šířka, výška, hloubka v metrech; stojí na podlaze), `resolution` (buněk podél nejdelší strany, 16–256), `closed_floor` |
+| Domain | `size` (šířka, výška, hloubka v metrech; stojí na podlaze), `resolution` (buněk podél nejdelší strany, 16–1024), `closed_floor`, `sparse` (počítat jen dlaždice s plynem, výchozí zapnuto), `cutoff` (pod touto hodnotou kouře, tepla, paliva i plamene dlaždici řešič pustí) |
 | Time | `substeps`, `pressure_cycles`, `seed` (snímková frekvence je společná, v uzlu Output) |
 | Motion | `buoyancy`, `weight` (tíha kouře), `vorticity` (víry, které hrubá mřížka rozmaže) |
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |
@@ -600,6 +600,44 @@ jednotlivé body. Se stojícím vzduchem venku drží vír rychlost pod svou
 (test `pyro_a_vortex_through_the_open_top_stays_bounded`). Stejná chyba
 předtím potichu udržovala výstupný proud i po dohoření exploze: kouř pak
 odcházel stropem rychleji, než měl.
+
+### Řídká mřížka: počítá se jen tam, kde je plyn
+
+Prach odstřelu zabírá v doméně 90 × 48 × 90 m jen pár procent buněk, zbytek
+je stojící vzduch. Houdini (Sparse Pyro) i produkce s OpenVDB proto drží
+a počítají jen buňky poblíž plynu; stejně to dělá i tento řešič, pokud je
+zapnuté `sparse` (v uzlu je to výchozí stav).
+
+- **Dlaždice.** Každé pole je uložené v dlaždicích 8 × 8 × 8 buněk
+  ([`SparseGrid.h`](../src/pg/sim/SparseGrid.h)): tabulka dlaždic celé
+  domény a hodnoty jen těch aktivních. Buňka mimo ně čte 0, stojící
+  prázdný vzduch. Pole jednoho tvaru sdílejí dlaždice, buňka má ve všech
+  stejný index a smyčka přes aktivní buňky čte a zapisuje všechna pole
+  naráz.
+- **Které dlaždice.** Před každým krokem řešič pustí dlaždice, kde kouř,
+  teplo, palivo i plamen klesly pod `cutoff`. Kolem zbylých, kolem zdrojů
+  a kolem pohybujících se těles přibere tolik dlaždic, kam nejrychlejší
+  vzduch za krok doletí, a buňku navíc (aspoň jednu dlaždici, nejvýš
+  čtyři). Plyn tak nikdy nedoteče za okraj.
+- **Stěny MAC.** Rychlosti leží na stěnách buněk. Dlaždice drží stěny
+  svých buněk; vzdálené stěny jejích posledních buněk jsou první vrstvou
+  další dlaždice, kterou si mřížka stěn přidá (`Tiles::faces`).
+- **Tlak.** Rovnice platí v aktivních buňkách a mimo ně je p = 0, jako na
+  otevřené straně domény. Na hrubších úrovních multigridu je buňka
+  aktivní, když je aktivní některá z jejích osmi. Stěny těles drží nejjemnější
+  úroveň jako bity (šest v bajtu na buňku), ne jako tři mřížky stěn.
+- **Stejné bity.** Se všemi dlaždicemi aktivními (`sparse` vypnuté) je
+  řešič hustý a dává bitově stejná pole jako předchozí hustá verze. Ověřuje
+  to otisk posledního snímku v `pgbench_pyro --dense`: `3adea3c11ea39814`
+  před přepisem i po něm.
+- **Cena.** Vzduch mimo dlaždice stojí. Tlaková vlna se nešíří celou
+  doménou, jen dlaždicemi kolem plynu. U prachu a kouře to v obraze není
+  vidět (měření v kapitole 8). U velmi rychlé exploze pomůže víc Substeps:
+  okraj pak roste po menších krocích.
+
+Snímky drží jen dlaždice s plynem (`Frame::gasTiles`, cache verze 10).
+Renderer, export VDB/USD a Python z nich skládají celou mřížku až ve chvíli,
+kdy ji potřebují.
 
 ### Rozpínání ředí
 
@@ -970,7 +1008,7 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 
 ## 9. Ověřování
 
-[`tests/test_pyro.cpp`](../tests/test_pyro.cpp) (21 testů):
+[`tests/test_pyro.cpp`](../tests/test_pyro.cpp) (26 testů):
 
 - interpolace mřížky; doména z násobků 8 buněk;
 - projekce odstraní divergenci; výchozí dva cykly jí uberou přes 97 %;
@@ -983,7 +1021,15 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
   neproteče; vítr odnáší kouř po větru;
 - vír točí kolem osy, zdvih a nasávání působí, výška ho omezí; vír sahající
   ke stropu zůstane omezený; rozpínání ředí;
-- bitově stejný výsledek na 1 a na 4 vláknech;
+- bitově stejný výsledek na 1 a na 4 vláknech, řídce i hustě (řídce
+  i stejné dlaždice);
+- řídká mřížka: se všemi dlaždicemi vzorkuje bitově stejně jako hustá (i meze
+  pro MacCormack), drží jen své dlaždice, při přeskládání zachová hodnoty
+  dlaždic, které zůstaly; stěny MAC mají první vrstvu další dlaždice; tlak
+  na dlaždicích uprostřed větší mřížky konverguje a mimo ně je 0; sloup
+  kouře v široké doméně zabere nejvýš třetinu buněk a kouře je stejně jako
+  v husté (±1 %, naměřeno 0,01 %) a ve stejné výšce (±1 cm); bez plynu
+  nezůstane žádná dlaždice;
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
