@@ -349,6 +349,7 @@ if(PG_BUILD_GUI)
     tools/prototype/SimViewport.cpp
     tools/prototype/SimWorkspace.cpp
     tools/prototype/Theme.cpp
+    tools/prototype/Wedge.cpp
     tools/prototype/Widgets.cpp)
 endif()
 add_executable(prototype ${PG_TOOL_SOURCES})

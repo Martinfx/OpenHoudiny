@@ -224,6 +224,25 @@ void SimWorkspace::paramMenu(int id, const sim::ParamDef& p) {
         setMessage("Copied ch(\"../" + n->name + "/" + p.name + "\"): paste it into an expression (fx)");
     }
     ImGui::SetItemTooltip("ch(\"../node/param\"), for an expression of another parameter");
+    if ((p.kind == sim::ParamKind::Float || p.kind == sim::ParamKind::Int) && !editingAsset()) {
+        const bool busy = wedge_.running() || bake_.running();
+        if (ImGui::MenuItem("Wedge\xe2\x80\xa6", nullptr, false, compiled_.ok && !busy)) {
+            const float now = net_.param(id, p.name)[0];
+            wedgeNode_ = id;
+            wedgeParam_ = p.name;
+            // Round what it is: half of it to half as much again, or the
+            // slider's run when it is 0.
+            wedgeFrom_ = now != 0.0f ? std::clamp(now * 0.5f, p.lo, p.hi) : p.min;
+            wedgeTo_ = now != 0.0f ? std::clamp(now * 1.5f, p.lo, p.hi) : p.max;
+            wedgeCount_ = 4;
+            wedgeFolder_ = (fs::path(outputFolder()) / (stem() + "_wedge_" + n->name + "_" + p.name)).string();
+            wedgeError_.clear();
+            wedgeOpen_ = true;
+        }
+        ImGui::SetItemTooltip(busy ? "A bake or a wedge is running"
+                                   : "Bakes the simulation with this parameter at several values, one after another, "
+                                     "at the full resolution -- to choose between them by looking");
+    }
 }
 
 void SimWorkspace::assetOverview() {

@@ -442,8 +442,8 @@ src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                             přivrácených ploch (depth peeling), složené s plynem na paprsku
 tests/           59 testů jádra (invarianty, SOP uzly) + 27 pro jazyk a výrazy + 7 pro
                  digital assets + 10 pro topologii, smyčky a vaření na pozadí + 25 pro shader graf + 86 pro simulaci, vodu, déšť, objekty,
-                 modely, geometrii v síti a animaci + 11 pro cache a export + 10 pro checkpointy
-                 a náhled + 5 pro JPEG a video
+                 modely, geometrii v síti a animaci + 11 pro cache a export + 11 pro checkpointy,
+                 náhled a profil + 5 pro JPEG a video
 bench/           měření tvrzení, o která se architektura opírá
 cli/             headless demo, export OBJ
 tools/prototype/  prototype — editor se dvěma sítěmi, simulací (výchozí) a shadery,
@@ -452,7 +452,8 @@ tools/prototype/  prototype — editor se dvěma sítěmi, simulací (výchozí)
                  (SimGeometry); digital assets: vstup dovnitř a zpět, Make Asset,
                  promote (SimAssets); cache na disk a export (SimRunner: snímky v paměti
                  i čtené z disku podle potřeby, menu); bake na pozadí jako vlastní proces
-                 s průběhem, zrušením a pokračováním z checkpointu (Bake); render
+                 s průběhem, zrušením a pokračováním z checkpointu (Bake); wedge -- varianty
+                 parametru, bake po bake (Wedge); profil kroku v přehledu; render
                  sekvencí a videa po snímcích s průběhem (RenderJob); kontext bez okna
                  pro příkazy (Offscreen: EGL, jinak skryté okno GLFW);
                  příkazy list/gen/check/render/sim (sim --cache/--from-cache/--export, video,

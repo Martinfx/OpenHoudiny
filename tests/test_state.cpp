@@ -198,3 +198,27 @@ TEST(checkpoint_file_holds_the_state_whole) {
     CHECK(!fs::exists(sim::checkpointFile(folder.string()) + ".part"));
     fs::remove_all(folder);
 }
+
+TEST(profile_says_where_the_time_of_a_step_went) {
+    sim::WorldSolver solver(sim::preview(exampleWorld("demolition"), 0.25f));
+    for (int f = 0; f < 3; ++f) solver.step();
+    const sim::Frame f = solver.capture();
+    const sim::Frame::Profile& p = f.profile;
+    CHECK(p.gas > 0.0f);
+    CHECK(p.rigid > 0.0f);
+    CHECK_EQ(p.water, 0.0f);
+    CHECK_EQ(p.rain, 0.0f);
+    // The gas's stages are its time -- all but what goes round them.
+    float stages = 0.0f;
+    for (const float s : p.gasStages) {
+        CHECK(s >= 0.0f);
+        stages += s;
+    }
+    CHECK(stages <= p.gas * 1.01f + 0.5f);
+    CHECK(stages >= p.gas * 0.5f);
+    // Kept in memory, not in the cache.
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(sim::formatFrame(f), back, error));
+    CHECK_EQ(back.profile.total(), 0.0f);
+}

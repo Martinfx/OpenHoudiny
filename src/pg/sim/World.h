@@ -90,6 +90,8 @@ public:
     bool loadState(std::string_view bytes, std::string& error);
 
     const World& world() const { return world_; }
+    /// Where the time of the last step went (Frame::Profile).
+    const Frame::Profile& profile() const { return profile_; }
     int frame() const { return frame_; }
     float time() const { return time_; }
     PyroSolver* gas() { return gas_.get(); }
@@ -107,6 +109,7 @@ private:
     void prepare();
 
     World world_;
+    Frame::Profile profile_;  // of the last step
     std::unique_ptr<PyroSolver> gas_;
     std::unique_ptr<LiquidSolver> water_;
     std::unique_ptr<RainSolver> rain_;

@@ -3,6 +3,7 @@
 #include "pg/sim/State.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -42,11 +43,51 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     if (world_.hasRigid) rigid_ = std::make_unique<RigidSolver>(world_.rigid);
 }
 
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+float msSince(Clock::time_point t0) {
+    return std::chrono::duration<float, std::milli>(Clock::now() - t0).count();
+}
+
+}  // namespace
+
 void WorldSolver::step() {
+    profile_ = Frame::Profile();
+    const PyroSolver::Times before = gas_ ? gas_->times() : PyroSolver::Times();
+    Clock::time_point t0 = Clock::now();
     prepare();
-    if (gas_) gas_->step();
-    if (water_) water_->step();
-    if (rain_) rain_->step(water_.get());
+    profile_.scenes = msSince(t0) - profile_.rigid;
+    if (gas_) {
+        t0 = Clock::now();
+        gas_->step();
+        profile_.gas = msSince(t0);
+    }
+    if (water_) {
+        t0 = Clock::now();
+        water_->step();
+        profile_.water = msSince(t0);
+    }
+    if (rain_) {
+        t0 = Clock::now();
+        rain_->step(water_.get());
+        profile_.rain = msSince(t0);
+    }
+    if (gas_) {
+        // The stages, this step's: the solids found when the pieces moved
+        // (setScene) among them -- their time counted in the gas's, not the
+        // scenes'.
+        const PyroSolver::Times& now = gas_->times();
+        const double stages[8] = {now.solids - before.solids,   now.tiles - before.tiles,
+                                  now.emit - before.emit,       now.advect - before.advect,
+                                  now.combust - before.combust, now.forces - before.forces,
+                                  now.project - before.project, now.dissipate - before.dissipate};
+        for (int s = 0; s < 8; ++s) profile_.gasStages[s] = static_cast<float>(stages[s]);
+        const float solidsInScenes = std::min(profile_.scenes, static_cast<float>(stages[0]));
+        profile_.scenes -= solidsInScenes;
+        profile_.gas += solidsInScenes;
+    }
     ++frame_;
     time_ += world_.timeStep;
 }
@@ -61,7 +102,9 @@ void WorldSolver::prepare() {
             rigid_->setColliders(now.rigid.colliders);
             rigid_->setGuide(now.rigid.guide, now.rigid.solver.guideStrength);
         }
+        const auto t0 = Clock::now();
         rigid_->step();
+        profile_.rigid = msSince(t0);
     }
     const RigidScene& rigid = world_.rigid;
     const bool piecesIntoGas = rigid_ && (rigid.intoGas || rigid.dustIntoGas);
@@ -214,6 +257,7 @@ Frame WorldSolver::capture() const {
     if (rigid_) f.rigid = rigid_->capture();
     f.number = frame_;
     f.time = time_;
+    f.profile = profile_;
     return f;
 }
 

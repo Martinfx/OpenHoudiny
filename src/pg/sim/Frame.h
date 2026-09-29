@@ -104,6 +104,16 @@ struct Frame {
     RainFrame rain;       ///< empty without rain
     RigidFrame rigid;     ///< empty without rigid bodies
     double stepMs = 0.0;  ///< how long the step to it took
+    /// Where the time of that step went, milliseconds: each part -- the
+    /// pieces, what goes between them and the rest (their colliders and
+    /// dust into the scenes), the gas, the water, the rain -- and the gas's
+    /// stages, as PyroSolver::Times names them. Kept in memory, not in the
+    /// cache: a frame read back has none.
+    struct Profile {
+        float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, water = 0.0f, rain = 0.0f;
+        float gasStages[8] = {};  ///< solids, tiles, emit, advect, combust, forces, project, dissipate
+        float total() const { return rigid + scenes + gas + water + rain; }
+    } profile;
 
     size_t bytes() const {
         return sizeof(Frame) + fields.size() * sizeof(uint16_t) + gasTiles.size() * sizeof(uint32_t) + water.bytes() +

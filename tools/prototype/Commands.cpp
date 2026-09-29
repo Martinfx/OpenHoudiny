@@ -956,6 +956,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     int plateErrors = 0;
     std::string last, lastExport;
     int simulated = 0;  // frames stepped here -- after the checkpoint, when resumed
+    sim::Frame::Profile spent;  // where the time of the steps went, summed
     for (int f = solver ? resumed + 1 : first; f <= frames; ++f) {
         const bool inRange = f >= first;  // before --start: simulated, cached, not drawn or exported
         bool draws = false;
@@ -966,6 +967,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         // The frame: simulated -- and taken when something wants it -- or read.
         if (solver) {
             solver->step();
+            const sim::Frame::Profile& p = solver->profile();
+            spent.rigid += p.rigid;
+            spent.scenes += p.scenes;
+            spent.gas += p.gas;
+            spent.water += p.water;
+            spent.rain += p.rain;
+            for (int s = 0; s < 8; ++s) spent.gasStages[s] += p.gasStages[s];
             if (draws || !o.cacheDir.empty() || (inRange && !o.exportPattern.empty())) {
                 current = std::make_shared<const sim::Frame>(solver->capture());
             }
@@ -1170,6 +1178,34 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     } else {
         std::printf("%s: %d frames%s read from %s; reading %.1f ms/frame\n", network.c_str(), passed, range.c_str(),
                     o.fromCache.c_str(), simulating / std::max(stepped, 1));
+    }
+    // Where the time went -- what to make faster, or coarser.
+    if (solver && simulated > 0 && spent.total() > 0.0f) {
+        const double all = spent.total();
+        auto share = [&](float ms) { return 100.0 * ms / all; };
+        std::string line = "time:";
+        auto add = [&](const char* name, float ms, bool there) {
+            if (!there) return;
+            char text[64];
+            std::snprintf(text, sizeof text, " %s %.0f%%", name, share(ms));
+            line += text;
+        };
+        add("pieces", spent.rigid, world.hasRigid);
+        add("into scenes", spent.scenes, world.hasRigid);
+        add("gas", spent.gas, world.hasGas);
+        if (world.hasGas) {
+            static const char* stages[8] = {"solids", "tiles", "emit", "advect", "combust", "forces", "project", "dissipate"};
+            line += " (";
+            for (int s = 0; s < 8; ++s) {
+                char text[48];
+                std::snprintf(text, sizeof text, "%s%s %.0f%%", s ? ", " : "", stages[s], share(spent.gasStages[s]));
+                line += text;
+            }
+            line += ")";
+        }
+        add("water", spent.water, world.hasWater);
+        add("rain", spent.rain, world.hasRain);
+        std::printf("%s\n", line.c_str());
     }
     if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());
     if (exports > 0) std::printf("exported %d frames of geometry, the last %s\n", exports, lastExport.c_str());

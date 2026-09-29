@@ -1495,9 +1495,14 @@ void SimWorkspace::networkOverview() {
                 ImGui::SetItemTooltip("Simulation > Preview Resolution; a bake is at the full resolution");
             }
             if (bake_.running() || bake_.ended()) bakePanel();
+            if (wedge_.any()) wedgePanel();
         } else {
             ImGui::TextColored(theme::vec(theme::kRed), "Nothing to simulate yet.");
         }
+    }
+    if (compiled_.ok) {
+        const std::shared_ptr<const sim::Frame> f = frameToShow();
+        if (f && f->profile.total() > 0.0f && ui::section("Profile", false)) profilePanel(*f);
     }
     if (!compiled_.problems.empty() && ui::section("Problems")) {
         for (size_t i = 0; i < compiled_.problems.size(); ++i) {
@@ -1753,7 +1758,7 @@ void SimWorkspace::menus() {
         }
         ImGui::SetItemTooltip("The gas and the water on grids half as fine: quick to work on. A bake is always at the "
                               "full resolution.");
-        if (ImGui::MenuItem("Bake to Disk\xe2\x80\xa6", nullptr, false, compiled_.ok && !bake_.running())) {
+        if (ImGui::MenuItem("Bake to Disk\xe2\x80\xa6", nullptr, false, compiled_.ok && !bake_.running() && !wedge_.running())) {
             files_.openFolder("Bake into a folder", true,
                               bakeFolder_.empty() ? (fs::path(outputFolder()) / (stem() + "_bake")).string() : bakeFolder_);
             fileAction_ = FileAction::Bake;
@@ -1761,11 +1766,13 @@ void SimWorkspace::menus() {
         ImGui::SetItemTooltip("Simulates every frame at the full resolution in a process of its own, into a cache "
                               "folder: the editor stays free and plays the frames as they land. The state is saved "
                               "every %d frames: a bake cut short goes on from there (Resume Bake).", kCheckpointEvery);
-        const bool resumable = !bake_.running() && compiled_.ok && Bake::canResume(bakeFolder_, net_.save());
+        const bool resumable = !bake_.running() && !wedge_.running() && compiled_.ok && Bake::canResume(bakeFolder_, net_.save());
         if (ImGui::MenuItem("Resume Bake", nullptr, false, resumable)) startBake(bakeFolder_, true);
         ImGui::SetItemTooltip("Goes on with the bake cut short, from its last checkpoint.");
         if (ImGui::MenuItem("Cancel Bake", nullptr, false, bake_.running())) bake_.cancel();
         ImGui::SetItemTooltip("Stops the bake: the frames written stay, and its last checkpoint.");
+        if (ImGui::MenuItem("Cancel Wedge", nullptr, false, wedge_.running())) wedge_.cancel();
+        ImGui::SetItemTooltip("A wedge starts from a parameter: right click on its name, Wedge...");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Add")) {
@@ -1832,6 +1839,7 @@ void SimWorkspace::helpMenu() {
 void SimWorkspace::popups() {
     job_.draw();
     makeAssetDialog();
+    wedgeDialog();
     std::string chosen;
     if (!files_.draw(chosen)) return;
     switch (fileAction_) {
@@ -1936,6 +1944,9 @@ std::string SimWorkspace::status() const {
                   static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), runner_->full() ? " full" : "", step);
     std::string line = text;
     if (preview_) line += "  \xc2\xb7  preview";
+    if (wedge_.running()) {
+        line += "  \xc2\xb7  wedge " + std::to_string(wedge_.baking() + 1) + " / " + std::to_string(wedge_.variants().size());
+    }
     if (bake_.running()) {
         line += "  \xc2\xb7  baking " + std::to_string(bake_.progress().frames) + " / " + std::to_string(bake_.frames());
         if (bake_.secondsLeft() > 0.0) line += ", " + Bake::duration(bake_.secondsLeft()) + " left";
@@ -2267,6 +2278,19 @@ bool SimWorkspace::startBake(const std::string& target, bool resume) {
 }
 
 void SimWorkspace::pollBake() {
+    if (wedge_.poll()) {
+        const auto& variants = wedge_.variants();
+        const int done = static_cast<int>(std::count_if(variants.begin(), variants.end(), [](const Wedge::Variant& v) {
+            return v.state == Wedge::Variant::State::Done;
+        }));
+        if (!wedge_.running()) {
+            const std::string text = "Wedge of " + wedge_.nodeName() + "." + wedge_.param() + ": " + std::to_string(done) +
+                                     " of " + std::to_string(variants.size()) + " variants baked into " +
+                                     shownPath(wedge_.root()) + " -- Show plays one";
+            setMessage(text, done < static_cast<int>(variants.size()));
+            notify(text, wedge_.root(), false, true);
+        }
+    }
     const bool was = bake_.running();
     bake_.poll();
     if (!runner_->folder().empty()) runner_->refresh();
@@ -2310,6 +2334,175 @@ void SimWorkspace::bakePanel() {
     } else {
         ImGui::Text("Bake        %d frames in %s", of, Bake::duration(bake_.seconds()).c_str());
     }
+}
+
+void SimWorkspace::profilePanel(const sim::Frame& f) {
+    const sim::Frame::Profile& p = f.profile;
+    const float total = std::max(p.total(), 1e-3f);
+    ImGui::TextDisabled("The step to frame %d: %.0f ms", f.number, static_cast<double>(p.total()));
+    auto bar = [&](const char* name, float ms, float of, bool inner) {
+        if (ms <= 0.0f && inner) return;
+        char text[64];
+        std::snprintf(text, sizeof text, "%.0f ms  %.0f %%", static_cast<double>(ms), 100.0 * ms / of);
+        ImGui::TextUnformatted(inner ? "   " : "");
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextUnformatted(name);
+        ImGui::SameLine(theme::px(110.0f));
+        ImGui::ProgressBar(std::clamp(ms / of, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f), text);
+    };
+    if (compiled_.world.hasRigid) {
+        bar("Pieces", p.rigid, total, false);
+        bar("Into scenes", p.scenes, total, false);
+    }
+    if (compiled_.world.hasGas) {
+        bar("Gas", p.gas, total, false);
+        static const char* stages[8] = {"solids", "tiles", "emit", "advect", "combust", "forces", "project", "dissipate"};
+        for (int s = 0; s < 8; ++s) bar(stages[s], p.gasStages[s], total, true);
+    }
+    if (compiled_.world.hasWater) bar("Water", p.water, total, false);
+    if (compiled_.world.hasRain) bar("Rain", p.rain, total, false);
+    ui::note("Of the whole step. Frames read from disk say nothing: a bake's time is in its bake.log.");
+}
+
+void SimWorkspace::wedgeDialog() {
+    if (wedgeOpen_) {
+        ImGui::OpenPopup("Wedge");
+        wedgeOpen_ = false;
+    }
+    if (!ImGui::BeginPopupModal("Wedge", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const sim::Node* n = net_.node(wedgeNode_);
+    const sim::NodeType* t = n ? sim::findNodeType(n->type) : nullptr;
+    const sim::ParamDef* def = nullptr;
+    for (size_t i = 0; t && i < t->params.size(); ++i) {
+        if (t->params[i].name == wedgeParam_) def = &t->params[i];
+    }
+    if (!def) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+    const bool whole = def->kind == sim::ParamKind::Int;
+    ImGui::Text("%s \xc2\xb7 %s", n->name.c_str(), def->label);
+    ImGui::TextDisabled("A bake a value, one after another, at the full resolution: %d frames each.", compiled_.frames);
+    ImGui::Spacing();
+    const char* format = whole ? "%.0f" : "%.3g";
+    // The names before the fields.
+    auto label = [](const char* text) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(text);
+        ImGui::SameLine();
+    };
+    label("From");
+    ImGui::SetNextItemWidth(theme::px(100.0f));
+    ImGui::InputFloat("##from", &wedgeFrom_, 0.0f, 0.0f, format);
+    ImGui::SameLine();
+    label("to");
+    ImGui::SetNextItemWidth(theme::px(100.0f));
+    ImGui::InputFloat("##to", &wedgeTo_, 0.0f, 0.0f, format);
+    ImGui::SameLine();
+    label("in");
+    ImGui::SetNextItemWidth(theme::px(100.0f));
+    ImGui::InputInt("##count", &wedgeCount_);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("variants");
+    wedgeCount_ = std::clamp(wedgeCount_, 2, 16);
+    wedgeFrom_ = std::clamp(wedgeFrom_, def->lo, def->hi);
+    wedgeTo_ = std::clamp(wedgeTo_, def->lo, def->hi);
+    const std::vector<float> values = Wedge::values(wedgeFrom_, wedgeTo_, wedgeCount_, whole);
+    std::string list;
+    for (const float v : values) {
+        char text[32];
+        std::snprintf(text, sizeof text, whole ? "%.0f" : "%.4g", static_cast<double>(v));
+        list += (list.empty() ? "" : ", ") + std::string(text);
+    }
+    ImGui::TextDisabled("Values: %s", list.c_str());
+    label("Folder");
+    ImGui::SetNextItemWidth(theme::px(460.0f));
+    ImGui::InputText("##folder", &wedgeFolder_);
+    ImGui::SetItemTooltip("A folder a variant goes into under it, and wedge.txt saying which value each holds");
+    if (!wedgeError_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kRed));
+        ImGui::TextUnformatted(wedgeError_.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Bake the Wedge", ImVec2(theme::px(140.0f), 0.0f))) {
+        std::string error;
+        if (wedge_.start(net_, wedgeNode_, wedgeParam_, values, wedgeFolder_, folder(), compiled_.frames, error)) {
+            wedgeShown_ = -1;
+            setMessage("Baking " + std::to_string(values.size()) + " variants of " + n->name + "." + wedgeParam_ +
+                       " into " + shownPath(wedgeFolder_) + ", one after another");
+            ImGui::CloseCurrentPopup();
+        } else {
+            wedgeError_ = error;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(theme::px(120.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void SimWorkspace::wedgePanel() {
+    const auto& variants = wedge_.variants();
+    ImGui::Text("Wedge       %s.%s", wedge_.nodeName().c_str(), wedge_.param().c_str());
+    ImGui::SetItemTooltip("%s", wedge_.root().c_str());
+    for (size_t i = 0; i < variants.size(); ++i) {
+        const Wedge::Variant& v = variants[i];
+        ImGui::PushID(static_cast<int>(i));
+        char value[48];
+        std::snprintf(value, sizeof value, "  %s %-8.4g", static_cast<int>(i) == wedgeShown_ ? "\xe2\x96\xb6" : " ",
+                      static_cast<double>(v.value));
+        ImGui::TextUnformatted(value);
+        ImGui::SameLine(theme::px(110.0f));
+        using S = Wedge::Variant::State;
+        const bool baking = v.state == S::Baking;
+        if (baking) {
+            const sim::CacheInfo& p = wedge_.bake().progress();
+            char line[64];
+            std::string left = wedge_.bake().secondsLeft() > 0.0 ? ", " + Bake::duration(wedge_.bake().secondsLeft()) + " left"
+                                                                   : std::string();
+            std::snprintf(line, sizeof line, "%d / %d%s", p.frames, wedge_.frames(), left.c_str());
+            ImGui::ProgressBar(static_cast<float>(p.frames) / static_cast<float>(std::max(1, wedge_.frames())),
+                               ImVec2(theme::px(200.0f), 0.0f), line);
+        } else if (v.state == S::Done) {
+            ImGui::TextDisabled("%-26s", ("baked in " + Bake::duration(v.seconds)).c_str());
+        } else if (v.state == S::Failed) {
+            ImGui::TextColored(theme::vec(theme::kRed), "%-26s", "failed");
+            ImGui::SetItemTooltip("%s", v.why.c_str());
+        } else {
+            ImGui::TextDisabled("%-26s", v.state == S::Waiting ? "waiting" : "cancelled");
+        }
+        if (v.state == S::Done || baking) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Show")) showVariant(i);
+            ImGui::SetItemTooltip("Its value into the parameter, its frames played from its folder");
+        }
+        ImGui::PopID();
+    }
+    if (wedge_.running()) {
+        if (ImGui::SmallButton("Cancel Wedge")) wedge_.cancel();
+        ImGui::SetItemTooltip("Stops the variant baking and those waiting; what is baked stays");
+    }
+}
+
+void SimWorkspace::showVariant(size_t i) {
+    const auto& variants = wedge_.variants();
+    if (i >= variants.size() || !net_.node(wedge_.node())) return;
+    const Wedge::Variant& v = variants[i];
+    net_.setParam(wedge_.node(), wedge_.param(), sim::ParamValue{v.value, 0.0f, 0.0f});
+    recompile();
+    if (!compiled_.ok) return;
+    runner_->stream(compiled_.world, compiled_.frames, v.folder);
+    cacheFolder_ = v.folder;
+    wedgeShown_ = static_cast<int>(i);
+    shown_.reset();
+    viewDirty_ = true;
+    char value[32];
+    std::snprintf(value, sizeof value, "%g", static_cast<double>(v.value));
+    setMessage("Variant " + std::to_string(i + 1) + ": " + wedge_.nodeName() + "." + wedge_.param() + " = " + value +
+               ", its frames from " + shownPath(v.folder));
 }
 
 void SimWorkspace::chooseExport(int id, bool frames) {

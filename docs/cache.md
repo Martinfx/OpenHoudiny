@@ -190,6 +190,61 @@ later = net.simulate(preview=0.5)
 later.load_state(state)                  # další step() je snímek po checkpointu
 ```
 
+### Wedge: varianty parametru
+
+Když se ladí vzhled simulace, porovnává se víc verzí najednou. Pravé
+tlačítko na názvu číselného parametru › **Wedge…** nabídne rozsah (výchozí
+je polovina až jedenapůlnásobek hodnoty) a počet variant (2 až 16). Editor
+je pak spočítá jednu po druhé, každou jako bake v plném rozlišení do vlastní
+složky. Stejně to dělá Wedge TOP v Houdini.
+
+![Wedge síly turbulence táboráku: tři varianty 1.75, 3.5 a 5.25, každá spočítaná za minutu a čtvrt, s tlačítkem Show; oznámení „3 of 3 variants baked“](img/editor-wedge.jpg)
+
+```
+campfire_wedge_turbulence_strength/
+  wedge.txt          pgwedge 1 / node turbulence / param strength /
+                     variant strength_1 1.75 / variant strength_2 3.5 / ...
+  strength_1/        cache jako z Bake to Disk (network.pgsim, bake.log, snímky)
+  strength_2/ ...
+```
+
+V přehledu je u každé varianty průběh, čas bake a tlačítko **Show**. To
+dá hodnotu varianty do parametru a přehraje její snímky z disku. Variantu
+lze pustit, i když se ještě peče. **Cancel Wedge** zastaví rozpečenou
+variantu i ty, které čekají. Hotové varianty zůstanou.
+
+Z příkazové řádky jde totéž smyčkou přes `--set`:
+
+```bash
+for s in 1.75 3.5 5.25; do
+  ./build/prototype sim campfire - --cache wedge/strength_$s --set turbulence.strength=$s
+done
+```
+
+### Profil: kam jde čas kroku
+
+Sekce **Profile** v přehledu simulace (zavřená, klikem se otevře) ukáže
+u snímku na obrazovce, kolik milisekund zabraly jednotlivé části kroku:
+
+- trosky (Jolt) a jejich převod do scén ostatních (překážky, prach);
+- plyn a jeho fáze: překážky, dlaždice, zdroje, advekce, hoření, síly,
+  tlak, útlum;
+- voda a déšť.
+
+![Profil kroku odstřelu: trosky 1 %, plyn 99 %, z toho advekce 51 %, tlak 21 %, překážky 12 %, síly 11 %](img/editor-profile.png)
+
+Příkazová řádka vypíše totéž průměrně za celý běh, i do `bake.log`:
+
+```
+demolition: simulated, gas 88 x 48 x 88 cells, 60 frames; simulation 48.3 ms/frame
+time: pieces 4% into scenes 0% gas 96% (solids 6%, tiles 1%, emit 2%, advect 50%, combust 0%, forces 11%, project 25%, dissipate 0%)
+```
+
+Z profilu je vidět, co zrychlovat nebo zhrubit. U prachu odstřelu to
+není tlak, ale advekce (MacCormack pro kouř, teplotu a rychlost). Profil
+se drží jen v paměti. Snímek přečtený z disku ho nemá a formát cache se
+nemění.
+
 ## 4. Export
 
 | přípona | co zapíše | kdo to čte |
@@ -301,6 +356,8 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 | `src/pg/sim/World.h` | `WorldSolver::saveState` / `loadState` (tělesa se spočítají znovu), `preview` |
 | `tools/prototype/SimRunner.h` | `stream`: snímky čtené z disku podle potřeby, nejdéle nepoužité uvolní; `refresh` najde nové od bake; `adopt`: snímky v paměti |
 | `tools/prototype/Bake.h` | proces bake (`posix_spawn`), průběh, odhad, zrušení, `canResume` |
+| `tools/prototype/Wedge.h` | wedge: fronta bake, jeden na hodnotu parametru, `wedge.txt` |
+| `src/pg/sim/Frame.h` | `Frame::Profile`: kam šel čas kroku (části, fáze plynu); `WorldSolver::profile` |
 | `tools/prototype/SimWorkspace.cpp` | menu, dialogy, uložení, načtení, export |
 | `tools/prototype/Widgets.h` | `FileBrowser::openFolder`: výběr složky (i nové) |
 
@@ -326,12 +383,13 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 - složka cache s `cache.txt` (fps 30, ne 29.999998) a hash sítě bez poloh
   uzlů.
 
-`tests/test_state.cpp`, 10 testů: pokračování z checkpointu bitově stejné
+`tests/test_state.cpp`, 11 testů: pokračování z checkpointu bitově stejné
 jako nepřerušená simulace (řídký a hustý plyn, zdroj v pohybu, voda, déšť
 na vodě, odstřel s prachem; každý snímek po obnovení porovnaný jako bajty
 cache), odmítnutí stavu jiné mřížky, jiných částí světa, useknutého kdekoli
 a stavu pro řešič, který už krokoval; náhled mění jen mřížky; `cache.txt`
-s průběhem tam a zpět; checkpoint na disku přepsaný celý. Python:
+s průběhem tam a zpět; checkpoint na disku přepsaný celý; profil kroku
+(části, fáze plynu v rámci jeho času, v cache se neukládá). Python:
 `save_state` / `load_state` a `preview` (`tests/python/test_pg.py`).
 
 ## 8. Omezení

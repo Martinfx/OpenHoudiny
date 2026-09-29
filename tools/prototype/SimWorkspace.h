@@ -34,6 +34,7 @@
 #include "NodeCanvas.h"
 #include "RenderJob.h"
 #include "SimRunner.h"
+#include "Wedge.h"
 #include "Workspace.h"
 
 #include "pg/gl/Volume.h"
@@ -218,6 +219,15 @@ private:
     void pollBake();
     /// How far it has got, in the Simulation panel.
     void bakePanel();
+    /// Where the time of the step to frame `f` went.
+    void profilePanel(const sim::Frame& f);
+    /// The wedge dialog: a parameter's values to bake a variant each.
+    void wedgeDialog();
+    /// The wedge's variants, how far each has got, and Show.
+    void wedgePanel();
+    /// Plays variant `i` of the wedge: its value into the parameter, its
+    /// frames from its folder.
+    void showVariant(size_t i);
     /// The dialog that exports geometry node `id`'s geometry: at the frame
     /// on screen, or at every frame cached (`frames`).
     void chooseExport(int id, bool frames);
@@ -406,6 +416,15 @@ private:
     Bake bake_;
     std::string bakeFolder_;   ///< where the last bake went
     double bakePolled_ = 0.0;  ///< when the bake and the frames on disk were last looked at (ImGui time)
+    Wedge wedge_;
+    bool wedgeOpen_ = false;   ///< the wedge dialog is to open
+    int wedgeNode_ = 0;        ///< ... for this node's
+    std::string wedgeParam_;   ///< ... parameter
+    float wedgeFrom_ = 0.0f, wedgeTo_ = 1.0f;
+    int wedgeCount_ = 4;
+    std::string wedgeFolder_;
+    std::string wedgeError_;
+    int wedgeShown_ = -1;      ///< the variant played; -1: none
 
     // Rendering.
     RenderJob job_;
