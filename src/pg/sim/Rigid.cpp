@@ -99,6 +99,51 @@ struct UnionFind {
     }
 };
 
+/// Quaternions x, y, z, w: `a` after `b`.
+Vec4 turnAfter(const Vec4& a, const Vec4& b) {
+    return Vec4(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+                a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
+}
+
+/// `v` turned by the unit quaternion `q`: v + 2 w (u x v) + 2 u x (u x v).
+Vec3 turned(const Vec4& q, const Vec3& v) {
+    const Vec3 u(q.x, q.y, q.z);
+    const Vec3 t = cross(u, v) * 2.0f;
+    return v + t * q.w + cross(u, t);
+}
+
+Vec4 unitTurn(const Vec4& q) {
+    const float n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return n > 1e-20f ? Vec4(q.x / n, q.y / n, q.z / n, q.w / n) : Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+/// The turn that takes points at rest nearest to where they have been
+/// moved, as a rigid body can: `spread` sums, over the points, where each
+/// is moved to from the middle of those times where it rests from theirs
+/// -- (moved - middle)(rest - middle)^T, column by column. From `from` on,
+/// turned the way the spread still asks until it asks nothing more (Müller,
+/// Bender, Chentanez and Macklin 2016: the rotational part of a
+/// deformation).
+Vec4 bestTurn(const Vec3 spread[3], Vec4 from) {
+    Vec4 q = unitTurn(from);
+    for (int i = 0; i < 64; ++i) {
+        const Vec3 axes[3] = {turned(q, Vec3(1.0f, 0.0f, 0.0f)), turned(q, Vec3(0.0f, 1.0f, 0.0f)),
+                              turned(q, Vec3(0.0f, 0.0f, 1.0f))};
+        Vec3 spin;
+        float along = 0.0f;
+        for (int c = 0; c < 3; ++c) {
+            spin += cross(axes[c], spread[c]);
+            along += dot(axes[c], spread[c]);
+        }
+        spin = spin * (1.0f / (std::fabs(along) + 1e-20f));
+        const float angle = length(spin);
+        if (!(angle > 1e-7f)) break;
+        const Vec3 axis = spin * (std::sin(0.5f * angle) / angle);
+        q = unitTurn(turnAfter(Vec4(axis.x, axis.y, axis.z, std::cos(0.5f * angle)), q));
+    }
+    return q;
+}
+
 }  // namespace
 
 std::vector<int32_t> pieceOfPrimitives(const Geometry& pieces, const std::string& attribute, int& count) {
@@ -143,6 +188,88 @@ std::vector<int32_t> pieceOfPrimitives(const Geometry& pieces, const std::string
     }
     number(roots);
     return out;
+}
+
+RigidGuideRest rigidGuideRest(const Geometry& pieces, const std::string& attribute) {
+    RigidGuideRest r;
+    int count = 0;
+    const std::vector<int32_t> piece = pieceOfPrimitives(pieces, attribute, count);
+    // Each point's piece: that of the first primitive that has it.
+    r.pieceOfPoint.assign(pieces.pointCount(), -1);
+    for (size_t p = 0; p < pieces.primitiveCount(); ++p) {
+        for (const uint32_t i : pieces.primitivePoints(p)) {
+            if (r.pieceOfPoint[i] < 0) r.pieceOfPoint[i] = piece[p];
+        }
+    }
+    r.points = pieces.pointCount();
+    const auto at = pieces.positions();
+    std::vector<double> sums(static_cast<size_t>(count) * 4, 0.0);
+    for (size_t i = 0; i < r.pieceOfPoint.size(); ++i) {
+        if (r.pieceOfPoint[i] < 0) continue;
+        double* s = sums.data() + 4 * static_cast<size_t>(r.pieceOfPoint[i]);
+        for (int a = 0; a < 3; ++a) s[a] += at[i][a];
+        s[3] += 1.0;
+    }
+    r.middle.resize(static_cast<size_t>(count));
+    for (size_t k = 0; k < r.middle.size(); ++k) {
+        const double* s = sums.data() + 4 * k;
+        const double w = s[3] > 0.0 ? 1.0 / s[3] : 0.0;
+        r.middle[k] = Vec3(static_cast<float>(s[0] * w), static_cast<float>(s[1] * w), static_cast<float>(s[2] * w));
+    }
+    return r;
+}
+
+std::shared_ptr<const RigidGuide> rigidGuide(const Geometry& pieces, const RigidGuideRest& rest, const Geometry& guide) {
+    if (guide.pointCount() != pieces.pointCount() || pieces.pointCount() == 0 || rest.points != pieces.pointCount()) {
+        return nullptr;
+    }
+    const size_t count = rest.middle.size();
+    const auto at = pieces.positions(), moved = guide.positions();
+    // Where each piece's points are moved to on average; how they spread
+    // there against how they spread at rest.
+    std::vector<double> sums(count * 4, 0.0);
+    for (size_t i = 0; i < rest.pieceOfPoint.size(); ++i) {
+        if (rest.pieceOfPoint[i] < 0) continue;
+        double* s = sums.data() + 4 * static_cast<size_t>(rest.pieceOfPoint[i]);
+        for (int a = 0; a < 3; ++a) s[a] += moved[i][a];
+        s[3] += 1.0;
+    }
+    std::vector<Vec3> movedMiddle(count);
+    for (size_t k = 0; k < count; ++k) {
+        const double* s = sums.data() + 4 * k;
+        const double w = s[3] > 0.0 ? 1.0 / s[3] : 0.0;
+        movedMiddle[k] = Vec3(static_cast<float>(s[0] * w), static_cast<float>(s[1] * w), static_cast<float>(s[2] * w));
+    }
+    std::vector<double> spread(count * 9, 0.0);
+    for (size_t i = 0; i < rest.pieceOfPoint.size(); ++i) {
+        if (rest.pieceOfPoint[i] < 0) continue;
+        const size_t k = static_cast<size_t>(rest.pieceOfPoint[i]);
+        const Vec3 a = moved[i] - movedMiddle[k], b = at[i] - rest.middle[k];
+        double* m = spread.data() + 9 * k;
+        for (int col = 0; col < 3; ++col) {
+            for (int row = 0; row < 3; ++row) m[3 * col + row] += static_cast<double>(a[row]) * b[col];
+        }
+    }
+    auto out = std::make_shared<RigidGuide>();
+    out->pieces.resize(count);
+    for (size_t k = 0; k < count; ++k) {
+        RigidPose& pose = out->pieces[k];
+        if (sums[4 * k + 3] <= 0.0) continue;  // nothing to it: where it rests
+        const double* m = spread.data() + 9 * k;
+        Vec3 columns[3];
+        for (int col = 0; col < 3; ++col) {
+            columns[col] = Vec3(static_cast<float>(m[3 * col]), static_cast<float>(m[3 * col + 1]),
+                                static_cast<float>(m[3 * col + 2]));
+        }
+        pose.rotation = bestTurn(columns, Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        pose.position = movedMiddle[k] - turned(pose.rotation, rest.middle[k]);
+    }
+    return out;
+}
+
+std::shared_ptr<const RigidGuide> rigidGuide(const Geometry& pieces, const Geometry& guide, const std::string& attribute) {
+    if (guide.pointCount() != pieces.pointCount() || pieces.pointCount() == 0) return nullptr;
+    return rigidGuide(pieces, rigidGuideRest(pieces, attribute), guide);
 }
 
 std::vector<Vec3> rigidPositions(const Geometry& pieces) {
@@ -1527,31 +1654,6 @@ JPH::Quat quaternionOf(const Rotation& r) {
     return m.GetQuaternion().Normalized();
 }
 
-/// The turn that takes points at rest nearest to where they have been
-/// moved, as a rigid body can: `spread` sums, over the points, where each
-/// is moved to from the middle of those times where it rests from theirs
-/// -- (moved - middle)(rest - middle)^T, column by column. From `from` on,
-/// turned the way the spread still asks until it asks nothing more (Müller,
-/// Bender, Chentanez and Macklin 2016: the rotational part of a
-/// deformation).
-JPH::Quat bestTurn(const Vec3 spread[3], JPH::QuatArg from) {
-    JPH::Quat q = from.Normalized();
-    for (int i = 0; i < 32; ++i) {
-        const Vec3 axes[3] = {ours(q * JPH::Vec3::sAxisX()), ours(q * JPH::Vec3::sAxisY()), ours(q * JPH::Vec3::sAxisZ())};
-        Vec3 spin;
-        float along = 0.0f;
-        for (int c = 0; c < 3; ++c) {
-            spin += cross(axes[c], spread[c]);
-            along += dot(axes[c], spread[c]);
-        }
-        spin = spin * (1.0f / (std::fabs(along) + 1e-20f));
-        const float angle = length(spin);
-        if (!(angle > 1e-7f)) break;
-        q = (JPH::Quat::sRotation(jolt(spin * (1.0f / angle)), angle) * q).Normalized();
-    }
-    return q;
-}
-
 Rotation rotationOf(JPH::QuatArg q) {
     Rotation r;
     r.x = ours(q * JPH::Vec3::sAxisX());
@@ -1663,12 +1765,13 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         Vec3 centre;                            ///< the middle of its box, at rest
         float guideWeight = 1.0f;               ///< how much the guide leads it (attribute guide)
         bool guided = false;                    ///< the guide still leads it
-        std::vector<uint32_t> points;           ///< its points, in the pieces' geometry
-        Vec3 middle;                            ///< ... where they are on average, at rest
+        int32_t guidePiece = 0;                 ///< its piece, as a guide numbers them (pieceOfPrimitives)
+        float points = 0.0f;                    ///< how many points it has
+        Vec3 middle;                            ///< where they are on average, at rest
+        Vec3 scatter[3];                        ///< how they spread about it: sum (p - middle)(p - middle)^T
     };
     std::vector<Piece> pieces;
-    std::vector<Vec3> rest;                     ///< the pieces' points, at rest
-    std::shared_ptr<const Geometry> guide;      ///< where the next step is to take them; null: nowhere
+    std::shared_ptr<const RigidGuide> guide;    ///< where the next step is to take them; null: nowhere
     float guideStrength = 1.0f;                 ///< how hard, this step
     std::vector<JPH::BodyID> still;             ///< each still piece's body
     std::vector<int> dirty;                     ///< pieces whose glue broke: their clusters come apart
@@ -2039,40 +2142,45 @@ struct RigidSolver::Impl : public JPH::ContactListener {
     /// the place taking its pieces' points at rest nearest to the guide's,
     /// the body's own turn now where the search starts. False without a
     /// guide.
+    /// Where the guide has a piece's points on average.
+    Vec3 guidedMiddle(const Piece& p) const {
+        const size_t k = static_cast<size_t>(p.guidePiece);
+        return guide && k < guide->pieces.size() ? guide->pieces[k].apply(p.middle) : p.middle;
+    }
+
     bool guidedPose(const Cluster& c, JPH::Quat& turn, Vec3& place) const {
         if (!guide) return false;
-        const std::span<const Vec3> G = guide->positions();
-        double from[3] = {0.0, 0.0, 0.0}, to[3] = {0.0, 0.0, 0.0};
-        size_t count = 0;
+        // Its pieces' points -- by their count, middles and spreads -- at
+        // rest and where the guide turns and moves each piece.
+        double n = 0.0, from[3] = {0.0, 0.0, 0.0}, to[3] = {0.0, 0.0, 0.0};
         for (const int k : c.pieces) {
-            for (const uint32_t i : pieces[static_cast<size_t>(k)].points) {
-                for (int a = 0; a < 3; ++a) {
-                    from[a] += rest[i][a];
-                    to[a] += G[i][a];
-                }
-                ++count;
+            const Piece& p = pieces[static_cast<size_t>(k)];
+            const Vec3 there = guidedMiddle(p);
+            for (int a = 0; a < 3; ++a) {
+                from[a] += static_cast<double>(p.points) * p.middle[a];
+                to[a] += static_cast<double>(p.points) * there[a];
             }
+            n += p.points;
         }
-        if (count == 0) return false;
-        const Vec3 restMiddle(static_cast<float>(from[0] / count), static_cast<float>(from[1] / count),
-                              static_cast<float>(from[2] / count));
-        const Vec3 guideMiddle(static_cast<float>(to[0] / count), static_cast<float>(to[1] / count),
-                               static_cast<float>(to[2] / count));
-        double spread[3][3] = {};
-        for (const int k : c.pieces) {
-            for (const uint32_t i : pieces[static_cast<size_t>(k)].points) {
-                const Vec3 a = G[i] - guideMiddle, b = rest[i] - restMiddle;
-                for (int col = 0; col < 3; ++col) {
-                    for (int row = 0; row < 3; ++row) spread[col][row] += static_cast<double>(a[row]) * b[col];
-                }
-            }
-        }
+        if (n <= 0.0) return false;
+        const Vec3 restMiddle(static_cast<float>(from[0] / n), static_cast<float>(from[1] / n),
+                              static_cast<float>(from[2] / n));
+        const Vec3 guideMiddle(static_cast<float>(to[0] / n), static_cast<float>(to[1] / n),
+                               static_cast<float>(to[2] / n));
+        // The spread of the moved against the rest: each piece's own, turned
+        // as the guide turns it, and that of its middle about the body's.
         Vec3 columns[3];
-        for (int col = 0; col < 3; ++col) {
-            columns[col] = Vec3(static_cast<float>(spread[col][0]), static_cast<float>(spread[col][1]),
-                                static_cast<float>(spread[col][2]));
+        for (const int k : c.pieces) {
+            const Piece& p = pieces[static_cast<size_t>(k)];
+            if (p.points <= 0.0f) continue;
+            const size_t g = static_cast<size_t>(p.guidePiece);
+            const Vec4 q = g < guide->pieces.size() ? guide->pieces[g].rotation : Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            const Vec3 a = guidedMiddle(p) - guideMiddle, b = p.middle - restMiddle;
+            for (int col = 0; col < 3; ++col) columns[col] += turned(q, p.scatter[col]) + a * (p.points * b[col]);
         }
-        turn = bestTurn(columns, physics.GetBodyInterfaceNoLock().GetRotation(c.id));
+        const JPH::Quat now = physics.GetBodyInterfaceNoLock().GetRotation(c.id);
+        const Vec4 best = bestTurn(columns, Vec4(now.GetX(), now.GetY(), now.GetZ(), now.GetW()));
+        turn = JPH::Quat(best.x, best.y, best.z, best.w);
         place = guideMiddle - ours(turn * jolt(restMiddle));
         return true;
     }
@@ -2132,17 +2240,13 @@ struct RigidSolver::Impl : public JPH::ContactListener {
             if (p.guided && (over || p.gone || (s.guideLetGo && p.looseAt >= 0.0f))) p.guided = false;
         }
         if (!guide || s.guideReach <= 0.0f) return;
-        const std::span<const Vec3> G = guide->positions();
         for (const Cluster& c : clusters) {
             if (!c.alive) continue;
             bool far = false;
             for (const int k : c.pieces) {
                 const Piece& p = pieces[static_cast<size_t>(k)];
-                if (!p.guided || p.points.empty()) continue;
-                Vec3 there;
-                for (const uint32_t i : p.points) there += G[i];
-                there = there * (1.0f / static_cast<float>(p.points.size()));
-                if (length(whereNow(k, p.middle) - there) > s.guideReach) {
+                if (!p.guided || p.points <= 0.0f) continue;
+                if (length(whereNow(k, p.middle) - guidedMiddle(p)) > s.guideReach) {
                     far = true;
                     break;
                 }
@@ -2738,7 +2842,8 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     // has it, when they carry one; what their attributes say.
     const std::vector<Vec3> P = rigidPositions(*geo);
     const std::span<const Vec3> at = geo->positions();
-    m.rest.assign(at.begin(), at.end());
+    int pieceCount = 0;
+    const std::vector<int32_t> pieceOf = pieceOfPrimitives(*geo, scene_.attribute, pieceCount);
     const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
@@ -2778,11 +2883,24 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         piece.size = piece.hulls.empty() ? 0.0f : std::max(length(hi - lo), 0.01f);
         piece.centre = piece.hulls.empty() ? Vec3() : (lo + hi) * 0.5f;
         if (piece.hulls.empty()) piece.gone = true;  // nothing to it
-        // Its points, as a guide moves them, and where they are on average.
+        // What a guide moves it by: its piece, and its points -- how many,
+        // where on average, how they spread about that.
         piece.guideWeight = std::clamp(numberOf(*geo, L, body, "guide", 1.0f), 0.0f, 1.0f);
-        for (const std::vector<uint32_t>& part : L.parts[k]) piece.points.insert(piece.points.end(), part.begin(), part.end());
-        std::sort(piece.points.begin(), piece.points.end());
-        piece.points.erase(std::unique(piece.points.begin(), piece.points.end()), piece.points.end());
+        piece.guidePiece = L.prims[k].empty() ? 0 : pieceOf[L.prims[k].front()];
+        {
+            std::vector<uint32_t> points;
+            for (const std::vector<uint32_t>& part : L.parts[k]) points.insert(points.end(), part.begin(), part.end());
+            std::sort(points.begin(), points.end());
+            points.erase(std::unique(points.begin(), points.end()), points.end());
+            Vec3 sum;
+            for (const uint32_t i : points) sum += at[i];
+            piece.points = static_cast<float>(points.size());
+            piece.middle = points.empty() ? piece.centre : sum * (1.0f / piece.points);
+            for (const uint32_t i : points) {
+                const Vec3 d = at[i] - piece.middle;
+                for (int col = 0; col < 3; ++col) piece.scatter[col] += d * d[col];
+            }
+        }
         if (meshes && !piece.hulls.empty()) {
             // Its triangles at rest, for the water and the gas.
             Geometry one;
@@ -2891,12 +3009,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     }
     // The guide: what it leads -- the pieces that move, as much as they say.
     setGuide(scene_.guide, s.guideStrength);
-    for (Impl::Piece& p : m.pieces) {
-        Vec3 sum;
-        for (const uint32_t i : p.points) sum += m.rest[i];
-        p.middle = p.points.empty() ? p.centre : sum * (1.0f / static_cast<float>(p.points.size()));
-        p.guided = m.guide && p.moves && !p.gone && p.guideWeight > 0.0f;
-    }
+    for (Impl::Piece& p : m.pieces) p.guided = m.guide && p.moves && !p.gone && p.guideWeight > 0.0f;
     m.physics.OptimizeBroadPhase();
 }
 
@@ -2917,11 +3030,9 @@ void RigidSolver::setColliders(const std::vector<Collider>& colliders) {
     }
 }
 
-void RigidSolver::setGuide(std::shared_ptr<const Geometry> guide, float strength) {
+void RigidSolver::setGuide(std::shared_ptr<const RigidGuide> guide, float strength) {
     Impl& m = *impl_;
-    // The pieces' points, moved: as many of them -- else it guides nothing.
-    const bool fits = guide && guide->pointCount() == m.rest.size() && !m.rest.empty();
-    m.guide = fits ? std::move(guide) : nullptr;
+    m.guide = std::move(guide);
     m.guideStrength = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
 }
 
@@ -3185,7 +3296,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
 RigidSolver::~RigidSolver() = default;
 size_t RigidSolver::pieceCount() const { return 0; }
 void RigidSolver::setColliders(const std::vector<Collider>&) {}
-void RigidSolver::setGuide(std::shared_ptr<const Geometry>, float) {}
+void RigidSolver::setGuide(std::shared_ptr<const RigidGuide>, float) {}
 void RigidSolver::step() {}
 RigidFrame RigidSolver::capture() const {
     RigidFrame f;

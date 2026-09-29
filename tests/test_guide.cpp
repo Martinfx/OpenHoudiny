@@ -90,7 +90,7 @@ TEST(guide_a_body_goes_where_the_guide_has_it_and_stays_there) {
     const auto guide = moved(*box, [](const Vec3& p) { return turnedAboutY(p, 90.0f) + Vec3(2.0f, 1.0f, 0.0f); });
     RigidScene scene;
     scene.pieces = box;
-    scene.guide = guide;
+    scene.guide = rigidGuide(*box, *guide);
     RigidSolver solver(scene);
     for (int i = 0; i < 10; ++i) solver.step();
     CHECK(offBy(solver.capture().poses[0], *box, *guide) < 0.02f);
@@ -103,12 +103,16 @@ TEST(guide_a_body_goes_where_the_guide_has_it_and_stays_there) {
     RigidSolver free(scene);
     for (int i = 0; i < 30; ++i) free.step();
     CHECK(length(free.capture().poses[0].position) < 0.01f);
-    // A guide that is not the pieces moved -- other points -- leads nothing.
-    scene.guide = together({boxPiece(Vec3(2.0f, 1.5f, 0.0f), Vec3(1.0f), 0, true),
-                            boxPiece(Vec3(4.0f, 1.5f, 0.0f), Vec3(1.0f), 1, true)});
-    RigidSolver wrong(scene);
-    for (int i = 0; i < 30; ++i) wrong.step();
-    CHECK(length(wrong.capture().poses[0].position) < 0.01f);
+    // A guide that is not the pieces moved -- other points -- is none.
+    CHECK(rigidGuide(*box, *together({boxPiece(Vec3(2.0f, 1.5f, 0.0f), Vec3(1.0f), 0, true),
+                                      boxPiece(Vec3(4.0f, 1.5f, 0.0f), Vec3(1.0f), 1, true)})) == nullptr);
+    // What it keeps: where it has each piece, turned and moved from rest.
+    const auto kept = rigidGuide(*box, *guide);
+    CHECK(kept && kept->pieces.size() == 1u);
+    if (kept && !kept->pieces.empty()) {
+        const auto a = box->positions(), b = guide->positions();
+        for (size_t i = 0; i < a.size(); ++i) CHECK(near(kept->pieces[0].apply(a[i]), b[i], 1e-4f));
+    }
 }
 
 TEST(guide_a_body_follows_a_guide_that_moves_and_lags_when_led_softly) {
@@ -125,13 +129,13 @@ TEST(guide_a_body_follows_a_guide_that_moves_and_lags_when_led_softly) {
     auto run = [&](float strength) {
         RigidScene scene;
         scene.pieces = box;
-        scene.guide = guideAt(1);
+        scene.guide = rigidGuide(*box, *guideAt(1));
         scene.solver.guideStrength = strength;
         RigidSolver solver(scene);
         float worst = 0.0f;
         for (int frame = 1; frame <= 60; ++frame) {
             const auto guide = guideAt(frame);
-            solver.setGuide(guide, strength);
+            solver.setGuide(rigidGuide(*box, *guide), strength);
             solver.step();
             if (frame > 10) worst = std::max(worst, offBy(solver.capture().poses[0], *box, *guide));
         }
@@ -150,7 +154,7 @@ TEST(guide_lets_the_bodies_go_after_its_time_or_when_they_are_too_far) {
     // Until half a second: then the box falls back to the floor.
     RigidScene scene;
     scene.pieces = box;
-    scene.guide = up;
+    scene.guide = rigidGuide(*box, *up);
     scene.solver.guideUntil = 0.5f;
     RigidSolver timed(scene);
     for (int i = 0; i < 15; ++i) timed.step();
@@ -164,12 +168,12 @@ TEST(guide_lets_the_bodies_go_after_its_time_or_when_they_are_too_far) {
     auto run = [&](float reach) {
         RigidScene s;
         s.pieces = box;
-        s.guide = down;
+        s.guide = rigidGuide(*box, *down);
         s.solver.guideStrength = 0.5f;
         s.solver.guideReach = reach;
         RigidSolver solver(s);
         for (int i = 0; i < 15; ++i) solver.step();
-        solver.setGuide(up, 0.5f);
+        solver.setGuide(rigidGuide(*box, *up), 0.5f);
         for (int i = 0; i < 60; ++i) solver.step();
         return solver.capture().poses[0].position.y;
     };
@@ -189,7 +193,7 @@ TEST(guide_lets_go_of_a_piece_whose_glue_breaks) {
     auto run = [&](bool letGo) {
         RigidScene s;
         s.pieces = pieces;
-        s.guide = moved(*pieces, [](const Vec3& p) { return p + Vec3(0.0f, 1.0f, 0.0f); });
+        s.guide = rigidGuide(*pieces, *moved(*pieces, [](const Vec3& p) { return p + Vec3(0.0f, 1.0f, 0.0f); }));
         s.solver.glue = 1e7f;
         s.solver.guideLetGo = letGo;
         RigidSolver solver(s);
@@ -218,7 +222,7 @@ TEST(guide_leads_each_piece_as_much_as_its_attribute_says) {
     setFloat(still, "guide", 1.0f);
     RigidScene s;
     s.pieces = together({led, not_, still});
-    s.guide = moved(*s.pieces, [](const Vec3& p) { return p + Vec3(0.0f, 1.0f, 0.0f); });
+    s.guide = rigidGuide(*s.pieces, *moved(*s.pieces, [](const Vec3& p) { return p + Vec3(0.0f, 1.0f, 0.0f); }));
     RigidSolver solver(s);
     for (int i = 0; i < 30; ++i) solver.step();
     const RigidFrame f = solver.capture();
@@ -273,8 +277,13 @@ TEST(guide_rbd_solver_takes_the_guide_at_every_frame) {
     CHECK(!c.world.animation.empty());
     const World& last = c.world.at(20);
     CHECK(last.rigid.guide != nullptr && last.rigid.guide != r.guide);
-    if (last.rigid.guide && r.pieces) {
-        CHECK(near(last.rigid.guide->positions()[0], r.pieces->positions()[0] + Vec3(0.0f, 2.0f, 0.0f), 1e-4f));
+    if (last.rigid.guide) {
+        // Each of the six pieces two metres up, not turned.
+        CHECK_EQ(last.rigid.guide->pieces.size(), 6u);
+        for (const RigidPose& p : last.rigid.guide->pieces) {
+            CHECK(near(p.position, Vec3(0.0f, 2.0f, 0.0f), 1e-4f));
+            CHECK(std::fabs(p.rotation.w) > 1.0f - 1e-6f);
+        }
     }
     WorldSolver sim(c.world);
     for (int i = 0; i < 20; ++i) sim.step();

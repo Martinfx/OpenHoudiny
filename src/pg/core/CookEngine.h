@@ -82,7 +82,10 @@ private:
 
 class CookEngine {
 public:
-    static constexpr size_t kDefaultBudget = 256ull * 1024 * 1024;
+    /// Room for the chain of a heavy geometry -- a million points of broken
+    /// concrete, each node charged all it holds, shared or not -- and the
+    /// frames of what is animated below it.
+    static constexpr size_t kDefaultBudget = 2048ull * 1024 * 1024;
 
     explicit CookEngine(size_t cacheBudgetBytes = kDefaultBudget);
 

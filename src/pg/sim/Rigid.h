@@ -155,6 +155,8 @@ struct RigidSettings {
     bool operator==(const RigidSettings&) const = default;
 };
 
+struct RigidGuide;
+
 struct RigidScene {
     RigidSettings solver;
     /// The pieces as they stand; compared by pointer -- another geometry,
@@ -169,11 +171,9 @@ struct RigidScene {
     /// place of those found where the pieces touch. Null: those. Compared
     /// by pointer, as the pieces are.
     std::shared_ptr<const Geometry> constraints;
-    /// The pieces as they are to move: the same points, in the same order,
-    /// moved -- where they are to be at the end of the first step. Null, or
-    /// not as many points as the pieces: nothing leads them. Compared by
-    /// pointer.
-    std::shared_ptr<const Geometry> guide;
+    /// Where the guide has the pieces at the end of the first step
+    /// (rigidGuide). Null: nothing leads them. Compared by pointer.
+    std::shared_ptr<const RigidGuide> guide;
     std::vector<Collider> colliders;   ///< the objects: still, or moving (velocity, spin)
     bool intoGas = false;              ///< the pieces are colliders of the gas
     bool intoWater = false;            ///< ... of the water
@@ -406,6 +406,34 @@ std::vector<Vec3> rigidPositions(const Geometry& pieces);
 /// or of what touches what when it has none. The count in `count`.
 std::vector<int32_t> pieceOfPrimitives(const Geometry& pieces, const std::string& attribute, int& count);
 
+/// Where a guide has the pieces: each piece -- numbered as
+/// pieceOfPrimitives numbers them -- turned and moved from where it rests,
+/// the nearest a rigid piece comes to its points in the guide. A few bytes
+/// a piece, whatever the points: a frame keeps it, not the guide's geometry.
+struct RigidGuide {
+    std::vector<RigidPose> pieces;  ///< position and rotation of each; velocity and spin unused
+
+    bool operator==(const RigidGuide&) const = default;
+};
+
+/// The guide the geometry `guide` gives the pieces: their points moved --
+/// as many, in the same order. Null when it is not that.
+std::shared_ptr<const RigidGuide> rigidGuide(const Geometry& pieces, const Geometry& guide,
+                                             const std::string& attribute = "piece");
+
+/// The pieces a guide reads -- what rigidGuide works out of them first, the
+/// same at every frame: each point's piece (-1 for none), how many pieces,
+/// and where each piece's points are on average at rest.
+struct RigidGuideRest {
+    std::vector<int32_t> pieceOfPoint;
+    std::vector<Vec3> middle;
+    size_t points = 0;
+};
+RigidGuideRest rigidGuideRest(const Geometry& pieces, const std::string& attribute = "piece");
+/// ... and the guide from that, frame after frame. Null when `guide` does
+/// not have as many points as the pieces.
+std::shared_ptr<const RigidGuide> rigidGuide(const Geometry& pieces, const RigidGuideRest& rest, const Geometry& guide);
+
 /// Whether this build has rigid bodies (it was built with Jolt).
 bool rigidAvailable();
 
@@ -430,7 +458,7 @@ public:
     void setColliders(const std::vector<Collider>& colliders);
     /// Where the guide has the pieces at the end of the next step, and how
     /// hard it steers them then (RigidSettings::guideStrength).
-    void setGuide(std::shared_ptr<const Geometry> guide, float strength);
+    void setGuide(std::shared_ptr<const RigidGuide> guide, float strength);
     void step();
 
     const RigidScene& scene() const { return scene_; }

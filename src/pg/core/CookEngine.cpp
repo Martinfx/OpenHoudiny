@@ -2,6 +2,8 @@
 
 #include "pg/core/Parallel.h"
 
+#include <iterator>
+
 namespace pg {
 
 // --- CookCache -------------------------------------------------------------
@@ -78,7 +80,22 @@ void CookCache::insert(const CacheKey& key, const GeometryPtr& geo, size_t bytes
 
 void CookCache::evictToBudgetLocked() {
     // Never evict the entry that was just inserted: a single result larger than
-    // the whole budget must still be returnable.
+    // the whole budget must still be returnable. What one frame alone needs
+    // goes first, oldest first; what every frame needs -- a time-independent
+    // result upstream of something animated -- only after: otherwise an
+    // animated node downstream of heavy geometry pushes it out every frame,
+    // and every frame cooks it again.
+    if (used_ > budget_ && lru_.size() > 1) {
+        auto it = std::prev(lru_.end());
+        while (used_ > budget_ && it != lru_.begin()) {
+            const auto victim = it--;
+            if (victim->key.frame == kAnyFrame) continue;
+            used_ -= victim->bytes;
+            index_.erase(victim->key);
+            lru_.erase(victim);
+            ++evictions_;
+        }
+    }
     while (used_ > budget_ && lru_.size() > 1) {
         Entry& victim = lru_.back();
         used_ -= victim.bytes;

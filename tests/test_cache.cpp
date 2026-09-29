@@ -63,6 +63,26 @@ TEST(eviction_is_least_recently_used_and_respects_the_budget) {
     CHECK_NE(cache.find(k3), GeometryPtr());
 }
 
+TEST(what_one_frame_needs_is_evicted_before_what_every_frame_needs) {
+    // A time-independent result used long ago, and frames of an animated
+    // node after it: the frames go first, oldest first -- the result every
+    // frame needs stays, however long ago it was used.
+    CookCache cache(350);
+    const CacheKey still{fakeNode(1), 1, kAnyFrame};
+    cache.insert(still, somePoints(1), 100);
+    for (int f = 1; f <= 5; ++f) cache.insert(CacheKey{fakeNode(2), 1, f}, somePoints(1), 100);
+    CHECK(cache.memoryUsed() <= 350u);
+    CHECK_NE(cache.find(still), GeometryPtr());
+    CHECK_EQ(cache.find(CacheKey{fakeNode(2), 1, 1}), GeometryPtr());
+    CHECK_NE(cache.find(CacheKey{fakeNode(2), 1, 5}), GeometryPtr());
+    CHECK_NE(cache.find(CacheKey{fakeNode(2), 1, 4}), GeometryPtr());
+    // Time-independent results alone over the budget: least recently used first.
+    CookCache small(250);
+    for (uintptr_t i = 1; i <= 3; ++i) small.insert(CacheKey{fakeNode(i), 1, kAnyFrame}, somePoints(1), 100);
+    CHECK_EQ(small.find(CacheKey{fakeNode(1), 1, kAnyFrame}), GeometryPtr());
+    CHECK_NE(small.find(CacheKey{fakeNode(3), 1, kAnyFrame}), GeometryPtr());
+}
+
 TEST(an_entry_larger_than_the_whole_budget_is_still_returned) {
     CookCache cache(100);
     const CacheKey k{fakeNode(1), 1, kAnyFrame};

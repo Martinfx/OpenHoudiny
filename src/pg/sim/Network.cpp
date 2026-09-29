@@ -2988,6 +2988,7 @@ struct Network::CompileMemo {
     std::map<int, std::shared_ptr<const Geometry>> pieces;   // an RBD Solver's, by node
     std::map<int, std::shared_ptr<const Geometry>> rebar;    // ... and its bars
     std::map<int, std::shared_ptr<const Geometry>> constraints;  // ... and its network of glue
+    std::map<int, RigidGuideRest> guideRest;                     // ... and its pieces as a guide reads them
     std::unique_ptr<GeometryGraph> own;
     GeometryGraph* cooker = nullptr;
 };
@@ -3616,8 +3617,14 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                         "The guide has " + std::to_string(geo->pointCount()) + " points, the pieces " +
                             std::to_string(r.pieces->pointCount()) +
                             ": it must be the pieces moved -- as many points, in the same order. Nothing leads them.");
-            } else if (geo) {
-                r.guide = geo;
+            } else if (geo && r.pieces) {
+                // Kept as where it has each piece -- a few bytes a piece a
+                // frame, not the guide's points.
+                auto rest = memo.guideRest.find(solver->id);
+                if (rest == memo.guideRest.end()) {
+                    rest = memo.guideRest.emplace(solver->id, rigidGuideRest(*r.pieces, r.attribute)).first;
+                }
+                r.guide = rigidGuide(*r.pieces, rest->second, *geo);
                 const pg::Node* core = cooker->coreNode(from);
                 if (core && cooker->engine().isTimeDependent(*core)) c.guideMoves = true;
             }
