@@ -563,6 +563,11 @@ target_link_libraries(pgbench PRIVATE pgcore)
 add_executable(pgbench_rigid bench/bench_rigid.cpp)
 target_link_libraries(pgbench_rigid PRIVATE pgsim)
 target_compile_definitions(pgbench_rigid PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
+# The gas against step 5: the demolition's dust at the resolutions asked for,
+# where a step's time goes and how much of the domain the dust takes.
+add_executable(pgbench_pyro bench/bench_pyro.cpp)
+target_link_libraries(pgbench_pyro PRIVATE pgsim)
+target_compile_definitions(pgbench_pyro PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
 
 add_executable(pgdemo cli/demo_main.cpp)
 target_link_libraries(pgdemo PRIVATE pgcore)

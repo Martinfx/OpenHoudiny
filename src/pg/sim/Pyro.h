@@ -96,6 +96,15 @@ public:
     /// not solid, in 1/s: what project() removes.
     double meanDivergence() const;
 
+    /// Milliseconds each stage has taken, summed over the steps since the
+    /// domain was made -- where the time of a step goes. `solids`: finding
+    /// the cells the colliders take, whenever they change.
+    struct Times {
+        double solids = 0.0, emit = 0.0, advect = 0.0, combust = 0.0, forces = 0.0, project = 0.0, dissipate = 0.0;
+        double total() const { return solids + emit + advect + combust + forces + project + dissipate; }
+    };
+    const Times& times() const { return times_; }
+
 private:
     void updateSolids();
     /// Zero velocity on every face the gas cannot flow through: at solids,
@@ -131,6 +140,7 @@ private:
     std::vector<std::array<Grid, 3>> noise_;  // a turbulence force's coarse lattices
     int frame_ = 0;
     float time_ = 0.0f;
+    Times times_;
 };
 
 /// Transmittance from each cell towards a light: exp(-optical depth) through

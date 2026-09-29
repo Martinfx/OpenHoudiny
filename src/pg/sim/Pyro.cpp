@@ -4,10 +4,24 @@
 #include "pg/sim/Shared.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
 namespace pg::sim {
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+/// Adds the milliseconds since `t0` to `ms`, and starts again.
+void lap(Clock::time_point& t0, double& ms) {
+    const Clock::time_point now = Clock::now();
+    ms += std::chrono::duration<double, std::milli>(now - t0).count();
+    t0 = now;
+}
+
+}  // namespace
 
 using detail::faceOffset;
 using detail::forEachCell;
@@ -52,6 +66,7 @@ void PyroSolver::reset() {
     noise_.assign(scene_.forces.size(), {});
     frame_ = 0;
     time_ = 0.0f;
+    times_ = Times{};
     updateSolids();
 }
 
@@ -62,6 +77,7 @@ Vec3 PyroSolver::worldAt(float x, float y, float z) const {
 }
 
 void PyroSolver::updateSolids() {
+    Clock::time_point t0 = Clock::now();
     solid_.fill(0.0f);
     anySolid_ = false;
     if (!scene_.colliders.empty()) {
@@ -148,6 +164,7 @@ void PyroSolver::updateSolids() {
         density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = 0.0f;
     }
     enforceWalls();
+    lap(t0, times_.solids);
 }
 
 bool PyroSolver::faceBlocked(int axis, int i, int j, int k) const {
@@ -181,12 +198,19 @@ void PyroSolver::step() {
     const int n = scene_.solver.substeps;
     const float dt = scene_.solver.timeStep / static_cast<float>(n);
     for (int s = 0; s < n; ++s) {
+        Clock::time_point t0 = Clock::now();
         emit(dt);
+        lap(t0, times_.emit);
         advect(dt);
+        lap(t0, times_.advect);
         combust(dt);
+        lap(t0, times_.combust);
         addForces(dt);
+        lap(t0, times_.forces);
         project();
+        lap(t0, times_.project);
         dissipate(dt);
+        lap(t0, times_.dissipate);
         time_ += dt;
     }
     ++frame_;
