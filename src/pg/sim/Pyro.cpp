@@ -334,8 +334,12 @@ void PyroSolver::step() {
     const float dt = scene_.solver.timeStep / static_cast<float>(n);
     for (int s = 0; s < n; ++s) {
         Clock::time_point t0 = Clock::now();
+        // New tiles find their solids again: that time is the solids', not
+        // the tiles'.
+        const double solids = times_.solids;
         updateTiles(dt);
         lap(t0, times_.tiles);
+        times_.tiles -= times_.solids - solids;
         emit(dt);
         lap(t0, times_.emit);
         advect(dt);

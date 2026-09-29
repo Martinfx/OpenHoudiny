@@ -311,15 +311,28 @@ skoro nehýbou (krok 5).
 
 ### Krok 5 — Měřítko
 
-- **Řídké mřížky a GPU** pro kouř a vodu — rozhraní `Grid` je malé právě
-  proto, aby šlo vyměnit; **upres**: jemná turbulence doplněná do hrubé
+- ✅ **Řídká mřížka pro kouř a oheň** ([docs/pyro.md §4](docs/pyro.md#řídká-mřížka-počítá-se-jen-tam-kde-je-plyn)):
+  pole v dlaždicích 8 × 8 × 8 buněk, jen tam, kde je plyn, a kolem, kam za
+  krok doletí; tlak multigridem jen na nich, mimo ně p = 0; snímky a cache
+  (verze 10) jen s dlaždicemi, kde plyn je. Se všemi dlaždicemi počítá
+  bitově stejně jako hustá mřížka. Buňky, které zabírají kusy, se hledají
+  jen v jejich obalech (dřív 40 % času prachu). Rozlišení až 1024.
+- **Řídká voda a GPU**; **upres**: jemná turbulence doplněná do hrubé
   simulace.
 - **Packed primitives, instance a out-of-core** — miliony kusů a data
   větší než paměť.
 - **Viewport pro velké cache**: zástupné tvary, přehrávání z disku.
 
 **Hotovo, když:** prach odstřelu má 100 milionů voxelů a spočítá se na
-jednom stroji přes noc.
+jednom stroji přes noc. **Splněno:** prach příkladu `demolition` s
+`--resolution 576` má doménu 576 × 312 × 576 = **103,5 milionu voxelů**
+(buňka 16 cm) a 180 snímků se spočítá za **20 minut** na 4 jádrech (6,6 s
+na snímek i s tuhými tělesy, `pgbench_pyro 576 --frames 180`), v nejvýš
+3,3 GB paměti, s renderem 5 GB. Počítá se přitom nejvýš 23 % domény
+(24 milionů voxelů, v nejhustším okamžiku); zbytek je stojící vzduch.
+Hustá mřížka by jen na pole potřebovala přes 10 GB.
+
+![Prach odstřelu ve 103,5 milionu voxelů: snímky 60, 90, 120 a 150](docs/img/demolition-576.jpg)
 
 ---
 

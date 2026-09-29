@@ -715,3 +715,51 @@ TEST(pyro_sparse_smoke_stays_where_its_gas_is) {
     for (int f = 0; f < 3; ++f) empty.step();
     CHECK_EQ(empty.activeCells(), 0u);
 }
+
+TEST(pyro_sparse_pressure_with_solids_converges_on_any_tiles) {
+    // Tiles of a crooked shape in a grid deep enough that its coarsest
+    // cells cover several tiles, some kept and some not, and a solid ball in
+    // it: every V-cycle takes the error well down, and nothing blows up.
+    const int n = 64;
+    const int tn = n / 8;
+    std::vector<uint8_t> state(static_cast<size_t>(tn * tn * tn), Tiles::Off);
+    for (int c = 0; c < tn; ++c) {
+        for (int b = 0; b < tn; ++b) {
+            for (int a = 0; a < tn; ++a) {
+                const bool l = (a >= 2 && a < 5 && b < 5 && c >= 1 && c < 4) || (a >= 2 && a < 7 && b < 2 && c >= 1 && c < 6);
+                if (l) state[static_cast<size_t>(a + tn * (b + tn * c))] = Tiles::Whole;
+            }
+        }
+    }
+    auto tiles = std::make_shared<const Tiles>(n, n, n, state, -1);
+    SparseGrid b(tiles), p(tiles), solid(tiles);
+    forEachCounted(*tiles, [&](int i, int j, int k, size_t c) {
+        const float dx = i - 28.0f, dy = j - 12.0f, dz = k - 20.0f;
+        if (dx * dx + dy * dy + dz * dz < 25.0f) solid.data()[c] = 1.0f;
+        else b.data()[c] = std::sin(0.37f * i * j + 1.1f * k) * std::cos(0.23f * k * j);
+    });
+    for (const bool floor : {false, true}) {
+        PoissonBoundary boundary;
+        boundary.closed[2] = floor;
+        boundary.solid = &solid;
+        PoissonSolver solver;
+        solver.setBoundary(boundary);
+        p.fill(0.0f);
+        const float h = 1.0f / n;
+        const double start = solver.residual(p, b, h);
+        double last = start;
+        double worst = 0.0;
+        for (int cycle = 0; cycle < 6; ++cycle) {
+            solver.solve(p, b, h, 1);
+            const double r = solver.residual(p, b, h);
+            CHECK(std::isfinite(r));
+            worst = std::max(worst, r / last);
+            last = r;
+        }
+        // Each cycle takes more than half of what is left (0.41 measured).
+        // Coarse cells half in the still air, as the dense solver would have
+        // them, took 0.55 here -- and in the dust of a demolition blew up.
+        CHECK(worst < 0.5);
+        CHECK(solver.levels() >= 5);
+    }
+}

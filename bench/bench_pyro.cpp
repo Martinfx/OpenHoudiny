@@ -6,7 +6,10 @@
 // and how much of the domain the dust and its air take: what a sparse grid,
 // which keeps only that, would store.
 //
-//   pgbench_pyro [RESOLUTION...] [--frames N] [--dense]
+//   pgbench_pyro [RESOLUTION...] [--frames N] [--dense] [--set PARAM=VALUE]... [--example NAME]
+//
+// --example steps another example's gas instead: its first Pyro Solver.
+// --set changes a parameter of that Pyro Solver.
 //
 #include "pg/core/Parallel.h"
 #include "pg/sim/Network.h"
@@ -72,20 +75,33 @@ Share share(const sim::PyroSolver& s, float slow) {
     return r;
 }
 
-bool bench(int resolution, int frames, bool sparse) {
+bool bench(const std::string& example, int resolution, int frames, bool sparse, const std::vector<std::string>& sets) {
     sim::Network net;
     std::string error;
-    if (!sim::Network::load(sim::Network::exampleText("demolition"), net, error)) {
-        std::printf("the demolition example did not load: %s\n", error.c_str());
+    if (!sim::Network::load(sim::Network::exampleText(example), net, error)) {
+        std::printf("the %s example did not load: %s\n", example.c_str(), error.c_str());
         return false;
     }
-    const sim::Node* dust = net.named("dust");
-    if (!dust) return false;
+    const sim::Node* dust = nullptr;
+    for (const sim::Node& n : net.nodes()) {
+        if (n.type == "pyro_solver") {
+            dust = &n;
+            break;
+        }
+    }
+    if (!dust) {
+        std::printf("the %s example has no Pyro Solver\n", example.c_str());
+        return false;
+    }
     net.setParam(dust->id, "resolution", std::to_string(resolution));
     net.setParam(dust->id, "sparse", sparse ? "1" : "0");
+    for (const std::string& set : sets) {
+        const size_t eq = set.find('=');
+        if (eq != std::string::npos) net.setParam(dust->id, set.substr(0, eq), set.substr(eq + 1));
+    }
     const sim::Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);
     if (!c.ok || !c.world.hasGas) {
-        std::printf("the demolition did not compile\n");
+        std::printf("the %s example did not compile\n", example.c_str());
         return false;
     }
     sim::WorldSolver world(c.world);
@@ -95,7 +111,8 @@ bool bench(int resolution, int frames, bool sparse) {
            std::to_string(d.cells[1]) + " x " + std::to_string(d.cells[2]) + " cells of " +
            std::to_string(d.voxel).substr(0, 5) + " m, " + std::to_string(d.cellCount() / 1000000) + "." +
            std::to_string(d.cellCount() / 100000 % 10) + " M voxels");
-    std::printf("  %5s %10s %10s %8s %8s %8s %8s\n", "frame", "gas ms", "world ms", "gas", "air", "worked", "MB");
+    std::printf("  %5s %10s %10s %8s %8s %8s %8s %8s\n", "frame", "gas ms", "world ms", "gas", "air", "worked", "MB",
+                "div 1/s");
     double gasMs = 0.0, worldMs = 0.0;
     sim::PyroSolver::Times before = gas.times();
     for (int f = 1; f <= frames; ++f) {
@@ -108,10 +125,11 @@ bool bench(int resolution, int frames, bool sparse) {
         gasMs += g;
         if (f % 10 == 0 || f == frames) {
             const Share s = share(gas, 0.05f);
-            std::printf("  %5d %10.0f %10.0f %7.1f%% %7.1f%% %7.1f%% %8.0f\n", f, g, ms,
+            std::printf("  %5d %10.0f %10.0f %7.1f%% %7.1f%% %7.1f%% %8.0f %8.4f\n", f, g, ms,
                         100.0 * static_cast<double>(s.gas) / static_cast<double>(s.tiles),
                         100.0 * static_cast<double>(s.moving) / static_cast<double>(s.tiles),
-                        100.0 * static_cast<double>(gas.activeCells()) / static_cast<double>(d.cellCount()), peakMb());
+                        100.0 * static_cast<double>(gas.activeCells()) / static_cast<double>(d.cellCount()), peakMb(),
+                        gas.meanDivergence());
         }
     }
     const sim::PyroSolver::Times& t = gas.times();
@@ -150,9 +168,13 @@ int main(int argc, char** argv) {
     std::vector<int> resolutions;
     int frames = 120;
     bool sparse = true;
+    std::string example = "demolition";
+    std::vector<std::string> sets;
     for (int a = 1; a < argc; ++a) {
         const std::string s = argv[a];
         if (s == "--frames" && a + 1 < argc) frames = std::max(1, std::atoi(argv[++a]));
+        else if (s == "--example" && a + 1 < argc) example = argv[++a];
+        else if (s == "--set" && a + 1 < argc) sets.push_back(argv[++a]);
         else if (s == "--dense") sparse = false;
         else resolutions.push_back(std::atoi(argv[a]));
     }
@@ -160,7 +182,7 @@ int main(int argc, char** argv) {
     std::printf("gas -- benchmarks\n");
     std::printf("hardware threads available: %u\n", TaskPool::instance().threadCount());
     for (const int r : resolutions) {
-        if (!bench(r, frames, sparse)) return 1;
+        if (!bench(example, r, frames, sparse, sets)) return 1;
     }
     return 0;
 }

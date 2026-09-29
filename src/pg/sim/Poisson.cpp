@@ -202,18 +202,20 @@ void PoissonSolver::build(const SparseGrid& fine, float h) {
         level.b = level.p;
         level.r = level.p;
         level.h = levelH;
-        // A coarse cell counts when any of its eight does.
+        // A coarse cell counts when all eight of its cells do: half in the
+        // still air, it would carry p = 0 half a coarse cell past where the
+        // finer level has it, and the corrections it sends up would miss --
+        // a solve that crawls, or blows up. (With every tile kept, every
+        // cell counts, as on a dense grid.)
         level.on.assign(level.p.size(), 0);
         const SparseGrid& finer = *g;
         const Counts& finerOn = *on;
         forEachCounted(*tiles, [&](int i, int j, int k, size_t c) {
             for (int q = 0; q < 8; ++q) {
                 const int fi = 2 * i + (q & 1), fj = 2 * j + ((q >> 1) & 1), fk = 2 * k + (q >> 2);
-                if (finer.stored(fi, fj, fk) && finerOn[finer.index(fi, fj, fk)]) {
-                    level.on[c] = 1;
-                    return;
-                }
+                if (!finer.stored(fi, fj, fk) || !finerOn[finer.index(fi, fj, fk)]) return;
             }
+            level.on[c] = 1;
         });
         if (solids) {
             // A coarse face is as open as the four fine faces it covers.
@@ -370,20 +372,25 @@ double PoissonSolver::residual(const SparseGrid& p, const SparseGrid& b, float h
     return cells ? sum / static_cast<double>(cells) : 0.0;
 }
 
-float PoissonSolver::faceOf(const SparseGrid& p, const Operator& op, int axis, int i, int j, int k) {
-    if (op.open.empty()) return op.a[axis].at(i, j, k);
-    // The cell above the face has it as its face below; else the cell below,
-    // as its face above.
+float PoissonSolver::faceOf(const SparseGrid& p, const Operator& op, int axis, int i, int j, int k) const {
     const int n = axis == 0 ? p.nx() : axis == 1 ? p.ny() : p.nz();
-    const int f = axis == 0 ? i : axis == 1 ? j : k;
-    if (f < n && p.stored(i, j, k)) {
-        const size_t c = p.index(i, j, k);
-        if (op.diagonal.shared() && (op.open[c] >> (2 * axis) & 1)) return 1.0f;
-        if (f == 0) return 0.0f;
+    const int f = axis == 0 ? i : axis == 1 ? j : k;  // face f: between cells f-1 and f
+    if (op.open.empty()) {
+        const SparseGrid& a = op.a[axis];
+        if (a.shared() && a.stored(i, j, k) && a.has(i, j, k)) return a.at(i, j, k);
+    } else {
+        // The cell above the face has it as its face below; else the cell
+        // below, as its face above.
+        if (f < n && p.stored(i, j, k)) return (op.open[p.index(i, j, k)] >> (2 * axis) & 1) ? 1.0f : 0.0f;
+        const int bi = i - (axis == 0), bj = j - (axis == 1), bk = k - (axis == 2);
+        if (f > 0 && p.stored(bi, bj, bk)) return (op.open[p.index(bi, bj, bk)] >> (2 * axis + 1) & 1) ? 1.0f : 0.0f;
     }
-    const int bi = i - (axis == 0), bj = j - (axis == 1), bk = k - (axis == 2);
-    if (f > 0 && p.stored(bi, bj, bk)) return (op.open[p.index(bi, bj, bk)] >> (2 * axis + 1) & 1) ? 1.0f : 0.0f;
-    return 0.0f;
+    // Between cells that do not count: the still air, as open as the sides
+    // of the box -- a coarse cell half in it meets p = 0 there, as its
+    // cells do, not a wall. (Walled in, a patch of cells has no pressure
+    // that solves it, and the sweeps blow up.)
+    const bool wall = (f == 0 && closed_[2 * axis]) || (f == n && closed_[2 * axis + 1]);
+    return wall ? 0.0f : 1.0f;
 }
 
 float PoissonSolver::faceOpen(int axis, int i, int j, int k) const {

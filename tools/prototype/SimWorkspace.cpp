@@ -8,6 +8,7 @@
 #include "pg/io/Video.h"
 #include "pg/sim/Asset.h"
 #include "pg/sim/Cache.h"
+#include "pg/sim/SparseGrid.h"
 
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -1427,6 +1428,14 @@ void SimWorkspace::networkOverview() {
                 domainLines("Gas", gas.sanitized().solver.domain());
                 ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", gas.emitters.size(),
                             gas.forces.size(), gas.colliders.size());
+                const std::shared_ptr<const sim::Frame> f = frameToShow();
+                if (f && !f->gasTiles.empty()) {
+                    const double held = static_cast<double>(f->gasTiles.size()) * sim::Tiles::kCells;
+                    ImGui::Text("With gas    %.2f million  (%.1f %%)", held / 1e6,
+                                100.0 * held / static_cast<double>(std::max<size_t>(f->domain.cellCount(), 1)));
+                    ImGui::SetItemTooltip("Sparse: the cells of the tiles of 8 \xc3\x97 8 \xc3\x97 8 this frame has gas in -- "
+                                          "all of the gas it keeps");
+                }
             }
             if (compiled_.world.hasWater) {
                 const sim::LiquidScene& water = compiled_.world.water;

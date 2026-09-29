@@ -3,6 +3,7 @@
 #include "pg/io/Obj.h"
 #include "pg/sim/SparseGrid.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -326,8 +327,12 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     f.time = in.f32();
     f.stepMs = in.f64();
     f.domain = in.domain();
-    // Every cell's -- or, sparse, the tiles' (version 10), which come last.
-    in.halvesAtMost(f.fields, 3 * f.domain.cellCount());
+    // Every cell's -- or, sparse, the tiles' (version 10), which come last:
+    // at most every tile, whole.
+    const size_t tileCount = static_cast<size_t>((f.domain.cells[0] + Tiles::kSide - 1) / Tiles::kSide) *
+                             static_cast<size_t>((f.domain.cells[1] + Tiles::kSide - 1) / Tiles::kSide) *
+                             static_cast<size_t>((f.domain.cells[2] + Tiles::kSide - 1) / Tiles::kSide);
+    in.halvesAtMost(f.fields, 3 * std::max(f.domain.cellCount(), Tiles::kCells * tileCount));
     WaterFrame& w = f.water;
     w.domain = in.domain();
     w.band = in.f32();
@@ -410,9 +415,6 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     }
     // The gas: every cell of its grid, or 512 for each of its tiles -- tiles
     // of the grid, in order.
-    const size_t tileCount = static_cast<size_t>((f.domain.cells[0] + Tiles::kSide - 1) / Tiles::kSide) *
-                             static_cast<size_t>((f.domain.cells[1] + Tiles::kSide - 1) / Tiles::kSide) *
-                             static_cast<size_t>((f.domain.cells[2] + Tiles::kSide - 1) / Tiles::kSide);
     bool gasFits = f.gasTiles.empty() ? f.fields.empty() || f.fields.size() == 3 * f.domain.cellCount()
                                       : f.fields.size() == 3 * Tiles::kCells * f.gasTiles.size();
     for (size_t t = 0; t < f.gasTiles.size() && gasFits; ++t) {

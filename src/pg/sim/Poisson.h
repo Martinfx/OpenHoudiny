@@ -91,8 +91,9 @@ private:
                          SparseGrid& r) const;
     void prolongAdd(const SparseGrid& coarse, SparseGrid& fine, const Counts& on) const;
     /// The coefficient of face (i, j, k) along `axis` of a level whose cells
-    /// are p's, and whose operator is `op`.
-    static float faceOf(const SparseGrid& p, const Operator& op, int axis, int i, int j, int k);
+    /// are p's, and whose operator is `op` -- open between cells that do
+    /// not count, but at a wall.
+    float faceOf(const SparseGrid& p, const Operator& op, int axis, int i, int j, int k) const;
 
     bool closed_[6] = {false, false, false, false, false, false};
     SparseGrid solid_;    // a copy of the mask, empty without solids

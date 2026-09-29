@@ -109,11 +109,12 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 359 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 17 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+./build/pgtests            # 365 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 97 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
 ctest --test-dir build -R python                   # 45 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna
+./build/pgbench_pyro 96 576 # prach odstřelu v rozlišeních: čas fází, paměť, kolik domény prach zabírá (--dense: hustě)
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
 ./build/prototype --example campfire               # příklad simulace: táborák
@@ -184,7 +185,9 @@ ze souborů OBJ, každý posunutý, pootočený a protažený), zdroje stejných
 tvarů (palivo, kouř, teplo, blikotání, pohyb, časové okno), síly (turbulence, vítr, vír,
 atraktor, odpor), řešič, vzhled a výstup. Řešič počítá proudění plynu na 3D mřížce: posunutá
 mřížka MAC, advekce MacCormack, hoření s rozpínáním, vorticity confinement
-a tlak přes multigrid, který zná podlahu i překážky. Vodu nesou částice
+a tlak přes multigrid, který zná podlahu i překážky. Mřížka je řídká jako
+v Sparse Pyro: počítají se jen dlaždice 8 × 8 × 8 buněk, kde je plyn, takže
+prach odstřelu ve 103,5 milionu voxelů trvá 20 minut. Vodu nesou částice
 (FLIP) a mřížka jí drží objem: tlak s volnou hladinou (ghost fluid, stěny
 částečně zakryté tělesy) řeší metoda sdružených gradientů s multigridem.
 Voda padá, tříští se, obtéká tělesa a plní nádrže; v obraze odráží oblohu

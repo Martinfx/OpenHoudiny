@@ -52,7 +52,9 @@ podle skutečných odstřelů:
   chodnících s obrubníky. Osm nejbližších je v plynu překážkami (Object
   box), takže prach teče ulicemi a přes nižší střechy; další řada domů
   za nimi dělá z bloku město až k okraji záběru.
-- **Prach**: Pyro Solver nad celým blokem (90 × 48 × 90 m, 176 buněk),
+- **Prach**: Pyro Solver nad celým blokem (90 × 48 × 90 m, 176 buněk,
+  řídce: počítají se jen dlaždice s prachem; `--resolution 576` dá
+  103,5 milionu voxelů a buňku 16 cm, [pyro.md §8](pyro.md#8-výkon-a-determinismus)),
   kusy jsou v něm pohyblivé překážky, prach je těžší než vzduch (`weight`)
   a Turbulence ho rozvíří; Volume Look ho barví do okrova se silným
   vlastním stínem.
@@ -1440,7 +1442,9 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   kusy jsou hotové předem.
 - **Detail prachu** je daný mřížkou plynu: v příkladu je buňka půl
   metru, takže oblak má tvar a stíny, ale ne jemné „květákové“ chuchvalce
-  produkčních simulací s desetinásobným rozlišením.
+  produkčních simulací. S `--resolution 576` (buňka 16 cm, 103,5 milionu
+  voxelů, 20 minut na 4 jádrech díky řídké mřížce) je jich v oblaku
+  mnohem víc; jemnější doplnění na hrubou simulaci (upres) zatím chybí.
 - **Jednosměrné vazby.** Kusy tlačí vodu a plyn, ale voda je nenadnáší a
   kouř je nebrzdí; kinematické překážky mají nekonečnou hmotu.
 - **Sklo bez lomu světla.** Tenká tabule posune obraz za sebou jen

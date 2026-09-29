@@ -1000,10 +1000,37 @@ překladač vloží přímo do smyčky hladiče a prodlužování z hrubé mří
 jemnou se dělá odděleně po osách. Předchozí verze bez překážek potřebovala
 17 ms.
 
+### Prach odstřelu: hustě a řídce
+
+`pgbench_pyro` krokuje příklad `demolition` (věž, její kusy a prach) v
+zadaných rozlišeních a vypíše čas snímku, rozdělení času mezi fáze
+kroku, paměť a jakou část domény prach a proudící vzduch zabírají
+(`--dense` počítá hustě). Na 4 jádrech:
+
+| rozlišení | voxelů domény | hustě | řídce | počítá se nejvýš |
+|---|---|---|---|---|
+| 96 (96 × 56 × 96), 90 snímků | 0,5 milionu | 270 ms/snímek, 114 MB | **56 ms**, 71 MB | — |
+| 576 (576 × 312 × 576), 180 snímků | 103,5 milionu | nevejde se (přes 10 GB) | **6,6 s**, 3,3 GB | 23 % domény |
+
+Při rozlišení 576 je buňka 16 cm a celý záběr (180 snímků, i s tuhými
+tělesy) trvá 20 minut; s renderem každého třicátého snímku 21 minut
+a nejvýš 5 GB paměti. Prach sám je nejvýš ve 12 % dlaždic, řešič počítá
+nejvýš 23 % (i dlaždice kolem a kolem padajících kusů), zbytek domény je
+stojící vzduch. Čas kroku: advekce 39 %, hledání buněk zabraných kusy 20 %
+(stovky pohyblivých kusů každý snímek), tlak 16 %, síly 7 %.
+
+Hustý režim je teď pomalejší, než byl hustý řešič před řídkou mřížkou
+(270 proti 164 ms/snímek při rozlišení 96). Každé čtení souseda jde přes
+tabulku dlaždic. Řídký režim, výchozí v uzlu, je i tak 2,9× rychlejší
+než starý hustý řešič.
+
+![Prach odstřelu ve 103,5 milionu voxelů: snímky 60, 90, 120 a 150](img/demolition-576.jpg)
+
 Simulace dodržuje invariant I5 jádra: stejná scéna dá **bitově stejná**
 pole na libovolném počtu vláken. Každá smyčka je `pg::parallelFor` přes řádky
-buněk, každou buňku zapisuje právě jeden kus práce a mezi buňkami se nic
-nesčítá. Test to ověřuje se všemi prvky naráz: dva zdroje (jeden pohyblivý),
+buněk nebo dlaždice, každou buňku zapisuje právě jeden kus práce a mezi
+buňkami se nic nesčítá; dlaždice se berou a pouští podle hodnot v nich,
+v pořadí jejich čísel. Test to ověřuje se všemi prvky naráz: dva zdroje (jeden pohyblivý),
 všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 
 ## 9. Ověřování

@@ -71,21 +71,30 @@ void WorldSolver::step() {
             // air the crushing squeezes out.
             for (const RigidDust& d : rigid_->dust()) {
                 if (d.amount <= 0.0f) continue;
-                Emitter e;
-                e.shape = Shape::Sphere;
-                e.center = d.at;
-                e.size = Vec3(1.0f, 1.0f, 1.0f) * d.size;
-                e.fuel = 0.0f;
-                e.smoke = 4.0f * d.amount;
-                e.heat = 0.02f * d.amount;
-                e.velocity = d.velocity;
-                e.expansion = d.expansion;
-                // In clumps, not an even ball: the lumps a cloud of dust
-                // billows in.
-                e.flicker = 1.0f;
-                e.flickerSize = 0.35f * d.size;
-                e.node = rigid.node;
-                gas.emitters.push_back(e);
+                // Along the way it went this frame, a ball every quarter of
+                // its size, sharing its dust: one ball a frame leaves a
+                // string of beads behind a fast puff, and on a fine grid each
+                // shows as a shell of its own.
+                const Vec3 travel = d.velocity * world_.timeStep;
+                const int balls = std::clamp(static_cast<int>(std::ceil(length(travel) / (0.25f * d.size))), 1, 8);
+                const float share = 1.0f / static_cast<float>(balls);
+                for (int b = 0; b < balls; ++b) {
+                    Emitter e;
+                    e.shape = Shape::Sphere;
+                    e.center = d.at - travel * (static_cast<float>(b) * share);
+                    e.size = Vec3(1.0f, 1.0f, 1.0f) * d.size;
+                    e.fuel = 0.0f;
+                    e.smoke = 4.0f * d.amount * share;
+                    e.heat = 0.02f * d.amount * share;
+                    e.velocity = d.velocity;
+                    e.expansion = d.expansion * share;
+                    // In clumps, not an even ball: the lumps a cloud of dust
+                    // billows in.
+                    e.flicker = 1.0f;
+                    e.flickerSize = 0.35f * d.size;
+                    e.node = rigid.node;
+                    gas.emitters.push_back(e);
+                }
             }
         }
         gas_->setScene(gas);
