@@ -1,5 +1,6 @@
 #include "pg/sim/Rigid.h"
 
+#include "pg/core/Parallel.h"
 #include "pg/core/Spatial.h"
 #include "pg/nodes/Rebuild.h"
 #include "pg/sim/Mesh.h"
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -20,6 +22,7 @@
 
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemSingleThreaded.h>
+#include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
@@ -40,6 +43,7 @@
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
+#include <Jolt/Physics/PhysicsStepListener.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 #endif
@@ -1765,6 +1769,30 @@ Vec3 vectorOf(const Geometry& geo, const RigidLayout& L, int k, const char* name
     return fallback;
 }
 
+/// The nearest face a ray goes into, and of faces as near the one of the
+/// lowest body and part: the same whatever order the broad phase hands them
+/// over in -- which, its boxes updated on Jolt's threads, it need not keep.
+class NearestHit : public JPH::CastRayCollector {
+public:
+    void AddHit(const JPH::RayCastResult& r) override {
+        if (had_ && (r.mFraction > mHit.mFraction ||
+                     (r.mFraction == mHit.mFraction &&
+                      (r.mBodyID > mHit.mBodyID ||
+                       (r.mBodyID == mHit.mBodyID && r.mSubShapeID2.GetValue() >= mHit.mSubShapeID2.GetValue()))))) {
+            return;
+        }
+        mHit = r;
+        had_ = true;
+        // Hits as near are still to come: those of other bodies.
+        UpdateEarlyOutFraction(std::nextafter(r.mFraction, 2.0f));
+    }
+    bool HadHit() const { return had_; }
+    JPH::RayCastResult mHit;
+
+private:
+    bool had_ = false;
+};
+
 }  // namespace
 
 // The glue, the way Houdini's Bullet solver has it: pieces glued together
@@ -1785,9 +1813,11 @@ Vec3 vectorOf(const Geometry& geo, const RigidLayout& L, int k, const char* name
 // bar holds all it can and gives beyond that, and stays as it was given:
 // plastic. How far it has given is kept by where its ends are: pulled
 // longer than it is, it slid out of a piece -- or stretched -- by as much.
-struct RigidSolver::Impl : public JPH::ContactListener {
+struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepListener {
     JPH::TempAllocatorImplWithMallocFallback temp{64 * 1024 * 1024};
-    JPH::JobSystemSingleThreaded jobs{JPH::cMaxPhysicsJobs};
+    /// Jolt's jobs: on this thread alone, or on as many as the task pool
+    /// has (TaskPool::threadCount) -- the same bits either way.
+    std::unique_ptr<JPH::JobSystem> jobs;
     JPH::BroadPhaseLayerInterfaceTable broadPhase{Layers::count, 2};
     JPH::ObjectLayerPairFilterTable pairs{Layers::count};
     std::unique_ptr<JPH::ObjectVsBroadPhaseLayerFilterTable> objectVsBroadPhase;
@@ -1884,8 +1914,16 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         int cluster[2] = {-1, -1}; ///< the clusters, -1 for anything else
         int piece[2] = {-1, -1};   ///< the pieces hit
         uint32_t body[2] = {0, 0}; ///< the bodies, by Jolt's index
+        uint32_t sub[2] = {0, 0};  ///< ... and which part of each
+        int step = 0;              ///< the collision step of Jolt's update it came in
     };
     std::vector<Knock> knocks;
+    // Jolt calls back from its jobs, on any of its threads and in no set
+    // order: the knocks are gathered under a lock, each with the collision
+    // step it came in (counted by OnStep, which comes before a step's
+    // collisions), and put in order after the update.
+    std::mutex knocking;
+    std::atomic<int> collisionStep{0};
     // The bars: where each runs through which piece, and what became of each
     // stretch of one -- slid out of its piece, torn after it -- how far it
     // has slid out of its piece so far, how much longer the bar after it got.
@@ -1946,6 +1984,22 @@ struct RigidSolver::Impl : public JPH::ContactListener {
                             JPH::ContactSettings& settings) override {
         knock(b1, b2, m, settings);
     }
+    void OnStep(const JPH::PhysicsStepListenerContext&) override { collisionStep.fetch_add(1, std::memory_order_relaxed); }
+    /// The knocks in an order of their own -- not the one Jolt's threads
+    /// found them in: by collision step, bodies and their parts.
+    void orderKnocks() {
+        std::sort(knocks.begin(), knocks.end(), [](const Knock& a, const Knock& b) {
+            if (a.step != b.step) return a.step < b.step;
+            for (int i = 0; i < 2; ++i) {
+                if (a.body[i] != b.body[i]) return a.body[i] < b.body[i];
+                if (a.sub[i] != b.sub[i]) return a.sub[i] < b.sub[i];
+            }
+            if (a.at.x != b.at.x) return a.at.x < b.at.x;
+            if (a.at.y != b.at.y) return a.at.y < b.at.y;
+            if (a.at.z != b.at.z) return a.at.z < b.at.z;
+            return a.speed < b.speed;
+        });
+    }
     void knock(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, JPH::ContactSettings&) {
         if (m.mRelativeContactPointsOn1.empty()) return;
         const JPH::RVec3 p = m.GetWorldSpaceContactPointOn1(0);
@@ -1974,12 +2028,16 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         }
         k.body[0] = b1.GetID().GetIndex();
         k.body[1] = b2.GetID().GetIndex();
+        k.sub[0] = m.mSubShapeID1.GetValue();
+        k.sub[1] = m.mSubShapeID2.GetValue();
+        k.step = collisionStep.load(std::memory_order_relaxed);
         // How big what knocked is: the smaller of two pieces -- a sliver puffs no dust.
         float size = 1e30f;
         for (const int q : k.piece) {
             if (q >= 0) size = std::min(size, pieces[static_cast<size_t>(q)].size);
         }
         k.size = size < 1e29f ? size : 1.0f;
+        const std::lock_guard<std::mutex> lock(knocking);
         knocks.push_back(k);
     }
 
@@ -2083,7 +2141,7 @@ struct RigidSolver::Impl : public JPH::ContactListener {
         JPH::RayCastSettings settings;
         settings.mTreatConvexAsSolid = false;
         settings.SetBackFaceMode(JPH::EBackFaceMode::IgnoreBackFaces);
-        JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> hit;
+        NearestHit hit;
         const JPH::SpecifiedObjectLayerFilter still(Layers::still);
         const JPH::ObjectLayerFilter all;
         physics.GetNarrowPhaseQuery().CastRay(ray, settings, hit, {}, stillOnly ? static_cast<const JPH::ObjectLayerFilter&>(still) : all);
@@ -2876,6 +2934,16 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
                    static_cast<JPH::uint>(std::max<size_t>(4096, all * 32)), m.broadPhase, *m.objectVsBroadPhase, m.pairs);
     m.physics.SetGravity(jolt(s.gravity));
     m.physics.SetContactListener(&m);
+    m.physics.AddStepListener(&m);
+    // Jolt's jobs on the task pool's threads: one, and they run here, one
+    // after another; more, and Jolt's own pool runs them beside this one.
+    const unsigned threads = TaskPool::instance().threadCount();
+    if (threads > 1) {
+        m.jobs = std::make_unique<JPH::JobSystemThreadPool>(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
+                                                            static_cast<int>(threads) - 1);
+    } else {
+        m.jobs = std::make_unique<JPH::JobSystemSingleThreaded>(JPH::cMaxPhysicsJobs);
+    }
     m.random ^= static_cast<uint64_t>(count) * 0x9E3779B97F4A7C15ull;
     m.gritScale = std::clamp(s.dustSize / 0.3f, 0.5f, 4.0f);
     if (!geo || count == 0) {
@@ -3151,7 +3219,9 @@ void RigidSolver::step() {
         c.beforeSpin = ours(bi.GetAngularVelocity(c.id));
     }
     m.knocks.clear();
-    m.physics.Update(dt, substeps, &m.temp, &m.jobs);
+    m.collisionStep.store(0, std::memory_order_relaxed);
+    m.physics.Update(dt, substeps, &m.temp, m.jobs.get());
+    m.orderKnocks();
     m.time += dt;
     // The bars take the step: those that gave slid out of their pieces, or
     // tore; their links again, and those again, until all hold.
@@ -3225,8 +3295,12 @@ void RigidSolver::step() {
         if (m.puffs.size() > kMaxPuffs) m.puffs.erase(m.puffs.begin(), m.puffs.end() - static_cast<long>(kMaxPuffs));
     }
 
-    // The grit flies, knocks into things, bounces and lies still.
-    for (Impl::Grit& q : m.grit) m.moveGrit(q, dt);
+    // The grit flies, knocks into things, bounces and lies still -- each bit
+    // by itself, what it reads of the bodies the same for all: on as many
+    // threads as there are, the same bits.
+    parallelFor(m.grit.size(), 256, [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) m.moveGrit(m.grit[i], dt);
+    });
     m.grit.erase(std::remove_if(m.grit.begin(), m.grit.end(), [](const Impl::Grit& q) { return q.p.y < -100.0f; }),
                  m.grit.end());
     if (m.grit.size() > kMaxGrit) m.grit.erase(m.grit.begin(), m.grit.end() - static_cast<long>(kMaxGrit));

@@ -661,10 +661,11 @@ public:
 
         // The cells -- each by itself, in parallel.
         std::vector<std::shared_ptr<Geometry>> cells(seeds.size());
+        const VoronoiCells cutter(mesh, seeds);
         parallelFor(seeds.size(), 1, [&](size_t begin, size_t end) {
             for (size_t i = begin; i < end; ++i) {
                 if (ctx.interrupted()) return;
-                std::shared_ptr<Geometry> cell = voronoiCell(mesh, seeds, i, group);
+                std::shared_ptr<Geometry> cell = cutter.cell(i, group);
                 if (cell && cell->primitiveCount() > 0) cells[i] = std::move(cell);
             }
         });

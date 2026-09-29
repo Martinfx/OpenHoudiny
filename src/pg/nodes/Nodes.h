@@ -4,6 +4,7 @@
 #include <array>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace pg {
@@ -63,6 +64,40 @@ std::vector<Vec3> proxyPositions(const Geometry& geo);
 /// primitive group `insideGroup`.
 std::shared_ptr<Geometry> voronoiCell(const GeometryPtr& mesh, const std::vector<Vec3>& seeds, size_t i,
                                       const std::string& insideGroup);
+
+/// The Voronoi cells of `seeds` in the closed `mesh`, each what voronoiCell
+/// makes of it -- made without the rest of the mesh and the rest of the
+/// seeds: a cell is cut out of the parts of the mesh (primitives that share
+/// points) that reach its box, by the planes of the seeds near enough to cut
+/// them, nearest first, as they come out of a grid. Set up once for all the
+/// cells; cell() may be called from several threads at once.
+class VoronoiCells {
+public:
+    VoronoiCells(GeometryPtr mesh, std::vector<Vec3> seeds);
+    std::shared_ptr<Geometry> cell(size_t i, const std::string& insideGroup) const;
+
+private:
+    struct Part {
+        std::vector<uint32_t> prims;
+        Vec3 lo, hi;
+    };
+    /// `piece` cut by the plane half way to each seed near enough, nearest first.
+    std::shared_ptr<Geometry> cut(size_t i, std::shared_ptr<Geometry> piece, const std::string& group) const;
+    /// The seeds but i further from seed i than `from` and no further than
+    /// `to`, as (distance, seed), nearest first -- the first of equals first.
+    void shell(size_t i, float from, float to, std::vector<std::pair<float, uint32_t>>& out) const;
+
+    GeometryPtr mesh_;
+    std::vector<Vec3> seeds_;
+    std::vector<Part> parts_;
+    std::shared_ptr<const Geometry> box_;  ///< the box round the mesh, a little bigger
+    float margin_ = 0.0f;                  ///< what float rounding cannot reach
+    float reachAll_ = 0.0f;                ///< no seed is further from another
+    Vec3 gridLo_;
+    float gridCell_ = 1.0f;
+    int dims_[3] = {1, 1, 1};
+    std::vector<uint32_t> gridStart_, gridSeeds_;
+};
 
 /// `iterations` steps of Catmull-Clark subdivision.
 std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations);

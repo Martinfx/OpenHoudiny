@@ -552,6 +552,11 @@ endif()
 # --- benchmark + demo ------------------------------------------------------
 add_executable(pgbench bench/bench_main.cpp)
 target_link_libraries(pgbench PRIVATE pgcore)
+# The rigid bodies against step 4 of the ROADMAP: the demolition tower, and
+# ten times its pieces, on one thread and on all.
+add_executable(pgbench_rigid bench/bench_rigid.cpp)
+target_link_libraries(pgbench_rigid PRIVATE pgsim)
+target_compile_definitions(pgbench_rigid PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
 
 add_executable(pgdemo cli/demo_main.cpp)
 target_link_libraries(pgdemo PRIVATE pgcore)

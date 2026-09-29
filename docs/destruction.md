@@ -121,6 +121,23 @@ kterého vznikla, a jsou ve skupině `inside` — vzhled ji obarví jinak než
 povrch. Buňky se počítají paralelně a skládají v pořadí bodů, takže výsledek
 je stejný na libovolném počtu vláken.
 
+Buňka se přitom neořezává z celého tělesa, ale jen z toho, čeho se může
+týkat ([`VoronoiCells`](../src/pg/nodes/Fracture.cpp)):
+
+- **Jen blízké části tělesa.** Uzel nejdřív spočítá buňku v kvádru kolem
+  tělesa. Je to jen pár stěn, takže to nic nestojí. Pak vezme jen ty
+  uzavřené části tělesa (primitiva, která sdílejí body), které zasahují
+  do jejího kvádru: u věže z tisíců kvádrů pár stropních desek a stěn.
+- **Jen blízké body.** Body bere z mřížky po slupkách, od nejbližších.
+  Když je další bod dál než dvojnásobek toho, kam kus sahá, jeho rovina už
+  nic neuřízne, a nic neuříznou ani body za ním.
+
+Roviny, které se kusu týkají, jsou tytéž a ve stejném pořadí jako dřív,
+takže výsledek je bit po bitu stejný jako při řezání celého tělesa všemi
+body (test to ověřuje buňku po buňce). Věž příkladu demolition (593 buněk)
+se rozřeže za 0,14 s místo 1,1 s, věž z 5 628 buněk za 1,0 s místo 13,5 s
+(čtyři vlákna).
+
 Body uvnitř tělesa pozná uzel paritou průsečíků paprsku s polygony
 (Möller–Trumbore po vějířích), s paprskem mírně mimo osy, aby neběžel podél
 hran. Tělesa s dutinami a z více uzavřených částí (věž z kvádrů, budova
@@ -860,12 +877,33 @@ simulace.
 ### Jak to funguje
 
 [`src/pg/sim/Rigid.h`](../src/pg/sim/Rigid.h) obaluje Jolt Physics 5.6
-(MIT). Jolt je sestaven s `CROSS_PLATFORM_DETERMINISTIC` a bez AVX a
-solver běží v jednom vlákně (`JobSystemSingleThreaded`): stejný krok dá
-stejné bity na každém stroji a při každém spuštění — to je pro cache
-snímků, pro testy a pro střih videa důležitější než rychlost. Věž
-z příkladu (593 kusů v 710 tělech, přes dva tisíce spojů) se krokuje
-v průměru za 6 ms na snímek.
+(MIT). Jolt je sestaven s `CROSS_PLATFORM_DETERMINISTIC` a bez AVX, takže
+stejný krok dá stejné bity na každém stroji a při každém spuštění. To je
+pro cache snímků, pro testy a pro střih videa důležitější než rychlost.
+Solver přitom běží na tolika vláknech, kolik jich má program
+(`--threads`), a výsledek je na jednom i na čtyřech vláknech bit po bitu
+stejný:
+
+- **Jolt na vláknech.** Jolt dostane vlastní pool vláken
+  (`JobSystemThreadPool`), při jednom vláknu běží jeho úlohy jedna po
+  druhé. Jolt sám je deterministický, pokud se jeho API volá ve stejném
+  pořadí.
+- **Nárazy v pevném pořadí.** Dotyky hlásí Jolt ze svých vláken, v pořadí,
+  které se mění. Solver je sbírá pod zámkem, každý s číslem podkroku, ve
+  kterém přišel (počítá ho posluchač kroků, který Jolt volá před
+  kolizemi podkroku). Po kroku je seřadí podle podkroku, těles a jejich
+  částí. Na pořadí záleží: náraz láme spoje postupně a jiné pořadí by
+  zlomilo jiné spoje.
+- **Drť na vláknech.** Každý kousek letí sám a z těles jen čte, takže se
+  kousky rozdělí mezi vlákna. Paprsek bere nejbližší plochu, a když jsou
+  dvě stejně blízko, tu s nižším číslem tělesa a části. Pořadí, ve kterém
+  je broad phase vydá, se totiž s vlákny může měnit.
+
+Věž z příkladu (593 kusů v 710 tělech, přes dva tisíce spojů) se krokuje
+za 5,3 ms na snímek na jednom vláknu a za 3,2 ms na čtyřech. Věž
+rozřezaná na 5 628 kusů za 78 ms na jednom a 31 ms na čtyřech
+(`./build/pgbench_rigid`, bez prachu). Skoro všechen čas je v řešiči
+kontaktů Joltu a roste s počtem těles, která se právě hýbou.
 
 - **Kusy a jejich části.** Kus je jedno tělo — nebo víc, když je
   z částí, které se nedotýkají. Každá část (uzavřený kus povrchu) naráží
@@ -1118,12 +1156,16 @@ drti; snímky verze 8 se čtou s drtí bez natočení.
 
 ## 6. Ověřování
 
-`tests/test_rigid.cpp` (15 testů), `tests/test_topology.cpp` (fracture)
+`tests/test_rigid.cpp` (17 testů), `tests/test_topology.cpp` (fracture)
 a testy expanze v `tests/test_pyro.cpp`:
 
 - kusy krychle jsou uzavřené a jejich objemy dají objem krychle; stejný hash
   na 1 i 4 vláknech; budova z assetu se rozřeže beze zbytku a stěny si
   nesou barvy;
+- každá buňka ořezaná jen z blízkých částí a jen blízkými body je bit po
+  bitu táž jako řez celého tělesa všemi body: osm kvádrů vedle sebe
+  i s mezerami, 61 bodů v nich i mezi nimi, dva na jednom místě; totéž
+  pro jediný kvádr;
 - kusy padají a dosednou na podlahu, v klidu, a každý kus si drží tvar;
 - slepená stavba stojí, jak je postavená, a pod závažím shozeným shora se
   lepidlo zlomí; klíčovaný objekt povalí slepenou zeď;
@@ -1135,7 +1177,10 @@ a testy expanze v `tests/test_pyro.cpp`:
 - tvrdý náraz vytlačí vzduch: obláček se rozpíná (nejvýš 20/s), s `air 0`
   ne; zdroj s expanzí tlačí plyn do stran a po zemi a studený kouř bez ní
   zůstane, kde byl;
-- stejné snímky na 1 a 4 vláknech i mezi dvěma běhy;
+- stejné snímky na 1 a 4 vláknech i mezi dvěma běhy; slepený blok, na
+  který spadnou volné kusy, se láme a sype drť na 1 i 4 vláknech stejně:
+  stejné pózy, stejné prasklé spoje, stejná drť a její natočení (Jolt na
+  čtyřech vláknech, nárazy seřazené, drť na vláknech);
 - posun, otočení a `v` na bodech; barvy kreslení (vlastní `Cd`, barva
   řezu, barva kusů, drť jako body); kusy bez atributu podle souvislosti;
 - RBD Solver v síti: překlad do světa a vzhledu (`glue` v kPa, `air`),

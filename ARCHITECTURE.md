@@ -410,7 +410,7 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                             jako síť vazeb (rigidGlue, rigidNetwork), výztuž, drť jako
                             částice (narážejí, leží, jedou s kusy), prach a jeho stopy,
                             Guide jako póza každého kusu (rigidGuide), ke které solver
-                            vede slepená tělesa
+                            vede slepená tělesa; Jolt na vláknech, nárazy seřazené
                  Camera     kamera záběru: poloha, rotace, objektiv, rozlišení
                  Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
                  World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku
@@ -500,6 +500,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Síť vazeb jako geometrie: RBD Constraints udělá z kusů bod na těleso a čáru na spoj (`strength` jako násobek Glue, `area`, barva podle pevnosti); zeslabená, smazaná nebo nakreslená síť zapojená do Constraints RBD Solveru je lepidlem; RBD Pieces vrátí síť snímku s `broken` a `time`, stav spojů ve snímku a cache (verze 8) ([docs/destruction.md §3](docs/destruction.md#síť-vazeb-rbd-constraints)) |
 | ✅ | Cihly: Brick Wall vyzdí zeď z cihel ve vazbě (běhounová, anglická, vlámská, stack) s maltou, omítkou a otvory s rovným ostěním; každá cihla jeden kus, rozlomené cihly jako dvě poloviny jedné kry; RBD Solver má maltu jako lepidlo, zeď se rozpadá ve spárách; příklady `brick_wall` (koule proti cihlové zdi s oknem) a `concrete_column` (odstřel železobetonového sloupu, holý armokoš) ([docs/destruction.md §2](docs/destruction.md#cihly-brick-wall)) |
 | ✅ | Drť jako částice: vylétá z okraje plochy prasklého spoje, vzduch ji brzdí, točí se, naráží do kusů, překážek i podlahy (paprsky v Joltu), zůstává ležet a jede s kusem, na kterém leží; stopy prachu za utrženými kusy (`trail`); natočení (`orient`) ve snímcích, cache verze 9, RBD Pieces, Pythonu a USD, Copy to Points podle něj natáčí ([docs/destruction.md §3](docs/destruction.md#drť-jako-částice)) |
+| ✅ | Tuhá tělesa na vláknech: Jolt na vlastním poolu, nárazy z jeho vláken seřazené, drť na vláknech; bitově stejné snímky na 1 i 4 vláknech; Voronoi Fracture řeže buňku jen z blízkých částí blízkými body (bitově stejně, věž z 5 628 buněk 13× rychleji); `pgbench_rigid` ([docs/destruction.md §3](docs/destruction.md#jak-to-funguje)) |
 | ✅ | Usměrněná simulace: Guide RBD Solveru (kusy posunuté a natočené, třeba klíčovaný Transform kolem Pivotu) vede slepená tělesa do pózy, která jejich body nejlépe položí na body Guide; síla, doba, dosah a puštění při prasknutí lepidla; atribut `guide`; z Guide se v každém snímku bere jen póza kusu; příklad `guided_fall` ([docs/destruction.md §3](docs/destruction.md#usměrněná-simulace-guide)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
@@ -521,6 +522,8 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | Interpret jazyka, noise | 63 Mbodů/s — první, jednoduchý jazyk |
 | Wrangle v2 proti prvnímu jazyku, týž stroj (4 jádra) | aritmetika 26,6 proti 29,0 Mbodů/s, noise 38 proti 50 Mbodů/s |
 | 240 snímků s cache 256 MB | 1.9 ms/snímek, zdroj cooknut **1×** |
+| Tuhá tělesa, věž odstřelu (593 kusů, 710 těles), `pgbench_rigid` | 5,3 ms/snímek na 1 vláknu, **3,2 ms** na 4; snímky bitově stejné |
+| … desetkrát víc kusů (5 628) | 78 ms/snímek na 1 vláknu, **31 ms** na 4; řez Voronoi 1,0 s (dřív 13,5 s) |
 
 ### Není v prototypu (vědomě)
 

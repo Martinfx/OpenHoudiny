@@ -14,8 +14,10 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
+#include <span>
 #include <utility>
 
 using namespace pg;
@@ -613,6 +615,82 @@ TEST(fracture_cuts_a_solid_into_closed_pieces_that_make_the_whole) {
     for (const int32_t p : pieces->primitives().find("piece")->read<int32_t>()) given = std::max(given, p + 1);
     CHECK_EQ(given, 2);
     CHECK(std::fabs(volumeOf(*pieces) - whole) < 1e-4f);
+}
+
+namespace {
+
+/// A closed box from `lo` to `hi`: eight points, six quads turned out.
+Geometry block(Vec3 lo, Vec3 hi) {
+    Geometry g;
+    g.addPoints(8);
+    const auto P = g.positionsForWrite();
+    for (uint32_t k = 0; k < 8; ++k) P[k] = Vec3(k & 1 ? hi.x : lo.x, k & 2 ? hi.y : lo.y, k & 4 ? hi.z : lo.z);
+    const uint32_t faces[6][4] = {{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}};
+    for (const auto& f : faces) g.addPrimitive(std::span<const uint32_t>(f, 4));
+    return g;
+}
+
+/// Seed i's cell as it was made before: all of the mesh, cut by the plane
+/// half way to every other seed, nearest first.
+std::shared_ptr<Geometry> wholeCell(const GeometryPtr& mesh, const std::vector<Vec3>& seeds, size_t i) {
+    std::vector<size_t> others(seeds.size());
+    for (size_t k = 0; k < others.size(); ++k) others[k] = k;
+    others.erase(others.begin() + static_cast<long>(i));
+    const Vec3 s = seeds[i];
+    std::stable_sort(others.begin(), others.end(),
+                     [&](size_t a, size_t b) { return length(seeds[a] - s) < length(seeds[b] - s); });
+    std::shared_ptr<Geometry> piece = std::make_shared<Geometry>(*mesh);
+    for (const size_t j : others) {
+        const Vec3 dir = s - seeds[j];
+        if (length(dir) < 1e-7f) continue;
+        const Vec3 origin = (s + seeds[j]) * 0.5f;
+        const Vec3 n = normalize(dir);
+        float least = 1e30f;
+        for (const Vec3& p : piece->positions()) least = std::min(least, dot(p - origin, n));
+        if (least >= 0.0f) continue;
+        piece = clipGeometry(*piece, origin, n, true, "inside");
+        if (piece->primitiveCount() == 0) break;
+    }
+    return piece;
+}
+
+}  // namespace
+
+TEST(fracture_cuts_each_cell_out_of_the_parts_near_it_as_out_of_the_whole) {
+    // Blocks side by side and apart -- a mesh of many parts, as a building
+    // of slabs and walls is -- and seeds in and between them, two on one
+    // place. Each cell, cut out of the parts near it by the seeds near it,
+    // is what cutting all of the mesh by every seed made of it: to the bit.
+    auto mesh = std::make_shared<Geometry>();
+    for (int k = 0; k < 8; ++k) {
+        const Vec3 lo(static_cast<float>(k % 4) * 1.0f + (k >= 4 ? 0.3f : 0.0f), static_cast<float>(k / 4) * 0.8f,
+                      (k % 2) * 0.25f);
+        mesh->append(block(lo, lo + Vec3(k % 3 == 2 ? 1.0f : 0.9f, 0.8f, 0.5f)));
+    }
+    std::vector<Vec3> seeds;
+    uint64_t state = 7;
+    auto unit = [&]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<float>(state >> 40) / static_cast<float>(1ull << 24);
+    };
+    for (int k = 0; k < 60; ++k) seeds.push_back(Vec3(unit() * 4.4f - 0.1f, unit() * 1.7f - 0.05f, unit() * 0.8f - 0.05f));
+    seeds.push_back(seeds[5]);  // two on one place: the first keeps it
+    const GeometryPtr whole = mesh;
+    const VoronoiCells cells(whole, seeds);
+    int made = 0;
+    for (size_t i = 0; i < seeds.size(); ++i) {
+        const std::shared_ptr<Geometry> fast = cells.cell(i, "inside");
+        const std::shared_ptr<Geometry> slow = wholeCell(whole, seeds, i);
+        CHECK_EQ(fast->primitiveCount(), slow->primitiveCount());
+        CHECK_EQ(fast->hash(), slow->hash());
+        if (fast->primitiveCount() > 0) ++made;
+    }
+    CHECK(made > 40);
+    // One part alone -- a box: the same.
+    const GeometryPtr one = std::make_shared<Geometry>(block(Vec3(0.0f), Vec3(1.0f)));
+    const std::vector<Vec3> few = {Vec3(0.2f, 0.3f, 0.4f), Vec3(0.7f, 0.6f, 0.5f), Vec3(0.5f, 0.1f, 0.9f)};
+    const VoronoiCells boxCells(one, few);
+    for (size_t i = 0; i < few.size(); ++i) CHECK_EQ(boxCells.cell(i, "inside")->hash(), wholeCell(one, few, i)->hash());
 }
 
 TEST(fracture_breaks_the_building) {

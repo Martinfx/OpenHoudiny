@@ -290,11 +290,24 @@ přerušená uprostřed jde dopočítat z cache bitově stejně.
   **guided_fall**: odstřelený komín padne podle klíčů přesně do ulice mezi
   dva domy a na silnici se volně rozlomí. Zbývá vedení silou nebo pružnou
   vazbou místo rychlosti a Guide, který kusy deformuje.
-- **Tuhá tělesa na více vláknech**, deterministicky.
+- ✅ **Tuhá tělesa na více vláknech**, deterministicky ([docs/destruction.md §3](docs/destruction.md#jak-to-funguje)):
+  Jolt na vlastním poolu vláken, nárazy z jeho vláken sebrané a seřazené
+  podle podkroku, těles a jejich částí, drť na vláknech, paprsek s pevným
+  pořadím stejně blízkých ploch; snímky na 1 i 4 vláknech bit po bitu
+  stejné (testy, `prototype sim --threads`, `pgbench_rigid`). Voronoi
+  Fracture řeže buňku jen z blízkých částí tělesa blízkými body, bit po
+  bitu stejně: věž z 5 628 buněk za 1,0 s místo 13,5 s. Lepidlo hledá
+  plochy zametáním místo každé s každou.
 
 **Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu
 a sekundární lámání a desetkrát víc kusů za stejný čas na snímek. Beton,
-výztuž, sklo, sekundární lámání a stopy prachu jsou; zbývá rychlost.
+výztuž, sklo, sekundární lámání, stopy prachu a vlákna jsou. Rychlost
+splněná není: věž z příkladu (593 kusů) se krokuje za 3,2 ms na snímek na
+4 vláknech (5,3 ms na jednom), desetkrát víc kusů (5 628) za 31 ms (78 ms
+na jednom). Krok roste s počtem těles, která se hýbou, a skoro celý je
+v řešiči kontaktů Joltu; víc jader ho zrychlí, desetinásobek za stejný čas
+potřebuje řešič na GPU nebo úspornější kroky pro trosky, které se už
+skoro nehýbou (krok 5).
 
 ### Krok 5 — Měřítko
 

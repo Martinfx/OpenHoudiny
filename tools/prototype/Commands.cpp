@@ -1102,7 +1102,8 @@ int simCommand(const Options& o) {
         for (const std::string& name : pg::sim::Network::exampleNames()) std::printf("%s\n", name.c_str());
         return 0;
     }
-    if (o.positional.size() != 2) return usage();
+    if (o.positional.size() != 2 || o.threads < 0) return usage();
+    if (o.threads > 0) pg::TaskPool::instance().setThreadCount(static_cast<unsigned>(o.threads));
     return simulate(o, o.positional[0], o.positional[1]);
 }
 
@@ -1277,7 +1278,7 @@ void printUsage(std::FILE* out) {
                  "                   [--resolution 16..256]\n"
                  "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
-                 "                   [--export PATH] [--export-node NODE]\n"
+                 "                   [--export PATH] [--export-node NODE] [--threads N]\n"
                  "                   simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                   frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
                  "                   OUT.exr: linear light and passes for compositing (Z, forward.u/v, mask.*);\n"
@@ -1291,7 +1292,8 @@ void printUsage(std::FILE* out) {
                  "                   whole shot as one USD stage -- geometry, pieces, grit, water, rain, gas (VDB\n"
                  "                   beside it), camera, light; what changes every frame in a layer a frame\n"
                  "                   beside it (NAME_frames/).\n"
-                 "                   '-' for OUT.png: no pictures.\n"
+                 "                   '-' for OUT.png: no pictures. --threads N: on N threads (all there are\n"
+                 "                   by default) -- the same frames on any number.\n"
                  "                   --start N: pictures and export from frame N on (a farm's share of a shot);\n"
                  "                   --end N is --frames N. A simulation still starts at frame 1; a cache is\n"
                  "                   read from N.\n"

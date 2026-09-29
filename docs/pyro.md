@@ -74,6 +74,10 @@ K, 2K, 3K… a pojmenuje je číslem snímku (`boom_0002.png`, `boom_0004.png`,
 …). Do videa (`.avi`, s ffmpeg i `.mp4`, `.webm`, `.gif`) jde každý
 snímek, se `--every K` každý K-tý ([render.md](render.md)).
 `--guides` do obrázku nakreslí vodítka: doménu, zdroje a síly.
+`--threads N` počítá na N vláknech (výchozí je jich tolik, kolik jich
+stroj má). Snímky jsou na libovolném počtu vláken stejné, takže se tím
+dá ověřit determinismus sítě (`--cache` na jednom a na čtyřech vláknech
+dá tytéž soubory).
 
 Má-li síť kameru připojenou do Outputu, `sim` renderuje jejím pohledem a
 v rozlišení jejího obrazu (`--size` ho přepíše). `--yaw`, `--pitch` a

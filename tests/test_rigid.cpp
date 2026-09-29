@@ -261,6 +261,46 @@ TEST(rigid_frames_are_the_same_on_any_thread_count_and_from_solver_to_solver) {
     CHECK(!samePoses(one.front(), one.back()));
 }
 
+TEST(rigid_knocks_grit_and_breaks_are_the_same_on_one_and_four_threads) {
+    // A glued block on the floor and loose pieces dropped onto it: Jolt's
+    // jobs on four threads call back the knocks in no set order, and the
+    // grit flies on four -- the glue breaks as it does on one, and the grit
+    // lands where it does on one, to the bit.
+    ThreadCountGuard guard;
+    auto both = std::make_shared<Geometry>(*fracturedBox(Vec3(0.0f, 0.5f, 0.0f), Vec3(2.0f, 1.0f, 1.0f), 30, 3));
+    Geometry falling(*fracturedBox(Vec3(0.2f, 2.6f, 0.1f), Vec3(1.2f, 0.6f, 0.8f), 12, 4));
+    auto shift = falling.primitives().find("piece")->write<int32_t>();
+    for (int32_t& p : shift) p += 100;
+    auto shiftPoints = falling.points().find("piece")->write<int32_t>();
+    for (int32_t& p : shiftPoints) p += 100;
+    both->append(falling);
+    RigidScene scene;
+    scene.pieces = both;
+    scene.solver.glue = 60.0f;
+    scene.solver.debris = 3.0f;
+    auto run = [&](unsigned threads) {
+        TaskPool::instance().setThreadCount(threads);
+        RigidSolver solver(scene);
+        std::vector<RigidFrame> out;
+        for (int i = 0; i < 45; ++i) {
+            solver.step();
+            out.push_back(solver.capture());
+        }
+        return out;
+    };
+    const std::vector<RigidFrame> one = run(1), four = run(4);
+    CHECK_EQ(one.size(), four.size());
+    for (size_t k = 0; k < one.size(); ++k) {
+        CHECK(samePoses(one[k], four[k]));
+        CHECK(one[k].debris == four[k].debris);
+        CHECK(one[k].debrisOrient == four[k].debrisOrient);
+        CHECK(one[k].debrisIds == four[k].debrisIds);
+    }
+    // It broke, and threw grit.
+    CHECK(one.back().broken > 0u);
+    CHECK(!one.back().debris.empty());
+}
+
 TEST(rigid_pieces_are_posed_and_drawn_in_their_colours) {
     // Two triangles, two pieces; the second is the cut face.
     auto geo = std::make_shared<Geometry>();

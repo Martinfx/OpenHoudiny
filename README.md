@@ -109,10 +109,11 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 357 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 12 topologie, fracture, smyčky a vaření na pozadí, 16 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 17 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
+./build/pgtests            # 359 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 25 shader graf, 93 simulace, voda, déšť, geometrie, animace, 17 cache a export, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
 ctest --test-dir build -R python                   # 45 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
+./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
 ./build/prototype --example campfire               # příklad simulace: táborák
@@ -257,8 +258,11 @@ RBD Solveru vede kusy, kam je chce záběr, a pustí je, když praskne
 lepidlo, když uplyne čas nebo když je něco zastaví dál než `guide_reach`.
 Klíčované objekty jsou kinematické překážky, kusy jdou jako pohyblivé
 překážky do vody, plynu i deště, prach do Pyro Solveru, a uzel RBD Pieces
-je vrací jako geometrii s rychlostí `v`. Jolt běží v jednom vlákně
-a deterministicky: stejné snímky při každém běhu, snímky do cache.
+je vrací jako geometrii s rychlostí `v`. Jolt běží na všech vláknech
+a deterministicky: stejné snímky při každém běhu a na libovolném počtu
+vláken, snímky do cache. Věž odstřelu (593 kusů) se krokuje za 3 ms na
+snímek, desetkrát víc kusů za 31 ms (4 vlákna); Voronoi Fracture řeže
+každou buňku jen z blízkých částí tělesa, věž z 5 628 buněk za 1 s.
 Příklad **demolition**: odstřel čtrnáctipatrového věžáku v bloku domů
 za zlatého světla; příklad **wall_collapse**: průčelí cihlového domu
 vyletí do ulice a kusy se kutálejí ke kameře těsně nad asfaltem, v prachu
