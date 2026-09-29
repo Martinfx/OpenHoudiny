@@ -251,6 +251,7 @@ add_library(pgsim
   src/pg/sim/GeometryGraph.cpp
   src/pg/sim/Grid.cpp
   src/pg/sim/SparseGrid.cpp
+  src/pg/sim/State.cpp
   src/pg/sim/Liquid.cpp
   src/pg/sim/Mesh.cpp
   src/pg/sim/Network.cpp
@@ -515,6 +516,7 @@ add_executable(pgtests
   tests/test_rain.cpp
   tests/test_sops.cpp
   tests/test_export.cpp
+  tests/test_state.cpp
   tests/test_usd.cpp
   tests/test_usd_read.cpp
   tests/test_exr.cpp

@@ -34,6 +34,8 @@
 namespace pg::sim {
 
 class LiquidSolver;
+class StateReader;
+class StateWriter;
 
 struct RainSettings {
     /// The box the drops start in: its middle and its size. It is the cloud:
@@ -91,6 +93,13 @@ public:
     /// Takes on another scene as it runs: the cloud, the forces, the solids;
     /// the drops in the air stay.
     void setScene(const RainScene& scene);
+
+    /// All the next step needs of what it has come to (State.h); not the
+    /// scene, which the solver it is loaded into has already.
+    void saveState(StateWriter& out) const;
+    /// Takes on a state saveState() wrote; false, with the solver as it
+    /// was, when it is not one.
+    bool loadState(StateReader& in);
 
     const RainScene& scene() const { return scene_; }
     int frame() const { return frame_; }

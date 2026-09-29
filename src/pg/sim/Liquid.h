@@ -52,6 +52,9 @@
 
 namespace pg::sim {
 
+class StateReader;
+class StateWriter;
+
 /// How a water source gives water.
 enum class WaterMode : uint8_t {
     Fill,  ///< its shape is filled with water once, when it starts
@@ -136,6 +139,13 @@ public:
     /// Substeps the last step took, and CG iterations its pressure solves took in all.
     int lastSubsteps() const { return lastSubsteps_; }
     int lastIterations() const { return lastIterations_; }
+
+    /// All the next step needs of what it has come to (State.h); not the
+    /// scene, which the solver it is loaded into has already.
+    void saveState(StateWriter& out) const;
+    /// Takes on a state saveState() wrote -- of a solver of this grid; false,
+    /// with the solver as it was, when it is not one.
+    bool loadState(StateReader& in);
 
     size_t particleCount() const { return position_.size(); }
     /// World units, and world units per second.

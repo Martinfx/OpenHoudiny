@@ -2,6 +2,7 @@
 
 #include "pg/core/Parallel.h"
 #include "pg/sim/Shared.h"
+#include "pg/sim/State.h"
 
 #include <algorithm>
 #include <cmath>
@@ -237,6 +238,67 @@ LiquidSolver::LiquidSolver(const LiquidScene& scene) : scene_(scene.sanitized())
     noise_.assign(scene_.forces.size(), {});
     filled_.assign(scene_.sources.size(), 0);
     updateSolids();
+}
+
+void LiquidSolver::saveState(StateWriter& out) const {
+    for (int a = 0; a < 3; ++a) out.pod(static_cast<int32_t>(n_[a]));
+    out.pod(static_cast<int32_t>(frame_));
+    out.pod(time_);
+    out.pod(substepCount_);
+    out.pod(made_);
+    out.pod(static_cast<int32_t>(lastSubsteps_));
+    out.pod(static_cast<int32_t>(lastIterations_));
+    out.list(position_);
+    out.list(velocity_);
+    out.list(foam_);
+    out.list(id_);
+    out.list(filled_);
+    for (int a = 0; a < 3; ++a) out.grid(vel_[a]);
+    out.grid(phi_);
+    out.grid(pressure_);
+}
+
+bool LiquidSolver::loadState(StateReader& in) {
+    int32_t n[3] = {0, 0, 0}, frame = 0, substeps = 0, iterations = 0;
+    float time = 0.0f;
+    uint32_t count = 0, made = 0;
+    std::vector<Vec3> position, velocity;
+    std::vector<float> foam;
+    std::vector<uint32_t> id;
+    std::vector<uint8_t> filled;
+    Grid vel[3], phi, pressure;
+    if (!in.pod(n[0]) || !in.pod(n[1]) || !in.pod(n[2]) || !in.pod(frame) || !in.pod(time) || !in.pod(count) ||
+        !in.pod(made) || !in.pod(substeps) || !in.pod(iterations) || !in.list(position) || !in.list(velocity) ||
+        !in.list(foam) || !in.list(id) || !in.list(filled)) {
+        return false;
+    }
+    for (Grid& g : vel) {
+        if (!in.grid(g)) return false;
+    }
+    if (!in.grid(phi) || !in.grid(pressure)) return false;
+    // Of this grid, and whole.
+    const size_t particles = position.size();
+    bool fits = n[0] == n_[0] && n[1] == n_[1] && n[2] == n_[2] && velocity.size() == particles &&
+                foam.size() == particles && id.size() == particles && filled.size() == scene_.sources.size() &&
+                phi.size() == phi_.size() && pressure.size() == pressure_.size();
+    for (int a = 0; a < 3; ++a) fits = fits && vel[a].size() == vel_[a].size();
+    if (!fits) return in.fail();
+    position_ = std::move(position);
+    velocity_ = std::move(velocity);
+    foam_ = std::move(foam);
+    id_ = std::move(id);
+    filled_ = std::move(filled);
+    for (int a = 0; a < 3; ++a) vel_[a] = std::move(vel[a]);
+    phi_ = std::move(phi);
+    pressure_ = std::move(pressure);
+    frame_ = frame;
+    time_ = time;
+    substepCount_ = count;
+    made_ = made;
+    lastSubsteps_ = substeps;
+    lastIterations_ = iterations;
+    sortParticles();  // as a step leaves them: in order, for the questions asked between steps
+    return true;
 }
 
 Vec3 LiquidSolver::worldAt(float x, float y, float z) const {

@@ -3,6 +3,7 @@
 #include "pg/core/Parallel.h"
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Shared.h"
+#include "pg/sim/State.h"
 
 #include <algorithm>
 #include <cmath>
@@ -74,6 +75,55 @@ void RainSolver::setScene(const RainScene& scene) {
     solids_.clear();
     for (const Collider& c : scene_.colliders) solids_.push_back(c.instance());
     noise_.resize(scene_.forces.size());
+}
+
+void RainSolver::saveState(StateWriter& out) const {
+    out.pod(static_cast<int32_t>(frame_));
+    out.pod(time_);
+    out.pod(made_);
+    out.pod(splashed_);
+    out.pod(static_cast<int32_t>(lastSolid_));
+    out.pod(static_cast<int32_t>(lastWater_));
+    out.list(drops_);
+    out.list(droplets_);
+    out.pod(ripples_.origin);
+    out.pod(ripples_.cell);
+    out.pod(static_cast<int32_t>(ripples_.nx));
+    out.pod(static_cast<int32_t>(ripples_.nz));
+    out.list(ripples_.height);
+    out.list(previous_);
+}
+
+bool RainSolver::loadState(StateReader& in) {
+    int32_t frame = 0, lastSolid = 0, lastWater = 0, nx = 0, nz = 0;
+    float time = 0.0f;
+    uint64_t made = 0;
+    uint32_t splashed = 0;
+    std::vector<RainParticle> drops, droplets;
+    Ripples ripples;
+    std::vector<float> previous;
+    if (!in.pod(frame) || !in.pod(time) || !in.pod(made) || !in.pod(splashed) || !in.pod(lastSolid) ||
+        !in.pod(lastWater) || !in.list(drops) || !in.list(droplets) || !in.pod(ripples.origin) ||
+        !in.pod(ripples.cell) || !in.pod(nx) || !in.pod(nz) || !in.list(ripples.height) || !in.list(previous)) {
+        return false;
+    }
+    if (nx < 0 || nz < 0 || ripples.height.size() != static_cast<size_t>(nx) * static_cast<size_t>(nz) ||
+        (!previous.empty() && previous.size() != ripples.height.size())) {
+        return in.fail();
+    }
+    ripples.nx = nx;
+    ripples.nz = nz;
+    frame_ = frame;
+    time_ = time;
+    made_ = made;
+    splashed_ = splashed;
+    lastSolid_ = lastSolid;
+    lastWater_ = lastWater;
+    drops_ = std::move(drops);
+    droplets_ = std::move(droplets);
+    ripples_ = std::move(ripples);
+    previous_ = std::move(previous);
+    return true;
 }
 
 Vec3 RainSolver::air(const Vec3& p) const {

@@ -19,6 +19,8 @@
 #include "pg/sim/Scene.h"
 
 #include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace pg::sim {
@@ -63,6 +65,11 @@ struct World {
     bool operator==(const World&) const = default;
 };
 
+/// The world with the grids of its gas and its water `fraction` as fine (at
+/// least 16 cells along the longest side): a preview of it, to work on
+/// quickly, before the final one is simulated. 1: the world as it is.
+World preview(const World& world, float fraction);
+
 /// Steps every part of a World by a frame.
 class WorldSolver {
 public:
@@ -71,6 +78,16 @@ public:
     void step();
     /// The frame as it is kept: each part's fields as half floats.
     Frame capture() const;
+
+    /// All it would take to go on from this frame as if it had never stopped
+    /// (State.h): a checkpoint. The gas's, the water's and the rain's state;
+    /// not the pieces' -- they cost little to step, and are stepped again.
+    std::string saveState() const;
+    /// Takes a solver fresh from its world to the frame of a state
+    /// saveState() wrote of the same world: the pieces stepped there again,
+    /// frame by frame, the rest read. False, with why, for a state of
+    /// another world or a file cut short -- the solver then is of no use.
+    bool loadState(std::string_view bytes, std::string& error);
 
     const World& world() const { return world_; }
     int frame() const { return frame_; }
@@ -85,6 +102,10 @@ public:
     const RigidSolver* rigid() const { return rigid_.get(); }
 
 private:
+    /// What a step does before the gas, the water and the rain move: the
+    /// pieces stepped, and each part given its scene of the frame.
+    void prepare();
+
     World world_;
     std::unique_ptr<PyroSolver> gas_;
     std::unique_ptr<LiquidSolver> water_;

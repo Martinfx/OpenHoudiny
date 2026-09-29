@@ -54,6 +54,9 @@
 
 namespace pg::sim {
 
+class StateReader;
+class StateWriter;
+
 class PyroSolver {
 public:
     explicit PyroSolver(const Scene& scene = Scene::fire());
@@ -124,6 +127,14 @@ public:
     /// Sparse: lets go of the tiles the gas has left and takes on those it
     /// may reach in a step of dt -- step() does, before each step.
     void updateTiles(float dt);
+
+    /// All the next step needs of what it has come to (State.h): the fields
+    /// to the bit, the tiles, the solids found, the frame and the time. Not
+    /// the scene: the solver it is loaded into has that already.
+    void saveState(StateWriter& out) const;
+    /// Takes on a state saveState() wrote -- of a solver of this grid; false,
+    /// with the solver as it was, when it is not one.
+    bool loadState(StateReader& in);
 
 private:
     /// Every field onto the tiles `cells` (and their faces).

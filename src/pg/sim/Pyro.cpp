@@ -2,6 +2,7 @@
 
 #include "pg/core/Parallel.h"
 #include "pg/sim/Shared.h"
+#include "pg/sim/State.h"
 
 #include <algorithm>
 #include <array>
@@ -95,6 +96,82 @@ void PyroSolver::retile(std::shared_ptr<const Tiles> cells) {
         blockedVel_[a].clear();
     }
     anySolid_ = false;
+}
+
+void PyroSolver::saveState(StateWriter& out) const {
+    out.pod(static_cast<int32_t>(nx_));
+    out.pod(static_cast<int32_t>(ny_));
+    out.pod(static_cast<int32_t>(nz_));
+    out.pod(static_cast<uint8_t>(scene_.solver.sparse));
+    out.pod(static_cast<int32_t>(frame_));
+    out.pod(time_);
+    out.tiles(*cells_);
+    for (int a = 0; a < 3; ++a) out.values(vel_[a]);
+    for (const SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &pressure_, &solid_}) out.values(*g);
+    out.pod(static_cast<uint8_t>(anySolid_));
+    out.list(solidCells_);
+    for (int a = 0; a < 3; ++a) {
+        out.list(blocked_[a]);
+        out.list(blockedVel_[a]);
+    }
+}
+
+bool PyroSolver::loadState(StateReader& in) {
+    int32_t n[3] = {0, 0, 0}, frame = 0;
+    uint8_t sparse = 0, anySolid = 0;
+    float time = 0.0f;
+    std::shared_ptr<const Tiles> cells;
+    if (!in.pod(n[0]) || !in.pod(n[1]) || !in.pod(n[2]) || !in.pod(sparse) || !in.pod(frame) || !in.pod(time) ||
+        !in.tiles(cells)) {
+        return false;
+    }
+    if (n[0] != nx_ || n[1] != ny_ || n[2] != nz_ || (sparse != 0) != scene_.solver.sparse || cells->axis() != -1 ||
+        cells->nx() != nx_ || cells->ny() != ny_ || cells->nz() != nz_) {
+        return in.fail();
+    }
+    // Read aside: a state cut short leaves this solver as it was.
+    SparseGrid vel[3];
+    for (int a = 0; a < 3; ++a) {
+        vel[a] = SparseGrid(Tiles::faces(*cells, a));
+        if (!in.values(vel[a])) return false;
+    }
+    SparseGrid fields[6];
+    for (SparseGrid& g : fields) {
+        g = SparseGrid(cells);
+        if (!in.values(g)) return false;
+    }
+    std::vector<size_t> solidCells, blocked[3];
+    std::vector<float> blockedVel[3];
+    if (!in.pod(anySolid) || !in.list(solidCells)) return false;
+    for (const size_t c : solidCells) {
+        if (c >= fields[5].size()) return in.fail();
+    }
+    for (int a = 0; a < 3; ++a) {
+        if (!in.list(blocked[a]) || !in.list(blockedVel[a]) || blocked[a].size() != blockedVel[a].size()) {
+            return in.fail();
+        }
+        for (const size_t f : blocked[a]) {
+            if (f >= vel[a].size()) return in.fail();
+        }
+    }
+    retile(cells);
+    for (int a = 0; a < 3; ++a) {
+        // Onto the faces retile() made, which the other face fields share.
+        std::copy(vel[a].values().begin(), vel[a].values().end(), vel_[a].data());
+        blocked_[a] = std::move(blocked[a]);
+        blockedVel_[a] = std::move(blockedVel[a]);
+    }
+    SparseGrid* mine[6] = {&density_, &temperature_, &fuel_, &flame_, &pressure_, &solid_};
+    for (int f = 0; f < 6; ++f) *mine[f] = std::move(fields[f]);
+    solidCells_ = std::move(solidCells);
+    anySolid_ = anySolid != 0;
+    frame_ = frame;
+    time_ = time;
+    PoissonBoundary boundary;
+    boundary.closed[2] = scene_.solver.closedFloor;
+    boundary.solid = anySolid_ ? &solid_ : nullptr;
+    poisson_.setBoundary(boundary);
+    return true;
 }
 
 Vec3 PyroSolver::worldAt(float x, float y, float z) const {
