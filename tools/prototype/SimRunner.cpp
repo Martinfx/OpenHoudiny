@@ -1,5 +1,8 @@
 #include "SimRunner.h"
 
+#include "pg/sim/Cache.h"
+
+#include <algorithm>
 #include <chrono>
 
 namespace pg::editor {
@@ -28,6 +31,10 @@ void SimRunner::set(const sim::World& world, int frames) {
             adopted_ = false;
             cache_.clear();
             bytes_ = 0;
+            folder_.clear();
+            read_.clear();
+            askedAt_.clear();
+            readBytes_ = 0;
             ++generation_;
             domain_ = safe.hasGas ? safe.gas.solver.domain() : sim::Domain();
         }
@@ -54,6 +61,10 @@ void SimRunner::adopt(const sim::World& world, int frames, std::vector<std::shar
         cache_ = std::move(loaded);
         bytes_ = 0;
         for (const auto& f : cache_) bytes_ += f->bytes();
+        folder_.clear();
+        read_.clear();
+        askedAt_.clear();
+        readBytes_ = 0;
         ++generation_;  // a frame simulated meanwhile belongs to no one
         domain_ = safe.hasGas ? safe.gas.solver.domain() : sim::Domain();
     }
@@ -70,11 +81,106 @@ void SimRunner::clear() {
         frames_ = 0;
         cache_.clear();
         bytes_ = 0;
+        folder_.clear();
+        read_.clear();
+        askedAt_.clear();
+        readBytes_ = 0;
         ++generation_;  // a frame simulated meanwhile belongs to no one
         stepMs_ = 0.0;
         domain_ = sim::Domain();
     }
     wake_.notify_all();
+}
+
+void SimRunner::stream(const sim::World& world, int frames, const std::string& folder) {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        const sim::World safe = world.sanitized();
+        started_ = true;
+        world_ = safe;
+        fresh_ = false;  // the thread's solver stays as it is, unused
+        adopted_ = true;
+        frames_ = std::max(1, frames);
+        cache_.clear();
+        bytes_ = 0;
+        folder_ = folder;
+        onDisk_ = 0;
+        read_.clear();
+        askedAt_.clear();
+        readBytes_ = 0;
+        ++generation_;  // a frame simulated meanwhile belongs to no one
+        domain_ = safe.hasGas ? safe.gas.solver.domain() : sim::Domain();
+    }
+    {
+        std::lock_guard<std::mutex> lock(loading_);
+        layout_.reset();
+        rebar_.reset();
+        glue_.reset();
+    }
+    refresh();
+    wake_.notify_all();
+}
+
+void SimRunner::refresh() {
+    std::string folder;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        folder = folder_;
+    }
+    if (folder.empty()) return;
+    sim::CacheInfo info;
+    std::string error;
+    const int count = sim::readCacheInfo(folder, info, error) ? info.frames : 0;
+    std::lock_guard<std::mutex> lock(mu_);
+    if (folder != folder_) return;  // streaming another meanwhile
+    onDisk_ = std::clamp(count, 0, frames_);
+}
+
+std::string SimRunner::folder() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return folder_;
+}
+
+std::shared_ptr<const sim::Frame> SimRunner::load(int number) const {
+    std::string folder;
+    sim::RigidScene rigid;
+    unsigned generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        folder = folder_;
+        rigid = world_.rigid;
+        generation = generation_;
+    }
+    // One read at a time: two asking for the same frame read it once.
+    std::lock_guard<std::mutex> reading(loading_);
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (generation != generation_) return nullptr;
+        if (auto it = read_.find(number); it != read_.end()) return it->second;
+    }
+    auto frame = std::make_shared<sim::Frame>();
+    std::string error;
+    if (!sim::readFrame(folder, number, *frame, error)) return nullptr;
+    frame->number = number;
+    sim::adoptPieces(*frame, rigid, &layout_, &rebar_, &glue_);
+    std::lock_guard<std::mutex> lock(mu_);
+    if (generation != generation_) return nullptr;  // another world or folder meanwhile
+    read_[number] = frame;
+    askedAt_[number] = ++asks_;
+    readBytes_ += frame->bytes();
+    // Past the budget: the frames asked for longest ago go -- never the one
+    // just read.
+    while (readBytes_ > budget_ && read_.size() > 1) {
+        auto oldest = askedAt_.begin();
+        for (auto it = askedAt_.begin(); it != askedAt_.end(); ++it) {
+            if (it->second < oldest->second) oldest = it;
+        }
+        if (oldest->first == number) break;
+        readBytes_ -= read_[oldest->first]->bytes();
+        read_.erase(oldest->first);
+        askedAt_.erase(oldest);
+    }
+    return frame;
 }
 
 bool SimRunner::adopted() const {
@@ -107,13 +213,23 @@ void SimRunner::setBudget(size_t bytes) {
 
 int SimRunner::cached() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return static_cast<int>(cache_.size());
+    return folder_.empty() ? static_cast<int>(cache_.size()) : onDisk_;
 }
 
 std::shared_ptr<const sim::Frame> SimRunner::frame(int number) const {
-    std::lock_guard<std::mutex> lock(mu_);
-    if (number < 1 || number > static_cast<int>(cache_.size())) return nullptr;
-    return cache_[static_cast<size_t>(number - 1)];
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (folder_.empty()) {
+            if (number < 1 || number > static_cast<int>(cache_.size())) return nullptr;
+            return cache_[static_cast<size_t>(number - 1)];
+        }
+        if (number < 1 || number > onDisk_) return nullptr;
+        if (auto it = read_.find(number); it != read_.end()) {
+            askedAt_[number] = ++asks_;
+            return it->second;
+        }
+    }
+    return load(number);
 }
 
 bool SimRunner::busy() const {
@@ -128,7 +244,7 @@ bool SimRunner::full() const {
 
 size_t SimRunner::bytes() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return bytes_;
+    return folder_.empty() ? bytes_ : readBytes_;
 }
 
 double SimRunner::stepMs() const {

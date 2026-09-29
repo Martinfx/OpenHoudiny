@@ -337,6 +337,7 @@ set(PG_TOOL_SOURCES tools/prototype/main.cpp tools/prototype/Commands.cpp tools/
 if(PG_BUILD_GUI)
   list(APPEND PG_TOOL_SOURCES
     tools/prototype/App.cpp
+    tools/prototype/Bake.cpp
     tools/prototype/Editor.cpp
     tools/prototype/Gizmo.cpp
     tools/prototype/NodeCanvas.cpp

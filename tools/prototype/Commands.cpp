@@ -11,8 +11,8 @@
 //                    [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...
 //   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..1024]
 //                    [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
-//                    [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
-//                    [--export PATH] [--export-node NODE]
+//                    [--set NODE.PARAM=VALUE]... [--cache DIR [--checkpoint K] [--resume]] [--from-cache DIR]
+//                    [--export PATH] [--export-node NODE] [--preview F]
 //   prototype sim --list
 //   prototype pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
 //   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE] [--set NODE.PARAM=VALUE]...
@@ -38,6 +38,11 @@
 // that parameter; a VALUE that is not a value is an expression ($F, ch()),
 // and NODE.PARAM.x=... sets one component of a vector. --cache DIR writes every frame to a folder, and
 // --from-cache DIR reads them from one instead of simulating (pg/sim/Cache.h);
+// its cache.txt says how far it has got after every frame. --checkpoint K
+// saves the whole state of the simulation there every K frames, and
+// --resume goes on from it -- a bake cut short does not start again (the
+// editor's Bake to Disk runs this, in a process of its own). --preview F
+// simulates the gas and the water on grids F as fine (sim::preview);
 // --export PATH writes the displayed geometry of every frame -- or that of
 // --export-node -- to .ply, .obj, .vdb or .usda files, $F4 in PATH the
 // frame (pg/io/Export.h); a .usda without $F is the whole shot as one USD
@@ -126,6 +131,9 @@ struct Options {
     bool guides = false;             ///< sim: draw the domain and the sources
     bool listExamples = false;       ///< sim --list
     std::string cacheDir;            ///< sim --cache: write every frame there
+    int checkpoint = 0;              ///< sim --checkpoint K: the state into the cache every K frames; 0: never
+    bool resume = false;             ///< sim --resume: go on from the cache's checkpoint
+    float preview = 1.0f;            ///< sim --preview F: the grids F as fine
     std::string fromCache;           ///< sim --from-cache: read the frames from there
     std::string exportPattern;       ///< sim --export: the displayed geometry of every frame, to files
     std::string exportNode;          ///< sim --export-node: that node's rather than the displayed one's
@@ -195,6 +203,9 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--set") { if (!next(v)) return false; o.sets.push_back(v); }
         else if (a == "--guides") o.guides = true;
         else if (a == "--cache") { if (!next(o.cacheDir)) return false; }
+        else if (a == "--checkpoint") { if (!nextInt(o.checkpoint)) return false; }
+        else if (a == "--resume") o.resume = true;
+        else if (a == "--preview") { if (!next(v) || !parseFloat(v, o.preview)) return false; }
         else if (a == "--from-cache") { if (!next(o.fromCache)) return false; }
         else if (a == "--export") { if (!next(o.exportPattern)) return false; }
         else if (a == "--export-node") { if (!next(o.exportNode)) return false; }
@@ -679,6 +690,15 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      o.resolution);
         return 1;
     }
+    if (o.checkpoint < 0 || !(o.preview > 0.0f && o.preview <= 1.0f)) {
+        std::fprintf(stderr, "%s: --checkpoint wants a number of frames, --preview a fraction above 0, at most 1\n", cmd);
+        return 1;
+    }
+    if ((o.checkpoint > 0 || o.resume) && (o.cacheDir.empty() || !o.fromCache.empty())) {
+        std::fprintf(stderr, "%s: --checkpoint and --resume keep the state in the cache: give --cache DIR, without "
+                             "--from-cache\n", cmd);
+        return 1;
+    }
     // "-": no pictures -- the cache or the export alone.
     const bool pictures = outPath != "-";
     if (!pictures && o.cacheDir.empty() && o.exportPattern.empty()) {
@@ -723,6 +743,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         c.world.gas.solver.resolution = o.resolution;
         c.world.water.solver.resolution = o.resolution;
     }
+    c.world = sim::preview(c.world, o.preview);
     int frames = o.frames > 0 ? o.frames : c.frames;
     // What is exported: the displayed node's geometry, or the one named.
     int exported = c.display;
@@ -840,6 +861,51 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     std::shared_ptr<const sim::RigidGlue> adoptedGlue;      // ... and the joints of their glue
     if (o.fromCache.empty()) solver = std::make_unique<sim::WorldSolver>(c.world);
     const sim::World world = c.world.sanitized();
+    // What the cache says of itself as it is written -- how far it has got,
+    // how long a frame takes, the frame of its checkpoint -- for whoever
+    // watches it: the editor, playing a bake as it runs.
+    const uint64_t networkHash = sim::networkHash(net.save());
+    sim::CacheInfo progress;
+    progress.fps = 1.0f / world.timeStep;
+    progress.network = networkHash;
+    progress.of = frames;
+    // Going on from the cache's checkpoint: the solver taken to its frame.
+    int resumed = 0;
+    if (o.resume) {
+        sim::CacheInfo before;
+        std::string state;
+        if (!sim::readCacheInfo(o.cacheDir, before, error) || !sim::readCheckpoint(o.cacheDir, state, error)) {
+            std::fprintf(stderr, "%s: --resume: %s\n", cmd, error.c_str());
+            return 1;
+        }
+        if (before.network != networkHash) {
+            std::fprintf(stderr, "%s: --resume: the checkpoint in %s is of another network (or another version of "
+                                 "it)\n", cmd, o.cacheDir.c_str());
+            return 1;
+        }
+        const auto t = std::chrono::steady_clock::now();
+        if (!solver->loadState(state, error)) {
+            std::fprintf(stderr, "%s: --resume: %s\n", cmd, error.c_str());
+            return 1;
+        }
+        resumed = solver->frame();
+        if (resumed > frames) {
+            std::fprintf(stderr, "%s: --resume: the checkpoint is of frame %d, after the last, %d\n", cmd, resumed,
+                         frames);
+            return 1;
+        }
+        progress.checkpoint = resumed;
+        progress.stepMs = before.stepMs;
+        // Frames after the checkpoint are made again: the note says so.
+        progress.frames = resumed;
+        if (resumed > 0 && !sim::writeCacheInfo(o.cacheDir, progress, error)) {
+            std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+            return 1;
+        }
+        std::printf("resumed at frame %d from %s (%.1f s)\n", resumed, sim::checkpointFile(o.cacheDir).c_str(),
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count());
+        std::fflush(stdout);
+    }
 #ifdef PG_CAN_RENDER
     sim::Domain box = gl::sceneDomain(world);
     if (volume) {
@@ -889,7 +955,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     int images = 0, cachedFrames = 0, exports = 0, passed = 0;  // passed: frames from --start on
     int plateErrors = 0;
     std::string last, lastExport;
-    for (int f = solver ? 1 : first; f <= frames; ++f) {
+    int simulated = 0;  // frames stepped here -- after the checkpoint, when resumed
+    for (int f = solver ? resumed + 1 : first; f <= frames; ++f) {
         const bool inRange = f >= first;  // before --start: simulated, cached, not drawn or exported
         bool draws = false;
 #ifdef PG_CAN_RENDER
@@ -913,12 +980,28 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             current = std::move(read);
         }
         simulating += ms(t);
+        ++simulated;
         if (!o.cacheDir.empty()) {
             if (!sim::writeFrame(*current, o.cacheDir, error)) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
                 return 1;
             }
             ++cachedFrames;
+            // Every K frames, the state -- not after the last: there is
+            // nothing to go on to.
+            if (solver && o.checkpoint > 0 && f % o.checkpoint == 0 && f < frames) {
+                if (!sim::writeCheckpoint(o.cacheDir, solver->saveState(), error)) {
+                    std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                    return 1;
+                }
+                progress.checkpoint = f;
+            }
+            progress.frames = f;
+            progress.stepMs = simulating / simulated;
+            if (f < frames && !sim::writeCacheInfo(o.cacheDir, progress, error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
         }
         if (!inRange) continue;
         ++passed;
@@ -1024,14 +1107,18 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         return 1;
     }
     if (!o.cacheDir.empty()) {
+        // Done: the note says so, and the checkpoint has served.
         sim::CacheInfo info;
         info.frames = frames;
         info.fps = 1.0f / world.timeStep;
-        info.network = sim::networkHash(net.save());
+        info.network = networkHash;
+        if (solver && simulated > 0) info.stepMs = simulating / simulated;
         if (!sim::writeCacheInfo(o.cacheDir, info, error)) {
             std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
             return 1;
         }
+        std::error_code ec;
+        fs::remove(sim::checkpointFile(o.cacheDir), ec);
     }
     std::string what;
     if (solver && world.hasGas) {
@@ -1069,7 +1156,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     const std::string through;
 #endif
     // Simulated: every frame to the last; read: those from --start.
-    const int stepped = solver ? frames : passed;
+    const int stepped = solver ? simulated : passed;
     const std::string range = first > 1 ? " " + std::to_string(first) + "-" + std::to_string(frames) : std::string();
     if (images > 0) {
         std::printf("wrote %s: %s%s, %d frames%s (%.1f s); %s %.1f ms/frame, rendering %.0f ms/image%s\n",
@@ -1077,8 +1164,9 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                     static_cast<double>(passed) * static_cast<double>(world.timeStep), solver ? "simulation" : "reading",
                     simulating / std::max(stepped, 1), rendering / std::max(images, 1), through.c_str());
     } else if (solver) {
-        std::printf("%s: simulated%s, %d frames; simulation %.1f ms/frame\n", network.c_str(), what.c_str(), frames,
-                    simulating / frames);
+        const std::string from = resumed > 0 ? ", from frame " + std::to_string(resumed + 1) : std::string();
+        std::printf("%s: simulated%s, %d frames%s; simulation %.1f ms/frame\n", network.c_str(), what.c_str(), frames,
+                    from.c_str(), simulating / std::max(stepped, 1));
     } else {
         std::printf("%s: %d frames%s read from %s; reading %.1f ms/frame\n", network.c_str(), passed, range.c_str(),
                     o.fromCache.c_str(), simulating / std::max(stepped, 1));
@@ -1277,15 +1365,18 @@ void printUsage(std::FILE* out) {
                  "  prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K]\n"
                  "                   [--resolution 16..1024]\n"
                  "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
-                 "                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
-                 "                   [--export PATH] [--export-node NODE] [--threads N]\n"
+                 "                   [--set NODE.PARAM=VALUE]... [--cache DIR [--checkpoint K] [--resume]]\n"
+                 "                   [--from-cache DIR] [--export PATH] [--export-node NODE] [--threads N]\n"
+                 "                   [--preview F]\n"
                  "                   simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                   frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
                  "                   OUT.exr: linear light and passes for compositing (Z, forward.u/v, mask.*);\n"
                  "                   a video gets every frame (every K-th): .avi always, .mp4 .mov .mkv .webm .gif\n"
                  "                   when ffmpeg is installed;\n"
                  "                   through the network's camera at its size, unless --yaw, --pitch or --distance\n"
-                 "                   ask for a view round the scene. --cache writes every frame to DIR;\n"
+                 "                   ask for a view round the scene. --cache writes every frame to DIR, and\n"
+                 "                   how far it has got to DIR/cache.txt; --checkpoint K the state every K\n"
+                 "                   frames, which --resume goes on from; --preview F: the grids F as fine;\n"
                  "                   --from-cache reads them from there instead of simulating; --export writes\n"
                  "                   the displayed geometry of every frame, PATH with $F4 for the frame:\n"
                  "                   .ply points, .obj polygons, .vdb volumes, .usda; a .usda without $F: the\n"

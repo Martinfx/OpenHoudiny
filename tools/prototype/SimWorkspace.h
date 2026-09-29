@@ -29,6 +29,7 @@
 // every instance follows. A parameter inside is promoted -- right click on
 // its name -- to show on the asset's node.
 //
+#include "Bake.h"
 #include "Gizmo.h"
 #include "NodeCanvas.h"
 #include "RenderJob.h"
@@ -210,6 +211,13 @@ private:
     /// The frames in `folder` in place of simulated ones, until what is
     /// simulated changes.
     bool loadCache(const std::string& folder);
+    /// Bakes the network into `target` in the background (Bake.h), playing
+    /// its frames as they land; `resume`: on from the folder's checkpoint.
+    bool startBake(const std::string& target, bool resume);
+    /// The bake, looked at: its end said, the frames it wrote found.
+    void pollBake();
+    /// How far it has got, in the Simulation panel.
+    void bakePanel();
     /// The dialog that exports geometry node `id`'s geometry: at the frame
     /// on screen, or at every frame cached (`frames`).
     void chooseExport(int id, bool frames);
@@ -386,12 +394,18 @@ private:
 
     ui::FileBrowser files_;
     enum class FileAction {
-        None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, ExportGeometry, ExportFrames,
+        None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, Bake, ExportGeometry, ExportFrames,
         ExportUsd, OpenAsset, SaveAsset
     } fileAction_ = FileAction::None;
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;
     std::string cacheFolder_;  ///< the folder the cache was last saved to or loaded from
+
+    // Preview and bakes.
+    bool preview_ = false;     ///< the gas and the water simulated on coarser grids (sim::preview)
+    Bake bake_;
+    std::string bakeFolder_;   ///< where the last bake went
+    double bakePolled_ = 0.0;  ///< when the bake and the frames on disk were last looked at (ImGui time)
 
     // Rendering.
     RenderJob job_;

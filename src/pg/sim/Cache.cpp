@@ -480,17 +480,31 @@ std::string frameFile(const std::string& folder, int number) {
     return (std::filesystem::path(folder) / name).string();
 }
 
-bool writeFrame(const Frame& frame, const std::string& folder, std::string& error) {
+bool writeWhole(const std::string& path, std::string_view bytes, std::string& error) {
+    const std::string part = path + ".part";
+    {
+        std::ofstream file(part, std::ios::binary | std::ios::trunc);
+        if (!file || !file.write(bytes.data(), static_cast<std::streamsize>(bytes.size())) || !file.flush()) {
+            error = path + ": cannot write it";
+            std::error_code ec;
+            std::filesystem::remove(part, ec);
+            return false;
+        }
+    }
     std::error_code ec;
-    std::filesystem::create_directories(folder, ec);
-    const std::string path = frameFile(folder, frame.number);
-    const std::string bytes = formatFrame(frame);
-    std::ofstream file(path, std::ios::binary);
-    if (!file || !file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()))) {
-        error = path + ": cannot write it";
+    std::filesystem::rename(part, path, ec);
+    if (ec) {
+        error = path + ": cannot write it (" + ec.message() + ")";
+        std::filesystem::remove(part, ec);
         return false;
     }
     return true;
+}
+
+bool writeFrame(const Frame& frame, const std::string& folder, std::string& error) {
+    std::error_code ec;
+    std::filesystem::create_directories(folder, ec);
+    return writeWhole(frameFile(folder, frame.number), formatFrame(frame), error);
 }
 
 bool readFrame(const std::string& folder, int number, Frame& frame, std::string& error) {
@@ -513,18 +527,22 @@ bool writeCacheInfo(const std::string& folder, const CacheInfo& info, std::strin
     std::error_code ec;
     std::filesystem::create_directories(folder, ec);
     const std::string path = (std::filesystem::path(folder) / "cache.txt").string();
-    std::ofstream file(path, std::ios::binary);
     char hash[32];
     std::snprintf(hash, sizeof hash, "%016llx", static_cast<unsigned long long>(info.network));
     // To the thousandth: 1 / (1 / 30) is 29.999998 in floats, and the note says 30.
     char fps[32];
     const auto written = std::to_chars(fps, fps + sizeof fps, std::round(info.fps * 1000.0f) / 1000.0f);  // a point, whatever the locale
-    if (!file || !(file << "pgcache 1\nframes " << info.frames << "\nfps " << std::string(fps, written.ptr) << "\nnetwork "
-                        << hash << "\n")) {
-        error = path + ": cannot write it";
-        return false;
+    std::string text = "pgcache 1\nframes " + std::to_string(info.frames) + "\nfps " + std::string(fps, written.ptr) +
+                       "\nnetwork " + hash + "\n";
+    // What a bake that runs says of itself.
+    if (info.of > info.frames) text += "of " + std::to_string(info.of) + "\n";
+    if (info.stepMs > 0.0) {
+        char ms[32];
+        const auto end = std::to_chars(ms, ms + sizeof ms, std::round(info.stepMs * 10.0) / 10.0);
+        text += "ms " + std::string(ms, end.ptr) + "\n";
     }
-    return true;
+    if (info.checkpoint > 0) text += "checkpoint " + std::to_string(info.checkpoint) + "\n";
+    return writeWhole(path, text, error);
 }
 
 bool readCacheInfo(const std::string& folder, CacheInfo& info, std::string& error) {
@@ -551,11 +569,41 @@ bool readCacheInfo(const std::string& folder, CacheInfo& info, std::string& erro
             if (io::readNumber(p, p + value.size(), fps)) info.fps = fps;
         }
         else if (word == "network") info.network = std::strtoull(value.c_str(), nullptr, 16);
+        else if (word == "of") info.of = std::atoi(value.c_str());
+        else if (word == "ms") {
+            const char* p = value.c_str();
+            float ms = 0.0f;
+            if (io::readNumber(p, p + value.size(), ms)) info.stepMs = std::max(0.0, static_cast<double>(ms));
+        }
+        else if (word == "checkpoint") info.checkpoint = std::max(0, std::atoi(value.c_str()));
     }
     if (info.frames < 1) {
         error = path + ": no frames";
         return false;
     }
+    return true;
+}
+
+std::string checkpointFile(const std::string& folder) {
+    return (std::filesystem::path(folder) / "checkpoint.pgstate").string();
+}
+
+bool writeCheckpoint(const std::string& folder, std::string_view state, std::string& error) {
+    std::error_code ec;
+    std::filesystem::create_directories(folder, ec);
+    return writeWhole(checkpointFile(folder), state, error);
+}
+
+bool readCheckpoint(const std::string& folder, std::string& state, std::string& error) {
+    const std::string path = checkpointFile(folder);
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        error = folder + ": no checkpoint here (checkpoint.pgstate)";
+        return false;
+    }
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    state = ss.str();
     return true;
 }
 

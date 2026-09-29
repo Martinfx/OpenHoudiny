@@ -37,6 +37,12 @@ namespace {
 
 using theme::Icon;
 
+/// Simulation > Preview Resolution: the grids of the gas and the water this
+/// much as fine.
+constexpr float kPreview = 0.5f;
+/// A bake saves its state every this many frames.
+constexpr int kCheckpointEvery = 10;
+
 ImU32 categoryColor(const std::string& c) {
     if (c == "Geometry") return IM_COL32(148, 74, 110, 255);
     if (c == "Objects") return IM_COL32(70, 98, 150, 255);
@@ -429,6 +435,7 @@ void SimWorkspace::recompile() {
     if (net_.revision() == compiledRevision_) return;
     compiledRevision_ = net_.revision();
     compiled_ = net_.compile(folder(), geometry_.get());
+    if (compiled_.ok && preview_) compiled_.world = sim::preview(compiled_.world, kPreview);
     if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
     else if (!simulates(net_)) runner_->clear();  // nothing left that simulates: its frames go too
     current_ = std::clamp(current_, 1, std::max(1, compiled_.frames));
@@ -485,6 +492,11 @@ void SimWorkspace::update(float dt) {
     recompile();
     history_.track(net_.save(), settled());
     if (synchronous_) runner_->step();
+    // A bake, and frames landing on disk: twice a second.
+    if (ImGui::GetTime() - bakePolled_ >= 0.5) {
+        bakePolled_ = ImGui::GetTime();
+        pollBake();
+    }
 
     // Playback at the network's frame rate, never past what is simulated.
     const int cached = runner_->cached();
@@ -1478,6 +1490,11 @@ void SimWorkspace::networkOverview() {
             } else if (runner_->stepMs() > 0.0) {
                 ImGui::Text("Step        %.0f ms", runner_->stepMs());
             }
+            if (preview_) {
+                ImGui::TextColored(theme::vec(theme::kYellow), "Preview     grids half as fine");
+                ImGui::SetItemTooltip("Simulation > Preview Resolution; a bake is at the full resolution");
+            }
+            if (bake_.running() || bake_.ended()) bakePanel();
         } else {
             ImGui::TextColored(theme::vec(theme::kRed), "Nothing to simulate yet.");
         }
@@ -1727,6 +1744,28 @@ void SimWorkspace::menus() {
             fileAction_ = FileAction::LoadCache;
         }
         ImGui::SetItemTooltip("Frames saved before, in place of simulating them -- until what is simulated changes.");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Preview Resolution", nullptr, preview_)) {
+            preview_ = !preview_;
+            compiledRevision_ = ~0ull;  // the world again, at the other grids
+            recompile();
+            shown_.reset();
+        }
+        ImGui::SetItemTooltip("The gas and the water on grids half as fine: quick to work on. A bake is always at the "
+                              "full resolution.");
+        if (ImGui::MenuItem("Bake to Disk\xe2\x80\xa6", nullptr, false, compiled_.ok && !bake_.running())) {
+            files_.openFolder("Bake into a folder", true,
+                              bakeFolder_.empty() ? (fs::path(outputFolder()) / (stem() + "_bake")).string() : bakeFolder_);
+            fileAction_ = FileAction::Bake;
+        }
+        ImGui::SetItemTooltip("Simulates every frame at the full resolution in a process of its own, into a cache "
+                              "folder: the editor stays free and plays the frames as they land. The state is saved "
+                              "every %d frames: a bake cut short goes on from there (Resume Bake).", kCheckpointEvery);
+        const bool resumable = !bake_.running() && compiled_.ok && Bake::canResume(bakeFolder_, net_.save());
+        if (ImGui::MenuItem("Resume Bake", nullptr, false, resumable)) startBake(bakeFolder_, true);
+        ImGui::SetItemTooltip("Goes on with the bake cut short, from its last checkpoint.");
+        if (ImGui::MenuItem("Cancel Bake", nullptr, false, bake_.running())) bake_.cancel();
+        ImGui::SetItemTooltip("Stops the bake: the frames written stay, and its last checkpoint.");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Add")) {
@@ -1812,6 +1851,7 @@ void SimWorkspace::popups() {
         case FileAction::ImportMesh: addMesh(chosen, addAt_); break;
         case FileAction::SaveCache: saveCache(chosen); break;
         case FileAction::LoadCache: loadCache(chosen); break;
+        case FileAction::Bake: startBake(chosen, false); break;
         case FileAction::ExportGeometry: exportGeometry(fileNode_, chosen); break;
         case FileAction::ExportFrames: exportFrames(fileNode_, chosen); break;
         case FileAction::ExportUsd: exportUsd(chosen); break;
@@ -1894,7 +1934,13 @@ std::string SimWorkspace::status() const {
     std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %s  \xc2\xb7  cache %d / %d (%.0f MB)%s  \xc2\xb7  %s",
                   net_.nodes().size(), gridsText().c_str(), runner_->cached(), compiled_.frames,
                   static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), runner_->full() ? " full" : "", step);
-    return text;
+    std::string line = text;
+    if (preview_) line += "  \xc2\xb7  preview";
+    if (bake_.running()) {
+        line += "  \xc2\xb7  baking " + std::to_string(bake_.progress().frames) + " / " + std::to_string(bake_.frames());
+        if (bake_.secondsLeft() > 0.0) line += ", " + Bake::duration(bake_.secondsLeft()) + " left";
+    }
+    return line;
 }
 
 void SimWorkspace::selectNode(const std::string& name) {
@@ -2178,24 +2224,15 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
         setMessage("The network does not compile: its frames from disk need what it simulates", true);
         return false;
     }
-    // No more than the timeline holds.
+    // No more than the timeline holds; read from disk as they are played.
     const int count = std::min(info.frames, std::max(1, compiled_.frames));
-    std::vector<std::shared_ptr<const sim::Frame>> frames;
-    frames.reserve(static_cast<size_t>(count));
-    std::shared_ptr<const sim::RigidLayout> layout;  // the pieces' bodies, once for all frames
-    std::shared_ptr<const sim::RigidRebar> bars;      // ... and the bars in them
-    std::shared_ptr<const sim::RigidGlue> glue;       // ... and the joints of their glue
-    for (int f = 1; f <= count; ++f) {
-        auto frame = std::make_shared<sim::Frame>();
-        if (!sim::readFrame(folder, f, *frame, error)) {
-            setMessage(error, true);
-            return false;
-        }
-        frame->number = f;
-        sim::adoptPieces(*frame, compiled_.world.rigid, &layout, &bars, &glue);
-        frames.push_back(std::move(frame));
+    std::string first;
+    sim::Frame probe;
+    if (!sim::readFrame(folder, 1, probe, first)) {
+        setMessage(first, true);
+        return false;
     }
-    runner_->adopt(compiled_.world, compiled_.frames, std::move(frames));
+    runner_->stream(compiled_.world, compiled_.frames, folder);
     cacheFolder_ = folder;
     shown_.reset();
     viewDirty_ = true;
@@ -2206,6 +2243,73 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
     }
     setMessage(text);
     return true;
+}
+
+bool SimWorkspace::startBake(const std::string& target, bool resume) {
+    if (!compiled_.ok) {
+        setMessage("The network does not compile: there is nothing to bake", true);
+        return false;
+    }
+    std::string error;
+    if (!bake_.start(net_.save(), folder(), target, compiled_.frames, kCheckpointEvery, resume, error)) {
+        setMessage(error, true);
+        return false;
+    }
+    bakeFolder_ = target;
+    cacheFolder_ = target;
+    // Its frames, as they land.
+    runner_->stream(compiled_.world, compiled_.frames, target);
+    shown_.reset();
+    viewDirty_ = true;
+    setMessage((resume ? "Resuming the bake of " : "Baking ") + std::to_string(compiled_.frames) + " frames into " +
+               shownPath(target) + " in the background" + (preview_ ? ", at the full resolution" : ""));
+    return true;
+}
+
+void SimWorkspace::pollBake() {
+    const bool was = bake_.running();
+    bake_.poll();
+    if (!runner_->folder().empty()) runner_->refresh();
+    if (!was || bake_.running()) return;
+    const std::string where = shownPath(bake_.folder());
+    if (!bake_.failed()) {
+        const std::string text = "Baked " + std::to_string(bake_.frames()) + " frames into " + where + " in " +
+                                 Bake::duration(bake_.seconds());
+        setMessage(text);
+        notify(text, bake_.folder(), false, true);
+    } else if (bake_.cancelled()) {
+        setMessage("Bake cancelled at frame " + std::to_string(bake_.progress().frames) + " of " +
+                   std::to_string(bake_.frames()) + (bake_.progress().checkpoint > 0 ? " -- Resume Bake goes on from frame " +
+                                                     std::to_string(bake_.progress().checkpoint) : std::string()));
+    } else {
+        const std::string text = "The bake stopped at frame " + std::to_string(bake_.progress().frames) + ": " + bake_.why();
+        setMessage(text, true);
+        notify(text, std::string(), true, true);
+    }
+}
+
+void SimWorkspace::bakePanel() {
+    const sim::CacheInfo& p = bake_.progress();
+    const int of = std::max(1, bake_.frames());
+    char line[160];
+    if (bake_.running()) {
+        std::snprintf(line, sizeof line, "%d / %d", p.frames, of);
+        ImGui::TextUnformatted("Bake       ");
+        ImGui::SameLine();
+        ImGui::ProgressBar(static_cast<float>(p.frames) / static_cast<float>(of), ImVec2(-1.0f, 0.0f), line);
+        std::string when = p.stepMs > 0.0 ? Bake::duration(p.stepMs / 1000.0) + " a frame" : std::string("starting");
+        if (bake_.secondsLeft() > 0.0) when += ", " + Bake::duration(bake_.secondsLeft()) + " left";
+        ImGui::TextDisabled("            %s", when.c_str());
+        if (p.checkpoint > 0) ImGui::TextDisabled("            checkpoint at frame %d", p.checkpoint);
+        if (ImGui::SmallButton("Cancel Bake")) bake_.cancel();
+        ImGui::SetItemTooltip("Stops the bake: the frames written stay, and its last checkpoint.");
+    } else if (bake_.failed()) {
+        ImGui::TextColored(theme::vec(bake_.cancelled() ? theme::kYellow : theme::kRed), "Bake        %s at %d / %d",
+                           bake_.cancelled() ? "cancelled" : "stopped", p.frames, of);
+        if (!bake_.why().empty()) ImGui::SetItemTooltip("%s", bake_.why().c_str());
+    } else {
+        ImGui::Text("Bake        %d frames in %s", of, Bake::duration(bake_.seconds()).c_str());
+    }
 }
 
 void SimWorkspace::chooseExport(int id, bool frames) {

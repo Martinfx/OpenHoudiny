@@ -3,7 +3,8 @@
 // loaded into a fresh solver goes on to the bit as if it had never stopped
 // -- the gas sparse and dense, the water, the rain, the pieces stepped
 // again -- and a state of another world or cut short is refused. And the
-// preview of a world: its grids coarser, the rest as it is.
+// preview of a world: its grids coarser, the rest as it is. And what a bake
+// leaves in its cache folder: how far it has got, and its checkpoint.
 //
 #include "pg/sim/Cache.h"
 #include "pg/sim/Network.h"
@@ -11,6 +12,10 @@
 
 #include "test_framework.h"
 
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <string>
 
 using namespace pg;
@@ -132,4 +137,64 @@ TEST(preview_makes_the_grids_coarser_and_nothing_else) {
     CHECK(sim::preview(w, 1.0f) == w);
     CHECK(sim::preview(w, 3.0f) == w);
     CHECK_EQ(sim::preview(w, 0.01f).water.solver.resolution, 16);
+}
+
+TEST(cache_note_says_how_far_a_bake_has_got_and_reads_back) {
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::temp_directory_path() / ("pg_test_bake_" + std::to_string(std::random_device{}()));
+    sim::CacheInfo info;
+    info.frames = 43;
+    info.fps = 24.0f;
+    info.network = 0x0123456789abcdefull;
+    info.of = 150;
+    info.stepMs = 6212.34;
+    info.checkpoint = 40;
+    std::string error;
+    CHECK(sim::writeCacheInfo(folder.string(), info, error));
+    sim::CacheInfo back;
+    CHECK(sim::readCacheInfo(folder.string(), back, error));
+    CHECK_EQ(back.frames, 43);
+    CHECK_EQ(back.of, 150);
+    CHECK_NEAR(back.stepMs, 6212.3, 1e-2);
+    CHECK_EQ(back.checkpoint, 40);
+    CHECK_EQ(back.network, info.network);
+    CHECK(!back.done());
+    // Done: none of it is written, and a note without it reads as done.
+    info.frames = 150;
+    info.checkpoint = 0;
+    CHECK(sim::writeCacheInfo(folder.string(), info, error));
+    std::ifstream text(folder / "cache.txt");
+    const std::string note((std::istreambuf_iterator<char>(text)), std::istreambuf_iterator<char>());
+    CHECK(note.find("of ") == std::string::npos);
+    CHECK(note.find("checkpoint") == std::string::npos);
+    CHECK(sim::readCacheInfo(folder.string(), back, error));
+    CHECK(back.done());
+    // Nothing is left beside the files written.
+    for (const fs::directory_entry& e : fs::directory_iterator(folder)) {
+        CHECK(e.path().extension() != ".part");
+    }
+    fs::remove_all(folder);
+}
+
+TEST(checkpoint_file_holds_the_state_whole) {
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::temp_directory_path() / ("pg_test_checkpoint_" + std::to_string(std::random_device{}()));
+    const sim::World w = sim::preview(exampleWorld("campfire"), 0.4f);
+    sim::WorldSolver solver(w);
+    for (int f = 0; f < 6; ++f) solver.step();
+    std::string error, state;
+    CHECK(!sim::readCheckpoint(folder.string(), state, error));
+    CHECK(sim::writeCheckpoint(folder.string(), solver.saveState(), error));
+    CHECK(sim::readCheckpoint(folder.string(), state, error));
+    CHECK(state == solver.saveState());
+    sim::WorldSolver resumed(w);
+    CHECK(resumed.loadState(state, error));
+    CHECK_EQ(resumed.frame(), 6);
+    // Written again: replaced whole.
+    solver.step();
+    CHECK(sim::writeCheckpoint(folder.string(), solver.saveState(), error));
+    CHECK(sim::readCheckpoint(folder.string(), state, error));
+    CHECK(state == solver.saveState());
+    CHECK(!fs::exists(sim::checkpointFile(folder.string()) + ".part"));
+    fs::remove_all(folder);
 }

@@ -7,15 +7,19 @@
 //
 // Frames are kept as half floats (sim::Frame), shared: the renderer reads
 // one while the thread adds the next. Frames read from a cache on disk take
-// the place of simulated ones (adopt()).
+// the place of simulated ones (adopt()) -- or stay on disk, read as they are
+// asked for (stream()): a cache bigger than the memory, a bake that is still
+// writing it.
 //
 #include "pg/sim/Frame.h"
 #include "pg/sim/World.h"
 
 #include <atomic>
 #include <condition_variable>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -38,7 +42,16 @@ public:
     /// simulated after them -- there is no solver to go on from -- until
     /// set() brings another world.
     void adopt(const sim::World& world, int frames, std::vector<std::shared_ptr<const sim::Frame>> loaded);
-    /// The frames are adopted ones, not simulated.
+    /// The frames of a cache folder as the world's frames, read from disk
+    /// when asked for -- the latest read kept, as many as the budget holds --
+    /// and nothing simulated, until set() brings another world. A bake may
+    /// still be writing them: refresh() finds those written since.
+    void stream(const sim::World& world, int frames, const std::string& folder);
+    /// Streaming: the frames on disk now, as its cache.txt says.
+    void refresh();
+    /// The folder streamed from; empty when not streaming.
+    std::string folder() const;
+    /// The frames are adopted or streamed ones, not simulated.
     bool adopted() const;
     /// Nothing to simulate: the frames and the world go, and the next set()
     /// starts again whatever it brings -- another network, or none.
@@ -75,6 +88,9 @@ private:
     void loop();
     /// Simulates the next frame; false if there was nothing to do.
     bool advance();
+    /// Streaming: frame `number` read from disk into the frames kept, the
+    /// least recently asked for let go past the budget.
+    std::shared_ptr<const sim::Frame> load(int number) const;
 
     const bool synchronous_;
     mutable std::mutex mu_;
@@ -93,6 +109,18 @@ private:
     unsigned generation_ = 0;
     double stepMs_ = 0.0;
     sim::Domain domain_;
+    // Streaming: the folder, the frames on disk, those read -- by number, and
+    // when last asked for -- and the pieces the frames get (adoptPieces).
+    std::string folder_;
+    int onDisk_ = 0;
+    mutable std::map<int, std::shared_ptr<const sim::Frame>> read_;
+    mutable std::map<int, uint64_t> askedAt_;
+    mutable uint64_t asks_ = 0;
+    mutable size_t readBytes_ = 0;
+    mutable std::mutex loading_;  // one read at a time; guards the memos
+    mutable std::shared_ptr<const sim::RigidLayout> layout_;
+    mutable std::shared_ptr<const sim::RigidRebar> rebar_;
+    mutable std::shared_ptr<const sim::RigidGlue> glue_;
 
     std::atomic<bool> running_{true};
     std::atomic<bool> hold_{false};
