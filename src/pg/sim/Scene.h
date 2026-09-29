@@ -107,6 +107,11 @@ struct Collider {
     /// second, and its spin -- along the axis it turns round, radians per
     /// second. The gas and the water it pushes take it on.
     Vec3 velocity, spin;
+    /// A piece of an RBD Solver: which (RigidSolver::colliders); -1 an object.
+    int32_t piece = -1;
+    /// A piece: how heavy its body is, kg -- what pushes it moves it; 0 it
+    /// does not give (an object, a piece held still).
+    float mass = 0.0f;
 
     ShapeInstance instance() const { return {shape, center, rotation, size, mesh}; }
     bool contains(const Vec3& p) const { return instance().contains(p); }

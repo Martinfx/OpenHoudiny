@@ -287,7 +287,7 @@ TEST(cloth_from_the_network_through_the_cache_and_a_checkpoint) {
 
     // A frame written and read back: the same points, the geometry adopted.
     const Frame frame = straight.capture();
-    CHECK_EQ(frame.cloth.points, c.world.cloth.geometry->pointCount());
+    CHECK_EQ(frame.cloth.positions.size(), c.world.cloth.geometry->pointCount());
     Frame back;
     std::string error;
     CHECK(parseFrame(formatFrame(frame), back, error));
@@ -308,3 +308,180 @@ TEST(cloth_from_the_network_through_the_cache_and_a_checkpoint) {
         CHECK(straight.cloth()->positions() == resumed.cloth()->positions());
     }
 }
+
+namespace {
+
+/// A curtain of `nx` x `ny` quads, 1 m wide and high, from y = 1 to 2 in the
+/// plane z = 0, hung by its top row; `weight` kg on each of the middle
+/// points of its bottom row.
+std::shared_ptr<Geometry> curtain(int nx, int ny, float weight) {
+    auto g = sheet(nx, ny, Vec3(1.0f, 0.0f, 1.0f), Vec3());
+    auto P = g->positionsForWrite();
+    for (Vec3& p : P) p = Vec3(p.x, 1.5f - p.z, 0.0f);
+    auto pin = g->points().create("pin", AttrType::Int).write<int32_t>();
+    auto mass = g->points().create("mass", AttrType::Float).write<float>();
+    for (size_t i = 0; i < P.size(); ++i) {
+        pin[i] = P[i].y > 1.999f ? 1 : 0;
+        const bool middle = std::fabs(P[i].x) < 0.15f && P[i].y < 1.001f;
+        mass[i] = middle ? weight : 0.3f / static_cast<float>((nx + 1) * (ny + 1));
+    }
+    return g;
+}
+
+}  // namespace
+
+TEST(cloth_tears_where_it_is_pulled_too_far) {
+    // A curtain with weights sewn in the middle of its hem: it holds them
+    // when it does not tear; torn, it opens and they fall to the floor.
+    auto run = [](float tear) {
+        ClothScene s = sceneOf(curtain(20, 20, 0.2f));
+        s.solver.tear = tear;
+        auto solver = std::make_unique<ClothSolver>(s);
+        for (int f = 0; f < 45; ++f) solver->step();
+        return solver;
+    };
+    const auto whole = run(0.0f), torn = run(0.3f);
+    CHECK_EQ(whole->tornPoints(), 0u);
+    CHECK(lowest(whole->positions()) > 0.5f);
+    CHECK(torn->tornPoints() > 0u);
+    CHECK(lowest(torn->positions()) < 0.05f);
+    // Drawn: the points split off with their own's attributes, every face
+    // there still, each on the points it is on now.
+    const ClothFrame frame = torn->capture();
+    CHECK(frame.torn());
+    CHECK_EQ(frame.copies.size(), torn->tornPoints());
+    const auto g = posedCloth(frame);
+    CHECK(g != nullptr);
+    CHECK_EQ(g->pointCount(), frame.positions.size());
+    CHECK_EQ(g->primitiveCount(), 400u);
+    const auto P = g->positions();
+    const AttributeArray* mass = g->points().find("mass");
+    CHECK(mass != nullptr);
+    for (size_t k = 0; k < frame.copies.size(); ++k) {
+        const size_t i = 441 + k;
+        CHECK(P[i] == frame.positions[i]);
+        CHECK(mass->read<float>()[i] == mass->read<float>()[frame.copies[k]]);
+    }
+    // A face on a split point is not on the point it was split off.
+    size_t moved = 0;
+    for (size_t v = 0; v < frame.corners.size(); ++v) moved += frame.corners[v] >= 441;
+    CHECK(moved > 0);
+}
+
+TEST(cloth_a_rope_parts_and_a_balloon_bursts) {
+    // A rope with a weight at its end, pinned at its top: torn, it parts in
+    // two lines, and the weight falls.
+    auto g = rope(Vec3(0.0f, 2.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), 20);
+    pin(*g, {0});
+    auto mass = g->points().create("mass", AttrType::Float).write<float>();
+    std::fill(mass.begin(), mass.end(), 0.01f);
+    mass[20] = 5.0f;
+    ClothScene s = sceneOf(g);
+    s.solver.tear = 0.2f;
+    ClothSolver r(s);
+    for (int f = 0; f < 30; ++f) r.step();
+    CHECK(r.positions()[20].y < 0.1f);
+    const auto parted = posedCloth(r.capture());
+    CHECK(parted != nullptr);
+    CHECK(parted->primitiveCount() >= 2u);
+    CHECK(r.capture().copies.empty());  // a rope parts without splitting its points
+
+    // A ball blown up to three times its volume: its edges tear, the ball is
+    // open, and no balloon any more.
+    registerBuiltinNodes();
+    Graph graph;
+    pg::Node* ball = graph.create("sphere", "sphere");
+    ball->setFloat("radius", 0.3f);
+    ball->setVec3("center", Vec3(0.0f, 1.0f, 0.0f));
+    CookEngine engine;
+    ClothScene b = sceneOf(std::make_shared<Geometry>(*engine.cook(*ball, CookContext{})));
+    b.solver.pressure = 3.0f;
+    b.solver.tear = 0.2f;
+    b.solver.selfCollision = false;
+    ClothSolver balloon(b);
+    CHECK_EQ(balloon.balloonCount(), 1u);
+    for (int f = 0; f < 30 && balloon.balloonCount() > 0; ++f) balloon.step();
+    CHECK_EQ(balloon.balloonCount(), 0u);
+    CHECK(balloon.tornPoints() > 0u);
+}
+
+TEST(cloth_torn_goes_through_the_cache_and_a_state_to_the_bit) {
+    ClothScene s = sceneOf(curtain(20, 20, 0.2f));
+    s.solver.tear = 0.3f;
+    const unsigned saved = TaskPool::instance().threadCount();
+    TaskPool::instance().setThreadCount(1);
+    ClothSolver one(s);
+    for (int f = 0; f < 45; ++f) one.step();
+    TaskPool::instance().setThreadCount(4);
+    ClothSolver four(s);
+    for (int f = 0; f < 30; ++f) four.step();
+    CHECK(four.tornPoints() > 0u);
+    StateWriter out;
+    four.saveState(out);
+    ClothSolver later(s);
+    StateReader in(out.bytes());
+    CHECK(later.loadState(in));
+    CHECK_EQ(later.tornPoints(), four.tornPoints());
+    for (int f = 0; f < 15; ++f) {
+        four.step();
+        later.step();
+    }
+    TaskPool::instance().setThreadCount(saved);
+    CHECK(one.positions() == four.positions());
+    CHECK(later.positions() == four.positions());
+
+    // A frame of it written, read back, and given its geometry again.
+    Frame frame;
+    frame.cloth = four.capture();
+    Frame back;
+    std::string error;
+    CHECK(parseFrame(formatFrame(frame), back, error));
+    CHECK(back.cloth.copies == frame.cloth.copies);
+    CHECK(back.cloth.corners == frame.cloth.corners);
+    ClothScene scene = s;
+    adoptCloth(back, scene);
+    CHECK(back.cloth.geometry == s.geometry);
+    const auto a = posedCloth(frame.cloth), b = posedCloth(back.cloth);
+    CHECK(a && b && a->pointCount() == b->pointCount() && a->primitiveCount() == b->primitiveCount());
+}
+
+TEST(cloth_catches_the_crates_and_the_block_tears_it) {
+    // The tarp example: three wooden crates dropped on a tarp laced to a
+    // frame, then a block of concrete. The tarp holds the crates up -- they
+    // feel it -- and the block goes through.
+    Network net;
+    CHECK(Network::example("tarp", net));
+    const Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK(c.world.rigid.intoCloth);
+    WorldSolver w(c.world);
+    auto heights = [&] {
+        std::vector<float> y;
+        for (const Collider& o : w.cloth()->scene().colliders) {
+            if (o.piece >= 0) y.push_back(o.center.y);
+        }
+        return y;
+    };
+    bool pushed = false;
+    for (int f = 0; f < 26; ++f) {
+        w.step();
+        pushed = pushed || !w.cloth()->reactions().empty();
+    }
+    CHECK(pushed);
+    CHECK_EQ(w.cloth()->tornPoints(), 0u);  // the crates alone do not tear it
+    std::vector<float> y = heights();
+    CHECK_EQ(y.size(), 4u);
+    for (int k = 0; k < 3; ++k) CHECK(y[static_cast<size_t>(k)] > 0.7f);  // on the tarp, not through it
+    const std::string state = w.saveState();
+    for (int f = 0; f < 30; ++f) w.step();
+    CHECK(w.cloth()->tornPoints() > 0u);
+    y = heights();
+    CHECK(y[3] < 0.5f);  // the block through it, on the floor
+    // A checkpoint goes on as the cloth pushed the pieces.
+    WorldSolver resumed(c.world);
+    std::string error;
+    CHECK(resumed.loadState(state, error));
+    for (int f = 0; f < 30; ++f) resumed.step();
+    CHECK(resumed.cloth()->positions() == w.cloth()->positions());
+}
+

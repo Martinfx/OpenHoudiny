@@ -48,7 +48,10 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     // and them about -- when there are any, and their share is not 0.
     if (rigid_) {
         const RigidSettings& r = world_.rigid.solver;
-        coupled_ = (water_ && (r.buoyancy > 0.0f || r.waterDrag > 0.0f)) || (gas_ && r.airDrag > 0.0f);
+        fluidsPush_ = (water_ && (r.buoyancy > 0.0f || r.waterDrag > 0.0f)) || (gas_ && r.airDrag > 0.0f);
+        // The cloth the pieces fall on holds them back.
+        clothPushes_ = cloth_ && world_.rigid.intoCloth;
+        coupled_ = fluidsPush_ || clothPushes_;
     }
 }
 
@@ -124,7 +127,18 @@ void WorldSolver::prepare() {
             if (at < flows_.size()) {
                 rigid_->setFlow(flows_[at]);
             } else {
-                flows_.push_back(rigid_->feel(fluids()));
+                RigidFlow flow = fluidsPush_ ? rigid_->feel(fluids()) : RigidFlow();
+                if (clothPushes_) {
+                    for (const ClothSolver::Reaction& r : cloth_->reactions()) {
+                        RigidFlow::Push push;
+                        push.piece = r.piece;
+                        push.shift = r.shift;
+                        push.velocity = r.velocity;
+                        push.spin = r.spin;
+                        flow.pushes.push_back(push);
+                    }
+                }
+                flows_.push_back(std::move(flow));
                 rigid_->setFlow(flows_.back());
             }
         }
@@ -223,13 +237,14 @@ RigidFluids WorldSolver::fluids() const {
     return f;
 }
 
-// The state: "pgstate", a version, the frame; what the water and the gas
-// did to the pieces in each step so far (version 2); then each part there
-// is -- the gas, the water, the rain -- as its saveState() writes it. The
-// pieces' is not: they are stepped again, with those flows.
+// The state: "pgstate", a version, the frame; what the water, the gas and
+// the cloth did to the pieces in each step so far (version 2); then each
+// part there is -- the gas, the water, the rain, the cloth, torn or not
+// (version 3) -- as its saveState() writes it. The pieces' is not: they are
+// stepped again, with those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
-constexpr uint32_t kStateVersion = 2;
+constexpr uint32_t kStateVersion = 3;
 }  // namespace
 
 std::string WorldSolver::saveState() const {
@@ -299,7 +314,7 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
         }
     }
     if (steps != (coupled_ ? static_cast<uint64_t>(frame) : 0u)) {
-        error = "the simulation state is of another world: the water and the gas push its pieces otherwise";
+        error = "the simulation state is of another world: the water, the gas and the cloth push its pieces otherwise";
         return false;
     }
     flows_ = std::move(flows);

@@ -2991,7 +2991,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     const std::span<const Vec3> at = geo->positions();
     int pieceCount = 0;
     const std::vector<int32_t> pieceOf = pieceOfPrimitives(*geo, scene_.attribute, pieceCount);
-    const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain;
+    const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain || scene_.intoCloth;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
     for (size_t k = 0; k < count; ++k) {
@@ -3283,6 +3283,14 @@ void RigidSolver::step() {
         Impl::Cluster& c = m.clusters[static_cast<size_t>(p.cluster)];
         // Held by a still piece, it stays where it was built.
         if (!c.alive || !c.anchors.empty() || c.mass <= 0.0f) continue;
+        if (push.shift != Vec3() || push.velocity != Vec3() || push.spin != Vec3()) {
+            // The cloth held it back, or threw it: where and how fast it
+            // went as the cloth stepped it.
+            bi.SetPosition(c.id, bi.GetPosition(c.id) + jolt(push.shift), JPH::EActivation::Activate);
+            bi.SetLinearVelocity(c.id, bi.GetLinearVelocity(c.id) + jolt(push.velocity));
+            bi.SetAngularVelocity(c.id, bi.GetAngularVelocity(c.id) + jolt(push.spin));
+            c.flowed += push.velocity;
+        }
         const Vec3 com = ours(bi.GetCenterOfMassPosition(c.id));
         bi.AddForce(c.id, jolt(push.force));
         bi.AddTorque(c.id, jolt(push.moment - cross(com, push.force)));
@@ -3597,6 +3605,11 @@ std::vector<Collider> RigidSolver::colliders() const {
         c.velocity = clampLength(v + cross(w, c.center - ours(bi.GetCenterOfMassPosition(id))), kMaxSpeed);
         c.spin = clampLength(w, kMaxSpin);
         c.node = scene_.node;
+        c.piece = static_cast<int32_t>(k);
+        if (p.cluster >= 0) {
+            const Impl::Cluster& body = m.clusters[static_cast<size_t>(p.cluster)];
+            if (body.alive && body.anchors.empty()) c.mass = body.mass;
+        }
         out.push_back(std::move(c));
     }
     return out;

@@ -127,7 +127,9 @@ private:
     /// The water and the gas push the pieces (RigidSolver::feel): what they
     /// did in each step so far, frame by frame -- a checkpoint keeps it, and
     /// the pieces take it again when they are stepped there again.
-    bool coupled_ = false;
+    bool coupled_ = false;      // something pushes the pieces: the flows are kept
+    bool fluidsPush_ = false;   // the water or the gas
+    bool clothPushes_ = false;  // the cloth they fall on
     std::vector<RigidFlow> flows_;
 };
 

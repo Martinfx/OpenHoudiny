@@ -23,7 +23,7 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 6: what became of the bars; 7: which grit is glass, which bodies came
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned.
-constexpr uint32_t kVersion = 11;
+constexpr uint32_t kVersion = 12;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -312,6 +312,11 @@ std::string formatFrame(const Frame& f) {
     out.u64(f.cloth.positions.size());
     for (const Vec3& p : f.cloth.positions) out.vec3(p);
     out.halves(f.cloth.velocities);
+    // Version 12: the cloth torn -- the points split off, the corners on
+    // them, the lines parted.
+    out.words(f.cloth.copies);
+    out.words(f.cloth.corners);
+    out.words(f.cloth.cuts);
     return std::move(out.bytes);
 }
 
@@ -416,9 +421,17 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     if (version >= 11) {
         f.cloth.positions.resize(in.count(12));
         for (Vec3& p : f.cloth.positions) p = in.vec3();
-        f.cloth.points = f.cloth.positions.size();
         in.halvesAtMost(f.cloth.velocities, 3 * f.cloth.positions.size());
         if (!f.cloth.velocities.empty() && f.cloth.velocities.size() != 3 * f.cloth.positions.size()) {
+            error = "the frame's cloth does not fit its points";
+            return false;
+        }
+    }
+    if (version >= 12) {
+        in.words(f.cloth.copies);
+        in.words(f.cloth.corners);
+        in.words(f.cloth.cuts);
+        if (f.cloth.copies.size() > f.cloth.positions.size()) {
             error = "the frame's cloth does not fit its points";
             return false;
         }
@@ -457,7 +470,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
 
 void adoptCloth(Frame& frame, const ClothScene& scene) {
     ClothFrame& c = frame.cloth;
-    if (c.positions.empty() || !scene.geometry || scene.geometry->pointCount() != c.positions.size()) return;
+    if (c.positions.empty() || !scene.geometry || !clothFits(c, *scene.geometry)) return;
     c.geometry = scene.geometry;
 }
 

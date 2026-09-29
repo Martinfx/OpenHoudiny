@@ -1175,12 +1175,19 @@ std::vector<NodeType> buildTypes() {
            "point's attribute mass, kg, in its place."},
           {"stretch", "Stretch", "Cloth", K::Float, {10000.0f, 0.0f, 0.0f}, 100.0f, 100000.0f, 0.01f, 1e9f, "N/m",
            "How hard an edge holds its length: 10000 cotton, barely stretching; a few hundred rubber."},
+          {"shear", "Shear", "Cloth", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 100000.0f, 0.01f, 1e9f, "N/m",
+           "How hard a quad holds its shape -- a pull along the bias: 1 woven cloth that drapes and droops; as "
+           "much as Stretch a tarp, a sheet of plastic, paper."},
           {"bend", "Bend", "Cloth", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 50.0f, 0.0f, 1e9f, "N/m",
            "How hard the cloth holds its folds: 0.1 silk, 1 cotton, 10 canvas, 1000 cardboard. A rope: how hard "
            "it keeps straight."},
           {"pressure", "Pressure", "Cloth", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 100.0f, "",
            "Closed meshes -- a sphere, a box -- hold this share of the volume they have at rest: 1 a balloon, a "
            "cushion, more blows them up. 0: they are cloth like the rest."},
+          {"tear", "Tear", "Cloth", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 100.0f, "",
+           "How much longer than it was an edge stretches before it tears -- 0.3 thirty percent; 0 never. "
+           "Torn, the cloth opens along its edges, a rope parts, a balloon bursts. A point's attribute tear "
+           "scales it: 0.5 tears at half the stretch -- a seam, a perforation."},
           {"thickness", "Thickness", "Collisions", K::Float, {0.01f, 0.0f, 0.0f}, 0.002f, 0.1f, 1e-4f, 1.0f, "m",
            "How far from the floor, the objects and itself the cloth stays."},
           {"friction", "Friction", "Collisions", K::Float, {0.4f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 10.0f, "",
@@ -3729,8 +3736,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         ClothSettings& s = cs.solver;
         s.density = f(*solver, "density");
         s.stretch = f(*solver, "stretch");
+        s.shear = f(*solver, "shear");
         s.bend = f(*solver, "bend");
         s.pressure = f(*solver, "pressure");
+        s.tear = f(*solver, "tear");
         s.thickness = f(*solver, "thickness");
         s.friction = f(*solver, "friction");
         s.selfCollision = f(*solver, "self_collision") != 0.0f;

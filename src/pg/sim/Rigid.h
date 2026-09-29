@@ -484,6 +484,9 @@ struct RigidFlow {
         uint32_t piece = 0;
         Vec3 force;   ///< newtons on the piece: the water holding it up, the flows dragging it
         Vec3 moment;  ///< newton metres: those forces' moment about the origin, sum of p x F
+        /// What the cloth did to it (ClothSolver::reactions): moved its body
+        /// by, sped it up by, and turned it faster by -- before the step.
+        Vec3 shift, velocity, spin;
     };
     std::vector<Push> pushes;
     /// For each bit of grit there is: the velocity of what it is in -- the
@@ -496,8 +499,9 @@ struct RigidFlow {
     bool operator==(const RigidFlow& o) const {
         if (pushes.size() != o.pushes.size() || gritFlow != o.gritFlow || gritWet != o.gritWet) return false;
         for (size_t i = 0; i < pushes.size(); ++i) {
-            if (pushes[i].piece != o.pushes[i].piece || !(pushes[i].force == o.pushes[i].force) ||
-                !(pushes[i].moment == o.pushes[i].moment)) {
+            const Push &a = pushes[i], &b = o.pushes[i];
+            if (a.piece != b.piece || !(a.force == b.force) || !(a.moment == b.moment) || !(a.shift == b.shift) ||
+                !(a.velocity == b.velocity) || !(a.spin == b.spin)) {
                 return false;
             }
         }

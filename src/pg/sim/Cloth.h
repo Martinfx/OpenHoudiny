@@ -18,12 +18,20 @@
 //   pins      points whose attribute pin is 1 do not move by themselves: they
 //             go where the geometry has them at each frame -- animated, they
 //             carry the cloth
+//   tearing   with Tear above 0 an edge stretched that much longer than it
+//             was tears: where the torn edges cut the faces round a point
+//             apart, the point is split in two, and the cloth opens there; a
+//             rope parts; a balloon torn open is cloth. The attribute tear of
+//             a point scales how far the edges at it stretch before they do.
 //
 // A point has the mass of the cloth round it -- Density, kilograms a square
 // metre, or a metre of rope -- or its attribute mass. The points collide
 // with the floor, with the objects and the pieces of an RBD Solver
 // (Colliders), a Thickness away, with friction, and with each other: what
-// folds does not pass through itself. The air pushes each triangle along
+// folds does not pass through itself. A piece gives as the cloth pushes
+// it: in the cloth's step it is a body of its weight that the cloth slows,
+// stops or throws, substep by substep, and where that leaves it the RBD
+// Solver takes on (reactions). The air pushes each triangle along
 // its normal -- a closed mesh's only from outside: the wind of the Forces,
 // and the flow of a Pyro Solver's gas.
 //
@@ -49,6 +57,10 @@ struct ClothSettings {
     /// How hard an edge holds its length, N/m: 1e4 cotton, barely stretching;
     /// a few hundred rubber.
     float stretch = 1e4f;
+    /// How hard a quad holds its shape -- a pull along the bias, N/m: 1
+    /// woven cloth that drapes and droops; as much as Stretch a tarp, a
+    /// sheet of plastic, paper.
+    float shear = 1.0f;
     /// How hard the cloth holds its folds, N/m across an edge: 0.1 silk,
     /// 10 canvas, 1000 cardboard.
     float bend = 1.0f;
@@ -61,6 +73,9 @@ struct ClothSettings {
     /// How hard the air pushes it -- still air as it falls, the wind, the
     /// gas's flow: 1 as it would, 0 not at all.
     float airDrag = 1.0f;
+    /// How much longer than it was an edge -- a rope's segment -- stretches
+    /// before it tears: 0.3 thirty percent; 0 never.
+    float tear = 0.0f;
     int substeps = 20;            ///< steps a frame
     bool selfCollision = true;
     bool floor = true;            ///< a floor at y = 0
@@ -88,20 +103,33 @@ struct ClothScene {
     bool operator==(const ClothScene&) const = default;
 };
 
-/// The cloth of a frame: where each point of the geometry is, and how fast it goes.
+/// The cloth of a frame: where each point is, and how fast it goes -- the
+/// geometry's points, and those torn off them after.
 struct ClothFrame {
     std::shared_ptr<const Geometry> geometry;  ///< at rest: the scene's; null in a frame read back until adoptCloth
     std::vector<Vec3> positions;
     std::vector<uint16_t> velocities;          ///< half floats, three a point
-    size_t points = 0;                         ///< how many the geometry has: positions.size()
+    /// Torn: for each point after the geometry's, the point of the geometry
+    /// it was split off; each corner of the geometry's primitives, the point
+    /// it is on now (empty: as in the geometry); the corners of lines whose
+    /// segment to the next has parted.
+    std::vector<uint32_t> copies, corners, cuts;
 
     bool empty() const { return positions.empty(); }
-    size_t bytes() const { return positions.size() * sizeof(Vec3) + velocities.size() * sizeof(uint16_t); }
+    bool torn() const { return !copies.empty() || !cuts.empty(); }
+    size_t bytes() const {
+        return positions.size() * sizeof(Vec3) + velocities.size() * sizeof(uint16_t) +
+               (copies.size() + corners.size() + cuts.size()) * sizeof(uint32_t);
+    }
 };
 
 /// The geometry of `f` where its points are: P moved, their velocity v, and
-/// normals N the mean of the faces round each point. Null without geometry.
+/// normals N the mean of the faces round each point; torn, the points split
+/// off with the attributes of theirs, the corners on them, the lines parted.
+/// Null without geometry, or with one it does not fit.
 std::shared_ptr<Geometry> posedCloth(const ClothFrame& f);
+/// Whether `f` is of `geometry`: its points, corners and cuts in range.
+bool clothFits(const ClothFrame& f, const Geometry& geometry);
 /// As the solver's look draws it: posed, its faces in the colour Cd they
 /// have -- `color` where they have none.
 std::shared_ptr<Geometry> drawnCloth(const ClothFrame& f, const Vec3& color);
@@ -125,6 +153,17 @@ public:
     const std::vector<Vec3>& velocities() const { return v_; }
     ClothFrame capture() const;
 
+    /// What it did to the pieces of an RBD Solver among its colliders in the
+    /// last step: how much further than they went it moved each, and how
+    /// much faster it made it go and turn.
+    struct Reaction {
+        uint32_t piece = 0;
+        Vec3 shift, velocity, spin;
+    };
+    const std::vector<Reaction>& reactions() const { return reactions_; }
+    /// How many points it has: the geometry's, and those torn off them.
+    size_t tornPoints() const { return x_.size() - (scene_.geometry ? scene_.geometry->pointCount() : 0); }
+
     /// Constraints by kind: stretch and shear, bend, balloons.
     size_t stretchCount() const { return stretchCount_; }
     size_t bendCount() const { return bendCount_; }
@@ -138,16 +177,22 @@ public:
     bool loadState(StateReader& in);
 
 private:
+    static constexpr uint32_t kNone = ~0u;
     struct Link {
         uint32_t a = 0, b = 0;
         float rest = 0.0f;
         float compliance = 0.0f;  ///< m/N
+        float limit = 0.0f;       ///< the length it tears at; 0 never
+        uint32_t corner = kNone;  ///< a rope's segment: the corner it starts at
     };
     struct Balloon {
         std::vector<uint32_t> triangles;  ///< three points each, as tris_
         float rest = 0.0f;                ///< signed volume at rest
     };
     void build();
+    void connect();
+    bool tear();
+    void split(uint32_t p);
     void aero(std::vector<Vec3>& accel) const;
     void solveLinks(float h);
     void solveBalloons(float h);
@@ -159,6 +204,15 @@ private:
     std::vector<ShapeInstance> shapes_;       // the colliders, placed
     std::vector<Vec3> x_, v_, prev_, start_, target_;
     std::vector<Vec3> rest_;                  // where the points were at frame 1
+    std::vector<uint32_t> corner_;            // each corner of the geometry: its point now
+    std::vector<uint32_t> origin_;            // each point: the geometry's it was split off (itself)
+    std::vector<uint8_t> ropeCut_;            // each corner: a line's segment from it to the next parted
+    std::vector<uint64_t> cut_;               // edges torn between faces not yet split apart, sorted
+    std::vector<float> tearOf_;               // each point of the geometry: its attribute tear
+    std::vector<int32_t> touched_;            // each point: the piece collider it touched this substep
+    std::vector<Vec3> pushed_;                // ... and how far that moved it
+    std::vector<Vec3> drift_, kick_, twist_;  // each collider that gives: moved, sped up, turned faster by the cloth this step
+    std::vector<Reaction> reactions_;
     std::vector<float> w_;                    // 1 / mass; 0 pinned
     std::vector<uint8_t> pinned_;
     std::vector<uint32_t> tris_;              // three points a triangle

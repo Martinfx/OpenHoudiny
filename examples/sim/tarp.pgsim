@@ -1,0 +1,112 @@
+pgsim 1
+# A tarp laced to a frame on four posts catches the crates dropped on it:
+# the wooden ones -- light -- bounce and settle in its hollow, the tarp
+# giving under them and throwing them back up (the pieces of the RBD Solver
+# are its colliders, and they feel it). Then a block of concrete comes down:
+# the tarp stretches further than it holds (Tear) and rips open; the block
+# falls through, the tarp snaps back and throws the crates up, and one of
+# them follows the block. Its hem is sewn stronger (the attribute tear): it
+# does not tear where it is laced.
+node 1 grid 1 tarp 0 0
+  param sizex 2.4
+  param sizez 2.4
+  param rows 41
+  param cols 41
+node 2 transform 1 raised 230 0
+  param t 0 1.4 0
+node 3 point_wrangle 1 corners 460 0
+  param snippet "// Laced to the frame all round; the hem three times as strong.\ni@pin = abs(@P.x) > 1.17 || abs(@P.z) > 1.17;\nf@tear = abs(@P.x) > 1.0 || abs(@P.z) > 1.0 ? 3 : 1;"
+node 4 cloth_solver 1 cloth 690 0
+  param density 0.4
+  param stretch 20000
+  param shear 20000
+  param bend 2
+  param tear 0.8
+  param thickness 0.02
+  param friction 0.6
+  param damping 4
+  param substeps 40
+  param color 0.2 0.38 0.62
+node 5 box 1 crate_a 0 200
+  param size 0.4 0.4 0.4
+  param center -0.4 1.9 0.25
+node 6 box 1 crate_b 0 260
+  param size 0.35 0.35 0.35
+  param center 0.4 2.3 -0.3
+node 7 box 1 crate_c 0 320
+  param size 0.4 0.3 0.4
+  param center 0.1 2.7 0.5
+node 8 merge 1 crates 230 260
+node 9 primitive_wrangle 1 wood 460 260
+  param snippet "f@density = 200;\nv@Cd = set(0.62, 0.46, 0.28);"
+node 10 box 1 block 0 420
+  param size 0.4 0.4 0.4
+  param center 0.1 6 0
+node 11 primitive_wrangle 1 concrete 230 420
+  param snippet "f@density = 2400;\nv@Cd = set(0.5, 0.49, 0.47);"
+node 12 merge 1 pieces 690 320
+node 13 rbd_solver 1 rbd 920 320
+  param glue 0
+  param dust 0
+  param impact_dust 0
+  param debris 0
+node 14 object 1 post_a 460 520
+  param shape cylinder
+  param center 1.2 0.7 1.2
+  param size 0.08 1.4 0.08
+  param color 0.4 0.3 0.2
+node 15 object 1 post_b 460 580
+  param shape cylinder
+  param center -1.2 0.7 1.2
+  param size 0.08 1.4 0.08
+  param color 0.4 0.3 0.2
+node 16 object 1 post_c 460 640
+  param shape cylinder
+  param center 1.2 0.7 -1.2
+  param size 0.08 1.4 0.08
+  param color 0.4 0.3 0.2
+node 17 object 1 post_d 460 700
+  param shape cylinder
+  param center -1.2 0.7 -1.2
+  param size 0.08 1.4 0.08
+  param color 0.4 0.3 0.2
+node 20 object 1 beam_a 690 520
+  param shape box
+  param center 0 1.4 1.2
+  param size 2.48 0.08 0.08
+  param color 0.4 0.3 0.2
+node 21 object 1 beam_b 690 580
+  param shape box
+  param center 0 1.4 -1.2
+  param size 2.48 0.08 0.08
+  param color 0.4 0.3 0.2
+node 22 object 1 beam_c 690 640
+  param shape box
+  param center 1.2 1.4 0
+  param size 0.08 0.08 2.48
+  param color 0.4 0.3 0.2
+node 23 object 1 beam_d 690 700
+  param shape box
+  param center -1.2 1.4 0
+  param size 0.08 0.08 2.48
+  param color 0.4 0.3 0.2
+node 18 output 2 output 1150 200
+node 19 camera 1 camera 1150 360
+  param center 3.6 2.6 4.4
+  param rotation -18 39 0
+  param focal 26
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.geometry
+link 5.geometry -> 8.geometry
+link 6.geometry -> 8.geometry
+link 7.geometry -> 8.geometry
+link 8.geometry -> 9.geometry
+link 10.geometry -> 11.geometry
+link 9.geometry -> 12.geometry
+link 11.geometry -> 12.geometry
+link 12.geometry -> 13.pieces
+link 13.collider -> 4.colliders
+link 4.look -> 18.look
+link 13.look -> 18.look
+link 19.camera -> 18.camera
