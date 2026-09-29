@@ -1190,7 +1190,8 @@ std::vector<NodeType> buildTypes() {
           {"floor", "Floor", "Collisions", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "A floor at height 0."},
           {"air_drag", "Air Drag", "Air", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
-           "How hard the air pushes it: the wind of the Forces, the flow of a Pyro Solver's gas. 0: not at all."},
+           "How hard the air pushes it: still air as it falls -- a sheet floats down, a ball drops -- the wind "
+           "of the Forces, the flow of a Pyro Solver's gas. Closed meshes only from outside. 0: not at all."},
           {"damping", "Damping", "Air", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "1/s",
            "How fast its motion dies away of itself."},
           {"gravity", "Gravity", "Air", K::Float, {9.81f, 0.0f, 0.0f}, 0.0f, 20.0f, -100.0f, 100.0f, "m/s\xc2\xb2",

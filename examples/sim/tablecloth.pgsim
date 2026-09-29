@@ -1,0 +1,74 @@
+pgsim 1
+# A tablecloth dropped on a table with a bowl on it, and a soft ball after
+# it: one Cloth Solver for both. The cloth drapes over the edges and the
+# bowl and folds where it hangs; the ball -- a closed sphere, which Pressure
+# 1 keeps as full as it was -- lands on it, squashes and rolls off.
+node 1 grid 1 cloth 0 0
+  param sizex 1.8
+  param sizez 1.5
+  param rows 38
+  param cols 45
+node 2 transform 1 raised 230 0
+  param t 0 1.15 0
+node 14 primitive_wrangle 1 checks 230 -70
+  param snippet "// Red and white checks, four faces a side.\nint c = floor((@P.x + 0.9) / 0.1636) + floor((@P.z + 0.75) / 0.1636);\nv@Cd = c % 2 ? {0.7, 0.09, 0.07} : {0.92, 0.9, 0.84};"
+node 15 primitive_wrangle 1 blue 230 130
+  param snippet "v@Cd = {0.18, 0.38, 0.75};"
+node 3 sphere 1 ball 0 130
+  param radius 0.17
+  param center -0.2 2.1 0.05
+node 4 merge 1 both 460 60
+node 5 cloth_solver 1 tablecloth 690 60
+  param bend 0.5
+  param pressure 1
+  param thickness 0.02
+  param friction 0.6
+  param color 0.85 0.83 0.76
+node 6 object 1 top 460 200
+  param shape box
+  param center 0 0.75 0
+  param size 1.2 0.05 0.9
+  param color 0.45 0.3 0.2
+node 7 object 1 leg1 230 260
+  param shape box
+  param center 0.53 0.37 0.38
+  param size 0.06 0.74 0.06
+  param color 0.45 0.3 0.2
+node 8 object 1 leg2 230 330
+  param shape box
+  param center -0.53 0.37 0.38
+  param size 0.06 0.74 0.06
+  param color 0.45 0.3 0.2
+node 9 object 1 leg3 230 400
+  param shape box
+  param center 0.53 0.37 -0.38
+  param size 0.06 0.74 0.06
+  param color 0.45 0.3 0.2
+node 10 object 1 leg4 230 470
+  param shape box
+  param center -0.53 0.37 -0.38
+  param size 0.06 0.74 0.06
+  param color 0.45 0.3 0.2
+node 11 object 1 bowl 460 330
+  param center 0.25 0.84 -0.1
+  param size 0.32 0.2 0.32
+  param color 0.85 0.8 0.6
+node 12 output 2 output 920 60
+node 13 camera 1 camera 920 200
+  param center 1.7 1.9 2.9
+  param rotation -18 30 0
+  param focal 30
+link 1.geometry -> 14.geometry
+link 14.geometry -> 2.geometry
+link 2.geometry -> 4.geometry
+link 3.geometry -> 15.geometry
+link 15.geometry -> 4.geometry
+link 4.geometry -> 5.geometry
+link 6.collider -> 5.colliders
+link 7.collider -> 5.colliders
+link 8.collider -> 5.colliders
+link 9.collider -> 5.colliders
+link 10.collider -> 5.colliders
+link 11.collider -> 5.colliders
+link 5.look -> 12.look
+link 13.camera -> 12.camera

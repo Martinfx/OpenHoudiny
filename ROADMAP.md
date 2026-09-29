@@ -26,7 +26,7 @@ Houdini:
 | Geometrie | Uzly jako SOP: atributy na bodech, rozích, primitivech i celé geometrii, skupiny, objemy; líné vaření jen toho, co se změnilo |
 | Jazyk | Wrangle: vlastní výpočet nad každým prvkem, s proměnnými, podmínkami, cykly a dotazy na geometrii |
 | Procedurálnost | Výrazy a odkazy v parametrech, subnety a digital assets, smyčky |
-| Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; tuhá tělesa a destrukce; později látky |
+| Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; tuhá tělesa a destrukce; látky, lana a měkká tělesa (XPBD) |
 | Obraz | Viewport, kamera, render záběru do obrázků a videa |
 | Pipeline | Příkazová řádka, cache na disku, export (PLY, OBJ, OpenVDB, USD), Python API |
 
@@ -348,8 +348,12 @@ Hustá mřížka by jen na pole potřebovala přes 10 GB.
 
 Seřazeno podle poměru hodnota / náklad:
 
-1. **XPBD solver** — látky, měkká tělesa, granuláty (obdoba Vellum). Jeden
-   solver pokryje široké spektrum.
+1. **XPBD solver** — ✅ látky, lana a měkká tělesa s tlakem (obdoba
+   Vellum): přišpendlené body nesené animací, kolize s objekty, kusy RBD
+   i sebou samou, vzduch, vítr a proud plynu, deterministicky na
+   libovolném počtu vláken ([cloth.md](docs/cloth.md)). Zbývá: kolize
+   hran a trojúhelníků, trhání, tvarové vazby, granuláty a zpětné
+   působení látky na kusy RBD.
 2. **Vazby mezi řešiči** — ✅ trosky ve vodě a v plynu: voda je nadnáší
    a unáší, proud plynu unáší drť, obousměrně s vodou i plynem, které jdou
    kolem kusů ([destruction.md](docs/destruction.md#jedenáctý-příklad-povodeň-na-dvoře)).

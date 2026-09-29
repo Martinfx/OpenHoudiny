@@ -414,10 +414,14 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                             částice (narážejí, leží, jedou s kusy), prach a jeho stopy,
                             Guide jako póza každého kusu (rigidGuide), ke které solver
                             vede slepená tělesa; Jolt na vláknech, nárazy seřazené
+                 Cloth      látky, lana a měkká tělesa (XPBD, malé kroky): vazby délky,
+                            smyku a ohybu, objem balonů, přišpendlené body, kolize
+                            s objekty, kusy RBD i sebou samou, vzduch; vazby v barvách
+                            na vláknech, bitově stejně na 1 i 4 vláknech
                  Camera     kamera záběru: poloha, rotace, objektiv, rozlišení
                  Shared     co řešiče sdílejí: paralelní smyčky, šum, vítr v nárazech, síly na MAC mřížce
                  World      všechny řešiče sítě jednou snímkovou frekvencí, snímek po snímku;
-                            checkpoint (saveState/loadState: plyn, voda a déšť se načtou,
+                            checkpoint (saveState/loadState: plyn, voda, déšť a látky se načtou,
                             tělesa se spočítají znovu) a náhled na hrubších mřížkách
                  State      stav řešiče jako bajty a zpět; čtení hlídá každou délku
                  Network    síť uzlů simulace i geometrie, formát .pgsim, klíčové snímky,
@@ -520,6 +524,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | **Python API** `import pg` (pybind11): sítě, parametry, výrazy a klíče, vaření a simulace ze skriptu; atributy a data snímků jako pole numpy bez kopie (buffer protocol nad sdílenou pamětí jádra); cache, USD, render přes `prototype`; síť jako Python (`as_code()`) ([docs/python.md](docs/python.md)) |
 | ✅ | Render do **EXR** bez knihovny: lineární světlo, hloubka, vektory pohybu, masky; čte ho OpenEXR 3.5 ([docs/render.md](docs/render.md)) |
 | ✅ | **Plate**: obraz záběru (PNG, JPEG, EXR, čtené bez knihoven, JPEG bit po bitu jako libjpeg) za CG kamerou záběru; holdout a shadow catcher (objekty i podlaha); do EXR CG s alfou a průchod `catcher`; kde CG nic nemění, vyjde plate pixel po pixelu ([docs/plate.md](docs/plate.md)) |
+| ✅ | **Látky, lana a měkká tělesa** (XPBD, obdoba Vellum): Cloth Solver z polygonů, polyčar a uzavřených sítí s tlakem; přišpendlené body nesené animací; kolize s podlahou, objekty, kusy RBD i sebou samou, tření; vzduch, vítr a proud plynu na plochách; snímky a cache (verze 11), checkpoint, Cloth Geometry; příklady `tablecloth` a `flag` ([docs/cloth.md](docs/cloth.md)) |
 | ✅ | Video: AVI s Motion JPEG bez závislostí (vlastní kodér JPEG), MP4/MOV/MKV (H.264), WebM (VP9) a GIF přes ffmpeg; v editoru render na pozadí s průběhem, z příkazové řádky `sim OUT.mp4` a `render OUT.mp4`; ověřeno dekódováním v ffmpeg |
 
 ### Změřeno (4 jádra, g++ 13.3, RelWithDebInfo)

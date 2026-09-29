@@ -24,7 +24,8 @@
 // with the floor, with the objects and the pieces of an RBD Solver
 // (Colliders), a Thickness away, with friction, and with each other: what
 // folds does not pass through itself. The air pushes each triangle along
-// its normal: the wind of the Forces, and the flow of a Pyro Solver's gas.
+// its normal -- a closed mesh's only from outside: the wind of the Forces,
+// and the flow of a Pyro Solver's gas.
 //
 // Deterministic (invariant I5): the constraints in colours none of whose
 // members share a point, each colour on as many threads as there are; the
@@ -57,8 +58,8 @@ struct ClothSettings {
     float thickness = 0.01f;      ///< metres: how far from what it touches the cloth stays
     float friction = 0.4f;
     float damping = 0.5f;         ///< 1/s: how fast its motion dies away of itself
-    /// How hard the air pushes it -- the wind, the gas's flow: 1 as it would,
-    /// 0 not at all.
+    /// How hard the air pushes it -- still air as it falls, the wind, the
+    /// gas's flow: 1 as it would, 0 not at all.
     float airDrag = 1.0f;
     int substeps = 20;            ///< steps a frame
     bool selfCollision = true;
@@ -157,11 +158,13 @@ private:
     std::function<Vec3(const Vec3&)> air_;
     std::vector<ShapeInstance> shapes_;       // the colliders, placed
     std::vector<Vec3> x_, v_, prev_, start_, target_;
+    std::vector<Vec3> rest_;                  // where the points were at frame 1
     std::vector<float> w_;                    // 1 / mass; 0 pinned
     std::vector<uint8_t> pinned_;
     std::vector<uint32_t> tris_;              // three points a triangle
     std::vector<uint32_t> triStart_, triOf_;  // each point's triangles
     std::vector<Vec3> airOfTri_;              // the gas's flow at each triangle, this step
+    std::vector<int8_t> outside_;             // closed meshes: 1 the normal points out, -1 in; 0 open
     std::vector<Link> links_;
     std::vector<std::vector<uint32_t>> colours_;  // links none of which share a point
     std::vector<uint32_t> leftOver_;              // links that fitted no colour

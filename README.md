@@ -41,6 +41,10 @@ okna.
   animací (Guide), trosky ve vodě a v plynu (dřevo plave a proud ho
   unáší, drť nese tlaková vlna); odstřel věžáku ve městě a zřícení zdi
   z pohledu od země jako videa, povodeň na dvoře s plovoucími bednami
+- **[docs/cloth.md](docs/cloth.md)** — látky, lana a měkká tělesa (XPBD,
+  obdoba Vellum): ubrus přes stůl, vlajka ve větru, míč držící objem,
+  přišpendlené body nesené animací, kolize s objekty, kusy RBD i sebou
+  samou, vítr a proud plynu
 - **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
   parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
   cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)

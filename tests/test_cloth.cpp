@@ -9,8 +9,11 @@
 #include "pg/core/Graph.h"
 #include "pg/core/Parallel.h"
 #include "pg/nodes/Nodes.h"
+#include "pg/sim/Cache.h"
 #include "pg/sim/Cloth.h"
+#include "pg/sim/Network.h"
 #include "pg/sim/State.h"
+#include "pg/sim/World.h"
 
 #include "test_framework.h"
 
@@ -225,4 +228,83 @@ TEST(cloth_is_the_same_on_one_thread_and_on_four_and_from_a_state) {
     CHECK(one.positions() == four.positions());
     CHECK(later.positions() == four.positions());
     CHECK(later.velocities() == four.velocities());
+}
+
+TEST(cloth_a_soft_ball_stays_round_where_its_points_crowd) {
+    // Round the poles of a sphere its points are nearer each other than the
+    // cloth is thick: they are not pushed apart for that.
+    registerBuiltinNodes();
+    Graph graph;
+    pg::Node* ball = graph.create("sphere", "sphere");
+    ball->setFloat("radius", 0.17f);
+    ball->setVec3("center", Vec3(0.0f, 2.1f, 0.0f));
+    CookEngine engine;
+    auto g = std::make_shared<Geometry>(*engine.cook(*ball, CookContext{}));
+    ClothScene s = sceneOf(g);
+    s.solver.pressure = 1.0f;
+    s.solver.thickness = 0.02f;
+    s.solver.airDrag = 0.0f;
+    ClothSolver solver(s);
+    for (int f = 0; f < 12; ++f) solver.step();
+    const auto& x = solver.positions();
+    Vec3 c;
+    for (const Vec3& p : x) c += p;
+    c = c * (1.0f / static_cast<float>(x.size()));
+    CHECK_NEAR(x.front().y - c.y, 0.17f, 0.005f);  // the north pole
+    CHECK_NEAR(c.y - x.back().y, 0.17f, 0.005f);   // the south pole
+    CHECK_NEAR(solver.balloonVolume(0) / solver.balloonRestVolume(0), 1.0f, 0.01f);
+}
+
+TEST(cloth_a_sheet_falls_slower_through_still_air) {
+    auto fallen = [](float drag) {
+        ClothScene s = sceneOf(sheet(10, 10, Vec3(1.0f, 0.0f, 1.0f), Vec3(0.0f, 5.0f, 0.0f)));
+        s.solver.airDrag = drag;
+        ClothSolver solver(s);
+        for (int f = 0; f < 15; ++f) solver.step();
+        return 5.0f - solver.positions()[60].y;
+    };
+    const float free = fallen(0.0f), held = fallen(1.0f);
+    CHECK(free > 1.1f);           // half a second of free fall: 1.2 m, less damping
+    CHECK(held < 0.7f * free);    // flat through the air: a couple of metres a second
+    CHECK(held > 0.3f);
+}
+
+TEST(cloth_from_the_network_through_the_cache_and_a_checkpoint) {
+    // The tablecloth example: a grid and a sphere merged, one Cloth Solver,
+    // the table its colliders.
+    Network net;
+    CHECK(Network::example("tablecloth", net));
+    const Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK(c.world.hasCloth);
+    CHECK(!c.clothMoves);
+    CHECK_EQ(c.world.cloth.colliders.size(), 6u);
+    CHECK_NEAR(c.world.cloth.solver.pressure, 1.0f, 1e-6f);
+    WorldSolver straight(c.world);
+    CHECK(straight.cloth() != nullptr);
+    CHECK_EQ(straight.cloth()->balloonCount(), 1u);  // the ball; the cloth is open
+    for (int f = 0; f < 20; ++f) straight.step();
+
+    // A frame written and read back: the same points, the geometry adopted.
+    const Frame frame = straight.capture();
+    CHECK_EQ(frame.cloth.points, c.world.cloth.geometry->pointCount());
+    Frame back;
+    std::string error;
+    CHECK(parseFrame(formatFrame(frame), back, error));
+    CHECK(back.cloth.geometry == nullptr);
+    adoptCloth(back, c.world.cloth);
+    CHECK(back.cloth.geometry == c.world.cloth.geometry);
+    CHECK(back.cloth.positions == frame.cloth.positions);
+    CHECK(back.cloth.velocities == frame.cloth.velocities);
+    CHECK(posedCloth(back.cloth) != nullptr);
+
+    // A checkpoint goes on to the bit.
+    const std::string state = straight.saveState();
+    WorldSolver resumed(c.world);
+    CHECK(resumed.loadState(state, error));
+    for (int f = 0; f < 5; ++f) {
+        straight.step();
+        resumed.step();
+        CHECK(straight.cloth()->positions() == resumed.cloth()->positions());
+    }
 }

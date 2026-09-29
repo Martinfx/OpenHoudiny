@@ -131,6 +131,7 @@ void ClothSolver::build() {
     const size_t n = geo->pointCount();
     const auto P = geo->positions();
     x_.assign(P.begin(), P.end());
+    rest_ = x_;
     v_.assign(n, Vec3());
     if (const AttributeArray* v = geo->points().find("v"); v && v->type() == AttrType::Vec3 && v->size() == n) {
         const auto vel = v->read<Vec3>();
@@ -221,9 +222,10 @@ void ClothSolver::build() {
         for (size_t k = 0; k < tris_.size(); ++k) triOf_[at[tris_[k]]++] = static_cast<uint32_t>(k / 3);
     }
 
-    // Balloons: the closed meshes -- every edge of their triangles shared
-    // by two -- when there is pressure.
-    if (s.pressure > 0.0f && !tris_.empty()) {
+    // The closed meshes -- every edge of their triangles shared by two: the
+    // air reaches only their outside, and with pressure they are balloons.
+    outside_.assign(tris_.size() / 3, 0);
+    if (!tris_.empty()) {
         const size_t count = tris_.size() / 3;
         std::vector<uint32_t> parent(n);
         std::iota(parent.begin(), parent.end(), 0u);
@@ -256,7 +258,9 @@ void ClothSolver::build() {
                 volume += tripleProduct(x_[tris_[3 * t]], x_[tris_[3 * t + 1]], x_[tris_[3 * t + 2]]);
             }
             b.rest = static_cast<float>(volume / 6.0);
-            if (std::fabs(b.rest) > 1e-9f) balloons_.push_back(std::move(b));
+            if (std::fabs(b.rest) <= 1e-9f) continue;
+            for (const uint32_t t : triangles) outside_[t] = b.rest > 0.0f ? 1 : -1;
+            if (s.pressure > 0.0f) balloons_.push_back(std::move(b));
         }
     }
 
@@ -338,6 +342,8 @@ void ClothSolver::aero(std::vector<Vec3>& accel) const {
             const Vec3 normal = face * (1.0f / twice);
             const Vec3 rel = flow - (v_[a] + v_[b] + v_[c]) * (1.0f / 3.0f);
             const float along = dot(rel, normal);
+            // A closed mesh: only where the air comes at its outside.
+            if (outside_[t] != 0 && along * static_cast<float>(outside_[t]) >= 0.0f) continue;
             // Pushed along its normal as a plate is, as hard as the air comes
             // at it -- no more in a substep than takes it the air's way.
             float push = 0.5f * kAirDensity * kPlateDrag * s.airDrag * 0.5f * twice * std::fabs(along) * along;
@@ -436,11 +442,14 @@ void ClothSolver::selfCollide() {
                         for (; it != sorted.end() && it->first == key; ++it) {
                             const uint32_t j = it->second;
                             if (j == i || std::binary_search(nb, nbEnd, j)) continue;
+                            // Points nearer than that at rest -- round the
+                            // pole of a sphere -- kept no nearer than they were.
+                            const float apart = std::min(reach, length(rest_[i] - rest_[j]));
                             const Vec3 d = x_[i] - x_[j];
                             const float dist = length(d);
-                            if (dist >= reach || dist < 1e-9f) continue;
+                            if (dist >= apart || dist < 1e-9f) continue;
                             const float share = w_[i] / (w_[i] + w_[j]);
-                            sum += d * ((reach - dist) * share / dist);
+                            sum += d * ((apart - dist) * share / dist);
                         }
                     }
                 }
@@ -519,9 +528,9 @@ void ClothSolver::step() {
     } else {
         std::fill(airOfTri_.begin(), airOfTri_.end(), Vec3());
     }
-    const bool blown = s.airDrag > 0.0f && count > 0 &&
-                       (air_ || std::any_of(scene_.forces.begin(), scene_.forces.end(),
-                                            [](const Force& f) { return f.kind == ForceKind::Wind; }));
+    // Still air too holds it back: a sheet falls no faster than a couple of
+    // metres a second, flat.
+    const bool blown = s.airDrag > 0.0f && count > 0;
     std::vector<Vec3> accel(n);
     const float fade = 1.0f / (1.0f + s.damping * h);
     for (int k = 0; k < steps; ++k) {
