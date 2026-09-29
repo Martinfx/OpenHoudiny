@@ -251,22 +251,44 @@ void PoissonSolver::relax(SparseGrid& p, const SparseGrid& b, const Counts& on, 
     const bool bits = !op.open.empty();
     float* v = p.data();
     const float* rhs = b.data();
+    auto update = [&](int i, int j, int k, size_t c) {
+        if (weighted) {
+            const float d = op.diagonal.data()[c];
+            if (d <= 0.0f) {  // walled in on every side: nothing flows, nothing to solve
+                v[c] = 0.0f;
+                return;
+            }
+            const float sum = bits ? openSum(p, op.open[c], i, j, k, c) : weightedSum(p, op.a, i, j, k, c);
+            v[c] += omega * ((sum - h2 * rhs[c]) / d - v[c]);
+        } else {
+            float sum, diagonal;
+            neighbours(p, i, j, k, c, closed_, sum, diagonal);
+            v[c] += omega * ((sum - h2 * rhs[c]) / diagonal - v[c]);
+        }
+    };
+    const Tiles& tiles = p.tiles();
+    const std::vector<uint32_t>& stored = tiles.stored();
+    const int n[3] = {p.nx(), p.ny(), p.nz()};
     for (int s = 0; s < sweeps; ++s) {
         for (int colour = 0; colour < 2; ++colour) {
-            forEachCounted(p.tiles(), [&](int i, int j, int k, size_t c) {
-                if (((i + j + k + colour) & 1) != 0 || !on[c]) return;
-                if (weighted) {
-                    const float d = op.diagonal.data()[c];
-                    if (d <= 0.0f) {  // walled in on every side: nothing flows, nothing to solve
-                        v[c] = 0.0f;
-                        return;
+            // Tile by tile, each row from its first cell of the colour on,
+            // every other cell: half the cells, and none looked at for nothing.
+            pg::parallelFor(stored.size(), 16, [&](size_t begin, size_t end) {
+                for (size_t t = begin; t < end; ++t) {
+                    int c0[3];
+                    tiles.corner(stored[t], c0[0], c0[1], c0[2]);
+                    const int ex = std::min(Tiles::kSide, n[0] - c0[0]), ey = std::min(Tiles::kSide, n[1] - c0[1]),
+                              ez = std::min(Tiles::kSide, n[2] - c0[2]);
+                    const size_t base = t * Tiles::kCells;
+                    for (int z = 0; z < ez; ++z) {
+                        for (int y = 0; y < ey; ++y) {
+                            const int j = c0[1] + y, k = c0[2] + z;
+                            for (int x = (colour + c0[0] + j + k) & 1; x < ex; x += 2) {
+                                const size_t c = base + SparseGrid::local(x, y, z);
+                                if (on[c]) update(c0[0] + x, j, k, c);
+                            }
+                        }
                     }
-                    const float sum = bits ? openSum(p, op.open[c], i, j, k, c) : weightedSum(p, op.a, i, j, k, c);
-                    v[c] += omega * ((sum - h2 * rhs[c]) / d - v[c]);
-                } else {
-                    float sum, diagonal;
-                    neighbours(p, i, j, k, c, closed_, sum, diagonal);
-                    v[c] += omega * ((sum - h2 * rhs[c]) / diagonal - v[c]);
                 }
             });
         }

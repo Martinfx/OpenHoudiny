@@ -504,7 +504,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | Cihly: Brick Wall vyzdí zeď z cihel ve vazbě (běhounová, anglická, vlámská, stack) s maltou, omítkou a otvory s rovným ostěním; každá cihla jeden kus, rozlomené cihly jako dvě poloviny jedné kry; RBD Solver má maltu jako lepidlo, zeď se rozpadá ve spárách; příklady `brick_wall` (koule proti cihlové zdi s oknem) a `concrete_column` (odstřel železobetonového sloupu, holý armokoš) ([docs/destruction.md §2](docs/destruction.md#cihly-brick-wall)) |
 | ✅ | Drť jako částice: vylétá z okraje plochy prasklého spoje, vzduch ji brzdí, točí se, naráží do kusů, překážek i podlahy (paprsky v Joltu), zůstává ležet a jede s kusem, na kterém leží; stopy prachu za utrženými kusy (`trail`); natočení (`orient`) ve snímcích, cache verze 9, RBD Pieces, Pythonu a USD, Copy to Points podle něj natáčí ([docs/destruction.md §3](docs/destruction.md#drť-jako-částice)) |
 | ✅ | Tuhá tělesa na vláknech: Jolt na vlastním poolu, nárazy z jeho vláken seřazené, drť na vláknech; bitově stejné snímky na 1 i 4 vláknech; Voronoi Fracture řeže buňku jen z blízkých částí blízkými body (bitově stejně, věž z 5 628 buněk 13× rychleji); `pgbench_rigid` ([docs/destruction.md §3](docs/destruction.md#jak-to-funguje)) |
-| ✅ | **Řídký plyn**: Pyro Solver počítá a drží jen dlaždice 8 × 8 × 8 buněk, kde je plyn, a kolem, kam za krok doletí; tlak multigridem jen na nich; se všemi dlaždicemi bitově stejně jako hustá mřížka; snímky a cache (verze 10) jen s dlaždicemi s plynem; rozlišení až 1024; prach odstřelu ve 103,5 M voxelů za 20 minut ([docs/pyro.md §4](docs/pyro.md#řídká-mřížka-počítá-se-jen-tam-kde-je-plyn), `pgbench_pyro`) |
+| ✅ | **Řídký plyn**: Pyro Solver počítá a drží jen dlaždice 8 × 8 × 8 buněk, kde je plyn, a kolem, kam za krok doletí; tlak multigridem jen na nich; se všemi dlaždicemi bitově stejně jako hustá mřížka; snímky a cache (verze 10) jen s dlaždicemi s plynem; rozlišení až 1024; prach odstřelu ve 103,5 M voxelů za 19 minut ([docs/pyro.md §4](docs/pyro.md#řídká-mřížka-počítá-se-jen-tam-kde-je-plyn), `pgbench_pyro`) |
 | ✅ | Usměrněná simulace: Guide RBD Solveru (kusy posunuté a natočené, třeba klíčovaný Transform kolem Pivotu) vede slepená tělesa do pózy, která jejich body nejlépe položí na body Guide; síla, doba, dosah a puštění při prasknutí lepidla; atribut `guide`; z Guide se v každém snímku bere jen póza kusu; příklad `guided_fall` ([docs/destruction.md §3](docs/destruction.md#usměrněná-simulace-guide)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
@@ -528,8 +528,8 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | 240 snímků s cache 256 MB | 1.9 ms/snímek, zdroj cooknut **1×** |
 | Tuhá tělesa, věž odstřelu (593 kusů, 710 těles), `pgbench_rigid` | 5,3 ms/snímek na 1 vláknu, **3,2 ms** na 4; snímky bitově stejné |
 | … desetkrát víc kusů (5 628) | 78 ms/snímek na 1 vláknu, **31 ms** na 4; řez Voronoi 1,0 s (dřív 13,5 s) |
-| Prach odstřelu, rozlišení 96 (0,5 M voxelů), `pgbench_pyro` | hustě 270 ms/snímek, **řídce 56 ms**; 114 → 71 MB |
-| … rozlišení 576 (103,5 M voxelů), 180 snímků | **6,6 s/snímek** i s tuhými tělesy, 20 minut; nejvýš 3,3 GB; počítá se nejvýš 23 % domény |
+| Prach odstřelu, rozlišení 96 (0,5 M voxelů), `pgbench_pyro` | hustě 249 ms/snímek, **řídce 55 ms** (hustý řešič dřív 164 ms); 119 → 75 MB |
+| … rozlišení 576 (103,5 M voxelů), 180 snímků | **6,2 s/snímek** i s tuhými tělesy, 19 minut; nejvýš 3,4 GB; počítá se nejvýš 23 % domény |
 
 ### Není v prototypu (vědomě)
 

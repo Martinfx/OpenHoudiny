@@ -326,9 +326,9 @@ skoro nehýbou (krok 5).
 **Hotovo, když:** prach odstřelu má 100 milionů voxelů a spočítá se na
 jednom stroji přes noc. **Splněno:** prach příkladu `demolition` s
 `--resolution 576` má doménu 576 × 312 × 576 = **103,5 milionu voxelů**
-(buňka 16 cm) a 180 snímků se spočítá za **20 minut** na 4 jádrech (6,6 s
+(buňka 16 cm) a 180 snímků se spočítá za **19 minut** na 4 jádrech (6,2 s
 na snímek i s tuhými tělesy, `pgbench_pyro 576 --frames 180`), v nejvýš
-3,3 GB paměti, s renderem 5 GB. Počítá se přitom nejvýš 23 % domény
+3,4 GB paměti, s renderem 5 GB. Počítá se přitom nejvýš 23 % domény
 (24 milionů voxelů, v nejhustším okamžiku); zbytek je stojící vzduch.
 Hustá mřížka by jen na pole potřebovala přes 10 GB.
 

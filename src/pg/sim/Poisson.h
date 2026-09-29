@@ -21,8 +21,10 @@
 //
 // Sparse (SparseGrid.h): the equation holds in the cells that count; a cell
 // that does not holds p = 0 -- the still air round the gas, as open as the
-// sides of the box. A coarse cell counts when any of its eight does. With
-// every tile active, the solve is the dense one, to the bit.
+// sides of the box. A coarse cell counts when all eight of its cells do: the
+// still air never reaches further on a coarse grid than on the fine one
+// (after McAdams, Sifakis and Teran, 2010). With every tile active, the
+// solve is the dense one, to the bit.
 //
 // Deterministic: red-black ordering, each half-sweep reading only cells of the
 // other colour, and no sums across cells.

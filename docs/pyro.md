@@ -624,8 +624,14 @@ zapnuté `sparse` (v uzlu je to výchozí stav).
   další dlaždice, kterou si mřížka stěn přidá (`Tiles::faces`).
 - **Tlak.** Rovnice platí v aktivních buňkách a mimo ně je p = 0, jako na
   otevřené straně domény. Na hrubších úrovních multigridu je buňka
-  aktivní, když je aktivní některá z jejích osmi. Stěny těles drží nejjemnější
-  úroveň jako bity (šest v bajtu na buňku), ne jako tři mřížky stěn.
+  aktivní, jen když je aktivní všech jejích osm (jako u McAdamse, Sifakise
+  a Terana, 2010): stojící vzduch tak na hrubé mřížce nikdy nesahá dál
+  než na jemné. Nejdřív to bylo naopak (aktivní, když aspoň jedna) a při
+  rozlišení 288 prach odstřelu kolem 90. snímku vybuchl do NaN: hrubé
+  buňky napůl ve vzduchu posílaly nahoru opravy, které netrefily, a s
+  tělesy některé oblasti uzavřely jako zdmi. Teď každý V-cyklus zmenší
+  zbytek dvacetkrát až stokrát. Stěny těles drží nejjemnější úroveň jako
+  bity (šest v bajtu na buňku), ne jako tři mřížky stěn.
 - **Stejné bity.** Se všemi dlaždicemi aktivními (`sparse` vypnuté) je
   řešič hustý a dává bitově stejná pole jako předchozí hustá verze. Ověřuje
   to otisk posledního snímku v `pgbench_pyro --dense`: `3adea3c11ea39814`
@@ -983,22 +989,26 @@ kamera, velikost, vodítka.
 
 ## 8. Výkon a determinismus
 
-Krok řešiče na 4 jádrech (Xeon 2,1 GHz), táborák, bez vykreslování:
+Snímek táboráku na 4 jádrech (`pgbench_pyro --example campfire`, průměr
+60 snímků, bez vykreslování), v ms: hustý řešič před řídkou mřížkou, dnešní
+řídký (výchozí) a dnešní hustý (`sparse` vypnuté):
 
-| rozlišení | buněk | ms na krok |
-|---|---|---|
-| 48 (32 × 48 × 32) | 49 tisíc | 15 |
-| 72 (48 × 72 × 48) | 166 tisíc | 33 |
-| 96 (64 × 96 × 64) | 393 tisíc | 63 |
-| 144 (96 × 144 × 96) | 1,3 milionu | 190 |
-| 192 (128 × 192 × 128) | 3,1 milionu | 404 |
+| rozlišení | buněk domény | hustý dřív | řídký | hustý |
+|---|---|---|---|---|
+| 48 (32 × 48 × 32) | 49 tisíc | 18 | 29 | 31 |
+| 72 (48 × 72 × 48) | 166 tisíc | 44 | 56 | 74 |
+| 96 (64 × 96 × 64) | 393 tisíc | 89 | 98 | 148 |
+| 144 (96 × 144 × 96) | 1,3 milionu | 238 | 238 | 508 |
+| 192 (128 × 192 × 128) | 3,1 milionu | 556 | **458** | 1204 |
 
-Na jednom vlákně trvá krok při rozlišení 96 asi 218 ms, na čtyřech je tedy
-3,4× rychlejší. Tlaková rovnice (dva V-cykly) z toho zabere 10 ms. Scéna bez
-překážek se počítá jednodušším operátorem bez vah stěn, součty sousedů
-překladač vloží přímo do smyčky hladiče a prodlužování z hrubé mřížky na
-jemnou se dělá odděleně po osách. Předchozí verze bez překážek potřebovala
-17 ms.
+Táborák zabírá velkou část své malé domény, řídká mřížka tu tedy moc
+neušetří a v malém rozlišení ji zdrží správa dlaždic. Hustý režim je
+zhruba dvakrát pomalejší než dřív: každé čtení souseda jde přes tabulku
+dlaždic. Vyplatí se ale u velké domény s plynem v její části (níže).
+Scéna bez překážek se počítá jednodušším operátorem bez vah stěn, součty
+sousedů překladač vloží přímo do smyčky hladiče, hladič prochází jen buňky
+jedné barvy a prodlužování z hrubé mřížky na jemnou se dělá odděleně po
+osách.
 
 ### Prach odstřelu: hustě a řídce
 
@@ -1009,19 +1019,20 @@ kroku, paměť a jakou část domény prach a proudící vzduch zabírají
 
 | rozlišení | voxelů domény | hustě | řídce | počítá se nejvýš |
 |---|---|---|---|---|
-| 96 (96 × 56 × 96), 90 snímků | 0,5 milionu | 270 ms/snímek, 114 MB | **56 ms**, 71 MB | — |
-| 576 (576 × 312 × 576), 180 snímků | 103,5 milionu | nevejde se (přes 10 GB) | **6,6 s**, 3,3 GB | 23 % domény |
+| 96 (96 × 56 × 96), 90 snímků | 0,5 milionu | 249 ms/snímek, 119 MB | **55 ms**, 75 MB | — |
+| 576 (576 × 312 × 576), 180 snímků | 103,5 milionu | nevejde se (přes 10 GB) | **6,2 s**, 3,4 GB | 23 % domény |
 
 Při rozlišení 576 je buňka 16 cm a celý záběr (180 snímků, i s tuhými
-tělesy) trvá 20 minut; s renderem každého třicátého snímku 21 minut
+tělesy) trvá 19 minut; s renderem každého třicátého snímku 21 minut
 a nejvýš 5 GB paměti. Prach sám je nejvýš ve 12 % dlaždic, řešič počítá
 nejvýš 23 % (i dlaždice kolem a kolem padajících kusů), zbytek domény je
-stojící vzduch. Čas kroku: advekce 39 %, hledání buněk zabraných kusy 20 %
-(stovky pohyblivých kusů každý snímek), tlak 16 %, síly 7 %.
+stojící vzduch. Čas kroku: advekce 44 %, hledání buněk zabraných kusy 20 %
+(stovky pohyblivých kusů každý snímek), tlak 19 %, síly 8 %. Divergence,
+která po tlaku zůstane, je nejvýš 0,4 1/s.
 
 Hustý režim je teď pomalejší, než byl hustý řešič před řídkou mřížkou
-(270 proti 164 ms/snímek při rozlišení 96). Každé čtení souseda jde přes
-tabulku dlaždic. Řídký režim, výchozí v uzlu, je i tak 2,9× rychlejší
+(249 proti 164 ms/snímek při rozlišení 96). Každé čtení souseda jde přes
+tabulku dlaždic. Řídký režim, výchozí v uzlu, je i tak 3× rychlejší
 než starý hustý řešič.
 
 ![Prach odstřelu ve 103,5 milionu voxelů: snímky 60, 90, 120 a 150](img/demolition-576.jpg)
@@ -1035,7 +1046,7 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 
 ## 9. Ověřování
 
-[`tests/test_pyro.cpp`](../tests/test_pyro.cpp) (26 testů):
+[`tests/test_pyro.cpp`](../tests/test_pyro.cpp) (27 testů):
 
 - interpolace mřížky; doména z násobků 8 buněk;
 - projekce odstraní divergenci; výchozí dva cykly jí uberou přes 97 %;
@@ -1053,7 +1064,9 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - řídká mřížka: se všemi dlaždicemi vzorkuje bitově stejně jako hustá (i meze
   pro MacCormack), drží jen své dlaždice, při přeskládání zachová hodnoty
   dlaždic, které zůstaly; stěny MAC mají první vrstvu další dlaždice; tlak
-  na dlaždicích uprostřed větší mřížky konverguje a mimo ně je 0; sloup
+  na dlaždicích uprostřed větší mřížky konverguje a mimo ně je 0, s tělesy
+  na křivolakých dlaždicích v hluboké hierarchii každý V-cyklus zmenší
+  zbytek aspoň na polovinu; sloup
   kouře v široké doméně zabere nejvýš třetinu buněk a kouře je stejně jako
   v husté (±1 %, naměřeno 0,01 %) a ve stejné výšce (±1 cm); bez plynu
   nezůstane žádná dlaždice;
