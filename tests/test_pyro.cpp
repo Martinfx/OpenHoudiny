@@ -504,7 +504,10 @@ TEST(pyro_frames_keep_the_gas_as_half_floats) {
     for (int f = 0; f < 5; ++f) sim.step();
     const Frame frame = capture(sim);
     CHECK_EQ(frame.number, 5);
-    CHECK_EQ(frame.fields.size(), 3 * sim.domain().cellCount());
+    // Sparse: the tiles with gas in them alone.
+    CHECK(!frame.gasTiles.empty());
+    CHECK_EQ(frame.fields.size(), 3 * 512 * frame.gasTiles.size());
+    CHECK(frame.gasTiles.size() < sim.tiles().tileCount());
     // Every cell within half-float precision of the solver's.
     double worst = 0.0;
     for (int k = 0; k < sim.nz(); ++k) {

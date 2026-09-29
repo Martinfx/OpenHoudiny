@@ -1812,7 +1812,10 @@ void VolumeRenderer::setFrame(const sim::Frame& frame) {
     setWater(frame.water);
     setRain(frame.rain);
     const int nx = frame.domain.cells[0], ny = frame.domain.cells[1], nz = frame.domain.cells[2];
-    if (frame.fields.size() != 3 * frame.domain.cellCount() || nx <= 0) {
+    // A sparse frame's tiles, into every cell: what the texture holds.
+    std::vector<uint16_t> scratch;
+    const std::vector<uint16_t>& fields = frame.fields.empty() ? frame.fields : frame.denseFields(scratch);
+    if (fields.size() != 3 * frame.domain.cellCount() || nx <= 0) {
         hasFrame_ = false;  // no gas in this frame
         return;
     }
@@ -1822,8 +1825,7 @@ void VolumeRenderer::setFrame(const sim::Frame& frame) {
     gl_.BindTexture(TEXTURE_3D, fields_);
     gl_.PixelStorei(UNPACK_ALIGNMENT, 2);
     if (size_[0] != nx || size_[1] != ny || size_[2] != nz) {
-        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(RGB16F), nx, ny, nz, 0, RGB, HALF_FLOAT,
-                       frame.fields.data());
+        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(RGB16F), nx, ny, nz, 0, RGB, HALF_FLOAT, fields.data());
         gl_.TexParameteri(TEXTURE_3D, TEXTURE_MIN_FILTER, LINEAR_MIPMAP_LINEAR);
         gl_.TexParameteri(TEXTURE_3D, TEXTURE_MAG_FILTER, LINEAR);
         for (GLenum wrap : {TEXTURE_WRAP_S, TEXTURE_WRAP_T, TEXTURE_WRAP_R}) {
@@ -1833,7 +1835,7 @@ void VolumeRenderer::setFrame(const sim::Frame& frame) {
         size_[1] = ny;
         size_[2] = nz;
     } else {
-        gl_.TexSubImage3D(TEXTURE_3D, 0, 0, 0, 0, nx, ny, nz, RGB, HALF_FLOAT, frame.fields.data());
+        gl_.TexSubImage3D(TEXTURE_3D, 0, 0, 0, 0, nx, ny, nz, RGB, HALF_FLOAT, fields.data());
     }
     gl_.GenerateMipmap(TEXTURE_3D);
     gl_.BindTexture(TEXTURE_3D, 0);

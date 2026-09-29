@@ -1,6 +1,7 @@
 #include "pg/sim/Cache.h"
 
 #include "pg/io/Obj.h"
+#include "pg/sim/SparseGrid.h"
 
 #include <charconv>
 #include <cmath>
@@ -21,7 +22,7 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 6: what became of the bars; 7: which grit is glass, which bodies came
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned.
-constexpr uint32_t kVersion = 9;
+constexpr uint32_t kVersion = 10;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -182,11 +183,14 @@ public:
     }
     /// Half floats, `expected` of them -- or none: runs of zeros take
     /// little room, so the data cannot say how many are too many.
-    void halves(std::vector<uint16_t>& v, size_t expected) {
+    void halves(std::vector<uint16_t>& v, size_t expected) { halves(v, expected, true); }
+    /// As many as there are, up to `most`.
+    void halvesAtMost(std::vector<uint16_t>& v, size_t most) { halves(v, most, false); }
+    void halves(std::vector<uint16_t>& v, size_t expected, bool exactly) {
         const uint64_t n = u64();
         v.clear();
         if (!ok_ || n == 0) return;
-        if (n != expected) {
+        if (exactly ? n != expected : n > expected) {
             ok_ = false;
             return;
         }
@@ -300,6 +304,9 @@ std::string formatFrame(const Frame& f) {
     std::vector<uint16_t> turned(b.debrisOrient.size());
     for (size_t i = 0; i < turned.size(); ++i) turned[i] = toHalf(b.debrisOrient[i]);
     out.halves(turned);
+    // Version 10: a sparse gas's tiles -- the gas above holds theirs alone.
+    out.u64(f.gasTiles.size());
+    for (const uint32_t t : f.gasTiles) out.u32(t);
     return std::move(out.bytes);
 }
 
@@ -319,7 +326,8 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     f.time = in.f32();
     f.stepMs = in.f64();
     f.domain = in.domain();
-    in.halves(f.fields, 3 * f.domain.cellCount());
+    // Every cell's -- or, sparse, the tiles' (version 10), which come last.
+    in.halvesAtMost(f.fields, 3 * f.domain.cellCount());
     WaterFrame& w = f.water;
     w.domain = in.domain();
     w.band = in.f32();
@@ -392,8 +400,26 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
             }
         }
     }
+    if (version >= 10) {
+        f.gasTiles.resize(in.count(4));
+        for (uint32_t& t : f.gasTiles) t = in.u32();
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
+        return false;
+    }
+    // The gas: every cell of its grid, or 512 for each of its tiles -- tiles
+    // of the grid, in order.
+    const size_t tileCount = static_cast<size_t>((f.domain.cells[0] + Tiles::kSide - 1) / Tiles::kSide) *
+                             static_cast<size_t>((f.domain.cells[1] + Tiles::kSide - 1) / Tiles::kSide) *
+                             static_cast<size_t>((f.domain.cells[2] + Tiles::kSide - 1) / Tiles::kSide);
+    bool gasFits = f.gasTiles.empty() ? f.fields.empty() || f.fields.size() == 3 * f.domain.cellCount()
+                                      : f.fields.size() == 3 * Tiles::kCells * f.gasTiles.size();
+    for (size_t t = 0; t < f.gasTiles.size() && gasFits; ++t) {
+        gasFits = f.gasTiles[t] < tileCount && (t == 0 || f.gasTiles[t - 1] < f.gasTiles[t]);
+    }
+    if (!gasFits) {
+        error = "the frame's gas does not fit its grid";
         return false;
     }
     // What is drawn from it indexes these by the sizes it gives.

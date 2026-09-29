@@ -5,6 +5,7 @@
 //
 //   gas    smoke, temperature and flame per cell, as half floats (IEEE 754
 //          binary16) -- six bytes a cell, a quarter of what the solver holds;
+//          from a sparse solver, only the tiles that hold any;
 //   water  the distance to the water's surface and how white it is, on a
 //          grid twice as fine as the liquid solver's, a byte each;
 //   rain   where each drop and droplet is and how fast it goes, and the
@@ -91,19 +92,29 @@ struct Frame {
     float time = 0.0f;  ///< seconds
     Domain domain;
     /// The gas: smoke, temperature and flame of each cell of `domain` in
-    /// turn, x fastest, then y, then z. Empty without gas.
+    /// turn, x fastest, then y, then z -- or, sparse, of the cells of the
+    /// tiles in gasTiles alone. Empty without gas.
     std::vector<uint16_t> fields;
+    /// Sparse gas: the tiles of 8 x 8 x 8 cells of `domain` that hold any,
+    /// by number (x fastest, as Tiles numbers them), in order -- one at least.
+    /// `fields` then holds their 512 cells each in turn, x fastest within the
+    /// tile. Empty: `fields` holds every cell of the domain.
+    std::vector<uint32_t> gasTiles;
     WaterFrame water;     ///< empty without water
     RainFrame rain;       ///< empty without rain
     RigidFrame rigid;     ///< empty without rigid bodies
     double stepMs = 0.0;  ///< how long the step to it took
 
     size_t bytes() const {
-        return sizeof(Frame) + fields.size() * sizeof(uint16_t) + water.bytes() + rain.bytes() + rigid.bytes();
+        return sizeof(Frame) + fields.size() * sizeof(uint16_t) + gasTiles.size() * sizeof(uint32_t) + water.bytes() +
+               rain.bytes() + rigid.bytes();
     }
     bool empty() const { return fields.empty() && water.empty() && rain.empty() && rigid.empty(); }
     /// The field `channel` (0 smoke, 1 temperature, 2 flame) of cell (i, j, k).
     float at(int channel, int i, int j, int k) const;
+    /// The gas of every cell of the domain, as `fields` holds it when not
+    /// sparse: `fields` itself, or `scratch`, made from the tiles.
+    const std::vector<uint16_t>& denseFields(std::vector<uint16_t>& scratch) const;
 };
 
 /// The solver's gas as a frame.

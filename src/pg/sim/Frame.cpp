@@ -16,11 +16,57 @@ uint16_t toHalf(float value) { return halfFromFloat(value); }
 
 float fromHalf(uint16_t value) { return floatFromHalf(value); }
 
+namespace {
+
+/// Tiles of 8 cells a side along each axis of a domain.
+void tileCounts(const Domain& d, size_t t[3]) {
+    for (int a = 0; a < 3; ++a) t[a] = static_cast<size_t>((d.cells[a] + Tiles::kSide - 1) / Tiles::kSide);
+}
+
+}  // namespace
+
 float Frame::at(int channel, int i, int j, int k) const {
-    const size_t cell = static_cast<size_t>(i) +
-                        static_cast<size_t>(domain.cells[0]) *
-                            (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k));
-    return fromHalf(fields[3 * cell + static_cast<size_t>(channel)]);
+    if (gasTiles.empty()) {
+        const size_t cell = static_cast<size_t>(i) +
+                            static_cast<size_t>(domain.cells[0]) *
+                                (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k));
+        return fromHalf(fields[3 * cell + static_cast<size_t>(channel)]);
+    }
+    size_t t[3];
+    tileCounts(domain, t);
+    const uint32_t tile = static_cast<uint32_t>(static_cast<size_t>(i >> Tiles::kLog) +
+                                                t[0] * (static_cast<size_t>(j >> Tiles::kLog) + t[1] * static_cast<size_t>(k >> Tiles::kLog)));
+    const auto found = std::lower_bound(gasTiles.begin(), gasTiles.end(), tile);
+    if (found == gasTiles.end() || *found != tile) return 0.0f;
+    const size_t slot = static_cast<size_t>(found - gasTiles.begin());
+    return fromHalf(fields[3 * (slot * Tiles::kCells + SparseGrid::local(i, j, k)) + static_cast<size_t>(channel)]);
+}
+
+const std::vector<uint16_t>& Frame::denseFields(std::vector<uint16_t>& scratch) const {
+    if (gasTiles.empty()) return fields;
+    scratch.assign(3 * domain.cellCount(), 0);
+    size_t t[3];
+    tileCounts(domain, t);
+    const size_t nx = static_cast<size_t>(domain.cells[0]), ny = static_cast<size_t>(domain.cells[1]);
+    pg::parallelFor(gasTiles.size(), 16, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            const size_t tile = gasTiles[s];
+            const int c[3] = {static_cast<int>(tile % t[0]) * Tiles::kSide,
+                              static_cast<int>((tile / t[0]) % t[1]) * Tiles::kSide,
+                              static_cast<int>(tile / (t[0] * t[1])) * Tiles::kSide};
+            for (int z = 0; z < Tiles::kSide && c[2] + z < domain.cells[2]; ++z) {
+                for (int y = 0; y < Tiles::kSide && c[1] + y < domain.cells[1]; ++y) {
+                    for (int x = 0; x < Tiles::kSide && c[0] + x < domain.cells[0]; ++x) {
+                        const size_t from = 3 * (s * Tiles::kCells + SparseGrid::local(x, y, z));
+                        const size_t cell = static_cast<size_t>(c[0] + x) +
+                                            nx * (static_cast<size_t>(c[1] + y) + ny * static_cast<size_t>(c[2] + z));
+                        for (int ch = 0; ch < 3; ++ch) scratch[3 * cell + static_cast<size_t>(ch)] = fields[from + static_cast<size_t>(ch)];
+                    }
+                }
+            }
+        }
+    });
+    return scratch;
 }
 
 Frame capture(const PyroSolver& sim) {
@@ -28,18 +74,57 @@ Frame capture(const PyroSolver& sim) {
     f.number = sim.frame();
     f.time = sim.time();
     f.domain = sim.domain();
-    // Every cell, x fastest; those the solver does not work on are empty.
-    f.fields.assign(3 * f.domain.cellCount(), 0);
     const float* smoke = sim.density().data();
     const float* heat = sim.temperature().data();
     const float* flame = sim.flame().data();
+    const Tiles& tiles = sim.tiles();
+    if (tiles.all()) {
+        // Every cell, x fastest.
+        f.fields.assign(3 * f.domain.cellCount(), 0);
+        uint16_t* out = f.fields.data();
+        const size_t nx = static_cast<size_t>(f.domain.cells[0]), ny = static_cast<size_t>(f.domain.cells[1]);
+        forEachCounted(tiles, [&](int i, int j, int k, size_t c) {
+            const size_t cell = static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * static_cast<size_t>(k));
+            out[3 * cell] = toHalf(smoke[c]);
+            out[3 * cell + 1] = toHalf(heat[c]);
+            out[3 * cell + 2] = toHalf(flame[c]);
+        });
+        return f;
+    }
+    // Sparse: the tiles with any gas -- as halves -- in them, as the solver
+    // keeps them; one, empty, when there is none.
+    const std::vector<uint32_t>& stored = tiles.stored();
+    std::vector<uint8_t> any(stored.size(), 0);
+    pg::parallelFor(stored.size(), 16, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            const size_t base = s * Tiles::kCells;
+            for (size_t c = base; c < base + Tiles::kCells && !any[s]; ++c) {
+                any[s] = toHalf(smoke[c]) != 0 || toHalf(heat[c]) != 0 || toHalf(flame[c]) != 0;
+            }
+        }
+    });
+    std::vector<size_t> slots;
+    for (size_t s = 0; s < stored.size(); ++s) {
+        if (!any[s]) continue;
+        f.gasTiles.push_back(stored[s]);
+        slots.push_back(s);
+    }
+    if (f.gasTiles.empty()) {
+        f.gasTiles.push_back(0);
+        f.fields.assign(3 * Tiles::kCells, 0);
+        return f;
+    }
+    f.fields.resize(3 * Tiles::kCells * slots.size());
     uint16_t* out = f.fields.data();
-    const size_t nx = static_cast<size_t>(f.domain.cells[0]), ny = static_cast<size_t>(f.domain.cells[1]);
-    forEachCounted(sim.tiles(), [&](int i, int j, int k, size_t c) {
-        const size_t cell = static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * static_cast<size_t>(k));
-        out[3 * cell] = toHalf(smoke[c]);
-        out[3 * cell + 1] = toHalf(heat[c]);
-        out[3 * cell + 2] = toHalf(flame[c]);
+    pg::parallelFor(slots.size(), 16, [&](size_t begin, size_t end) {
+        for (size_t t = begin; t < end; ++t) {
+            const size_t from = slots[t] * Tiles::kCells, to = t * Tiles::kCells;
+            for (size_t c = 0; c < Tiles::kCells; ++c) {
+                out[3 * (to + c)] = toHalf(smoke[from + c]);
+                out[3 * (to + c) + 1] = toHalf(heat[from + c]);
+                out[3 * (to + c) + 2] = toHalf(flame[from + c]);
+            }
+        }
     });
     return f;
 }

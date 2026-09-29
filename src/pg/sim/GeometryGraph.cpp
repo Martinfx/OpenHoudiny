@@ -123,11 +123,13 @@ public:
         if (!frame_ || frame_->fields.empty()) return geo;
         const Domain& d = frame_->domain;
         const size_t n = d.cellCount();
-        if (frame_->fields.size() < 3 * n) return geo;
+        std::vector<uint16_t> scratch;
+        const std::vector<uint16_t>& fields = frame_->denseFields(scratch);
+        if (fields.size() < 3 * n) return geo;
         const char* names[3] = {"density", "temperature", "flame"};
         for (int channel = 0; channel < 3; ++channel) {
             std::vector<float> values(n);
-            for (size_t c = 0; c < n; ++c) values[c] = fromHalf(frame_->fields[3 * c + static_cast<size_t>(channel)]);
+            for (size_t c = 0; c < n; ++c) values[c] = fromHalf(fields[3 * c + static_cast<size_t>(channel)]);
             geo->addVolume(Volume::make(names[channel], d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2],
                                         std::move(values)));
         }

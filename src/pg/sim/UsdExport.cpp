@@ -529,12 +529,14 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
     // The gas: a file of it.
     const Domain& d = frame.domain;
     const size_t cells = d.cellCount();
-    if (!frame.fields.empty() && frame.fields.size() >= 3 * cells) {
+    std::vector<uint16_t> scratch;
+    const std::vector<uint16_t>& gas = frame.fields.empty() ? frame.fields : frame.denseFields(scratch);
+    if (!gas.empty() && gas.size() >= 3 * cells) {
         const char* names[3] = {"density", "temperature", "flame"};
         std::vector<Volume> volumes;
         for (int channel = 0; channel < 3; ++channel) {
             std::vector<float> values(cells);
-            for (size_t c = 0; c < cells; ++c) values[c] = fromHalf(frame.fields[3 * c + static_cast<size_t>(channel)]);
+            for (size_t c = 0; c < cells; ++c) values[c] = fromHalf(gas[3 * c + static_cast<size_t>(channel)]);
             volumes.push_back(Volume::make(names[channel], d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2],
                                            std::move(values)));
         }

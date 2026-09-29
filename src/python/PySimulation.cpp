@@ -170,8 +170,18 @@ void bindSimulation(py::module_& m) {
         .def("gas", [](const PyFrame& p, const std::string& name) {
             const int channel = name == "density" ? 0 : name == "temperature" ? 1 : name == "flame" ? 2 : -1;
             if (channel < 0) throw Error("no field '" + name + "' of the gas: density, temperature or flame");
-            const bool some = p.f->fields.size() >= 3 * p.f->domain.cellCount();
-            return field(p.f, some ? p.f->fields.data() : nullptr, p.f->domain, 3, channel);
+            // A sparse frame's tiles into every cell: a frame of its own, that
+            // the array keeps.
+            FramePtr f = p.f;
+            if (!f->gasTiles.empty()) {
+                auto dense = std::make_shared<sim::Frame>();
+                dense->domain = f->domain;
+                std::vector<uint16_t> scratch;
+                dense->fields = f->denseFields(scratch);
+                f = dense;
+            }
+            const bool some = f->fields.size() >= 3 * f->domain.cellCount();
+            return field(f, some ? f->fields.data() : nullptr, f->domain, 3, channel);
         })
         // --- water
         .def_property_readonly("has_water", [](const PyFrame& p) { return !p.f->water.empty(); })
