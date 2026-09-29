@@ -250,6 +250,7 @@ add_library(pgsim
   src/pg/sim/Display.cpp
   src/pg/sim/GeometryGraph.cpp
   src/pg/sim/Grid.cpp
+  src/pg/sim/SparseGrid.cpp
   src/pg/sim/Liquid.cpp
   src/pg/sim/Mesh.cpp
   src/pg/sim/Network.cpp

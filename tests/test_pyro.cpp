@@ -22,12 +22,12 @@ struct ThreadCountGuard {
     ~ThreadCountGuard() { TaskPool::instance().setThreadCount(saved); }
 };
 
-bool sameBits(const Grid& a, const Grid& b) {
+bool sameBits(const SparseGrid& a, const SparseGrid& b) {
     return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
 }
 
 /// Centre of mass of a field along `axis`, world units.
-double centreOf(const PyroSolver& sim, const Grid& g, int axis) {
+double centreOf(const PyroSolver& sim, const SparseGrid& g, int axis) {
     double mass = 0.0, moment = 0.0;
     for (int k = 0; k < g.nz(); ++k) {
         for (int j = 0; j < g.ny(); ++j) {
@@ -50,11 +50,11 @@ Scene small(Scene s, int resolution) {
 /// Some flow that is anything but incompressible: sources and sinks everywhere.
 void stir(PyroSolver& sim) {
     for (int a = 0; a < 3; ++a) {
-        Grid& v = sim.velocity(a);
+        SparseGrid& v = sim.velocity(a);
         for (int k = 0; k < v.nz(); ++k) {
             for (int j = 0; j < v.ny(); ++j) {
                 for (int i = 0; i < v.nx(); ++i) {
-                    v.at(i, j, k) = std::sin(0.7f * i + 1.3f * a) * std::cos(0.5f * j) + 0.3f * std::sin(0.9f * k);
+                    v.ref(i, j, k) = std::sin(0.7f * i + 1.3f * a) * std::cos(0.5f * j) + 0.3f * std::sin(0.9f * k);
                 }
             }
         }
@@ -62,7 +62,7 @@ void stir(PyroSolver& sim) {
 }
 
 bool finite(const PyroSolver& sim) {
-    for (const Grid* g : {&sim.density(), &sim.temperature(), &sim.fuel(), &sim.flame(), &sim.velocity(0),
+    for (const SparseGrid* g : {&sim.density(), &sim.temperature(), &sim.fuel(), &sim.flame(), &sim.velocity(0),
                           &sim.velocity(1), &sim.velocity(2)}) {
         for (const float v : g->values()) {
             if (!std::isfinite(v)) return false;
@@ -111,6 +111,7 @@ TEST(pyro_domain_is_whole_multiples_of_8_cells) {
 TEST(pyro_projection_makes_the_flow_divergence_free) {
     Scene s = small(Scene::smoke(), 24);
     s.solver.pressureCycles = 10;
+    s.solver.sparse = false;  // every cell stirred
     PyroSolver sim(s);
     stir(sim);
     const double before = sim.meanDivergence();
@@ -122,13 +123,15 @@ TEST(pyro_projection_makes_the_flow_divergence_free) {
 TEST(pyro_projection_converges_fast_with_the_default_cycles) {
     // The default budget, from a cold start: nearly all of the divergence goes
     // in one step, and the pressure carried over finishes the rest later.
-    PyroSolver sim(small(Scene::smoke(), 48));
-    Grid& v = sim.velocity(1);
+    Scene s = small(Scene::smoke(), 48);
+    s.solver.sparse = false;  // the jet set on every face
+    PyroSolver sim(s);
+    SparseGrid& v = sim.velocity(1);
     for (int k = 0; k < v.nz(); ++k) {
         for (int j = 0; j < v.ny(); ++j) {
             for (int i = 0; i < v.nx(); ++i) {
                 const float dx = (i - 16.0f) / 6.0f, dy = (j - 16.0f) / 6.0f, dz = (k - 16.0f) / 6.0f;
-                v.at(i, j, k) = std::exp(-(dx * dx + dy * dy + dz * dz));  // an upward jet
+                v.ref(i, j, k) = std::exp(-(dx * dx + dy * dy + dz * dz));  // an upward jet
             }
         }
     }
@@ -143,13 +146,13 @@ TEST(pyro_multigrid_converges_at_any_resolution) {
     // wall and with solids too.
     for (const int n : {16, 32, 64}) {
         for (int variant = 0; variant < 3; ++variant) {
-            Grid b(n, n / 2 * 3, n), p(n, n / 2 * 3, n), solid(n, n / 2 * 3, n);
+            SparseGrid b(n, n / 2 * 3, n), p(n, n / 2 * 3, n), solid(n, n / 2 * 3, n);
             for (int k = 0; k < b.nz(); ++k) {
                 for (int j = 0; j < b.ny(); ++j) {
                     for (int i = 0; i < b.nx(); ++i) {
-                        b.at(i, j, k) = std::sin(0.37f * i * i + 1.1f * j) * std::cos(0.23f * k * j);
+                        b.ref(i, j, k) = std::sin(0.37f * i * i + 1.1f * j) * std::cos(0.23f * k * j);
                         const float dx = i - n * 0.5f, dy = j - n * 0.6f, dz = k - n * 0.5f;
-                        if (dx * dx + dy * dy + dz * dz < n * n / 25.0f) solid.at(i, j, k) = 1.0f;
+                        if (dx * dx + dy * dy + dz * dz < n * n / 25.0f) solid.ref(i, j, k) = 1.0f;
                     }
                 }
             }
@@ -240,8 +243,9 @@ TEST(pyro_box_sources_fill_a_box) {
     s.emitters[0].size = Vec3(0.3f, 0.2f, 0.2f);
     s.emitters[0].velocity = Vec3();
     PyroSolver sim(s);
+    sim.updateTiles(0.1f);  // the source's tiles taken on, as a step does first
     sim.emit(0.1f);
-    const Grid& d = sim.density();
+    const SparseGrid& d = sim.density();
     for (int k = 0; k < d.nz(); ++k) {
         for (int j = 0; j < d.ny(); ++j) {
             for (int i = 0; i < d.nx(); ++i) {
@@ -262,7 +266,7 @@ TEST(pyro_colliders_keep_the_gas_out_and_the_flow_around) {
     s.colliders.push_back(ball);
     PyroSolver sim(s);
     for (int f = 0; f < 40; ++f) sim.step();
-    const Grid& solid = sim.solid();
+    const SparseGrid& solid = sim.solid();
     CHECK(solid.sum() > 10.0);
     double inside = 0.0;
     for (size_t c = 0; c < solid.size(); ++c) {
@@ -289,6 +293,7 @@ TEST(pyro_colliders_keep_the_gas_out_and_the_flow_around) {
 TEST(pyro_a_closed_floor_lets_nothing_through) {
     Scene s = small(Scene::smoke(), 24);
     s.solver.closedFloor = true;
+    s.solver.sparse = false;  // every cell stirred
     PyroSolver sim(s);
     stir(sim);
     sim.project();
@@ -327,6 +332,7 @@ TEST(pyro_a_vortex_spins_the_gas_around_its_axis) {
     vortex.speed = 1.0f;
     vortex.strength = 2.0f;
     s.forces.push_back(vortex);
+    s.solver.sparse = false;  // no gas: sparse, there would be no air to spin
     PyroSolver sim(s);
     sim.addForces(0.1f);
     // Counter-clockwise seen from above (+y): at +x the gas moves towards -z.
@@ -455,7 +461,7 @@ TEST(pyro_scenes_out_of_range_are_made_safe) {
     CHECK(safe.solver.timeStep > 0.0f);
     CHECK_EQ(safe.solver.cooling, SolverSettings{}.cooling);
     CHECK_EQ(safe.solver.substeps, 16);
-    CHECK_EQ(safe.solver.resolution, 256);
+    CHECK_EQ(safe.solver.resolution, 1024);
     CHECK(safe.emitters[0].size.x > 0.0f);
     CHECK_EQ(safe.emitters[0].fuel, 0.0f);
     CHECK(length(safe.forces[1].direction) > 0.0f);
@@ -468,15 +474,15 @@ TEST(pyro_scenes_out_of_range_are_made_safe) {
 }
 
 TEST(pyro_smoke_shadows_what_is_behind_it) {
-    Grid density(8, 8, 8);
+    SparseGrid density(8, 8, 8);
     for (int k = 0; k < 8; ++k) {
-        for (int i = 0; i < 8; ++i) density.at(i, 5, k) = 4.0f;  // a slab at y = 5
+        for (int i = 0; i < 8; ++i) density.ref(i, 5, k) = 4.0f;  // a slab at y = 5
     }
     const float up[3] = {0.0f, 1.0f, 0.0f};
     const Grid light = lightTransmittance(density, up, 0.5f, 1);
     CHECK(light.at(4, 1, 4) < 0.2f);   // below the slab: in its shadow
     CHECK(light.at(4, 7, 4) > 0.99f);  // above it: nothing between it and the light
-    const Grid empty = lightTransmittance(Grid(8, 8, 8), up, 0.5f, 2);
+    const Grid empty = lightTransmittance(SparseGrid(8, 8, 8), up, 0.5f, 2);
     CHECK_EQ(empty.nx(), 4);
     CHECK_NEAR(empty.at(1, 1, 1), 1.0, 1e-6);
 }
@@ -498,7 +504,7 @@ TEST(pyro_frames_keep_the_gas_as_half_floats) {
     for (int f = 0; f < 5; ++f) sim.step();
     const Frame frame = capture(sim);
     CHECK_EQ(frame.number, 5);
-    CHECK_EQ(frame.fields.size(), 3 * sim.density().size());
+    CHECK_EQ(frame.fields.size(), 3 * sim.domain().cellCount());
     // Every cell within half-float precision of the solver's.
     double worst = 0.0;
     for (int k = 0; k < sim.nz(); ++k) {
@@ -533,7 +539,7 @@ TEST(pyro_a_swelling_source_pushes_the_gas_out) {
     };
     // How far from the source's axis the smoke is, on average.
     auto reach = [](const PyroSolver& sim) {
-        const Grid& g = sim.density();
+        const SparseGrid& g = sim.density();
         double mass = 0.0, moment = 0.0;
         for (int k = 0; k < g.nz(); ++k) {
             for (int j = 0; j < g.ny(); ++j) {

@@ -9,7 +9,7 @@
 //                    [--spirv-val PATH] [--library FILE]...
 //   prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--mesh sphere|torus|cube|plane|billboard] [--size N]
 //                    [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...
-//   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..256]
+//   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..1024]
 //                    [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
 //                    [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]
 //                    [--export PATH] [--export-node NODE]
@@ -674,8 +674,8 @@ std::string numbered(const std::string& path, int frame) {
 int simulate(const Options& o, const std::string& network, const std::string& outPath) {
     const char* cmd = o.command.c_str();
     if (o.frames < 0 || o.every < 0 || o.start < 0) return usage();
-    if (o.resolution != 0 && (o.resolution < 16 || o.resolution > 256)) {
-        std::fprintf(stderr, "%s: --resolution wants 16 to 256 cells along the longest side, not %d\n", cmd,
+    if (o.resolution != 0 && (o.resolution < 16 || o.resolution > 1024)) {
+        std::fprintf(stderr, "%s: --resolution wants 16 to 1024 cells along the longest side, not %d\n", cmd,
                      o.resolution);
         return 1;
     }
@@ -1275,7 +1275,7 @@ void printUsage(std::FILE* out) {
                  "                   [--time SECONDS] [--frames N] [--yaw DEG] [--pitch DEG] [--library FILE]...\n"
                  "                   a video: --frames of the preview animated, 30 a second (90)\n"
                  "  prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K]\n"
-                 "                   [--resolution 16..256]\n"
+                 "                   [--resolution 16..1024]\n"
                  "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--cache DIR] [--from-cache DIR]\n"
                  "                   [--export PATH] [--export-node NODE] [--threads N]\n"

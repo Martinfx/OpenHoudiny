@@ -28,18 +28,18 @@ Frame capture(const PyroSolver& sim) {
     f.number = sim.frame();
     f.time = sim.time();
     f.domain = sim.domain();
-    const size_t n = sim.density().size();
-    f.fields.resize(3 * n);
+    // Every cell, x fastest; those the solver does not work on are empty.
+    f.fields.assign(3 * f.domain.cellCount(), 0);
     const float* smoke = sim.density().data();
     const float* heat = sim.temperature().data();
     const float* flame = sim.flame().data();
     uint16_t* out = f.fields.data();
-    pg::parallelFor(n, 16384, [&](size_t begin, size_t end) {
-        for (size_t c = begin; c < end; ++c) {
-            out[3 * c] = toHalf(smoke[c]);
-            out[3 * c + 1] = toHalf(heat[c]);
-            out[3 * c + 2] = toHalf(flame[c]);
-        }
+    const size_t nx = static_cast<size_t>(f.domain.cells[0]), ny = static_cast<size_t>(f.domain.cells[1]);
+    forEachCounted(sim.tiles(), [&](int i, int j, int k, size_t c) {
+        const size_t cell = static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * static_cast<size_t>(k));
+        out[3 * cell] = toHalf(smoke[c]);
+        out[3 * cell + 1] = toHalf(heat[c]);
+        out[3 * cell + 2] = toHalf(flame[c]);
     });
     return f;
 }

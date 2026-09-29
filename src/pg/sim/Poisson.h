@@ -19,11 +19,18 @@
 // solids, a coarse face is as open as the four fine faces it covers are on
 // average.
 //
+// Sparse (SparseGrid.h): the equation holds in the cells that count; a cell
+// that does not holds p = 0 -- the still air round the gas, as open as the
+// sides of the box. A coarse cell counts when any of its eight does. With
+// every tile active, the solve is the dense one, to the bit.
+//
 // Deterministic: red-black ordering, each half-sweep reading only cells of the
 // other colour, and no sums across cells.
 //
-#include "pg/sim/Grid.h"
+#include "pg/sim/SparseGrid.h"
 
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace pg::sim {
@@ -32,9 +39,9 @@ namespace pg::sim {
 struct PoissonBoundary {
     /// Walls instead of open sides, in the order -x, +x, -y, +y, -z, +z.
     bool closed[6] = {false, false, false, false, false, false};
-    /// Cells a solid takes (value above 0.5), the size of the pressure grid.
-    /// Null: no solids.
-    const Grid* solid = nullptr;
+    /// Cells a solid takes (value above 0.5), the size of the pressure grid
+    /// and of its tiles. Null: no solids.
+    const SparseGrid* solid = nullptr;
 };
 
 class PoissonSolver {
@@ -43,11 +50,12 @@ public:
     void setBoundary(const PoissonBoundary& boundary);
 
     /// Improves `p`, which comes in as the first guess -- the pressure of the
-    /// previous step -- with `cycles` V-cycles. `p` and `b` share their size.
-    void solve(Grid& p, const Grid& b, float h, int cycles);
+    /// previous step -- with `cycles` V-cycles. `p` and `b` share their tiles.
+    void solve(SparseGrid& p, const SparseGrid& b, float h, int cycles);
 
-    /// Mean |b - A p| over the cells: how far `p` is from solving the equation.
-    double residual(const Grid& p, const Grid& b, float h);
+    /// Mean |b - A p| over the cells that count: how far `p` is from solving
+    /// the equation.
+    double residual(const SparseGrid& p, const SparseGrid& b, float h);
 
     /// Grids in the hierarchy of the last solve(), the finest included. A grid
     /// is halved while its sides are even and at least 4 cells long.
@@ -60,26 +68,35 @@ public:
 private:
     /// Face coefficients and the diagonal of one level -- only with solids.
     struct Operator {
-        Grid a[3];  // (nx+1) x ny x nz faces along x, and so on
-        Grid diagonal;
+        SparseGrid a[3];  // (nx+1) x ny x nz faces along x, and so on
+        SparseGrid diagonal;
     };
+    /// Which stored cells of a level count, one byte each, as data() has them.
+    using Counts = std::vector<uint8_t>;
     struct Level {
-        Grid p, b, r;
+        SparseGrid p, b, r;
+        Counts on;
         Operator op;
         float h = 0.0f;
     };
-    void build(const Grid& fine, float h);
-    void vcycle(Grid& p, const Grid& b, Grid& r, const Operator& op, float h, size_t next);
-    void relax(Grid& p, const Grid& b, const Operator& op, float h, int sweeps, float omega) const;
-    void computeResidual(const Grid& p, const Grid& b, const Operator& op, float h, Grid& r) const;
-    void prolongAdd(const Grid& coarse, Grid& fine) const;
+    void build(const SparseGrid& fine, float h);
+    void vcycle(SparseGrid& p, const SparseGrid& b, SparseGrid& r, const Counts& on, const Operator& op, float h,
+                size_t next);
+    void relax(SparseGrid& p, const SparseGrid& b, const Counts& on, const Operator& op, float h, int sweeps,
+               float omega) const;
+    void computeResidual(const SparseGrid& p, const SparseGrid& b, const Counts& on, const Operator& op, float h,
+                         SparseGrid& r) const;
+    void prolongAdd(const SparseGrid& coarse, SparseGrid& fine, const Counts& on) const;
 
     bool closed_[6] = {false, false, false, false, false, false};
-    Grid solid_;          // a copy of the mask, empty without solids
+    SparseGrid solid_;    // a copy of the mask, empty without solids
+    bool solids_ = false;
     bool dirty_ = true;   // the hierarchy has to be rebuilt
     std::vector<Level> coarse_;  // coarse_[0] is half the caller's resolution
-    Grid fineResidual_;
+    SparseGrid fineResidual_;
+    Counts fineOn_;
     Operator fineOp_;
+    std::shared_ptr<const Tiles> tiles_;  // the fine level's, as last built
     int dims_[3] = {0, 0, 0};
     float h_ = 0.0f;
 };

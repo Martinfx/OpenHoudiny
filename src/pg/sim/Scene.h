@@ -154,9 +154,16 @@ struct Domain {
 
 struct SolverSettings {
     Vec3 size{1.0f, 1.5f, 1.0f};  ///< the domain, world units
-    /// Cells along the longest side, 16 to 256; each count is rounded up to a
-    /// multiple of 8, so the domain may come out a little larger.
+    /// Cells along the longest side, 16 to 1024; each count is rounded up to
+    /// a multiple of 8, so the domain may come out a little larger.
     int resolution = 96;
+    /// Work and keep only the tiles of 8 x 8 x 8 cells the gas is in, and
+    /// those round them (SparseGrid.h): the rest of the domain is still,
+    /// empty air. Off, every cell of it is.
+    bool sparse = false;
+    /// With sparse: a tile whose smoke, heat, fuel and flame all stay below
+    /// this is let go.
+    float cutoff = 1e-3f;
     bool closedFloor = true;      ///< a floor at y = 0 the gas cannot pass; else open like the rest
 
     float timeStep = 1.0f / 30.0f;
@@ -187,7 +194,7 @@ struct Scene {
     std::vector<Force> forces;
     std::vector<Collider> colliders;
 
-    /// Every number in a range the solver can work with -- 16 to 256 cells, a
+    /// Every number in a range the solver can work with -- 16 to 1024 cells, a
     /// time step above 0 and at most 1 s, no negative rates, sizes above 0 --
     /// and what is not a number replaced by its default. The solver takes its
     /// scene this way, so no input divides by zero or allocates the machine away.

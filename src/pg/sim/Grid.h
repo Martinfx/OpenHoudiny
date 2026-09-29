@@ -31,6 +31,8 @@ public:
     }
     float& at(int i, int j, int k) { return data_[index(i, j, k)]; }
     float at(int i, int j, int k) const { return data_[index(i, j, k)]; }
+    /// at(), to write -- as SparseGrid has it.
+    float& ref(int i, int j, int k) { return data_[index(i, j, k)]; }
     /// The nearest cell inside the grid: a boundary that repeats itself.
     float clamped(int i, int j, int k) const;
 

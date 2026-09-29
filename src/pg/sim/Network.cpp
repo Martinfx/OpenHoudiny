@@ -257,10 +257,15 @@ std::vector<ParamDef> legacyColliderParams(bool sphere) {
 std::vector<ParamDef> pyroSolverParams(bool withFrameRate) {
     std::vector<ParamDef> p = {{"size", "Size", "Domain", K::Vector, {1.0f, 1.5f, 1.0f}, 0.1f, 5.0f, 0.1f, 1000.0f, "m",
            "Width, height and depth of the box the gas lives in. It stands on the floor, centred."},
-          {"resolution", "Resolution", "Domain", K::Int, {96.0f, 0.0f, 0.0f}, 16.0f, 256.0f, 16.0f, 256.0f, "",
+          {"resolution", "Resolution", "Domain", K::Int, {96.0f, 0.0f, 0.0f}, 16.0f, 256.0f, 16.0f, 1024.0f, "",
            "Cells along the longest side. Twice as many: finer detail, and eight times the work."},
           {"closed_floor", "Closed Floor", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "A floor the gas cannot pass. Off, the bottom is open like the sides and the top."},
+          {"sparse", "Sparse", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "Work only where the gas is -- in tiles of 8 cells a side, and those round them. The rest of the "
+           "domain is still, empty air: a big domain costs what its gas does."},
+          {"cutoff", "Cutoff", "Domain", K::Float, {0.001f, 0.0f, 0.0f}, 0.0f, 0.05f, 0.0f, 1.0f, "",
+           "Sparse: a tile whose smoke, heat, fuel and flame all stay below this is let go."},
           {"fps", "Frame Rate", "Time", K::Float, {30.0f, 0.0f, 0.0f}, 10.0f, 120.0f, 1.0f, 10000.0f, "fps",
            "Frames a second. Each frame moves the gas on by 1/fps seconds."},
           {"substeps", "Substeps", "Time", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
@@ -3647,6 +3652,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.size = v3(*solver, "size");
         s.resolution = whole(*solver, "resolution");
         s.closedFloor = f(*solver, "closed_floor") != 0.0f;
+        s.sparse = f(*solver, "sparse") != 0.0f;
+        s.cutoff = f(*solver, "cutoff");
         s.timeStep = c.world.timeStep;
         s.substeps = whole(*solver, "substeps");
         s.pressureCycles = whole(*solver, "pressure_cycles");

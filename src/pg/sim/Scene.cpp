@@ -97,7 +97,8 @@ Scene Scene::sanitized() const {
     Scene s = *this;
     SolverSettings& v = s.solver;
     v.size = fix(v.size, 0.1f, 1000.0f, ds.size);
-    v.resolution = std::clamp(v.resolution, 16, 256);
+    v.resolution = std::clamp(v.resolution, 16, 1024);
+    v.cutoff = fix(v.cutoff, 0.0f, 1.0f, ds.cutoff);
     v.timeStep = fix(v.timeStep, 1e-4f, 1.0f, ds.timeStep);
     v.substeps = std::clamp(v.substeps, 1, 16);
     v.pressureCycles = std::clamp(v.pressureCycles, 1, 16);
@@ -137,6 +138,7 @@ Scene Scene::sanitized() const {
 Scene Scene::fire() {
     Scene s;
     SolverSettings& v = s.solver;
+    v.sparse = true;  // as the network's Pyro Solver has it
     v.buoyancy = 0.9f;
     v.weight = 0.05f;
     v.vorticity = 0.9f;
@@ -169,6 +171,7 @@ Scene Scene::fire() {
 Scene Scene::smoke() {
     Scene s;
     SolverSettings& v = s.solver;
+    v.sparse = true;  // as the network's Pyro Solver has it
     v.buoyancy = 1.0f;
     v.weight = 0.08f;
     v.vorticity = 0.9f;

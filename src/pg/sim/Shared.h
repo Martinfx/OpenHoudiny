@@ -10,6 +10,7 @@
 #include "pg/core/Parallel.h"
 #include "pg/sim/Grid.h"
 #include "pg/sim/Scene.h"
+#include "pg/sim/SparseGrid.h"
 
 #include <algorithm>
 #include <array>
@@ -55,6 +56,12 @@ void forEachIn(int x0, int x1, int y0, int y1, int z0, int z1, const F& f) {
 template <class F>
 void forEachCell(const Grid& g, const F& f) {
     forEachIn(0, g.nx(), 0, g.ny(), 0, g.nz(), f);
+}
+
+/// f(i, j, k) for every cell of a sparse grid that counts, in parallel.
+template <class F>
+void forEachCell(const SparseGrid& g, const F& f) {
+    forEachCounted(g.tiles(), [&](int i, int j, int k, size_t) { f(i, j, k); });
 }
 
 inline uint32_t hash(int x, int y, int z, uint32_t seed) {
@@ -124,12 +131,12 @@ inline Vec3 windAt(const Force& force, float t, uint32_t seed, const Vec3& p) {
 }
 
 /// Adds `force` over dt at time t to the velocity `vel` (the three
-/// components, each on its faces) of a MAC grid over `domain`. `seed` makes
-/// the force's noise; `knots` keeps a turbulence force's lattice from step to
-/// step. `mask(a, i, j, k)`: how much the force acts at face (i, j, k) of
-/// component a, 0 to 1.
-template <class Mask>
-void addForce(const Force& force, uint32_t seed, const Domain& domain, float time, float dt, Grid* vel,
+/// components, each on its faces; Grid or SparseGrid) of a MAC grid over
+/// `domain`. `seed` makes the force's noise; `knots` keeps a turbulence
+/// force's lattice from step to step. `mask(a, i, j, k)`: how much the force
+/// acts at face (i, j, k) of component a, 0 to 1.
+template <class G, class Mask>
+void addForce(const Force& force, uint32_t seed, const Domain& domain, float time, float dt, G* vel,
               std::array<Grid, 3>& knots, const Mask& mask) {
     const Vec3 o = domain.origin();
     const float h = domain.voxel;
@@ -177,7 +184,7 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
                     const float push = g.sample((static_cast<float>(i) + ox) / cellsPerKnot + 0.5f,
                                                 (static_cast<float>(j) + oy) / cellsPerKnot + 0.5f,
                                                 (static_cast<float>(k) + oz) / cellsPerKnot + 0.5f);
-                    vel[a].at(i, j, k) += dt * force.strength * m * push;
+                    vel[a].ref(i, j, k) += dt * force.strength * m * push;
                 });
             }
             break;
@@ -190,7 +197,7 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
                 forEachCell(vel[a], [&](int i, int j, int k) {
                     const float m = mask(a, i, j, k);
                     const float wind = windAt(force, time, seed, facePosition(a, i, j, k))[a];
-                    float& v = vel[a].at(i, j, k);
+                    float& v = vel[a].ref(i, j, k);
                     v += pull * m * (wind - v);
                 });
             }
@@ -220,7 +227,7 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
                     const Vec3 outward = d > 1e-6f ? out * (1.0f / d) : Vec3();
                     const Vec3 target = cross(axis, outward) * (force.speed * 4.0f * x * (1.0f - x)) +
                                         axis * force.lift - outward * (force.suction * x);
-                    float& v = vel[a].at(i, j, k);
+                    float& v = vel[a].ref(i, j, k);
                     v += pull * w * mask(a, i, j, k) * (target[a] - v);
                 });
             }
@@ -233,7 +240,7 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
                     const float d = length(r);
                     if (d < 1e-6f || d >= force.radius) return;
                     const float falloff = (1.0f - d / force.radius) * (1.0f - d / force.radius);
-                    vel[a].at(i, j, k) += dt * force.strength * falloff * mask(a, i, j, k) * r[a] / d;
+                    vel[a].ref(i, j, k) += dt * force.strength * falloff * mask(a, i, j, k) * r[a] / d;
                 });
             }
             break;
@@ -243,7 +250,7 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
             for (int a = 0; a < 3; ++a) {
                 forEachCell(vel[a], [&](int i, int j, int k) {
                     const float m = mask(a, i, j, k);
-                    vel[a].at(i, j, k) *= 1.0f - (1.0f - keep) * m;
+                    vel[a].ref(i, j, k) *= 1.0f - (1.0f - keep) * m;
                 });
             }
             break;

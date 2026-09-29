@@ -4,6 +4,7 @@
 #include "pg/sim/Shared.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <utility>
@@ -21,10 +22,16 @@ void lap(Clock::time_point& t0, double& ms) {
     t0 = now;
 }
 
+/// The number of cell (i, j, k) in a box of n cells, x fastest: an order
+/// that does not depend on the tiles.
+uint64_t numberOf(int i, int j, int k, const int n[3]) {
+    return static_cast<uint64_t>(i) +
+           static_cast<uint64_t>(n[0]) * (static_cast<uint64_t>(j) + static_cast<uint64_t>(n[1]) * static_cast<uint64_t>(k));
+}
+
 }  // namespace
 
 using detail::faceOffset;
-using detail::forEachCell;
 using detail::forEachIn;
 using detail::noise3;
 
@@ -36,7 +43,8 @@ void PyroSolver::setScene(const Scene& scene) {
     const Scene safe = scene.sanitized();
     const Domain d = safe.solver.domain();
     const bool resize = d.cells[0] != domain_.cells[0] || d.cells[1] != domain_.cells[1] ||
-                        d.cells[2] != domain_.cells[2] || d.voxel != domain_.voxel;
+                        d.cells[2] != domain_.cells[2] || d.voxel != domain_.voxel ||
+                        safe.solver.sparse != scene_.solver.sparse;
     const bool walls = safe.colliders != scene_.colliders || safe.solver.closedFloor != scene_.solver.closedFloor;
     scene_ = safe;
     if (resize) {
@@ -52,17 +60,13 @@ void PyroSolver::reset() {
     nx_ = domain_.cells[0];
     ny_ = domain_.cells[1];
     nz_ = domain_.cells[2];
-    for (int a = 0; a < 3; ++a) {
-        const int fx = nx_ + (a == 0), fy = ny_ + (a == 1), fz = nz_ + (a == 2);
-        vel_[a] = Grid(fx, fy, fz);
-        velNext_[a] = Grid(fx, fy, fz);
+    // Sparse, nothing is worked on until there is gas or a source; dense,
+    // every tile is.
+    for (SparseGrid* g : {&vel_[0], &vel_[1], &vel_[2], &density_, &temperature_, &fuel_, &flame_, &pressure_}) {
+        *g = SparseGrid();
     }
-    for (Grid* g : {&density_, &temperature_, &fuel_, &flame_, &solid_, &back_[0], &back_[1], &back_[2], &forward_[0],
-                    &forward_[1], &forward_[2], &predicted_, &lo_, &hi_, &corrected_, &expansion_, &pressure_,
-                    &divergence_, &centre_[0], &centre_[1], &centre_[2], &curl_[0], &curl_[1], &curl_[2],
-                    &curlLength_}) {
-        *g = Grid(nx_, ny_, nz_);
-    }
+    retile(scene_.solver.sparse ? std::make_shared<const Tiles>(nx_, ny_, nz_, std::vector<uint8_t>(), -1)
+                                : std::make_shared<const Tiles>(nx_, ny_, nz_));
     noise_.assign(scene_.forces.size(), {});
     frame_ = 0;
     time_ = 0.0f;
@@ -70,10 +74,124 @@ void PyroSolver::reset() {
     updateSolids();
 }
 
+void PyroSolver::retile(std::shared_ptr<const Tiles> cells) {
+    cells_ = std::move(cells);
+    for (int a = 0; a < 3; ++a) {
+        faces_[a] = Tiles::faces(*cells_, a);
+        vel_[a].retile(faces_[a]);
+        velNext_[a] = SparseGrid(faces_[a]);
+    }
+    // What the gas carries, and the pressure -- the next solve's first guess
+    // -- go on where the tiles do.
+    for (SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &pressure_}) g->retile(cells_);
+    // The rest is made again each step, or by updateSolids().
+    for (SparseGrid* g : {&solid_, &back_[0], &back_[1], &back_[2], &forward_[0], &forward_[1], &forward_[2],
+                          &predicted_, &lo_, &hi_, &corrected_, &expansion_, &divergence_, &centre_[0], &centre_[1],
+                          &centre_[2], &curl_[0], &curl_[1], &curl_[2], &curlLength_}) {
+        *g = SparseGrid(cells_);
+    }
+    solidCells_.clear();
+    for (int a = 0; a < 3; ++a) {
+        blocked_[a].clear();
+        blockedVel_[a].clear();
+    }
+    anySolid_ = false;
+}
+
 Vec3 PyroSolver::worldAt(float x, float y, float z) const {
     const Vec3 o = domain_.origin();
     const float h = domain_.voxel;
     return {o.x + x * h, o.y + y * h, o.z + z * h};
+}
+
+void PyroSolver::updateTiles(float dt) {
+    if (!scene_.solver.sparse) return;
+    const Tiles& now = *cells_;
+    const int tn[3] = {now.tilesX(), now.tilesY(), now.tilesZ()};
+    auto number = [&](int a, int b, int c) {
+        return static_cast<size_t>(a) +
+               static_cast<size_t>(tn[0]) * (static_cast<size_t>(b) + static_cast<size_t>(tn[1]) * static_cast<size_t>(c));
+    };
+    std::vector<uint8_t> busy(now.tileCount(), 0);
+    // Tiles with gas in them.
+    const float cutoff = scene_.solver.cutoff;
+    const std::vector<uint32_t>& stored = now.stored();
+    pg::parallelFor(stored.size(), 16, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            const size_t base = s * Tiles::kCells;
+            bool gas = false;
+            for (const SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_}) {
+                const float* v = g->data() + base;
+                for (int c = 0; c < Tiles::kCells && !gas; ++c) gas = v[c] > cutoff;
+                if (gas) break;
+            }
+            if (gas) busy[stored[s]] = 1;
+        }
+    });
+    // How fast the air goes: how far the gas may get in a step.
+    float speed = 0.0f;
+    for (int a = 0; a < 3; ++a) {
+        const size_t tiles = faces_[a]->stored().size();
+        std::vector<float> most(tiles, 0.0f);
+        pg::parallelFor(tiles, 16, [&](size_t begin, size_t end) {
+            for (size_t s = begin; s < end; ++s) {
+                const float* v = vel_[a].data() + s * Tiles::kCells;
+                float m = 0.0f;
+                for (int c = 0; c < Tiles::kCells; ++c) m = std::max(m, std::fabs(v[c]));
+                most[s] = m;
+            }
+        });
+        for (const float m : most) speed = std::max(speed, m);
+    }
+    // The boxes of the sources and of the solids that move: the gas starts
+    // there, and a moving solid pushes the air.
+    const float h = domain_.voxel;
+    const Vec3 origin = domain_.origin();
+    const int n[3] = {nx_, ny_, nz_};
+    auto box = [&](const Vec3& lo, const Vec3& hi) {
+        int from[3], to[3];
+        for (int a = 0; a < 3; ++a) {
+            if (!(hi[a] >= lo[a])) return;
+            from[a] = std::clamp(static_cast<int>(std::floor((lo[a] - origin[a]) / h)) - 1, 0, n[a] - 1) / Tiles::kSide;
+            to[a] = std::clamp(static_cast<int>(std::ceil((hi[a] - origin[a]) / h)) + 1, 0, n[a] - 1) / Tiles::kSide;
+        }
+        for (int c = from[2]; c <= to[2]; ++c) {
+            for (int b = from[1]; b <= to[1]; ++b) {
+                for (int a = from[0]; a <= to[0]; ++a) busy[number(a, b, c)] = 1;
+            }
+        }
+    };
+    for (const Emitter& e : scene_.emitters) {
+        if (!e.activeAt(time_)) continue;
+        Vec3 lo, hi;
+        e.shapeAt(time_).bounds(lo, hi);
+        box(lo, hi);
+    }
+    for (const Collider& c : scene_.colliders) {
+        if (!c.moves()) continue;
+        Vec3 lo, hi;
+        c.instance().bounds(lo, hi);
+        box(lo, hi);
+    }
+    // Round them, as far as the fastest air goes in a step and a cell more:
+    // a tile at least, four at most.
+    const float reach = speed * dt / h + 1.0f;
+    const int pad = std::clamp(static_cast<int>(std::ceil(reach / static_cast<float>(Tiles::kSide))), 1, 4);
+    std::vector<uint8_t> state(now.tileCount(), Tiles::Off);
+    for (size_t t = 0; t < busy.size(); ++t) {
+        if (!busy[t]) continue;
+        const int a = static_cast<int>(t % static_cast<size_t>(tn[0]));
+        const int b = static_cast<int>((t / static_cast<size_t>(tn[0])) % static_cast<size_t>(tn[1]));
+        const int c = static_cast<int>(t / (static_cast<size_t>(tn[0]) * static_cast<size_t>(tn[1])));
+        for (int z = std::max(c - pad, 0); z <= std::min(c + pad, tn[2] - 1); ++z) {
+            for (int y = std::max(b - pad, 0); y <= std::min(b + pad, tn[1] - 1); ++y) {
+                for (int x = std::max(a - pad, 0); x <= std::min(a + pad, tn[0] - 1); ++x) state[number(x, y, z)] = Tiles::Whole;
+            }
+        }
+    }
+    if (state == now.states()) return;
+    retile(std::make_shared<const Tiles>(nx_, ny_, nz_, std::move(state), -1));
+    updateSolids();
 }
 
 void PyroSolver::updateSolids() {
@@ -86,6 +204,12 @@ void PyroSolver::updateSolids() {
     const float h = domain_.voxel;
     const Vec3 origin = domain_.origin();
     const int n[3] = {nx_, ny_, nz_};
+    struct Cell {
+        uint64_t number;
+        int i, j, k;
+        size_t at;
+    };
+    std::vector<Cell> solids;
     for (size_t c = 0; c < scene_.colliders.size(); ++c) {
         // A cell is solid when its centre is inside a collider -- the first
         // one that has it: solid_ holds 1 + the collider's index, which one
@@ -101,7 +225,8 @@ void PyroSolver::updateSolids() {
         }
         const float mark = 1.0f + static_cast<float>(c);
         forEachIn(from[0], to[0], from[1], to[1], from[2], to[2], [&](int i, int j, int k) {
-            float& cell = solid_.at(i, j, k);
+            if (!solid_.stored(i, j, k)) return;
+            float& cell = solid_.ref(i, j, k);
             if (cell > 0.5f) return;
             const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
                                    static_cast<float>(k) + 0.5f);
@@ -111,60 +236,65 @@ void PyroSolver::updateSolids() {
         for (int k = from[2]; k < to[2]; ++k) {
             for (int j = from[1]; j < to[1]; ++j) {
                 for (int i = from[0]; i < to[0]; ++i) {
-                    if (solid_.at(i, j, k) == mark) solidCells_.push_back(solid_.index(i, j, k));
+                    if (solid_.stored(i, j, k) && solid_.at(i, j, k) == mark) {
+                        solids.push_back({numberOf(i, j, k, n), i, j, k, solid_.index(i, j, k)});
+                    }
                 }
             }
         }
     }
-    std::sort(solidCells_.begin(), solidCells_.end());
+    std::sort(solids.begin(), solids.end(), [](const Cell& a, const Cell& b) { return a.number < b.number; });
+    for (const Cell& c : solids) solidCells_.push_back(c.at);
     anySolid_ = !solidCells_.empty();
     // The faces the solids block -- the six of each solid cell -- and the
     // floor's when it is closed, listed once: the walls are enforced several
-    // times a step, by walking these short lists.
-    for (int a = 0; a < 3; ++a) blocked_[a].clear();
-    if (anySolid_) {
-        for (int a = 0; a < 3; ++a) {
-            const Grid& v = vel_[a];
-            std::vector<size_t>& faces = blocked_[a];
-            for (const size_t c : solidCells_) {
-                const int i = static_cast<int>(c % static_cast<size_t>(nx_));
-                const int j = static_cast<int>((c / static_cast<size_t>(nx_)) % static_cast<size_t>(ny_));
-                const int k = static_cast<int>(c / (static_cast<size_t>(nx_) * static_cast<size_t>(ny_)));
-                faces.push_back(v.index(i, j, k));
-                faces.push_back(v.index(i + (a == 0), j + (a == 1), k + (a == 2)));
-            }
-            if (a == 1 && scene_.solver.closedFloor) {
-                for (int k = 0; k < nz_; ++k) {
-                    for (int i = 0; i < nx_; ++i) faces.push_back(v.index(i, 0, k));
-                }
-            }
-            std::sort(faces.begin(), faces.end());
-            faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
-        }
-    }
-    // What a moving solid gives the faces it blocks: its velocity there,
-    // along the face's axis -- the gas next to it is pushed and dragged.
+    // times a step, by walking these short lists. And what a moving solid
+    // gives each: its velocity there, along the face's axis -- the gas next
+    // to it is pushed and dragged.
     const bool moving = anySolid_ && std::any_of(scene_.colliders.begin(), scene_.colliders.end(),
                                                  [](const Collider& c) { return c.moves(); });
     for (int a = 0; a < 3; ++a) {
-        blockedVel_[a].assign(blocked_[a].size(), 0.0f);
-        if (!moving) continue;
-        const Grid& v = vel_[a];
-        const int n = a == 0 ? nx_ : a == 1 ? ny_ : nz_;
-        for (size_t b = 0; b < blocked_[a].size(); ++b) {
-            const size_t f = blocked_[a][b];
-            const int i = static_cast<int>(f % static_cast<size_t>(v.nx()));
-            const int j = static_cast<int>((f / static_cast<size_t>(v.nx())) % static_cast<size_t>(v.ny()));
-            const int k = static_cast<int>(f / (static_cast<size_t>(v.nx()) * static_cast<size_t>(v.ny())));
-            const int at = a == 0 ? i : a == 1 ? j : k;
-            // The solid cell beside the face: ahead of it, or behind.
-            float owner = at < n ? solid_.at(std::min(i, nx_ - 1), std::min(j, ny_ - 1), std::min(k, nz_ - 1)) : 0.0f;
-            if (owner < 0.5f && at > 0) owner = solid_.at(i - (a == 0), j - (a == 1), k - (a == 2));
-            if (owner < 0.5f) continue;  // the floor
-            const Collider& c = scene_.colliders[static_cast<size_t>(owner - 0.5f)];
-            const Vec3 p = worldAt(static_cast<float>(i) + (a == 0 ? 0.0f : 0.5f), static_cast<float>(j) + (a == 1 ? 0.0f : 0.5f),
-                                   static_cast<float>(k) + (a == 2 ? 0.0f : 0.5f));
-            blockedVel_[a][b] = c.velocityAt(p)[a];
+        blocked_[a].clear();
+        blockedVel_[a].clear();
+        if (!anySolid_) continue;
+        const SparseGrid& v = vel_[a];
+        const int fn[3] = {v.nx(), v.ny(), v.nz()};
+        std::vector<Cell> faces;
+        for (const Cell& c : solids) {
+            faces.push_back({numberOf(c.i, c.j, c.k, fn), c.i, c.j, c.k, 0});
+            const int i = c.i + (a == 0), j = c.j + (a == 1), k = c.k + (a == 2);
+            faces.push_back({numberOf(i, j, k, fn), i, j, k, 0});
+        }
+        if (a == 1 && scene_.solver.closedFloor) {
+            for (int k = 0; k < nz_; ++k) {
+                for (int i = 0; i < nx_; ++i) {
+                    if (v.has(i, 0, k)) faces.push_back({numberOf(i, 0, k, fn), i, 0, k, 0});
+                }
+            }
+        }
+        std::sort(faces.begin(), faces.end(), [](const Cell& x, const Cell& y) { return x.number < y.number; });
+        faces.erase(std::unique(faces.begin(), faces.end(),
+                                [](const Cell& x, const Cell& y) { return x.number == y.number; }),
+                    faces.end());
+        const int na = n[a];
+        for (const Cell& f : faces) {
+            blocked_[a].push_back(v.index(f.i, f.j, f.k));
+            float given = 0.0f;
+            if (moving) {
+                const int at = a == 0 ? f.i : a == 1 ? f.j : f.k;
+                // The solid cell beside the face: ahead of it, or behind.
+                float owner =
+                    at < na ? solid_.at(std::min(f.i, nx_ - 1), std::min(f.j, ny_ - 1), std::min(f.k, nz_ - 1)) : 0.0f;
+                if (owner < 0.5f && at > 0) owner = solid_.at(f.i - (a == 0), f.j - (a == 1), f.k - (a == 2));
+                if (owner >= 0.5f) {  // else the floor
+                    const Collider& c = scene_.colliders[static_cast<size_t>(owner - 0.5f)];
+                    const Vec3 p = worldAt(static_cast<float>(f.i) + (a == 0 ? 0.0f : 0.5f),
+                                           static_cast<float>(f.j) + (a == 1 ? 0.0f : 0.5f),
+                                           static_cast<float>(f.k) + (a == 2 ? 0.0f : 0.5f));
+                    given = c.velocityAt(p)[a];
+                }
+            }
+            blockedVel_[a].push_back(given);
         }
     }
     PoissonBoundary boundary;
@@ -181,7 +311,10 @@ void PyroSolver::updateSolids() {
 
 void PyroSolver::enforceWalls() {
     if (scene_.solver.closedFloor) {
-        forEachIn(0, nx_, 0, 1, 0, nz_, [&](int i, int, int k) { vel_[1].at(i, 0, k) = 0.0f; });
+        SparseGrid& v = vel_[1];
+        forEachIn(0, nx_, 0, 1, 0, nz_, [&](int i, int, int k) {
+            if (v.has(i, 0, k)) v.ref(i, 0, k) = 0.0f;
+        });
     }
     for (int a = 0; a < 3; ++a) {
         float* v = vel_[a].data();
@@ -202,6 +335,8 @@ void PyroSolver::step() {
     const float dt = scene_.solver.timeStep / static_cast<float>(n);
     for (int s = 0; s < n; ++s) {
         Clock::time_point t0 = Clock::now();
+        updateTiles(dt);
+        lap(t0, times_.tiles);
         emit(dt);
         lap(t0, times_.emit);
         advect(dt);
@@ -253,16 +388,18 @@ void PyroSolver::emit(float dt) {
             hi[a] = std::clamp(static_cast<int>(std::ceil((reachHi[a] - origin[a]) / h)) + 1, 0, n[a]);
         }
         forEachIn(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], [&](int i, int j, int k) {
-            if (anySolid_ && solid_.at(i, j, k) > 0.5f) return;
+            if (!density_.has(i, j, k)) return;
+            const size_t c = density_.index(i, j, k);
+            if (anySolid_ && solid_.data()[c] > 0.5f) return;
             const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
                                    static_cast<float>(k) + 0.5f);
             const float w = weight(p);
             if (w <= 0.0f) return;
             const float amount = dt * w * flicker(p);
-            fuel_.at(i, j, k) += e.fuel * amount;
-            density_.at(i, j, k) += e.smoke * amount;
-            temperature_.at(i, j, k) += e.heat * amount;
-            expansion_.at(i, j, k) += e.expansion * w;
+            fuel_.data()[c] += e.fuel * amount;
+            density_.data()[c] += e.smoke * amount;
+            temperature_.data()[c] += e.heat * amount;
+            expansion_.data()[c] += e.expansion * w;
         });
 
         // Push the gas the source's way -- along its own axes -- and across it
@@ -273,17 +410,18 @@ void PyroSolver::emit(float dt) {
         if (speed <= 0.0f) continue;
         const Vec3 along = push * (1.0f / speed);
         for (int a = 0; a < 3; ++a) {
-            Grid& vel = vel_[a];
+            SparseGrid& vel = vel_[a];
             const float across = 1.0f - std::fabs(along[a]);
             forEachIn(lo[0], std::min(hi[0] + (a == 0), vel.nx()), lo[1], std::min(hi[1] + (a == 1), vel.ny()), lo[2],
                       std::min(hi[2] + (a == 2), vel.nz()), [&](int i, int j, int k) {
+                          if (!vel.has(i, j, k)) return;
                           const Vec3 p = worldAt(static_cast<float>(i) + faceOffset(a, 0),
                                                  static_cast<float>(j) + faceOffset(a, 1),
                                                  static_cast<float>(k) + faceOffset(a, 2));
                           const float w = weight(p);
                           if (w <= 0.0f) return;
                           const float m = flicker(p);
-                          float& v = vel.at(i, j, k);
+                          float& v = vel.ref(i, j, k);
                           const float target = push[a] * w * (0.6f + 0.4f * m);
                           if (push[a] > 0.0f) v = std::max(v, target);
                           else if (push[a] < 0.0f) v = std::min(v, target);
@@ -304,8 +442,7 @@ void PyroSolver::emit(float dt) {
 void PyroSolver::advect(float dt) {
     const float cells = dt / domain_.voxel;  // velocity x dt, in cells
     // Where the gas of each cell was a step ago, and where it will be (RK2).
-    forEachCell(density_, [&](int i, int j, int k) {
-        const size_t c = density_.index(i, j, k);
+    forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
         const float x = static_cast<float>(i) + 0.5f, y = static_cast<float>(j) + 0.5f,
                     z = static_cast<float>(k) + 0.5f;
         const float u = 0.5f * (vel_[0].at(i, j, k) + vel_[0].at(i + 1, j, k));
@@ -314,7 +451,7 @@ void PyroSolver::advect(float dt) {
         for (const float sign : {-1.0f, 1.0f}) {
             float mid[3];
             velocityAt(x + sign * 0.5f * cells * u, y + sign * 0.5f * cells * v, z + sign * 0.5f * cells * w, mid);
-            Grid* out = sign < 0.0f ? back_ : forward_;
+            SparseGrid* out = sign < 0.0f ? back_ : forward_;
             out[0].data()[c] = x + sign * cells * mid[0];
             out[1].data()[c] = y + sign * cells * mid[1];
             out[2].data()[c] = z + sign * cells * mid[2];
@@ -345,7 +482,7 @@ void PyroSolver::faceVelocity(int axis, int i, int j, int k, float out[3]) const
     for (int b = 0; b < 3; ++b) {
         if (b == axis) continue;
         // Each cell's two faces along b.
-        const Grid& v = vel_[b];
+        const SparseGrid& v = vel_[b];
         const int e[3] = {b == 0, b == 1, b == 2};
         out[b] = 0.25f * (v.at(below[0], below[1], below[2]) + v.at(below[0] + e[0], below[1] + e[1], below[2] + e[2]) +
                           v.at(above[0], above[1], above[2]) + v.at(above[0] + e[0], above[1] + e[1], above[2] + e[2]));
@@ -356,8 +493,8 @@ void PyroSolver::advectVelocity(int axis, float cells) {
     const float ox = faceOffset(axis, 0), oy = faceOffset(axis, 1), oz = faceOffset(axis, 2);
     const float nx = static_cast<float>(nx_), ny = static_cast<float>(ny_), nz = static_cast<float>(nz_);
     const bool floor = scene_.solver.closedFloor;
-    Grid& out = velNext_[axis];
-    forEachCell(out, [&](int i, int j, int k) {
+    SparseGrid& out = velNext_[axis];
+    forEachCounted(*faces_[axis], [&](int i, int j, int k, size_t c) {
         const float x = static_cast<float>(i) + ox, y = static_cast<float>(j) + oy, z = static_cast<float>(k) + oz;
         float v0[3], v1[3];
         faceVelocity(axis, i, j, k, v0);
@@ -367,28 +504,26 @@ void PyroSolver::advectVelocity(int axis, float cells) {
         // outside. (Carrying in the velocity at the side instead, a flow that
         // sucks gas in -- the low pressure in a vortex -- would feed on itself.)
         if (px < 0.0f || px > nx || pz < 0.0f || pz > nz || py > ny || (py < 0.0f && !floor)) {
-            out.at(i, j, k) = 0.0f;
+            out.data()[c] = 0.0f;
             return;
         }
         // This component where the gas came from. Grid::sample puts sample
         // (0, 0, 0) at 0.5: shift by what the faces lack of it.
-        out.at(i, j, k) = vel_[axis].sample(px + (0.5f - ox), py + (0.5f - oy), pz + (0.5f - oz));
+        out.data()[c] = vel_[axis].sample(px + (0.5f - ox), py + (0.5f - oy), pz + (0.5f - oz));
     });
 }
 
-void PyroSolver::advectScalar(Grid& field) {
+void PyroSolver::advectScalar(SparseGrid& field) {
     // MacCormack: advect, advect the result back, correct by half the error
     // that round trip shows, clamp to what the first step interpolated from.
-    forEachCell(field, [&](int i, int j, int k) {
-        const size_t c = field.index(i, j, k);
+    forEachCounted(*cells_, [&](int, int, int, size_t c) {
         float lo, hi;
         predicted_.data()[c] = field.sample(back_[0].data()[c], back_[1].data()[c], back_[2].data()[c], true, lo, hi);
         lo_.data()[c] = lo;
         hi_.data()[c] = hi;
     });
     const float nx = static_cast<float>(nx_), ny = static_cast<float>(ny_), nz = static_cast<float>(nz_);
-    forEachCell(field, [&](int i, int j, int k) {
-        const size_t c = field.index(i, j, k);
+    forEachCounted(*cells_, [&](int, int, int, size_t c) {
         const float fx = forward_[0].data()[c], fy = forward_[1].data()[c], fz = forward_[2].data()[c];
         // Where the gas leaves the domain the round trip would come back
         // empty and the correction add what is not there: smoke would pile up
@@ -409,8 +544,7 @@ void PyroSolver::advectScalar(Grid& field) {
 void PyroSolver::combust(float dt) {
     const SolverSettings& s = scene_.solver;
     const float share = 1.0f - std::exp(-s.burnRate * dt);
-    forEachCell(fuel_, [&](int i, int j, int k) {
-        const size_t c = fuel_.index(i, j, k);
+    forEachCounted(*cells_, [&](int, int, int, size_t c) {
         const float burnt = fuel_.data()[c] * share;
         fuel_.data()[c] -= burnt;
         temperature_.data()[c] += burnt * s.heatRelease;
@@ -425,7 +559,8 @@ void PyroSolver::combust(float dt) {
 void PyroSolver::addForces(float dt) {
     const SolverSettings& s = scene_.solver;
     // Buoyancy on the vertical faces, from the cells below and above them.
-    forEachCell(vel_[1], [&](int i, int j, int k) {
+    SparseGrid& vy = vel_[1];
+    forEachCounted(*faces_[1], [&](int i, int j, int k, size_t c) {
         float heat = 0.0f, smoke = 0.0f, n = 0.0f;
         if (j > 0) {
             heat += temperature_.at(i, j - 1, k);
@@ -437,7 +572,7 @@ void PyroSolver::addForces(float dt) {
             smoke += density_.at(i, j, k);
             n += 1.0f;
         }
-        vel_[1].at(i, j, k) += dt * (s.buoyancy * heat - s.weight * smoke) / n;
+        vy.data()[c] += dt * (s.buoyancy * heat - s.weight * smoke) / n;
     });
     if (s.vorticity > 0.0f) addVorticity(dt);
     for (size_t f = 0; f < scene_.forces.size(); ++f) addForce(scene_.forces[f], f, dt);
@@ -448,35 +583,36 @@ void PyroSolver::addVorticity(float dt) {
     // Vorticity confinement: find the swirls, push along them. Worked out at
     // the cell centres, then spread to the faces.
     const float h = domain_.voxel;
-    forEachCell(density_, [&](int i, int j, int k) {
-        centre_[0].at(i, j, k) = 0.5f * (vel_[0].at(i, j, k) + vel_[0].at(i + 1, j, k));
-        centre_[1].at(i, j, k) = 0.5f * (vel_[1].at(i, j, k) + vel_[1].at(i, j + 1, k));
-        centre_[2].at(i, j, k) = 0.5f * (vel_[2].at(i, j, k) + vel_[2].at(i, j, k + 1));
+    forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
+        centre_[0].data()[c] = 0.5f * (vel_[0].at(i, j, k) + vel_[0].at(i + 1, j, k));
+        centre_[1].data()[c] = 0.5f * (vel_[1].at(i, j, k) + vel_[1].at(i, j + 1, k));
+        centre_[2].data()[c] = 0.5f * (vel_[2].at(i, j, k) + vel_[2].at(i, j, k + 1));
     });
     // Neighbours along each axis, kept inside the grid; the differences are
     // over the distance between them.
     struct Around {
-        size_t minus[3], plus[3];
+        int minus[3][3], plus[3][3];
         float scale[3];
     };
     auto around = [&](int i, int j, int k) {
-        const Grid& g = density_;
         const int im = std::max(i - 1, 0), ip = std::min(i + 1, nx_ - 1);
         const int jm = std::max(j - 1, 0), jp = std::min(j + 1, ny_ - 1);
         const int km = std::max(k - 1, 0), kp = std::min(k + 1, nz_ - 1);
-        return Around{{g.index(im, j, k), g.index(i, jm, k), g.index(i, j, km)},
-                      {g.index(ip, j, k), g.index(i, jp, k), g.index(i, j, kp)},
+        return Around{{{im, j, k}, {i, jm, k}, {i, j, km}},
+                      {{ip, j, k}, {i, jp, k}, {i, j, kp}},
                       {1.0f / (static_cast<float>(ip - im) * h), 1.0f / (static_cast<float>(jp - jm) * h),
                        1.0f / (static_cast<float>(kp - km) * h)}};
     };
-    forEachCell(density_, [&](int i, int j, int k) {
+    auto value = [](const SparseGrid& g, const int at[3]) { return g.at(at[0], at[1], at[2]); };
+    forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
         const Around n = around(i, j, k);
         // d(component a)/d(axis b)
-        auto d = [&](int a, int b) { return (centre_[a].data()[n.plus[b]] - centre_[a].data()[n.minus[b]]) * n.scale[b]; };
+        auto d = [&](int a, int b) {
+            return (value(centre_[a], n.plus[b]) - value(centre_[a], n.minus[b])) * n.scale[b];
+        };
         const float wx = d(2, 1) - d(1, 2);
         const float wy = d(0, 2) - d(2, 0);
         const float wz = d(1, 0) - d(0, 1);
-        const size_t c = density_.index(i, j, k);
         curl_[0].data()[c] = wx;
         curl_[1].data()[c] = wy;
         curl_[2].data()[c] = wz;
@@ -484,14 +620,14 @@ void PyroSolver::addVorticity(float dt) {
     });
     // The force, at the centres: centre_ is free again.
     const float strength = scene_.solver.vorticity * h;
-    forEachCell(density_, [&](int i, int j, int k) {
+    forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
         const Around n = around(i, j, k);
-        const float* l = curlLength_.data();
         float g[3];
-        for (int b = 0; b < 3; ++b) g[b] = (l[n.plus[b]] - l[n.minus[b]]) * n.scale[b];
+        for (int b = 0; b < 3; ++b) {
+            g[b] = (value(curlLength_, n.plus[b]) - value(curlLength_, n.minus[b])) * n.scale[b];
+        }
         const float len = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) + 1e-6f;
         const float gx = g[0] / len, gy = g[1] / len, gz = g[2] / len;
-        const size_t c = density_.index(i, j, k);
         const float wx = curl_[0].data()[c], wy = curl_[1].data()[c], wz = curl_[2].data()[c];
         centre_[0].data()[c] = strength * (gy * wz - gz * wy);
         centre_[1].data()[c] = strength * (gz * wx - gx * wz);
@@ -499,7 +635,8 @@ void PyroSolver::addVorticity(float dt) {
     });
     for (int a = 0; a < 3; ++a) {
         const int n = a == 0 ? nx_ : a == 1 ? ny_ : nz_;
-        forEachCell(vel_[a], [&](int i, int j, int k) {
+        SparseGrid& vel = vel_[a];
+        forEachCounted(*faces_[a], [&](int i, int j, int k, size_t c) {
             const int f = a == 0 ? i : a == 1 ? j : k;  // face f is between cells f-1 and f
             float force = 0.0f, count = 0.0f;
             if (f > 0) {
@@ -510,7 +647,7 @@ void PyroSolver::addVorticity(float dt) {
                 force += centre_[a].at(i, j, k);
                 count += 1.0f;
             }
-            vel_[a].at(i, j, k) += dt * force / count;
+            vel.data()[c] += dt * force / count;
         });
     }
 }
@@ -545,23 +682,25 @@ float PyroSolver::divergence(int i, int j, int k) const {
 void PyroSolver::project() {
     const float h = domain_.voxel;
     enforceWalls();  // what flows through walls is 0 before anything is measured
-    forEachCell(divergence_, [&](int i, int j, int k) {
-        divergence_.at(i, j, k) =
-            anySolid_ && solid_.at(i, j, k) > 0.5f ? 0.0f : divergence(i, j, k) - expansion_.at(i, j, k);
+    forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
+        divergence_.data()[c] =
+            anySolid_ && solid_.data()[c] > 0.5f ? 0.0f : divergence(i, j, k) - expansion_.data()[c];
     });
     // The pressure of the previous step is the first guess.
     poisson_.solve(pressure_, divergence_, h, scene_.solver.pressureCycles);
     // Subtract its gradient. The open sides hold p = 0 on the face -- a ghost
-    // cell outside holds minus the cell inside. What this does to the faces of
-    // walls and solids does not count: they go back to 0 right after.
+    // cell outside holds minus the cell inside; past the tiles worked on, the
+    // still air holds p = 0. What this does to the faces of walls and solids
+    // does not count: they go back to 0 right after.
     for (int a = 0; a < 3; ++a) {
         const int n = a == 0 ? nx_ : a == 1 ? ny_ : nz_;
-        forEachCell(vel_[a], [&](int i, int j, int k) {
+        SparseGrid& vel = vel_[a];
+        forEachCounted(*faces_[a], [&](int i, int j, int k, size_t c) {
             const int f = a == 0 ? i : a == 1 ? j : k;  // face f is between cells f-1 and f
             const int bi = i - (a == 0), bj = j - (a == 1), bk = k - (a == 2);
             const float ahead = f < n ? pressure_.at(i, j, k) : -pressure_.at(bi, bj, bk);
             const float behind = f > 0 ? pressure_.at(bi, bj, bk) : -pressure_.at(i, j, k);
-            vel_[a].at(i, j, k) -= (ahead - behind) / h;
+            vel.data()[c] -= (ahead - behind) / h;
         });
     }
     enforceWalls();
@@ -573,8 +712,7 @@ void PyroSolver::dissipate(float dt) {
     const SolverSettings& s = scene_.solver;
     const float smoke = std::exp(-s.smokeDecay * dt), heat = std::exp(-s.cooling * dt);
     const float flame = s.flameLife > 0.0f ? std::exp(-dt / s.flameLife) : 0.0f;
-    forEachCell(density_, [&](int i, int j, int k) {
-        const size_t c = density_.index(i, j, k);
+    forEachCounted(*cells_, [&](int, int, int, size_t c) {
         // Where the burning gas swells -- by expansion x dt of its volume this
         // step -- what it carries spreads over the more room. Advection alone
         // keeps a value as it moves: right where the gas neither swells nor
@@ -595,6 +733,7 @@ double PyroSolver::meanDivergence() const {
     for (int k = 0; k < nz_; ++k) {
         for (int j = 0; j < ny_; ++j) {
             for (int i = 0; i < nx_; ++i) {
+                if (!density_.has(i, j, k)) continue;
                 if (anySolid_ && solid_.at(i, j, k) > 0.5f) continue;
                 sum += std::fabs(divergence(i, j, k) - expansion_.at(i, j, k));
                 ++cells;
@@ -604,7 +743,7 @@ double PyroSolver::meanDivergence() const {
     return cells ? sum / static_cast<double>(cells) : 0.0;
 }
 
-Grid lightTransmittance(const Grid& density, const float towardsLight[3], float extinctionPerCell, int divisor) {
+Grid lightTransmittance(const SparseGrid& density, const float towardsLight[3], float extinctionPerCell, int divisor) {
     divisor = std::max(1, divisor);
     const int lx = std::max(1, density.nx() / divisor), ly = std::max(1, density.ny() / divisor),
               lz = std::max(1, density.nz() / divisor);
@@ -619,7 +758,7 @@ Grid lightTransmittance(const Grid& density, const float towardsLight[3], float 
     const float step = static_cast<float>(divisor);  // in density cells
     const float nx = static_cast<float>(density.nx()), ny = static_cast<float>(density.ny()),
                 nz = static_cast<float>(density.nz());
-    forEachCell(out, [&](int i, int j, int k) {
+    detail::forEachCell(out, [&](int i, int j, int k) {
         // Start half a step towards the light: a cell does not shade itself.
         float x = (static_cast<float>(i) + 0.5f) * sx + d[0] * 0.5f * step;
         float y = (static_cast<float>(j) + 0.5f) * sy + d[1] * 0.5f * step;
