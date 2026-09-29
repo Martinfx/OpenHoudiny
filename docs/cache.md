@@ -346,8 +346,9 @@ s průběhem tam a zpět; checkpoint na disku přepsaný celý. Python:
   řešiče: dál se simuluje jen z checkpointu, a ten je jen jeden, poslední.
   Načtená cache bez checkpointu se nedopočítává.
 - Checkpoint je stav tohoto buildu: jiná verze formátu se odmítne, ne
-  převede. Tuhá tělesa se při obnovení počítají znovu od začátku, u tisíců
-  kusů to trvá (odstřel: desítky sekund).
+  převede. Tuhá tělesa se při obnovení počítají znovu od začátku. U odstřelu
+  (593 kusů, plyn 96 buněk) obnovení na snímku 120 trvá 0,6 s a checkpoint
+  má 23 MB; u tisíců kusů a dlouhých záběrů to bude víc.
 - Bake běží na tomtéž stroji jako editor (proces, ne fronta farmy)
   a jen na Linuxu (`/proc/self/exe`, `posix_spawn`).
 - PLY čte jen prvky `vertex` a `face`, ostatní přeskočí.
