@@ -2,58 +2,55 @@
 //
 // Small value types shared by the whole core.
 //
+// The vectors are GLM's (OpenGL Mathematics): Vec3 is glm::vec3, and so on,
+// with GLM's operators and its dot, cross and length -- a vector here is one
+// wherever GLM is spoken. pgmath (CMakeLists.txt) sets how every file sees
+// them: at zero when made without values, x, y, z and w their parts alone,
+// three floats one after another -- as the attributes store them.
+//
 // `pg` (procedural geometry) is a placeholder namespace. The real name is a
 // Phase 0 deliverable -- see ROADMAP.md 0.1.
 //
+#ifndef GLM_FORCE_CTOR_INIT
+#define GLM_FORCE_CTOR_INIT
+#endif
+#ifndef GLM_FORCE_XYZW_ONLY
+#define GLM_FORCE_XYZW_ONLY
+#endif
+#include <glm/geometric.hpp>
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
+
 #include <cmath>
 #include <cstdint>
 #include <string>
+
+// Every file the same: GLM included before this header, without pgmath's
+// settings, would make vectors that differ from these.
+static_assert(GLM_CONFIG_CTOR_INIT != GLM_CTOR_INIT_DISABLE, "GLM without GLM_FORCE_CTOR_INIT: link pgmath");
+static_assert(GLM_CONFIG_XYZW_ONLY == GLM_ENABLE, "GLM without GLM_FORCE_XYZW_ONLY: link pgmath");
 
 namespace pg {
 
 // --- vectors ---------------------------------------------------------------
 
-struct Vec2 {
-    float x = 0, y = 0;
-    constexpr Vec2() = default;
-    constexpr Vec2(float a, float b) : x(a), y(b) {}
-};
+using Vec2 = glm::vec2;
+using Vec3 = glm::vec3;
+using Vec4 = glm::vec4;
 
-struct Vec3 {
-    float x = 0, y = 0, z = 0;
-    constexpr Vec3() = default;
-    constexpr Vec3(float a, float b, float c) : x(a), y(b), z(c) {}
-    explicit constexpr Vec3(float s) : x(s), y(s), z(s) {}
+static_assert(sizeof(Vec2) == 8 && sizeof(Vec3) == 12 && sizeof(Vec4) == 16, "vectors are floats, packed");
 
-    constexpr float operator[](int i) const { return i == 0 ? x : (i == 1 ? y : z); }
-    constexpr float& operator[](int i) { return i == 0 ? x : (i == 1 ? y : z); }
+using glm::cross;  ///< right-handed: cross(x, y) == z
+using glm::dot;
+using glm::length;
 
-    constexpr Vec3 operator+(const Vec3& o) const { return {x + o.x, y + o.y, z + o.z}; }
-    constexpr Vec3 operator-(const Vec3& o) const { return {x - o.x, y - o.y, z - o.z}; }
-    constexpr Vec3 operator-() const { return {-x, -y, -z}; }
-    constexpr Vec3 operator*(float s) const { return {x * s, y * s, z * s}; }
-    constexpr Vec3 operator*(const Vec3& o) const { return {x * o.x, y * o.y, z * o.z}; }
-    constexpr Vec3& operator+=(const Vec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
-    constexpr bool operator==(const Vec3& o) const { return x == o.x && y == o.y && z == o.z; }
-};
-
-inline float dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-inline float length(const Vec3& v) { return std::sqrt(dot(v, v)); }
-/// Right-handed: cross(x, y) == z.
-inline Vec3 cross(const Vec3& a, const Vec3& b) {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-/// Unit vector along `v`; a zero vector stays zero.
+/// Unit vector along `v`; a zero vector stays zero (glm::normalize would
+/// divide by its length).
 inline Vec3 normalize(const Vec3& v) {
     const float len = length(v);
     return len > 0.0f ? v * (1.0f / len) : v;
 }
-
-struct Vec4 {
-    float x = 0, y = 0, z = 0, w = 0;
-    constexpr Vec4() = default;
-    constexpr Vec4(float a, float b, float c, float d) : x(a), y(b), z(c), w(d) {}
-};
 
 // --- 4x4 matrix, row-major, row-vector convention (p * M) -------------------
 

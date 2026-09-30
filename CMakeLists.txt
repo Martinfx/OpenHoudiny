@@ -4,8 +4,9 @@ project(prototype LANGUAGES CXX)
 # ---------------------------------------------------------------------------
 # Prototype: procedural geometry, simulations and shaders, built from nodes.
 #
-# The core is deliberately dependency-free: C++20 and the standard library.
-# The default build adds the editor to the `prototype` program, which fetches Dear
+# The core needs C++20, the standard library and GLM -- the vectors,
+# matrices and quaternions everything is computed with -- which is headers
+# alone: the system's when it has one, else fetched. The default build adds the editor to the `prototype` program, which fetches Dear
 # ImGui and (unless the system has it) GLFW; with -DPG_BUILD_GUI=OFF
 # `cmake -B build && cmake --build build && ctest --test-dir build` works on a
 # bare machine. Production targets (TBB, OpenVDB, USD, LLVM) are listed in
@@ -40,6 +41,34 @@ if(PG_BUILD_PYTHON)
     set(PG_BUILD_PYTHON OFF)
   endif()
 endif()
+
+# --- GLM --------------------------------------------------------------------
+#
+# The vectors, matrices and quaternions of the whole program are GLM's
+# (OpenGL Mathematics, MIT; headers alone): the system's -- FreeBSD's
+# math/glm, Debian's and Ubuntu's libglm-dev -- when it is 1.0 or newer,
+# else fetched. Every file sees them the same way, through pgmath: vectors
+# start at zero and matrices at the identity (GLM_FORCE_CTOR_INIT), and x, y,
+# z and w alone name their parts -- plain structs of floats, laid out as the
+# attributes store them (GLM_FORCE_XYZW_ONLY).
+find_package(glm 1.0 CONFIG QUIET)
+if(NOT TARGET glm::glm)
+  include(FetchContent)
+  set(GLM_BUILD_LIBRARY OFF CACHE BOOL "" FORCE)
+  set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.1
+    GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(glm)
+  # Its headers as the system's: our warnings are not about them.
+  get_target_property(PG_GLM_INCLUDES glm-header-only INTERFACE_INCLUDE_DIRECTORIES)
+  set_target_properties(glm-header-only PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PG_GLM_INCLUDES}")
+endif()
+add_library(pgmath INTERFACE)
+target_link_libraries(pgmath INTERFACE glm::glm)
+target_compile_definitions(pgmath INTERFACE GLM_FORCE_CTOR_INIT GLM_FORCE_XYZW_ONLY GLM_ENABLE_EXPERIMENTAL)
 
 add_library(pgcore
   src/pg/core/Types.cpp
@@ -102,7 +131,7 @@ add_library(pgcore
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
-target_link_libraries(pgcore PUBLIC Threads::Threads)
+target_link_libraries(pgcore PUBLIC Threads::Threads pgmath)
 
 if(MSVC)
   target_compile_options(pgcore PRIVATE /W4)
