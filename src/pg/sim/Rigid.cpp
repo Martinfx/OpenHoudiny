@@ -1,6 +1,7 @@
 #include "pg/sim/Rigid.h"
 
 #include "pg/core/Half.h"
+#include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Spatial.h"
 #include "pg/nodes/Rebuild.h"
@@ -107,24 +108,6 @@ struct UnionFind {
     }
 };
 
-/// Quaternions x, y, z, w: `a` after `b`.
-Vec4 turnAfter(const Vec4& a, const Vec4& b) {
-    return Vec4(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-                a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
-}
-
-/// `v` turned by the unit quaternion `q`: v + 2 w (u x v) + 2 u x (u x v).
-Vec3 turned(const Vec4& q, const Vec3& v) {
-    const Vec3 u(q.x, q.y, q.z);
-    const Vec3 t = cross(u, v) * 2.0f;
-    return v + t * q.w + cross(u, t);
-}
-
-Vec4 unitTurn(const Vec4& q) {
-    const float n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    return n > 1e-20f ? Vec4(q.x / n, q.y / n, q.z / n, q.w / n) : Vec4(0.0f, 0.0f, 0.0f, 1.0f);
-}
-
 /// The turn that takes points at rest nearest to where they have been
 /// moved, as a rigid body can: `spread` sums, over the points, where each
 /// is moved to from the middle of those times where it rests from theirs
@@ -133,10 +116,10 @@ Vec4 unitTurn(const Vec4& q) {
 /// Bender, Chentanez and Macklin 2016: the rotational part of a
 /// deformation).
 Vec4 bestTurn(const Vec3 spread[3], Vec4 from) {
-    Vec4 q = unitTurn(from);
+    Vec4 q = unitQuat(from);
     for (int i = 0; i < 64; ++i) {
-        const Vec3 axes[3] = {turned(q, Vec3(1.0f, 0.0f, 0.0f)), turned(q, Vec3(0.0f, 1.0f, 0.0f)),
-                              turned(q, Vec3(0.0f, 0.0f, 1.0f))};
+        const Vec3 axes[3] = {quatRotate(q, Vec3(1.0f, 0.0f, 0.0f)), quatRotate(q, Vec3(0.0f, 1.0f, 0.0f)),
+                              quatRotate(q, Vec3(0.0f, 0.0f, 1.0f))};
         Vec3 spin;
         float along = 0.0f;
         for (int c = 0; c < 3; ++c) {
@@ -147,7 +130,7 @@ Vec4 bestTurn(const Vec3 spread[3], Vec4 from) {
         const float angle = length(spin);
         if (!(angle > 1e-7f)) break;
         const Vec3 axis = spin * (std::sin(0.5f * angle) / angle);
-        q = unitTurn(turnAfter(Vec4(axis.x, axis.y, axis.z, std::cos(0.5f * angle)), q));
+        q = unitQuat(quatMultiply(Vec4(axis.x, axis.y, axis.z, std::cos(0.5f * angle)), q));
     }
     return q;
 }
@@ -270,7 +253,7 @@ std::shared_ptr<const RigidGuide> rigidGuide(const Geometry& pieces, const Rigid
                                 static_cast<float>(m[3 * col + 2]));
         }
         pose.rotation = bestTurn(columns, Vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        pose.position = movedMiddle[k] - turned(pose.rotation, rest.middle[k]);
+        pose.position = movedMiddle[k] - quatRotate(pose.rotation, rest.middle[k]);
     }
     return out;
 }
@@ -2313,7 +2296,7 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
             const size_t g = static_cast<size_t>(p.guidePiece);
             const Vec4 q = g < guide->pieces.size() ? guide->pieces[g].rotation : Vec4(0.0f, 0.0f, 0.0f, 1.0f);
             const Vec3 a = guidedMiddle(p) - guideMiddle, b = p.middle - restMiddle;
-            for (int col = 0; col < 3; ++col) columns[col] += turned(q, p.scatter[col]) + a * (p.points * b[col]);
+            for (int col = 0; col < 3; ++col) columns[col] += quatRotate(q, p.scatter[col]) + a * (p.points * b[col]);
         }
         const JPH::Quat now = physics.GetBodyInterfaceNoLock().GetRotation(c.id);
         const Vec4 best = bestTurn(columns, Vec4(now.GetX(), now.GetY(), now.GetZ(), now.GetW()));

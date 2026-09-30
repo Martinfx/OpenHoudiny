@@ -68,24 +68,21 @@ struct Mesh {
 /// of it water.
 std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water = false);
 
-/// A mesh where it stands: turned by `turn` (columns: the images of its
-/// axes), `scale` times as big, moved to `at`; its colours times `tint`.
+/// A mesh where it stands: turned by `axes` (its columns the images of the
+/// mesh's axes), `scale` times as big, moved to `at`; its colours times `tint`.
 struct Placed {
     uint32_t mesh = 0;
     Vec3 at;
-    Vec3 x{1.0f, 0.0f, 0.0f}, y{0.0f, 1.0f, 0.0f}, z{0.0f, 0.0f, 1.0f};
+    Mat3 axes{1.0f};
     float scale = 1.0f;
     Vec3 tint{1.0f, 1.0f, 1.0f};
 
-    Vec3 toWorld(const Vec3& p) const { return at + (x * p.x + y * p.y + z * p.z) * scale; }
-    Vec3 turn(const Vec3& v) const { return x * v.x + y * v.y + z * v.z; }
-    /// World to the mesh's own space; directions keep their length's share,
-    /// so a ray's t is the same in both.
-    Vec3 toLocal(const Vec3& p) const {
-        const Vec3 d = p - at;
-        return Vec3(dot(x, d), dot(y, d), dot(z, d)) * (1.0f / scale);
-    }
-    Vec3 dirToLocal(const Vec3& v) const { return Vec3(dot(x, v), dot(y, v), dot(z, v)) * (1.0f / scale); }
+    Vec3 toWorld(const Vec3& p) const { return at + (axes * p) * scale; }
+    Vec3 turn(const Vec3& v) const { return axes * v; }
+    /// World to the mesh's own space -- by the transpose; directions keep
+    /// their length's share, so a ray's t is the same in both.
+    Vec3 toLocal(const Vec3& p) const { return ((p - at) * axes) * (1.0f / scale); }
+    Vec3 dirToLocal(const Vec3& v) const { return (v * axes) * (1.0f / scale); }
 };
 
 /// Where a ray met a surface.

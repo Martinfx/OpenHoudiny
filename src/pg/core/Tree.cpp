@@ -1,5 +1,7 @@
 #include "pg/core/Tree.h"
 
+#include <glm/gtx/rotate_vector.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
@@ -47,12 +49,6 @@ const Vec3 kUp(0.0f, 1.0f, 0.0f);
 Vec3 perpendicular(const Vec3& d) {
     const Vec3 a = std::fabs(d.x) < 0.6f ? Vec3(1.0f, 0.0f, 0.0f) : std::fabs(d.y) < 0.6f ? kUp : Vec3(0.0f, 0.0f, 1.0f);
     return normalize(cross(d, a));
-}
-
-/// `v` turned about the unit axis `k` by `angle` radians.
-Vec3 rotate(const Vec3& v, const Vec3& k, float angle) {
-    const float c = std::cos(angle), s = std::sin(angle);
-    return v * c + cross(k, v) * s + k * (dot(k, v) * (1.0f - c));
 }
 
 /// How long the first branches are from the crown's foot (0) to its top
@@ -180,8 +176,8 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
         const float rest = height * (1.0f - static_cast<float>(f) / static_cast<float>(trunkPieces));
         const Vec3 side0 = perpendicular(dir);
         for (int j = 0; j < forks; ++j) {
-            const Vec3 side = rotate(side0, dir, offset + 2.0f * kPi * static_cast<float>(j) / static_cast<float>(forks) +
-                                                     0.3f * fork.centred());
+            const Vec3 side = glm::rotate(side0, offset + 2.0f * kPi * static_cast<float>(j) / static_cast<float>(forks) +
+                                                     0.3f * fork.centred(), dir);
             const float off = std::clamp(s.forkAngle, 0.0f, 90.0f) * (1.0f + 0.2f * fork.centred()) * kPi / 180.0f;
             // As much as the branches turn up to the light, they turn back up.
             Turning turn = trunkTurn;
@@ -262,7 +258,7 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
                 sample(parent, t, at, dir, pr);
                 // Round the parent a golden angle on from the one before, off
                 // it by the level's angle.
-                const Vec3 side = rotate(perpendicular(dir), dir, offset + static_cast<float>(k) * kGolden + 0.2f * place.centred());
+                const Vec3 side = glm::rotate(perpendicular(dir), offset + static_cast<float>(k) * kGolden + 0.2f * place.centred(), dir);
                 const float off = s.angle[l] * (1.0f + 0.15f * place.centred()) * kPi / 180.0f;
                 const Vec3 way = normalize(dir * std::cos(off) + side * std::sin(off));
                 // The first branches as the crown's outline says; the others
@@ -319,14 +315,14 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
                 Vec3 at, dir;
                 float r = 0.0f;
                 sample(st, t, at, dir, r);
-                const Vec3 side = rotate(perpendicular(dir), dir, offset + static_cast<float>(j) * kGolden);
+                const Vec3 side = glm::rotate(perpendicular(dir), offset + static_cast<float>(j) * kGolden, dir);
                 TreeLeaf leaf;
                 // Out from the twig, a little forward and up.
                 leaf.along = normalize(side * 0.8f + dir * 0.45f + kUp * 0.25f + leafRandom.direction() * 0.2f);
                 // Its blade to the sky as far as it can, turned a little.
                 Vec3 facing = kUp - leaf.along * leaf.along.y;
                 facing = length(facing) > 1e-3f ? normalize(facing) : perpendicular(leaf.along);
-                leaf.facing = rotate(facing, leaf.along, 0.6f * leafRandom.centred());
+                leaf.facing = glm::rotate(facing, 0.6f * leafRandom.centred(), leaf.along);
                 leaf.at = at + side * r;
                 leaf.size = std::max(s.leafSize, 1e-4f) * scale * (0.8f + 0.4f * leafRandom.unit());
                 leaf.color = shade(s.leafColor, s.variation, leafRandom);

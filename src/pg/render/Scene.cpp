@@ -4,6 +4,8 @@
 #include "pg/core/Parallel.h"
 #include "pg/sim/Display.h"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -80,9 +82,7 @@ bool nearestTriangle(const Mesh& m, const Vec3& origin, const Vec3& dir, float& 
 
 /// A turn as the images of the three axes.
 void axesOf(const Vec4& q, Placed& p) {
-    p.x = quatRotate(q, Vec3(1.0f, 0.0f, 0.0f));
-    p.y = quatRotate(q, Vec3(0.0f, 1.0f, 0.0f));
-    p.z = quatRotate(q, Vec3(0.0f, 0.0f, 1.0f));
+    p.axes = glm::mat3_cast(quatOf(q));
 }
 
 /// The box round a placed mesh: its box's corners, placed.

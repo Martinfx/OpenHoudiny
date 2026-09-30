@@ -2,6 +2,9 @@
 
 #include "pg/core/Parallel.h"
 
+#include <glm/common.hpp>
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -39,23 +42,21 @@ struct Rng {
 
 float luminance(const Vec3& c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; }
 float largest(const Vec3& c) { return std::max(c.x, std::max(c.y, c.z)); }
-Vec3 clamp01(const Vec3& c) {
-    return {std::clamp(c.x, 0.0f, 1.0f), std::clamp(c.y, 0.0f, 1.0f), std::clamp(c.z, 0.0f, 1.0f)};
-}
+Vec3 clamp01(const Vec3& c) { return glm::clamp(c, 0.0f, 1.0f); }
 
-/// Axes round a unit normal (Duff et al., Building an Orthonormal Basis, Revisited).
+/// Axes round a unit normal (Duff et al., Building an Orthonormal Basis,
+/// Revisited): the columns of a matrix, its transpose the way back.
 struct Frame {
-    Vec3 t, b, n;
+    Mat3 axes;
 
-    explicit Frame(const Vec3& normal) : n(normal) {
+    explicit Frame(const Vec3& n) {
         const float sign = std::copysign(1.0f, n.z);
         const float a = -1.0f / (sign + n.z);
         const float c = n.x * n.y * a;
-        t = Vec3(1.0f + sign * n.x * n.x * a, sign * c, -sign * n.x);
-        b = Vec3(c, sign + n.y * n.y * a, -n.y);
+        axes = Mat3(Vec3(1.0f + sign * n.x * n.x * a, sign * c, -sign * n.x), Vec3(c, sign + n.y * n.y * a, -n.y), n);
     }
-    Vec3 toLocal(const Vec3& v) const { return {dot(v, t), dot(v, b), dot(v, n)}; }
-    Vec3 toWorld(const Vec3& v) const { return t * v.x + b * v.y + n * v.z; }
+    Vec3 toLocal(const Vec3& v) const { return v * axes; }
+    Vec3 toWorld(const Vec3& v) const { return axes * v; }
 };
 
 Vec3 cosineHemisphere(float u1, float u2) {
@@ -91,7 +92,6 @@ float fresnelDielectric(float cosi, float eta) {
     return 0.5f * (rs * rs + rp * rp);
 }
 
-Vec3 reflect(const Vec3& d, const Vec3& n) { return d - n * (2.0f * dot(d, n)); }
 
 /// An opaque surface as it scatters light: diffusely, off a GGX sheen, and
 /// -- a thin one -- through to its other side. Directions leave it.
@@ -233,7 +233,7 @@ Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float
             const float cosi = std::clamp(-dot(dir, n), 0.0f, 1.0f);
             const float reflected = fresnelDielectric(cosi, eta);
             if (rng.next() < reflected) {
-                dir = normalize(reflect(dir, n));
+                dir = normalize(glm::reflect(dir, n));
                 origin = hit.position + face * eps;
             } else {
                 const float k = 1.0f / eta;

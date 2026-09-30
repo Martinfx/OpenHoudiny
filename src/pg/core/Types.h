@@ -18,6 +18,7 @@
 #define GLM_FORCE_XYZW_ONLY
 #endif
 #include <glm/ext/quaternion_float.hpp>
+#include <glm/ext/quaternion_geometric.hpp>
 #include <glm/geometric.hpp>
 #include <glm/mat3x3.hpp>
 #include <glm/mat4x4.hpp>
@@ -81,6 +82,8 @@ inline Vec3 transformDirection(const Mat4& m, const Vec3& v) { return Mat3(m) * 
 /// GLM's, and back.
 inline Quat quatOf(const Vec4& q) { return Quat::wxyz(q.w, q.x, q.y, q.z); }
 inline Vec4 vec4Of(const Quat& q) { return Vec4(q.x, q.y, q.z, q.w); }
+/// `q` of unit length; one of no length turns nothing (glm::normalize).
+inline Vec4 unitQuat(const Vec4& q) { return vec4Of(glm::normalize(quatOf(q))); }
 
 // --- attribute types -------------------------------------------------------
 

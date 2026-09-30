@@ -27,16 +27,7 @@ Vec4 quatUpTo(const Vec3& n) {
     return Vec4(axis.x * s, axis.y * s, axis.z * s, w);
 }
 
-Vec3 turnUpTo(const Vec3& n, const Vec3& v) {
-    const Vec3 up(0.0f, 1.0f, 0.0f);
-    const float c = dot(up, n);
-    if (c > 0.999999f) return v;
-    if (c < -0.999999f) return Vec3(v.x, -v.y, -v.z);  // half a turn about x
-    const Vec3 axis = normalize(cross(up, n));
-    const float s = std::sqrt(std::max(0.0f, 1.0f - c * c));
-    // Rodrigues.
-    return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
-}
+Vec3 turnUpTo(const Vec3& n, const Vec3& v) { return quatRotate(quatUpTo(n), v); }
 
 namespace {
 
@@ -51,13 +42,6 @@ const AttributeArray* ofType(const AttributeSet& set, const char* name, AttrType
     return a && a->type() == type ? a : nullptr;
 }
 
-/// A quaternion made of unit length; none -- of no length -- turns nothing.
-Vec4 unit(const Vec4& q) {
-    const float n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    if (n <= 1e-12f) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    const float k = 1.0f / n;
-    return Vec4(q.x * k, q.y * k, q.z * k, q.w * k);
-}
 
 }  // namespace
 
@@ -97,7 +81,7 @@ std::vector<Placement> placementsOf(const Geometry& geo, float scale, bool align
             p.at = P[i];
             p.scale = scale * (pscale ? pscale->read<float>()[i] : 1.0f);
             if (orient) {
-                p.orient = unit(orient->read<Vec4>()[i]);
+                p.orient = unitQuat(orient->read<Vec4>()[i]);
             } else if (N) {
                 const Vec3 n = normalize(N->read<Vec3>()[i]);
                 if (length(n) > 0.5f) p.orient = quatUpTo(n);
@@ -228,7 +212,7 @@ std::shared_ptr<Geometry> copiesOnPoints(const Geometry& tplIn, const Geometry& 
             const uint32_t q = which[c];
             const float s = scale * (pscaleAttr ? pscaleAttr->read<float>()[q] : 1.0f);
             if (orientAttr) {
-                const Vec4 o = unit(orientAttr->read<Vec4>()[q]);
+                const Vec4 o = unitQuat(orientAttr->read<Vec4>()[q]);
                 for (size_t i = c * tp; i < (c + 1) * tp; ++i) {
                     P[i] = at[q] + quatRotate(o, P[i] * s);
                     if (turnNormals) N[i] = quatRotate(o, N[i]);

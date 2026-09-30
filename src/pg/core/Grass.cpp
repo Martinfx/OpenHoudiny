@@ -1,5 +1,7 @@
 #include "pg/core/Grass.h"
 
+#include <glm/common.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -27,8 +29,6 @@ struct Random {
     float unit() { return static_cast<float>(splitmix(state) >> 40) / static_cast<float>(1u << 24); }  // [0, 1)
     float centred() { return 2.0f * unit() - 1.0f; }                                                  // [-1, 1)
 };
-
-Vec3 mix(const Vec3& a, const Vec3& b, float t) { return a + (b - a) * t; }
 
 }  // namespace
 
@@ -77,7 +77,7 @@ Geometry growGrassClump(const GrassSettings& s, uint64_t seed) {
             const float t = static_cast<float>(k) / static_cast<float>(segments);
             const float angle = lean + bend * (0.5f * kPi - lean) * std::pow(t, 1.5f);
             const Vec3 along = out * std::sin(angle) + Vec3(0.0f, std::cos(angle), 0.0f);
-            const Vec3 colour = mix(rootColor, tipColor, std::pow(t, 0.8f));
+            const Vec3 colour = glm::mix(rootColor, tipColor, std::pow(t, 0.8f));
             if (k == segments) {
                 P[base + 2 * k] = at;
                 Cd[base + 2 * k] = colour;

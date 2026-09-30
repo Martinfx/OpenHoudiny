@@ -1,5 +1,10 @@
 #include "pg/usd/Geom.h"
 
+#include <glm/ext/quaternion_double.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/matrix.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -68,7 +73,7 @@ Matrix opMatrix(const Stage& stage, const Stage::Prim& prim, const std::string& 
     if (type == "orient" && n.size() >= 4) return Matrix::orient(n[0], n[1], n[2], n[3]);
     if (type == "transform" && n.size() >= 16) {
         Matrix m;
-        std::copy(n.begin(), n.begin() + 16, m.m.begin());
+        std::copy(n.begin(), n.begin() + 16, glm::value_ptr(m.m));
         return m;
     }
     return {};
@@ -643,105 +648,53 @@ bool isGeometry(const std::string& type) {
 
 // --- Matrices ----------------------------------------------------------------------------------
 
-Matrix Matrix::operator*(const Matrix& o) const {
-    Matrix r;
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double s = 0.0;
-            for (int k = 0; k < 4; ++k) s += at(i, k) * o.at(k, j);
-            r.at(i, j) = s;
-        }
-    }
-    return r;
-}
-
 Matrix Matrix::inverse() const {
-    double a[4][8];
-    for (int r = 0; r < 4; ++r) {
-        for (int c = 0; c < 4; ++c) {
-            a[r][c] = at(r, c);
-            a[r][c + 4] = r == c ? 1.0 : 0.0;
-        }
-    }
-    for (int c = 0; c < 4; ++c) {
-        int pivot = c;
-        for (int r = c + 1; r < 4; ++r) {
-            if (std::abs(a[r][c]) > std::abs(a[pivot][c])) pivot = r;
-        }
-        if (std::abs(a[pivot][c]) < 1e-300) return {};
-        if (pivot != c) {
-            for (int k = 0; k < 8; ++k) std::swap(a[c][k], a[pivot][k]);
-        }
-        const double d = a[c][c];
-        for (int k = 0; k < 8; ++k) a[c][k] /= d;
-        for (int r = 0; r < 4; ++r) {
-            if (r == c) continue;
-            const double f = a[r][c];
-            if (f == 0.0) continue;
-            for (int k = 0; k < 8; ++k) a[r][k] -= f * a[c][k];
-        }
-    }
-    Matrix out;
-    for (int r = 0; r < 4; ++r) {
-        for (int c = 0; c < 4; ++c) out.at(r, c) = a[r][c + 4];
-    }
-    return out;
+    // Singular: the identity.
+    if (std::abs(glm::determinant(m)) < 1e-300) return {};
+    return {glm::inverse(m)};
 }
 
-double Matrix::determinant3() const {
-    return at(0, 0) * (at(1, 1) * at(2, 2) - at(1, 2) * at(2, 1)) - at(0, 1) * (at(1, 0) * at(2, 2) - at(1, 2) * at(2, 0)) +
-           at(0, 2) * (at(1, 0) * at(2, 1) - at(1, 1) * at(2, 0));
-}
+double Matrix::determinant3() const { return glm::determinant(glm::dmat3(m)); }
 
 void Matrix::transformPoint(const double in[3], double out[3]) const {
-    double w = in[0] * at(0, 3) + in[1] * at(1, 3) + in[2] * at(2, 3) + at(3, 3);
-    if (w == 0.0) w = 1.0;
-    for (int c = 0; c < 3; ++c) out[c] = (in[0] * at(0, c) + in[1] * at(1, c) + in[2] * at(2, c) + at(3, c)) / w;
+    const glm::dvec4 p = m * glm::dvec4(in[0], in[1], in[2], 1.0);
+    const double w = p.w == 0.0 ? 1.0 : p.w;
+    for (int c = 0; c < 3; ++c) out[c] = p[c] / w;
 }
 
 void Matrix::transformDirection(const double in[3], double out[3]) const {
-    for (int c = 0; c < 3; ++c) out[c] = in[0] * at(0, c) + in[1] * at(1, c) + in[2] * at(2, c);
+    const glm::dvec3 d = glm::dmat3(m) * glm::dvec3(in[0], in[1], in[2]);
+    for (int c = 0; c < 3; ++c) out[c] = d[c];
 }
 
 Matrix Matrix::translate(double x, double y, double z) {
-    Matrix m;
-    m.at(3, 0) = x;
-    m.at(3, 1) = y;
-    m.at(3, 2) = z;
-    return m;
+    Matrix r;
+    r.m[3] = glm::dvec4(x, y, z, 1.0);
+    return r;
 }
 
 Matrix Matrix::scale(double x, double y, double z) {
-    Matrix m;
-    m.at(0, 0) = x;
-    m.at(1, 1) = y;
-    m.at(2, 2) = z;
-    return m;
+    Matrix r;
+    r.m[0][0] = x;
+    r.m[1][1] = y;
+    r.m[2][2] = z;
+    return r;
 }
 
 Matrix Matrix::rotate(int axis, double degrees) {
-    const double a = degrees * kPi / 180.0, c = std::cos(a), s = std::sin(a);
-    Matrix m;
+    const double a = glm::radians(degrees), c = std::cos(a), s = std::sin(a);
+    Matrix r;
     const int i = (axis + 1) % 3, j = (axis + 2) % 3;
-    m.at(i, i) = c;
-    m.at(i, j) = s;
-    m.at(j, i) = -s;
-    m.at(j, j) = c;
-    return m;
+    r.at(i, i) = c;
+    r.at(i, j) = s;
+    r.at(j, i) = -s;
+    r.at(j, j) = c;
+    return r;
 }
 
 Matrix Matrix::orient(double x, double y, double z, double w) {
-    Matrix m;
-    m.at(0, 0) = 1.0 - 2.0 * (y * y + z * z);
-    m.at(0, 1) = 2.0 * (x * y + z * w);
-    m.at(0, 2) = 2.0 * (z * x - y * w);
-    m.at(1, 0) = 2.0 * (x * y - z * w);
-    m.at(1, 1) = 1.0 - 2.0 * (z * z + x * x);
-    m.at(1, 2) = 2.0 * (y * z + x * w);
-    m.at(2, 0) = 2.0 * (z * x + y * w);
-    m.at(2, 1) = 2.0 * (y * z - x * w);
-    m.at(2, 2) = 1.0 - 2.0 * (y * y + x * x);
-    return m;
+    // As GfMatrix4d::SetRotate, the quaternion as it is: GLM's mat3_cast.
+    return {glm::dmat4(glm::mat3_cast(glm::dquat::wxyz(w, x, y, z)))};
 }
 
 // --- Transforms --------------------------------------------------------------------------------

@@ -3422,18 +3422,11 @@ size_t strayJoints(const Geometry& network, const Geometry* pieces, const std::s
 Vec3 spinBetween(const Vec3& fromDegrees, const Vec3& toDegrees, float dt) {
     if (fromDegrees == toDegrees || dt <= 0.0f) return {};
     const Rotation a = Rotation::fromEuler(fromDegrees), b = Rotation::fromEuler(toDegrees);
-    // The turn from a to b, b a^T, as a matrix of rows.
-    float m[3][3];
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c) {
-            float sum = 0.0f;
-            for (int k = 0; k < 3; ++k) sum += b.axis(k)[r] * a.axis(k)[c];
-            m[r][c] = sum;
-        }
-    }
+    // The turn from a to b, b a^T; GLM indexes [column][row].
+    const Mat3 m = b.matrix() * glm::transpose(a.matrix());
     const float cosine = std::clamp(0.5f * (m[0][0] + m[1][1] + m[2][2] - 1.0f), -1.0f, 1.0f);
     const float angle = std::acos(cosine);
-    const Vec3 axis(m[2][1] - m[1][2], m[0][2] - m[2][0], m[1][0] - m[0][1]);  // 2 sin(angle) along the axis
+    const Vec3 axis(m[1][2] - m[2][1], m[2][0] - m[0][2], m[0][1] - m[1][0]);  // 2 sin(angle) along the axis
     const float twiceSine = length(axis);
     if (twiceSine < 1e-7f) return {};
     return axis * (angle / (twiceSine * dt));

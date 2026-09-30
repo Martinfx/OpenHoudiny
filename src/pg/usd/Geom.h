@@ -17,6 +17,8 @@
 #include "pg/core/Geometry.h"
 #include "pg/usd/Stage.h"
 
+#include <glm/ext/matrix_double4x4.hpp>
+
 #include <array>
 #include <memory>
 #include <string>
@@ -24,14 +26,16 @@
 
 namespace pg::usd {
 
-/// 4 x 4, row by row, as GfMatrix4d.
+/// 4 x 4, row by row, as GfMatrix4d: a point a row on the left, p x M. Kept
+/// as GLM's dmat4, whose columns are -- the same numbers in memory -- these
+/// rows: GLM's M * p is p x M here.
 struct Matrix {
-    std::array<double, 16> m{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    glm::dmat4 m{1.0};
 
-    double& at(int r, int c) { return m[static_cast<size_t>(r * 4 + c)]; }
-    double at(int r, int c) const { return m[static_cast<size_t>(r * 4 + c)]; }
+    double& at(int r, int c) { return m[r][c]; }
+    double at(int r, int c) const { return m[r][c]; }
     /// This, then `o`: (p x this) x o.
-    Matrix operator*(const Matrix& o) const;
+    Matrix operator*(const Matrix& o) const { return {o.m * m}; }
     Matrix inverse() const;
     double determinant3() const;
     void transformPoint(const double in[3], double out[3]) const;
