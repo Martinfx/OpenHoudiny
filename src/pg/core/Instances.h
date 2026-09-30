@@ -29,12 +29,16 @@
 namespace pg {
 
 // --- quaternions x, y, z, w: turns by the right hand ------------------------
+//
+// As the `orient` attribute keeps them, computed as GLM's (quatOf, vec4Of:
+// core/Types.h).
 
+/// `a` after `b`: glm's product.
 Vec4 quatMultiply(const Vec4& a, const Vec4& b);
 /// `v` turned by the unit quaternion `q`.
 Vec3 quatRotate(const Vec4& q, const Vec3& v);
 /// What turns x, y and z to the unit vectors `X`, `Y`, `Z`, square to each
-/// other, a right-handed frame.
+/// other, a right-handed frame: glm::quat_cast of the matrix of them.
 Vec4 quatFromAxes(const Vec3& X, const Vec3& Y, const Vec3& Z);
 /// The shortest turn of +y to the unit vector `n`.
 Vec4 quatUpTo(const Vec3& n);

@@ -82,13 +82,13 @@ public:
         const Vec3 r = params_.evalVec3("r", ctx, Vec3(0, 0, 0));
         const Vec3 s = params_.evalVec3("s", ctx, Vec3(1, 1, 1));
         const Vec3 pivot = params_.evalVec3("p", ctx, Vec3(0, 0, 0));
-        const Mat4 m = Mat4::translate(pivot * -1.0f) * Mat4::scale(s) * Mat4::rotate(r) * Mat4::translate(pivot) *
-                       Mat4::translate(t);
+        // Round the pivot: sized, turned, then moved.
+        const Mat4 m = translation(t) * (translation(pivot) * (rotationXYZ(r) * (scaling(s) * translation(pivot * -1.0f))));
         auto P = geo->positionsForWrite();
         parallelFor(n, 16384, [&](size_t begin, size_t end) {
             for (size_t i = begin; i < end; ++i) {
                 if (weight[i] <= 0.0f) continue;
-                P[i] = P[i] + (m.transformPoint(P[i]) - P[i]) * weight[i];
+                P[i] = P[i] + (transformPoint(m, P[i]) - P[i]) * weight[i];
             }
         });
         if (AttributeArray* nAttr = geo->points().find("N"); nAttr && nAttr->type() == AttrType::Vec3) {
@@ -96,7 +96,7 @@ public:
             parallelFor(N.size(), 16384, [&](size_t begin, size_t end) {
                 for (size_t i = begin; i < end; ++i) {
                     if (weight[i] <= 0.0f) continue;
-                    const Vec3 turned = N[i] + (m.transformDirection(N[i]) - N[i]) * weight[i];
+                    const Vec3 turned = N[i] + (transformDirection(m, N[i]) - N[i]) * weight[i];
                     const float l = length(turned);
                     if (l > 1e-12f) N[i] = turned * (1.0f / l);
                 }

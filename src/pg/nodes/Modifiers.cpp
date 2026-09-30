@@ -46,21 +46,21 @@ public:
         const Vec3 r = params_.evalVec3("r", ctx, Vec3(0, 0, 0));
         const Vec3 s = params_.evalVec3("s", ctx, Vec3(1, 1, 1)) * params_.evalFloat("scale", ctx, 1.0f);
         const Vec3 pivot = params_.evalVec3("p", ctx, Vec3(0, 0, 0));
-        const Mat4 m = Mat4::translate(pivot * -1.0f) * Mat4::scale(s) * Mat4::rotate(r) * Mat4::translate(pivot) *
-                       Mat4::translate(t);
+        // Round the pivot: sized, turned, then moved.
+        const Mat4 m = translation(t) * (translation(pivot) * (rotationXYZ(r) * (scaling(s) * translation(pivot * -1.0f))));
         // Before N turns: a point turned to it keeps the turn it had.
         turnInstances(*geo, m);
 
         auto P = geo->positionsForWrite();
         parallelFor(P.size(), 16384, [&](size_t begin, size_t end) {
-            for (size_t i = begin; i < end; ++i) P[i] = m.transformPoint(P[i]);
+            for (size_t i = begin; i < end; ++i) P[i] = transformPoint(m, P[i]);
         });
         // A proxy -- where the pieces of rough concrete are simulated -- is a
         // place too.
         if (AttributeArray* proxy = geo->points().find("proxy"); proxy && proxy->type() == AttrType::Vec3) {
             auto Q = proxy->write<Vec3>();
             parallelFor(Q.size(), 16384, [&](size_t begin, size_t end) {
-                for (size_t i = begin; i < end; ++i) Q[i] = m.transformPoint(Q[i]);
+                for (size_t i = begin; i < end; ++i) Q[i] = transformPoint(m, Q[i]);
             });
         }
 
@@ -68,7 +68,7 @@ public:
             nAttr && nAttr->type() == AttrType::Vec3) {
             auto N = nAttr->write<Vec3>();
             parallelFor(N.size(), 16384, [&](size_t begin, size_t end) {
-                for (size_t i = begin; i < end; ++i) N[i] = m.transformDirection(N[i]);
+                for (size_t i = begin; i < end; ++i) N[i] = transformDirection(m, N[i]);
             });
         }
         return geo;
@@ -85,8 +85,8 @@ private:
         std::vector<uint32_t> points;
         for (const auto& p : byPrototype) points.insert(points.end(), p.begin(), p.end());
         if (points.empty()) return;
-        const Vec3 x = m.transformDirection(Vec3(1.0f, 0.0f, 0.0f)), y = m.transformDirection(Vec3(0.0f, 1.0f, 0.0f)),
-                   z = m.transformDirection(Vec3(0.0f, 0.0f, 1.0f));
+        const Vec3 x = transformDirection(m, Vec3(1.0f, 0.0f, 0.0f)), y = transformDirection(m, Vec3(0.0f, 1.0f, 0.0f)),
+                   z = transformDirection(m, Vec3(0.0f, 0.0f, 1.0f));
         const float det = dot(x, cross(y, z));
         if (std::fabs(det) < 1e-20f) return;
         const float size = std::cbrt(std::fabs(det));

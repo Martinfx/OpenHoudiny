@@ -331,11 +331,11 @@ TEST(concrete_proxy_goes_where_the_pieces_go) {
         t.setVec3("t", Vec3(1.0f, 2.0f, 3.0f));
         t.setVec3("r", Vec3(0.0f, 90.0f, 0.0f));
     });
-    const Mat4 m = Mat4::rotate(Vec3(0.0f, 90.0f, 0.0f)) * Mat4::translate(Vec3(1.0f, 2.0f, 3.0f));
+    const Mat4 m = translation(Vec3(1.0f, 2.0f, 3.0f)) * rotationXYZ(Vec3(0.0f, 90.0f, 0.0f));
     const auto a = before->points().find("proxy")->read<Vec3>();
     const auto b = after->points().find("proxy")->read<Vec3>();
     CHECK_EQ(a.size(), b.size());
-    for (size_t i = 0; i < a.size(); ++i) CHECK(length(m.transformPoint(a[i]) - b[i]) < 1e-5f);
+    for (size_t i = 0; i < a.size(); ++i) CHECK(length(transformPoint(m, a[i]) - b[i]) < 1e-5f);
 
     // The solver's places: the proxy where there is one; merged with
     // pieces that had none (a proxy of 0 far from the origin), the points.

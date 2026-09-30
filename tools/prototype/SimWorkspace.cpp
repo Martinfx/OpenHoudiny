@@ -1635,9 +1635,8 @@ void SimWorkspace::updateGuides() {
 }
 
 void SimWorkspace::drawGnomon(ImDrawList* d, ImVec2 corner) const {
-    float f[3], r[3], u[3];
-    renderer_.orbit.axes(f, r, u);
-    const Vec3 forward(f[0], f[1], f[2]), right(r[0], r[1], r[2]), up(u[0], u[1], u[2]);
+    Vec3 forward, right, up;
+    renderer_.orbit.axes(forward, right, up);
     const float len = theme::px(22.0f);
     const ImVec2 c(corner.x + theme::px(34.0f), corner.y - theme::px(34.0f));
     struct Axis {

@@ -38,14 +38,17 @@ enum class Shape : uint8_t { Sphere, Box, Cylinder, Cone, Torus, Mesh };
 /// Names as files and the command line write them: "sphere", "box", ...
 const char* shapeName(Shape shape);
 
-/// A rotation as the images of the three axes: the columns of its matrix.
+/// A rotation as the images of the three axes: the columns of its matrix,
+/// a glm::mat3 (matrix(), of()).
 struct Rotation {
     Vec3 x{1.0f, 0.0f, 0.0f}, y{0.0f, 1.0f, 0.0f}, z{0.0f, 0.0f, 1.0f};
 
+    Mat3 matrix() const { return Mat3(x, y, z); }
+    static Rotation of(const Mat3& m) { return {m[0], m[1], m[2]}; }
     /// The rotation applied to v.
-    Vec3 apply(const Vec3& v) const { return x * v.x + y * v.y + z * v.z; }
-    /// Undone: world to the rotated frame.
-    Vec3 inverse(const Vec3& v) const { return {dot(x, v), dot(y, v), dot(z, v)}; }
+    Vec3 apply(const Vec3& v) const { return matrix() * v; }
+    /// Undone: world to the rotated frame -- by the transpose.
+    Vec3 inverse(const Vec3& v) const { return v * matrix(); }
     /// `this` after `first`.
     Rotation then(const Rotation& first) const;
     /// Axis `a` (0 x, 1 y, 2 z) of the rotated frame.

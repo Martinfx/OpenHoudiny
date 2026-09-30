@@ -1194,7 +1194,7 @@ TEST(edit_transform_is_the_edit_node_and_a_drag_after_it_is_one_again) {
     }
     // Its turn is the node's: Mat4's Euler angles and the Rotation's agree.
     for (const Vec3& v : {Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), Vec3(0.3f, -0.4f, 0.8f)}) {
-        CHECK_NEAR(length(Mat4::rotate(e.r).transformDirection(v) - axes.apply(v)), 0.0f, 1e-5f);
+        CHECK_NEAR(length(transformDirection(rotationXYZ(e.r), v) - axes.apply(v)), 0.0f, 1e-5f);
     }
 }
 

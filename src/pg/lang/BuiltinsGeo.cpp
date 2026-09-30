@@ -192,8 +192,9 @@ FormatArg formatArg(const TNode& k, Env& e) {
         case Type::Mat3: {
             const Mat3 m = ev<Mat3>(k, e);
             char buf[256];
-            std::snprintf(buf, sizeof buf, "[[%g, %g, %g], [%g, %g, %g], [%g, %g, %g]]", m.m[0][0], m.m[0][1], m.m[0][2],
-                          m.m[1][0], m.m[1][1], m.m[1][2], m.m[2][0], m.m[2][1], m.m[2][2]);
+            // VEX's rows: GLM's columns.
+            std::snprintf(buf, sizeof buf, "[[%g, %g, %g], [%g, %g, %g], [%g, %g, %g]]", m[0][0], m[0][1], m[0][2],
+                          m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2]);
             a.text = buf;
             break;
         }
@@ -202,7 +203,7 @@ FormatArg formatArg(const TNode& k, Env& e) {
             std::string s = "[";
             for (int i = 0; i < 4; ++i) {
                 char buf[128];
-                std::snprintf(buf, sizeof buf, "%s[%g, %g, %g, %g]", i ? ", " : "", m.m[i][0], m.m[i][1], m.m[i][2], m.m[i][3]);
+                std::snprintf(buf, sizeof buf, "%s[%g, %g, %g, %g]", i ? ", " : "", m[i][0], m[i][1], m[i][2], m[i][3]);
                 s += buf;
             }
             a.text = s + "]";

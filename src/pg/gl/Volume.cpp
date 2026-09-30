@@ -5,6 +5,8 @@
 #include "pg/io/Picture.h"
 #include "pg/sim/Display.h"
 
+#include <glm/gtc/type_ptr.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -2055,7 +2057,7 @@ void VolumeRenderer::drawRain(int width, int height, const Vec3& eye) {
     gl_.Enable(BLEND);
     gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
     gl_.UseProgram(rainProgram_);
-    gl_.UniformMatrix4fv(location(rainProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+    gl_.UniformMatrix4fv(location(rainProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
     gl_.Uniform1f(location(rainProgram_, "u_streakTime"), s.rainStreak * rainTimeStep_);
     gl_.Uniform2f(location(rainProgram_, "u_pixel"), 2.0f / static_cast<float>(width), 2.0f / static_cast<float>(height));
     // As wide on a big image as on a small one: some 1.3 px at 600 high.
@@ -2189,8 +2191,8 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
     gl_.Disable(BLEND);
     gl_.Disable(CULL_FACE);
     gl_.UseProgram(meshProgram_);
-    gl_.UniformMatrix4fv(location(meshProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
-    gl_.UniformMatrix4fv(location(meshProgram_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
+    gl_.UniformMatrix4fv(location(meshProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
+    gl_.UniformMatrix4fv(location(meshProgram_, "u_nextViewProj"), 1, 0, glm::value_ptr(nextViewProjection_));
     gl_.Uniform2f(location(meshProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
     gl_.Uniform3f(location(meshProgram_, "u_eye"), eye.x, eye.y, eye.z);
     for (size_t i = 0; i < solids_.size(); ++i) {
@@ -2215,8 +2217,8 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
     if ((geoVertices_ > 0 || shownElements_ > 0 || hasInstances()) && geoProgram_) {
         gl_.UseProgram(geoProgram_);
         placeUninstanced();
-        gl_.UniformMatrix4fv(location(geoProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
-        gl_.UniformMatrix4fv(location(geoProgram_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
+        gl_.UniformMatrix4fv(location(geoProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
+        gl_.UniformMatrix4fv(location(geoProgram_, "u_nextViewProj"), 1, 0, glm::value_ptr(nextViewProjection_));
         gl_.Uniform1f(location(geoProgram_, "u_frameTime"), passes.on ? passes.frameTime : 0.0f);
         gl_.Uniform2f(location(geoProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
         gl_.Uniform3f(location(geoProgram_, "u_eye"), eye.x, eye.y, eye.z);
@@ -2269,7 +2271,7 @@ void VolumeRenderer::renderGlass(int width, int height, const Vec3& eye) {
     gl_.Disable(BLEND);
     gl_.Disable(CULL_FACE);
     gl_.UseProgram(glassProgram_);
-    gl_.UniformMatrix4fv(location(glassProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+    gl_.UniformMatrix4fv(location(glassProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
     gl_.Uniform3f(location(glassProgram_, "u_eye"), eye.x, eye.y, eye.z);
     gl_.Uniform1i(location(glassProgram_, "u_first"), 13);
     gl_.BindVertexArray(glassVao_);
@@ -2599,11 +2601,12 @@ void VolumeRenderer::updateGeoShadow(const Vec3& light) {
         hi[a] += margin;
     }
     const float ax = 2.0f / (hi.x - lo.x), ay = 2.0f / (hi.y - lo.y), az = 2.0f / (hi.z - lo.z);
-    Mat4 m{};
-    m[0] = sx.x * ax; m[4] = sx.y * ax; m[8] = sx.z * ax; m[12] = -lo.x * ax - 1.0f;
-    m[1] = sy.x * ay; m[5] = sy.y * ay; m[9] = sy.z * ay; m[13] = -lo.y * ay - 1.0f;
-    m[2] = f.x * az;  m[6] = f.y * az;  m[10] = f.z * az; m[14] = -lo.z * az - 1.0f;
-    m[15] = 1.0f;
+    // Rows: the sun's view axes, scaled to the box -- GLM's columns index first.
+    Mat4 m(0.0f);
+    m[0][0] = sx.x * ax; m[1][0] = sx.y * ax; m[2][0] = sx.z * ax; m[3][0] = -lo.x * ax - 1.0f;
+    m[0][1] = sy.x * ay; m[1][1] = sy.y * ay; m[2][1] = sy.z * ay; m[3][1] = -lo.y * ay - 1.0f;
+    m[0][2] = f.x * az;  m[1][2] = f.y * az;  m[2][2] = f.z * az;  m[3][2] = -lo.z * az - 1.0f;
+    m[3][3] = 1.0f;
     lightViewProj_ = m;
     // Two texels of it, as a depth: what a surface may be off its own triangles.
     const float texel = std::max(hi.x - lo.x, hi.y - lo.y) / static_cast<float>(size);
@@ -2623,7 +2626,7 @@ void VolumeRenderer::updateGeoShadow(const Vec3& light) {
     gl_.Disable(BLEND);
     gl_.Disable(CULL_FACE);
     gl_.UseProgram(geoShadowProgram_);
-    gl_.UniformMatrix4fv(location(geoShadowProgram_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
+    gl_.UniformMatrix4fv(location(geoShadowProgram_, "u_lightViewProj"), 1, 0, glm::value_ptr(lightViewProj_));
     placeUninstanced();
     if (shownElements_ > 0) {
         gl_.BindVertexArray(shownVao_);
@@ -2653,14 +2656,13 @@ void VolumeRenderer::drawGeometry(int width, int height) {
     gl_.DepthFunc(LEQUAL);
     if (dots_ > 0 && dotProgram_) {
         const sim::Look& s = look;
-        float towards[3], across[3], upwards[3];
-        orbit.axes(towards, across, upwards);
+        Vec3 f, r, u;
+        orbit.axes(f, r, u);
         const Vec3 light = normalize(s.lightDirection());
-        const Vec3 f(towards[0], towards[1], towards[2]), r(across[0], across[1], across[2]), u(upwards[0], upwards[1], upwards[2]);
         gl_.DepthMask(1);
         gl_.Enable(PROGRAM_POINT_SIZE);
         gl_.UseProgram(dotProgram_);
-        gl_.UniformMatrix4fv(location(dotProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.UniformMatrix4fv(location(dotProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
         const float tanHalf = std::tan(orbit.fovY * kPi / 360.0f);
         gl_.Uniform1f(location(dotProgram_, "u_pixelsPerUnit"), 0.5f * static_cast<float>(height) / tanHalf);
         gl_.Uniform1f(location(dotProgram_, "u_dot"), std::max(3.0f, 3.0f * static_cast<float>(height) / 700.0f));
@@ -2674,8 +2676,7 @@ void VolumeRenderer::drawGeometry(int width, int height) {
         // Through the smoke: the fields and the sunlight in them, where there is gas.
         gl_.Uniform1i(location(dotProgram_, "u_hasGas"), hasFrame_ ? 1 : 0);
         const Vec3 lo = domain_.origin(), size = domain_.size();
-        float eye[3];
-        orbit.eye(eye);
+        const Vec3 eye = orbit.eye();
         gl_.Uniform3f(location(dotProgram_, "u_boxMin"), lo.x, lo.y, lo.z);
         gl_.Uniform3f(location(dotProgram_, "u_boxSize"), size.x, size.y, size.z);
         gl_.Uniform3f(location(dotProgram_, "u_texel"), 1.0f / static_cast<float>(domain_.cells[0]),
@@ -2709,7 +2710,7 @@ void VolumeRenderer::drawGeometry(int width, int height) {
         gl_.Enable(BLEND);
         gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
         gl_.UseProgram(lineProgram_);
-        gl_.UniformMatrix4fv(location(lineProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.UniformMatrix4fv(location(lineProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
         gl_.BindVertexArray(curveVao_);
         gl_.DrawArrays(LINES, 0, curveVertices_);
         gl_.Disable(BLEND);
@@ -2828,7 +2829,7 @@ void VolumeRenderer::drawOverlay(int width, int height, const Vec3& eye) {
     float fade = 1.0f;
     auto use = [&](GLuint program, float pull) {
         gl_.UseProgram(program);
-        gl_.UniformMatrix4fv(location(program, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.UniformMatrix4fv(location(program, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
         gl_.Uniform3f(location(program, "u_eye"), eye.x, eye.y, eye.z);
         gl_.Uniform1f(location(program, "u_pull"), pull);
         gl_.Uniform1f(location(program, "u_fade"), fade);
@@ -3088,25 +3089,21 @@ Orbit orbitThrough(const sim::Camera& camera, float distance) {
     o.yaw = std::atan2(-f.x, -f.z) * kDegrees;
     o.distance = std::max(distance, 0.01f);
     const Vec3 target = camera.position + f * o.distance;
-    o.target[0] = target.x;
-    o.target[1] = target.y;
-    o.target[2] = target.z;
+    o.target = target;
     o.fovY = camera.fovY();
     // The roll: how far the camera's right is turned from the level one.
-    float level[3], right[3], up[3];
+    Vec3 level, right, up;
     o.axes(level, right, up);
     const Vec3 r = camera.right();
-    o.roll = std::atan2(dot(r, Vec3(up[0], up[1], up[2])), dot(r, Vec3(right[0], right[1], right[2]))) * kDegrees;
+    o.roll = std::atan2(dot(r, up), dot(r, right)) * kDegrees;
     return o;
 }
 
 sim::Camera cameraFrom(const Orbit& orbit, sim::Camera camera) {
-    float eye[3], forward[3], right[3], up[3];
-    orbit.eye(eye);
+    Vec3 forward, right, up;
     orbit.axes(forward, right, up);
-    camera.position = Vec3(eye[0], eye[1], eye[2]);
-    camera.rotation = sim::Camera::rotationFor(Vec3(forward[0], forward[1], forward[2]), Vec3(up[0], up[1], up[2]),
-                                               camera.rotation);
+    camera.position = orbit.eye();
+    camera.rotation = sim::Camera::rotationFor(forward, up, camera.rotation);
     return camera;
 }
 
@@ -3117,9 +3114,7 @@ Orbit VolumeRenderer::viewOf(const sim::Domain& domain) {
     o.pitch = 12.0f;
     // Far enough for the sphere round the domain to fit the view, a little tighter.
     o.distance = 0.92f * 0.5f * length(size) / std::sin(kFovY * kPi / 360.0f);
-    o.target[0] = 0.0f;
-    o.target[1] = 0.46f * size.y;
-    o.target[2] = 0.0f;
+    o.target = Vec3(0.0f, 0.46f * size.y, 0.0f);
     return o;
 }
 
@@ -3127,28 +3122,23 @@ void VolumeRenderer::render(int width, int height) {
     ensureTarget(width, height);
     updateLighting();
     // The camera: where it is, and the directions of the screen's axes.
-    float eye[3], towards[3], across[3], upwards[3];
-    orbit.eye(eye);
-    orbit.axes(towards, across, upwards);
+    const Vec3 e = orbit.eye();
+    Vec3 forward, right, up;
+    orbit.axes(forward, right, up);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    viewProjection_ = multiply(perspective(orbit.fovY, aspect, kNear, kFar), lookAlong(eye, towards, upwards));
+    viewProjection_ = orbit.viewProjection(aspect, kNear, kFar);
     // The view of the next frame, for the passes' motion; the same when the
     // camera stands still.
     nextViewProjection_ = viewProjection_;
-    if (passes.on && passes.moving) {
-        float nextEye[3], nextTowards[3], nextAcross[3], nextUp[3];
-        passes.next.eye(nextEye);
-        passes.next.axes(nextTowards, nextAcross, nextUp);
-        nextViewProjection_ = multiply(perspective(passes.next.fovY, aspect, kNear, kFar), lookAlong(nextEye, nextTowards, nextUp));
-    }
+    if (passes.on && passes.moving) nextViewProjection_ = passes.next.viewProjection(aspect, kNear, kFar);
     // The shadows of the geometry: its map from the sun, when it or the sun moved.
     updateGeoShadow(normalize(look.lightDirection()));
     // The meshes first, into their own buffer, seen by the same camera.
     const bool meshes = (anyMesh_ || geoVertices_ > 0 || shownElements_ > 0 || hasInstances()) && meshProgram_;
-    if (meshes) renderMeshes(width, height, Vec3(eye[0], eye[1], eye[2]));
+    if (meshes) renderMeshes(width, height, e);
     // ... and the glass into its own, as two layers.
     const bool glass = glassVertices_ > 0 && glassProgram_;
-    if (glass) renderGlass(width, height, Vec3(eye[0], eye[1], eye[2]));
+    if (glass) renderGlass(width, height, e);
     gl_.BindFramebuffer(FRAMEBUFFER, fbo_);
     gl_.Viewport(0, 0, width, height);
     gl_.ColorMask(1, 1, 1, 1);
@@ -3160,8 +3150,6 @@ void VolumeRenderer::render(int width, int height) {
         return;
     }
 
-    const Vec3 e(eye[0], eye[1], eye[2]), forward(towards[0], towards[1], towards[2]);
-    const Vec3 right(across[0], across[1], across[2]), up(upwards[0], upwards[1], upwards[2]);
     const float tanHalf = std::tan(orbit.fovY * kPi / 360.0f);
 
     const sim::Look& s = look;
@@ -3178,7 +3166,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform3f(location(program_, "u_up"), up.x, up.y, up.z);
     gl_.Uniform3f(location(program_, "u_forward"), forward.x, forward.y, forward.z);
     gl_.Uniform2f(location(program_, "u_tanHalfFov"), tanHalf * aspect, tanHalf);
-    gl_.UniformMatrix4fv(location(program_, "u_viewProj"), 1, 0, viewProjection_.data());
+    gl_.UniformMatrix4fv(location(program_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
     gl_.Uniform1i(location(program_, "u_hasGas"), hasFrame_ ? 1 : 0);
     gl_.Uniform3f(location(program_, "u_lightDir"), light.x, light.y, light.z);
     gl_.Uniform3f(location(program_, "u_light"), s.lightColor.x * s.lightIntensity, s.lightColor.y * s.lightIntensity,
@@ -3202,7 +3190,7 @@ void VolumeRenderer::render(int width, int height) {
     // The shadows of the geometry, from their map.
     const bool geoShadow = hasGeoShadow_ && (geoVertices_ > 0 || shownElements_ > 0 || hasInstances());
     gl_.Uniform1i(location(program_, "u_hasGeoShadow"), geoShadow ? 1 : 0);
-    gl_.UniformMatrix4fv(location(program_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
+    gl_.UniformMatrix4fv(location(program_, "u_lightViewProj"), 1, 0, glm::value_ptr(lightViewProj_));
     gl_.Uniform1f(location(program_, "u_geoShadowTexel"), 1.0f / static_cast<float>(kGeoShadowSize));
     gl_.Uniform1f(location(program_, "u_geoShadowBias"), geoShadowBias_);
     gl_.Uniform1f(location(program_, "u_geoShadowLift"), geoShadowLift_);
@@ -3222,7 +3210,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform3f(location(program_, "u_backgroundBottom"), 0.022f, 0.023f, 0.027f);
     // The passes: linear light, and the motion to the next frame.
     gl_.Uniform1i(location(program_, "u_linear"), passes.on ? 1 : 0);
-    gl_.UniformMatrix4fv(location(program_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
+    gl_.UniformMatrix4fv(location(program_, "u_nextViewProj"), 1, 0, glm::value_ptr(nextViewProjection_));
     gl_.Uniform2f(location(program_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
     gl_.ActiveTexture(TEXTURE0 + 11);
     gl_.BindTexture(TEXTURE_2D, meshes && passes.on ? gAux_ : 0);
@@ -3309,7 +3297,7 @@ void VolumeRenderer::render(int width, int height) {
         gl_.Enable(BLEND);
         gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
         gl_.UseProgram(lineProgram_);
-        gl_.UniformMatrix4fv(location(lineProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.UniformMatrix4fv(location(lineProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
         gl_.BindVertexArray(lineVao_);
         gl_.DrawArrays(LINES, 0, static_cast<GLsizei>(lineCount_));
         gl_.Disable(BLEND);

@@ -84,13 +84,8 @@ float pixelsToSegment(ImVec2 p, ImVec2 a, ImVec2 b, float* along) {
 
 ViewCamera ViewCamera::of(const gl::Orbit& orbit, ImVec2 lo, ImVec2 size) {
     ViewCamera c;
-    float e[3], f[3], r[3], u[3];
-    orbit.eye(e);
-    orbit.axes(f, r, u);
-    c.eye = Vec3(e[0], e[1], e[2]);
-    c.forward = Vec3(f[0], f[1], f[2]);
-    c.right = Vec3(r[0], r[1], r[2]);
-    c.up = Vec3(u[0], u[1], u[2]);
+    c.eye = orbit.eye();
+    orbit.axes(c.forward, c.right, c.up);
     c.tanHalfFov = std::tan(orbit.fovY * kPi / 360.0f);
     c.aspect = size.x / std::max(size.y, 1.0f);
     c.lo = lo;

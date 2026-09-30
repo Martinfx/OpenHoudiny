@@ -1,41 +1,33 @@
 #pragma once
 //
-// The cameras of the previews: an orbit around the origin, and the matrices
-// OpenGL wants for it.
+// The cameras of the previews: an orbit around a point. Its matrices are
+// GLM's: glm::lookAt along its view, glm::perspective for its lens.
 //
-#include <array>
+#include "pg/core/Types.h"
 
 namespace pg::gl {
-
-using Mat4 = std::array<float, 16>;  // column-major, as GL expects
-
-Mat4 multiply(const Mat4& a, const Mat4& b);
-Mat4 perspective(float fovyDegrees, float aspect, float zNear, float zFar);
-/// Looking from `eye` at the origin, y up.
-Mat4 lookAt(const float eye[3]);
-/// Looking from `eye` at `target`, y up.
-Mat4 lookAt(const float eye[3], const float target[3]);
-/// Looking from `eye` along the unit vector `forward`, the unit vector `up`
-/// (square to it) up the picture.
-Mat4 lookAlong(const float eye[3], const float forward[3], const float up[3]);
-Mat4 identity();
 
 /// Camera orbiting a point: the origin, unless the target says otherwise.
 struct Orbit {
     float yaw = 30.0f;    ///< degrees around the vertical axis
     float pitch = 18.0f;  ///< degrees above the horizon
     float distance = 3.4f;
-    float target[3] = {0.0f, 0.0f, 0.0f};
+    Vec3 target{0.0f, 0.0f, 0.0f};
     /// Degrees the camera is turned about where it looks: 0 keeps the
     /// horizon level.
     float roll = 0.0f;
     float fovY = 35.0f;   ///< degrees from the top of the picture to its bottom
 
     /// Where the camera is.
-    void eye(float out[3]) const;
+    Vec3 eye() const;
     /// Where it looks, and the picture's right and up: unit vectors, square
     /// to each other.
-    void axes(float forward[3], float right[3], float up[3]) const;
+    void axes(Vec3& forward, Vec3& right, Vec3& up) const;
+    /// World to the camera: glm::lookAt from the eye along where it looks.
+    Mat4 view() const;
+    /// ... and on to the picture, `aspect` wide to 1 high (OpenGL's clip
+    /// space, -1 to 1): glm::perspective times the view.
+    Mat4 viewProjection(float aspect, float zNear, float zFar) const;
 };
 
 }  // namespace pg::gl

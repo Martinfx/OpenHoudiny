@@ -2,6 +2,8 @@
 
 #include "pg/core/Parallel.h"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -10,35 +12,11 @@
 
 namespace pg {
 
-Vec4 quatMultiply(const Vec4& a, const Vec4& b) {
-    return Vec4(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-                a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
-}
+Vec4 quatMultiply(const Vec4& a, const Vec4& b) { return vec4Of(quatOf(a) * quatOf(b)); }
 
-Vec3 quatRotate(const Vec4& q, const Vec3& v) {
-    // q v q* for the unit quaternion: v + 2 w (u x v) + 2 u x (u x v).
-    const Vec3 u(q.x, q.y, q.z);
-    const Vec3 t = cross(u, v) * 2.0f;
-    return v + t * q.w + cross(u, t);
-}
+Vec3 quatRotate(const Vec4& q, const Vec3& v) { return quatOf(q) * v; }
 
-Vec4 quatFromAxes(const Vec3& X, const Vec3& Y, const Vec3& Z) {
-    const float trace = X.x + Y.y + Z.z;
-    if (trace > 0.0f) {
-        const float r = 2.0f * std::sqrt(trace + 1.0f);
-        return Vec4((Y.z - Z.y) / r, (Z.x - X.z) / r, (X.y - Y.x) / r, 0.25f * r);
-    }
-    if (X.x > Y.y && X.x > Z.z) {
-        const float r = 2.0f * std::sqrt(1.0f + X.x - Y.y - Z.z);
-        return Vec4(0.25f * r, (Y.x + X.y) / r, (Z.x + X.z) / r, (Y.z - Z.y) / r);
-    }
-    if (Y.y > Z.z) {
-        const float r = 2.0f * std::sqrt(1.0f + Y.y - X.x - Z.z);
-        return Vec4((Y.x + X.y) / r, 0.25f * r, (Z.y + Y.z) / r, (Z.x - X.z) / r);
-    }
-    const float r = 2.0f * std::sqrt(1.0f + Z.z - X.x - Y.y);
-    return Vec4((Z.x + X.z) / r, (Z.y + Y.z) / r, 0.25f * r, (X.y - Y.x) / r);
-}
+Vec4 quatFromAxes(const Vec3& X, const Vec3& Y, const Vec3& Z) { return vec4Of(glm::quat_cast(Mat3(X, Y, Z))); }
 
 Vec4 quatUpTo(const Vec3& n) {
     const float c = n.y;  // dot(+y, n)

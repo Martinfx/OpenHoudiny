@@ -1,5 +1,9 @@
 #include "pg/gl/Preview.h"
 
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -101,8 +105,8 @@ MeshData plane() {
 
 /// An upright square facing the eye, turned about the vertical axis only, so
 /// that flames keep pointing up. u runs left to right, v bottom to top.
-MeshData billboard(const float eye[3]) {
-    float rx = eye[2], rz = -eye[0];  // horizontal, perpendicular to the view
+MeshData billboard(const Vec3& eye) {
+    float rx = eye.z, rz = -eye.x;  // horizontal, perpendicular to the view
     const float len = std::sqrt(rx * rx + rz * rz);
     if (len < 1e-5f) {
         rx = 1.0f;
@@ -224,7 +228,7 @@ GLint PreviewRenderer::location(const std::string& name) {
     return loc;
 }
 
-void PreviewRenderer::uploadMesh(const float eye[3]) {
+void PreviewRenderer::uploadMesh(const Vec3& eye) {
     MeshData m;
     switch (meshKind_) {
         case MeshKind::Sphere: m = sphere(); break;
@@ -274,8 +278,7 @@ void PreviewRenderer::render(int width, int height, float time) {
     width = std::max(width, 1);
     height = std::max(height, 1);
     ensureTarget(width, height);
-    float eye[3];
-    orbit.eye(eye);
+    const Vec3 eye = orbit.eye();
     // A billboard follows the camera, so it is rebuilt every frame: four vertices.
     if (meshDirty_ || meshKind_ == MeshKind::Billboard) uploadMesh(eye);
 
@@ -296,14 +299,15 @@ void PreviewRenderer::render(int width, int height, float time) {
         }
         gl_.UseProgram(program_);
 
-        const Mat4 viewProj = multiply(
-            perspective(35.0f, static_cast<float>(width) / static_cast<float>(height), 0.05f, 50.0f), lookAt(eye));
-        const Mat4 model = identity();
+        const Mat4 viewProj = glm::perspective(glm::radians(35.0f), static_cast<float>(width) / static_cast<float>(height),
+                                               0.05f, 50.0f) *
+                              glm::lookAt(eye, Vec3(0.0f), Vec3(0.0f, 1.0f, 0.0f));
+        const Mat4 model(1.0f);
         const float* L = lightDirection;
         const float ll = std::sqrt(L[0] * L[0] + L[1] * L[1] + L[2] * L[2]);
 
-        gl_.UniformMatrix4fv(location("u_model"), 1, 0, model.data());
-        gl_.UniformMatrix4fv(location("u_viewProj"), 1, 0, viewProj.data());
+        gl_.UniformMatrix4fv(location("u_model"), 1, 0, glm::value_ptr(model));
+        gl_.UniformMatrix4fv(location("u_viewProj"), 1, 0, glm::value_ptr(viewProj));
         gl_.Uniform3f(location("u_cameraPos"), eye[0], eye[1], eye[2]);
         gl_.Uniform3f(location("u_lightDir"), L[0] / ll, L[1] / ll, L[2] / ll);
         gl_.Uniform1f(location("u_time"), time);

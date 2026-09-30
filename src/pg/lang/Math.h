@@ -54,48 +54,15 @@ inline int32_t toInt(double v) {
 
 // --- matrices ----------------------------------------------------------------------------------
 
-inline Mat3 addm(const Mat3& a, const Mat3& b, float s) {
-    Mat3 r;
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) r.m[i][j] = a.m[i][j] + s * b.m[i][j];
-    return r;
-}
-inline Mat4 addm(const Mat4& a, const Mat4& b, float s) {
-    Mat4 r;
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j) r.m[i][j] = a.m[i][j] + s * b.m[i][j];
-    return r;
-}
-inline Mat3 scalem(const Mat3& a, float s) {
-    Mat3 r;
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) r.m[i][j] = a.m[i][j] * s;
-    return r;
-}
-inline Mat4 scalem(const Mat4& a, float s) {
-    Mat4 r;
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j) r.m[i][j] = a.m[i][j] * s;
-    return r;
-}
-inline Mat3 diag3(float s) {
-    Mat3 r;
-    r.m[0][0] = r.m[1][1] = r.m[2][2] = s;
-    return r;
-}
-inline Mat4 diag4(float s) {
-    Mat4 r;
-    r.m[0][0] = r.m[1][1] = r.m[2][2] = r.m[3][3] = s;
-    return r;
-}
-inline bool sameMat(const Mat4& a, const Mat4& b) { return std::memcmp(a.m, b.m, sizeof a.m) == 0; }
-inline Vec4 mul(const Vec4& v, const Mat4& m) {
-    Vec4 r;
-    for (int j = 0; j < 4; ++j) {
-        compRef(r, j) = v.x * m.m[0][j] + v.y * m.m[1][j] + v.z * m.m[2][j] + v.w * m.m[3][j];
-    }
-    return r;
-}
+inline Mat3 addm(const Mat3& a, const Mat3& b, float s) { return a + b * s; }
+inline Mat4 addm(const Mat4& a, const Mat4& b, float s) { return a + b * s; }
+inline Mat3 scalem(const Mat3& a, float s) { return a * s; }
+inline Mat4 scalem(const Mat4& a, float s) { return a * s; }
+inline Mat3 diag3(float s) { return Mat3(s); }
+inline Mat4 diag4(float s) { return Mat4(s); }
+inline bool sameMat(const Mat4& a, const Mat4& b) { return std::memcmp(&a, &b, sizeof a) == 0; }
+/// `v` a row times `m`, as VEX has it: GLM's m * v.
+inline Vec4 mul(const Vec4& v, const Mat4& m) { return m * v; }
 
 // --- the generic operators ---------------------------------------------------------------------
 

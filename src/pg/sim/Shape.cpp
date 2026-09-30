@@ -2,6 +2,9 @@
 
 #include "pg/sim/Mesh.h"
 
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/gtx/euler_angles.hpp>
+
 #include <algorithm>
 #include <cmath>
 
@@ -67,25 +70,13 @@ const char* shapeName(Shape shape) {
 
 // --- rotations ---------------------------------------------------------------------
 
-Rotation Rotation::then(const Rotation& first) const {
-    Rotation r;
-    r.x = apply(first.x);
-    r.y = apply(first.y);
-    r.z = apply(first.z);
-    return r;
-}
+Rotation Rotation::then(const Rotation& first) const { return of(matrix() * first.matrix()); }
 
 Rotation Rotation::fromEuler(const Vec3& degrees) {
-    const float a = degrees.x * kRadians, b = degrees.y * kRadians, c = degrees.z * kRadians;
-    const float ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b), cc = std::cos(c),
-                sc = std::sin(c);
-    // Rz Ry Rx, column by column. With all angles 0 it is exactly the
-    // identity, so an unturned shape costs no rounding.
-    Rotation r;
-    r.x = Vec3(cc * cb, sc * cb, -sb);
-    r.y = Vec3(cc * sb * sa - sc * ca, sc * sb * sa + cc * ca, cb * sa);
-    r.z = Vec3(cc * sb * ca + sc * sa, sc * sb * ca - cc * sa, cb * ca);
-    return r;
+    // Rz Ry Rx. With all angles 0 it is exactly the identity, so an unturned
+    // shape costs no rounding.
+    const Vec3 a = glm::radians(degrees);
+    return of(Mat3(glm::eulerAngleZYX(a.z, a.y, a.x)));
 }
 
 Vec3 Rotation::toEuler(const Vec3& near) const {
@@ -143,15 +134,8 @@ EditTransform EditTransform::moved(const Vec3& by) const {
 }
 
 Rotation Rotation::about(const Vec3& axis, float degrees) {
-    const Vec3 n = normalize(axis);
-    if (length(n) < 0.5f) return Rotation();
-    const float th = degrees * kRadians;
-    const float c = std::cos(th), s = std::sin(th), t = 1.0f - c;
-    Rotation r;
-    r.x = Vec3(t * n.x * n.x + c, t * n.x * n.y + s * n.z, t * n.x * n.z - s * n.y);
-    r.y = Vec3(t * n.x * n.y - s * n.z, t * n.y * n.y + c, t * n.y * n.z + s * n.x);
-    r.z = Vec3(t * n.x * n.z + s * n.y, t * n.y * n.z - s * n.x, t * n.z * n.z + c);
-    return r;
+    if (!(dot(axis, axis) > 1e-30f)) return Rotation();
+    return of(Mat3(glm::rotate(Mat4(1.0f), glm::radians(degrees), axis)));
 }
 
 // --- shapes ------------------------------------------------------------------------

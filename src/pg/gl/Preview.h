@@ -69,7 +69,7 @@ public:
     float background[3] = {0.16f, 0.17f, 0.19f};
 
 private:
-    void uploadMesh(const float eye[3]);
+    void uploadMesh(const Vec3& eye);
     void ensureTarget(int width, int height);
     GLint location(const std::string& name);
 

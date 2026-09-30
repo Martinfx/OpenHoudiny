@@ -216,7 +216,7 @@ TEST(rebar_lays_a_mesh_in_a_wall_and_a_cage_in_a_beam) {
     // 3 bars a side round 0.4 m less the cover and the stirrups: 8; the
     // stirrups every 0.2 m along 3 m less the cover: 16.
     size_t along = 0, stirrups = 0;
-    const Mat4 turn = Mat4::rotate(Vec3(0.0f, 20.0f, 6.0f));
+    const Mat4 turn = rotationXYZ(Vec3(0.0f, 20.0f, 6.0f));
     const auto Q = cage->positions();
     const auto qw = cage->points().find("width")->read<float>();
     for (size_t prim = 0; prim < cage->primitiveCount(); ++prim) {
@@ -233,9 +233,9 @@ TEST(rebar_lays_a_mesh_in_a_wall_and_a_cage_in_a_beam) {
         for (const uint32_t q : c) {
             // Back in the beam's own axes: inside it, Cover in from its faces.
             const Vec3 local = Q[q] - Vec3(0.3f, 3.4f, -0.2f);
-            const Vec3 ax = turn.transformDirection(Vec3(1.0f, 0.0f, 0.0f));
-            const Vec3 ay = turn.transformDirection(Vec3(0.0f, 1.0f, 0.0f));
-            const Vec3 az = turn.transformDirection(Vec3(0.0f, 0.0f, 1.0f));
+            const Vec3 ax = transformDirection(turn, Vec3(1.0f, 0.0f, 0.0f));
+            const Vec3 ay = transformDirection(turn, Vec3(0.0f, 1.0f, 0.0f));
+            const Vec3 az = transformDirection(turn, Vec3(0.0f, 0.0f, 1.0f));
             CHECK(std::fabs(dot(local, ax)) <= 1.5f - cover + 1e-3f);
             CHECK(std::fabs(dot(local, ay)) <= 0.2f - cover + 1e-3f);
             CHECK(std::fabs(dot(local, az)) <= 0.2f - cover + 1e-3f);

@@ -204,10 +204,10 @@ void SimWorkspace::renderTab(int width, int height) {
         if (dlt.x != 0.0f || dlt.y != 0.0f) {
             leaveCamera();
             if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyShift)) {
-                float fwd[3], right[3], up[3];
+                Vec3 fwd, right, up;
                 o.axes(fwd, right, up);
                 const float k = o.distance * 0.0018f;
-                for (int a = 0; a < 3; ++a) o.target[a] += right[a] * (-dlt.x * k) + up[a] * (dlt.y * k);
+                o.target += right * (-dlt.x * k) + up * (dlt.y * k);
             } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
                 o.distance = std::clamp(o.distance * std::exp(dlt.y * 0.006f), 0.2f, 200.0f);
             } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {

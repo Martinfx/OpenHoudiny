@@ -2,9 +2,9 @@
 //
 // Small value types shared by the whole core.
 //
-// The vectors are GLM's (OpenGL Mathematics): Vec3 is glm::vec3, and so on,
-// with GLM's operators and its dot, cross and length -- a vector here is one
-// wherever GLM is spoken. pgmath (CMakeLists.txt) sets how every file sees
+// The vectors, matrices and quaternions are GLM's (OpenGL Mathematics): Vec3
+// is glm::vec3, Mat4 glm::mat4, Quat glm::quat, with GLM's operators and
+// functions -- a vector here is one wherever GLM is spoken. pgmath (CMakeLists.txt) sets how every file sees
 // them: at zero when made without values, x, y, z and w their parts alone,
 // three floats one after another -- as the attributes store them.
 //
@@ -17,7 +17,10 @@
 #ifndef GLM_FORCE_XYZW_ONLY
 #define GLM_FORCE_XYZW_ONLY
 #endif
+#include <glm/ext/quaternion_float.hpp>
 #include <glm/geometric.hpp>
+#include <glm/mat3x3.hpp>
+#include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
@@ -52,21 +55,32 @@ inline Vec3 normalize(const Vec3& v) {
     return len > 0.0f ? v * (1.0f / len) : v;
 }
 
-// --- 4x4 matrix, row-major, row-vector convention (p * M) -------------------
+// --- matrices and quaternions ------------------------------------------------
+//
+// GLM's too, as GLM has them: column vectors on the right, so B * A is A
+// first, then B, and a matrix's columns are the images of the axes.
 
-struct Mat4 {
-    float m[4][4]{};
+using Mat3 = glm::mat3;
+using Mat4 = glm::mat4;
+using Quat = glm::quat;
 
-    static Mat4 identity();
-    static Mat4 translate(const Vec3& t);
-    static Mat4 scale(const Vec3& s);
-    /// Euler XYZ in degrees.
-    static Mat4 rotate(const Vec3& degrees);
+/// Moved by `t`.
+Mat4 translation(const Vec3& t);
+/// Sized by `s` along the axes.
+Mat4 scaling(const Vec3& s);
+/// Turned `degrees` about x, then about y, then about z -- the world's axes,
+/// Houdini's xyz order: Rz Ry Rx.
+Mat4 rotationXYZ(const Vec3& degrees);
+/// Where `m` takes the point `p`: its 3 x 3, then its move.
+inline Vec3 transformPoint(const Mat4& m, const Vec3& p) { return Mat3(m) * p + Vec3(m[3]); }
+/// ... and the direction `v`, which does not move.
+inline Vec3 transformDirection(const Mat4& m, const Vec3& v) { return Mat3(m) * v; }
 
-    Mat4 operator*(const Mat4& o) const;
-    Vec3 transformPoint(const Vec3& p) const;
-    Vec3 transformDirection(const Vec3& v) const;
-};
+/// A quaternion as the program keeps it -- a Vec4, x, y, z the axis times
+/// the sine of half the angle and w its cosine, as Houdini's `orient` -- as
+/// GLM's, and back.
+inline Quat quatOf(const Vec4& q) { return Quat::wxyz(q.w, q.x, q.y, q.z); }
+inline Vec4 vec4Of(const Quat& q) { return Vec4(q.x, q.y, q.z, q.w); }
 
 // --- attribute types -------------------------------------------------------
 

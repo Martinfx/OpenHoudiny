@@ -23,19 +23,19 @@ namespace pg::lang {
 // --- values ------------------------------------------------------------------------------
 
 /// A 3x3 matrix, row-major, rows are the images of x, y, z: v * M.
-struct Mat3 {
-    float m[3][3]{};
-    static Mat3 identity() {
-        Mat3 r;
-        r.m[0][0] = r.m[1][1] = r.m[2][2] = 1.0f;
-        return r;
-    }
-    bool operator==(const Mat3& o) const {
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                if (m[i][j] != o.m[i][j]) return false;
-        return true;
-    }
+// The language's matrices are GLM's -- but, as every value of the language,
+// zero until given one (GLM starts its own at the identity). VEX's rows are
+// GLM's columns: the same numbers in memory, the other convention -- VEX's
+// v * M is GLM's M * v, and its A * B (A, then B) GLM's B * A.
+struct Mat3 : glm::mat3 {
+    Mat3() : glm::mat3(0.0f) {}
+    Mat3(const glm::mat3& m) : glm::mat3(m) {}  // NOLINT: GLM's arithmetic gives these
+    explicit Mat3(float diagonal) : glm::mat3(diagonal) {}
+};
+struct Mat4 : glm::mat4 {
+    Mat4() : glm::mat4(0.0f) {}
+    Mat4(const glm::mat4& m) : glm::mat4(m) {}  // NOLINT
+    explicit Mat4(float diagonal) : glm::mat4(diagonal) {}
 };
 
 using IntArr = std::vector<int32_t>;

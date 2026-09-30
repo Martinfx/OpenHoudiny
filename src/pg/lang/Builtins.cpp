@@ -4,6 +4,9 @@
 #include "pg/lang/Builtins.h"
 #include "pg/lang/Math.h"
 
+#include <glm/gtc/quaternion.hpp>
+#include <glm/matrix.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -61,170 +64,49 @@ float valueNoise(const Vec3& p) {
     return lerp(lerp(lerp(c000, c100, sx), lerp(c010, c110, sx), sy), lerp(lerp(c001, c101, sx), lerp(c011, c111, sx), sy), sz);
 }
 
-Vec4 quatFromAxisAngle(float angle, const Vec3& axis) {
-    const Vec3 a = normalize(axis);
-    const float s = std::sin(angle * 0.5f);
-    return Vec4(a.x * s, a.y * s, a.z * s, std::cos(angle * 0.5f));
-}
+// Quaternions and matrices are GLM's. VEX's matrices are rows of the images
+// of the axes, v * M; GLM's the same numbers as columns, M * v (Ast.h).
 
-Vec4 quatMul(const Vec4& a, const Vec4& b) {
-    return Vec4(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-                a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
-}
+Vec4 quatFromAxisAngle(float angle, const Vec3& axis) { return vec4Of(glm::angleAxis(angle, normalize(axis))); }
 
-Vec3 quatRotate(const Vec4& q, const Vec3& v) {
-    const Vec3 u(q.x, q.y, q.z);
-    const Vec3 t = cross(u, v) * 2.0f;
-    return v + t * q.w + cross(u, t);
-}
+Vec4 quatMul(const Vec4& a, const Vec4& b) { return vec4Of(quatOf(a) * quatOf(b)); }
+
+Vec3 quatRotate(const Vec4& q, const Vec3& v) { return quatOf(q) * v; }
 
 Mat3 quatToMat3(const Vec4& q0) {
-    const float len = std::sqrt(q0.x * q0.x + q0.y * q0.y + q0.z * q0.z + q0.w * q0.w);
-    const Vec4 q = len > 0.0f ? Vec4(q0.x / len, q0.y / len, q0.z / len, q0.w / len) : Vec4(0, 0, 0, 1);
-    // Rows are the images of x, y, z: v * M rotates v by q.
-    const Vec3 x = quatRotate(q, Vec3(1, 0, 0)), y = quatRotate(q, Vec3(0, 1, 0)), z = quatRotate(q, Vec3(0, 0, 1));
-    Mat3 m;
-    for (int j = 0; j < 3; ++j) {
-        m.m[0][j] = x[j];
-        m.m[1][j] = y[j];
-        m.m[2][j] = z[j];
-    }
-    return m;
+    const Quat q = quatOf(q0);
+    const float len = glm::length(q);
+    return glm::mat3_cast(len > 0.0f ? q / len : Quat::wxyz(1.0f, 0.0f, 0.0f, 0.0f));
 }
 
-Vec4 mat3ToQuat(const Mat3& r) {
-    // The rotation's matrix in column form: R[i][j] = r.m[j][i].
-    const float m00 = r.m[0][0], m11 = r.m[1][1], m22 = r.m[2][2];
-    const float m01 = r.m[1][0], m10 = r.m[0][1], m02 = r.m[2][0], m20 = r.m[0][2], m12 = r.m[2][1], m21 = r.m[1][2];
-    const float tr = m00 + m11 + m22;
-    Vec4 q;
-    if (tr > 0.0f) {
-        const float s = std::sqrt(tr + 1.0f) * 2.0f;
-        q = Vec4((m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25f * s);
-    } else if (m00 > m11 && m00 > m22) {
-        const float s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f;
-        q = Vec4(0.25f * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s);
-    } else if (m11 > m22) {
-        const float s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f;
-        q = Vec4((m01 + m10) / s, 0.25f * s, (m12 + m21) / s, (m02 - m20) / s);
-    } else {
-        const float s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f;
-        q = Vec4((m02 + m20) / s, (m12 + m21) / s, 0.25f * s, (m10 - m01) / s);
-    }
-    return q;
-}
+Vec4 mat3ToQuat(const Mat3& r) { return vec4Of(glm::quat_cast(glm::mat3(r))); }
 
-Mat3 mul(const Mat3& a, const Mat3& b) {
-    Mat3 r;
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) r.m[i][j] = a.m[i][0] * b.m[0][j] + a.m[i][1] * b.m[1][j] + a.m[i][2] * b.m[2][j];
-    return r;
-}
+Mat3 mul(const Mat3& a, const Mat3& b) { return b * a; }
 
-Vec3 mul(const Vec3& v, const Mat3& m) {
-    return Vec3(v.x * m.m[0][0] + v.y * m.m[1][0] + v.z * m.m[2][0], v.x * m.m[0][1] + v.y * m.m[1][1] + v.z * m.m[2][1],
-                v.x * m.m[0][2] + v.y * m.m[1][2] + v.z * m.m[2][2]);
-}
+Vec3 mul(const Vec3& v, const Mat3& m) { return m * v; }
 
-Mat3 transpose(const Mat3& m) {
-    Mat3 r;
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) r.m[i][j] = m.m[j][i];
-    return r;
-}
+Mat3 transpose(const Mat3& m) { return glm::transpose(glm::mat3(m)); }
 
-float determinant(const Mat3& m) {
-    return m.m[0][0] * (m.m[1][1] * m.m[2][2] - m.m[1][2] * m.m[2][1]) -
-           m.m[0][1] * (m.m[1][0] * m.m[2][2] - m.m[1][2] * m.m[2][0]) +
-           m.m[0][2] * (m.m[1][0] * m.m[2][1] - m.m[1][1] * m.m[2][0]);
-}
+float determinant(const Mat3& m) { return glm::determinant(glm::mat3(m)); }
 
 Mat3 inverse(const Mat3& m) {
-    const float d = determinant(m);
-    if (d == 0.0f) return Mat3();
-    Mat3 r;
-    const float k = 1.0f / d;
-    r.m[0][0] = (m.m[1][1] * m.m[2][2] - m.m[1][2] * m.m[2][1]) * k;
-    r.m[0][1] = (m.m[0][2] * m.m[2][1] - m.m[0][1] * m.m[2][2]) * k;
-    r.m[0][2] = (m.m[0][1] * m.m[1][2] - m.m[0][2] * m.m[1][1]) * k;
-    r.m[1][0] = (m.m[1][2] * m.m[2][0] - m.m[1][0] * m.m[2][2]) * k;
-    r.m[1][1] = (m.m[0][0] * m.m[2][2] - m.m[0][2] * m.m[2][0]) * k;
-    r.m[1][2] = (m.m[0][2] * m.m[1][0] - m.m[0][0] * m.m[1][2]) * k;
-    r.m[2][0] = (m.m[1][0] * m.m[2][1] - m.m[1][1] * m.m[2][0]) * k;
-    r.m[2][1] = (m.m[0][1] * m.m[2][0] - m.m[0][0] * m.m[2][1]) * k;
-    r.m[2][2] = (m.m[0][0] * m.m[1][1] - m.m[0][1] * m.m[1][0]) * k;
-    return r;
+    // A singular matrix gives zeros.
+    if (determinant(m) == 0.0f) return Mat3();
+    return glm::inverse(glm::mat3(m));
 }
 
-Mat4 transpose(const Mat4& m) {
-    Mat4 r;
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j) r.m[i][j] = m.m[j][i];
-    return r;
-}
+Mat4 transpose(const Mat4& m) { return glm::transpose(glm::mat4(m)); }
 
-float determinant(const Mat4& m) {
-    float det = 0.0f;
-    for (int c = 0; c < 4; ++c) {
-        Mat3 minor;
-        for (int i = 1; i < 4; ++i) {
-            int col = 0;
-            for (int j = 0; j < 4; ++j) {
-                if (j == c) continue;
-                minor.m[i - 1][col++] = m.m[i][j];
-            }
-        }
-        det += ((c % 2) ? -1.0f : 1.0f) * m.m[0][c] * determinant(minor);
-    }
-    return det;
-}
+float determinant(const Mat4& m) { return glm::determinant(glm::mat4(m)); }
 
 Mat4 inverse(const Mat4& m) {
-    // Gauss-Jordan with partial pivoting; a singular matrix gives zeros.
-    float a[4][8];
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            a[i][j] = m.m[i][j];
-            a[i][j + 4] = i == j ? 1.0f : 0.0f;
-        }
-    }
-    for (int c = 0; c < 4; ++c) {
-        int pivot = c;
-        for (int r = c + 1; r < 4; ++r) {
-            if (std::fabs(a[r][c]) > std::fabs(a[pivot][c])) pivot = r;
-        }
-        if (a[pivot][c] == 0.0f) return Mat4();
-        if (pivot != c) {
-            for (int j = 0; j < 8; ++j) std::swap(a[c][j], a[pivot][j]);
-        }
-        const float inv = 1.0f / a[c][c];
-        for (int j = 0; j < 8; ++j) a[c][j] *= inv;
-        for (int r = 0; r < 4; ++r) {
-            if (r == c) continue;
-            const float f = a[r][c];
-            if (f == 0.0f) continue;
-            for (int j = 0; j < 8; ++j) a[r][j] -= f * a[c][j];
-        }
-    }
-    Mat4 r;
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j) r.m[i][j] = a[i][j + 4];
-    return r;
+    if (determinant(m) == 0.0f) return Mat4();
+    return glm::inverse(glm::mat4(m));
 }
 
-Mat3 upper(const Mat4& m) {
-    Mat3 r;
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) r.m[i][j] = m.m[i][j];
-    return r;
-}
+Mat3 upper(const Mat4& m) { return glm::mat3(m); }
 
-Mat4 widen(const Mat3& m) {
-    Mat4 r = Mat4::identity();
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) r.m[i][j] = m.m[i][j];
-    return r;
-}
+Mat4 widen(const Mat3& m) { return glm::mat4(glm::mat3(m)); }
 
 // --- formatting ------------------------------------------------------------------------------------
 
@@ -791,8 +673,8 @@ void addMathBuiltins(Builtins& b) {
     }
 
     // Matrices and quaternions.
-    add(b, "ident", Type::Mat4, {}, [](Env&, const TNode&, void* o) { put(o, Mat4::identity()); });
-    add(b, "ident", Type::Mat3, {}, [](Env&, const TNode&, void* o) { put(o, Mat3::identity()); });
+    add(b, "ident", Type::Mat4, {}, [](Env&, const TNode&, void* o) { put(o, Mat4(1.0f)); });
+    add(b, "ident", Type::Mat3, {}, [](Env&, const TNode&, void* o) { put(o, Mat3(1.0f)); });
     add(b, "transpose", Type::Mat3, {Type::Mat3}, [](Env& e, const TNode& c, void* o) { put(o, transpose(arg<Mat3>(e, c, 0))); });
     add(b, "transpose", Type::Mat4, {Type::Mat4}, [](Env& e, const TNode& c, void* o) { put(o, transpose(arg<Mat4>(e, c, 0))); });
     add(b, "invert", Type::Mat3, {Type::Mat3}, [](Env& e, const TNode& c, void* o) { put(o, inverse(arg<Mat3>(e, c, 0))); });
@@ -807,24 +689,20 @@ void addMathBuiltins(Builtins& b) {
     add(b, "rotate", Type::Void, {Type::Mat4, Type::Float, Type::Vec3}, [](Env& e, const TNode& c, void*) {
         const Mat4 r = widen(quatToMat3(quatFromAxisAngle(arg<F>(e, c, 1), arg<Vec3>(e, c, 2))));
         Mat4& m = refOf<Mat4>(*c.lv, e);
-        m = m * r;
+        m = r * m;  // m, then the turn
     }, 1);
     add(b, "scale", Type::Void, {Type::Mat3, Type::Vec3}, [](Env& e, const TNode& c, void*) {
-        const Vec3 s = arg<Vec3>(e, c, 1);
-        Mat3 k;
-        k.m[0][0] = s.x;
-        k.m[1][1] = s.y;
-        k.m[2][2] = s.z;
+        const Mat3 k = glm::mat3(scaling(arg<Vec3>(e, c, 1)));
         Mat3& m = refOf<Mat3>(*c.lv, e);
         m = mul(m, k);
     }, 1);
     add(b, "scale", Type::Void, {Type::Mat4, Type::Vec3}, [](Env& e, const TNode& c, void*) {
         Mat4& m = refOf<Mat4>(*c.lv, e);
-        m = m * Mat4::scale(arg<Vec3>(e, c, 1));
+        m = scaling(arg<Vec3>(e, c, 1)) * m;
     }, 1);
     add(b, "translate", Type::Void, {Type::Mat4, Type::Vec3}, [](Env& e, const TNode& c, void*) {
         Mat4& m = refOf<Mat4>(*c.lv, e);
-        m = m * Mat4::translate(arg<Vec3>(e, c, 1));
+        m = translation(arg<Vec3>(e, c, 1)) * m;
     }, 1);
     add(b, "dihedral", Type::Mat3, {Type::Vec3, Type::Vec3}, [](Env& e, const TNode& c, void* o) {
         const Vec3 a = normalize(arg<Vec3>(e, c, 0)), d = normalize(arg<Vec3>(e, c, 1));
@@ -832,7 +710,7 @@ void addMathBuiltins(Builtins& b) {
         const float s = length(axis), cs = std::clamp(dot(a, d), -1.0f, 1.0f);
         if (s < 1e-7f) {
             if (cs > 0.0f) {
-                put(o, Mat3::identity());
+                put(o, Mat3(1.0f));
                 return;
             }
             // Opposite: half a turn about any axis across a.
@@ -848,13 +726,7 @@ void addMathBuiltins(Builtins& b) {
         Vec3 x = normalize(cross(up, z));
         if (length(x) == 0.0f) x = Vec3(1, 0, 0);
         const Vec3 y = cross(z, x);
-        Mat3 m;
-        for (int j = 0; j < 3; ++j) {
-            m.m[0][j] = x[j];
-            m.m[1][j] = y[j];
-            m.m[2][j] = z[j];
-        }
-        put(o, m);
+        put(o, Mat3(glm::mat3(x, y, z)));  // VEX's rows x, y, z: GLM's columns
     });
     add(b, "quaternion", Type::Vec4, {Type::Float, Type::Vec3}, [](Env& e, const TNode& c, void* o) {
         put(o, quatFromAxisAngle(arg<F>(e, c, 0), arg<Vec3>(e, c, 1)));
@@ -868,32 +740,21 @@ void addMathBuiltins(Builtins& b) {
         put(o, quatRotate(q, arg<Vec3>(e, c, 1)));
     });
     add(b, "qinvert", Type::Vec4, {Type::Vec4}, [](Env& e, const TNode& c, void* o) {
-        const Vec4 q = arg<Vec4>(e, c, 0);
-        const float n = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-        put(o, n > 0.0f ? Vec4(-q.x / n, -q.y / n, -q.z / n, q.w / n) : Vec4());
+        const Quat q = quatOf(arg<Vec4>(e, c, 0));
+        put(o, glm::dot(q, q) > 0.0f ? vec4Of(glm::inverse(q)) : Vec4());
     });
     add(b, "qconvert", Type::Mat3, {Type::Vec4}, [](Env& e, const TNode& c, void* o) { put(o, quatToMat3(arg<Vec4>(e, c, 0))); });
     add(b, "slerp", Type::Vec4, {Type::Vec4, Type::Vec4, Type::Float}, [](Env& e, const TNode& c, void* o) {
-        Vec4 a = normalizeOf(arg<Vec4>(e, c, 0)), d = normalizeOf(arg<Vec4>(e, c, 1));
+        // The shorter way round, at an even speed; the ends as unit quaternions.
+        const Vec4 a = normalizeOf(arg<Vec4>(e, c, 0)), d = normalizeOf(arg<Vec4>(e, c, 1));
         const float t = arg<F>(e, c, 2);
-        float cs = dotOf(a, d);
-        if (cs < 0.0f) {
-            d = opNeg(d);
-            cs = -cs;
-        }
-        if (cs > 0.9995f) {
-            put(o, normalizeOf(zipv(a, d, [t](float x, float y) { return x + (y - x) * t; })));
-            return;
-        }
-        const float th = std::acos(cs), s = std::sin(th);
-        const float wa = std::sin((1.0f - t) * th) / s, wb = std::sin(t * th) / s;
-        put(o, zipv(a, d, [wa, wb](float x, float y) { return x * wa + y * wb; }));
+        put(o, normalizeOf(vec4Of(glm::slerp(quatOf(a), quatOf(d), t))));
     });
     add(b, "eulertoquaternion", Type::Vec4, {Type::Vec3, Type::Int}, [](Env& e, const TNode& c, void* o) {
         const Vec3 r = arg<Vec3>(e, c, 0);
         const Vec4 qx = quatFromAxisAngle(r.x, Vec3(1, 0, 0)), qy = quatFromAxisAngle(r.y, Vec3(0, 1, 0)),
                    qz = quatFromAxisAngle(r.z, Vec3(0, 0, 1));
-        put(o, quatMul(qz, quatMul(qy, qx)));  // x first, then y, then z
+        put(o, vec4Of(quatOf(qz) * (quatOf(qy) * quatOf(qx))));  // x first, then y, then z
     });
 
     // Strings.

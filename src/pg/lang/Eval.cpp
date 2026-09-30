@@ -205,12 +205,12 @@ template <class T> T makeOf(const TNode& n, Env& e) {
         }
         return r;
     } else if constexpr (std::is_same_v<T, Mat3>) {
-        Mat3 r;
-        for (size_t i = 0; i < 9 && i < n.kids.size(); ++i) r.m[i / 3][i % 3] = ev<float>(*n.kids[i], e);
+        Mat3 r;  // VEX's rows, GLM's columns
+        for (size_t i = 0; i < 9 && i < n.kids.size(); ++i) r[static_cast<int>(i / 3)][static_cast<int>(i % 3)] = ev<float>(*n.kids[i], e);
         return r;
     } else if constexpr (std::is_same_v<T, Mat4>) {
         Mat4 r;
-        for (size_t i = 0; i < 16 && i < n.kids.size(); ++i) r.m[i / 4][i % 4] = ev<float>(*n.kids[i], e);
+        for (size_t i = 0; i < 16 && i < n.kids.size(); ++i) r[static_cast<int>(i / 4)][static_cast<int>(i % 4)] = ev<float>(*n.kids[i], e);
         return r;
     } else if constexpr (IsArray<T>::value) {
         T r;
@@ -554,14 +554,22 @@ template <class T> T ev(const TNode& n, Env& e) {
             if constexpr (std::is_same_v<T, Vec3>) {
                 const Vec3 v = ev<Vec3>(*n.kids[0], e);
                 if (n.sub == Type::Mat3) return mul(v, ev<Mat3>(*n.kids[1], e));
-                return ev<Mat4>(*n.kids[1], e).transformPoint(v);
+                return transformPoint(ev<Mat4>(*n.kids[1], e), v);
             } else if constexpr (std::is_same_v<T, Vec4>) {
-                return mul(ev<Vec4>(*n.kids[0], e), ev<Mat4>(*n.kids[1], e));
+                const Vec4 v = ev<Vec4>(*n.kids[0], e);
+                return mul(v, ev<Mat4>(*n.kids[1], e));
             }
             break;
         case Op::MatMat:
-            if constexpr (std::is_same_v<T, Mat3>) return mul(ev<Mat3>(*n.kids[0], e), ev<Mat3>(*n.kids[1], e));
-            else if constexpr (std::is_same_v<T, Mat4>) return ev<Mat4>(*n.kids[0], e) * ev<Mat4>(*n.kids[1], e);
+            // The left first, then the right: VEX's A * B is GLM's B * A.
+            if constexpr (std::is_same_v<T, Mat3>) {
+                const Mat3 a = ev<Mat3>(*n.kids[0], e);
+                return mul(a, ev<Mat3>(*n.kids[1], e));
+            } else if constexpr (std::is_same_v<T, Mat4>) {
+                const Mat4 a = ev<Mat4>(*n.kids[0], e);
+                const Mat4 b = ev<Mat4>(*n.kids[1], e);
+                return b * a;
+            }
             break;
         case Op::MatScale:
             if constexpr (isMat) return scalem(ev<T>(*n.kids[0], e), ev<float>(*n.kids[1], e));
