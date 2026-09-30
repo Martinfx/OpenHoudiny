@@ -61,15 +61,15 @@ Příklad **tarp** ([examples/sim/tarp.pgsim](../examples/sim/tarp.pgsim)):
   (`i@pin = abs(@P.x) > 1.17 || abs(@P.z) > 1.17;`). Lem dostane
   atribut `f@tear = 3`, takže vydrží třikrát víc a u rámu se netrhá.
 - **Cloth Solver:** plachtovina (Density 0,4, Stretch i Shear 20 000 N/m,
-  aby se neroztahovala ani do šikma), **Tear 0,8**, Damping 4, 40 podkroků.
+  aby se neroztahovala ani do šikma), **Tear 0,6**, Damping 4, 40 podkroků.
 - **RBD Solver:** tři dřevěné bedny (200 kg/m³) nízko nad plachtou a
   betonový blok (2400 kg/m³, 150 kg) vysoko. Jeho výstup **Collider** vede
   do **Colliders** Cloth Solveru.
 
 Bedny dopadnou do plachty, ta se pod nimi prohne, pruží a vrací je
 nahoru, až se usadí v prohlubni. Pak dopadne blok, plachtu natáhne víc,
-než vydrží, a prorazí ji. Plachta se vymrští, vyhodí bedny a jedna propadne
-dírou za blokem. Simulace trvá asi 60–70 ms na snímek.
+než vydrží, a prorazí ji. Plachta se vymrští, bedny nadskočí a jedna
+propadne dírou za blokem. Simulace trvá asi 60–70 ms na snímek.
 
 ![Plachta nese bedny (vlevo); betonový blok ji prorazil (vpravo)](img/tarp.jpg)
 
@@ -161,7 +161,11 @@ velkém kroku.
    animované objekty), jde v podkrocích plynule z místa, kde bylo na
    začátku snímku, do místa na jeho konci. Nepřeskočí do látky o celý
    snímek najednou.
-7. **Rychlost** = (nová poloha − stará) / h.
+7. **Rychlost** = (nová poloha − stará) / h. Bod, který se v podkroku
+   něčeho dotkl, se od toho neodrazí rychleji, než se ten povrch pohybuje.
+   O kolik ho kolize vysunula ven, to je oprava polohy, ne rychlost.
+   Jinak by bod hluboko v rychle letícím kusu vylétl stovkami m/s. Látka
+   se od povrchů prakticky neodráží.
 
 **Kusy RBD a látka obousměrně.** Kus je v kroku látky těleso s hmotností
 a momentem setrvačnosti svého tělesa v Joltu. V každém podkroku se sečte
@@ -202,7 +206,22 @@ bit po bitu stejný na jednom i na čtyřech vláknech.
   jako simulace bez přerušení.
 - Profil kroku (Frame::Profile) má vlastní položku **Cloth**.
 
-## 6. Ověřování
+## 6. Export
+
+- **USD:** `prototype sim tarp - --export plachta.usda` zapíše látku pod
+  `/World/cloth`. Plochy tvoří Mesh, lana BasisCurves; body mají normály
+  a rychlosti pro rozmazání pohybem. Každý snímek má síť ve své vrstvě
+  (value clips, [usd.md](usd.md)), takže roztržená látka má od snímku
+  roztržení nové body i plochy. Pixarova knihovna USD scénu otevře bez
+  nálezu validátorů a počty bodů a ploch sedí se snímky simulace.
+- **OBJ, PLY po snímcích:** uzel **Cloth Geometry** zapojený za Cloth
+  Solver vrátí látku jako geometrii. `--export-node` ji pak zapíše po
+  snímcích: `prototype sim tarp - --export out/plachta.$F4.obj
+  --export-node <jméno uzlu>`.
+- **Python:** `sim.current.cloth()` vrátí látku snímku jako geometrii
+  (body, `v`, `N`, plochy) s poli numpy ([python.md](python.md)).
+
+## 7. Ověřování
 
 `tests/test_cloth.cpp`:
 
@@ -221,11 +240,14 @@ bit po bitu stejný na jednom i na čtyřech vláknech.
 - lano se závažím se přetrhne na dvě čáry; nafouknutý balon praskne;
 - roztržená látka: 1 a 4 vlákna, stav, cache a zpět bit po bitu;
 - příklad tarp: bedny zůstanou na plachtě a samy ji neroztrhnou, blok ji
-  prorazí a spadne na zem, checkpoint pokračuje bit po bitu.
+  prorazí a spadne na zem, checkpoint pokračuje bit po bitu;
+- export do USD: látka v každé vrstvě snímku, po roztržení s odtrženými
+  body, v barvě plachty, bez atributů řešiče (`tests/test_usd.cpp`);
+- Python: `frame.cloth()` vrátí spadlou látku s `v` a `N`.
 
 Příklady projdou testem formátu a testem „všechny příklady běží“.
 
-## 7. Omezení
+## 8. Omezení
 
 - Kolize se kontrolují jen mezi body. Hrana může projít hranou, když je
   síť hrubá vůči tloušťce. Vellum kontroluje i hrany a trojúhelníky.
@@ -241,7 +263,7 @@ Příklady projdou testem formátu a testem „všechny příklady běží“.
   zatím jen balony.
 - Renderer kreslí látku neprůsvitnou, bez prosvítání tenké tkaniny.
 
-## 8. Odkazy
+## 9. Odkazy
 
 - M. Macklin, M. Müller, N. Chentanez: *XPBD: Position-Based Simulation of
   Compliant Constrained Dynamics*, MIG 2016.

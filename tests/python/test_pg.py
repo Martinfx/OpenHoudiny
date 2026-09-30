@@ -346,6 +346,27 @@ class Simulations(unittest.TestCase):
         self.assertIn("v", shown.points)
 
     @needs_numpy
+    def test_the_cloth_of_a_frame(self):
+        net = pg.Network()
+        grid = net.add("grid", sizex=1, sizez=1, rows=11, cols=11)
+        raised = net.add("transform", t=(0, 1, 0))
+        cloth = net.add("cloth_solver")
+        out = net.add("output", frames=20)
+        grid.connect(raised).connect(cloth)
+        net.connect(cloth, out)  # its Look
+        self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+        sim = net.simulate()
+        for f in sim.run(10):
+            pass
+        sheet = sim.current.cloth()
+        self.assertEqual(sheet.point_count, 121)
+        self.assertEqual(sheet.primitive_count, 100)
+        self.assertIn("v", sheet.points)
+        self.assertIn("N", sheet.points)
+        self.assertTrue(np.all(sheet.P[:, 1] < 1.0))  # it fell
+        self.assertTrue(np.all(sheet.points["v"][:, 1] < 0.0))
+
+    @needs_numpy
     def test_concrete_breaks_rough_over_a_plain_proxy(self):
         net = pg.Network()
         box = net.add("box", size=(2, 1, 0.3), center=(0, 0.5, 0))

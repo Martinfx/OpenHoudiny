@@ -807,6 +807,13 @@ class Frame:
     def rigid(self):
         return _Rigid(self._f)
 
+    def cloth(self):
+        """The Cloth Solver's cloth where its points are, with the velocity v
+        and normal N of each -- as Cloth Geometry gives it: torn, the points
+        split off with their own's attributes, the faces on them, the ropes
+        parted. Empty without cloth."""
+        return Geometry(self._f.cloth())
+
     def save(self, folder):
         """Into a cache folder, as frame.NNNN.pgframe. Returns the file."""
         os.makedirs(folder, exist_ok=True)

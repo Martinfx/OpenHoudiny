@@ -4,8 +4,8 @@ pgsim 1
 # giving under them and throwing them back up (the pieces of the RBD Solver
 # are its colliders, and they feel it). Then a block of concrete comes down:
 # the tarp stretches further than it holds (Tear) and rips open; the block
-# falls through, the tarp snaps back and throws the crates up, and one of
-# them follows the block. Its hem is sewn stronger (the attribute tear): it
+# falls through, the tarp snaps back, the crates jump, and one of them
+# follows the block. Its hem is sewn stronger (the attribute tear): it
 # does not tear where it is laced.
 node 1 grid 1 tarp 0 0
   param sizex 2.4
@@ -21,7 +21,7 @@ node 4 cloth_solver 1 cloth 690 0
   param stretch 20000
   param shear 20000
   param bend 2
-  param tear 0.8
+  param tear 0.6
   param thickness 0.02
   param friction 0.6
   param damping 4

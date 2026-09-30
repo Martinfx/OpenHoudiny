@@ -141,6 +141,7 @@ simulace čte snímky z cache.
 | voda | `frame.water.positions`, `.velocities` (float16), `.foam`, `.ids`, `.flow` (rychlost na mřížce, `[i, j, k, osa]`), `.surface()` (síť jako Liquid Surface), `.litres` |
 | déšť | `frame.rain.positions`, `.velocities`, `.ids`, `.droplet_positions`…, `.ripples()` |
 | tělesa | `frame.rigid.centres`, `.velocities` (středů), `.spins`, `.rotations` (x, y, z, w), `.translations`, `.vanished`, `.grit` (x, y, z, velikost), `.grit_velocities`, `.grit_ids`, `.grit_orient` (natočení každého zrnka: x, y, z, w), `.pieces()`; výztuž `.rebar()` (pruty jako lomené čáry s `width` a `v`), `.rebar_state` (1 prut z kusu vyšel, 2 je za ním přetržený), `.rebar_stations` (těleso, odkud, kam, prut); sklo `.grit_glass` (1 skleněná drť), `.unglued` (tělesa, kterým praskl spoj); síť vazeb `.network()` (bod na těleso, čára na spoj, `broken`, `time`), `.joint_state` (0 drží, 1 praskl, 2 nikdy nedržel), `.joint_time` (kdy praskl) |
+| látka | `frame.cloth()`: látka Cloth Solveru jako geometrie tam, kde jsou její body, s `v` a `N`; roztržená s odtrženými body a přepojenými plochami, rozpojená lana jako samostatné čáry ([cloth.md](cloth.md)) |
 | kamera | `sim.camera()`: poloha, otočení, ohnisko, rozměry obrazu v tomto snímku |
 | cache | `frame.save("cache")`, `sim.write_cache_info("cache")`, `sim.cache("cache", frames=120)`, `pg.Frame.read("cache", 7)` |
 | USD | `with pg.UsdExport("shot.usda", sim) as usd:` a po každém kroku `usd.add()`, nebo `sim.export_usd("shot.usda")` ([usd.md](usd.md)) |

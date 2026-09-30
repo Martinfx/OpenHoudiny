@@ -1,6 +1,7 @@
 #include "pg/sim/UsdExport.h"
 
 #include "pg/io/Vdb.h"
+#include "pg/sim/Cloth.h"
 #include "pg/sim/Rigid.h"
 #include "pg/sim/WaterMesh.h"
 
@@ -193,20 +194,40 @@ struct UsdExport::Impl {
         }
     }
 
-    /// The displayed geometry at frame f: its mesh, curves and points, as
-    /// geometryPrim makes them.
-    void sampleGeometry(usda::Stage& layer, int f, const Geometry& geo) {
+    /// Geometry at frame f under the prim `at`: its mesh, curves and points,
+    /// as geometryPrim makes them.
+    void sampleShapes(usda::Stage& layer, const std::string& at, int f, const Geometry& geo) {
         std::vector<uint32_t> all(geo.primitiveCount());
         for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<uint32_t>(i);
         std::vector<int32_t> scratch;
         const usda::MeshText mesh = usda::meshText(geo, all, Vec3(), nullptr, scratch);
         const usda::CurvesText curves = usda::curvesText(geo);
         const usda::PointsText points = usda::pointsText(geo);
-        const std::string at = geometryPath();
         if (!mesh.empty()) sample(layer, at + "/mesh", "Mesh", f, usda::fields(mesh));
         if (!curves.empty()) sample(layer, at + "/curves", "BasisCurves", f, usda::fields(curves));
         if (!points.empty()) sample(layer, at + "/points", "Points", f, usda::fields(points));
         primAt(layer.prims, at);  // there, even when it is empty now
+    }
+
+    /// The displayed geometry at frame f.
+    void sampleGeometry(usda::Stage& layer, int f, const Geometry& geo) { sampleShapes(layer, geometryPath(), f, geo); }
+
+    /// The cloth at frame f, where its points are -- torn, as it is torn --
+    /// with their normals and velocities: its faces a Mesh, its ropes
+    /// BasisCurves. What has no colour of its own is in the look's.
+    bool sampleCloth(usda::Stage& layer, int f, const ClothFrame& c, const Vec3& color) {
+        const std::shared_ptr<Geometry> cloth = posedCloth(c);
+        if (!cloth || cloth->primitiveCount() == 0) return false;
+        if (!cloth->points().contains("Cd") && !cloth->vertices().contains("Cd") && !cloth->primitives().contains("Cd") &&
+            !cloth->detail().contains("Cd")) {
+            cloth->detail().create("Cd", AttrType::Vec3).write<Vec3>()[0] = color;
+        }
+        // Not what only the solver reads: which points are pinned, how heavy
+        // they are, how easily they tear.
+        for (const char* solverOnly : {"pin", "mass", "tear"}) cloth->points().erase(solverOnly);
+        sampleShapes(layer, "/World/cloth", f, *cloth);
+        for (const Vec3& p : cloth->positions()) scene.grow(p);
+        return true;
     }
 
     /// The grit at frame f: a point a bit, as wide as it is, with its
@@ -409,7 +430,8 @@ UsdExport::UsdExport(std::string path, std::string geometryName, float fps) : im
     impl_->fps = fps > 0.0f ? fps : 30.0f;
     impl_->geometryName = usda::identifier(geometryName.empty() ? "geometry" : geometryName);
     // Not the name of another prim of the stage.
-    for (const char* taken : {"Looks", "pieces", "grit", "rebar", "water", "rain", "gas", "camera", "sun", "sky", "ground"}) {
+    for (const char* taken :
+         {"Looks", "pieces", "grit", "rebar", "cloth", "water", "rain", "gas", "camera", "sun", "sky", "ground"}) {
         if (impl_->geometryName == taken) impl_->geometryName += "_geometry";
     }
     const fs::path p(impl_->path);
@@ -515,6 +537,14 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
             box.grow(d.origin() + d.size());
             m.scene.grow(box);
         }
+    }
+
+    // The cloth -- when it is drawn.
+    if (!frame.cloth.empty() && look.cloth && m.sampleCloth(layer, f, frame.cloth, look.clothColor)) {
+        Impl::ClipSet& set = m.clipSets["/World/cloth"];
+        set.frames.push_back(f);
+        set.present.push_back(f);
+        named = true;
     }
 
     // The rain.
@@ -737,6 +767,11 @@ usda::Stage UsdExport::stage() const {
         bars.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&m.rebarColor, 1))).metadata =
             usda::interpolation("constant");
         bars.relate("material:binding", kSurface);
+    }
+    if (m.clipSets.count("/World/cloth")) {
+        Prim& cloth = m.clippedPrim(world, "/World/cloth", "Xform", m.clipSets.at("/World/cloth").present);
+        cloth.metadata.push_back(kBinding);
+        cloth.relate("material:binding", kSurface);
     }
     if (m.clipSets.count("/World/water")) {
         Prim& water = m.clippedPrim(world, "/World/water", "Mesh", m.clipSets.at("/World/water").present);

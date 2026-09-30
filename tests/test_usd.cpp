@@ -662,3 +662,55 @@ TEST(usd_export_water_and_rain_go_to_a_layer_a_frame) {
     CHECK(manifest.find("over \"droplets\"") != std::string::npos);
     CHECK(manifest.find("float[] primvars:foam\n") != std::string::npos);
 }
+
+TEST(usd_export_the_cloth_goes_to_a_layer_a_frame_torn_as_it_is) {
+    // The tarp: the cloth where its points are each frame, in its layer --
+    // and once the block has torn it, with the points split off and the
+    // faces on them.
+    TempFolder dir("usd_cloth");
+    sim::Network net;
+    CHECK(sim::Network::example("tarp", net));
+    sim::Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);
+    CHECK(c.ok);
+    sim::WorldSolver solver(c.world);
+    sim::UsdExport usd(dir / "tarp.usda", "geometry", 1.0f / c.world.timeStep);
+    std::string error;
+    sim::Frame first, last;
+    for (int f = 1; f <= 34; ++f) {
+        solver.step();
+        if (f > 2 && f < 33) continue;
+        last = solver.capture();
+        if (f == 1) first = last;
+        CHECK(usd.add(last, nullptr, nullptr, c.lookAt(f), error));
+    }
+    CHECK(usd.finish(error));
+    CHECK(last.cloth.torn());
+    const usda::Stage s = usd.stage();
+    const usda::Prim* mesh = find(s, {"World", "cloth", "mesh"});
+    CHECK(mesh != nullptr);
+    if (!mesh) return;
+    CHECK_EQ(mesh->type, std::string("Mesh"));
+    for (const char* name : {"points", "normals", "velocities", "faceVertexCounts", "faceVertexIndices", "extent"}) {
+        const usda::Attribute* a = attribute(*mesh, name);
+        CHECK(a && a->value.empty());  // declared; the values are the layers'
+    }
+    const std::string text = s.text();
+    CHECK(text.find("string primPath = \"/World/cloth\"") != std::string::npos);
+    CHECK(text.find("rel material:binding = </World/Looks/surface>") != std::string::npos);
+    // Frame 1: as many points as the tarp has; frame 34: those torn off too,
+    // in the tarp's colour, what only the solver reads left out.
+    auto pointsIn = [&](const std::string& file, int f) {
+        const std::string layer = fileText(dir / ("tarp_frames/" + file));
+        const size_t at = layer.find("point3f[] points.timeSamples");
+        if (at == std::string::npos) return size_t(0);
+        const size_t open = layer.find(std::to_string(f) + ": ", at);
+        return parseTuples(layer.substr(open, layer.find('\n', open) - open)).size();
+    };
+    CHECK_EQ(pointsIn("tarp.0001.usda", 1), first.cloth.positions.size());
+    CHECK_EQ(pointsIn("tarp.0034.usda", 34), last.cloth.positions.size());
+    CHECK(last.cloth.positions.size() > first.cloth.positions.size());
+    const std::string layer = fileText(dir / "tarp_frames/tarp.0034.usda");
+    CHECK(layer.find("primvars:displayColor") != std::string::npos);
+    CHECK(layer.find("primvars:pin") == std::string::npos);
+    CHECK(layer.find("primvars:tear") == std::string::npos);
+}

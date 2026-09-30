@@ -720,6 +720,7 @@ void ClothSolver::collide(float h) {
     pg::parallelFor(n, 512, [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
             touched_[i] = -1;
+            leans_[i] = 0;
             if (w_[i] <= 0.0f) continue;
             bool held = false;  // by the floor, or by what does not give
             if (s.floor && x_[i].y < r) {
@@ -727,6 +728,9 @@ void ClothSolver::collide(float h) {
                 x_[i].y = r;
                 rub(i, Vec3(0.0f, 1.0f, 0.0f), depth, Vec3());
                 held = true;
+                leans_[i] = 1;
+                leanNormal_[i] = Vec3(0.0f, 1.0f, 0.0f);
+                leanVelocity_[i] = Vec3();
             }
             for (size_t c = 0; c < shapes_.size(); ++c) {
                 // Far outside the ball round it: not near it.
@@ -739,7 +743,11 @@ void ClothSolver::collide(float h) {
                 const Vec3 was = x_[i];
                 x_[i] += normal * (r - d);
                 const Vec3 moving = drift_.empty() ? Vec3() : kick_[c] + cross(twist_[c], x_[i] - shapes_[c].center());
-                rub(i, normal, r - d, scene_.colliders[c].velocityAt(x_[i]) + moving);
+                const Vec3 surface = scene_.colliders[c].velocityAt(x_[i]) + moving;
+                rub(i, normal, r - d, surface);
+                leans_[i] = 1;
+                leanNormal_[i] = normal;
+                leanVelocity_[i] = surface;
                 // A piece: how far it moved the point, what the point's
                 // momentum it took.
                 if (scene_.colliders[c].mass > 0.0f) {
@@ -824,6 +832,9 @@ void ClothSolver::step() {
     std::vector<Vec3> accel(n);
     touched_.assign(n, -1);
     pushed_.assign(n, Vec3());
+    leans_.assign(n, 0);
+    leanNormal_.assign(n, Vec3());
+    leanVelocity_.assign(n, Vec3());
     const float fade = 1.0f / (1.0f + s.damping * h);
     for (int k = 0; k < steps; ++k) {
         const float t = static_cast<float>(k + 1) / static_cast<float>(steps);
@@ -846,6 +857,9 @@ void ClothSolver::step() {
             accel.resize(n);
             touched_.resize(n, -1);
             pushed_.resize(n);
+            leans_.resize(n, 0);
+            leanNormal_.resize(n);
+            leanVelocity_.resize(n);
         }
         if (!balloons_.empty()) solveBalloons(h);
         if (s.selfCollision && count > 0) selfCollide();
@@ -862,7 +876,16 @@ void ClothSolver::step() {
         }
         collide(h);
         pg::parallelFor(n, 2048, [&](size_t begin, size_t end) {
-            for (size_t i = begin; i < end; ++i) v_[i] = (x_[i] - prev_[i]) * (fade / h);
+            for (size_t i = begin; i < end; ++i) {
+                v_[i] = (x_[i] - prev_[i]) * (fade / h);
+                // Put out of what it went into, it does not spring off it:
+                // no faster away from it than it goes -- how far it was put
+                // out is no speed (cloth hardly bounces).
+                if (!leans_[i]) continue;
+                const Vec3 off = v_[i] - leanVelocity_[i];
+                const float away = dot(off, leanNormal_[i]);
+                if (away > 0.0f) v_[i] = v_[i] - leanNormal_[i] * away;
+            }
         });
         time_ += h;
     }

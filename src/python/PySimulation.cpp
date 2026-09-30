@@ -304,6 +304,11 @@ void bindSimulation(py::module_& m) {
             if (p.f->rigid.empty() || !p.f->rigid.pieces) return PyGeometry();
             return PyGeometry(sim::posedPieces(p.f->rigid));
         })
+        .def("cloth", [](const PyFrame& p) {
+            // Where its points are, with v and N; torn, as it is torn.
+            const std::shared_ptr<Geometry> g = p.f->cloth.empty() ? nullptr : sim::posedCloth(p.f->cloth);
+            return g ? PyGeometry(g) : PyGeometry();
+        })
         .def("network", [](const PyFrame& p) { return PyGeometry(sim::rigidNetwork(p.f->rigid)); })
         .def("joint_state", [](const PyFrame& p) {
             const auto& v = p.f->rigid.jointState;

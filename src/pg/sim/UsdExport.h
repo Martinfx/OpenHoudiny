@@ -18,6 +18,10 @@
 //   /World/rebar     the steel bars in the pieces, where the pieces have taken
 //                    them -- bent between two, torn -- linear BasisCurves as
 //                    thick as they are, with velocities
+//   /World/cloth     the Cloth Solver's cloth where its points are, with their
+//                    normals and velocities: its faces a Mesh, its ropes
+//                    BasisCurves; torn, as it is torn -- the points split off,
+//                    the faces on them
 //   /World/water     the water's surface: a closed Mesh with normals,
 //                    velocities and primvars:foam (WaterMesh.h) -- unless
 //                    the Water Look hides it
@@ -33,7 +37,7 @@
 //                    the water's, the rain's
 //
 // What is large and new every frame -- the water, the rain, the grit, the
-// bars, the displayed geometry when it changes -- goes to a layer of its own for each
+// bars, the cloth, the displayed geometry when it changes -- goes to a layer of its own for each
 // frame, written as the frame comes (shot_frames/shot.0001.usda): the stage
 // takes their values from them as USD's value clips, declared in
 // shot_frames/shot.manifest.usda. A shot of any length never has to fit in

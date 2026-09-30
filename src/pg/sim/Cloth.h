@@ -211,6 +211,8 @@ private:
     std::vector<float> tearOf_;               // each point of the geometry: its attribute tear
     std::vector<int32_t> touched_;            // each point: the piece collider it touched this substep
     std::vector<Vec3> pushed_;                // ... and how far that moved it
+    std::vector<uint8_t> leans_;              // each point: it touched something this substep
+    std::vector<Vec3> leanNormal_, leanVelocity_;  // ... its surface there, and how fast that goes
     std::vector<Vec3> drift_, kick_, twist_;  // each collider that gives: moved, sped up, turned faster by the cloth this step
     std::vector<Reaction> reactions_;
     std::vector<float> w_;                    // 1 / mass; 0 pinned

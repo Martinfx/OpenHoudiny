@@ -57,6 +57,7 @@ Kde scénu otevřít:
           /glass             GeomSubset: plochy skla, s materiálem skla
       /cracks                … trhliny skla: neviditelné do snímku, kdy tabule praskla
   /grit                    Points: drť                        ┐
+  /cloth/mesh, /curves     Mesh a BasisCurves: látka a lana   │
   /water                   Mesh: povrch vody                  │ hodnoty ze
   /rain/drops              Points: kapky                      │ souborů po
   /rain/droplets           Points: kapičky odstřiků           ┘ snímcích
@@ -83,6 +84,7 @@ pond_gas/pond_gas.0001.vdb …   prach, je-li
 | barva | `Cd` rohu, bodu, primitiva nebo celé geometrie jako `displayColor`. Zapíše se jednou pro celý objekt, jednou na plochu, nebo jednou na roh, podle toho, jak se barva mění. |
 | tělesa | Tvar tělesa (barvy jako v náhledu) se zapíše **jednou**, posunutý do středu tělesa. Každý snímek pak jen `translate` a `orient`. Rozmetané těleso má od toho snímku `visibility = invisible`. |
 | drť | Body se šířkou podle velikosti zrnka, v barvě řezu o odstín tmavší, s rychlostí (`velocities`), číslem (`ids`) a natočením (`primvars:orient`, `quatf[]` po bodech). Číslo dostane zrnko při vyhození a drží ho, dokud je ve scéně, takže ho renderer sleduje ze snímku na snímek a rozmaže pohybem. Podle natočení natočí instancer kamínek, který na zrnko postaví. Cache starší než formát 4 čísla ani rychlosti nemá, starší než formát 9 natočení. Než první zrnko vyletí, je drť neviditelná. |
+| látka | Látka Cloth Solveru tam, kde jsou její body, s normálami (`normals`) a rychlostmi (`velocities`) pro rozmazání pohybem. Plochy tvoří Mesh, lana BasisCurves. Barva je z `Cd` geometrie, jinak z parametru Color. Každý snímek má celou síť ve své vrstvě včetně topologie. Roztržená látka má od snímku, kdy se roztrhla, víc bodů (odtržené kopie) a plochy přepojené na ně ([cloth.md](cloth.md)). Atributy, které čte jen řešič (`pin`, `mass`, `tear`), se nezapisují. |
 | voda | Povrch vody jako uzavřená síť čtyřúhelníků, stejný jako z uzlu Liquid Surface ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)): hladké normály, `velocities` z rychlosti vody (cache od formátu 5), `primvars:foam` (0 až 1) pro bílou pěnu, vlnky od deště na hladině. Uzavřená i u dna a stěn, aby jí renderer lámal světlo. Materiál `water`: barva z Water Looku, průhlednost 0,35, drsnost 0,02, index lomu 1,33. Když Water Look povrch skrývá (Surface vypnuté), voda se nezapíše. |
 | déšť | Kapky a kapičky odstřiků jako dvoje Points s číslem (`ids`) a rychlostí (`velocities`); kapka je široká 2 mm, kapička 1 mm. Renderer s motion blurem z nich podle rychlosti udělá čáry, jako je kreslí náhled. Materiál `rain`: barva a průhlednost z Looku deště. |
 | prach | Každý snímek zapíše jeden VDB soubor do složky `<jméno>_gas/` vedle scény. Cesty jsou relativní, takže složka jde přesunout spolu se scénou. |

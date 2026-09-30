@@ -485,3 +485,4 @@ TEST(cloth_catches_the_crates_and_the_block_tears_it) {
     CHECK(resumed.cloth()->positions() == w.cloth()->positions());
 }
 
+
