@@ -14,7 +14,9 @@
 //   polylines  the open primitives, as line segments in their colour;
 //   points     those no primitive uses, as dots: pscale wide where they have
 //              one, else a few pixels -- a glass chip (a point attribute
-//              glass of 1) glints instead;
+//              glass of 1) glints instead; a point that stands for a
+//              prototype (Instances.h) is not a dot: its prototype's
+//              polygons are drawn there, instanced (DisplayInstances);
 //   volumes    a dot in each voxel that is not empty -- blue to yellow as
 //              the value grows -- and the box round the volume.
 //
@@ -66,6 +68,24 @@ struct DisplayGeometry {
 /// `faces`, the polygons that are not glass are left out of `triangles`
 /// (a DisplayMesh draws them) -- the box still goes round them.
 DisplayGeometry displayOf(const Geometry& geo, size_t maxDots = 400000, bool faces = true);
+
+/// What stands on the points of a geometry (Instances.h), as the renderer
+/// draws it: each prototype some point stands for -- its polygons once on
+/// the GPU -- and where it goes, twelve floats an instance: its place and
+/// size, its turn (a quaternion x, y, z, w), its tint and 1.
+struct DisplayInstances {
+    static constexpr size_t kFloats = 12;
+    std::vector<GeometryPtr> prototypes;
+    std::vector<std::vector<float>> placements;  ///< for each of `prototypes`
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};  ///< the box round them all
+
+    size_t count() const {
+        size_t n = 0;
+        for (const auto& p : placements) n += p.size() / kFloats;
+        return n;
+    }
+};
+DisplayInstances instancesOf(const Geometry& geo);
 
 /// The normal of each corner of `triangles` (three point indices each), in
 /// order: the faces round its point that bend less than `crease` degrees

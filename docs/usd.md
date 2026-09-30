@@ -51,6 +51,8 @@ Kde scénu otevřít:
   /Looks/water, /rain      Material: voda (průhledná, hladká, ior 1,33), déšť
   /Looks/glass             Material: sklo (čiré, hladké, ior 1,5), je-li v kusech
   /<uzel>                  zobrazená geometrie: mesh, curves, points
+      /instances             PointInstancer: tráva, stromy jako instance
+          /Prototypes/proto_0 …  … prototypy, jednou
   /pieces/body_0000 …      tělesa RBD Solveru: Xform (translate, orient)
       /mesh                  … nad tvarem tělesa kolem jeho středu
           /inside            GeomSubset: plochy, které vyřízl lom
@@ -80,7 +82,7 @@ pond_gas/pond_gas.0001.vdb …   prach, je-li
 
 | Prim | Co obsahuje |
 |---|---|
-| geometrie | Zobrazený uzel podle svého jména (`street`, `city`). Uzavřené polygony jsou Mesh bez subdivize, otevřené čáry lineární BasisCurves a volné body Points. Body mají šířku podle `pscale`, `v` jako `velocities` a `id` jako `ids`; `v` meshe jsou také `velocities`. Ostatní atributy bodů (čísla, celá čísla, vektory, třeba `foam`) jdou jako primvars (`primvars:foam`). Geometrie, která se nemění, je ve scéně jednou; když se změní, je v souborech snímků, ve kterých se změnila. |
+| geometrie | Zobrazený uzel podle svého jména (`street`, `city`). Uzavřené polygony jsou Mesh bez subdivize, otevřené čáry lineární BasisCurves a volné body Points. Body mají šířku podle `pscale`, `v` jako `velocities` a `id` jako `ids`; `v` meshe jsou také `velocities`. Ostatní atributy bodů (čísla, celá čísla, vektory, třeba `foam`) jdou jako primvars (`primvars:foam`). Instance (body, které zastupují prototypy — tráva z Grass, stromy s Output Instances) jsou PointInstancer `instances`: prototypy ve scope `Prototypes` pod ním, `protoIndices`, `positions`, `orientations`, `scales`, `primvars:tint`, `ids` ([vegetation.md](vegetation.md)). Geometrie, která se nemění, je ve scéně jednou; když se změní, je v souborech snímků, ve kterých se změnila — prototypy instancí zůstávají ve scéně, ve snímcích je jen to, jak instance stojí. |
 | barva | `Cd` rohu, bodu, primitiva nebo celé geometrie jako `displayColor`. Zapíše se jednou pro celý objekt, jednou na plochu, nebo jednou na roh, podle toho, jak se barva mění. |
 | tělesa | Tvar tělesa (barvy jako v náhledu) se zapíše **jednou**, posunutý do středu tělesa. Každý snímek pak jen `translate` a `orient`. Rozmetané těleso má od toho snímku `visibility = invisible`. |
 | drť | Body se šířkou podle velikosti zrnka, v barvě řezu o odstín tmavší, s rychlostí (`velocities`), číslem (`ids`) a natočením (`primvars:orient`, `quatf[]` po bodech). Číslo dostane zrnko při vyhození a drží ho, dokud je ve scéně, takže ho renderer sleduje ze snímku na snímek a rozmaže pohybem. Podle natočení natočí instancer kamínek, který na zrnko postaví. Cache starší než formát 4 čísla ani rychlosti nemá, starší než formát 9 natočení. Než první zrnko vyletí, je drť neviditelná. |
@@ -211,7 +213,7 @@ Testy jsou v `tests/test_usd.cpp` (9):
 
 | Soubor | Co dělá |
 |---|---|
-| `src/pg/io/Usda.h` | Zapisovač USDA: hodnoty jako text, prim (`def` i `over`), stage, časové vzorky, `clips`. Geometrie jako Mesh, BasisCurves a Points (`geometryPrim`, `geometryStage`), její atributy snímku (`fields`) a primvars z atributů bodů (`pointPrimvars`). |
+| `src/pg/io/Usda.h` | Zapisovač USDA: hodnoty jako text, prim (`def` i `over`), stage, časové vzorky, `clips`. Geometrie jako Mesh, BasisCurves a Points (`geometryPrim`, `geometryStage`), instance jako PointInstancer (`instancerPrim`, `addPrototypes`), její atributy snímku (`fields`) a primvars z atributů bodů (`pointPrimvars`). |
 | `src/pg/io/Export.cpp` | `.usda` ve `writeGeometry`: geometrie jako samostatná scéna |
 | `src/pg/sim/UsdExport.h` | Záběr simulace: snímky přicházejí po jednom (`add`) a vrstva každého se hned zapíše; scéna a manifest se zapíší na konci (`finish`) |
 | `src/pg/sim/WaterMesh.h` | Povrch vody snímku jako síť (`waterMesh`), stejný jako z uzlu Liquid Surface |

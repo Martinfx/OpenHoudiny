@@ -28,6 +28,7 @@ stejné, na kterém stojí `pgdemo`. Geometrie se:
 ./build/prototype --example foreach_city       # městský blok: smyčka For-Each přes 25 věží
 ./build/prototype --example tree_shapes        # sedm druhů stromů z uzlu Tree (trees.md)
 ./build/prototype --example forest             # les na kopci ve větru
+./build/prototype --example meadow             # louka u lesa: tráva, keře a stromy jako instance (vegetation.md)
 ./build/prototype sim rock_garden rocks.png    # bez okna: poslední snímek do PNG
 ./build/prototype sim liquid_points out/p.png --every 5 --set look.surface=on
 ```
@@ -44,7 +45,8 @@ nastaveným na ni.
 | **Grid** | Mřížka čtyřúhelníků v rovině xz, stěny nahoru (+y) |
 | **Line** | Otevřená lomená čára bodů |
 | **Point Cloud** | Volné body v krychli, stejné pro stejné seed |
-| **Tree** | Strom, jak roste rostlina: kmen (i rozdělený do vůdčích větví), až tři úrovně větví kolem rodiče o zlatý úhel, ohnuté gravitací a ke světlu, listy na větvičkách; sedm tvarů koruny (smrk, dub, bříza, topol, akácie, vrba, lípa); na každém bodě vstupu jeden strom (les, každý jiný podle `id`); síť (kůra, listy, `flex` pro vítr) nebo kostra (osy a body listů s `orient`). Viz [trees.md](trees.md) |
+| **Tree** | Strom, jak roste rostlina: kmen (i rozdělený do vůdčích větví), až tři úrovně větví kolem rodiče o zlatý úhel, ohnuté gravitací a ke světlu, listy na větvičkách; sedm tvarů koruny (smrk, dub, bříza, topol, akácie, vrba, lípa); na každém bodě vstupu jeden strom (les, každý jiný podle `id`); síť (kůra, listy, `flex` pro vítr), kostra (osy a body listů s `orient`), nebo instance: Variants stromů a bod pro každý strom lesa. Viz [trees.md](trees.md) |
+| **Grass** | Tráva: trsy stébel z jednoho kořene, stébla se zužují, naklánějí a ohýbají, od kořene tmavá, ke špičce světlá, některá suchá; po povrchu Density trsů na m² jako instance (Variants trsů jednou, bod pro každý trs s `orient`, `pscale`, `tint`), podle atributu hustoty a sklonu; bez vstupu jeden trs. Viz [vegetation.md](vegetation.md) |
 | **File** | Body, polygony a čáry ze souboru OBJ; relativní cesta od složky sítě; soubor, který se změní, se načte znovu |
 | **Transform** | Posun, rotace, měřítko po osách a celkové; rotace a měřítko kolem bodu **Pivot** (třeba hrany, přes kterou se věc převrací) |
 | **Merge** | Spojí geometrie ve vstupu, který bere libovolně spojů — v pořadí spojů |
@@ -59,8 +61,9 @@ nastaveným na ni.
 | **Sculpt** | Tvar ze štětce ve viewportu (**U**): vytlačit a zatlačit (Push / Pull), uhladit (Smooth, okraje drží čáru), chytit a táhnout (Grab), zarovnat do roviny (Flatten); kapky jako místa, každá na povrchu, jak ho nechaly kapky před ní; tah se počítá přírůstkově, jen z nových kapek |
 | **Point / Primitive / Detail Wrangle** | Kód nad každým bodem, primitivem, nebo jednou nad celou geometrií: posouvá, barví, vyrábí atributy, čte sousedy a další vstupy, staví a maže geometrii ([wrangle.md](wrangle.md)) |
 | **Normal** | Normály bodů `N`, průměr stěn kolem bodu vážený plochou |
-| **Scatter** | Body rozházené po polygonech úměrně ploše, deterministicky podle seed; barvy a další atributy se interpolují z rohů, `N` ze stěny |
-| **Copy to Points** | Kopie geometrie na každý bod druhého vstupu: velikost `pscale` × Scale, natočená podle `orient` bodu (kvaternion x, y, z, w — třeba drti z RBD Pieces), jinak +y do `N` (Align), s atributy bodu (kromě P, N, pscale, orient) |
+| **Scatter** | Body rozházené po polygonech úměrně ploše — počet (Count), nebo na m² (Density) —, deterministicky podle seed; barvy a další atributy se interpolují z rohů, `N` ze stěny; pravidla: atribut 0–1, jaký podíl bodů kde zůstane, žádné na plochách strmějších než Max Slope, žádný blíž než Min Distance k jinému ([vegetation.md](vegetation.md)) |
+| **Copy to Points** | Kopie geometrie na každý bod druhého vstupu: velikost `pscale` × Scale, natočená podle `orient` bodu (kvaternion x, y, z, w — třeba drti z RBD Pieces), jinak +y do `N` (Align), s atributy bodu (kromě P, N, pscale, orient, `tint` násobí barvy); Piece Attribute rozdělí geometrii na kusy a bod dostane svůj; **Instance**: body, z nichž každý kopii zastupuje, geometrie jednou ([vegetation.md](vegetation.md)) |
+| **Unpack** | Z instancí (bodů, které zastupují prototypy — Grass, Tree s Output Instances, Copy to Points s Instance) udělá kopie: geometrii, kterou mohou měnit všechny uzly |
 | **Null** | Nic nemění: jméno, na které se dá ukázat, konec řetězce |
 | **Connectivity** | Očísluje souvislé kusy (primitivy, které sdílejí body, jsou jeden kus): celočíselný atribut `class` na primitivech nebo bodech, kusy od 0 v pořadí prvních primitiv |
 | **Fuse** | Body blíž než Distance spojí v jeden (uprostřed nich), primitivy je následují; co se zhroutí (trojúhelník ze dvou bodů), zmizí |

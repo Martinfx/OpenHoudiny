@@ -359,6 +359,11 @@ src/pg/core/     Types      vektory, matice, typy atributů
                  Tree       strom, jak roste (Weber a Penn): kmen s vidlicí, úrovně větví
                             kolem rodiče o zlatý úhel, tvar koruny, listy; náhodná čísla
                             každé části zvlášť; síť (trubky, listy, flex) nebo kostra
+                 Grass      trs trávy: stébla z jednoho kořene, zužující se, nakloněná
+                            a ohnutá, barva od kořene ke špičce, suchá stébla, flex
+                 Instances  body, které zastupují prototypy geometrie (instance, orient,
+                            pscale, tint): umístění, kopie na body (copiesOnPoints),
+                            Unpack, obálky; kvaterniony; prototypy drží Geometry (COW)
 src/pg/lang/     Parse      lexer a parser do AST, kontrola jmen a počtu argumentů
                  Check      typová kontrola proti geometrii: vazby atributů, přetížení
                  Eval       interpret typovaného stromu
@@ -371,9 +376,12 @@ src/pg/nodes/    Generators grid, line, pointcloud
                             attribcreate, groupbox, blast
                  Edit       groupcreate, edit (s měkkým poloměrem), attribpaint, sculpt:
                             co udělá výběr, úchyt a štětec ve viewportu
-                 Surface    file (OBJ), scatter, normal, copytopoints, color
+                 Surface    file (OBJ), scatter (počet i hustota, pravidla: podíl z atributu,
+                            sklon, odstup; scatterPoints), normal, copytopoints (i instance
+                            a kusy podle atributu), unpack, color
                  Trees      tree: strom z Tree.h, nebo jeden na každém bodě vstupu (les),
-                            stromy paralelně a spojené v pořadí bodů
+                            stromy paralelně a spojené v pořadí bodů; instance: varianty
+                 Grass      grass: trsy z Grass.h po povrchu jako instance (varianty)
                  Wrangle    uzly pointwrangle a attribwrangle (body, primitivy, rohy, detail)
                  Topology   connectivity, fuse, polyextrude, subdivide (Catmull-Clark),
                             clip s uzavřením řezu, attribtransfer; nové body jako váhy starých

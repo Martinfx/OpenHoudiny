@@ -147,6 +147,18 @@ void Geometry::addVolume(Volume volume) {
     volumes_->push_back(std::move(volume));
 }
 
+const std::vector<GeometryPtr>& Geometry::prototypes() const {
+    static const std::vector<GeometryPtr> none;
+    return prototypes_ ? *prototypes_ : none;
+}
+
+size_t Geometry::addPrototype(GeometryPtr prototype) {
+    if (!prototypes_) prototypes_ = std::make_shared<std::vector<GeometryPtr>>();
+    else if (prototypes_.use_count() > 1) prototypes_ = std::make_shared<std::vector<GeometryPtr>>(*prototypes_);
+    prototypes_->push_back(std::move(prototype));
+    return prototypes_->size() - 1;
+}
+
 const Volume* Geometry::findVolume(const std::string& name) const {
     for (const Volume& v : volumes()) {
         if (v.name == name) return &v;
@@ -173,11 +185,26 @@ const AttributeSet& Geometry::attributes(AttrClass c) const {
     return const_cast<Geometry*>(this)->attributes(c);
 }
 
+namespace {
+
+/// The integer attribute `instance` of these points, if there is one.
+AttributeArray* instanceAttribute(AttributeSet& points) {
+    AttributeArray* a = points.find("instance");
+    return a && a->type() == AttrType::Int ? a : nullptr;
+}
+
+}  // namespace
+
 size_t Geometry::addPoints(size_t n) {
     const size_t first = points_.elementCount();
     points_.setElementCount(first + n);
     for (auto& [name, g] : groups_) {
         if (g.classOf() == AttrClass::Point) g.resize(first + n);
+    }
+    // A new point stands for nothing: 0 would be the first prototype.
+    if (AttributeArray* instance = prototypeCount() > 0 && n > 0 ? instanceAttribute(points_) : nullptr) {
+        auto k = instance->write<int32_t>();
+        std::fill(k.begin() + static_cast<std::ptrdiff_t>(first), k.end(), -1);
     }
     return first;
 }
@@ -199,6 +226,33 @@ size_t Geometry::addPrimitive(std::span<const uint32_t> pointIndices, bool close
         else if (g.classOf() == AttrClass::Vertex) g.resize(t.vertexPoint.size());
     }
     return prim;
+}
+
+size_t Geometry::addPrimitives(std::span<const uint32_t> points, std::span<const uint32_t> counts,
+                               std::span<const uint8_t> closed) {
+    Topology& t = topologyForWrite();
+    const size_t first = primitives_.elementCount();
+    t.vertexPoint.insert(t.vertexPoint.end(), points.begin(), points.end());
+    t.primStart.reserve(t.primStart.size() + counts.size());
+    t.primCount.reserve(t.primCount.size() + counts.size());
+    size_t start = t.vertexPoint.size() - points.size();
+    for (const uint32_t n : counts) {
+        t.primStart.push_back(static_cast<uint32_t>(start));
+        t.primCount.push_back(n);
+        start += n;
+    }
+    if (closed.size() == counts.size()) {
+        t.primClosed.insert(t.primClosed.end(), closed.begin(), closed.end());
+    } else {
+        t.primClosed.resize(t.primClosed.size() + counts.size(), !closed.empty() && closed[0] ? 1 : 0);
+    }
+    vertices_.setElementCount(t.vertexPoint.size());
+    primitives_.setElementCount(first + counts.size());
+    for (auto& [name, g] : groups_) {
+        if (g.classOf() == AttrClass::Primitive) g.resize(first + counts.size());
+        else if (g.classOf() == AttrClass::Vertex) g.resize(t.vertexPoint.size());
+    }
+    return first;
 }
 
 std::span<const uint32_t> Geometry::primitivePoints(size_t prim) const {
@@ -231,8 +285,56 @@ void Geometry::append(const Geometry& other) {
     const size_t pointOffset = pointCount();
     const size_t vertexOffset = vertexCount();
     const size_t primOffset = primitiveCount();
+    // Whose points stand for prototypes: theirs are renumbered to follow
+    // ours; the points of a side without any stand for none -- the zeros
+    // the attribute is filled with would make them the first prototype.
+    const size_t prototypeOffset = prototypeCount();
+    const bool ourInstances = prototypeOffset > 0 && instanceAttribute(points_) != nullptr;
+    const bool theirInstances =
+        other.prototypeCount() > 0 && other.points_.find("instance") && other.points_.find("instance")->type() == AttrType::Int;
+
+    // What sizes and tints instances: a side without it was drawn at 1.
+    const bool ourScale = points_.find("pscale") && points_.find("pscale")->type() == AttrType::Float;
+    const bool theirScale = other.points_.find("pscale") && other.points_.find("pscale")->type() == AttrType::Float;
+    const bool ourTint = points_.find("tint") && points_.find("tint")->type() == AttrType::Vec3;
+    const bool theirTint = other.points_.find("tint") && other.points_.find("tint")->type() == AttrType::Vec3;
 
     points_.append(other.points_);
+    if (ourInstances || theirInstances) {
+        const AttributeArray* k = instanceAttribute(points_);
+        auto ones = [&](const char* name, AttrType type, size_t from, size_t to) {
+            AttributeArray* a = points_.find(name);
+            if (!a || a->type() != type || !k) return;
+            const auto which = k->read<int32_t>();
+            if (type == AttrType::Float) {
+                auto v = a->write<float>();
+                for (size_t p = from; p < to; ++p) {
+                    if (which[p] >= 0) v[p] = 1.0f;
+                }
+            } else {
+                auto v = a->write<Vec3>();
+                for (size_t p = from; p < to; ++p) {
+                    if (which[p] >= 0) v[p] = Vec3(1.0f, 1.0f, 1.0f);
+                }
+            }
+        };
+        if (AttributeArray* instance = instanceAttribute(points_)) {
+            auto k = instance->write<int32_t>();
+            const auto theirs = k.begin() + static_cast<std::ptrdiff_t>(pointOffset);
+            if (!ourInstances) std::fill(k.begin(), theirs, -1);
+            if (!theirInstances) {
+                std::fill(theirs, k.end(), -1);
+            } else {
+                for (auto it = theirs; it != k.end(); ++it) {
+                    if (*it >= 0) *it += static_cast<int32_t>(prototypeOffset);
+                }
+            }
+        }
+        for (const GeometryPtr& prototype : other.prototypes()) addPrototype(prototype);
+        const size_t end = pointCount();
+        if (ourScale != theirScale) ones("pscale", AttrType::Float, ourScale ? pointOffset : 0, ourScale ? end : pointOffset);
+        if (ourTint != theirTint) ones("tint", AttrType::Vec3, ourTint ? pointOffset : 0, ourTint ? end : pointOffset);
+    }
     vertices_.append(other.vertices_);
     primitives_.append(other.primitives_);
 
@@ -469,6 +571,8 @@ uint64_t Geometry::hash() const {
         hashBytes(h, v.res, sizeof(v.res));
         if (v.values && !v.values->empty()) hashBytes(h, v.values->data(), v.values->size() * sizeof(float));
     }
+    hashU64(h, prototypeCount());
+    for (const GeometryPtr& prototype : prototypes()) hashU64(h, prototype ? prototype->hash() : 0);
     return h;
 }
 
@@ -480,6 +584,7 @@ size_t Geometry::memoryUsage() const {
     bytes += t.primStart.size() * sizeof(uint32_t) * 2 + t.primClosed.size();
     for (const auto& [name, g] : groups_) bytes += g.size();
     for (const Volume& v : volumes()) bytes += v.values ? v.values->size() * sizeof(float) : 0;
+    for (const GeometryPtr& prototype : prototypes()) bytes += prototype ? prototype->memoryUsage() : 0;
     return bytes;
 }
 

@@ -1,10 +1,12 @@
 #include "pg/nodes/Nodes.h"
 
 #include "pg/core/Geometry.h"
+#include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Selection.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace pg {
 namespace {
@@ -46,6 +48,8 @@ public:
         const Vec3 pivot = params_.evalVec3("p", ctx, Vec3(0, 0, 0));
         const Mat4 m = Mat4::translate(pivot * -1.0f) * Mat4::scale(s) * Mat4::rotate(r) * Mat4::translate(pivot) *
                        Mat4::translate(t);
+        // Before N turns: a point turned to it keeps the turn it had.
+        turnInstances(*geo, m);
 
         auto P = geo->positionsForWrite();
         parallelFor(P.size(), 16384, [&](size_t begin, size_t end) {
@@ -68,6 +72,53 @@ public:
             });
         }
         return geo;
+    }
+
+private:
+    /// What the points stand for turns and sizes with them: their orient
+    /// turned as the transform turns -- the nearest turn to it, where it
+    /// stretches -- and their pscale times how much it sizes, on the whole.
+    /// A point turned to its N gets the orient that turned it so, turned:
+    /// turned again to its turned N, what stands on it would twist about it.
+    static void turnInstances(Geometry& geo, const Mat4& m) {
+        const auto byPrototype = instancesByPrototype(geo);
+        std::vector<uint32_t> points;
+        for (const auto& p : byPrototype) points.insert(points.end(), p.begin(), p.end());
+        if (points.empty()) return;
+        const Vec3 x = m.transformDirection(Vec3(1.0f, 0.0f, 0.0f)), y = m.transformDirection(Vec3(0.0f, 1.0f, 0.0f)),
+                   z = m.transformDirection(Vec3(0.0f, 0.0f, 1.0f));
+        const float det = dot(x, cross(y, z));
+        if (std::fabs(det) < 1e-20f) return;
+        const float size = std::cbrt(std::fabs(det));
+        // The turn: the frame the axes go to, made square.
+        const Vec3 X = normalize(x), Z = normalize(cross(X, y)), Y = cross(Z, X);
+        const Vec4 turn = quatFromAxes(X, Y, Z);
+        const bool turned = std::fabs(turn.w) < 0.9999999f;
+        const AttributeArray* oAttr = geo.points().find("orient");
+        const bool hasOrient = oAttr && oAttr->type() == AttrType::Vec4;
+        const AttributeArray* nAttr = geo.points().find("N");
+        const bool hasN = nAttr && nAttr->type() == AttrType::Vec3;
+        if (turned) {
+            if (!hasOrient) {
+                // As they stand now: turned to N, else not at all.
+                const std::vector<Placement> now = placementsOf(geo);
+                auto o = geo.points().create("orient", AttrType::Vec4).write<Vec4>();
+                std::fill(o.begin(), o.end(), Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                if (hasN) {
+                    for (const uint32_t p : points) o[p] = now[p].orient;
+                }
+            }
+            auto o = geo.points().find("orient")->write<Vec4>();
+            for (const uint32_t p : points) o[p] = quatMultiply(turn, o[p]);
+        }
+        if (std::fabs(size - 1.0f) > 1e-6f) {
+            AttributeArray* ps = geo.points().find("pscale");
+            const bool had = ps && ps->type() == AttrType::Float;
+            // A point that stands for nothing keeps what it had -- 0, a dot
+            // a few pixels wide, where there was no pscale.
+            auto S = geo.points().create("pscale", AttrType::Float).write<float>();
+            for (const uint32_t p : points) S[p] = (had ? S[p] : 1.0f) * size;
+        }
     }
 };
 
@@ -239,6 +290,7 @@ void registerBuiltinNodes() {
         registerVolumeNodes();
         registerEditNodes();
         registerTreeNodes();
+        registerGrassNodes();
         registerUsdNodes();
         return true;
     }();

@@ -2,6 +2,7 @@
 // arrays without a copy; building one from Python; files in and out.
 #include "Bindings.h"
 
+#include "pg/core/Instances.h"
 #include "pg/io/Export.h"
 #include "pg/io/Obj.h"
 #include "pg/io/Ply.h"
@@ -432,6 +433,19 @@ void bindGeometry(py::module_& m) {
             g.edit().addVolume(Volume::make(name, Vec3(origin[0], origin[1], origin[2]), voxel, nx, ny, nz, std::move(data)));
         }, py::arg("name"), py::arg("values"), py::arg("origin") = std::array<float, 3>{0.0f, 0.0f, 0.0f},
            py::arg("voxel") = 0.1f)
+        // --- instances: points that stand for prototypes
+        .def_property_readonly("prototype_count", [](const PyGeometry& g) { return g.get().prototypeCount(); })
+        .def_property_readonly("instance_count", [](const PyGeometry& g) { return instanceCount(g.get()); })
+        .def("prototypes", [](const PyGeometry& g) {
+            std::vector<PyGeometry> out;
+            for (const auto& p : g.get().prototypes()) out.emplace_back(p);
+            return out;
+        })
+        .def("add_prototype", [](PyGeometry& g, const PyGeometry& prototype) {
+            return g.edit().addPrototype(prototype.snapshot());
+        }, py::arg("prototype"))
+        .def("clear_prototypes", [](PyGeometry& g) { g.edit().clearPrototypes(); })
+        .def("unpack", [](const PyGeometry& g) { return PyGeometry(unpackInstances(g.get())); })
         // --- the whole of it
         .def("hash", [](const PyGeometry& g) { return g.get().hash(); })
         .def("bounds", [](const PyGeometry& g) -> py::object {

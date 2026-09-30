@@ -1,5 +1,6 @@
 #include "pg/io/Ply.h"
 
+#include "pg/core/Instances.h"
 #include "pg/io/Obj.h"
 
 #include <algorithm>
@@ -189,6 +190,8 @@ private:
 }  // namespace
 
 std::string formatPly(const Geometry& geo) {
+    // Instances as copies: what they stand for, where they stand.
+    if (geo.prototypeCount() > 0) return formatPly(*unpackInstances(geo));
     const std::vector<Column> columns = columnsOf(geo);
     std::vector<size_t> faces;
     for (size_t p = 0; p < geo.primitiveCount(); ++p) {

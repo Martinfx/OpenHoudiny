@@ -1,0 +1,137 @@
+pgsim 1
+# A meadow at the edge of a wood, in the wind -- vegetation as instances:
+# each plant grown once, a point for every one that stands in the landscape.
+# A Grid raised into rolling ground; a wrangle paints it: a path winding
+# across it (bare earth, the grass thinning at its edges), the wood at the
+# back, shrubs along its edge -- attributes 0 to 1 that say how likely each
+# plant is there. Grass scatters clumps of grass over it by its attribute:
+# eight kinds of clump for 120 000 of them, two million blades. Scatter
+# keeps the trees 3.5 m apart where the wood is; a Tree grows five
+# broadleaves for them to stand for, another four spruces, and a Tree forked
+# from the ground four shrubs. The wind is a wrangle on the points: gusts
+# that run across the meadow bow the clumps from their roots (p@orient), the
+# trees sway a little -- only the points change, the plants are held once.
+node 1 grid 1 land 0 0
+  param sizex 80
+  param sizez 60
+  param rows 170
+  param cols 220
+  param center 0 0 -10
+node 2 point_wrangle 1 terrain 0 110
+  param snippet "// Rolling ground, rising to the wood at the back -- above the floor.\n@P.y = 2.0 + 1.4 * (noise(@P * 0.06) - 0.5) + 0.2 * (noise(@P * 0.35) - 0.5) - 0.05 * @P.z;\n// A path winding across the meadow: bare earth, the grass thinning at its edges.\nfloat d = abs(@P.z - (4.0 + 2.5 * sin(@P.x * 0.15)));\nfloat path = 1.0 - smoothstep(0.5, 1.3, d);\n// The wood at the back, a few trees out in the meadow; shrubs along its edge.\nf@trees = (1.0 - smoothstep(-13.0, -7.0, @P.z)) + 0.03;\nf@trees *= 1.0 - path;\nf@shrubs = (exp(-pow((@P.z + 7.5) / 2.0, 2.0)) * 0.9 + 0.015) * (1.0 - path);\nf@grass = (1.0 - path) * (1.0 - 0.7 * smoothstep(-9.0, -14.0, @P.z));\n@Cd = lerp(set(0.05, 0.065, 0.025), set(0.2, 0.16, 0.11), path) * (0.8 + 0.4 * noise(@P * 0.7));"
+node 3 grass 1 grass -250 230
+  param density 40
+  param densityattribute "grass"
+  param maxslope 40
+  param rootcolor 0.045 0.085 0.018
+  param tipcolor 0.2 0.31 0.07
+  param dry 0.18
+  param variation 0.35
+node 4 point_wrangle 1 wind -250 340
+  param snippet "// Gusts running across the meadow bow the clumps from their roots.\nfloat gust = 0.5 + 0.5 * sin(@Time * 1.6 - @P.x * 0.3 + 3.0 * noise(@P * 0.12));\nfloat bow = 0.08 + 0.22 * gust * gust + 0.05 * sin(@Time * 5.0 + @ptnum * 0.37);\np@orient = qmultiply(quaternion(ch(\"strength\") * bow, set(0, 0, -1)), p@orient);"
+  param strength 1
+node 5 scatter 1 tree_spots 0 230
+  param mode density
+  param density 0.08
+  param seed 3
+  param densityattribute "trees"
+  param mindistance 3.5
+node 6 point_wrangle 1 kinds 0 340
+  param snippet "@group_conifer = rand(@ptnum * 1.37 + 0.2) < 0.45;"
+node 7 blast 1 broadleaf_spots -80 450
+  param group "conifer"
+node 8 blast 1 conifer_spots 80 450
+  param group "conifer"
+  param invert on
+node 9 tree 1 broadleaves -80 560
+  param height 7
+  param radius 0.24
+  param sizevariation 0.25
+  param crown 0.3
+  param forks 3
+  param forkheight 0.45
+  param forkangle 28
+  param length1 0.55
+  param branches3 4
+  param leaves 12
+  param leafsize 0.22
+  param leafcolor 0.07 0.15 0.035
+  param sides 8
+  param segment 0.35
+  param output instances
+  param variants 5
+node 10 tree 1 spruces 80 560
+  param shape conical
+  param height 12
+  param radius 0.22
+  param seed 2
+  param sizevariation 0.25
+  param crown 0.08
+  param levels 2
+  param gravity 0.35
+  param up 0.05
+  param branches1 60
+  param angle1 80
+  param length1 0.3
+  param branches2 12
+  param angle2 55
+  param leaves 14
+  param leafsize 0.25
+  param leafshape needles
+  param barkcolor 0.1 0.08 0.065
+  param leafcolor 0.035 0.08 0.035
+  param sides 8
+  param segment 0.4
+  param output instances
+  param variants 4
+node 11 scatter 1 shrub_spots 250 230
+  param mode density
+  param density 0.25
+  param seed 7
+  param densityattribute "shrubs"
+  param mindistance 1.2
+node 12 tree 1 shrubs 250 340
+  param height 1.1
+  param radius 0.025
+  param sizevariation 0.35
+  param tip 0.3
+  param crown 0.02
+  param forks 5
+  param forkheight 0.03
+  param forkangle 38
+  param levels 2
+  param branches1 10
+  param angle1 50
+  param length1 0.7
+  param branches2 6
+  param leaves 14
+  param leafsize 0.07
+  param leafcolor 0.06 0.13 0.03
+  param sides 5
+  param segment 0.1
+  param output instances
+  param variants 4
+node 13 merge 1 trees 0 670
+node 14 point_wrangle 1 sway 0 780
+  param snippet "// The trees and shrubs sway a little, from their feet.\nfloat gust = 0.5 + 0.5 * sin(@Time * 1.6 - @P.x * 0.3 + 3.0 * noise(@P * 0.12));\np@orient = qmultiply(quaternion(ch(\"strength\") * 0.012 * gust * sin(@Time * 1.1 + @ptnum), set(0, 0, -1)), p@orient);"
+  param strength 1
+node 15 merge 1 meadow 0 890
+  display
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.surface
+link 3.geometry -> 4.geometry
+link 2.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 7.geometry
+link 6.geometry -> 8.geometry
+link 7.geometry -> 9.points
+link 8.geometry -> 10.points
+link 2.geometry -> 11.geometry
+link 11.geometry -> 12.points
+link 9.geometry -> 13.geometry
+link 10.geometry -> 13.geometry
+link 12.geometry -> 13.geometry
+link 13.geometry -> 14.geometry
+link 2.geometry -> 15.geometry
+link 4.geometry -> 15.geometry
+link 14.geometry -> 15.geometry

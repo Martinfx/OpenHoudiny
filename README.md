@@ -31,6 +31,11 @@ okna.
   úrovně větví kolem rodiče o zlatý úhel, sedm tvarů koruny (smrk, dub,
   bříza, topol, akácie, vrba, lípa), listy i jehličí; les na bodech, každý
   strom jiný; vítr wranglem podle `flex`; kostra pro vlastní listy
+- **[docs/vegetation.md](docs/vegetation.md)** — vegetace jako instance:
+  tráva z trsů stébel (uzel Grass) po terénu podle namalované hustoty
+  a sklonu, keře a stromy jako varianty, které zastupují body; viewport je
+  kreslí přes GPU instancing, USD dostane PointInstancer, OBJ kopie; vítr
+  otáčí `orient`; louka u lesa s 1,9 milionu stébel za 148 ms
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání
@@ -154,6 +159,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
 ./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # částice do PLY
 ./build/prototype --example street                 # ulice ze tří digital assetů Building
+./build/prototype --example meadow                 # louka u lesa: tráva, keře a stromy jako instance
 ./build/prototype cook street street.obj --set tower.floors=12   # geometrie bez okna, do OBJ
 ./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
 ./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)

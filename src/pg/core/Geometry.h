@@ -8,8 +8,8 @@
 // composability, so it is not done here and must not be done later.
 //
 // Copying a Geometry copies no element data: the attribute buffers, the
-// topology, the group masks and the volumes are all shared and clone on first
-// write.
+// topology, the group masks, the volumes and the prototypes are all shared
+// and clone on first write.
 //
 #include "pg/core/Attribute.h"
 
@@ -111,15 +111,23 @@ public:
 
     // --- building -----------------------------------------------------------
 
-    /// Appends `n` points. Returns the index of the first one.
+    /// Appends `n` points. Returns the index of the first one. With
+    /// prototypes, they stand for none (instance -1).
     size_t addPoints(size_t n);
 
     /// Appends a primitive over the given point indices.
     /// Returns the primitive index.
     size_t addPrimitive(std::span<const uint32_t> pointIndices, bool closed = true);
+    /// Appends many at once: `counts` corners each, their points one after
+    /// the other in `points`; `closed` one flag for each, or one for all.
+    /// Returns the first.
+    size_t addPrimitives(std::span<const uint32_t> points, std::span<const uint32_t> counts,
+                         std::span<const uint8_t> closed);
 
     /// Appends all of `other`. Point indices in the incoming topology are
-    /// rebased; attributes are merged by name.
+    /// rebased; attributes are merged by name; its prototypes follow ours,
+    /// its instance points renumbered to them -- and the points of the side
+    /// with no instances stand for none.
     void append(const Geometry& other);
 
     // --- topology -----------------------------------------------------------
@@ -163,6 +171,19 @@ public:
     /// The first volume of that name, or null.
     const Volume* findVolume(const std::string& name) const;
 
+    // --- instances ----------------------------------------------------------
+    //
+    // Geometry that points stand for, held once however many points stand
+    // for it: a point whose integer attribute `instance` is k (0 or more)
+    // stands for prototype k -- placed as Copy to Points places a copy
+    // (Instances.h). A point of -1, or of no prototype, is a point.
+
+    const std::vector<std::shared_ptr<const Geometry>>& prototypes() const;
+    size_t prototypeCount() const { return prototypes_ ? prototypes_->size() : 0; }
+    /// Adds a prototype; returns its number.
+    size_t addPrototype(std::shared_ptr<const Geometry> prototype);
+    void clearPrototypes() { prototypes_.reset(); }
+
     // --- whole-geometry operations ------------------------------------------
 
     /// Keeps only the points selected by `keep` (size == pointCount) and drops
@@ -199,6 +220,7 @@ private:
     std::map<std::string, Group> groups_;
     std::shared_ptr<Topology> topo_;
     std::shared_ptr<std::vector<Volume>> volumes_;  ///< null: none
+    std::shared_ptr<std::vector<std::shared_ptr<const Geometry>>> prototypes_;  ///< null: none
 };
 
 using GeometryPtr = std::shared_ptr<const Geometry>;

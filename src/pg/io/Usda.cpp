@@ -1,5 +1,7 @@
 #include "pg/io/Usda.h"
 
+#include "pg/core/Instances.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -426,7 +428,19 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
         for (const uint32_t p : source) v.push_back(a->read<Vec3>()[p]);
         return tuples(v);
     };
+    // Normals only where every point has one: a zero one -- merged in from
+    // points that had them -- would shade it black; without, the renderer
+    // makes its own, as the viewport does.
     m.normals = vectors("N");
+    if (const AttributeArray* N = geo.points().find("N"); N && !m.normals.empty()) {
+        for (const uint32_t p : source) {
+            const Vec3& n = N->read<Vec3>()[p];
+            if (dot(n, n) <= 1e-24f) {
+                m.normals.clear();
+                break;
+            }
+        }
+    }
     m.velocities = vectors("v");
     m.primvars = pointPrimvars(geo, source);
     for (const uint32_t p : source) local[p] = -1;
@@ -618,19 +632,112 @@ Prim pointsPrim(const std::string& name, const std::vector<std::pair<int, Points
     return p;
 }
 
-Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, const Geometry*>>& frames) {
+InstancesText instancesText(const Geometry& geo) {
+    std::vector<int32_t> indices, ids;
+    std::vector<Vec3> positions, scales, tints;
+    std::string orientations = "[";
+    Bounds box;
+    const AttributeArray* tint = geo.points().find("tint");
+    const bool tinted = tint && tint->type() == AttrType::Vec3 && tint->size() == geo.pointCount();
+    const AttributeArray* id = geo.points().find("id");
+    const bool named = id && id->type() == AttrType::Int && id->size() == geo.pointCount();
+    if (geo.prototypeCount() > 0) {
+        // The prototype each point stands for, in the points' order.
+        std::vector<int32_t> which(geo.pointCount(), -1);
+        const auto byPrototype = instancesByPrototype(geo);
+        for (size_t k = 0; k < byPrototype.size(); ++k) {
+            for (const uint32_t p : byPrototype[k]) which[p] = static_cast<int32_t>(k);
+        }
+        const std::vector<Placement> places = placementsOf(geo);
+        for (size_t p = 0; p < which.size(); ++p) {
+            if (which[p] < 0) continue;
+            indices.push_back(which[p]);
+            positions.push_back(places[p].at);
+            scales.push_back(Vec3(places[p].scale, places[p].scale, places[p].scale));
+            if (indices.size() > 1) orientations += ", ";
+            orientations += quat(places[p].orient);
+            if (tinted) tints.push_back(tint->read<Vec3>()[p]);
+            if (named) ids.push_back(id->read<int32_t>()[p]);
+        }
+        Vec3 lo, hi;
+        instancesBox(geo, lo, hi);
+        if (lo.x <= hi.x) {
+            box.grow(lo);
+            box.grow(hi);
+        }
+    }
+    InstancesText t;
+    t.indices = integers(indices);
+    t.positions = tuples(positions);
+    t.orientations = orientations + "]";
+    t.scales = tuples(scales);
+    if (tinted) t.tints = tuples(tints);
+    if (named) t.ids = integers(ids);
+    t.extent = box.extent();
+    return t;
+}
+
+std::vector<Field> fields(const InstancesText& t) {
+    std::vector<Field> out;
+    out.push_back({"float3[]", "extent", "", t.extent});
+    if (!t.ids.empty()) out.push_back({"int64[]", "ids", "", t.ids});
+    out.push_back({"quath[]", "orientations", "", t.orientations});
+    out.push_back({"point3f[]", "positions", "", t.positions});
+    if (!t.tints.empty()) out.push_back({"color3f[]", "primvars:tint", interpolation("vertex"), t.tints});
+    out.push_back({"int[]", "protoIndices", "", t.indices});
+    out.push_back({"float3[]", "scales", "", t.scales});
+    return out;
+}
+
+void addPrototypes(Prim& instancer, const std::string& path,
+                   const std::vector<std::shared_ptr<const Geometry>>& prototypes) {
+    Prim& scope = instancer.child("Scope", "Prototypes");
+    std::string targets = "[";
+    for (size_t k = 0; k < prototypes.size(); ++k) {
+        const std::string name = "proto_" + std::to_string(k);
+        const std::string at = path + "/Prototypes/" + name;
+        const Geometry empty;
+        scope.children.push_back(geometryPrim(name, {{0, prototypes[k] ? prototypes[k].get() : &empty}}, at));
+        targets += (k > 0 ? ", <" : "<") + at + ">";
+    }
+    instancer.relate("prototypes", targets + "]");
+}
+
+Prim instancerPrim(const std::string& name, const std::string& path,
+                   const std::vector<std::shared_ptr<const Geometry>>& prototypes,
+                   const std::vector<std::pair<int, InstancesText>>& frames) {
+    Prim p("PointInstancer", name);
+    animateFields(p, frames);
+    addPrototypes(p, path, prototypes);
+    return p;
+}
+
+Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, const Geometry*>>& frames,
+                  const std::string& path) {
+    const std::string at = path.empty() ? "/" + name : path;
     Prim g("Xform", name);
     std::vector<std::pair<int, MeshText>> meshes;
     std::vector<std::pair<int, CurvesText>> curves;
     std::vector<std::pair<int, PointsText>> points;
+    std::vector<std::pair<int, InstancesText>> instances;
+    const Geometry* prototypesOf = nullptr;  // the first frame with instances
     bool anyMesh = false, anyCurves = false, anyPoints = false;
     std::vector<int32_t> scratch;
     for (const auto& [f, geo] : frames) {
-        std::vector<uint32_t> all(geo->primitiveCount());
+        // The instances apart; the rest as shapes.
+        std::shared_ptr<Geometry> rest;
+        const Geometry* shapes = geo;
+        instances.emplace_back(f, instancesText(*geo));
+        if (geo->prototypeCount() > 0) {
+            rest = withoutInstances(*geo);
+            shapes = rest.get();
+            if (!prototypesOf && !instances.back().second.empty()) prototypesOf = geo;
+        }
+        std::vector<uint32_t> all(shapes->primitiveCount());
         for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<uint32_t>(i);
-        meshes.emplace_back(f, meshText(*geo, all, Vec3(), nullptr, scratch));
-        curves.emplace_back(f, curvesText(*geo));
-        points.emplace_back(f, pointsText(*geo));
+        meshes.emplace_back(f, meshText(*shapes, all, Vec3(), nullptr, scratch));
+        curves.emplace_back(f, curvesText(*shapes));
+        points.emplace_back(f, pointsText(*shapes));
         anyMesh = anyMesh || !meshes.back().second.empty();
         anyCurves = anyCurves || !curves.back().second.empty();
         anyPoints = anyPoints || !points.back().second.empty();
@@ -638,6 +745,7 @@ Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, cons
     if (anyMesh) g.children.push_back(meshPrim("mesh", meshes));
     if (anyCurves) g.children.push_back(curvesPrim("curves", curves));
     if (anyPoints) g.children.push_back(pointsPrim("points", points));
+    if (prototypesOf) g.children.push_back(instancerPrim("instances", at + "/instances", prototypesOf->prototypes(), instances));
     return g;
 }
 
@@ -645,7 +753,7 @@ Stage geometryStage(const Geometry& geo, const std::string& name) {
     Stage s;
     const std::string prim = identifier(name.empty() ? "geometry" : name);
     s.metadata = {{"defaultPrim", quoted(prim)}, {"metersPerUnit", "1"}, {"upAxis", quoted("Y")}};
-    s.prims.push_back(geometryPrim(prim, {{0, &geo}}));
+    s.prims.push_back(geometryPrim(prim, {{0, &geo}}, "/" + prim));
     return s;
 }
 

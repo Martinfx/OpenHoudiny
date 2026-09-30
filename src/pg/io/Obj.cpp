@@ -1,5 +1,7 @@
 #include "pg/io/Obj.h"
 
+#include "pg/core/Instances.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -127,6 +129,8 @@ bool readObj(const std::string& path, Geometry& out, std::string& error) {
 }
 
 std::string formatObj(const Geometry& geo) {
+    // Instances as copies: what they stand for, where they stand.
+    if (geo.prototypeCount() > 0) return formatObj(*unpackInstances(geo));
     std::string out = "# prototype\n";
     char buf[48];
     auto number = [&](float x) {

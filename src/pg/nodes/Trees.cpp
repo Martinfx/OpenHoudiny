@@ -11,6 +11,10 @@
 //           orient -- in the point group leaves -- for Copy to Points to put
 //           a leaf of one's own on: modelled lying flat, facing +y, its
 //           stalk at the origin, pointing along +z.
+//           instances: Variants trees grown once, and a point for each
+//           tree that stands for one of them (pg/core/Instances.h) --
+//           instance, orient (turned about +y as it happens), pscale, tint
+//           (a shade of its own) -- a forest of thousands.
 //   points  each tree stands on one, pscale times as big (and Size
 //           Variation more or less); its id, else its number, makes it its
 //           own. Without them one tree stands at Center.
@@ -18,6 +22,7 @@
 #include "pg/nodes/Nodes.h"
 
 #include "pg/core/Geometry.h"
+#include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Tree.h"
 
@@ -32,6 +37,21 @@ uint64_t mixSeed(uint64_t seed, uint64_t id) {
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
     return z ^ (z >> 31);
+}
+
+float unitOf(uint64_t bits) { return static_cast<float>(bits >> 40) / static_cast<float>(1u << 24); }
+
+/// The primitive groups bark and leaves of a tree's mesh.
+void groupMesh(Geometry& geo) {
+    const AttributeArray* level = geo.primitives().find("level");
+    if (!level) return;
+    const auto lv = level->read<int32_t>();
+    uint8_t* bark = geo.createGroup("bark", AttrClass::Primitive).writableMask();
+    uint8_t* leaves = geo.createGroup("leaves", AttrClass::Primitive).writableMask();
+    for (size_t i = 0; i < lv.size(); ++i) {
+        bark[i] = lv[i] >= 0 ? 1 : 0;
+        leaves[i] = lv[i] < 0 ? 1 : 0;
+    }
 }
 
 class TreeNode : public Node {
@@ -71,7 +91,8 @@ public:
         params_.setFloat("variation", d.variation);
         params_.setInt("sides", d.sides);
         params_.setFloat("segment", d.segment);
-        params_.setInt("output", 0);  // 0 mesh, 1 skeleton
+        params_.setInt("output", 0);  // 0 mesh, 1 skeleton, 2 instances
+        params_.setInt("variants", 8);
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
@@ -107,14 +128,10 @@ public:
         s.sides = std::clamp(params_.evalInt("sides", ctx, d.sides), 3, 64);
         s.segment = std::max(params_.evalFloat("segment", ctx, d.segment), 0.01f);
         const uint64_t seed = static_cast<uint64_t>(std::max(params_.evalInt("seed", ctx, 1), 0));
-        const bool skeleton = params_.evalInt("output", ctx, 0) == 1;
+        const int output = std::clamp(params_.evalInt("output", ctx, 0), 0, 2);
+        const bool skeleton = output == 1;
 
         // Where the trees stand.
-        struct Place {
-            Vec3 at;
-            float scale = 1.0f;
-            uint64_t seed = 0;
-        };
         std::vector<Place> places;
         const Geometry* points = !in.empty() && in[0] && in[0]->pointCount() > 0 ? in[0].get() : nullptr;
         if (!points) {
@@ -137,6 +154,8 @@ public:
                               (1.0f + sizeVariation * (2.0f * u - 1.0f));
             }
         }
+
+        if (output == 2) return instances(ctx, s, seed, places, !points);
 
         // Each grown on its own, then one after the other.
         std::vector<Geometry> parts(places.size());
@@ -166,15 +185,60 @@ public:
             Group& leaves = geo->createGroup("leaves", AttrClass::Point);
             uint8_t* mask = leaves.writableMask();
             for (size_t p = 0; p < used.size(); ++p) mask[p] = used[p] ? 0 : 1;
-        } else if (const AttributeArray* level = geo->primitives().find("level")) {
-            const auto lv = level->read<int32_t>();
-            uint8_t* bark = geo->createGroup("bark", AttrClass::Primitive).writableMask();
-            uint8_t* leaves = geo->createGroup("leaves", AttrClass::Primitive).writableMask();
-            for (size_t i = 0; i < lv.size(); ++i) {
-                bark[i] = lv[i] >= 0 ? 1 : 0;
-                leaves[i] = lv[i] < 0 ? 1 : 0;
-            }
+        } else {
+            groupMesh(*geo);
         }
+        return geo;
+    }
+
+private:
+    struct Place {
+        Vec3 at;
+        float scale = 1.0f;
+        uint64_t seed = 0;
+    };
+
+    /// Variants trees -- the ones the first points would grow -- and a
+    /// point for each place that stands for one of them, turned about +y
+    /// as it happens, a shade of its own; `alone`: the one tree as it
+    /// grows at Center.
+    GeometryPtr instances(const CookContext& ctx, const TreeSettings& s, uint64_t seed, const std::vector<Place>& places,
+                          bool alone) {
+        const size_t variants = static_cast<size_t>(std::clamp(params_.evalInt("variants", ctx, 8), 1, 64));
+        std::vector<std::shared_ptr<Geometry>> kinds(variants);
+        parallelFor(variants, 1, [&](size_t b, size_t e) {
+            for (size_t v = b; v < e && !ctx.interrupted(); ++v) {
+                kinds[v] = std::make_shared<Geometry>();
+                meshTree(growTree(s, Vec3(), 1.0f, mixSeed(seed, v)), s, static_cast<int>(v), *kinds[v]);
+                groupMesh(*kinds[v]);
+            }
+        });
+        if (ctx.interrupted()) return nullptr;
+        auto geo = std::make_shared<Geometry>();
+        geo->addPoints(places.size());
+        auto P = geo->positionsForWrite();
+        auto instance = geo->points().create("instance", AttrType::Int).write<int32_t>();
+        auto orient = geo->points().create("orient", AttrType::Vec4).write<Vec4>();
+        auto pscale = geo->points().create("pscale", AttrType::Float).write<float>();
+        auto tint = geo->points().create("tint", AttrType::Vec3).write<Vec3>();
+        for (size_t i = 0; i < places.size(); ++i) {
+            const Place& place = places[i];
+            P[i] = place.at;
+            pscale[i] = std::max(place.scale, 0.0f);
+            if (alone) {
+                instance[i] = 0;
+                orient[i] = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                tint[i] = Vec3(1.0f, 1.0f, 1.0f);
+                continue;
+            }
+            instance[i] = static_cast<int32_t>(mixSeed(place.seed, 11) % variants);
+            const float yaw = 6.28318531f * unitOf(mixSeed(place.seed, 12));
+            orient[i] = Vec4(0.0f, std::sin(0.5f * yaw), 0.0f, std::cos(0.5f * yaw));
+            const float shade = 1.0f + 0.4f * s.variation * (2.0f * unitOf(mixSeed(place.seed, 13)) - 1.0f);
+            const float warm = s.variation * unitOf(mixSeed(place.seed, 14));
+            tint[i] = Vec3(shade * (1.0f + 0.2f * warm), shade * (1.0f + 0.08f * warm), shade * (1.0f - 0.3f * warm));
+        }
+        for (auto& kind : kinds) geo->addPrototype(std::move(kind));
         return geo;
     }
 };

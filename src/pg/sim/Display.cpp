@@ -1,5 +1,6 @@
 #include "pg/sim/Display.h"
 
+#include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
 
 #include <algorithm>
@@ -10,6 +11,33 @@
 
 namespace pg::sim {
 namespace {
+
+const AttributeArray* pointVectors(const Geometry& geo, const char* name) {
+    const AttributeArray* a = geo.points().find(name);
+    return a && a->type() == AttrType::Vec3 && a->size() == geo.pointCount() ? a : nullptr;
+}
+
+/// The points' N, where every corner of the primitives has one of some
+/// length -- else none, and the faces bend the normals: a ground merged
+/// with what brought N along has N of 0, and is drawn as it was.
+const AttributeArray* usableNormals(const Geometry& geo) {
+    const AttributeArray* N = pointVectors(geo, "N");
+    if (!N) return nullptr;
+    const auto n = N->read<Vec3>();
+    for (const uint32_t p : geo.vertexPoints()) {
+        if (p < n.size() && dot(n[p], n[p]) <= 1e-24f) return nullptr;
+    }
+    return N;
+}
+
+/// 1 for each point of `geo` that stands for a prototype, 0 for the rest.
+std::vector<uint8_t> instancePoints(const Geometry& geo) {
+    std::vector<uint8_t> out(geo.pointCount(), 0);
+    for (const auto& points : instancesByPrototype(geo)) {
+        for (const uint32_t p : points) out[p] = 1;
+    }
+    return out;
+}
 
 constexpr float kPi = 3.14159265358979323846f;
 
@@ -165,7 +193,7 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots, bool faces) {
     std::vector<std::array<uint32_t, 3>> tris;
     std::vector<std::array<size_t, 3>> corners;  // the vertex of each corner
     std::vector<size_t> owner;                   // the primitive of each triangle
-    std::vector<uint8_t> used(points, 0);
+    std::vector<uint8_t> used = instancePoints(geo);  // a point that stands for a prototype is no dot
     for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
         const auto pts = geo.primitivePoints(prim);
         const size_t first = geo.primitiveVertexStart(prim);
@@ -198,8 +226,8 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots, bool faces) {
         bool wanted = faces;
         for (size_t t = 0; t < tris.size() && !wanted; ++t) wanted = glassOf(owner[t]) >= 0.5f;
         std::vector<Vec3> normals;
-        const AttributeArray* N = geo.points().find("N");
-        const bool pointNormals = N && N->type() == AttrType::Vec3 && N->size() == points;
+        const AttributeArray* N = usableNormals(geo);
+        const bool pointNormals = N != nullptr;
         if (!pointNormals && wanted) normals = cornerNormals(P, tris, kCrease);
         const std::span<const Vec3> pointN = pointNormals ? N->read<Vec3>() : std::span<const Vec3>();
         const AttributeArray* v = geo.points().find("v");
@@ -329,11 +357,6 @@ std::pair<const void*, int> identity(const AttributeArray* a) {
 }
 
 /// A point attribute of three floats for every point, if there is one.
-const AttributeArray* pointVectors(const Geometry& geo, const char* name) {
-    const AttributeArray* a = geo.points().find(name);
-    return a && a->type() == AttrType::Vec3 && a->size() == geo.pointCount() ? a : nullptr;
-}
-
 void growMesh(DisplayMesh& mesh, const Vec3& p) {
     for (int a = 0; a < 3; ++a) {
         mesh.lo[a] = std::min(mesh.lo[a], p[a]);
@@ -365,8 +388,10 @@ bool DisplayMesher::sameMaking(const Geometry& geo) const {
            identity(geo.primitives().find("Cd")) == identity(was.primitives().find("Cd")) &&
            identity(geo.detail().find("Cd")) == identity(was.detail().find("Cd")) &&
            identity(geo.primitives().find("glass")) == identity(was.primitives().find("glass")) &&
-           (pointVectors(geo, "N") != nullptr) == pointNormals_ && (pointVectors(geo, "v") != nullptr) == moving_ &&
-           geo.volumes().empty() == was.volumes().empty();
+           (usableNormals(geo) != nullptr) == pointNormals_ && (pointVectors(geo, "v") != nullptr) == moving_ &&
+           geo.volumes().empty() == was.volumes().empty() &&
+           identity(geo.points().find("instance")) == identity(was.points().find("instance")) &&
+           geo.prototypeCount() == was.prototypeCount();
 }
 
 void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
@@ -381,7 +406,7 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     const auto P = geo.positions();
     const Colors colors(geo);
     const Glass glass(geo);
-    const AttributeArray* N = pointVectors(geo, "N");
+    const AttributeArray* N = usableNormals(geo);
     const AttributeArray* v = pointVectors(geo, "v");
     pointNormals_ = N != nullptr;
     moving_ = v != nullptr;
@@ -391,7 +416,7 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     // and loose points are the rest.
     std::vector<std::array<uint32_t, 3>> corners;  // the vertex of each corner, for its colour
     std::vector<uint32_t> owner;
-    std::vector<uint8_t> used(points, 0);
+    std::vector<uint8_t> used = instancePoints(geo);  // a point that stands for a prototype is no loose point
     tris_.reserve(geo.vertexCount());
     corners.reserve(geo.vertexCount());
     owner.reserve(geo.vertexCount());
@@ -489,7 +514,7 @@ bool DisplayMesher::move(const Geometry& geo, DisplayMesh& mesh) {
         return false;
     }
     const auto P = geo.positions();
-    const AttributeArray* N = pointVectors(geo, "N");
+    const AttributeArray* N = usableNormals(geo);
     const auto pointN = N ? N->read<Vec3>() : std::span<const Vec3>();
     std::vector<Vec3> faceNormal;
     std::vector<float> faceSize;
@@ -542,6 +567,49 @@ bool DisplayMesher::move(const Geometry& geo, DisplayMesh& mesh) {
     mesh.hi = Vec3(-1e30f, -1e30f, -1e30f);
     for (size_t w = 0; w < count; ++w) growMesh(mesh, P[vertexPoint_[w]]);
     return true;
+}
+
+DisplayInstances instancesOf(const Geometry& geo) {
+    DisplayInstances out;
+    const auto byPrototype = instancesByPrototype(geo);
+    if (byPrototype.empty()) return out;
+    const std::vector<Placement> places = placementsOf(geo);
+    const AttributeArray* tint = geo.points().find("tint");
+    if (tint && tint->type() != AttrType::Vec3) tint = nullptr;
+    for (size_t k = 0; k < byPrototype.size(); ++k) {
+        const GeometryPtr& prototype = geo.prototypes()[k];
+        if (byPrototype[k].empty() || !prototype || prototype->pointCount() == 0) continue;
+        // The box round the prototype: where each copy of it reaches, its
+        // corners placed.
+        Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+        for (const Vec3& p : prototype->positions()) {
+            for (int a = 0; a < 3; ++a) {
+                lo[a] = std::min(lo[a], p[a]);
+                hi[a] = std::max(hi[a], p[a]);
+            }
+        }
+        const auto& points = byPrototype[k];
+        std::vector<float> f(points.size() * DisplayInstances::kFloats);
+        for (size_t i = 0; i < points.size(); ++i) {
+            const uint32_t p = points[i];
+            const Placement& pl = places[p];
+            const Vec3 t = tint ? tint->read<Vec3>()[p] : Vec3(1.0f, 1.0f, 1.0f);
+            float* o = &f[i * DisplayInstances::kFloats];
+            o[0] = pl.at.x, o[1] = pl.at.y, o[2] = pl.at.z, o[3] = pl.scale;
+            o[4] = pl.orient.x, o[5] = pl.orient.y, o[6] = pl.orient.z, o[7] = pl.orient.w;
+            o[8] = t.x, o[9] = t.y, o[10] = t.z, o[11] = 1.0f;
+            for (int c = 0; c < 8; ++c) {
+                const Vec3 corner = pl.point(Vec3(c & 1 ? hi.x : lo.x, c & 2 ? hi.y : lo.y, c & 4 ? hi.z : lo.z));
+                for (int a = 0; a < 3; ++a) {
+                    out.lo[a] = std::min(out.lo[a], corner[a]);
+                    out.hi[a] = std::max(out.hi[a], corner[a]);
+                }
+            }
+        }
+        out.prototypes.push_back(prototype);
+        out.placements.push_back(std::move(f));
+    }
+    return out;
 }
 
 }  // namespace pg::sim

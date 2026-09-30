@@ -246,7 +246,11 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return number(v("focal")) + " mm" + dot + std::to_string(static_cast<int>(v("width"))) + times +
                std::to_string(static_cast<int>(v("height")));
     }
+    if (t == "scatter" && static_cast<int>(v("mode")) == 1) return number(v("density")) + " /m\xc2\xb2";
     if (t == "scatter" || t == "point_cloud") return std::to_string(static_cast<int>(v("count"))) + " points";
+    if (t == "grass") {
+        return number(v("density")) + " /m\xc2\xb2" + dot + std::to_string(static_cast<int>(v("variants"))) + " clumps";
+    }
     if (t == "box") {
         const sim::ParamValue s = net.param(n.id, "size");
         return number(s[0]) + times + number(s[1]) + times + number(s[2]) + " m";

@@ -137,7 +137,8 @@ trojúhelníků z paty pokryje přesně, i ten zubatý.
 | | Variation | 0,3 | jak moc se liší odstín listů a kůra stromů |
 | Detail | Sides | 10 | stěn kolem kmene; každá úroveň větví o 2 méně, nejméně 3, nikdy 6 (pak 7; viz Vítr) |
 | | Segment | 0,25 m | délka kousku kmene; větve o čtvrtinu jemněji na úroveň |
-| | Output | Mesh | Mesh (síť) nebo Skeleton (kostra) |
+| | Output | Mesh | Mesh (síť), Skeleton (kostra), nebo Instances: Variants stromů a bod pro každý strom ([vegetation.md](vegetation.md)) |
+| | Variants | 8 | u Instances: kolik různých stromů se vypěstuje — ty, které by vyrostly na prvních bodech |
 
 Ve viewportu má vybraný uzel v režimu objektů (**1**) úchyt jako Tube:
 **W** posouvá Center, **R** mění Height (nahoru) a Radius kmene (do stran)
@@ -167,6 +168,14 @@ rodičovské větve, u kmene −1) a `tree`. Listy jsou volné body ve skupině
 bodů `leaves`: `N` je směr, kam čepel hledí, `pscale` délka listu, `Cd`,
 `flex` a `orient` (níže). Kostra se hodí pro vlastní listy nebo květy
 (Copy to Points) a pro export do nástroje, který si trubky postaví sám.
+
+**Instances.** Stromy jako instance ([vegetation.md](vegetation.md)):
+uzel vypěstuje Variants stromů a každý bod vstupu jeden z nich zastupuje —
+otočený kolem +y, velký podle `pscale` a Size Variation, s vlastním
+odstínem (`tint`). Les tisíců stromů tak stojí tolik, kolik stojí osm
+stromů a tisíc bodů; viewport je kreslí přes GPU instancing, USD dostane
+PointInstancer. Ve větru se strom jako instance kývá celý od paty
+(`orient`), neohýbá se podle `flex`.
 
 ## 4. Les: strom na každém bodě
 

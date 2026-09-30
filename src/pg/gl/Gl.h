@@ -113,7 +113,10 @@ inline constexpr GLenum RGBA16F = 0x881A, COLOR_ATTACHMENT1 = 0x8CE1, COLOR_ATTA
     X(VertexAttribPointer, void, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))         \
     X(DisableVertexAttribArray, void, (GLuint))                                                    \
     X(VertexAttrib3f, void, (GLuint, GLfloat, GLfloat, GLfloat))                                   \
+    X(VertexAttrib4f, void, (GLuint, GLfloat, GLfloat, GLfloat, GLfloat))                          \
+    X(VertexAttribDivisor, void, (GLuint, GLuint))                                                 \
     X(DrawElements, void, (GLenum, GLsizei, GLenum, const void*))                                  \
+    X(DrawElementsInstanced, void, (GLenum, GLsizei, GLenum, const void*, GLsizei))                \
     X(DrawArrays, void, (GLenum, GLint, GLsizei))                                                  \
     X(GenTextures, void, (GLsizei, GLuint*))                                                       \
     X(BindTexture, void, (GLenum, GLuint))                                                         \

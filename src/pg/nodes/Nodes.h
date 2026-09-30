@@ -25,6 +25,22 @@ void registerVolumeNodes();
 void registerUsdNodes();
 void registerEditNodes();
 void registerTreeNodes();
+void registerGrassNodes();
+
+/// How Scatter places its points.
+struct ScatterRules {
+    size_t count = 1000;           ///< how many to try
+    double density = -1.0;         ///< 0 or more: as many to a square metre instead
+    uint32_t seed = 0;
+    std::string densityAttribute;  ///< a point attribute of the surface, 0 to 1: the share kept there
+    float maxSlope = 180.0f;       ///< degrees from level: none on steeper faces
+    float minDistance = 0.0f;      ///< m: none nearer to one kept before it
+};
+/// Points over the closed polygons of `src` by the rules, the same for the
+/// same seed -- each with the normal of its face (unless the corners have
+/// N) and the point attributes of its corners, blended (whole numbers and
+/// strings: the nearest corner's).
+std::shared_ptr<Geometry> scatterPoints(const Geometry& src, const ScatterRules& rules);
 
 /// Newell's normal of the polygon through `corners`: pointing the way they
 /// turn anticlockwise, twice the polygon's area long.

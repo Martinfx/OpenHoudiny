@@ -372,6 +372,28 @@ private:
     // triangles.
     GLuint shownVao_ = 0, shownPlaces_ = 0, shownColors_ = 0, shownVelocities_ = 0, shownIndices_ = 0;
     GLsizei shownElements_ = 0;
+    // What stands on the displayed geometry's points (Instances.h): each
+    // prototype's polygons once -- made when it is new -- and where each of
+    // its points puts it (attributes 4 to 7, one set an instance), sent
+    // again on every change.
+    struct InstancedGpu {
+        GeometryPtr prototype;  // held: its pointer names it
+        sim::DisplayMesher mesher;
+        sim::DisplayMesh mesh;
+        GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0;
+        GLsizei elements = 0, instances = 0;
+        size_t capacity = 0;  // floats the placements' buffer holds
+    };
+    std::vector<InstancedGpu> instanced_;
+    sim::DisplayInstances instances_;
+    void uploadInstances();
+    void releaseInstanced(InstancedGpu& gpu);
+    bool hasInstances() const;
+    /// Draws the instances, with the program that places them in use.
+    void drawInstances();
+    /// The attributes of one instance that stands where it is: what every
+    /// draw but the instanced ones reads.
+    void placeUninstanced();
     // The glass: its triangles (position, normal, tint, kind), and the
     // nearest two of its faces turned to the eye at each pixel.
     GLuint glassProgram_ = 0, glassVao_ = 0, glassBuffer_ = 0;

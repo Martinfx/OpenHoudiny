@@ -737,6 +737,33 @@ class Geometry:
         """values[i, j, k] of a (nx, ny, nz) array."""
         self._g.add_volume(name, values, tuple(origin), float(voxel))
 
+    # instances
+    @property
+    def prototypes(self):
+        """What its instance points stand for: a Geometry each, held once
+        however many points stand for it (Grass, Tree's Instances, Copy to
+        Points' Instance)."""
+        return [Geometry(g) for g in self._g.prototypes()]
+
+    @property
+    def instance_count(self):
+        """How many points stand for a prototype: their int attribute
+        instance says which, P where, orient how it is turned, pscale how big,
+        tint what its colours are multiplied by."""
+        return self._g.instance_count
+
+    def add_prototype(self, prototype):
+        """Another prototype; returns its number, for the points' instance."""
+        return self._g.add_prototype(prototype._g)
+
+    def clear_prototypes(self):
+        self._g.clear_prototypes()
+
+    def unpack(self):
+        """A copy with each instance made the geometry it stands for, as the
+        Unpack node makes it."""
+        return Geometry(self._g.unpack())
+
     # the whole of it
     def bounds(self):
         """((x, y, z) least, (x, y, z) most) of its points; None without any."""
@@ -747,8 +774,11 @@ class Geometry:
         return self._g.hash()
 
     def __repr__(self):
-        return (f"<pg.Geometry {self.point_count} points, {self.primitive_count} primitives, "
-                f"{self._g.volume_count} volumes>")
+        text = (f"<pg.Geometry {self.point_count} points, {self.primitive_count} primitives, "
+                f"{self._g.volume_count} volumes")
+        if self._g.prototype_count:
+            text += f", {self._g.instance_count} instances of {self._g.prototype_count} prototypes"
+        return text + ">"
 
 
 # --- simulations -------------------------------------------------------------------------------

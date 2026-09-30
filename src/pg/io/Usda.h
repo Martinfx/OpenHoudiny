@@ -174,9 +174,39 @@ Prim meshPrim(const std::string& name, const std::vector<std::pair<int, MeshText
 Prim curvesPrim(const std::string& name, const std::vector<std::pair<int, CurvesText>>& frames);
 Prim pointsPrim(const std::string& name, const std::vector<std::pair<int, PointsText>>& frames);
 
+// --- Instances ------------------------------------------------------------------------------
+//
+// The points that stand for prototypes (pg/core/Instances.h) as a
+// PointInstancer: its prototypes -- each as geometryPrim makes it -- in the
+// scope Prototypes under it; for each point which it stands for
+// (protoIndices), where (positions), how it is turned (orientations) and
+// how big (scales), its tint as the primvar tint, a point each, and its id
+// as ids.
+
+struct InstancesText {
+    std::string indices, positions, orientations, scales, tints, ids, extent;
+    bool empty() const { return indices.size() <= 2; }
+};
+InstancesText instancesText(const Geometry& geo);
+std::vector<Field> fields(const InstancesText& t);
+
+/// The scope Prototypes under the PointInstancer `instancer` -- at `path`
+/// on the stage -- with each of `prototypes` in it, as geometryPrim makes
+/// it (proto_0, proto_1...), and the instancer's relationship to them.
+void addPrototypes(Prim& instancer, const std::string& path,
+                   const std::vector<std::shared_ptr<const Geometry>>& prototypes);
+/// A PointInstancer of frames of instances and of `prototypes`, at `path`.
+Prim instancerPrim(const std::string& name, const std::string& path,
+                   const std::vector<std::shared_ptr<const Geometry>>& prototypes,
+                   const std::vector<std::pair<int, InstancesText>>& frames);
+
 /// Geometry at frames -- one frame: none of it animated -- as an Xform
-/// `name` over the mesh, curves and points it has.
-Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, const Geometry*>>& frames);
+/// `name` over the mesh, curves and points it has and its instances, as a
+/// PointInstancer "instances" of the prototypes of the first frame that
+/// has any. `path`: where the prim is on the stage, which the instancer
+/// names its prototypes by; /`name` when empty.
+Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, const Geometry*>>& frames,
+                  const std::string& path = {});
 
 /// `geo` alone as a stage: Y up, a unit a metre, the prim /`name` its
 /// default -- what writeGeometry() writes to .usda.

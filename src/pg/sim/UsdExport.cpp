@@ -1,5 +1,6 @@
 #include "pg/sim/UsdExport.h"
 
+#include "pg/core/Instances.h"
 #include "pg/io/Vdb.h"
 #include "pg/sim/Cloth.h"
 #include "pg/sim/Rigid.h"
@@ -99,6 +100,16 @@ Prim& primAt(std::list<Prim>& prims, const std::string& path, const char* specif
     return *at;
 }
 
+/// `box` grown round `geo` as it is drawn: its instances by what they
+/// stand for.
+void growDrawn(usda::Bounds& box, const Geometry& geo) {
+    Vec3 lo, hi;
+    drawnBox(geo, lo, hi);
+    if (lo.x > hi.x) return;
+    box.grow(lo);
+    box.grow(hi);
+}
+
 bool hasValues(const std::list<Prim>& prims) {
     for (const Prim& p : prims) {
         if (!p.attributes.empty() || hasValues(p.children)) return true;
@@ -127,6 +138,9 @@ struct UsdExport::Impl {
         std::map<std::string, usda::Field> declared;
     };
     std::map<std::string, Clipped> clipped;
+    // ... the prototypes of each PointInstancer among them, by its path: held
+    // in the stage, the first frame's that had instances.
+    std::map<std::string, std::vector<std::shared_ptr<const Geometry>>> prototypes;
     // ... in sets, each on the prim it hangs from (/World/water, /World/rain):
     // the frames whose layers it takes, and the frames it is there at.
     struct ClipSet {
@@ -195,8 +209,21 @@ struct UsdExport::Impl {
     }
 
     /// Geometry at frame f under the prim `at`: its mesh, curves and points,
-    /// as geometryPrim makes them.
-    void sampleShapes(usda::Stage& layer, const std::string& at, int f, const Geometry& geo) {
+    /// and its instances, as geometryPrim makes them -- the instancer's
+    /// prototypes those of the first frame with instances.
+    void sampleShapes(usda::Stage& layer, const std::string& at, int f, const Geometry& whole) {
+        std::shared_ptr<Geometry> rest;
+        const Geometry* shapes = &whole;
+        if (whole.prototypeCount() > 0) {
+            rest = withoutInstances(whole);
+            shapes = rest.get();
+            const usda::InstancesText instances = usda::instancesText(whole);
+            if (!instances.empty()) {
+                prototypes.emplace(at + "/instances", whole.prototypes());
+                sample(layer, at + "/instances", "PointInstancer", f, usda::fields(instances));
+            }
+        }
+        const Geometry& geo = *shapes;
         std::vector<uint32_t> all(geo.primitiveCount());
         for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<uint32_t>(i);
         std::vector<int32_t> scratch;
@@ -384,6 +411,7 @@ struct UsdExport::Impl {
                 q.setUniform("token", "type", usda::quoted("linear"));
                 if (!c.declared.count("widths")) q.set("float[]", "widths", "[0.01]").metadata = usda::interpolation("constant");
             }
+            if (c.type == "PointInstancer" && prototypes.count(path)) usda::addPrototypes(q, path, prototypes.at(path));
         }
         return p;
     }
@@ -467,7 +495,7 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
         if (!m.firstGeometry) {
             m.firstGeometry = m.lastGeometry = geometry;
             m.firstGeometryFrame = f;
-            for (const Vec3& p : geometry->positions()) m.scene.grow(p);
+            growDrawn(m.scene, *geometry);
             hold = true;
         } else if (m.lastGeometry != geometry && m.lastGeometry->hash() != geometry->hash()) {
             Impl::ClipSet& set = m.clipSets[m.geometryPath()];
@@ -485,7 +513,7 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
             m.sampleGeometry(layer, f, *geometry);
             set.frames.push_back(f);
             named = true;
-            for (const Vec3& p : geometry->positions()) m.scene.grow(p);
+            growDrawn(m.scene, *geometry);
             m.lastGeometry = geometry;
         }
     }
@@ -660,7 +688,8 @@ usda::Stage UsdExport::stage() const {
         if (m.geometryChanges) {
             g = &m.clippedPrim(world, m.geometryPath(), "Xform", m.geometryPresent);
         } else {
-            g = &world.children.emplace_back(usda::geometryPrim(m.geometryName, {{m.firstGeometryFrame, m.firstGeometry.get()}}));
+            g = &world.children.emplace_back(
+                usda::geometryPrim(m.geometryName, {{m.firstGeometryFrame, m.firstGeometry.get()}}, m.geometryPath()));
             m.visibility(*g, m.geometryPresent);
         }
         g->metadata.push_back(kBinding);

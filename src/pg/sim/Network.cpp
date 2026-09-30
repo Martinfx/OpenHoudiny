@@ -549,12 +549,18 @@ std::vector<NodeType> buildTypes() {
         p.push_back({"segment", "Segment", "Detail", K::Float, {0.25f, 0.0f, 0.0f}, 0.05f, 1.0f, 0.01f, kBig, "m",
                      "How long a piece of the trunk is; the branches in finer pieces, level by level. Longer: "
                      "fewer faces, for a forest far away."});
-        p.push_back({"output", "Output", "Detail", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+        p.push_back({"output", "Output", "Detail", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
                      "Mesh: the stems as tubes of bark, the leaves as polygons -- the groups bark and leaves. "
                      "Skeleton: each stem an open polyline, pscale its radius, and each leaf a point -- N the way "
                      "it faces, pscale its size, orient, in the group leaves -- for Copy to Points to put a leaf "
-                     "of your own on: modelled lying flat, facing +y, its stalk at the origin, pointing along +z.",
-                     {"mesh", "skeleton"}, {"Mesh", "Skeleton"}});
+                     "of your own on: modelled lying flat, facing +y, its stalk at the origin, pointing along +z. "
+                     "Instances: Variants trees grown once and a point for each tree standing for one of them, "
+                     "turned about +y as it happens, a shade of its own -- a forest of thousands, drawn "
+                     "instanced.",
+                     {"mesh", "skeleton", "instances"}, {"Mesh", "Skeleton", "Instances"}});
+        p.push_back({"variants", "Variants", "Detail", K::Int, {8.0f, 0.0f, 0.0f}, 1.0f, 32.0f, 1.0f, 64.0f, "",
+                     "Instances: how many trees are grown -- the ones the first points would grow -- for all the "
+                     "points to stand for."});
         geometry("tree", "Tree", "tree",
                  "A tree grown as a plant grows: a trunk thick at its foot, branches off it round it a golden "
                  "angle on from the one before, branches off those, each turned up to the light, bent under its "
@@ -567,6 +573,60 @@ std::vector<NodeType> buildTypes() {
                  {{"points", "Points", PinType::Geometry}}, std::move(p),
                  {"center", nullptr, nullptr, nullptr, "radius", "height"});
     }
+    geometry("grass", "Grass", "grass",
+             "Grass as it grows: clumps of blades from one root, each blade narrowing to its tip, leaning out "
+             "and bowing over under its weight, dark green at the root, light at the tip, a blade here and there "
+             "dry. With a surface in, clumps over it, Density to a square metre -- as instances: Variants clumps "
+             "held once and a point for each clump in the meadow (instance, orient, pscale, tint), millions of "
+             "blades for what their points cost. Only points in: a clump on each. Nothing in: one clump at "
+             "Center. Point Cd and flex -- how far along the blade, 0 at the root, 1 at the tip.",
+             {{"surface", "Surface", PinType::Geometry}},
+             {{"density", "Density", "Grass", K::Float, {50.0f, 0.0f, 0.0f}, 0.0f, 200.0f, 0.0f, kBig, "1/m\xc2\xb2",
+               "How many clumps to a square metre of the surface."},
+              seed("Grass", "Another number: other places, other clumps."),
+              vec("center", "Center", "Grass", Vec3(), -5.0f, 5.0f, "m", "Where the clump stands, with nothing in."),
+              {"sizevariation", "Size Variation", "Grass", K::Float, {0.3f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How much the clumps differ in size, one from the next -- on top of the points' pscale."},
+              {"alongnormal", "Along Normal", "Grass", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Grow out of the surface along its normal -- moss on a wall. Off: straight up, as grass grows "
+               "on a slope."},
+              text("densityattribute", "Density Attribute", "Rules", "",
+                   "A point attribute of the surface, 0 to 1 -- painted, or a wrangle's -- that says what share of "
+                   "the clumps grow there: 0 none, a path, 1 all. Empty: all."),
+              {"maxslope", "Max Slope", "Rules", K::Float, {45.0f, 0.0f, 0.0f}, 0.0f, 180.0f, 0.0f, 180.0f, "\xc2\xb0",
+               "No grass where the face leans more than this from level: off rocks and cliffs."},
+              {"blades", "Blades", "Blades", K::Int, {16.0f, 0.0f, 0.0f}, 1.0f, 60.0f, 0.0f, 1000.0f, "",
+               "How many blades in a clump."},
+              {"height", "Height", "Blades", K::Float, {0.4f, 0.0f, 0.0f}, 0.02f, 1.5f, 0.0f, kBig, "m",
+               "How long a blade is: a lawn 0.08, a meadow 0.4, tall grass 1."},
+              {"heightvariation", "Height Variation", "Blades", K::Float, {0.4f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How much the blades differ in length."},
+              {"width", "Width", "Blades", K::Float, {0.006f, 0.0f, 0.0f}, 0.001f, 0.05f, 0.0f, kBig, "m",
+               "How wide a blade is at its root; it narrows to its tip."},
+              {"bend", "Bend", "Blades", K::Float, {0.55f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How far the blades bow over under their weight: 0 upright, 1 their tips level."},
+              {"lean", "Lean", "Blades", K::Float, {30.0f, 0.0f, 0.0f}, 0.0f, 60.0f, 0.0f, 90.0f, "\xc2\xb0",
+               "How far they lean out from the clump's middle, at the most."},
+              {"spread", "Spread", "Blades", K::Float, {0.08f, 0.0f, 0.0f}, 0.0f, 0.3f, 0.0f, kBig, "m",
+               "How far from the clump's middle their roots are, at the most."},
+              {"segments", "Segments", "Blades", K::Int, {4.0f, 0.0f, 0.0f}, 1.0f, 12.0f, 1.0f, 16.0f, "",
+               "Pieces along a blade: more, a smoother bow; fewer, lighter for a field far away."},
+              {"rootcolor", "Root Color", "Look", K::Color, {0.08f, 0.14f, 0.03f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour of the blades at the root, as Cd."},
+              {"tipcolor", "Tip Color", "Look", K::Color, {0.25f, 0.4f, 0.08f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour at the tip."},
+              {"dry", "Dry", "Look", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The share of blades that are dry: 0 spring, 0.5 late summer."},
+              {"drycolor", "Dry Color", "Look", K::Color, {0.45f, 0.38f, 0.15f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour of a dry blade."},
+              {"variation", "Variation", "Look", K::Float, {0.2f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How much the blades, and the clumps, differ in shade -- lighter, darker, yellower."},
+              {"variants", "Variants", "Output", K::Int, {8.0f, 0.0f, 0.0f}, 1.0f, 32.0f, 1.0f, 64.0f, "",
+               "How many clumps are grown, for the points to stand for."},
+              {"instances", "Instances", "Output", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The points, each standing for its clump, drawn instanced. Off: the clumps made copies of -- "
+               "geometry every node can change, as heavy as its blades."}},
+             {"center", nullptr, nullptr, nullptr, nullptr, "height"});
     {
         ParamDef f = file("An OBJ file: its points, polygons and lines. A relative path is read from the "
                           "network's folder; a file that changes is read again.");
@@ -776,22 +836,51 @@ std::vector<NodeType> buildTypes() {
              in, {});
     geometry("scatter", "Scatter", "scatter",
              "Points over the surface, as many to a square metre everywhere; each with the normal of its face "
-             "and the attributes of the corners round it, blended.",
+             "and the attributes of the corners round it, blended. Rules keep them off where they do not "
+             "belong -- too steep, painted out, too near one another: grass on a meadow, trees in a wood.",
              in,
-             {{"count", "Count", "Scatter", K::Int, {1000.0f, 0.0f, 0.0f}, 1.0f, 20000.0f, 0.0f, 1e7f, "",
+             {{"mode", "Mode", "Scatter", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Count: that many are tried, all over. Density: as many to a square metre -- more area, more "
+               "points.",
+               {"count", "density"}, {"Count", "Density"}},
+              {"count", "Count", "Scatter", K::Int, {1000.0f, 0.0f, 0.0f}, 1.0f, 20000.0f, 0.0f, 1e7f, "",
                "How many points."},
-              seed("Scatter", "Another number, other places.")});
+              {"density", "Density", "Scatter", K::Float, {10.0f, 0.0f, 0.0f}, 0.0f, 200.0f, 0.0f, kBig, "1/m\xc2\xb2",
+               "How many to a square metre, in Density mode."},
+              seed("Scatter", "Another number, other places."),
+              text("densityattribute", "Density Attribute", "Rules", "",
+                   "A point attribute of the input, 0 to 1 -- painted, or a wrangle's -- that says what share of "
+                   "the points to keep there: 0 none, 1 all. Empty: all."),
+              {"maxslope", "Max Slope", "Rules", K::Float, {180.0f, 0.0f, 0.0f}, 0.0f, 180.0f, 0.0f, 180.0f, "\xc2\xb0",
+               "None where the face leans more than this from level: 30 keeps grass off a cliff, 90 off "
+               "overhangs, 180 anywhere."},
+              {"mindistance", "Min Distance", "Rules", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "m",
+               "None nearer than this to one before it: trees that keep their distance. 0: as they fall."}});
     t.push_back({"copy_to_points", "Copy to Points", "Geometry",
                  "A copy of Geometry on every point of Points: moved there, sized by the point's pscale, turned "
                  "by its orient -- a quaternion, as RBD Pieces gives the grit -- else its +y turned to the point's "
-                 "N. The points' other attributes -- a colour -- go onto their copy.",
+                 "N. The points' other attributes go onto their copy -- their Cd in place of its colours, their "
+                 "tint multiplying them. Instance: the points themselves, each standing for its copy, the "
+                 "geometry held once -- a forest of a few trees, a meadow of a few clumps.",
                  {{"geometry", "Geometry", PinType::Geometry}, {"points", "Points", PinType::Geometry}}, out,
                  {{"scale", "Scale", "Copy", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
                    "Every copy this much larger, on top of pscale."},
                   {"align", "Align to N", "Copy", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-                   "Turn each copy's +y to its point's normal."}},
+                   "Turn each copy's +y to its point's normal."},
+                  {"instance", "Instance", "Copy", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                   "Not copies: the points, each standing for what would be copied onto it (its instance), "
+                   "that held once -- the renderer draws it instanced, Unpack and the writers make the copies. "
+                   "Millions of blades of grass cost what their points do."},
+                  text("pieceattribute", "Piece Attribute", "Copy", "",
+                       "A primitive attribute of Geometry -- an integer or a text: each of its values is a piece, "
+                       "and each point gets the piece of its own value of it (a point without it, one in turn). "
+                       "Variants: eight clumps of grass, one on each point. Empty: all of it on every point.")},
                  1});
     t.back().core = "copytopoints";
+    geometry("unpack", "Unpack", "unpack",
+             "What the points stand for (instances: Copy to Points with Instance, Grass, Tree) made copies of "
+             "-- geometry every node can change. What is no instance stays as it is.",
+             in, {});
     geometry("null", "Null", "null", "What comes in, unchanged: a name to point at, an end to display.", in, {});
     // What changes the mesh itself.
     geometry("connectivity", "Connectivity", "connectivity",

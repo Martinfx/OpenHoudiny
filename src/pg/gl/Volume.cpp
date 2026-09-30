@@ -1,5 +1,6 @@
 #include "pg/gl/Volume.h"
 
+#include "pg/core/Instances.h"
 #include "pg/io/Exr.h"
 #include "pg/io/Picture.h"
 #include "pg/sim/Display.h"
@@ -1063,17 +1064,24 @@ layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec3 a_color;
 layout(location = 3) in vec3 a_velocity;  // world units a second
+// An instance: where it stands and how big, how it is turned (a quaternion),
+// its tint -- one of each where the geometry is not instanced: where it is,
+// as it is.
+layout(location = 4) in vec4 i_place;
+layout(location = 5) in vec4 i_turn;
+layout(location = 6) in vec4 i_tint;
 uniform mat4 u_viewProj, u_nextViewProj;
 uniform float u_frameTime;                // seconds to the next frame
 out vec3 v_world, v_normal, v_color;
 out vec4 v_now, v_next;                   // on the screen now, and where it moves by the next frame
+vec3 turned(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }
 void main() {
-    v_world = a_position;
-    v_normal = a_normal;
-    v_color = a_color;
-    gl_Position = u_viewProj * vec4(a_position, 1.0);
+    v_world = i_place.xyz + turned(i_turn, a_position * i_place.w);
+    v_normal = turned(i_turn, a_normal);
+    v_color = a_color * i_tint.rgb;
+    gl_Position = u_viewProj * vec4(v_world, 1.0);
     v_now = gl_Position;
-    v_next = u_nextViewProj * vec4(a_position + a_velocity * u_frameTime, 1.0);
+    v_next = u_nextViewProj * vec4(v_world + turned(i_turn, a_velocity) * u_frameTime, 1.0);
 }
 )";
 
@@ -1101,8 +1109,11 @@ void main() {
 // its light each pixel's nearest triangle is, 0 to 1 -- what they shadow.
 const char* kGeoShadowVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
+layout(location = 4) in vec4 i_place;  // an instance, as the geometry's program places it
+layout(location = 5) in vec4 i_turn;
 uniform mat4 u_lightViewProj;
-void main() { gl_Position = u_lightViewProj * vec4(a_position, 1.0); }
+vec3 turned(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }
+void main() { gl_Position = u_lightViewProj * vec4(i_place.xyz + turned(i_turn, a_position * i_place.w), 1.0); }
 )";
 
 const char* kGeoShadowFragment = R"(#version 330 core
@@ -1821,6 +1832,7 @@ VolumeRenderer::~VolumeRenderer() {
     if (geoShadowFbo_) gl_.DeleteFramebuffers(1, &geoShadowFbo_);
     if (geoShadowTex_) gl_.DeleteTextures(1, &geoShadowTex_);
     if (geoShadowDepth_) gl_.DeleteRenderbuffers(1, &geoShadowDepth_);
+    for (InstancedGpu& gpu : instanced_) releaseInstanced(gpu);
     for (GLuint a : {geoVao_, dotVao_, curveVao_, shownVao_}) {
         if (a) gl_.DeleteVertexArrays(1, &a);
     }
@@ -2216,8 +2228,9 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
         gl_.BindVertexArray(gpu->vao);
         gl_.DrawArrays(TRIANGLES, 0, gpu->vertices);
     }
-    if ((geoVertices_ > 0 || shownElements_ > 0) && geoProgram_) {
+    if ((geoVertices_ > 0 || shownElements_ > 0 || hasInstances()) && geoProgram_) {
         gl_.UseProgram(geoProgram_);
+        placeUninstanced();
         gl_.UniformMatrix4fv(location(geoProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
         gl_.UniformMatrix4fv(location(geoProgram_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
         gl_.Uniform1f(location(geoProgram_, "u_frameTime"), passes.on ? passes.frameTime : 0.0f);
@@ -2229,6 +2242,7 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
             gl_.BindVertexArray(shownVao_);
             gl_.DrawElements(TRIANGLES, shownElements_, UNSIGNED_INT, nullptr);
         }
+        drawInstances();
         gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Pieces));
         if (geoVertices_ > 0) {
             gl_.BindVertexArray(geoVao_);
@@ -2298,6 +2312,9 @@ void VolumeRenderer::renderGlass(int width, int height, const Vec3& eye) {
 void VolumeRenderer::setGeometry(const GeometryPtr& geometry) {
     if (geometry == geometry_) return;
     geometry_ = geometry;
+    // What stands on its points: where, sent again; what, made only when new.
+    instances_ = geometry ? sim::instancesOf(*geometry) : sim::DisplayInstances();
+    uploadInstances();
     // Its polygons indexed. When only the points moved, the vertices' places
     // alone go to the GPU again -- and with nothing else to draw, that is all.
     const bool moved = shownMesher_.make(geometry, shownMesh_) == sim::DisplayMesher::Made::Moved;
@@ -2365,12 +2382,112 @@ void VolumeRenderer::uploadShownMesh(bool all) {
 void VolumeRenderer::updateGeometryBounds() {
     Vec3 lo = shownDisplay_.lo, hi = shownDisplay_.hi;
     for (int a = 0; a < 3; ++a) {
-        lo[a] = std::min(lo[a], piecesDisplay_.lo[a]);
-        hi[a] = std::max(hi[a], piecesDisplay_.hi[a]);
+        lo[a] = std::min({lo[a], piecesDisplay_.lo[a], instances_.lo[a]});
+        hi[a] = std::max({hi[a], piecesDisplay_.hi[a], instances_.hi[a]});
     }
     hasGeoBounds_ = lo.x <= hi.x;
     geoLo_ = lo;
     geoHi_ = hi;
+}
+
+bool VolumeRenderer::hasInstances() const {
+    for (const InstancedGpu& gpu : instanced_) {
+        if (gpu.instances > 0 && gpu.elements > 0) return true;
+    }
+    return false;
+}
+
+void VolumeRenderer::releaseInstanced(InstancedGpu& gpu) {
+    if (gpu.vao) gl_.DeleteVertexArrays(1, &gpu.vao);
+    for (GLuint b : {gpu.places, gpu.colors, gpu.indices, gpu.placements}) {
+        if (b) gl_.DeleteBuffers(1, &b);
+    }
+    gpu = InstancedGpu();
+}
+
+void VolumeRenderer::uploadInstances() {
+    auto bytes = [](const auto& v) { return static_cast<GLsizeiptr>(v.size() * sizeof(v[0])); };
+    std::vector<InstancedGpu> kept;
+    kept.reserve(instances_.prototypes.size());
+    for (size_t k = 0; k < instances_.prototypes.size(); ++k) {
+        const GeometryPtr& prototype = instances_.prototypes[k];
+        InstancedGpu gpu;
+        const auto was = std::find_if(instanced_.begin(), instanced_.end(),
+                                      [&](const InstancedGpu& g) { return g.prototype == prototype && g.vao; });
+        if (was != instanced_.end()) {
+            gpu = std::move(*was);
+            *was = InstancedGpu();
+        } else {
+            // Its polygons, as the displayed geometry's are made -- what
+            // stands on its own points made copies of first.
+            gpu.prototype = prototype;
+            gpu.mesher.make(prototype->prototypeCount() > 0 ? GeometryPtr(unpackInstances(*prototype)) : prototype, gpu.mesh);
+            const sim::DisplayMesh& m = gpu.mesh;
+            gl_.GenVertexArrays(1, &gpu.vao);
+            GLuint buffers[4] = {};
+            gl_.GenBuffers(4, buffers);
+            gpu.places = buffers[0];
+            gpu.colors = buffers[1];
+            gpu.indices = buffers[2];
+            gpu.placements = buffers[3];
+            const GLsizei six = 6 * static_cast<GLsizei>(sizeof(float)), three = 3 * static_cast<GLsizei>(sizeof(float));
+            gl_.BindVertexArray(gpu.vao);
+            gl_.BindBuffer(ARRAY_BUFFER, gpu.places);
+            gl_.BufferData(ARRAY_BUFFER, bytes(m.places), m.places.data(), STATIC_DRAW);
+            gl_.EnableVertexAttribArray(0);
+            gl_.VertexAttribPointer(0, 3, FLOAT, 0, six, nullptr);
+            gl_.EnableVertexAttribArray(1);
+            gl_.VertexAttribPointer(1, 3, FLOAT, 0, six, reinterpret_cast<const void*>(3 * sizeof(float)));
+            gl_.BindBuffer(ARRAY_BUFFER, gpu.colors);
+            gl_.BufferData(ARRAY_BUFFER, bytes(m.colors), m.colors.data(), STATIC_DRAW);
+            gl_.EnableVertexAttribArray(2);
+            gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
+            gl_.DisableVertexAttribArray(3);  // not moving: the velocity everything without its own reads
+            gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, gpu.indices);
+            gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
+            // Where each instance goes: three vectors of it, one set an instance.
+            gl_.BindBuffer(ARRAY_BUFFER, gpu.placements);
+            const GLsizei stride = static_cast<GLsizei>(sim::DisplayInstances::kFloats * sizeof(float));
+            for (GLuint a = 0; a < 3; ++a) {
+                gl_.EnableVertexAttribArray(4 + a);
+                gl_.VertexAttribPointer(4 + a, 4, FLOAT, 0, stride, reinterpret_cast<const void*>(size_t{a} * 4 * sizeof(float)));
+                gl_.VertexAttribDivisor(4 + a, 1);
+            }
+            gl_.BindVertexArray(0);
+            gpu.elements = static_cast<GLsizei>(m.indices.size());
+        }
+        const std::vector<float>& placements = instances_.placements[k];
+        gl_.BindBuffer(ARRAY_BUFFER, gpu.placements);
+        if (placements.size() > gpu.capacity) {
+            gl_.BufferData(ARRAY_BUFFER, bytes(placements), placements.data(), DYNAMIC_DRAW);
+            gpu.capacity = placements.size();
+        } else if (!placements.empty()) {
+            gl_.BufferSubData(ARRAY_BUFFER, 0, bytes(placements), placements.data());
+        }
+        gl_.BindBuffer(ARRAY_BUFFER, 0);
+        gpu.instances = static_cast<GLsizei>(placements.size() / sim::DisplayInstances::kFloats);
+        kept.push_back(std::move(gpu));
+    }
+    // What no point stands for any more goes.
+    for (InstancedGpu& gpu : instanced_) releaseInstanced(gpu);
+    instanced_ = std::move(kept);
+    geoShadowDirty_ = true;
+}
+
+void VolumeRenderer::drawInstances() {
+    gl_.VertexAttrib3f(3, 0.0f, 0.0f, 0.0f);
+    for (const InstancedGpu& gpu : instanced_) {
+        if (gpu.instances == 0 || gpu.elements == 0) continue;
+        gl_.BindVertexArray(gpu.vao);
+        gl_.DrawElementsInstanced(TRIANGLES, gpu.elements, UNSIGNED_INT, nullptr, gpu.instances);
+    }
+    gl_.BindVertexArray(0);
+}
+
+void VolumeRenderer::placeUninstanced() {
+    gl_.VertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 1.0f);  // here, as big as it is
+    gl_.VertexAttrib4f(5, 0.0f, 0.0f, 0.0f, 1.0f);  // not turned
+    gl_.VertexAttrib4f(6, 1.0f, 1.0f, 1.0f, 1.0f);  // its own colour
 }
 
 void VolumeRenderer::setPieces(const GeometryPtr& pieces) {
@@ -2444,7 +2561,7 @@ void VolumeRenderer::uploadGeometry() {
 }
 
 void VolumeRenderer::updateGeoShadow(const Vec3& light) {
-    if (!geoShadowProgram_ || (geoVertices_ == 0 && shownElements_ == 0) || !hasGeoBounds_) {
+    if (!geoShadowProgram_ || (geoVertices_ == 0 && shownElements_ == 0 && !hasInstances()) || !hasGeoBounds_) {
         hasGeoShadow_ = false;
         return;
     }
@@ -2523,10 +2640,12 @@ void VolumeRenderer::updateGeoShadow(const Vec3& light) {
     gl_.Disable(CULL_FACE);
     gl_.UseProgram(geoShadowProgram_);
     gl_.UniformMatrix4fv(location(geoShadowProgram_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
+    placeUninstanced();
     if (shownElements_ > 0) {
         gl_.BindVertexArray(shownVao_);
         gl_.DrawElements(TRIANGLES, shownElements_, UNSIGNED_INT, nullptr);
     }
+    drawInstances();
     if (geoVertices_ > 0) {
         gl_.BindVertexArray(geoVao_);
         gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
@@ -3041,7 +3160,7 @@ void VolumeRenderer::render(int width, int height) {
     // The shadows of the geometry: its map from the sun, when it or the sun moved.
     updateGeoShadow(normalize(look.lightDirection()));
     // The meshes first, into their own buffer, seen by the same camera.
-    const bool meshes = (anyMesh_ || geoVertices_ > 0 || shownElements_ > 0) && meshProgram_;
+    const bool meshes = (anyMesh_ || geoVertices_ > 0 || shownElements_ > 0 || hasInstances()) && meshProgram_;
     if (meshes) renderMeshes(width, height, Vec3(eye[0], eye[1], eye[2]));
     // ... and the glass into its own, as two layers.
     const bool glass = glassVertices_ > 0 && glassProgram_;
@@ -3097,7 +3216,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform1i(location(program_, "u_grid"), s.grid ? 1 : 0);
     gl_.Uniform1i(location(program_, "u_skyBehind"), s.skyBehind ? 1 : 0);
     // The shadows of the geometry, from their map.
-    const bool geoShadow = hasGeoShadow_ && (geoVertices_ > 0 || shownElements_ > 0);
+    const bool geoShadow = hasGeoShadow_ && (geoVertices_ > 0 || shownElements_ > 0 || hasInstances());
     gl_.Uniform1i(location(program_, "u_hasGeoShadow"), geoShadow ? 1 : 0);
     gl_.UniformMatrix4fv(location(program_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
     gl_.Uniform1f(location(program_, "u_geoShadowTexel"), 1.0f / static_cast<float>(kGeoShadowSize));
