@@ -11,6 +11,7 @@
 #include "pg/nodes/Rebuild.h"
 
 #include "pg/core/Parallel.h"
+#include "pg/core/Selection.h"
 #include "pg/core/Spatial.h"
 
 #include <algorithm>
@@ -200,16 +201,20 @@ public:
         const float distance = params_.evalFloat("distance", ctx, 0.2f);
         const float inset = params_.evalFloat("inset", ctx, 0.0f);
         const bool back = params_.evalBool("outputback", ctx, false);
+        // The faces a group or a pattern names -- 0-9, p3-4, a point group's
+        // -- or every face.
         const std::string groupName = params_.getString("group");
-        const Group* group = groupName.empty() ? nullptr : src.findGroup(groupName);
         error_.clear();
-        if (!groupName.empty() && (!group || group->classOf() != AttrClass::Primitive)) {
+        bool named = true;
+        const std::vector<uint8_t> picked =
+            groupName.empty() ? std::vector<uint8_t>() : selectElements(src, AttrClass::Primitive, groupName, &named);
+        if (!named) {
             error_ = "no primitive group '" + groupName + "'";
             return in[0];
         }
         const auto P = src.positions();
         auto chosen = [&](size_t p) {
-            return src.primitiveClosed(p) && src.primitiveVertexCount(p) >= 3 && (!group || group->contains(p));
+            return src.primitiveClosed(p) && src.primitiveVertexCount(p) >= 3 && (groupName.empty() || picked[p]);
         };
 
         Blends points, vertices;

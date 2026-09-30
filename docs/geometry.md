@@ -60,7 +60,7 @@ nastaveným na ni.
 | **Null** | Nic nemění: jméno, na které se dá ukázat, konec řetězce |
 | **Connectivity** | Očísluje souvislé kusy (primitivy, které sdílejí body, jsou jeden kus): celočíselný atribut `class` na primitivech nebo bodech, kusy od 0 v pořadí prvních primitiv |
 | **Fuse** | Body blíž než Distance spojí v jeden (uprostřed nich), primitivy je následují; co se zhroutí (trojúhelník ze dvou bodů), zmizí |
-| **PolyExtrude** | Každou stěnu (nebo stěny skupiny) vytáhne podél normály, s bočními stěnami podél hran: dovnitř okno, ven římsa; Inset ji předtím zmenší o pevnou vzdálenost od hran; Output Back nechá i původní stěnu (uzavřené těleso); skupiny `extrudeFront` a `extrudeSide` |
+| **PolyExtrude** | Každou stěnu (nebo stěny skupiny či vzoru `0-9 12` — Tab ve viewportu ho vyplní vybranými plochami; šipka ve viewportu mění Distance) vytáhne podél normály, s bočními stěnami podél hran: dovnitř okno, ven římsa; Inset ji předtím zmenší o pevnou vzdálenost od hran; Output Back nechá i původní stěnu (uzavřené těleso); skupiny `extrudeFront` a `extrudeSide` |
 | **Subdivide** | Catmull-Clark: každá stěna na čtyřúhelníky, body posunuté do hladkého tvaru; volné hrany drží svou čáru a rohy mřížky zůstávají; atributy bodů jdou s nimi, rohů lineárně |
 | **Clip** | Nechá to, co je na jedné straně roviny: stěny rozřízne podél ní a s Cap uzavřené těleso zase uzavře stěnou v rovině (skupina `cut`); nekonvexní řez rozloží na trojúhelníky — z obou stran roviny na tytéž, takže víčka dvou polovin lícují |
 | **Attribute Transfer** | Atributy bodů z druhého vstupu (Source) na body blízko nich: do Distance vážený průměr bodů, dál slábnoucí přes Blend Width; celá čísla a řetězce od nejbližšího |

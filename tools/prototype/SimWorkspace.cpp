@@ -846,6 +846,66 @@ bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
     return false;
 }
 
+bool SimWorkspace::pickedMenu() {
+    // Tab in the viewport: the geometry nodes, those that take a group --
+    // what is picked goes into it -- first.
+    if (ImGui::IsWindowAppearing()) {
+        pickedSearch_.clear();
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(theme::px(250.0f));
+    ImGui::InputTextWithHint("##search", "Search nodes\xe2\x80\xa6", &pickedSearch_);
+    std::string q = pickedSearch_;
+    for (char& ch : q) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    auto fits = [&](const sim::NodeType& t) {
+        if (!t.core || t.inputs.empty() || t.inputs.front().type != sim::PinType::Geometry) return false;
+        if (std::string(t.name) == "asset_input") return false;
+        if (q.empty()) return true;
+        std::string label = t.label;
+        for (char& ch : label) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return label.find(q) != std::string::npos || std::string(t.name).find(q) != std::string::npos;
+    };
+    const size_t picked = elementCount();
+    const sim::NodeType* first = nullptr;
+    const sim::NodeType* chosen = nullptr;
+    auto list = [&](const char* heading, bool withGroup) {
+        std::vector<const sim::NodeType*> types;
+        for (const sim::NodeType* t : sim::allNodeTypes()) {
+            if (fits(*t) && (t->param("group") != nullptr) == withGroup) types.push_back(t);
+        }
+        if (types.empty()) return;
+        ImGui::TextDisabled("%s", heading);
+        for (const sim::NodeType* t : types) {
+            if (!first) first = t;
+            ImGui::PushID(t->name);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable("##t", false, 0, ImVec2(theme::px(250.0f), 0.0f))) chosen = t;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(theme::px(320.0f));
+                ImGui::TextUnformatted(t->help);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+            const float h = ImGui::GetTextLineHeight();
+            ImDrawList* d = ImGui::GetWindowDrawList();
+            theme::drawIcon(d, typeIcon(t), ImVec2(p.x + theme::px(12.0f), p.y + h * 0.5f), h * 0.85f,
+                            theme::shade(typeColor(*t), 0.35f));
+            d->AddText(ImVec2(p.x + theme::px(26.0f), p.y), theme::kText, t->label);
+            ImGui::PopID();
+        }
+        ImGui::Dummy(ImVec2(0.0f, theme::px(3.0f)));
+    };
+    ImGui::Dummy(ImVec2(0.0f, theme::px(2.0f)));
+    list(picked ? "On what is picked" : "On all of it -- nothing is picked", true);
+    list("After the shown node", false);
+    if (!first) ImGui::TextDisabled("Nothing fits");
+    if (first && ImGui::IsKeyPressed(ImGuiKey_Enter)) chosen = first;
+    if (!chosen) return false;
+    applyToPicked(chosen->name);
+    return true;
+}
+
 void SimWorkspace::nodeMenu(int id) {
     const sim::Node* n = net_.node(id);
     if (!n) return;
@@ -1859,6 +1919,7 @@ void SimWorkspace::helpMenu() {
     ImGui::TextUnformatted("Ctrl+G, Del               a group of it, delete it (Group, Blast)");
     ImGui::TextUnformatted("Ctrl+A, Ctrl+I, Esc       pick all, the others, none");
     ImGui::TextUnformatted("P, [ ], Shift+wheel       paint an attribute (Ctrl: erase), brush size");
+    ImGui::TextUnformatted("Tab, N                    a node on what is picked (PolyExtrude...), numbers");
     ImGui::Separator();
     ImGui::TextDisabled("Timeline");
     ImGui::TextUnformatted("Space  Home  End  Left  Right");

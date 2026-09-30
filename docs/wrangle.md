@@ -46,7 +46,9 @@ for (int i = 0; i < 5; i++) {      // fraktální šum: pět oktáv
 
 Všechny tři jsou tentýž uzel s jiným výchozím **Run Over** (Points,
 Primitives, Vertices, Detail), který jde přepnout. **Group** omezí běh na
-prvky jedné skupiny. Uzel má **čtyři vstupy**: první je geometrie, nad kterou
+prvky jedné skupiny — nebo na prvky vzoru: čísla a rozsahy `0-9 12`, hrany
+`p3-4`, `*`, `^` ubírá ([editing.md](editing.md#7-vzory-prvků)); Tab ve
+viewportu ho vyplní vybranými prvky. Uzel má **čtyři vstupy**: první je geometrie, nad kterou
 běží a kterou mění, další tři jsou jen ke čtení (`point(1, "P", i)`,
 `@opinput1_P`, `npoints(2)` …).
 

@@ -468,3 +468,32 @@ TEST(edit_transform_is_the_edit_node_and_a_drag_after_it_is_one_again) {
         CHECK_NEAR(length(Mat4::rotate(e.r).transformDirection(v) - axes.apply(v)), 0.0f, 1e-5f);
     }
 }
+
+TEST(extrude_and_wrangles_take_a_pattern_of_elements) {
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 4);  // 16 quads
+    Node* extrude = g.create("polyextrude", "extrude");
+    extrude->setInput(0, grid);
+    extrude->setString("group", "0-1 5");  // three quads, as Tab in the viewport writes them
+    GeometryPtr out = engine.cook(*extrude, CookContext{});
+    const Group* front = out->findGroup("extrudeFront");
+    CHECK(front && front->memberCount() == 3u);
+    extrude->setString("group", "nosuch");
+    out = engine.cook(*extrude, CookContext{});
+    CHECK_EQ(out->primitiveCount(), 16u);  // names nothing there is: said, and left as it was
+    // A Point Wrangle over the points a pattern names, and over an edge's.
+    Node* wrangle = g.create("pointwrangle", "wrangle");
+    wrangle->setInput(0, grid);
+    wrangle->setString("snippet", "@P.y = 1;");
+    wrangle->setString("group", "0-2 24");
+    out = engine.cook(*wrangle, CookContext{});
+    size_t up = 0;
+    for (const Vec3& p : out->positions()) up += p.y > 0.5f;
+    CHECK_EQ(up, 4u);
+    wrangle->setString("group", "p5-6-7");
+    out = engine.cook(*wrangle, CookContext{});
+    up = 0;
+    for (const Vec3& p : out->positions()) up += p.y > 0.5f;
+    CHECK_EQ(up, 3u);
+}

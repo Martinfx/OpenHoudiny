@@ -742,7 +742,7 @@ void SimWorkspace::frameSelection() {
 
 void SimWorkspace::viewTools(ImVec2 at) {
     const float side = theme::px(28.0f), gap = theme::px(2.0f), pad = theme::px(3.0f), space = theme::px(8.0f);
-    const float height = 13.0f * side + 9.0f * gap + 3.0f * space + 2.0f * pad;
+    const float height = 14.0f * side + 10.0f * gap + 3.0f * space + 2.0f * pad;
     ImDrawList* d = ImGui::GetWindowDrawList();
     toolsLo_ = at;
     toolsHi_ = ImVec2(at.x + side + 2.0f * pad, at.y + height);
@@ -796,6 +796,12 @@ void SimWorkspace::viewTools(ImVec2 at) {
                           paint_, true, side)) {
         setPaint(!paint_);
     }
+    place();
+    if (theme::iconButton("numbers", Icon::Numbers, "Numbers (N): of the points, or of the primitives, seen", numbers_,
+                          editingElements(), side)) {
+        numbers_ = !numbers_;
+        numbersKey_.clear();
+    }
     y += space - gap;
     place();
     if (theme::iconButton("axes", localAxes_ ? Icon::Local : Icon::World,
@@ -827,6 +833,13 @@ void SimWorkspace::viewMenu() {
         const bool any = elementCount() > 0;
         if (ImGui::MenuItem("Group from Picked", "Ctrl+G", false, any)) groupElements();
         if (iconItem(Icon::Trash, theme::kTextDim, "Delete Picked", "Del") && any) deleteElements();
+        if (ImGui::MenuItem("Extrude Picked", nullptr, false, any && elements_ == Elements::Primitives)) {
+            applyToPicked("polyextrude");
+        }
+        if (ImGui::BeginMenu("Node on Picked", net_.node(net_.displayed()) != nullptr)) {
+            if (pickedMenu()) ImGui::CloseCurrentPopup();
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Pick All", "Ctrl+A", false, !paint_)) selectAllElements(false);
         if (ImGui::MenuItem("Pick the Others", "Ctrl+I", false, !paint_)) selectAllElements(true);
         ImGui::Separator();
@@ -872,6 +885,10 @@ void SimWorkspace::viewMenu() {
         setElements(Elements::Primitives);
     }
     if (iconItem(Icon::Brush, paint_ ? theme::kAccent : theme::kTextDim, "Paint", "P")) setPaint(!paint_);
+    if (ImGui::MenuItem("Numbers", "N", numbers_, editingElements())) {
+        numbers_ = !numbers_;
+        numbersKey_.clear();
+    }
     ImGui::Separator();
     if (ImGui::MenuItem("Local Axes", nullptr, localAxes_)) localAxes_ = !localAxes_;
     if (ImGui::MenuItem("Snap", nullptr, snap_)) snap_ = !snap_;
@@ -887,8 +904,14 @@ void SimWorkspace::viewKeys(bool overView) {
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         if (gizmo_.dragging()) {
             gizmo_.cancel();
-            if (editNode_ || editPending_) restoreElementDrag();
-            else restoreDrag();
+            if (editNode_ || editPending_) {
+                restoreElementDrag();
+            } else if (extrudeNode_) {
+                net_.setParamAt(extrudeNode_, "distance", static_cast<float>(current_), {extrudeDistance0_, 0.0f, 0.0f});
+                extrudeNode_ = 0;
+            } else {
+                restoreDrag();
+            }
             gizmoOwnsMouse_ = true;  // until the button is let go
             setMessage("Put back");
         } else if (boxing_) {
@@ -932,6 +955,15 @@ void SimWorkspace::viewKeys(bool overView) {
         }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_P, false)) setPaint(!paint_);
+    if (ImGui::IsKeyPressed(ImGuiKey_N, false) && editingElements()) {
+        numbers_ = !numbers_;
+        numbersKey_.clear();
+    }
+    // Tab: a geometry node after the shown one, on what is picked.
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false) && net_.node(net_.displayed())) {
+        setPaint(false);
+        ImGui::OpenPopup("on_picked");
+    }
     if (paint_ && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) scaleBrush(0.8f);
     if (paint_ && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) scaleBrush(1.25f);
     if (ImGui::IsKeyPressed(ImGuiKey_K, false)) keySelection();
@@ -1318,6 +1350,7 @@ void SimWorkspace::viewport(ImVec2 size) {
         theme::drawIcon(d, Icon::Warning, ImVec2(c.x, c.y - t.y * 0.45f), t.y * 1.1f, theme::kYellow);
         d->AddText(ImVec2(c.x - t.x * 0.5f, c.y + t.y * 0.25f), theme::kText, why.c_str());
     }
+    drawNumbers(d, cam);
     drawGnomon(d, ImVec2(lo.x, hi.y));
     drawNotice(d, lo, hi);
 
@@ -1332,6 +1365,10 @@ void SimWorkspace::viewport(ImVec2 size) {
     }
     if (ImGui::BeginPopup("add_to_scene")) {
         if (sceneMenu(addAt_)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("on_picked")) {
+        if (pickedMenu()) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar();

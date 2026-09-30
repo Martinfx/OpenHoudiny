@@ -373,8 +373,9 @@ Seřazeno podle poměru hodnota / náklad:
    nastavuje uzel Edit (tahy se přesně skládají, měkký poloměr), Ctrl+G
    skupina, Delete Blast, štětec maluje atribut kapkami jako místy
    (Attribute Paint); značky v rendereru s testem hloubky
-   ([editing.md](docs/editing.md)). Zbývá: výběr lasem a štětcem, režim
-   vrcholů, Dissolve hran, symetrie, čísla bodů ve viewportu.
+   ([editing.md](docs/editing.md)); Tab vloží libovolný uzel na vybrané
+   (PolyExtrude s úchytem na Distance, wrangle), N ukáže čísla prvků.
+   Zbývá: výběr lasem a štětcem, režim vrcholů, Dissolve hran, symetrie.
 
 ---
 

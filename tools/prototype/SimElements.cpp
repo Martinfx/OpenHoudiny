@@ -577,6 +577,8 @@ void SimWorkspace::elementGizmo(ImDrawList* d, const ViewCamera& cam, bool overV
     const ImGuiIO& io = ImGui::GetIO();
     Vec3 center;
     const bool any = !paint_ && tool_ != GizmoMode::Select && elementCenter(center);
+    // Nothing picked, a PolyExtrude shown: its own handle.
+    if (!any && !editNode_ && !editPending_ && extrudeGizmo(d, cam, overView)) return;
     if (!any && !gizmo_.dragging()) return;
     if (gizmo_.dragging() && (paint_ || tool_ != gizmo_.drag().mode)) {
         // The tool changed under the drag: what it did stays.
@@ -828,6 +830,175 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
     const ImVec2 at(io.MousePos.x + theme::px(14.0f), io.MousePos.y + theme::px(10.0f));
     d->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 180), label);
     d->AddText(at, col, label);
+}
+
+// --- nodes on what is picked ----------------------------------------------------------------
+
+std::string SimWorkspace::patternFor(AttrClass cls) const {
+    const GeometryPtr& geo = renderer_.geometry();
+    if (!geo || elementCount() == 0) return {};
+    // Edges name their points, or the primitives they are sides of, alike.
+    if (elements_ == Elements::Edges) return edgePatternOf(picked_.edges);
+    const bool prims = elements_ == Elements::Primitives;
+    if ((cls == AttrClass::Primitive) == prims) return patternOf(picked_.mask);
+    return cls == AttrClass::Primitive ? patternOf(primitivesOfPoints(*geo, picked_.mask))
+                                       : patternOf(pointsOfPrimitives(*geo, picked_.mask));
+}
+
+void SimWorkspace::applyToPicked(const std::string& type) {
+    const sim::NodeType* t = sim::findNodeType(type);
+    if (!t || !net_.node(net_.displayed())) {
+        setMessage("Display a geometry node first: Tab puts a node after it", true);
+        return;
+    }
+    const size_t n = elementCount();
+    // The class the node works on: its own -- a Point or Primitive
+    // Wrangle, PolyExtrude's faces -- or, where it has a choice, ours.
+    AttrClass cls = elements_ == Elements::Primitives ? AttrClass::Primitive : AttrClass::Point;
+    bool fixed = false;
+    if (type == "polyextrude" || type == "primitive_wrangle") {
+        cls = AttrClass::Primitive;
+        fixed = true;
+    } else if (type == "point_wrangle") {
+        cls = AttrClass::Point;
+        fixed = true;
+    }
+    const std::string pattern = n ? patternFor(cls) : std::string();
+    const int id = insertAfterDisplayed(type);
+    if (!id) return;
+    if (!pattern.empty() && t->param("group")) net_.setText(id, "group", pattern);
+    if (!fixed && t->param("class") && n) {
+        net_.setParam(id, "class", {cls == AttrClass::Primitive ? 1.0f : 0.0f, 0.0f, 0.0f});
+    }
+    const sim::Node* made = net_.node(id);
+    setMessage(std::string(t->label) + " " + (made ? made->name : std::string()) +
+               (pattern.empty() ? std::string(" after the shown node")
+                                : " on " + std::to_string(n) + " " + kindOf(elements_, n != 1) + " picked"));
+}
+
+// --- the handle of a PolyExtrude -------------------------------------------------------------
+
+bool SimWorkspace::extrudeGizmo(ImDrawList* d, const ViewCamera& cam, bool overView) {
+    const int shown = net_.displayed();
+    const sim::Node* n = net_.node(shown);
+    const GeometryPtr& geo = renderer_.geometry();
+    if (!n || n->type != "polyextrude" || n->bypass || !geo || paint_ || tool_ == GizmoMode::Select) return false;
+    const float frame = static_cast<float>(current_);
+    // Its faces moved: their middle, and which way they went.
+    Vec3 center = extrudeCenter0_, normal = extrudeNormal0_;
+    if (!gizmo_.dragging() || extrudeNode_ != shown) {
+        const Group* front = geo->findGroup(net_.text(shown, "frontgroup"));
+        if (!front || front->classOf() != AttrClass::Primitive || front->memberCount() == 0) return false;
+        const auto P = geo->positions();
+        Vec3 sum, dir;
+        size_t count = 0;
+        for (size_t p = 0; p < geo->primitiveCount(); ++p) {
+            if (!front->contains(p)) continue;
+            const auto pts = geo->primitivePoints(p);
+            if (pts.size() < 3) continue;
+            for (size_t k = 1; k + 1 < pts.size(); ++k) dir += cross(P[pts[k]] - P[pts[0]], P[pts[k + 1]] - P[pts[0]]);
+            for (const uint32_t q : pts) {
+                sum += P[q];
+                ++count;
+            }
+        }
+        if (count == 0 || length(dir) < 1e-12f) return false;
+        center = sum * (1.0f / static_cast<float>(count));
+        normal = normalize(dir);
+    }
+    // The handle's y along the normal: dragged, Distance grows by how far
+    // along it the drag went.
+    const Vec3 helper = std::fabs(normal.y) < 0.9f ? Vec3(0.0f, 1.0f, 0.0f) : Vec3(1.0f, 0.0f, 0.0f);
+    sim::Rotation axes;
+    axes.y = normal;
+    axes.x = normalize(cross(helper, normal));
+    axes.z = cross(axes.x, axes.y);
+    const float distance = net_.valueAt(shown, "distance", frame)[0];
+    Vec3 pivot = center;
+    if (gizmo_.dragging()) pivot = extrudeCenter0_ + extrudeNormal0_ * dot(gizmo_.drag().move, extrudeNormal0_);
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool free = overView && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    gizmo_.update(d, cam, GizmoMode::Move, pivot, axes, free, snap_ != io.KeyCtrl);
+    if (gizmo_.began()) {
+        extrudeNode_ = shown;
+        extrudeDistance0_ = distance;
+        extrudeCenter0_ = center;
+        extrudeNormal0_ = normal;
+        gizmoOwnsMouse_ = true;
+    }
+    if ((gizmo_.dragging() || gizmo_.ended()) && extrudeNode_ == shown) {
+        const float along = dot(gizmo_.drag().move, extrudeNormal0_);
+        net_.setParamAt(shown, "distance", frame, {extrudeDistance0_ + along, 0.0f, 0.0f});
+    }
+    if (gizmo_.ended()) extrudeNode_ = 0;
+    // What it is: said by the arrow.
+    ImVec2 at;
+    if (cam.toScreen(pivot + normal * (cam.pixel(pivot) * Gizmo::screenLength() * 1.1f), at)) {
+        char text[64];
+        std::snprintf(text, sizeof text, "Distance %.3g m", static_cast<double>(net_.valueAt(shown, "distance", frame)[0]));
+        const ImVec2 o(at.x + theme::px(8.0f), at.y - theme::px(8.0f));
+        d->AddText(ImVec2(o.x + 1.0f, o.y + 1.0f), IM_COL32(0, 0, 0, 200), text);
+        d->AddText(o, IM_COL32(235, 236, 240, 235), text);
+    }
+    return true;
+}
+
+// --- the numbers of the elements -------------------------------------------------------------
+
+void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
+    const GeometryPtr& geo = renderer_.geometry();
+    if (!numbers_ || !editingElements() || !geo) return;
+    const bool prims = elements_ == Elements::Primitives;
+    // Those seen, found again when the view or the geometry changed.
+    char key[200];
+    std::snprintf(key, sizeof key, "%p %d %g %g %g %g %g %g %g %g", static_cast<const void*>(geo.get()), prims ? 1 : 0,
+                  static_cast<double>(cam.eye.x), static_cast<double>(cam.eye.y), static_cast<double>(cam.eye.z),
+                  static_cast<double>(cam.forward.x), static_cast<double>(cam.forward.y), static_cast<double>(cam.forward.z),
+                  static_cast<double>(cam.size.x), static_cast<double>(cam.size.y));
+    constexpr size_t kMost = 3000;
+    if (key != numbersKey_) {
+        numbersKey_ = key;
+        numberAt_.clear();
+        const ElementPicker* p = picker();
+        const size_t count = prims ? geo->primitiveCount() : geo->pointCount();
+        const auto P = geo->positions();
+        for (size_t i = 0; i < count && numberAt_.size() <= kMost; ++i) {
+            const Vec3 at = prims ? (p ? p->middle(i) : Vec3()) : P[i];
+            ImVec2 s;
+            if (!cam.toScreen(at, s) || s.x < cam.lo.x || s.y < cam.lo.y || s.x > cam.lo.x + cam.size.x ||
+                s.y > cam.lo.y + cam.size.y) {
+                continue;
+            }
+            numberAt_.emplace_back(at, static_cast<uint32_t>(i));
+        }
+        // Too many on screen to read: none -- come nearer.
+        if (numberAt_.size() > kMost) {
+            numberAt_.clear();
+            numbersKey_ += " many";
+        } else if (p) {
+            std::vector<std::pair<Vec3, uint32_t>> seen;
+            for (const auto& [at, i] : numberAt_) {
+                if (p->visible(cam.eye, at)) seen.emplace_back(at, i);
+            }
+            numberAt_ = std::move(seen);
+        }
+    }
+    if (numbersKey_.size() >= 5 && numbersKey_.compare(numbersKey_.size() - 5, 5, " many") == 0) {
+        const char* text = "Too many numbers to show: come nearer";
+        d->AddText(ImVec2(cam.lo.x + theme::px(60.0f), cam.lo.y + cam.size.y - theme::px(60.0f)), theme::kTextDim, text);
+        return;
+    }
+    const ImU32 col = prims ? IM_COL32(255, 214, 120, 235) : IM_COL32(170, 220, 255, 235);
+    char text[16];
+    for (const auto& [at, i] : numberAt_) {
+        ImVec2 s;
+        if (!cam.toScreen(at, s)) continue;
+        std::snprintf(text, sizeof text, "%u", i);
+        const ImVec2 ts = ImGui::CalcTextSize(text);
+        const ImVec2 o(s.x + (prims ? -ts.x * 0.5f : theme::px(4.0f)), s.y - (prims ? ts.y * 0.5f : ts.y + theme::px(2.0f)));
+        d->AddText(ImVec2(o.x + 1.0f, o.y + 1.0f), IM_COL32(0, 0, 0, 200), text);
+        d->AddText(o, col, text);
+    }
 }
 
 // --- what the viewport says -------------------------------------------------------------------

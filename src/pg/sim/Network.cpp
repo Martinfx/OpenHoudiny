@@ -625,7 +625,8 @@ std::vector<NodeType> buildTypes() {
                       {"input2", "Input 2", PinType::Geometry}, {"input3", "Input 3", PinType::Geometry}},
                      {snippet, over,
                       text("group", "Group", "Wrangle", "",
-                           "Only the elements of this group run; empty: all of them.")});
+                           "Only these elements run: a group's name, or numbers and ranges -- 0-9 12, edges p3-4 "
+                           "-- as Tab in the viewport writes them for what is picked; empty: all of them.")});
         };
         wrangle("point_wrangle", "Point Wrangle", 0,
                 "Runs a snippet for every point: move them, colour them, read their neighbours, make and delete "
@@ -682,7 +683,9 @@ std::vector<NodeType> buildTypes() {
                "How far out along the face's normal; less than 0, in."},
               {"inset", "Inset", "Extrude", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "m",
                "How far each edge moves in across the face first."},
-              text("group", "Group", "Extrude", "", "Only the primitives of this group; empty: every face."),
+              text("group", "Group", "Extrude", "",
+                   "Only these faces: a group's name, or numbers and ranges -- 0-9 12 -- as Tab in the viewport "
+                   "writes them for the faces picked; empty: every face."),
               {"outputback", "Output Back", "Extrude", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "Keep the face where it was, turned round: a closed solid."},
               text("frontgroup", "Front Group", "Groups", "extrudeFront", "The faces moved; empty: no group."),

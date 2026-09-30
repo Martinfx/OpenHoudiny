@@ -69,7 +69,7 @@ enum class Icon {
     Geometry, Points, Table,                         // geometry
     Film,                                            // a video
     Asset,                                           // a digital asset
-    Vertices, Edges, Faces, Brush,                   // editing geometry: what is picked, the paint brush
+    Vertices, Edges, Faces, Brush, Numbers,          // editing geometry: what is picked, the brush, numbers
 };
 
 /// `icon` in a square `size` wide, centred on `center`.

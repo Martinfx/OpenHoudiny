@@ -5,6 +5,7 @@
 #include "pg/lang/Query.h"
 
 #include "pg/core/Parallel.h"
+#include "pg/core/Selection.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -298,17 +299,24 @@ bool Program::run(Geometry& geo, const RunOptions& options, std::string& error, 
     if (!bindAll(run, geo, checked, error)) return false;
     run.count = options.runOver == AttrClass::Detail ? 1 : geo.elementCount(options.runOver);
 
-    // Only a group's elements, if one is named.
+    // Only a group's elements, if one is named -- or those a pattern names
+    // (pg/core/Selection.h): numbers, ranges, edges, groups, * and ^.
     std::vector<uint8_t> only;
     if (!options.group.empty() && options.runOver != AttrClass::Detail) {
         const Group* g = snapshot->findGroup(options.group);
         const char* cls = options.runOver == AttrClass::Point ? "point" : options.runOver == AttrClass::Primitive ? "primitive" : "vertex";
-        if (!g || g->classOf() != options.runOver) {
+        bool named = false;
+        if (g && g->classOf() == options.runOver) {
+            const auto m = g->mask();
+            only.assign(m.begin(), m.end());
+            named = true;
+        } else if (options.runOver != AttrClass::Vertex) {
+            only = selectElements(*snapshot, options.runOver, options.group, &named);
+        }
+        if (!named) {
             error = std::string("no ") + cls + " group '" + options.group + "'";
             return false;
         }
-        const auto m = g->mask();
-        only.assign(m.begin(), m.end());
         only.resize(run.count, 0);
     }
     auto skip = [&](size_t i) { return !only.empty() && !only[i]; };

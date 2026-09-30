@@ -374,6 +374,19 @@ private:
     void scaleBrush(float factor);
     /// What the bottom of the viewport says in these modes; empty for none.
     std::string elementStatus() const;
+    /// What is picked as a pattern of elements of class `cls`: the points
+    /// of primitives picked, the primitives all of whose points are...
+    std::string patternFor(AttrClass cls) const;
+    /// Tab in the viewport: a geometry node put after the displayed one,
+    /// on what is picked -- its Group the pattern, its class ours. True
+    /// when one was chosen.
+    bool pickedMenu();
+    void applyToPicked(const std::string& type);
+    /// The handle of a PolyExtrude shown: an arrow along its faces' normal
+    /// that sets Distance. True when it is there.
+    bool extrudeGizmo(ImDrawList* d, const ViewCamera& cam, bool overView);
+    /// The numbers of the points or primitives seen (N).
+    void drawNumbers(ImDrawList* d, const ViewCamera& cam);
 
     sim::Network net_;
     /// The geometry nodes, cooked: the network's; inside an asset, its inside's.
@@ -504,6 +517,17 @@ private:
     /// just after: taken out again untouched, it is as it was before.
     std::string madeBefore_, madeAfter_;
     Vec3 editT0_, editR0_, editS0_{1.0f, 1.0f, 1.0f}, editP0_, editCenter0_;
+    // The handle of a PolyExtrude: its node, Distance when the drag began,
+    // the faces' middle and normal then.
+    int extrudeNode_ = 0;
+    float extrudeDistance0_ = 0.0f;
+    Vec3 extrudeCenter0_, extrudeNormal0_;
+    // The numbers shown (N): where each is, found again as the view or the
+    // geometry changes.
+    bool numbers_ = false;
+    std::vector<std::pair<Vec3, uint32_t>> numberAt_;
+    std::string numbersKey_;
+    std::string pickedSearch_;  ///< what Tab's menu is searched for
     // The brush.
     bool paint_ = false;
     bool stroking_ = false;                 ///< the button is down, painting

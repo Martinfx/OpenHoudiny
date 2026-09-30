@@ -76,6 +76,8 @@ bodů a primitiv.
 | **Ctrl+G** | skupina z vybraného (Group) |
 | **Delete**, **X** | smaže vybrané (Blast) |
 | **P** | štětec zapnout / vypnout |
+| **Tab** | uzel na vybrané: PolyExtrude, wrangle, Edit… (§6a) |
+| **N** | čísla bodů (v režimu primitiv čísla primitiv), jen viditelných |
 | **[** , **]**, **Shift**+kolečko | menší / větší štětec |
 | **Ctrl** při malování | maluje hodnotou Erase Value (maže) |
 | **Esc** při tažení | vrátí, co tažení udělalo |
@@ -166,9 +168,32 @@ sloupy, dva rohy zvednuté Editem s měkkým poloměrem, rohy přišpendlené
 
 ![Příklad shade_sail: plachta mezi čtyřmi sloupy ve větru](img/shade-sail.jpg)
 
+## 6a. Jakýkoli uzel na vybraném: Tab
+
+**Tab** nad viewportem otevře nabídku geometrických uzlů s hledáním (jako
+Tab v síti). Vybraný uzel se vloží za zobrazený a — pokud má parametr
+Group — dostane do něj vybrané prvky jako vzor; kde má třídu (Points /
+Primitives), dostane naši. Uzly, které pracují na své třídě, si výběr
+převedou: **PolyExtrude** a **Primitive Wrangle** berou plochy (z bodů
+plochy, jejichž všechny body jsou vybrané), **Point Wrangle** body (z ploch
+jejich rohy). Hrany zůstávají hranami (`p3-4`). Uzly bez Group jsou
+v nabídce níž a vloží se jen za zobrazený. Nabídka je i v pravém kliku
+(*Node on Picked*, *Extrude Picked*).
+
+![Plochy vybrané obdélníkem, Tab › PolyExtrude, šipka úchytu vytáhla Distance na 0,44 m](img/edit-extrude.jpg)
+
+**PolyExtrude** zobrazený ve viewportu má vlastní úchyt: šipka
+z vytažených ploch (skupina Front Group) podél jejich normály. Tažení
+mění **Distance** (Ctrl přichytává, Esc vrací). Vytažením se mění
+topologie, takže výběr ploch zmizí a zůstane úchyt uzlu.
+
+**N** vypíše čísla bodů, v režimu primitiv čísla primitiv (u středu
+plochy). Jen ta, která jsou vidět, nejvýš 3000 na obrazovce — při víc
+ukáže výzvu přiblížit se.
+
 ## 7. Vzory prvků
 
-Parametry Group, Edit a Blast berou prvky jako **vzor**, jako skupinová
+Parametry Group, Edit, Blast, PolyExtrude a wranglů berou prvky jako **vzor**, jako skupinová
 pole uzlů v Houdini. Viewport je tak píše a dají se psát i ručně:
 
 | Vzor | Co vybere |
@@ -229,8 +254,8 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   pojmenovávají. Malování to nepostihne — kapky jsou místa.
 - Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
   objekty ani kusy před ní.
-- Zatím chybí výběr lasem a štětcem, režim vrcholů (rohů), *Dissolve* hran,
-  symetrie a čísla bodů ve viewportu.
+- Zatím chybí výběr lasem a štětcem, režim vrcholů (rohů), *Dissolve* hran
+  a symetrie. Úchyt má z uzlů jen Edit a PolyExtrude.
 - Drát a všechny body se kreslí do 400 000 hran či bodů; ve větší geometrii
   jen výběr. První výběr v síti milionů trojúhelníků postaví strom obálek
   (řádově sekunda).

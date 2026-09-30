@@ -614,6 +614,12 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             d->AddConvexPolyFilled(tip, 3, col);
             break;
         }
+        case Icon::Numbers:  // a hash: numbers of the elements
+            line(-0.25f, -0.8f, -0.45f, 0.8f);
+            line(0.45f, -0.8f, 0.25f, 0.8f);
+            line(-0.75f, -0.3f, 0.8f, -0.3f);
+            line(-0.8f, 0.3f, 0.75f, 0.3f);
+            break;
         case Icon::Film:  // a strip of film: holes along both edges, a picture between
             d->AddRect(P(-0.85f, -0.7f), P(0.85f, 0.7f), col, 0.1f * s, 0, t);
             for (int i = 0; i < 4; ++i) {
