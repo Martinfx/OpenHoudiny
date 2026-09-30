@@ -90,6 +90,16 @@ public:
     bool fits(const Geometry& geo) const;
     /// The geometry asked about from now on: one that fits.
     void adopt(GeometryPtr geo) { geo_ = std::move(geo); }
+    /// The geometry asked about from now on: the topology this was built
+    /// for, its points moved -- a surface sculpted. The tree keeps its shape
+    /// and takes the boxes of where the points are now, many times quicker
+    /// than a new one; what a query finds never depends on how the tree is
+    /// cut. False, and nothing changed, for another topology.
+    bool refit(GeometryPtr geo);
+    /// How much the tree's boxes have grown by refits since it was made:
+    /// their surfaces summed, over what they were. Far over 1, a new tree
+    /// answers quicker.
+    float swell() const;
 
     /// Its edges (edgesOf): what edge() and edgesIn() count.
     const std::vector<Edge>& edges() const { return edges_; }
@@ -149,6 +159,8 @@ private:
         uint32_t left = 0, right = 0;   ///< a branch's children
     };
     uint32_t make(uint32_t first, uint32_t count);
+    /// The boxes' surfaces, summed.
+    double area() const;
     /// Whether the ray meets triangle `tri` nearer than `best`: then `best`.
     bool hit(const Triangle& tri, const Vec3& origin, const Vec3& dir, float& best) const;
     bool faceSeen(size_t prim, const Vec3& eye, const Vec3& p) const;
@@ -160,6 +172,7 @@ private:
     std::vector<Triangle> tris_;
     std::vector<Node> nodes_;
     std::vector<Edge> edges_;
+    double builtArea_ = 0.0, area_ = 0.0;  ///< area() when made, and now
 };
 
 }  // namespace pg

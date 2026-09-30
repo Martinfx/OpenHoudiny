@@ -9,6 +9,7 @@
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
 #include "pg/core/Pick.h"
+#include "pg/core/Sculpt.h"
 #include "pg/core/Selection.h"
 #include "pg/core/Soft.h"
 #include "pg/nodes/Nodes.h"
@@ -602,6 +603,73 @@ TEST(picker_regions_on_a_fine_grid_are_what_asking_each_element_gives) {
     CHECK_EQ(wrong, 0u);
 }
 
+TEST(picker_refit_to_a_sculpted_surface_answers_as_a_new_one) {
+    // A grid pushed up into hills, its topology kept: the flat grid's tree
+    // with its boxes made again finds what a tree made for the hills finds
+    // -- under the mouse, in a lasso, along a ray, what the hills hide.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 40);
+    const GeometryPtr flat = engine.cook(*grid, CookContext{});
+    auto hills = std::make_shared<Geometry>(*flat);
+    std::vector<SculptDab> dabs;
+    for (int k = 0; k < 12; ++k) {
+        SculptDab d;
+        d.at = Vec3(-0.4f + 0.07f * static_cast<float>(k), 0.0f, 0.3f * std::sin(static_cast<float>(k)));
+        d.normal = Vec3(0.0f, 1.0f, 0.0f);
+        d.radius = 0.2f;
+        d.strength = 3.0f;
+        dabs.push_back(d);
+    }
+    sculpt(*hills, dabs);
+    ElementPicker moved(flat);
+    CHECK(moved.refit(hills));
+    CHECK(moved.geometry() == hills);
+    CHECK(moved.swell() > 1.0f && moved.swell() < 4.0f);
+    const ElementPicker fresh(hills);
+    // Looking down at the hills at a slant: some of the grid behind them.
+    PickView view;
+    view.eye = Vec3(0.0f, 0.6f, 1.2f);
+    view.forward = normalize(Vec3(0.0f, 0.1f, 0.0f) - view.eye);
+    view.right = Vec3(1.0f, 0.0f, 0.0f);
+    view.up = cross(view.right, view.forward);
+    view.tanHalfFov = std::tan(25.0f * 3.14159265f / 180.0f);
+    view.width = view.height = 400.0f;
+    size_t hits = 0, points = 0;
+    for (float y = 10.0f; y < 400.0f; y += 23.0f) {
+        for (float x = 10.0f; x < 400.0f; x += 19.0f) {
+            const int32_t prim = fresh.primitive(view, x, y, 4.0f);
+            CHECK_EQ(moved.primitive(view, x, y, 4.0f), prim);
+            const int32_t point = fresh.point(view, x, y, 6.0f);
+            CHECK_EQ(moved.point(view, x, y, 6.0f), point);
+            CHECK_EQ(moved.edge(view, x, y, 6.0f), fresh.edge(view, x, y, 6.0f));
+            Vec3 o, dir;
+            view.ray(x, y, o, dir);
+            float t0 = 0.0f, t1 = 0.0f;
+            CHECK_EQ(moved.raycast(o, dir, t0), fresh.raycast(o, dir, t1));
+            CHECK(t0 == t1);
+            hits += prim >= 0 ? 1 : 0;
+            points += point >= 0 ? 1 : 0;
+        }
+    }
+    CHECK(hits > 100);
+    CHECK(points > 10);
+    std::vector<Vec2> ring;
+    for (int k = 0; k < 24; ++k) {
+        const float a = 6.2831853f * static_cast<float>(k) / 24.0f;
+        ring.push_back({200.0f + 150.0f * std::cos(a), 220.0f + 110.0f * std::sin(a)});
+    }
+    const ScreenRegion lasso = ScreenRegion::lasso(ring);
+    CHECK(moved.pointsIn(view, lasso) == fresh.pointsIn(view, lasso));
+    CHECK(moved.edgesIn(view, lasso) == fresh.edgesIn(view, lasso));
+    CHECK(moved.primitivesIn(view, lasso) == fresh.primitivesIn(view, lasso));
+    // Another topology: not for a refit.
+    Graph g2;
+    Node* other = flatGrid(g2, 20);
+    CHECK(!moved.refit(engine.cook(*other, CookContext{})));
+    CHECK(moved.geometry() == hills);
+}
+
 TEST(picker_takes_what_is_hidden_too_when_asked) {
     Graph g;
     CookEngine engine;
@@ -786,6 +854,302 @@ TEST(edit_moves_the_points_round_by_their_soft_weights) {
             }
             CHECK_EQ(wrong, 0u);
         }
+    }
+}
+
+TEST(sculpt_dabs_read_and_write_as_text) {
+    SculptDab push;
+    push.tool = SculptDab::Tool::Push;
+    push.at = Vec3(0.25f, 1.5f, -2.0f);
+    push.normal = Vec3(0.0f, 1.0f, 0.0f);
+    push.radius = 0.3f;
+    push.strength = -0.5f;
+    SculptDab smooth;
+    smooth.tool = SculptDab::Tool::Smooth;
+    smooth.at = Vec3(1.0f, 2.0f, 3.0f);
+    smooth.radius = 0.1f;
+    smooth.strength = 0.75f;
+    SculptDab grab;
+    grab.tool = SculptDab::Tool::Grab;
+    grab.at = Vec3(-1.0f, 0.0f, 0.5f);
+    grab.move = Vec3(0.0f, 0.25f, 0.125f);
+    grab.radius = 0.5f;
+    SculptDab flat = push;
+    flat.tool = SculptDab::Tool::Flatten;
+    flat.strength = 1.0f;
+    const std::string text = sculptText(push) + "; " + sculptText(smooth) + "; nonsense 1 2; " + sculptText(grab) + "; " +
+                             sculptText(flat) + "; p 0 0 0 0 0 0 1 1";  // no normal: left out
+    const std::vector<SculptDab> back = parseSculpt(text);
+    CHECK_EQ(back.size(), 4u);
+    if (back.size() == 4) {
+        CHECK(back[0].tool == SculptDab::Tool::Push && back[0].at == push.at && back[0].strength == -0.5f);
+        CHECK(back[1].tool == SculptDab::Tool::Smooth && back[1].radius == 0.1f && back[1].strength == 0.75f);
+        CHECK(back[2].tool == SculptDab::Tool::Grab && back[2].move == grab.move && back[2].radius == 0.5f);
+        CHECK(back[3].tool == SculptDab::Tool::Flatten && back[3].normal == flat.normal);
+    }
+}
+
+TEST(sculpt_pushes_grabs_flattens_and_smooths_where_the_points_are) {
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 20);  // 21 x 21 points 5 cm apart, 220 in the middle
+    GeometryPtr flat = engine.cook(*grid, CookContext{});
+    auto dab = [](SculptDab::Tool tool, Vec3 at, float radius, float strength) {
+        SculptDab d;
+        d.tool = tool;
+        d.at = at;
+        d.normal = Vec3(0.0f, 1.0f, 0.0f);
+        d.radius = radius;
+        d.strength = strength;
+        return d;
+    };
+    // Out along the normal, a fifth of the radius at the middle; in, below 0.
+    const float top = kSculptPush * 0.3f;
+    Geometry pushed(*flat);
+    sculpt(pushed, std::vector<SculptDab>{dab(SculptDab::Tool::Push, Vec3(), 0.3f, 1.0f)});
+    CHECK_NEAR(pushed.positions()[220].y, top, 1e-6f);
+    for (size_t i = 0; i < pushed.pointCount(); ++i) {
+        const float d = length(flat->positions()[i]);
+        CHECK_NEAR(pushed.positions()[i].y, d < 0.3f ? top * falloff(Falloff::Smooth, d / 0.3f) : 0.0f, 1e-6f);
+    }
+    Geometry pulled(*flat);
+    sculpt(pulled, std::vector<SculptDab>{dab(SculptDab::Tool::Push, Vec3(), 0.3f, -1.0f)}, Falloff::Linear);
+    CHECK_NEAR(pulled.positions()[220].y, -top, 1e-6f);
+    // Grabbed: what it held, by the move -- all of it at its middle.
+    SculptDab up = dab(SculptDab::Tool::Grab, Vec3(), 0.02f, 1.0f);
+    up.move = Vec3(0.0f, 0.5f, 0.0f);
+    SculptDab again = up;               // where the point was: nothing there now
+    SculptDab there = up;
+    there.at = Vec3(0.0f, 0.5f, 0.0f);  // where it is: it goes on
+    Geometry grabbed(*flat);
+    sculpt(grabbed, std::vector<SculptDab>{up, again, there});
+    CHECK_NEAR(grabbed.positions()[220].y, 1.0f, 1e-6f);
+    for (size_t i = 0; i < grabbed.pointCount(); ++i) {
+        if (i != 220) CHECK_EQ(grabbed.positions()[i].y, 0.0f);
+    }
+    // Flattened onto the plane where it is: the bump near gone -- its top,
+    // over the dab's middle, takes a share a hair below all.
+    Geometry flattened(pushed);
+    sculpt(flattened, std::vector<SculptDab>{dab(SculptDab::Tool::Flatten, Vec3(), 0.3f, 1.0f)});
+    CHECK_NEAR(flattened.positions()[220].y, top * (1.0f - falloff(Falloff::Smooth, top / 0.3f)), 1e-7f);
+    CHECK(flattened.positions()[221].y < pushed.positions()[221].y);
+    // A spike smoothed away towards its neighbours.
+    Geometry spike(*flat);
+    SculptDab lift = up;
+    lift.move = Vec3(0.0f, 0.3f, 0.0f);
+    sculpt(spike, std::vector<SculptDab>{lift, dab(SculptDab::Tool::Smooth, Vec3(0.0f, 0.3f, 0.0f), 0.1f, 1.0f)});
+    CHECK_NEAR(spike.positions()[220].y, 0.0f, 1e-6f);
+    // A point of the border pulled out: smoothed back onto the border's
+    // line; a corner stays where it is.
+    const size_t side = 10 * 21;  // the middle of the border at x = -0.5
+    CHECK_NEAR(flat->positions()[side].x, -0.5f, 1e-6f);
+    Geometry border(*flat);
+    SculptDab out = dab(SculptDab::Tool::Grab, flat->positions()[side], 0.02f, 1.0f);
+    out.move = Vec3(-0.1f, 0.0f, 0.0f);
+    SculptDab corner = dab(SculptDab::Tool::Smooth, flat->positions()[0], 0.02f, 1.0f);
+    sculpt(border, std::vector<SculptDab>{out, dab(SculptDab::Tool::Smooth, Vec3(-0.6f, 0.0f, flat->positions()[side].z), 0.03f, 1.0f),
+                                          corner});
+    CHECK_NEAR(border.positions()[side].x, -0.5f, 1e-6f);
+    CHECK(border.positions()[0] == flat->positions()[0]);
+    // Point normals found again: tilted on the bump's side, of unit length.
+    Geometry withN(*flat);
+    AttributeArray& N = withN.points().create("N", AttrType::Vec3);
+    for (Vec3& n : N.write<Vec3>()) n = Vec3(0.0f, 1.0f, 0.0f);
+    sculpt(withN, std::vector<SculptDab>{dab(SculptDab::Tool::Push, Vec3(), 0.3f, 4.0f)});
+    const Vec3 slope = withN.points().find("N")->read<Vec3>()[223];
+    CHECK_NEAR(length(slope), 1.0f, 1e-5f);
+    CHECK(slope.x > 0.3f && slope.y > 0.5f);  // at x = 0.15 the bump falls away towards +x: turned that way
+}
+
+TEST(sculpt_is_what_asking_every_point_gives) {
+    // Dabs small and large on a bumpy sheet: the grid that finds the points
+    // near a dab, as they move, finds what asking every point finds.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 30);
+    Geometry sheet(*engine.cook(*grid, CookContext{}));
+    uint32_t seed = 11;
+    auto next = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    for (Vec3& p : sheet.positionsForWrite()) p.y = 0.05f * next();
+    std::vector<SculptDab> dabs;
+    for (int k = 0; k < 300; ++k) {
+        SculptDab d;
+        d.tool = k % 3 == 0 ? SculptDab::Tool::Push : k % 3 == 1 ? SculptDab::Tool::Grab : SculptDab::Tool::Flatten;
+        d.at = Vec3(next() - 0.5f, 0.05f * next(), next() - 0.5f);
+        d.normal = normalize(Vec3(next() - 0.5f, 1.0f, next() - 0.5f));
+        d.move = Vec3(0.1f * (next() - 0.5f), 0.1f * next(), 0.1f * (next() - 0.5f));
+        d.radius = k % 17 == 0 ? 0.8f : 0.01f + 0.15f * next();
+        d.strength = 2.0f * next() - 0.5f;
+        if (d.tool == SculptDab::Tool::Flatten) d.strength = std::clamp(d.strength, 0.0f, 1.0f);
+        dabs.push_back(d);
+    }
+    Geometry fast(sheet);
+    sculpt(fast, dabs, Falloff::Sphere);
+    std::vector<Vec3> slow(sheet.positions().begin(), sheet.positions().end());
+    for (const SculptDab& d : dabs) {
+        std::vector<Vec3> now = slow;
+        for (size_t i = 0; i < slow.size(); ++i) {
+            const float dist = length(slow[i] - d.at);
+            if (!(dist < d.radius)) continue;
+            const float w = falloff(Falloff::Sphere, dist / d.radius);
+            if (d.tool == SculptDab::Tool::Push) now[i] = slow[i] + d.normal * (d.strength * kSculptPush * d.radius * w);
+            if (d.tool == SculptDab::Tool::Grab) now[i] = slow[i] + d.move * w;
+            if (d.tool == SculptDab::Tool::Flatten) now[i] = slow[i] + d.normal * (-dot(slow[i] - d.at, d.normal) * d.strength * w);
+        }
+        slow = now;
+    }
+    size_t wrong = 0;
+    for (size_t i = 0; i < slow.size(); ++i) wrong += length(fast.positions()[i] - slow[i]) > 1e-6f ? 1 : 0;
+    CHECK_EQ(wrong, 0u);
+}
+
+TEST(sculpt_node_makes_its_geometry_of_its_strokes) {
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 20);
+    Node* s = g.create("sculpt", "sculpt");
+    s->setInput(0, grid);
+    GeometryPtr before = engine.cook(*grid, CookContext{});
+    CHECK(engine.cook(*s, CookContext{})->positions().data() == before->positions().data());  // no strokes: shared
+    s->setString("strokes", "p 0 0 0 0 1 0 0.3 1; g 0 0.06 0 0 0.2 0 0.1");
+    GeometryPtr after = engine.cook(*s, CookContext{});
+    CHECK_NEAR(after->positions()[220].y, kSculptPush * 0.3f + 0.2f, 1e-5f);
+    s->setInt("falloff", 1);  // linear: the ring round it lower
+    GeometryPtr linear = engine.cook(*s, CookContext{});
+    CHECK(linear->positions()[223].y < after->positions()[223].y);
+}
+
+namespace {
+
+/// The same positions and normals, to the bit.
+bool sameShape(const Geometry& a, const Geometry& b) {
+    if (a.pointCount() != b.pointCount()) return false;
+    for (size_t i = 0; i < a.pointCount(); ++i) {
+        if (!(a.positions()[i] == b.positions()[i])) return false;
+    }
+    const AttributeArray* na = a.points().find("N");
+    const AttributeArray* nb = b.points().find("N");
+    if (!na || !nb) return !na && !nb;
+    for (size_t i = 0; i < a.pointCount(); ++i) {
+        if (!(na->read<Vec3>()[i] == nb->read<Vec3>()[i])) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+TEST(sculptor_goes_on_from_where_it_got_to) {
+    // A sheet with normals and open borders, under dabs of every tool:
+    // going on from the last cook -- more dabs, the last one other, one
+    // taken back -- makes what all of them from the start make.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 30);
+    auto sheet = std::make_shared<Geometry>(*engine.cook(*grid, CookContext{}));
+    uint32_t seed = 3;
+    auto next = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    for (Vec3& p : sheet->positionsForWrite()) p.y = 0.05f * next();
+    auto N = sheet->points().create("N", AttrType::Vec3).write<Vec3>();
+    std::fill(N.begin(), N.end(), Vec3(0.0f, 1.0f, 0.0f));
+    const GeometryPtr source = sheet;
+    std::vector<SculptDab> dabs;
+    for (int k = 0; k < 120; ++k) {
+        SculptDab d;
+        d.tool = static_cast<SculptDab::Tool>(k % 4);
+        d.at = Vec3(next() - 0.5f, 0.05f * next(), next() - 0.5f);
+        d.normal = normalize(Vec3(next() - 0.5f, 1.0f, next() - 0.5f));
+        d.move = Vec3(0.1f * (next() - 0.5f), 0.1f * next(), 0.1f * (next() - 0.5f));
+        d.radius = k % 13 == 0 ? 0.6f : 0.02f + 0.15f * next();
+        d.strength = d.tool == SculptDab::Tool::Push ? 2.0f * next() - 1.0f : next();
+        dabs.push_back(d);
+    }
+    const auto whole = [&](std::span<const SculptDab> some, Falloff shape) {
+        Geometry geo(*source);
+        sculpt(geo, some, shape);
+        return geo;
+    };
+    const auto first = [&](size_t m) { return std::span<const SculptDab>(dabs.data(), m); };
+    Sculptor sculptor;
+    size_t had = 0;
+    for (const size_t m : {1u, 2u, 3u, 30u, 31u, 90u, 120u}) {
+        const GeometryPtr got = sculptor.cook(source, first(m), Falloff::Smooth);
+        CHECK_EQ(sculptor.reused(), had);  // only the new ones
+        CHECK(sameShape(*got, whole(first(m), Falloff::Smooth)));
+        had = m;
+    }
+    // Asked again: what it gave.
+    const GeometryPtr again = sculptor.cook(source, dabs, Falloff::Smooth);
+    CHECK_EQ(sculptor.reused(), dabs.size());
+    CHECK(sameShape(*again, whole(dabs, Falloff::Smooth)));
+    // A grab that moves on: the last dab other, again and again.
+    std::vector<SculptDab> grab = dabs;
+    grab.back().tool = SculptDab::Tool::Grab;
+    for (int step = 1; step <= 3; ++step) {
+        grab.back().move = Vec3(0.0f, 0.05f * static_cast<float>(step), 0.02f);
+        const GeometryPtr got = sculptor.cook(source, grab, Falloff::Smooth);
+        CHECK_EQ(sculptor.reused(), dabs.size() - 1);
+        CHECK(sameShape(*got, whole(grab, Falloff::Smooth)));
+    }
+    // One taken back, then another: the first from before the last, the
+    // second from the start.
+    GeometryPtr got = sculptor.cook(source, first(119), Falloff::Smooth);
+    CHECK_EQ(sculptor.reused(), 119u);
+    CHECK(sameShape(*got, whole(first(119), Falloff::Smooth)));
+    got = sculptor.cook(source, first(118), Falloff::Smooth);
+    CHECK_EQ(sculptor.reused(), 0u);
+    CHECK(sameShape(*got, whole(first(118), Falloff::Smooth)));
+    // Another falloff, a dab other in the middle, another geometry: all from the start.
+    got = sculptor.cook(source, first(118), Falloff::Sphere);
+    CHECK_EQ(sculptor.reused(), 0u);
+    CHECK(sameShape(*got, whole(first(118), Falloff::Sphere)));
+    std::vector<SculptDab> other(dabs.begin(), dabs.begin() + 118);
+    other[50].radius *= 1.5f;
+    got = sculptor.cook(source, other, Falloff::Sphere);
+    CHECK_EQ(sculptor.reused(), 0u);
+    CHECK(sameShape(*got, whole(other, Falloff::Sphere)));
+    const GeometryPtr copy = std::make_shared<Geometry>(*source);
+    got = sculptor.cook(copy, other, Falloff::Sphere);
+    CHECK_EQ(sculptor.reused(), 0u);
+    CHECK(sameShape(*got, whole(other, Falloff::Sphere)));
+    // What it gave is not changed by what it does after.
+    const Geometry kept(*got);
+    sculptor.cook(copy, dabs, Falloff::Sphere);
+    CHECK(sameShape(*got, kept));
+}
+
+TEST(sculpt_node_cooks_a_stroke_going_on_as_it_would_all_of_it) {
+    // The brush adds dabs to the node's text, a few at a time: each cook
+    // makes what a new node with all the text makes.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 40);
+    Node* s = g.create("sculpt", "sculpt");
+    s->setInput(0, grid);
+    std::string strokes;
+    for (int k = 0; k < 24; ++k) {
+        SculptDab d;
+        d.tool = k % 5 == 4 ? SculptDab::Tool::Smooth : SculptDab::Tool::Push;
+        d.at = Vec3(-0.4f + 0.035f * static_cast<float>(k), 0.0f, 0.1f);
+        d.normal = Vec3(0.0f, 1.0f, 0.0f);
+        d.radius = 0.15f;
+        d.strength = 0.8f;
+        strokes += (strokes.empty() ? "" : "; ") + sculptText(d);
+        if (k % 3 != 2) continue;
+        s->setString("strokes", strokes);
+        const GeometryPtr got = engine.cook(*s, CookContext{});
+        Graph fresh;
+        CookEngine other;
+        Node* grid2 = flatGrid(fresh, 40);
+        Node* s2 = fresh.create("sculpt", "sculpt");
+        s2->setInput(0, grid2);
+        s2->setString("strokes", strokes);
+        CHECK(sameShape(*got, *other.cook(*s2, CookContext{})));
     }
 }
 

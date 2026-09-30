@@ -13,8 +13,10 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 
 using namespace pg;
 
@@ -470,6 +472,53 @@ TEST(point_tree_answers_like_a_search_of_every_point) {
         tree.near(p, -1.0f, 3, three);
         CHECK_EQ(three.size(), 3u);
     }
+}
+
+TEST(adjacency_is_what_asking_every_primitive_gives) {
+    // Faces of all sizes over a jumble of points, a line, a point twice in
+    // a face, a side of two points the same, a closed "face" of two points
+    // (a line), points of nothing: each point's lists as a search of every
+    // primitive finds them, sorted, each entry once.
+    Geometry geo;
+    geo.addPoints(60);
+    uint32_t seed = 5;
+    auto next = [&seed](uint32_t n) {
+        seed = seed * 1664525u + 1013904223u;
+        return (seed >> 8) % n;
+    };
+    for (int k = 0; k < 90; ++k) {
+        std::vector<uint32_t> pts(2 + next(5));
+        for (uint32_t& p : pts) p = next(50);  // 50 to 59 in nothing
+        geo.addPrimitive(pts, k % 7 != 0);
+    }
+    geo.addPrimitive(std::vector<uint32_t>{3, 3, 4, 3}, true);
+    geo.addPrimitive(std::vector<uint32_t>{8, 9}, true);
+    Adjacency adjacency;
+    adjacency.build(geo);
+    std::vector<std::set<int32_t>> nb(60), prims(60), verts(60);
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        const auto pts = geo.primitivePoints(prim);
+        const bool closed = geo.primitiveClosed(prim) && pts.size() > 2;
+        for (size_t i = 0; i < pts.size(); ++i) {
+            prims[pts[i]].insert(static_cast<int32_t>(prim));
+            verts[pts[i]].insert(static_cast<int32_t>(geo.primitiveVertexStart(prim) + i));
+            if (i + 1 == pts.size() && !closed) continue;
+            const uint32_t a = pts[i], b = pts[(i + 1) % pts.size()];
+            if (a == b) continue;
+            nb[a].insert(static_cast<int32_t>(b));
+            nb[b].insert(static_cast<int32_t>(a));
+        }
+    }
+    const auto same = [](std::span<const int32_t> got, const std::set<int32_t>& want) {
+        return got.size() == want.size() && std::equal(got.begin(), got.end(), want.begin());
+    };
+    for (size_t p = 0; p < 60; ++p) {
+        CHECK(same(adjacency.neighbours(p), nb[p]));
+        CHECK(same(adjacency.primitives(p), prims[p]));
+        CHECK(same(adjacency.vertices(p), verts[p]));
+    }
+    CHECK(adjacency.neighbours(55).empty());
+    CHECK(adjacency.neighbours(60).empty());
 }
 
 // --- in a network -------------------------------------------------------------------------------

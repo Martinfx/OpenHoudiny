@@ -378,8 +378,14 @@ Seřazeno podle poměru hodnota / náklad:
    výběr obdélníkem, lasem i štětcem (S), H vybírá i skryté a ukáže je
    průsvitně; úchyty geometrických uzlů (Transform a Edit v pivotu, Clip);
    měkký výběr (O) s náhledem podílu pohybu na geometrii, poloměr klávesami
-   i kolečkem během tahu, vzdálenost přímá nebo po povrchu, pět tvarů útlumu.
-   Zbývá: režim vrcholů, Dissolve hran, symetrie.
+   i kolečkem během tahu, vzdálenost přímá nebo po povrchu, pět tvarů útlumu;
+   sculpt (U, uzel Sculpt): Push / Pull, Smooth s okraji, které drží čáru,
+   Grab, Flatten, kapky jako místa, přírůstkový výpočet tahu do bitu shodný
+   s výpočtem od začátku (pohyb myši na milionu bodů 12 ms), strom pro
+   výběr jen přepočítá obálky (refit).
+   Zbývá: režim vrcholů, Dissolve hran, symetrie, dyntopo; viewport, který
+   při posunu bodů nahraje jen polohy a normály (dnes pokaždé rozepíše
+   všechny trojúhelníky — nad sto tisíc bodů je to nejpomalejší část tahu).
 
 ---
 

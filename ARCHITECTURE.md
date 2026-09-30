@@ -346,11 +346,16 @@ src/pg/core/     Types      vektory, matice, typy atributů
                  Graph      vlastnictví uzlů
                  CookEngine pull evaluace, LRU cache
                  Spatial    k-d strom bodů (deterministické pořadí), sousedé přes hrany
+                            (Adjacency: dva průchody do polí, bez vektoru na bod)
                  Selection  vzory prvků: čísla, rozsahy, skupiny, hrany (p3-4), * a ^
                  Soft       měkký výběr: podíl pohybu bodů kolem vybraného, vzdálenost
                             přímo nebo po povrchu (přes hrany), tvary útlumu
+                 Sculpt     kapky štětce (push/pull, smooth, grab, flatten) na bodech:
+                            mřížka, která jde s body, uhlazování s okraji; Sculptor
+                            počítá tah přírůstkově, do bitu jako od začátku
                  Pick       co je pod myší, v obdélníku, lasu, tahu štětce: BVH nad
-                            polygony, jen viditelné nebo i skryté
+                            polygony, jen viditelné nebo i skryté; refit, když se body
+                            jen posunou
 src/pg/lang/     Parse      lexer a parser do AST, kontrola jmen a počtu argumentů
                  Check      typová kontrola proti geometrii: vazby atributů, přetížení
                  Eval       interpret typovaného stromu
@@ -361,7 +366,7 @@ src/pg/nodes/    Generators grid, line, pointcloud
                  Primitives box, sphere, tube (uzavřené, stěny ven)
                  Modifiers  transform, merge, switch, null,
                             attribcreate, groupbox, blast
-                 Edit       groupcreate, edit (s měkkým poloměrem), attribpaint:
+                 Edit       groupcreate, edit (s měkkým poloměrem), attribpaint, sculpt:
                             co udělá výběr, úchyt a štětec ve viewportu
                  Surface    file (OBJ), scatter, normal, copytopoints, color
                  Wrangle    uzly pointwrangle a attribwrangle (body, primitivy, rohy, detail)

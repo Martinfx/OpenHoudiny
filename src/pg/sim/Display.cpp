@@ -9,9 +9,8 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
-/// Cd of one element of an attribute set, if it has one: a colour, or a grey.
-bool colorOf(const AttributeSet& set, size_t i, Vec3& out) {
-    const AttributeArray* a = set.find("Cd");
+/// Element `i` of a Cd attribute, if there is one: a colour, or a grey.
+bool colorAt(const AttributeArray* a, size_t i, Vec3& out) {
     if (!a || i >= a->size()) return false;
     switch (a->type()) {
         case AttrType::Vec3: out = a->read<Vec3>()[i]; return true;
@@ -24,6 +23,9 @@ bool colorOf(const AttributeSet& set, size_t i, Vec3& out) {
         default: return false;
     }
 }
+
+/// Cd of one element of an attribute set, if it has one.
+bool colorOf(const AttributeSet& set, size_t i, Vec3& out) { return colorAt(set.find("Cd"), i, out); }
 
 void grow(DisplayGeometry& d, const Vec3& p) {
     for (int a = 0; a < 3; ++a) {
@@ -55,16 +57,19 @@ std::vector<Vec3> cornerNormals(const std::vector<Vec3>& positions, const std::v
         for (const uint32_t v : triangles[f]) around[fill[v]++] = static_cast<uint32_t>(f);
     }
     const float cosine = std::cos(crease * kPi / 180.0f);
+    // Each face's length once, not at each corner of each face round it.
+    std::vector<float> faceLength(faces);
+    for (size_t f = 0; f < faces; ++f) faceLength[f] = length(faceNormal[f]);
     std::vector<Vec3> out;
     out.reserve(faces * 3);
     for (size_t f = 0; f < faces; ++f) {
-        const float area = length(faceNormal[f]);
+        const float area = faceLength[f];
         const Vec3 own = area > 0.0f ? faceNormal[f] * (1.0f / area) : Vec3(0.0f, 1.0f, 0.0f);
         for (const uint32_t v : triangles[f]) {
             Vec3 sum;
             for (uint32_t k = start[v]; k < start[v + 1]; ++k) {
                 const Vec3& other = faceNormal[around[k]];
-                const float l = length(other);
+                const float l = faceLength[around[k]];
                 if (l > 0.0f && dot(other, own) >= cosine * l) sum += other;
             }
             const float l = length(sum);
@@ -81,12 +86,14 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots) {
     const Vec3 grey(0.72f, 0.72f, 0.74f);
     Vec3 detailColor = grey;
     colorOf(geo.detail(), 0, detailColor);
-    // The colour of a corner: the first of vertex, point, primitive, detail.
+    // The colour of a corner: the first of vertex, point, primitive, detail
+    // -- the attributes found once, not by name at each of millions.
+    const AttributeArray* vertexCd = geo.vertices().find("Cd");
+    const AttributeArray* pointCd = geo.points().find("Cd");
+    const AttributeArray* primitiveCd = geo.primitives().find("Cd");
     auto cornerColor = [&](size_t prim, size_t vertex, uint32_t point) {
         Vec3 c;
-        if (colorOf(geo.vertices(), vertex, c) || colorOf(geo.points(), point, c) || colorOf(geo.primitives(), prim, c)) {
-            return c;
-        }
+        if (colorAt(vertexCd, vertex, c) || colorAt(pointCd, point, c) || colorAt(primitiveCd, prim, c)) return c;
         return detailColor;
     };
 
@@ -136,15 +143,17 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots) {
         const AttributeArray* N = geo.points().find("N");
         const bool pointNormals = N && N->type() == AttrType::Vec3 && N->size() == points;
         if (!pointNormals) normals = cornerNormals(std::vector<Vec3>(P.begin(), P.end()), tris);
+        const std::span<const Vec3> pointN = pointNormals ? N->read<Vec3>() : std::span<const Vec3>();
         const AttributeArray* v = geo.points().find("v");
         const bool moving = v && v->type() == AttrType::Vec3 && v->size() == points;
+        const std::span<const Vec3> pointV = moving ? v->read<Vec3>() : std::span<const Vec3>();
         d.triangles.reserve(tris.size() * 27);
         if (moving) d.velocities.reserve(tris.size() * 9);
         for (size_t t = 0; t < tris.size(); ++t) {
             const float kind = glassOf(owner[t]);
             for (int c = 0; c < 3; ++c) {
                 const uint32_t p = tris[t][static_cast<size_t>(c)];
-                Vec3 n = pointNormals ? N->read<Vec3>()[p] : normals[t * 3 + static_cast<size_t>(c)];
+                Vec3 n = pointNormals ? pointN[p] : normals[t * 3 + static_cast<size_t>(c)];
                 const Vec3 col = cornerColor(owner[t], corners[t][static_cast<size_t>(c)], p);
                 grow(d, P[p]);
                 if (kind >= 0.5f) {
@@ -160,7 +169,7 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots) {
                 }
                 d.triangles.insert(d.triangles.end(), {P[p].x, P[p].y, P[p].z, n.x, n.y, n.z, col.x, col.y, col.z});
                 if (moving) {
-                    const Vec3 w = v->read<Vec3>()[p];
+                    const Vec3 w = pointV[p];
                     d.velocities.insert(d.velocities.end(), {w.x, w.y, w.z});
                 }
             }
@@ -175,7 +184,7 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots) {
     for (size_t p = 0; p < points; ++p) {
         if (used[p]) continue;
         Vec3 c;
-        if (!colorOf(geo.points(), p, c)) c = detailColor;
+        if (!colorAt(pointCd, p, c)) c = detailColor;
         float r = sized ? std::max(pscale->read<float>()[p], 0.0f) : 0.0f;
         if (glassy && chips->read<int32_t>()[p] > 0 && r > 0.0f) r = -r;
         put(d.dots, P[p], c);

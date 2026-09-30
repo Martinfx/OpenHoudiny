@@ -5,6 +5,7 @@
 
 #include "pg/core/Geometry.h"
 #include "pg/core/Parallel.h"
+#include "pg/core/Sculpt.h"
 #include "pg/core/Selection.h"
 #include "pg/core/Soft.h"
 #include "pg/core/Spatial.h"
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 
 namespace pg {
 namespace {
@@ -102,6 +104,35 @@ public:
         }
         return geo;
     }
+};
+
+/// The surface pushed, smoothed, grabbed and flattened by the viewport's
+/// sculpting brush (pg/core/Sculpt.h): its dabs, in the order they were
+/// made, each where the surface is after the ones before. Tool, Radius and
+/// Strength are what the brush makes its next dabs with; Falloff shapes
+/// them all.
+class SculptNode : public Node {
+public:
+    explicit SculptNode(std::string name) : Node("sculpt", std::move(name)) {
+        setInputCount(1);
+        params_.setInt("tool", 0);  // push, smooth, grab, flatten
+        params_.setFloat("radius", 0.2f);
+        params_.setFloat("strength", 0.5f);
+        params_.setInt("falloff", 0);
+        params_.setString("strokes", "");
+    }
+
+    GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
+        const std::vector<SculptDab> dabs = parseSculpt(params_.getString("strokes"));
+        const Falloff shape = static_cast<Falloff>(std::clamp(params_.evalInt("falloff", ctx, 0), 0, 4));
+        // While a stroke goes on, only the dabs it added since.
+        std::lock_guard<std::mutex> lk(mu_);
+        return sculptor_.cook(in.empty() ? nullptr : in[0], dabs, shape);
+    }
+
+private:
+    std::mutex mu_;
+    Sculptor sculptor_;
 };
 
 /// A number painted onto the points with a brush -- the viewport's paint
@@ -206,6 +237,7 @@ void registerEditNodes() {
     r.add("groupcreate", [](const std::string& n) { return std::make_unique<GroupCreateNode>(n); });
     r.add("edit", [](const std::string& n) { return std::make_unique<EditNode>(n); });
     r.add("attribpaint", [](const std::string& n) { return std::make_unique<AttribPaintNode>(n); });
+    r.add("sculpt", [](const std::string& n) { return std::make_unique<SculptNode>(n); });
 }
 
 }  // namespace pg

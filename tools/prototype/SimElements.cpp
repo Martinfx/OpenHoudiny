@@ -123,6 +123,9 @@ const ElementPicker* SimWorkspace::picker() {
         picker_->adopt(geo);
         return picker_.get();
     }
+    // Moved, not remade -- sculpted, dragged: the tree's boxes made again,
+    // while they have not swollen much.
+    if (picker_ && picker_->refit(geo) && picker_->swell() < 4.0f) return picker_.get();
     if (!picker_) picker_ = std::make_unique<ElementPicker>();
     picker_->build(geo);
     return picker_.get();
@@ -142,10 +145,11 @@ void SimWorkspace::checkElements() {
         hoverElement_ = -1;
     }
     picked_.node = net_.displayed();
-    if (paint_ && !paintNode() && !stroking_) {
+    if (paint_ && !brushNode() && !stroking_) {
         // The node painted into is no longer shown: the brush is put away.
         paint_ = false;
         paintMade_ = false;
+        grabbing_ = false;
     }
 }
 
@@ -588,13 +592,15 @@ void SimWorkspace::updateOverlay() {
     char key[256];
 
     // The geometry's own marks -- its wire, its points, the paint: made
-    // again only when it changes.
-    std::snprintf(key, sizeof key, "%d %d %p %d %s", on ? 1 : 0, static_cast<int>(elements_), shown, painted,
+    // again only when it changes. Sculpting, the surface alone: no wire
+    // over what is shaped.
+    const bool marked = on && !sculpting();
+    std::snprintf(key, sizeof key, "%d %d %p %d %s", marked ? 1 : 0, static_cast<int>(elements_), shown, painted,
                   attribute.c_str());
     if (key != overlayKey_[0]) {
         overlayKey_[0] = key;
         gl::Overlay o;
-        if (on) {
+        if (marked) {
             const Geometry& g = *geo;
             const auto P = g.positions();
             // The wire: every edge, where there are not too many.
@@ -966,20 +972,53 @@ int SimWorkspace::paintNode() const {
     return n && n->type == "attribute_paint" && !n->bypass ? n->id : 0;
 }
 
+int SimWorkspace::sculptNode() const {
+    const sim::Node* n = net_.node(net_.displayed());
+    return n && n->type == "sculpt" && !n->bypass ? n->id : 0;
+}
+
+SculptDab::Tool SimWorkspace::sculptTool() const {
+    const int node = sculptNode();
+    if (!node) return SculptDab::Tool::Push;
+    if (ImGui::GetIO().KeyShift) return SculptDab::Tool::Smooth;  // as in every sculpting program
+    const int tool = static_cast<int>(net_.valueAt(node, "tool", static_cast<float>(current_))[0]);
+    return static_cast<SculptDab::Tool>(std::clamp(tool, 0, 3));
+}
+
 void SimWorkspace::setPaint(bool on) {
+    // On what is shown when it takes a brush; else a new Attribute Paint.
+    setBrush(on, sculptNode() ? "sculpt" : "attribute_paint");
+}
+
+void SimWorkspace::setSculpt(bool on) {
+    if (on && paint_ && !sculptNode()) setBrush(false, "");  // an Attribute Paint's brush put down first
+    setBrush(on, "sculpt");
+}
+
+void SimWorkspace::setBrush(bool on, const char* type) {
     if (on == paint_) return;
+    const bool sculpt = std::string(type) == "sculpt";
     if (on) {
         if (!renderer_.geometry() || !net_.node(net_.displayed())) {
-            setMessage("Nothing to paint on: display a geometry node first (the flag at its right end, or R on it)", true);
+            setMessage(std::string("Nothing to ") + (sculpt ? "sculpt" : "paint on") +
+                           ": display a geometry node first (the flag at its right end, or R on it)",
+                       true);
             return;
         }
         paint_ = true;
         paintMade_ = false;
-        paintNode_ = paintNode();
+        paintNode_ = sculpt ? sculptNode() : brushNode();
         if (!paintNode_) {
             madeBefore_ = net_.save();
-            paintNode_ = insertAfterDisplayed("attribute_paint");
+            paintNode_ = insertAfterDisplayed(type);
             paintMade_ = paintNode_ != 0;
+            // A brush as big as a twelfth of what is sculpted, said shortly.
+            Vec3 lo, hi;
+            if (paintNode_ && sculpt && renderer_.geometryBounds(lo, hi) && length(hi - lo) > 1e-6f) {
+                const float r = length(hi - lo) / 12.0f;
+                const float step = std::pow(10.0f, std::floor(std::log10(r)) - 1.0f);
+                net_.setParam(paintNode_, "radius", {std::round(r / step) * step, 0.0f, 0.0f});
+            }
             madeAfter_ = net_.save();
         }
         if (!paintNode_) {
@@ -988,13 +1027,20 @@ void SimWorkspace::setPaint(bool on) {
         }
         canvas_.select(paintNode_);
         hoverElement_ = -1;
-        setMessage("Painting " + net_.text(paintNode_, "name") +
-                   ": drag on the geometry -- Ctrl paints the Erase Value; [ ] or Shift+wheel: the size; P again: done");
+        if (sculptNode()) {
+            setMessage("Sculpting " + net_.node(paintNode_)->name +
+                       ": drag on the geometry -- Shift smooths, Ctrl pulls in; the tool in its parameters or the right "
+                       "click; [ ] or Shift+wheel: the size; U again: done");
+        } else {
+            setMessage("Painting " + net_.text(paintNode_, "name") +
+                       ": drag on the geometry -- Ctrl paints the Erase Value; [ ] or Shift+wheel: the size; P again: done");
+        }
         return;
     }
     paint_ = false;
     stroking_ = false;
-    // Made by P and never painted with: taken out again -- the network as it
+    grabbing_ = false;
+    // Made by P or U and never used: taken out again -- the network as it
     // was, when nothing else changed since.
     if (paintMade_ && net_.node(paintNode_) && net_.text(paintNode_, "strokes").empty()) {
         if (net_.save() == madeAfter_) restore(madeBefore_);
@@ -1005,7 +1051,7 @@ void SimWorkspace::setPaint(bool on) {
 }
 
 void SimWorkspace::scaleBrush(float factor) {
-    const int node = paintNode();
+    const int node = brushNode();
     if (!node) return;
     const float frame = static_cast<float>(current_);
     const float r = std::clamp(net_.valueAt(node, "radius", frame)[0] * factor, 1e-3f, 100.0f);
@@ -1014,14 +1060,16 @@ void SimWorkspace::scaleBrush(float factor) {
 
 void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView) {
     const ImGuiIO& io = ImGui::GetIO();
-    const int node = paintNode();
+    const int node = brushNode();
+    const bool sculpt = node && node == sculptNode();
     brushHit_ = false;
     if (!paint_ || !node) {
-        stroking_ = false;
+        stroking_ = grabbing_ = false;
         return;
     }
     const float frame = static_cast<float>(current_);
     const float radius = std::max(net_.valueAt(node, "radius", frame)[0], 1e-4f);
+    const SculptDab::Tool tool = sculpt ? sculptTool() : SculptDab::Tool::Push;
     // The brush is where the ray under the mouse meets the surface.
     const bool inside = io.MousePos.x >= cam.lo.x && io.MousePos.y >= cam.lo.y && io.MousePos.x < cam.lo.x + cam.size.x &&
                         io.MousePos.y < cam.lo.y + cam.size.y;
@@ -1038,20 +1086,33 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
             }
         }
     }
-    // Dabs along the stroke, a quarter of the brush apart.
-    auto dab = [&](const Vec3& at) {
-        const float value = net_.valueAt(node, io.KeyCtrl ? "erase" : "value", frame)[0];
-        const float strength = net_.valueAt(node, "strength", frame)[0];
-        char text[160];
-        std::snprintf(text, sizeof text, "%.4f %.4f %.4f %.4g %.4g %.3g", static_cast<double>(at.x), static_cast<double>(at.y),
-                      static_cast<double>(at.z), static_cast<double>(radius), static_cast<double>(value),
-                      static_cast<double>(strength));
+    auto append = [&](const std::string& text) {
         std::string strokes = net_.text(node, "strokes");
         if (!strokes.empty()) strokes += "; ";
         strokes += text;
         net_.setText(node, "strokes", strokes);
     };
-    // A stroke begins with the press, on the surface or off it: it paints
+    // A dab: of paint -- or of sculpting, with the tool in the hand.
+    auto dab = [&](const Vec3& at) {
+        const float strength = net_.valueAt(node, "strength", frame)[0];
+        if (sculpt) {
+            SculptDab s;
+            s.tool = tool;
+            s.at = at;
+            s.normal = normalize(brushNormal_);
+            s.radius = radius;
+            s.strength = tool == SculptDab::Tool::Push && io.KeyCtrl ? -strength : strength;
+            append(sculptText(s));
+            return;
+        }
+        const float value = net_.valueAt(node, io.KeyCtrl ? "erase" : "value", frame)[0];
+        char text[160];
+        std::snprintf(text, sizeof text, "%.4f %.4f %.4f %.4g %.4g %.3g", static_cast<double>(at.x), static_cast<double>(at.y),
+                      static_cast<double>(at.z), static_cast<double>(radius), static_cast<double>(value),
+                      static_cast<double>(strength));
+        append(text);
+    };
+    // A stroke begins with the press, on the surface or off it: it works
     // where the brush is on it. Off it and back, it begins afresh there --
     // not across what is between.
     const bool turns = io.KeyAlt || ImGui::IsKeyDown(ImGuiKey_Space);
@@ -1061,13 +1122,38 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
         strokeOn_ = false;
     }
     if (stroking_ && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        if (!brushHit_) {
+        if (sculpt && tool == SculptDab::Tool::Grab) {
+            // Grab: what is under the press goes with the mouse -- one dab,
+            // its move set again as the mouse goes, in the plane of the
+            // screen through where it took hold.
+            if (!grabbing_ && brushHit_) {
+                grabbing_ = true;
+                grab_ = SculptDab{};
+                grab_.tool = SculptDab::Tool::Grab;
+                grab_.at = brushAt_;
+                grab_.radius = radius;
+                grabBefore_ = net_.text(node, "strokes");
+                net_.setText(node, "strokes", grabBefore_ + (grabBefore_.empty() ? "" : "; ") + sculptText(grab_));
+            } else if (grabbing_) {
+                Vec3 o, dir;
+                cam.ray(io.MousePos, o, dir);
+                const float along = dot(dir, cam.forward);
+                if (std::fabs(along) > 1e-6f) {
+                    const Vec3 to = o + dir * (dot(grab_.at - o, cam.forward) / along);
+                    if (!(to - grab_.at == grab_.move)) {
+                        grab_.move = to - grab_.at;
+                        net_.setText(node, "strokes", grabBefore_ + (grabBefore_.empty() ? "" : "; ") + sculptText(grab_));
+                    }
+                }
+            }
+        } else if (!brushHit_) {
             strokeOn_ = false;
         } else if (!strokeOn_) {
             dab(brushAt_);
             lastDab_ = brushAt_;
             strokeOn_ = true;
         } else {
+            // Dabs along the stroke, a quarter of the brush apart.
             const float spacing = radius * 0.25f;
             const float far = length(brushAt_ - lastDab_);
             if (far >= spacing) {
@@ -1080,33 +1166,52 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
             }
         }
     }
-    if (stroking_ && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) stroking_ = strokeOn_ = false;
-    if (!brushHit_) return;
-    // The brush: a ring as big as it is, lying on the surface, and what it lays on.
-    const Vec3 nrm = normalize(brushNormal_);
+    if (stroking_ && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) stroking_ = strokeOn_ = grabbing_ = false;
+    // The brush: a ring as big as it is, lying on the surface -- where the
+    // grab took hold, moved -- and what it does.
+    const bool held = grabbing_;
+    if (!brushHit_ && !held) return;
+    const Vec3 at = held ? grab_.at + grab_.move : brushAt_;
+    const Vec3 nrm = normalize(held ? cam.forward * -1.0f : brushNormal_);
     const Vec3 helper = std::fabs(nrm.y) < 0.9f ? Vec3(0.0f, 1.0f, 0.0f) : Vec3(1.0f, 0.0f, 0.0f);
     const Vec3 u = normalize(cross(nrm, helper)), v = cross(nrm, u);
     ImVec2 ring[64];
     int count = 0;
     for (int i = 0; i < 64; ++i) {
         const float a = 6.28318531f * static_cast<float>(i) / 64.0f;
-        ImVec2 s;
-        if (cam.toScreen(brushAt_ + (u * std::cos(a) + v * std::sin(a)) * radius, s)) ring[count++] = s;
+        ImVec2 sp;
+        if (cam.toScreen(at + (u * std::cos(a) + v * std::sin(a)) * radius, sp)) ring[count++] = sp;
     }
     const bool erase = io.KeyCtrl;
-    const ImU32 col = erase ? IM_COL32(120, 190, 255, 235) : IM_COL32(255, 236, 200, 235);
+    ImU32 col = erase ? IM_COL32(120, 190, 255, 235) : IM_COL32(255, 236, 200, 235);
+    std::string label;
+    if (sculpt) {
+        static const char* names[4] = {"Push", "Smooth", "Grab", "Flatten"};
+        static const ImU32 colors[4] = {IM_COL32(255, 196, 120, 235), IM_COL32(140, 230, 150, 235),
+                                        IM_COL32(255, 150, 90, 235), IM_COL32(200, 160, 255, 235)};
+        const int k = static_cast<int>(tool);
+        col = tool == SculptDab::Tool::Push && erase ? IM_COL32(120, 190, 255, 235) : colors[k];
+        label = tool == SculptDab::Tool::Push && erase ? "Pull" : names[k];
+        label += " " + metres(radius);
+    } else {
+        char text[96];
+        std::snprintf(text, sizeof text, "%s %g", net_.text(node, "name").c_str(),
+                      static_cast<double>(net_.valueAt(node, erase ? "erase" : "value", frame)[0]));
+        label = text;
+    }
     if (count > 2) {
         d->AddPolyline(ring, count, IM_COL32(0, 0, 0, 150), ImDrawFlags_Closed, theme::px(3.0f));
         d->AddPolyline(ring, count, col, ImDrawFlags_Closed, theme::px(1.5f));
     }
     ImVec2 mid;
-    if (cam.toScreen(brushAt_, mid)) d->AddCircleFilled(mid, theme::px(2.0f), col);
-    char label[96];
-    std::snprintf(label, sizeof label, "%s %g", net_.text(node, "name").c_str(),
-                  static_cast<double>(net_.valueAt(node, erase ? "erase" : "value", frame)[0]));
-    const ImVec2 at(io.MousePos.x + theme::px(14.0f), io.MousePos.y + theme::px(10.0f));
-    d->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 180), label);
-    d->AddText(at, col, label);
+    if (cam.toScreen(at, mid)) d->AddCircleFilled(mid, theme::px(2.0f), col);
+    if (held) {
+        ImVec2 from;
+        if (cam.toScreen(grab_.at, from) && cam.toScreen(at, mid)) d->AddLine(from, mid, col, theme::px(1.2f));
+    }
+    const ImVec2 o(io.MousePos.x + theme::px(14.0f), io.MousePos.y + theme::px(10.0f));
+    d->AddText(ImVec2(o.x + 1.0f, o.y + 1.0f), IM_COL32(0, 0, 0, 180), label.c_str());
+    d->AddText(o, col, label.c_str());
 }
 
 // --- nodes on what is picked ----------------------------------------------------------------
@@ -1285,6 +1390,17 @@ std::string SimWorkspace::elementStatus() const {
     const GeometryPtr& geo = renderer_.geometry();
     if (!geo) return "Nothing shown to pick in: display a geometry node (its flag, or R on it)";
     const float frame = static_cast<float>(current_);
+    if (paint_ && sculptNode()) {
+        const int node = sculptNode();
+        static const char* names[4] = {"Push / Pull", "Smooth", "Grab", "Flatten"};
+        const SculptDab::Tool tool = sculptTool();
+        // The keys that change what this tool does: Ctrl only pulls a push in.
+        const char* keys = tool == SculptDab::Tool::Push     ? "Shift smooths, Ctrl pulls in  \xc2\xb7  "
+                           : tool == SculptDab::Tool::Smooth ? ""
+                                                             : "Shift smooths  \xc2\xb7  ";
+        return "Sculpting " + net_.node(node)->name + ": " + names[static_cast<int>(tool)] + ", radius " +
+               metres(net_.valueAt(node, "radius", frame)[0]) + "  \xc2\xb7  " + keys + "[ ] size  \xc2\xb7  U: done";
+    }
     if (paint_) {
         const int node = paintNode();
         if (!node) return {};

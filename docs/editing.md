@@ -1,16 +1,18 @@
-# Úpravy geometrie ve viewportu: body, hrany, plochy a štětec
+# Úpravy geometrie ve viewportu: body, hrany, plochy, štětec a sculpt
 
 Zobrazenou geometrii (uzel s display flagem, [geometry.md](geometry.md))
 jde upravovat přímo ve viewportu, jako v Houdini: myší vybrat body, hrany
 nebo plochy — kliknutím, obdélníkem, lasem nebo štětcem, jen viditelné,
 nebo i ty za povrchem —, posunout je, otočit a zvětšit úchytem, udělat
-z nich skupinu, smazat je, a štětcem namalovat atribut — třeba `pin` nebo
-`tear` látce ([cloth.md](cloth.md)).
+z nich skupinu, smazat je, štětcem namalovat atribut — třeba `pin` nebo
+`tear` látce ([cloth.md](cloth.md)) — a štětcem geometrii tvarovat jako
+hlínu: vytlačit, zatlačit, uhladit, chytit a táhnout, zarovnat (§6c).
 
 Nic z toho není skryté kouzlo. Každá úprava je **obyčejný uzel sítě**,
 který editor vloží za zobrazený uzel: **Edit**, **Group**, **Blast**,
-**Attribute Paint**. V jeho parametrech je to, co udělala myš — vybrané
-prvky jako vzor (`339 363-364 387-390`), tahy štětce jako seznam kapek.
+**Attribute Paint**, **Sculpt**. V jeho parametrech je to, co udělala
+myš — vybrané prvky jako vzor (`339 363-364 387-390`), tahy štětce jako
+seznam kapek.
 Síť zůstává procedurální: undo funguje jako u každé jiné změny, uzel jde
 vypnout (bypass), přesunout, upravit v parametrech, uložit se sítí, a co
 je před ním, jde dál měnit.
@@ -36,6 +38,8 @@ je před ním, jde dál měnit.
    smaže (uzel **Blast**).
 5. **P** a tažení po geometrii maluje atribut `pin` (uzel **Attribute
    Paint**); s **Ctrl** maže. **P** znovu malování ukončí.
+6. **U** a tažení po geometrii ji vytlačuje ven (uzel **Sculpt**);
+   s **Ctrl** dovnitř, se **Shift** uhlazuje. **U** znovu sculpt ukončí.
 
 ## 2. Co se vybírá
 
@@ -46,6 +50,7 @@ je před ním, jde dál měnit.
 | **3** | čtyřúhelník se zvýrazněnou stranou | hrany |
 | **4** | vyplněný čtyřúhelník | primitivy: polygony a křivky |
 | **P** | štětec | nic — maluje |
+| **U** | kopeček pod štětcem | nic — tvaruje (sculpt) |
 
 V režimech 2–4 viewport ukáže drátěný model geometrie, v režimu bodů
 i všechny body. Prvek pod myší svítí **tyrkysově**, vybrané jsou
@@ -112,12 +117,14 @@ ní, vezme obdélník, laso nebo štětec).
 | **[** , **]**, kolečko během tahu | menší / větší poloměr měkkého výběru |
 | **Ctrl+G** | skupina z vybraného (Group) |
 | **Delete**, **X** | smaže vybrané (Blast) |
-| **P** | štětec zapnout / vypnout |
+| **P** | malovací štětec zapnout / vypnout (§6) |
+| **U** | sculpt zapnout / vypnout (§6c) |
 | **Tab** | uzel na vybrané: PolyExtrude, wrangle, Edit… (§6a) |
 | **N** | čísla bodů (v režimu primitiv čísla primitiv), jen viditelných |
-| **[** , **]**, **Shift**+kolečko | menší / větší štětec (malovací; výběrový, když není zapnutý měkký výběr) |
+| **[** , **]**, **Shift**+kolečko | menší / větší štětec (malovací či sculpt; výběrový, když není zapnutý měkký výběr) |
 | **Ctrl** při malování | maluje hodnotou Erase Value (maže) |
-| **Esc** při tažení | vrátí, co tažení udělalo (úchyt, štětec výběru) |
+| **Ctrl**, **Shift** při sculptu | Ctrl: Push zatlačuje dovnitř; Shift: uhlazuje, s kterýmkoli nástrojem |
+| **Esc** při tažení | vrátí, co tažení udělalo (úchyt, štětec výběru, Grab) |
 
 Stejné položky jsou v pravém kliku do viewportu a v nabídce Help.
 Mezerník přehrává a zastavuje, až když ho pustíte, a jen pokud jste
@@ -295,6 +302,57 @@ uzlu. Pivot samotný úchyt nemění; nastavte ho v parametrech. Kopie
 geometrického uzlu (**Ctrl+D**) zůstane, kde byl originál — posune se jen
 kopie objektu nebo zdroje, aby neležela v originálu.
 
+## 6c. Sculpt: tvarování štětcem (U)
+
+**U** nad viewportem tvaruje zobrazenou geometrii štětcem, jako hlínu —
+podobně jako sculpt v Blenderu nebo ZBrushi, jen výsledkem je zase
+obyčejný uzel **Sculpt** za zobrazeným uzlem (když zobrazený uzel žádný
+Sculpt není; jinak tvaruje do něj). Tah po geometrii ji pod kroužkem
+vytlačuje ven a s **Ctrl** zatlačuje dovnitř; se **Shift** uhlazuje, ať
+je vybraný kterýkoli nástroj. Nástroj se vybírá v parametrech uzlu nebo
+v pravém kliku › *Sculpt Tool*:
+
+| Nástroj | Co kapka udělá s bodem ve vzdálenosti *d* od svého středu (poloměr *r*, útlum *f* = Falloff(*d*/*r*)) |
+|---|---|
+| **Push / Pull** | posune ho podél normály povrchu pod středem kapky o `Strength × 0,2 × r × f`; s Ctrl dovnitř |
+| **Smooth** | posune ho k průměru jeho sousedů po hranách o podíl `Strength × f` |
+| **Grab** | vezme ho s sebou: o to, kam se myš od začátku tahu posunula, krát `f` |
+| **Flatten** | srovná ho k rovině středem kapky kolmé na normálu o podíl `Strength × f` |
+
+![Terén 4 × 4 m (81 × 81 bodů) z 193 kapek: hřbet a kulatý kopec (Push), údolí (Ctrl), uhlazené svahy (Shift), zarovnaná plošina (Flatten); štětec právě táhne další kopec](img/edit-sculpt.jpg)
+
+| Parametr | Co dělá |
+|---|---|
+| Tool | Push / Pull, Smooth, Grab, Flatten |
+| Radius | velikost štětce (**[** **]**, **Shift**+kolečko); nový uzel dostane dvanáctinu velikosti geometrie |
+| Strength | Push: při 1 vytlačí střed kapky o pětinu poloměru (0 až 4); Smooth a Flatten: jaký podíl cesty bod ujde (0 až 1) |
+| Falloff | tvar útlumu k okraji kroužku, jako u měkkého výběru (§4a): Smooth, Linear, Sharp, Sphere, Constant |
+| Strokes | kapky: kolik jich je, a **Clear** |
+
+Tah klade kapky po čtvrtině poloměru a každá pracuje s povrchem, jak ho
+nechaly kapky před ní — tah přes vlastní kopec ho zvedá dál, normála se
+bere z povrchu pod středem kapky. Kapky jsou **místa, ne čísla bodů**:
+zjemněte síť před Sculptem a tvar zůstane, jen jemnější. Kroužek má
+barvu a popisek podle nástroje (`Push 0.47 m`, `Pull`, `Smooth`…).
+
+**Grab** je na celý tah jedna kapka: místo, kde tah začal, a posun myši
+v rovině kolmé k pohledu. Kopec jde za myší, čára ukazuje odkud; **Esc**
+během tahu Grab vrátí.
+
+![Grab: vrchol vytažený z terénu tahem myši nahoru; čára vede od místa, kde tah začal](img/edit-sculpt-grab.jpg)
+
+Uhlazování drží **okraje**. Bod na otevřeném okraji plochy (strana jediné
+plochy) se hýbe jen podél okraje, k průměru svých dvou sousedů na okraji;
+roh okraje — kde okraj uhne o víc než 30° —, bod, kde se okraje potkávají,
+a konce čar zůstanou, kde jsou. Co je roh, se rozhoduje podle tvaru, jak
+do Sculptu přišel, takže ho tah neuhladí pryč. Okraj mřížky se tak
+neroztřepí a rohy se nezakulatí.
+
+Kde geometrie má normály `N`, Sculpt je dopočítá z ploch. Během sculptu
+viewport nekreslí drát, aby byl tvar vidět. **U** znovu (nebo Q, W, E, R,
+1–4) sculpt ukončí; uzel, který U vložilo a do kterého se nic
+nevytvarovalo, zase zmizí.
+
 ## 7. Vzory prvků
 
 Parametry Group, Edit, Blast, PolyExtrude a wranglů berou prvky jako **vzor**, jako skupinová
@@ -334,7 +392,11 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   přiblíží na poloměr, a viditelnost se ptá v místě dotyku. Plochy pod
   středem štětce najdou paprsky po půl poloměru podél tahu. Strom se staví
   jen pro nové body nebo topologii: malováním se geometrie mění, ale
-  sdílí body (copy-on-write), a strom zůstává.
+  sdílí body (copy-on-write), a strom zůstává. Když se body jen posunou
+  (sculpt, tah úchytem) a topologie zůstane, strom si nechá tvar a znovu
+  spočítá jen obálky (refit) — na milionu bodů 40 ms místo 1,2 s; co najde
+  dotaz, na tvaru stromu nezávisí. Když obálky narostou nad čtyřnásobek
+  plochy, kterou měly, postaví se strom znovu.
 - **Značky** — overlay rendereru (`gl::Overlay`): drát, body, výběr,
   zvýraznění pod myší (vlastní vrstva, aby pohyb myši nepřestavoval
   zbytek) a barvy malování, kreslené s testem hloubky proti scéně, kousek
@@ -355,15 +417,33 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   povrch ohne zpátky k němu. Viewport tónuje podle geometrie, kterou
   zobrazený Edit dostává na vstupu (kooker ji vrací spolu se zobrazenou),
   takže náhled odpovídá tomu, co Edit spočítá, i během tahu.
+- **Sculpt** — `src/pg/core/Sculpt.h`: `SculptDab`, `parseSculpt`,
+  `sculpt`, `Sculptor`. Body v dosahu kapky najde mřížka buněk velkých
+  jako typický poloměr kapek, ve které se bod přestěhuje, když se
+  posune do jiné buňky; při pár kapkách je rychlejší zeptat se rovnou
+  všech bodů (na více vláknech). Body jedné kapky se posunou najednou,
+  každý podle toho, kde byly body před kapkou — na pořadí nezáleží a velká
+  kapka se počítá na více vláknech. Uhlazování zná sousedy z `Adjacency`
+  a okraje (strany jediné plochy) z geometrie, jak do uzlu přišla.
+  **Přírůstkově**: uzel si pamatuje vstup, kapky, geometrii po všech
+  kapkách a před poslední. Tah, který přidá kapku nebo dvě, spočítá jen
+  je; Grab, který mění jen poslední kapku, jen ji. Undo celého tahu
+  spočítá kapky znovu od začátku. Výsledek je do bitu týž jako ze všech
+  kapek od začátku (testy to ověřují). Na mřížce o milionu bodů: 2 000 kapek od
+  začátku 0,17 s, pohyb myši v tahu 12 ms (s normálami `N` 33 ms), Grab
+  3 ms. V editoru pak při každém pohybu přibude refit stromu pro výběr
+  a překreslení geometrie ve viewportu; to druhé (trojúhelníky pro GPU)
+  je nejdražší — na 90 000 bodech asi 40 ms, takže tah je plynulý zhruba
+  do sta tisíc bodů.
 - **Skládání úprav** — `sim::EditTransform` (`src/pg/sim/Shape.h`):
   Edit dělá `x → R S (x − p) + p + t`; tah úchytu kolem středu `c`
   složený za něj je znovu Edit: otočení předřazené `R`, měřítko násobí
   `S`, `t` vezme `p + t` tam, kam ho vezme tah. Testy ověřují, že to
   platí bod po bodu a že Edit v uzlu počítá totéž.
 - **Uzly** — `src/pg/nodes/Edit.cpp`: `groupcreate`, `edit`,
-  `attribpaint`; Blast v `Modifiers.cpp`. Attribute Paint nanáší kapku po
-  kapce jen na body v jejím dosahu (strom bodů), takže tisíce kapek na
-  jemné síti jsou rychlé.
+  `attribpaint`, `sculpt`; Blast v `Modifiers.cpp`. Attribute Paint
+  nanáší kapku po kapce jen na body v jejím dosahu (strom bodů), takže
+  tisíce kapek na jemné síti jsou rychlé.
 - **Editor** — `tools/prototype/SimElements.cpp`; úchyty uzlů
   (`sim::Handles` v `src/pg/sim/Network.h`, s polem `pivot` pro úchyt
   v pivotu) v `SimViewport.cpp`.
@@ -380,11 +460,14 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   pojmenovávají. Malování to nepostihne — kapky jsou místa.
 - Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
   objekty ani kusy před ní.
-- Zatím chybí režim vrcholů (rohů), *Dissolve* hran a symetrie. Měkký
-  výběr má jen úchyty (posun, otočení, měřítko); štětec *Sculpt* zatím
-  není.
+- Zatím chybí režim vrcholů (rohů), *Dissolve* hran a symetrie (ani
+  sculpt ji nemá). Měkký výběr má jen úchyty (posun, otočení, měřítko).
   Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by
   Box (dva rohy).
+- Sculpt body posouvá, nepřidává je: jemný detail chce jemnou síť
+  (Subdivide před Sculptem); síť, která se sama zjemňuje pod štětcem
+  (dyntopo, jako v Blenderu), není. Změna čehokoli před Sculptem nebo
+  jeho Falloff spočítá všechny kapky znovu od začátku.
 - Drát a všechny body se kreslí do 400 000 hran či bodů; ve větší geometrii
   jen výběr. První výběr v síti milionů trojúhelníků postaví strom obálek
   (řádově sekunda).

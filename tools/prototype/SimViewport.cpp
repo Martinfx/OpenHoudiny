@@ -747,7 +747,7 @@ void SimWorkspace::frameSelection() {
 
 void SimWorkspace::viewTools(ImVec2 at) {
     const float side = theme::px(28.0f), gap = theme::px(2.0f), pad = theme::px(3.0f), space = theme::px(8.0f);
-    const float height = 17.0f * side + 13.0f * gap + 3.0f * space + 2.0f * pad;
+    const float height = 18.0f * side + 14.0f * gap + 3.0f * space + 2.0f * pad;
     ImDrawList* d = ImGui::GetWindowDrawList();
     toolsLo_ = at;
     toolsHi_ = ImVec2(at.x + side + 2.0f * pad, at.y + height);
@@ -830,8 +830,15 @@ void SimWorkspace::viewTools(ImVec2 at) {
     if (theme::iconButton("paint", Icon::Brush,
                           "Paint (P): an attribute on the displayed geometry -- pin, tear, mass -- with a brush; Ctrl "
                           "paints the Erase Value, [ ] sizes it",
-                          paint_, true, side)) {
-        setPaint(!paint_);
+                          paint_ && !sculpting(), true, side)) {
+        setPaint(!(paint_ && !sculpting()));
+    }
+    place();
+    if (theme::iconButton("sculpt", Icon::Sculpt,
+                          "Sculpt (U): push and pull the displayed geometry with a brush, smooth it (Shift), grab it, "
+                          "flatten it -- a Sculpt node; Ctrl pulls in, [ ] sizes it",
+                          sculpting(), true, side)) {
+        setSculpt(!sculpting());
     }
     place();
     if (theme::iconButton("numbers", Icon::Numbers, "Numbers (N): of the points, or of the primitives, seen", numbers_,
@@ -937,7 +944,19 @@ void SimWorkspace::viewMenu() {
         setPaint(false);
         setElements(Elements::Primitives);
     }
-    if (iconItem(Icon::Brush, paint_ ? theme::kAccent : theme::kTextDim, "Paint", "P")) setPaint(!paint_);
+    if (iconItem(Icon::Brush, paint_ && !sculpting() ? theme::kAccent : theme::kTextDim, "Paint", "P")) {
+        setPaint(!(paint_ && !sculpting()));
+    }
+    if (iconItem(Icon::Sculpt, sculpting() ? theme::kAccent : theme::kTextDim, "Sculpt", "U")) setSculpt(!sculpting());
+    if (sculpting() && ImGui::BeginMenu("Sculpt Tool")) {
+        const char* tools[4] = {"Push / Pull", "Smooth", "Grab", "Flatten"};
+        const int node = sculptNode();
+        const int now = static_cast<int>(net_.valueAt(node, "tool", static_cast<float>(current_))[0]);
+        for (int k = 0; k < 4; ++k) {
+            if (ImGui::MenuItem(tools[k], nullptr, now == k)) net_.setParam(node, "tool", {static_cast<float>(k), 0.0f, 0.0f});
+        }
+        ImGui::EndMenu();
+    }
     if (editingElements() && !paint_ && ImGui::BeginMenu("Pick With")) {
         if (iconItem(Icon::PickBox, pickStyle_ == PickStyle::Box ? theme::kAccent : theme::kTextDim, "A Box", "S")) {
             setPickStyle(PickStyle::Box);
@@ -980,6 +999,11 @@ void SimWorkspace::viewKeys(bool overView) {
             }
             gizmoOwnsMouse_ = true;  // until the button is let go
             setMessage("Put back");
+        } else if (grabbing_) {
+            // Sculpting's grab: the strokes as they were before it.
+            if (const int node = sculptNode()) net_.setText(node, "strokes", grabBefore_);
+            grabbing_ = stroking_ = false;
+            pressCancelled_ = true;
         } else if (brushing_) {
             // The brush's stroke: what was picked before it.
             const uint64_t revision = picked_.revision;
@@ -1028,7 +1052,8 @@ void SimWorkspace::viewKeys(bool overView) {
             setElements(modes[k]);
         }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_P, false)) setPaint(!paint_);
+    if (ImGui::IsKeyPressed(ImGuiKey_P, false)) setPaint(!(paint_ && !sculpting()));
+    if (ImGui::IsKeyPressed(ImGuiKey_U, false)) setSculpt(!sculpting());
     // How a drag picks: a box, a lasso, a brush; what is hidden too.
     if (ImGui::IsKeyPressed(ImGuiKey_S, false) && editingElements() && !paint_) {
         setPickStyle(pickStyle_ == PickStyle::Box ? PickStyle::Lasso : pickStyle_ == PickStyle::Lasso ? PickStyle::Brush

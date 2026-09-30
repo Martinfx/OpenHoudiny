@@ -666,6 +666,18 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             d->AddCircleFilled(P(0.0f, -0.5f), 0.2f * s, col);
             break;
         }
+        case Icon::Sculpt: {  // a surface bulged by a brush: a mound, the brush's round tip over it
+            ImVec2 mound[13];
+            for (int i = 0; i <= 12; ++i) {
+                const float x = -0.9f + 1.8f * static_cast<float>(i) / 12.0f, u = (x + 0.15f) / 0.6f;
+                const float f = std::max(0.0f, 1.0f - u * u);
+                mound[i] = P(x, 0.75f - 0.55f * f * f);
+            }
+            d->AddPolyline(mound, 13, col, 0, t);
+            d->AddCircle(P(0.35f, -0.3f), 0.28f * s, col, 16, t);
+            line(0.55f, -0.5f, 0.85f, -0.85f, 1.6f * t);
+            break;
+        }
         case Icon::Numbers:  // a hash: numbers of the elements
             line(-0.25f, -0.8f, -0.45f, 0.8f);
             line(0.45f, -0.8f, 0.25f, 0.8f);

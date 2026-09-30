@@ -31,10 +31,11 @@ public:
     const char* kind() const { return kind_; }
 
 private:
+    // Built without EGL or without the GUI, some of these are not used.
     const char* kind_ = "";
-    void* egl_ = nullptr;     // gl::HeadlessContext
-    void* window_ = nullptr;  // GLFWwindow
-    bool glfw_ = false;       // glfwInit succeeded
+    [[maybe_unused]] void* egl_ = nullptr;     // gl::HeadlessContext
+    [[maybe_unused]] void* window_ = nullptr;  // GLFWwindow
+    [[maybe_unused]] bool glfw_ = false;       // glfwInit succeeded
 };
 
 }  // namespace pg::cli

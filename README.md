@@ -23,7 +23,9 @@ okna.
   štětec; jen viditelné, nebo i skryté), úchyt je posune, otočí
   a zvětší (uzel Edit; měkký výběr s náhledem, vzdálenost i po povrchu),
   skupina a mazání z vybraného (Group, Blast), štětec maluje atribut —
-  piny a trhání látky (Attribute Paint)
+  piny a trhání látky (Attribute Paint) — a tvaruje geometrii jako hlínu:
+  vytlačit, zatlačit, uhladit, chytit, zarovnat (Sculpt, přírůstkově
+  i na milionu bodů)
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání

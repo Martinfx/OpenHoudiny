@@ -46,6 +46,7 @@
 #include "Workspace.h"
 
 #include "pg/core/Pick.h"
+#include "pg/core/Sculpt.h"
 #include "pg/gl/Volume.h"
 #include "pg/sim/Cooker.h"
 #include "pg/sim/GeometryGraph.h"
@@ -409,11 +410,22 @@ private:
     void applyElementDrag(const GizmoDrag& drag);
     /// Escape during a drag: the Edit as it was -- gone, when the drag made it.
     void restoreElementDrag();
-    /// The brush: P on and off; its strokes while the button is down.
+    /// The brush: P on and off -- on what is shown when it is an Attribute
+    /// Paint or a Sculpt, else a new Attribute Paint; U: a Sculpt. Its
+    /// strokes while the button is down.
     void setPaint(bool on);
+    void setSculpt(bool on);
+    void setBrush(bool on, const char* type);
     void paintTool(ImDrawList* d, const ViewCamera& cam, bool overView);
     /// The Attribute Paint node painted into: the displayed one, if it is one.
     int paintNode() const;
+    /// The Sculpt node sculpted: the displayed one, if it is one.
+    int sculptNode() const;
+    /// Either: the node the brush makes its dabs in.
+    int brushNode() const { return paintNode() ? paintNode() : sculptNode(); }
+    bool sculpting() const { return paint_ && sculptNode() != 0; }
+    /// The tool a sculpting dab is made with now: the node's, Shift smooths.
+    SculptDab::Tool sculptTool() const;
     void scaleBrush(float factor);
     /// What the bottom of the viewport says in these modes; empty for none.
     std::string elementStatus() const;
@@ -601,6 +613,9 @@ private:
     Vec3 lastDab_;
     bool brushHit_ = false;                 ///< the brush is on the surface
     Vec3 brushAt_, brushNormal_;
+    bool grabbing_ = false;                 ///< sculpting's Grab: the dab the mouse moves
+    SculptDab grab_;
+    std::string grabBefore_;                ///< ... the strokes before it
     Vec3 addAt_;                   ///< where the add menu puts what it adds
     int newColor_ = 0;
 

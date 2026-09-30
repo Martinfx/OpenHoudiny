@@ -617,6 +617,27 @@ std::vector<NodeType> buildTypes() {
                "Where the points start when they have no such attribute."},
               {"strokes", "Strokes", "Paint", K::Data, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
                "The dabs painted, in order."}});
+    geometry("sculpt", "Sculpt", "sculpt",
+             "The surface shaped with the viewport's brush: pushed out and pulled in, smoothed, grabbed and "
+             "moved, flattened -- a hill in a terrain, a dent in a car, a fold in a sheet. The dabs are places, "
+             "each on the surface as those before it left it: made finer, the geometry keeps its shape. U in "
+             "the viewport sculpts what is shown.",
+             in,
+             {{"tool", "Tool", "Sculpt", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 3.0f, "",
+               "What the brush does next: Push / Pull out along the surface's normal (Ctrl held: in); Smooth "
+               "(also Shift held); Grab, what is under it moved with the mouse; Flatten onto the plane where "
+               "the brush is.",
+               {"push", "smooth", "grab", "flatten"}, {"Push / Pull", "Smooth", "Grab", "Flatten"}},
+              {"radius", "Radius", "Sculpt", K::Float, {0.2f, 0.0f, 0.0f}, 0.01f, 2.0f, 1e-4f, kBig, "m",
+               "How big the brush is: [ and ] in the viewport, or Shift+wheel."},
+              {"strength", "Strength", "Sculpt", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 4.0f, "",
+               "How much a dab does at its middle: Push moves out a fifth of the radius for 1; Smooth and "
+               "Flatten, the share of the way."},
+              {"falloff", "Falloff", "Sculpt", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 4.0f, "",
+               "How a dab does less towards its edge: Smooth, Linear, Sharp, Sphere, Constant. Of all the dabs.",
+               {"smooth", "linear", "sharp", "sphere", "constant"}, {"Smooth", "Linear", "Sharp", "Sphere", "Constant"}},
+              {"strokes", "Strokes", "Sculpt", K::Data, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+               "The dabs, in order."}});
     {
         // One node of the core, three ways in: over the points, the
         // primitives, or once over the whole geometry.

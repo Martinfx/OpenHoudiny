@@ -255,11 +255,63 @@ void ElementPicker::build(GeometryPtr geo) {
         make(0, static_cast<uint32_t>(tris_.size()));
     }
     edges_ = edgesOf(g);
+    builtArea_ = area_ = area();
 }
 
 bool ElementPicker::fits(const Geometry& geo) const {
     return geo_ && geo.pointCount() == pointCount_ && geo.primitiveCount() == primitiveCount_ &&
            geo.positions().data() == positions_ && geo.vertexPoints().data() == corners_;
+}
+
+bool ElementPicker::refit(GeometryPtr geo) {
+    if (!geo_ || !geo || geo->pointCount() != pointCount_ || geo->primitiveCount() != primitiveCount_ ||
+        geo->vertexPoints().data() != corners_) {
+        return false;
+    }
+    geo_ = std::move(geo);
+    const auto P = geo_->positions();
+    positions_ = P.data();
+    // A node's children come after it: from the last node back, each box
+    // is made of boxes made already.
+    for (size_t i = nodes_.size(); i-- > 0;) {
+        Node& node = nodes_[i];
+        if (node.count > 0) {
+            node.lo = Vec3(kFar, kFar, kFar);
+            node.hi = Vec3(-kFar, -kFar, -kFar);
+            for (uint32_t k = node.first; k < node.first + node.count; ++k) {
+                const Triangle& t = tris_[k];
+                for (const uint32_t q : {t.a, t.b, t.c}) {
+                    for (int a = 0; a < 3; ++a) {
+                        node.lo[a] = std::min(node.lo[a], P[q][a]);
+                        node.hi[a] = std::max(node.hi[a], P[q][a]);
+                    }
+                }
+            }
+        } else {
+            const Node& l = nodes_[node.left];
+            const Node& r = nodes_[node.right];
+            for (int a = 0; a < 3; ++a) {
+                node.lo[a] = std::min(l.lo[a], r.lo[a]);
+                node.hi[a] = std::max(l.hi[a], r.hi[a]);
+            }
+        }
+    }
+    area_ = area();
+    return true;
+}
+
+float ElementPicker::swell() const {
+    if (builtArea_ > 0.0) return static_cast<float>(area_ / builtArea_);
+    return area_ > 0.0 ? std::numeric_limits<float>::infinity() : 1.0f;
+}
+
+double ElementPicker::area() const {
+    double sum = 0.0;
+    for (const Node& node : nodes_) {
+        const Vec3 d = node.hi - node.lo;
+        sum += 2.0 * (static_cast<double>(d.x) * d.y + static_cast<double>(d.y) * d.z + static_cast<double>(d.z) * d.x);
+    }
+    return sum;
 }
 
 uint32_t ElementPicker::make(uint32_t first, uint32_t count) {

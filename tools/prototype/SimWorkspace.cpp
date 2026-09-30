@@ -1922,6 +1922,7 @@ void SimWorkspace::helpMenu() {
     ImGui::TextUnformatted("Ctrl+G, Del               a group of it, delete it (Group, Blast)");
     ImGui::TextUnformatted("Ctrl+A, Ctrl+I, Esc       pick all, the others, none");
     ImGui::TextUnformatted("P, [ ], Shift+wheel       paint an attribute (Ctrl: erase), brush size");
+    ImGui::TextUnformatted("U                         sculpt: push (Ctrl: pull), Shift: smooth, grab, flatten");
     ImGui::TextUnformatted("Tab, N                    a node on what is picked (PolyExtrude...), numbers");
     ImGui::Separator();
     ImGui::TextDisabled("Timeline");
