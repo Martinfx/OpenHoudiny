@@ -490,6 +490,10 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
     primitiveInts(geo, "level", prim0, level);
     primitiveInts(geo, "stem", prim0, stem);
     primitiveInts(geo, "tree", prim0, std::vector<int32_t>(sizes.size(), treeIndex));
+    // For a renderer that follows light (render/Scene.h): the leaves thin,
+    // letting a share of the light through; the bark not.
+    auto translucency = geo.primitives().create("translucency", AttrType::Float).write<float>();
+    for (size_t i = 0; i < level.size(); ++i) translucency[prim0 + i] = level[i] < 0 ? 0.4f : 0.0f;
 }
 
 void skeletonTree(const Tree& tree, int treeIndex, Geometry& geo) {

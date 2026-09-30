@@ -70,13 +70,18 @@
 #include "pg/gl/Preview.h"
 #include "pg/gl/Volume.h"
 #endif
+#include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
+#include "pg/io/Exr.h"
 #include "pg/io/Export.h"
+#include "pg/io/Picture.h"
 #include "pg/io/Video.h"
+#include "pg/render/PathTracer.h"
 #include "pg/sim/Cache.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
 #include "pg/sim/UsdExport.h"
+#include "pg/sim/WaterMesh.h"
 #include "pg/sim/World.h"
 #include "pg/usd/Geom.h"
 #include "pg/usd/Stage.h"
@@ -137,6 +142,8 @@ struct Options {
     std::string fromCache;           ///< sim --from-cache: read the frames from there
     std::string exportPattern;       ///< sim --export: the displayed geometry of every frame, to files
     std::string exportNode;          ///< sim --export-node: that node's rather than the displayed one's
+    std::string renderer = "gl";     ///< sim --renderer: gl, the viewport's; path, the path tracer
+    int samples = 0;                 ///< sim --samples: a pixel, for the path tracer; 0: the Output's
     // cook
     std::string node;   ///< --node: which node's geometry, rather than the displayed one's
     int frame = 0;      ///< --frame: the one frame cooked; 0: frame 1
@@ -209,6 +216,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--from-cache") { if (!next(o.fromCache)) return false; }
         else if (a == "--export") { if (!next(o.exportPattern)) return false; }
         else if (a == "--export-node") { if (!next(o.exportNode)) return false; }
+        else if (a == "--renderer") { if (!next(o.renderer)) return false; }
+        else if (a == "--samples") { if (!nextInt(o.samples)) return false; }
         else if (a == "--list") o.listExamples = true;
         else if (a == "--node") { if (!next(o.node)) return false; }
         else if (a == "--frame") { if (!nextInt(o.frame)) return false; }
@@ -670,7 +679,6 @@ bool applySetting(const std::string& assignment, pg::sim::Network& net, std::str
     return true;
 }
 
-#ifdef PG_CAN_RENDER
 /// fire.png, 30 -> fire_0030.png
 std::string numbered(const std::string& path, int frame) {
     char digits[16];
@@ -678,7 +686,84 @@ std::string numbered(const std::string& path, int frame) {
     const fs::path p(path);
     return (p.parent_path() / (p.stem().string() + digits + p.extension().string())).string();
 }
-#endif
+
+/// The camera of the viewport's orbit round `target`: `yaw` degrees round
+/// the vertical, `pitch` above the horizon, `distance` away, 35 degrees
+/// from the top of the picture to its bottom.
+pg::sim::Camera orbitCamera(const Vec3& target, float yaw, float pitch, float distance, int width, int height) {
+    const float y = yaw * 0.01745329252f, p = pitch * 0.01745329252f;
+    const Vec3 towards(-std::cos(p) * std::sin(y), -std::sin(p), -std::cos(p) * std::cos(y));
+    pg::sim::Camera c;
+    c.position = target - towards * distance;
+    c.rotation = pg::sim::Camera::rotationFor(towards, Vec3(0.0f, 1.0f, 0.0f));
+    c.focal = 12.0f / std::tan(17.5f * 0.01745329252f);
+    c.width = width;
+    c.height = height;
+    return c;
+}
+
+/// The path tracer's picture of a frame, `samples` passes: what a screen
+/// shows (RGB, 8 bits), or -- `exr` -- the light and its passes in an EXR.
+bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, bool exr, std::vector<uint8_t>& rgb,
+                const std::string& comment, std::string& error) {
+    const pg::render::Settings& s = tracer.settings();
+    const int every = std::max(1, s.samples / 8);
+    for (int i = tracer.samples(); i < s.samples; ++i) {
+        tracer.pass();
+        if ((i + 1) % every == 0 && s.samples >= 32) {
+            std::fprintf(stderr, "  %d/%d samples (%.1f s)\r", i + 1, s.samples, tracer.seconds());
+            std::fflush(stderr);
+        }
+    }
+    if (s.samples >= 32) std::fprintf(stderr, "\n");
+    const pg::render::Image image = s.denoise ? tracer.denoised() : tracer.beauty();
+    if (exr) {
+        pg::io::ExrImage out;
+        out.width = image.width;
+        out.height = image.height;
+        const size_t n = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+        auto channel = [&](const char* name, const pg::render::Image& from, int c, bool half) {
+            pg::io::ExrChannel ch;
+            ch.name = name;
+            ch.half = half;
+            ch.values.resize(n);
+            for (size_t p = 0; p < n; ++p) ch.values[p] = from.pixels[p * static_cast<size_t>(from.channels) + static_cast<size_t>(c)];
+            out.channels.push_back(std::move(ch));
+        };
+        channel("R", image, 0, true);
+        channel("G", image, 1, true);
+        channel("B", image, 2, true);
+        pg::io::ExrChannel alpha;
+        alpha.name = "A";
+        alpha.values.assign(n, 1.0f);
+        out.channels.push_back(std::move(alpha));
+        channel("Z", tracer.depth(), 0, false);
+        const pg::render::Image albedo = tracer.albedo(), normal = tracer.normal();
+        channel("albedo.R", albedo, 0, true);
+        channel("albedo.G", albedo, 1, true);
+        channel("albedo.B", albedo, 2, true);
+        channel("N.X", normal, 0, true);
+        channel("N.Y", normal, 1, true);
+        channel("N.Z", normal, 2, true);
+        out.strings.push_back({"comment", comment});
+        return pg::io::writeExr(out, path, error);
+    }
+    const std::vector<uint8_t> rgba = pg::render::toDisplay(image, tracer.scene()->look.exposure);
+    rgb.resize(rgba.size() / 4 * 3);
+    for (size_t p = 0; p < rgba.size() / 4; ++p) {
+        rgb[3 * p] = rgba[4 * p];
+        rgb[3 * p + 1] = rgba[4 * p + 1];
+        rgb[3 * p + 2] = rgba[4 * p + 2];
+    }
+    if (path.empty()) return true;
+    const std::string png = pg::io::encodePng(rgb.data(), image.width, image.height, 3);
+    std::ofstream file(path, std::ios::binary);
+    if (!file || !file.write(png.data(), static_cast<std::streamsize>(png.size()))) {
+        error = "cannot write " + path;
+        return false;
+    }
+    return true;
+}
 
 
 /// `sim NETWORK OUT.png`, and `pyro OUT.png --preset NAME`: the same, with an example.
@@ -793,13 +878,23 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      frames);
         return 1;
     }
-#ifdef PG_CAN_RENDER
-    namespace gl = pg::gl;
+    if (o.renderer != "gl" && o.renderer != "path") {
+        std::fprintf(stderr, "%s: --renderer wants gl (the viewport's) or path (the path tracer), not %s\n", cmd,
+                     o.renderer.c_str());
+        return 1;
+    }
+    if (o.samples < 0 || o.samples > 1 << 16) {
+        std::fprintf(stderr, "%s: --samples wants 1 to 65536 a pixel, not %d\n", cmd, o.samples);
+        return 1;
+    }
+    // The path tracer: light followed as it goes, on the processor -- no
+    // OpenGL wanted.
+    const bool pathTrace = pictures && o.renderer == "path";
     // Through the network's camera, at the size of its picture -- unless
     // the command line asks for a view round the scene. Without a camera:
     // tall for a plume, wide for a scene wider than it is high.
     const bool throughCamera = c.hasCamera && !(o.yawSet || o.pitchSet || o.distance > 0.0f);
-    const Vec3 extent = gl::sceneDomain(c.world).size();
+    const Vec3 extent = sim::sceneDomain(c.world).size();
     int width = extent.y >= std::max(extent.x, extent.z) ? 400 : 640;
     int height = extent.y >= std::max(extent.x, extent.z) ? 600 : 400;
     if (throughCamera) {
@@ -822,10 +917,18 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     const bool exr = pictures && outExt == ".exr";
     std::unique_ptr<pg::io::VideoWriter> movie;
     const double videoFps = 1.0 / (static_cast<double>(c.world.timeStep) * std::max(o.every, 1));
+    // Opened before anything is simulated: a video that cannot be written
+    // says so at once.
+    if (video && !(movie = pg::io::openVideo(outPath, width, height, videoFps, error))) {
+        std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+        return 1;
+    }
+#ifdef PG_CAN_RENDER
+    namespace gl = pg::gl;
     Offscreen context;
     gl::Api api;
     std::unique_ptr<gl::VolumeRenderer> volume;
-    if (pictures) {
+    if (pictures && !pathTrace) {
         if (!context.create(error)) {
             std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
             return 1;
@@ -840,17 +943,12 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             std::fprintf(stderr, "%s: the driver rejected the volume shader:\n%s\n", cmd, log.c_str());
             return 1;
         }
-        // Opened before anything is simulated: a video that cannot be
-        // written says so at once.
-        if (video && !(movie = pg::io::openVideo(outPath, width, height, videoFps, error))) {
-            std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
-            return 1;
-        }
     }
 #else
-    if (pictures) {
-        std::fprintf(stderr, "%s: this prototype was built without EGL and without the editor: it draws no picture -- "
-                             "'-' in place of OUT.png simulates, caches and exports all the same\n", cmd);
+    if (pictures && !pathTrace) {
+        std::fprintf(stderr, "%s: this prototype was built without EGL and without the editor: it draws no picture "
+                             "with OpenGL -- --renderer path renders on the processor; '-' in place of OUT.png "
+                             "simulates, caches and exports all the same\n", cmd);
         return 1;
     }
 #endif
@@ -946,6 +1044,34 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         }
     }
 #endif
+    // The path tracer's view, without the camera: the viewport's -- round
+    // the simulations' box, or framing the geometry alone.
+    pg::render::SceneBuilder builder;
+    pg::render::PathTracer tracer;
+    pg::render::Settings settings = c.render;
+    settings.width = width;
+    settings.height = height;
+    if (o.samples > 0) settings.samples = o.samples;
+    const sim::Domain domain = sim::sceneDomain(world);
+    pg::render::Box domainBox;
+    domainBox.lo = domain.origin();
+    domainBox.hi = domain.origin() + domain.size();
+    Vec3 viewTarget(0.0f, 0.46f * domain.size().y, 0.0f);
+    float viewYaw = 35.0f, viewPitch = 12.0f;
+    float viewDistance = 0.92f * 0.5f * length(domain.size()) / std::sin(17.5f * 0.01745329252f);
+    if (pathTrace && geometryOnly && c.display) {
+        const GeometryPtr geo = geometry.cook(c.display, first, world.timeStep);
+        Vec3 lo, hi;
+        if (geo) drawnBox(*geo, lo, hi);
+        if (geo && lo.x <= hi.x) {
+            const Vec3 size(std::max(hi.x - lo.x, 0.1f), std::max(hi.y - lo.y, 0.1f), std::max(hi.z - lo.z, 0.1f));
+            viewTarget = (lo + hi) * 0.5f;
+            viewDistance = 0.92f * 0.5f * length(size) / std::sin(17.5f * 0.01745329252f);
+        }
+    }
+    if (o.yawSet) viewYaw = o.yaw;
+    if (o.pitchSet) viewPitch = o.pitch;
+    if (o.distance > 0.0f) viewDistance = o.distance;
 
     using Clock = std::chrono::steady_clock;
     auto ms = [](Clock::time_point since) {
@@ -963,6 +1089,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
 #ifdef PG_CAN_RENDER
         draws = volume && inRange && (o.every > 0 ? f % o.every == 0 : video || f == frames);
 #endif
+        if (pathTrace) draws = inRange && (o.every > 0 ? f % o.every == 0 : video || f == frames);
         auto t = Clock::now();
         // The frame: simulated -- and taken when something wants it -- or read.
         if (solver) {
@@ -1034,6 +1161,43 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             }
             ++exports;
         }
+        if (pathTrace && draws) {
+            t = Clock::now();
+            pg::render::SceneInput in;
+            if (c.display) {
+                in.geometry = geometry.cook(c.display, f, world.timeStep);
+                const std::string why = geometry.error(c.display);
+                if (!why.empty()) std::fprintf(stderr, "%s: %s: %s\n", cmd, net.node(c.display)->name.c_str(), why.c_str());
+            }
+            in.look = c.lookAt(f);
+            if (!geometryOnly) {
+                in.bodies = sim::drawnBodies(*current, in.look);
+                if (!current->water.empty() && in.look.waterSurface) in.water = sim::waterMesh(current->water, &current->rain);
+            }
+            in.solids = c.solidsAt(f);
+            in.camera = throughCamera ? c.cameraAt(f)
+                                      : orbitCamera(viewTarget, viewYaw, viewPitch, viewDistance, width, height);
+            in.camera.width = width;
+            in.camera.height = height;
+            in.sunAngle = settings.sunAngle;
+            in.domain = domainBox;
+            tracer.setSettings(settings);
+            tracer.setScene(builder.build(in));
+            const std::string file = movie ? std::string() : o.every > 0 ? numbered(outPath, f) : outPath;
+            std::vector<uint8_t> rgb;
+            if (!pathTraced(tracer, file, exr, rgb, "prototype sim " + network + ", frame " + std::to_string(f), error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
+            if (movie && !movie->add(rgb.data(), error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
+            last = movie ? outPath : file;
+            rendering += ms(t);
+            ++images;
+            continue;
+        }
 #ifdef PG_CAN_RENDER
         if (!draws) continue;
         t = Clock::now();
@@ -1104,12 +1268,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         ++images;
 #endif
     }
-#ifdef PG_CAN_RENDER
     if (movie && !movie->finish(error)) {
         std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
-#endif
     if (usd && !usd->finish(error)) {
         std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
@@ -1144,14 +1306,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 std::to_string(solver->rain()->droplets().size()) + " droplets";
     }
     if (!o.fromCache.empty()) what += ", read from " + o.fromCache;
-#ifdef PG_CAN_RENDER
-    if (volume && throughCamera) {
+    if (images > 0 && throughCamera) {
         const sim::Node* n = net.node(c.camera.node);
         what += ", through " + (n ? n->name : std::string("the camera"));
     }
-#endif
     std::string written = last;
-#ifdef PG_CAN_RENDER
     if (movie) {
         char rate[32];
         std::snprintf(rate, sizeof rate, "%g", videoFps);
@@ -1159,9 +1318,15 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     } else if (images > 1) {
         written += " and " + std::to_string(images - 1) + " before it";
     }
-    const std::string through = images > 0 ? std::string(" through ") + context.kind() : std::string();
-#else
-    const std::string through;
+    std::string through;
+    if (images > 0 && pathTrace) {
+        char text[96];
+        std::snprintf(text, sizeof text, " through the path tracer, %d samples a pixel%s", settings.samples,
+                      settings.denoise ? ", denoised" : "");
+        through = text;
+    }
+#ifdef PG_CAN_RENDER
+    if (images > 0 && !pathTrace) through = std::string(" through ") + context.kind();
 #endif
     // Simulated: every frame to the last; read: those from --start.
     const int stepped = solver ? simulated : passed;

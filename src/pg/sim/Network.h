@@ -41,6 +41,7 @@
 //   node 2 pyro_solver 1 solver 320 80
 //   link 1.source -> 2.sources          # an output to an input
 //
+#include "pg/render/PathTracer.h"
 #include "pg/sim/Camera.h"
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
@@ -291,6 +292,9 @@ struct Compiled {
     bool clothMoves = false;
     /// The geometry node whose geometry is shown (Network::displayed()); 0 if none.
     int display = 0;
+    /// How the path tracer renders the shot (render/PathTracer.h): the
+    /// Output's Render section, the camera's picture size.
+    render::Settings render;
 
     /// When something is animated, what is drawn at each frame from 1 on:
     /// the look, the objects where they are, the camera. (What is simulated

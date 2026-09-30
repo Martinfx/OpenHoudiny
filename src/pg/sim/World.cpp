@@ -38,6 +38,24 @@ World World::sanitized() const {
     return w;
 }
 
+Domain sceneDomain(const World& world) {
+    const World safe = world.sanitized();
+    Vec3 size;
+    bool any = false;
+    auto take = [&](const Domain& d) {
+        const Vec3 e = d.size();
+        size = any ? Vec3(std::max(size.x, e.x), std::max(size.y, e.y), std::max(size.z, e.z)) : e;
+        any = true;
+    };
+    if (safe.hasGas) take(safe.gas.solver.domain());
+    if (safe.hasWater) take(safe.water.solver.domain());
+    // Rain alone: some ground to fall on, not the sky it falls from -- and
+    // the same however the cloud is sized, or the camera would follow it.
+    if (!any && safe.hasRain) take(Domain::ofBox(Vec3(3.0f, 1.5f, 3.0f), 64));
+    if (!any) return Scene().solver.domain();
+    return Domain::ofBox(size, 64);
+}
+
 WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     if (world_.hasGas) gas_ = std::make_unique<PyroSolver>(world_.gas);
     if (world_.hasWater) water_ = std::make_unique<LiquidSolver>(world_.water);

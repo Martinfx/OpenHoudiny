@@ -347,6 +347,32 @@ std::vector<ParamDef> volumeLookParams() {
     return p;
 }
 
+/// How the path tracer renders the shot (render/PathTracer.h): the Output's
+/// Render section, what the editor's Render tab and `prototype sim
+/// --renderer path` take.
+std::vector<ParamDef> renderParams() {
+    return {{"render_samples", "Samples", "Render", K::Int, {128.0f, 0.0f, 0.0f}, 1.0f, 1024.0f, 1.0f, 65536.0f, "",
+             "How many samples a pixel the render takes: more, less noise. 16 a quick look, 128 a picture, 512 "
+             "one to print."},
+            {"render_bounces", "Bounces", "Render", K::Int, {4.0f, 0.0f, 0.0f}, 0.0f, 12.0f, 0.0f, 64.0f, "",
+             "How many times light may bounce from surface to surface on its way to the camera: 0 the sun and the "
+             "sky alone, 4 a shadow lit by what is round it."},
+            {"render_denoise", "Denoise", "Render", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "Take out the noise that is left, keeping edges: a clean picture from fewer samples."},
+            {"render_fstop", "F-Stop", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 22.0f, 0.0f, 1000.0f, "",
+             "The lens's f-number: 1.4 a shallow focus, the background blurred; 16 nearly all sharp. 0: "
+             "everything sharp."},
+            {"render_focus", "Focus", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 50.0f, 0.0f, kBig, "m",
+             "How far from the camera what is sharp is. 0: what the middle of the picture sees."},
+            {"render_clamp", "Clamp", "Render", K::Float, {20.0f, 0.0f, 0.0f}, 1.0f, 100.0f, 0.1f, kBig, "",
+             "The most light a bounce may add to a pixel: no bright specks (fireflies) where light found a rare "
+             "way, a little less of what is lit only that way."},
+            {"render_sun_angle", "Sun Size", "Render", K::Float, {0.53f, 0.0f, 0.0f}, 0.1f, 5.0f, 0.01f, 30.0f,
+             "\xc2\xb0",
+             "How wide the sun is, degrees: 0.53 the real sun, sharp shadows near what casts them and soft far "
+             "from it; larger, softer -- a hazy day."}};
+}
+
 std::vector<ParamDef> outputParams() {
     std::vector<ParamDef> p = {
         {"frames", "Frames", "Output", K::Int, {150.0f, 0.0f, 0.0f}, 1.0f, 1000.0f, 1.0f, 100000.0f, "",
@@ -375,6 +401,7 @@ std::vector<ParamDef> outputParams() {
                  "Holdout: the plate as it is. Solid: the floor drawn over the plate.",
                  {"solid", "holdout", "catcher"},
                  {"Solid", "Holdout", "Shadow Catcher"}});
+    for (ParamDef& d : renderParams()) p.push_back(d);
     return p;
 }
 
@@ -3720,6 +3747,15 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     k.grid = f(*output, "grid") != 0.0f;
     k.skyBehind = f(*output, "sky_behind") != 0.0f;
     k.floorMatte = static_cast<Matte>(std::clamp(whole(*output, "floor_matte"), 0, 2));
+    // How the path tracer renders it.
+    render::Settings& r = c.render;
+    r.samples = std::max(1, whole(*output, "render_samples"));
+    r.bounces = std::clamp(whole(*output, "render_bounces"), 0, 64);
+    r.denoise = f(*output, "render_denoise") != 0.0f;
+    r.fstop = std::max(f(*output, "render_fstop"), 0.0f);
+    r.focus = std::max(f(*output, "render_focus"), 0.0f);
+    r.clamp = std::max(f(*output, "render_clamp"), 0.01f);
+    r.sunAngle = std::clamp(f(*output, "render_sun_angle"), 0.01f, 30.0f);
     // The camera of the shot.
     if (const Node* cam = upstream(*output, "camera")) {
         Camera& m = c.camera;
@@ -3765,6 +3801,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             plate = (std::filesystem::path(folder) / plate).lexically_normal().string();
         }
         m.plate = plate;
+        if (c.hasCamera) {
+            c.render.width = m.width;
+            c.render.height = m.height;
+        }
         if (!plate.empty() && frame <= 1.0f) {
             std::error_code ec;
             if (!std::filesystem::is_regular_file(m.plateFile(1), ec)) {

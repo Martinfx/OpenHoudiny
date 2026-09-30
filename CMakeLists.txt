@@ -273,6 +273,9 @@ add_library(pgsim
   src/pg/sim/Shape.cpp
   src/pg/sim/World.cpp
   src/pg/sim/UsdExport.cpp
+  src/pg/render/Bvh.cpp
+  src/pg/render/Scene.cpp
+  src/pg/render/PathTracer.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp
 )

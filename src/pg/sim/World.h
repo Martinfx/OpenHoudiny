@@ -73,6 +73,11 @@ struct World {
 /// quickly, before the final one is simulated. 1: the world as it is.
 World preview(const World& world, float fraction);
 
+/// The box the pictures of `world` frame: as large along each axis as its
+/// gas's and its water's, round the origin on the floor; some ground for
+/// rain alone; a default scene's without either.
+Domain sceneDomain(const World& world);
+
 /// Steps every part of a World by a frame.
 class WorldSolver {
 public:

@@ -1624,23 +1624,7 @@ void Lines::shape(const sim::ShapeInstance& s, const float color[4]) {
     }
 }
 
-sim::Domain sceneDomain(const sim::World& world) {
-    const sim::World safe = world.sanitized();
-    Vec3 size;
-    bool any = false;
-    auto take = [&](const sim::Domain& d) {
-        const Vec3 e = d.size();
-        size = any ? Vec3(std::max(size.x, e.x), std::max(size.y, e.y), std::max(size.z, e.z)) : e;
-        any = true;
-    };
-    if (safe.hasGas) take(safe.gas.solver.domain());
-    if (safe.hasWater) take(safe.water.solver.domain());
-    // Rain alone: some ground to fall on, not the sky it falls from -- and
-    // the same however the cloud is sized, or the camera would follow it.
-    if (!any && safe.hasRain) take(sim::Domain::ofBox(Vec3(3.0f, 1.5f, 3.0f), 64));
-    if (!any) return sim::Scene().solver.domain();
-    return sim::Domain::ofBox(size, 64);
-}
+sim::Domain sceneDomain(const sim::World& world) { return sim::sceneDomain(world); }
 
 Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids, const std::vector<int>& selected,
                   int domainNode, int waterNode, int rainNode, const sim::Camera* camera) {
@@ -1690,7 +1674,7 @@ Lines sceneGuides(const sim::World* world, const std::vector<sim::Solid>& solids
     };
     if (world && world->hasWater) more(world->water.sanitized().forces);
     if (world && world->hasRain) more(world->rain.sanitized().forces);
-    const sim::Domain whole = world && world->any() ? sceneDomain(*world) : domain;
+    const sim::Domain whole = world && world->any() ? sim::sceneDomain(*world) : domain;
     const Vec3 middle = whole.origin() + whole.size() * 0.5f;
     for (const sim::Force& f : forces) {
         lines.owner = f.node;

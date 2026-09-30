@@ -69,6 +69,20 @@ struct DisplayGeometry {
 /// (a DisplayMesh draws them) -- the box still goes round them.
 DisplayGeometry displayOf(const Geometry& geo, size_t maxDots = 400000, bool faces = true);
 
+/// The closed polygons of `geo` as the viewport shades them, for a renderer
+/// of its own: fans of triangles, three corners each -- place, normal (the
+/// points' N where every point has a usable one, else the faces' round the
+/// corner within the viewport's crease; glass flat) and colour (Cd as
+/// displayOf finds it) -- the primitive each came from, and its glass: 0
+/// none, 1 a pane, 2 a crack.
+struct ShadedTriangles {
+    std::vector<Vec3> positions, normals, colors;  ///< three a triangle
+    std::vector<uint32_t> prims;                   ///< one a triangle
+    std::vector<uint8_t> glass;                    ///< one a triangle
+    size_t count() const { return prims.size(); }
+};
+ShadedTriangles shadedTriangles(const Geometry& geo);
+
 /// What stands on the points of a geometry (Instances.h), as the renderer
 /// draws it: each prototype some point stands for -- its polygons once on
 /// the GPU -- and where it goes, twelve floats an instance: its place and

@@ -116,6 +116,10 @@ Geometry growGrassClump(const GrassSettings& s, uint64_t seed) {
     geo.addPrimitives(corners, sizes, std::span<const uint8_t>(&closed, 1));
     auto outBlade = geo.primitives().create("blade", AttrType::Int).write<int32_t>();
     std::copy(blade.begin(), blade.end(), outBlade.begin());
+    // For a renderer that follows light (render/Scene.h): the blades thin,
+    // letting through a share of the light that falls on them.
+    auto translucency = geo.primitives().create("translucency", AttrType::Float).write<float>();
+    std::fill(translucency.begin(), translucency.end(), 0.35f);
     return geo;
 }
 

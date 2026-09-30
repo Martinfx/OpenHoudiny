@@ -179,6 +179,54 @@ std::vector<Vec3> cornerNormals(std::span<const Vec3> positions, const std::vect
     return out;
 }
 
+ShadedTriangles shadedTriangles(const Geometry& geo) {
+    ShadedTriangles out;
+    const auto P = geo.positions();
+    const size_t points = geo.pointCount();
+    const Colors colors(geo);
+    const Glass glass(geo);
+    std::vector<std::array<uint32_t, 3>> tris;
+    std::vector<std::array<size_t, 3>> corners;  // the vertex of each corner
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        if (!geo.primitiveClosed(prim)) continue;
+        const auto pts = geo.primitivePoints(prim);
+        const size_t first = geo.primitiveVertexStart(prim);
+        for (size_t k = 1; k + 1 < pts.size(); ++k) {
+            if (pts[0] >= points || pts[k] >= points || pts[k + 1] >= points) continue;
+            tris.push_back({pts[0], pts[k], pts[k + 1]});
+            corners.push_back({first, first + k, first + k + 1});
+            out.prims.push_back(static_cast<uint32_t>(prim));
+        }
+    }
+    if (tris.empty()) return out;
+    const AttributeArray* N = usableNormals(geo);
+    std::vector<Vec3> made;
+    if (!N) made = cornerNormals(P, tris, kCrease);
+    const std::span<const Vec3> pointN = N ? N->read<Vec3>() : std::span<const Vec3>();
+    const size_t n = tris.size();
+    out.positions.resize(3 * n);
+    out.normals.resize(3 * n);
+    out.colors.resize(3 * n);
+    out.glass.resize(n);
+    parallelFor(n, 4096, [&](size_t begin, size_t end) {
+        for (size_t t = begin; t < end; ++t) {
+            const float kind = glass.of(out.prims[t]);
+            out.glass[t] = kind >= 1.5f ? 2 : kind >= 0.5f ? 1 : 0;
+            const Vec3& a = P[tris[t][0]];
+            const Vec3 flat = normalize(cross(P[tris[t][1]] - a, P[tris[t][2]] - a));
+            for (size_t c = 0; c < 3; ++c) {
+                const uint32_t p = tris[t][c];
+                out.positions[3 * t + c] = P[p];
+                Vec3 nrm = N ? normalize(pointN[p]) : made[3 * t + c];
+                if (out.glass[t] != 0 && length(flat) > 0.5f) nrm = flat;  // glass is flat, as the viewport has it
+                out.normals[3 * t + c] = nrm;
+                out.colors[3 * t + c] = colors.at(out.prims[t], corners[t][c], p);
+            }
+        }
+    });
+    return out;
+}
+
 DisplayGeometry displayOf(const Geometry& geo, size_t maxDots, bool faces) {
     DisplayGeometry d;
     const auto P = geo.positions();
