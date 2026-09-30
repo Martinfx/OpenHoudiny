@@ -54,6 +54,7 @@ add_library(pgcore
   src/pg/core/Sculpt.cpp
   src/pg/core/Selection.cpp
   src/pg/core/Soft.cpp
+  src/pg/core/Tree.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp
   src/pg/lang/Eval.cpp
@@ -76,6 +77,7 @@ add_library(pgcore
   src/pg/nodes/Volumes.cpp
   src/pg/nodes/Usd.cpp
   src/pg/nodes/Edit.cpp
+  src/pg/nodes/Trees.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/Jpeg.cpp
@@ -529,6 +531,7 @@ add_executable(pgtests
   tests/test_coupling.cpp
   tests/test_cloth.cpp
   tests/test_edit.cpp
+  tests/test_trees.cpp
   tests/test_usd.cpp
   tests/test_usd_read.cpp
   tests/test_exr.cpp

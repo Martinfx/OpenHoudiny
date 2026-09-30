@@ -73,6 +73,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Destrukce | Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení, drť, prach hnaný vytlačeným vzduchem; odstřel věžáku jako video | [docs/destruction.md](docs/destruction.md) |
 | Úpravy ve viewportu | Body, hrany a plochy vybrané myší (klik, obdélník, laso, štětec; jen viditelné, nebo i skryté); úchyt je posune, otočí a zvětší (Edit s měkkým poloměrem), skupina a mazání z vybraného, štětec atributů (piny, trhání látky) — vše jako uzly sítě | [docs/editing.md](docs/editing.md) |
 | Geometrie v editoru | 30 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture, Convert Volume, Liquid Surface), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
+| Stromy | Uzel Tree: kmen s vidlicí, tři úrovně větví, sedm tvarů koruny, listy a jehličí, les na bodech, `flex` pro vítr, kostra pro vlastní listy; deterministicky na libovolném počtu vláken | [docs/trees.md](docs/trees.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
 | Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť, povrch vody, déšť, prach, kamera, světla; co se mění, v souboru pro každý snímek) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
@@ -386,6 +387,17 @@ Seřazeno podle poměru hodnota / náklad:
    indexovaně a při posunu bodů nahraje jen polohy a normály vrcholů
    (milion bodů 62 ms místo sekund, na GPU 24 MB místo 215 MB).
    Zbývá: režim vrcholů, Dissolve hran, symetrie, dyntopo.
+8. **Vegetace** — ✅ uzel Tree: strom roste jako rostlina podle modelu
+   Webera a Penna — kmen (i rozdělený do vůdčích větví), až tři úrovně
+   větví kolem rodiče o zlatý úhel, prohnuté vahou, stočené ke světlu
+   a bloudící, sedm tvarů koruny, listy, úzké listy a jehličí; na každém
+   bodě vstupu jeden strom (les, každý jiný podle `id`); síť s atributem
+   `flex` pro vítr wranglem, nebo kostra s `orient` pro vlastní listy přes
+   Copy to Points ([trees.md](docs/trees.md)). Les 34 stromů (3,5 milionu
+   bodů) za 0,9 s; ve větru se ve viewportu nahrávají jen polohy.
+   Zbývá: UV a textury kůry a listů, průsvitnost listů, prořezávání
+   obálkou, LOD a billboardy pro vzdálený les, vítr jako simulace ohybu,
+   kořeny, tráva a keře.
 
 ---
 

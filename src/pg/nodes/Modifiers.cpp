@@ -238,6 +238,7 @@ void registerBuiltinNodes() {
         registerBrickNodes();
         registerVolumeNodes();
         registerEditNodes();
+        registerTreeNodes();
         registerUsdNodes();
         return true;
     }();

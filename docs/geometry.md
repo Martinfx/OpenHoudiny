@@ -26,6 +26,8 @@ stejné, na kterém stojí `pgdemo`. Geometrie se:
 ./build/prototype --example scatter_fire       # oheň z bodů rozházených po mřížce
 ./build/prototype --example rock_garden        # kameny z kopií koule, déšť na nich
 ./build/prototype --example foreach_city       # městský blok: smyčka For-Each přes 25 věží
+./build/prototype --example tree_shapes        # sedm druhů stromů z uzlu Tree (trees.md)
+./build/prototype --example forest             # les na kopci ve větru
 ./build/prototype sim rock_garden rocks.png    # bez okna: poslední snímek do PNG
 ./build/prototype sim liquid_points out/p.png --every 5 --set look.surface=on
 ```
@@ -42,6 +44,7 @@ nastaveným na ni.
 | **Grid** | Mřížka čtyřúhelníků v rovině xz, stěny nahoru (+y) |
 | **Line** | Otevřená lomená čára bodů |
 | **Point Cloud** | Volné body v krychli, stejné pro stejné seed |
+| **Tree** | Strom, jak roste rostlina: kmen (i rozdělený do vůdčích větví), až tři úrovně větví kolem rodiče o zlatý úhel, ohnuté gravitací a ke světlu, listy na větvičkách; sedm tvarů koruny (smrk, dub, bříza, topol, akácie, vrba, lípa); na každém bodě vstupu jeden strom (les, každý jiný podle `id`); síť (kůra, listy, `flex` pro vítr) nebo kostra (osy a body listů s `orient`). Viz [trees.md](trees.md) |
 | **File** | Body, polygony a čáry ze souboru OBJ; relativní cesta od složky sítě; soubor, který se změní, se načte znovu |
 | **Transform** | Posun, rotace, měřítko po osách a celkové; rotace a měřítko kolem bodu **Pivot** (třeba hrany, přes kterou se věc převrací) |
 | **Merge** | Spojí geometrie ve vstupu, který bere libovolně spojů — v pořadí spojů |
@@ -324,6 +327,7 @@ sklo, zeď s kusy, plachta, déšť, vlna po snímcích).
 |---|---|---|---|---|
 | 90 000 bodů | 40 ms, 19 MB | 20 ms, 5 MB | 6 ms, na GPU 2 MB | 0,7 ms |
 | milion bodů | 0,4–2 s, 215 MB | 0,25 s, 59 MB | 62 ms, na GPU 24 MB | 7 ms |
+
 Trojúhelníky jdou do stejného G-bufferu jako modely z OBJ: normála, index
 tělesa a vzdálenost na pixel; zobrazená geometrie má místo indexu barvu
 zakódovanou jako záporné číslo (8 bitů na kanál), takže ji hlavní shader

@@ -26,6 +26,11 @@ okna.
   piny a trhání látky (Attribute Paint) — a tvaruje geometrii jako hlínu:
   vytlačit, zatlačit, uhladit, chytit, zarovnat (Sculpt, přírůstkově
   i na milionu bodů)
+- **[docs/trees.md](docs/trees.md)** — stromy, jak rostou rostliny (uzel
+  Tree po vzoru Webera a Penna): kmen i s vidlicí do vůdčích větví, tři
+  úrovně větví kolem rodiče o zlatý úhel, sedm tvarů koruny (smrk, dub,
+  bříza, topol, akácie, vrba, lípa), listy i jehličí; les na bodech, každý
+  strom jiný; vítr wranglem podle `flex`; kostra pro vlastní listy
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání

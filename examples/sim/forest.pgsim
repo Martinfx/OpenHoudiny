@@ -1,0 +1,87 @@
+pgsim 1
+# A forest on a hill in the wind. A Grid raised by noise into a hill, points
+# scattered over its middle, a wrangle that makes the ones higher up more
+# likely conifers; a Tree on each point -- broadleaves forking into leaders
+# on the rest, spruces on the conifers -- each its own: its number grows it,
+# Size Variation sizes it. The wind is a wrangle after the hill and the trees
+# are merged: it bends each tree from its foot by flex, how far along the
+# wood a point is -- the trunk stands, the crown sways, the twigs more, in
+# gusts that run across the hill; the hill, without flex, stays. Only the
+# points move, so the viewport sends only their places to the GPU.
+node 1 grid 1 land 0 0
+  param sizex 160
+  param sizez 160
+  param rows 110
+  param cols 110
+node 2 point_wrangle 1 terrain 0 110
+  param snippet "float h = 4.0 * exp(-(@P.x * @P.x + @P.z * @P.z) / 500.0);\nh += 3.0 * (noise(@P * 0.03) - 0.5) + 0.4 * (noise(@P * 0.25) - 0.5);\n@P.y = h + 1.8;\n@Cd = set(0.045, 0.075, 0.02) * (0.7 + 0.6 * noise(@P * 0.4));"
+node 3 primitive_wrangle 1 wood_edge 0 220
+  param snippet "@group_far = length(set(@P.x, 0, @P.z)) > 27;"
+node 4 blast 1 wood 0 330
+  param group "far"
+  param class primitive
+node 5 scatter 1 spots 0 440
+  param count 34
+  param seed 5
+node 6 point_wrangle 1 kinds 0 550
+  param snippet "// The higher up the hill, the likelier a conifer.\n@group_conifer = rand(@ptnum * 1.37 + 0.2) < 0.12 * (@P.y - 1.8) + 0.2;"
+node 7 blast 1 broadleaf_spots -130 660
+  param group "conifer"
+node 8 blast 1 conifer_spots 130 660
+  param group "conifer"
+  param invert on
+node 9 tree 1 broadleaves -130 770
+  param height 7
+  param radius 0.24
+  param sizevariation 0.25
+  param crown 0.3
+  param forks 3
+  param forkheight 0.45
+  param forkangle 28
+  param length1 0.55
+  param branches3 4
+  param leaves 12
+  param leafsize 0.22
+  param leafcolor 0.07 0.15 0.035
+  param sides 8
+  param segment 0.35
+node 10 tree 1 spruces 130 770
+  param shape conical
+  param height 12
+  param radius 0.22
+  param seed 2
+  param sizevariation 0.25
+  param crown 0.08
+  param levels 2
+  param gravity 0.35
+  param up 0.05
+  param branches1 60
+  param angle1 80
+  param length1 0.3
+  param branches2 12
+  param angle2 55
+  param leaves 14
+  param leafsize 0.25
+  param leafshape needles
+  param barkcolor 0.1 0.08 0.065
+  param leafcolor 0.035 0.08 0.035
+  param sides 8
+  param segment 0.4
+node 11 merge 1 forest 0 880
+node 12 point_wrangle 1 wind 0 990
+  param snippet "// Bent from the foot: the further along the wood, the more.\nfloat f = @flex * @flex;\nfloat gust = 0.6 + 0.4 * sin(@Time * 0.8 - @P.x * 0.12);\nfloat sway = 0.5 + sin(@Time * 2.1 - @P.x * 0.2 + @P.z * 0.07);\n@P.x += ch(\"strength\") * f * gust * sway;\n@P.z += 0.3 * ch(\"strength\") * f * sin(@Time * 1.4 + @P.z * 0.25);\n// The twigs and leaves flutter.\n@P.y += 0.02 * max(@flex - 0.6, 0) * sin(@Time * 12.0 + (@P.x + @P.z) * 2.0);"
+  param strength 0.12
+  display
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 7.geometry
+link 6.geometry -> 8.geometry
+link 7.geometry -> 9.points
+link 8.geometry -> 10.points
+link 2.geometry -> 11.geometry
+link 9.geometry -> 11.geometry
+link 10.geometry -> 11.geometry
+link 11.geometry -> 12.geometry

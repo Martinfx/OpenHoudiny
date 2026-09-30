@@ -865,8 +865,9 @@ void main() {
     int matte = onPlate && !displayed ? matteOf(which) : 0;
     // Geometry lying on the floor -- a grid at y 0 -- is in front of it: the
     // distance its faces rasterise to and the floor's, met exactly, are a
-    // hair apart either way.
-    float floorAt = fromMesh ? tFloor * (1.0 + 2e-4) : tFloor;
+    // hair apart either way. Without the floor nothing is behind it: a
+    // terrain's valleys below y 0 show.
+    float floorAt = !u_floor ? 1e30 : fromMesh ? tFloor * (1.0 + 2e-4) : tFloor;
     if (tSolid < floorAt && tSolid < 1e29 && matte != 0) {
         tEnd = tSolid;
         if (matte == 2) relit = catcher(u_eye + dir * tSolid, normal);

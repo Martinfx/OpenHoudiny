@@ -356,6 +356,9 @@ src/pg/core/     Types      vektory, matice, typy atributů
                  Pick       co je pod myší, v obdélníku, lasu, tahu štětce: BVH nad
                             polygony, jen viditelné nebo i skryté; refit, když se body
                             jen posunou
+                 Tree       strom, jak roste (Weber a Penn): kmen s vidlicí, úrovně větví
+                            kolem rodiče o zlatý úhel, tvar koruny, listy; náhodná čísla
+                            každé části zvlášť; síť (trubky, listy, flex) nebo kostra
 src/pg/lang/     Parse      lexer a parser do AST, kontrola jmen a počtu argumentů
                  Check      typová kontrola proti geometrii: vazby atributů, přetížení
                  Eval       interpret typovaného stromu
@@ -369,6 +372,8 @@ src/pg/nodes/    Generators grid, line, pointcloud
                  Edit       groupcreate, edit (s měkkým poloměrem), attribpaint, sculpt:
                             co udělá výběr, úchyt a štětec ve viewportu
                  Surface    file (OBJ), scatter, normal, copytopoints, color
+                 Trees      tree: strom z Tree.h, nebo jeden na každém bodě vstupu (les),
+                            stromy paralelně a spojené v pořadí bodů
                  Wrangle    uzly pointwrangle a attribwrangle (body, primitivy, rohy, detail)
                  Topology   connectivity, fuse, polyextrude, subdivide (Catmull-Clark),
                             clip s uzavřením řezu, attribtransfer; nové body jako váhy starých

@@ -289,6 +289,7 @@ parametrů (na aktuálním snímku, s klíči jako u objektů):
 | Box | Center | — | Size |
 | Sphere | Center | — | Radius |
 | Tube | Center | — | Radius, Height |
+| Tree | Center | — | Radius (kmene), Height |
 | Grid, Point Cloud | Center | — | — |
 | Line | Origin | Direction | — |
 | **Clip** | Origin (bod roviny) | Direction (normála roviny) | — |

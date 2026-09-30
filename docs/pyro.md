@@ -386,7 +386,7 @@ Camera bere jednu kameru: pohled, kterým se renderuje.
 | Output | `frames` (délka časové osy), `fps` (snímků za sekundu pro všechny řešiče) |
 | Sun | `light_azimuth`, `light_elevation`, `light_color`, `light_intensity` |
 | Sky | `sky_color`, `sky_intensity` |
-| Image | `exposure`, `floor`, `ground_color` (barva země: asfalt, beton, prach), `grid` (mřížka na zemi po 10 cm a po metru; pro záběr vypnout), `sky_behind` (za scénou obloha místo tmavého pozadí studia: opar nejsvětlejší u obzoru a záře kolem slunce — venku, kouř proti světlu) |
+| Image | `exposure`, `floor` (vypnutá podlaha nic neschovává: i geometrie pod y = 0, třeba údolí terénu, je vidět), `ground_color` (barva země: asfalt, beton, prach), `grid` (mřížka na zemi po 10 cm a po metru; pro záběr vypnout), `sky_behind` (za scénou obloha místo tmavého pozadí studia: opar nejsvětlejší u obzoru a záře kolem slunce — venku, kouř proti světlu) |
 
 **Camera** (Render): záběr ([§2](#kamera-a-záběr)).
 

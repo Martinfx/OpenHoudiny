@@ -466,6 +466,108 @@ std::vector<NodeType> buildTypes() {
               vec("center", "Center", "Points", Vec3(0.0f, 0.5f, 0.0f), -5.0f, 5.0f, "m", "The cube's middle.")},
              {"center", nullptr, nullptr, nullptr, nullptr, nullptr});
     {
+        auto level = [](int n, const char* section, int branches, float angle, float length) {
+            static const char* names[3][3] = {{"branches1", "angle1", "length1"},
+                                              {"branches2", "angle2", "length2"},
+                                              {"branches3", "angle3", "length3"}};
+            const char* const* name = names[n - 1];
+            return std::vector<ParamDef>{
+                {name[0], "Branches", section, K::Int, {static_cast<float>(branches), 0.0f, 0.0f}, 0.0f, 60.0f, 0.0f, 200.0f,
+                 "", n == 1 ? "How many branches grow from the trunk, from the crown's foot up."
+                            : "How many branches grow from each branch of the level before."},
+                {name[1], "Angle", section, K::Float, {angle, 0.0f, 0.0f}, 0.0f, 120.0f, 0.0f, 180.0f, "\xc2\xb0",
+                 "How far off their parent they grow: 0 along it, 90 square to it."},
+                {name[2], "Length", section, K::Float, {length, 0.0f, 0.0f}, 0.0f, 1.2f, 0.0f, 5.0f, "",
+                 n == 1 ? "How long the longest of them is, a share of the trunk's length; the crown's shape says "
+                          "how long the others are."
+                        : "How long they are at their parent's base, a share of its length -- shorter towards its "
+                          "tip."}};
+        };
+        std::vector<ParamDef> p = {
+            {"shape", "Shape", "Tree", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 6.0f, 0.0f, 6.0f, "",
+             "The crown's outline -- how long the first branches are from its foot up. Conical: longest at the "
+             "foot, a spruce, a fir. Spherical: longest halfway, an oak, a lime. Hemispherical: long at the foot, "
+             "round over the top. Cylindrical: all as long, a poplar. Flame: longest two thirds down, a birch. "
+             "Umbrella: longest at the top, an acacia, a stone pine. Weeping: round, the twigs hanging, a "
+             "willow.",
+             {"conical", "spherical", "hemispherical", "cylindrical", "flame", "umbrella", "weeping"},
+             {"Conical", "Spherical", "Hemispherical", "Cylindrical", "Flame", "Umbrella", "Weeping"}},
+            {"height", "Height", "Tree", K::Float, {6.0f, 0.0f, 0.0f}, 0.5f, 30.0f, 0.01f, kBig, "m",
+             "How long the trunk is; the crown reaches a little higher."},
+            {"radius", "Radius", "Tree", K::Float, {0.16f, 0.0f, 0.0f}, 0.01f, 1.0f, 1e-4f, kBig, "m",
+             "How thick the trunk is above its foot."},
+            seed("Tree", "Another number: another tree of the same kind."),
+            vec("center", "Center", "Tree", Vec3(), -5.0f, 5.0f, "m", "Where it stands, without points in."),
+            {"sizevariation", "Size Variation", "Tree", K::Float, {0.2f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "How much the trees on the points differ in size, one from the next."},
+            {"tip", "Tip", "Trunk", K::Float, {0.08f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "How thick the trunk is at its top, a share of Radius."},
+            {"flare", "Flare", "Trunk", K::Float, {0.35f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
+             "How much wider it is at the ground, where the roots go in."},
+            {"lean", "Lean", "Trunk", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "How far it leans one way and bows back."},
+            {"crown", "Crown", "Trunk", K::Float, {0.35f, 0.0f, 0.0f}, 0.0f, 0.95f, 0.0f, 0.95f, "",
+             "Where the branches begin, a share of the trunk's length: below it the trunk is bare."},
+            {"forks", "Forks", "Trunk", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 5.0f, 1.0f, 5.0f, "",
+             "How many leaders the trunk parts into -- an oak's, a maple's, an acacia's crown on two or three. "
+             "1: it goes up to its top, a spruce's, a poplar's."},
+            {"forkheight", "Fork Height", "Trunk", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "Where it forks, a share of its length."},
+            {"forkangle", "Fork Angle", "Trunk", K::Float, {25.0f, 0.0f, 0.0f}, 0.0f, 60.0f, 0.0f, 90.0f, "\xc2\xb0",
+             "How far the leaders diverge; they turn back up as they grow."},
+            {"levels", "Levels", "Branches", K::Int, {3.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 3.0f, "",
+             "Branches off the trunk, off those, off those: how many levels. 0: a bare trunk."},
+            {"thickness", "Thickness", "Branches", K::Float, {0.55f, 0.0f, 0.0f}, 0.05f, 0.95f, 0.05f, 0.95f, "",
+             "How thick a branch is at its base, a share of its parent's thickness where it grows."},
+            {"gravity", "Gravity", "Branches", K::Float, {0.25f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 4.0f, "",
+             "How much the branches droop under their weight -- the thinner, the more, towards their tips."},
+            {"up", "Up", "Branches", K::Float, {0.25f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 4.0f, "",
+             "How much they turn up to the light as they grow."},
+            {"wobble", "Wobble", "Branches", K::Float, {0.3f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 4.0f, "",
+             "How much they wander this way and that as they grow."}};
+        for (auto&& d : level(1, "Level 1", 28, 55.0f, 0.5f)) p.push_back(d);
+        for (auto&& d : level(2, "Level 2", 7, 45.0f, 0.45f)) p.push_back(d);
+        for (auto&& d : level(3, "Level 3", 5, 40.0f, 0.4f)) p.push_back(d);
+        p.push_back({"leaves", "Leaves", "Leaves", K::Int, {10.0f, 0.0f, 0.0f}, 0.0f, 60.0f, 0.0f, 500.0f, "",
+                     "How many leaves grow on each twig -- each branch nothing grows from."});
+        p.push_back({"leafsize", "Leaf Size", "Leaves", K::Float, {0.12f, 0.0f, 0.0f}, 0.01f, 0.5f, 1e-4f, kBig, "m",
+                     "How long a leaf is."});
+        p.push_back({"leafshape", "Leaf Shape", "Leaves", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+                     "Broad: an oval blade, an oak's, a lime's. Narrow: a long thin one, a willow's. Needles: a "
+                     "conifer's -- many to a twig.",
+                     {"broad", "narrow", "needles"}, {"Broad", "Narrow", "Needles"}});
+        p.push_back({"barkcolor", "Bark Color", "Look", K::Color, {0.14f, 0.11f, 0.085f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "The colour of the bark, as Cd -- the young wood a little lighter."});
+        p.push_back({"leafcolor", "Leaf Color", "Look", K::Color, {0.1f, 0.23f, 0.05f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "The colour of the leaves, as Cd."});
+        p.push_back({"variation", "Variation", "Look", K::Float, {0.3f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "How much the leaves differ in shade -- lighter, darker, yellower -- and the trees' bark."});
+        p.push_back({"sides", "Sides", "Detail", K::Int, {10.0f, 0.0f, 0.0f}, 3.0f, 32.0f, 3.0f, 64.0f, "",
+                     "Faces round the trunk; two fewer round each level of branches, three at the least -- "
+                     "never six: their edges would be as sharp as the viewport's crease, 60 degrees, smooth one "
+                     "frame and sharp the next as the tree sways; seven instead."});
+        p.push_back({"segment", "Segment", "Detail", K::Float, {0.25f, 0.0f, 0.0f}, 0.05f, 1.0f, 0.01f, kBig, "m",
+                     "How long a piece of the trunk is; the branches in finer pieces, level by level. Longer: "
+                     "fewer faces, for a forest far away."});
+        p.push_back({"output", "Output", "Detail", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "Mesh: the stems as tubes of bark, the leaves as polygons -- the groups bark and leaves. "
+                     "Skeleton: each stem an open polyline, pscale its radius, and each leaf a point -- N the way "
+                     "it faces, pscale its size, orient, in the group leaves -- for Copy to Points to put a leaf "
+                     "of your own on: modelled lying flat, facing +y, its stalk at the origin, pointing along +z.",
+                     {"mesh", "skeleton"}, {"Mesh", "Skeleton"}});
+        geometry("tree", "Tree", "tree",
+                 "A tree grown as a plant grows: a trunk thick at its foot, branches off it round it a golden "
+                 "angle on from the one before, branches off those, each turned up to the light, bent under its "
+                 "weight and wandering a little, and leaves on the twigs. The crown's shape says how long the "
+                 "first branches are from its foot up (after Weber and Penn). With points in, a tree on each -- a "
+                 "forest, each tree its own: its id, else its number, grows it; pscale sizes it. Point Cd and "
+                 "flex -- how far along the wood from the tree's foot, a share of its height: 0 at the ground, "
+                 "about 1 at the crown's top, what a wrangle bends it in the wind by; primitive level (-1 a "
+                 "leaf), stem, tree.",
+                 {{"points", "Points", PinType::Geometry}}, std::move(p),
+                 {"center", nullptr, nullptr, nullptr, "radius", "height"});
+    }
+    {
         ParamDef f = file("An OBJ file: its points, polygons and lines. A relative path is read from the "
                           "network's folder; a file that changes is read again.");
         f.section = "File";
