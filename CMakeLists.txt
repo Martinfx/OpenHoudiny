@@ -276,6 +276,7 @@ add_library(pgsim
   src/pg/render/Bvh.cpp
   src/pg/render/Scene.cpp
   src/pg/render/PathTracer.cpp
+  src/pg/render/Save.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp
 )
@@ -362,6 +363,8 @@ if(PG_BUILD_GUI)
     tools/prototype/SimElements.cpp
     tools/prototype/SimRunner.cpp
     tools/prototype/SimViewport.cpp
+    tools/prototype/SimRender.cpp
+    tools/prototype/RenderView.cpp
     tools/prototype/SimWorkspace.cpp
     tools/prototype/Theme.cpp
     tools/prototype/Wedge.cpp
@@ -539,6 +542,7 @@ add_executable(pgtests
   tests/test_edit.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp
+  tests/test_render.cpp
   tests/test_usd.cpp
   tests/test_usd_read.cpp
   tests/test_exr.cpp

@@ -36,6 +36,10 @@ okna.
   a sklonu, keře a stromy jako varianty, které zastupují body; viewport je
   kreslí přes GPU instancing, USD dostane PointInstancer, OBJ kopie; vítr
   otáčí `orient`; louka u lesa s 1,9 milionu stébel za 148 ms
+- **[docs/pathtracer.md](docs/pathtracer.md)** — pořádný render: path
+  tracer na procesoru v záložce Render vedle Viewportu i z příkazové řádky;
+  odražené světlo, měkké slunce, prosvítající tráva a listí, sklo a voda,
+  hloubka ostrosti, odšumění; nastavení v uzlu Output, PNG i EXR
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání

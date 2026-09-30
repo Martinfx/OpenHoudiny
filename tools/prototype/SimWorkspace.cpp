@@ -1969,6 +1969,7 @@ void SimWorkspace::popups() {
         case FileAction::ExportUsd: exportUsd(chosen); break;
         case FileAction::OpenAsset: open(chosen); break;
         case FileAction::SaveAsset: commitAsset(chosen); break;
+        case FileAction::SaveRender: saveRender(chosen); break;
         case FileAction::None: break;
     }
     fileAction_ = FileAction::None;

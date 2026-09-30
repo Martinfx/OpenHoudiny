@@ -12,7 +12,7 @@
 //   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..1024]
 //                    [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
 //                    [--set NODE.PARAM=VALUE]... [--cache DIR [--checkpoint K] [--resume]] [--from-cache DIR]
-//                    [--export PATH] [--export-node NODE] [--preview F]
+//                    [--export PATH] [--export-node NODE] [--preview F] [--renderer gl|path [--samples N]]
 //   prototype sim --list
 //   prototype pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
 //   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE] [--set NODE.PARAM=VALUE]...
@@ -33,7 +33,10 @@
 // viewport; --start S draws and exports from frame S on -- a farm machine's
 // share of a shot read from a cache. OUT.exr: the pictures in linear light
 // with their passes for compositing -- depth, motion vectors, masks
-// (gl::writePassesExr). --set changes a
+// (gl::writePassesExr). --renderer path renders with the path tracer
+// instead (pg/render): light followed as it bounces, on the processor, no
+// OpenGL wanted -- as the Output's Render section sets it, --samples N a
+// pixel; its EXR: the light, Z, albedo.* and N.*. --set changes a
 // parameter first: NODE.PARAM=VALUE, or PARAM=VALUE when a single node has
 // that parameter; a VALUE that is not a value is an expression ($F, ch()),
 // and NODE.PARAM.x=... sets one component of a vector. --cache DIR writes every frame to a folder, and
@@ -77,6 +80,7 @@
 #include "pg/io/Picture.h"
 #include "pg/io/Video.h"
 #include "pg/render/PathTracer.h"
+#include "pg/render/Save.h"
 #include "pg/sim/Cache.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
@@ -702,9 +706,9 @@ pg::sim::Camera orbitCamera(const Vec3& target, float yaw, float pitch, float di
     return c;
 }
 
-/// The path tracer's picture of a frame, `samples` passes: what a screen
-/// shows (RGB, 8 bits), or -- `exr` -- the light and its passes in an EXR.
-bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, bool exr, std::vector<uint8_t>& rgb,
+/// The path tracer's picture of a frame, `samples` passes, into `path`
+/// (none: into `rgb` alone, for a video).
+bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, std::vector<uint8_t>& rgb,
                 const std::string& comment, std::string& error) {
     const pg::render::Settings& s = tracer.settings();
     const int every = std::max(1, s.samples / 8);
@@ -716,53 +720,11 @@ bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, bool ex
         }
     }
     if (s.samples >= 32) std::fprintf(stderr, "\n");
-    const pg::render::Image image = s.denoise ? tracer.denoised() : tracer.beauty();
-    if (exr) {
-        pg::io::ExrImage out;
-        out.width = image.width;
-        out.height = image.height;
-        const size_t n = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
-        auto channel = [&](const char* name, const pg::render::Image& from, int c, bool half) {
-            pg::io::ExrChannel ch;
-            ch.name = name;
-            ch.half = half;
-            ch.values.resize(n);
-            for (size_t p = 0; p < n; ++p) ch.values[p] = from.pixels[p * static_cast<size_t>(from.channels) + static_cast<size_t>(c)];
-            out.channels.push_back(std::move(ch));
-        };
-        channel("R", image, 0, true);
-        channel("G", image, 1, true);
-        channel("B", image, 2, true);
-        pg::io::ExrChannel alpha;
-        alpha.name = "A";
-        alpha.values.assign(n, 1.0f);
-        out.channels.push_back(std::move(alpha));
-        channel("Z", tracer.depth(), 0, false);
-        const pg::render::Image albedo = tracer.albedo(), normal = tracer.normal();
-        channel("albedo.R", albedo, 0, true);
-        channel("albedo.G", albedo, 1, true);
-        channel("albedo.B", albedo, 2, true);
-        channel("N.X", normal, 0, true);
-        channel("N.Y", normal, 1, true);
-        channel("N.Z", normal, 2, true);
-        out.strings.push_back({"comment", comment});
-        return pg::io::writeExr(out, path, error);
+    if (path.empty()) {
+        rgb = pg::render::displayRgb(tracer, s.denoise);
+        return true;
     }
-    const std::vector<uint8_t> rgba = pg::render::toDisplay(image, tracer.scene()->look.exposure);
-    rgb.resize(rgba.size() / 4 * 3);
-    for (size_t p = 0; p < rgba.size() / 4; ++p) {
-        rgb[3 * p] = rgba[4 * p];
-        rgb[3 * p + 1] = rgba[4 * p + 1];
-        rgb[3 * p + 2] = rgba[4 * p + 2];
-    }
-    if (path.empty()) return true;
-    const std::string png = pg::io::encodePng(rgb.data(), image.width, image.height, 3);
-    std::ofstream file(path, std::ios::binary);
-    if (!file || !file.write(png.data(), static_cast<std::streamsize>(png.size()))) {
-        error = "cannot write " + path;
-        return false;
-    }
-    return true;
+    return pg::render::savePicture(tracer, path, s.denoise, comment, error);
 }
 
 
@@ -1185,7 +1147,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             tracer.setScene(builder.build(in));
             const std::string file = movie ? std::string() : o.every > 0 ? numbered(outPath, f) : outPath;
             std::vector<uint8_t> rgb;
-            if (!pathTraced(tracer, file, exr, rgb, "prototype sim " + network + ", frame " + std::to_string(f), error)) {
+            if (!pathTraced(tracer, file, rgb, "prototype sim " + network + ", frame " + std::to_string(f), error)) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
                 return 1;
             }
@@ -1569,10 +1531,12 @@ void printUsage(std::FILE* out) {
                  "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--cache DIR [--checkpoint K] [--resume]]\n"
                  "                   [--from-cache DIR] [--export PATH] [--export-node NODE] [--threads N]\n"
-                 "                   [--preview F]\n"
+                 "                   [--preview F] [--renderer gl|path [--samples N]]\n"
                  "                   simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                   frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
                  "                   OUT.exr: linear light and passes for compositing (Z, forward.u/v, mask.*);\n"
+                 "                   --renderer path: the path tracer, on the processor (the Output's Render\n"
+                 "                   settings; --samples N a pixel); its EXR: light, Z, albedo.*, N.*;\n"
                  "                   a video gets every frame (every K-th): .avi always, .mp4 .mov .mkv .webm .gif\n"
                  "                   when ffmpeg is installed;\n"
                  "                   through the network's camera at its size, unless --yaw, --pitch or --distance\n"

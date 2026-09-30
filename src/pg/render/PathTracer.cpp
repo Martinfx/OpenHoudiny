@@ -567,7 +567,24 @@ Image denoise(const Image& beauty, const Image& albedo, const Image& normal, con
         colour[p] = a;
         light[p] = sky[p] ? c : Vec3(c.x / a.x, c.y / a.y, c.z / a.z);
         nrm[p] = Vec3(normal.pixels[3 * p], normal.pixels[3 * p + 1], normal.pixels[3 * p + 2]);
-        spread[p] = std::sqrt(variance[p]) / std::max(luminance(a), 0.03f);
+    }
+    // How far a pixel may differ: its noise -- as the pixels round it have
+    // it, a few samples' own spread being too noisy to go by.
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const size_t p = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+            float v = 0.0f;
+            int count = 0;
+            for (int qy = std::max(y - 2, 0); qy <= std::min(y + 2, h - 1); ++qy) {
+                for (int qx = std::max(x - 2, 0); qx <= std::min(x + 2, w - 1); ++qx) {
+                    const size_t q = static_cast<size_t>(qy) * static_cast<size_t>(w) + static_cast<size_t>(qx);
+                    if (sky[q]) continue;
+                    v += variance[q];
+                    ++count;
+                }
+            }
+            spread[p] = std::sqrt(count > 0 ? v / static_cast<float>(count) : variance[p]) / std::max(luminance(colour[p]), 0.03f);
+        }
     }
     const float kernel[3] = {3.0f / 8.0f, 1.0f / 4.0f, 1.0f / 16.0f};
     for (int pass = 0; pass < 5; ++pass) {

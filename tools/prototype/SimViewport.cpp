@@ -1135,6 +1135,25 @@ void SimWorkspace::viewport(ImVec2 size) {
         updateGuides();
     }
 
+    // Two tabs: the viewport, and the path tracer's render of what it shows.
+    if (ImGui::BeginTabBar("view.tabs")) {
+        if (ImGui::BeginTabItem("Viewport")) {
+            renderTabOn_ = false;
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Render")) {
+            renderTabOn_ = true;
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    if (renderTabOn_) {
+        const ImVec2 room = ImGui::GetContentRegionAvail();
+        renderTab(static_cast<int>(room.x), static_cast<int>(room.y));
+        return;
+    }
+    stopRender();
+
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const int w = std::max(16, static_cast<int>(avail.x)), hh = std::max(16, static_cast<int>(avail.y));
     // The camera frames the domain when a network opens and when the

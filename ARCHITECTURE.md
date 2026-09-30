@@ -467,6 +467,14 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                             polohy a normály vrcholů
                  Frame      snímek: plyn v poloviční přesnosti, hladina vody po bajtech, kapky
                  Cache      snímky na disku: složka, cache.txt, .pgframe s běhy nul; hash sítě
+src/pg/render/   Bvh        hierarchie obalových kvádrů (SAH, přihrádky), stavba podstromů
+                            paralelně a deterministicky; průchod paprsku, bližší dítě první
+                 Scene      scéna pro paprsky: sítě zobrazené geometrie, těles a vody,
+                            instance jako umístění jedné sítě, objekty přesně; slunce, obloha
+                            a podlaha z Looku; materiály z atributů
+                 PathTracer progresivní path tracer: GGX, průsvitnost, sklo a voda, slunce
+                            s MIS, tenká čočka, AOV, à-trous odšumění, ACES; deterministicky
+                 Save       PNG, EXR se Z, albedem a normálami
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
                  Volume     objemové vykreslování simulace: podlaha, objekty, voda, déšť,
@@ -549,6 +557,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | **Řídký plyn**: Pyro Solver počítá a drží jen dlaždice 8 × 8 × 8 buněk, kde je plyn, a kolem, kam za krok doletí; tlak multigridem jen na nich; se všemi dlaždicemi bitově stejně jako hustá mřížka; snímky a cache (verze 10) jen s dlaždicemi s plynem; rozlišení až 1024; prach odstřelu ve 103,5 M voxelů za 19 minut ([docs/pyro.md §4](docs/pyro.md#řídká-mřížka-počítá-se-jen-tam-kde-je-plyn), `pgbench_pyro`) |
 | ✅ | Usměrněná simulace: Guide RBD Solveru (kusy posunuté a natočené, třeba klíčovaný Transform kolem Pivotu) vede slepená tělesa do pózy, která jejich body nejlépe položí na body Guide; síla, doba, dosah a puštění při prasknutí lepidla; atribut `guide`; z Guide se v každém snímku bere jen póza kusu; příklad `guided_fall` ([docs/destruction.md §3](docs/destruction.md#usměrněná-simulace-guide)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
+| ✅ | **Path tracer** na procesoru: BVH se SAH, instance jako umístění jedné sítě, slunce s MIS a obloha z Looku (jas podlahy sedí s viewportem na 0,4 %), GGX, průsvitnost trávy a listí, sklo a voda, tenká čočka, à-trous odšumění; deterministický na libovolném počtu vláken; záložka Render v editoru (vlastní vlákno, přerušení), `--renderer path`, EXR se Z, albedem a normálami ([docs/pathtracer.md](docs/pathtracer.md)) |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
 | ✅ | **Čtení USD** bez knihovny: `.usda`, `.usdc` (verze 0.4.0–0.10.0), `.usdz`; scéna složená jako v USD (sublayers, reference, payloady, varianty, třídy, value clips); kamera z matchmove (USD Camera) a geometrie (USD Import) v metrech s Y nahoru; transformace, skládání i geometrie sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)) |
 | ✅ | **Python API** `import pg` (pybind11): sítě, parametry, výrazy a klíče, vaření a simulace ze skriptu; atributy a data snímků jako pole numpy bez kopie (buffer protocol nad sdílenou pamětí jádra); cache, USD, render přes `prototype`; síť jako Python (`as_code()`) ([docs/python.md](docs/python.md)) |

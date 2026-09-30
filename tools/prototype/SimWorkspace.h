@@ -41,6 +41,7 @@
 #include "Gizmo.h"
 #include "NodeCanvas.h"
 #include "RenderJob.h"
+#include "RenderView.h"
 #include "SimRunner.h"
 #include "Wedge.h"
 #include "Workspace.h"
@@ -194,6 +195,11 @@ private:
     /// orbit through it turns round.
     float focusOf(const sim::Camera& camera) const;
     bool renderImage(const std::string& path);
+    // The Render tab (SimRender.cpp): the path tracer on the shown scene.
+    void renderTab(int width, int height);
+    sim::Camera renderCamera(int width, int height) const;
+    void stopRender();
+    void saveRender(const std::string& path);
     /// Every frame of the shot -- 1 to the Output's last, as the simulation
     /// gets there -- into `target`: a video when its extension is one's,
     /// else a folder of numbered PNGs.
@@ -622,7 +628,7 @@ private:
     ui::FileBrowser files_;
     enum class FileAction {
         None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, Bake, ExportGeometry, ExportFrames,
-        ExportUsd, OpenAsset, SaveAsset
+        ExportUsd, OpenAsset, SaveAsset, SaveRender
     } fileAction_ = FileAction::None;
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;
@@ -649,6 +655,15 @@ private:
     int jobReturnFrame_ = 1;            ///< the play head, put back when the job ends
     bool jobWasPlaying_ = false;
     std::string renderFolder_;          ///< where the last render went
+    // The Render tab.
+    bool renderTabOn_ = false;
+    bool renderAutoPaused_ = false;  ///< paused as the tab was left: goes on when it is back
+    std::unique_ptr<RenderView> renderView_;
+    gl::GLuint renderTexture_ = 0;
+    int renderTextureW_ = 0, renderTextureH_ = 0;
+    int renderScale_ = 1;               ///< into 25, 50, 100 %
+    uint64_t renderKey_ = 0;
+    render::Settings renderSettings_;
     struct Notice {
         std::string text, path;
         bool error = false;
