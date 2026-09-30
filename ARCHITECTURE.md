@@ -449,7 +449,9 @@ src/pg/sim/      Grid       hustá 3D mřížka hodnot, trilineární vzorkován
                  Asset      digital assets: knihovna definic s verzemi, typ instance
                             z definice, instance vařená ve vlastním GeometryGraph,
                             asset z vybraných uzlů (collapseToAsset)
-                 Display    geometrie pro viewport: trojúhelníky s barvou, tečky, čáry
+                 Display    geometrie pro viewport: trojúhelníky s barvou, tečky, čáry;
+                            DisplayMesher: polygony indexovaně, při posunu bodů jen
+                            polohy a normály vrcholů
                  Frame      snímek: plyn v poloviční přesnosti, hladina vody po bajtech, kapky
                  Cache      snímky na disku: složka, cache.txt, .pgframe s běhy nul; hash sítě
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí

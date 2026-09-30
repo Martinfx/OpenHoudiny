@@ -19,11 +19,16 @@
 //              the value grows -- and the box round the volume.
 //
 // Worked out on the CPU, handed to the renderer as flat arrays of floats.
+// The displayed node's polygons go as a DisplayMesh instead -- indexed, and
+// made again quickly when only the points move (a sculpting brush, a
+// handle dragged).
 //
 #include "pg/core/Geometry.h"
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <span>
 #include <vector>
 
 namespace pg::sim {
@@ -57,13 +62,62 @@ struct DisplayGeometry {
 };
 
 /// What `geo` looks like in the viewport. At most `maxDots` dots come from
-/// its volumes: past that, every second voxel, every third...
-DisplayGeometry displayOf(const Geometry& geo, size_t maxDots = 400000);
+/// its volumes: past that, every second voxel, every third... Without
+/// `faces`, the polygons that are not glass are left out of `triangles`
+/// (a DisplayMesh draws them) -- the box still goes round them.
+DisplayGeometry displayOf(const Geometry& geo, size_t maxDots = 400000, bool faces = true);
 
 /// The normal of each corner of `triangles` (three point indices each), in
 /// order: the faces round its point that bend less than `crease` degrees
 /// from its own, averaged by area.
-std::vector<Vec3> cornerNormals(const std::vector<Vec3>& positions, const std::vector<std::array<uint32_t, 3>>& triangles,
+std::vector<Vec3> cornerNormals(std::span<const Vec3> positions, const std::vector<std::array<uint32_t, 3>>& triangles,
                                 float crease = 60.0f);
+
+/// The polygons of a geometry that are not glass, as the GPU draws them
+/// best: the corners that share a point, a normal and a colour are one
+/// vertex, the triangles indices of the vertices -- a smooth surface has
+/// about as many vertices as points, a sixth of its corners. Corner for
+/// corner the triangles of displayOf, in the same order, to the bit.
+struct DisplayMesh {
+    std::vector<float> places;      ///< six floats a vertex: position, normal
+    std::vector<float> colors;      ///< three floats a vertex
+    std::vector<float> velocities;  ///< three floats a vertex, its point's v; empty when the points have none
+    std::vector<uint32_t> indices;  ///< three vertices a triangle
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};  ///< the box round the vertices
+
+    size_t vertexCount() const { return colors.size() / 3; }
+    size_t triangleCount() const { return indices.size() / 3; }
+};
+
+/// Makes the DisplayMesh of a geometry, and makes it again quickly when
+/// only the points moved -- under a sculpting brush, a handle: the same
+/// topology, colours and glass keep the triangles and which corners are one
+/// vertex, and only the vertices' places, normals and velocities are found
+/// again. A fold turned sharp enough to part the corners of a vertex -- or
+/// anything else changed -- makes it anew.
+class DisplayMesher {
+public:
+    enum class Made {
+        Anew,   ///< all of it: the indices and colours too
+        Moved,  ///< the places, normals and velocities only
+    };
+    Made make(const GeometryPtr& geo, DisplayMesh& mesh);
+    /// Whether the geometry last made has more to draw than these polygons
+    /// -- glass, lines, loose points, volumes: what displayOf draws.
+    bool hasRest() const { return rest_; }
+
+private:
+    void build(const Geometry& geo, DisplayMesh& mesh);
+    bool move(const Geometry& geo, DisplayMesh& mesh);
+    bool sameMaking(const Geometry& geo) const;
+
+    GeometryPtr made_;  ///< the geometry last made -- held, so no buffer of it is taken for a new one
+    bool pointNormals_ = false, moving_ = false, rest_ = false;
+    std::vector<std::array<uint32_t, 3>> tris_;  ///< the fan of every closed polygon, glass too: its faces bend the normals
+    std::vector<uint32_t> drawn_;                ///< the triangles drawn -- not glass -- in order
+    std::vector<uint32_t> start_, around_;       ///< the triangles round each point: around_[start_[p], start_[p + 1])
+    std::vector<uint32_t> vertexPoint_;          ///< each vertex's point
+    std::vector<uint32_t> vertexCorner_;         ///< ... and its first corner: 3 x its triangle in drawn_ + which
+};
 
 }  // namespace pg::sim

@@ -308,6 +308,22 @@ Editor drží jeden `GeometryGraph` po celou dobu: `compile()` z něj bere
 tvary (a nevaří znovu, co je hotové) a viewport z něj každý snímek bere
 zobrazenou geometrii. Pro GPU ji `sim::displayOf()` (`src/pg/sim/Display.h`)
 převede na ploché pole trojúhelníků, teček a čar — na CPU a testovaně.
+Polygony zobrazeného uzlu (ne sklo) jdou jinak: `sim::DisplayMesher` z nich
+udělá **indexovanou síť** — rohy, které sdílejí bod, normálu a barvu, jsou
+jeden vrchol, trojúhelníky jsou indexy vrcholů. Hladký povrch má zhruba
+tolik vrcholů jako bodů, šestinu rohů; krychle 24 (tři na roh, kvůli
+hranám). Když má nová geometrie stejnou topologii, barvy a sklo a posunuly
+se jen body — tah sculptu, úchyt, animovaná vlna —, spočítají se znovu
+jen polohy a normály vrcholů (paralelně) a na GPU jde jen tohle
+(`glBufferSubData`). Kdyby ostrý přehyb rozdělil rohy, které byly jeden
+vrchol, síť se udělá znovu celá. Obraz je týž, pixel po pixelu, jako
+z trojúhelníků displayOf (porovnáno na devatenácti renderech: sculpt, město,
+sklo, zeď s kusy, plachta, déšť, vlna po snímcích).
+
+| Geometrie | displayOf (dřív) | síť poprvé | posun bodů | s normálami `N` |
+|---|---|---|---|---|
+| 90 000 bodů | 40 ms, 19 MB | 20 ms, 5 MB | 6 ms, na GPU 2 MB | 0,7 ms |
+| milion bodů | 0,4–2 s, 215 MB | 0,25 s, 59 MB | 62 ms, na GPU 24 MB | 7 ms |
 Trojúhelníky jdou do stejného G-bufferu jako modely z OBJ: normála, index
 tělesa a vzdálenost na pixel; zobrazená geometrie má místo indexu barvu
 zakódovanou jako záporné číslo (8 bitů na kanál), takže ji hlavní shader

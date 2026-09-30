@@ -30,6 +30,7 @@ using GLchar = char;
 using GLbitfield = unsigned int;
 using GLubyte = unsigned char;
 using GLsizeiptr = std::ptrdiff_t;
+using GLintptr = std::ptrdiff_t;
 
 inline constexpr GLbitfield COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x0100;
 inline constexpr GLenum DEPTH_TEST = 0x0B71, CULL_FACE = 0x0B44, LESS = 0x0201;
@@ -38,7 +39,7 @@ inline constexpr GLenum LEQUAL = 0x0203, GREATER = 0x0204, ALWAYS = 0x0207;
 inline constexpr GLenum PROGRAM_POINT_SIZE = 0x8642;
 inline constexpr GLenum BLEND = 0x0BE2, ONE = 1, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303;
 inline constexpr GLenum UNSIGNED_BYTE = 0x1401, UNSIGNED_INT = 0x1405, FLOAT = 0x1406, HALF_FLOAT = 0x140B;
-inline constexpr GLenum ARRAY_BUFFER = 0x8892, ELEMENT_ARRAY_BUFFER = 0x8893, STATIC_DRAW = 0x88E4;
+inline constexpr GLenum ARRAY_BUFFER = 0x8892, ELEMENT_ARRAY_BUFFER = 0x8893, STATIC_DRAW = 0x88E4, DYNAMIC_DRAW = 0x88E8;
 inline constexpr GLenum VERTEX_SHADER = 0x8B31, FRAGMENT_SHADER = 0x8B30;
 inline constexpr GLenum COMPILE_STATUS = 0x8B81, LINK_STATUS = 0x8B82, INFO_LOG_LENGTH = 0x8B84;
 inline constexpr GLenum TEXTURE_2D = 0x0DE1, TEXTURE0 = 0x84C0;
@@ -106,6 +107,7 @@ inline constexpr GLenum RGBA16F = 0x881A, COLOR_ATTACHMENT1 = 0x8CE1, COLOR_ATTA
     X(GenBuffers, void, (GLsizei, GLuint*))                                                        \
     X(BindBuffer, void, (GLenum, GLuint))                                                          \
     X(BufferData, void, (GLenum, GLsizeiptr, const void*, GLenum))                                 \
+    X(BufferSubData, void, (GLenum, GLintptr, GLsizeiptr, const void*))                            \
     X(DeleteBuffers, void, (GLsizei, const GLuint*))                                               \
     X(EnableVertexAttribArray, void, (GLuint))                                                     \
     X(VertexAttribPointer, void, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))         \

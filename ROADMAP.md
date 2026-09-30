@@ -382,10 +382,10 @@ Seřazeno podle poměru hodnota / náklad:
    sculpt (U, uzel Sculpt): Push / Pull, Smooth s okraji, které drží čáru,
    Grab, Flatten, kapky jako místa, přírůstkový výpočet tahu do bitu shodný
    s výpočtem od začátku (pohyb myši na milionu bodů 12 ms), strom pro
-   výběr jen přepočítá obálky (refit).
-   Zbývá: režim vrcholů, Dissolve hran, symetrie, dyntopo; viewport, který
-   při posunu bodů nahraje jen polohy a normály (dnes pokaždé rozepíše
-   všechny trojúhelníky — nad sto tisíc bodů je to nejpomalejší část tahu).
+   výběr jen přepočítá obálky (refit); viewport kreslí zobrazenou geometrii
+   indexovaně a při posunu bodů nahraje jen polohy a normály vrcholů
+   (milion bodů 62 ms místo sekund, na GPU 24 MB místo 215 MB).
+   Zbývá: režim vrcholů, Dissolve hran, symetrie, dyntopo.
 
 ---
 

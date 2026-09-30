@@ -432,9 +432,10 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   kapek od začátku (testy to ověřují). Na mřížce o milionu bodů: 2 000 kapek od
   začátku 0,17 s, pohyb myši v tahu 12 ms (s normálami `N` 33 ms), Grab
   3 ms. V editoru pak při každém pohybu přibude refit stromu pro výběr
-  a překreslení geometrie ve viewportu; to druhé (trojúhelníky pro GPU)
-  je nejdražší — na 90 000 bodech asi 40 ms, takže tah je plynulý zhruba
-  do sta tisíc bodů.
+  a nová geometrie ve viewportu: ten kreslí polygony indexovaně a při
+  posunu bodů na GPU pošle jen polohy a normály vrcholů — na 90 000 bodech
+  6 ms, na milionu 62 ms (s normálami `N` 7 ms); viz
+  [geometry.md](geometry.md#3-display-flag-a-viewport).
 - **Skládání úprav** — `sim::EditTransform` (`src/pg/sim/Shape.h`):
   Edit dělá `x → R S (x − p) + p + t`; tah úchytu kolem středu `c`
   složený za něj je znovu Edit: otočení předřazené `R`, měřítko násobí

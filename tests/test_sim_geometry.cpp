@@ -14,6 +14,7 @@
 #include "test_framework.h"
 
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -763,6 +764,154 @@ TEST(sim_geometry_is_drawn_in_its_colours) {
     d = displayOf(thick, 5000);
     CHECK(d.dotCount() <= 5000 && d.dotCount() > 1000);
     CHECK(d.dots[6] > 0.03f);  // thinned dots are bigger
+}
+
+namespace {
+
+/// A DisplayMesh's corners laid out as displayOf lays out its triangles:
+/// nine floats a corner -- and their velocities, three.
+void expand(const DisplayMesh& m, std::vector<float>& corners, std::vector<float>& velocities) {
+    corners.clear();
+    velocities.clear();
+    for (const uint32_t v : m.indices) {
+        corners.insert(corners.end(), m.places.begin() + 6 * v, m.places.begin() + 6 * v + 6);
+        corners.insert(corners.end(), m.colors.begin() + 3 * v, m.colors.begin() + 3 * v + 3);
+        if (!m.velocities.empty()) velocities.insert(velocities.end(), m.velocities.begin() + 3 * v, m.velocities.begin() + 3 * v + 3);
+    }
+}
+
+/// The same floats, bit for bit.
+bool sameFloats(const std::vector<float>& a, const std::vector<float>& b) {
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
+}
+
+/// Whether the mesh draws what displayOf draws of `geo`, corner for corner.
+bool drawsAsDisplayOf(const DisplayMesh& mesh, const Geometry& geo) {
+    const DisplayGeometry d = displayOf(geo);
+    std::vector<float> corners, velocities;
+    expand(mesh, corners, velocities);
+    return sameFloats(corners, d.triangles) && sameFloats(velocities, d.velocities);
+}
+
+}  // namespace
+
+TEST(display_mesh_is_the_triangles_of_displayOf_with_corners_shared) {
+    // A box keeps its edges -- three vertices at each of its points -- and a
+    // ball is smooth -- one a point: corner for corner, bit for bit, what
+    // displayOf draws, a sixth of the corners or fewer.
+    Network net;
+    const int box = net.add("box");
+    const int ball = net.add("sphere");
+    GeometryGraph g;
+    g.sync(net);
+    for (const int id : {box, ball}) {
+        const GeometryPtr geo = g.cook(id, 1);
+        DisplayMesher mesher;
+        DisplayMesh mesh;
+        CHECK(mesher.make(geo, mesh) == DisplayMesher::Made::Anew);
+        CHECK(drawsAsDisplayOf(mesh, *geo));
+        CHECK(!mesher.hasRest());
+        const DisplayGeometry d = displayOf(*geo);
+        CHECK(near(mesh.lo, d.lo) && near(mesh.hi, d.hi));
+        CHECK_EQ(mesh.triangleCount(), d.triangleCount());
+        CHECK_EQ(mesh.vertexCount(), id == box ? size_t(24) : geo->pointCount());
+    }
+
+    // Colours of vertices, points and primitives, velocities, a pane of
+    // glass, a line, a loose point: the faces not glass are the mesh's, the
+    // rest displayOf's without them.
+    Geometry geo;
+    geo.addPoints(13);
+    auto P = geo.positionsForWrite();
+    for (size_t i = 0; i < 6; ++i) P[i] = Vec3(static_cast<float>(i % 3), 0.0f, static_cast<float>(i / 3));
+    for (size_t i = 6; i < 10; ++i) P[i] = Vec3(static_cast<float>((i - 6) % 2), 1.0f, static_cast<float>((i - 6) / 2) + 3.0f);
+    P[10] = Vec3(-1.0f, 0.0f, 0.0f);
+    P[11] = Vec3(-1.0f, 1.0f, 0.0f);
+    P[12] = Vec3(4.0f, 2.0f, 1.0f);
+    const uint32_t a[4] = {0, 1, 4, 3}, b[4] = {1, 2, 5, 4}, pane[4] = {6, 7, 9, 8}, line[2] = {10, 11};
+    geo.addPrimitive(a, true);
+    geo.addPrimitive(b, true);
+    geo.addPrimitive(pane, true);
+    geo.addPrimitive(line, false);
+    geo.primitives().create("glass", AttrType::Int).write<int32_t>()[2] = 1;
+    geo.primitives().create("Cd", AttrType::Vec3).write<Vec3>()[1] = Vec3(0.1f, 0.8f, 0.2f);
+    auto pointCd = geo.points().create("Cd", AttrType::Vec3).write<Vec3>();
+    for (size_t i = 0; i < 13; ++i) pointCd[i] = Vec3(0.05f * static_cast<float>(i), 0.3f, 0.6f);
+    geo.vertices().create("Cd", AttrType::Float).write<float>()[1] = 0.9f;  // one corner of point 1 its own
+    auto V = geo.points().create("v", AttrType::Vec3).write<Vec3>();
+    for (size_t i = 0; i < 13; ++i) V[i] = Vec3(0.0f, static_cast<float>(i), 1.0f);
+    const auto shared = std::make_shared<const Geometry>(geo);
+    DisplayMesher mesher;
+    DisplayMesh mesh;
+    mesher.make(shared, mesh);
+    CHECK(drawsAsDisplayOf(mesh, geo));
+    CHECK(mesher.hasRest());
+    CHECK_EQ(mesh.triangleCount(), size_t(4));
+    CHECK_EQ(mesh.velocities.size(), mesh.colors.size());
+    CHECK_EQ(mesh.vertexCount(), size_t(7));  // six points, one with a corner of its own colour
+    const DisplayGeometry all = displayOf(geo), rest = displayOf(geo, 400000, false);
+    CHECK(rest.triangles.empty() && rest.velocities.empty());
+    CHECK(sameFloats(rest.glass, all.glass) && sameFloats(rest.dots, all.dots) && sameFloats(rest.lines, all.lines));
+    CHECK_EQ(rest.glassCount(), size_t(2));
+    CHECK(rest.lo == all.lo && rest.hi == all.hi);
+    // Nothing: nothing.
+    CHECK(mesher.make(nullptr, mesh) == DisplayMesher::Made::Anew);
+    CHECK(mesh.indices.empty() && mesh.places.empty() && !mesher.hasRest());
+}
+
+TEST(display_mesh_is_made_again_quickly_when_only_the_points_move) {
+    Network net;
+    const int grid = net.add("grid");
+    CHECK(net.setParam(grid, "rows", "31"));
+    CHECK(net.setParam(grid, "cols", "31"));
+    GeometryGraph g;
+    g.sync(net);
+    const GeometryPtr flat = g.cook(grid, 1);
+    DisplayMesher mesher;
+    DisplayMesh mesh;
+    CHECK(mesher.make(flat, mesh) == DisplayMesher::Made::Anew);
+    // Hills of the same grid: the places and normals made again, the rest
+    // kept -- as displayOf draws them.
+    const auto moved = [&](auto&& height) {
+        auto geo = std::make_shared<Geometry>(*flat);
+        for (Vec3& p : geo->positionsForWrite()) p.y = height(p.x, p.z);
+        return geo;
+    };
+    const auto hills = moved([](float x, float z) { return 0.1f * std::sin(6.0f * x) * std::cos(4.0f * z); });
+    const std::vector<uint32_t> indices = mesh.indices;
+    CHECK(mesher.make(hills, mesh) == DisplayMesher::Made::Moved);
+    CHECK(mesh.indices == indices);
+    CHECK(drawsAsDisplayOf(mesh, *hills));
+    // A fold sharper than the crease parts the corners along it: made anew.
+    const auto fold = moved([](float x, float) { return x > 0.0f ? 2.0f * x : 0.0f; });
+    CHECK(mesher.make(fold, mesh) == DisplayMesher::Made::Anew);
+    CHECK(drawsAsDisplayOf(mesh, *fold));
+    CHECK(mesh.vertexCount() > flat->pointCount());
+    // Smooth again: the corners parted may stay so -- they draw the same.
+    CHECK(mesher.make(hills, mesh) == DisplayMesher::Made::Moved);
+    CHECK(drawsAsDisplayOf(mesh, *hills));
+    // New colours, or point normals where there were none: anew.
+    auto painted = std::make_shared<Geometry>(*hills);
+    auto Cd = painted->points().create("Cd", AttrType::Vec3).write<Vec3>();
+    for (size_t i = 0; i < Cd.size(); ++i) Cd[i] = Vec3(static_cast<float>(i % 7) / 7.0f, 0.5f, 0.2f);
+    CHECK(mesher.make(painted, mesh) == DisplayMesher::Made::Anew);
+    CHECK(drawsAsDisplayOf(mesh, *painted));
+    auto normals = std::make_shared<Geometry>(*painted);
+    auto N = normals->points().create("N", AttrType::Vec3).write<Vec3>();
+    for (size_t i = 0; i < N.size(); ++i) N[i] = normalize(Vec3(0.1f * static_cast<float>(i % 5), 1.0f, 0.0f));
+    CHECK(mesher.make(normals, mesh) == DisplayMesher::Made::Anew);
+    CHECK_EQ(mesh.vertexCount(), flat->pointCount());
+    // ... and those moved with the points, as a node finds them again.
+    auto again = std::make_shared<Geometry>(*normals);
+    auto Q = again->positionsForWrite();
+    auto M = again->points().find("N")->write<Vec3>();
+    for (size_t i = 0; i < Q.size(); ++i) {
+        Q[i].y += 0.05f;
+        M[i] = normalize(Vec3(0.0f, 1.0f, 0.1f * static_cast<float>(i % 3)));
+    }
+    CHECK(mesher.make(again, mesh) == DisplayMesher::Made::Moved);
+    CHECK(drawsAsDisplayOf(mesh, *again));
+    CHECK(near(mesh.lo, displayOf(*again).lo) && near(mesh.hi, displayOf(*again).hi));
 }
 
 TEST(sim_geometry_examples_of_geometry_alone_cook) {

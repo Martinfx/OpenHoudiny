@@ -295,6 +295,11 @@ private:
     void drawOverlay(int width, int height, const Vec3& eye);
     /// The displayed geometry and the pieces, as they are drawn, to the GPU.
     void uploadGeometry();
+    /// The displayed node's polygons to the GPU: all of them, or only the
+    /// vertices' places and velocities -- the points moved.
+    void uploadShownMesh(bool all);
+    /// The box round what is drawn: the displayed node's and the pieces.
+    void updateGeometryBounds();
     /// The faces of the glass turned to the eye, the nearest two at each
     /// pixel, one after the other (depth peeling): for the pass that shades
     /// everything, as the meshes are.
@@ -348,7 +353,9 @@ private:
     float geoShadowBias_ = 0.0f;
     float geoShadowLift_ = 0.0f;
     GeometryPtr geometry_, pieces_;
-    sim::DisplayGeometry shownDisplay_, piecesDisplay_;  // what each is drawn as
+    sim::DisplayGeometry shownDisplay_, piecesDisplay_;  // what each is drawn as -- the displayed node's polygons apart:
+    sim::DisplayMesher shownMesher_;                     // ... indexed, made again quickly when only the points move
+    sim::DisplayMesh shownMesh_;
     GLuint geoProgram_ = 0, dotProgram_ = 0;
     // The overlay: faces and thin lines, dots, wide lines -- each its own
     // program, vertex array and buffer.
@@ -359,8 +366,12 @@ private:
     GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
     GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;
     GLsizei gritDots_ = 0;  // the last of the dots: the pieces' loose points, their grit
-    GLsizei shownVertices_ = 0;   // the first of the triangles: the displayed geometry's, then the pieces'
     GLuint geoVelocityBuffer_ = 0;  // the triangles' corners' velocities (attribute 3), when they have any
+    // The displayed node's polygons, indexed: the vertices' places (position
+    // and normal, attributes 0 and 1), colours (2), velocities (3), and the
+    // triangles.
+    GLuint shownVao_ = 0, shownPlaces_ = 0, shownColors_ = 0, shownVelocities_ = 0, shownIndices_ = 0;
+    GLsizei shownElements_ = 0;
     // The glass: its triangles (position, normal, tint, kind), and the
     // nearest two of its faces turned to the eye at each pixel.
     GLuint glassProgram_ = 0, glassVao_ = 0, glassBuffer_ = 0;

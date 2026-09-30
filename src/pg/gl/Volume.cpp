@@ -1820,10 +1820,11 @@ VolumeRenderer::~VolumeRenderer() {
     if (geoShadowFbo_) gl_.DeleteFramebuffers(1, &geoShadowFbo_);
     if (geoShadowTex_) gl_.DeleteTextures(1, &geoShadowTex_);
     if (geoShadowDepth_) gl_.DeleteRenderbuffers(1, &geoShadowDepth_);
-    for (GLuint a : {geoVao_, dotVao_, curveVao_}) {
+    for (GLuint a : {geoVao_, dotVao_, curveVao_, shownVao_}) {
         if (a) gl_.DeleteVertexArrays(1, &a);
     }
-    for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_, geoVelocityBuffer_}) {
+    for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_, geoVelocityBuffer_, shownPlaces_, shownColors_, shownVelocities_,
+                     shownIndices_}) {
         if (b) gl_.DeleteBuffers(1, &b);
     }
     for (GLuint t : {auxTex_[0], auxTex_[1], gAux_, plateTex_}) {
@@ -2214,19 +2215,24 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
         gl_.BindVertexArray(gpu->vao);
         gl_.DrawArrays(TRIANGLES, 0, gpu->vertices);
     }
-    if (geoVertices_ > 0 && geoProgram_) {
+    if ((geoVertices_ > 0 || shownElements_ > 0) && geoProgram_) {
         gl_.UseProgram(geoProgram_);
         gl_.UniformMatrix4fv(location(geoProgram_, "u_viewProj"), 1, 0, viewProjection_.data());
         gl_.UniformMatrix4fv(location(geoProgram_, "u_nextViewProj"), 1, 0, nextViewProjection_.data());
         gl_.Uniform1f(location(geoProgram_, "u_frameTime"), passes.on ? passes.frameTime : 0.0f);
         gl_.Uniform2f(location(geoProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
         gl_.Uniform3f(location(geoProgram_, "u_eye"), eye.x, eye.y, eye.z);
-        gl_.BindVertexArray(geoVao_);
         // The displayed geometry, then the pieces: what each is, for the masks.
         gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Geometry));
-        if (shownVertices_ > 0) gl_.DrawArrays(TRIANGLES, 0, shownVertices_);
+        if (shownElements_ > 0) {
+            gl_.BindVertexArray(shownVao_);
+            gl_.DrawElements(TRIANGLES, shownElements_, UNSIGNED_INT, nullptr);
+        }
         gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Pieces));
-        if (geoVertices_ > shownVertices_) gl_.DrawArrays(TRIANGLES, shownVertices_, geoVertices_ - shownVertices_);
+        if (geoVertices_ > 0) {
+            gl_.BindVertexArray(geoVao_);
+            gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
+        }
     }
     gl_.BindVertexArray(0);
     gl_.UseProgram(0);
@@ -2291,8 +2297,79 @@ void VolumeRenderer::renderGlass(int width, int height, const Vec3& eye) {
 void VolumeRenderer::setGeometry(const GeometryPtr& geometry) {
     if (geometry == geometry_) return;
     geometry_ = geometry;
-    shownDisplay_ = geometry ? sim::displayOf(*geometry) : sim::DisplayGeometry();
+    // Its polygons indexed. When only the points moved, the vertices' places
+    // alone go to the GPU again -- and with nothing else to draw, that is all.
+    const bool moved = shownMesher_.make(geometry, shownMesh_) == sim::DisplayMesher::Made::Moved;
+    if (moved && !shownMesher_.hasRest()) {
+        shownDisplay_ = sim::DisplayGeometry();
+        shownDisplay_.lo = shownMesh_.lo;
+        shownDisplay_.hi = shownMesh_.hi;
+        uploadShownMesh(false);
+        updateGeometryBounds();
+        geoShadowDirty_ = true;
+        return;
+    }
+    shownDisplay_ = geometry ? sim::displayOf(*geometry, 400000, false) : sim::DisplayGeometry();
+    uploadShownMesh(!moved);
     uploadGeometry();
+}
+
+void VolumeRenderer::uploadShownMesh(bool all) {
+    const sim::DisplayMesh& m = shownMesh_;
+    if (!shownVao_) {
+        gl_.GenVertexArrays(1, &shownVao_);
+        GLuint buffers[4] = {};
+        gl_.GenBuffers(4, buffers);
+        shownPlaces_ = buffers[0];
+        shownColors_ = buffers[1];
+        shownVelocities_ = buffers[2];
+        shownIndices_ = buffers[3];
+        all = true;
+    }
+    auto bytes = [](const auto& v) { return static_cast<GLsizeiptr>(v.size() * sizeof(v[0])); };
+    const GLsizei six = 6 * static_cast<GLsizei>(sizeof(float)), three = 3 * static_cast<GLsizei>(sizeof(float));
+    gl_.BindVertexArray(shownVao_);
+    gl_.BindBuffer(ARRAY_BUFFER, shownPlaces_);
+    if (all) {
+        gl_.BufferData(ARRAY_BUFFER, bytes(m.places), m.places.data(), DYNAMIC_DRAW);
+        gl_.EnableVertexAttribArray(0);
+        gl_.VertexAttribPointer(0, 3, FLOAT, 0, six, nullptr);
+        gl_.EnableVertexAttribArray(1);
+        gl_.VertexAttribPointer(1, 3, FLOAT, 0, six, reinterpret_cast<const void*>(3 * sizeof(float)));
+        gl_.BindBuffer(ARRAY_BUFFER, shownColors_);
+        gl_.BufferData(ARRAY_BUFFER, bytes(m.colors), m.colors.data(), STATIC_DRAW);
+        gl_.EnableVertexAttribArray(2);
+        gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
+        // The triangles: bound with the vertex array, and kept by it.
+        gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, shownIndices_);
+        gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
+    } else if (!m.places.empty()) {
+        gl_.BufferSubData(ARRAY_BUFFER, 0, bytes(m.places), m.places.data());
+    }
+    if (m.velocities.empty()) {
+        gl_.DisableVertexAttribArray(3);
+        gl_.VertexAttrib3f(3, 0.0f, 0.0f, 0.0f);
+    } else {
+        gl_.BindBuffer(ARRAY_BUFFER, shownVelocities_);
+        if (all) gl_.BufferData(ARRAY_BUFFER, bytes(m.velocities), m.velocities.data(), DYNAMIC_DRAW);
+        else gl_.BufferSubData(ARRAY_BUFFER, 0, bytes(m.velocities), m.velocities.data());
+        gl_.EnableVertexAttribArray(3);
+        gl_.VertexAttribPointer(3, 3, FLOAT, 0, three, nullptr);
+    }
+    gl_.BindVertexArray(0);
+    gl_.BindBuffer(ARRAY_BUFFER, 0);
+    shownElements_ = static_cast<GLsizei>(m.indices.size());
+}
+
+void VolumeRenderer::updateGeometryBounds() {
+    Vec3 lo = shownDisplay_.lo, hi = shownDisplay_.hi;
+    for (int a = 0; a < 3; ++a) {
+        lo[a] = std::min(lo[a], piecesDisplay_.lo[a]);
+        hi[a] = std::max(hi[a], piecesDisplay_.hi[a]);
+    }
+    hasGeoBounds_ = lo.x <= hi.x;
+    geoLo_ = lo;
+    geoHi_ = hi;
 }
 
 void VolumeRenderer::setPieces(const GeometryPtr& pieces) {
@@ -2310,13 +2387,7 @@ void VolumeRenderer::uploadGeometry() {
     d.dots.insert(d.dots.end(), p.dots.begin(), p.dots.end());
     d.lines.insert(d.lines.end(), p.lines.begin(), p.lines.end());
     d.glass.insert(d.glass.end(), p.glass.begin(), p.glass.end());
-    for (int a = 0; a < 3; ++a) {
-        d.lo[a] = std::min(d.lo[a], p.lo[a]);
-        d.hi[a] = std::max(d.hi[a], p.hi[a]);
-    }
-    hasGeoBounds_ = d.lo.x <= d.hi.x;
-    geoLo_ = d.lo;
-    geoHi_ = d.hi;
+    updateGeometryBounds();
     // Each array into its buffer, with the layout of its attributes: {location, floats}.
     auto upload = [&](GLuint& vao, GLuint& buffer, const std::vector<float>& data, std::initializer_list<std::pair<int, int>> layout) {
         if (!vao) {
@@ -2360,7 +2431,6 @@ void VolumeRenderer::uploadGeometry() {
         gl_.BindBuffer(ARRAY_BUFFER, 0);
     }
     gl_.BindVertexArray(0);
-    shownVertices_ = static_cast<GLsizei>(shownDisplay_.triangles.size() / 9);
     upload(dotVao_, dotBuffer_, d.dots, {{0, 3}, {1, 3}, {2, 1}});
     upload(curveVao_, curveBuffer_, d.lines, {{0, 3}, {1, 4}});
     upload(glassVao_, glassBuffer_, d.glass, {{0, 3}, {1, 3}, {2, 3}, {3, 1}});
@@ -2373,7 +2443,7 @@ void VolumeRenderer::uploadGeometry() {
 }
 
 void VolumeRenderer::updateGeoShadow(const Vec3& light) {
-    if (!geoShadowProgram_ || geoVertices_ == 0 || !hasGeoBounds_) {
+    if (!geoShadowProgram_ || (geoVertices_ == 0 && shownElements_ == 0) || !hasGeoBounds_) {
         hasGeoShadow_ = false;
         return;
     }
@@ -2452,8 +2522,14 @@ void VolumeRenderer::updateGeoShadow(const Vec3& light) {
     gl_.Disable(CULL_FACE);
     gl_.UseProgram(geoShadowProgram_);
     gl_.UniformMatrix4fv(location(geoShadowProgram_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
-    gl_.BindVertexArray(geoVao_);
-    gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
+    if (shownElements_ > 0) {
+        gl_.BindVertexArray(shownVao_);
+        gl_.DrawElements(TRIANGLES, shownElements_, UNSIGNED_INT, nullptr);
+    }
+    if (geoVertices_ > 0) {
+        gl_.BindVertexArray(geoVao_);
+        gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
+    }
     gl_.BindVertexArray(0);
     gl_.UseProgram(0);
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
@@ -2964,7 +3040,7 @@ void VolumeRenderer::render(int width, int height) {
     // The shadows of the geometry: its map from the sun, when it or the sun moved.
     updateGeoShadow(normalize(look.lightDirection()));
     // The meshes first, into their own buffer, seen by the same camera.
-    const bool meshes = (anyMesh_ || geoVertices_ > 0) && meshProgram_;
+    const bool meshes = (anyMesh_ || geoVertices_ > 0 || shownElements_ > 0) && meshProgram_;
     if (meshes) renderMeshes(width, height, Vec3(eye[0], eye[1], eye[2]));
     // ... and the glass into its own, as two layers.
     const bool glass = glassVertices_ > 0 && glassProgram_;
@@ -3020,7 +3096,7 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform1i(location(program_, "u_grid"), s.grid ? 1 : 0);
     gl_.Uniform1i(location(program_, "u_skyBehind"), s.skyBehind ? 1 : 0);
     // The shadows of the geometry, from their map.
-    const bool geoShadow = hasGeoShadow_ && geoVertices_ > 0;
+    const bool geoShadow = hasGeoShadow_ && (geoVertices_ > 0 || shownElements_ > 0);
     gl_.Uniform1i(location(program_, "u_hasGeoShadow"), geoShadow ? 1 : 0);
     gl_.UniformMatrix4fv(location(program_, "u_lightViewProj"), 1, 0, lightViewProj_.data());
     gl_.Uniform1f(location(program_, "u_geoShadowTexel"), 1.0f / static_cast<float>(kGeoShadowSize));
