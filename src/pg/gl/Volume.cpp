@@ -863,10 +863,14 @@ void main() {
     // shows there (relit, for a catcher), and what is behind it is hidden.
     vec3 relit = vec3(1.0);
     int matte = onPlate && !displayed ? matteOf(which) : 0;
-    if (tSolid < tFloor && tSolid < 1e29 && matte != 0) {
+    // Geometry lying on the floor -- a grid at y 0 -- is in front of it: the
+    // distance its faces rasterise to and the floor's, met exactly, are a
+    // hair apart either way.
+    float floorAt = fromMesh ? tFloor * (1.0 + 2e-4) : tFloor;
+    if (tSolid < floorAt && tSolid < 1e29 && matte != 0) {
         tEnd = tSolid;
         if (matte == 2) relit = catcher(u_eye + dir * tSolid, normal);
-    } else if (tSolid < tFloor && tSolid < 1e29) {
+    } else if (tSolid < floorAt && tSolid < 1e29) {
         tEnd = tSolid;
         surface = displayed ? shadeSurface(u_eye + dir * tSolid, normal, dir, displayColor, 0.0)
                             : shadeSolid(u_eye + dir * tSolid, normal, dir, which);
@@ -1316,6 +1320,91 @@ out vec4 o_color;
 void main() { o_color = v_color; }
 )";
 
+// The marks of editing (Overlay): each a hair nearer the eye than where it
+// is -- `u_pull` of the way -- so that what lies on a surface is drawn over
+// it, and what is behind the surface is not.
+const char* kOverlayVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec4 a_color;
+uniform mat4 u_viewProj;
+uniform vec3 u_eye;
+uniform float u_pull;
+out vec4 v_color;
+void main() {
+    v_color = a_color;
+    gl_Position = u_viewProj * vec4(a_position + (u_eye - a_position) * u_pull, 1.0);
+}
+)";
+
+const char* kOverlayFragment = R"(#version 330 core
+in vec4 v_color;
+out vec4 o_color;
+void main() { o_color = v_color; }
+)";
+
+// A dot, round, with a dark rim so that it shows on any colour. It covers a
+// patch of the surface it lies on, the deeper the more slanted the surface
+// is seen: it is drawn that much nearer the eye, all of it over the surface.
+const char* kOverlayDotVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec4 a_color;
+layout(location = 2) in float a_size;
+layout(location = 3) in vec3 a_normal;
+uniform mat4 u_viewProj;
+uniform vec3 u_eye;
+uniform float u_pull;
+uniform float u_pixel;  // world units a pixel covers, a unit of distance away
+out vec4 v_color;
+void main() {
+    v_color = a_color;
+    vec3 toEye = u_eye - a_position;
+    float dist = length(toEye);
+    vec3 v = toEye / max(dist, 1e-6);
+    float c = dot(a_normal, a_normal) > 0.25 ? abs(dot(normalize(a_normal), v)) : 0.7;
+    float slant = sqrt(max(1.0 - c * c, 0.0)) / max(c, 0.15);
+    float pull = u_pull * dist + 0.6 * a_size * u_pixel * dist * slant;
+    gl_Position = u_viewProj * vec4(a_position + v * min(pull, 0.5 * dist), 1.0);
+    gl_PointSize = a_size;
+}
+)";
+
+const char* kOverlayDotFragment = R"(#version 330 core
+in vec4 v_color;
+out vec4 o_color;
+void main() {
+    vec2 c = gl_PointCoord * 2.0 - 1.0;
+    float r = dot(c, c);
+    if (r > 1.0) discard;
+    o_color = r > 0.5 ? vec4(0.03, 0.03, 0.04, v_color.a) : v_color;
+}
+)";
+
+// A line as wide as it says: two triangles, their corners pushed across the
+// line on the screen -- lines of GL wider than a pixel are not there in a
+// core profile.
+const char* kOverlayWideVertex = R"(#version 330 core
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_other;   // the line's other end
+layout(location = 2) in float a_side;   // -1 or 1: which side of the line
+layout(location = 3) in float a_width;  // pixels
+layout(location = 4) in vec4 a_color;
+uniform mat4 u_viewProj;
+uniform vec3 u_eye;
+uniform float u_pull;
+uniform vec2 u_viewport;                // pixels
+out vec4 v_color;
+vec4 placed(vec3 p) { return u_viewProj * vec4(p + (u_eye - p) * u_pull, 1.0); }
+void main() {
+    v_color = a_color;
+    vec4 here = placed(a_position), there = placed(a_other);
+    vec2 a = here.xy / max(here.w, 1e-6), b = there.xy / max(there.w, 1e-6);
+    vec2 along = (b - a) * u_viewport;
+    along = dot(along, along) > 1e-12 ? normalize(along) : vec2(1.0, 0.0);
+    vec2 across = vec2(-along.y, along.x) * a_side * a_width / u_viewport;
+    gl_Position = here + vec4(across * here.w, 0.0, 0.0);
+}
+)";
+
 // A drop as a streak: from where it is back along its velocity, as far as it
 // falls in a share of a frame. A streak is drawn a line wide; a drop far
 // away covers less of that line, and is fainter for it -- far off, the rain
@@ -1710,8 +1799,14 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 
 VolumeRenderer::~VolumeRenderer() {
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
-                     dotProgram_, geoShadowProgram_, glassProgram_}) {
+                     dotProgram_, geoShadowProgram_, glassProgram_, overlayProgram_, overlayDotProgram_, overlayWideProgram_}) {
         if (p) gl_.DeleteProgram(p);
+    }
+    for (int l = 0; l < kOverlayLayers; ++l) {
+        for (int k = 0; k < 4; ++k) {
+            if (overlayVao_[l][k]) gl_.DeleteVertexArrays(1, &overlayVao_[l][k]);
+            if (overlayBuffer_[l][k]) gl_.DeleteBuffers(1, &overlayBuffer_[l][k]);
+        }
     }
     if (glassFbo_) gl_.DeleteFramebuffers(1, &glassFbo_);
     for (GLuint t : glassTex_) {
@@ -1772,16 +1867,22 @@ bool VolumeRenderer::init(std::string& log) {
     const GLuint dots = geo ? buildProgram(gl_, kDotVertex, kDotFragment, log) : 0;
     const GLuint geoShadow = dots ? buildProgram(gl_, kGeoShadowVertex, kGeoShadowFragment, log) : 0;
     const GLuint glass = geoShadow ? buildProgram(gl_, kGlassVertex, kGlassFragment, log) : 0;
-    if (!glass) {
-        for (GLuint p : {view, shadow, glow, lines, meshes, rain, geo, dots, geoShadow}) {
+    const GLuint overlay = glass ? buildProgram(gl_, kOverlayVertex, kOverlayFragment, log) : 0;
+    const GLuint overlayDots = overlay ? buildProgram(gl_, kOverlayDotVertex, kOverlayDotFragment, log) : 0;
+    const GLuint overlayWide = overlayDots ? buildProgram(gl_, kOverlayWideVertex, kOverlayFragment, log) : 0;
+    if (!overlayWide) {
+        for (GLuint p : {view, shadow, glow, lines, meshes, rain, geo, dots, geoShadow, glass, overlay, overlayDots}) {
             if (p) gl_.DeleteProgram(p);
         }
         return false;
     }
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
-                     dotProgram_, geoShadowProgram_, glassProgram_}) {
+                     dotProgram_, geoShadowProgram_, glassProgram_, overlayProgram_, overlayDotProgram_, overlayWideProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
+    overlayProgram_ = overlay;
+    overlayDotProgram_ = overlayDots;
+    overlayWideProgram_ = overlayWide;
     program_ = view;
     shadowProgram_ = shadow;
     glowProgram_ = glow;
@@ -2449,6 +2550,140 @@ void VolumeRenderer::setLines(const Lines& lines) {
     lineCount_ = lines.vertices.size();
 }
 
+void Overlay::dot(const Vec3& p, const Vec4& color, float pixels, const Vec3& normal) {
+    dots.insert(dots.end(), {p.x, p.y, p.z, color.x, color.y, color.z, color.w, pixels, normal.x, normal.y, normal.z});
+}
+
+void Overlay::line(const Vec3& a, const Vec3& b, const Vec4& color) {
+    lines.insert(lines.end(), {a.x, a.y, a.z, color.x, color.y, color.z, color.w, b.x, b.y, b.z, color.x, color.y, color.z, color.w});
+}
+
+void Overlay::wideLine(const Vec3& a, const Vec3& b, const Vec4& color, float pixels) {
+    wide.insert(wide.end(), {a.x, a.y, a.z, color.x, color.y, color.z, color.w, pixels, b.x, b.y, b.z, color.x, color.y,
+                             color.z, color.w, pixels});
+}
+
+void Overlay::face(const Vec3& a, const Vec3& b, const Vec3& c, const Vec4& color) { face(a, b, c, color, color, color); }
+
+void Overlay::face(const Vec3& a, const Vec3& b, const Vec3& c, const Vec4& ca, const Vec4& cb, const Vec4& cc) {
+    faces.insert(faces.end(), {a.x, a.y, a.z, ca.x, ca.y, ca.z, ca.w, b.x, b.y, b.z, cb.x, cb.y, cb.z, cb.w, c.x, c.y, c.z,
+                               cc.x, cc.y, cc.z, cc.w});
+}
+
+void VolumeRenderer::setOverlay(const Overlay& overlay, int layer) {
+    if (layer < 0 || layer >= kOverlayLayers) return;
+    GLuint* vaos = overlayVao_[layer];
+    GLuint* buffers = overlayBuffer_[layer];
+    GLsizei* counts = overlayCount_[layer];
+    // The wide lines as the triangles they are drawn as: six corners each,
+    // every corner knowing the line's other end and its side.
+    std::vector<float> wide;
+    wide.reserve(overlay.wide.size() / 16 * 6 * 12);
+    for (size_t i = 0; i + 16 <= overlay.wide.size(); i += 16) {
+        const float* a = &overlay.wide[i];
+        const float* b = &overlay.wide[i + 8];
+        auto corner = [&](const float* end, const float* other, float side) {
+            wide.insert(wide.end(), {end[0], end[1], end[2], other[0], other[1], other[2], side, end[7], end[3], end[4],
+                                     end[5], end[6]});
+        };
+        // Across b the other way round is the same side as across a.
+        corner(a, b, -1.0f);
+        corner(a, b, 1.0f);
+        corner(b, a, -1.0f);
+        corner(a, b, -1.0f);
+        corner(b, a, -1.0f);
+        corner(b, a, 1.0f);
+    }
+    const std::vector<float>* data[4] = {&overlay.faces, &overlay.lines, &overlay.dots, &wide};
+    const int floats[4] = {7, 7, 11, 12};
+    for (int k = 0; k < 4; ++k) {
+        if (!vaos[k]) {
+            if (data[k]->empty()) continue;
+            gl_.GenVertexArrays(1, &vaos[k]);
+            gl_.GenBuffers(1, &buffers[k]);
+            gl_.BindVertexArray(vaos[k]);
+            gl_.BindBuffer(ARRAY_BUFFER, buffers[k]);
+            const GLsizei stride = static_cast<GLsizei>(floats[k] * sizeof(float));
+            auto attribute = [&](GLuint index, GLint size, int offset) {
+                gl_.EnableVertexAttribArray(index);
+                gl_.VertexAttribPointer(index, size, FLOAT, 0, stride,
+                                        reinterpret_cast<const void*>(static_cast<size_t>(offset) * sizeof(float)));
+            };
+            if (k < 2) {  // position, colour
+                attribute(0, 3, 0);
+                attribute(1, 4, 3);
+            } else if (k == 2) {  // position, colour, size, normal
+                attribute(0, 3, 0);
+                attribute(1, 4, 3);
+                attribute(2, 1, 7);
+                attribute(3, 3, 8);
+            } else {  // position, the other end, side, width, colour
+                attribute(0, 3, 0);
+                attribute(1, 3, 3);
+                attribute(2, 1, 6);
+                attribute(3, 1, 7);
+                attribute(4, 4, 8);
+            }
+            gl_.BindVertexArray(0);
+        }
+        gl_.BindBuffer(ARRAY_BUFFER, buffers[k]);
+        gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(data[k]->size() * sizeof(float)), data[k]->data(), STATIC_DRAW);
+        counts[k] = static_cast<GLsizei>(data[k]->size() / static_cast<size_t>(floats[k]));
+    }
+    gl_.BindBuffer(ARRAY_BUFFER, 0);
+}
+
+void VolumeRenderer::drawOverlay(int width, int height, const Vec3& eye) {
+    GLsizei any = 0;
+    for (int l = 0; l < kOverlayLayers; ++l) {
+        for (int k = 0; k < 4; ++k) any += overlayCount_[l][k];
+    }
+    if (!overlayProgram_ || any == 0) return;
+    gl_.Enable(DEPTH_TEST);
+    gl_.DepthFunc(LEQUAL);
+    gl_.DepthMask(0);
+    gl_.Enable(BLEND);
+    gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
+    auto use = [&](GLuint program, float pull) {
+        gl_.UseProgram(program);
+        gl_.UniformMatrix4fv(location(program, "u_viewProj"), 1, 0, viewProjection_.data());
+        gl_.Uniform3f(location(program, "u_eye"), eye.x, eye.y, eye.z);
+        gl_.Uniform1f(location(program, "u_pull"), pull);
+    };
+    for (int l = 0; l < kOverlayLayers; ++l) {
+        const GLsizei* counts = overlayCount_[l];
+        // Faces first, then the lines over them, the dots over those.
+        if (counts[0] > 0) {
+            use(overlayProgram_, 0.002f);
+            gl_.BindVertexArray(overlayVao_[l][0]);
+            gl_.DrawArrays(TRIANGLES, 0, counts[0]);
+        }
+        if (counts[1] > 0) {
+            use(overlayProgram_, 0.003f);
+            gl_.BindVertexArray(overlayVao_[l][1]);
+            gl_.DrawArrays(LINES, 0, counts[1]);
+        }
+        if (counts[3] > 0) {
+            use(overlayWideProgram_, 0.0035f);
+            gl_.Uniform2f(location(overlayWideProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
+            gl_.BindVertexArray(overlayVao_[l][3]);
+            gl_.DrawArrays(TRIANGLES, 0, counts[3]);
+        }
+        if (counts[2] > 0) {
+            use(overlayDotProgram_, 0.003f);
+            gl_.Uniform1f(location(overlayDotProgram_, "u_pixel"),
+                          2.0f * std::tan(orbit.fovY * kPi / 360.0f) / static_cast<float>(std::max(height, 1)));
+            gl_.Enable(PROGRAM_POINT_SIZE);
+            gl_.BindVertexArray(overlayVao_[l][2]);
+            gl_.DrawArrays(POINTS, 0, counts[2]);
+            gl_.Disable(PROGRAM_POINT_SIZE);
+        }
+    }
+    gl_.BindVertexArray(0);
+    gl_.Disable(BLEND);
+    gl_.DepthMask(1);
+}
+
 void VolumeRenderer::setSceneUniforms(GLuint program) {
     float a[4 * kMaxSolids] = {}, b[4 * kMaxSolids] = {}, c[4 * kMaxSolids] = {}, d[4 * kMaxSolids] = {},
           e[4 * kMaxSolids] = {}, f[4 * kMaxSolids] = {};
@@ -2869,6 +3104,7 @@ void VolumeRenderer::render(int width, int height) {
     if (passes.on) gl_.DrawBuffers(1, &picture);
     drawGeometry(width, height);
     drawRain(width, height, e);
+    drawOverlay(width, height, e);
 
     // The guide lines, behind the solids where they pass behind them.
     if (lineCount_ > 0 && lineProgram_) {

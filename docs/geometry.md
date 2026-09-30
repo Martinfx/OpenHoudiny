@@ -49,7 +49,10 @@ nastaveným na ni.
 | **Attribute Create** | Atribut jedné hodnoty (číslo nebo vektor) na bodech, rozích, primitivech nebo celé geometrii |
 | **Color** | Barva `Cd` bodů nebo primitiv |
 | **Group Box** | Skupina bodů uvnitř krabice |
-| **Blast** | Smaže body skupiny — nebo naopak nechá jen je (Keep) — i s primitivy, které ztratí bod |
+| **Group** | Skupina bodů nebo primitiv podle vzoru — čísla a rozsahy `0-9 12`, hrany `p3-4`, jiné skupiny, `*`, `^` ubírá; **Ctrl+G** ve viewportu ji udělá z vybraného ([editing.md](editing.md)) |
+| **Blast** | Smaže body vzoru (skupina, čísla, hrany) i s primitivy, které ztratí bod — nebo primitivy i s body, které používaly jen ony; nebo naopak nechá jen je (Keep). **Delete** ve viewportu ho udělá z vybraného |
+| **Edit** | Posune, otočí a zvětší body vzoru — nebo body jeho primitiv — kolem Pivot; Soft Radius vezme s sebou i body kolem, tím méně, čím dál jsou. Co udělá úchyt (W E R) na vybraném ve viewportu |
+| **Attribute Paint** | Číslo namalované na body štětcem ve viewportu (**P**): kapky jako místa (x y z poloměr hodnota síla), v pořadí; `pin`, `tear`, `mass` pro látku |
 | **Point / Primitive / Detail Wrangle** | Kód nad každým bodem, primitivem, nebo jednou nad celou geometrií: posouvá, barví, vyrábí atributy, čte sousedy a další vstupy, staví a maže geometrii ([wrangle.md](wrangle.md)) |
 | **Normal** | Normály bodů `N`, průměr stěn kolem bodu vážený plochou |
 | **Scatter** | Body rozházené po polygonech úměrně ploše, deterministicky podle seed; barvy a další atributy se interpolují z rohů, `N` ze stěny |
@@ -162,6 +165,12 @@ Jak se geometrie kreslí:
 
 Klávesa **F** bez výběru zarámuje i zobrazenou geometrii; když síť nic
 nesimuluje, kamera ji zarámuje sama.
+
+Zobrazenou geometrii jde upravovat přímo ve viewportu — vybrat myší body
+(**2**), hrany (**3**) nebo plochy (**4**), posunout je úchytem, udělat
+z nich skupinu, smazat je, namalovat atribut štětcem (**P**). Každá úprava
+je uzel za zobrazeným (Edit, Group, Blast, Attribute Paint): viz
+[editing.md](editing.md).
 
 Water Look má přepínač **Surface**: vypnutý hladinu nekreslí — voda se
 simuluje dál a je vidět jen to, co z ní ukazuje síť (částice přes Liquid

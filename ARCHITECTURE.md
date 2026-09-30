@@ -346,6 +346,8 @@ src/pg/core/     Types      vektory, matice, typy atributů
                  Graph      vlastnictví uzlů
                  CookEngine pull evaluace, LRU cache
                  Spatial    k-d strom bodů (deterministické pořadí), sousedé přes hrany
+                 Selection  vzory prvků: čísla, rozsahy, skupiny, hrany (p3-4), * a ^
+                 Pick       co je pod myší a v obdélníku: BVH nad polygony, jen viditelné
 src/pg/lang/     Parse      lexer a parser do AST, kontrola jmen a počtu argumentů
                  Check      typová kontrola proti geometrii: vazby atributů, přetížení
                  Eval       interpret typovaného stromu
@@ -356,6 +358,8 @@ src/pg/nodes/    Generators grid, line, pointcloud
                  Primitives box, sphere, tube (uzavřené, stěny ven)
                  Modifiers  transform, merge, switch, null,
                             attribcreate, groupbox, blast
+                 Edit       groupcreate, edit (s měkkým poloměrem), attribpaint:
+                            co udělá výběr, úchyt a štětec ve viewportu
                  Surface    file (OBJ), scatter, normal, copytopoints, color
                  Wrangle    uzly pointwrangle a attribwrangle (body, primitivy, rohy, detail)
                  Topology   connectivity, fuse, polyextrude, subdivide (Catmull-Clark),
@@ -454,7 +458,9 @@ cli/             headless demo, export OBJ
 tools/prototype/  prototype — editor se dvěma sítěmi, simulací (výchozí) a shadery,
                  na společném plátně uzlů; viewport s výběrem a gizmem
                  (SimViewport, Gizmo), zobrazená geometrie a tabulka atributů
-                 (SimGeometry); digital assets: vstup dovnitř a zpět, Make Asset,
+                 (SimGeometry); úpravy zobrazené geometrie -- body, hrany a plochy
+                 myší, úchyt, skupina, mazání, štětec jako uzly sítě (SimElements);
+                 digital assets: vstup dovnitř a zpět, Make Asset,
                  promote (SimAssets); cache na disk a export (SimRunner: snímky v paměti
                  i čtené z disku podle potřeby, menu); bake na pozadí jako vlastní proces
                  s průběhem, zrušením a pokračováním z checkpointu (Bake); wedge -- varianty

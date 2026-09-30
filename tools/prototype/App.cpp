@@ -19,7 +19,7 @@
 //   drag X1 Y1 X2 Y2 [right|middle] [STEPS]       press, move, let go
 //   down / up [left|right|middle]                 wheel D
 //   key [ctrl+][shift+]NAME      tab, enter, escape, delete, space, left,
-//                                right, home, end, backspace, f5, a..z
+//                                right, home, end, backspace, f5, a..z, 0..9, [ ]
 //   hold / release ctrl|shift|alt                 a modifier down over the steps between
 //   type TEXT           characters, as typed
 //   wait N              N frames with no input
@@ -229,7 +229,8 @@ private:
             {"delete", ImGuiKey_Delete}, {"space", ImGuiKey_Space},   {"left", ImGuiKey_LeftArrow},
             {"right", ImGuiKey_RightArrow}, {"up", ImGuiKey_UpArrow}, {"down", ImGuiKey_DownArrow},
             {"home", ImGuiKey_Home},     {"end", ImGuiKey_End},       {"backspace", ImGuiKey_Backspace},
-            {"f5", ImGuiKey_F5},         {"f12", ImGuiKey_F12}};
+            {"f5", ImGuiKey_F5},         {"f12", ImGuiKey_F12},       {"[", ImGuiKey_LeftBracket},
+            {"]", ImGuiKey_RightBracket}};
         for (const auto& [name, key] : names) {
             if (k == name) return key;
         }

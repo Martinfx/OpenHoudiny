@@ -1,0 +1,61 @@
+pgsim 1
+# A shade sail stretched between four posts, two of them tall: the cloth
+# twists into a saddle and the gusts fill it. Nothing of it was typed but
+# the grid: its two corners were lifted with the viewport's handle -- 2,
+# the corners picked, W and a drag up -- softly, the cloth round them
+# going along (Edit, Soft Radius); its corners were pinned with the brush
+# -- P, a dab of pin on each (Attribute Paint).
+node 1 grid 1 sail 0 0
+  param sizex 2.4
+  param sizez 2.4
+  param rows 41
+  param cols 41
+  param center 0 2 0
+node 2 edit 1 lifted 230 0
+  param group "0 1680"
+  param t 0 0.9 0
+  param soft 1.2
+node 3 attribute_paint 1 corners 460 0
+  param strokes "-1.2 2.9 -1.2 0.15 1 1; 1.2 2.9 1.2 0.15 1 1; 1.2 2 -1.2 0.15 1 1; -1.2 2 1.2 0.15 1 1"
+node 4 cloth_solver 1 cloth 690 0
+  param density 0.25
+  param stretch 20000
+  param shear 20000
+  param bend 0.5
+  param damping 1
+  param color 0.72 0.3 0.12
+node 5 wind 1 wind 460 130
+  param direction -0.6 0.35 -1
+  param speed 6
+  param gusts 0.6
+node 6 object 1 post_a 460 260
+  param shape cylinder
+  param center -1.25 1.45 -1.25
+  param size 0.08 2.9 0.08
+  param color 0.35 0.33 0.3
+node 7 object 1 post_b 460 320
+  param shape cylinder
+  param center 1.25 1.45 1.25
+  param size 0.08 2.9 0.08
+  param color 0.35 0.33 0.3
+node 8 object 1 post_c 460 380
+  param shape cylinder
+  param center 1.25 1 -1.25
+  param size 0.08 2 0.08
+  param color 0.35 0.33 0.3
+node 9 object 1 post_d 460 440
+  param shape cylinder
+  param center -1.25 1 1.25
+  param size 0.08 2 0.08
+  param color 0.35 0.33 0.3
+node 10 output 2 output 920 60
+node 11 camera 1 camera 920 200
+  param center -4.4 3.4 4.4
+  param rotation -14 -45 0
+  param focal 26
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.geometry
+link 5.force -> 4.forces
+link 4.look -> 10.look
+link 11.camera -> 10.camera

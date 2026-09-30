@@ -580,8 +580,14 @@ void SimWorkspace::shortcuts() {
         fileAction_ = FileAction::Open;
     }
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) newNetwork();
+    // Space plays and stops, let go -- unless it was held to turn the view.
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) spaceUsed_ = false;
+    if (ImGui::IsKeyDown(ImGuiKey_Space) && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
+                                             ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+        spaceUsed_ = true;
+    }
     if (io.KeyCtrl || io.KeyAlt) return;
-    if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playing_ = !playing_;
+    if (ImGui::IsKeyReleased(ImGuiKey_Space) && !spaceUsed_) playing_ = !playing_;
     if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) current_ = 1;
     if (ImGui::IsKeyPressed(ImGuiKey_End, false)) current_ = std::max(1, runner_->cached());
     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
@@ -1081,7 +1087,9 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
     theme::drawIcon(d, typeIcon(&type), ImVec2(at.x + side * 0.5f, at.y + side * 0.5f), side * 0.62f, IM_COL32_WHITE);
     ImGui::Dummy(ImVec2(side, side));
     ImGui::SameLine();
-    if (nameEditNode_ != id) {
+    // Another node -- or this one renamed, undone, made again with its
+    // number -- and the field shows its name, unless it is being typed in.
+    if (nameEditNode_ != id || (!nameActive_ && nameEdit_ != node.name)) {
         nameEdit_ = node.name;
         nameEditNode_ = id;
     }
@@ -1094,6 +1102,7 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
             nameEdit_ = node.name;
         }
     }
+    nameActive_ = ImGui::IsItemActive();
     ImGui::PopFont();
     ImGui::SetItemTooltip("The node's name: what --set NAME.param=value calls it");
     ui::note(type.help);
@@ -1842,6 +1851,15 @@ void SimWorkspace::helpMenu() {
     ImGui::TextUnformatted("Double click              frame what is clicked, or the domain");
     ImGui::TextUnformatted("0, Ctrl+Alt+0             look through the camera, camera from view");
     ImGui::Separator();
+    ImGui::TextDisabled("Editing the displayed geometry");
+    ImGui::TextUnformatted("1  2  3  4                objects; points, edges, primitives");
+    ImGui::TextUnformatted("Click, left drag          pick one, a box (Shift adds, Ctrl takes away)");
+    ImGui::TextUnformatted("Alt / Space + left drag   orbit, while picking or painting");
+    ImGui::TextUnformatted("W  E  R, drag a handle    move, turn, size what is picked (an Edit node)");
+    ImGui::TextUnformatted("Ctrl+G, Del               a group of it, delete it (Group, Blast)");
+    ImGui::TextUnformatted("Ctrl+A, Ctrl+I, Esc       pick all, the others, none");
+    ImGui::TextUnformatted("P, [ ], Shift+wheel       paint an attribute (Ctrl: erase), brush size");
+    ImGui::Separator();
     ImGui::TextDisabled("Timeline");
     ImGui::TextUnformatted("Space  Home  End  Left  Right");
     ImGui::Separator();
@@ -1996,6 +2014,10 @@ void SimWorkspace::renderShot(int width, int height, int frame) {
     }
     renderer_.setLines({});
     renderer_.setHighlight({}, 0);
+    for (int layer = 0; layer < gl::VolumeRenderer::kOverlayLayers; ++layer) {
+        renderer_.setOverlay({}, layer);
+        overlayKey_[layer].clear();  // back on the next frame
+    }
     renderer_.render(width * 2, height * 2);
     renderer_.orbit = view;
     shownPlate_ = "\x01";  // the viewport sets its own plate again

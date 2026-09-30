@@ -21,6 +21,14 @@
 //
 // It starts on an empty scene; File > Examples has finished ones.
 //
+// The displayed geometry is edited in the viewport as in Houdini
+// (SimElements.cpp): 2, 3 and 4 pick its points, edges and primitives -- a
+// click, a box, Shift adding, Ctrl taking away -- 1 the objects again. The
+// handle of W, E and R moves, turns and sizes what is picked through an Edit
+// node put after the displayed one; Ctrl+G makes a Group of it, Delete a
+// Blast. P paints an attribute with a brush through an Attribute Paint node.
+// Each is an ordinary node of the network, undone as any change is.
+//
 // Digital assets (pg/sim/Asset.h): geometry nodes chosen become one asset
 // (Make Asset), its node in their place. Going into an instance -- double
 // click, I -- edits the asset's inside, with the instance's inputs coming
@@ -37,6 +45,7 @@
 #include "Wedge.h"
 #include "Workspace.h"
 
+#include "pg/core/Pick.h"
 #include "pg/gl/Volume.h"
 #include "pg/sim/Cooker.h"
 #include "pg/sim/GeometryGraph.h"
@@ -87,6 +96,10 @@ public:
     void selectNode(const std::string& name);
     /// What the viewport's gizmo does: select, move, rotate, scale.
     void setTool(GizmoMode tool) { tool_ = tool; }
+
+    /// What a click in the viewport picks: objects -- nodes -- or the
+    /// points, edges or primitives of the displayed geometry.
+    enum class Elements { Objects, Points, Edges, Primitives };
 
 private:
     void load(const sim::Network& net, const std::string& path, const std::string& example);
@@ -306,6 +319,62 @@ private:
     void frameSelection();
     void viewKeys(bool overView);
 
+    // --- editing the displayed geometry (SimElements.cpp) ------------------------------
+    /// Picks another kind of element; what was picked becomes the same
+    /// place in the new kind: the points of primitives, the edges between
+    /// points...
+    void setElements(Elements mode);
+    /// Whether the viewport's left button picks elements or paints -- not
+    /// objects.
+    bool editingElements() const { return elements_ != Elements::Objects || paint_; }
+    /// The displayed geometry, and what picks in it -- made again only when
+    /// it moved; null when nothing is shown.
+    const ElementPicker* picker();
+    static PickView pickView(const ViewCamera& cam);
+    /// The element under the mouse, of the kind picked; -1 for none.
+    int32_t elementAt(const ViewCamera& cam, ImVec2 mouse);
+    /// A click: that element alone, or added (Shift), or taken away (Ctrl).
+    void clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, bool remove);
+    /// What a box from `a` to `b` holds, the same way.
+    void boxElements(const ViewCamera& cam, ImVec2 a, ImVec2 b, bool add, bool remove);
+    void selectAllElements(bool invert);
+    size_t elementCount() const;
+    /// What is picked as the nodes read it: a pattern, and the class
+    /// (0 points, 1 primitives) -- edges as their points.
+    std::string elementPattern() const;
+    int elementClass() const;
+    /// The points what is picked moves: its points, the corners of its
+    /// primitives, the ends of its edges.
+    std::vector<uint8_t> elementPoints(const Geometry& geo) const;
+    /// Their middle in the displayed geometry; false for none.
+    bool elementCenter(Vec3& center) const;
+    /// Forgets what was picked where the geometry it was of is no longer shown.
+    void checkElements();
+    /// The marks over the geometry: its wire, its points, what is picked,
+    /// what is under the mouse, the paint.
+    void updateOverlay();
+    /// A node of `type` put after the displayed one -- fed by it, feeding
+    /// what it fed -- and displayed. Its id; 0 when nothing is displayed.
+    int insertAfterDisplayed(const std::string& type);
+    /// Takes node `id` out, what fed it feeding what it fed again.
+    void extractNode(int id);
+    /// A Group of what is picked (Ctrl+G), a Blast of it (Delete).
+    void groupElements();
+    void deleteElements();
+    /// The handle on what is picked, and the Edit node a drag of it sets.
+    void elementGizmo(ImDrawList* d, const ViewCamera& cam, bool overView);
+    void applyElementDrag(const GizmoDrag& drag);
+    /// Escape during a drag: the Edit as it was -- gone, when the drag made it.
+    void restoreElementDrag();
+    /// The brush: P on and off; its strokes while the button is down.
+    void setPaint(bool on);
+    void paintTool(ImDrawList* d, const ViewCamera& cam, bool overView);
+    /// The Attribute Paint node painted into: the displayed one, if it is one.
+    int paintNode() const;
+    void scaleBrush(float factor);
+    /// What the bottom of the viewport says in these modes; empty for none.
+    std::string elementStatus() const;
+
     sim::Network net_;
     /// The geometry nodes, cooked: the network's; inside an asset, its inside's.
     std::unique_ptr<sim::GeometryGraph> geometry_ = std::make_unique<sim::GeometryGraph>();
@@ -348,6 +417,7 @@ private:
     std::string search_;
     std::string nameEdit_;
     int nameEditNode_ = 0;
+    bool nameActive_ = false;  ///< the name is being typed in
 
     const gl::Api& gl_;
     gl::VolumeRenderer renderer_;
@@ -399,6 +469,50 @@ private:
     int highlightedHover_ = 0;
     ImVec2 toolsLo_, toolsHi_;     ///< the toolbar, last frame
     ViewCamera camera_;            ///< the viewport's, last frame
+
+    // Editing the displayed geometry.
+    Elements elements_ = Elements::Objects;
+    /// What is picked, of the geometry of the displayed node `node`: one
+    /// byte a point or primitive, or the edges, sorted.
+    struct Picked {
+        int node = 0;
+        size_t points = 0, primitives = 0;  ///< what that geometry had
+        std::vector<uint8_t> mask;
+        std::vector<Edge> edges;
+        uint64_t revision = 0;              ///< changes with what is picked
+    } picked_;
+    std::unique_ptr<ElementPicker> picker_;
+    int32_t hoverElement_ = -1;             ///< under the mouse, of the kind picked
+    ImVec2 hoverMouse_{-1.0f, -1.0f};       ///< where the mouse was when it was found
+    Vec3 hoverEye_, hoverForward_;          ///< ... and the camera
+    const Geometry* hoverGeometry_ = nullptr;
+    bool boxing_ = false;                   ///< a box is being drawn
+    bool pressTurns_ = false;               ///< the press was Alt's or Space's: it turns the view
+    bool pressCancelled_ = false;           ///< Escape during the press: it picks nothing
+    GeometryPtr edgeGeometry_;              ///< the geometry of the wire drawn
+    std::vector<Edge> edges_;               ///< ... its edges
+    bool spaceUsed_ = false;                ///< Space held turned the view: letting go does not play
+    std::string overlayKey_[2];             ///< what the overlay's layers were made of
+    // A drag of the handle on elements: the Edit node, its values when it
+    // began, the handle's middle then; made by this drag, it goes on Escape.
+    int editNode_ = 0;
+    bool editMade_ = false;
+    bool editPending_ = false;              ///< a drag began: its Edit is made once it moves something
+    std::string editPattern_;               ///< ... of what was picked then
+    int editClass_ = 0;
+    /// The network before a node was put in for a drag or the brush, and
+    /// just after: taken out again untouched, it is as it was before.
+    std::string madeBefore_, madeAfter_;
+    Vec3 editT0_, editR0_, editS0_{1.0f, 1.0f, 1.0f}, editP0_, editCenter0_;
+    // The brush.
+    bool paint_ = false;
+    bool stroking_ = false;                 ///< the button is down, painting
+    bool strokeOn_ = false;                 ///< ... and the brush on the surface since the last dab
+    bool paintMade_ = false;                ///< its node made by P, unpainted yet
+    int paintNode_ = 0;
+    Vec3 lastDab_;
+    bool brushHit_ = false;                 ///< the brush is on the surface
+    Vec3 brushAt_, brushNormal_;
     Vec3 addAt_;                   ///< where the add menu puts what it adds
     int newColor_ = 0;
 

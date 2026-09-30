@@ -2,10 +2,68 @@
 
 #include <algorithm>
 #include <charconv>
+#include <map>
 
 namespace pg {
 
 namespace {
+
+bool apart(char c) { return c == ' ' || c == ',' || c == '\t' || c == '\n'; }
+
+/// Each item of a pattern in turn, with 1 -- or 0 for one after "^".
+template <typename F>
+void forEachItem(std::string_view pattern, F&& f) {
+    size_t at = 0;
+    while (at < pattern.size()) {
+        while (at < pattern.size() && apart(pattern[at])) ++at;
+        size_t end = at;
+        while (end < pattern.size() && !apart(pattern[end])) ++end;
+        std::string_view item = pattern.substr(at, end - at);
+        at = end;
+        if (item.empty()) continue;
+        uint8_t set = 1;
+        if (item.front() == '^') {
+            set = 0;
+            item.remove_prefix(1);
+            if (item.empty()) continue;
+        }
+        f(item, set);
+    }
+}
+
+Edge edgeOf(uint32_t a, uint32_t b) { return a < b ? Edge(a, b) : Edge(b, a); }
+
+/// "p3-4", "p0-1-2-3": the points of an edge item, in order. False when
+/// the item is not one.
+bool edgeItem(std::string_view item, std::vector<uint32_t>& path) {
+    path.clear();
+    if (item.size() < 4 || item.front() != 'p') return false;
+    const char* s = item.data() + 1;
+    const char* end = item.data() + item.size();
+    for (;;) {
+        uint32_t v = 0;
+        const auto r = std::from_chars(s, end, v);
+        if (r.ec != std::errc() || r.ptr == s) return false;
+        path.push_back(v);
+        s = r.ptr;
+        if (s == end) break;
+        if (*s != '-') return false;
+        ++s;
+    }
+    return path.size() >= 2;
+}
+
+/// The edges of a path that are among `all` (sorted), sorted.
+std::vector<Edge> edgesAlong(const std::vector<uint32_t>& path, std::span<const Edge> all) {
+    std::vector<Edge> out;
+    for (size_t k = 0; k + 1 < path.size(); ++k) {
+        const Edge e = edgeOf(path[k], path[k + 1]);
+        if (std::binary_search(all.begin(), all.end(), e)) out.push_back(e);
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
 
 /// "12" or "3-40": the first and last numbers, inclusive. False when the
 /// item is not numbers.
@@ -55,27 +113,10 @@ std::vector<uint8_t> selectElements(const Geometry& geo, AttrClass cls, std::str
     const size_t n = cls == AttrClass::Primitive ? geo.primitiveCount() : geo.pointCount();
     std::vector<uint8_t> mask(n, 0);
     if (named) *named = false;
-    size_t at = 0;
-    while (at < pattern.size()) {
-        // The next item: up to a space or a comma.
-        while (at < pattern.size() && (pattern[at] == ' ' || pattern[at] == ',' || pattern[at] == '\t' ||
-                                       pattern[at] == '\n')) {
-            ++at;
-        }
-        size_t end = at;
-        while (end < pattern.size() && pattern[end] != ' ' && pattern[end] != ',' && pattern[end] != '\t' &&
-               pattern[end] != '\n') {
-            ++end;
-        }
-        std::string_view item = pattern.substr(at, end - at);
-        at = end;
-        if (item.empty()) continue;
-        uint8_t set = 1;
-        if (item.front() == '^') {
-            set = 0;
-            item.remove_prefix(1);
-            if (item.empty()) continue;
-        }
+    std::vector<Edge> edges;  // the geometry's, once an edge item asks
+    bool edgesMade = false;
+    std::vector<uint32_t> path;
+    forEachItem(pattern, [&](std::string_view item, uint8_t set) {
         size_t first = 0, last = 0;
         if (item == "*") {
             std::fill(mask.begin(), mask.end(), set);
@@ -83,6 +124,34 @@ std::vector<uint8_t> selectElements(const Geometry& geo, AttrClass cls, std::str
         } else if (rangeOf(item, first, last)) {
             for (size_t i = first; i <= last && i < n; ++i) mask[i] = set;
             if (named) *named = true;
+        } else if (edgeItem(item, path)) {
+            if (named) *named = true;
+            if (!edgesMade) {
+                edges = edgesOf(geo);
+                edgesMade = true;
+            }
+            const std::vector<Edge> wanted = edgesAlong(path, edges);
+            if (wanted.empty()) return;
+            if (cls == AttrClass::Point) {
+                for (const Edge& e : wanted) {
+                    if (e.first < n) mask[e.first] = set;
+                    if (e.second < n) mask[e.second] = set;
+                }
+                return;
+            }
+            // The primitives they are sides of.
+            for (size_t p = 0; p < n; ++p) {
+                const auto pts = geo.primitivePoints(p);
+                const size_t m = pts.size();
+                if (m < 2) continue;
+                const size_t sides = geo.primitiveClosed(p) ? m : m - 1;
+                for (size_t k = 0; k < sides; ++k) {
+                    if (std::binary_search(wanted.begin(), wanted.end(), edgeOf(pts[k], pts[(k + 1) % m]))) {
+                        mask[p] = set;
+                        break;
+                    }
+                }
+            }
         } else if (const Group* g = geo.findGroup(std::string(item))) {
             if (named) *named = true;
             std::vector<uint8_t> members(g->classOf() == AttrClass::Primitive ? geo.primitiveCount() : geo.pointCount(), 0);
@@ -93,14 +162,14 @@ std::vector<uint8_t> selectElements(const Geometry& geo, AttrClass cls, std::str
                 } else if (g->classOf() == AttrClass::Point && cls == AttrClass::Primitive) {
                     members = primitivesOfPoints(geo, members);
                 } else {
-                    continue;
+                    return;
                 }
             }
             for (size_t i = 0; i < n && i < members.size(); ++i) {
                 if (members[i]) mask[i] = set;
             }
         }
-    }
+    });
     return mask;
 }
 
@@ -118,6 +187,79 @@ std::string patternOf(std::span<const uint8_t> mask) {
         out += std::to_string(i);
         if (j > i) out += '-' + std::to_string(j);
         i = j + 1;
+    }
+    return out;
+}
+
+std::vector<Edge> edgesOf(const Geometry& geo) {
+    std::vector<Edge> out;
+    out.reserve(geo.vertexCount());
+    for (size_t p = 0; p < geo.primitiveCount(); ++p) {
+        const auto pts = geo.primitivePoints(p);
+        const size_t m = pts.size();
+        if (m < 2) continue;
+        const size_t sides = geo.primitiveClosed(p) ? m : m - 1;
+        for (size_t k = 0; k < sides; ++k) {
+            const uint32_t a = pts[k], b = pts[(k + 1) % m];
+            if (a != b) out.push_back(edgeOf(a, b));
+        }
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::vector<Edge> selectEdges(std::span<const Edge> edges, std::string_view pattern) {
+    std::vector<uint8_t> mask(edges.size(), 0);
+    std::vector<uint32_t> path;
+    forEachItem(pattern, [&](std::string_view item, uint8_t set) {
+        if (item == "*") {
+            std::fill(mask.begin(), mask.end(), set);
+        } else if (edgeItem(item, path)) {
+            for (const Edge& e : edgesAlong(path, edges)) {
+                mask[static_cast<size_t>(std::lower_bound(edges.begin(), edges.end(), e) - edges.begin())] = set;
+            }
+        }
+    });
+    std::vector<Edge> out;
+    for (size_t i = 0; i < edges.size(); ++i) {
+        if (mask[i]) out.push_back(edges[i]);
+    }
+    return out;
+}
+
+std::string edgePatternOf(std::span<const Edge> edges) {
+    // Paths: from each edge not yet written, on along the next one at its
+    // end -- the one to the lowest point -- while there is one.
+    std::map<uint32_t, std::vector<size_t>> at;  // the edges at each point
+    for (size_t i = 0; i < edges.size(); ++i) {
+        at[edges[i].first].push_back(i);
+        at[edges[i].second].push_back(i);
+    }
+    std::vector<uint8_t> written(edges.size(), 0);
+    std::string out;
+    for (size_t i = 0; i < edges.size(); ++i) {
+        if (written[i]) continue;
+        written[i] = 1;
+        if (!out.empty()) out += ' ';
+        out += 'p' + std::to_string(edges[i].first) + '-' + std::to_string(edges[i].second);
+        uint32_t end = edges[i].second;
+        for (;;) {
+            size_t next = edges.size();
+            uint32_t to = 0;
+            for (const size_t j : at[end]) {
+                if (written[j]) continue;
+                const uint32_t other = edges[j].first == end ? edges[j].second : edges[j].first;
+                if (next == edges.size() || other < to) {
+                    next = j;
+                    to = other;
+                }
+            }
+            if (next == edges.size()) break;
+            written[next] = 1;
+            out += '-' + std::to_string(to);
+            end = to;
+        }
     }
     return out;
 }

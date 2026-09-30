@@ -10,6 +10,7 @@
 //   Delete / X, Ctrl+D     delete, duplicate the selection
 //   F                      frame the selection;  double click: frame what is clicked
 //   Escape                 undo the drag under way, or select nothing
+//   2 3 4, P               pick points, edges, primitives; paint (SimElements.cpp) -- 1: objects
 //
 // A drag starts from the values the nodes had when it began (Placed), so the
 // gizmo's rounding never builds up; the History records it once let go.
@@ -654,7 +655,17 @@ void SimWorkspace::frameSelection() {
         }
         any = true;
     };
-    const std::set<int>& chosen = canvas_.selection();
+    // Elements picked: their points.
+    if (editingElements() && elementCount() > 0) {
+        if (const GeometryPtr geo = renderer_.geometry()) {
+            const std::vector<uint8_t> points = elementPoints(*geo);
+            const auto P = geo->positions();
+            for (size_t i = 0; i < points.size() && i < P.size(); ++i) {
+                if (points[i]) grow(P[i], P[i]);
+            }
+        }
+    }
+    const std::set<int> chosen = editingElements() ? std::set<int>() : canvas_.selection();
     for (const sim::Solid& s : compiled_.solidsAt(current_)) {
         if (!chosen.count(s.body.node)) continue;
         Vec3 a, b;
@@ -731,7 +742,7 @@ void SimWorkspace::frameSelection() {
 
 void SimWorkspace::viewTools(ImVec2 at) {
     const float side = theme::px(28.0f), gap = theme::px(2.0f), pad = theme::px(3.0f), space = theme::px(8.0f);
-    const float height = 8.0f * side + 5.0f * gap + 2.0f * space + 2.0f * pad;
+    const float height = 13.0f * side + 9.0f * gap + 3.0f * space + 2.0f * pad;
     ImDrawList* d = ImGui::GetWindowDrawList();
     toolsLo_ = at;
     toolsHi_ = ImVec2(at.x + side + 2.0f * pad, at.y + height);
@@ -752,7 +763,38 @@ void SimWorkspace::viewTools(ImVec2 at) {
                           {GizmoMode::Scale, Icon::Scale, "Scale (R): drag a cube; the middle one sizes all three"}};
     for (const Tool& t : tools) {
         place();
-        if (theme::iconButton(t.tip, t.icon, t.tip, tool_ == t.mode, true, side)) tool_ = t.mode;
+        if (theme::iconButton(t.tip, t.icon, t.tip, tool_ == t.mode && !paint_, true, side)) {
+            tool_ = t.mode;
+            setPaint(false);
+        }
+    }
+    y += space - gap;
+    // What a click picks: objects, or the displayed geometry's points,
+    // edges, primitives; and the brush.
+    struct Kind {
+        Elements mode;
+        Icon icon;
+        const char* tip;
+    };
+    const Kind kinds[] = {
+        {Elements::Objects, Icon::Geometry, "Objects (1): a click picks an object, a source, a guide"},
+        {Elements::Points, Icon::Vertices, "Points (2): pick the displayed geometry's points -- a click, a box; Shift "
+                                           "adds, Ctrl takes away; Alt+drag turns the view"},
+        {Elements::Edges, Icon::Edges, "Edges (3): pick its edges"},
+        {Elements::Primitives, Icon::Faces, "Primitives (4): pick its polygons and curves"}};
+    for (const Kind& k : kinds) {
+        place();
+        if (theme::iconButton(k.tip, k.icon, k.tip, elements_ == k.mode && !paint_, true, side)) {
+            setPaint(false);
+            setElements(k.mode);
+        }
+    }
+    place();
+    if (theme::iconButton("paint", Icon::Brush,
+                          "Paint (P): an attribute on the displayed geometry -- pin, tear, mass -- with a brush; Ctrl "
+                          "paints the Erase Value, [ ] sizes it",
+                          paint_, true, side)) {
+        setPaint(!paint_);
     }
     y += space - gap;
     place();
@@ -780,6 +822,15 @@ void SimWorkspace::viewTools(ImVec2 at) {
 }
 
 void SimWorkspace::viewMenu() {
+    if (editingElements()) {
+        // What is picked of the geometry: a group of it, deleted, all of it.
+        const bool any = elementCount() > 0;
+        if (ImGui::MenuItem("Group from Picked", "Ctrl+G", false, any)) groupElements();
+        if (iconItem(Icon::Trash, theme::kTextDim, "Delete Picked", "Del") && any) deleteElements();
+        if (ImGui::MenuItem("Pick All", "Ctrl+A", false, !paint_)) selectAllElements(false);
+        if (ImGui::MenuItem("Pick the Others", "Ctrl+I", false, !paint_)) selectAllElements(true);
+        ImGui::Separator();
+    }
     if (ImGui::BeginMenu("Add")) {
         if (sceneMenu(addAt_)) ImGui::CloseCurrentPopup();
         ImGui::EndMenu();
@@ -804,6 +855,24 @@ void SimWorkspace::viewMenu() {
     if (iconItem(Icon::Rotate, tool_ == GizmoMode::Rotate ? theme::kAccent : theme::kTextDim, "Rotate", "E")) tool_ = GizmoMode::Rotate;
     if (iconItem(Icon::Scale, tool_ == GizmoMode::Scale ? theme::kAccent : theme::kTextDim, "Scale", "R")) tool_ = GizmoMode::Scale;
     ImGui::Separator();
+    if (iconItem(Icon::Geometry, elements_ == Elements::Objects && !paint_ ? theme::kAccent : theme::kTextDim, "Objects", "1")) {
+        setPaint(false);
+        setElements(Elements::Objects);
+    }
+    if (iconItem(Icon::Vertices, elements_ == Elements::Points && !paint_ ? theme::kAccent : theme::kTextDim, "Points", "2")) {
+        setPaint(false);
+        setElements(Elements::Points);
+    }
+    if (iconItem(Icon::Edges, elements_ == Elements::Edges && !paint_ ? theme::kAccent : theme::kTextDim, "Edges", "3")) {
+        setPaint(false);
+        setElements(Elements::Edges);
+    }
+    if (iconItem(Icon::Faces, elements_ == Elements::Primitives && !paint_ ? theme::kAccent : theme::kTextDim, "Primitives", "4")) {
+        setPaint(false);
+        setElements(Elements::Primitives);
+    }
+    if (iconItem(Icon::Brush, paint_ ? theme::kAccent : theme::kTextDim, "Paint", "P")) setPaint(!paint_);
+    ImGui::Separator();
     if (ImGui::MenuItem("Local Axes", nullptr, localAxes_)) localAxes_ = !localAxes_;
     if (ImGui::MenuItem("Snap", nullptr, snap_)) snap_ = !snap_;
     if (ImGui::MenuItem("Guides", "G", guides_)) {
@@ -818,19 +887,34 @@ void SimWorkspace::viewKeys(bool overView) {
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         if (gizmo_.dragging()) {
             gizmo_.cancel();
-            restoreDrag();
+            if (editNode_ || editPending_) restoreElementDrag();
+            else restoreDrag();
             gizmoOwnsMouse_ = true;  // until the button is let go
             setMessage("Put back");
+        } else if (boxing_) {
+            boxing_ = false;
+            pressCancelled_ = true;
+        } else if (overView && paint_) {
+            setPaint(false);
+        } else if (overView && editingElements() && elementCount() > 0) {
+            picked_.mask.clear();
+            picked_.edges.clear();
+            ++picked_.revision;
         } else if (overView) {
             canvas_.clearSelection();
         }
     }
-    if (!overView || gizmo_.dragging()) return;
+    if (!overView || gizmo_.dragging() || stroking_) return;
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
     const bool zero = ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false);
     if (io.KeyCtrl) {
         if (ImGui::IsKeyPressed(ImGuiKey_D, false) && !chosen.empty()) duplicate(chosen);
         if (io.KeyAlt && zero) cameraFromView();
+        if (editingElements() && !io.KeyAlt) {
+            if (ImGui::IsKeyPressed(ImGuiKey_G, false)) groupElements();
+            if (ImGui::IsKeyPressed(ImGuiKey_A, false) && !paint_) selectAllElements(false);
+            if (ImGui::IsKeyPressed(ImGuiKey_I, false) && !paint_) selectAllElements(true);
+        }
         return;
     }
     if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
@@ -839,19 +923,37 @@ void SimWorkspace::viewKeys(bool overView) {
         return;
     }
     if (io.KeyAlt || io.KeyShift) return;
+    // What a click picks: objects, points, edges, primitives; the brush.
+    const Elements modes[4] = {Elements::Objects, Elements::Points, Elements::Edges, Elements::Primitives};
+    for (int k = 0; k < 4; ++k) {
+        if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_1 + k), false)) {
+            setPaint(false);
+            setElements(modes[k]);
+        }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_P, false)) setPaint(!paint_);
+    if (paint_ && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) scaleBrush(0.8f);
+    if (paint_ && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) scaleBrush(1.25f);
     if (ImGui::IsKeyPressed(ImGuiKey_K, false)) keySelection();
-    if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) tool_ = GizmoMode::Select;
-    if (ImGui::IsKeyPressed(ImGuiKey_W, false)) tool_ = GizmoMode::Move;
-    if (ImGui::IsKeyPressed(ImGuiKey_E, false)) tool_ = GizmoMode::Rotate;
-    if (ImGui::IsKeyPressed(ImGuiKey_R, false)) tool_ = GizmoMode::Scale;
+    const GizmoMode keyed[4] = {GizmoMode::Select, GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale};
+    const ImGuiKey keys[4] = {ImGuiKey_Q, ImGuiKey_W, ImGuiKey_E, ImGuiKey_R};
+    for (int k = 0; k < 4; ++k) {
+        if (!ImGui::IsKeyPressed(keys[k], false)) continue;
+        tool_ = keyed[k];
+        setPaint(false);  // a tool put in the hand puts the brush down
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameSelection();
     if (zero) setThroughCamera(!throughCamera_);
     if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !chosen.empty()) toggleBypass(chosen);
-    if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_X, false) ||
-         ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) &&
-        !chosen.empty()) {
-        removeNodes(chosen);
-        canvas_.clearSelection();
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_X, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
+        if (editingElements()) {
+            // Of the geometry, what is picked: a Blast.
+            if (!paint_) deleteElements();
+        } else if (!chosen.empty()) {
+            removeNodes(chosen);
+            canvas_.clearSelection();
+        }
     }
 }
 
@@ -948,10 +1050,25 @@ void SimWorkspace::viewport(ImVec2 size) {
     const bool onTools = within(io.MousePos, toolsLo_, toolsHi_) || within(io.MousePos, noticeLo_, noticeHi_);
     const bool overView = ImGui::IsWindowHovered() && within(io.MousePos, lo, hi) && !onTools;
 
-    // What is under the mouse lights up -- while nothing is being dragged.
+    // What is under the mouse lights up -- while nothing is being dragged:
+    // an object, or the element of the displayed geometry.
+    checkElements();
     const bool buttons = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
                          ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-    if (!buttons) hovered_ = overView && gizmo_.hovered() == Handle::None ? pickAt(cam, io.MousePos) : 0;
+    if (!buttons) {
+        hovered_ = overView && !editingElements() && gizmo_.hovered() == Handle::None ? pickAt(cam, io.MousePos) : 0;
+    }
+    if (!editingElements() || paint_ || buttons || !overView || gizmo_.hovered() != Handle::None || gizmo_.dragging()) {
+        hoverElement_ = -1;
+        hoverGeometry_ = nullptr;
+    } else if (io.MousePos.x != hoverMouse_.x || io.MousePos.y != hoverMouse_.y || cam.eye != hoverEye_ ||
+               cam.forward != hoverForward_ || renderer_.geometry().get() != hoverGeometry_) {
+        hoverMouse_ = io.MousePos;
+        hoverEye_ = cam.eye;
+        hoverForward_ = cam.forward;
+        hoverGeometry_ = renderer_.geometry().get();
+        hoverElement_ = elementAt(cam, io.MousePos);
+    }
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
     if (chosen != highlighted_ || hovered_ != highlightedHover_) {
         highlighted_ = chosen;
@@ -959,6 +1076,7 @@ void SimWorkspace::viewport(ImVec2 size) {
         renderer_.setHighlight(chosen, hovered_);
         viewDirty_ = true;
     }
+    updateOverlay();
 
     if (w != viewWidth_ || hh != viewHeight_) viewDirty_ = true;
     if (viewDirty_ && rendererLog_.empty()) {
@@ -976,6 +1094,12 @@ void SimWorkspace::viewport(ImVec2 size) {
                                ImGuiButtonFlags_MouseButtonMiddle);
     const bool viewActive = ImGui::IsItemActive(), viewHovered = ImGui::IsItemHovered(),
                viewReleased = ImGui::IsItemDeactivated();
+    if (ImGui::IsItemActivated()) {
+        // Picking elements or painting, the left button is theirs; held
+        // with Alt or Space it turns the view.
+        pressTurns_ = io.KeyAlt || ImGui::IsKeyDown(ImGuiKey_Space);
+        pressCancelled_ = false;
+    }
     ImDrawList* d = ImGui::GetWindowDrawList();
     d->PushClipRect(lo, hi, true);
     if (throughCamera_) {
@@ -996,10 +1120,14 @@ void SimWorkspace::viewport(ImVec2 size) {
         d->AddText(ImVec2(gateHi_.x - ts.x - pad, gateLo_.y + pad), IM_COL32(225, 226, 232, 210), label);
     }
 
-    // The gizmo, on what is selected.
-    const std::vector<int> moving = movable();
+    // The gizmo, on what is selected: the objects -- or the elements picked,
+    // through an Edit node; the brush.
+    const std::vector<int> moving = editingElements() ? std::vector<int>() : movable();
     const GizmoMode tool = moving.empty() ? GizmoMode::Select : toolFor(moving);
-    if (tool != GizmoMode::Select) {
+    if (editingElements()) {
+        elementGizmo(d, cam, overView);
+        paintTool(d, cam, overView);
+    } else if (tool != GizmoMode::Select) {
         Vec3 pivot;
         sim::Rotation frame;
         pivotOf(moving, tool, pivot, frame);
@@ -1025,48 +1153,73 @@ void SimWorkspace::viewport(ImVec2 size) {
         gizmo_.cancel();  // what was dragged went away
         dragStart_.clear();
     }
-    runner_->hold(gizmo_.dragging());
+    // While the handle is dragged or the brush paints, the simulation waits.
+    runner_->hold(gizmo_.dragging() || stroking_);
 
-    // The camera -- unless the press was the gizmo's.
+    // The camera -- unless the press was the gizmo's, the box's, the brush's.
     gl::Orbit& o = renderer_.orbit;
-    if (viewActive && !gizmoOwnsMouse_) {
+    const bool leftTurns = !editingElements() || pressTurns_;
+    if (viewActive && !gizmoOwnsMouse_ && !boxing_ && !stroking_) {
         const ImVec2 dlt = io.MouseDelta;
-        if (dlt.x != 0.0f || dlt.y != 0.0f) {
+        const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && leftTurns;
+        if ((dlt.x != 0.0f || dlt.y != 0.0f) &&
+            (left || ImGui::IsMouseDown(ImGuiMouseButton_Middle) || ImGui::IsMouseDown(ImGuiMouseButton_Right))) {
             setThroughCamera(false);  // moving the view leaves the camera where it is
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyShift)) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (left && io.KeyShift)) {
                 // Pan: move what the camera looks at, in the plane of the screen.
                 const float k = o.distance * 0.0018f;
                 const Vec3 move = cam.right * (-dlt.x * k) + cam.up * (dlt.y * k);
                 for (int a = 0; a < 3; ++a) o.target[a] += move[a];
             } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
                 o.distance = std::clamp(o.distance * std::exp(dlt.y * 0.006f), 0.2f, 200.0f);
-            } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            } else if (left) {
                 o.yaw -= dlt.x * 0.35f;
                 o.pitch = std::clamp(o.pitch + dlt.y * 0.35f, -89.0f, 89.0f);
             }
             viewDirty_ = true;
         }
     }
-    if (viewHovered && io.MouseWheel != 0.0f) {
+    const float wheel = io.MouseWheel != 0.0f ? io.MouseWheel : io.KeyShift ? io.MouseWheelH : 0.0f;
+    if (viewHovered && paint_ && io.KeyShift && wheel != 0.0f) {
+        scaleBrush(std::pow(1.15f, wheel));  // Shift+wheel: the brush's size
+    } else if (viewHovered && io.MouseWheel != 0.0f) {
         setThroughCamera(false);
         o.distance = std::clamp(o.distance * std::pow(0.88f, io.MouseWheel), 0.2f, 200.0f);
         viewDirty_ = true;
     }
 
-    // A click that did not drag selects; a double click frames what it hit.
+    // Picking elements, a left drag draws a box: what it holds is picked.
     const float still = theme::px(4.0f) * theme::px(4.0f);
+    if (editingElements() && !paint_ && viewActive && !gizmoOwnsMouse_ && !pressTurns_ && !pressCancelled_ &&
+        ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] >= still) {
+        boxing_ = true;
+    }
+    if (boxing_) {
+        const ImVec2 a = io.MouseClickedPos[ImGuiMouseButton_Left], b = io.MousePos;
+        const ImVec2 lo2(std::min(a.x, b.x), std::min(a.y, b.y)), hi2(std::max(a.x, b.x), std::max(a.y, b.y));
+        d->AddRectFilled(lo2, hi2, IM_COL32(255, 200, 60, 28));
+        d->AddRect(lo2, hi2, IM_COL32(255, 205, 80, 220), 0.0f, 0, theme::px(1.0f));
+        if (viewReleased) boxElements(cam, a, b, io.KeyShift, io.KeyCtrl);
+        if (viewReleased || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) boxing_ = false;
+    }
+
+    // A click that did not drag selects; a double click frames what it hit.
     if (viewReleased && !gizmoOwnsMouse_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
         io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < still) {
-        const int picked = pickAt(cam, io.MousePos);
-        if (io.KeyShift || io.KeyCtrl) {
-            if (picked) canvas_.toggle(picked);
-        } else if (picked) {
-            canvas_.select(picked);
+        if (editingElements()) {
+            if (!paint_ && !pressTurns_ && !pressCancelled_) clickElements(cam, io.MousePos, io.KeyShift, io.KeyCtrl);
         } else {
-            canvas_.clearSelection();
+            const int picked = pickAt(cam, io.MousePos);
+            if (io.KeyShift || io.KeyCtrl) {
+                if (picked) canvas_.toggle(picked);
+            } else if (picked) {
+                canvas_.select(picked);
+            } else {
+                canvas_.clearSelection();
+            }
         }
     }
-    if (viewHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !gizmoOwnsMouse_) {
+    if (viewHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !gizmoOwnsMouse_ && !editingElements()) {
         if (pickAt(cam, io.MousePos)) {
             frameSelection();
         } else {
@@ -1077,7 +1230,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     // A right click that did not drag: the menu.
     if (viewHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
         io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < still) {
-        const int picked = pickAt(cam, io.MousePos);
+        const int picked = editingElements() ? 0 : pickAt(cam, io.MousePos);
         if (picked && !canvas_.selection().count(picked)) canvas_.select(picked);
         addAt_ = floorPoint(cam, io.MousePos);
         ImGui::OpenPopup("view_menu");
@@ -1113,7 +1266,12 @@ void SimWorkspace::viewport(ImVec2 size) {
     }
     // What is selected, or under the mouse, at the bottom.
     const int named = hovered_ ? hovered_ : canvas_.current();
-    if (const sim::Node* n = net_.node(named)) {
+    const std::string elementsText = elementStatus();
+    if (!elementsText.empty()) {
+        const ImVec2 ts = ImGui::CalcTextSize(elementsText.c_str());
+        d->AddText(ImVec2(hi.x - ts.x - pad, hi.y - ts.y - pad), hoverElement_ >= 0 ? theme::kText : theme::kAccentHover,
+                   elementsText.c_str());
+    } else if (const sim::Node* n = net_.node(named)) {
         const sim::NodeType* t = sim::findNodeType(n->type);
         std::snprintf(text, sizeof text, "%s  %s%s", n->name.c_str(), t ? t->label : n->type.c_str(),
                       hovered_ && hovered_ != canvas_.current() ? "" : "  \xc2\xb7  selected");

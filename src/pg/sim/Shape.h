@@ -62,6 +62,24 @@ struct Rotation {
     static Rotation about(const Vec3& axis, float degrees);
 };
 
+/// What an Edit node does to a point: sized by `s` along the world's axes
+/// and turned by `r` (degrees, as Rotation::fromEuler) about the pivot
+/// `p`, then moved by `t` -- x to R S (x - p) + p + t. What the viewport's
+/// handle does after it is again one (turned, sized, moved), so a drag
+/// goes on setting the same node.
+struct EditTransform {
+    Vec3 t, r, s{1.0f, 1.0f, 1.0f}, p;
+
+    Vec3 apply(const Vec3& x) const;
+    /// This, then `turn` about `center`.
+    EditTransform turned(const Rotation& turn, const Vec3& center) const;
+    /// This, then sized by `k` about `center` -- along its own axes, the
+    /// turned ones: sizes along others would shear.
+    EditTransform sized(const Vec3& k, const Vec3& center) const;
+    /// This, then moved.
+    EditTransform moved(const Vec3& by) const;
+};
+
 /// A shape placed in the world, ready for the questions asked of it cell by
 /// cell and ray by ray.
 class ShapeInstance {

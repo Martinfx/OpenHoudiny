@@ -93,6 +93,14 @@ Body s atributem `pin` = 1 se samy nehýbou. Jdou tam, kde je má
 geometrie v aktuálním snímku, takže animovaná geometrie (třeba
 klíčovaný Transform) je nese s sebou: vlajku na stožáru nebo záclonu na
 posuvné tyči. Mezi snímky jde přišpendlený bod plynule, po podkrocích.
+Přišpendlený je bod s `pin` nad 0,5.
+
+`pin` i `tear` jde místo wranglu **namalovat štětcem** ve viewportu:
+zobrazit vstup Cloth Solveru, **P**, tah po látce (s Ctrl maže). Vznikne
+uzel Attribute Paint, jehož kapky jsou místa, ne čísla bodů — látka může
+být pak jemnější a namalované zůstane. Rohy jde také zvednout úchytem
+(**2**, vybrat, **W**) — uzel Edit s měkkým poloměrem. Příklad
+**shade_sail** tak vznikl; viz [editing.md](editing.md).
 
 Hmotnost bodu je hustota (Density, kg/m², u lana kg/m) krát plocha
 kolem něj. Hmotnost lze zadat i přímo bodovým atributem `mass` (kg).

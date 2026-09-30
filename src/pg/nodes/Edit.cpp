@@ -185,17 +185,23 @@ public:
         }
         const std::vector<Dab> all = dabs(params_.getString("strokes"));
         const auto P = geo->positions();
-        parallelFor(n, 1024, [&](size_t begin, size_t end) {
-            for (size_t i = begin; i < end; ++i) {
-                for (const Dab& d : all) {
-                    const Vec3 off = P[i] - d.at;
-                    const float r2 = d.radius * d.radius, d2 = dot(off, off);
+        if (!all.empty()) {
+            // Dab after dab, each on the points within its reach alone: a
+            // stroke of thousands on a fine mesh stays quick.
+            const PointTree tree(P);
+            std::vector<int32_t> near;
+            for (const Dab& d : all) {
+                tree.near(d.at, d.radius, 0, near);
+                const float r2 = d.radius * d.radius;
+                for (const int32_t i : near) {
+                    const Vec3 off = P[static_cast<size_t>(i)] - d.at;
+                    const float d2 = dot(off, off);
                     if (d2 >= r2) continue;
                     const float f = 1.0f - d2 / r2;
-                    value[i] += (d.value - value[i]) * d.strength * f * f;
+                    value[static_cast<size_t>(i)] += (d.value - value[static_cast<size_t>(i)]) * d.strength * f * f;
                 }
             }
-        });
+        }
         if (a && a->type() == AttrType::Int) {
             auto v = a->write<int32_t>();
             for (size_t i = 0; i < n; ++i) v[i] = static_cast<int32_t>(std::lround(value[i]));

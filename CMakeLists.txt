@@ -50,6 +50,7 @@ add_library(pgcore
   src/pg/core/Graph.cpp
   src/pg/core/CookEngine.cpp
   src/pg/core/Spatial.cpp
+  src/pg/core/Pick.cpp
   src/pg/core/Selection.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp
@@ -348,6 +349,7 @@ if(PG_BUILD_GUI)
     tools/prototype/ShaderWorkspace.cpp
     tools/prototype/SimGeometry.cpp
     tools/prototype/SimAssets.cpp
+    tools/prototype/SimElements.cpp
     tools/prototype/SimRunner.cpp
     tools/prototype/SimViewport.cpp
     tools/prototype/SimWorkspace.cpp

@@ -1,6 +1,6 @@
 # Roadmapa
 
-> Stav dokumentu: **v3** · Poslední aktualizace: 2026-09-27
+> Stav dokumentu: **v3** · Poslední aktualizace: 2026-09-30
 >
 > Živý dokument. Verze 1 (2026-09-21) plánovala headless knihovnu pro
 > geometrii, GUI až ve třetí fázi a simulace po verzi 1.0. Cíl se změnil:
@@ -71,6 +71,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Shader graf | Uzly z textu, čtyři cíle (GLSL, GLSL ES, Vulkan, HLSL), editor s náhledem | [docs/shader-graph.md](docs/shader-graph.md) |
 | Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; z uzlů, deterministicky na libovolném počtu vláken | [docs/pyro.md](docs/pyro.md) |
 | Destrukce | Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení, drť, prach hnaný vytlačeným vzduchem; odstřel věžáku jako video | [docs/destruction.md](docs/destruction.md) |
+| Úpravy ve viewportu | Body, hrany a plochy vybrané myší (klik, obdélník, jen viditelné); úchyt je posune, otočí a zvětší (Edit s měkkým poloměrem), skupina a mazání z vybraného, štětec atributů (piny, trhání látky) — vše jako uzly sítě | [docs/editing.md](docs/editing.md) |
 | Geometrie v editoru | 30 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture, Convert Volume, Liquid Surface), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
@@ -367,6 +368,13 @@ Seřazeno podle poměru hodnota / náklad:
 5. **Alembic, čtení VDB, MaterialX.**
 6. **Build podle VFX Reference Platform** — Rocky Linux a knihovny ve
    verzích, se kterými počítají pipeline studií.
+7. **Úpravy geometrie ve viewportu** — ✅ body, hrany a plochy vybrané
+   myší, jen viditelné (strom obálek nad polygony); úchyt na vybraném
+   nastavuje uzel Edit (tahy se přesně skládají, měkký poloměr), Ctrl+G
+   skupina, Delete Blast, štětec maluje atribut kapkami jako místy
+   (Attribute Paint); značky v rendereru s testem hloubky
+   ([editing.md](docs/editing.md)). Zbývá: výběr lasem a štětcem, režim
+   vrcholů, Dissolve hran, symetrie, čísla bodů ve viewportu.
 
 ---
 

@@ -594,6 +594,26 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             d->AddCircleFilled(P(0.0f, 0.0f), 0.32f * s, shade(col, -0.65f));
             break;
         }
+        case Icon::Vertices:  // a quad's outline, its corners picked
+        case Icon::Edges:     // ... one of its sides
+        case Icon::Faces: {   // ... itself
+            const ImVec2 q[4] = {P(-0.75f, -0.5f), P(0.55f, -0.8f), P(0.8f, 0.55f), P(-0.55f, 0.75f)};
+            if (icon == Icon::Faces) d->AddConvexPolyFilled(q, 4, shade(col, -0.35f));
+            d->AddPolyline(q, 4, icon == Icon::Faces ? col : shade(col, -0.45f), ImDrawFlags_Closed, t);
+            if (icon == Icon::Vertices) {
+                for (const ImVec2& c : q) d->AddCircleFilled(c, 0.2f * s, col);
+            }
+            if (icon == Icon::Edges) d->AddLine(q[1], q[2], col, 2.6f * t);
+            break;
+        }
+        case Icon::Brush: {  // a round brush: its handle, the ferrule, the tip of the hairs
+            d->AddLine(P(0.85f, -0.85f), P(0.05f, -0.05f), col, 1.8f * t);
+            const ImVec2 hairs[4] = {P(0.1f, -0.25f), P(0.25f, -0.1f), P(-0.3f, 0.55f), P(-0.55f, 0.3f)};
+            d->AddConvexPolyFilled(hairs, 4, col);
+            const ImVec2 tip[3] = {P(-0.3f, 0.55f), P(-0.85f, 0.85f), P(-0.55f, 0.3f)};
+            d->AddConvexPolyFilled(tip, 3, col);
+            break;
+        }
         case Icon::Film:  // a strip of film: holes along both edges, a picture between
             d->AddRect(P(-0.85f, -0.7f), P(0.85f, 0.7f), col, 0.1f * s, 0, t);
             for (int i = 0; i < 4; ++i) {

@@ -555,31 +555,32 @@ std::vector<NodeType> buildTypes() {
     geometry("blast", "Blast", "blast",
              "Deletes the points of a group, and the primitives they were part of -- or of class Primitives the "
              "primitives, and the points only they used. Inverted, it keeps only them. Delete in the viewport "
-             "makes one of what is selected.",
+             "makes one of what is picked there.",
              in,
              {text("group", "Group", "Blast", "selected",
-                   "Which: a group's name, or numbers and ranges -- 0-9 12 -- * for all, ^ before one takes it "
-                   "away."),
+                   "Which: a group's name, numbers and ranges -- 0-9 12 -- edges by their points -- p3-4, "
+                   "p0-1-2 -- * for all; ^ before one takes it away."),
               elements("Blast", "What Group names: points, or primitives."),
               {"invert", "Keep", "Blast", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "Keep the group and delete the rest."}});
     geometry("group", "Group", "groupcreate",
              "A group of the points or primitives picked -- in the viewport, or by numbers and ranges: what "
-             "Blast deletes, a wrangle runs over, the cloth pins by. G in the viewport makes one of what is "
-             "selected.",
+             "Blast deletes, a wrangle runs over, the cloth pins by. Ctrl+G in the viewport makes one of what "
+             "is picked there.",
              in,
              {text("name", "Name", "Group", "group1", "What it is called."),
               elements("Group", "Points, or primitives."),
               text("pattern", "Elements", "Group", "",
-                   "Which: numbers and ranges -- 0-9 12 20-30 -- other groups by name, * for all; ^ before one "
-                   "takes it away.")});
+                   "Which: numbers and ranges -- 0-9 12 20-30 -- edges by their points -- p3-4 -- other groups "
+                   "by name, * for all; ^ before one takes it away.")});
     geometry("edit", "Edit", "edit",
              "Moves, turns and sizes the points picked in the viewport -- or those of the primitives picked -- "
-             "about the pivot, as the handle does: what dragging a selection makes. Soft Radius takes the "
-             "points round them along, less the further they are.",
+             "about the pivot, as the handle does: what dragging what is picked in the viewport makes -- W, "
+             "E, R. Soft Radius takes the points round them along, less the further they are.",
              in,
              {text("group", "Elements", "Edit", "",
-                   "Which: numbers and ranges -- 0-9 12 -- groups by name, * for all; ^ before one takes it away."),
+                   "Which: numbers and ranges -- 0-9 12 -- edges -- p3-4 -- groups by name, * for all; ^ before "
+                   "one takes it away."),
               elements("Edit", "Points, or the points of primitives."),
               vec("t", "Translate", "Edit", Vec3(), -5.0f, 5.0f, "m", "How far they move."),
               vec("r", "Rotate", "Edit", Vec3(), -180.0f, 180.0f, "\xc2\xb0", "Degrees about x, then y, then z, about the pivot."),
@@ -595,11 +596,11 @@ std::vector<NodeType> buildTypes() {
              in,
              {text("name", "Attribute", "Paint", "pin", "What it paints: @name in a wrangle."),
               {"value", "Value", "Paint", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
-               "What the brush lays on. Ctrl lays on Erase Value."},
+               "What the brush lays on. Ctrl held, it lays on Erase Value."},
               {"erase", "Erase Value", "Paint", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
                "What the brush lays on with Ctrl held."},
               {"radius", "Radius", "Paint", K::Float, {0.15f, 0.0f, 0.0f}, 0.01f, 1.0f, 1e-4f, kBig, "m",
-               "How big the brush is. [ and ] in the viewport."},
+               "How big the brush is: [ and ] in the viewport, or Shift+wheel."},
               {"strength", "Strength", "Paint", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "How much of the value a dab lays on at its middle."},
               {"default", "Default", "Paint", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",

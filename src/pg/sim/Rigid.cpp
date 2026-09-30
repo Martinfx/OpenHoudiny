@@ -3505,7 +3505,7 @@ RigidFlow RigidSolver::feel(const RigidFluids& fluids) const {
             moment += cross(com, f);
         }
         if (force == Vec3() && moment == Vec3()) continue;
-        out.pushes.push_back({static_cast<uint32_t>(k), force, moment});
+        out.pushes.push_back({static_cast<uint32_t>(k), force, moment, Vec3(), Vec3(), Vec3()});
     }
     // The grit: what each bit is in, and how that flows -- to half a float,
     // as a checkpoint keeps it, so a step taken again takes the same.

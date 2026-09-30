@@ -106,6 +106,37 @@ Orbit orbitThrough(const sim::Camera& camera, float distance);
 /// as they were.
 sim::Camera cameraFrom(const Orbit& orbit, sim::Camera camera);
 
+/// Marks over the displayed geometry while it is edited -- its wire, its
+/// points, what is picked and what is under the mouse, a painted
+/// attribute: drawn where they are in the world, hidden behind what is in
+/// front of them, a hair nearer the eye than the surface they lie on. The
+/// editor's alone: renders are drawn without.
+struct Overlay {
+    /// Eleven floats a dot: position, colour (with alpha), pixels across,
+    /// the normal of the surface it lies on (0 for none).
+    std::vector<float> dots;
+    /// Seven floats an end, two ends a line a pixel wide: position, colour.
+    std::vector<float> lines;
+    /// Eight floats an end, two ends a wide line: position, colour, pixels across.
+    std::vector<float> wide;
+    /// Seven floats a corner, three corners a face: position, colour.
+    std::vector<float> faces;
+
+    bool empty() const { return dots.empty() && lines.empty() && wide.empty() && faces.empty(); }
+    void clear() {
+        dots.clear();
+        lines.clear();
+        wide.clear();
+        faces.clear();
+    }
+    void dot(const Vec3& p, const Vec4& color, float pixels, const Vec3& normal = Vec3());
+    void line(const Vec3& a, const Vec3& b, const Vec4& color);
+    void wideLine(const Vec3& a, const Vec3& b, const Vec4& color, float pixels);
+    void face(const Vec3& a, const Vec3& b, const Vec3& c, const Vec4& color);
+    /// A face a colour at each corner, blended across.
+    void face(const Vec3& a, const Vec3& b, const Vec3& c, const Vec4& ca, const Vec4& cb, const Vec4& cc);
+};
+
 class VolumeRenderer;
 /// The passes of the renderer's last render -- drawn with passes on --
 /// averaged down 2x, to an OpenEXR file (pg/io/Exr.h): the picture in
@@ -142,6 +173,11 @@ public:
     void setHighlight(const std::vector<int>& selected, int hovered);
     /// Guide lines, drawn over the rest.
     void setLines(const Lines& lines);
+    /// The marks of editing, drawn over the geometry (Overlay): two layers,
+    /// the second over the first -- what changes with every move of the
+    /// mouse apart from what does not. An empty one: none.
+    void setOverlay(const Overlay& overlay, int layer = 0);
+    static constexpr int kOverlayLayers = 2;
     /// Geometry drawn with the scene: the network's displayed node. Null:
     /// none. The same geometry again costs nothing. Its glass -- primitives
     /// whose attribute glass is 1 or more (sim::DisplayGeometry) -- is
@@ -251,6 +287,8 @@ private:
     void renderMeshes(int width, int height, const Vec3& eye);
     /// The displayed geometry's dots and lines, over what the main pass drew.
     void drawGeometry(int width, int height);
+    /// The marks of editing, over that.
+    void drawOverlay(int width, int height, const Vec3& eye);
     /// The displayed geometry and the pieces, as they are drawn, to the GPU.
     void uploadGeometry();
     /// The faces of the glass turned to the eye, the nearest two at each
@@ -308,6 +346,11 @@ private:
     GeometryPtr geometry_, pieces_;
     sim::DisplayGeometry shownDisplay_, piecesDisplay_;  // what each is drawn as
     GLuint geoProgram_ = 0, dotProgram_ = 0;
+    // The overlay: faces and thin lines, dots, wide lines -- each its own
+    // program, vertex array and buffer.
+    GLuint overlayProgram_ = 0, overlayDotProgram_ = 0, overlayWideProgram_ = 0;
+    GLuint overlayVao_[2][4] = {}, overlayBuffer_[2][4] = {};
+    GLsizei overlayCount_[2][4] = {};  // of each layer: faces' corners, lines' ends, dots, wide lines' corners
     GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
     GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;
     GLsizei gritDots_ = 0;  // the last of the dots: the pieces' loose points, their grit

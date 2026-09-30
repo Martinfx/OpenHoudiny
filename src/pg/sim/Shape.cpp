@@ -112,6 +112,36 @@ Vec3 Rotation::toEuler(const Vec3& near) const {
     return unwrap(Vec3(a, -90.0f, c), near);
 }
 
+Vec3 EditTransform::apply(const Vec3& x) const {
+    const Vec3 d = x - p;
+    return Rotation::fromEuler(r).apply(Vec3(d.x * s.x, d.y * s.y, d.z * s.z)) + p + t;
+}
+
+EditTransform EditTransform::turned(const Rotation& turn, const Vec3& center) const {
+    // turn (R S (x - p) + p + t - c) + c: the turn before R, and t what
+    // takes p + t where the turn takes it.
+    EditTransform e = *this;
+    e.r = turn.then(Rotation::fromEuler(r)).toEuler(r);
+    e.t = turn.apply(p + t - center) + center - p;
+    return e;
+}
+
+EditTransform EditTransform::sized(const Vec3& k, const Vec3& center) const {
+    // R K R^T (R S (x - p) + p + t - c) + c = R (K S) (x - p) + ...
+    const Rotation axes = Rotation::fromEuler(r);
+    EditTransform e = *this;
+    e.s = Vec3(s.x * k.x, s.y * k.y, s.z * k.z);
+    const Vec3 local = axes.inverse(p + t - center);
+    e.t = axes.apply(Vec3(local.x * k.x, local.y * k.y, local.z * k.z)) + center - p;
+    return e;
+}
+
+EditTransform EditTransform::moved(const Vec3& by) const {
+    EditTransform e = *this;
+    e.t = t + by;
+    return e;
+}
+
 Rotation Rotation::about(const Vec3& axis, float degrees) {
     const Vec3 n = normalize(axis);
     if (length(n) < 0.5f) return Rotation();
