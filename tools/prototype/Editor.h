@@ -48,6 +48,7 @@ private:
     std::unique_ptr<ShaderWorkspace> shaders_;
     std::vector<Workspace*> workspaces_;
     size_t active_ = 0;
+    size_t shown_ = 0;  ///< the workspace shown last frame
 
     // The layout, in pixels: kept as the window is resized, changed by the splitters.
     float rightWidth_ = 0.0f;

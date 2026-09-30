@@ -261,7 +261,10 @@ Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float
 
         // The sun, directly: a point of its disc, if nothing is in the way.
         if (sunOn) {
-            const Vec3 wl = sampleCone(scene.sunDirection, scene.sunCosine, rng.next(), rng.next());
+            // Taken one after the other: a call's arguments are in no set order.
+            const float u1 = rng.next();
+            const float u2 = rng.next();
+            const Vec3 wl = sampleCone(scene.sunDirection, scene.sunCosine, u1, u2);
             float pdf = 0.0f;
             const Vec3 f = surface.eval(wl, pdf);
             const float side = dot(face, wl);

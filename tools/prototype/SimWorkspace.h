@@ -72,6 +72,7 @@ public:
     bool modified() const override;
 
     void update(float dt) override;
+    void hidden() override { stopRender(); }
     void shortcuts() override;
     void viewport(ImVec2 size) override;
     void bottom(ImVec2 size) override;

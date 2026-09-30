@@ -137,6 +137,10 @@ void Editor::statusBar(float height) {
 }
 
 void Editor::frame(float dt) {
+    if (shown_ != active_) {
+        if (shown_ < workspaces_.size()) workspaces_[shown_]->hidden();
+        shown_ = active_;
+    }
     Workspace& w = current();
     w.update(dt);
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Q)) quit_ = true;

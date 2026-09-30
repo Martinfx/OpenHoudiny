@@ -34,6 +34,9 @@ public:
 
     /// Once a frame, before the panels: `dt` seconds since the last.
     virtual void update(float dt) = 0;
+    /// Another workspace is shown instead: what works in the background
+    /// for this one's panels may stop.
+    virtual void hidden() {}
     /// Keys that work anywhere in the workspace.
     virtual void shortcuts() = 0;
 

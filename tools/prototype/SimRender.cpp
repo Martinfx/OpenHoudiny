@@ -189,11 +189,20 @@ void SimWorkspace::renderTab(int width, int height) {
                                ImGuiButtonFlags_MouseButtonMiddle);
 
     // The view turns here as in the viewport; the render starts again.
+    // Leaving the camera, the view starts from where the camera is.
+    auto leaveCamera = [&] {
+        if (throughCamera_ && compiled_.hasCamera) {
+            const sim::Camera& c = compiled_.cameraAt(current_);
+            renderer_.orbit = gl::orbitThrough(c, focusOf(c));
+        }
+        setThroughCamera(false);
+    };
+    const bool hovered = ImGui::IsItemHovered();
     gl::Orbit& o = renderer_.orbit;
     if (ImGui::IsItemActive()) {
         const ImVec2 dlt = io.MouseDelta;
         if (dlt.x != 0.0f || dlt.y != 0.0f) {
-            setThroughCamera(false);
+            leaveCamera();
             if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Left) && io.KeyShift)) {
                 float fwd[3], right[3], up[3];
                 o.axes(fwd, right, up);
@@ -208,11 +217,13 @@ void SimWorkspace::renderTab(int width, int height) {
             viewDirty_ = true;
         }
     }
-    if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
-        setThroughCamera(false);
+    if (hovered && io.MouseWheel != 0.0f) {
+        leaveCamera();
         o.distance = std::clamp(o.distance * std::pow(0.88f, io.MouseWheel), 0.2f, 200.0f);
         viewDirty_ = true;
     }
+    // 0: through the camera, or not -- as in the viewport.
+    if (hovered && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_0, false)) setThroughCamera(!throughCamera_);
     if (!st.error.empty()) d->AddText(ImVec2(lo.x + theme::px(8.0f), lo.y + theme::px(8.0f)), IM_COL32(240, 120, 110, 255),
                                       st.error.c_str());
 }

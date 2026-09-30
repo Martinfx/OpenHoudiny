@@ -27,16 +27,26 @@ namespace fs = std::filesystem;
 
 namespace {
 
+/// A number in [-1, 1): the same with any standard library, as the
+/// generator's numbers are (its distributions' are not).
+float centred(std::mt19937& rng) { return static_cast<float>(rng() >> 8) * (2.0f / 16777216.0f) - 1.0f; }
+/// Three, in this order -- a call's arguments are taken in no set order.
+Vec3 centred3(std::mt19937& rng) {
+    const float x = centred(rng);
+    const float y = centred(rng);
+    const float z = centred(rng);
+    return {x, y, z};
+}
+
 /// `n` triangles strewn in a box 2 m wide, each some `size` across.
 std::shared_ptr<Geometry> strewn(int n, uint32_t seed, float size = 0.3f) {
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> at(-1.0f, 1.0f), off(-0.5f * size, 0.5f * size);
     auto geo = std::make_shared<Geometry>();
     geo->addPoints(3 * static_cast<size_t>(n));
     auto P = geo->positionsForWrite();
     for (int t = 0; t < n; ++t) {
-        const Vec3 c(at(rng), at(rng) + 1.2f, at(rng));
-        for (int k = 0; k < 3; ++k) P[3 * t + k] = c + Vec3(off(rng), off(rng), off(rng));
+        const Vec3 c = centred3(rng) + Vec3(0.0f, 1.2f, 0.0f);
+        for (int k = 0; k < 3; ++k) P[3 * t + k] = c + centred3(rng) * (0.5f * size);
         const uint32_t tri[3] = {static_cast<uint32_t>(3 * t), static_cast<uint32_t>(3 * t + 1), static_cast<uint32_t>(3 * t + 2)};
         geo->addPrimitive(tri, true);
     }
@@ -77,14 +87,21 @@ SceneInput inputOf(GeometryPtr geo, const sim::Look& look, const sim::Camera& ca
     return in;
 }
 
-/// A small picture of triangles over the floor: many small ones, or a few
-/// large -- broad surfaces in each other's shadows and light.
-std::shared_ptr<const Scene> smallScene(int width, int height, bool broad = false) {
+/// A small picture of triangles over the floor: many small ones in the
+/// sun -- or a few large under an overcast sky, broad surfaces in each
+/// other's soft shadows: the light a sky gives, noisy with few samples.
+std::shared_ptr<const Scene> smallScene(int width, int height, bool overcast = false) {
     sim::Camera cam = sim::Camera::lookingAt(Vec3(1.6f, 1.9f, 2.0f), Vec3(0.0f, 1.0f, 0.0f));
     cam.width = width;
     cam.height = height;
+    sim::Look look;
+    if (overcast) {
+        look.lightIntensity = 0.0f;
+        look.skyIntensity = 1.0f;
+        look.groundColor = Vec3(0.5f, 0.5f, 0.5f);
+    }
     SceneBuilder builder;
-    return builder.build(inputOf(broad ? strewn(12, 3, 1.6f) : strewn(300, 3), sim::Look(), cam));
+    return builder.build(inputOf(overcast ? strewn(12, 3, 1.6f) : strewn(300, 3), look, cam));
 }
 
 }  // namespace
@@ -94,11 +111,10 @@ TEST(render_bvh_meets_what_every_triangle_meets) {
     SceneBuilder builder;
     const auto scene = builder.build(inputOf(geo, noFloor(), sim::Camera()));
     std::mt19937 rng(5);
-    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
     int hits = 0;
     for (int r = 0; r < 3000; ++r) {
-        const Vec3 o(3.0f * u(rng), 1.2f + 3.0f * u(rng), 3.0f * u(rng));
-        const Vec3 target(0.8f * u(rng), 1.2f + 0.8f * u(rng), 0.8f * u(rng));
+        const Vec3 o = centred3(rng) * 3.0f + Vec3(0.0f, 1.2f, 0.0f);
+        const Vec3 target = centred3(rng) * 0.8f + Vec3(0.0f, 1.2f, 0.0f);
         const Vec3 d = normalize(target - o);
         const float expected = bruteForce(*geo, o, d);
         Hit hit;
@@ -140,12 +156,12 @@ TEST(render_instances_meet_rays_as_their_copies) {
     CHECK_EQ(a->meshes.size(), 1u);  // the prototype once
     CHECK_EQ(a->placed.size(), static_cast<size_t>(n));
     std::mt19937 rng(9);
-    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
     int hits = 0;
     for (int r = 0; r < 2000; ++r) {
         // At one of them, from anywhere round.
-        const Vec3 at = P[static_cast<size_t>(r % n)] + Vec3(0.6f * u(rng), 1.0f + 0.6f * u(rng), 0.6f * u(rng));
-        const Vec3 o = at + normalize(Vec3(u(rng), 0.3f + std::fabs(u(rng)), u(rng))) * 8.0f;
+        const Vec3 at = P[static_cast<size_t>(r % n)] + centred3(rng) * 0.6f + Vec3(0.0f, 1.0f, 0.0f);
+        const Vec3 w = centred3(rng);
+        const Vec3 o = at + normalize(Vec3(w.x, 0.3f + std::fabs(w.y), w.z)) * 8.0f;
         const Vec3 d = normalize(at - o);
         Hit ha, hb;
         const bool ma = a->intersect(o, d, 1e30f, 0.5f, ha), mb = b->intersect(o, d, 1e30f, 0.5f, hb);
@@ -255,7 +271,7 @@ TEST(render_denoiser_comes_nearer_the_converged_picture) {
         savePicture(noisy, std::string(dump) + "/den.png", true, "", e);
     }
     std::printf("  rms %.4f raw, %.4f denoised\n", raw, clean);
-    CHECK(clean < 0.8 * raw);
+    CHECK(clean < 0.6 * raw);
 }
 
 TEST(render_settings_come_from_the_output) {
