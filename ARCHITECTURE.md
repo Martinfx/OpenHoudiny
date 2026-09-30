@@ -347,7 +347,8 @@ src/pg/core/     Types      vektory, matice, typy atributů
                  CookEngine pull evaluace, LRU cache
                  Spatial    k-d strom bodů (deterministické pořadí), sousedé přes hrany
                  Selection  vzory prvků: čísla, rozsahy, skupiny, hrany (p3-4), * a ^
-                 Pick       co je pod myší a v obdélníku: BVH nad polygony, jen viditelné
+                 Pick       co je pod myší, v obdélníku, lasu, tahu štětce: BVH nad
+                            polygony, jen viditelné nebo i skryté
 src/pg/lang/     Parse      lexer a parser do AST, kontrola jmen a počtu argumentů
                  Check      typová kontrola proti geometrii: vazby atributů, přetížení
                  Eval       interpret typovaného stromu

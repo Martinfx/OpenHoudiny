@@ -100,6 +100,9 @@ public:
     /// What a click in the viewport picks: objects -- nodes -- or the
     /// points, edges or primitives of the displayed geometry.
     enum class Elements { Objects, Points, Edges, Primitives };
+    /// How a drag picks them: what a box holds, what a lasso drawn round
+    /// goes round, what a brush goes over.
+    enum class PickStyle { Box, Lasso, Brush };
 
 private:
     void load(const sim::Network& net, const std::string& path, const std::string& example);
@@ -335,8 +338,17 @@ private:
     int32_t elementAt(const ViewCamera& cam, ImVec2 mouse);
     /// A click: that element alone, or added (Shift), or taken away (Ctrl).
     void clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, bool remove);
-    /// What a box from `a` to `b` holds, the same way.
-    void boxElements(const ViewCamera& cam, ImVec2 a, ImVec2 b, bool add, bool remove);
+    /// What a part of the screen takes in -- a box, a lasso, a brush's way
+    /// -- the same way.
+    void regionElements(const ViewCamera& cam, const ScreenRegion& region, bool add, bool remove);
+    /// S: a box, a lasso, a brush; H: what the surface hides picked too.
+    void setPickStyle(PickStyle style);
+    void setPickHidden(bool on);
+    /// The brush that picks: begun by the press -- a dab -- then over what
+    /// it goes while the button is down; its ring.
+    void pickBrushTool(ImDrawList* d, const ViewCamera& cam, bool overView, bool pressed);
+    /// Its radius, pixels.
+    float pickBrushRadius() const;
     void selectAllElements(bool invert);
     size_t elementCount() const;
     /// What is picked as the nodes read it: a pattern, and the class
@@ -353,6 +365,9 @@ private:
     /// The marks over the geometry: its wire, its points, what is picked,
     /// what is under the mouse, the paint.
     void updateOverlay();
+    /// The surface's normal at each point of `geo` (not of unit length): a
+    /// point's dot lies on it. Found again only for other points or faces.
+    const std::vector<Vec3>& pointNormals(const GeometryPtr& geo);
     /// A node of `type` put after the displayed one -- fed by it, feeding
     /// what it fed -- and displayed. Its id; 0 when nothing is displayed.
     int insertAfterDisplayed(const std::string& type);
@@ -494,18 +509,29 @@ private:
         std::vector<Edge> edges;
         uint64_t revision = 0;              ///< changes with what is picked
     } picked_;
+    Picked brushBefore_;                    ///< what was picked before the brush's stroke: Escape puts it back
     std::unique_ptr<ElementPicker> picker_;
     int32_t hoverElement_ = -1;             ///< under the mouse, of the kind picked
     ImVec2 hoverMouse_{-1.0f, -1.0f};       ///< where the mouse was when it was found
     Vec3 hoverEye_, hoverForward_;          ///< ... and the camera
     const Geometry* hoverGeometry_ = nullptr;
-    bool boxing_ = false;                   ///< a box is being drawn
+    bool boxing_ = false;                   ///< a box or a lasso is being drawn
+    PickStyle pickStyle_ = PickStyle::Box;
+    bool pickHidden_ = false;               ///< what the surface hides is picked too, and shown faint
+    float overlayHidden_ = 0.0f;            ///< ... as the renderer was told
+    std::vector<Vec2> lasso_;               ///< the lasso drawn so far, on the screen
+    bool brushing_ = false;                 ///< the button is down, the brush picking
+    bool brushRemoves_ = false;             ///< ... taking away: Ctrl at the press
+    ImVec2 brushFrom_;                      ///< where it was the frame before
+    float pickBrush_ = 0.0f;                ///< its radius, unscaled pixels; 0: the default
     bool pressTurns_ = false;               ///< the press was Alt's or Space's: it turns the view
     bool pressCancelled_ = false;           ///< Escape during the press: it picks nothing
     GeometryPtr edgeGeometry_;              ///< the geometry of the wire drawn
     std::vector<Edge> edges_;               ///< ... its edges
     bool spaceUsed_ = false;                ///< Space held turned the view: letting go does not play
-    std::string overlayKey_[2];             ///< what the overlay's layers were made of
+    std::string overlayKey_[gl::VolumeRenderer::kOverlayLayers];  ///< what the overlay's layers were made of
+    GeometryPtr normalsGeometry_;           ///< the geometry of the normals the points are drawn over
+    std::vector<Vec3> normals_;             ///< ... at each point, from the faces round it
     // A drag of the handle on elements: the Edit node, its values when it
     // began, the handle's middle then; made by this drag, it goes on Escape.
     int editNode_ = 0;

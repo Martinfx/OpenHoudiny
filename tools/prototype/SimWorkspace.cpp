@@ -1039,9 +1039,10 @@ void SimWorkspace::duplicate(const std::vector<int>& nodes) {
         }
         for (const auto& [channel, text] : original.exprs) net_.setExpression(copy, channel, text);
         net_.setBypass(copy, original.bypass);
-        // In the world too, beside the original rather than inside it.
-        const sim::Handles& h = sim::findNodeType(original.type)->handles;
-        if (h.center) {
+        // In the world too, beside the original rather than inside it -- an
+        // object, a source; a geometry node is as it was.
+        const sim::Handles& h = type->handles;
+        if (h.center && category != "Geometry") {
             const float step = h.size ? 1.2f * net_.param(copy, h.size)[0] : h.radius ? 2.2f * net_.value(copy, h.radius) : 0.3f;
             sim::ParamValue c = net_.param(copy, h.center);
             c[0] += step;
@@ -1914,6 +1915,7 @@ void SimWorkspace::helpMenu() {
     ImGui::TextDisabled("Editing the displayed geometry");
     ImGui::TextUnformatted("1  2  3  4                objects; points, edges, primitives");
     ImGui::TextUnformatted("Click, left drag          pick one, a box (Shift adds, Ctrl takes away)");
+    ImGui::TextUnformatted("S, H                      box, lasso or brush; what is hidden too");
     ImGui::TextUnformatted("Alt / Space + left drag   orbit, while picking or painting");
     ImGui::TextUnformatted("W  E  R, drag a handle    move, turn, size what is picked (an Edit node)");
     ImGui::TextUnformatted("Ctrl+G, Del               a group of it, delete it (Group, Blast)");

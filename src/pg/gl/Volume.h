@@ -173,11 +173,15 @@ public:
     void setHighlight(const std::vector<int>& selected, int hovered);
     /// Guide lines, drawn over the rest.
     void setLines(const Lines& lines);
-    /// The marks of editing, drawn over the geometry (Overlay): two layers,
-    /// the second over the first -- what changes with every move of the
-    /// mouse apart from what does not. An empty one: none.
+    /// The marks of editing, drawn over the geometry (Overlay): three
+    /// layers, each over the one before -- what changes with the geometry,
+    /// with what is picked, with every move of the mouse, apart. An empty
+    /// one: none.
     void setOverlay(const Overlay& overlay, int layer = 0);
-    static constexpr int kOverlayLayers = 2;
+    static constexpr int kOverlayLayers = 3;
+    /// What of the marks the surface hides is drawn too, this faint (an
+    /// alpha, 0 to 1): when what is hidden is picked as well. 0: not at all.
+    void setOverlayHidden(float alpha) { overlayHidden_ = alpha; }
     /// Geometry drawn with the scene: the network's displayed node. Null:
     /// none. The same geometry again costs nothing. Its glass -- primitives
     /// whose attribute glass is 1 or more (sim::DisplayGeometry) -- is
@@ -349,8 +353,9 @@ private:
     // The overlay: faces and thin lines, dots, wide lines -- each its own
     // program, vertex array and buffer.
     GLuint overlayProgram_ = 0, overlayDotProgram_ = 0, overlayWideProgram_ = 0;
-    GLuint overlayVao_[2][4] = {}, overlayBuffer_[2][4] = {};
-    GLsizei overlayCount_[2][4] = {};  // of each layer: faces' corners, lines' ends, dots, wide lines' corners
+    GLuint overlayVao_[kOverlayLayers][4] = {}, overlayBuffer_[kOverlayLayers][4] = {};
+    GLsizei overlayCount_[kOverlayLayers][4] = {};  // of each layer: faces' corners, lines' ends, dots, wide lines' corners
+    float overlayHidden_ = 0.0f;
     GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
     GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;
     GLsizei gritDots_ = 0;  // the last of the dots: the pieces' loose points, their grit

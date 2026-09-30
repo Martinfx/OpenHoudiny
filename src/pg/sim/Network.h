@@ -115,6 +115,9 @@ struct Handles {
     const char* size = nullptr;      ///< Vector, m: its extent along its own axes
     const char* radius = nullptr;    ///< Float, m: a radius, across its axis
     const char* height = nullptr;    ///< Float, m: a length along its axis
+    /// Vector, m: what it turns and sizes about, from `center` -- the handle
+    /// is there, at center + pivot; the gizmo leaves it as it is.
+    const char* pivot = nullptr;
 
     bool any() const { return center || rotation || axis || size || radius || height; }
 };

@@ -17,6 +17,7 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 
 using namespace pg;
@@ -422,6 +423,258 @@ TEST(picker_leaves_out_what_the_surface_hides) {
     auto moved = std::make_shared<Geometry>(*geo);
     moved->positionsForWrite()[0] = Vec3(0.0f, 2.0f, 0.0f);
     CHECK(!picker.fits(*moved));
+}
+
+TEST(screen_regions_a_box_a_lasso_and_the_way_of_a_brush) {
+    const ScreenRegion box = ScreenRegion::box(30.0f, 40.0f, 10.0f, 20.0f);  // corners either way round
+    CHECK(box.contains(10.0f, 20.0f) && box.contains(30.0f, 40.0f) && box.contains(20.0f, 30.0f));
+    CHECK(!box.contains(31.0f, 30.0f) && !box.contains(20.0f, 19.0f));
+    // A U: its hollow is out.
+    const ScreenRegion u = ScreenRegion::lasso({{0.0f, 0.0f}, {10.0f, 0.0f}, {10.0f, 30.0f}, {20.0f, 30.0f}, {20.0f, 0.0f},
+                                                {30.0f, 0.0f}, {30.0f, 40.0f}, {0.0f, 40.0f}});
+    CHECK(u.contains(5.0f, 5.0f) && u.contains(25.0f, 5.0f) && u.contains(15.0f, 35.0f));
+    CHECK(!u.contains(15.0f, 10.0f) && !u.contains(-1.0f, 5.0f) && !u.contains(15.0f, 41.0f));
+    // A star drawn in one line round itself: its middle, gone round twice, is out.
+    std::vector<Vec2> star;
+    for (int k = 0; k < 5; ++k) {
+        const float a = (90.0f + 144.0f * static_cast<float>(k)) * 3.14159265f / 180.0f;
+        star.push_back({100.0f * std::cos(a), -100.0f * std::sin(a)});
+    }
+    const ScreenRegion s = ScreenRegion::lasso(star);
+    CHECK(!s.contains(0.0f, 0.0f));
+    CHECK(s.contains(0.0f, -70.0f));  // in the top point
+    CHECK(!ScreenRegion::lasso({{0.0f, 0.0f}, {10.0f, 10.0f}}).contains(5.0f, 5.0f));  // no inside to a line
+    // A lasso of many points: the same as asking every side.
+    std::vector<Vec2> blob;
+    uint32_t seed = 7;
+    auto next = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    for (int k = 0; k < 500; ++k) {
+        const float a = 6.2831853f * static_cast<float>(k) / 500.0f, r = 60.0f + 40.0f * next();
+        blob.push_back({200.0f + r * std::cos(a), 200.0f + r * std::sin(a)});
+    }
+    const ScreenRegion b = ScreenRegion::lasso(blob);
+    int agree = 0, in = 0;
+    for (int k = 0; k < 4000; ++k) {
+        const float x = 80.0f + 240.0f * next(), y = 80.0f + 240.0f * next();
+        bool odd = false;
+        for (size_t i = 0; i < blob.size(); ++i) {
+            const Vec2& p = blob[i];
+            const Vec2& q = blob[(i + 1) % blob.size()];
+            if ((p.y > y) != (q.y > y) && x < (q.x - p.x) * (y - p.y) / (q.y - p.y) + p.x) odd = !odd;
+        }
+        agree += b.contains(x, y) == odd ? 1 : 0;
+        in += odd ? 1 : 0;
+    }
+    CHECK_EQ(agree, 4000);
+    CHECK(in > 1000 && in < 3000);
+    // A brush moved from (0, 0) to (100, 0), 10 across: what is near its way.
+    const ScreenRegion brush = ScreenRegion::brush(0.0f, 0.0f, 100.0f, 0.0f, 10.0f);
+    CHECK(brush.contains(50.0f, 9.0f) && brush.contains(-7.0f, 7.0f) && brush.contains(107.0f, -7.0f));
+    CHECK(!brush.contains(50.0f, 11.0f) && !brush.contains(-8.0f, 8.0f));
+    float along = 0.0f;
+    CHECK(brush.touches(40.0f, -50.0f, 40.0f, 50.0f, along));  // across its way: where it crosses
+    CHECK_NEAR(along, 0.5f, 1e-5f);
+    CHECK(brush.touches(50.0f, 30.0f, 50.0f, 5.0f, along));  // an end in reach
+    CHECK_NEAR(along, 1.0f, 1e-5f);
+    CHECK(brush.touches(-30.0f, 5.0f, -6.0f, 5.0f, along));  // reached from the brush's start
+    CHECK_NEAR(along, 1.0f, 1e-5f);
+    CHECK(!brush.touches(0.0f, 20.0f, 100.0f, 20.0f, along));
+    CHECK(!brush.touches(120.0f, -50.0f, 120.0f, 50.0f, along));
+    float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+    brush.bounds(x0, y0, x1, y1);
+    CHECK(x0 == -10.0f && y0 == -10.0f && x1 == 110.0f && y1 == 10.0f);
+}
+
+TEST(picker_takes_in_what_a_lasso_goes_round_and_what_a_brush_goes_over) {
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 4);  // 5 x 5 points, a quarter apart
+    GeometryPtr geo = engine.cook(*grid, CookContext{});
+    const ElementPicker picker(geo);
+    const PickView view = fromAbove(3.0f);
+    auto at = [&](size_t i) {
+        Vec2 s;
+        view.project(geo->positions()[i], s.x, s.y);
+        return s;
+    };
+    // An L round the row of 6 7 8 and down the column of 6 11 16: not 12,
+    // in its corner.
+    const float m = 10.0f;
+    const Vec2 p6 = at(6), p8 = at(8), p16 = at(16);
+    const ScreenRegion l = ScreenRegion::lasso({{p6.x - m, p6.y - m}, {p8.x + m, p6.y - m}, {p8.x + m, p6.y + m},
+                                                {p6.x + m, p6.y + m}, {p6.x + m, p16.y + m}, {p6.x - m, p16.y + m}});
+    const std::vector<uint8_t> points = picker.pointsIn(view, l);
+    CHECK_EQ(countOf(points), 5u);
+    for (const size_t i : {6u, 7u, 8u, 11u, 16u}) CHECK(points[i] == 1);
+    CHECK(points[12] == 0);
+    const std::vector<uint8_t> edges = picker.edgesIn(view, l);
+    CHECK_EQ(countOf(edges), 4u);  // 6-7, 7-8, 6-11, 11-16
+    CHECK_EQ(countOf(picker.primitivesIn(view, l)), 0u);  // no quad's middle is in it
+    // A brush along the row: the three points, the ten edges they end, no face.
+    const ScreenRegion row = ScreenRegion::brush(p6.x, p6.y, p8.x, p8.y, 8.0f);
+    CHECK_EQ(countOf(picker.pointsIn(view, row)), 3u);
+    CHECK_EQ(countOf(picker.edgesIn(view, row)), 10u);
+    // Along the middles of two quads: the two, the edge between them, no point.
+    float ax = 0.0f, ay = 0.0f, bx = 0.0f, by = 0.0f;
+    const std::vector<uint8_t> none(picker.edges().size(), 0);
+    size_t first = 0, second = 0;
+    for (size_t p = 0; p < geo->primitiveCount(); ++p) {
+        const auto pts = geo->primitivePoints(p);
+        const bool has6 = std::find(pts.begin(), pts.end(), 6u) != pts.end();
+        const bool has12 = std::find(pts.begin(), pts.end(), 12u) != pts.end();
+        const bool has8 = std::find(pts.begin(), pts.end(), 8u) != pts.end();
+        if (has6 && has12) first = p;
+        if (has8 && has12) second = p;
+    }
+    view.project(picker.middle(first), ax, ay);
+    view.project(picker.middle(second), bx, by);
+    const ScreenRegion across = ScreenRegion::brush(ax, ay, bx, by, 5.0f);
+    CHECK_EQ(countOf(picker.pointsIn(view, across)), 0u);
+    const std::vector<uint8_t> faces = picker.primitivesIn(view, across);
+    CHECK_EQ(countOf(faces), 2u);
+    CHECK(faces[first] == 1 && faces[second] == 1);
+    const std::vector<uint8_t> crossed = picker.edgesIn(view, across);
+    CHECK_EQ(countOf(crossed), 1u);
+    for (size_t i = 0; i < crossed.size(); ++i) {
+        if (crossed[i]) CHECK(picker.edges()[i] == Edge(7, 12));
+    }
+    // A dab bigger than a quad on one of them: the quad and its four corners.
+    const ScreenRegion dab = ScreenRegion::brush(ax, ay, ax, ay, 34.0f);
+    CHECK_EQ(countOf(picker.pointsIn(view, dab)), 4u);
+    CHECK_EQ(countOf(picker.primitivesIn(view, dab)), 1u);
+}
+
+TEST(picker_regions_on_a_fine_grid_are_what_asking_each_element_gives) {
+    // Thousands of points, edges and quads: the threads split them, the
+    // answer is the same as one element after another.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 80);  // 6561 points, 6400 quads
+    GeometryPtr geo = engine.cook(*grid, CookContext{});
+    const ElementPicker picker(geo);
+    const PickView view = fromAbove(2.0f);
+    const auto P = geo->positions();
+    std::vector<Vec2> star;
+    for (int k = 0; k < 40; ++k) {
+        const float a = 6.2831853f * static_cast<float>(k) / 40.0f, r = k % 2 ? 60.0f : 150.0f;
+        star.push_back({200.0f + r * std::cos(a), 200.0f + r * std::sin(a)});
+    }
+    const ScreenRegion lasso = ScreenRegion::lasso(star);
+    const ScreenRegion brush = ScreenRegion::brush(90.0f, 120.0f, 310.0f, 250.0f, 14.0f);
+    for (const ScreenRegion* region : {&lasso, &brush}) {
+        const std::vector<uint8_t> points = picker.pointsIn(view, *region);
+        const std::vector<uint8_t> edges = picker.edgesIn(view, *region);
+        size_t in = 0, wrong = 0;
+        for (size_t i = 0; i < P.size(); ++i) {
+            float x = 0.0f, y = 0.0f;
+            const bool expect = view.project(P[i], x, y) && region->contains(x, y);
+            wrong += (points[i] != 0) != expect ? 1 : 0;
+            in += expect ? 1 : 0;
+        }
+        CHECK_EQ(wrong, 0u);
+        CHECK(in > 300);
+        size_t touched = 0;
+        wrong = 0;
+        for (size_t i = 0; i < picker.edges().size(); ++i) {
+            const Edge& e = picker.edges()[i];
+            float ax = 0.0f, ay = 0.0f, bx = 0.0f, by = 0.0f, along = 0.0f;
+            view.project(P[e.first], ax, ay);
+            view.project(P[e.second], bx, by);
+            const bool expect = region->touches(ax, ay, bx, by, along);
+            wrong += (edges[i] != 0) != expect ? 1 : 0;
+            touched += expect ? 1 : 0;
+        }
+        CHECK_EQ(wrong, 0u);
+        CHECK(touched > 300);
+    }
+    // The quads whose middle the lasso goes round.
+    const std::vector<uint8_t> quads = picker.primitivesIn(view, lasso);
+    size_t wrong = 0;
+    for (size_t p = 0; p < geo->primitiveCount(); ++p) {
+        float x = 0.0f, y = 0.0f;
+        const bool expect = view.project(picker.middle(p), x, y) && lasso.contains(x, y);
+        wrong += (quads[p] != 0) != expect ? 1 : 0;
+    }
+    CHECK_EQ(wrong, 0u);
+}
+
+TEST(picker_takes_what_is_hidden_too_when_asked) {
+    Graph g;
+    CookEngine engine;
+    registerBuiltinNodes();
+    Node* box = g.create("box", "box");
+    GeometryPtr geo = engine.cook(*box, CookContext{});
+    const ElementPicker picker(geo);
+    const PickView view = fromAbove(3.0f);
+    // A click on a point below picks it, asked for what is hidden too.
+    for (size_t i = 0; i < geo->pointCount(); ++i) {
+        float sx = 0.0f, sy = 0.0f;
+        view.project(geo->positions()[i], sx, sy);
+        CHECK_EQ(picker.point(view, sx, sy, 3.0f, true), static_cast<int32_t>(i));
+    }
+    // A brush over all of it: the top's four points -- or all eight.
+    const ScreenRegion all = ScreenRegion::brush(200.0f, 200.0f, 200.0f, 200.0f, 300.0f);
+    CHECK_EQ(countOf(picker.pointsIn(view, all)), 4u);
+    CHECK_EQ(countOf(picker.pointsIn(view, all, true)), 8u);
+    CHECK_EQ(countOf(picker.edgesIn(view, all)), 4u);
+    CHECK_EQ(countOf(picker.edgesIn(view, all, true)), 12u);
+    CHECK_EQ(countOf(picker.primitivesIn(view, all)), 1u);
+    CHECK_EQ(countOf(picker.primitivesIn(view, all, true)), 6u);
+    // A lasso round it all, likewise.
+    const ScreenRegion round = ScreenRegion::lasso({{0.0f, 0.0f}, {400.0f, 0.0f}, {400.0f, 400.0f}, {0.0f, 400.0f}});
+    CHECK_EQ(countOf(picker.pointsIn(view, round)), 4u);
+    CHECK_EQ(countOf(picker.pointsIn(view, round, true)), 8u);
+    // An edge of the bottom under the mouse: hidden -- asked, it is picked.
+    const auto P = geo->positions();
+    size_t low = 0, other = 0;
+    while (low < P.size() && P[low].y > 0.0f) ++low;
+    for (size_t i = 0; i < P.size(); ++i) {
+        if (i != low && P[i].y == P[low].y && (P[i].x == P[low].x) != (P[i].z == P[low].z)) other = i;
+    }
+    CHECK(low < P.size() && other != low);
+    float sa = 0.0f, ta = 0.0f, sb = 0.0f, tb = 0.0f;
+    view.project(P[low], sa, ta);
+    view.project(P[other], sb, tb);
+    const Edge bottom(static_cast<uint32_t>(std::min(low, other)), static_cast<uint32_t>(std::max(low, other)));
+    const int32_t seen = picker.edge(view, (sa + sb) * 0.5f, (ta + tb) * 0.5f, 3.0f);
+    CHECK(seen < 0 || picker.edges()[static_cast<size_t>(seen)] != bottom);
+    const int32_t e = picker.edge(view, (sa + sb) * 0.5f, (ta + tb) * 0.5f, 3.0f, true);
+    CHECK(e >= 0);
+    if (e >= 0) CHECK(picker.edges()[static_cast<size_t>(e)] == bottom);
+}
+
+TEST(the_handles_of_every_node_type_are_parameters_it_has) {
+    // What the viewport's gizmo sets: a vector for a place, a turn, an
+    // axis, a size, a pivot; a number for a radius, a height.
+    int checked = 0;
+    for (const sim::NodeType& t : sim::nodeTypes()) {
+        const sim::Handles& h = t.handles;
+        auto is = [&](const char* name, sim::ParamKind kind) {
+            if (!name) return;
+            const sim::ParamDef* d = t.param(name);
+            CHECK(d != nullptr);
+            if (d) CHECK(d->kind == kind);
+            ++checked;
+        };
+        for (const char* v : {h.center, h.rotation, h.axis, h.size, h.pivot}) is(v, sim::ParamKind::Vector);
+        for (const char* f : {h.radius, h.height}) is(f, sim::ParamKind::Float);
+        CHECK(!h.pivot || h.center);  // a pivot is from where it is
+    }
+    CHECK(checked > 40);
+    // Transform and Edit turn about their pivot: the handle is there. Clip
+    // moves its plane and turns its normal.
+    for (const char* type : {"transform", "edit"}) {
+        const sim::NodeType* t = sim::findNodeType(type);
+        CHECK(t && t->handles.center && std::string(t->handles.center) == "t");
+        CHECK(t && t->handles.pivot && std::string(t->handles.pivot) == "p");
+        CHECK(t && t->handles.rotation && t->handles.size);
+    }
+    const sim::NodeType* clip = sim::findNodeType("clip");
+    CHECK(clip && clip->handles.center && std::string(clip->handles.center) == "origin");
+    CHECK(clip && clip->handles.axis && std::string(clip->handles.axis) == "dir");
 }
 
 TEST(edit_transform_is_the_edit_node_and_a_drag_after_it_is_one_again) {

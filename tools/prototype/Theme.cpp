@@ -614,6 +614,46 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             d->AddConvexPolyFilled(tip, 3, col);
             break;
         }
+        case Icon::PickBox:  // a box drawn round two points, dashed
+            for (int i = 0; i < 4; ++i) {
+                const float a = -0.8f + 0.42f * static_cast<float>(i), b = a + 0.26f;
+                line(a, -0.7f, b, -0.7f);
+                line(a, 0.7f, b, 0.7f);
+                if (i < 3) {
+                    const float y0 = -0.7f + 0.5f * static_cast<float>(i), y1 = y0 + 0.3f;
+                    line(-0.8f, y0, -0.8f, y1);
+                    line(0.8f, y0, 0.8f, y1);
+                }
+            }
+            d->AddCircleFilled(P(-0.25f, 0.05f), 0.16f * s, col);
+            d->AddCircleFilled(P(0.3f, -0.15f), 0.16f * s, col);
+            break;
+        case Icon::Lasso:  // a loop drawn round, its tail hanging down
+            d->PathArcTo(P(0.05f, -0.2f), 0.68f * s, kPi * 0.62f, kPi * 2.45f, 28);
+            d->PathStroke(col, 0, t);
+            d->AddBezierCubic(P(-0.3f, 0.36f), P(-0.45f, 0.6f), P(-0.05f, 0.65f), P(-0.3f, 0.95f), col, t);
+            d->AddCircleFilled(P(-0.3f, 0.36f), 0.13f * s, col);
+            break;
+        case Icon::PickBrush: {  // a round brush's ring, the points it went over
+            d->AddCircle(P(0.1f, 0.05f), 0.72f * s, col, 24, t);
+            d->AddCircleFilled(P(-0.2f, -0.15f), 0.15f * s, col);
+            d->AddCircleFilled(P(0.35f, -0.25f), 0.15f * s, col);
+            d->AddCircleFilled(P(0.15f, 0.35f), 0.15f * s, col);
+            break;
+        }
+        case Icon::XRay: {  // a box seen through: the edges behind it faint
+            const ImU32 faint = shade(col, -0.55f);
+            d->AddLine(P(-0.45f, 0.45f), P(-0.45f, -0.8f), faint, t);
+            d->AddLine(P(-0.45f, 0.45f), P(0.8f, 0.45f), faint, t);
+            d->AddLine(P(-0.45f, 0.45f), P(-0.8f, 0.8f), faint, t);
+            d->AddRect(P(-0.8f, -0.45f), P(0.45f, 0.8f), col, 0.0f, 0, t);
+            line(-0.45f, -0.8f, 0.8f, -0.8f);
+            line(0.8f, -0.8f, 0.8f, 0.45f);
+            line(-0.8f, -0.45f, -0.45f, -0.8f);
+            line(0.45f, -0.45f, 0.8f, -0.8f);
+            line(0.45f, 0.8f, 0.8f, 0.45f);
+            break;
+        }
         case Icon::Numbers:  // a hash: numbers of the elements
             line(-0.25f, -0.8f, -0.45f, 0.8f);
             line(0.45f, -0.8f, 0.25f, 0.8f);

@@ -51,9 +51,150 @@ Vec3 onSegment(const PickView& view, const Vec3& a, const Vec3& b, float along) 
     return a + (b - a) * std::clamp(t, 0.0f, 1.0f);
 }
 
-bool inside(float x, float y, float x0, float y0, float x1, float y1) { return x >= x0 && x <= x1 && y >= y0 && y <= y1; }
+/// z of the cross product of two vectors on the screen.
+float cross2(float ax, float ay, float bx, float by) { return ax * by - ay * bx; }
 
 }  // namespace
+
+// --- parts of the screen -------------------------------------------------------------------
+
+ScreenRegion ScreenRegion::box(float x0, float y0, float x1, float y1) {
+    ScreenRegion r;
+    r.kind_ = Kind::Box;
+    r.x0_ = std::min(x0, x1);
+    r.y0_ = std::min(y0, y1);
+    r.x1_ = std::max(x0, x1);
+    r.y1_ = std::max(y0, y1);
+    return r;
+}
+
+ScreenRegion ScreenRegion::lasso(std::vector<Vec2> points) {
+    ScreenRegion r;
+    r.kind_ = Kind::Lasso;
+    r.points_ = std::move(points);
+    const size_t n = r.points_.size();
+    if (n == 0) return r;
+    r.x0_ = r.x1_ = r.points_[0].x;
+    r.y0_ = r.y1_ = r.points_[0].y;
+    for (const Vec2& p : r.points_) {
+        r.x0_ = std::min(r.x0_, p.x);
+        r.x1_ = std::max(r.x1_, p.x);
+        r.y0_ = std::min(r.y0_, p.y);
+        r.y1_ = std::max(r.y1_, p.y);
+    }
+    if (n < 3) return r;
+    // Each side into every band its height reaches.
+    const size_t bands = std::clamp<size_t>(n / 4, 1, 256);
+    r.bandTop_ = r.y0_;
+    r.bandHeight_ = std::max((r.y1_ - r.y0_) / static_cast<float>(bands), 1e-6f);
+    auto band = [&r, bands](float y) {
+        const float b = (y - r.bandTop_) / r.bandHeight_;
+        return b <= 0.0f ? size_t(0) : std::min(static_cast<size_t>(b), bands - 1);
+    };
+    std::vector<uint32_t> count(bands + 1, 0);
+    for (size_t i = 0; i < n; ++i) {
+        const float ya = r.points_[i].y, yb = r.points_[(i + 1) % n].y;
+        for (size_t b = band(std::min(ya, yb)); b <= band(std::max(ya, yb)); ++b) ++count[b + 1];
+    }
+    r.bandStart_.assign(bands + 1, 0);
+    for (size_t b = 0; b < bands; ++b) r.bandStart_[b + 1] = r.bandStart_[b] + count[b + 1];
+    r.bandSides_.assign(r.bandStart_[bands], 0);
+    std::vector<uint32_t> at(r.bandStart_.begin(), r.bandStart_.end() - 1);
+    for (size_t i = 0; i < n; ++i) {
+        const float ya = r.points_[i].y, yb = r.points_[(i + 1) % n].y;
+        for (size_t b = band(std::min(ya, yb)); b <= band(std::max(ya, yb)); ++b) {
+            r.bandSides_[at[b]++] = static_cast<uint32_t>(i);
+        }
+    }
+    return r;
+}
+
+ScreenRegion ScreenRegion::brush(float x0, float y0, float x1, float y1, float radius) {
+    ScreenRegion r;
+    r.kind_ = Kind::Brush;
+    r.x0_ = x0;
+    r.y0_ = y0;
+    r.x1_ = x1;
+    r.y1_ = y1;
+    r.radius_ = std::max(radius, 0.0f);
+    return r;
+}
+
+bool ScreenRegion::contains(float x, float y) const {
+    switch (kind_) {
+        case Kind::Box: return x >= x0_ && x <= x1_ && y >= y0_ && y <= y1_;
+        case Kind::Brush: {
+            float along = 0.0f;
+            return toSegment(x, y, x0_, y0_, x1_, y1_, along) <= radius_;
+        }
+        case Kind::Lasso: {
+            if (bandStart_.size() < 2 || x < x0_ || x > x1_ || y < y0_ || y > y1_) return false;
+            const size_t bands = bandStart_.size() - 1;
+            const float fb = (y - bandTop_) / bandHeight_;
+            const size_t b = fb <= 0.0f ? 0 : std::min(static_cast<size_t>(fb), bands - 1);
+            const size_t n = points_.size();
+            bool in = false;
+            for (uint32_t k = bandStart_[b]; k < bandStart_[b + 1]; ++k) {
+                const size_t i = bandSides_[k];
+                const Vec2& a = points_[i];
+                const Vec2& c = points_[(i + 1) % n];
+                if ((a.y > y) != (c.y > y) && x < (c.x - a.x) * (y - a.y) / (c.y - a.y) + a.x) in = !in;
+            }
+            return in;
+        }
+    }
+    return false;
+}
+
+bool ScreenRegion::touches(float ax, float ay, float bx, float by, float& along) const {
+    along = 0.5f;
+    if (kind_ != Kind::Brush) return contains(ax, ay) && contains(bx, by);
+    // The segments cross: there.
+    const float ux = bx - ax, uy = by - ay, vx = x1_ - x0_, vy = y1_ - y0_;
+    const float den = cross2(ux, uy, vx, vy);
+    if (std::fabs(den) > 1e-12f) {
+        const float t = cross2(x0_ - ax, y0_ - ay, vx, vy) / den;
+        const float s = cross2(x0_ - ax, y0_ - ay, ux, uy) / den;
+        if (t >= 0.0f && t <= 1.0f && s >= 0.0f && s <= 1.0f) {
+            along = t;
+            return true;
+        }
+    }
+    // Else nearest where one of the four ends is.
+    float best = 0.0f, t = 0.0f;
+    best = toSegment(ax, ay, x0_, y0_, x1_, y1_, t);
+    along = 0.0f;
+    float d = toSegment(bx, by, x0_, y0_, x1_, y1_, t);
+    if (d < best) {
+        best = d;
+        along = 1.0f;
+    }
+    d = toSegment(x0_, y0_, ax, ay, bx, by, t);
+    if (d < best) {
+        best = d;
+        along = t;
+    }
+    d = toSegment(x1_, y1_, ax, ay, bx, by, t);
+    if (d < best) {
+        best = d;
+        along = t;
+    }
+    return best <= radius_;
+}
+
+void ScreenRegion::bounds(float& x0, float& y0, float& x1, float& y1) const {
+    if (kind_ == Kind::Brush) {
+        x0 = std::min(x0_, x1_) - radius_;
+        y0 = std::min(y0_, y1_) - radius_;
+        x1 = std::max(x0_, x1_) + radius_;
+        y1 = std::max(y0_, y1_) + radius_;
+        return;
+    }
+    x0 = x0_;
+    y0 = y0_;
+    x1 = x1_;
+    y1 = y1_;
+}
 
 // --- the view ----------------------------------------------------------------------------
 
@@ -268,7 +409,7 @@ Vec3 ElementPicker::middle(size_t prim) const {
 
 // --- under the mouse ----------------------------------------------------------------------
 
-int32_t ElementPicker::point(const PickView& view, float sx, float sy, float reach) const {
+int32_t ElementPicker::point(const PickView& view, float sx, float sy, float reach, bool hidden) const {
     if (!geo_) return -1;
     const auto P = geo_->positions();
     std::vector<std::pair<float, uint32_t>> near;
@@ -281,12 +422,12 @@ int32_t ElementPicker::point(const PickView& view, float sx, float sy, float rea
     // The nearest on the screen that is not hidden.
     std::sort(near.begin(), near.end());
     for (const auto& [d2, i] : near) {
-        if (visible(view.eye, P[i])) return static_cast<int32_t>(i);
+        if (hidden || visible(view.eye, P[i])) return static_cast<int32_t>(i);
     }
     return -1;
 }
 
-int32_t ElementPicker::edge(const PickView& view, float sx, float sy, float reach) const {
+int32_t ElementPicker::edge(const PickView& view, float sx, float sy, float reach, bool hidden) const {
     if (!geo_) return -1;
     const auto P = geo_->positions();
     struct Near {
@@ -311,12 +452,14 @@ int32_t ElementPicker::edge(const PickView& view, float sx, float sy, float reac
               [](const Near& a, const Near& b) { return a.pixels < b.pixels || (a.pixels == b.pixels && a.edge < b.edge); });
     for (const Near& n : near) {
         const Edge& e = edges_[n.edge];
-        if (visible(view.eye, onSegment(view, P[e.first], P[e.second], n.along))) return static_cast<int32_t>(n.edge);
+        if (hidden || visible(view.eye, onSegment(view, P[e.first], P[e.second], n.along))) {
+            return static_cast<int32_t>(n.edge);
+        }
     }
     return -1;
 }
 
-int32_t ElementPicker::primitive(const PickView& view, float sx, float sy, float reach) const {
+int32_t ElementPicker::primitive(const PickView& view, float sx, float sy, float reach, bool hidden) const {
     if (!geo_) return -1;
     Vec3 origin, dir;
     view.ray(sx, sy, origin, dir);
@@ -339,7 +482,7 @@ int32_t ElementPicker::primitive(const PickView& view, float sx, float sy, float
             const float pixels = toSegment(sx, sy, ax, ay, bx, by, along);
             if (pixels > nearest) continue;
             const Vec3 q = onSegment(view, a, b, along);
-            if (length(q - view.eye) > t + slack(t) || !visible(view.eye, q)) continue;
+            if (!hidden && (length(q - view.eye) > t + slack(t) || !visible(view.eye, q))) continue;
             nearest = pixels;
             curve = static_cast<int32_t>(p);
         }
@@ -347,28 +490,29 @@ int32_t ElementPicker::primitive(const PickView& view, float sx, float sy, float
     return curve >= 0 ? curve : face;
 }
 
-// --- in a box ----------------------------------------------------------------------------
+// --- in a part of the screen ------------------------------------------------------------
 
-std::vector<uint8_t> ElementPicker::pointsIn(const PickView& view, float x0, float y0, float x1, float y1, bool hidden) const {
+std::vector<uint8_t> ElementPicker::pointsIn(const PickView& view, const ScreenRegion& region, bool hidden) const {
     if (!geo_) return {};
-    if (x0 > x1) std::swap(x0, x1);
-    if (y0 > y1) std::swap(y0, y1);
+    float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+    region.bounds(x0, y0, x1, y1);
     const auto P = geo_->positions();
     std::vector<uint8_t> out(P.size(), 0);
     parallelFor(P.size(), 512, [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
             float x = 0.0f, y = 0.0f;
-            if (!view.project(P[i], x, y) || !inside(x, y, x0, y0, x1, y1)) continue;
+            if (!view.project(P[i], x, y) || x < x0 || x > x1 || y < y0 || y > y1 || !region.contains(x, y)) continue;
             out[i] = hidden || visible(view.eye, P[i]) ? 1 : 0;
         }
     });
     return out;
 }
 
-std::vector<uint8_t> ElementPicker::edgesIn(const PickView& view, float x0, float y0, float x1, float y1, bool hidden) const {
+std::vector<uint8_t> ElementPicker::edgesIn(const PickView& view, const ScreenRegion& region, bool hidden) const {
     if (!geo_) return {};
-    if (x0 > x1) std::swap(x0, x1);
-    if (y0 > y1) std::swap(y0, y1);
+    float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+    region.bounds(x0, y0, x1, y1);
+    const bool brush = region.kind() == ScreenRegion::Kind::Brush;
     const auto P = geo_->positions();
     std::vector<uint8_t> out(edges_.size(), 0);
     parallelFor(edges_.size(), 512, [&](size_t begin, size_t end) {
@@ -376,29 +520,61 @@ std::vector<uint8_t> ElementPicker::edgesIn(const PickView& view, float x0, floa
             const Edge& e = edges_[i];
             float ax = 0.0f, ay = 0.0f, bx = 0.0f, by = 0.0f;
             if (!view.project(P[e.first], ax, ay) || !view.project(P[e.second], bx, by)) continue;
-            if (!inside(ax, ay, x0, y0, x1, y1) || !inside(bx, by, x0, y0, x1, y1)) continue;
-            out[i] = hidden || visible(view.eye, (P[e.first] + P[e.second]) * 0.5f) ? 1 : 0;
+            if (std::max(ax, bx) < x0 || std::min(ax, bx) > x1 || std::max(ay, by) < y0 || std::min(ay, by) > y1) continue;
+            float along = 0.5f;
+            if (!region.touches(ax, ay, bx, by, along)) continue;
+            // Seen where the brush touches it; taken in whole, at its middle.
+            const Vec3 at = brush ? onSegment(view, P[e.first], P[e.second], along) : (P[e.first] + P[e.second]) * 0.5f;
+            out[i] = hidden || visible(view.eye, at) ? 1 : 0;
         }
     });
     return out;
 }
 
-std::vector<uint8_t> ElementPicker::primitivesIn(const PickView& view, float x0, float y0, float x1, float y1,
-                                                 bool hidden) const {
+std::vector<uint8_t> ElementPicker::primitivesIn(const PickView& view, const ScreenRegion& region, bool hidden) const {
     if (!geo_) return {};
-    if (x0 > x1) std::swap(x0, x1);
-    if (y0 > y1) std::swap(y0, y1);
+    float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+    region.bounds(x0, y0, x1, y1);
+    const bool brush = region.kind() == ScreenRegion::Kind::Brush;
     const Geometry& g = *geo_;
+    const auto P = g.positions();
     std::vector<uint8_t> out(g.primitiveCount(), 0);
     parallelFor(out.size(), 256, [&](size_t begin, size_t end) {
         for (size_t p = begin; p < end; ++p) {
+            const bool face = g.primitiveClosed(p) && g.primitiveVertexCount(p) >= 3;
+            if (brush && !face) {
+                // A polyline: where the brush touches it, if it is seen there.
+                const auto pts = g.primitivePoints(p);
+                for (size_t k = 0; k + 1 < pts.size() && !out[p]; ++k) {
+                    if (pts[k] >= P.size() || pts[k + 1] >= P.size()) continue;
+                    float ax = 0.0f, ay = 0.0f, bx = 0.0f, by = 0.0f, along = 0.0f;
+                    if (!view.project(P[pts[k]], ax, ay) || !view.project(P[pts[k + 1]], bx, by)) continue;
+                    if (!region.touches(ax, ay, bx, by, along)) continue;
+                    out[p] = hidden || visible(view.eye, onSegment(view, P[pts[k]], P[pts[k + 1]], along)) ? 1 : 0;
+                }
+                continue;
+            }
             const Vec3 m = middle(p);
             float x = 0.0f, y = 0.0f;
-            if (!view.project(m, x, y) || !inside(x, y, x0, y0, x1, y1)) continue;
-            const bool face = g.primitiveClosed(p) && g.primitiveVertexCount(p) >= 3;
+            if (!view.project(m, x, y) || x < x0 || x > x1 || y < y0 || y > y1 || !region.contains(x, y)) continue;
             out[p] = hidden || (face ? faceSeen(p, view.eye, m) : visible(view.eye, m)) ? 1 : 0;
         }
     });
+    if (brush) {
+        // The faces under the brush's middle, all along its way: a face
+        // larger than the brush may have no middle in it.
+        const Vec2 a = region.from(), b = region.to();
+        const float step = std::max(0.5f * region.radius(), 1.0f);
+        const int n = std::min(static_cast<int>(std::ceil(std::hypot(b.x - a.x, b.y - a.y) / step)), 1024);
+        for (int k = 0; k <= n; ++k) {
+            const float f = n ? static_cast<float>(k) / static_cast<float>(n) : 0.0f;
+            Vec3 origin, dir;
+            view.ray(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, origin, dir);
+            float t = 0.0f;
+            const int32_t hit = raycast(origin, dir, t);
+            if (hit >= 0) out[static_cast<size_t>(hit)] = 1;
+        }
+    }
     return out;
 }
 

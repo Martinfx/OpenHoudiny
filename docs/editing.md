@@ -2,9 +2,10 @@
 
 Zobrazenou geometrii (uzel s display flagem, [geometry.md](geometry.md))
 jde upravovat přímo ve viewportu, jako v Houdini: myší vybrat body, hrany
-nebo plochy, posunout je, otočit a zvětšit úchytem, udělat z nich skupinu,
-smazat je, a štětcem namalovat atribut — třeba `pin` nebo `tear` látce
-([cloth.md](cloth.md)).
+nebo plochy — kliknutím, obdélníkem, lasem nebo štětcem, jen viditelné,
+nebo i ty za povrchem —, posunout je, otočit a zvětšit úchytem, udělat
+z nich skupinu, smazat je, a štětcem namalovat atribut — třeba `pin` nebo
+`tear` látce ([cloth.md](cloth.md)).
 
 Nic z toho není skryté kouzlo. Každá úprava je **obyčejný uzel sítě**,
 který editor vloží za zobrazený uzel: **Edit**, **Group**, **Blast**,
@@ -57,9 +58,41 @@ na hrany (jejich strany), z bodů na hrany (hrany mezi vybranými body).
 
 Vybírá se jen to, co je **vidět**: bod, hranu či plochu, kterou zakrývá
 vlastní povrch geometrie, klik ani obdélník nevezme a značky za povrchem
-nejsou vidět. Výběr drží čísla bodů a primitiv zobrazené geometrie;
-zůstane i po undo a po vložení dalšího uzlu, dokud má geometrie stejně
-bodů a primitiv.
+nejsou vidět — dokud nezapnete **H** (§2a). Výběr drží čísla bodů
+a primitiv zobrazené geometrie; zůstane i po undo a po vložení dalšího
+uzlu, dokud má geometrie stejně bodů a primitiv.
+
+## 2a. Obdélník, laso, štětec; i skryté
+
+Tažení levým tlačítkem vybírá jedním ze tří způsobů. **S** je střídá
+(obdélník → laso → štětec), stejně tlačítko pod čtyřmi režimy v liště
+(ukazuje ten, který platí) a pravý klik › *Pick With*:
+
+| Způsob | Co vybere |
+|---|---|
+| **obdélník** | body, které v něm leží; hrany, jejichž oba konce v něm leží; primitivy, jejichž střed v něm leží |
+| **laso** | totéž, jen místo obdélníku to, co obkrouží čára tažená myší (uzavřená z konce zpátky na začátek). Smyčka, kterou čára udělá kolem sebe, je zase venku (pravidlo sudý–lichý: uvnitř je, co paprsek ven protne lichým počtem čar) |
+| **štětec** | kroužek, který vybírá, čeho se dotkne, jak jím táhnete: body pod ním, hrany, kterých se dotkne, primitivy, přes jejichž střed přejede, plochy pod jeho středem (i ty větší než kroužek) a křivky, kterých se dotkne |
+
+Se **Shift** výběr přidává, s **Ctrl** ubírá, jinak ho nahradí — u štětce
+rozhoduje, co bylo drženo při stisku: stisk sám je jedna kapka, pak
+štětec bere, přes co jde. Kroužek je oranžový, při ubírání modrý;
+velikost mění **[** **]** a **Shift**+kolečko. **Esc** během tahu vrátí
+výběr, jaký byl před ním. Klik bez tažení u obdélníku a lasa vybere prvek
+pod myší jako dosud.
+
+![Laso ve tvaru C vybralo srpek 109 bodů; se Shift se kreslí druhé laso](img/edit-lasso.jpg)
+
+![Štětec v režimu primitiv: plochy, přes které šel, ve vlnitém pásu](img/edit-brush-pick.jpg)
+
+**H** (tlačítko s průhlednou krychlí, pravý klik › *Pick Hidden Too*)
+vybírá **i skryté**: klik, obdélník, laso i štětec berou i body a hrany za
+povrchem a zadní stranu, a značky, které povrch zakrývá — drát, body,
+výběr — jsou vidět slabě, jako rentgen. Vpravo dole je pak napsáno
+*Hidden too*. Klik na plochu vybere tu první pod myší i tak (co je za
+ní, vezme obdélník, laso nebo štětec).
+
+![H zapnuté: laso přes kouli vybralo pás bodů vpředu i vzadu (zadní slabě)](img/edit-hidden.jpg)
 
 ## 3. Myš a klávesy
 
@@ -67,7 +100,9 @@ bodů a primitiv.
 |---|---|
 | klik | vybere prvek pod myší (a nic jiného); klik do prázdna výběr zruší |
 | **Shift**+klik, **Ctrl**+klik | přidá, ubere |
-| tažení levým | obdélník: bod, který v něm leží, hranu, jejíž oba konce v něm leží, primitivum, jehož střed v něm leží; se Shift přidá, s Ctrl ubere |
+| tažení levým | obdélník, laso nebo štětec (§2a); se Shift přidá, s Ctrl ubere |
+| **S** | obdélník → laso → štětec |
+| **H** | vybírat i skryté (a ukázat je slabě) |
 | **Alt** nebo **mezerník** + tažení levým | otáčí pohledem — levé tlačítko v těchto režimech vybírá |
 | prostřední tažení, pravé tažení, kolečko | posun pohledu, přiblížení (jako vždy) |
 | **Ctrl+A**, **Ctrl+I**, **Esc** | vybere vše, obrátí výběr, zruší výběr |
@@ -78,9 +113,9 @@ bodů a primitiv.
 | **P** | štětec zapnout / vypnout |
 | **Tab** | uzel na vybrané: PolyExtrude, wrangle, Edit… (§6a) |
 | **N** | čísla bodů (v režimu primitiv čísla primitiv), jen viditelných |
-| **[** , **]**, **Shift**+kolečko | menší / větší štětec |
+| **[** , **]**, **Shift**+kolečko | menší / větší štětec (malovací i výběrový) |
 | **Ctrl** při malování | maluje hodnotou Erase Value (maže) |
-| **Esc** při tažení | vrátí, co tažení udělalo |
+| **Esc** při tažení | vrátí, co tažení udělalo (úchyt, štětec výběru) |
 
 Stejné položky jsou v pravém kliku do viewportu a v nabídce Help.
 Mezerník přehrává a zastavuje, až když ho pustíte, a jen pokud jste
@@ -191,6 +226,30 @@ topologie, takže výběr ploch zmizí a zůstane úchyt uzlu.
 plochy). Jen ta, která jsou vidět, nejvýš 3000 na obrazovce — při víc
 ukáže výzvu přiblížit se.
 
+## 6b. Úchyty geometrických uzlů
+
+V režimu objektů (**1**) má úchyt i vybraný geometrický uzel — klikněte
+na něj v síti, **W**, **E**, **R** a táhněte; hodnoty se píšou do jeho
+parametrů (na aktuálním snímku, s klíči jako u objektů):
+
+| Uzel | Posun | Otočení | Měřítko |
+|---|---|---|---|
+| Box | Center | — | Size |
+| Sphere | Center | — | Radius |
+| Tube | Center | — | Radius, Height |
+| Grid, Point Cloud | Center | — | — |
+| Line | Origin | Direction | — |
+| **Clip** | Origin (bod roviny) | Direction (normála roviny) | — |
+| **Transform** | Translate | Rotate | Scale |
+| **Edit** | Translate | Rotate | Scale |
+
+Transform a Edit mají úchyt **v pivotu** (Pivot + Translate): tam, kolem
+čeho se geometrie otáčí a zvětšuje — u Transformu třeba pata věže, která
+má padnout. Otočení úchytem tak otáčí kolem něj a měřítko jde podél os
+uzlu. Pivot samotný úchyt nemění; nastavte ho v parametrech. Kopie
+geometrického uzlu (**Ctrl+D**) zůstane, kde byl originál — posune se jen
+kopie objektu nebo zdroje, aby neležela v originálu.
+
 ## 7. Vzory prvků
 
 Parametry Group, Edit, Blast, PolyExtrude a wranglů berou prvky jako **vzor**, jako skupinová
@@ -220,17 +279,26 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   listy po čtyřech). Paprsek najde nejbližší plochu; stejně daleké plochy
   rozhoduje pořadí trojúhelníků, takže výsledek nezávisí na tom, jak se
   strom rozdělil. Prvek je vidět, když paprsek od oka k němu nepotká
-  plochu blíž než 0,1 % vzdálenosti před ním. Obdélník se vyhodnocuje na
-  více vláknech, prvek po prvku. Strom se staví jen pro nové body nebo
-  topologii: malováním se geometrie mění, ale sdílí body (copy-on-write),
-  a strom zůstává.
+  plochu blíž než 0,1 % vzdálenosti před ním. Obdélník, laso i tah štětce
+  jsou `ScreenRegion` (část obrazovky) a vyhodnocují se na více vláknech,
+  prvek po prvku. Laso je mnohoúhelník s pravidlem sudý–lichý; jeho
+  strany jsou roztříděné do vodorovných pásů, takže bod se ptá jen stran
+  svého pásu (laso o stovkách bodů nad statisíci bodů geometrie je
+  rychlé). Tah štětce za jeden snímek je kapsle: úsečka od minulé polohy
+  myši k nynější s poloměrem kroužku; hrana se jí dotkne, když se úsečky
+  přiblíží na poloměr, a viditelnost se ptá v místě dotyku. Plochy pod
+  středem štětce najdou paprsky po půl poloměru podél tahu. Strom se staví
+  jen pro nové body nebo topologii: malováním se geometrie mění, ale
+  sdílí body (copy-on-write), a strom zůstává.
 - **Značky** — overlay rendereru (`gl::Overlay`): drát, body, výběr,
   zvýraznění pod myší (vlastní vrstva, aby pohyb myši nepřestavoval
   zbytek) a barvy malování, kreslené s testem hloubky proti scéně, kousek
   blíž k oku než povrch. Tečka se přitáhne o tolik, kolik z povrchu kolem
   sebe pokrývá — víc, když je povrch vidět šikmo — takže ji povrch
   neusekne. Široké čáry jsou dva trojúhelníky (core profil OpenGL širší
-  čáry než pixel nemá). Rendery záběru značky nemají.
+  čáry než pixel nemá). S **H** se značky kreslí dvakrát: nejdřív
+  s obráceným testem hloubky (jen to, co povrch zakrývá) a průhlednosti
+  0,3, pak normálně. Rendery záběru značky nemají.
 - **Skládání úprav** — `sim::EditTransform` (`src/pg/sim/Shape.h`):
   Edit dělá `x → R S (x − p) + p + t`; tah úchytu kolem středu `c`
   složený za něj je znovu Edit: otočení předřazené `R`, měřítko násobí
@@ -240,7 +308,9 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   `attribpaint`; Blast v `Modifiers.cpp`. Attribute Paint nanáší kapku po
   kapce jen na body v jejím dosahu (strom bodů), takže tisíce kapek na
   jemné síti jsou rychlé.
-- **Editor** — `tools/prototype/SimElements.cpp`.
+- **Editor** — `tools/prototype/SimElements.cpp`; úchyty uzlů
+  (`sim::Handles` v `src/pg/sim/Network.h`, s polem `pivot` pro úchyt
+  v pivotu) v `SimViewport.cpp`.
 
 Geometrie ležící na podlaze (mřížka v y = 0) se s podlahou už nebije:
 plocha geometrie vyhrává, když je stejně daleko jako podlaha.
@@ -254,8 +324,10 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   pojmenovávají. Malování to nepostihne — kapky jsou místa.
 - Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
   objekty ani kusy před ní.
-- Zatím chybí výběr lasem a štětcem, režim vrcholů (rohů), *Dissolve* hran
-  a symetrie. Úchyt má z uzlů jen Edit a PolyExtrude.
+- Zatím chybí režim vrcholů (rohů), *Dissolve* hran, symetrie a měkký
+  výběr kreslený přímo ve viewportu (měkký poloměr je parametr Editu).
+  Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by
+  Box (dva rohy).
 - Drát a všechny body se kreslí do 400 000 hran či bodů; ve větší geometrii
   jen výběr. První výběr v síti milionů trojúhelníků postaví strom obálek
   (řádově sekunda).

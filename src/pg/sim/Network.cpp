@@ -510,7 +510,7 @@ std::vector<NodeType> buildTypes() {
                "How much larger, all ways."},
               vec("p", "Pivot", "Transform", Vec3(), -5.0f, 5.0f, "m",
                   "The point it turns and sizes about -- the foot of a tower that is to topple.")},
-             {"t", "r", nullptr, "s", nullptr, nullptr});
+             {"t", "r", nullptr, "s", nullptr, nullptr, "p"});
     t.push_back({"merge", "Merge", "Geometry",
                  "Everything linked into it, one after the other: points, primitives, attributes (missing ones "
                  "filled with zeros), groups and volumes.",
@@ -588,7 +588,8 @@ std::vector<NodeType> buildTypes() {
               vec("p", "Pivot", "Edit", Vec3(), -5.0f, 5.0f, "m", "What they turn and size about: the middle of the selection."),
               {"soft", "Soft Radius", "Edit", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "m",
                "How far round the selection points go along: all the way at it, not at all this far away. 0: "
-               "only those picked."}});
+               "only those picked."}},
+             {"t", "r", nullptr, "s", nullptr, nullptr, "p"});
     geometry("attribute_paint", "Attribute Paint", "attribpaint",
              "A number painted onto the points with the viewport's brush -- where the cloth is pinned (pin), "
              "how soon it tears (tear), how heavy it is (mass). The strokes are places, not point numbers: "
@@ -707,7 +708,8 @@ std::vector<NodeType> buildTypes() {
                "The side Direction points to, or the other.", {"above", "below"}, {"Above", "Below"}},
               {"cap", "Cap", "Plane", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "Close a closed mesh again where it was cut."},
-              text("capgroup", "Cap Group", "Plane", "cut", "The faces that close the cut; empty: no group.")});
+              text("capgroup", "Cap Group", "Plane", "cut", "The faces that close the cut; empty: no group.")},
+             {"origin", nullptr, "dir", nullptr, nullptr, nullptr});
     geometry("attribute_transfer", "Attribute Transfer", "attribtransfer",
              "Point attributes of Source onto the points near them: within Distance, the weighted mean of the "
              "points there; further, fading out over Blend Width.",

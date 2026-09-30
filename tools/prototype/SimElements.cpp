@@ -5,10 +5,13 @@
 // Edit, Group, Blast, Attribute Paint -- whose parameters hold what the
 // mouse did: the elements as a pattern (pg/core/Selection.h), the strokes as
 // dabs. What cannot be seen is not picked: the geometry's own surface hides
-// what is behind it (pg/core/Pick.h).
+// what is behind it (pg/core/Pick.h) -- unless asked for (H).
 //
 //   1 2 3 4            objects; points, edges, primitives
 //   click, drag        pick one, or what a box holds: Shift adds, Ctrl takes away
+//   S                  a drag draws a box, a lasso, or is a brush that picks what
+//                      it goes over -- [ ] or Shift+wheel: its size
+//   H                  what the surface hides is picked too, and drawn faint
 //   Alt or Space held  the left button turns the view (middle: pan; right, wheel: zoom)
 //   W E R              move, turn, size what is picked -- an Edit node; Q: no handle
 //   Ctrl+G             a Group of it;   Delete, X: a Blast of it
@@ -172,6 +175,10 @@ bool SimWorkspace::elementCenter(Vec3& center) const {
     }
     if (n == 0) return false;
     center = sum * (1.0f / static_cast<float>(n));
+    // What rounding left of a 0 -- the middle of a sphere -- is 0.
+    for (int k = 0; k < 3; ++k) {
+        if (std::fabs(center[k]) < 1e-6f) center[k] = 0.0f;
+    }
     return true;
 }
 
@@ -242,9 +249,9 @@ int32_t SimWorkspace::elementAt(const ViewCamera& cam, ImVec2 mouse) {
     if (!p) return -1;
     const PickView v = pickView(cam);
     switch (elements_) {
-        case Elements::Points: return p->point(v, mouse.x, mouse.y, reach());
-        case Elements::Edges: return p->edge(v, mouse.x, mouse.y, reach());
-        case Elements::Primitives: return p->primitive(v, mouse.x, mouse.y, reach());
+        case Elements::Points: return p->point(v, mouse.x, mouse.y, reach(), pickHidden_);
+        case Elements::Edges: return p->edge(v, mouse.x, mouse.y, reach(), pickHidden_);
+        case Elements::Primitives: return p->primitive(v, mouse.x, mouse.y, reach(), pickHidden_);
         default: return -1;
     }
 }
@@ -276,7 +283,7 @@ void SimWorkspace::clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, 
     ++picked_.revision;
 }
 
-void SimWorkspace::boxElements(const ViewCamera& cam, ImVec2 a, ImVec2 b, bool add, bool remove) {
+void SimWorkspace::regionElements(const ViewCamera& cam, const ScreenRegion& region, bool add, bool remove) {
     const GeometryPtr geo = renderer_.geometry();
     const ElementPicker* p = picker();
     if (!geo || !p || elements_ == Elements::Objects) return;
@@ -285,7 +292,7 @@ void SimWorkspace::boxElements(const ViewCamera& cam, ImVec2 a, ImVec2 b, bool a
     }
     const PickView v = pickView(cam);
     if (elements_ == Elements::Edges) {
-        const std::vector<uint8_t> in = p->edgesIn(v, a.x, a.y, b.x, b.y);
+        const std::vector<uint8_t> in = p->edgesIn(v, region, pickHidden_);
         std::vector<Edge> out;
         for (size_t i = 0; i < in.size(); ++i) {
             const Edge& e = p->edges()[i];
@@ -295,8 +302,8 @@ void SimWorkspace::boxElements(const ViewCamera& cam, ImVec2 a, ImVec2 b, bool a
         }
         picked_.edges = std::move(out);
     } else {
-        const std::vector<uint8_t> in = elements_ == Elements::Points ? p->pointsIn(v, a.x, a.y, b.x, b.y)
-                                                                      : p->primitivesIn(v, a.x, a.y, b.x, b.y);
+        const std::vector<uint8_t> in = elements_ == Elements::Points ? p->pointsIn(v, region, pickHidden_)
+                                                                      : p->primitivesIn(v, region, pickHidden_);
         picked_.mask.resize(in.size(), 0);
         for (size_t i = 0; i < in.size(); ++i) {
             const bool was = picked_.mask[i] != 0;
@@ -304,6 +311,61 @@ void SimWorkspace::boxElements(const ViewCamera& cam, ImVec2 a, ImVec2 b, bool a
         }
     }
     ++picked_.revision;
+}
+
+void SimWorkspace::setPickStyle(PickStyle style) {
+    if (boxing_ || brushing_) return;
+    pickStyle_ = style;
+    hoverElement_ = -1;
+    hoverGeometry_ = nullptr;
+    switch (style) {
+        case PickStyle::Box: setMessage("Picking with a box: a drag picks what it holds (S: a lasso)"); break;
+        case PickStyle::Lasso: setMessage("Picking with a lasso: draw round what to pick (S: a brush)"); break;
+        case PickStyle::Brush:
+            setMessage("Picking with a brush: what it goes over is picked -- Shift adds, Ctrl takes away; [ ] its size "
+                       "(S: a box)");
+            break;
+    }
+}
+
+void SimWorkspace::setPickHidden(bool on) {
+    pickHidden_ = on;
+    hoverElement_ = -1;
+    hoverGeometry_ = nullptr;
+    setMessage(on ? "What the surface hides is picked too -- drawn faint (H: only what is seen)"
+                  : "Only what is seen is picked (H: what is hidden too)");
+}
+
+float SimWorkspace::pickBrushRadius() const { return theme::px(pickBrush_ > 0.0f ? pickBrush_ : 24.0f); }
+
+void SimWorkspace::pickBrushTool(ImDrawList* d, const ViewCamera& cam, bool overView, bool pressed) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (paint_ || pickStyle_ != PickStyle::Brush || elements_ == Elements::Objects) {
+        brushing_ = false;
+        return;
+    }
+    const float r = pickBrushRadius();
+    const ImVec2 m = io.MousePos;
+    // The press: a dab -- in place of what was picked, or added, or taken
+    // away; then its way from frame to frame.
+    if (pressed && overView && !gizmoOwnsMouse_ && !pressTurns_ && !brushing_) {
+        brushing_ = true;
+        brushRemoves_ = io.KeyCtrl;
+        brushBefore_ = picked_;
+        brushFrom_ = m;
+        regionElements(cam, ScreenRegion::brush(m.x, m.y, m.x, m.y, r), io.KeyShift, brushRemoves_);
+    } else if (brushing_ && ImGui::IsMouseDown(ImGuiMouseButton_Left) && (m.x != brushFrom_.x || m.y != brushFrom_.y)) {
+        regionElements(cam, ScreenRegion::brush(brushFrom_.x, brushFrom_.y, m.x, m.y, r), !brushRemoves_, brushRemoves_);
+        brushFrom_ = m;
+    }
+    if (brushing_ && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) brushing_ = false;
+    if (!overView && !brushing_) return;
+    // Its ring, where the mouse is.
+    const bool removes = brushing_ ? brushRemoves_ : io.KeyCtrl;
+    const ImU32 col = removes ? IM_COL32(120, 190, 255, 230) : IM_COL32(255, 205, 80, 230);
+    d->AddCircle(m, r, IM_COL32(0, 0, 0, 140), 48, theme::px(3.0f));
+    d->AddCircle(m, r, col, 48, theme::px(1.5f));
+    if (brushing_) d->AddCircleFilled(m, r, removes ? IM_COL32(120, 190, 255, 24) : IM_COL32(255, 200, 60, 24), 48);
 }
 
 void SimWorkspace::selectAllElements(bool invert) {
@@ -329,14 +391,48 @@ void SimWorkspace::selectAllElements(bool invert) {
 
 // --- the marks ---------------------------------------------------------------------------
 
+const std::vector<Vec3>& SimWorkspace::pointNormals(const GeometryPtr& geo) {
+    // The same points and faces as the geometry they were found for -- kept,
+    // so that its buffers are not another's: the same normals.
+    const Geometry& g = *geo;
+    const bool same = normalsGeometry_ && normalsGeometry_->positions().data() == g.positions().data() &&
+                      normalsGeometry_->vertexPoints().data() == g.vertexPoints().data() &&
+                      normalsGeometry_->pointCount() == g.pointCount() &&
+                      normalsGeometry_->primitiveCount() == g.primitiveCount();
+    if (same) return normals_;
+    normalsGeometry_ = geo;
+    const auto P = g.positions();
+    normals_.assign(g.pointCount(), Vec3());
+    for (size_t p = 0; p < g.primitiveCount(); ++p) {
+        const auto pts = g.primitivePoints(p);
+        if (pts.size() < 3 || !g.primitiveClosed(p)) continue;
+        for (size_t k = 1; k + 1 < pts.size(); ++k) {
+            if (pts[0] >= P.size() || pts[k] >= P.size() || pts[k + 1] >= P.size()) continue;
+            const Vec3 n = cross(P[pts[k]] - P[pts[0]], P[pts[k + 1]] - P[pts[0]]);
+            for (const uint32_t q : {pts[0], pts[k], pts[k + 1]}) normals_[q] += n;
+        }
+    }
+    return normals_;
+}
+
 void SimWorkspace::updateOverlay() {
     const GeometryPtr& geo = renderer_.geometry();
     const bool on = editingElements() && geo != nullptr;
+    // Picking what is hidden too, the marks it hides are drawn faint.
+    const float faint = on && pickHidden_ && !paint_ ? 0.3f : 0.0f;
+    if (faint != overlayHidden_) {
+        overlayHidden_ = faint;
+        renderer_.setOverlayHidden(faint);
+        viewDirty_ = true;
+    }
     const int painted = paint_ ? paintNode() : 0;
     const std::string attribute = painted ? net_.text(painted, "name") : std::string();
+    const void* shown = geo.get();
     char key[256];
-    std::snprintf(key, sizeof key, "%d %d %p %llu %d %s", on ? 1 : 0, static_cast<int>(elements_),
-                  static_cast<const void*>(geo.get()), static_cast<unsigned long long>(picked_.revision), painted,
+
+    // The geometry's own marks -- its wire, its points, the paint: made
+    // again only when it changes.
+    std::snprintf(key, sizeof key, "%d %d %p %d %s", on ? 1 : 0, static_cast<int>(elements_), shown, painted,
                   attribute.c_str());
     if (key != overlayKey_[0]) {
         overlayKey_[0] = key;
@@ -355,20 +451,6 @@ void SimWorkspace::updateOverlay() {
             if (edges_.size() <= kMostMarks) {
                 for (const Edge& e : edges_) o.line(P[e.first], P[e.second], kWire);
             }
-            const bool mine = picked_.points == g.pointCount() && picked_.primitives == g.primitiveCount();
-            // The surface's normal at each point: its dot is drawn over it.
-            std::vector<Vec3> normals;
-            auto normalsOf = [&]() {
-                normals.assign(g.pointCount(), Vec3());
-                for (size_t p = 0; p < g.primitiveCount(); ++p) {
-                    const auto pts = g.primitivePoints(p);
-                    if (pts.size() < 3 || !g.primitiveClosed(p)) continue;
-                    for (size_t k = 1; k + 1 < pts.size(); ++k) {
-                        const Vec3 n = cross(P[pts[k]] - P[pts[0]], P[pts[k + 1]] - P[pts[0]]);
-                        for (const uint32_t q : {pts[0], pts[k], pts[k + 1]}) normals[q] += n;
-                    }
-                }
-            };
             if (painted) {
                 // The paint: each corner in the colour of its point's value.
                 const AttributeArray* a = g.points().find(attribute);
@@ -396,21 +478,38 @@ void SimWorkspace::updateOverlay() {
                 if (faces == 0 && g.pointCount() <= kMostMarks) {
                     for (size_t i = 0; i < P.size(); ++i) o.dot(P[i], paintColor(value[i]), theme::px(6.0f));
                 }
-            } else if (elements_ == Elements::Points) {
-                normalsOf();
-                if (P.size() <= kMostMarks) {
-                    for (size_t i = 0; i < P.size(); ++i) o.dot(P[i], kPoint, theme::px(5.0f), normals[i]);
+            } else if (elements_ == Elements::Points && P.size() <= kMostMarks) {
+                // The points, each over the surface's normal there.
+                const std::vector<Vec3>& normals = pointNormals(geo);
+                for (size_t i = 0; i < P.size(); ++i) o.dot(P[i], kPoint, theme::px(5.0f), normals[i]);
+            }
+        }
+        renderer_.setOverlay(o, 0);
+        viewDirty_ = true;
+    }
+
+    // What is picked: a layer of its own, made again as that changes --
+    // with every move of the brush that picks.
+    const bool marks = on && !painted;
+    std::snprintf(key, sizeof key, "%d %d %p %llu", marks ? 1 : 0, static_cast<int>(elements_), shown,
+                  static_cast<unsigned long long>(picked_.revision));
+    if (key != overlayKey_[1]) {
+        overlayKey_[1] = key;
+        gl::Overlay o;
+        const bool mine = geo && picked_.points == geo->pointCount() && picked_.primitives == geo->primitiveCount();
+        if (marks && mine) {
+            const Geometry& g = *geo;
+            const auto P = g.positions();
+            if (elements_ == Elements::Points) {
+                const std::vector<Vec3>& normals = pointNormals(geo);
+                for (size_t i = 0; i < picked_.mask.size() && i < P.size(); ++i) {
+                    if (picked_.mask[i]) o.dot(P[i], kPicked, theme::px(8.0f), normals[i]);
                 }
-                if (mine) {
-                    for (size_t i = 0; i < picked_.mask.size() && i < P.size(); ++i) {
-                        if (picked_.mask[i]) o.dot(P[i], kPicked, theme::px(8.0f), normals[i]);
-                    }
-                }
-            } else if (elements_ == Elements::Edges && mine) {
+            } else if (elements_ == Elements::Edges) {
                 for (const Edge& e : picked_.edges) {
                     if (e.first < P.size() && e.second < P.size()) o.wideLine(P[e.first], P[e.second], kPicked, theme::px(3.0f));
                 }
-            } else if (elements_ == Elements::Primitives && mine) {
+            } else if (elements_ == Elements::Primitives) {
                 for (size_t p = 0; p < picked_.mask.size() && p < g.primitiveCount(); ++p) {
                     if (!picked_.mask[p]) continue;
                     const auto pts = g.primitivePoints(p);
@@ -425,31 +524,22 @@ void SimWorkspace::updateOverlay() {
                 }
             }
         }
-        renderer_.setOverlay(o, 0);
+        renderer_.setOverlay(o, 1);
         viewDirty_ = true;
     }
 
-    // What is under the mouse: a layer of its own, made again as it moves.
+    // What is under the mouse: the last layer, made again as it moves.
     const bool hover = on && !paint_ && hoverElement_ >= 0;
-    std::snprintf(key, sizeof key, "%d %d %p %d", hover ? 1 : 0, static_cast<int>(elements_),
-                  static_cast<const void*>(geo.get()), hoverElement_);
-    if (key != overlayKey_[1]) {
-        overlayKey_[1] = key;
+    std::snprintf(key, sizeof key, "%d %d %p %d", hover ? 1 : 0, static_cast<int>(elements_), shown, hoverElement_);
+    if (key != overlayKey_[2]) {
+        overlayKey_[2] = key;
         gl::Overlay o;
         if (hover) {
             const Geometry& g = *geo;
             const auto P = g.positions();
             const size_t h = static_cast<size_t>(hoverElement_);
             if (elements_ == Elements::Points && h < P.size()) {
-                // The surface's normal there, from the faces round the point.
-                Vec3 n;
-                for (size_t p = 0; p < g.primitiveCount(); ++p) {
-                    const auto pts = g.primitivePoints(p);
-                    if (pts.size() < 3 || !g.primitiveClosed(p)) continue;
-                    if (std::find(pts.begin(), pts.end(), static_cast<uint32_t>(h)) == pts.end()) continue;
-                    n += cross(P[pts[1]] - P[pts[0]], P[pts[2]] - P[pts[0]]);
-                }
-                o.dot(P[h], kHover, theme::px(10.0f), n);
+                o.dot(P[h], kHover, theme::px(10.0f), pointNormals(geo)[h]);
             } else if (elements_ == Elements::Edges && picker_ && h < picker_->edges().size()) {
                 const Edge& e = picker_->edges()[h];
                 o.wideLine(P[e.first], P[e.second], kHover, theme::px(3.0f));
@@ -463,7 +553,7 @@ void SimWorkspace::updateOverlay() {
                 for (size_t k = 0; k < sides; ++k) o.wideLine(P[pts[k]], P[pts[(k + 1) % pts.size()]], kHover, theme::px(2.0f));
             }
         }
-        renderer_.setOverlay(o, 1);
+        renderer_.setOverlay(o, 2);
         viewDirty_ = true;
     }
 }
@@ -1034,9 +1124,15 @@ std::string SimWorkspace::elementStatus() const {
         text += std::to_string(n) + " " + kindOf(elements_, n != 1) + " picked";
         if (hoverElement_ < 0) text += "  \xc2\xb7  W E R move, turn, size  \xc2\xb7  Ctrl+G group  \xc2\xb7  Delete";
     } else if (hoverElement_ < 0) {
-        text = std::string("Click or drag a box to pick ") + kindOf(elements_, true) +
-               "  \xc2\xb7  Shift adds, Ctrl takes away  \xc2\xb7  Alt+drag turns the view";
+        const std::string kind = kindOf(elements_, true);
+        text = pickStyle_ == PickStyle::Brush ? "Paint over the " + kind + " to pick them"
+               : pickStyle_ == PickStyle::Lasso ? "Click, or draw round the " + kind + " to pick"
+                                                : "Click or drag a box to pick " + kind;
+        text += "  \xc2\xb7  Shift adds, Ctrl takes away  \xc2\xb7  S: box, lasso, brush  \xc2\xb7  Alt+drag turns the view";
     }
+    // First, what is not seen otherwise: the hints after it go first when
+    // the viewport is narrow.
+    if (pickHidden_) text = "Hidden too" + (text.empty() ? std::string() : "  \xc2\xb7  " + text);
     return text;
 }
 

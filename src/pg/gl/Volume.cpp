@@ -1338,8 +1338,9 @@ void main() {
 
 const char* kOverlayFragment = R"(#version 330 core
 in vec4 v_color;
+uniform float u_fade;  // 1; less for what is drawn through the surface
 out vec4 o_color;
-void main() { o_color = v_color; }
+void main() { o_color = vec4(v_color.rgb, v_color.a * u_fade); }
 )";
 
 // A dot, round, with a dark rim so that it shows on any colour. It covers a
@@ -1370,12 +1371,13 @@ void main() {
 
 const char* kOverlayDotFragment = R"(#version 330 core
 in vec4 v_color;
+uniform float u_fade;
 out vec4 o_color;
 void main() {
     vec2 c = gl_PointCoord * 2.0 - 1.0;
     float r = dot(c, c);
     if (r > 1.0) discard;
-    o_color = r > 0.5 ? vec4(0.03, 0.03, 0.04, v_color.a) : v_color;
+    o_color = r > 0.5 ? vec4(0.03, 0.03, 0.04, v_color.a * u_fade) : vec4(v_color.rgb, v_color.a * u_fade);
 }
 )";
 
@@ -2640,45 +2642,59 @@ void VolumeRenderer::drawOverlay(int width, int height, const Vec3& eye) {
     }
     if (!overlayProgram_ || any == 0) return;
     gl_.Enable(DEPTH_TEST);
-    gl_.DepthFunc(LEQUAL);
     gl_.DepthMask(0);
     gl_.Enable(BLEND);
     gl_.BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
+    float fade = 1.0f;
     auto use = [&](GLuint program, float pull) {
         gl_.UseProgram(program);
         gl_.UniformMatrix4fv(location(program, "u_viewProj"), 1, 0, viewProjection_.data());
         gl_.Uniform3f(location(program, "u_eye"), eye.x, eye.y, eye.z);
         gl_.Uniform1f(location(program, "u_pull"), pull);
+        gl_.Uniform1f(location(program, "u_fade"), fade);
     };
-    for (int l = 0; l < kOverlayLayers; ++l) {
-        const GLsizei* counts = overlayCount_[l];
-        // Faces first, then the lines over them, the dots over those.
-        if (counts[0] > 0) {
-            use(overlayProgram_, 0.002f);
-            gl_.BindVertexArray(overlayVao_[l][0]);
-            gl_.DrawArrays(TRIANGLES, 0, counts[0]);
+    auto layers = [&]() {
+        for (int l = 0; l < kOverlayLayers; ++l) {
+            const GLsizei* counts = overlayCount_[l];
+            // Faces first, then the lines over them, the dots over those.
+            if (counts[0] > 0) {
+                use(overlayProgram_, 0.002f);
+                gl_.BindVertexArray(overlayVao_[l][0]);
+                gl_.DrawArrays(TRIANGLES, 0, counts[0]);
+            }
+            if (counts[1] > 0) {
+                use(overlayProgram_, 0.003f);
+                gl_.BindVertexArray(overlayVao_[l][1]);
+                gl_.DrawArrays(LINES, 0, counts[1]);
+            }
+            if (counts[3] > 0) {
+                use(overlayWideProgram_, 0.0035f);
+                gl_.Uniform2f(location(overlayWideProgram_, "u_viewport"), static_cast<float>(width),
+                              static_cast<float>(height));
+                gl_.BindVertexArray(overlayVao_[l][3]);
+                gl_.DrawArrays(TRIANGLES, 0, counts[3]);
+            }
+            if (counts[2] > 0) {
+                use(overlayDotProgram_, 0.003f);
+                gl_.Uniform1f(location(overlayDotProgram_, "u_pixel"),
+                              2.0f * std::tan(orbit.fovY * kPi / 360.0f) / static_cast<float>(std::max(height, 1)));
+                gl_.Enable(PROGRAM_POINT_SIZE);
+                gl_.BindVertexArray(overlayVao_[l][2]);
+                gl_.DrawArrays(POINTS, 0, counts[2]);
+                gl_.Disable(PROGRAM_POINT_SIZE);
+            }
         }
-        if (counts[1] > 0) {
-            use(overlayProgram_, 0.003f);
-            gl_.BindVertexArray(overlayVao_[l][1]);
-            gl_.DrawArrays(LINES, 0, counts[1]);
-        }
-        if (counts[3] > 0) {
-            use(overlayWideProgram_, 0.0035f);
-            gl_.Uniform2f(location(overlayWideProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
-            gl_.BindVertexArray(overlayVao_[l][3]);
-            gl_.DrawArrays(TRIANGLES, 0, counts[3]);
-        }
-        if (counts[2] > 0) {
-            use(overlayDotProgram_, 0.003f);
-            gl_.Uniform1f(location(overlayDotProgram_, "u_pixel"),
-                          2.0f * std::tan(orbit.fovY * kPi / 360.0f) / static_cast<float>(std::max(height, 1)));
-            gl_.Enable(PROGRAM_POINT_SIZE);
-            gl_.BindVertexArray(overlayVao_[l][2]);
-            gl_.DrawArrays(POINTS, 0, counts[2]);
-            gl_.Disable(PROGRAM_POINT_SIZE);
-        }
+    };
+    // What the surface hides, first and faint, when it is asked for; then
+    // what it does not.
+    if (overlayHidden_ > 0.0f) {
+        gl_.DepthFunc(GREATER);
+        fade = overlayHidden_;
+        layers();
     }
+    gl_.DepthFunc(LEQUAL);
+    fade = 1.0f;
+    layers();
     gl_.BindVertexArray(0);
     gl_.Disable(BLEND);
     gl_.DepthMask(1);

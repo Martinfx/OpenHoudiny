@@ -19,10 +19,11 @@ okna.
   jako SOP v Houdini): display flag, viewport, tabulka atributů, geometrie
   jako tvar překážek a zdrojů, simulace zpátky jako body a objemy
 - **[docs/editing.md](docs/editing.md)** — úpravy geometrie ve viewportu
-  jako v Houdini: body, hrany a plochy vybrané myší (klik, obdélník, jen
-  viditelné), úchyt je posune, otočí a zvětší (uzel Edit s měkkým
-  poloměrem), skupina a mazání z vybraného (Group, Blast), štětec maluje
-  atribut — piny a trhání látky (Attribute Paint)
+  jako v Houdini: body, hrany a plochy vybrané myší (klik, obdélník, laso,
+  štětec; jen viditelné, nebo i skryté), úchyt je posune, otočí
+  a zvětší (uzel Edit s měkkým poloměrem), skupina a mazání z vybraného
+  (Group, Blast), štětec maluje atribut — piny a trhání látky (Attribute
+  Paint)
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání
