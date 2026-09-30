@@ -108,12 +108,14 @@ ní, vezme obdélník, laso nebo štětec).
 | **Ctrl+A**, **Ctrl+I**, **Esc** | vybere vše, obrátí výběr, zruší výběr |
 | **F** | zarámuje vybrané |
 | **W**, **E**, **R** | posun, otočení, měřítko vybraného úchytem; **Q** úchyt skryje |
+| **O** | měkký výběr zapnout / vypnout (§4a) |
+| **[** , **]**, kolečko během tahu | menší / větší poloměr měkkého výběru |
 | **Ctrl+G** | skupina z vybraného (Group) |
 | **Delete**, **X** | smaže vybrané (Blast) |
 | **P** | štětec zapnout / vypnout |
 | **Tab** | uzel na vybrané: PolyExtrude, wrangle, Edit… (§6a) |
 | **N** | čísla bodů (v režimu primitiv čísla primitiv), jen viditelných |
-| **[** , **]**, **Shift**+kolečko | menší / větší štětec (malovací i výběrový) |
+| **[** , **]**, **Shift**+kolečko | menší / větší štětec (malovací; výběrový, když není zapnutý měkký výběr) |
 | **Ctrl** při malování | maluje hodnotou Erase Value (maže) |
 | **Esc** při tažení | vrátí, co tažení udělalo (úchyt, štětec výběru) |
 
@@ -133,7 +135,9 @@ zobrazeného, a převezme display flag — a nastaví mu:
 | Class | Points, nebo Primitives (pak se hýbou body vybraných primitiv) |
 | Translate, Rotate, Scale | co udělal úchyt; rotace ve stupních kolem x, pak y, pak z |
 | Pivot | střed vybraného při prvním tahu: kolem něj se otáčí a zvětšuje |
-| Soft Radius | jak daleko kolem vybraného body jdou s ním: úplně u něj, vůbec ve vzdálenosti Soft Radius, mezi tím `(1 − (d/r)²)²` |
+| Soft Radius | jak daleko kolem vybraného body jdou s ním: úplně u něj, vůbec ve vzdálenosti Soft Radius (§4a) |
+| Distance | jak se ta vzdálenost měří: přímo prostorem, nebo po povrchu (§4a) |
+| Falloff | jak podíl pohybu slábne: Smooth, Linear, Sharp, Sphere, Constant (§4a) |
 
 Další tahy se **stejným výběrem** nastavují tentýž Edit: otočení
 a měřítko se skládají přesně (otočení kolem středu úchytu, měřítko podél
@@ -145,6 +149,47 @@ vytvořil, vrátí síť, jak byla. **Ctrl** během tahu přichytává po krocí
 
 Hrany se posouvají svými body: Edit dostane vzor hran (`p3-4`)
 a třídu Points.
+
+Když je zobrazený Edit a nic není vybráno, **2** (u Editu primitiv **4**)
+vybere, co ten Edit hýbe — úchyt pak pokračuje v něm, jako když v Houdini
+vyberete uzel Edit a vrátíte se do jeho nástroje.
+
+## 4a. Měkký výběr (O)
+
+**O** zapne měkký výběr: tah úchytu vezme s sebou i body kolem vybraného,
+tím méně, čím dál jsou — z bodu je kopec, ne jehla. Kolik z pohybu který
+bod dostane, je vidět ještě před tahem: plochy kolem vybraného jsou
+tónované do oranžova (plný pohyb) přes červenou do ztracena (žádný),
+body na cestě mají barvu svého podílu a kolem úchytu je kruh o poloměru
+měkkého výběru s popiskem (`soft 0.51 m`). Výchozí poloměr je 15 %
+velikosti geometrie; mění ho **[** **]** a **kolečko myši během tahu**
+(kopec se mění živě), stejně jako parametr **Soft Radius** Editu.
+
+![Jeden bod mřížky zvednutý s měkkým výběrem 0,8 m: tónování ukazuje, kolik z pohybu který bod dostal](img/edit-soft.jpg)
+
+Nastavení měkkého výběru jsou parametry Editu: nový Edit je dostane
+z viewportu a u zobrazeného Editu téhož výběru viewport ukazuje a mění
+jeho vlastní. Pravý klik › *Soft Selection*, *Soft Distance*, *Soft
+Falloff*; tlačítko s kopečkem v liště pod nástroji.
+
+**Distance** — jak daleko bod je:
+
+| Volba | Vzdálenost |
+|---|---|
+| Space | přímo prostorem k nejbližšímu vybranému bodu |
+| Along the Surface | po povrchu, přes hrany: list ležící nad jiným, vedlejší kus, který se nedotýká, nebo druhá strana ohnutého pásu zůstanou, kde jsou |
+
+![Bod spodního listu zvednutý s poloměrem 0,7 m: přímou vzdáleností (vlevo) se vyboulí i modrý list nad ním, po povrchu (vpravo) zůstane rovný](img/edit-soft-surface.jpg)
+
+**Falloff** — tvar útlumu, `x` je vzdálenost dělená poloměrem:
+
+| Volba | Podíl pohybu | Tvar |
+|---|---|---|
+| Smooth | `(1 − x²)²` | kopec, plochý nahoře i u paty (výchozí) |
+| Linear | `1 − x` | kužel |
+| Sharp | `(1 − x)²` | špička |
+| Sphere | `√(1 − x²)` | kupole, strmá u okraje |
+| Constant | `1` | celý pohyb až do poloměru |
 
 ## 5. Skupina a mazání
 
@@ -299,6 +344,17 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   čáry než pixel nemá). S **H** se značky kreslí dvakrát: nejdřív
   s obráceným testem hloubky (jen to, co povrch zakrývá) a průhlednosti
   0,3, pak normálně. Rendery záběru značky nemají.
+- **Měkký výběr** — `src/pg/core/Soft.h`, `softWeights`: podíl pohybu
+  každého bodu, stejný pro uzel Edit i pro tónování ve viewportu. Přímá
+  vzdálenost hledá nejbližší vybraný bod stromem bodů. Po povrchu jde
+  fronta od všech vybraných bodů naráz přes hrany (Dijkstra, stejně
+  vzdálené body popořadě podle čísel — výsledek je pokaždé stejný); bod si
+  pamatuje vybraný bod, od kterého k němu cesta vedla, a vzdálenost je
+  přímá čára k němu, dokud cesta vede od něj dál — na rovném listu je tak
+  útlum kulatý, ne kosočtverec kroků po hranách — a délka hran tam, kde se
+  povrch ohne zpátky k němu. Viewport tónuje podle geometrie, kterou
+  zobrazený Edit dostává na vstupu (kooker ji vrací spolu se zobrazenou),
+  takže náhled odpovídá tomu, co Edit spočítá, i během tahu.
 - **Skládání úprav** — `sim::EditTransform` (`src/pg/sim/Shape.h`):
   Edit dělá `x → R S (x − p) + p + t`; tah úchytu kolem středu `c`
   složený za něj je znovu Edit: otočení předřazené `R`, měřítko násobí
@@ -324,8 +380,9 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   pojmenovávají. Malování to nepostihne — kapky jsou místa.
 - Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
   objekty ani kusy před ní.
-- Zatím chybí režim vrcholů (rohů), *Dissolve* hran, symetrie a měkký
-  výběr kreslený přímo ve viewportu (měkký poloměr je parametr Editu).
+- Zatím chybí režim vrcholů (rohů), *Dissolve* hran a symetrie. Měkký
+  výběr má jen úchyty (posun, otočení, měřítko); štětec *Sculpt* zatím
+  není.
   Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by
   Box (dva rohy).
 - Drát a všechny body se kreslí do 400 000 hran či bodů; ve větší geometrii

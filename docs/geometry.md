@@ -51,7 +51,7 @@ nastaveným na ni.
 | **Group Box** | Skupina bodů uvnitř krabice |
 | **Group** | Skupina bodů nebo primitiv podle vzoru — čísla a rozsahy `0-9 12`, hrany `p3-4`, jiné skupiny, `*`, `^` ubírá; **Ctrl+G** ve viewportu ji udělá z vybraného ([editing.md](editing.md)) |
 | **Blast** | Smaže body vzoru (skupina, čísla, hrany) i s primitivy, které ztratí bod — nebo primitivy i s body, které používaly jen ony; nebo naopak nechá jen je (Keep). **Delete** ve viewportu ho udělá z vybraného |
-| **Edit** | Posune, otočí a zvětší body vzoru — nebo body jeho primitiv — kolem Pivot; Soft Radius vezme s sebou i body kolem, tím méně, čím dál jsou. Co udělá úchyt (W E R) na vybraném ve viewportu |
+| **Edit** | Posune, otočí a zvětší body vzoru — nebo body jeho primitiv — kolem Pivot; Soft Radius vezme s sebou i body kolem, tím méně, čím dál jsou — vzdálenost přímo, nebo po povrchu (Distance), tvar útlumu Falloff. Co udělá úchyt (W E R) na vybraném ve viewportu, s měkkým výběrem (O) |
 | **Attribute Paint** | Číslo namalované na body štětcem ve viewportu (**P**): kapky jako místa (x y z poloměr hodnota síla), v pořadí; `pin`, `tear`, `mass` pro látku |
 | **Point / Primitive / Detail Wrangle** | Kód nad každým bodem, primitivem, nebo jednou nad celou geometrií: posouvá, barví, vyrábí atributy, čte sousedy a další vstupy, staví a maže geometrii ([wrangle.md](wrangle.md)) |
 | **Normal** | Normály bodů `N`, průměr stěn kolem bodu vážený plochou |

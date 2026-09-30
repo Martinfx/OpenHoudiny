@@ -98,9 +98,12 @@ void SimWorkspace::updateGeometry() {
     // the network, the levels gone into, the frame, the nodes wanted, the
     // simulation's frame (what Liquid Points reads).
     const std::shared_ptr<const sim::Frame> simFrame = runner_->frame(shownFrame());
-    char key[160];
-    std::snprintf(key, sizeof key, "%llu/%llu/%d/%d/%d/%p/%s", static_cast<unsigned long long>(net_.revision()),
-                  static_cast<unsigned long long>(levelsRevision_), shownFrame(), display, sheet_ ? sheet : 0,
+    // With soft selection, what the shown Edit of what is picked moves:
+    // the shares of a drag are of that.
+    const int base = softBaseNode();
+    char key[200];
+    std::snprintf(key, sizeof key, "%llu/%llu/%d/%d/%d/%d/%p/%s", static_cast<unsigned long long>(net_.revision()),
+                  static_cast<unsigned long long>(levelsRevision_), shownFrame(), display, sheet_ ? sheet : 0, base,
                   static_cast<const void*>(simFrame.get()), folder().c_str());
     if (key != cookKey_) {
         cookKey_ = key;
@@ -111,6 +114,7 @@ void SimWorkspace::updateGeometry() {
         r.timeStep = compiled_.world.timeStep;
         if (display) r.nodes.push_back(display);
         if (sheet_ && sheet) r.nodes.push_back(sheet);
+        if (base) r.nodes.push_back(base);
         cooker_->submit(std::move(r));
         cookAsked_ = ImGui::GetTime();
     }
@@ -126,6 +130,9 @@ void SimWorkspace::updateGeometry() {
     const auto sheetGeo = done.geometry.find(sheet);
     sheetGeometry_ = sheetGeo != done.geometry.end() ? sheetGeo->second : nullptr;
     sheetGeometryNode_ = sheet;
+    const auto baseGeo = base ? done.geometry.find(base) : done.geometry.end();
+    softBase_ = baseGeo != done.geometry.end() ? baseGeo->second : nullptr;
+    softBaseNode_ = softBase_ ? base : 0;
     // What went wrong the last time each node cooked.
     cookErrors_ = std::move(done.errors);
     cookWarnings_ = std::move(done.warnings);

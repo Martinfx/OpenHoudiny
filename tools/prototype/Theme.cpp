@@ -654,6 +654,18 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
             line(0.45f, 0.8f, 0.8f, 0.45f);
             break;
         }
+        case Icon::Soft: {  // a hill: the point picked at its top, those round lower and lower
+            ImVec2 hill[17];
+            for (int i = 0; i <= 16; ++i) {
+                const float x = -0.9f + 1.8f * static_cast<float>(i) / 16.0f, u = x / 0.9f;
+                const float f = std::max(0.0f, 1.0f - u * u);
+                hill[i] = P(x, 0.7f - 1.2f * f * f);
+            }
+            d->AddPolyline(hill, 17, col, 0, t);
+            line(-0.9f, 0.7f, 0.9f, 0.7f, std::max(1.0f, t * 0.6f));
+            d->AddCircleFilled(P(0.0f, -0.5f), 0.2f * s, col);
+            break;
+        }
         case Icon::Numbers:  // a hash: numbers of the elements
             line(-0.25f, -0.8f, -0.45f, 0.8f);
             line(0.45f, -0.8f, 0.25f, 0.8f);

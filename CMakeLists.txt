@@ -52,6 +52,7 @@ add_library(pgcore
   src/pg/core/Spatial.cpp
   src/pg/core/Pick.cpp
   src/pg/core/Selection.cpp
+  src/pg/core/Soft.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp
   src/pg/lang/Eval.cpp

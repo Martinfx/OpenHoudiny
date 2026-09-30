@@ -71,6 +71,7 @@ enum class Icon {
     Asset,                                           // a digital asset
     Vertices, Edges, Faces, Brush, Numbers,          // editing geometry: what is picked, the brush, numbers
     PickBox, Lasso, PickBrush, XRay,                 // ... how a drag picks; what is hidden picked too
+    Soft,                                            // ... soft selection
 };
 
 /// `icon` in a square `size` wide, centred on `center`.

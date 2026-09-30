@@ -1918,6 +1918,7 @@ void SimWorkspace::helpMenu() {
     ImGui::TextUnformatted("S, H                      box, lasso or brush; what is hidden too");
     ImGui::TextUnformatted("Alt / Space + left drag   orbit, while picking or painting");
     ImGui::TextUnformatted("W  E  R, drag a handle    move, turn, size what is picked (an Edit node)");
+    ImGui::TextUnformatted("O, [ ], wheel in a drag   soft selection, its radius");
     ImGui::TextUnformatted("Ctrl+G, Del               a group of it, delete it (Group, Blast)");
     ImGui::TextUnformatted("Ctrl+A, Ctrl+I, Esc       pick all, the others, none");
     ImGui::TextUnformatted("P, [ ], Shift+wheel       paint an attribute (Ctrl: erase), brush size");

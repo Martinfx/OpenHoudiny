@@ -6,6 +6,7 @@
 #include "pg/core/Geometry.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Selection.h"
+#include "pg/core/Soft.h"
 #include "pg/core/Spatial.h"
 
 #include <algorithm>
@@ -46,7 +47,8 @@ public:
 /// scaled, then turned about the pivot, then moved: what the viewport's
 /// handle does to a selection. With a soft radius the points round them
 /// follow too, less the further they are: all the way at the selection,
-/// not at all the radius away.
+/// not at all the radius away (Soft.h) -- the distance straight, or along
+/// the surface; the falloff's shape a hill, a cone, a spike, a dome, flat.
 class EditNode : public Node {
 public:
     explicit EditNode(std::string name) : Node("edit", std::move(name)) {
@@ -58,6 +60,8 @@ public:
         params_.setVec3("s", Vec3(1, 1, 1));
         params_.setVec3("p", Vec3(0, 0, 0));
         params_.setFloat("soft", 0.0f);
+        params_.setInt("metric", 0);   // 0 space, 1 along the surface
+        params_.setInt("falloff", 0);  // Falloff: smooth, linear, sharp, sphere, constant
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
@@ -66,30 +70,11 @@ public:
         std::vector<uint8_t> chosen = selectElements(*geo, cls, params_.getString("group"));
         if (cls == AttrClass::Primitive) chosen = pointsOfPrimitives(*geo, chosen);
         const size_t n = geo->pointCount();
-        std::vector<float> weight(n, 0.0f);
-        std::vector<Vec3> picked;
-        const auto P0 = geo->positions();
-        for (size_t i = 0; i < n; ++i) {
-            if (!chosen[i]) continue;
-            weight[i] = 1.0f;
-            picked.push_back(P0[i]);
-        }
-        if (picked.empty()) return geo;
+        if (std::none_of(chosen.begin(), chosen.end(), [](uint8_t c) { return c != 0; })) return geo;
         const float soft = std::max(params_.evalFloat("soft", ctx, 0.0f), 0.0f);
-        if (soft > 0.0f) {
-            // How far each other point is from the nearest one picked.
-            const PointTree tree(picked);
-            parallelFor(n, 4096, [&](size_t begin, size_t end) {
-                for (size_t i = begin; i < end; ++i) {
-                    if (chosen[i]) continue;
-                    const int32_t j = tree.nearest(P0[i], soft);
-                    if (j < 0) continue;
-                    const float d = length(P0[i] - picked[static_cast<size_t>(j)]) / soft;
-                    const float f = std::max(0.0f, 1.0f - d * d);
-                    weight[i] = f * f;
-                }
-            });
-        }
+        const SoftDistance metric = params_.evalInt("metric", ctx, 0) == 1 ? SoftDistance::Surface : SoftDistance::Space;
+        const Falloff shape = static_cast<Falloff>(std::clamp(params_.evalInt("falloff", ctx, 0), 0, 4));
+        const std::vector<float> weight = softWeights(*geo, chosen, soft, metric, shape);
 
         const Vec3 t = params_.evalVec3("t", ctx, Vec3(0, 0, 0));
         const Vec3 r = params_.evalVec3("r", ctx, Vec3(0, 0, 0));

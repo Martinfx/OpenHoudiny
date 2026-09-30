@@ -576,7 +576,8 @@ std::vector<NodeType> buildTypes() {
     geometry("edit", "Edit", "edit",
              "Moves, turns and sizes the points picked in the viewport -- or those of the primitives picked -- "
              "about the pivot, as the handle does: what dragging what is picked in the viewport makes -- W, "
-             "E, R. Soft Radius takes the points round them along, less the further they are.",
+             "E, R. Soft Radius takes the points round them along, less the further they are -- O in the "
+             "viewport shows how much each takes.",
              in,
              {text("group", "Elements", "Edit", "",
                    "Which: numbers and ranges -- 0-9 12 -- edges -- p3-4 -- groups by name, * for all; ^ before "
@@ -588,7 +589,15 @@ std::vector<NodeType> buildTypes() {
               vec("p", "Pivot", "Edit", Vec3(), -5.0f, 5.0f, "m", "What they turn and size about: the middle of the selection."),
               {"soft", "Soft Radius", "Edit", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "m",
                "How far round the selection points go along: all the way at it, not at all this far away. 0: "
-               "only those picked."}},
+               "only those picked. [ ] in the viewport with O on, or the wheel while dragging."},
+              {"metric", "Distance", "Edit", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How far a point is from the selection: straight through space, or along the surface -- through "
+               "its edges, so that a sheet lying over another, or a piece near but not joined, stays where it is.",
+               {"space", "surface"}, {"Space", "Along the Surface"}},
+              {"falloff", "Falloff", "Edit", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 4.0f, "",
+               "How the share of the move goes from all of it at the selection to none at Soft Radius: Smooth, a "
+               "hill; Linear, a cone; Sharp, a spike; Sphere, a dome; Constant, all of it as far as the radius.",
+               {"smooth", "linear", "sharp", "sphere", "constant"}, {"Smooth", "Linear", "Sharp", "Sphere", "Constant"}}},
              {"t", "r", nullptr, "s", nullptr, nullptr, "p"});
     geometry("attribute_paint", "Attribute Paint", "attribpaint",
              "A number painted onto the points with the viewport's brush -- where the cloth is pinned (pin), "

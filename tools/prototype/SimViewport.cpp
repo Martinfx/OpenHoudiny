@@ -747,7 +747,7 @@ void SimWorkspace::frameSelection() {
 
 void SimWorkspace::viewTools(ImVec2 at) {
     const float side = theme::px(28.0f), gap = theme::px(2.0f), pad = theme::px(3.0f), space = theme::px(8.0f);
-    const float height = 16.0f * side + 12.0f * gap + 3.0f * space + 2.0f * pad;
+    const float height = 17.0f * side + 13.0f * gap + 3.0f * space + 2.0f * pad;
     ImDrawList* d = ImGui::GetWindowDrawList();
     toolsLo_ = at;
     toolsHi_ = ImVec2(at.x + side + 2.0f * pad, at.y + height);
@@ -772,6 +772,15 @@ void SimWorkspace::viewTools(ImVec2 at) {
             tool_ = t.mode;
             setPaint(false);
         }
+    }
+    // Soft selection: what the handle's drags take along.
+    place();
+    const Soft soft = softNow();
+    if (theme::iconButton("soft", Icon::Soft,
+                          "Soft selection (O): a drag of the handle takes the points round what is picked along, less "
+                          "the further they are; [ ] or the wheel while dragging: the radius",
+                          soft.on && editingElements() && !paint_, editingElements() && !paint_, side)) {
+        setSoft(!soft.on);
     }
     y += space - gap;
     // What a click picks: objects, or the displayed geometry's points,
@@ -870,6 +879,22 @@ void SimWorkspace::viewMenu() {
         }
         if (ImGui::MenuItem("Pick All", "Ctrl+A", false, !paint_)) selectAllElements(false);
         if (ImGui::MenuItem("Pick the Others", "Ctrl+I", false, !paint_)) selectAllElements(true);
+        ImGui::Separator();
+        // Soft selection: on, how far is measured, the falloff's shape.
+        const Soft soft = softNow();
+        if (ImGui::MenuItem("Soft Selection", "O", soft.on, !paint_)) setSoft(!soft.on);
+        if (ImGui::BeginMenu("Soft Distance", !paint_)) {
+            if (ImGui::MenuItem("Space", nullptr, soft.metric == 0)) setSoftMetric(0);
+            if (ImGui::MenuItem("Along the Surface", nullptr, soft.metric == 1)) setSoftMetric(1);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Soft Falloff", !paint_)) {
+            const char* shapes[5] = {"Smooth", "Linear", "Sharp", "Sphere", "Constant"};
+            for (int k = 0; k < 5; ++k) {
+                if (ImGui::MenuItem(shapes[k], nullptr, soft.falloff == k)) setSoftFalloff(k);
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
     }
     if (ImGui::BeginMenu("Add")) {
@@ -1010,6 +1035,7 @@ void SimWorkspace::viewKeys(bool overView) {
                                                                                                   : PickStyle::Box);
     }
     if (ImGui::IsKeyPressed(ImGuiKey_H, false) && editingElements() && !paint_) setPickHidden(!pickHidden_);
+    if (ImGui::IsKeyPressed(ImGuiKey_O, false) && editingElements() && !paint_) setSoft(!softNow().on);
     if (ImGui::IsKeyPressed(ImGuiKey_N, false) && editingElements()) {
         numbers_ = !numbers_;
         numbersKey_.clear();
@@ -1019,12 +1045,19 @@ void SimWorkspace::viewKeys(bool overView) {
         setPaint(false);
         ImGui::OpenPopup("on_picked");
     }
-    if (paint_ && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) scaleBrush(0.8f);
-    if (paint_ && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) scaleBrush(1.25f);
-    const bool pickBrush = editingElements() && !paint_ && pickStyle_ == PickStyle::Brush;
-    if (pickBrush && (ImGui::IsKeyPressed(ImGuiKey_LeftBracket) || ImGui::IsKeyPressed(ImGuiKey_RightBracket))) {
-        const float r = pickBrush_ > 0.0f ? pickBrush_ : 24.0f;
-        pickBrush_ = std::clamp(r * (ImGui::IsKeyPressed(ImGuiKey_LeftBracket) ? 0.8f : 1.25f), 3.0f, 400.0f);
+    // [ ]: the size of what is in the hand -- the paint brush, the soft
+    // radius round what is picked, the brush that picks.
+    const bool smaller = ImGui::IsKeyPressed(ImGuiKey_LeftBracket), larger = ImGui::IsKeyPressed(ImGuiKey_RightBracket);
+    if (smaller || larger) {
+        const float k = smaller ? 0.8f : 1.25f;
+        const Soft soft = softNow();
+        if (paint_) {
+            scaleBrush(k);
+        } else if (editingElements() && soft.on && elementCount() > 0) {
+            setSoftRadius(soft.radius * k);
+        } else if (editingElements() && pickStyle_ == PickStyle::Brush) {
+            pickBrush_ = std::clamp((pickBrush_ > 0.0f ? pickBrush_ : 24.0f) * k, 3.0f, 400.0f);
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_K, false)) keySelection();
     const GizmoMode keyed[4] = {GizmoMode::Select, GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale};
@@ -1222,6 +1255,9 @@ void SimWorkspace::viewport(ImVec2 size) {
         elementGizmo(d, cam, overView);
         paintTool(d, cam, overView);
         pickBrushTool(d, cam, overView, pressed);
+        // No handle: the soft radius round the middle of what is picked.
+        Vec3 middle;
+        if (tool_ == GizmoMode::Select && !paint_ && elementCenter(middle)) drawSoftRing(d, cam, middle);
     } else if (tool != GizmoMode::Select) {
         Vec3 pivot;
         sim::Rotation frame;
@@ -1277,6 +1313,8 @@ void SimWorkspace::viewport(ImVec2 size) {
     const float wheel = io.MouseWheel != 0.0f ? io.MouseWheel : io.KeyShift ? io.MouseWheelH : 0.0f;
     if (viewHovered && paint_ && io.KeyShift && wheel != 0.0f) {
         scaleBrush(std::pow(1.15f, wheel));  // Shift+wheel: the brush's size
+    } else if (gizmo_.dragging() && editingElements() && io.MouseWheel != 0.0f && softNow().on) {
+        setSoftRadius(softNow().radius * std::pow(1.15f, io.MouseWheel));  // dragging: the soft radius
     } else if (viewHovered && editingElements() && pickStyle_ == PickStyle::Brush && io.KeyShift && wheel != 0.0f) {
         pickBrush_ = std::clamp((pickBrush_ > 0.0f ? pickBrush_ : 24.0f) * std::pow(1.15f, wheel), 3.0f, 400.0f);
     } else if (viewHovered && io.MouseWheel != 0.0f) {

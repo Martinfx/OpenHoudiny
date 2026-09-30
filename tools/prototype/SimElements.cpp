@@ -14,6 +14,8 @@
 //   H                  what the surface hides is picked too, and drawn faint
 //   Alt or Space held  the left button turns the view (middle: pan; right, wheel: zoom)
 //   W E R              move, turn, size what is picked -- an Edit node; Q: no handle
+//   O                  soft selection: the points round go along, less the further
+//                      they are -- [ ], or the wheel while dragging: its radius
 //   Ctrl+G             a Group of it;   Delete, X: a Blast of it
 //   Ctrl+A, Ctrl+I     all of them, the others;   Escape: none
 //   P                  the brush: the Attribute Paint node's attribute, its Value
@@ -23,6 +25,8 @@
 // mouse, the paint -- are the renderer's overlay: hidden behind what is in
 // front of them, as the geometry is.
 #include "SimWorkspace.h"
+
+#include "pg/core/Soft.h"
 
 #include <algorithm>
 #include <cmath>
@@ -70,6 +74,20 @@ Vec4 paintColor(float v) {
     const Vec4& a = stops[i];
     const Vec4& b = stops[i + 1];
     return {a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f, a.w + (b.w - a.w) * f};
+}
+
+/// The colour of a share of a drag, over the surface: none at 0, through
+/// red to the colour of what is picked at 1.
+Vec4 softColor(float w, float alpha) {
+    const float t = std::clamp(w, 0.0f, 1.0f);
+    return {0.95f + 0.05f * t, 0.22f + 0.58f * t, 0.3f - 0.1f * t, alpha * t};
+}
+
+/// A length said shortly: 0.42 m, 1.5 m, 12 m.
+std::string metres(float m) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.2g m", static_cast<double>(m));
+    return text;
 }
 
 size_t countOf(const std::vector<uint8_t>& mask) {
@@ -136,7 +154,13 @@ size_t SimWorkspace::elementCount() const {
 }
 
 std::string SimWorkspace::elementPattern() const {
-    return elements_ == Elements::Edges ? edgePatternOf(picked_.edges) : patternOf(picked_.mask);
+    // Asked many times a frame: found again only when what is picked changed.
+    if (patternRevision_ != picked_.revision || patternElements_ != elements_) {
+        patternCache_ = elements_ == Elements::Edges ? edgePatternOf(picked_.edges) : patternOf(picked_.mask);
+        patternRevision_ = picked_.revision;
+        patternElements_ = elements_;
+    }
+    return patternCache_;
 }
 
 int SimWorkspace::elementClass() const { return elements_ == Elements::Primitives ? 1 : 0; }
@@ -211,7 +235,24 @@ void SimWorkspace::setElements(Elements mode) {
     picked_.node = net_.displayed();
     picked_.points = geo->pointCount();
     picked_.primitives = geo->primitiveCount();
-    if (!had) return;
+    if (!had) {
+        // Nothing was picked and an Edit is shown: what it moves -- its
+        // handle goes on with it.
+        const sim::Node* n = net_.node(picked_.node);
+        const std::string pattern = n && n->type == "edit" && !n->bypass ? net_.text(n->id, "group") : std::string();
+        const int cls = n ? static_cast<int>(net_.value(n->id, "class")) : 0;
+        if (pattern.empty()) return;
+        if (mode == Elements::Points && cls == 0) {
+            picked_.mask = selectElements(*geo, AttrClass::Point, pattern);
+        } else if (mode == Elements::Primitives && cls == 1) {
+            picked_.mask = selectElements(*geo, AttrClass::Primitive, pattern);
+        } else if (mode == Elements::Edges && cls == 0) {
+            const std::vector<Edge> all = edgesOf(*geo);
+            picked_.edges = selectEdges(all, pattern);
+        }
+        ++picked_.revision;
+        return;
+    }
     switch (mode) {
         case Elements::Points: picked_.mask = points; break;
         case Elements::Primitives: picked_.mask = primitivesOfPoints(*geo, points); break;
@@ -368,6 +409,122 @@ void SimWorkspace::pickBrushTool(ImDrawList* d, const ViewCamera& cam, bool over
     if (brushing_) d->AddCircleFilled(m, r, removes ? IM_COL32(120, 190, 255, 24) : IM_COL32(255, 200, 60, 24), 48);
 }
 
+// --- soft selection ---------------------------------------------------------------------------
+
+int SimWorkspace::pickedEdit() const {
+    if (elements_ == Elements::Objects || elementCount() == 0) return 0;
+    const int shown = net_.displayed();
+    const sim::Node* n = net_.node(shown);
+    const bool ours = n && n->type == "edit" && !n->bypass && net_.text(shown, "group") == elementPattern() &&
+                      static_cast<int>(net_.value(shown, "class")) == elementClass();
+    return ours ? shown : 0;
+}
+
+SimWorkspace::Soft SimWorkspace::softNow() const {
+    Soft s;
+    s.on = soft_;
+    s.radius = softRadius_;
+    if (s.radius <= 0.0f) {
+        // Not set yet: a share of the geometry's size, said shortly.
+        Vec3 lo, hi;
+        const float size = renderer_.geometryBounds(lo, hi) ? length(hi - lo) : 3.0f;
+        const float r = std::max(0.15f * size, 1e-3f);
+        const float step = std::pow(10.0f, std::floor(std::log10(r)) - 1.0f);
+        s.radius = std::round(r / step) * step;
+    }
+    s.metric = softMetric_;
+    s.falloff = softFalloff_;
+    // The shown Edit of what is picked: its own.
+    if (const int e = pickedEdit()) {
+        const float frame = static_cast<float>(current_);
+        const float r = net_.valueAt(e, "soft", frame)[0];
+        s.on = r > 0.0f;
+        if (s.on) s.radius = r;
+        s.metric = static_cast<int>(net_.valueAt(e, "metric", frame)[0]);
+        s.falloff = static_cast<int>(net_.valueAt(e, "falloff", frame)[0]);
+    }
+    return s;
+}
+
+void SimWorkspace::setSoft(bool on) {
+    const Soft now = softNow();
+    soft_ = on;
+    softRadius_ = now.radius;
+    if (const int e = pickedEdit()) net_.setParamAt(e, "soft", static_cast<float>(current_), {on ? softRadius_ : 0.0f, 0.0f, 0.0f});
+    setMessage(on ? "Soft selection, " + metres(softRadius_) +
+                        ": a drag takes the points round along, less the further they are -- [ ] or the wheel while "
+                        "dragging: the radius; O: off"
+                  : std::string("Soft selection off: a drag moves only what is picked"));
+}
+
+void SimWorkspace::setSoftRadius(float radius) {
+    softRadius_ = std::clamp(radius, 1e-3f, 1000.0f);
+    const int e = pickedEdit();
+    if (e && softNow().on) net_.setParamAt(e, "soft", static_cast<float>(current_), {softRadius_, 0.0f, 0.0f});
+}
+
+void SimWorkspace::setSoftMetric(int metric) {
+    softMetric_ = metric;
+    if (const int e = pickedEdit()) net_.setParam(e, "metric", {static_cast<float>(metric), 0.0f, 0.0f});
+}
+
+void SimWorkspace::setSoftFalloff(int falloff) {
+    softFalloff_ = falloff;
+    if (const int e = pickedEdit()) net_.setParam(e, "falloff", {static_cast<float>(falloff), 0.0f, 0.0f});
+}
+
+int SimWorkspace::softBaseNode() const {
+    if (!editingElements() || paint_) return 0;
+    const int e = pickedEdit();
+    if (!e || !softNow().on) return 0;
+    const std::vector<sim::Link> in = net_.linksInto(e, "geometry");
+    return in.empty() ? 0 : in.front().from;
+}
+
+const std::vector<float>& SimWorkspace::softShares() {
+    const GeometryPtr& geo = renderer_.geometry();
+    const Soft s = softNow();
+    if (!geo || !s.on || !editingElements() || paint_ || elementCount() == 0 || picked_.points != geo->pointCount() ||
+        picked_.primitives != geo->primitiveCount()) {
+        softShares_.clear();
+        softKey_.clear();
+        return softShares_;
+    }
+    // Of the geometry the shown Edit moves, when it is shown: as it was
+    // before the drag, as the Edit reckons them.
+    const int base = softBaseNode();
+    const bool before = base && softBase_ && softBaseNode_ == base && softBase_->pointCount() == geo->pointCount() &&
+                        softBase_->primitiveCount() == geo->primitiveCount();
+    const GeometryPtr& of = before ? softBase_ : geo;
+    char key[200];
+    std::snprintf(key, sizeof key, "%p %llu %d %g %d %d", static_cast<const void*>(of.get()),
+                  static_cast<unsigned long long>(picked_.revision), static_cast<int>(elements_), static_cast<double>(s.radius),
+                  s.metric, s.falloff);
+    if (key != softKey_) {
+        softKey_ = key;
+        softShares_ = softWeights(*of, elementPoints(*geo), s.radius, s.metric == 1 ? SoftDistance::Surface : SoftDistance::Space,
+                                  static_cast<Falloff>(std::clamp(s.falloff, 0, 4)));
+    }
+    return softShares_;
+}
+
+void SimWorkspace::drawSoftRing(ImDrawList* d, const ViewCamera& cam, const Vec3& center) {
+    const Soft s = softNow();
+    if (!s.on || elementCount() == 0) return;
+    ImVec2 at;
+    if (!cam.toScreen(center, at)) return;
+    // As big as the radius looks where the handle is.
+    const float r = s.radius / std::max(cam.pixel(center), 1e-9f);
+    if (r < 2.0f || r > 20000.0f) return;
+    const ImU32 col = IM_COL32(255, 150, 90, 200);
+    d->AddCircle(at, r, IM_COL32(0, 0, 0, 110), 96, theme::px(2.5f));
+    d->AddCircle(at, r, col, 96, theme::px(1.2f));
+    const std::string label = "soft " + metres(s.radius) + (s.metric == 1 ? ", along the surface" : "");
+    const ImVec2 o(at.x + r * 0.7071f + theme::px(4.0f), at.y - r * 0.7071f - ImGui::GetFontSize());
+    d->AddText(ImVec2(o.x + 1.0f, o.y + 1.0f), IM_COL32(0, 0, 0, 200), label.c_str());
+    d->AddText(o, col, label.c_str());
+}
+
 void SimWorkspace::selectAllElements(bool invert) {
     const GeometryPtr geo = renderer_.geometry();
     if (!geo || elements_ == Elements::Objects) return;
@@ -489,14 +646,39 @@ void SimWorkspace::updateOverlay() {
     }
 
     // What is picked: a layer of its own, made again as that changes --
-    // with every move of the brush that picks.
+    // with every move of the brush that picks; with soft selection, the
+    // share of a drag the points round take, over the surface.
     const bool marks = on && !painted;
-    std::snprintf(key, sizeof key, "%d %d %p %llu", marks ? 1 : 0, static_cast<int>(elements_), shown,
-                  static_cast<unsigned long long>(picked_.revision));
+    const std::vector<float>& shares = marks ? softShares() : softShares_;
+    std::snprintf(key, sizeof key, "%d %d %p %llu %s", marks ? 1 : 0, static_cast<int>(elements_), shown,
+                  static_cast<unsigned long long>(picked_.revision), marks ? softKey_.c_str() : "");
     if (key != overlayKey_[1]) {
         overlayKey_[1] = key;
         gl::Overlay o;
         const bool mine = geo && picked_.points == geo->pointCount() && picked_.primitives == geo->primitiveCount();
+        if (marks && mine && shares.size() == geo->pointCount()) {
+            const Geometry& g = *geo;
+            const auto P = g.positions();
+            for (size_t p = 0; p < g.primitiveCount(); ++p) {
+                const auto pts = g.primitivePoints(p);
+                if (pts.size() < 3 || !g.primitiveClosed(p)) continue;
+                for (size_t k = 1; k + 1 < pts.size(); ++k) {
+                    const float a = shares[pts[0]], b = shares[pts[k]], c = shares[pts[k + 1]];
+                    if (a <= 0.0f && b <= 0.0f && c <= 0.0f) continue;
+                    o.face(P[pts[0]], P[pts[k]], P[pts[k + 1]], softColor(a, 0.5f), softColor(b, 0.5f), softColor(c, 0.5f));
+                }
+            }
+            if (P.size() <= kMostMarks) {
+                // The points that go part of the way.
+                const std::vector<Vec3>& normals = pointNormals(geo);
+                for (size_t i = 0; i < P.size(); ++i) {
+                    if (shares[i] > 0.0f && shares[i] < 1.0f) {
+                        const Vec4 c = softColor(shares[i], 1.0f);
+                        o.dot(P[i], Vec4(c.x, c.y, c.z, 0.95f), theme::px(5.0f), normals[i]);
+                    }
+                }
+            }
+        }
         if (marks && mine) {
             const Geometry& g = *geo;
             const auto P = g.positions();
@@ -694,6 +876,7 @@ void SimWorkspace::elementGizmo(ImDrawList* d, const ViewCamera& cam, bool overV
     const bool free = overView && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
                       (gizmo_.dragging() || (!io.KeyShift && !io.KeyCtrl));
     gizmo_.update(d, cam, tool_, pivot, axes, free, snap_ != io.KeyCtrl);
+    drawSoftRing(d, cam, pivot);
     if (gizmo_.began()) {
         // The Edit shown goes on; else one is made -- once the drag moves
         // something: a click on the handle makes none.
@@ -724,6 +907,7 @@ void SimWorkspace::applyElementDrag(const GizmoDrag& drag) {
                            : drag.mode == GizmoMode::Scale  ? drag.scale == Vec3(1.0f, 1.0f, 1.0f)
                                                             : true;
         if (still) return;
+        const Soft soft = softNow();  // the viewport's: no Edit of what is picked is shown yet
         madeBefore_ = net_.save();
         editNode_ = insertAfterDisplayed("edit");
         editPending_ = false;
@@ -732,6 +916,9 @@ void SimWorkspace::applyElementDrag(const GizmoDrag& drag) {
         net_.setText(editNode_, "group", editPattern_);
         net_.setParam(editNode_, "class", {static_cast<float>(editClass_), 0.0f, 0.0f});
         net_.setParam(editNode_, "p", pv(editP0_));
+        net_.setParam(editNode_, "soft", {soft.on ? soft.radius : 0.0f, 0.0f, 0.0f});
+        net_.setParam(editNode_, "metric", {static_cast<float>(soft.metric), 0.0f, 0.0f});
+        net_.setParam(editNode_, "falloff", {static_cast<float>(soft.falloff), 0.0f, 0.0f});
     }
     if (!net_.node(editNode_)) return;
     // What the Edit did when the drag began, then what the drag does about
@@ -1122,6 +1309,8 @@ std::string SimWorkspace::elementStatus() const {
     }
     if (n) {
         text += std::to_string(n) + " " + kindOf(elements_, n != 1) + " picked";
+        const Soft soft = softNow();
+        if (soft.on) text += "  \xc2\xb7  soft " + metres(soft.radius);
         if (hoverElement_ < 0) text += "  \xc2\xb7  W E R move, turn, size  \xc2\xb7  Ctrl+G group  \xc2\xb7  Delete";
     } else if (hoverElement_ < 0) {
         const std::string kind = kindOf(elements_, true);

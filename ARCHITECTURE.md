@@ -347,6 +347,8 @@ src/pg/core/     Types      vektory, matice, typy atributů
                  CookEngine pull evaluace, LRU cache
                  Spatial    k-d strom bodů (deterministické pořadí), sousedé přes hrany
                  Selection  vzory prvků: čísla, rozsahy, skupiny, hrany (p3-4), * a ^
+                 Soft       měkký výběr: podíl pohybu bodů kolem vybraného, vzdálenost
+                            přímo nebo po povrchu (přes hrany), tvary útlumu
                  Pick       co je pod myší, v obdélníku, lasu, tahu štětce: BVH nad
                             polygony, jen viditelné nebo i skryté
 src/pg/lang/     Parse      lexer a parser do AST, kontrola jmen a počtu argumentů

@@ -376,7 +376,9 @@ Seřazeno podle poměru hodnota / náklad:
    ([editing.md](docs/editing.md)); Tab vloží libovolný uzel na vybrané
    (PolyExtrude s úchytem na Distance, wrangle), N ukáže čísla prvků;
    výběr obdélníkem, lasem i štětcem (S), H vybírá i skryté a ukáže je
-   průsvitně; úchyty geometrických uzlů (Transform a Edit v pivotu, Clip).
+   průsvitně; úchyty geometrických uzlů (Transform a Edit v pivotu, Clip);
+   měkký výběr (O) s náhledem podílu pohybu na geometrii, poloměr klávesami
+   i kolečkem během tahu, vzdálenost přímá nebo po povrchu, pět tvarů útlumu.
    Zbývá: režim vrcholů, Dissolve hran, symetrie.
 
 ---

@@ -10,6 +10,7 @@
 #include "pg/core/Graph.h"
 #include "pg/core/Pick.h"
 #include "pg/core/Selection.h"
+#include "pg/core/Soft.h"
 #include "pg/nodes/Nodes.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
@@ -675,6 +676,117 @@ TEST(the_handles_of_every_node_type_are_parameters_it_has) {
     const sim::NodeType* clip = sim::findNodeType("clip");
     CHECK(clip && clip->handles.center && std::string(clip->handles.center) == "origin");
     CHECK(clip && clip->handles.axis && std::string(clip->handles.axis) == "dir");
+}
+
+TEST(soft_weights_straight_and_along_the_surface) {
+    // The shapes of the falloff, at the selection, halfway, at the radius.
+    CHECK_NEAR(falloff(Falloff::Smooth, 0.0f), 1.0f, 1e-6f);
+    CHECK_NEAR(falloff(Falloff::Smooth, 0.5f), 0.5625f, 1e-6f);
+    CHECK_NEAR(falloff(Falloff::Linear, 0.5f), 0.5f, 1e-6f);
+    CHECK_NEAR(falloff(Falloff::Sharp, 0.5f), 0.25f, 1e-6f);
+    CHECK_NEAR(falloff(Falloff::Sphere, 0.5f), std::sqrt(0.75f), 1e-6f);
+    CHECK_NEAR(falloff(Falloff::Constant, 0.5f), 1.0f, 1e-6f);
+    for (const Falloff f : {Falloff::Smooth, Falloff::Linear, Falloff::Sharp, Falloff::Sphere, Falloff::Constant}) {
+        CHECK_NEAR(falloff(f, 1.0f), 0.0f, 1e-6f);
+    }
+    // A flat sheet, 21 x 21 points 5 cm apart, its middle point picked.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 20);
+    GeometryPtr sheet = engine.cook(*grid, CookContext{});
+    const auto P = sheet->positions();
+    const size_t middle = 220;
+    CHECK_NEAR(length(P[middle]), 0.0f, 1e-6f);
+    std::vector<uint8_t> picked(sheet->pointCount(), 0);
+    picked[middle] = 1;
+    const std::vector<float> space = softWeights(*sheet, picked, 0.3f);
+    size_t moved = 0;
+    for (size_t i = 0; i < P.size(); ++i) {
+        const float d = length(P[i] - P[middle]);
+        CHECK_NEAR(space[i], d < 0.3f ? falloff(Falloff::Smooth, d / 0.3f) : 0.0f, 1e-5f);
+        moved += space[i] > 0.0f ? 1 : 0;
+    }
+    CHECK(moved > 80 && moved < 120);  // about pi 6^2 points
+    // Along a flat sheet the surface is space: round, not a diamond of edges.
+    const std::vector<float> along = softWeights(*sheet, picked, 0.3f, SoftDistance::Surface);
+    for (size_t i = 0; i < P.size(); ++i) CHECK_NEAR(along[i], space[i], 1e-5f);
+    // A finer sheet, split among the threads: the same, point by point.
+    Graph g2;
+    Node* fine = flatGrid(g2, 80);
+    GeometryPtr many = engine.cook(*fine, CookContext{});
+    std::vector<uint8_t> one(many->pointCount(), 0);
+    one[many->pointCount() / 2] = 1;
+    const std::vector<float> a = softWeights(*many, one, 0.2f, SoftDistance::Space, Falloff::Sphere);
+    const std::vector<float> b = softWeights(*many, one, 0.2f, SoftDistance::Surface, Falloff::Sphere);
+    size_t differ = 0, some = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        differ += std::fabs(a[i] - b[i]) > 1e-5f ? 1 : 0;
+        some += a[i] > 0.0f ? 1 : 0;
+    }
+    CHECK_EQ(differ, 0u);
+    CHECK(some > 700);  // pi 16^2 points
+    // Nothing picked, or no radius: only what is picked moves.
+    CHECK_EQ(softWeights(*sheet, std::vector<uint8_t>(), 0.3f), std::vector<float>(P.size(), 0.0f));
+    const std::vector<float> none = softWeights(*sheet, picked, 0.0f);
+    for (size_t i = 0; i < P.size(); ++i) CHECK_EQ(none[i], i == middle ? 1.0f : 0.0f);
+    // A second sheet 10 cm over the first, not joined to it: straight, the
+    // points over the one picked go along; along the surface they stay.
+    Geometry two(*sheet);
+    Geometry upper(*sheet);
+    for (Vec3& p : upper.positionsForWrite()) p.y += 0.1f;
+    two.append(upper);
+    std::vector<uint8_t> low(two.pointCount(), 0);
+    low[middle] = 1;
+    const size_t above = sheet->pointCount() + middle;
+    CHECK(softWeights(two, low, 0.3f, SoftDistance::Space)[above] > 0.5f);
+    CHECK_EQ(softWeights(two, low, 0.3f, SoftDistance::Surface)[above], 0.0f);
+    // A strip bent back over itself: 10 cm apart in space, 2 m along it.
+    Geometry u;
+    u.addPoints(41);
+    auto Q = u.positionsForWrite();
+    std::vector<uint32_t> line;
+    for (uint32_t k = 0; k < 41; ++k) {
+        Q[k] = k <= 20 ? Vec3(0.05f * static_cast<float>(k), 0.0f, 0.0f)
+                       : Vec3(0.05f * static_cast<float>(40 - k), 0.1f, 0.0f);
+        line.push_back(k);
+    }
+    u.addPrimitive(line, false);
+    std::vector<uint8_t> end(41, 0);
+    end[0] = 1;
+    const std::vector<float> bent = softWeights(u, end, 0.3f, SoftDistance::Surface, Falloff::Linear);
+    CHECK_NEAR(bent[1], 1.0f - 0.05f / 0.3f, 1e-5f);
+    CHECK_NEAR(bent[5], 1.0f - 0.25f / 0.3f, 1e-5f);
+    CHECK_EQ(bent[6], 0.0f);
+    CHECK_EQ(bent[40], 0.0f);  // over the one picked, the other way round
+    CHECK(softWeights(u, end, 0.3f, SoftDistance::Space, Falloff::Linear)[40] > 0.6f);
+}
+
+TEST(edit_moves_the_points_round_by_their_soft_weights) {
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 20);
+    Node* edit = g.create("edit", "edit");
+    edit->setInput(0, grid);
+    edit->setString("group", "220");
+    edit->setFloat("soft", 0.3f);
+    edit->setVec3("t", Vec3(0.0f, 1.0f, 0.0f));
+    GeometryPtr before = engine.cook(*grid, CookContext{});
+    std::vector<uint8_t> picked(before->pointCount(), 0);
+    picked[220] = 1;
+    for (int metric = 0; metric < 2; ++metric) {
+        for (int shape = 0; shape < 5; ++shape) {
+            edit->setInt("metric", metric);
+            edit->setInt("falloff", shape);
+            GeometryPtr after = engine.cook(*edit, CookContext{});
+            const std::vector<float> w = softWeights(*before, picked, 0.3f, metric ? SoftDistance::Surface : SoftDistance::Space,
+                                                     static_cast<Falloff>(shape));
+            size_t wrong = 0;
+            for (size_t i = 0; i < w.size(); ++i) {
+                wrong += std::fabs(after->positions()[i].y - before->positions()[i].y - w[i]) > 1e-5f ? 1 : 0;
+            }
+            CHECK_EQ(wrong, 0u);
+        }
+    }
 }
 
 TEST(edit_transform_is_the_edit_node_and_a_drag_after_it_is_one_again) {

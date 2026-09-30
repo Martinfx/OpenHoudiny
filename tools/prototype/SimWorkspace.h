@@ -349,6 +349,34 @@ private:
     void pickBrushTool(ImDrawList* d, const ViewCamera& cam, bool overView, bool pressed);
     /// Its radius, pixels.
     float pickBrushRadius() const;
+
+    // Soft selection (O): how far round what is picked a drag of the handle
+    // takes the points along -- the Edit node's Soft Radius, Distance and
+    // Falloff, shown on the geometry before and while it is dragged.
+    struct Soft {
+        bool on = false;
+        float radius = 0.0f;  ///< m
+        int metric = 0;       ///< 0 straight, 1 along the surface
+        int falloff = 0;      ///< pg::Falloff
+    };
+    /// The Edit shown, when it is one of what is picked: the one a drag
+    /// goes on with. 0 when not.
+    int pickedEdit() const;
+    /// Soft selection as it is: the shown Edit's of what is picked -- else
+    /// the viewport's, what the next Edit is made with.
+    Soft softNow() const;
+    void setSoft(bool on);
+    void setSoftRadius(float radius);
+    void setSoftMetric(int metric);
+    void setSoftFalloff(int falloff);
+    /// The node whose geometry the shown Edit of what is picked moves -- its
+    /// input: the shares are of that geometry. 0 for none.
+    int softBaseNode() const;
+    /// The share of a drag each point of the shown geometry takes; empty
+    /// with soft selection off or nothing picked.
+    const std::vector<float>& softShares();
+    /// The ring of the radius round the handle's middle, and what it is.
+    void drawSoftRing(ImDrawList* d, const ViewCamera& cam, const Vec3& center);
     void selectAllElements(bool invert);
     size_t elementCount() const;
     /// What is picked as the nodes read it: a pattern, and the class
@@ -510,6 +538,9 @@ private:
         uint64_t revision = 0;              ///< changes with what is picked
     } picked_;
     Picked brushBefore_;                    ///< what was picked before the brush's stroke: Escape puts it back
+    mutable std::string patternCache_;      ///< elementPattern(), for the revision and kind it was found for
+    mutable uint64_t patternRevision_ = ~0ull;
+    mutable Elements patternElements_ = Elements::Objects;
     std::unique_ptr<ElementPicker> picker_;
     int32_t hoverElement_ = -1;             ///< under the mouse, of the kind picked
     ImVec2 hoverMouse_{-1.0f, -1.0f};       ///< where the mouse was when it was found
@@ -524,6 +555,13 @@ private:
     bool brushRemoves_ = false;             ///< ... taking away: Ctrl at the press
     ImVec2 brushFrom_;                      ///< where it was the frame before
     float pickBrush_ = 0.0f;                ///< its radius, unscaled pixels; 0: the default
+    bool soft_ = false;                     ///< soft selection, for the next Edit
+    float softRadius_ = 0.0f;               ///< m; 0: not set -- a share of the geometry's size
+    int softMetric_ = 0, softFalloff_ = 0;
+    GeometryPtr softBase_;                  ///< what the shown Edit of what is picked moves
+    int softBaseNode_ = 0;                  ///< ... the node it is of
+    std::vector<float> softShares_;         ///< softShares(), and what they were found for
+    std::string softKey_;
     bool pressTurns_ = false;               ///< the press was Alt's or Space's: it turns the view
     bool pressCancelled_ = false;           ///< Escape during the press: it picks nothing
     GeometryPtr edgeGeometry_;              ///< the geometry of the wire drawn
