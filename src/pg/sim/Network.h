@@ -78,10 +78,15 @@ enum class ParamKind : uint8_t {
     File,    ///< a path, text (Node::texts); files write it in quotes; `choices` are the extensions
     Text,    ///< a line of text (Node::texts): a name, a group
     Code,    ///< lines of text (Node::texts): a snippet of the per-element language
+    /// Text the viewport writes, not typed (Node::texts): a selection, the
+    /// dabs of a brush. The parameters show how much of it there is.
+    Data,
 };
 
 /// File, Text and Code: parameters whose value is text, kept in Node::texts.
-inline bool isText(ParamKind kind) { return kind == ParamKind::File || kind == ParamKind::Text || kind == ParamKind::Code; }
+inline bool isText(ParamKind kind) {
+    return kind == ParamKind::File || kind == ParamKind::Text || kind == ParamKind::Code || kind == ParamKind::Data;
+}
 
 /// A parameter's value: one number, or three for vectors and colours.
 using ParamValue = std::array<float, 3>;

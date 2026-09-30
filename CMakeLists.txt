@@ -50,6 +50,7 @@ add_library(pgcore
   src/pg/core/Graph.cpp
   src/pg/core/CookEngine.cpp
   src/pg/core/Spatial.cpp
+  src/pg/core/Selection.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp
   src/pg/lang/Eval.cpp
@@ -71,6 +72,7 @@ add_library(pgcore
   src/pg/nodes/Rebuild.cpp
   src/pg/nodes/Volumes.cpp
   src/pg/nodes/Usd.cpp
+  src/pg/nodes/Edit.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/Jpeg.cpp
@@ -522,6 +524,7 @@ add_executable(pgtests
   tests/test_state.cpp
   tests/test_coupling.cpp
   tests/test_cloth.cpp
+  tests/test_edit.cpp
   tests/test_usd.cpp
   tests/test_usd_read.cpp
   tests/test_exr.cpp

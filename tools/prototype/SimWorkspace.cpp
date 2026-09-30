@@ -1371,6 +1371,19 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                     if (p.kind == sim::ParamKind::Code) ui::note("Applied when you click away.");
                     break;
                 }
+                case sim::ParamKind::Data: {
+                    // What the viewport wrote -- the dabs of a brush: how
+                    // many, and a way to start over.
+                    const std::string& data = net_.text(id, p.name);
+                    const size_t dabs = data.empty() ? 0 : static_cast<size_t>(std::count(data.begin(), data.end(), ';')) + 1;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(dabs == 0 ? "none" : (std::to_string(dabs) + (dabs == 1 ? " dab" : " dabs")).c_str());
+                    if (dabs > 0) {
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Clear")) net_.setText(id, p.name, "");
+                    }
+                    break;
+                }
                 case sim::ParamKind::Choice: {
                     int i = static_cast<int>(v[0]);
                     const auto& labels = p.choiceLabels.empty() ? p.choices : p.choiceLabels;

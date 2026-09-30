@@ -456,7 +456,8 @@ public:
             switch (d->kind) {
                 case ParamKind::File:
                 case ParamKind::Text:
-                case ParamKind::Code: inner_->setText(n->id, p.param, params_.getString(p.name)); break;
+                case ParamKind::Code:
+                case ParamKind::Data: inner_->setText(n->id, p.param, params_.getString(p.name)); break;
                 case ParamKind::Float: inner_->setParam(n->id, p.param, {params_.evalFloat(p.name, ctx), 0.0f, 0.0f}); break;
                 case ParamKind::Int:
                 case ParamKind::Choice:

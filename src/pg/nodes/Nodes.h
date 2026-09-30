@@ -23,6 +23,7 @@ void registerGlassNodes();
 void registerBrickNodes();
 void registerVolumeNodes();
 void registerUsdNodes();
+void registerEditNodes();
 
 /// Newell's normal of the polygon through `corners`: pointing the way they
 /// turn anticlockwise, twice the polygon's area long.

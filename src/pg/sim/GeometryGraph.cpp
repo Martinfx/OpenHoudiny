@@ -335,7 +335,8 @@ void GeometryGraph::sync(const Network& net, const std::string& folder) {
                     case ParamKind::Vector:
                     case ParamKind::Color: changed |= p.setVec3(name, Vec3(v[0], v[1], v[2])); break;
                     case ParamKind::Text:
-                    case ParamKind::Code: changed |= p.setString(name, net.text(id, d.name)); break;
+                    case ParamKind::Code:
+                    case ParamKind::Data: changed |= p.setString(name, net.text(id, d.name)); break;
                     case ParamKind::File: {
                         std::string path = net.text(id, d.name);
                         if (!path.empty() && !folder.empty() && fs::path(path).is_relative()) {

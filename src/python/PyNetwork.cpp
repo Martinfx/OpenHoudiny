@@ -24,6 +24,7 @@ const char* kindName(sim::ParamKind k) {
         case sim::ParamKind::File: return "file";
         case sim::ParamKind::Text: return "text";
         case sim::ParamKind::Code: return "code";
+        case sim::ParamKind::Data: return "data";
     }
     return "float";
 }

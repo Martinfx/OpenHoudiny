@@ -546,12 +546,66 @@ std::vector<NodeType> buildTypes() {
              {text("name", "Group", "Group", "selected", "The group's name."),
               vec("min", "Min", "Group", Vec3(-0.5f, 0.0f, -0.5f), -5.0f, 5.0f, "m", "The box's lowest corner."),
               vec("max", "Max", "Group", Vec3(0.5f, 1.0f, 0.5f), -5.0f, 5.0f, "m", "The box's highest corner.")});
+    // Which of the points or the primitives: the class of a Group, an Edit,
+    // a Blast.
+    auto elements = [](const char* section, const char* help) {
+        return ParamDef{"class", "Class", section, K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "", help,
+                        {"point", "primitive"}, {"Points", "Primitives"}};
+    };
     geometry("blast", "Blast", "blast",
-             "Deletes the points of a group, and the primitives they were part of -- or, inverted, keeps only them.",
+             "Deletes the points of a group, and the primitives they were part of -- or of class Primitives the "
+             "primitives, and the points only they used. Inverted, it keeps only them. Delete in the viewport "
+             "makes one of what is selected.",
              in,
-             {text("group", "Group", "Blast", "selected", "Which group."),
+             {text("group", "Group", "Blast", "selected",
+                   "Which: a group's name, or numbers and ranges -- 0-9 12 -- * for all, ^ before one takes it "
+                   "away."),
+              elements("Blast", "What Group names: points, or primitives."),
               {"invert", "Keep", "Blast", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "Keep the group and delete the rest."}});
+    geometry("group", "Group", "groupcreate",
+             "A group of the points or primitives picked -- in the viewport, or by numbers and ranges: what "
+             "Blast deletes, a wrangle runs over, the cloth pins by. G in the viewport makes one of what is "
+             "selected.",
+             in,
+             {text("name", "Name", "Group", "group1", "What it is called."),
+              elements("Group", "Points, or primitives."),
+              text("pattern", "Elements", "Group", "",
+                   "Which: numbers and ranges -- 0-9 12 20-30 -- other groups by name, * for all; ^ before one "
+                   "takes it away.")});
+    geometry("edit", "Edit", "edit",
+             "Moves, turns and sizes the points picked in the viewport -- or those of the primitives picked -- "
+             "about the pivot, as the handle does: what dragging a selection makes. Soft Radius takes the "
+             "points round them along, less the further they are.",
+             in,
+             {text("group", "Elements", "Edit", "",
+                   "Which: numbers and ranges -- 0-9 12 -- groups by name, * for all; ^ before one takes it away."),
+              elements("Edit", "Points, or the points of primitives."),
+              vec("t", "Translate", "Edit", Vec3(), -5.0f, 5.0f, "m", "How far they move."),
+              vec("r", "Rotate", "Edit", Vec3(), -180.0f, 180.0f, "\xc2\xb0", "Degrees about x, then y, then z, about the pivot."),
+              vec("s", "Scale", "Edit", Vec3(1.0f, 1.0f, 1.0f), 0.0f, 5.0f, "", "How much larger along x, y, z, about the pivot."),
+              vec("p", "Pivot", "Edit", Vec3(), -5.0f, 5.0f, "m", "What they turn and size about: the middle of the selection."),
+              {"soft", "Soft Radius", "Edit", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "m",
+               "How far round the selection points go along: all the way at it, not at all this far away. 0: "
+               "only those picked."}});
+    geometry("attribute_paint", "Attribute Paint", "attribpaint",
+             "A number painted onto the points with the viewport's brush -- where the cloth is pinned (pin), "
+             "how soon it tears (tear), how heavy it is (mass). The strokes are places, not point numbers: "
+             "made finer, the geometry keeps its paint. P in the viewport paints on what is shown.",
+             in,
+             {text("name", "Attribute", "Paint", "pin", "What it paints: @name in a wrangle."),
+              {"value", "Value", "Paint", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
+               "What the brush lays on. Ctrl lays on Erase Value."},
+              {"erase", "Erase Value", "Paint", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
+               "What the brush lays on with Ctrl held."},
+              {"radius", "Radius", "Paint", K::Float, {0.15f, 0.0f, 0.0f}, 0.01f, 1.0f, 1e-4f, kBig, "m",
+               "How big the brush is. [ and ] in the viewport."},
+              {"strength", "Strength", "Paint", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "How much of the value a dab lays on at its middle."},
+              {"default", "Default", "Paint", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
+               "Where the points start when they have no such attribute."},
+              {"strokes", "Strokes", "Paint", K::Data, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+               "The dabs painted, in order."}});
     {
         // One node of the core, three ways in: over the points, the
         // primitives, or once over the whole geometry.
@@ -1723,7 +1777,8 @@ std::string formatParam(const ParamDef& def, const ParamValue& v) {
         case K::Color: return formatNumber(v[0]) + ' ' + formatNumber(v[1]) + ' ' + formatNumber(v[2]);
         case K::File:
         case K::Text:
-        case K::Code: return "\"\"";  // the text is the node's, not the value's
+        case K::Code:
+        case K::Data: return "\"\"";  // the text is the node's, not the value's
         case K::Float:
         case K::Int: break;
     }
@@ -1736,7 +1791,8 @@ bool parseParam(const ParamDef& def, std::string_view text, ParamValue& out, std
     switch (def.kind) {
         case K::File:
         case K::Text:
-        case K::Code: {
+        case K::Code:
+        case K::Data: {
             std::string path;
             if (!unquoted(text, path)) break;
             out = v;
@@ -1786,7 +1842,8 @@ bool parseParam(const ParamDef& def, std::string_view text, ParamValue& out, std
     switch (def.kind) {
         case K::File: error = std::string(def.name) + " is a path, in quotes if it has spaces"; break;
         case K::Text:
-        case K::Code: error = std::string(def.name) + " is text, in quotes if it has spaces"; break;
+        case K::Code:
+        case K::Data: error = std::string(def.name) + " is text, in quotes if it has spaces"; break;
         case K::Toggle: error = std::string(def.name) + " is on or off"; break;
         case K::Vector:
         case K::Color: error = std::string(def.name) + " wants three numbers, like 0 1 0"; break;
