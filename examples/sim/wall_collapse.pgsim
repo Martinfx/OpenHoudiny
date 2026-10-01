@@ -184,7 +184,7 @@ definition building
 |   param sidegroup "door_reveal"
 | node 7 polyextrude 1 parapet 0 660
 |   param distance 0
-|   param inset 0.12
+|   param inset 0.15
 |   param group "roof"
 |   param frontgroup "roof_inner"
 |   param sidegroup "parapet_top"
