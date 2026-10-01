@@ -24,7 +24,10 @@ V editoru:
    Přes kameru (klávesa **0** ve viewportu) se renderuje záběr kamery
    v jejím poměru stran.
 4. Nastavení je v uzlu **Output** v sekci **Render**. Ikona Output
-   v nástrojové liště záložky uzel vybere.
+   v nástrojové liště záložky uzel vybere. Scéna jen s geometrií (třeba
+   příklad `meadow`) Output mít nemusí a renderuje se s výchozím
+   nastavením. Output přidaný přes Tab v síti pak určuje slunce, oblohu,
+   kameru i render.
 5. Ikona fotoaparátu uloží render jako **PNG**, nebo jako **EXR**
    s lineárním světlem, hloubkou, albedem a normálami.
 
@@ -48,6 +51,8 @@ Path tracer nepotřebuje OpenGL, takže běží i v buildu bez EGL a bez
 editoru.
 
 ## 2. Záložka Render
+
+![Záložka Render: louka přes kameru po 31 vzorcích, vpravo nastavení v uzlu Output › Render](img/pathtracer-tab.jpg)
 
 | prvek | co dělá |
 |---|---|
