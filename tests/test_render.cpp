@@ -1,9 +1,10 @@
 //
-// The path tracer (render/): its hierarchies meet what trying every triangle
-// meets; instances as the copies they stand for; a render the same however
-// it is run; the sun lighting a floor as the viewport lights it; the
-// denoiser nearer the converged picture than the noise; the Output's
-// settings; the files; the materials vegetation brings.
+// The path tracer (render/): its hierarchies -- Embree's and our own -- meet
+// what trying every triangle meets, and what each other meets, shadows
+// through glass included; instances as the copies they stand for; a render
+// the same however it is run; the sun lighting a floor as the viewport
+// lights it; the denoiser nearer the converged picture than the noise; the
+// Output's settings; the files; the materials vegetation brings.
 //
 #include "pg/core/Grass.h"
 #include "pg/core/Instances.h"
@@ -79,6 +80,13 @@ sim::Look noFloor() {
     return k;
 }
 
+/// The engines this build has: ours, and Embree's when it is there.
+std::vector<RayEngine> engines() {
+    std::vector<RayEngine> e{RayEngine::Own};
+    if (embreeAvailable()) e.push_back(RayEngine::Embree);
+    return e;
+}
+
 SceneInput inputOf(GeometryPtr geo, const sim::Look& look, const sim::Camera& cam) {
     SceneInput in;
     in.geometry = std::move(geo);
@@ -90,7 +98,8 @@ SceneInput inputOf(GeometryPtr geo, const sim::Look& look, const sim::Camera& ca
 /// A small picture of triangles over the floor: many small ones in the
 /// sun -- or a few large under an overcast sky, broad surfaces in each
 /// other's soft shadows: the light a sky gives, noisy with few samples.
-std::shared_ptr<const Scene> smallScene(int width, int height, bool overcast = false) {
+std::shared_ptr<const Scene> smallScene(int width, int height, bool overcast = false,
+                                        RayEngine engine = defaultRayEngine()) {
     sim::Camera cam = sim::Camera::lookingAt(Vec3(1.6f, 1.9f, 2.0f), Vec3(0.0f, 1.0f, 0.0f));
     cam.width = width;
     cam.height = height;
@@ -100,7 +109,7 @@ std::shared_ptr<const Scene> smallScene(int width, int height, bool overcast = f
         look.skyIntensity = 1.0f;
         look.groundColor = Vec3(0.5f, 0.5f, 0.5f);
     }
-    SceneBuilder builder;
+    SceneBuilder builder(engine);
     return builder.build(inputOf(overcast ? strewn(12, 3, 1.6f) : strewn(300, 3), look, cam));
 }
 
@@ -108,27 +117,32 @@ std::shared_ptr<const Scene> smallScene(int width, int height, bool overcast = f
 
 TEST(render_bvh_meets_what_every_triangle_meets) {
     const auto geo = strewn(400, 11);
-    SceneBuilder builder;
-    const auto scene = builder.build(inputOf(geo, noFloor(), sim::Camera()));
-    std::mt19937 rng(5);
-    int hits = 0;
-    for (int r = 0; r < 3000; ++r) {
-        const Vec3 o = centred3(rng) * 3.0f + Vec3(0.0f, 1.2f, 0.0f);
-        const Vec3 target = centred3(rng) * 0.8f + Vec3(0.0f, 1.2f, 0.0f);
-        const Vec3 d = normalize(target - o);
-        const float expected = bruteForce(*geo, o, d);
-        Hit hit;
-        const bool met = scene->intersect(o, d, 1e30f, 0.5f, hit);
-        CHECK_EQ(met, expected < 1e29f);
-        if (met) {
-            ++hits;
-            CHECK_NEAR(hit.t, expected, 1e-4f * std::max(1.0f, expected));
+    for (const RayEngine engine : engines()) {
+        SceneBuilder builder(engine);
+        const auto scene = builder.build(inputOf(geo, noFloor(), sim::Camera()));
+        CHECK(scene->engine == engine);
+        CHECK_EQ(scene->embree != nullptr, engine == RayEngine::Embree);
+        std::mt19937 rng(5);
+        int hits = 0;
+        for (int r = 0; r < 3000; ++r) {
+            const Vec3 o = centred3(rng) * 3.0f + Vec3(0.0f, 1.2f, 0.0f);
+            const Vec3 target = centred3(rng) * 0.8f + Vec3(0.0f, 1.2f, 0.0f);
+            const Vec3 d = normalize(target - o);
+            const float expected = bruteForce(*geo, o, d);
+            Hit hit;
+            const bool met = scene->intersect(o, d, 1e30f, 0.5f, hit);
+            CHECK_EQ(met, expected < 1e29f);
+            if (met) {
+                ++hits;
+                CHECK_NEAR(hit.t, expected, 1e-4f * std::max(1.0f, expected));
+            }
+            // A shadow ray stops at the same place.
+            const Vec3 through = scene->transmittance(o, d, 1e30f);
+            CHECK_EQ(through.x + through.y + through.z == 0.0f, expected < 1e29f);
         }
-        // A shadow ray stops at the same place.
-        const Vec3 through = scene->transmittance(o, d, 1e30f);
-        CHECK_EQ(through.x + through.y + through.z == 0.0f, expected < 1e29f);
+        std::printf("  %s: %d of 3000 met\n", rayEngineName(engine).c_str(), hits);
+        CHECK(hits > 1000);
     }
-    CHECK(hits > 1000);
 }
 
 TEST(render_instances_meet_rays_as_their_copies) {
@@ -150,62 +164,160 @@ TEST(render_instances_meet_rays_as_their_copies) {
         pscale[i] = 0.6f + 0.05f * static_cast<float>(i);
     }
     const auto copies = unpackInstances(*geo);
-    SceneBuilder builder;
-    const auto a = builder.build(inputOf(geo, noFloor(), sim::Camera()));
-    const auto b = builder.build(inputOf(copies, noFloor(), sim::Camera()));
-    CHECK_EQ(a->meshes.size(), 1u);  // the prototype once
-    CHECK_EQ(a->placed.size(), static_cast<size_t>(n));
-    std::mt19937 rng(9);
-    int hits = 0;
-    for (int r = 0; r < 2000; ++r) {
-        // At one of them, from anywhere round.
-        const Vec3 at = P[static_cast<size_t>(r % n)] + centred3(rng) * 0.6f + Vec3(0.0f, 1.0f, 0.0f);
-        const Vec3 w = centred3(rng);
-        const Vec3 o = at + normalize(Vec3(w.x, 0.3f + std::fabs(w.y), w.z)) * 8.0f;
-        const Vec3 d = normalize(at - o);
+    for (const RayEngine engine : engines()) {
+        SceneBuilder builder(engine);
+        const auto a = builder.build(inputOf(geo, noFloor(), sim::Camera()));
+        const auto b = builder.build(inputOf(copies, noFloor(), sim::Camera()));
+        CHECK_EQ(a->meshes.size(), 1u);  // the prototype once
+        CHECK_EQ(a->placed.size(), static_cast<size_t>(n));
+        std::mt19937 rng(9);
+        int hits = 0;
+        for (int r = 0; r < 2000; ++r) {
+            // At one of them, from anywhere round.
+            const Vec3 at = P[static_cast<size_t>(r % n)] + centred3(rng) * 0.6f + Vec3(0.0f, 1.0f, 0.0f);
+            const Vec3 w = centred3(rng);
+            const Vec3 o = at + normalize(Vec3(w.x, 0.3f + std::fabs(w.y), w.z)) * 8.0f;
+            const Vec3 d = normalize(at - o);
+            Hit ha, hb;
+            const bool ma = a->intersect(o, d, 1e30f, 0.5f, ha), mb = b->intersect(o, d, 1e30f, 0.5f, hb);
+            CHECK_EQ(ma, mb);
+            if (ma && mb) {
+                ++hits;
+                CHECK_NEAR(ha.t, hb.t, 1e-3f);
+                CHECK(length(ha.face - hb.face) < 1e-3f || length(ha.face + hb.face) < 1e-3f);
+                CHECK(length(ha.color - hb.color) < 1e-4f);  // tinted as the copy
+            }
+        }
+        std::printf("  %s: %d of 2000 met\n", rayEngineName(engine).c_str(), hits);
+        CHECK(hits > 100);
+    }
+}
+
+TEST(render_embree_meets_what_our_bvh_meets) {
+    if (!embreeAvailable()) {
+        std::printf("  no Embree in this build\n");
+        return;
+    }
+    // Triangles of the geometry itself -- a quarter of them glass -- a
+    // prototype placed turned, sized and tinted, a ball and a box; the
+    // floor.
+    auto geo = strewn(300, 17, 0.5f);
+    auto glass = geo->primitives().create("glass", AttrType::Float).write<float>();
+    for (size_t p = 0; p < glass.size(); p += 4) glass[p] = 1.0f;
+    geo->addPrototype(strewn(40, 4));
+    const size_t first = geo->pointCount();
+    const int n = 30;
+    geo->addPoints(n);
+    auto P = geo->positionsForWrite();
+    auto k = geo->points().create("instance", AttrType::Int).write<int32_t>();
+    auto orient = geo->points().create("orient", AttrType::Vec4).write<Vec4>();
+    auto pscale = geo->points().create("pscale", AttrType::Float).write<float>();
+    auto tint = geo->points().create("tint", AttrType::Vec3).write<Vec3>();
+    for (size_t pt = 0; pt < first; ++pt) k[pt] = -1;  // the triangles' own corners stand for nothing
+    for (int i = 0; i < n; ++i) {
+        const size_t pt = first + static_cast<size_t>(i);
+        P[pt] = Vec3(static_cast<float>(i % 6) * 1.5f - 4.0f, -0.6f, static_cast<float>(i / 6) * 1.5f - 3.0f);
+        k[pt] = 0;
+        const float a = 1.3f * static_cast<float>(i);
+        orient[pt] = Vec4(0.0f, std::sin(0.5f * a), 0.0f, std::cos(0.5f * a));
+        pscale[pt] = 0.5f + 0.04f * static_cast<float>(i);
+        tint[pt] = Vec3(1.0f, 0.5f + 0.01f * static_cast<float>(i), 0.8f);
+    }
+    SceneInput in = inputOf(geo, sim::Look(), sim::Camera());
+    sim::Solid ball, box;
+    ball.body.shape = sim::Shape::Sphere;
+    ball.body.center = Vec3(0.5f, 1.0f, -0.5f);
+    ball.body.size = Vec3(0.6f, 0.6f, 0.6f);
+    box.body.shape = sim::Shape::Box;
+    box.body.center = Vec3(-1.0f, 0.8f, 0.6f);
+    box.body.rotation = Vec3(10.0f, 30.0f, 0.0f);
+    box.body.size = Vec3(0.5f, 0.4f, 0.7f);
+    in.solids = {ball, box};
+    SceneBuilder ours(RayEngine::Own), embree(RayEngine::Embree);
+    const auto a = ours.build(in), b = embree.build(in);
+    CHECK(a->embree == nullptr && b->embree != nullptr);
+    CHECK_EQ(b->meshes.size(), 2u);  // the geometry's own, the prototype
+    CHECK_EQ(b->placed.size(), static_cast<size_t>(n) + 1);
+    CHECK(b->embree->anyClear());
+    std::mt19937 rng(23);
+    int hits = 0, solids = 0, floors = 0, glassy = 0, shaded = 0;
+    for (int r = 0; r < 4000; ++r) {
+        const Vec3 o = centred3(rng) * 4.0f + Vec3(0.0f, 2.5f, 0.0f);
+        const Vec3 target = centred3(rng) * Vec3(4.0f, 1.0f, 4.0f) + Vec3(0.0f, 0.4f, 0.0f);
+        const Vec3 d = normalize(target - o);
         Hit ha, hb;
         const bool ma = a->intersect(o, d, 1e30f, 0.5f, ha), mb = b->intersect(o, d, 1e30f, 0.5f, hb);
         CHECK_EQ(ma, mb);
         if (ma && mb) {
             ++hits;
-            CHECK_NEAR(ha.t, hb.t, 1e-3f);
-            CHECK(length(ha.face - hb.face) < 1e-3f || length(ha.face + hb.face) < 1e-3f);
+            CHECK_NEAR(ha.t, hb.t, 1e-4f * std::max(1.0f, ha.t));
+            CHECK(length(ha.face - hb.face) < 1e-3f);
+            CHECK(length(ha.normal - hb.normal) < 1e-3f);
+            CHECK(length(ha.color - hb.color) < 1e-4f);
+            CHECK(ha.material && hb.material && *ha.material == *hb.material);
+            CHECK_EQ(ha.floor, hb.floor);
+            solids += ha.material == &a->solidMaterial;
+            floors += ha.floor;
+            glassy += ha.material->kind == Material::Kind::Glass;
         }
+        // Shadows: blocked alike, tinted alike through the glass.
+        const Vec3 sun = normalize(Vec3(0.3f, 1.0f, 0.2f) + centred3(rng) * 0.3f);
+        const Vec3 from = ma ? ha.position + ha.face * (dot(ha.face, sun) > 0.0f ? 1e-3f : -1e-3f) : o;
+        const Vec3 ta = a->transmittance(from, sun, 1e30f), tb = b->transmittance(from, sun, 1e30f);
+        CHECK(length(ta - tb) < 1e-4f);
+        shaded += ta.x < 1.0f;
     }
-    std::printf("  %d of 2000 met\n", hits);
-    CHECK(hits > 100);
+    std::printf("  %d of 4000 met (%d solids, %d floor, %d glass); %d shadows\n", hits, solids, floors, glassy, shaded);
+    CHECK(hits > 2000 && solids > 20 && floors > 100 && glassy > 20 && shaded > 200);
 }
 
 TEST(render_is_the_same_however_it_is_run) {
-    Settings s;
-    s.width = 64;
-    s.height = 40;
-    s.samples = 3;
-    s.denoise = false;
-    PathTracer a, b;
-    a.setSettings(s);
-    b.setSettings(s);
-    a.setScene(smallScene(64, 40));
-    b.setScene(smallScene(64, 40));
-    for (int i = 0; i < 3; ++i) {
-        CHECK(a.pass());
-        CHECK(b.pass());
+    std::vector<Image> depths;
+    for (const RayEngine engine : engines()) {
+        Settings s;
+        s.width = 64;
+        s.height = 40;
+        s.samples = 3;
+        s.denoise = false;
+        // Each with a scene of its own: built again, the hierarchies the same.
+        PathTracer a, b;
+        a.setSettings(s);
+        b.setSettings(s);
+        a.setScene(smallScene(64, 40, false, engine));
+        b.setScene(smallScene(64, 40, false, engine));
+        for (int i = 0; i < 3; ++i) {
+            CHECK(a.pass());
+            CHECK(b.pass());
+        }
+        CHECK(a.done());
+        const Image ia = a.beauty(), ib = b.beauty();
+        CHECK(ia.pixels == ib.pixels);
+        depths.push_back(a.depth());
+        // Another seed: another noise.
+        s.seed = 7;
+        b.setSettings(s);
+        for (int i = 0; i < 3; ++i) b.pass();
+        CHECK(!(b.beauty().pixels == ia.pixels));
+        // Stopped on the way: no sample added.
+        std::atomic<bool> stop{true};
+        PathTracer c;
+        c.setSettings(s);
+        c.setScene(smallScene(64, 40, false, engine));
+        CHECK(!c.pass(&stop));
+        CHECK_EQ(c.samples(), 0);
     }
-    CHECK(a.done());
-    const Image ia = a.beauty(), ib = b.beauty();
-    CHECK(ia.pixels == ib.pixels);
-    // Another seed: another noise.
-    s.seed = 7;
-    b.setSettings(s);
-    for (int i = 0; i < 3; ++i) b.pass();
-    CHECK(!(b.beauty().pixels == ia.pixels));
-    // Stopped on the way: no sample added.
-    std::atomic<bool> stop{true};
-    PathTracer c;
-    c.setSettings(s);
-    c.setScene(smallScene(64, 40));
-    CHECK(!c.pass(&stop));
-    CHECK_EQ(c.samples(), 0);
+    if (depths.size() == 2) {
+        // The engines see the same: how far what each pixel first meets is.
+        int same = 0, seen = 0;
+        for (size_t p = 0; p < depths[0].pixels.size(); ++p) {
+            const float za = depths[0].pixels[p], zb = depths[1].pixels[p];
+            if (!std::isfinite(za) && !std::isfinite(zb)) continue;
+            ++seen;
+            same += std::isfinite(za) && std::isfinite(zb) && std::fabs(za - zb) <= 1e-4f * za;
+        }
+        std::printf("  depth the same in %d of %d pixels\n", same, seen);
+        CHECK(seen > 1000 && same >= seen - seen / 100);
+    }
 }
 
 TEST(render_sun_lights_the_floor_as_the_viewport_does) {

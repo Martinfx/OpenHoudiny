@@ -116,11 +116,26 @@ hodnota 0 udělala z terénu zrcadlo.
 - **Scéna** (`src/pg/render/Scene.h`): trojúhelníky zobrazené geometrie
   mají stejné normály a barvy jako ve viewportu (`sim::shadedTriangles`).
   Ke scéně patří i kusy a látka ze solverů, povrch vody a objekty
-  (koule, kvádry… počítané přesně). Každá síť má hierarchii obalových
-  kvádrů (BVH, SAH se 12 přihrádkami). Nad sítěmi je horní hierarchie.
-  **Instance** (`core/Instances.h`) mají síť prototypu jednou a jen se
-  umístí, takže louka se 122 000 trsů stojí 8 sítí trsů plus umístění.
-  Horní hierarchie se staví paralelně a deterministicky.
+  (koule, kvádry… počítané přesně). **Instance** (`core/Instances.h`)
+  mají síť prototypu jednou a jen se umístí, takže louka se 122 000 trsů
+  stojí 8 sítí trsů plus umístění.
+- **Paprsky** (`src/pg/render/Embree.h`): co paprsek trefí, hledá knihovna
+  **Intel Embree 4**. Hierarchie obalových kvádrů (BVH) staví a prochází
+  s vektorovými instrukcemi procesoru (SSE, AVX2, AVX-512). Každá síť je
+  jedna scéna Embree. Postaví se jednou a drží se se sítí, takže trs
+  trávy, který se snímek po snímku kymácí, se nestaví znovu. Umístění
+  jsou instance té scény. Síť bez transformace (terén, kusy, voda) je ve
+  scéně přímo a paprsek se kvůli ní neotáčí. Embree staví hierarchii
+  metodou SAH bez spatial splits, takže je stejná na libovolném počtu
+  vláken. V robustním režimu žádný paprsek neproklouzne hranou mezi dvěma
+  trojúhelníky. Stínový paprsek nejdřív jen zjistí, jestli mu něco
+  neprůhledného stojí v cestě. Sklem a vodou pak prochází plochu po
+  ploše a bere si jejich barvu. Objekty (koule, kvádry) hledá vlastní
+  hierarchie (`src/pg/render/Bvh.h`, SAH se 12 přihrádkami).
+- **Bez Embree** (`-DPG_EMBREE=OFF`, nebo `PG_RAYS=own` v prostředí)
+  hledá paprsky vlastní hierarchie i v sítích. Výsledek je stejný až na
+  zaokrouhlení: test `render_embree_meets_what_our_bvh_meets` porovná
+  4 000 paprsků v obou (sítě, instance, sklo, objekty, podlaha, stíny).
 - **Světlo** (`src/pg/render/PathTracer.h`): slunce je kotouč, přímo se
   vzorkuje v každém odrazu a váží se s odrazy (multiple importance
   sampling). Obloha je vzorec z Looku včetně Sky Behind. Povrch je
@@ -130,8 +145,14 @@ hodnota 0 udělala z terénu zrcadlo.
 - **Kamera**: tenká čočka (F-Stop, Focus). Pixel je vzorkovaný po celé
   ploše, takže hrany jsou vyhlazené.
 - **Determinismus**: náhodná čísla vzorku závisí jen na pixelu, čísle
-  vzorku a seedu. Render je proto na libovolném počtu vláken stejný (test
-  `render_is_the_same_however_it_is_run`).
+  vzorku a seedu a hierarchie jsou na libovolném počtu vláken stejné.
+  Render je proto na libovolném počtu vláken stejný (test
+  `render_is_the_same_however_it_is_run`, s Embree i bez ní). Embree si
+  ale podle procesoru vybere jiné instrukce a ty zaokrouhlují jinak.
+  SSE2, SSE4.2 a AVX dají stejný obraz, AVX2 a AVX-512 každá trochu jiný.
+  Na 2 vzorcích se liší většina pixelů, ale průměrně o 0,1 % jasu. Je to
+  jiný šum, ne jiný obraz. Vlastní hierarchie dává stejný obraz na všech
+  strojích a s GCC i clang.
 - **Odšumění**: à-trous vlnkový filtr (Dammertz a kol.) nad světlem, které
   povrch dostal. Barva povrchu se vydělí a potom vrátí, takže textura
   zůstane ostrá. Filtr se zastaví na hranách barvy, normály a hloubky
@@ -160,6 +181,6 @@ hustou trávou.
 - Rozmazání pohybem (motion blur) a průchody pohybu a masek do EXR.
 - Textury a UV, normálové mapy, subsurface scattering.
 - Světla kromě slunce a oblohy (bodová, plošná), HDRI obloha.
-- Vektorové instrukce (SIMD) a širší BVH: dnes je to skalární kód, zhruba
-  10× pomalejší než Embree.
+- Svazky paprsků (ray streams, wavefront): dnes se sleduje jedna cesta po
+  druhé. Embree umí najednou 4, 8 nebo 16 souběžných paprsků.
 - Adaptivní vzorkování: víc vzorků tam, kde je šum.

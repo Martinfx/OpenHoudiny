@@ -7,10 +7,12 @@
 //   meshes   the displayed geometry's polygons (sim::shadedTriangles: the
 //            viewport's normals and colours), the pieces and the cloth of
 //            the solvers, the water's surface: triangles in a hierarchy of
-//            boxes (Bvh.h) each. A prototype (core/Instances.h) is a mesh
-//            once, placed on each point that stands for it -- a meadow of
-//            122 000 clumps costs 8 clumps and the placements.
-//   shapes   the objects of the scene, met exactly (sim::ShapeInstance).
+//            boxes each -- Embree's (Embree.h), else our own (Bvh.h). A
+//            prototype (core/Instances.h) is a mesh once, placed on each
+//            point that stands for it -- a meadow of 122 000 clumps costs 8
+//            clumps and the placements.
+//   shapes   the objects of the scene, met exactly (sim::ShapeInstance), in
+//            a hierarchy of our own.
 //   floor    the Output's floor at y 0, fading out far away as the
 //            viewport's does.
 //
@@ -29,6 +31,7 @@
 //
 #include "pg/core/Geometry.h"
 #include "pg/render/Bvh.h"
+#include "pg/render/Embree.h"
 #include "pg/sim/Camera.h"
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
@@ -52,21 +55,24 @@ struct Material {
     bool operator==(const Material&) const = default;
 };
 
-/// Triangles for rays: in the order the leaves of their hierarchy take them.
+/// Triangles for rays -- with our own hierarchy, in the order its leaves
+/// take them.
 struct Mesh {
     std::vector<Vec3> v0, e1, e2;       ///< a corner and the edges from it, one a triangle
     std::vector<Vec3> normals, colors;  ///< three a triangle
     std::vector<uint16_t> material;     ///< one a triangle, into `materials`
     std::vector<Material> materials;
-    Bvh bvh;                            ///< its leaves' items are the triangles' numbers
+    Bvh bvh;                                   ///< our own: its leaves' items are the triangles' numbers
+    std::shared_ptr<const EmbreeMesh> embree;  ///< Embree's: its triangles' numbers are ours
     Box box;
+    bool clear = false;  ///< some of it is glass or water
     size_t count() const { return v0.size(); }
 };
 
 /// The mesh of the closed polygons of `geo` -- what stands on its points
 /// (instances) left out -- its materials from its attributes; `water`: all
-/// of it water.
-std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water = false);
+/// of it water. Its hierarchy `engine`'s.
+std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water = false, RayEngine engine = defaultRayEngine());
 
 /// A mesh where it stands: turned by `axes` (its columns the images of the
 /// mesh's axes), `scale` times as big, moved to `at`; its colours times `tint`.
@@ -97,13 +103,17 @@ struct Hit {
 };
 
 struct Scene {
+    RayEngine engine = RayEngine::Own;
     std::vector<std::shared_ptr<const Mesh>> meshes;
     std::vector<Placed> placed;
     std::vector<sim::Solid> solids;
     std::vector<sim::ShapeInstance> shapes;  ///< the solids' shapes, placed
     Material floorMaterial{Material::Kind::Surface, 0.8f, 0.0f, 0.0f, 1.5f};
     Material solidMaterial{Material::Kind::Surface, 0.6f, 0.0f, 0.0f, 1.5f};
-    Bvh top;     ///< items below placed.size() are placed meshes, the rest solids
+    /// Our own engine: items below placed.size() are placed meshes, the
+    /// rest solids. Embree's: the solids alone, item i shapes[i].
+    Bvh top;
+    std::shared_ptr<const EmbreeScene> embree;  ///< the placed meshes, with Embree's engine
     Box bounds;  ///< what there is, the floor aside
 
     // The world round it: the look's light, as the viewport lights it.
@@ -149,12 +159,16 @@ struct SceneInput {
 };
 
 /// Builds scenes, keeping the meshes of the prototypes that live on -- a
-/// clump of grass swaying frame after frame is a mesh once.
+/// clump of grass swaying frame after frame is a mesh once. Their rays go
+/// through `engine` -- our own when Embree is not available.
 class SceneBuilder {
 public:
+    explicit SceneBuilder(RayEngine engine = defaultRayEngine());
+    RayEngine engine() const { return engine_; }
     std::shared_ptr<const Scene> build(const SceneInput& input);
 
 private:
+    RayEngine engine_;
     /// The mesh of a prototype: kept while the geometry lives.
     std::shared_ptr<const Mesh> prototype(const GeometryPtr& geo);
     struct Kept {

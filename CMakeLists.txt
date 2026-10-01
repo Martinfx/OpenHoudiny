@@ -308,6 +308,7 @@ add_library(pgsim
   src/pg/sim/World.cpp
   src/pg/sim/UsdExport.cpp
   src/pg/render/Bvh.cpp
+  src/pg/render/Embree.cpp
   src/pg/render/Scene.cpp
   src/pg/render/PathTracer.cpp
   src/pg/render/Save.cpp
@@ -355,6 +356,61 @@ if(PG_WITH_JOLT)
     target_compile_options(Jolt PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
   endif()
   target_compile_definitions(pgsim PRIVATE PG_HAVE_JOLT)
+endif()
+
+# The path tracer's rays (src/pg/render/Embree.cpp): Intel Embree 4 (Apache
+# 2.0) -- hierarchies built and walked with SIMD -- faster than our own
+# (src/pg/render/Bvh.h), which stays for a build without it. The system's:
+# FreeBSD's graphics/embree, libembree-dev on Debian 13 and Ubuntu 24.04.
+# Else fetched and built with what the path tracer needs alone -- triangles
+# and instances, SSE2 and AVX2, its own threads -- a few minutes, once.
+option(PG_EMBREE "Path tracer rays through Intel Embree 4 (Apache 2.0), the system's or fetched; OFF: our own BVH" ON)
+if(PG_EMBREE)
+  find_package(embree 4 CONFIG QUIET)
+  if(TARGET embree)
+    message(STATUS "Embree ${embree_VERSION}: the system's")
+  else()
+    include(FetchContent)
+    foreach(off EMBREE_TUTORIALS EMBREE_ISPC_SUPPORT EMBREE_ZIP_MODE EMBREE_FILTER_FUNCTION EMBREE_RAY_MASK
+                EMBREE_RAY_PACKETS EMBREE_GEOMETRY_QUAD EMBREE_GEOMETRY_CURVE EMBREE_GEOMETRY_SUBDIVISION
+                EMBREE_GEOMETRY_USER EMBREE_GEOMETRY_GRID EMBREE_GEOMETRY_POINT EMBREE_GEOMETRY_INSTANCE_ARRAY)
+      set(${off} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    foreach(on EMBREE_STATIC_LIB EMBREE_GEOMETRY_TRIANGLE EMBREE_GEOMETRY_INSTANCE)
+      set(${on} ON CACHE BOOL "" FORCE)
+    endforeach()
+    set(EMBREE_TASKING_SYSTEM INTERNAL CACHE STRING "" FORCE)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+      # Kernels for the machines of the last twenty years and of the last ten.
+      set(EMBREE_MAX_ISA NONE CACHE STRING "" FORCE)
+      foreach(isa SSE2 AVX2)
+        set(EMBREE_ISA_${isa} ON CACHE BOOL "" FORCE)
+      endforeach()
+      foreach(isa SSE42 AVX AVX512)
+        set(EMBREE_ISA_${isa} OFF CACHE BOOL "" FORCE)
+      endforeach()
+    endif()
+    FetchContent_Declare(embree
+      GIT_REPOSITORY https://github.com/RenderKit/embree.git
+      GIT_TAG v4.4.1
+      GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(embree)
+    if(TARGET embree)
+      message(STATUS "Embree 4.4.1: fetched")
+      # Its headers as the system's: our warnings are not about them.
+      get_target_property(PG_EMBREE_INCLUDES embree INTERFACE_INCLUDE_DIRECTORIES)
+      set_target_properties(embree PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PG_EMBREE_INCLUDES}")
+    else()
+      message(WARNING "Embree could not be had: the path tracer uses its own BVH. Install it (FreeBSD: pkg install "
+                      "embree; Debian, Ubuntu: apt install libembree-dev) or point FETCHCONTENT_SOURCE_DIR_EMBREE "
+                      "at a checkout of github.com/RenderKit/embree 4.4.1.")
+      set(PG_EMBREE OFF)
+    endif()
+  endif()
+endif()
+if(PG_EMBREE)
+  target_link_libraries(pgsim PRIVATE embree)
+  target_compile_definitions(pgsim PRIVATE PG_HAVE_EMBREE)
 endif()
 
 # The renderers: OpenGL through function pointers the caller loads, so they

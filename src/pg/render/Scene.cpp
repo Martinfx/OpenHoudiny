@@ -98,7 +98,7 @@ Box placedBox(const Placed& p, const Mesh& m) {
 
 }  // namespace
 
-std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water) {
+std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine engine) {
     auto mesh = std::make_shared<Mesh>();
     const sim::ShadedTriangles tris = sim::shadedTriangles(geo);
     const size_t n = tris.count();
@@ -141,16 +141,24 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water) {
         }
         which[t] = it->second;
     }
+    for (const Material& m : mesh->materials) mesh->clear = mesh->clear || m.kind != Material::Kind::Surface;
 
-    // The hierarchy, then the triangles in the order its leaves take them.
-    std::vector<Box> boxes(n);
+    // Our own hierarchy, and the triangles in the order its leaves take
+    // them; Embree's keeps them as they come.
+    const bool embree = engine == RayEngine::Embree && embreeAvailable();
+    std::vector<Box> boxes(embree ? 0 : n);
     for (size_t t = 0; t < n; ++t) {
         for (size_t c = 0; c < 3; ++c) {
-            boxes[t].grow(tris.positions[3 * t + c]);
+            if (!embree) boxes[t].grow(tris.positions[3 * t + c]);
             mesh->box.grow(tris.positions[3 * t + c]);
         }
     }
-    mesh->bvh = buildBvh(boxes, 4);
+    if (!embree) {
+        mesh->bvh = buildBvh(boxes, 4);
+    } else {
+        mesh->bvh.items.resize(n);
+        std::iota(mesh->bvh.items.begin(), mesh->bvh.items.end(), 0u);
+    }
     mesh->v0.resize(n);
     mesh->e1.resize(n);
     mesh->e2.resize(n);
@@ -173,7 +181,12 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water) {
             mesh->material[i] = which[t];
         }
     });
-    std::iota(mesh->bvh.items.begin(), mesh->bvh.items.end(), 0u);
+    if (embree) {
+        mesh->bvh = Bvh();
+        mesh->embree = EmbreeMesh::build(tris.positions);
+    } else {
+        std::iota(mesh->bvh.items.begin(), mesh->bvh.items.end(), 0u);
+    }
     return mesh;
 }
 
@@ -182,31 +195,47 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
     int placedHit = -1, solidHit = -1;
     TriangleHit triangle;
     Vec3 solidNormal;
-    traverse(top, origin, dir, 0.0f, best, [&](uint32_t first, uint32_t count) {
-        for (uint32_t k = first; k < first + count; ++k) {
-            const uint32_t item = top.items[k];
-            if (item < placed.size()) {
-                const Placed& p = placed[item];
-                TriangleHit th;
-                if (nearestTriangle(*meshes[p.mesh], p.toLocal(origin), p.dirToLocal(dir), best, th)) {
-                    placedHit = static_cast<int>(item);
-                    solidHit = -1;
-                    triangle = th;
-                }
-            } else {
-                const size_t s = item - placed.size();
-                float t = 0.0f;
-                Vec3 n;
-                if (shapes[s].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < best) {
-                    best = t;
-                    solidHit = static_cast<int>(s);
-                    placedHit = -1;
-                    solidNormal = n;
+    auto solid = [&](size_t s) {
+        float t = 0.0f;
+        Vec3 n;
+        if (shapes[s].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < best) {
+            best = t;
+            solidHit = static_cast<int>(s);
+            placedHit = -1;
+            solidNormal = n;
+        }
+    };
+    if (embree) {
+        // The meshes through Embree, the solids nearer than what it met through ours.
+        EmbreeHit e;
+        if (embree->nearest(origin, dir, 0.0f, best, e)) {
+            best = e.t;
+            placedHit = static_cast<int>(e.placed);
+            triangle = {e.triangle, e.u, e.v};
+        }
+        traverse(top, origin, dir, 0.0f, best, [&](uint32_t first, uint32_t count) {
+            for (uint32_t k = first; k < first + count; ++k) solid(top.items[k]);
+            return true;
+        });
+    } else {
+        traverse(top, origin, dir, 0.0f, best, [&](uint32_t first, uint32_t count) {
+            for (uint32_t k = first; k < first + count; ++k) {
+                const uint32_t item = top.items[k];
+                if (item < placed.size()) {
+                    const Placed& p = placed[item];
+                    TriangleHit th;
+                    if (nearestTriangle(*meshes[p.mesh], p.toLocal(origin), p.dirToLocal(dir), best, th)) {
+                        placedHit = static_cast<int>(item);
+                        solidHit = -1;
+                        triangle = th;
+                    }
+                } else {
+                    solid(item - placed.size());
                 }
             }
-        }
-        return true;
-    });
+            return true;
+        });
+    }
 
     // The floor: under what lies on it, fading out far away.
     if (look.floor && dir.y < -1e-9f && origin.y > 0.0f) {
@@ -253,9 +282,49 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
     return false;
 }
 
+namespace {
+
+/// Light through a clear triangle -- glass or water: what it does not
+/// reflect, tinted a little at each face; water a little less. False -- no
+/// light at all -- for an opaque one.
+bool passThrough(const Mesh& m, uint32_t t, const Placed& p, Vec3& through) {
+    const Material& mat = m.materials[m.material[t]];
+    if (mat.kind == Material::Kind::Surface) return false;
+    if (mat.kind == Material::Kind::Glass) {
+        const Vec3 c = (m.colors[3 * t] + m.colors[3 * t + 1] + m.colors[3 * t + 2]) * (1.0f / 3.0f) * p.tint;
+        through = through * (Vec3(1.0f, 1.0f, 1.0f) * 0.65f + c * 0.35f) * 0.92f;
+    } else {
+        through = through * 0.9f;
+    }
+    return true;
+}
+
+}  // namespace
+
 Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax) const {
     Vec3 through(1.0f, 1.0f, 1.0f);
     bool blocked = false;
+    if (embree) {
+        // A solid in the way, then an opaque mesh: no light.
+        traverse(top, origin, dir, 0.0f, tMax, [&](uint32_t first, uint32_t count) {
+            for (uint32_t k = first; k < first + count && !blocked; ++k) {
+                float t = 0.0f;
+                Vec3 n;
+                if (shapes[top.items[k]].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < tMax) blocked = true;
+            }
+            return !blocked;
+        });
+        if (blocked || embree->blocked(origin, dir, tMax)) return {};
+        // Through the glass and the water, face after face, from the nearest.
+        float from = 0.0f;
+        EmbreeHit e;
+        for (int faces = 0; faces < 256 && embree->nearestClear(origin, dir, from, tMax, e); ++faces) {
+            const Placed& p = placed[e.placed];
+            if (!passThrough(*meshes[p.mesh], e.triangle, p, through)) return {};
+            from = e.t + std::max(e.t * 1e-6f, 1e-6f);
+        }
+        return through;
+    }
     traverse(top, origin, dir, 0.0f, tMax, [&](uint32_t first, uint32_t count) {
         for (uint32_t k = first; k < first + count && !blocked; ++k) {
             const uint32_t item = top.items[k];
@@ -282,18 +351,9 @@ Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax) const
                     if (v < 0.0f || u + v > 1.0f) continue;
                     const float h = dot(m.e2[t], q) * inv;
                     if (h <= 0.0f || h >= tMax) continue;
-                    const Material& mat = m.materials[m.material[t]];
-                    if (mat.kind == Material::Kind::Surface) {
+                    if (!passThrough(m, t, p, through)) {
                         blocked = true;
                         return false;
-                    }
-                    // Glass lets through what it does not reflect, tinted a
-                    // little at each face; water a little less.
-                    if (mat.kind == Material::Kind::Glass) {
-                        const Vec3 c = (m.colors[3 * t] + m.colors[3 * t + 1] + m.colors[3 * t + 2]) * (1.0f / 3.0f) * p.tint;
-                        through = through * (Vec3(1.0f, 1.0f, 1.0f) * 0.65f + c * 0.35f) * 0.92f;
-                    } else {
-                        through = through * 0.9f;
                     }
                 }
                 return true;
@@ -327,6 +387,9 @@ Vec3 Scene::sunRadiance() const {
     return sunLight * (kPi / solidAngle);
 }
 
+SceneBuilder::SceneBuilder(RayEngine engine)
+    : engine_(engine == RayEngine::Embree && !embreeAvailable() ? RayEngine::Own : engine) {}
+
 std::shared_ptr<const Mesh> SceneBuilder::prototype(const GeometryPtr& geo) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto it = kept_.begin(); it != kept_.end();) {
@@ -336,7 +399,8 @@ std::shared_ptr<const Mesh> SceneBuilder::prototype(const GeometryPtr& geo) {
     const auto it = kept_.find(geo.get());
     if (it != kept_.end() && it->second.geometry.lock() == geo) return it->second.mesh;
     // A prototype's own instances made copies of: a mesh of it all.
-    std::shared_ptr<const Mesh> mesh = geo->prototypeCount() > 0 ? meshOf(*unpackInstances(*geo)) : meshOf(*geo);
+    std::shared_ptr<const Mesh> mesh =
+        geo->prototypeCount() > 0 ? meshOf(*unpackInstances(*geo), false, engine_) : meshOf(*geo, false, engine_);
     kept_[geo.get()] = {geo, mesh};
     return mesh;
 }
@@ -344,6 +408,7 @@ std::shared_ptr<const Mesh> SceneBuilder::prototype(const GeometryPtr& geo) {
 std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     auto scene = std::make_shared<Scene>();
     Scene& s = *scene;
+    s.engine = engine_;
     s.look = in.look;
     s.camera = in.camera;
     s.sunDirection = normalize(in.look.lightDirection());
@@ -360,7 +425,7 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     };
     if (in.geometry) {
         if (in.geometry->prototypeCount() > 0) {
-            add(meshOf(*withoutInstances(*in.geometry)));
+            add(meshOf(*withoutInstances(*in.geometry), false, engine_));
             // What stands on the points: each prototype once, placed on its points.
             const auto byPrototype = instancesByPrototype(*in.geometry);
             const std::vector<Placement> places = placementsOf(*in.geometry);
@@ -386,23 +451,29 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
                 }
             }
         } else {
-            add(meshOf(*in.geometry));
+            add(meshOf(*in.geometry, false, engine_));
         }
     }
-    if (in.bodies) add(meshOf(*in.bodies));
-    if (in.water) add(meshOf(*in.water, true));
+    if (in.bodies) add(meshOf(*in.bodies, false, engine_));
+    if (in.water) add(meshOf(*in.water, true, engine_));
     s.solids = in.solids;
     s.shapes.reserve(s.solids.size());
     for (const sim::Solid& solid : s.solids) s.shapes.push_back(solid.body.instance());
 
-    // The hierarchy over them all.
+    // The hierarchy over them all: ours; or Embree's over the placed meshes
+    // and ours over the solids.
     std::vector<Box> boxes(s.placed.size() + s.shapes.size());
     parallelFor(s.placed.size(), 4096, [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) boxes[i] = placedBox(s.placed[i], *s.meshes[s.placed[i].mesh]);
     });
     for (size_t i = 0; i < s.shapes.size(); ++i) s.shapes[i].bounds(boxes[s.placed.size() + i].lo, boxes[s.placed.size() + i].hi);
     for (const Box& b : boxes) s.bounds.grow(b);
-    s.top = buildBvh(boxes, 2);
+    if (engine_ == RayEngine::Embree) {
+        s.embree = EmbreeScene::build(s.meshes, s.placed);
+        s.top = buildBvh(std::span<const Box>(boxes).subspan(s.placed.size()), 2);
+    } else {
+        s.top = buildBvh(boxes, 2);
+    }
 
     // How far the floor goes, as the viewport has it: past the simulations,
     // past what is drawn, as far as the eye is off.

@@ -1282,8 +1282,9 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
     std::string through;
     if (images > 0 && pathTrace) {
-        char text[96];
-        std::snprintf(text, sizeof text, " through the path tracer, %d samples a pixel%s", settings.samples,
+        char text[160];
+        std::snprintf(text, sizeof text, " through the path tracer (%s), %d samples a pixel%s",
+                      pg::render::rayEngineName(builder.engine()).c_str(), settings.samples,
                       settings.denoise ? ", denoised" : "");
         through = text;
     }
