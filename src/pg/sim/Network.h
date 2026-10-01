@@ -259,8 +259,13 @@ struct Problem {
 /// What a network compiles to.
 struct Compiled {
     /// True when the Output is reached from a solver: there is something to
-    /// simulate. False with the errors in `problems` that say why not.
+    /// simulate. False with the errors in `problems` that say why not --
+    /// none for a model.
     bool ok = false;
+    /// The network shows geometry and simulates nothing -- a model, a
+    /// layout, a landscape: a scene all the same, which an Output, if there
+    /// is one, lights and frames through its camera.
+    bool model = false;
     /// What is simulated: the gas (world.gas, when world.hasGas) and the
     /// water (world.water, when world.hasWater), at the Output's frame rate.
     World world;

@@ -1587,6 +1587,8 @@ void SimWorkspace::networkOverview() {
             }
             if (bake_.running() || bake_.ended()) bakePanel();
             if (wedge_.any()) wedgePanel();
+        } else if (compiled_.model) {
+            ImGui::TextDisabled("Nothing: the scene is the geometry shown.");
         } else {
             ImGui::TextColored(theme::vec(theme::kRed), "Nothing to simulate yet.");
         }
@@ -2023,11 +2025,7 @@ std::string SimWorkspace::gridsText() const {
 
 bool SimWorkspace::geometryOnly() const {
     if (!levels_.empty() || editingAsset()) return true;
-    if (!net_.displayed()) return false;
-    return std::all_of(net_.nodes().begin(), net_.nodes().end(), [](const sim::Node& n) {
-        const sim::NodeType* t = sim::findNodeType(n.type);
-        return t && t->core;
-    });
+    return compiled_.model;
 }
 
 std::string SimWorkspace::status() const {

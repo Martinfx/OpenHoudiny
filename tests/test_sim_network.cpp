@@ -321,6 +321,46 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     CHECK(!c.isActive(loose));
 }
 
+TEST(sim_network_model_is_no_problem) {
+    // Geometry shown and nothing simulated -- a model, a landscape: nothing
+    // is missing, with an Output (its sun, its camera) or without one.
+    Network net;
+    const int box = net.add("box");
+    CHECK(net.setDisplay(box));
+    Compiled c = net.compile();
+    CHECK(!c.ok);
+    CHECK(c.model);
+    CHECK_EQ(c.display, box);
+    CHECK(c.problems.empty());
+
+    const int output = net.add("output");
+    const int camera = net.add("camera");
+    CHECK(net.connect(camera, "camera", output, "camera"));
+    net.setParam(output, "light_azimuth", "75");
+    c = net.compile();
+    CHECK(!c.ok);
+    CHECK(c.model);
+    CHECK(c.problems.empty());
+    CHECK(c.hasCamera);
+    CHECK_NEAR(c.look.lightAzimuth, 75.0f, 1e-6f);
+    CHECK(c.isActive(output) && c.isActive(box));
+
+    // A solver means a simulation: what it lacks is said again.
+    const int solver = net.add("pyro_solver");
+    c = net.compile();
+    CHECK(!c.model);
+    CHECK(mentions(c, output, "Nothing to show"));
+    CHECK(net.setBypass(solver, true));
+    CHECK(net.compile().model);
+
+    // Nothing shown is nothing to see.
+    CHECK(net.remove(solver));
+    CHECK(net.setDisplay(0));
+    c = net.compile();
+    CHECK(!c.model);
+    CHECK(mentions(c, output, "Nothing to show"));
+}
+
 TEST(sim_network_says_what_is_missing) {
     Network net;
     Compiled c = net.compile();

@@ -221,8 +221,9 @@ private:
     void chooseVideo();
     /// A network with no node: what a new scene is.
     bool emptyScene() const { return net_.nodes().empty(); }
-    /// A network of geometry nodes alone, one of them displayed -- a model,
-    /// an asset's inside: nothing to simulate is no problem.
+    /// A network that shows geometry and simulates nothing -- a model, a
+    /// landscape an Output lights, an asset's inside: nothing to simulate is
+    /// no problem.
     bool geometryOnly() const;
 
     // --- the cache on disk, and export ------------------------------------------------

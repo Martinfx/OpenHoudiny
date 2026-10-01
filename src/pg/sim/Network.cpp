@@ -3667,6 +3667,11 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     };
     // Every return goes through here: `active` is searched, so sorted.
     c.display = displayed();
+    c.model = c.display && std::all_of(nodes_.begin(), nodes_.end(), [](const Node& n) {
+        const NodeType* t = findNodeType(n.type);
+        return n.bypass || !t || t->core || n.type == "output" || n.type == "camera" || n.type == "usd_camera" ||
+               n.type == "object";
+    });
     auto done = [&]() {
         // What feeds geometry that takes part -- into a shape, or shown --
         // takes part too.
@@ -3714,7 +3719,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         else problem(L::Warning, n.id, "Another Output: only " + output->name + " is used.");
     }
     if (!output) {
-        problem(L::Error, 0, "No Output node. Add one (Render > Output) and link a Volume Look into it.");
+        if (!c.model) problem(L::Error, 0, "No Output node. Add one (Render > Output) and link a Volume Look into it.");
         return done();
     }
     c.output = output->id;
@@ -4280,8 +4285,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     // what is simulated.
     const std::vector<Link> layers = linksInto(output->id, "look");
     if (layers.empty()) {
-        problem(L::Error, output->id,
-                "Nothing to show: link a Volume Look, a Water Look, a Rain or an RBD Solver into Looks.");
+        if (!c.model) {
+            problem(L::Error, output->id,
+                    "Nothing to show: link a Volume Look, a Water Look, a Rain or an RBD Solver into Looks.");
+        }
         return done();
     }
     for (const Link& layer : layers) {

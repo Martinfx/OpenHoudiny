@@ -80,11 +80,15 @@ class Networks(unittest.TestCase):
         self.assertEqual(net.links(), [])
         with self.assertRaises(pg.Error):
             net.connect(pieces, net.add("output"))  # geometry does not go into an Output
-        # Nothing to simulate: the compile says so.
+        # Geometry shown and nothing simulated: a model, nothing wrong with it --
+        # and nothing to simulate.
         levels = [level for (level, node, message) in net.problems()]
-        self.assertIn("error", levels)
+        self.assertNotIn("error", levels)
         with self.assertRaises(pg.Error):
             net.simulate()
+        net.add("pyro_solver")  # a simulation, which lacks what it needs
+        levels = [level for (level, node, message) in net.problems()]
+        self.assertIn("error", levels)
 
     def test_expressions_and_keys(self):
         net = pg.Network()
