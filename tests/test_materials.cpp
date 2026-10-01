@@ -6,8 +6,9 @@
 // the Material node any; the pieces of the RBD Solver keep where they were
 // (rest), their cut faces broken concrete, their bars steel; the renderers'
 // meshes take the materials' roughness, their textures and the windows'
-// numbers; texture sets are found from a folder or from one picture of
-// them, the library's for each material; both renderers lay them on.
+// numbers, and geometry with no colour its materials' own; texture sets are
+// found from a folder or from one picture of them, the library's for each
+// material; both renderers lay them on -- rows along a sloping face level.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -380,6 +381,20 @@ TEST(materials_the_renderers_meshes_take_presets_textures_and_windows) {
     CHECK_EQ(tm->materials[0].texture, "/x/y_diff.png");
     CHECK_NEAR(tm->materials[0].textureSize, 3.0f, 1e-6f);
     CHECK_EQ(static_cast<int>(tm->materials[0].textureTint), 0);
+    // No colour of its own: each surface its material's -- a lawn green --
+    // and the viewport's grey where it is of none; with Cd, Cd.
+    const auto lawn = render::meshOf(*wrangled(box(), "s@material = @primnum == 0 ? \"lawn\" : \"\";", 1));
+    bool green = false;
+    for (size_t t = 0; t < lawn->count(); ++t) {
+        const bool isLawn = lawn->materials[lawn->material[t]].preset == MaterialPreset::Lawn;
+        green = green || isLawn;
+        const Vec3 want = isLawn ? render::presetSurface(MaterialPreset::Lawn).color : Vec3(0.72f, 0.72f, 0.74f);
+        CHECK(length(lawn->colors[3 * t] - want) < 1e-4f);
+    }
+    CHECK(green);
+    CHECK(render::presetSurface(MaterialPreset::Lawn).color.y > 1.5f * render::presetSurface(MaterialPreset::Lawn).color.x);
+    const auto colored = render::meshOf(*wrangled(wrangled(box(), "s@material = \"lawn\";", 1), "@Cd = {0.2, 0.4, 0.6};", 1));
+    for (size_t t = 0; t < colored->count(); ++t) CHECK(length(colored->colors[3 * t] - Vec3(0.2f, 0.4f, 0.6f)) < 1e-4f);
     // Where the points were: carried corner by corner.
     auto moved = std::make_shared<Geometry>(*box());
     auto restOut = moved->points().create("rest", AttrType::Vec3).write<Vec3>();
@@ -450,16 +465,23 @@ TEST(materials_texture_sets_are_found_from_a_picture_or_a_folder) {
     // Nothing: none.
     CHECK(!render::textureSet((dir / "nothing").string()).valid());
     CHECK(!render::presetTextureSet((dir / "ours").string(), MaterialPreset::Wood).valid());
-    // The library that comes with the program: concrete, plaster, a brick
-    // wall, wood, bark, soil and roofs -- a brick wall as it is.
+    // The library that comes with the program: a set for every material
+    // but those of a pattern of their own -- a brick wall as it is, roof
+    // tiles laid along the roof.
     const std::string library = render::textureLibrary();
     CHECK(!library.empty());
-    for (const MaterialPreset p : {MaterialPreset::Concrete, MaterialPreset::Plaster, MaterialPreset::BrickWall,
-                                   MaterialPreset::Wood, MaterialPreset::Bark, MaterialPreset::Soil, MaterialPreset::Roof}) {
+    const std::set<MaterialPreset> patterned = {MaterialPreset::None,  MaterialPreset::Brick, MaterialPreset::Window,
+                                                MaterialPreset::Glass, MaterialPreset::Steel, MaterialPreset::Stone,
+                                                MaterialPreset::Leaf,  MaterialPreset::Grass};
+    for (size_t i = 0; i < kMaterialPresets; ++i) {
+        const auto p = static_cast<MaterialPreset>(i);
         const render::TextureSet set = render::presetTextureSet(library, p);
-        CHECK(set.valid());
+        CHECK_EQ(set.valid(), !patterned.count(p));
+        if (!set.valid()) continue;
         CHECK(!set.height.empty());
+        CHECK(set.size > 0.2f && set.size < 10.0f);
         CHECK(set.tint == (p != MaterialPreset::BrickWall));
+        CHECK(set.alongFace == (p == MaterialPreset::RoofTiles));
     }
     // What a material gets: its own, else its preset's, sized as it says;
     // none with textures off.
@@ -475,6 +497,45 @@ TEST(materials_texture_sets_are_found_from_a_picture_or_a_folder) {
     s.textures = false;
     CHECK(!render::textureOf(m, s).valid());
     fs::remove_all(dir);
+}
+
+TEST(materials_rows_are_laid_along_a_sloping_face) {
+    // A picture of level rows, four to a picture of a metre, laid on roofs of
+    // 40 degrees facing each way: along the face, the rows stay level -- the
+    // same colour across the roof -- and change up it; from three sides,
+    // where the roof faces x, the picture seen from above runs them down
+    // the slope. A face lying flat: from three sides either way.
+    render::TexturePicture rows;
+    rows.width = 16;
+    rows.height = 16;
+    rows.pixels.resize(256);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) rows.pixels[static_cast<size_t>(y * 16 + x)] = (y / 2) % 2 ? Vec3(0.9f) : Vec3(0.1f);
+    }
+    rows.size = 1.0f;
+    const float sn = std::sin(0.7f), cs = std::cos(0.7f);
+    for (const Vec3& face : {Vec3(sn, cs, 0.0f), Vec3(0.0f, cs, sn), Vec3(-sn, cs, 0.0f), Vec3(0.0f, cs, -sn)}) {
+        const Vec3 level = normalize(Vec3(face.z, 0.0f, -face.x));
+        const Vec3 up = cross(face, level);
+        auto spread = [&](bool along, const Vec3& dir) {
+            rows.alongFace = along;
+            float lo = 1e9f, hi = -1e9f;
+            for (int i = 0; i < 64; ++i) {
+                const float g = rows.onSurface(Vec3(3.0f, 2.0f, 1.0f) + dir * (0.03f * static_cast<float>(i)), face).y;
+                lo = std::min(lo, g);
+                hi = std::max(hi, g);
+            }
+            return hi - lo;
+        };
+        CHECK(spread(true, level) < 0.02f);
+        CHECK(spread(true, up) > 0.5f);
+        if (std::fabs(face.x) > 0.1f) CHECK(spread(false, level) > 0.2f);
+    }
+    const Vec3 lying(0.0f, 1.0f, 0.0f), at(0.3f, 0.0f, 0.6f);
+    rows.alongFace = false;
+    const Vec3 three = rows.onSurface(at, lying);
+    rows.alongFace = true;
+    CHECK(length(rows.onSurface(at, lying) - three) < 1e-6f);
 }
 
 TEST(materials_the_path_tracer_lays_a_texture_on) {
@@ -584,4 +645,83 @@ TEST(materials_cycles_draws_the_photographs_and_the_patterns) {
     CHECK(brick > 2.0 * plain && brick > 0.15);
     CHECK(std::fabs(concreteMean / flatMean - 1.0) < 0.2);
     CHECK(asphalt > 0.03);
+}
+
+TEST(materials_cycles_lays_rows_along_a_roof) {
+    if (!render::cyclesAvailable()) return;
+    // A roof of 40 degrees facing +x, seen square on under an even sky, a
+    // picture of level rows laid on it: along the roof, the rows level in
+    // the picture of it -- each row of pixels about one colour, each column
+    // striped; from three sides, the picture from above runs them down the
+    // slope, across the rows of pixels.
+    const fs::path dir = fs::temp_directory_path() / "pg_test_texture_rows";
+    fs::remove_all(dir);
+    for (const std::string which : {"along", "three"}) {
+        fs::create_directories(dir / which);
+        writeTestPicture((dir / which / "color.png").string(), 16, 16,
+                         [](int, int y) { return (y / 2) % 2 ? Vec3(0.9f) : Vec3(0.1f); });
+        std::ofstream t(dir / which / "texture.txt");
+        t << "size 8\ntint 0\n" << (which == "along" ? "projection face\n" : "");
+    }
+    const float sn = std::sin(0.7f), cs = std::cos(0.7f);
+    const Vec3 face(sn, cs, 0.0f), level(0.0f, 0.0f, -1.0f), up = cross(face, level);
+    sim::Camera cam = sim::Camera::lookingAt(face * 6.0f, Vec3(0.0f));
+    cam.width = 48;
+    cam.height = 48;
+    sim::Look look;
+    look.lightIntensity = 0.0f;
+    look.skyIntensity = 1.0f;
+    look.skyColor = Vec3(1.0f);
+    look.floor = false;
+    // How much the green varies along the rows of pixels, and along the
+    // columns, on the whole.
+    auto spread = [&](const std::string& which, double& alongRows, double& alongColumns) {
+        auto geo = std::make_shared<Geometry>();
+        geo->addPoints(4);
+        auto P = geo->positionsForWrite();
+        P[0] = (-level - up) * 10.0f;
+        P[1] = (level - up) * 10.0f;
+        P[2] = (level + up) * 10.0f;
+        P[3] = (-level + up) * 10.0f;
+        const uint32_t quad[4] = {0, 1, 2, 3};
+        geo->addPrimitive(quad, true);
+        setPrimitiveString(*geo, "texture", (dir / which).string());
+        geo->primitives().create("texture_tint", AttrType::Int).write<int32_t>()[0] = 0;
+        render::SceneInput in;
+        in.geometry = geo;
+        in.look = look;
+        in.camera = cam;
+        render::SceneBuilder builder;
+        render::Settings s;
+        s.width = 48;
+        s.height = 48;
+        s.samples = 16;
+        s.denoise = false;
+        s.sky = render::Settings::Sky::Look;
+        const render::Image img = cycles(builder.build(in), s);
+        auto stdOf = [&](int x0, int y0, int dx, int dy) {
+            double sum = 0.0, square = 0.0;
+            for (int i = 0; i < 48; ++i) {
+                const double g = img.pixels[3 * static_cast<size_t>((y0 + dy * i) * img.width + x0 + dx * i) + 1];
+                sum += g;
+                square += g * g;
+            }
+            const double mean = sum / 48.0;
+            return std::sqrt(std::max(square / 48.0 - mean * mean, 0.0));
+        };
+        alongRows = alongColumns = 0.0;
+        for (int i = 0; i < 48; ++i) {
+            alongRows += stdOf(0, i, 1, 0) / 48.0;
+            alongColumns += stdOf(i, 0, 0, 1) / 48.0;
+        }
+    };
+    double alongRows = 0.0, alongColumns = 0.0, threeRows = 0.0, threeColumns = 0.0;
+    spread("along", alongRows, alongColumns);
+    spread("three", threeRows, threeColumns);
+    std::printf("  along the roof: rows %.3f, columns %.3f; from three sides: rows %.3f, columns %.3f\n", alongRows,
+                alongColumns, threeRows, threeColumns);
+    CHECK(alongColumns > 0.1);
+    CHECK(alongRows < 0.25 * alongColumns);
+    CHECK(threeRows > 3.0 * alongRows);
+    fs::remove_all(dir);
 }

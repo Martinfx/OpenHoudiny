@@ -105,25 +105,29 @@ Box placedBox(const Placed& p, const Mesh& m) {
 
 PresetSurface presetSurface(MaterialPreset preset) {
     switch (preset) {
-        case MaterialPreset::None: return {0.5f, 0.0f};
-        case MaterialPreset::Concrete: return {0.85f, 0.0f};
-        case MaterialPreset::BrokenConcrete: return {0.95f, 0.0f};
-        case MaterialPreset::Brick:
-        case MaterialPreset::BrickWall: return {0.85f, 0.0f};
-        case MaterialPreset::Mortar: return {0.95f, 0.0f};
-        case MaterialPreset::Plaster: return {0.8f, 0.0f};
-        case MaterialPreset::Window: return {0.04f, 0.0f};
-        case MaterialPreset::Glass: return {0.0f, 0.0f};
-        case MaterialPreset::Steel: return {0.45f, 0.8f};
-        case MaterialPreset::Metal: return {0.3f, 1.0f};
-        case MaterialPreset::Asphalt: return {0.9f, 0.0f};
-        case MaterialPreset::Wood: return {0.65f, 0.0f};
-        case MaterialPreset::Stone: return {0.75f, 0.0f};
-        case MaterialPreset::Roof: return {0.8f, 0.0f};
-        case MaterialPreset::Bark: return {0.9f, 0.0f};
-        case MaterialPreset::Leaf: return {0.5f, 0.0f};
-        case MaterialPreset::Grass: return {0.6f, 0.0f};
-        case MaterialPreset::Soil: return {0.95f, 0.0f};
+        case MaterialPreset::None: return {0.5f, 0.0f, Vec3(0.72f, 0.72f, 0.74f)};
+        case MaterialPreset::Concrete: return {0.85f, 0.0f, Vec3(0.31f, 0.3f, 0.28f)};
+        case MaterialPreset::BrokenConcrete: return {0.95f, 0.0f, Vec3(0.36f, 0.34f, 0.31f)};
+        case MaterialPreset::Brick: return {0.85f, 0.0f, Vec3(0.3f, 0.1f, 0.06f)};
+        case MaterialPreset::BrickWall: return {0.85f, 0.0f, Vec3(0.25f, 0.08f, 0.05f)};
+        case MaterialPreset::Mortar: return {0.95f, 0.0f, Vec3(0.42f, 0.4f, 0.36f)};
+        case MaterialPreset::Plaster: return {0.8f, 0.0f, Vec3(0.6f, 0.58f, 0.54f)};
+        case MaterialPreset::Window: return {0.04f, 0.0f, Vec3(0.04f, 0.05f, 0.06f)};
+        case MaterialPreset::Glass: return {0.0f, 0.0f, Vec3(0.9f, 0.95f, 0.95f)};
+        case MaterialPreset::Steel: return {0.45f, 0.8f, Vec3(0.4f, 0.4f, 0.42f)};
+        case MaterialPreset::Metal: return {0.3f, 1.0f, Vec3(0.55f, 0.56f, 0.57f)};
+        case MaterialPreset::Asphalt: return {0.9f, 0.0f, Vec3(0.06f, 0.06f, 0.065f)};
+        case MaterialPreset::Wood: return {0.65f, 0.0f, Vec3(0.23f, 0.14f, 0.08f)};
+        case MaterialPreset::Stone: return {0.75f, 0.0f, Vec3(0.3f, 0.29f, 0.27f)};
+        case MaterialPreset::Roof: return {0.8f, 0.0f, Vec3(0.2f, 0.19f, 0.18f)};
+        case MaterialPreset::Bark: return {0.9f, 0.0f, Vec3(0.15f, 0.1f, 0.06f)};
+        case MaterialPreset::Leaf: return {0.5f, 0.0f, Vec3(0.08f, 0.17f, 0.03f)};
+        case MaterialPreset::Grass: return {0.6f, 0.0f, Vec3(0.1f, 0.22f, 0.04f)};
+        case MaterialPreset::Soil: return {0.95f, 0.0f, Vec3(0.09f, 0.065f, 0.045f)};
+        case MaterialPreset::Paving: return {0.8f, 0.0f, Vec3(0.16f, 0.15f, 0.14f)};
+        case MaterialPreset::RoofTiles: return {0.7f, 0.0f, Vec3(0.06f, 0.065f, 0.07f)};
+        case MaterialPreset::Lawn: return {0.65f, 0.0f, Vec3(0.14f, 0.24f, 0.05f)};
+        case MaterialPreset::Sand: return {0.95f, 0.0f, Vec3(0.45f, 0.36f, 0.22f)};
     }
     return {};
 }
@@ -164,6 +168,9 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
         if (!textures || prim >= textures->size()) return none;
         return textures->stringValue(textures->read<int32_t>()[prim]);
     };
+    // Geometry with no colour of its own: each surface its material's.
+    const bool colored = geo.vertices().find("Cd") || geo.points().find("Cd") || geo.primitives().find("Cd") ||
+                         geo.detail().find("Cd");
     std::map<std::tuple<std::array<int, 5>, std::string, int>, uint16_t> known;
     std::vector<uint16_t> which(n);
     auto quantize = [](float x) { return static_cast<int>(std::lround(std::clamp(x, 0.0f, 1.0f) * 255.0f)); };
@@ -208,6 +215,16 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
         which[t] = it->second;
     }
     for (const Material& m : mesh->materials) mesh->clear = mesh->clear || m.kind != Material::Kind::Surface;
+    // The colour of each material, for geometry with none of its own: the
+    // viewport's grey where it is of none, or is glass or water.
+    std::vector<Vec3> own;
+    if (!colored) {
+        for (const Material& m : mesh->materials) {
+            own.push_back(m.kind == Material::Kind::Surface && m.preset != MaterialPreset::None
+                              ? presetSurface(m.preset).color
+                              : presetSurface(MaterialPreset::None).color);
+        }
+    }
     // The windows' faces each a number of its own: of where its first
     // triangle was before it moved, so that it stays the same while pieces
     // come and go.
@@ -265,7 +282,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
             for (size_t c = 0; c < 3; ++c) {
                 mesh->normals[3 * i + c] = tris.normals[3 * t + c];
                 if (!mesh->rest.empty()) mesh->rest[3 * i + c] = tris.rest[3 * t + c];
-                const Vec3 col = tris.colors[3 * t + c];
+                const Vec3 col = colored ? tris.colors[3 * t + c] : own[which[t]];
                 mesh->colors[3 * i + c] = Vec3(std::clamp(col.x, 0.0f, 1.0f), std::clamp(col.y, 0.0f, 1.0f),
                                                std::clamp(col.z, 0.0f, 1.0f));
             }

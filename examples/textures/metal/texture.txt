@@ -1,7 +1,7 @@
-# The texture bark: what src/pg/render/Textures.cpp reads.
+# The texture metal: what src/pg/render/Textures.cpp reads.
 size 1.000
-depth 0.02194
-mean 0.14654 0.09627 0.06278
+depth 0.00050
+mean 0.49984 0.49984 0.49984
 tint 1
 source Amazon Lumberyard Bistro (Amazon, CC-BY 4.0, https://developer.nvidia.com/orca/amazon-lumberyard-bistro), via pbrt-v4-scenes
 license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

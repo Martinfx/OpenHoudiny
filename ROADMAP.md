@@ -368,8 +368,9 @@ Seřazeno podle poměru hodnota / náklad:
    ostrosti, AOV do EXR; kouř, oheň a prach s vícenásobným rozptylem,
    stíny kouře a světlem plamenů; odšumění neuronovou sítí Intel Open
    Image Denoise; materiály podle toho, z čeho povrch je (`s@material`:
-   beton, omítka, cihla, okno, ocel…), fotografie povrchů z knihovny
-   a vlastní textury kladené ze tří stran podle polohy kusu před pohybem
+   beton, omítka, cihla, okno, ocel, dlažba, tašky, trávník…), fotografie
+   povrchů z knihovny (patnáct sad) a vlastní textury kladené ze tří stran
+   nebo podél plochy podle polohy kusu před pohybem
    ([materials.md](docs/materials.md)).
    Zbývá: Cycles na GPU, rozmazání pohybem, UV a normálové mapy, barevná
    správa OCIO/ACES. Do té doby renderují studia náročné záběry přes USD

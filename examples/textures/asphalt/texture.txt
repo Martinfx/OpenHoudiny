@@ -1,0 +1,7 @@
+# The texture asphalt: what src/pg/render/Textures.cpp reads.
+size 2.000
+depth 0.00300
+mean 0.22779 0.23292 0.23920
+tint 1
+source BabylonJS/Assets (https://github.com/BabylonJS/Assets), CC-BY 4.0
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

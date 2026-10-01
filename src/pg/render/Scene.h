@@ -80,10 +80,12 @@ struct Material {
 
 /// How rough and how metal a surface of `preset` is -- what both renderers
 /// make of it; the attributes roughness and metallic, where there are any,
-/// before it.
+/// before it -- and its colour where the geometry has no Cd (linear light;
+/// for a set of photographs, about their own).
 struct PresetSurface {
     float roughness = 0.5f;
     float metallic = 0.0f;
+    Vec3 color{0.72f, 0.72f, 0.74f};
 };
 PresetSurface presetSurface(MaterialPreset preset);
 

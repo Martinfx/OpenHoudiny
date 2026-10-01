@@ -45,10 +45,12 @@ okna.
   Denoise
 - **[docs/materials.md](docs/materials.md)** — materiály a textury: plochy
   říkají, z čeho jsou (`s@material`: beton, lom betonu, omítka, cihla,
-  okno, ocel, dřevo, kůra…), generátory si je nastaví samy, uzel Material
-  komukoli; Cycles kreslí fotografie z knihovny (Bistro, CC-BY 4.0) nebo
-  procedurální vzory, path tracer fotografie bez reliéfu; vlastní textury
-  z Poly Haven a ambientCG; textura jde s kusem, který letí
+  okno, ocel, dřevo, kůra, dlažba, tašky, trávník…), generátory si je
+  nastaví samy, uzel Material komukoli; Cycles kreslí fotografie z knihovny
+  (Bistro a Babylon.js, CC-BY 4.0) nebo procedurální vzory, path tracer
+  fotografie bez reliéfu; tašky podél střechy, řady vodorovně; geometrie
+  bez `Cd` v barvách svých materiálů; vlastní textury z Poly Haven
+  a ambientCG; textura jde s kusem, který letí
 - **[docs/pathtracer.md](docs/pathtracer.md)** — vlastní path tracer na
   procesoru, druhá volba záložky Render a `--renderer path`; odražené
   světlo, měkké slunce, prosvítající tráva a listí, sklo a voda, hloubka

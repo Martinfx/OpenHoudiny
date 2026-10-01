@@ -1,0 +1,7 @@
+# The texture lawn: what src/pg/render/Textures.cpp reads.
+size 1.500
+depth 0.00600
+mean 0.14201 0.24361 0.05299
+tint 1
+source BabylonJS/Assets (https://github.com/BabylonJS/Assets), CC-BY 4.0
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

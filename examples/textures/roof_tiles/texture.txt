@@ -1,7 +1,8 @@
-# The texture bark: what src/pg/render/Textures.cpp reads.
-size 1.000
-depth 0.02194
-mean 0.14654 0.09627 0.06278
+# The texture roof_tiles: what src/pg/render/Textures.cpp reads.
+size 1.800
+depth 0.02082
+mean 0.05796 0.06355 0.06400
 tint 1
+projection face
 source Amazon Lumberyard Bistro (Amazon, CC-BY 4.0, https://developer.nvidia.com/orca/amazon-lumberyard-bistro), via pbrt-v4-scenes
 license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

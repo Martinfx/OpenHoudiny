@@ -120,6 +120,10 @@ TextureSet readFolder(const fs::path& folder) {
             int tint = 1;
             if (words >> tint) set.tint = tint != 0;
         }
+        if (key == "projection") {
+            std::string how;
+            if (words >> how) set.alongFace = how == "face";
+        }
     }
     auto picture = [&](const char* name) {
         for (const char* ext : {".jpg", ".png", ".jpeg", ".exr"}) {
@@ -246,15 +250,30 @@ Vec3 TexturePicture::at(float u, float v) const {
 }
 
 Vec3 TexturePicture::onSurface(const Vec3& rest, const Vec3& face) const {
+    const float k = 1.0f / std::max(size, 1e-3f);
+    Vec3 c(0.0f);
+    // Along the face, where it leans more than some 15 degrees from lying:
+    // across it level -- its normal turned a quarter round Y -- and up it,
+    // across both (as Cycles' alongFace).
+    float along = 0.0f;
+    if (alongFace) {
+        const float lean = std::sqrt(face.x * face.x + face.z * face.z);
+        const float t = std::clamp((lean - 0.24f) / 0.04f, 0.0f, 1.0f);
+        along = t * t * (3.0f - 2.0f * t);
+        if (along > 0.0f) {
+            const Vec3 level = Vec3(face.z, 0.0f, -face.x) / std::max(lean, 1e-4f);
+            const Vec3 up = glm::cross(face, level);
+            c = at(glm::dot(rest, level) * k, glm::dot(rest, up) * k) * along;
+            if (along >= 1.0f) return c;
+        }
+    }
     // As much from each side as the surface faces it, to the fourth power;
     // each side's picture moved, so that the three do not line up.
     Vec3 w(face.x * face.x, face.y * face.y, face.z * face.z);
     w = w * w;
     const float sum = w.x + w.y + w.z;
     if (sum <= 0.0f) return Vec3(1.0f, 1.0f, 1.0f);
-    w = w / sum;
-    const float k = 1.0f / std::max(size, 1e-3f);
-    Vec3 c(0.0f);
+    w = w * ((1.0f - along) / sum);
     if (w.x > 1e-3f) c = c + at(rest.z * k + 0.31f, rest.y * k + 0.17f) * w.x;
     if (w.y > 1e-3f) c = c + at(rest.x * k + 0.53f, rest.z * k + 0.71f) * w.y;
     if (w.z > 1e-3f) c = c + at(rest.x * k, rest.y * k) * w.z;
@@ -273,7 +292,8 @@ std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set) {
     if (!set.valid()) return nullptr;
     std::lock_guard<std::mutex> lock(mutex);
     std::ostringstream key;
-    key << set.color << '|' << set.size << '|' << set.tint << '|' << set.mean.x << ' ' << set.mean.y << ' ' << set.mean.z;
+    key << set.color << '|' << set.size << '|' << set.tint << '|' << set.alongFace << '|' << set.mean.x << ' '
+        << set.mean.y << ' ' << set.mean.z;
     if (const auto it = pictures.find(key.str()); it != pictures.end()) return it->second;
     io::Picture picture;
     std::string error;
@@ -316,6 +336,7 @@ std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set) {
         out->size = set.size;
         out->mean = set.mean;
         out->tint = set.tint;
+        out->alongFace = set.alongFace;
     }
     pictures[key.str()] = out;
     return out;

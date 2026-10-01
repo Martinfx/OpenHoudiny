@@ -1,0 +1,7 @@
+# The texture broken_concrete: what src/pg/render/Textures.cpp reads.
+size 0.800
+depth 0.01987
+mean 0.38299 0.32117 0.23509
+tint 1
+source BabylonJS/Assets (https://github.com/BabylonJS/Assets), CC-BY 4.0
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

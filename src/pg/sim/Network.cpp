@@ -781,16 +781,19 @@ std::vector<NodeType> buildTypes() {
              in,
              {text("group", "Group", "Material", "",
                    "Which faces: a group's name, numbers and ranges -- 0-9 12 -- * or empty for all."),
-              {"material", "Material", "Material", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 18.0f, 0.0f, 18.0f, "",
-               "What the faces are. Cycles draws concrete, plaster, a brick wall, wood, bark and soil with the "
-               "photographs that come with the program (examples/textures), the others with a pattern of their "
-               "own -- broken concrete with its stones, brick, mortar, a window with a room behind it, rusty steel "
-               "-- all on their colour Cd; the path tracer the photographs too, without their bumps. None takes "
-               "it away.",
+              {"material", "Material", "Material", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 22.0f, 0.0f, 22.0f, "",
+               "What the faces are. Cycles draws most with the photographs that come with the program "
+               "(examples/textures) -- concrete and its break, plaster, a brick wall, mortar, metal, asphalt, wood, "
+               "roofs, paving, bark, soil, a lawn, sand -- the others with a pattern of their own: brick, a window "
+               "with a room behind it, rusty steel, stone, leaves, grass. All on their colour Cd, or the "
+               "material's own where the geometry has none; the path tracer the photographs too, without their "
+               "bumps. None takes it away.",
                {"none", "concrete", "broken_concrete", "brick", "brick_wall", "mortar", "plaster", "window", "glass",
-                "steel", "metal", "asphalt", "wood", "stone", "roof", "bark", "leaf", "grass", "soil"},
+                "steel", "metal", "asphalt", "wood", "stone", "roof", "bark", "leaf", "grass", "soil", "paving",
+                "roof_tiles", "lawn", "sand"},
                {"None", "Concrete", "Broken Concrete", "Brick", "Brick Wall", "Mortar", "Plaster", "Window", "Glass",
-                "Steel", "Metal", "Asphalt", "Wood", "Stone", "Roof", "Bark", "Leaf", "Grass", "Soil"}},
+                "Steel", "Metal", "Asphalt", "Wood", "Stone", "Roof", "Bark", "Leaf", "Grass", "Soil", "Paving",
+                "Roof Tiles", "Lawn", "Sand"}},
               {"texture", "Texture", "Texture", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
                "A texture of your own instead of the material's: a picture of its colour -- the other pictures of "
                "the set beside it are found by their names (Poly Haven's _diff_, _rough_, _disp_; ambientCG's "

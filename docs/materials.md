@@ -1,7 +1,8 @@
 # Materiály a textury
 
 Každá plocha může říct, **z čeho je**: beton, omítka, cihla, okno, ocel,
-dřevo, kůra, tráva… Řekne to řetězcovým atributem primitiv `material`.
+dřevo, dlažba, taškové střechy, trávník… Řekne to řetězcovým atributem
+primitiv `material`.
 Renderery podle něj kreslí povrch: Cycles fotografií, pokud ji knihovna
 má, jinak procedurálním vzorem, a vždy s drsností a kovovostí toho
 materiálu. Path tracer klade stejné fotografie, ale bez reliéfu, a bere
@@ -9,10 +10,18 @@ drsnost a kovovost.
 
 ![Vzorník materiálů v Cycles](img/materials.jpg)
 
-*Vzorník (Cycles). Přední řada fotografie: beton, omítka, cihlová zeď, dřevo,
-kůra, půda, a procedurální lom betonu. Prostřední řada: cihla, malta, okno,
-ocel, kov, asfalt, kámen. Zadní řada: střecha (fotka betonu), list, tráva,
-sklo, bez materiálu.*
+*Vzorník (Cycles) bez barev `Cd`: každý materiál ve své vlastní barvě. Přední
+řada: beton, lom betonu, omítka, cihlová zeď, malta, kov. Druhá: asfalt,
+dlažba, dřevo, kůra, půda, trávník. Třetí: písek, plochá střecha, valbová
+střecha z tašek, cihla, okno, ocel. Zadní: kámen, list, tráva, sklo, bez
+materiálu.*
+
+![Nároží ulice z fotek knihovny](img/materials-library.jpg)
+
+*Fotky z knihovny v jedné scéně (Cycles), opět bez `Cd`: asfalt, chodník
+z dlažby, trávník, písek s kusy lomu betonu, kovový kontejner a dům z omítky
+s valbovou střechou z tašek. Řady tašek leží vodorovně na každé straně
+střechy.*
 
 ## 1. Rychlý start
 
@@ -30,6 +39,7 @@ Ve wrangle stačí jeden řádek:
 ```c
 s@material = "plaster";                 // Primitive Wrangle
 if (@group_glass) s@material = "window";
+if (@group_roof) s@material = "roof_tiles";
 ```
 
 ## 2. Materiály
@@ -37,23 +47,31 @@ if (@group_glass) s@material = "window";
 | Jméno | Co Cycles nakreslí | Drsnost / kov |
 |---|---|---|
 | `concrete` | **fotka** betonu se skvrnami, nahoře šmouhy stékající vody | 0,85 / 0 |
-| `broken_concrete` | lom betonu: ostrohranné kamínky kameniva v cementu, rozervaný reliéf, tmavší prohlubně | 0,95 / 0 |
+| `broken_concrete` | **fotka** lomu: kamínky kameniva v cementu, hluboký reliéf | 0,95 / 0 |
 | `brick` | líc jedné cihly: skvrny, tmavší zrnka, drsný pálený povrch | 0,85 / 0 |
 | `brick_wall` | **fotka** cihlové zdi i s maltou (na zeď, která je jedna plocha) | 0,85 / 0 |
-| `mortar` | malta: zrnitý písek, místy špinavější | 0,95 / 0 |
+| `mortar` | **fotka** písku, jemnější (zrna malty) | 0,95 / 0 |
 | `plaster` | **fotka** omítky, šmouhy pod okny, skvrny po celé fasádě | 0,8 / 0 |
 | `window` | sklo s místností za ním: každé okno jinak tmavé nebo světlé (záclony, světlo), teplejší či studenější, odráží oblohu | 0,04 / 0 |
 | `glass` | sklo (průhledné, jako Glass Fracture) | 0 |
 | `steel` | ocel výztuže, místy rezavá (rez je drsná a nekovová) | 0,45 / 0,8 |
-| `metal` | plech: místy hladší, místy drsnější | 0,3 / 1 |
-| `asphalt` | asfalt: dehet a kamínky, světlejší vyjeté pruhy, tmavší záplaty | 0,9 / 0 |
+| `metal` | **fotka** plechu: kartáčované rýhy, škrábance, skvrny | 0,3 / 1 |
+| `asphalt` | **fotka** asfaltu: drobné kamínky v dehtu | 0,9 / 0 |
 | `wood` | **fotka** dřeva s kresbou | 0,65 / 0 |
 | `stone` | kámen: zrna několika barev, skvrny, nerovný | 0,75 / 0 |
 | `roof` | plochá střecha: **fotka** betonu v šestimetrové dlaždici, skvrny po vodě | 0,8 / 0 |
+| `roof_tiles` | šikmá střecha: **fotka** břidlicových tašek v řadách, kladená podél střechy (řady vodorovně, ať se plocha dívá kamkoli) | 0,7 / 0 |
+| `paving` | **fotka** dlažby z kostek asi 18 × 14 cm, písek ve spárách | 0,8 / 0 |
 | `bark` | **fotka** kůry (svislé rýhy, hluboký reliéf) | 0,9 / 0 |
 | `leaf` | list: některé žlutší, některé tmavší, po skupinách v koruně | 0,5 / 0 |
-| `grass` | tráva: sušší v několikametrových skvrnách | 0,6 / 0 |
+| `grass` | tráva (stébla uzlu Grass): sušší v několikametrových skvrnách | 0,6 / 0 |
+| `lawn` | **fotka** trávníku: na zem, která je jedna plocha | 0,65 / 0 |
 | `soil` | **fotka** hlíny | 0,95 / 0 |
+| `sand` | **fotka** písku | 0,95 / 0 |
+
+Bez fotek (Textures vypnuté) kreslí Cycles každý materiál vzorem: dlažbu
+a tašky v řadách, lom betonu s kamínky, trávník se stébly a písek
+s čeřinami.
 
 Neznámé jméno nebo `""` znamená bez materiálu: povrch má barvu `Cd`
 a „detail“ z [cycles.md](cycles.md) (§3). Atributy `roughness`
@@ -65,6 +83,12 @@ barva povrchu je pořád `Cd` a fotka ji jen zesvětluje a ztmavuje. Fasáda
 tak má barvu, jakou jí dal asset, a každá cihla Brick Wall svůj odstín. Výjimkou je
 cihlová zeď (`brick_wall`). Malta je světlejší než cihly, takže by se jasnou
 `Cd` přepálila do bílé, a proto se kreslí ve vlastních barvách fotky.
+
+**Bez `Cd` barva materiálu.** Když geometrie `Cd` nemá vůbec (ani na bodech,
+ani na plochách), dostane každá plocha barvu svého materiálu: trávník
+zelenou, asfalt tmavě šedou, písek béžovou, tašky břidlicově šedou. U fotek
+je to zhruba jejich vlastní barva. Stačí tedy nastavit `material` a povrch
+vypadá, jak má. Plochy bez materiálu zůstávají šedé jako ve viewportu.
 
 ### Kdo materiál nastaví sám
 
@@ -97,12 +121,14 @@ naskrz: cihla, kámen, dřevo, kov a sklo zůstanou samy sebou.
 ## 3. Fotografie (textury)
 
 Knihovna, která je součástí programu, leží v
-[examples/textures](../examples/textures/README.md): `concrete`, `plaster`,
-`brick_wall`, `wood`, `bark`, `soil` a `roof`. Každá sada obsahuje
-`color.jpg`, `height.jpg` a `texture.txt` (velikost dlaždice v metrech,
-hloubku reliéfu, průměrnou barvu a `tint`). Fotky pocházejí z Bistro od
-Amazon Lumberyard a šíří se pod licencí CC-BY 4.0; autoři jsou uvedeni
-v README knihovny.
+[examples/textures](../examples/textures/README.md): `concrete`,
+`broken_concrete`, `plaster`, `brick_wall`, `mortar`, `metal`, `asphalt`,
+`wood`, `roof`, `roof_tiles`, `paving`, `bark`, `soil`, `lawn` a `sand`.
+Každá sada obsahuje `color.jpg`, `height.jpg` a `texture.txt` (velikost
+dlaždice v metrech, hloubku reliéfu, průměrnou barvu, `tint` a případně
+`projection`). Fotky pocházejí z Bistro od Amazon Lumberyard (přes
+pbrt-v4-scenes) a z BabylonJS/Assets a šíří se pod licencí CC-BY 4.0;
+autoři jsou uvedeni v README knihovny.
 
 **Jak se fotka klade.** Geometrie nemá UV, takže se fotka promítá ze tří
 stran najednou (triplanárně). Z každé osy přispívá tolik, kolik se tím směrem
@@ -111,6 +137,15 @@ shora a šikmá plocha prolnutí obou. Promítá se podle `rest` a normály v
 `rest`, takže letící kus nese svou kresbu. Každá ze tří projekcí je posunutá,
 aby se dlaždice na hranách nepotkaly ve stejném místě. Na fasádách navíc
 leží velké skvrny a šmouhy, takže opakování dlaždic není vidět.
+
+**Podél plochy** se kladou sady, jejichž řady musí zůstat vodorovné: tašky
+(`roof_tiles`, v `texture.txt` řádek `projection face`). Ze tří stran by se
+na střeše se sklonem 45° prolnuly dvě projekce a řady by se zdvojily. Na
+valbě obrácené k ose x by navíc běžely dolů po spádu. Podél plochy se fotka
+klade tak, že vodorovně po ploše vede osa u a do kopce osa v. Řady tak
+leží vodorovně na každé straně střechy. Plochy skoro vodorovné (méně než
+asi 15°) se kladou ze tří stran jako ostatní. Totéž umí i vaše sada:
+stačí do jejího `texture.txt` napsat `projection face`.
 
 **Výška** dělá v Cycles reliéf (Bump): spáry mezi cihlami, rýhy v kůře,
 póry v betonu. **Drsnost** se bere z mapy, pokud ji sada má, jinak z
@@ -163,12 +198,17 @@ okolních domů odrážejí oblohu.*
   plochám lomu `broken_concrete` a trubkám prutů `steel`.
 - `src/pg/render/Scene.cpp`: `meshOf` čte `material`, `texture*` a `rest`
   a oknům dá číslo podle polohy jejich první plochy v `rest`. Číslo je
-  stejné snímek za snímkem, i když kusy mizí.
+  stejné snímek za snímkem, i když kusy mizí. Geometrii bez `Cd` dá barvy
+  materiálů (`presetSurface`).
 - `src/pg/render/Textures.cpp`: hledání sad (knihovna, `texture.txt`,
   jména souborů z Poly Haven a ambientCG), průměrná barva a triplanární
   vyhledání pro path tracer.
 - `src/pg/render/Cycles.cpp`: `patternOf` (procedurální vzory ve třech
-  měřítkách), `laidOn` a `sampled` (triplanární fotky), `weathered`
-  (skvrny a šmouhy přes fotky). Sítě nesou atributy `pg_rest`,
-  `pg_rest_normal` a `pg_random`.
-- `tools/textures/prepare.py`: výroba knihovny z fotek pbrt-v4-scenes.
+  měřítkách), `laidOn` a `sampled` (fotky ze tří stran nebo podél plochy,
+  `alongFace`), `weathered` (skvrny a šmouhy přes fotky). Sítě nesou
+  atributy `pg_rest`, `pg_rest_normal` a `pg_random`.
+- `tools/textures/prepare.py`: výroba knihovny z fotek pbrt-v4-scenes
+  a BabylonJS/Assets. Výšku integruje z normálové mapy a podle toho, který
+  směr zelené osy dá skutečný povrch (u druhého by sklony žádnému povrchu
+  nepatřily), pozná, kam zelená osa míří. Kovu skládá barvu z rýh jeho
+  reliéfu, protože jeho fotka má jen deset odstínů šedi.

@@ -5,17 +5,20 @@
 // are these -- and how many metres one picture covers. Both renderers lay a
 // set on a surface from three sides at once, as much from each as the
 // surface faces that way, by where the surface was before it moved (the
-// point attribute rest): it goes with a piece that flies. Cycles takes its
-// height for bumps too.
+// point attribute rest): it goes with a piece that flies. A set whose rows
+// must stay level -- a roof's slates -- is laid along each face instead,
+// where the face slopes: across it level, up it as it rises, whichever way
+// it faces. Cycles takes its height for bumps too.
 //
 // The sets that come with the program are in examples/textures, a folder
-// for each material (core/Material.h) that has one -- concrete, plaster,
-// brick_wall, wood, bark, soil -- made by tools/textures/prepare.py from the
-// photographs of pbrt-v4-scenes (CC-BY 4.0, examples/textures/README.md):
-// color.jpg, height.jpg and texture.txt. Any other set -- what Poly Haven or
-// ambientCG give away -- is found from a picture of it: the pictures beside
-// it whose names differ in what they are (_diff_ and _rough_ and _disp_,
-// _Color and _Roughness and _Displacement...).
+// for each material (core/Material.h) that has one -- concrete and its
+// break, plaster, a brick wall, mortar, metal, asphalt, wood, roofs, paving,
+// bark, soil, a lawn, sand -- made by tools/textures/prepare.py from the
+// photographs of pbrt-v4-scenes and BabylonJS/Assets (CC-BY 4.0,
+// examples/textures/README.md): color.jpg, height.jpg and texture.txt. Any
+// other set -- what Poly Haven or ambientCG give away -- is found from a
+// picture of it: the pictures beside it whose names differ in what they are
+// (_diff_ and _rough_ and _disp_, _Color and _Roughness and _Displacement...).
 //
 #include "pg/core/Material.h"
 #include "pg/core/Types.h"
@@ -40,6 +43,9 @@ struct TextureSet {
     /// darker round it, its colour divided by `mean`. Else the picture as
     /// it is -- a brick wall, its mortar lighter than its bricks.
     bool tint = true;
+    /// Laid along each face where it slopes (texture.txt: projection face),
+    /// not from three sides: rows that must stay level.
+    bool alongFace = false;
 
     bool valid() const { return !color.empty(); }
     bool operator==(const TextureSet&) const = default;
@@ -71,10 +77,12 @@ struct TexturePicture {
     float size = 2.0f;         ///< metres one picture covers
     Vec3 mean{0.5f, 0.5f, 0.5f};
     bool tint = true;          ///< TextureSet::tint
+    bool alongFace = false;    ///< TextureSet::alongFace
 
     /// The picture at (u, v) pictures from its corner, between pixels.
     Vec3 at(float u, float v) const;
-    /// Laid from three sides at `rest`, the surface facing `face` there.
+    /// Laid on at `rest`, the surface facing `face` there (a unit long):
+    /// from three sides, or along the face.
     Vec3 onSurface(const Vec3& rest, const Vec3& face) const;
     /// A surface of colour `color` -- Cd times its copy's `tint` -- with it
     /// laid on: tinted, the colour times the picture over its mean; else

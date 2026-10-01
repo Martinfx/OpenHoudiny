@@ -511,16 +511,53 @@ ccl::ShaderOutput* bumped(ccl::ShaderGraph& graph, ccl::ShaderOutput* height, fl
     return b->output("Normal");
 }
 
-/// How a picture is laid on a surface from three sides (render/Textures.h,
-/// as the path tracer does): where on the picture each side looks, and how
-/// much of each -- as much as the surface faced that side, to the fourth
-/// power. `at` where the surface was before it moved, `face` the way it
-/// faced there (pg_rest, pg_rest_normal), `perUnit` pictures to a metre.
-struct Laid {
-    ccl::ShaderOutput* uv[3];
-    ccl::ShaderOutput* weight[3];
+/// Where on a face `at` is, in metres along it: across it level, up it as it
+/// slopes (`face`: which way it faces) -- a roof's rows level whichever way
+/// it faces; and how far it leans from lying flat, 0 to 1 (render/Textures.h).
+struct Along {
+    ccl::ShaderOutput* uv;
+    ccl::ShaderOutput* lean;
 };
-Laid laidOn(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutput* face, float perUnit) {
+Along alongFace(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutput* face) {
+    auto* n = graph.create_node<ccl::SeparateXYZNode>();
+    graph.connect(face, n->input("Vector"));
+    ccl::ShaderOutput* x2 = math(graph, ccl::NODE_MATH_MULTIPLY, n->output("X"), 0.0f, n->output("X"));
+    ccl::ShaderOutput* z2 = math(graph, ccl::NODE_MATH_MULTIPLY, n->output("Z"), 0.0f, n->output("Z"));
+    ccl::ShaderOutput* lean = math(graph, ccl::NODE_MATH_SQRT, math(graph, ccl::NODE_MATH_ADD, x2, 0.0f, z2), 0.0f);
+    ccl::ShaderOutput* safe = math(graph, ccl::NODE_MATH_MAXIMUM, lean, 1e-4f);
+    // Level along it: its normal turned a quarter round Y; up it: across both.
+    auto* level = graph.create_node<ccl::CombineXYZNode>();
+    graph.connect(math(graph, ccl::NODE_MATH_DIVIDE, n->output("Z"), 0.0f, safe), level->input("X"));
+    graph.connect(math(graph, ccl::NODE_MATH_DIVIDE, scaled(graph, n->output("X"), -1.0f, 0.0f), 0.0f, safe), level->input("Z"));
+    auto* up = graph.create_node<ccl::VectorMathNode>();
+    up->set_math_type(ccl::NODE_VECTOR_MATH_CROSS_PRODUCT);
+    graph.connect(face, up->input("Vector1"));
+    graph.connect(level->output("Vector"), up->input("Vector2"));
+    auto along = [&](ccl::ShaderOutput* axis) {
+        auto* d = graph.create_node<ccl::VectorMathNode>();
+        d->set_math_type(ccl::NODE_VECTOR_MATH_DOT_PRODUCT);
+        graph.connect(at, d->input("Vector1"));
+        graph.connect(axis, d->input("Vector2"));
+        return d->output("Value");
+    };
+    auto* uv = graph.create_node<ccl::CombineXYZNode>();
+    graph.connect(along(level->output("Vector")), uv->input("X"));
+    graph.connect(along(up->output("Vector")), uv->input("Y"));
+    return {uv->output("Vector"), lean};
+}
+
+/// How a picture is laid on a surface (render/Textures.h, as the path tracer
+/// does): where on the picture each way looks, and how much of each. From
+/// three sides, as much from each as the surface faced that side, to the
+/// fourth power -- or, `along` and the face leaning more than some 15
+/// degrees, along it (alongFace): a roof's slates in rows. `at` where the
+/// surface was before it moved, `face` the way it faced there (pg_rest,
+/// pg_rest_normal), `perUnit` pictures to a metre.
+struct Laid {
+    ccl::ShaderOutput* uv[4] = {};
+    ccl::ShaderOutput* weight[4] = {};
+};
+Laid laidOn(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutput* face, float perUnit, bool along) {
     auto* p = graph.create_node<ccl::SeparateXYZNode>();
     graph.connect(at, p->input("Vector"));
     auto* n = graph.create_node<ccl::SeparateXYZNode>();
@@ -546,13 +583,26 @@ Laid laidOn(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutput* f
     laid.uv[0] = uv("Z", 0.31f, "Y", 0.17f);
     laid.uv[1] = uv("X", 0.53f, "Z", 0.71f);
     laid.uv[2] = uv("X", 0.0f, "Y", 0.0f);
+    if (along) {
+        const Along a = alongFace(graph, at, face);
+        ccl::ShaderOutput* on = ramp(graph, a.lean, 0.24f, 0.28f);
+        ccl::ShaderOutput* off = scaled(graph, on, -1.0f, 1.0f);
+        for (int i = 0; i < 3; ++i) laid.weight[i] = math(graph, ccl::NODE_MATH_MULTIPLY, laid.weight[i], 0.0f, off);
+        auto* scale = graph.create_node<ccl::VectorMathNode>();
+        scale->set_math_type(ccl::NODE_VECTOR_MATH_SCALE);
+        graph.connect(a.uv, scale->input("Vector1"));
+        scale->set_scale(perUnit);
+        laid.uv[3] = scale->output("Vector");
+        laid.weight[3] = on;
+    }
     return laid;
 }
 
 /// The picture `file` laid on so: its colour (sRGB) or its value (as it is).
 ccl::ShaderOutput* sampled(ccl::ShaderGraph& graph, const Laid& laid, const std::string& file, bool color) {
     ccl::ShaderOutput* sum = nullptr;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
+        if (!laid.uv[i]) continue;
         auto* image = graph.create_node<ccl::ImageTextureNode>();
         image->set_filename(ccl::ustring(file));
         image->set_colorspace(color ? ccl::u_colorspace_srgb : ccl::u_colorspace_raw);
@@ -599,6 +649,13 @@ ccl::ShaderOutput* weathered(ccl::ShaderGraph& graph, const Material& m, ccl::Sh
         case MaterialPreset::BrickWall: streaks = 0.15f; break;
         case MaterialPreset::Soil: patches = 0.15f; break;
         case MaterialPreset::Roof: patches = 0.2f; break;  // puddles dried, tar patched
+        case MaterialPreset::RoofTiles:
+            patches = 0.15f;  // moss, lichen
+            streaks = 0.1f;
+            break;
+        case MaterialPreset::Asphalt:
+        case MaterialPreset::Paving:
+        case MaterialPreset::Lawn: patches = 0.15f; break;
         default: break;
     }
     ccl::ShaderOutput* c = varied(graph, color, noise(graph, at, 0.3f, 4.0f, 0.55f), patches * a);
@@ -629,6 +686,43 @@ Pattern patternOf(ccl::ShaderGraph& graph, const Material& m, ccl::ShaderOutput*
     auto streaked = [&](ccl::ShaderOutput* c, float k) {
         ccl::ShaderOutput* streaks = noise(graph, stretched(graph, at, Vec3(4.0f, 0.25f, 4.0f)), 1.5f, 5.0f, 0.6f);
         return times(graph, c, ramp(graph, streaks, 0.5f, 0.78f, 1.0f, 1.0f - k * a));
+    };
+    // Where on its face `at` is, in metres: along the face where it slopes
+    // (alongFace), as seen from above where it lies -- rows level on a roof
+    // whichever way it faces, and on a pavement.
+    auto flat = [&]() {
+        auto* face = graph.create_node<ccl::AttributeNode>();
+        face->set_attribute(ccl::ustring("pg_rest_normal"));
+        const Along along = alongFace(graph, at, face->output("Vector"));
+        auto* p3 = graph.create_node<ccl::SeparateXYZNode>();
+        graph.connect(at, p3->input("Vector"));
+        auto* above = graph.create_node<ccl::CombineXYZNode>();
+        graph.connect(p3->output("X"), above->input("X"));
+        graph.connect(p3->output("Z"), above->input("Y"));
+        return mixed(graph, above->output("Vector"), along.uv, ramp(graph, along.lean, 0.24f, 0.28f));
+    };
+    // Rows of `width` by `height` metres on `uv`, each row half a one along
+    // from the last, `joint` between them: each a shade between `light` and
+    // `dark`, the joints `jointShade` -- times the colour -- and 1 in the
+    // joints (Fac).
+    auto rows = [&](ccl::ShaderOutput* uv, float width, float height, float joint, float light, float dark,
+                    float jointShade) {
+        auto* b = graph.create_node<ccl::BrickTextureNode>();
+        b->set_scale(1.0f);
+        b->set_brick_width(width);
+        b->set_row_height(height);
+        b->set_mortar_size(joint);
+        b->set_mortar_smooth(0.2f);
+        b->set_offset(0.5f);
+        b->set_offset_frequency(2);
+        b->set_squash(1.0f);
+        b->set_squash_frequency(2);
+        b->set_bias(0.0f);
+        b->set_color1(ccl::make_float3(light, light, light));
+        b->set_color2(ccl::make_float3(dark, dark, dark));
+        b->set_mortar(ccl::make_float3(jointShade, jointShade, jointShade));
+        graph.connect(uv, b->input("Vector"));
+        return b;
     };
     switch (m.preset) {
         case MaterialPreset::None:
@@ -833,6 +927,55 @@ Pattern patternOf(ccl::ShaderGraph& graph, const Material& m, ccl::ShaderOutput*
             c = varied(graph, c, crumbs, 0.12f * a);
             p.color = times(graph, c, ramp(graph, damp, 0.5f, 0.75f, 1.0f, 1.0f - 0.35f * a));
             p.normal = bumped(graph, scaled(graph, ramp(graph, clods.edge, 0.0f, 0.25f), 0.6f, 0.0f, crumbs), 0.6f * a, 0.004f);
+            break;
+        }
+        case MaterialPreset::Paving: {
+            // Setts of some 18 by 14 cm in rows, sand in the joints: each a
+            // shade of its own, blotched, worn smoother on top.
+            auto* setts = rows(flat(), 0.18f, 0.14f, 0.012f, 1.15f, 0.75f, 0.9f);
+            ccl::ShaderOutput* blotches = noise(graph, at, 12.0f, 4.0f, 0.6f);
+            ccl::ShaderOutput* c = tinted(graph, color, setts->output("Color"));
+            c = varied(graph, c, blotches, 0.12f * a);
+            p.color = varied(graph, c, noise(graph, at, 0.5f, 4.0f, 0.55f), 0.1f * a);
+            p.roughness = scaled(graph, setts->output("Fac"), 0.15f * a, m.roughness - 0.05f * a, nullptr, true);
+            ccl::ShaderOutput* top = scaled(graph, setts->output("Fac"), -1.0f, 1.0f);
+            p.normal = bumped(graph, scaled(graph, blotches, 0.15f, 0.0f, top), 0.8f * a, 0.008f);
+            break;
+        }
+        case MaterialPreset::RoofTiles: {
+            // Slates of some 22 by 15 cm in rows, each row over the top of
+            // the one below: each slate rising to its lower edge, a step
+            // down onto the next; dark in the gaps, a shade of its own.
+            ccl::ShaderOutput* uv = flat();
+            auto* slates = rows(uv, 0.22f, 0.15f, 0.006f, 1.1f, 0.8f, 0.3f);
+            auto* v = graph.create_node<ccl::SeparateXYZNode>();
+            graph.connect(uv, v->input("Vector"));
+            ccl::ShaderOutput* up = math(graph, ccl::NODE_MATH_FRACTION, scaled(graph, v->output("Y"), 1.0f / 0.15f, 0.0f), 0.0f);
+            ccl::ShaderOutput* c = tinted(graph, color, slates->output("Color"));
+            p.color = varied(graph, c, noise(graph, at, 6.0f, 4.0f, 0.6f), 0.1f * a);
+            ccl::ShaderOutput* height = scaled(graph, up, -1.0f, 1.0f, scaled(graph, slates->output("Fac"), -1.0f, 0.0f));
+            p.normal = bumped(graph, height, 0.8f * a, 0.012f);
+            break;
+        }
+        case MaterialPreset::Lawn: {
+            // Blades too fine to tell apart, drier in patches.
+            ccl::ShaderOutput* patch = noise(graph, at, 0.35f, 3.0f, 0.5f);
+            ccl::ShaderOutput* dry = times(graph, constant(graph, Vec3(1.45f, 1.2f, 0.55f)),
+                                           scaled(graph, lightness(graph, color), 0.85f, 0.0f));
+            ccl::ShaderOutput* c = mixed(graph, color, dry, ramp(graph, patch, 0.55f, 0.8f, 0.0f, 0.5f * a));
+            ccl::ShaderOutput* blades = noise(graph, at, 250.0f, 2.0f, 0.5f);
+            c = varied(graph, c, blades, 0.25f * a);
+            p.color = varied(graph, c, noise(graph, at, 4.0f, 3.0f, 0.5f), 0.12f * a);
+            p.normal = bumped(graph, blades, 0.7f * a, 0.004f);
+            break;
+        }
+        case MaterialPreset::Sand: {
+            // Grains, ripples the wind left, darker where it is damp.
+            ccl::ShaderOutput* grains = noise(graph, at, 400.0f, 2.0f, 0.5f);
+            ccl::ShaderOutput* ripples = noise(graph, stretched(graph, at, Vec3(10.0f, 1.0f, 1.5f)), 1.0f, 3.0f, 0.5f);
+            ccl::ShaderOutput* c = varied(graph, color, grains, 0.12f * a);
+            p.color = times(graph, c, ramp(graph, noise(graph, at, 0.6f, 3.0f, 0.5f), 0.55f, 0.75f, 1.0f, 1.0f - 0.25f * a));
+            p.normal = bumped(graph, scaled(graph, grains, 0.2f, 0.0f, ripples), 0.5f * a, 0.003f);
             break;
         }
     }
@@ -1042,7 +1185,8 @@ struct CyclesRender::Impl {
                     rest->set_attribute(ccl::ustring("pg_rest"));
                     auto* face = graph->create_node<ccl::AttributeNode>();
                     face->set_attribute(ccl::ustring("pg_rest_normal"));
-                    const Laid laid = laidOn(*graph, rest->output("Vector"), face->output("Vector"), 1.0f / texture.size);
+                    const Laid laid =
+                        laidOn(*graph, rest->output("Vector"), face->output("Vector"), 1.0f / texture.size, texture.alongFace);
                     ccl::ShaderOutput* picture = sampled(*graph, laid, texture.color, true);
                     if (texture.tint) {
                         const Vec3 mean = glm::max(texture.mean, Vec3(1e-4f));

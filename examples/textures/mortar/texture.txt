@@ -1,0 +1,8 @@
+# The texture mortar: the pictures of sand, 0.4 m across.
+pictures ../sand
+size 0.400
+depth 0.00067
+mean 0.52763 0.34834 0.15372
+tint 1
+source BabylonJS/Assets (https://github.com/BabylonJS/Assets), CC-BY 4.0
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

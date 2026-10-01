@@ -1,0 +1,7 @@
+# The texture sand: what src/pg/render/Textures.cpp reads.
+size 1.200
+depth 0.00200
+mean 0.52763 0.34834 0.15372
+tint 1
+source BabylonJS/Assets (https://github.com/BabylonJS/Assets), CC-BY 4.0
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
