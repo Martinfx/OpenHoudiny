@@ -459,6 +459,16 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     s.solids = in.solids;
     s.shapes.reserve(s.solids.size());
     for (const sim::Solid& solid : s.solids) s.shapes.push_back(solid.body.instance());
+    // The smoke and the fire: made once a frame, however often it is rendered.
+    s.gasLook = GasLook::of(in.look);
+    if (in.gas) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (gasFrame_.lock() != in.gas) {
+            gas_ = Gas::build(*in.gas);
+            gasFrame_ = in.gas;
+        }
+        s.gas = gas_;
+    }
 
     // The hierarchy over them all: ours; or Embree's over the placed meshes
     // and ours over the solids.
@@ -468,6 +478,7 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     });
     for (size_t i = 0; i < s.shapes.size(); ++i) s.shapes[i].bounds(boxes[s.placed.size() + i].lo, boxes[s.placed.size() + i].hi);
     for (const Box& b : boxes) s.bounds.grow(b);
+    if (s.gas) s.bounds.grow(s.gas->bounds());
     if (engine_ == RayEngine::Embree) {
         s.embree = EmbreeScene::build(s.meshes, s.placed);
         s.top = buildBvh(std::span<const Box>(boxes).subspan(s.placed.size()), 2);

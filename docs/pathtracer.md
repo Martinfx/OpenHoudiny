@@ -3,8 +3,8 @@
 Viewport kreslí scénu rychle přes OpenGL. Stín je tam jedna mapa, okolní
 světlo je odhad a tráva nepropouští světlo. **Path tracer** počítá světlo
 tak, jak se opravdu šíří. Z kamery sleduje paprsky, které se odrážejí od
-povrchů, lámou se ve skle a ve vodě, prochází stébly a listy a končí na
-slunci nebo na obloze. Počítá se na procesoru, takže nepotřebuje grafickou
+povrchů, lámou se ve skle a ve vodě, prochází stébly a listy, rozptylují
+se v kouři a prachu a končí na slunci, na obloze nebo v plameni. Počítá se na procesoru, takže nepotřebuje grafickou
 kartu. Stejný render dá **záložka Render** v editoru vedle Viewportu
 i příkazová řádka (`prototype sim … --renderer path`), třeba na farmě.
 
@@ -111,7 +111,48 @@ listy z uzlu Tree 0,4, kůra 0. Proti slunci proto tráva a listí svítí.
 `roughness` se nezapisuje. Po Merge s jinou geometrií by chybějící
 hodnota 0 udělala z terénu zrcadlo.
 
-## 5. Jak to funguje
+## 5. Kouř, oheň a prach
+
+![Táborák: vlevo viewport, vpravo path tracer, 128 vzorků na pixel. Kouř stíní podlahu i sám sebe, plamen svítí do kouře](img/pathtracer-campfire.jpg)
+
+Plyn ze simulace (Pyro Solver) vykreslí path tracer stejně jako povrchy,
+podle stejného **Volume Looku** jako viewport. Světlo ale počítá tak, jak
+se šíří:
+
+- Slunce svítí do kouře, kouř stíní sám sebe a vrhá stín na zem i na
+  stavby.
+- Světlo se v kouři rozptýlí i víckrát, takže hustý kouř prosvětlí sám
+  sebe. Obloha ho přisvětlí ze všech stran.
+- Plamen svítí do kouře kolem sebe a slabě i na okolí.
+
+Viewport tohle odhaduje (Fire Light, Occlusion). Path tracer to počítá,
+proto tyhle dva parametry nepoužívá.
+
+| parametr Volume Looku | v path traceru |
+|---|---|
+| Smoke Color | barva, kterou hustý kouř vypadá (viz níže) |
+| Smoke Density | kolik světla kouř zastaví na metr; v plameni méně, jako ve viewportu |
+| Flame Intensity, Start, Range | kolik světla plamen vydá a jakou barvou podle teploty: černé těleso od 1000 K do 3000 K, stejně jako viewport |
+| Fire Light, Occlusion | nepoužívá: světlo plamenů a stínění oblohy se počítá |
+
+**Barva kouře.** Smoke Color 0,75 neznamená, že kouř při každém rozptylu
+pohltí čtvrtinu světla. Po desítkách rozptylů v hustém kouři by ho
+zbyla jen malá část a kouř by vyšel tmavý. Path tracer bere Smoke Color
+jako barvu, kterou hustý kouř vypadá. Podíl, který si nechá každý
+rozptyl, z ní dopočítá: 0,75 dá 0,984, 0,2 dá 0,61. Je to převod Chianga,
+Kutze a Burleyho (2016), který Cycles používá pro kůži. Jas proto sedí
+s viewportem: obecný kouř (`smoke`) má v průměru sRGB 129 proti 130 ve
+viewportu, táborák je v obou světle šedý a výbuch v path traceru vyjde
+113 proti 95.
+
+![Prach odstřelu (snímek 120): vlevo viewport, vpravo path tracer, 64 vzorků na pixel. Prach je prosvětlený vícenásobným rozptylem a stíní ulici](img/pathtracer-dust.jpg)
+
+Každý rozptyl v kouři se počítá jako odraz (Bounces v uzlu Output).
+Plyn renderuje path tracer přes knihovnu **NanoVDB**. Bez ní
+(`-DPG_NANOVDB=OFF`) se plyn v path traceru nevykreslí a příkazová řádka
+to oznámí.
+
+## 6. Jak to funguje
 
 - **Scéna** (`src/pg/render/Scene.h`): trojúhelníky zobrazené geometrie
   mají stejné normály a barvy jako ve viewportu (`sim::shadedTriangles`).
@@ -137,6 +178,27 @@ hodnota 0 udělala z terénu zrcadlo.
   hledá paprsky vlastní hierarchie i v sítích. Výsledek je stejný až na
   zaokrouhlení: test `render_embree_meets_what_our_bvh_meets` porovná
   4 000 paprsků v obou (sítě, instance, sklo, objekty, podlaha, stíny).
+- **Plyn** (`src/pg/render/Gas.h`): kouř, teplota a plamen snímku jsou
+  v mřížce **NanoVDB** (součást OpenVDB, Apache 2.0). Dlaždice 8 × 8 × 8
+  buněk, ve kterých plyn je, jsou listy jejího stromu a hodnoty se mezi
+  středy buněk čtou trilineárně jako texturou ve viewportu. Ke každé
+  dlaždici patří nejvíc kouře, plamene a teploty, jaké bod v ní přečte,
+  tedy včetně vrstvy buněk kolem. Paprsek jde plynem metodou **delta
+  tracking**: dělá kroky tak dlouhé, jaké by dělal v nejhustším kouři
+  dlaždice, a v každém kroku kouř rozhodne, jestli se tam světlo
+  rozptýlí, s pravděpodobností úměrnou tomu, jak je tam hustý. Prázdné
+  dlaždice paprsek přeskočí. Plamenem jde krokem aspoň po buňce a každý
+  krok přičte světlo, které tam plamen vydá. Stínový paprsek ke slunci
+  dělá stejné kroky a násobí podílem světla, který každý propustí
+  (**ratio tracking**). Když zbude méně než desetina, rozhodne
+  ruská ruleta. Obojí je nestranné: s více vzorky ubývá šum, ne
+  přesnost (test porovná 20 000 paprsků s přesně spočtenou propustností).
+  Rozptyl se řídí stejnou Henyeyho–Greensteinovou funkcí jako ve
+  viewportu: hlavně dopředu, trochu zpátky. Odšumovač by se v kouři
+  neměl čeho chytit, protože každý vzorek se v kouři buď rozptýlí, nebo
+  jím projde. Proto se pro každý pixel jednou spočítá bez šumu, kolik
+  kouře pixel vidí a jak daleko. Albedo, normála a hloubka pak přejdou
+  z povrchu za kouřem do kouře plynule, podle toho, kolik ho kouř zakryje.
 - **Světlo** (`src/pg/render/PathTracer.h`): slunce je kotouč, přímo se
   vzorkuje v každém odrazu a váží se s odrazy (multiple importance
   sampling). Obloha je vzorec z Looku včetně Sky Behind. Povrch je
@@ -161,7 +223,7 @@ hodnota 0 udělala z terénu zrcadlo.
 - **Výstup**: expozice, tónová křivka ACES (Narkowicz) a gama 2,2, stejně
   jako viewport. EXR ukládá lineární světlo bez křivky.
 
-## 6. Výkon
+## 7. Výkon
 
 Čtyři jádra (Xeon 2,8 GHz s AVX-512), RelWithDebInfo, oba sloupce měřené
 po sobě na stejném stroji:
@@ -182,10 +244,16 @@ Louku víc nezrychlí ani Embree. Má 122 000 malých trsů trávy
 Paprsek u země jich projde průměrně 56, než trefí stéblo, a u každého se
 otáčí do prostoru trsu. Rychlejší by byly větší trsy s víc stébly.
 
-## 7. Co zatím chybí
+## 8. Co zatím chybí
 
-- Plyn (kouř, oheň, prach), déšť, drť jako body, plate a holdouty.
-  Tyhle prvky kreslí jen viewport.
+- Déšť, drť jako body, plate a holdouty. Tyhle prvky kreslí jen
+  viewport. Objemy zobrazené geometrie (třeba z Convert Volume) také,
+  path tracer kreslí plyn simulace.
+- Světlo plamenů dopadá na okolí jen odrazy, které plamen náhodou
+  trefí. Plameny se nevzorkují přímo jako slunce, takže země u ohně má
+  víc šumu.
+- Odšumění neuronovou sítí (Intel Open Image Denoise) místo à-trous
+  filtru.
 - Rozmazání pohybem (motion blur) a průchody pohybu a masek do EXR.
 - Textury a UV, normálové mapy, subsurface scattering.
 - Světla kromě slunce a oblohy (bodová, plošná), HDRI obloha.

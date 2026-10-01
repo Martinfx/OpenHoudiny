@@ -309,6 +309,7 @@ add_library(pgsim
   src/pg/sim/UsdExport.cpp
   src/pg/render/Bvh.cpp
   src/pg/render/Embree.cpp
+  src/pg/render/Gas.cpp
   src/pg/render/Scene.cpp
   src/pg/render/PathTracer.cpp
   src/pg/render/Save.cpp
@@ -413,6 +414,67 @@ endif()
 if(PG_EMBREE)
   target_link_libraries(pgsim PRIVATE embree)
   target_compile_definitions(pgsim PRIVATE PG_HAVE_EMBREE)
+endif()
+
+# The gas as the path tracer goes through it (src/pg/render/Gas.cpp): a
+# NanoVDB grid -- OpenVDB's sparse volume flattened into one block of memory
+# (Apache 2.0) -- headers alone, nothing to build. The system's when they
+# compile here as Gas.cpp takes them (OpenVDB 12 and later lay them out so);
+# else fetched with OpenVDB 13.0.0, none of whose CMake runs. Not 13.1: its
+# NanoVDB takes std::atomic_ref under C++20, which libc++ 18 -- FreeBSD 14's
+# -- does not have.
+option(PG_NANOVDB "Path tracer renders the gas through NanoVDB (headers only), the system's or fetched; OFF: without the gas" ON)
+if(PG_NANOVDB)
+  find_path(PG_NANOVDB_SYSTEM_DIR nanovdb/tools/CreateNanoGrid.h)
+  set(PG_NANOVDB_INCLUDE_DIR "")
+  if(PG_NANOVDB_SYSTEM_DIR)
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_INCLUDES "${PG_NANOVDB_SYSTEM_DIR}")
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_source_compiles([[
+      #include <nanovdb/NanoVDB.h>
+      #include <nanovdb/tools/CreateNanoGrid.h>
+      #include <nanovdb/tools/GridBuilder.h>
+      int main() {
+        nanovdb::tools::build::Grid<nanovdb::Vec3f> build(nanovdb::Vec3f(0.0f));
+        auto handle = nanovdb::tools::createNanoGrid<decltype(build), nanovdb::Vec3f>(
+            build, nanovdb::tools::StatsMode::BBox, nanovdb::CheckMode::Disable);
+        const nanovdb::Vec3fGrid* grid = handle.grid<nanovdb::Vec3f>();
+        nanovdb::Vec3fGrid::AccessorType acc = grid->getAccessor();
+        const auto* leaf = acc.probeLeaf(nanovdb::Coord(0, 0, 0));
+        return static_cast<int>(handle.bufferSize() == 0) + (leaf ? static_cast<int>(leaf->getValue(0u)[0]) : 0);
+      }]] PG_NANOVDB_SYSTEM_WORKS)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_QUIET)
+    if(PG_NANOVDB_SYSTEM_WORKS)
+      set(PG_NANOVDB_INCLUDE_DIR "${PG_NANOVDB_SYSTEM_DIR}")
+      message(STATUS "NanoVDB: the system's (${PG_NANOVDB_SYSTEM_DIR})")
+    else()
+      message(STATUS "NanoVDB: the system's (${PG_NANOVDB_SYSTEM_DIR}) does not compile here; fetching 13.0.0")
+    endif()
+  endif()
+  if(NOT PG_NANOVDB_INCLUDE_DIR)
+    include(FetchContent)
+    FetchContent_Declare(openvdb
+      GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/openvdb.git
+      GIT_TAG v13.0.0
+      GIT_SHALLOW TRUE
+      SOURCE_SUBDIR nanovdb/headers-only)  # no CMakeLists.txt there: its build is not ours
+    FetchContent_MakeAvailable(openvdb)
+    if(EXISTS "${openvdb_SOURCE_DIR}/nanovdb/nanovdb/tools/CreateNanoGrid.h")
+      set(PG_NANOVDB_INCLUDE_DIR "${openvdb_SOURCE_DIR}/nanovdb")
+      message(STATUS "NanoVDB: fetched with OpenVDB 13.0.0")
+    else()
+      message(WARNING "NanoVDB could not be had: the path tracer renders without the gas. Install OpenVDB 12 or "
+                      "newer with NanoVDB's headers, or point FETCHCONTENT_SOURCE_DIR_OPENVDB at a checkout of "
+                      "github.com/AcademySoftwareFoundation/openvdb 13.0.0.")
+      set(PG_NANOVDB OFF)
+    endif()
+  endif()
+endif()
+if(PG_NANOVDB)
+  target_include_directories(pgsim SYSTEM PRIVATE "${PG_NANOVDB_INCLUDE_DIR}")
+  target_compile_definitions(pgsim PRIVATE PG_HAVE_NANOVDB)
 endif()
 
 # The renderers: OpenGL through function pointers the caller loads, so they
@@ -635,6 +697,7 @@ add_executable(pgtests
   tests/test_trees.cpp
   tests/test_vegetation.cpp
   tests/test_render.cpp
+  tests/test_gas.cpp
   tests/test_usd.cpp
   tests/test_usd_read.cpp
   tests/test_exr.cpp

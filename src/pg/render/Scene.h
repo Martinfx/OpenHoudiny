@@ -15,6 +15,9 @@
 //            a hierarchy of our own.
 //   floor    the Output's floor at y 0, fading out far away as the
 //            viewport's does.
+//   gas      the smoke and the fire of the frame, as the Volume Look has
+//            them (Gas.h): rays go through it, scattered in the smoke, lit
+//            by the flames.
 //
 // What a surface is made of comes from attributes of its geometry -- of its
 // primitive, else its first point, else the detail -- as in Houdini:
@@ -32,6 +35,7 @@
 #include "pg/core/Geometry.h"
 #include "pg/render/Bvh.h"
 #include "pg/render/Embree.h"
+#include "pg/render/Gas.h"
 #include "pg/sim/Camera.h"
 #include "pg/sim/Look.h"
 #include "pg/sim/Scene.h"
@@ -114,6 +118,8 @@ struct Scene {
     /// rest solids. Embree's: the solids alone, item i shapes[i].
     Bvh top;
     std::shared_ptr<const EmbreeScene> embree;  ///< the placed meshes, with Embree's engine
+    std::shared_ptr<const Gas> gas;  ///< the smoke and the fire; null without them
+    GasLook gasLook;                 ///< ... as the look has them
     Box bounds;  ///< what there is, the floor aside
 
     // The world round it: the look's light, as the viewport lights it.
@@ -151,6 +157,7 @@ struct SceneInput {
     GeometryPtr geometry;  ///< the displayed node's
     GeometryPtr bodies;    ///< the solvers' pieces and cloth (sim::drawnBodies)
     GeometryPtr water;     ///< the water's surface (sim::waterMesh)
+    std::shared_ptr<const sim::Frame> gas;  ///< the frame whose smoke and fire are rendered
     std::vector<sim::Solid> solids;
     sim::Look look;
     sim::Camera camera;
@@ -176,6 +183,10 @@ private:
         std::shared_ptr<const Mesh> mesh;
     };
     std::map<const Geometry*, Kept> kept_;
+    /// The gas of the last frame: kept while the frame lives, so that a
+    /// render of it from elsewhere does not make it again.
+    std::weak_ptr<const sim::Frame> gasFrame_;
+    std::shared_ptr<const Gas> gas_;
     std::mutex mutex_;
 };
 

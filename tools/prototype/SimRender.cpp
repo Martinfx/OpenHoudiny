@@ -104,7 +104,9 @@ void SimWorkspace::renderTab(int width, int height) {
     }
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", progress);
-    ImGui::SetItemTooltip("Rays through %s", render::rayEngineName(render::defaultRayEngine()).c_str());
+    ImGui::SetItemTooltip("Rays through %s; the gas %s", render::rayEngineName(render::defaultRayEngine()).c_str(),
+                          render::gasAvailable() ? ("through " + render::gasLibrary()).c_str()
+                                                 : "not rendered: built without NanoVDB");
 
     // What it renders: the picture's size -- the camera's, or the pane's --
     // times the scale.

@@ -1,6 +1,7 @@
 #include "pg/render/PathTracer.h"
 
 #include "pg/core/Parallel.h"
+#include "pg/render/Random.h"
 
 #include <glm/common.hpp>
 #include <glm/geometric.hpp>
@@ -16,29 +17,6 @@ namespace {
 constexpr float kPi = 3.14159265358979f;
 constexpr float kInfinity = std::numeric_limits<float>::infinity();
 constexpr int kTile = 16;
-
-uint32_t hash32(uint32_t x) {
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-    return x;
-}
-
-/// The numbers of one sample of one pixel: the same whatever else runs.
-struct Rng {
-    uint32_t state;
-
-    Rng(uint32_t pixel, uint32_t sample, uint32_t seed)
-        : state(hash32(pixel * 0x9E3779B9u ^ hash32(sample * 0x85EBCA6Bu + seed * 0xC2B2AE35u + 0x27d4eb2fu))) {}
-    float next() {
-        state = state * 747796405u + 2891336453u;
-        uint32_t w = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-        w = (w >> 22u) ^ w;
-        return static_cast<float>(w >> 8) * (1.0f / 16777216.0f);
-    }
-};
 
 float luminance(const Vec3& c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; }
 float largest(const Vec3& c) { return std::max(c.x, std::max(c.y, c.z)); }
@@ -167,6 +145,26 @@ struct Surface {
     }
 };
 
+/// How likely the smoke scatters light going one way into a way at an angle
+/// to it of cosine `c`: Henyey and Greenstein's.
+float henyeyGreenstein(float c, float g) {
+    const float d = 1.0f + g * g - 2.0f * g * c;
+    return (1.0f - g * g) / (4.0f * kPi * d * std::sqrt(d));
+}
+
+/// ... as the viewport mixes it: mostly forwards, a little back.
+float phase(float c) { return 0.7f * henyeyGreenstein(c, 0.55f) + 0.3f * henyeyGreenstein(c, -0.25f); }
+
+/// A way for light going along `dir` to be scattered into, as likely as
+/// phase() has it.
+Vec3 samplePhase(const Vec3& dir, float u0, float u1, float u2) {
+    const float g = u0 < 0.7f ? 0.55f : -0.25f;
+    const float k = (1.0f - g * g) / (1.0f - g + 2.0f * g * u1);
+    const float c = std::clamp((1.0f + g * g - k * k) / (2.0f * g), -1.0f, 1.0f);
+    const float s = std::sqrt(std::max(0.0f, 1.0f - c * c)), phi = 2.0f * kPi * u2;
+    return Frame(dir).toWorld(Vec3(s * std::cos(phi), s * std::sin(phi), c));
+}
+
 struct Sample {
     Vec3 color, albedo{1.0f, 1.0f, 1.0f}, normal;
     float depth = kInfinity;
@@ -181,12 +179,22 @@ Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float
     const float pdfSun = 1.0f / (2.0f * kPi * std::max(1.0f - scene.sunCosine, 1e-9f));
     const float clarity = std::max(scene.look.waterClarity, 1e-3f);
     const Vec3 waterGlow = scene.look.waterColor * (scene.skyLight * 1.5f + scene.sunLight * (0.35f * std::max(scene.sunDirection.y, 0.0f)));
+    const Gas* gas = scene.gas.get();
+    const GasLook& gasLook = scene.gasLook;
+    const Vec3 gasAlbedo = clamp01(gasLook.albedo);
     bool specular = true, inWater = false;
     float lastPdf = 0.0f;
     int bounces = 0, turns = 0;
     for (;;) {
         Hit hit;
         const bool met = scene.intersect(origin, dir, kInfinity, rng.next(), hit);
+        if (turns == 0 && met) {
+            // What the camera ray meets, for the denoiser to go by -- the gas
+            // before it comes in as a whole pixel sees it (PathTracer::pass).
+            out.depth = hit.t;
+            out.normal = hit.normal;
+            out.albedo = hit.material->kind == Material::Kind::Surface ? clamp01(hit.color) : Vec3(1.0f, 1.0f, 1.0f);
+        }
         // Past the first bounce, no one path adds more than `clamp`: no fireflies.
         auto add = [&](const Vec3& c) {
             Vec3 v = c;
@@ -194,11 +202,55 @@ Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float
             if (bounces > 0 && most > s.clamp) v = v * (s.clamp / most);
             light = light + v;
         };
+        // The gas on the way to what the ray meets: the light the flames
+        // give off along it, and where the smoke scatters it, if it does.
+        float tGas = 0.0f;
+        bool scattered = false;
+        if (gas) {
+            Vec3 emitted;
+            scattered = gas->track(origin, dir, 0.0f, met ? hit.t : kInfinity, gasLook, rng, tGas, emitted);
+            if (largest(emitted) > 0.0f) add(beta * emitted);
+        }
         if (inWater) {
             // Through water: the more of it, the more of its colour.
-            const float through = std::exp(-(met ? hit.t : 1e3f) / clarity);
+            const float through = std::exp(-(scattered ? tGas : met ? hit.t : 1e3f) / clarity);
             add(beta * waterGlow * (1.0f - through));
             beta = beta * through;
+        }
+        if (scattered) {
+            // Scattered by the smoke: the sun, directly, if nothing hides it;
+            // then on, as the smoke scatters light.
+            const Vec3 at = origin + dir * tGas;
+            ++turns;
+            if (sunOn) {
+                const float u1 = rng.next();
+                const float u2 = rng.next();
+                const Vec3 wl = sampleCone(scene.sunDirection, scene.sunCosine, u1, u2);
+                const float p = phase(dot(wl, dir));
+                Vec3 through = scene.transmittance(at, wl, kInfinity);
+                if (largest(through) > 0.0f) through = through * gas->transmittance(at, wl, 0.0f, kInfinity, gasLook, rng);
+                if (largest(through) > 0.0f) {
+                    const float w = pdfSun * pdfSun / (pdfSun * pdfSun + p * p);
+                    add(beta * gasAlbedo * through * sun * (p * w / pdfSun));
+                }
+            }
+            if (bounces >= s.bounces) break;
+            const float u0 = rng.next();
+            const float u1 = rng.next();
+            const float u2 = rng.next();
+            const Vec3 wi = samplePhase(dir, u0, u1, u2);
+            lastPdf = phase(dot(wi, dir));
+            beta = beta * gasAlbedo;
+            origin = at;
+            dir = wi;
+            specular = false;
+            ++bounces;
+            if (bounces >= 3) {
+                const float keep = std::min(0.95f, largest(beta));
+                if (rng.next() >= keep) break;
+                beta = beta * (1.0f / keep);
+            }
+            continue;
         }
         if (!met) {
             if (turns == 0) {
@@ -214,11 +266,6 @@ Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float
             break;
         }
         const Material& m = *hit.material;
-        if (turns == 0) {
-            out.depth = hit.t;
-            out.normal = hit.normal;
-            out.albedo = m.kind == Material::Kind::Surface ? clamp01(hit.color) : Vec3(1.0f, 1.0f, 1.0f);
-        }
         ++turns;
         const float eps = 1e-4f * (1.0f + std::max(std::fabs(hit.position.x), std::max(std::fabs(hit.position.y), std::fabs(hit.position.z))));
 
@@ -269,7 +316,9 @@ Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float
             const Vec3 f = surface.eval(wl, pdf);
             const float side = dot(face, wl);
             if (largest(f) > 0.0f && side != 0.0f && (dot(n, wl) > 0.0f) == (side > 0.0f)) {
-                const Vec3 through = scene.transmittance(hit.position + face * (side > 0.0f ? eps : -eps), wl, kInfinity);
+                const Vec3 from = hit.position + face * (side > 0.0f ? eps : -eps);
+                Vec3 through = scene.transmittance(from, wl, kInfinity);
+                if (gas && largest(through) > 0.0f) through = through * gas->transmittance(from, wl, 0.0f, kInfinity, gasLook, rng);
                 if (largest(through) > 0.0f) {
                     const float w = pdfSun * pdfSun / (pdfSun * pdfSun + pdf * pdf);
                     add(beta * f * through * sun * (std::fabs(dot(n, wl)) * w / pdfSun));
@@ -336,6 +385,7 @@ void PathTracer::restart() {
     albedo_.assign(3 * n, 0.0f);
     normal_.assign(3 * n, 0.0f);
     depth_.assign(2 * n, 0.0f);
+    gasSeen_.clear();
     // How far the lens focuses: as asked, else what the middle of the picture sees.
     focus_ = settings_.focus > 0.0f ? settings_.focus : 10.0f;
     if (scene_ && settings_.focus <= 0.0f) {
@@ -387,6 +437,31 @@ bool PathTracer::pass(const std::atomic<bool>* stop) {
 
     const int tilesX = (w + kTile - 1) / kTile, tilesY = (h + kTile - 1) / kTile;
     std::atomic<bool> stopped{false};
+    // With the first pass, what each pixel sees of the gas -- through its
+    // middle, up to the surface there -- for the denoiser to go by: a
+    // sample either is scattered by the smoke or goes through, and what
+    // each finds first would be as noisy as the light.
+    std::vector<float> seen;
+    if (scene.gas && sample == 0) {
+        seen.assign(5 * n, 1.0f);
+        parallelFor(static_cast<size_t>(h), 4, [&](size_t y0, size_t y1) {
+            for (size_t y = y0; y < y1; ++y) {
+                for (size_t x = 0; x < static_cast<size_t>(w); ++x) {
+                    const size_t p = y * static_cast<size_t>(w) + x;
+                    const float px = (static_cast<float>(x) + 0.5f) / static_cast<float>(w) * 2.0f - 1.0f;
+                    const float py = 1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(h) * 2.0f;
+                    const Vec3 dir = normalize(forward + right * (px * tanX) + upAxis * (py * tanY));
+                    Hit hit;
+                    const float tMax = scene.intersect(eye, dir, kInfinity, 0.5f, hit) ? hit.t : kInfinity;
+                    scene.gas->seen(eye, dir, tMax, scene.gasLook, seen[5 * p], seen[5 * p + 1]);
+                    seen[5 * p + 2] = -dir.x;
+                    seen[5 * p + 3] = -dir.y;
+                    seen[5 * p + 4] = -dir.z;
+                }
+            }
+        });
+        if (stop && stop->load()) return false;
+    }
     parallelFor(static_cast<size_t>(tilesX) * static_cast<size_t>(tilesY), 1, [&](size_t begin, size_t end) {
         for (size_t tile = begin; tile < end; ++tile) {
             if (stop && stop->load(std::memory_order_relaxed)) {
@@ -432,6 +507,7 @@ bool PathTracer::pass(const std::atomic<bool>* stop) {
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (sum_.size() != 3 * n) return false;  // started again meanwhile, at another size
+    if (!seen.empty()) gasSeen_ = std::move(seen);
     parallelFor(n, 16384, [&](size_t begin, size_t end) {
         for (size_t p = begin; p < end; ++p) {
             for (size_t c = 0; c < 3; ++c) {
@@ -472,20 +548,39 @@ Image PathTracer::beauty() const {
 
 Image PathTracer::albedo() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return average(albedo_, 3);
+    Image out = average(albedo_, 3);
+    // The gas in front, as much as it hides: the colour it looks.
+    if (gasSeen_.size() == 5 * (out.pixels.size() / 3) && scene_) {
+        const Vec3 gas = clamp01(scene_->gasLook.color);
+        for (size_t p = 0; p < out.pixels.size() / 3; ++p) {
+            const float through = gasSeen_[5 * p];
+            for (int c = 0; c < 3; ++c) {
+                float& a = out.pixels[3 * p + static_cast<size_t>(c)];
+                a = a * through + gas[c] * (1.0f - through);
+            }
+        }
+    }
+    return out;
 }
 
 Image PathTracer::normal() const {
     std::lock_guard<std::mutex> lock(mutex_);
     Image out = average(normal_, 3);
+    const bool gas = gasSeen_.size() == 5 * (out.pixels.size() / 3);
     for (size_t p = 0; p + 2 < out.pixels.size(); p += 3) {
-        const Vec3 v(out.pixels[p], out.pixels[p + 1], out.pixels[p + 2]);
+        Vec3 v(out.pixels[p], out.pixels[p + 1], out.pixels[p + 2]);
         const float l = length(v);
-        if (l > 1e-6f) {
-            out.pixels[p] = v.x / l;
-            out.pixels[p + 1] = v.y / l;
-            out.pixels[p + 2] = v.z / l;
+        if (l > 1e-6f) v = v * (1.0f / l);
+        if (gas) {
+            // The gas in front, as much as it hides: turned to the eye.
+            const float* g = &gasSeen_[5 * (p / 3)];
+            v = v * g[0] + Vec3(g[2], g[3], g[4]) * (1.0f - g[0]);
+            const float k = length(v);
+            if (k > 1e-6f) v = v * (1.0f / k);
         }
+        out.pixels[p] = v.x;
+        out.pixels[p + 1] = v.y;
+        out.pixels[p + 2] = v.z;
     }
     return out;
 }
@@ -498,10 +593,21 @@ Image PathTracer::depth() const {
     out.channels = 1;
     const size_t n = depth_.size() / 2;
     out.pixels.resize(n);
-    // Seen by most of its samples, else the sky's.
+    const bool gas = gasSeen_.size() == 5 * n;
+    // Seen by most of its samples, else the sky's. The gas in front comes
+    // in as much as it hides what is behind it -- gradually, or the
+    // denoiser would stop at where it hid half; over the sky, all of it.
     for (size_t p = 0; p < n; ++p) {
         const float hits = depth_[2 * p + 1];
-        out.pixels[p] = hits > 0.5f * static_cast<float>(samples_) && hits > 0.0f ? depth_[2 * p] / hits : kInfinity;
+        float d = hits > 0.5f * static_cast<float>(samples_) && hits > 0.0f ? depth_[2 * p] / hits : kInfinity;
+        if (gas) {
+            const float through = gasSeen_[5 * p], z = gasSeen_[5 * p + 1];
+            if (std::isfinite(z)) {
+                if (std::isfinite(d)) d = d * through + z * (1.0f - through);
+                else if (through < 0.98f) d = z;
+            }
+        }
+        out.pixels[p] = d;
     }
     return out;
 }

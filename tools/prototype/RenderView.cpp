@@ -5,7 +5,9 @@
 
 namespace pg::editor {
 
-RenderView::RenderView() : thread_([this] { run(); }) {}
+// Started once everything it uses is made: the members after thread_ are
+// not yet while thread_ is.
+RenderView::RenderView() { thread_ = std::thread([this] { run(); }); }
 
 RenderView::~RenderView() {
     {
@@ -109,6 +111,7 @@ void RenderView::run() {
                 if (!request.frame->water.empty() && in.look.waterSurface) {
                     in.water = sim::waterMesh(request.frame->water, &request.frame->rain);
                 }
+                in.gas = request.frame;
             }
             std::shared_ptr<const render::Scene> scene = builder_.build(in);
             std::lock_guard<std::mutex> lock(mutex_);

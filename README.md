@@ -132,12 +132,21 @@ postaví jen s tím, co path tracer potřebuje (na čtyřech jádrech asi
 (`-DPG_EMBREE=OFF`) path tracer použije vlastní BVH: stejný obraz, ale
 pomaleji ([docs/pathtracer.md](docs/pathtracer.md)).
 
+Kouř, oheň a prach renderuje path tracer přes **NanoVDB** (součást
+OpenVDB, Apache 2.0, jen hlavičky, nic se nekompiluje). Použije se
+systémová, pokud ji jde tímto překladačem přeložit. Jinak ji CMake
+stáhne s OpenVDB 13.0 (35 MB za pár sekund). Ubuntu 24.04 má starou
+verzi 10.0.1 s jiným rozhraním, ta se přeskočí. Přeskočí se i NanoVDB
+z OpenVDB 13.1 s libc++ 18 (clang 18 na FreeBSD 14), protože potřebuje
+`std::atomic_ref`, které tahle libc++ nemá. Bez NanoVDB
+(`-DPG_NANOVDB=OFF`) path tracer plyn nevykreslí, viewport ano.
+
 Výchozí build obsahuje editor: při konfiguraci stáhne Dear ImGui a GLFW,
 pokud v systému není (`sudo apt install libglfw3-dev`). Když najde vývojové
 soubory Pythonu (`python3-dev`), stáhne pybind11 a postaví i modul `pg` do
 `build/python` ([docs/python.md](docs/python.md)); jiný Python vybere
 `-DPython3_EXECUTABLE=…`. Bez editoru a bez Pythonu nemá build žádné
-externí závislosti kromě Jolt, GLM a Embree, stačí C++20 a standardní
+externí závislosti kromě Jolt, GLM, Embree a NanoVDB, stačí C++20 a standardní
 knihovna:
 
 ```bash

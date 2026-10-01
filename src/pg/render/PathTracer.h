@@ -14,6 +14,9 @@
 //     let some of it through (translucency);
 //   - glass and water that reflect and bend light (Fresnel, Snell), water
 //     taking on its colour with depth;
+//   - smoke that scatters light, again and again where it is thick, and
+//     shades itself and what is under it; flames that give light off, to
+//     the smoke round them and further (Gas.h);
 //   - a lens that blurs what is out of focus (an f-number), and each pixel
 //     sampled all over, so edges come out smooth.
 //
@@ -99,6 +102,10 @@ private:
     std::vector<float> sum_, square_, albedo_, normal_, depth_;
     // One pass's samples, before they are added.
     std::vector<float> passColor_, passAlbedo_, passNormal_, passDepth_;
+    /// What each pixel sees of the gas, without noise -- the share of what
+    /// is behind that shows, how far the gas is, the way the eye looks --
+    /// made with the first pass; empty without gas.
+    std::vector<float> gasSeen_;
     double seconds_ = 0.0;
     uint64_t paths_ = 0;
 };

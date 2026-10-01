@@ -1135,6 +1135,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             if (!geometryOnly) {
                 in.bodies = sim::drawnBodies(*current, in.look);
                 if (!current->water.empty() && in.look.waterSurface) in.water = sim::waterMesh(current->water, &current->rain);
+                in.gas = current;
             }
             in.solids = c.solidsAt(f);
             in.camera = throughCamera ? c.cameraAt(f)
@@ -1282,9 +1283,15 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
     std::string through;
     if (images > 0 && pathTrace) {
-        char text[160];
-        std::snprintf(text, sizeof text, " through the path tracer (%s), %d samples a pixel%s",
-                      pg::render::rayEngineName(builder.engine()).c_str(), settings.samples,
+        // The gas, through NanoVDB -- or not at all in a build without it.
+        std::string gas;
+        if (world.hasGas && !geometryOnly) {
+            gas = pg::render::gasAvailable() ? "; the gas through " + pg::render::gasLibrary()
+                                             : "; no gas: built without NanoVDB";
+        }
+        char text[200];
+        std::snprintf(text, sizeof text, " through the path tracer (%s%s), %d samples a pixel%s",
+                      pg::render::rayEngineName(builder.engine()).c_str(), gas.c_str(), settings.samples,
                       settings.denoise ? ", denoised" : "");
         through = text;
     }
