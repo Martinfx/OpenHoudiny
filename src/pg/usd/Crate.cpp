@@ -533,7 +533,9 @@ private:
         const bool quat = t.name[0] == 'q';
         if (!(rep & kArray)) {
             if (rep & kInlined) {
-                uint8_t bytes[4];
+                // The four bytes the value is inlined in, kept in eight: no
+                // type scalarAt() could be asked for reads past them.
+                uint8_t bytes[8] = {};
                 const uint32_t bits = static_cast<uint32_t>(payload);
                 std::memcpy(bytes, &bits, 4);
                 if (t.width > 1 && !quat) {
