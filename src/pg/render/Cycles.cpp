@@ -38,6 +38,14 @@
 #include "util/version.h"
 #endif
 
+#ifdef PG_HAVE_CYCLES
+// Cycles' sky model (its third_party/sky), linked with it: the light of
+// Nishita's sun at the bottom and the top of its disc, CIE XYZ.
+extern "C" void SKY_nishita_skymodel_precompute_sun(float sun_elevation, float angular_diameter, float altitude,
+                                                    float air_density, float dust_density, float* r_pixel_bottom,
+                                                    float* r_pixel_top);
+#endif
+
 namespace pg::render {
 
 #ifdef PG_HAVE_CYCLES
@@ -311,6 +319,96 @@ ccl::ShaderOutput* throughForShadows(ccl::ShaderGraph& graph, ccl::ShaderOutput*
     return mix->output("Closure");
 }
 
+/// Perlin's noise (fBM) at `at`, `scale` times a unit across, of `detail`
+/// octaves: 0 to 1, a half on the whole.
+ccl::ShaderOutput* noise(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, float scale, float detail, float roughness) {
+    auto* n = graph.create_node<ccl::NoiseTextureNode>();
+    n->set_scale(scale);
+    n->set_detail(detail);
+    n->set_roughness(roughness);
+    if (at) graph.connect(at, n->input("Vector"));
+    return n->output("Fac");
+}
+
+/// `x` times `k`, plus `add` -- or plus what `plus` gives; clamped to 0..1
+/// with `clamp`.
+ccl::ShaderOutput* scaled(ccl::ShaderGraph& graph, ccl::ShaderOutput* x, float k, float add,
+                          ccl::ShaderOutput* plus = nullptr, bool clamp = false) {
+    auto* m = graph.create_node<ccl::MathNode>();
+    m->set_math_type(ccl::NODE_MATH_MULTIPLY_ADD);
+    graph.connect(x, m->input("Value1"));
+    m->set_value2(k);
+    m->set_value3(add);
+    m->set_use_clamp(clamp && !plus);
+    if (!plus) return m->output("Value");
+    // The third input linked would be `plus` instead of `add`: added after.
+    auto* sum = graph.create_node<ccl::MathNode>();
+    sum->set_math_type(ccl::NODE_MATH_ADD);
+    graph.connect(m->output("Value"), sum->input("Value1"));
+    graph.connect(plus, sum->input("Value2"));
+    sum->set_use_clamp(clamp);
+    return sum->output("Value");
+}
+
+/// A colour times a number.
+ccl::ShaderOutput* times(ccl::ShaderGraph& graph, ccl::ShaderOutput* color, ccl::ShaderOutput* k) {
+    auto* m = graph.create_node<ccl::VectorMathNode>();
+    m->set_math_type(ccl::NODE_VECTOR_MATH_SCALE);
+    graph.connect(color, m->input("Vector1"));
+    graph.connect(k, m->input("Scale"));
+    return m->output("Vector");
+}
+
+/// A surface the scene has flat, as it is up close: its colour lighter and
+/// darker in blotches a metre or two across and in stains a hand wide, its
+/// roughness with the stains, bumps `grain` to a unit (40: some 2 cm) -- all
+/// as much as `amount` (Settings::detail). `at`: where on it, in its own space.
+struct Detail {
+    ccl::ShaderOutput* color = nullptr;
+    ccl::ShaderOutput* roughness = nullptr;
+    ccl::ShaderOutput* normal = nullptr;
+};
+Detail detailOf(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutput* color, float roughness, float amount,
+                float grain, float bump) {
+    Detail d;
+    ccl::ShaderOutput* blotches = noise(graph, at, 0.6f, 4.0f, 0.55f);
+    ccl::ShaderOutput* stains = noise(graph, at, 6.0f, 5.0f, 0.6f);
+    // 1, give or take a fifth.
+    ccl::ShaderOutput* lighter = scaled(graph, blotches, 0.45f * amount, 1.0f - 0.225f * amount);
+    lighter = scaled(graph, stains, 0.3f * amount, -0.15f * amount, lighter);
+    d.color = times(graph, color, lighter);
+    d.roughness = scaled(graph, stains, 0.3f * amount, roughness - 0.15f * amount, nullptr, true);
+    auto* bumps = graph.create_node<ccl::BumpNode>();
+    graph.connect(noise(graph, at, grain, 6.0f, 0.65f), bumps->input("Height"));
+    bumps->set_strength(bump * amount);
+    bumps->set_distance(0.02f);
+    d.normal = bumps->output("Normal");
+    return d;
+}
+
+/// How bright Nishita's sun is at `elevation` radians, `size` radians across:
+/// its radiance times the square of its width (Cycles' own estimate), a
+/// quarter of pi of which is the light it sheds.
+float nishitaSun(float elevation, float size) {
+    ccl::SkyTextureNode probe;
+    probe.set_sky_type(ccl::NODE_SKY_NISHITA);
+    probe.set_sun_elevation(elevation);
+    probe.set_sun_size(size);
+    return probe.get_sun_average_radiance();
+}
+
+/// The colour of Nishita's sun `elevation` radians up: linear Rec. 709 --
+/// Cycles' -- of luminance 1.
+Vec3 nishitaSunColour(float elevation, float size) {
+    float bottom[3], top[3];
+    SKY_nishita_skymodel_precompute_sun(elevation, size, 1.0f, 1.0f, 1.0f, bottom, top);
+    const float x = bottom[0] + top[0], y = bottom[1] + top[1], z = bottom[2] + top[2];
+    const Vec3 c(3.2406f * x - 1.5372f * y - 0.4986f * z, -0.9689f * x + 1.8758f * y + 0.0415f * z,
+                 0.0557f * x - 0.2040f * y + 1.0570f * z);
+    const float luminance = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+    return luminance > 0.0f ? c / luminance : Vec3(1.0f, 1.0f, 1.0f);
+}
+
 /// A sphere, box, cylinder, cone or torus in triangles fine enough not to
 /// show them, its normals the shape's own; a mesh object, its mesh.
 void tessellate(const sim::ShapeInstance& s, std::vector<Vec3>& points, std::vector<Vec3>& normals) {
@@ -449,10 +547,12 @@ struct CyclesRender::Impl {
 
     /// The shader of a material: a Principled BSDF of the colour of the
     /// surface -- its attribute "Col" times its object's colour (an
-    /// instance's tint) -- a translucent one mixed in by the translucency;
-    /// glass; water, bending light and taking on the Water Look's colour.
+    /// instance's tint) -- a translucent one mixed in by the translucency,
+    /// with the detail of a real surface (Settings::detail); glass; water,
+    /// bending light and taking on the Water Look's colour.
     ccl::Shader* shaderOf(ccl::Scene* scene, const Material& m, const sim::Look& look) {
-        std::vector<float> key = {m.roughness, m.metallic, m.translucency, m.ior};
+        const float detail = m.kind == Material::Kind::Surface ? std::clamp(settings.detail, 0.0f, 1.0f) : 0.0f;
+        std::vector<float> key = {m.roughness, m.metallic, m.translucency, m.ior, detail};
         if (m.kind == Material::Kind::Water) {
             key.insert(key.end(), {waterGlow.x, waterGlow.y, waterGlow.z, look.waterClarity});
         }
@@ -474,6 +574,15 @@ struct CyclesRender::Impl {
                 auto* bsdf = principled(*graph);
                 bsdf->set_roughness(m.roughness);
                 bsdf->set_metallic(m.metallic);
+                if (detail > 0.0f) {
+                    // Leaves and blades are thin: their bumps small.
+                    auto* where = graph->create_node<ccl::TextureCoordinateNode>();
+                    const Detail d = detailOf(*graph, where->output("Object"), color, m.roughness, detail, 40.0f,
+                                              m.translucency > 0.0f ? 0.1f : 0.35f);
+                    color = d.color;
+                    graph->connect(d.roughness, bsdf->input("Roughness"));
+                    graph->connect(d.normal, bsdf->input("Normal"));
+                }
                 graph->connect(color, bsdf->input("Base Color"));
                 surface = bsdf->output("BSDF");
                 if (m.translucency > 0.0f) {
@@ -618,6 +727,53 @@ struct CyclesRender::Impl {
         return mesh;
     }
 
+    /// The sun's elevation, radians -- for the sky's brightness and colour no
+    /// lower than 3 degrees -- and its width.
+    float sunElevation(const Scene& s) const {
+        return std::asin(std::clamp(ccl::normalize(toCycles(s.sunDirection)).z, -1.0f, 1.0f));
+    }
+    float sunSize() const { return std::clamp(settings.sunAngle, 0.01f, 30.0f) * kPi / 180.0f; }
+
+    /// Nishita's sky in `graph`, as Blender's Sky Texture -- its sun where
+    /// the look's is, as wide as Sun Size -- its colours made such that its
+    /// sun is the look's (Light Color): the sky as blue as it is beside
+    /// that sun. `disc`: with the sun's disc. `at`: the way it is looked at,
+    /// else the ray's.
+    ccl::ShaderOutput* daySky(ccl::ShaderGraph& graph, const Scene& s, bool disc = true,
+                              ccl::ShaderOutput* at = nullptr) const {
+        auto* day = graph.create_node<ccl::SkyTextureNode>();
+        day->set_sky_type(ccl::NODE_SKY_NISHITA);
+        const ccl::float3 d = ccl::normalize(toCycles(s.sunDirection));
+        day->set_sun_elevation(sunElevation(s));
+        day->set_sun_rotation(std::atan2(d.x, d.y));
+        day->set_sun_size(sunSize());
+        day->set_sun_disc(disc);
+        if (at) graph.connect(at, day->input("Vector"));
+        const Vec3 model = nishitaSunColour(std::max(sunElevation(s), 3.0f * kPi / 180.0f), sunSize());
+        const float lum = 0.2126f * s.sunLight.x + 0.7152f * s.sunLight.y + 0.0722f * s.sunLight.z;
+        const Vec3 wanted = lum > 0.0f ? s.sunLight / lum : Vec3(1.0f, 1.0f, 1.0f);
+        auto* tinted = graph.create_node<ccl::VectorMathNode>();
+        tinted->set_math_type(ccl::NODE_VECTOR_MATH_MULTIPLY);
+        graph.connect(day->output("Color"), tinted->input("Vector1"));
+        tinted->set_vector2(ccl::make_float3(wanted.x / model.x, wanted.y / model.y, wanted.z / model.z));
+        return tinted->output("Vector");
+    }
+    /// How strong it is: its sun as bright as the look's. Cycles' estimate
+    /// of the sun's light (Nishita's sun) misses some -- its limb is darker,
+    /// its light measured as X, Y and Z on the whole: 1.15 times it is what
+    /// it sheds (render_cycles_lights_a_day_under_a_physical_sky).
+    float dayStrength(const Scene& s) const {
+        const float sun = 0.2126f * s.sunLight.x + 0.7152f * s.sunLight.y + 0.0722f * s.sunLight.z;
+        return 1.15f * 4.0f * sun /
+               std::max(nishitaSun(std::max(sunElevation(s), 3.0f * kPi / 180.0f), sunSize()), 1e-6f);
+    }
+
+    /// Whether Nishita's sky lights the scene: asked for, and a sun to make
+    /// it as bright as.
+    bool physicalSky(const Scene& s) const {
+        return settings.sky == Settings::Sky::Physical && 0.2126f * s.sunLight.x + 0.7152f * s.sunLight.y + 0.0722f * s.sunLight.z > 0.0f;
+    }
+
     ccl::Object* place(ccl::Scene* scene, ccl::Geometry* geometry, const ccl::Transform& tfm, const Vec3& tint) {
         auto* object = scene->create_node<ccl::Object>();
         object->set_geometry(geometry);
@@ -628,8 +784,10 @@ struct CyclesRender::Impl {
     }
 
     /// The floor: the look's ground, matt, fading out from 35 % of the way
-    /// to where it ends -- as the viewport's; seen from above alone.
-    ccl::Shader* floorShader(ccl::Scene* scene, const Scene& s) {
+    /// to where it ends -- as the viewport's; seen from above alone. Under a
+    /// physical sky, the ground out to the horizon, as uneven as real ground
+    /// is (Settings::detail).
+    ccl::Shader* floorShader(ccl::Scene* scene, const Scene& s, bool horizon) {
         auto graph = std::make_unique<ccl::ShaderGraph>();
         auto* bsdf = principled(*graph);
         bsdf->set_base_color(rgb(s.look.groundColor));
@@ -637,6 +795,53 @@ struct CyclesRender::Impl {
         auto* clear = graph->create_node<ccl::TransparentBsdfNode>();
         clear->set_color(ccl::one_float3());
         auto* geometry = graph->create_node<ccl::GeometryNode>();
+        if (settings.detail > 0.0f) {
+            // Patches of a few metres too, and bumps of a few centimetres.
+            auto* base = graph->create_node<ccl::ColorNode>();
+            base->set_value(rgb(s.look.groundColor));
+            const float amount = std::clamp(settings.detail, 0.0f, 1.0f);
+            ccl::ShaderOutput* patches = noise(*graph, geometry->output("Position"), 0.12f, 3.0f, 0.5f);
+            ccl::ShaderOutput* lighter = scaled(*graph, patches, 0.5f * amount, 1.0f - 0.25f * amount);
+            const Detail d = detailOf(*graph, geometry->output("Position"), times(*graph, base->output("Color"), lighter),
+                                      s.floorMaterial.roughness, amount, 25.0f, 0.3f);
+            graph->connect(d.color, bsdf->input("Base Color"));
+            graph->connect(d.roughness, bsdf->input("Roughness"));
+            graph->connect(d.normal, bsdf->input("Normal"));
+        }
+        if (horizon) {
+            // To the horizon, hazy far off as the air between scatters the
+            // sky's light: the sky just above the horizon the way the eye
+            // looks, as much of it as 1 - e^(-distance / 3 km).
+            auto* eye = graph->create_node<ccl::CameraNode>();
+            auto* far = scaled(*graph, eye->output("View Distance"), -1.0f / 3000.0f, 0.0f);
+            auto* fade = graph->create_node<ccl::MathNode>();
+            fade->set_math_type(ccl::NODE_MATH_EXPONENT);
+            graph->connect(far, fade->input("Value1"));
+            ccl::ShaderOutput* haze = scaled(*graph, fade->output("Value"), -1.0f, 1.0f);
+            auto* split = graph->create_node<ccl::SeparateXYZNode>();
+            graph->connect(geometry->output("Incoming"), split->input("Vector"));
+            auto* along = graph->create_node<ccl::CombineXYZNode>();
+            graph->connect(scaled(*graph, split->output("X"), -1.0f, 0.0f), along->input("X"));
+            graph->connect(scaled(*graph, split->output("Y"), -1.0f, 0.0f), along->input("Y"));
+            along->set_z(0.03f);
+            auto* glow = graph->create_node<ccl::EmissionNode>();
+            glow->set_strength(dayStrength(s));
+            graph->connect(daySky(*graph, s, false, along->output("Vector")), glow->input("Color"));
+            auto* hazy = graph->create_node<ccl::MixClosureNode>();
+            graph->connect(haze, hazy->input("Fac"));
+            graph->connect(bsdf->output("BSDF"), hazy->input("Closure1"));
+            graph->connect(glow->output("Emission"), hazy->input("Closure2"));
+            // Seen from below alone, it is not there.
+            auto* mix = graph->create_node<ccl::MixClosureNode>();
+            graph->connect(geometry->output("Backfacing"), mix->input("Fac"));
+            graph->connect(hazy->output("Closure"), mix->input("Closure1"));
+            graph->connect(clear->output("BSDF"), mix->input("Closure2"));
+            graph->connect(mix->output("Closure"), graph->output()->input("Surface"));
+            auto* shader = scene->create_node<ccl::Shader>();
+            shader->set_graph(std::move(graph));
+            shader->tag_update(scene);
+            return shader;
+        }
         auto* split = graph->create_node<ccl::SeparateXYZNode>();
         graph->connect(geometry->output("Position"), split->input("Vector"));
         // How far out: sqrt(x^2 + y^2) of Cycles' world, our x and z.
@@ -686,7 +891,34 @@ struct CyclesRender::Impl {
         auto graph = std::make_unique<ccl::ShaderGraph>();
         auto* sky = graph->create_node<ccl::BackgroundNode>();
         sky->set_strength(1.0f);
-        if (s.look.skyBehind) {
+        // Without Sky Behind the camera sees a studio's backdrop: from the
+        // bottom to the top of the picture, Scene::background's grey.
+        auto backdropBehind = [&]() {
+            const float e = 1.0f / std::max(s.look.exposure, 1e-6f);
+            auto* coordinates = graph->create_node<ccl::TextureCoordinateNode>();
+            auto* split = graph->create_node<ccl::SeparateXYZNode>();
+            graph->connect(coordinates->output("Window"), split->input("Vector"));
+            auto* gradient = graph->create_node<ccl::MixColorNode>();
+            gradient->set_a(ccl::make_float3(0.022f * e, 0.023f * e, 0.027f * e));
+            gradient->set_b(ccl::make_float3(0.075f * e, 0.082f * e, 0.095f * e));
+            graph->connect(split->output("Y"), gradient->input("Factor"));
+            auto* backdrop = graph->create_node<ccl::BackgroundNode>();
+            backdrop->set_strength(1.0f);
+            graph->connect(gradient->output("Result"), backdrop->input("Color"));
+            auto* path = graph->create_node<ccl::LightPathNode>();
+            auto* mix = graph->create_node<ccl::MixClosureNode>();
+            graph->connect(path->output("Is Camera Ray"), mix->input("Fac"));
+            graph->connect(sky->output("Background"), mix->input("Closure1"));
+            graph->connect(backdrop->output("Background"), mix->input("Closure2"));
+            graph->connect(mix->output("Closure"), graph->output()->input("Surface"));
+        };
+        if (physicalSky(s)) {
+            // A real day's: Nishita's sky, as Blender's Sky Texture.
+            graph->connect(daySky(*graph, s), sky->input("Color"));
+            sky->set_strength(dayStrength(s));
+            if (s.look.skyBehind) graph->connect(sky->output("Background"), graph->output()->input("Surface"));
+            else backdropBehind();
+        } else if (s.look.skyBehind) {
             constexpr int kW = 1024, kH = 512;
             std::vector<float> rgba(static_cast<size_t>(kW) * kH * 4, 1.0f);
             for (int j = 0; j < kH; ++j) {
@@ -711,31 +943,23 @@ struct CyclesRender::Impl {
             graph->connect(sky->output("Background"), graph->output()->input("Surface"));
         } else {
             sky->set_color(rgb(s.skyLight));
-            // The camera sees the backdrop: from bottom to top of the
-            // picture, Scene::background's grey.
-            const float e = 1.0f / std::max(s.look.exposure, 1e-6f);
-            auto* coordinates = graph->create_node<ccl::TextureCoordinateNode>();
-            auto* split = graph->create_node<ccl::SeparateXYZNode>();
-            graph->connect(coordinates->output("Window"), split->input("Vector"));
-            auto* gradient = graph->create_node<ccl::MixColorNode>();
-            gradient->set_a(ccl::make_float3(0.022f * e, 0.023f * e, 0.027f * e));
-            gradient->set_b(ccl::make_float3(0.075f * e, 0.082f * e, 0.095f * e));
-            graph->connect(split->output("Y"), gradient->input("Factor"));
-            auto* backdrop = graph->create_node<ccl::BackgroundNode>();
-            backdrop->set_strength(1.0f);
-            graph->connect(gradient->output("Result"), backdrop->input("Color"));
-            auto* path = graph->create_node<ccl::LightPathNode>();
-            auto* mix = graph->create_node<ccl::MixClosureNode>();
-            graph->connect(path->output("Is Camera Ray"), mix->input("Fac"));
-            graph->connect(sky->output("Background"), mix->input("Closure1"));
-            graph->connect(backdrop->output("Background"), mix->input("Closure2"));
-            graph->connect(mix->output("Closure"), graph->output()->input("Surface"));
+            backdropBehind();
         }
         ccl::Shader* shader = scene->default_background;
         shader->set_graph(std::move(graph));
         shader->tag_update(scene);
         scene->background->set_shader(shader);
         scene->background->set_use_shader(true);
+        // Sampled as a light, as Blender has it: rays sent towards where
+        // the sky is bright -- the sun in a physical sky found.
+        auto* dome = scene->create_node<ccl::Light>();
+        dome->set_light_type(ccl::LIGHT_BACKGROUND);
+        dome->set_use_mis(true);
+        ccl::array<ccl::Node*> used;
+        used.push_back_slow(shader);
+        dome->set_used_shaders(used);
+        owned.push_back(dome);
+        place(scene, dome, ccl::transform_identity(), Vec3(1.0f, 1.0f, 1.0f));
     }
 
     /// The look's sun: a distant light as wide as Sun Angle, lighting a
@@ -743,6 +967,7 @@ struct CyclesRender::Impl {
     /// times the sun's light.
     void sun(ccl::Scene* scene, const Scene& s, const Settings& settings) {
         if (!(std::max({s.sunLight.x, s.sunLight.y, s.sunLight.z}) > 0.0f)) return;
+        if (physicalSky(s)) return;  // the sky's own sun lights it
         auto* light = scene->create_node<ccl::Light>();
         light->set_light_type(ccl::LIGHT_DISTANT);
         light->set_strength(rgb(s.sunLight * kPi));
@@ -939,9 +1164,11 @@ struct CyclesRender::Impl {
         }
         // The floor: as far as it goes, a square round it, faded to a disc.
         if (s.look.floor) {
-            const float r = std::min(s.floorRadius, 1e5f);
+            const bool horizon = physicalSky(s) && s.look.skyBehind;
+            const float r = horizon ? 5000.0f : std::min(s.floorRadius, 1e5f);
             const Vec3 a(-r, 0.0f, -r), b(r, 0.0f, -r), c(r, 0.0f, r), d(-r, 0.0f, r), n(0.0f, 1.0f, 0.0f);
-            ccl::Mesh* mesh = ownMesh(scene, {a, d, c, a, c, b}, {n, n, n, n, n, n}, s.look.groundColor, floorShader(scene, s));
+            ccl::Mesh* mesh = ownMesh(scene, {a, d, c, a, c, b}, {n, n, n, n, n, n}, s.look.groundColor,
+                                      floorShader(scene, s, horizon));
             place(scene, mesh, turned, Vec3(1.0f, 1.0f, 1.0f));
         }
         gas(scene, s);

@@ -7,7 +7,12 @@ spočítá na všech jádrech procesoru. Šum vezme Intel Open Image Denoise jak
 v Blenderu. Vlastní path tracer ([pathtracer.md](pathtracer.md)) zůstává
 jako druhá volba a jako záloha v buildu bez Cycles.
 
-![Ulice: vlevo náš path tracer, vpravo Cycles, 128 vzorků na pixel](img/cycles-street.jpg)
+Cycles navíc svítí fyzikální oblohou jako v Blenderu, převádí světlo na
+obraz přes AgX a hladkým povrchům přidává detail ([§3](#3-obloha-barvy-a-povrchy)):
+
+![Demolice: vlevo dosud, vpravo fyzikální obloha, AgX Punchy a detail povrchů](img/cycles-look.jpg)
+
+![Ulice se stejným nastavením jako path tracer: vlevo náš path tracer, vpravo Cycles, 128 vzorků na pixel](img/cycles-street.jpg)
 
 ![Louka zblízka přes Cycles, 1280 × 720, 128 vzorků na pixel](img/cycles-meadow.jpg)
 
@@ -23,8 +28,8 @@ V editoru:
    stihnou spočítat. Nově otevřená scéna se nejdřív ukáže, teprve potom
    se začne další snímek.
 4. Nastavení (vzorky, odrazy, odšumění, clona, ostrost, clamp, velikost
-   slunce) je v uzlu **Output** v sekci **Render**, stejné pro oba
-   renderery.
+   slunce, obloha, převod barev, detail povrchů) je v uzlu **Output**
+   v sekci **Render**, stejné pro oba renderery.
 
 ![Záložka Render: louka přes Cycles, 54 ze 128 vzorků na pixel](img/cycles-tab.jpg)
 
@@ -58,21 +63,45 @@ through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 | sklo (`glass` 1) | Glass BSDF s indexem 1,5 a nádechem barvy |
 | povrch vody | Glass BSDF s indexem 1,33, uvnitř pohlcuje světlo podle Clarity a nabírá barvu Water Looku |
 | kouř, oheň, prach | objem: mřížky útlumu a záře v kvádru kolem plynu, Principled Volume |
-| podlaha | čtverec s barvou podlahy, ke kraji mizí jako ve viewportu |
-| slunce | vzdálené světlo (Sun) s úhlem Sun Size a stejnou silou jako náš |
-| obloha | s **Sky Behind** obloha jako obrázek všude kolem; bez ní pozadí studia pro kameru a stejnoměrná obloha pro světlo |
+| podlaha | čtverec s barvou podlahy, ke kraji mizí jako ve viewportu; pod fyzikální oblohou se Sky Behind zem až k obzoru ([§3](#3-obloha-barvy-a-povrchy)) |
+| slunce | Sky `look`: vzdálené světlo (Sun) s úhlem Sun Size a stejnou silou jako náš; Sky `physical`: slunce oblohy Nishita |
+| obloha | Sky `physical`: obloha Nishita; Sky `look`: s **Sky Behind** obloha Looku jako obrázek všude kolem; bez Sky Behind vždy pozadí studia pro kameru |
 | kamera | záběr z kamery nebo pohled viewportu, objektiv, clona a ostrost z Output |
 
 Scéna je v Cycles otočená, protože Cycles má osu Z nahoru a my Y.
-Barvy, světlo a expozice zůstávají stejné jako v path traceru i ve
-viewportu. Obraz projde stejnou tónovou křivkou.
+Expozice zůstává stejná jako v path traceru i ve viewportu.
 
 **Sklo a voda propouštějí slunce do stínů.** Cycles by světlo za sklem
 a pod vodou našel jen po lomených cestách (kaustikách), a místnost za oknem
 nebo dno bazénu by zůstaly tmavé. Stínové paprsky proto sklem a vodou
 projdou, jen trochu ztlumené, stejně jako v našem path traceru.
 
-## 3. Kouř, oheň a prach
+## 3. Obloha, barvy a povrchy
+
+Tři volby v sekci **Render** uzlu Output dělají z Cycles víc než náš path
+tracer:
+
+| volba | co dělá |
+|---|---|
+| **Sky** `physical` (výchozí) | obloha a slunce jako Sky Texture v Blenderu (model Nishita): modrá obloha, opar u obzoru. Slunce je tam, kde ho má Look, s jeho barvou (Light Color) a silou. Obloha k němu přidá modré světlo, které ve stínech chybělo. Se **Sky Behind** kamera vidí oblohu a zem až k obzoru, vzdálená zem mizí v oparu. Bez Sky Behind zůstane tmavé pozadí studia. |
+| **Sky** `look` | slunce a obloha Looku jako ve viewportu a v path traceru |
+| **View** `agx_punchy` (výchozí), `agx`, `aces` | jak se světlo převede na obraz: AgX jako v Blenderu, jasné barvy přecházejí do bílé jako na filmu. `agx_punchy` přidá look Punchy z Blenderu (víc kontrastu a barev, střední tóny tmavší), `aces` je křivka viewportu. Platí pro Cycles i path tracer. |
+| **Surface Detail** 0–1 (1) | povrchy, které jsou ve scéně hladké, dostanou barvu a drsnost proměnlivou ve skvrnách metr až dva velkých a velkých jako dlaň, a drobné nerovnosti. Zem k tomu skvrny několika metrů. 0: hladké jako ve viewportu. |
+
+Síla oblohy je nastavená tak, že slunce dává stejné světlo jako slunce
+Looku. Test `render_cycles_lights_a_day_under_a_physical_sky` to ověřuje:
+podlaha pod sluncem ve výšce 45° má jas matné podlahy pod sluncem Looku
+a obloha přidá asi 10 %. Při nízkém slunci je podíl modrého světla oblohy
+větší.
+
+Obloha je v Cycles i světlo, které se vzorkuje podle jasu (jako
+v Blenderu): slunce na obloze najde každý paprsek, nejen ten, který
+na něj náhodou narazí.
+
+Path tracer svítí vždy oblohou Looku a detail povrchů nepřidává.
+Převod barev (View) má stejný.
+
+## 4. Kouř, oheň a prach
 
 ![Táborák a kouř: vždy vlevo path tracer, vpravo Cycles, 64 vzorků na pixel](img/cycles-gas.jpg)
 
@@ -98,7 +127,10 @@ nejvýš 32 milionů buněk. Větší plyn (prach odstřelu) se čte po
 blocích 2 × 2 × 2 nebo větších. Bez NanoVDB (`-DPG_NANOVDB=OFF`)
 plyn nevykreslí ani Cycles, ani path tracer.
 
-## 4. Rozdíly proti path traceru
+## 5. Rozdíly proti path traceru
+
+Rozdíly níže platí se stejným nastavením (Sky `look`, Surface Detail 0),
+se kterým testy Cycles s path tracerem porovnávají.
 
 - **Hrubé povrchy jsou v Cycles asi o 15 % světlejší.** Principled BSDF
   počítá i světlo, které se mezi mikroploškami odrazí víckrát. Náš odlesk
@@ -110,10 +142,10 @@ plyn nevykreslí ani Cycles, ani path tracer.
 - **Průchody do EXR:** normála v Cycles míří vždy ke kameře, naše zůstává
   na straně, kam trojúhelník míří. Hloubka v Cycles je z prvního vzorku
   pixelu, naše je průměr.
-- **Plyn je v Cycles pomalejší** ([§6](#6-výkon)): Cycles jím prochází
+- **Plyn je v Cycles pomalejší** ([§7](#7-výkon)): Cycles jím prochází
   po krocích, náš path tracer delta trackingem s maximy dlaždic.
 
-## 5. Build
+## 6. Build
 
 Cycles se stáhne z GitHubu (`blender/cycles`, značka **v4.5.0**, mělký
 klon asi 24 MB) a postaví jednou se zbytkem programu. K tomu potřebuje
@@ -145,7 +177,7 @@ Kdy se Cycles nepostaví a renderuje path tracer:
 `prototype sim … --renderer cycles` v takovém buildu skončí chybou
 a záložka Render nabídne jen path tracer.
 
-## 6. Výkon
+## 7. Výkon
 
 Čtyři jádra (Xeon s AVX-512), Release, stejné nastavení pro oba
 renderery:
@@ -169,7 +201,7 @@ V záložce Render je první obraz z větších pixelů hotový za zlomek
 sekundy. Při přehrávání ukazuje záložka snímky v nižším rozlišení, plné
 dostane snímek, na kterém se zastaví.
 
-## 7. Jak to funguje
+## 8. Jak to funguje
 
 - `src/pg/render/Cycles.h`, `Cycles.cpp`: `CyclesRender` drží session
   Cycles. Pro příkazovou řádku má každý snímek vlastní session až do
@@ -177,7 +209,11 @@ dostane snímek, na kterém se zastaví.
   má taky, se znovu nestaví. Obrazy během renderu dostává záložka přes
   display driver Cycles (`DisplayDriver`, poloviční floaty RGBA). Na konci
   dostane přes output driver (`OutputDriver`) obraz, albedo, normály
-  a hloubku pro EXR.
+  a hloubku pro EXR. Fyzikální obloha je uzel Sky Texture (Nishita) se
+  světlem pozadí (`LIGHT_BACKGROUND`), detail povrchů jsou uzly Noise
+  Texture a Bump v shaderu každého materiálu.
+- `src/pg/render/PathTracer.cpp`: `shown()` převádí lineární světlo na obraz
+  (AgX, AgX Punchy, ACES) pro oba renderery.
 - `src/pg/render/Gas.h`: `Gas::dense` dává mřížky plynu pro renderer, který
   čte husté mřížky.
 - `tools/prototype/RenderView.cpp`: vlákno záložky Render s oběma renderery.
@@ -199,11 +235,19 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   světlo plamene a jas do 30 % jako v path traceru.
 - `gas_dense_grids_are_the_gas_at_the_cells_middles`: mřížky odpovídají
   plynu ve středech buněk, velký plyn jde po blocích.
+- `render_cycles_lights_a_day_under_a_physical_sky`: slunce fyzikální oblohy
+  svítí jako slunce Looku a má jeho barvu, obloha je modrá.
+- `render_cycles_surface_detail_makes_a_flat_surface_uneven`: detail mění
+  jas povrchu z místa na místo, v průměru ho nechá stejný.
+- `render_agx_shows_middle_grey_as_blender_does_and_bright_colours_going_white`:
+  střední šedá je v AgX v polovině, jasná červená přechází do bílé, Punchy
+  má víc kontrastu a barev.
 
-## 8. Co zatím chybí
+## 9. Co zatím chybí
 
 - GPU (CUDA, OptiX, HIP, Metal): Cycles je postavený jen pro procesor.
-- Rozmazání pohybem, OSL shadery, textury a UV.
+- Rozmazání pohybem, OSL shadery, textury a UV, materiály podle toho, co
+  povrch je (beton, cihly, sklo oken, asfalt).
 - Plate (obraz na pozadí kamery). Holdout a shadow catcher na objektech
   scény ano.
 - Déšť a drť jako body. Kreslí je jen viewport.

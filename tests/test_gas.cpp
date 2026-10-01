@@ -420,6 +420,8 @@ TEST(render_cycles_renders_the_gas_as_the_path_tracer_does) {
     s.height = h;
     s.samples = 64;
     s.denoise = false;
+    s.sky = Settings::Sky::Look;
+    s.detail = 0.0f;
     auto cycles = [&](std::shared_ptr<const Scene> scene) {
         CyclesRender r;
         r.start(std::move(scene), s);

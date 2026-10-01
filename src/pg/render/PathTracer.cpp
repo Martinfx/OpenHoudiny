@@ -646,20 +646,58 @@ Image PathTracer::denoised() const {
 
 std::vector<uint8_t> PathTracer::display(bool withDenoise) const {
     const Image image = withDenoise ? denoised() : beauty();
-    return toDisplay(image, scene_ ? scene_->look.exposure : 1.0f);
+    return toDisplay(image, scene_ ? scene_->look.exposure : 1.0f, settings_.view);
 }
 
-std::vector<uint8_t> toDisplay(const Image& image, float exposure) {
+Vec3 shown(const Vec3& linear, Settings::View view) {
+    if (view == Settings::View::Aces) {
+        return {std::pow(aces(std::max(linear.x, 0.0f)), 1.0f / 2.2f), std::pow(aces(std::max(linear.y, 0.0f)), 1.0f / 2.2f),
+                std::pow(aces(std::max(linear.z, 0.0f)), 1.0f / 2.2f)};
+    }
+    // AgX: the colour moved in from the primaries a little -- so that a
+    // bright saturated one goes towards white rather than to a hue of its
+    // own -- its logarithm from 12.5 stops below middle grey to 4 above,
+    // the curve, and the primaries out again.
+    const Vec3 c(std::max(linear.x, 0.0f), std::max(linear.y, 0.0f), std::max(linear.z, 0.0f));
+    Vec3 in(0.842479062253094f * c.x + 0.0784335999999992f * c.y + 0.0792237451477643f * c.z,
+            0.0423282422610123f * c.x + 0.878468636469772f * c.y + 0.0791661274605434f * c.z,
+            0.0423756549057051f * c.x + 0.0784336f * c.y + 0.879142973793104f * c.z);
+    constexpr float kLow = -12.47393f, kHigh = 4.026069f;
+    auto curve = [&](float v) {
+        const float x = (std::clamp(std::log2(std::max(v, 1e-10f)), kLow, kHigh) - kLow) / (kHigh - kLow);
+        const float x2 = x * x, x4 = x2 * x2;
+        return 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x -
+               0.00232f;
+    };
+    in = Vec3(curve(in.x), curve(in.y), curve(in.z));
+    if (view == Settings::View::AgXPunchy) {
+        // Blender's look Punchy: more contrast -- a power of 1.35 -- and
+        // 1.4 times the saturation.
+        in = Vec3(std::pow(std::max(in.x, 0.0f), 1.35f), std::pow(std::max(in.y, 0.0f), 1.35f),
+                  std::pow(std::max(in.z, 0.0f), 1.35f));
+        const float luma = 0.2126f * in.x + 0.7152f * in.y + 0.0722f * in.z;
+        in = Vec3(luma, luma, luma) + (in - Vec3(luma, luma, luma)) * 1.4f;
+    }
+    const Vec3 out(1.19687900512017f * in.x - 0.0980208811401368f * in.y - 0.0990297440797205f * in.z,
+                   -0.0528968517574562f * in.x + 1.15190312990417f * in.y - 0.0989611768448433f * in.z,
+                   -0.0529716355144438f * in.x - 0.0980434501171241f * in.y + 1.15107367264116f * in.z);
+    return {std::clamp(out.x, 0.0f, 1.0f), std::clamp(out.y, 0.0f, 1.0f), std::clamp(out.z, 0.0f, 1.0f)};
+}
+
+std::vector<uint8_t> toDisplay(const Image& image, float exposure, Settings::View view) {
     const size_t n = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
     std::vector<uint8_t> out(4 * n, 255);
     if (image.pixels.size() < n * static_cast<size_t>(image.channels)) return out;
     parallelFor(n, 16384, [&](size_t begin, size_t end) {
         for (size_t p = begin; p < end; ++p) {
+            float v[3];
             for (int c = 0; c < 3; ++c) {
-                const float v = image.pixels[p * static_cast<size_t>(image.channels) + static_cast<size_t>(std::min(c, image.channels - 1))];
-                const float shown = std::pow(aces(std::max(v * exposure, 0.0f)), 1.0f / 2.2f);
-                out[4 * p + static_cast<size_t>(c)] = static_cast<uint8_t>(std::lround(std::clamp(shown, 0.0f, 1.0f) * 255.0f));
+                v[c] = image.pixels[p * static_cast<size_t>(image.channels) + static_cast<size_t>(std::min(c, image.channels - 1))];
             }
+            const Vec3 s = shown(Vec3(v[0], v[1], v[2]) * exposure, view);
+            out[4 * p] = static_cast<uint8_t>(std::lround(std::clamp(s.x, 0.0f, 1.0f) * 255.0f));
+            out[4 * p + 1] = static_cast<uint8_t>(std::lround(std::clamp(s.y, 0.0f, 1.0f) * 255.0f));
+            out[4 * p + 2] = static_cast<uint8_t>(std::lround(std::clamp(s.z, 0.0f, 1.0f) * 255.0f));
         }
     });
     return out;

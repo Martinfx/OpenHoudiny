@@ -765,6 +765,7 @@ bool cyclesRendered(const std::shared_ptr<const pg::render::Scene>& scene, const
     out.normal = render.normal();
     out.depth = render.depth();
     out.exposure = scene->look.exposure;
+    out.view = s.view;
     if (out.beauty.width != s.width || out.beauty.height != s.height) {
         error = "Cycles gave no picture";
         return false;

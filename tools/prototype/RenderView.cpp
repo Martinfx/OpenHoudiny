@@ -127,6 +127,7 @@ bool RenderView::save(const std::string& path, const std::string& comment, std::
         r.normal = cycles_->normal();
         r.depth = cycles_->depth();
         r.exposure = cyclesScene_->look.exposure;
+        r.view = cyclesSettings_.view;
         return render::savePicture(r, path, comment, error);
     }
     return render::savePicture(tracer_, path, tracer_.settings().denoise, comment, error);
@@ -146,8 +147,8 @@ std::shared_ptr<const render::Scene> RenderView::build(Request& request) {
     return builder_.build(in);
 }
 
-void RenderView::publish(const render::Image& image, float exposure) {
-    std::vector<uint8_t> picture = render::toDisplay(image, exposure);
+void RenderView::publish(const render::Image& image, float exposure, render::Settings::View view) {
+    std::vector<uint8_t> picture = render::toDisplay(image, exposure, view);
     std::lock_guard<std::mutex> lock(mutex_);
     if (restart_) return;
     picture_ = std::move(picture);
@@ -269,11 +270,13 @@ void RenderView::run() {
             render::Image image;
             if (cycles_ && cycles_->takePicture(image)) {
                 float exposure = 1.0f;
+                render::Settings::View view;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
                     if (cyclesScene_) exposure = cyclesScene_->look.exposure;
+                    view = cyclesSettings_.view;
                 }
-                publish(image, exposure);
+                publish(image, exposure, view);
             }
             continue;
         }
@@ -303,7 +306,7 @@ void RenderView::run() {
             denoiseCost_ = std::chrono::duration<double>(Clock::now() - start).count();
             sinceDenoise_ = 0.0;
         }
-        publish(image, tracer_.scene() ? tracer_.scene()->look.exposure : 1.0f);
+        publish(image, tracer_.scene() ? tracer_.scene()->look.exposure : 1.0f, s.view);
     }
 }
 

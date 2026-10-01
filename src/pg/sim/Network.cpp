@@ -370,7 +370,22 @@ std::vector<ParamDef> renderParams() {
             {"render_sun_angle", "Sun Size", "Render", K::Float, {0.53f, 0.0f, 0.0f}, 0.1f, 5.0f, 0.01f, 30.0f,
              "\xc2\xb0",
              "How wide the sun is, degrees: 0.53 the real sun, sharp shadows near what casts them and soft far "
-             "from it; larger, softer -- a hazy day."}};
+             "from it; larger, softer -- a hazy day."},
+            {"render_sky", "Sky", "Render", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "What lights the render in Cycles. Physical: a real day's sky, as Blender's Sky Texture -- the sun "
+             "where the light is and as bright, its colour and the sky's blue from the air it shines through, the "
+             "ground out to the horizon. Look: the light and sky of this node as the viewport has them (the path "
+             "tracer always).",
+             {"look", "physical"},
+             {"Look", "Physical"}},
+            {"render_view", "View", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+             "How the light becomes the picture. AgX: as Blender shows it, bright colours going towards white as "
+             "on film -- Punchy with Blender's look of more contrast and colour. ACES: as the viewport.",
+             {"agx_punchy", "agx", "aces"},
+             {"AgX Punchy", "AgX", "ACES"}},
+            {"render_detail", "Surface Detail", "Render", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "What Cycles adds to surfaces the scene has flat: colour and roughness that vary, small bumps that "
+             "catch the light -- as stone, plaster and the ground are. 0: as flat as the viewport draws them."}};
 }
 
 std::vector<ParamDef> outputParams() {
@@ -3754,6 +3769,9 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     r.focus = std::max(f(*output, "render_focus"), 0.0f);
     r.clamp = std::max(f(*output, "render_clamp"), 0.01f);
     r.sunAngle = std::clamp(f(*output, "render_sun_angle"), 0.01f, 30.0f);
+    r.sky = static_cast<render::Settings::Sky>(std::clamp(whole(*output, "render_sky"), 0, 1));
+    r.view = static_cast<render::Settings::View>(std::clamp(whole(*output, "render_view"), 0, 2));
+    r.detail = std::clamp(f(*output, "render_detail"), 0.0f, 1.0f);
     // The camera of the shot.
     if (const Node* cam = upstream(*output, "camera")) {
         Camera& m = c.camera;

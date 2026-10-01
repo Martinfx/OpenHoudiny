@@ -10,7 +10,9 @@ i příkazová řádka (`prototype sim … --renderer path`), třeba na farmě.
 
 Výchozí renderer záložky Render je dnes **Cycles** z Blenderu
 ([cycles.md](cycles.md)). Path tracer se v záložce vybere v liště volbou
-**Path tracer** a renderuje i v buildu bez Cycles.
+**Path tracer** a renderuje i v buildu bez Cycles. Fyzikální oblohu
+a detail povrchů má jen Cycles. Převod barev (View: AgX Punchy, AgX,
+ACES) mají oba ([cycles.md §3](cycles.md#3-obloha-barvy-a-povrchy)).
 
 ![Louka: vlevo viewport (OpenGL), vpravo path tracer, 64 vzorků na pixel](img/pathtracer-meadow.jpg)
 

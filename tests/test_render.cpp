@@ -566,6 +566,8 @@ TEST(render_cycles_lights_a_floor_as_the_sun_and_the_sky_do) {
         s.height = 32;
         s.samples = 64;
         s.denoise = false;
+        s.sky = Settings::Sky::Look;
+        s.detail = 0.0f;
         const Image cycles = cyclesRender(scene, s);
         CHECK_EQ(cycles.pixels.size(), 3u * 32u * 32u);
         double mean = 0.0;
@@ -588,6 +590,8 @@ TEST(render_cycles_shows_what_the_path_tracer_does) {
     s.height = 60;
     s.samples = 256;
     s.denoise = false;
+    s.sky = Settings::Sky::Look;
+    s.detail = 0.0f;
     const auto scene = smallScene(96, 60);
     PathTracer t;
     t.setSettings(s);
@@ -622,6 +626,8 @@ TEST(render_cycles_is_the_same_twice_and_its_passes_are_ours) {
     s.height = 40;
     s.samples = 16;
     s.denoise = true;
+    s.sky = Settings::Sky::Look;
+    s.detail = 0.0f;
     // A few large triangles: few pixels on their edges, where a pixel's
     // samples see different things.
     const auto scene = smallScene(64, 40, true);
@@ -721,4 +727,123 @@ TEST(render_cycles_for_the_render_tab_shows_pictures_and_goes_on_after_a_stop) {
     }
     CHECK_EQ(r.beauty().width, 96);
     CHECK_EQ(r.beauty().height, 60);
+}
+
+TEST(render_agx_shows_middle_grey_as_blender_does_and_bright_colours_going_white) {
+    using V = Settings::View;
+    // Middle grey half way up, black black, a light 16 times as bright as
+    // white nearly white -- and in between, the brighter the lighter.
+    const Vec3 grey = shown(Vec3(0.18f, 0.18f, 0.18f), V::AgX);
+    std::printf("  AgX: middle grey %.3f, black %.3f, 16 %.3f\n", grey.y, shown(Vec3(), V::AgX).y,
+                shown(Vec3(16.0f, 16.0f, 16.0f), V::AgX).y);
+    CHECK(std::fabs(grey.y - 0.5f) < 0.03f);
+    CHECK(std::fabs(grey.x - grey.y) < 0.01f && std::fabs(grey.z - grey.y) < 0.01f);
+    CHECK(shown(Vec3(), V::AgX).y < 0.02f);
+    CHECK(shown(Vec3(16.0f, 16.0f, 16.0f), V::AgX).y > 0.95f);
+    float last = -1.0f;
+    for (float v = 0.001f; v < 64.0f; v *= 1.5f) {
+        const float s = shown(Vec3(v, v, v), V::AgX).y;
+        CHECK(s >= last);
+        last = s;
+    }
+    // A very bright red: towards white, as on film -- the viewport's ACES,
+    // channel by channel, keeps it red.
+    const Vec3 red(20.0f, 0.05f, 0.05f);
+    std::printf("  a bright red: AgX %.2f %.2f %.2f, ACES %.2f %.2f %.2f\n", shown(red, V::AgX).x, shown(red, V::AgX).y,
+                shown(red, V::AgX).z, shown(red, V::Aces).x, shown(red, V::Aces).y, shown(red, V::Aces).z);
+    CHECK(shown(red, V::AgX).y > 0.5f && shown(red, V::AgX).z > 0.5f);
+    CHECK(shown(red, V::Aces).y < 0.4f);
+    // Punchy: darker below the middle, as bright at white, more colour.
+    const Vec3 punchy = shown(Vec3(0.18f, 0.18f, 0.18f), V::AgXPunchy);
+    const Vec3 tint = shown(Vec3(0.3f, 0.18f, 0.1f), V::AgXPunchy), plain = shown(Vec3(0.3f, 0.18f, 0.1f), V::AgX);
+    std::printf("  Punchy: middle grey %.3f; an orange %.2f %.2f %.2f (AgX %.2f %.2f %.2f)\n", punchy.y, tint.x, tint.y,
+                tint.z, plain.x, plain.y, plain.z);
+    CHECK(punchy.y < grey.y - 0.05f && punchy.y > 0.3f);
+    CHECK(tint.x - tint.z > plain.x - plain.z);
+    CHECK(shown(Vec3(16.0f, 16.0f, 16.0f), V::AgXPunchy).y > 0.95f);
+}
+
+TEST(render_cycles_lights_a_day_under_a_physical_sky) {
+    if (!cyclesAvailable()) return;
+    // A grey floor from above in Nishita's day: the sun as bright as the
+    // look's and of its colour, the blue sky adding a little -- more of it,
+    // and bluer, when the sun is low; the sky overhead blue.
+    auto floorLight = [](float elevation, const Vec3& colour, bool up) {
+        sim::Camera cam = up ? sim::Camera::lookingAt(Vec3(0.0f, 1.0f, 0.0f), Vec3(0.01f, 5.0f, 0.0f))
+                             : sim::Camera::lookingAt(Vec3(0.0f, 3.0f, 0.01f), Vec3(0.0f, 0.0f, 0.0f));
+        cam.width = 32;
+        cam.height = 32;
+        sim::Look look;
+        look.lightIntensity = 2.2f;
+        look.lightElevation = elevation;
+        look.lightColor = colour;
+        look.groundColor = Vec3(0.5f, 0.5f, 0.5f);
+        look.skyBehind = true;
+        SceneBuilder builder;
+        const auto scene = builder.build(inputOf(strewn(1, 1, 0.01f), look, cam));
+        Settings s;
+        s.width = 32;
+        s.height = 32;
+        s.samples = 64;
+        s.denoise = true;
+        s.sky = Settings::Sky::Physical;
+        s.detail = 0.0f;
+        const Image img = cyclesRender(scene, s);
+        Vec3 mean;
+        for (size_t p = 0; p < 32u * 32u; ++p) mean += Vec3(img.pixels[3 * p], img.pixels[3 * p + 1], img.pixels[3 * p + 2]);
+        return mean / 1024.0f;
+    };
+    const Vec3 white(1.0f, 1.0f, 1.0f), warm(1.0f, 0.8f, 0.6f);
+    const Vec3 high = floorLight(45.0f, white, false), low = floorLight(10.0f, white, false),
+               golden = floorLight(45.0f, warm, false), sky = floorLight(45.0f, white, true);
+    const float sun = 0.5f * 2.2f * std::sin(45.0f * 3.14159265f / 180.0f);
+    const float bright = 0.2126f * high.x + 0.7152f * high.y + 0.0722f * high.z;
+    std::printf("  the floor in the day: %.3f (the sun alone %.3f); red over blue %.2f, the sun low %.2f, the sun "
+                "golden %.2f; the sky overhead %.2f %.2f %.2f\n",
+                bright, sun, high.x / high.z, low.x / low.z, golden.x / golden.z, sky.x, sky.y, sky.z);
+    CHECK(bright > 1.0f * sun && bright < 1.6f * sun);
+    CHECK(high.x / high.z < 1.0f && high.x / high.z > 0.7f);
+    CHECK(low.x / low.z < high.x / high.z);
+    CHECK(golden.x / golden.z > 1.3f);
+    CHECK(sky.z > 1.2f * sky.x);
+}
+
+TEST(render_cycles_surface_detail_makes_a_flat_surface_uneven) {
+    if (!cyclesAvailable()) return;
+    // The floor from above under an even sky -- some 40 m of it, its
+    // patches several -- flat without the detail, as bright all over;
+    // uneven with it, about as bright on the whole.
+    sim::Camera cam = sim::Camera::lookingAt(Vec3(0.0f, 60.0f, 0.01f), Vec3(0.0f, 0.0f, 0.0f));
+    cam.width = 48;
+    cam.height = 48;
+    sim::Look look;
+    look.lightIntensity = 0.0f;
+    look.skyIntensity = 1.0f;
+    look.skyColor = Vec3(1.0f, 1.0f, 1.0f);
+    look.groundColor = Vec3(0.5f, 0.5f, 0.5f);
+    SceneBuilder builder;
+    const auto scene = builder.build(inputOf(strewn(1, 1, 0.01f), look, cam));
+    auto spread = [&](float detail, double& mean) {
+        Settings s;
+        s.width = 48;
+        s.height = 48;
+        s.samples = 32;
+        s.denoise = true;
+        s.sky = Settings::Sky::Look;
+        s.detail = detail;
+        const Image img = cyclesRender(scene, s);
+        double sum = 0.0, square = 0.0;
+        for (size_t p = 0; p < 48u * 48u; ++p) {
+            sum += img.pixels[3 * p + 1];
+            square += double(img.pixels[3 * p + 1]) * img.pixels[3 * p + 1];
+        }
+        mean = sum / (48.0 * 48.0);
+        return std::sqrt(std::max(square / (48.0 * 48.0) - mean * mean, 0.0)) / mean;
+    };
+    double flatMean = 0.0, detailMean = 0.0;
+    const double flat = spread(0.0f, flatMean), uneven = spread(1.0f, detailMean);
+    std::printf("  the floor: %.3f flat, varying %.3f; with detail %.3f, varying %.3f\n", flatMean, flat, detailMean,
+                uneven);
+    CHECK(uneven > 3.0 * flat && uneven > 0.03);
+    CHECK(std::fabs(detailMean / flatMean - 1.0) < 0.1);
 }

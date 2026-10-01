@@ -77,7 +77,7 @@ private:
     void run();
     /// The scene of `request`, built off the lock.
     std::shared_ptr<const render::Scene> build(Request& request);
-    void publish(const render::Image& image, float exposure);
+    void publish(const render::Image& image, float exposure, render::Settings::View view);
 
     std::thread thread_;
     mutable std::mutex mutex_;

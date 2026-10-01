@@ -13,10 +13,11 @@ namespace pg::render {
 
 /// What a render made: the light -- the noise taken out or not -- and what
 /// the first surface each pixel sees is (as PathTracer's albedo(), normal()
-/// and depth() have them); the exposure it is shown with.
+/// and depth() have them); the exposure and the view it is shown with.
 struct Rendered {
     Image beauty, albedo, normal, depth;
     float exposure = 1.0f;
+    Settings::View view = Settings::View::AgXPunchy;  ///< how a PNG shows its light
 };
 
 /// The path tracer's: `denoise`, the picture with the noise taken out.

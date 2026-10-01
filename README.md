@@ -39,8 +39,9 @@ okna.
 - **[docs/cycles.md](docs/cycles.md)** — render přes Cycles z Blenderu:
   záložka Render vedle Viewportu (první obraz hned, při přehrávání snímek
   po snímku) i příkazová řádka `--renderer cycles`; scéna převedená do
-  Cycles i s kouřem a ohněm, Principled BSDF, sklo a voda, odšumění Open
-  Image Denoise
+  Cycles i s kouřem a ohněm, Principled BSDF, sklo a voda, fyzikální
+  obloha a slunce jako v Blenderu, převod barev AgX, detail povrchů,
+  odšumění Open Image Denoise
 - **[docs/pathtracer.md](docs/pathtracer.md)** — vlastní path tracer na
   procesoru, druhá volba záložky Render a `--renderer path`; odražené
   světlo, měkké slunce, prosvítající tráva a listí, sklo a voda, hloubka

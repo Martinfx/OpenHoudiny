@@ -48,6 +48,23 @@ struct Settings {
     float clamp = 20.0f;             ///< the most a bounce adds to a pixel: no fireflies
     float sunAngle = 0.53f;          ///< degrees across the sun: larger, softer shadows
     uint32_t seed = 0;
+    /// The sky Cycles lights the scene with: the look's sun and sky, as the
+    /// viewport and the path tracer have them -- or a real day's, as
+    /// Blender's Sky Texture has it (Nishita's model): the sun where the
+    /// look has it and as bright, its colour and the sky's blue from the
+    /// air it shines through, the ground out to the horizon.
+    enum class Sky : uint8_t { Look, Physical };
+    Sky sky = Sky::Physical;
+    /// How light becomes the picture: AgX, as Blender shows it -- bright
+    /// colours go towards white as on film -- with Blender's look Punchy,
+    /// more contrast and colour, or as it is; or ACES (Narkowicz's fit), as
+    /// the viewport.
+    enum class View : uint8_t { AgXPunchy, AgX, Aces };
+    View view = View::AgXPunchy;
+    /// What Cycles adds to surfaces that are flat in the scene: their colour
+    /// and roughness vary, small bumps catch the light -- 1 as stone,
+    /// plaster and the ground are; 0 as flat as the viewport draws them.
+    float detail = 1.0f;
 
     bool operator==(const Settings&) const = default;
 };
@@ -112,9 +129,14 @@ private:
     uint64_t paths_ = 0;
 };
 
-/// Linear light as a screen shows it, as the viewport's: times `exposure`,
-/// ACES (Narkowicz's fit), gamma 2.2; RGBA, alpha 255.
-std::vector<uint8_t> toDisplay(const Image& image, float exposure);
+/// Linear light as a screen shows it: times `exposure`, then AgX -- as
+/// Blender's view transform (Sobotka's, the polynomial fit of its curve),
+/// with its look Punchy or not -- or ACES (Narkowicz's fit) and gamma 2.2,
+/// as the viewport's; RGBA, alpha 255.
+std::vector<uint8_t> toDisplay(const Image& image, float exposure,
+                               Settings::View view = Settings::View::AgXPunchy);
+/// One colour so: 0 to 1, as a screen shows it.
+Vec3 shown(const Vec3& linear, Settings::View view);
 
 /// `beauty` with its noise taken out: an edge-avoiding a-trous wavelet
 /// filter (Dammertz et al.) over the light each surface gets -- its colour
