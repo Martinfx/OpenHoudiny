@@ -73,7 +73,8 @@ struct EmbreeHit {
 
 /// The placed meshes of a scene as Embree finds rays in them: all of them;
 /// the opaque ones -- with neither glass nor water -- for shadows; the clear
-/// ones, for shadows through glass and water.
+/// ones, for shadows through glass and water. Rain casts no shadow: it is
+/// in neither (Mesh::shadows).
 class EmbreeScene {
 public:
     /// Over `placed`, each its mesh's Embree mesh (Mesh::embree) where it

@@ -122,6 +122,55 @@ listy z uzlu Tree 0,4, kůra 0. Proti slunci proto tráva a listí svítí.
 `roughness` se nezapisuje. Po Merge s jinou geometrií by chybějící
 hodnota 0 udělala z terénu zrcadlo.
 
+### Drť, déšť a mokrý povrch
+
+![Drť ze sloupu na schodech (příklad debris_stairs, snímek 45): vlevo Cycles, vpravo path tracer](img/render-grit.jpg)
+
+**Drť** kusů z RBD Solveru (volné body s `pscale`) kreslí oba renderery
+jako hranaté úlomky:
+
+- **Tvary.** Tucet tvarů kamene a šest střepů skla. Kámen je kvádr,
+  zploštělý a protažený, kterému roviny odrazily rohy a hrany. Střep je
+  plochý mnohoúhelník o třech až pěti stranách, tenký jako tabule.
+- **Tvar podle `id`.** Každý bod dostane tvar podle svého `id`, takže si
+  ho za letu drží.
+- **Velikost a natočení.** Úlomek je velký jako jeho `pscale`
+  (nejvzdálenější roh je tak daleko od středu) a natočený podle `orient`.
+- **Barva.** Každý úlomek má vlastní odstín své barvy: některé jsou
+  světlejší, tmavší nebo šedší.
+- **Materiál.** Kámen je lom betonu (`broken_concrete`, s fotkou jako na
+  úlomku asi 5 cm), sklo je sklo.
+- **Instance.** Úlomky jsou instance, takže 40 000 kousků stojí 18 sítí
+  a jejich umístění.
+
+![Úlomky zblízka (Cycles)](img/render-grit-close.jpg)
+
+**Déšť** kreslí oba renderery stejně jako viewport:
+
+- **Délka.** Každá kapka je čárka, kterou proletí za podíl snímku daný
+  parametrem Streak uzlu Rain. Vede od místa, kde kapka je, zpátky po
+  směru její rychlosti.
+- **Tvar.** Tenké vřeteno, u hlavy silné jako kapka (2,5 mm, kapička ze
+  šplíchnutí polovina), k ocasu se ztenčuje do ztracena.
+- **Neprůhlednost.** Vřeteno je z vody (index lomu 1,33) a je tam jen po
+  část času, kterou říká Opacity. Paprsek, který čárku trefí zepředu, ji
+  s touto pravděpodobností potká (odrazí se od ní, nebo se do ní zalomí),
+  jinak projde. Tak vypadá kapka rozmazaná pohybem.
+- **Stín.** Déšť stín nevrhá.
+- **Blízko kamery.** Kapky blíž než půl metru od kamery se vynechají,
+  protože by byly mimo ostrost.
+
+**Mokrý povrch.** Kde prší, je povrch obrácený nahoru tak mokrý, jak
+říká Wet Floor uzlu Rain (jako podlaha ve viewportu). Je tmavší
+o polovinu a hladší, takže vrstva vody zrcadlí okolí. Mokro sahá tak
+daleko, kam dopadají kapky, a 35 cm za okrajem uschne.
+
+![Bouřka (příklad storm, snímek 60): vlevo path tracer, vpravo Cycles s fyzikální oblohou. Kapky chytají světlo ohně, mokrá zem zrcadlí oheň, poleno i kámen](img/render-rain.jpg)
+
+Pod fyzikální oblohou je déšť v Cycles slabší, protože kapky lámou
+skutečnou oblohu, ne oblohu Looku. Se Sky `look` mají čárky v obou
+rendererech stejný kontrast (v příkladu storm +29 úrovní nad pozadím).
+
 ## 5. Kouř, oheň a prach
 
 ![Táborák: vlevo viewport, vpravo path tracer, 128 vzorků na pixel. Kouř stíní podlahu i sám sebe, plamen svítí do kouře](img/pathtracer-campfire.jpg)
@@ -171,6 +220,14 @@ to oznámí.
   (koule, kvádry… počítané přesně). **Instance** (`core/Instances.h`)
   mají síť prototypu jednou a jen se umístí, takže louka se 122 000 trsů
   stojí 8 sítí trsů plus umístění.
+- **Drť a déšť** (`src/pg/render/Particles.h`): `chipMesh` staví tvary
+  úlomků jednou (kvádr ořezaný rovinami, hranol střepu), `placeChips` je
+  umístí na volné body s `pscale`, `rainMesh` udělá z kapek vřetena.
+  Materiál deště (`Material::Kind::Rain`) path tracer s pravděpodobností
+  1 − Opacity propustí, stejně jako každou čárku zezadu. Do stínových
+  paprsků se déšť nedostane vůbec (`Mesh::shadows`): Embree ho nemá ve
+  scéně stínů, vlastní hierarchie ho přeskočí. Mokro (`Scene::wetAt`)
+  ztmaví povrch a sníží jeho drsnost směrem k 0,06.
 - **Paprsky** (`src/pg/render/Embree.h`): co paprsek trefí, hledá knihovna
   **Intel Embree 4**. Hierarchie obalových kvádrů (BVH) staví a prochází
   s vektorovými instrukcemi procesoru (SSE, AVX2, AVX-512). Každá síť je
@@ -284,9 +341,10 @@ nezabralo víc než polovinu času.
 
 ## 8. Co zatím chybí
 
-- Déšť, drť jako body, plate a holdouty. Tyhle prvky kreslí jen
-  viewport. Objemy zobrazené geometrie (třeba z Convert Volume) také,
-  path tracer kreslí plyn simulace.
+- Plate a holdouty. Kreslí je jen viewport. Objemy zobrazené geometrie
+  (třeba z Convert Volume) také, path tracer kreslí plyn simulace.
+- Vlnky po kapkách na vodě má jen síť vody (`waterMesh`), stékající
+  stružky a mokré svislé stěny ne.
 - Světlo plamenů dopadá na okolí jen odrazy, které plamen náhodou
   trefí. Plameny se nevzorkují přímo jako slunce, takže země u ohně má
   víc šumu.

@@ -291,7 +291,7 @@ std::shared_ptr<const Scene> gasScene(bool withGas, int width, int height) {
     SceneInput in;
     in.look = look;
     in.camera = cam;
-    if (withGas) in.gas = frame;
+    if (withGas) in.frame = frame;
     SceneBuilder builder;
     return builder.build(in);
 }
@@ -361,7 +361,7 @@ TEST(render_gas_is_the_same_however_it_is_run) {
     // The builder keeps a frame's gas: rendered again, not made again.
     auto frame = std::make_shared<sim::Frame>(frameOf(16, 0.1f, [](int i, int, int) { return Vec3(i > 4 ? 0.5f : 0.0f, 0.0f, 0.0f); }, false));
     SceneInput in;
-    in.gas = frame;
+    in.frame = frame;
     SceneBuilder builder;
     const auto first = builder.build(in), again = builder.build(in);
     CHECK(first->gas && first->gas == again->gas);

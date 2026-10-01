@@ -62,6 +62,9 @@ through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 | `translucency` (stébla, listí) | k Principled BSDF přimíchaný Translucent BSDF |
 | sklo (`glass` 1) | Glass BSDF s indexem 1,5 a nádechem barvy |
 | povrch vody | Glass BSDF s indexem 1,33, uvnitř pohlcuje světlo podle Clarity a nabírá barvu Water Looku |
+| drť kusů (volné body s `pscale`) | hranaté úlomky kamene a střepy skla jako objekty jedné z 18 sítí, natočené podle `orient`, každý v odstínu své barvy ([pathtracer.md §4](pathtracer.md#drť-déšť-a-mokrý-povrch)) |
+| kapky deště | vřetena tak dlouhá, kolik kapka proletí za Streak snímku: Glass BSDF s indexem 1,33 smíchaný s Transparent BSDF podle Opacity, zezadu jen průhledná; objekt nevrhá stín |
+| mokro pod deštěm | povrchy obrácené nahoru tmavší o polovinu s vrstvou (Coat) vody: Coat Weight podle Wet Floor, drsnost 0,03, index 1,33 |
 | kouř, oheň, prach | objem: mřížky útlumu a záře v kvádru kolem plynu, Principled Volume |
 | podlaha | čtverec s barvou podlahy, ke kraji mizí jako ve viewportu; pod fyzikální oblohou se Sky Behind zem až k obzoru ([§3](#3-obloha-barvy-a-povrchy)) |
 | slunce | Sky `look`: vzdálené světlo (Sun) s úhlem Sun Size a stejnou silou jako náš; Sky `physical`: slunce oblohy Nishita |
@@ -176,6 +179,10 @@ se kterým testy Cycles s path tracerem porovnávají.
   pixelu, naše je průměr.
 - **Plyn je v Cycles pomalejší** ([§7](#7-výkon)): Cycles jím prochází
   po krocích, náš path tracer delta trackingem s maximy dlaždic.
+- **Mokro:** Cycles dává mokrému povrchu vrstvu vody (Coat), náš path
+  tracer mu jen sníží drsnost. Oba ho ztmaví o polovinu.
+- **Déšť pod fyzikální oblohou je slabší**, protože kapky lámou skutečnou
+  oblohu. Se Sky `look` mají čárky stejný kontrast jako v path traceru.
 
 ## 6. Build
 
@@ -279,6 +286,9 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
 - `render_agx_shows_middle_grey_as_blender_does_and_bright_colours_going_white`:
   střední šedá je v AgX v polovině, jasná červená přechází do bílé, Punchy
   má víc kontrastu a barev.
+- `render_cycles_draws_the_grit_and_the_wet` (`tests/test_particles.cpp`):
+  úlomek je vidět a podlaha pod ním je ve stínu, mokrá podlaha je tmavší
+  než suchá.
 
 ## 9. Co zatím chybí
 
@@ -289,6 +299,5 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   a obloha z obrázku ve viewportu.
 - Plate (obraz na pozadí kamery). Holdout a shadow catcher na objektech
   scény ano.
-- Déšť a drť jako body. Kreslí je jen viewport.
 - Plyn přímo jako NanoVDB v Cycles (bez husté mřížky): Cycles ho umí jen
   s OpenVDB.

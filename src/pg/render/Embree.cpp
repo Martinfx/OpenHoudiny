@@ -228,18 +228,19 @@ std::shared_ptr<const EmbreeScene> EmbreeScene::build(const std::vector<std::sha
         const uint32_t m = placed[i].mesh;
         if (m >= meshes.size() || !meshes[m] || !meshes[m]->embree) continue;  // nothing there to meet
         all.push_back(i);
+        if (!meshes[m]->shadows) continue;  // rain: seen, casting no shadow
         (meshes[m]->clear ? clear : opaque).push_back(i);
     }
     std::shared_ptr<EmbreeScene> s(new EmbreeScene());
     s->all_ = topOf(meshes, placed, all);
-    if (clear.empty()) {
-        // Nothing clear: the shadows see what the eye sees.
+    if (opaque.size() == all.size()) {
+        // Nothing clear, nothing without a shadow: the shadows see what the eye sees.
         rtcRetainScene(sceneOf(s->all_.scene));
         s->opaque_ = s->all_;
     } else {
         s->opaque_ = topOf(meshes, placed, opaque);
-        s->clear_ = topOf(meshes, placed, clear);
     }
+    if (!clear.empty()) s->clear_ = topOf(meshes, placed, clear);
     return s;
 #else
     (void)meshes;

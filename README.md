@@ -42,7 +42,8 @@ okna.
   Cycles i s kouřem a ohněm, Principled BSDF, sklo a voda, fyzikální
   obloha a slunce jako v Blenderu s nastavitelnými mraky nebo obloha
   z obrázku (HDRI), převod barev AgX, detail povrchů, odšumění Open Image
-  Denoise
+  Denoise; drť jako hranaté úlomky kamene a skla, kapky deště jako čárky
+  vody a mokrá zem, kam prší
 - **[docs/materials.md](docs/materials.md)** — materiály a textury: plochy
   říkají, z čeho jsou (`s@material`: beton, lom betonu, omítka, cihla,
   okno, ocel, dřevo, kůra, dlažba, tašky, trávník…), generátory si je
@@ -53,9 +54,9 @@ okna.
   a ambientCG; textura jde s kusem, který letí
 - **[docs/pathtracer.md](docs/pathtracer.md)** — vlastní path tracer na
   procesoru, druhá volba záložky Render a `--renderer path`; odražené
-  světlo, měkké slunce, prosvítající tráva a listí, sklo a voda, hloubka
-  ostrosti, odšumění neuronovou sítí (Intel Open Image Denoise);
-  nastavení v uzlu Output, PNG i EXR
+  světlo, měkké slunce, prosvítající tráva a listí, sklo a voda, drť,
+  déšť a mokrý povrch, hloubka ostrosti, odšumění neuronovou sítí (Intel
+  Open Image Denoise); nastavení v uzlu Output, PNG i EXR
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání

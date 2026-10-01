@@ -142,7 +142,7 @@ std::shared_ptr<const render::Scene> RenderView::build(Request& request) {
         if (!request.frame->water.empty() && in.look.waterSurface) {
             in.water = sim::waterMesh(request.frame->water, &request.frame->rain);
         }
-        in.gas = request.frame;
+        in.frame = request.frame;
     }
     return builder_.build(in);
 }

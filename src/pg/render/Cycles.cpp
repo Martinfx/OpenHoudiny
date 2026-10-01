@@ -1123,6 +1123,12 @@ struct CyclesRender::Impl {
     uint64_t imageId = 0;  // the pictures Cycles is given, told apart
     // The light water gives off as ours does, in the scene synced now.
     Vec3 waterGlow;
+    // Where the rain wets what it falls on, in the scene synced now
+    // (Scene::wetAt): how wet, and how far it reaches in x and z -- rounded
+    // out to a quarter of a metre, so that the shaders it is in last from
+    // frame to frame.
+    float wetness = 0.0f;
+    Vec2 wetLo, wetHi;
     ccl::Shader* gasShader = nullptr;
 
     void make() {
@@ -1141,6 +1147,39 @@ struct CyclesRender::Impl {
         if (interactive) session->set_display_driver(std::make_unique<Display>(pictures));
     }
 
+    /// How wet the rain has made what a shader is drawing, 0 to 1, as ours
+    /// has it (Scene::wetAt): under the rain, drying off 35 cm out of it,
+    /// and facing up -- in Cycles' world, Z up, our z its -y.
+    ccl::ShaderOutput* wetOf(ccl::ShaderGraph& graph) const {
+        auto* where = graph.create_node<ccl::GeometryNode>();
+        auto* p = graph.create_node<ccl::SeparateXYZNode>();
+        graph.connect(where->output("Position"), p->input("Vector"));
+        auto* n = graph.create_node<ccl::SeparateXYZNode>();
+        graph.connect(where->output("Normal"), n->input("Vector"));
+        // How far out of the rain, along x and along our z.
+        auto out = [&](ccl::ShaderOutput* a, ccl::ShaderOutput* b) {
+            return math(graph, ccl::NODE_MATH_MAXIMUM, math(graph, ccl::NODE_MATH_MAXIMUM, a, 0.0f, b), 0.0f);
+        };
+        ccl::ShaderOutput* x = out(scaled(graph, p->output("X"), -1.0f, wetLo.x), scaled(graph, p->output("X"), 1.0f, -wetHi.x));
+        ccl::ShaderOutput* z = out(scaled(graph, p->output("Y"), 1.0f, wetLo.y), scaled(graph, p->output("Y"), -1.0f, -wetHi.y));
+        ccl::ShaderOutput* far = math(graph, ccl::NODE_MATH_SQRT,
+                                      math(graph, ccl::NODE_MATH_ADD, math(graph, ccl::NODE_MATH_MULTIPLY, x, 0.0f, x), 0.0f,
+                                           math(graph, ccl::NODE_MATH_MULTIPLY, z, 0.0f, z)),
+                                      0.0f);
+        return math(graph, ccl::NODE_MATH_MULTIPLY, ramp(graph, far, 0.0f, 0.35f, wetness, 0.0f), 0.0f,
+                    ramp(graph, n->output("Z"), 0.1f, 0.7f));
+    }
+
+    /// Wet, `bsdf` of `color`: darker, a film of water over it. The colour.
+    ccl::ShaderOutput* wetten(ccl::ShaderGraph& graph, ccl::PrincipledBsdfNode* bsdf, ccl::ShaderOutput* color) const {
+        if (wetness <= 0.0f) return color;
+        ccl::ShaderOutput* wet = wetOf(graph);
+        graph.connect(wet, bsdf->input("Coat Weight"));
+        bsdf->set_coat_roughness(0.03f);
+        bsdf->set_coat_ior(1.33f);
+        return times(graph, color, scaled(graph, wet, -0.5f, 1.0f));
+    }
+
     /// The shader of a material: a Principled BSDF of the colour of the
     /// surface -- its attribute "Col" times its object's colour (an
     /// instance's tint) -- a translucent one mixed in by the translucency,
@@ -1154,6 +1193,10 @@ struct CyclesRender::Impl {
         if (m.kind == Material::Kind::Water) {
             key.insert(key.end(), {waterGlow.x, waterGlow.y, waterGlow.z, look.waterClarity});
         }
+        if (m.kind == Material::Kind::Surface && wetness > 0.0f) {
+            key.insert(key.end(), {wetness, wetLo.x, wetLo.y, wetHi.x, wetHi.y});
+        }
+        if (m.kind == Material::Kind::Rain) key.push_back(m.opacity);
         if (texture.valid()) {
             key.insert(key.end(), {texture.size, texture.depth, texture.mean.x, texture.mean.y, texture.mean.z,
                                    texture.tint ? 1.0f : 0.0f});
@@ -1236,6 +1279,8 @@ struct CyclesRender::Impl {
                     graph->connect(d.roughness, bsdf->input("Roughness"));
                     graph->connect(d.normal, bsdf->input("Normal"));
                 }
+                // Wet where the rain falls (Scene::wetAt).
+                color = wetten(*graph, bsdf, color);
                 graph->connect(color, bsdf->input("Base Color"));
                 surface = bsdf->output("BSDF");
                 if (m.translucency > 0.0f) {
@@ -1294,6 +1339,33 @@ struct CyclesRender::Impl {
                 graph->connect(path->output("Is Shadow Ray"), notForShadows->input("Fac"));
                 graph->connect(both->output("Closure"), notForShadows->input("Closure1"));
                 graph->connect(notForShadows->output("Closure"), graph->output()->input("Volume"));
+                break;
+            }
+            case Material::Kind::Rain: {
+                // A drop's streak, as ours: water where a ray meets it from
+                // the front, as much of the time as its opacity says --
+                // tinted a little by the rain's colour, as glass is -- and
+                // nothing the rest of the time, nor from behind. Its object
+                // casts no shadow (sync).
+                auto* tinted = graph->create_node<ccl::VectorMathNode>();
+                tinted->set_math_type(ccl::NODE_VECTOR_MATH_MULTIPLY_ADD);
+                graph->connect(color, tinted->input("Vector1"));
+                tinted->set_vector2(ccl::make_float3(0.35f, 0.35f, 0.35f));
+                tinted->set_vector3(ccl::make_float3(0.65f, 0.65f, 0.65f));
+                auto* water = graph->create_node<ccl::GlassBsdfNode>();
+                water->set_IOR(m.ior);
+                water->set_roughness(0.0f);
+                graph->connect(tinted->output("Vector"), water->input("Color"));
+                auto* clear = graph->create_node<ccl::TransparentBsdfNode>();
+                clear->set_color(ccl::one_float3());
+                auto* side = graph->create_node<ccl::GeometryNode>();
+                auto* there = graph->create_node<ccl::MixClosureNode>();
+                graph->connect(math(*graph, ccl::NODE_MATH_MULTIPLY, scaled(*graph, side->output("Backfacing"), -1.0f, 1.0f),
+                                    std::clamp(m.opacity, 0.0f, 1.0f)),
+                               there->input("Fac"));
+                graph->connect(clear->output("BSDF"), there->input("Closure1"));
+                graph->connect(water->output("BSDF"), there->input("Closure2"));
+                surface = there->output("Closure");
                 break;
             }
         }
@@ -1606,19 +1678,22 @@ struct CyclesRender::Impl {
         auto* clear = graph->create_node<ccl::TransparentBsdfNode>();
         clear->set_color(ccl::one_float3());
         auto* geometry = graph->create_node<ccl::GeometryNode>();
+        auto* base = graph->create_node<ccl::ColorNode>();
+        base->set_value(rgb(s.look.groundColor));
+        ccl::ShaderOutput* ground = base->output("Color");
         if (settings.detail > 0.0f) {
             // Patches of a few metres too, and bumps of a few centimetres.
-            auto* base = graph->create_node<ccl::ColorNode>();
-            base->set_value(rgb(s.look.groundColor));
             const float amount = std::clamp(settings.detail, 0.0f, 1.0f);
             ccl::ShaderOutput* patches = noise(*graph, geometry->output("Position"), 0.12f, 3.0f, 0.5f);
             ccl::ShaderOutput* lighter = scaled(*graph, patches, 0.5f * amount, 1.0f - 0.25f * amount);
-            const Detail d = detailOf(*graph, geometry->output("Position"), times(*graph, base->output("Color"), lighter),
+            const Detail d = detailOf(*graph, geometry->output("Position"), times(*graph, ground, lighter),
                                       s.floorMaterial.roughness, amount, 25.0f, 0.3f);
-            graph->connect(d.color, bsdf->input("Base Color"));
+            ground = d.color;
             graph->connect(d.roughness, bsdf->input("Roughness"));
             graph->connect(d.normal, bsdf->input("Normal"));
         }
+        // Wet where the rain falls, as ours (Scene::wetAt).
+        graph->connect(wetten(*graph, bsdf, ground), bsdf->input("Base Color"));
         if (horizon) {
             // To the horizon, hazy far off as the air between scatters the
             // sky's light: the sky just above the horizon the way the eye
@@ -1946,6 +2021,9 @@ struct CyclesRender::Impl {
     void sync(const Scene& s, const Settings& settings) {
         ccl::Scene* scene = session->scene.get();
         waterGlow = s.look.waterColor * (s.skyLight * 1.5f + s.sunLight * (0.35f * std::max(s.sunDirection.y, 0.0f)));
+        wetness = s.wetness;
+        wetLo = glm::floor(s.wetLo * 4.0f) * 0.25f;
+        wetHi = glm::ceil(s.wetHi * 4.0f) * 0.25f;
         // What the last scene had of its own goes; the meshes stay.
         if (!objects.empty()) {
             std::set<ccl::Object*> gone(objects.begin(), objects.end());
@@ -1966,11 +2044,15 @@ struct CyclesRender::Impl {
             }
         }
 
-        // The meshes, where they stand.
+        // The meshes, where they stand -- each made (or found) once however
+        // often it is placed: the grit's chips, a meadow's clumps. Rain
+        // casts no shadow.
+        std::vector<ccl::Mesh*> made(s.meshes.size(), nullptr);
         for (const Placed& p : s.placed) {
             if (p.mesh >= s.meshes.size() || !s.meshes[p.mesh] || s.meshes[p.mesh]->count() == 0) continue;
-            ccl::Mesh* mesh = meshOf(scene, s.meshes[p.mesh], s.look);
-            place(scene, mesh, placement(p.axes, p.scale, p.at), p.tint);
+            if (!made[p.mesh]) made[p.mesh] = meshOf(scene, s.meshes[p.mesh], s.look);
+            ccl::Object* object = place(scene, made[p.mesh], placement(p.axes, p.scale, p.at), p.tint);
+            if (!s.meshes[p.mesh]->shadows) object->set_visibility(ccl::PATH_RAY_ALL_VISIBILITY & ~ccl::PATH_RAY_SHADOW);
         }
         // The scene's objects, each its own mesh, its colour its object's.
         const ccl::Transform turned = placement(Mat3(1.0f), 1.0f, Vec3());

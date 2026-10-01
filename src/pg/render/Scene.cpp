@@ -2,8 +2,10 @@
 
 #include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
+#include "pg/render/Particles.h"
 #include "pg/render/Textures.h"
 #include "pg/sim/Display.h"
+#include "pg/sim/Frame.h"
 
 #include <glm/gtc/quaternion.hpp>
 
@@ -299,6 +301,60 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     return mesh;
 }
 
+std::shared_ptr<const Mesh> meshOfTriangles(const std::vector<Vec3>& corners, const std::vector<Vec3>& normals,
+                                            const Material& material, const Vec3& color, RayEngine engine) {
+    auto mesh = std::make_shared<Mesh>();
+    const size_t n = corners.size() / 3;
+    if (n == 0) return mesh;
+    mesh->materials.push_back(material);
+    mesh->clear = material.kind == Material::Kind::Glass || material.kind == Material::Kind::Water;
+    mesh->shadows = material.kind != Material::Kind::Rain;
+    // Our own hierarchy, and the triangles in the order its leaves take
+    // them; Embree's keeps them as they come (as meshOf).
+    const bool embree = engine == RayEngine::Embree && embreeAvailable();
+    std::vector<Box> boxes(embree ? 0 : n);
+    for (size_t t = 0; t < n; ++t) {
+        for (size_t c = 0; c < 3; ++c) {
+            if (!embree) boxes[t].grow(corners[3 * t + c]);
+            mesh->box.grow(corners[3 * t + c]);
+        }
+    }
+    if (!embree) {
+        mesh->bvh = buildBvh(boxes, 4);
+    } else {
+        mesh->bvh.items.resize(n);
+        std::iota(mesh->bvh.items.begin(), mesh->bvh.items.end(), 0u);
+    }
+    mesh->v0.resize(n);
+    mesh->e1.resize(n);
+    mesh->e2.resize(n);
+    mesh->normals.resize(3 * n);
+    mesh->colors.assign(3 * n, color);
+    mesh->material.assign(n, 0);
+    const bool shaded = normals.size() == corners.size();
+    parallelFor(n, 8192, [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            const size_t t = mesh->bvh.items[i];
+            const Vec3& a = corners[3 * t];
+            mesh->v0[i] = a;
+            mesh->e1[i] = corners[3 * t + 1] - a;
+            mesh->e2[i] = corners[3 * t + 2] - a;
+            const Vec3 face = cross(mesh->e1[i], mesh->e2[i]);
+            const float l = length(face);
+            for (size_t c = 0; c < 3; ++c) {
+                mesh->normals[3 * i + c] = shaded ? normals[3 * t + c] : l > 0.0f ? face / l : Vec3(0.0f, 1.0f, 0.0f);
+            }
+        }
+    });
+    if (embree) {
+        mesh->bvh = Bvh();
+        mesh->embree = EmbreeMesh::build(corners);
+    } else {
+        std::iota(mesh->bvh.items.begin(), mesh->bvh.items.end(), 0u);
+    }
+    return mesh;
+}
+
 bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit) const {
     float best = tMax;
     int placedHit = -1, solidHit = -1;
@@ -408,6 +464,7 @@ namespace {
 bool passThrough(const Mesh& m, uint32_t t, const Placed& p, Vec3& through) {
     const Material& mat = m.materials[m.material[t]];
     if (mat.kind == Material::Kind::Surface) return false;
+    if (mat.kind == Material::Kind::Rain) return true;  // casts no shadow
     if (mat.kind == Material::Kind::Glass) {
         const Vec3 c = (m.colors[3 * t] + m.colors[3 * t + 1] + m.colors[3 * t + 2]) * (1.0f / 3.0f) * p.tint;
         through = through * (Vec3(1.0f, 1.0f, 1.0f) * 0.65f + c * 0.35f) * 0.92f;
@@ -454,6 +511,7 @@ Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax) const
             }
             const Placed& p = placed[item];
             const Mesh& m = *meshes[p.mesh];
+            if (!m.shadows) continue;
             const Vec3 o = p.toLocal(origin), d = p.dirToLocal(dir);
             traverse(m.bvh, o, d, 0.0f, tMax, [&](uint32_t f, uint32_t c) {
                 for (uint32_t t = f; t < f + c; ++t) {
@@ -496,6 +554,13 @@ Vec3 Scene::background(const Vec3& dir, float up) const {
     const Vec3 top(0.075f, 0.082f, 0.095f), bottom(0.022f, 0.023f, 0.027f);
     const float u = std::clamp(up, 0.0f, 1.0f);
     return (bottom + (top - bottom) * u) * (1.0f / std::max(look.exposure, 1e-6f));
+}
+
+float Scene::wetAt(const Vec3& p, const Vec3& n) const {
+    if (wetness <= 0.0f) return 0.0f;
+    const float dx = std::max({wetLo.x - p.x, p.x - wetHi.x, 0.0f});
+    const float dz = std::max({wetLo.y - p.z, p.z - wetHi.y, 0.0f});
+    return wetness * (1.0f - smoothstep(0.0f, 0.35f, std::sqrt(dx * dx + dz * dz))) * smoothstep(0.1f, 0.7f, n.y);
 }
 
 Vec3 Scene::sunRadiance() const {
@@ -573,18 +638,39 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
             add(meshOf(*in.geometry, false, engine_));
         }
     }
-    if (in.bodies) add(meshOf(*in.bodies, false, engine_));
+    if (in.bodies) {
+        add(meshOf(*in.bodies, false, engine_));
+        // Their grit: a chip on each of its points.
+        placeChips(*in.bodies, s);
+    }
     if (in.water) add(meshOf(*in.water, true, engine_));
+    // The rain: each drop the streak it falls in a share of a frame; wet
+    // where it falls, as far as the drops reach in x and z.
+    if (in.frame && in.frame->rain.dropCount() + in.frame->rain.dropletCount() > 0) {
+        const sim::RainFrame& rain = in.frame->rain;
+        add(rainMesh(rain, in.look, engine_, &in.camera.position));
+        // Wet as far as the drops reach -- the splashes' droplets aside.
+        Vec2 lo(1e30f), hi(-1e30f);
+        for (size_t i = 0; i + 5 < rain.drops.size(); i += 6) {
+            lo = glm::min(lo, Vec2(rain.drops[i], rain.drops[i + 2]));
+            hi = glm::max(hi, Vec2(rain.drops[i], rain.drops[i + 2]));
+        }
+        if (lo.x <= hi.x) {
+            s.wetness = std::clamp(in.look.wetness, 0.0f, 1.0f);
+            s.wetLo = lo;
+            s.wetHi = hi;
+        }
+    }
     s.solids = in.solids;
     s.shapes.reserve(s.solids.size());
     for (const sim::Solid& solid : s.solids) s.shapes.push_back(solid.body.instance());
     // The smoke and the fire: made once a frame, however often it is rendered.
     s.gasLook = GasLook::of(in.look);
-    if (in.gas) {
+    if (in.frame) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (gasFrame_.lock() != in.gas) {
-            gas_ = Gas::build(*in.gas);
-            gasFrame_ = in.gas;
+        if (gasFrame_.lock() != in.frame) {
+            gas_ = Gas::build(*in.frame);
+            gasFrame_ = in.frame;
         }
         s.gas = gas_;
     }

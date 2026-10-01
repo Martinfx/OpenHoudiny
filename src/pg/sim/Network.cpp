@@ -1628,13 +1628,16 @@ std::vector<NodeType> buildTypes() {
                   {"end", "End", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
                    "When it stops. At or before the start, it never does."},
                   {"color", "Color", "Look", K::Color, {0.75f, 0.8f, 0.9f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-                   "The colour of the drops in the light of the sky."},
+                   "The colour of the drops in the light of the sky; in a render, the tint of the water."},
                   {"opacity", "Opacity", "Look", K::Float, {0.35f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-                   "How much of what is behind a drop it hides."},
+                   "How much of what is behind a drop it hides. In a render, each drop is water a ray meets as "
+                   "much of the time as this says -- a drop smeared by its motion."},
                   {"streak", "Streak", "Look", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 4.0f, "",
-                   "How long a drop is drawn: as far as it falls in this share of a frame -- motion blur."},
+                   "How long a drop is drawn: as far as it falls in this share of a frame -- motion blur. The "
+                   "renderers draw it so too."},
                   {"wet", "Wet Floor", "Look", K::Float, {0.6f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-                   "How wet the floor looks: darker, and shining with the sky."}},
+                   "How wet the floor looks: darker, and shining with the sky. In a render, whatever faces up "
+                   "under the rain."}},
                  1});
     t.back().handles = {"center", nullptr, nullptr, "size", nullptr, nullptr};
     t.push_back({"water_look", "Water Look", "Render",

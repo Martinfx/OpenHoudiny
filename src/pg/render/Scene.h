@@ -11,6 +11,13 @@
 //            prototype (core/Instances.h) is a mesh once, placed on each
 //            point that stands for it -- a meadow of 122 000 clumps costs 8
 //            clumps and the placements.
+//   grit     the pieces' loose points: chips of stone and slivers of glass
+//            (Particles.h), a few shapes placed on each point -- as big as
+//            its pscale, turned as it tumbles.
+//   rain     the frame's drops and droplets, each the streak it falls in a
+//            share of a frame (Look::rainStreak): water, there as much of
+//            the time as Look::rainOpacity says, casting no shadow. What it
+//            falls on is wet (Scene::wetAt): darker, and shining.
 //   shapes   the objects of the scene, met exactly (sim::ShapeInstance), in
 //            a hierarchy of our own.
 //   floor    the Output's floor at y 0, fading out far away as the
@@ -50,12 +57,17 @@
 namespace pg::render {
 
 struct Material {
-    enum class Kind : uint8_t { Surface, Glass, Water };
+    /// Rain: a drop's streak (Particles.h) -- water where a ray meets it from
+    /// the front, as much of the time as `opacity` says, its drop there;
+    /// passed through the rest of the time, and from behind. It casts no
+    /// shadow.
+    enum class Kind : uint8_t { Surface, Glass, Water, Rain };
     Kind kind = Kind::Surface;
     float roughness = 0.5f;
     float metallic = 0.0f;
     float translucency = 0.0f;
     float ior = 1.5f;
+    float opacity = 1.0f;  ///< Rain: how much of the time its drop is there
     /// What it is made of (s@material): Cycles draws its pattern, both
     /// renderers its photographs (render/Textures.h).
     MaterialPreset preset = MaterialPreset::None;
@@ -106,7 +118,8 @@ struct Mesh {
     Bvh bvh;                                   ///< our own: its leaves' items are the triangles' numbers
     std::shared_ptr<const EmbreeMesh> embree;  ///< Embree's: its triangles' numbers are ours
     Box box;
-    bool clear = false;  ///< some of it is glass or water
+    bool clear = false;   ///< some of it is glass or water
+    bool shadows = true;  ///< it casts shadows -- rain casts none
     size_t count() const { return v0.size(); }
 };
 
@@ -114,6 +127,12 @@ struct Mesh {
 /// (instances) left out -- its materials from its attributes; `water`: all
 /// of it water. Its hierarchy `engine`'s.
 std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water = false, RayEngine engine = defaultRayEngine());
+
+/// A mesh of triangles as they are -- three corners each, a normal at each
+/// corner -- all of `material`, of `color`. Its hierarchy `engine`'s.
+std::shared_ptr<const Mesh> meshOfTriangles(const std::vector<Vec3>& corners, const std::vector<Vec3>& normals,
+                                            const Material& material, const Vec3& color,
+                                            RayEngine engine = defaultRayEngine());
 
 /// A mesh where it stands: turned by `axes` (its columns the images of the
 /// mesh's axes), `scale` times as big, moved to `at`; its colours times `tint`.
@@ -173,6 +192,11 @@ struct Scene {
     float floorRadius = 1e30f;  ///< where the floor has faded out, from the origin
     sim::Camera camera;
     float time = 0.0f;          ///< seconds into the shot (SceneInput::time)
+    /// Where the rain wets what it falls on, as the viewport has it: within
+    /// the drops' extent in x and z (wetLo to wetHi), drying off some 35 cm
+    /// out; how wet there (Look::wetness) -- 0 without rain.
+    float wetness = 0.0f;
+    Vec2 wetLo, wetHi;
 
     /// The first surface a ray from `origin` along the unit `dir` meets
     /// before `tMax`. `fade`, in [0, 1): whether the floor, fading out far
@@ -193,6 +217,9 @@ struct Scene {
     Vec3 background(const Vec3& dir, float up) const;
     /// The sun's light, per unit of solid angle, from within its disc.
     Vec3 sunRadiance() const;
+    /// How wet the rain has made a surface at `p` facing `n` (its side seen),
+    /// 0 to 1: under it, and facing up -- as the viewport wets the floor.
+    float wetAt(const Vec3& p, const Vec3& n) const;
 };
 
 /// What a frame shows.
@@ -200,7 +227,8 @@ struct SceneInput {
     GeometryPtr geometry;  ///< the displayed node's
     GeometryPtr bodies;    ///< the solvers' pieces and cloth (sim::drawnBodies)
     GeometryPtr water;     ///< the water's surface (sim::waterMesh)
-    std::shared_ptr<const sim::Frame> gas;  ///< the frame whose smoke and fire are rendered
+    /// The frame whose smoke and fire, and rain, are rendered; null for none.
+    std::shared_ptr<const sim::Frame> frame;
     std::vector<sim::Solid> solids;
     sim::Look look;
     sim::Camera camera;

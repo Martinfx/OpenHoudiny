@@ -189,16 +189,22 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, Ve
     const Vec3 gasAlbedo = clamp01(gasLook.albedo);
     bool specular = true, inWater = false;
     float lastPdf = 0.0f;
-    int bounces = 0, turns = 0;
+    int bounces = 0, turns = 0, streaks = 0;
     for (;;) {
         Hit hit;
         const bool met = scene.intersect(origin, dir, kInfinity, rng.next(), hit);
+        // A streak of rain: its drop there as much of the time as its
+        // opacity says -- met from the front; passed through the rest of the
+        // time, and from behind (the light that went in comes out bent once,
+        // as Cycles has it).
+        const bool past = met && hit.material->kind == Material::Kind::Rain &&
+                          (dot(hit.face, dir) >= 0.0f || rng.next() >= hit.material->opacity);
         if (met && !textures.empty()) {
             if (const auto it = textures.find(hit.material); it != textures.end()) {
                 hit.color = it->second->shade(hit.color, hit.tint, hit.rest, hit.restFace);
             }
         }
-        if (turns == 0 && met) {
+        if (turns == 0 && met && !past) {
             // What the camera ray meets, for the denoiser to go by -- the gas
             // before it comes in as a whole pixel sees it (PathTracer::pass).
             out.depth = hit.t;
@@ -276,8 +282,13 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, Ve
             break;
         }
         const Material& m = *hit.material;
-        ++turns;
         const float eps = 1e-4f * (1.0f + std::max(std::fabs(hit.position.x), std::max(std::fabs(hit.position.y), std::fabs(hit.position.z))));
+        if (past) {
+            if (++streaks > 1024) break;
+            origin = hit.position + dir * eps;
+            continue;
+        }
+        ++turns;
 
         if (m.kind != Material::Kind::Surface) {
             // Glass and water: reflected, else bent into it or out of it.
@@ -297,7 +308,7 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, Ve
                 const float c2 = 1.0f - k * k * (1.0f - cosi * cosi);
                 dir = normalize(dir * k + n * (k * cosi - std::sqrt(std::max(c2, 0.0f))));
                 origin = hit.position - face * eps;
-                if (m.kind == Material::Kind::Glass && entering) {
+                if ((m.kind == Material::Kind::Glass || m.kind == Material::Kind::Rain) && entering) {
                     beta = beta * (Vec3(1.0f, 1.0f, 1.0f) * 0.65f + clamp01(hit.color) * 0.35f);
                 }
                 if (m.kind == Material::Kind::Water) inWater = entering;
@@ -314,7 +325,16 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, Ve
             n = n * -1.0f;
         }
         if (dot(n, dir) >= 0.0f) n = face;
-        const Surface surface(hit.color, m, dir * -1.0f, n);
+        // Wet where the rain falls: darker, and smoother -- a film of water on it.
+        const float wet = scene.wetAt(hit.position, n);
+        Material wetted;
+        if (wet > 0.0f) {
+            wetted.roughness = m.roughness + (0.06f - m.roughness) * wet;
+            wetted.metallic = m.metallic;
+            wetted.translucency = m.translucency;
+        }
+        const Surface surface(wet > 0.0f ? hit.color * (1.0f - 0.5f * wet) : hit.color, wet > 0.0f ? wetted : m,
+                              dir * -1.0f, n);
 
         // The sun, directly: a point of its disc, if nothing is in the way.
         if (sunOn) {

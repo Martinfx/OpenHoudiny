@@ -371,7 +371,9 @@ Seřazeno podle poměru hodnota / náklad:
    beton, omítka, cihla, okno, ocel, dlažba, tašky, trávník…), fotografie
    povrchů z knihovny (patnáct sad) a vlastní textury kladené ze tří stran
    nebo podél plochy podle polohy kusu před pohybem
-   ([materials.md](docs/materials.md)).
+   ([materials.md](docs/materials.md)); drť jako hranaté úlomky kamene
+   a skla, déšť jako čárky vody a mokrý povrch, kam prší
+   ([pathtracer.md](docs/pathtracer.md#drť-déšť-a-mokrý-povrch)).
    Zbývá: Cycles na GPU, rozmazání pohybem, UV a normálové mapy, barevná
    správa OCIO/ACES. Do té doby renderují studia náročné záběry přes USD
    vlastními renderery.

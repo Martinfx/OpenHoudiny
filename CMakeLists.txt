@@ -312,6 +312,7 @@ add_library(pgsim
   src/pg/render/Embree.cpp
   src/pg/render/Gas.cpp
   src/pg/render/Scene.cpp
+  src/pg/render/Particles.cpp
   src/pg/render/PathTracer.cpp
   src/pg/render/Save.cpp
   src/pg/render/Textures.cpp
@@ -971,6 +972,7 @@ add_executable(pgtests
   tests/test_glass.cpp
   tests/test_bricks.cpp
   tests/test_materials.cpp
+  tests/test_particles.cpp
   tests/test_constraints.cpp
   tests/test_debris.cpp
   tests/test_guide.cpp

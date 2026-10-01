@@ -1190,7 +1190,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             if (!geometryOnly) {
                 in.bodies = sim::drawnBodies(*current, in.look);
                 if (!current->water.empty() && in.look.waterSurface) in.water = sim::waterMesh(current->water, &current->rain);
-                in.gas = current;
+                in.frame = current;
             }
             in.solids = c.solidsAt(f);
             in.camera = throughCamera ? c.cameraAt(f)
