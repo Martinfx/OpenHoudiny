@@ -62,6 +62,11 @@ if(NOT TARGET glm::glm)
     GIT_TAG 1.0.1
     GIT_SHALLOW TRUE)
   FetchContent_MakeAvailable(glm)
+  if(NOT TARGET glm-header-only)
+    message(FATAL_ERROR "GLM 1.0 or newer is needed and could not be downloaded. "
+      "Install it (FreeBSD: pkg install glm; Debian 13, Ubuntu 25.04: apt install libglm-dev) "
+      "or point FETCHCONTENT_SOURCE_DIR_GLM at a checkout of github.com/g-truc/glm 1.0.1.")
+  endif()
   # Its headers as the system's: our warnings are not about them.
   get_target_property(PG_GLM_INCLUDES glm-header-only INTERFACE_INCLUDE_DIRECTORIES)
   set_target_properties(glm-header-only PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PG_GLM_INCLUDES}")

@@ -118,12 +118,18 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Vektory, matice a kvaterniony počítá celý program knihovnou **GLM**
+(OpenGL Mathematics, MIT, jen hlavičky). Použije se systémová verze 1.0
+nebo novější (`pkg install glm` na FreeBSD, `sudo apt install libglm-dev`
+na Debianu 13 a Ubuntu 25.04), jinak ji CMake stáhne. Starší balíčky
+(Ubuntu 24.04 má 0.9.9) se přeskočí.
+
 Výchozí build obsahuje editor: při konfiguraci stáhne Dear ImGui a GLFW,
 pokud v systému není (`sudo apt install libglfw3-dev`). Když najde vývojové
 soubory Pythonu (`python3-dev`), stáhne pybind11 a postaví i modul `pg` do
 `build/python` ([docs/python.md](docs/python.md)); jiný Python vybere
 `-DPython3_EXECUTABLE=…`. Bez editoru a bez Pythonu nemá build žádné
-externí závislosti kromě Jolt, stačí C++20 a standardní knihovna:
+externí závislosti kromě Jolt a GLM, stačí C++20 a standardní knihovna:
 
 ```bash
 cmake -S . -B build -DPG_BUILD_GUI=OFF -DPG_BUILD_PYTHON=OFF

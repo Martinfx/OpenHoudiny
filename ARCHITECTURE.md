@@ -321,12 +321,34 @@ studia musí smět psát proprietární uzly.
 | Obrázky, barvy | OpenImageIO, OpenColorIO, OpenEXR | BSD / Apache 2.0 |
 | Materiály | MaterialX, OSL | Apache 2.0 / BSD |
 | Threading | Intel TBB | Apache 2.0 |
+| Vektory, matice, kvaterniony | **GLM** (hotovo: `Vec3` je `glm::vec3`, `Mat4` `glm::mat4`, `Quat` `glm::quat`) | MIT |
 | Rigid body | **Jolt Physics** (krok 2, hotovo: [docs/destruction.md](docs/destruction.md)) | MIT |
 | Python vazby | **pybind11** (krok 3, hotovo: [docs/python.md](docs/python.md)) | BSD |
 | JIT | LLVM ORC | Apache 2.0 + LLVM ex. |
 | GUI | Qt 6 | LGPL (dynamicky linkovat) |
 
 **CGAL se nepoužije** — je GPL/komerční. Proto Manifold na booleany.
+
+**GLM** počítá všechnu lineární algebru: vektory, matice (sloupcová
+konvence GLM, `B * A` je nejdřív A, pak B), kvaterniony, kameru náhledů
+(`glm::lookAt`, `glm::perspective`), Eulerovy úhly (`glm::eulerAngleZYX`)
+i inverze. Každý soubor ho vidí stejně přes cíl `pgmath`:
+- `GLM_FORCE_CTOR_INIT`: vektor bez hodnot je nulový, matice jednotková.
+- `GLM_FORCE_XYZW_ONLY`: vektor jsou jen `x`, `y`, `z`, `w`, tři floaty za
+  sebou, jak je ukládají atributy.
+
+Vlastní zůstaly jen konvence programu, ne matematika:
+- `normalize` nechá nulový vektor nulový,
+- `quatUpTo` je nejkratší otočení +y do normály,
+- `Rotation::toEuler` volí úhly nejblíž předchozím,
+- matice jazyka wrangle mají řádky VEXu, což jsou v paměti tytéž hodnoty
+  jako sloupce GLM, a bez hodnoty jsou nulové.
+
+Přechod na GLM ověřily otisky všech 44 příkladů. Prvních šest snímků
+každé simulace (v náhledovém rozlišení) vyšlo bit po bitu stejně. Vařená
+geometrie stromů, trávy a ulice se posunula jen o zaokrouhlení, nejvýš
+o 0,023 mm. Topologie zůstala stejná a barva se změnila jen u 40
+z 26,9 milionu bodů louky, o jeden stupeň z 255.
 
 **OpenUSD + Hydra** stojí za zdůraznění: dává viewport (Storm), napojení na
 libovolný produkční renderer přes render delegates, a hlavně okamžitou
@@ -338,7 +360,7 @@ projektu.
 ## 8. Rozvržení zdrojů
 
 ```
-src/pg/core/     Types      vektory, matice, typy atributů
+src/pg/core/     Types      vektory, matice a kvaterniony (GLM), transformace, typy atributů
                  Attribute  AttributeArray (COW), AttributeSet
                  Geometry   kontejner, topologie, skupiny, objemy, hash
                  Parallel   deterministické chunkování, thread pool
