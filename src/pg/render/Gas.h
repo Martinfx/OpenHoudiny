@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace pg::sim {
 struct Frame;
@@ -108,6 +109,19 @@ public:
     /// average the light the smoke sends back comes from (infinity: none).
     void seen(const Vec3& origin, const Vec3& dir, float tMax, const GasLook& look, float& through,
               float& depth) const;
+
+    /// The gas as a renderer that reads a grid with no holes in it takes it
+    /// (Cycles): the light it stops and gives off per world unit (as
+    /// extinction() and emission() have them) at the middles of the cells
+    /// of the box round the tiles it fills -- of blocks of cells, as few as
+    /// make no more than `most`. x fastest, then y, then z.
+    struct Dense {
+        Box box;                      ///< what the cells fill
+        int size[3] = {0, 0, 0};      ///< cells along each axis
+        std::vector<float> extinction;
+        std::vector<Vec3> emission;   ///< empty where nothing glows
+    };
+    Dense dense(const GasLook& look, size_t most) const;
 
     struct Grid;  // NanoVDB's, and the most of each tile
 

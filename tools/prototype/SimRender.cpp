@@ -4,6 +4,7 @@
 
 #include "Theme.h"
 #include "Widgets.h"
+#include "pg/render/Cycles.h"
 #include "pg/render/Denoise.h"
 
 #include <cmath>
@@ -44,7 +45,12 @@ sim::Camera SimWorkspace::renderCamera(int width, int height) const {
 }
 
 void SimWorkspace::renderTab(int width, int height) {
-    if (!renderView_) renderView_ = std::make_unique<RenderView>();
+    if (!renderView_) {
+        renderView_ = std::make_unique<RenderView>();
+        // Cycles' first pictures are of fewer, larger pixels anyway: the
+        // whole pane from the start.
+        if (renderView_->engine() == RenderView::Engine::Cycles) renderScale_ = 2;
+    }
     if (renderAutoPaused_) {
         renderView_->setPaused(false);
         renderAutoPaused_ = false;
@@ -65,6 +71,23 @@ void SimWorkspace::renderTab(int width, int height) {
                           false, st.samples > 0)) {
         files_.open("Save render", {".png", ".exr"}, true, (fs::path(renderFolder()) / (stem() + "_render.png")).string());
         fileAction_ = FileAction::SaveRender;
+    }
+    ImGui::SameLine();
+    // Which renderer: Cycles, Blender's, when the build has it -- or ours.
+    const RenderView::Engine engine = renderView_->engine();
+    ImGui::SetNextItemWidth(theme::px(104.0f));
+    if (ImGui::BeginCombo("##render.engine", RenderView::engineName(engine))) {
+        for (const RenderView::Engine e : {RenderView::Engine::Cycles, RenderView::Engine::PathTracer}) {
+            const bool can = e != RenderView::Engine::Cycles || render::cyclesAvailable();
+            if (ImGui::Selectable(RenderView::engineName(e), e == engine, can ? 0 : ImGuiSelectableFlags_Disabled)) {
+                renderView_->setEngine(e);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(render::cyclesAvailable() ? "Cycles: Blender's renderer. Path tracer: ours"
+                                                    : "Cycles: not in this build (it needs OpenImageIO)");
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(theme::px(70.0f));
@@ -97,19 +120,32 @@ void SimWorkspace::renderTab(int width, int height) {
     if (st.building) {
         std::snprintf(progress, sizeof progress, "building the scene\xe2\x80\xa6");
     } else if (st.of > 0) {
-        const double mpaths = static_cast<double>(st.paths) / std::max(st.seconds, 1e-3) * 1e-6;
-        std::snprintf(progress, sizeof progress, "%d / %d samples  \xc2\xb7  %.1f s  \xc2\xb7  %.2f M paths/s%s", st.samples,
-                      st.of, st.seconds, mpaths, paused ? "  \xc2\xb7  paused" : st.samples >= st.of ? "  \xc2\xb7  done" : "");
+        // Paths a second: the path tracer's count; Cycles keeps none.
+        char rate[48] = "";
+        if (st.paths > 0) {
+            std::snprintf(rate, sizeof rate, "  \xc2\xb7  %.2f M paths/s",
+                          static_cast<double>(st.paths) / std::max(st.seconds, 1e-3) * 1e-6);
+        }
+        std::snprintf(progress, sizeof progress, "%d / %d samples  \xc2\xb7  %.1f s%s%s", st.samples, st.of, st.seconds,
+                      rate, paused ? "  \xc2\xb7  paused" : st.samples >= st.of ? "  \xc2\xb7  done" : "");
     } else {
         std::snprintf(progress, sizeof progress, "starting\xe2\x80\xa6");
     }
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", progress);
-    ImGui::SetItemTooltip("Rays through %s; the gas %s; the noise taken out by %s",
-                          render::rayEngineName(render::defaultRayEngine()).c_str(),
-                          render::gasAvailable() ? ("through " + render::gasLibrary()).c_str()
-                                                 : "not rendered: built without NanoVDB",
-                          render::denoiserName(render::defaultDenoiser()).c_str());
+    if (engine == RenderView::Engine::Cycles) {
+        const std::string denoiser = render::cyclesDenoiser();
+        ImGui::SetItemTooltip("%s, Blender's renderer; the gas %s; %s", render::cyclesVersion().c_str(),
+                              render::gasAvailable() ? "in it" : "not rendered: built without NanoVDB",
+                              denoiser.empty() ? "the noise left in: built without Open Image Denoise"
+                                               : ("the noise taken out by " + denoiser).c_str());
+    } else {
+        ImGui::SetItemTooltip("Rays through %s; the gas %s; the noise taken out by %s",
+                              render::rayEngineName(render::defaultRayEngine()).c_str(),
+                              render::gasAvailable() ? ("through " + render::gasLibrary()).c_str()
+                                                     : "not rendered: built without NanoVDB",
+                              render::denoiserName(render::defaultDenoiser()).c_str());
+    }
 
     // What it renders: the picture's size -- the camera's, or the pane's --
     // times the scale.

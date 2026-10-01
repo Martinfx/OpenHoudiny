@@ -8,6 +8,10 @@ se v kouři a prachu a končí na slunci, na obloze nebo v plameni. Počítá se
 kartu. Stejný render dá **záložka Render** v editoru vedle Viewportu
 i příkazová řádka (`prototype sim … --renderer path`), třeba na farmě.
 
+Výchozí renderer záložky Render je dnes **Cycles** z Blenderu
+([cycles.md](cycles.md)). Path tracer se v záložce vybere v liště volbou
+**Path tracer** a renderuje i v buildu bez Cycles.
+
 ![Louka: vlevo viewport (OpenGL), vpravo path tracer, 64 vzorků na pixel](img/pathtracer-meadow.jpg)
 
 ![Tráva zblízka: vlevo viewport, vpravo path tracer. Stébla prosvítají, stín pod stromy je prosvětlený odraženým světlem](img/pathtracer-grass.jpg)
@@ -56,6 +60,7 @@ editoru.
 
 | prvek | co dělá |
 |---|---|
+| Cycles / Path tracer | čím se renderuje ([cycles.md](cycles.md)) |
 | ▶ / ⏸ | pozastaví nebo spustí render (po návratu z Viewportu pokračuje sám) |
 | ↻ | začne znovu od nuly |
 | 📷 | uloží render do PNG nebo EXR |
@@ -65,10 +70,13 @@ editoru.
 
 Render běží ve vlastním vlákně na všech jádrech a okno zůstává plynulé.
 Při odchodu na záložku Viewport se zastaví, takže viewport dostane
-procesor. Při změně scény se rozpracovaný průchod přeruší hned
-a začne nový. Obraz se odšumí po prvním průchodu, na konci a mezi tím
-vždy, když průchody od posledního odšumění trvaly aspoň tak dlouho jako
-odšumění samo. Odšumění tak nezabere víc než polovinu času. Mezi tím
+procesor. Při změně scény se rozpracovaný průchod přeruší a začne nový.
+Nová scéna ale nejdřív dokončí svůj první průchod, takže při přehrávání
+simulace záložka ukazuje snímek po snímku, jak rychle se stihnou
+spočítat. Snímek, na kterém se přehrávání zastaví, se renderuje dál.
+Obraz se odšumí po prvním průchodu, na konci a mezi tím vždy, když
+průchody od posledního odšumění trvaly aspoň tak dlouho jako odšumění
+samo. Odšumění tak nezabere víc než polovinu času. Mezi tím
 zůstane vidět poslední odšuměný obraz.
 
 Na čtyřjádrovém stroji bez grafické karty je první obraz louky

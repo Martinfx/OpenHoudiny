@@ -3,10 +3,13 @@
 // frame holds, faded as the viewport fades it; delta tracking scatters light
 // as often as the smoke stops it and adds up the light the flames give off;
 // ratio tracking lets through what the smoke lets through; the flames glow
-// as the viewport's; the look's colour comes out of thick smoke; and a render
-// with gas shades, casts a shadow, glows, and is the same however it is run.
+// as the viewport's; the look's colour comes out of thick smoke; a render
+// with gas shades, casts a shadow, glows, and is the same however it is run;
+// and the grids Cycles reads (Gas::dense) are the gas, which Cycles renders
+// as the path tracer does.
 //
 #include "pg/core/Parallel.h"
+#include "pg/render/Cycles.h"
 #include "pg/render/Gas.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Random.h"
@@ -362,4 +365,82 @@ TEST(render_gas_is_the_same_however_it_is_run) {
     SceneBuilder builder;
     const auto first = builder.build(in), again = builder.build(in);
     CHECK(first->gas && first->gas == again->gas);
+}
+
+TEST(gas_dense_grids_are_the_gas_at_the_cells_middles) {
+    if (!gasAvailable()) return;
+    const int n = 32;
+    const sim::Frame f = frameOf(n, 0.05f, [&](int i, int j, int k) { return blob(i, j, k, n); }, true);
+    const auto gas = Gas::build(f);
+    CHECK(gas != nullptr);
+    if (!gas) return;
+    const GasLook look;
+    const Gas::Dense d = gas->dense(look, size_t(1) << 30);
+    const size_t cells = static_cast<size_t>(d.size[0]) * static_cast<size_t>(d.size[1]) * static_cast<size_t>(d.size[2]);
+    CHECK(cells > 0 && d.extinction.size() == cells);
+    CHECK_EQ(d.emission.size(), cells);  // the blob burns low in it
+    // The box: the domain's, but for the empty tiles round the blob -- a
+    // cell of reading past those that hold it.
+    for (int a = 0; a < 3; ++a) {
+        CHECK(d.box.lo[a] >= -0.8f - 1e-4f && d.box.hi[a] <= 0.8f + (a == 1 ? 0.8f : 0.0f) + 1e-4f);
+        CHECK_NEAR((d.box.hi[a] - d.box.lo[a]) / d.size[a], 0.05f, 1e-5f);
+    }
+    // Each cell: the light the gas stops and gives off at its middle.
+    std::mt19937 rng(3);
+    for (int t = 0; t < 2000; ++t) {
+        const int x = static_cast<int>(rng() % static_cast<unsigned>(d.size[0]));
+        const int y = static_cast<int>(rng() % static_cast<unsigned>(d.size[1]));
+        const int z = static_cast<int>(rng() % static_cast<unsigned>(d.size[2]));
+        const Vec3 p = d.box.lo + Vec3(x + 0.5f, y + 0.5f, z + 0.5f) * 0.05f;
+        const Vec3 fields = gas->at(p);
+        const size_t i = static_cast<size_t>(x) + static_cast<size_t>(d.size[0]) * (static_cast<size_t>(y) + static_cast<size_t>(d.size[1]) * static_cast<size_t>(z));
+        CHECK_NEAR(d.extinction[i], Gas::extinction(fields, look), 1e-4f * (1.0f + d.extinction[i]));
+        const Vec3 e = Gas::emission(fields, look);
+        CHECK_NEAR(d.emission[i].x, e.x, 1e-4f * (1.0f + e.x));
+        CHECK_NEAR(d.emission[i].z, e.z, 1e-4f * (1.0f + e.z));
+    }
+    // Too many cells: blocks of them, as few as fit -- the same box.
+    const Gas::Dense coarse = gas->dense(look, cells / 6);
+    const size_t fewer = static_cast<size_t>(coarse.size[0]) * static_cast<size_t>(coarse.size[1]) * static_cast<size_t>(coarse.size[2]);
+    CHECK(fewer <= cells / 6 && fewer >= cells / 27);
+    for (int a = 0; a < 3; ++a) {
+        CHECK_NEAR(coarse.box.lo[a], d.box.lo[a], 1e-5f);
+        CHECK(coarse.box.hi[a] >= d.box.hi[a] - 1e-5f);
+    }
+    // Smoke without fire: nothing given off, no grid of it.
+    const auto smoke = Gas::build(frameOf(16, 0.1f, [](int i, int, int) { return Vec3(i > 4 ? 0.5f : 0.0f, 0.0f, 0.0f); }, false));
+    CHECK(smoke && smoke->dense(look, size_t(1) << 30).emission.empty());
+}
+
+TEST(render_cycles_renders_the_gas_as_the_path_tracer_does) {
+    if (!gasAvailable() || !cyclesAvailable()) return;
+    const int w = 64, h = 40;
+    Settings s;
+    s.width = w;
+    s.height = h;
+    s.samples = 64;
+    s.denoise = false;
+    auto cycles = [&](std::shared_ptr<const Scene> scene) {
+        CyclesRender r;
+        r.start(std::move(scene), s);
+        r.wait();
+        return r.beauty();
+    };
+    const auto withGas = gasScene(true, w, h);
+    const Image a = cycles(withGas), b = cycles(gasScene(false, w, h)), ours = rendered(withGas, w, h, 64);
+    CHECK_EQ(a.width, w);
+    const sim::Camera& cam = withGas->camera;
+    const Vec3 under(-0.19f, 0.0f, 0.0f), fire(0.4f, 0.31f, -0.03f), slab(-0.19f, 0.95f, 0.5f);
+    const double shadeA = meanAt(a, 1, cam, under), shadeB = meanAt(b, 1, cam, under);
+    const double fireR = meanAt(a, 0, cam, fire), fireB = meanAt(a, 2, cam, fire), floorR = meanAt(b, 0, cam, fire);
+    const double smokeA = meanAt(a, 1, cam, slab), smokeOurs = meanAt(ours, 1, cam, slab);
+    const double fireOurs = meanAt(ours, 0, cam, fire);
+    std::printf("  %s: floor under the smoke %.3f (%.3f without); fire %.3f red (ours %.3f), %.3f blue (floor %.3f); "
+                "the smoke %.3f (ours %.3f)\n",
+                cyclesVersion().c_str(), shadeA, shadeB, fireR, fireOurs, fireB, floorR, smokeA, smokeOurs);
+    // Its shadow, its fire; as bright as ours.
+    CHECK(shadeA < 0.5 * shadeB);
+    CHECK(fireR > 1.5 * floorR && fireR > 1.5 * fireB);
+    CHECK(std::fabs(fireR / fireOurs - 1.0) < 0.3);
+    CHECK(std::fabs(smokeA / smokeOurs - 1.0) < 0.3);
 }

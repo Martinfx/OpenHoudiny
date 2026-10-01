@@ -7,8 +7,9 @@ dalšího; `.mp4`, `.mov`, `.mkv` (H.264), `.webm` (VP9) a `.gif` zapíše přes
 pro simulace i pro náhled shaderu. Pro compositing jde snímek do **EXR**:
 v lineárním světle a s průchody — hloubkou, vektory pohybu a maskami
 ([§4](#4-exr-pro-compositing)). Pořádný render se sledováním světla
-(path tracer) je v záložce **Render** a v `--renderer path`: viz
-[pathtracer.md](pathtracer.md).
+je v záložce **Render**: Cycles z Blenderu (`--renderer cycles`, viz
+[cycles.md](cycles.md)) nebo vlastní path tracer (`--renderer path`, viz
+[pathtracer.md](pathtracer.md)).
 
 ![Editor: render videa běží -- okno s průběhem, odhadem času a tlačítkem Stop](img/editor-render.png)
 

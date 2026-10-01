@@ -528,6 +528,7 @@ private:
     uint64_t posedRevision_ = ~0ull;
     Vec3 framedSize_;  ///< the domain the camera was framed for, world units
     bool framed_ = false;
+    bool geometryFramed_ = false;  ///< the geometry shown framed since the network opened
     bool throughCamera_ = false;  ///< the viewport looks through the Output's camera
     std::string shownPlate_;      ///< the plate the renderer has, through the camera
     sim::Camera plateCamera_;     ///< and the camera it was set for

@@ -75,7 +75,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Geometrie v editoru | 30 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture, Convert Volume, Liquid Surface), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Stromy | Uzel Tree: kmen s vidlicí, tři úrovně větví, sedm tvarů koruny, listy a jehličí, les na bodech, `flex` pro vítr, kostra pro vlastní listy; deterministicky na libovolném počtu vláken | [docs/trees.md](docs/trees.md) |
 | Vegetace | Instance: body, které zastupují prototypy (GPU instancing, USD PointInstancer, Unpack); uzel Grass (trsy trávy), stromy a keře jako varianty; Scatter s hustotou, maskou, sklonem a odstupem; louka u lesa ve větru | [docs/vegetation.md](docs/vegetation.md) |
-| Render | Path tracer na procesoru: paprsky přes Intel Embree 4 a instance, kouř, oheň a prach přes NanoVDB, slunce a obloha z Looku, GGX, průsvitnost, sklo a voda, hloubka ostrosti, odšumění přes Intel Open Image Denoise; záložka Render v editoru, `--renderer path`, PNG a EXR s průchody | [docs/pathtracer.md](docs/pathtracer.md) |
+| Render | Cycles z Blenderu jako knihovna (sítě a instance, Principled BSDF, sklo a voda, kouř a oheň, slunce a obloha z Looku, hloubka ostrosti, Open Image Denoise), výchozí v záložce Render, `--renderer cycles`; vlastní path tracer na procesoru přes Intel Embree 4 a NanoVDB jako druhá volba (`--renderer path`); PNG a EXR s průchody | [docs/cycles.md](docs/cycles.md), [docs/pathtracer.md](docs/pathtracer.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
 | Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť, povrch vody, déšť, prach, kamera, světla; co se mění, v souboru pro každý snímek) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
@@ -362,14 +362,15 @@ Seřazeno podle poměru hodnota / náklad:
    a unáší, proud plynu unáší drť, obousměrně s vodou i plynem, které jdou
    kolem kusů ([destruction.md](docs/destruction.md#jedenáctý-příklad-povodeň-na-dvoře)).
    Zbývá: voda uhasí oheň, déšť v kouři, déšť přidá vodu do bazénu.
-3. **Render pro finální obraz** — ✅ path tracer na procesoru
-   ([pathtracer.md](docs/pathtracer.md)): povrchy přes Intel Embree 4,
-   hloubka ostrosti, AOV do EXR; kouř, oheň a prach přes NanoVDB
-   s vícenásobným rozptylem, stíny kouře a světlem plamenů; odšumění
-   neuronovou sítí Intel Open Image Denoise.
-   Zbývá: materiály a textury, rozmazání pohybem, barevná správa
-   OCIO/ACES, světlo plamenů vzorkované přímo. Do té doby renderují studia náročné záběry přes USD vlastními
-   renderery.
+3. **Render pro finální obraz** — ✅ Cycles z Blenderu jako knihovna
+   ([cycles.md](docs/cycles.md)) a vlastní path tracer na procesoru
+   ([pathtracer.md](docs/pathtracer.md)): povrchy, sklo a voda, hloubka
+   ostrosti, AOV do EXR; kouř, oheň a prach s vícenásobným rozptylem,
+   stíny kouře a světlem plamenů; odšumění neuronovou sítí Intel Open
+   Image Denoise.
+   Zbývá: Cycles na GPU, materiály a textury, rozmazání pohybem, barevná
+   správa OCIO/ACES. Do té doby renderují studia náročné záběry přes USD
+   vlastními renderery.
 4. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
    hrdlem (kritérium M5 výše).
 5. **Alembic, čtení VDB, MaterialX.**

@@ -262,8 +262,9 @@ grafické kartě je to zlomek.
 - LOD: tráva v dálce jako řidší trsy nebo billboardy a ořez podle kamery.
 - Ohyb stébel ve větru podél délky (ve shaderu podle `flex`), ne jen
   otočení trsu.
-- Průsvitnost stébel a listů proti slunci ve viewportu (path tracer ji
-  má: [pathtracer.md](pathtracer.md)), textury, UV.
+- Průsvitnost stébel a listů proti slunci ve viewportu (Cycles i path
+  tracer ji mají: [cycles.md](cycles.md), [pathtracer.md](pathtracer.md)),
+  textury, UV.
 - Šlapání a interakce (tráva ohnutá tělesem nebo postavou).
 - Ekosystém: druhy, které si konkurují o místo a světlo, a jejich rozšíření
   podle vlhkosti a stínu.

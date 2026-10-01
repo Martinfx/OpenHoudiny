@@ -12,7 +12,7 @@
 //   prototype sim    NETWORK.pgsim|EXAMPLE OUT.png|OUT.exr|OUT.mp4|- [--frames N] [--start N] [--every K] [--resolution 16..1024]
 //                    [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]
 //                    [--set NODE.PARAM=VALUE]... [--cache DIR [--checkpoint K] [--resume]] [--from-cache DIR]
-//                    [--export PATH] [--export-node NODE] [--preview F] [--renderer gl|path [--samples N]]
+//                    [--export PATH] [--export-node NODE] [--preview F] [--renderer gl|path|cycles [--samples N]]
 //   prototype sim --list
 //   prototype pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
 //   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE] [--set NODE.PARAM=VALUE]...
@@ -36,7 +36,9 @@
 // (gl::writePassesExr). --renderer path renders with the path tracer
 // instead (pg/render): light followed as it bounces, on the processor, no
 // OpenGL wanted -- as the Output's Render section sets it, --samples N a
-// pixel; its EXR: the light, Z, albedo.* and N.*. --set changes a
+// pixel; its EXR: the light, Z, albedo.* and N.*. --renderer cycles
+// renders with Cycles, Blender's renderer (pg/render/Cycles.h), the same
+// scene, settings and EXR. --set changes a
 // parameter first: NODE.PARAM=VALUE, or PARAM=VALUE when a single node has
 // that parameter; a VALUE that is not a value is an expression ($F, ch()),
 // and NODE.PARAM.x=... sets one component of a vector. --cache DIR writes every frame to a folder, and
@@ -79,6 +81,7 @@
 #include "pg/io/Export.h"
 #include "pg/io/Picture.h"
 #include "pg/io/Video.h"
+#include "pg/render/Cycles.h"
 #include "pg/render/Denoise.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Save.h"
@@ -728,6 +731,51 @@ bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, std::ve
     return pg::render::savePicture(tracer, path, s.denoise, comment, error);
 }
 
+/// The same through Cycles, to the end: its samples told as the path
+/// tracer's are, while it renders on threads of its own.
+bool cyclesRendered(const std::shared_ptr<const pg::render::Scene>& scene, const pg::render::Settings& s,
+                    const std::string& path, std::vector<uint8_t>& rgb, const std::string& comment,
+                    std::string& error) {
+    pg::render::CyclesRender render;
+    render.start(scene, s);
+    std::atomic<bool> finished{false};
+    std::thread waiting([&] {
+        render.wait();
+        finished = true;
+    });
+    int told = 0;
+    while (!finished) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const int n = render.samples();
+        if (s.samples >= 32 && !finished && n != told) {
+            std::fprintf(stderr, "  %d/%d samples (%.1f s)\r", n, s.samples, render.seconds());
+            std::fflush(stderr);
+            told = n;
+        }
+    }
+    waiting.join();
+    if (s.samples >= 32) std::fprintf(stderr, "\n");
+    if (!render.error().empty()) {
+        error = "Cycles: " + render.error();
+        return false;
+    }
+    pg::render::Rendered out;
+    out.beauty = render.beauty();
+    out.albedo = render.albedo();
+    out.normal = render.normal();
+    out.depth = render.depth();
+    out.exposure = scene->look.exposure;
+    if (out.beauty.width != s.width || out.beauty.height != s.height) {
+        error = "Cycles gave no picture";
+        return false;
+    }
+    if (path.empty()) {
+        rgb = pg::render::displayRgb(out);
+        return true;
+    }
+    return pg::render::savePicture(out, path, comment, error);
+}
+
 
 /// `sim NETWORK OUT.png`, and `pyro OUT.png --preset NAME`: the same, with an example.
 int simulate(const Options& o, const std::string& network, const std::string& outPath) {
@@ -841,9 +889,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                      frames);
         return 1;
     }
-    if (o.renderer != "gl" && o.renderer != "path") {
-        std::fprintf(stderr, "%s: --renderer wants gl (the viewport's) or path (the path tracer), not %s\n", cmd,
-                     o.renderer.c_str());
+    if (o.renderer != "gl" && o.renderer != "path" && o.renderer != "cycles") {
+        std::fprintf(stderr, "%s: --renderer wants gl (the viewport's), path (the path tracer) or cycles, not %s\n",
+                     cmd, o.renderer.c_str());
+        return 1;
+    }
+    if (o.renderer == "cycles" && !pg::render::cyclesAvailable()) {
+        std::fprintf(stderr, "%s: --renderer cycles: built without Cycles (PG_CYCLES; it needs OpenImageIO)\n", cmd);
         return 1;
     }
     if (o.samples < 0 || o.samples > 1 << 16) {
@@ -852,7 +904,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
     // The path tracer: light followed as it goes, on the processor -- no
     // OpenGL wanted.
-    const bool pathTrace = pictures && o.renderer == "path";
+    const bool cycles = pictures && o.renderer == "cycles";
+    const bool pathTrace = pictures && (o.renderer == "path" || cycles);
     // Through the network's camera, at the size of its picture -- unless
     // the command line asks for a view round the scene. Without a camera:
     // tall for a plume, wide for a scene wider than it is high.
@@ -1145,11 +1198,18 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             in.camera.height = height;
             in.sunAngle = settings.sunAngle;
             in.domain = domainBox;
-            tracer.setSettings(settings);
-            tracer.setScene(builder.build(in));
             const std::string file = movie ? std::string() : o.every > 0 ? numbered(outPath, f) : outPath;
+            const std::string comment = "prototype sim " + network + ", frame " + std::to_string(f);
             std::vector<uint8_t> rgb;
-            if (!pathTraced(tracer, file, rgb, "prototype sim " + network + ", frame " + std::to_string(f), error)) {
+            bool rendered;
+            if (cycles) {
+                rendered = cyclesRendered(builder.build(in), settings, file, rgb, comment, error);
+            } else {
+                tracer.setSettings(settings);
+                tracer.setScene(builder.build(in));
+                rendered = pathTraced(tracer, file, rgb, comment, error);
+            }
+            if (!rendered) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
                 return 1;
             }
@@ -1293,9 +1353,19 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         const std::string denoised =
             settings.denoise ? ", denoised by " + pg::render::denoiserName(pg::render::defaultDenoiser()) : std::string();
         char text[280];
-        std::snprintf(text, sizeof text, " through the path tracer (%s%s), %d samples a pixel%s",
-                      pg::render::rayEngineName(builder.engine()).c_str(), gas.c_str(), settings.samples,
-                      denoised.c_str());
+        if (cycles) {
+            // The gas goes to Cycles as it goes to the path tracer: through NanoVDB.
+            const std::string noGas =
+                world.hasGas && !geometryOnly && !pg::render::gasAvailable() ? "; no gas: built without NanoVDB" : "";
+            const std::string denoiser = pg::render::cyclesDenoiser();
+            std::snprintf(text, sizeof text, " through %s%s, %d samples a pixel%s", pg::render::cyclesVersion().c_str(),
+                          noGas.c_str(), settings.samples,
+                          settings.denoise && !denoiser.empty() ? (", denoised by " + denoiser).c_str() : "");
+        } else {
+            std::snprintf(text, sizeof text, " through the path tracer (%s%s), %d samples a pixel%s",
+                          pg::render::rayEngineName(builder.engine()).c_str(), gas.c_str(), settings.samples,
+                          denoised.c_str());
+        }
         through = text;
     }
 #ifdef PG_CAN_RENDER
@@ -1542,12 +1612,13 @@ void printUsage(std::FILE* out) {
                  "                   [--size WxH] [--yaw DEG] [--pitch DEG] [--distance D] [--guides]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--cache DIR [--checkpoint K] [--resume]]\n"
                  "                   [--from-cache DIR] [--export PATH] [--export-node NODE] [--threads N]\n"
-                 "                   [--preview F] [--renderer gl|path [--samples N]]\n"
+                 "                   [--preview F] [--renderer gl|path|cycles [--samples N]]\n"
                  "                   simulates a network of nodes and renders its last frame; --every K renders\n"
                  "                   frames K, 2K, 3K... as OUT_<frame>.png (K = 2: OUT_0002.png, OUT_0004.png...);\n"
                  "                   OUT.exr: linear light and passes for compositing (Z, forward.u/v, mask.*);\n"
                  "                   --renderer path: the path tracer, on the processor (the Output's Render\n"
                  "                   settings; --samples N a pixel); its EXR: light, Z, albedo.*, N.*;\n"
+                 "                   --renderer cycles: Cycles, Blender's renderer, the same way;\n"
                  "                   a video gets every frame (every K-th): .avi always, .mp4 .mov .mkv .webm .gif\n"
                  "                   when ffmpeg is installed;\n"
                  "                   through the network's camera at its size, unless --yaw, --pitch or --distance\n"

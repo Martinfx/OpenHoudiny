@@ -358,6 +358,10 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     playing_ = true;
     throughCamera_ = false;
     framed_ = false;
+    // What was shown of the network before is not this one's: nothing,
+    // until this one cooks -- and then the view frames it.
+    renderer_.setGeometry(nullptr);
+    geometryFramed_ = false;
     viewDirty_ = true;
 }
 

@@ -496,7 +496,8 @@ class Network:
         .avi... Options as `prototype sim` has them: frames=, start=, every=,
         size="1920x1080", yaw=, pitch=, distance=, resolution=, guides=True,
         cache=, export=... renderer="path" (with samples=) renders through the
-        path tracer, on the processor. Returns what it printed."""
+        path tracer, on the processor; renderer="cycles", through Cycles,
+        Blender's renderer, where the build has it. Returns what it printed."""
         with tempfile.TemporaryDirectory() as tmp:
             network = os.path.join(tmp, "network.pgsim")
             with open(network, "w", encoding="utf-8") as f:

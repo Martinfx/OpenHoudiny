@@ -11,6 +11,7 @@
 #include "pg/core/Instances.h"
 #include "pg/core/Tree.h"
 #include "pg/io/Exr.h"
+#include "pg/render/Cycles.h"
 #include "pg/render/Denoise.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Save.h"
@@ -18,11 +19,13 @@
 
 #include "test_framework.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <random>
 #include <set>
+#include <thread>
 
 using namespace pg;
 using namespace pg::render;
@@ -507,4 +510,215 @@ TEST(render_vegetation_lets_light_through) {
     const auto mesh = meshOf(clump);
     CHECK_EQ(mesh->materials.size(), 1u);
     CHECK_NEAR(mesh->materials[0].translucency, 0.35f, 0.01f);
+}
+
+namespace {
+
+/// The mean of each block of `n` x `n` pixels' brightness: a picture as
+/// its shapes, its noise averaged away.
+std::vector<double> blocks(const Image& img, int n) {
+    std::vector<double> out;
+    for (int by = 0; by + n <= img.height; by += n) {
+        for (int bx = 0; bx + n <= img.width; bx += n) {
+            double sum = 0.0;
+            for (int y = by; y < by + n; ++y) {
+                for (int x = bx; x < bx + n; ++x) {
+                    const float* p = &img.pixels[(static_cast<size_t>(y) * static_cast<size_t>(img.width) + static_cast<size_t>(x)) * 3];
+                    sum += 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+                }
+            }
+            out.push_back(sum / (n * n));
+        }
+    }
+    return out;
+}
+
+Image cyclesRender(const std::shared_ptr<const Scene>& scene, const Settings& s) {
+    CyclesRender render;
+    render.start(scene, s);
+    render.wait();
+    CHECK(render.error().empty());
+    return render.beauty();
+}
+
+}  // namespace
+
+TEST(render_cycles_lights_a_floor_as_the_sun_and_the_sky_do) {
+    if (!cyclesAvailable()) return;
+    // A grey floor seen from above, under a white sky, then under the sun
+    // alone: as bright as a matte floor is -- the light as strong as ours,
+    // from where ours comes from.
+    for (const bool sun : {false, true}) {
+        sim::Camera cam = sim::Camera::lookingAt(Vec3(0.0f, 3.0f, 0.01f), Vec3(0.0f, 0.0f, 0.0f));
+        cam.width = 32;
+        cam.height = 32;
+        sim::Look look;
+        look.lightIntensity = sun ? 2.2f : 0.0f;
+        look.lightElevation = 60.0f;
+        look.lightColor = Vec3(1.0f, 1.0f, 1.0f);
+        look.skyIntensity = sun ? 0.0f : 1.0f;
+        look.skyColor = Vec3(1.0f, 1.0f, 1.0f);
+        look.groundColor = Vec3(0.5f, 0.5f, 0.5f);
+        SceneBuilder builder;
+        const auto scene = builder.build(inputOf(strewn(1, 1, 0.1f), look, cam));
+        Settings s;
+        s.width = 32;
+        s.height = 32;
+        s.samples = 64;
+        s.denoise = false;
+        const Image cycles = cyclesRender(scene, s);
+        CHECK_EQ(cycles.pixels.size(), 3u * 32u * 32u);
+        double mean = 0.0;
+        for (size_t p = 0; p < 32u * 32u; ++p) mean += cycles.pixels[3 * p + 1];
+        mean /= 1024.0;
+        const double matte = sun ? 0.5 * 2.2 * std::sin(60.0 * 3.14159265358979 / 180.0) : 0.5;
+        std::printf("  the floor under the %s: %.3f, a matte one %.3f\n", sun ? "sun" : "sky", mean, matte);
+        CHECK(std::fabs(mean / matte - 1.0) < 0.05);
+    }
+}
+
+TEST(render_cycles_shows_what_the_path_tracer_does) {
+    if (!cyclesAvailable()) return;
+    // The same scene -- the sun, the sky, the floor, triangles strewn on
+    // it -- through both: the same picture, but for the noise and how each
+    // makes a surface reflect (Cycles' reflections lose no light where the
+    // surface is rough; ours, some).
+    Settings s;
+    s.width = 96;
+    s.height = 60;
+    s.samples = 256;
+    s.denoise = false;
+    const auto scene = smallScene(96, 60);
+    PathTracer t;
+    t.setSettings(s);
+    t.setScene(scene);
+    while (!t.done()) t.pass();
+    const Image ours = t.beauty();
+    const Image cycles = cyclesRender(scene, s);
+    CHECK_EQ(cycles.width, 96);
+    CHECK_EQ(cycles.height, 60);
+    const std::vector<double> a = blocks(ours, 12), b = blocks(cycles, 12);
+    CHECK_EQ(a.size(), b.size());
+    double meanA = 0.0, meanB = 0.0, off = 0.0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        meanA += a[i];
+        meanB += b[i];
+    }
+    meanA /= static_cast<double>(a.size());
+    meanB /= static_cast<double>(b.size());
+    for (size_t i = 0; i < a.size(); ++i) off += std::fabs(a[i] / meanA - b[i] / meanB);
+    off /= static_cast<double>(a.size());
+    std::printf("  mean brightness %.4f ours, %.4f %s; blocks off by %.3f\n", meanA, meanB, cyclesVersion().c_str(), off);
+    // About as bright, and the same shapes where they are: the camera,
+    // the scene the right way up, the shadows where the sun casts them.
+    CHECK(std::fabs(meanB / meanA - 1.0) < 0.25);
+    CHECK(off < 0.08);
+}
+
+TEST(render_cycles_is_the_same_twice_and_its_passes_are_ours) {
+    if (!cyclesAvailable()) return;
+    Settings s;
+    s.width = 64;
+    s.height = 40;
+    s.samples = 16;
+    s.denoise = true;
+    // A few large triangles: few pixels on their edges, where a pixel's
+    // samples see different things.
+    const auto scene = smallScene(64, 40, true);
+    CyclesRender a;
+    a.start(scene, s);
+    a.wait();
+    const Image first = a.beauty();
+    CHECK(cyclesRender(scene, s).pixels == first.pixels);  // the same picture, the same again
+    // What the pixels see, in our axes, as the path tracer has it: the
+    // normals turned back to Y up, the depth along the ray, infinite for
+    // the sky.
+    const Image n = a.normal(), z = a.depth(), albedo = a.albedo();
+    CHECK_EQ(n.width, 64);
+    CHECK_EQ(z.width, 64);
+    CHECK_EQ(albedo.width, 64);
+    PathTracer t;
+    t.setSettings(s);
+    t.setScene(scene);
+    while (!t.done()) t.pass();
+    const Image ourN = t.normal(), ourZ = t.depth();
+    int both = 0, sky = 0, ourSky = 0, alike = 0, near = 0;
+    for (size_t p = 0; p < 64u * 40u; ++p) {
+        sky += !std::isfinite(z.pixels[p]);
+        ourSky += !std::isfinite(ourZ.pixels[p]);
+        if (!std::isfinite(z.pixels[p]) || !std::isfinite(ourZ.pixels[p])) continue;
+        ++both;
+        const Vec3 cn(n.pixels[3 * p], n.pixels[3 * p + 1], n.pixels[3 * p + 2]);
+        const Vec3 on(ourN.pixels[3 * p], ourN.pixels[3 * p + 1], ourN.pixels[3 * p + 2]);
+        // Cycles turns a normal toward the camera; ours stays on the side
+        // the triangle was made with.
+        alike += std::fabs(dot(cn, on)) > 0.99f * length(cn) * length(on);
+        near += std::fabs(z.pixels[p] / ourZ.pixels[p] - 1.0f) < 0.03f;
+    }
+    std::printf("  of %d pixels both see, normals alike in %d, as far in %d; sky %d pixels against %d\n", both, alike,
+                near, sky, ourSky);
+    // But where a pixel's samples see different things: an edge, the floor
+    // far away -- Cycles' depth is its first sample's, ours their mean.
+    CHECK(both > 1000);
+    CHECK(alike > both * 17 / 20);
+    CHECK(near > both * 17 / 20);
+    CHECK(std::abs(sky - ourSky) < 64 * 40 / 50);
+    // Saved: the PNG as the path tracer's is, the EXR with its passes.
+    const fs::path dir = fs::temp_directory_path() / "pg_test_cycles";
+    fs::create_directories(dir);
+    Rendered r;
+    r.beauty = first;
+    r.albedo = albedo;
+    r.normal = n;
+    r.depth = z;
+    std::string error;
+    CHECK(savePicture(r, (dir / "c.png").string(), "", error));
+    CHECK(savePicture(r, (dir / "c.exr").string(), "cycles", error));
+    io::ExrImage exr;
+    CHECK(io::readExr((dir / "c.exr").string(), exr, error));
+    std::set<std::string> names;
+    for (const auto& c : exr.channels) names.insert(c.name);
+    for (const char* want : {"R", "G", "B", "A", "Z", "albedo.R", "N.Y"}) CHECK(names.count(want));
+    fs::remove_all(dir);
+}
+
+TEST(render_cycles_for_the_render_tab_shows_pictures_and_goes_on_after_a_stop) {
+    if (!cyclesAvailable()) return;
+    // As the Render tab has it: pictures as the samples add up -- the first
+    // of fewer, larger pixels -- then, stopped (another renderer chosen)
+    // and asked again, it renders again.
+    Settings s;
+    s.width = 96;
+    s.height = 60;
+    s.samples = 32;
+    const auto scene = smallScene(96, 60);
+    CyclesRender r(true);
+    auto picture = [&](Image& out) {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (std::chrono::steady_clock::now() < until) {
+            if (r.takePicture(out)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+    r.start(scene, s);
+    Image first;
+    CHECK(picture(first));
+    CHECK(first.width > 0 && first.width <= 96 && first.height * 96 == first.width * 60);
+    r.cancel();
+    CHECK(r.done());
+    r.start(scene, s);
+    Image again;
+    CHECK(picture(again));
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (!r.done() && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK(r.done());
+    CHECK_EQ(r.samples(), 32);
+    CHECK(r.error().empty());
+    // The end: the whole picture.
+    Image last = again;
+    while (r.takePicture(last)) {
+    }
+    CHECK_EQ(r.beauty().width, 96);
+    CHECK_EQ(r.beauty().height, 60);
 }

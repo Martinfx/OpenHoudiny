@@ -122,6 +122,7 @@ struct Gas::Grid {
     std::vector<Vec3> most;
     Box box;
     size_t active = 0;
+    int lo[3] = {0, 0, 0}, hi[3] = {-1, -1, -1};  // the tiles filled, from and to
 
     size_t tileOf(int a, int b, int c) const {
         return static_cast<size_t>(a) +
@@ -351,6 +352,16 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
     });
     if (active == 0) return nullptr;
     g.active = active;
+    for (size_t t = 0; t < tileCount; ++t) {
+        if (!filled[t]) continue;
+        const int at[3] = {static_cast<int>(t % static_cast<size_t>(g.tiles[0])),
+                           static_cast<int>((t / static_cast<size_t>(g.tiles[0])) % static_cast<size_t>(g.tiles[1])),
+                           static_cast<int>(t / (static_cast<size_t>(g.tiles[0]) * static_cast<size_t>(g.tiles[1])))};
+        for (int a = 0; a < 3; ++a) {
+            g.lo[a] = g.hi[a] < g.lo[a] ? at[a] : std::min(g.lo[a], at[a]);
+            g.hi[a] = std::max(g.hi[a], at[a]);
+        }
+    }
     g.handle = nanovdb::tools::createNanoGrid<Build, nanovdb::Vec3f>(build, nanovdb::tools::StatsMode::BBox,
                                                                        nanovdb::CheckMode::Disable);
     g.grid = g.handle.grid<nanovdb::Vec3f>();
@@ -406,6 +417,68 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
     (void)frame;
     return nullptr;
 #endif
+}
+
+Gas::Dense Gas::dense(const GasLook& look, size_t most) const {
+    Dense out;
+#ifdef PG_HAVE_NANOVDB
+    const Grid& g = *grid_;
+    if (g.hi[0] < g.lo[0]) return out;
+    // The cells of the tiles filled and one round them -- where reading
+    // between the cells' middles takes in the last ones.
+    int from[3], count[3];
+    size_t cells = 1;
+    for (int a = 0; a < 3; ++a) {
+        from[a] = std::max(g.lo[a] * sim::Tiles::kSide - 1, 0);
+        const int to = std::min((g.hi[a] + 1) * sim::Tiles::kSide + 1, g.cells[a]);
+        count[a] = std::max(to - from[a], 1);
+        cells *= static_cast<size_t>(count[a]);
+    }
+    // Blocks of k x k x k cells where they are too many.
+    int k = 1;
+    while (cells / (static_cast<size_t>(k) * k * k) > std::max<size_t>(most, 1)) ++k;
+    for (int a = 0; a < 3; ++a) {
+        out.size[a] = (count[a] + k - 1) / k;
+        out.box.lo[a] = g.origin[a] + static_cast<float>(from[a]) * g.voxel;
+        out.box.hi[a] = out.box.lo[a] + static_cast<float>(out.size[a] * k) * g.voxel;
+    }
+    const size_t n = static_cast<size_t>(out.size[0]) * static_cast<size_t>(out.size[1]) * static_cast<size_t>(out.size[2]);
+    out.extinction.assign(n, 0.0f);
+    std::vector<Vec3> emission(n);
+    std::atomic<bool> glows{false};
+    const size_t row = static_cast<size_t>(out.size[0]);
+    const size_t rows = static_cast<size_t>(out.size[1]) * static_cast<size_t>(out.size[2]);
+    parallelFor(rows, 16, [&](size_t begin, size_t end) {
+        Accessor acc = g.grid->getAccessor();
+        bool lit = false;
+        for (size_t r = begin; r < end; ++r) {
+            const int y = static_cast<int>(r % static_cast<size_t>(out.size[1])), z = static_cast<int>(r / static_cast<size_t>(out.size[1]));
+            for (int x = 0; x < out.size[0]; ++x) {
+                // A cell's middle: its own numbers; a block's: read there.
+                Vec3 f;
+                if (k == 1) {
+                    const nanovdb::Vec3f v = acc.getValue(nanovdb::Coord(from[0] + x, from[1] + y, from[2] + z));
+                    f = Vec3(v[0], v[1], v[2]);
+                } else {
+                    const Vec3 p(out.box.lo.x + (static_cast<float>(x) + 0.5f) * static_cast<float>(k) * g.voxel,
+                                 out.box.lo.y + (static_cast<float>(y) + 0.5f) * static_cast<float>(k) * g.voxel,
+                                 out.box.lo.z + (static_cast<float>(z) + 0.5f) * static_cast<float>(k) * g.voxel);
+                    f = sample(g, acc, p);
+                }
+                const size_t i = r * row + static_cast<size_t>(x);
+                out.extinction[i] = extinction(f, look);
+                emission[i] = Gas::emission(f, look);
+                lit = lit || emission[i].x > 0.0f || emission[i].y > 0.0f || emission[i].z > 0.0f;
+            }
+        }
+        if (lit) glows = true;
+    });
+    if (glows) out.emission = std::move(emission);
+#else
+    (void)look;
+    (void)most;
+#endif
+    return out;
 }
 
 Vec3 Gas::at(const Vec3& p) const {

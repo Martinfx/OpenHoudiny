@@ -36,10 +36,15 @@ okna.
   a sklonu, keře a stromy jako varianty, které zastupují body; viewport je
   kreslí přes GPU instancing, USD dostane PointInstancer, OBJ kopie; vítr
   otáčí `orient`; louka u lesa s 1,9 milionu stébel za 148 ms
-- **[docs/pathtracer.md](docs/pathtracer.md)** — pořádný render: path
-  tracer na procesoru v záložce Render vedle Viewportu i z příkazové řádky;
-  odražené světlo, měkké slunce, prosvítající tráva a listí, sklo a voda,
-  hloubka ostrosti, odšumění neuronovou sítí (Intel Open Image Denoise);
+- **[docs/cycles.md](docs/cycles.md)** — render přes Cycles z Blenderu:
+  záložka Render vedle Viewportu (první obraz hned, při přehrávání snímek
+  po snímku) i příkazová řádka `--renderer cycles`; scéna převedená do
+  Cycles i s kouřem a ohněm, Principled BSDF, sklo a voda, odšumění Open
+  Image Denoise
+- **[docs/pathtracer.md](docs/pathtracer.md)** — vlastní path tracer na
+  procesoru, druhá volba záložky Render a `--renderer path`; odražené
+  světlo, měkké slunce, prosvítající tráva a listí, sklo a voda, hloubka
+  ostrosti, odšumění neuronovou sítí (Intel Open Image Denoise);
   nastavení v uzlu Output, PNG i EXR
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
@@ -149,12 +154,20 @@ procesor, asi za minutu. K tomu potřebuje ISPC 1.21 nebo novější a TBB
 (`sudo apt install ispc libtbb-dev` na Debianu a Ubuntu). Bez ní
 (`-DPG_OIDN=OFF`) odšumuje vlastní filtr.
 
+Finální obraz renderuje **Cycles** z Blenderu (Apache 2.0). CMake ho
+stáhne z GitHubu (značka v4.5.0) a jednou postaví jen pro procesor
+(na čtyřech jádrech asi 2 minuty). Potřebuje **OpenImageIO** a TBB: `pkg
+install openimageio pugixml onetbb` na FreeBSD, `sudo apt install
+libopenimageio-dev libpugixml-dev libtbb-dev` na Debianu a Ubuntu. Bez
+nich (nebo s `-DPG_CYCLES=OFF`) renderuje vlastní path tracer
+([docs/cycles.md](docs/cycles.md)).
+
 Výchozí build obsahuje editor: při konfiguraci stáhne Dear ImGui a GLFW,
 pokud v systému není (`sudo apt install libglfw3-dev`). Když najde vývojové
 soubory Pythonu (`python3-dev`), stáhne pybind11 a postaví i modul `pg` do
 `build/python` ([docs/python.md](docs/python.md)); jiný Python vybere
 `-DPython3_EXECUTABLE=…`. Bez editoru a bez Pythonu nemá build žádné
-externí závislosti kromě Jolt, GLM, Embree, NanoVDB a Open Image Denoise, stačí C++20 a standardní
+externí závislosti kromě Jolt, GLM, Embree, NanoVDB, Open Image Denoise a Cycles (s OpenImageIO), stačí C++20 a standardní
 knihovna:
 
 ```bash

@@ -1135,7 +1135,32 @@ void SimWorkspace::viewport(ImVec2 size) {
         updateGuides();
     }
 
-    // Two tabs: the viewport, and the path tracer's render of what it shows.
+    // The camera frames the domain when a network opens and when the
+    // domain's size changes -- not for another resolution; nothing
+    // simulated, the geometry shown, once it has cooked. Both tabs see
+    // through it.
+    const Vec3 box = compiled_.ok && compiled_.world.any() ? dm.size() : framedSize_;
+    const bool resized = std::fabs(box.x - framedSize_.x) + std::fabs(box.y - framedSize_.y) +
+                             std::fabs(box.z - framedSize_.z) > 1e-4f;
+    const bool simulated = compiled_.ok && compiled_.world.any();
+    Vec3 glo, ghi;
+    const bool geometry = !simulated && renderer_.geometryBounds(glo, ghi);
+    if (!framed_ || resized || (geometry && !geometryFramed_)) {
+        renderer_.orbit = gl::VolumeRenderer::viewOf(dm);
+        if (geometry) {
+            const Vec3 middle = (glo + ghi) * 0.5f;
+            gl::Orbit& o = renderer_.orbit;
+            for (int k = 0; k < 3; ++k) o.target[k] = middle[k];
+            o.distance = std::clamp(1.15f * std::max(0.5f * length(ghi - glo), 0.05f) / std::sin(o.fovY * 3.14159265f / 360.0f),
+                                    0.2f, 200.0f);
+            geometryFramed_ = true;
+        }
+        framedSize_ = box;
+        framed_ = true;
+        viewDirty_ = true;
+    }
+
+    // Two tabs: the viewport, and the render of what it shows.
     if (ImGui::BeginTabBar("view.tabs")) {
         if (ImGui::BeginTabItem("Viewport")) {
             renderTabOn_ = false;
@@ -1156,26 +1181,6 @@ void SimWorkspace::viewport(ImVec2 size) {
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const int w = std::max(16, static_cast<int>(avail.x)), hh = std::max(16, static_cast<int>(avail.y));
-    // The camera frames the domain when a network opens and when the
-    // domain's size changes -- not for another resolution.
-    const Vec3 box = compiled_.ok && compiled_.world.any() ? dm.size() : framedSize_;
-    const bool resized = std::fabs(box.x - framedSize_.x) + std::fabs(box.y - framedSize_.y) +
-                             std::fabs(box.z - framedSize_.z) > 1e-4f;
-    if (!framed_ || resized) {
-        renderer_.orbit = gl::VolumeRenderer::viewOf(dm);
-        // Nothing simulated: the geometry shown, if there is some.
-        Vec3 glo, ghi;
-        if (!(compiled_.ok && compiled_.world.any()) && renderer_.geometryBounds(glo, ghi)) {
-            const Vec3 middle = (glo + ghi) * 0.5f;
-            gl::Orbit& o = renderer_.orbit;
-            for (int k = 0; k < 3; ++k) o.target[k] = middle[k];
-            o.distance = std::clamp(1.15f * std::max(0.5f * length(ghi - glo), 0.05f) / std::sin(o.fovY * 3.14159265f / 360.0f),
-                                    0.2f, 200.0f);
-        }
-        framedSize_ = box;
-        framed_ = true;
-        viewDirty_ = true;
-    }
     const ImVec2 lo = ImGui::GetCursorScreenPos();
     const ImVec2 hi(lo.x + static_cast<float>(w), lo.y + static_cast<float>(hh));
     const ImGuiIO& io = ImGui::GetIO();

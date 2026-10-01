@@ -546,6 +546,228 @@ if(PG_OIDN)
   target_compile_definitions(pgsim PRIVATE PG_HAVE_OIDN)
 endif()
 
+# Rendering with Cycles (src/pg/render/Cycles.cpp): Blender's renderer
+# (Apache 2.0), as a library -- what the Render tab and `--renderer cycles`
+# render with. No system has it packaged on its own: it is built from its
+# sources -- a git checkout of 4.5.0 -- by its own CMake, in a directory of
+# its own (cycles-build), once, in a few minutes: its libraries alone, the
+# processor's device, with the Embree and the Open Image Denoise we have.
+# It needs OpenImageIO and TBB (FreeBSD: pkg install openimageio pugixml
+# onetbb; Debian, Ubuntu: apt install libopenimageio-dev libpugixml-dev
+# libtbb-dev). Our code compiles against it with the definitions and the
+# flags its own code has, and links what its own program links, both read
+# from its build. Without it, the path tracer renders.
+option(PG_CYCLES "Render with Cycles, Blender's renderer, built from its sources (needs OpenImageIO and TBB)" ON)
+if(PG_CYCLES AND PG_SANITIZE_THREAD)
+  # As Embree: its TBB is not built with the thread sanitizer.
+  message(STATUS "Thread sanitizer: no Cycles, the path tracer renders")
+  set(PG_CYCLES OFF)
+endif()
+if(PG_CYCLES AND MSVC)
+  message(STATUS "Cycles: not built with Visual Studio here; the path tracer renders")
+  set(PG_CYCLES OFF)
+endif()
+if(PG_CYCLES)
+  # Found as Cycles finds it: its CMake files of some systems name programs
+  # a package of their own installs.
+  find_path(PG_OIIO_INCLUDE_DIR OpenImageIO/imageio.h)
+  find_library(PG_OIIO_LIBRARY NAMES OpenImageIO)
+  find_library(PG_OIIO_UTIL_LIBRARY NAMES OpenImageIO_Util)
+  if(NOT PG_OIIO_INCLUDE_DIR OR NOT PG_OIIO_LIBRARY OR NOT PG_OIIO_UTIL_LIBRARY)
+    message(WARNING "Cycles needs OpenImageIO: the path tracer renders. Install it (FreeBSD: pkg install "
+                    "openimageio pugixml onetbb; Debian, Ubuntu: apt install libopenimageio-dev libpugixml-dev "
+                    "libtbb-dev).")
+    set(PG_CYCLES OFF)
+  else()
+    # A system's OpenImageIO built against another standard library (libc++
+    # here, libstdc++ there) does not link: its strings are not ours.
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_INCLUDES ${PG_OIIO_INCLUDE_DIR})
+    set(CMAKE_REQUIRED_LIBRARIES ${PG_OIIO_LIBRARY} ${PG_OIIO_UTIL_LIBRARY})
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_source_compiles("
+      #include <OpenImageIO/imageio.h>
+      #include <string>
+      int main() { auto in = OIIO::ImageInput::open(std::string(\"none.png\")); return in ? 1 : 0; }"
+      PG_CYCLES_OIIO_LINKS)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    unset(CMAKE_REQUIRED_QUIET)
+    if(NOT PG_CYCLES_OIIO_LINKS)
+      message(WARNING "Cycles: the system's OpenImageIO does not link with this compiler's standard library: "
+                      "the path tracer renders.")
+      set(PG_CYCLES OFF)
+    endif()
+  endif()
+endif()
+if(PG_CYCLES)
+  include(FetchContent)
+  FetchContent_Declare(cycles
+    GIT_REPOSITORY https://github.com/blender/cycles.git
+    GIT_TAG v4.5.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR pg-cycles-builds-on-its-own)  # its CMake runs below, not as part of ours
+  FetchContent_MakeAvailable(cycles)
+  set(PG_CYCLES_DIR ${CMAKE_BINARY_DIR}/cycles-build)
+  set(PG_CYCLES_ARGS
+    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+    -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+    -DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}
+    -DWITH_LIBS_PRECOMPILED=OFF
+    -DWITH_CYCLES_ALEMBIC=OFF -DWITH_CYCLES_OPENCOLORIO=OFF -DWITH_CYCLES_OPENSUBDIV=OFF -DWITH_CYCLES_OPENVDB=OFF
+    -DWITH_CYCLES_NANOVDB=OFF -DWITH_CYCLES_OSL=OFF -DWITH_CYCLES_USD=OFF -DWITH_CYCLES_HYDRA_RENDER_DELEGATE=OFF
+    -DWITH_CYCLES_LOGGING=OFF -DWITH_CYCLES_STANDALONE_GUI=OFF
+    -DWITH_CYCLES_DEVICE_CUDA=OFF -DWITH_CYCLES_DEVICE_OPTIX=OFF -DWITH_CYCLES_DEVICE_HIP=OFF
+    -DWITH_CYCLES_DEVICE_METAL=OFF -DWITH_CYCLES_DEVICE_ONEAPI=OFF)
+  if(CMAKE_C_COMPILER)
+    # Ours, where a project of ours has C on; else Cycles finds its own.
+    list(APPEND PG_CYCLES_ARGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER})
+  endif()
+  if(PG_EMBREE AND NOT DEFINED embree_SOURCE_DIR)
+    list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_EMBREE=ON)
+  else()
+    # Embree fetched and built static with only what our rays use: Cycles
+    # goes through its own hierarchy.
+    list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_EMBREE=OFF)
+  endif()
+  if(PG_OIDN)
+    list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_OPENIMAGEDENOISE=ON)
+    if(DEFINED oidn_SOURCE_DIR)
+      # Ours, built from its sources: its headers to compile against; the
+      # library is linked into our programs.
+      list(APPEND PG_CYCLES_ARGS -DOPENIMAGEDENOISE_INCLUDE_DIR=${oidn_SOURCE_DIR}/include
+           -DOPENIMAGEDENOISE_LIBRARY=${oidn_BINARY_DIR}/libOpenImageDenoise.a
+           -DOPENIMAGEDENOISE_OPENIMAGEDENOISE_LIBRARY=${oidn_BINARY_DIR}/libOpenImageDenoise.a)
+    endif()
+  else()
+    list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_OPENIMAGEDENOISE=OFF)
+  endif()
+  # Configured when what it is configured with changes: makefiles, so that
+  # what it compiles and links with can be read.
+  string(SHA1 PG_CYCLES_KEY "${cycles_SOURCE_DIR};${PG_CYCLES_ARGS}")
+  set(PG_CYCLES_STAMP ${PG_CYCLES_DIR}/pg-configured)
+  set(PG_CYCLES_CONFIGURED "")
+  if(EXISTS ${PG_CYCLES_STAMP})
+    file(READ ${PG_CYCLES_STAMP} PG_CYCLES_CONFIGURED)
+  endif()
+  if(NOT PG_CYCLES_CONFIGURED STREQUAL PG_CYCLES_KEY)
+    message(STATUS "Cycles: configuring its build")
+    execute_process(COMMAND ${CMAKE_COMMAND} -S ${cycles_SOURCE_DIR} -B ${PG_CYCLES_DIR} -G "Unix Makefiles"
+                            ${PG_CYCLES_ARGS}
+                    RESULT_VARIABLE PG_CYCLES_RESULT OUTPUT_VARIABLE PG_CYCLES_OUT ERROR_VARIABLE PG_CYCLES_ERR)
+    if(PG_CYCLES_RESULT EQUAL 0)
+      file(WRITE ${PG_CYCLES_STAMP} "${PG_CYCLES_KEY}")
+    else()
+      string(REGEX MATCH "[^\n]*Error[^\n]*\n[^\n]*\n[^\n]*" PG_CYCLES_WHY "${PG_CYCLES_ERR}")
+      message(WARNING "Cycles could not be configured: the path tracer renders.\n${PG_CYCLES_WHY}")
+      set(PG_CYCLES OFF)
+    endif()
+  endif()
+endif()
+if(PG_CYCLES)
+  # What its own code compiles with -- definitions, include directories,
+  # instruction sets -- and what its own program links, in its order.
+  file(STRINGS ${PG_CYCLES_DIR}/src/session/CMakeFiles/cycles_session.dir/flags.make PG_CYCLES_FLAGS)
+  set(PG_CYCLES_DEFINES "")
+  set(PG_CYCLES_INCLUDES "")
+  set(PG_CYCLES_OPTIONS "")
+  foreach(line IN LISTS PG_CYCLES_FLAGS)
+    if(line MATCHES "^CXX_DEFINES = (.*)")
+      string(REGEX MATCHALL "-D[A-Za-z_][A-Za-z_0-9]*(=[^ \"]*)?" defs "${CMAKE_MATCH_1}")
+      foreach(d IN LISTS defs)
+        if(NOT d MATCHES "^-D(CCL_NAMESPACE_|NDEBUG)")
+          string(SUBSTRING "${d}" 2 -1 d)
+          list(APPEND PG_CYCLES_DEFINES "${d}")
+        endif()
+      endforeach()
+    elseif(line MATCHES "^CXX_INCLUDES = (.*)")
+      string(REGEX MATCHALL "(-I|-isystem )[^ ]+" incs "${CMAKE_MATCH_1}")
+      foreach(i IN LISTS incs)
+        string(REGEX REPLACE "^(-I|-isystem )" "" i "${i}")
+        list(APPEND PG_CYCLES_INCLUDES "${i}")
+      endforeach()
+    elseif(line MATCHES "^CXX_FLAGS = (.*)")
+      # Its instruction sets: the -m flags, whole words.
+      string(REGEX MATCHALL " -m[^ ]+" opts " ${CMAKE_MATCH_1}")
+      foreach(o IN LISTS opts)
+        string(STRIP "${o}" o)
+        list(APPEND PG_CYCLES_OPTIONS "${o}")
+      endforeach()
+    endif()
+  endforeach()
+  file(READ ${PG_CYCLES_DIR}/src/app/CMakeFiles/cycles.dir/link.txt PG_CYCLES_LINK)
+  string(REGEX REPLACE ".* -o [^ ]+ " "" PG_CYCLES_LINK "${PG_CYCLES_LINK}")
+  string(STRIP "${PG_CYCLES_LINK}" PG_CYCLES_LINK)
+  separate_arguments(PG_CYCLES_LINK UNIX_COMMAND "${PG_CYCLES_LINK}")
+  set(PG_CYCLES_LIBS "")
+  set(PG_CYCLES_BYPRODUCTS "")
+  set(PG_CYCLES_TARGETS "")
+  foreach(item IN LISTS PG_CYCLES_LINK)
+    if(item MATCHES "^\\.\\./\\.\\./lib/lib(.*)\\.a$")
+      list(APPEND PG_CYCLES_LIBS ${PG_CYCLES_DIR}/lib/lib${CMAKE_MATCH_1}.a)
+      list(APPEND PG_CYCLES_BYPRODUCTS ${PG_CYCLES_DIR}/lib/lib${CMAKE_MATCH_1}.a)
+      list(APPEND PG_CYCLES_TARGETS ${CMAKE_MATCH_1})
+    elseif(item MATCHES "^(/|-l)" AND NOT item MATCHES "OpenImageDenoise")
+      list(APPEND PG_CYCLES_LIBS ${item})
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES PG_CYCLES_BYPRODUCTS)
+  list(REMOVE_DUPLICATES PG_CYCLES_TARGETS)
+  cmake_host_system_information(RESULT PG_CORES QUERY NUMBER_OF_LOGICAL_CORES)
+  include(ExternalProject)
+  ExternalProject_Add(cycles_build
+    SOURCE_DIR ${cycles_SOURCE_DIR}
+    BINARY_DIR ${PG_CYCLES_DIR}
+    DOWNLOAD_COMMAND ""
+    UPDATE_COMMAND ""
+    CONFIGURE_COMMAND ""
+    BUILD_COMMAND ${CMAKE_COMMAND} --build ${PG_CYCLES_DIR} --target ${PG_CYCLES_TARGETS} --parallel ${PG_CORES}
+    INSTALL_COMMAND ""
+    BUILD_ALWAYS ON
+    BUILD_BYPRODUCTS ${PG_CYCLES_BYPRODUCTS})
+  add_library(pgcycles STATIC src/pg/render/Cycles.cpp)
+  target_link_libraries(pgcycles PUBLIC pgsim)
+  target_include_directories(pgcycles SYSTEM PRIVATE ${PG_CYCLES_INCLUDES})
+  target_compile_definitions(pgcycles PRIVATE PG_HAVE_CYCLES "CCL_NAMESPACE_BEGIN=namespace ccl {"
+                                              "CCL_NAMESPACE_END=}" ${PG_CYCLES_DEFINES})
+  target_compile_options(pgcycles PRIVATE ${PG_CYCLES_OPTIONS})
+  add_dependencies(pgcycles cycles_build)
+  if(PG_OIDN)
+    add_dependencies(cycles_build OpenImageDenoise)
+  endif()
+  # Its libraries need one another round: as a group.
+  set(PG_CYCLES_STATIC "")
+  set(PG_CYCLES_SHARED "")
+  foreach(item IN LISTS PG_CYCLES_LIBS)
+    if(item MATCHES "^${PG_CYCLES_DIR}/")
+      list(APPEND PG_CYCLES_STATIC ${item})
+    else()
+      list(APPEND PG_CYCLES_SHARED ${item})
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES PG_CYCLES_STATIC)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    string(REPLACE ";" "," PG_CYCLES_GROUP "${PG_CYCLES_STATIC}")
+    target_link_libraries(pgcycles PRIVATE "$<LINK_GROUP:RESCAN,${PG_CYCLES_GROUP}>")
+  else()
+    target_link_libraries(pgcycles PRIVATE ${PG_CYCLES_STATIC} ${PG_CYCLES_STATIC})
+  endif()
+  target_link_libraries(pgcycles PRIVATE ${PG_CYCLES_SHARED})
+  if(PG_OIDN)
+    target_link_libraries(pgcycles PRIVATE OpenImageDenoise)
+  endif()
+  message(STATUS "Cycles 4.5.0: built from its sources (${PG_CYCLES_DIR})")
+else()
+  add_library(pgcycles STATIC src/pg/render/Cycles.cpp)
+  target_link_libraries(pgcycles PUBLIC pgsim)
+endif()
+if(MSVC)
+  target_compile_options(pgcycles PRIVATE /W4)
+else()
+  target_compile_options(pgcycles PRIVATE -Wall -Wextra)
+endif()
+
 # The renderers: OpenGL through function pointers the caller loads, so they
 # link against nothing. The shader preview (the editor, `prototype render`) and
 # the volume renderer of the simulation (the editor, `prototype pyro`).
@@ -597,7 +819,7 @@ add_executable(prototype ${PG_TOOL_SOURCES})
 target_include_directories(prototype PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/prototype)
 # Where the examples built into the program read their files (meshes) from.
 target_compile_definitions(prototype PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
-target_link_libraries(prototype PRIVATE pgshadergraph pgsim Threads::Threads)
+target_link_libraries(prototype PRIVATE pgshadergraph pgsim pgcycles Threads::Threads)
 # Warnings for our own sources only; the fetched libraries compile as they are.
 if(MSVC)
   set_source_files_properties(${PG_TOOL_SOURCES} PROPERTIES COMPILE_OPTIONS "/W4")
@@ -774,7 +996,7 @@ add_executable(pgtests
   tests/test_volume_mesh.cpp
   tests/test_video.cpp
 )
-target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim)
+target_link_libraries(pgtests PRIVATE pgcore pgshadergraph pgsim pgcycles)
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim"
                                            PG_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 add_test(NAME pgtests COMMAND pgtests)
