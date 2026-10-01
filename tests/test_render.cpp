@@ -847,3 +847,129 @@ TEST(render_cycles_surface_detail_makes_a_flat_surface_uneven) {
     CHECK(uneven > 3.0 * flat && uneven > 0.03);
     CHECK(std::fabs(detailMean / flatMean - 1.0) < 0.1);
 }
+
+TEST(render_cycles_lights_the_scene_with_a_sky_picture) {
+    if (!cyclesAvailable()) return;
+    // A picture all round: a blue sky over brown ground, a quarter of the
+    // sky five times as bright. The floor lit by the sky alone as a matte
+    // floor is under an even sky that colour; twice as bright with Sky
+    // Strength 2; seen straight up, the sky's blue; turned, the bright
+    // quarter goes round.
+    const std::string file = (std::filesystem::temp_directory_path() / "pg_test_sky.exr").string();
+    {
+        io::ExrImage sky;
+        sky.width = 64;
+        sky.height = 32;
+        const char* names[3] = {"R", "G", "B"};
+        const float above[3] = {0.2f, 0.35f, 0.9f}, below[3] = {0.3f, 0.2f, 0.1f};
+        for (int c = 0; c < 3; ++c) {
+            io::ExrChannel ch;
+            ch.name = names[c];
+            ch.half = false;
+            for (int y = 0; y < 32; ++y) {
+                for (int x = 0; x < 64; ++x) {
+                    const bool bright = y < 16 && x < 16;
+                    ch.values.push_back(y < 16 ? above[c] * (bright ? 5.0f : 1.0f) : below[c]);
+                }
+            }
+            sky.channels.push_back(std::move(ch));
+        }
+        std::string error;
+        CHECK(io::writeExr(sky, file, error));
+    }
+    auto render = [&](const sim::Camera& c, float rotation, float strength, bool behind) {
+        sim::Camera cam = c;
+        cam.width = 32;
+        cam.height = 32;
+        sim::Look look;
+        look.lightIntensity = 0.0f;
+        look.groundColor = Vec3(0.5f, 0.5f, 0.5f);
+        look.skyBehind = behind;
+        SceneBuilder builder;
+        const auto scene = builder.build(inputOf(strewn(1, 1, 0.01f), look, cam));
+        Settings s;
+        s.width = 32;
+        s.height = 32;
+        s.samples = 64;
+        s.denoise = true;
+        s.sky = Settings::Sky::Image;
+        s.skyImage = file;
+        s.skyRotation = rotation;
+        s.skyStrength = strength;
+        s.detail = 0.0f;
+        const Image img = cyclesRender(scene, s);
+        Vec3 mean;
+        for (size_t p = 0; p < 32u * 32u; ++p) mean += Vec3(img.pixels[3 * p], img.pixels[3 * p + 1], img.pixels[3 * p + 2]);
+        return mean / 1024.0f;
+    };
+    const sim::Camera down = sim::Camera::lookingAt(Vec3(0.0f, 3.0f, 0.01f), Vec3(0.0f, 0.0f, 0.0f));
+    const sim::Camera up = sim::Camera::lookingAt(Vec3(0.0f, 1.0f, 0.0f), Vec3(0.01f, 5.0f, 0.0f));
+    const Vec3 floor = render(down, 0.0f, 1.0f, false), twice = render(down, 0.0f, 2.0f, false);
+    const Vec3 overhead = render(up, 0.0f, 1.0f, true);
+    // The sky's light on the floor, the bright quarter's share with it.
+    const Vec3 sky = Vec3(0.2f, 0.35f, 0.9f) * 2.0f;
+    std::printf("  under the picture: the floor %.3f %.3f %.3f (an even sky %.3f %.3f %.3f), twice %.2f; overhead %.2f "
+                "%.2f %.2f\n",
+                floor.x, floor.y, floor.z, 0.5f * sky.x, 0.5f * sky.y, 0.5f * sky.z, twice.z / floor.z, overhead.x,
+                overhead.y, overhead.z);
+    CHECK(std::fabs(floor.z / (0.5f * sky.z) - 1.0f) < 0.25f);
+    CHECK(floor.z > 2.0f * floor.x);
+    CHECK(std::fabs(twice.z / floor.z - 2.0f) < 0.15f);
+    CHECK(overhead.z > 2.0f * overhead.x);
+    // Looking out at the horizon, the picture turned a quarter at a time.
+    float least = 1e30f, most = 0.0f;
+    for (int k = 0; k < 4; ++k) {
+        const Vec3 m = render(sim::Camera::lookingAt(Vec3(0.0f, 1.0f, 0.0f), Vec3(5.0f, 1.8f, 0.0f)), 90.0f * k, 1.0f, true);
+        least = std::min(least, m.z);
+        most = std::max(most, m.z);
+    }
+    std::printf("  turned round: the view's blue %.3f to %.3f\n", least, most);
+    CHECK(most > 2.0f * least);
+    std::filesystem::remove(file);
+}
+
+TEST(render_cycles_clouds_cover_the_sky_and_drift_on_the_wind) {
+    if (!cyclesAvailable()) return;
+    // Looking up into Nishita's sky: clear, blue; clouded, whiter and
+    // brighter; later, the wind has moved the clouds.
+    auto render = [](float clouds, float time) {
+        sim::Camera cam = sim::Camera::lookingAt(Vec3(0.0f, 1.0f, 0.0f), Vec3(0.3f, 5.0f, 0.0f));
+        cam.width = 32;
+        cam.height = 32;
+        sim::Look look;
+        look.lightIntensity = 2.2f;
+        look.lightElevation = 45.0f;
+        look.skyBehind = true;
+        SceneInput in = inputOf(strewn(1, 1, 0.01f), look, cam);
+        in.time = time;
+        SceneBuilder builder;
+        const auto scene = builder.build(in);
+        Settings s;
+        s.width = 32;
+        s.height = 32;
+        s.samples = 16;
+        s.denoise = true;
+        s.sky = Settings::Sky::Physical;
+        s.clouds = clouds;
+        s.cloudSize = 0.5f;
+        s.cloudWind = 20.0f;
+        s.detail = 0.0f;
+        return cyclesRender(scene, s);
+    };
+    auto mean = [](const Image& img) {
+        Vec3 m;
+        for (size_t p = 0; p < 32u * 32u; ++p) m += Vec3(img.pixels[3 * p], img.pixels[3 * p + 1], img.pixels[3 * p + 2]);
+        return m / 1024.0f;
+    };
+    const Vec3 clear = mean(render(0.0f, 0.0f)), cloudy = mean(render(0.8f, 0.0f));
+    const Image now = render(0.5f, 0.0f), later = render(0.5f, 300.0f);
+    double moved = 0.0;
+    for (size_t i = 0; i < now.pixels.size(); ++i) moved += std::fabs(now.pixels[i] - later.pixels[i]);
+    moved /= static_cast<double>(now.pixels.size());
+    std::printf("  overhead: clear %.3f %.3f %.3f, clouded %.3f %.3f %.3f; the wind moved them by %.3f a pixel\n", clear.x,
+                clear.y, clear.z, cloudy.x, cloudy.y, cloudy.z, moved);
+    CHECK(clear.z > 1.5f * clear.x);
+    CHECK(cloudy.z / cloudy.x < 0.8f * clear.z / clear.x);
+    CHECK(cloudy.y > clear.y);
+    CHECK(moved > 0.02 * clear.z);
+}

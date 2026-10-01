@@ -371,13 +371,34 @@ std::vector<ParamDef> renderParams() {
              "\xc2\xb0",
              "How wide the sun is, degrees: 0.53 the real sun, sharp shadows near what casts them and soft far "
              "from it; larger, softer -- a hazy day."},
-            {"render_sky", "Sky", "Render", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-             "What lights the render in Cycles. Physical: a real day's sky, as Blender's Sky Texture -- the sun "
-             "where the light is and as bright, its colour and the sky's blue from the air it shines through, the "
-             "ground out to the horizon. Look: the light and sky of this node as the viewport has them (the path "
-             "tracer always).",
-             {"look", "physical"},
-             {"Look", "Physical"}},
+            {"render_sky", "Sky", "Render", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+             "What lights the render in Cycles. Physical: a real day's sky, as Blender's Sky Texture -- this "
+             "node's sun, the sky's blue from the air it shines through, clouds as Clouds says, the ground out to "
+             "the horizon. Image: a picture all round (an HDRI, Sky Image). Look: the light and sky of this node "
+             "as the viewport has them (the path tracer always).",
+             {"look", "physical", "image"},
+             {"Look", "Physical", "Image"}},
+            {"render_sky_image", "Sky Image", "Render", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+             "With Sky Image: the picture all round -- equirectangular (2 : 1), .hdr or .exr for its light as it "
+             "is (Poly Haven's HDRIs, say), .png or .jpg too. It lights the scene and the camera sees it with Sky "
+             "Behind. A relative path is read from the network's folder.",
+             {".hdr", ".exr", ".png", ".jpg", ".jpeg"},
+             {}},
+            {"render_sky_rotation", "Sky Rotation", "Render", K::Float, {0.0f, 0.0f, 0.0f}, -180.0f, 180.0f, -360.0f,
+             360.0f, "\xc2\xb0", "The sky picture turned about the vertical: its sun where the shot wants it."},
+            {"render_sky_strength", "Sky Strength", "Render", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 1000.0f,
+             "", "The sky picture's light times this."},
+            {"render_sky_sun", "Sky Sun", "Render", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "With Sky Image: this node's sun too -- sharp shadows under a sky picture without a sun of its own."},
+            {"render_clouds", "Clouds", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "With a physical sky: how much of it clouds cover -- 0 clear, 0.3 a few, 0.6 broken, 1 overcast, the "
+             "sun mostly hidden."},
+            {"render_cloud_size", "Cloud Size", "Render", K::Float, {1.5f, 0.0f, 0.0f}, 0.1f, 5.0f, 0.01f, 100.0f,
+             "km", "How big the clouds are: some kilometre and a half across at 1.5."},
+            {"render_cloud_wind", "Cloud Wind", "Render", K::Float, {5.0f, 0.0f, 0.0f}, 0.0f, 50.0f, 0.0f, 1000.0f,
+             "m/s", "How fast the wind takes the clouds over the sky, frame after frame."},
+            {"render_cloud_direction", "Cloud Direction", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 360.0f, -360.0f,
+             720.0f, "\xc2\xb0", "Which way the wind takes the clouds, degrees round from +x."},
             {"render_view", "View", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
              "How the light becomes the picture. AgX: as Blender shows it, bright colours going towards white as "
              "on film -- Punchy with Blender's look of more contrast and colour. ACES: as the viewport.",
@@ -3769,7 +3790,26 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     r.focus = std::max(f(*output, "render_focus"), 0.0f);
     r.clamp = std::max(f(*output, "render_clamp"), 0.01f);
     r.sunAngle = std::clamp(f(*output, "render_sun_angle"), 0.01f, 30.0f);
-    r.sky = static_cast<render::Settings::Sky>(std::clamp(whole(*output, "render_sky"), 0, 1));
+    r.sky = static_cast<render::Settings::Sky>(std::clamp(whole(*output, "render_sky"), 0, 2));
+    r.skyImage = text(output->id, "render_sky_image");
+    if (!r.skyImage.empty() && !folder.empty() && std::filesystem::path(r.skyImage).is_relative()) {
+        r.skyImage = (std::filesystem::path(folder) / r.skyImage).lexically_normal().string();
+    }
+    if (r.sky == render::Settings::Sky::Image && frame <= 1.0f) {
+        std::error_code ec;
+        if (r.skyImage.empty()) {
+            problem(L::Warning, output->id, "Sky is Image, but there is no Sky Image: the physical sky lights it");
+        } else if (!std::filesystem::is_regular_file(r.skyImage, ec)) {
+            problem(L::Warning, output->id, "no sky image: " + r.skyImage + " is not there");
+        }
+    }
+    r.skyRotation = f(*output, "render_sky_rotation");
+    r.skyStrength = std::max(f(*output, "render_sky_strength"), 0.0f);
+    r.skySun = f(*output, "render_sky_sun") != 0.0f;
+    r.clouds = std::clamp(f(*output, "render_clouds"), 0.0f, 1.0f);
+    r.cloudSize = std::clamp(f(*output, "render_cloud_size"), 0.01f, 100.0f);
+    r.cloudWind = std::max(f(*output, "render_cloud_wind"), 0.0f);
+    r.cloudDirection = f(*output, "render_cloud_direction");
     r.view = static_cast<render::Settings::View>(std::clamp(whole(*output, "render_view"), 0, 2));
     r.detail = std::clamp(f(*output, "render_detail"), 0.0f, 1.0f);
     // The camera of the shot.

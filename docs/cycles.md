@@ -83,8 +83,14 @@ tracer:
 
 | volba | co dělá |
 |---|---|
-| **Sky** `physical` (výchozí) | obloha a slunce jako Sky Texture v Blenderu (model Nishita): modrá obloha, opar u obzoru. Slunce je tam, kde ho má Look, s jeho barvou (Light Color) a silou. Obloha k němu přidá modré světlo, které ve stínech chybělo. Se **Sky Behind** kamera vidí oblohu a zem až k obzoru, vzdálená zem mizí v oparu. Bez Sky Behind zůstane tmavé pozadí studia. |
+| **Sky** `physical` (výchozí) | obloha a slunce jako Sky Texture v Blenderu (model Nishita): modrá obloha, opar u obzoru, mraky podle **Clouds**. Slunce je tam, kde ho má Look, s jeho barvou (Light Color) a silou. Obloha k němu přidá modré světlo, které ve stínech chybělo. Se **Sky Behind** kamera vidí oblohu a zem až k obzoru, vzdálená zem mizí v oparu. Bez Sky Behind zůstane tmavé pozadí studia. |
+| **Sky** `image` | obloha z obrázku všude kolem (HDRI, **Sky Image**): osvětlí scénu a se Sky Behind je vidět za ní |
 | **Sky** `look` | slunce a obloha Looku jako ve viewportu a v path traceru |
+| **Sky Image** | obrázek oblohy, equirectangular (2 : 1): `.hdr` nebo `.exr` se světlem, jaké je (třeba HDRI z [Poly Haven](https://polyhaven.com/hdris), CC0), i `.png` a `.jpg`. Relativní cesta se čte ze složky sítě. |
+| **Sky Rotation**, **Sky Strength** | obrázek otočený kolem svislé osy (slunce z obrázku tam, kde ho záběr chce), jeho světlo krát síla |
+| **Sky Sun** | k obrázku i slunce Looku: ostré stíny pod oblohou bez vlastního slunce |
+| **Clouds** 0–1 (0) | kolik oblohy pokrývají mraky: 0 jasno, 0,3 pár mraků, 0,6 polojasno, 1 zataženo (slunce skoro schované, stíny měkké) |
+| **Cloud Size**, **Cloud Wind**, **Cloud Direction** | jak velké jsou mraky (km, 1,5), jak rychle je nese vítr (m/s, 5) a kam (stupně od osy +x): snímek po snímku se posouvají |
 | **View** `agx_punchy` (výchozí), `agx`, `aces` | jak se světlo převede na obraz: AgX jako v Blenderu, jasné barvy přecházejí do bílé jako na filmu. `agx_punchy` přidá look Punchy z Blenderu (víc kontrastu a barev, střední tóny tmavší), `aces` je křivka viewportu. Platí pro Cycles i path tracer. |
 | **Surface Detail** 0–1 (1) | povrchy, které jsou ve scéně hladké, dostanou barvu a drsnost proměnlivou ve skvrnách metr až dva velkých a velkých jako dlaň, a drobné nerovnosti. Zem k tomu skvrny několika metrů. 0: hladké jako ve viewportu. |
 
@@ -94,12 +100,30 @@ podlaha pod sluncem ve výšce 45° má jas matné podlahy pod sluncem Looku
 a obloha přidá asi 10 %. Při nízkém slunci je podíl modrého světla oblohy
 větší.
 
+![Demolice pod mraky 0,4 a 0,85 a pod HDRI](img/cycles-skies.jpg)
+
+Mraky jsou vrstva dva kilometry nad zemí. Kde jsou a kde ne, určuje
+Perlinův šum velký jako Cloud Size. Slunce je víc rozsvítí na tenkých
+okrajích a kolem sebe, husté a zatažené jsou šedší. U obzoru mizí
+v oparu. Slunce Looku je samostatné světlo, takže mrak, který přejde
+přes slunce, scénu nezhasne. Zatažená obloha slunce tlumí sama: při
+Clouds 1 zbude 15 % jeho světla.
+
+Z příkazové řádky jdou volby nastavit přes `--set`:
+
+```bash
+./build/prototype sim demolition odstrel.png --renderer cycles --set output.render_clouds=0.5
+./build/prototype sim demolition odstrel.png --renderer cycles \
+    --set output.render_sky=image --set output.render_sky_image=obloha.hdr --set output.render_sky_rotation=90
+```
+
 Obloha je v Cycles i světlo, které se vzorkuje podle jasu (jako
-v Blenderu): slunce na obloze najde každý paprsek, nejen ten, který
-na něj náhodou narazí.
+v Blenderu): jasné části oblohy z obrázku i mraky najde každý paprsek,
+nejen ten, který na ně náhodou narazí.
 
 Path tracer svítí vždy oblohou Looku a detail povrchů nepřidává.
-Převod barev (View) má stejný.
+Převod barev (View) má stejný. Viewport kreslí oblohu Looku, mraky
+a obrázek oblohy jsou jen v renderu.
 
 ## 4. Kouř, oheň a prach
 
@@ -239,6 +263,11 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   svítí jako slunce Looku a má jeho barvu, obloha je modrá.
 - `render_cycles_surface_detail_makes_a_flat_surface_uneven`: detail mění
   jas povrchu z místa na místo, v průměru ho nechá stejný.
+- `render_cycles_lights_the_scene_with_a_sky_picture`: obloha z obrázku
+  osvětlí podlahu jako stejnoměrná obloha té barvy, Sky Strength ji
+  zjasní, Sky Rotation otočí.
+- `render_cycles_clouds_cover_the_sky_and_drift_on_the_wind`: mraky oblohu
+  zbělí a vítr je posune.
 - `render_agx_shows_middle_grey_as_blender_does_and_bright_colours_going_white`:
   střední šedá je v AgX v polovině, jasná červená přechází do bílé, Punchy
   má víc kontrastu a barev.
@@ -248,6 +277,8 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
 - GPU (CUDA, OptiX, HIP, Metal): Cycles je postavený jen pro procesor.
 - Rozmazání pohybem, OSL shadery, textury a UV, materiály podle toho, co
   povrch je (beton, cihly, sklo oken, asfalt).
+- Mraky jako objem (stíny mraků na zemi, mraky, do kterých se dá vletět)
+  a obloha z obrázku ve viewportu.
 - Plate (obraz na pozadí kamery). Holdout a shadow catcher na objektech
   scény ano.
 - Déšť a drť jako body. Kreslí je jen viewport.

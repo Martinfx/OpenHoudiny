@@ -186,6 +186,7 @@ void SimWorkspace::renderTab(int width, int height) {
         }
         r.input.camera = cam;
         r.input.sunAngle = settings.sunAngle;
+        r.input.time = static_cast<float>(current_ - 1) * compiled_.world.timeStep;
         const sim::Domain dm = sceneBox();
         r.input.domain.lo = dm.origin();
         r.input.domain.hi = dm.origin() + dm.size();

@@ -49,12 +49,27 @@ struct Settings {
     float sunAngle = 0.53f;          ///< degrees across the sun: larger, softer shadows
     uint32_t seed = 0;
     /// The sky Cycles lights the scene with: the look's sun and sky, as the
-    /// viewport and the path tracer have them -- or a real day's, as
-    /// Blender's Sky Texture has it (Nishita's model): the sun where the
-    /// look has it and as bright, its colour and the sky's blue from the
-    /// air it shines through, the ground out to the horizon.
-    enum class Sky : uint8_t { Look, Physical };
+    /// viewport and the path tracer have them; a real day's, as Blender's
+    /// Sky Texture has it (Nishita's model) -- the look's sun, the sky's
+    /// blue from the air it shines through, clouds if asked, the ground out
+    /// to the horizon; or a picture all round (an HDRI).
+    enum class Sky : uint8_t { Look, Physical, Image };
     Sky sky = Sky::Physical;
+    /// Image: the picture -- equirectangular, .hdr, .exr, .png or .jpg --
+    /// turned `skyRotation` degrees about the vertical, its light times
+    /// `skyStrength`; the look's sun too with `skySun`.
+    std::string skyImage;
+    float skyRotation = 0.0f;
+    float skyStrength = 1.0f;
+    bool skySun = false;
+    /// Physical: how much of the sky clouds cover, 0 to 1 (1 overcast, the
+    /// sun mostly hidden); how big they are, `cloudSize` kilometres or so
+    /// across; how fast the wind takes them, m/s, towards `cloudDirection`
+    /// degrees round from +x.
+    float clouds = 0.0f;
+    float cloudSize = 1.5f;
+    float cloudWind = 5.0f;
+    float cloudDirection = 0.0f;
     /// How light becomes the picture: AgX, as Blender shows it -- bright
     /// colours go towards white as on film -- with Blender's look Punchy,
     /// more contrast and colour, or as it is; or ACES (Narkowicz's fit), as

@@ -130,6 +130,7 @@ struct Scene {
     float sunCosine = 1.0f; ///< of the angle from the sun's middle to its rim
     float floorRadius = 1e30f;  ///< where the floor has faded out, from the origin
     sim::Camera camera;
+    float time = 0.0f;          ///< seconds into the shot (SceneInput::time)
 
     /// The first surface a ray from `origin` along the unit `dir` meets
     /// before `tMax`. `fade`, in [0, 1): whether the floor, fading out far
@@ -163,6 +164,7 @@ struct SceneInput {
     sim::Camera camera;
     float sunAngle = 0.53f;  ///< degrees across the sun's disc
     Box domain;              ///< the simulations' box, for how far the floor goes
+    float time = 0.0f;       ///< seconds into the shot: how far the clouds have drifted
 };
 
 /// Builds scenes, keeping the meshes of the prototypes that live on -- a

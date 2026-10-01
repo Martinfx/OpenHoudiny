@@ -411,6 +411,7 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     s.engine = engine_;
     s.look = in.look;
     s.camera = in.camera;
+    s.time = in.time;
     s.sunDirection = normalize(in.look.lightDirection());
     s.sunLight = in.look.lightColor * in.look.lightIntensity;
     s.skyLight = in.look.skyColor * in.look.skyIntensity;

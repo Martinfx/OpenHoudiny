@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -768,10 +769,126 @@ struct CyclesRender::Impl {
                std::max(nishitaSun(std::max(sunElevation(s), 3.0f * kPi / 180.0f), sunSize()), 1e-6f);
     }
 
-    /// Whether Nishita's sky lights the scene: asked for, and a sun to make
-    /// it as bright as.
-    bool physicalSky(const Scene& s) const {
-        return settings.sky == Settings::Sky::Physical && 0.2126f * s.sunLight.x + 0.7152f * s.sunLight.y + 0.0722f * s.sunLight.z > 0.0f;
+    /// What the sky is, as asked and as it can be: a picture, when there is
+    /// one -- else Nishita's, when there is a sun to make it as bright as --
+    /// else the look's.
+    Settings::Sky skyKind(const Scene& s) const {
+        std::error_code ec;
+        if (settings.sky == Settings::Sky::Image && !settings.skyImage.empty() &&
+            std::filesystem::is_regular_file(settings.skyImage, ec)) {
+            return Settings::Sky::Image;
+        }
+        const float sun = 0.2126f * s.sunLight.x + 0.7152f * s.sunLight.y + 0.0722f * s.sunLight.z;
+        return settings.sky != Settings::Sky::Look && sun > 0.0f ? Settings::Sky::Physical : Settings::Sky::Look;
+    }
+    bool physicalSky(const Scene& s) const { return skyKind(s) == Settings::Sky::Physical; }
+
+    /// The sky picture all round, turned as Sky Rotation says; looked up
+    /// the way `at` gives, else the ray's.
+    ccl::ShaderOutput* imageSky(ccl::ShaderGraph& graph, ccl::ShaderOutput* at = nullptr) const {
+        auto* env = graph.create_node<ccl::EnvironmentTextureNode>();
+        env->set_filename(ccl::ustring(settings.skyImage));
+        env->set_projection(ccl::NODE_ENVIRONMENT_EQUIRECTANGULAR);
+        env->set_interpolation(ccl::INTERPOLATION_LINEAR);
+        env->tex_mapping.rotation = ccl::make_float3(0.0f, 0.0f, settings.skyRotation * kPi / 180.0f);
+        if (at) graph.connect(at, env->input("Vector"));
+        return env->output("Color");
+    }
+
+    /// The sky's light from along `at` (the ray's way without it), before
+    /// skyStrength(): a picture's, else Nishita's -- without its sun's disc,
+    /// the look's sun lighting (sun()) -- with its clouds unless `clear`.
+    ccl::ShaderOutput* skyAt(ccl::ShaderGraph& graph, const Scene& s, ccl::ShaderOutput* at, bool clear = false) const {
+        if (skyKind(s) == Settings::Sky::Image) return imageSky(graph, at);
+        ccl::ShaderOutput* sky = daySky(graph, s, false, at);
+        if (clear || settings.clouds <= 0.0f) return sky;
+        if (!at) at = graph.create_node<ccl::TextureCoordinateNode>()->output("Generated");
+        return clouded(graph, s, sky, at);
+    }
+    float skyStrength(const Scene& s) const {
+        return skyKind(s) == Settings::Sky::Image ? settings.skyStrength : dayStrength(s);
+    }
+
+    /// Clouds over `sky` along `dir`: a layer 2 km up, its holes where
+    /// Perlin's noise -- Cloud Size kilometres or so across -- is below what
+    /// Clouds asks, drifting on the wind; lit by the sun, brighter round it,
+    /// greyer where they are thick and the more of the sky they cover;
+    /// thinning into the haze at the horizon.
+    ccl::ShaderOutput* clouded(ccl::ShaderGraph& graph, const Scene& s, ccl::ShaderOutput* sky, ccl::ShaderOutput* dir) const {
+        const float cover = std::clamp(settings.clouds, 0.0f, 1.0f);
+        auto* split = graph.create_node<ccl::SeparateXYZNode>();
+        graph.connect(dir, split->input("Vector"));
+        auto* up = graph.create_node<ccl::MathNode>();
+        up->set_math_type(ccl::NODE_MATH_MAXIMUM);
+        graph.connect(split->output("Z"), up->input("Value1"));
+        up->set_value2(0.02f);
+        auto* reach = graph.create_node<ccl::MathNode>();
+        reach->set_math_type(ccl::NODE_MATH_DIVIDE);
+        reach->set_value1(2000.0f);
+        graph.connect(up->output("Value"), reach->input("Value2"));
+        auto* there = graph.create_node<ccl::VectorMathNode>();
+        there->set_math_type(ccl::NODE_VECTOR_MATH_SCALE);
+        graph.connect(dir, there->input("Vector1"));
+        graph.connect(reach->output("Value"), there->input("Scale"));
+        // The wind: our x and z are Cycles' x and -y.
+        const float a = settings.cloudDirection * kPi / 180.0f, drift = settings.cloudWind * s.time;
+        auto* blown = graph.create_node<ccl::VectorMathNode>();
+        blown->set_math_type(ccl::NODE_VECTOR_MATH_SUBTRACT);
+        graph.connect(there->output("Vector"), blown->input("Vector1"));
+        blown->set_vector2(ccl::make_float3(drift * std::cos(a), -drift * std::sin(a), 0.0f));
+        ccl::ShaderOutput* n =
+            noise(graph, blown->output("Vector"), 1.0f / (1000.0f * std::max(settings.cloudSize, 0.01f)), 6.0f, 0.55f);
+        auto range = [&](ccl::ShaderOutput* x, float from, float to) {
+            auto* m = graph.create_node<ccl::MapRangeNode>();
+            m->set_range_type(ccl::NODE_MAP_RANGE_SMOOTHSTEP);
+            m->set_from_min(from);
+            m->set_from_max(to);
+            m->set_to_min(0.0f);
+            m->set_to_max(1.0f);
+            m->set_clamp(true);
+            graph.connect(x, m->input("Value"));
+            return m->output("Result");
+        };
+        const float edge = 0.66f - 0.36f * cover;
+        auto* seen = graph.create_node<ccl::MathNode>();
+        seen->set_math_type(ccl::NODE_MATH_MULTIPLY);
+        graph.connect(range(n, edge, edge + 0.14f), seen->input("Value1"));
+        graph.connect(range(split->output("Z"), 0.0f, 0.15f), seen->input("Value2"));
+        // Their light: the sun's on a white surface facing it, more of it
+        // looking towards the sun, less where they are thick; the sky's.
+        const float k = std::max(skyStrength(s), 1e-6f);
+        auto* toward = graph.create_node<ccl::VectorMathNode>();
+        toward->set_math_type(ccl::NODE_VECTOR_MATH_DOT_PRODUCT);
+        graph.connect(dir, toward->input("Vector1"));
+        toward->set_vector2(ccl::normalize(toCycles(s.sunDirection)));
+        auto* facing = graph.create_node<ccl::MathNode>();
+        facing->set_math_type(ccl::NODE_MATH_MAXIMUM);
+        graph.connect(toward->output("Value"), facing->input("Value1"));
+        facing->set_value2(0.0f);
+        auto* glare = graph.create_node<ccl::MathNode>();
+        glare->set_math_type(ccl::NODE_MATH_POWER);
+        graph.connect(facing->output("Value"), glare->input("Value1"));
+        glare->set_value2(8.0f);
+        // Thin edges as bright as white paper in the sun, thick bases a
+        // third of it; an overcast -- thick all over -- greyer still.
+        ccl::ShaderOutput* lit = scaled(graph, glare->output("Value"), 1.0f, 0.75f);
+        lit = scaled(graph, range(n, edge + 0.04f, edge + 0.32f), -0.5f, 0.0f, lit);
+        lit = scaled(graph, lit, 1.0f - 0.6f * cover * cover, 0.0f);
+        auto* sun = graph.create_node<ccl::ColorNode>();
+        sun->set_value(rgb(s.sunLight / k));
+        ccl::ShaderOutput* white = times(graph, sun->output("Color"), lit);
+        auto* overhead = graph.create_node<ccl::CombineXYZNode>();
+        overhead->set_z(1.0f);
+        auto* zenith = graph.create_node<ccl::VectorMathNode>();
+        zenith->set_math_type(ccl::NODE_VECTOR_MATH_MULTIPLY_ADD);
+        graph.connect(daySky(graph, s, false, overhead->output("Vector")), zenith->input("Vector1"));
+        zenith->set_vector2(ccl::make_float3(0.5f, 0.5f, 0.5f));
+        graph.connect(white, zenith->input("Vector3"));
+        auto* mix = graph.create_node<ccl::MixColorNode>();
+        graph.connect(seen->output("Value"), mix->input("Factor"));
+        graph.connect(sky, mix->input("A"));
+        graph.connect(zenith->output("Vector"), mix->input("B"));
+        return mix->output("Result");
     }
 
     ccl::Object* place(ccl::Scene* scene, ccl::Geometry* geometry, const ccl::Transform& tfm, const Vec3& tint) {
@@ -825,8 +942,8 @@ struct CyclesRender::Impl {
             graph->connect(scaled(*graph, split->output("Y"), -1.0f, 0.0f), along->input("Y"));
             along->set_z(0.03f);
             auto* glow = graph->create_node<ccl::EmissionNode>();
-            glow->set_strength(dayStrength(s));
-            graph->connect(daySky(*graph, s, false, along->output("Vector")), glow->input("Color"));
+            glow->set_strength(skyStrength(s));
+            graph->connect(skyAt(*graph, s, along->output("Vector"), true), glow->input("Color"));
             auto* hazy = graph->create_node<ccl::MixClosureNode>();
             graph->connect(haze, hazy->input("Fac"));
             graph->connect(bsdf->output("BSDF"), hazy->input("Closure1"));
@@ -883,10 +1000,11 @@ struct CyclesRender::Impl {
         return shader;
     }
 
-    /// The world: the look's sky -- with Sky Behind, the viewport's,
-    /// brighter round the sun, as a picture all round Cycles samples as it
-    /// lights; without, its colour -- the camera seeing the studio's
-    /// backdrop then, darker at the bottom of the picture.
+    /// The world: Nishita's sky or a picture all round (skyAt()); else the
+    /// look's sky -- with Sky Behind, the viewport's, brighter round the
+    /// sun, as a picture all round; without, its colour. Without Sky Behind
+    /// the camera sees the studio's backdrop, darker at the bottom of the
+    /// picture.
     void world(ccl::Scene* scene, const Scene& s) {
         auto graph = std::make_unique<ccl::ShaderGraph>();
         auto* sky = graph->create_node<ccl::BackgroundNode>();
@@ -912,10 +1030,11 @@ struct CyclesRender::Impl {
             graph->connect(backdrop->output("Background"), mix->input("Closure2"));
             graph->connect(mix->output("Closure"), graph->output()->input("Surface"));
         };
-        if (physicalSky(s)) {
-            // A real day's: Nishita's sky, as Blender's Sky Texture.
-            graph->connect(daySky(*graph, s), sky->input("Color"));
-            sky->set_strength(dayStrength(s));
+        if (skyKind(s) != Settings::Sky::Look) {
+            // A real day's -- Nishita's sky, as Blender's Sky Texture, its
+            // clouds -- or the picture all round.
+            graph->connect(skyAt(*graph, s, nullptr), sky->input("Color"));
+            sky->set_strength(skyStrength(s));
             if (s.look.skyBehind) graph->connect(sky->output("Background"), graph->output()->input("Surface"));
             else backdropBehind();
         } else if (s.look.skyBehind) {
@@ -964,13 +1083,21 @@ struct CyclesRender::Impl {
 
     /// The look's sun: a distant light as wide as Sun Angle, lighting a
     /// surface facing it as the viewport's does -- an irradiance of pi
-    /// times the sun's light.
+    /// times the sun's light -- under Nishita's sky too; under a sky
+    /// picture, with Sky Sun alone.
     void sun(ccl::Scene* scene, const Scene& s, const Settings& settings) {
         if (!(std::max({s.sunLight.x, s.sunLight.y, s.sunLight.z}) > 0.0f)) return;
-        if (physicalSky(s)) return;  // the sky's own sun lights it
+        const Settings::Sky kind = skyKind(s);
+        if (kind == Settings::Sky::Image && !settings.skySun) return;  // the picture's own sun lights it
+        // Behind a cover of clouds -- more than broken -- most of it hidden.
+        float through = 1.0f;
+        if (kind == Settings::Sky::Physical) {
+            const float t = std::clamp((settings.clouds - 0.6f) / 0.4f, 0.0f, 1.0f);
+            through = 1.0f - 0.85f * t * t * (3.0f - 2.0f * t);
+        }
         auto* light = scene->create_node<ccl::Light>();
         light->set_light_type(ccl::LIGHT_DISTANT);
-        light->set_strength(rgb(s.sunLight * kPi));
+        light->set_strength(rgb(s.sunLight * (kPi * through)));
         light->set_angle(std::clamp(settings.sunAngle, 0.01f, 30.0f) * kPi / 180.0f);
         light->set_use_mis(true);
         light->set_cast_shadow(true);
@@ -1164,7 +1291,7 @@ struct CyclesRender::Impl {
         }
         // The floor: as far as it goes, a square round it, faded to a disc.
         if (s.look.floor) {
-            const bool horizon = physicalSky(s) && s.look.skyBehind;
+            const bool horizon = skyKind(s) != Settings::Sky::Look && s.look.skyBehind;
             const float r = horizon ? 5000.0f : std::min(s.floorRadius, 1e5f);
             const Vec3 a(-r, 0.0f, -r), b(r, 0.0f, -r), c(r, 0.0f, r), d(-r, 0.0f, r), n(0.0f, 1.0f, 0.0f);
             ccl::Mesh* mesh = ownMesh(scene, {a, d, c, a, c, b}, {n, n, n, n, n, n}, s.look.groundColor,

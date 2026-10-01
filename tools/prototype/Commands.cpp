@@ -1199,6 +1199,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             in.camera.height = height;
             in.sunAngle = settings.sunAngle;
             in.domain = domainBox;
+            in.time = static_cast<float>(f - 1) * world.timeStep;
             const std::string file = movie ? std::string() : o.every > 0 ? numbered(outPath, f) : outPath;
             const std::string comment = "prototype sim " + network + ", frame " + std::to_string(f);
             std::vector<uint8_t> rgb;
