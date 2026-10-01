@@ -1,0 +1,7 @@
+# The texture plaster: what src/pg/render/Textures.cpp reads.
+size 3.000
+depth 0.00108
+mean 0.50066 0.50157 0.50066
+tint 1
+source Amazon Lumberyard Bistro (Amazon, CC-BY 4.0, https://developer.nvidia.com/orca/amazon-lumberyard-bistro), via pbrt-v4-scenes
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

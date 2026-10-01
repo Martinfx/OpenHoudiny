@@ -367,8 +367,11 @@ Seřazeno podle poměru hodnota / náklad:
    ([pathtracer.md](docs/pathtracer.md)): povrchy, sklo a voda, hloubka
    ostrosti, AOV do EXR; kouř, oheň a prach s vícenásobným rozptylem,
    stíny kouře a světlem plamenů; odšumění neuronovou sítí Intel Open
-   Image Denoise.
-   Zbývá: Cycles na GPU, materiály a textury, rozmazání pohybem, barevná
+   Image Denoise; materiály podle toho, z čeho povrch je (`s@material`:
+   beton, omítka, cihla, okno, ocel…), fotografie povrchů z knihovny
+   a vlastní textury kladené ze tří stran podle polohy kusu před pohybem
+   ([materials.md](docs/materials.md)).
+   Zbývá: Cycles na GPU, rozmazání pohybem, UV a normálové mapy, barevná
    správa OCIO/ACES. Do té doby renderují studia náročné záběry přes USD
    vlastními renderery.
 4. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
@@ -411,7 +414,8 @@ Seřazeno podle poměru hodnota / náklad:
    a odstupem; Copy to Points s instancemi a kusy podle atributu. Příklad
    meadow: 122 577 trsů (1,9 milionu stébel), 84 stromů a 65 keřů
    za 148 ms, snímek ve větru 31–39 ms ([vegetation.md](docs/vegetation.md)).
-   Zbývá: UV a textury kůry a listů, průsvitnost listů a stébel,
+   Kůra má fotografii, listy a tráva skvrny ([materials.md](docs/materials.md)).
+   Zbývá: UV a textury listů, průsvitnost listů a stébel,
    prořezávání obálkou, LOD a billboardy pro vzdálený les a trávu, ohyb
    stébel ve shaderu, vítr jako simulace ohybu, kořeny, ekosystém druhů.
 

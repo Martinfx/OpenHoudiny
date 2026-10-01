@@ -406,7 +406,15 @@ std::vector<ParamDef> renderParams() {
              {"AgX Punchy", "AgX", "ACES"}},
             {"render_detail", "Surface Detail", "Render", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
              "What Cycles adds to surfaces the scene has flat: colour and roughness that vary, small bumps that "
-             "catch the light -- as stone, plaster and the ground are. 0: as flat as the viewport draws them."}};
+             "catch the light -- as stone, plaster and the ground are. 0: as flat as the viewport draws them."},
+            {"render_textures", "Textures", "Render", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "The photographs of the materials -- concrete, plaster, a brick wall, wood, bark, soil -- and the "
+             "textures the Material nodes give. Off: their patterns and colours alone."},
+            {"render_texture_folder", "Texture Folder", "Render", K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f,
+             0.0f, "",
+             "Where the materials' photographs are: a folder for each, named as the material (concrete, plaster, "
+             "brick_wall...), each with color.jpg, height.jpg and texture.txt. Empty: the ones that come with the "
+             "program (examples/textures). A relative path is read from the network's folder."}};
 }
 
 std::vector<ParamDef> outputParams() {
@@ -765,6 +773,36 @@ std::vector<NodeType> buildTypes() {
              {{"color", "Color", "Color", K::Color, {0.9f, 0.45f, 0.2f}, 0.0f, 1.0f, 0.0f, 1.0f, "", "The colour."},
               {"class", "Class", "Color", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "On the points, or on the primitives.", {"point", "primitive"}, {"Point", "Primitive"}}});
+    // The names in the order of kMaterialNames (core/Material.h), "none" for "".
+    geometry("material", "Material", "material",
+             "What the faces of a group are made of -- or all of them -- for the renderers: the string attribute "
+             "material, and a texture of your own if you give one (texture, texture_size, texture_tint). Brick "
+             "Wall, Concrete Fracture, Tree, Grass and Glass Fracture set theirs themselves.",
+             in,
+             {text("group", "Group", "Material", "",
+                   "Which faces: a group's name, numbers and ranges -- 0-9 12 -- * or empty for all."),
+              {"material", "Material", "Material", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 18.0f, 0.0f, 18.0f, "",
+               "What the faces are. Cycles draws concrete, plaster, a brick wall, wood, bark and soil with the "
+               "photographs that come with the program (examples/textures), the others with a pattern of their "
+               "own -- broken concrete with its stones, brick, mortar, a window with a room behind it, rusty steel "
+               "-- all on their colour Cd; the path tracer the photographs too, without their bumps. None takes "
+               "it away.",
+               {"none", "concrete", "broken_concrete", "brick", "brick_wall", "mortar", "plaster", "window", "glass",
+                "steel", "metal", "asphalt", "wood", "stone", "roof", "bark", "leaf", "grass", "soil"},
+               {"None", "Concrete", "Broken Concrete", "Brick", "Brick Wall", "Mortar", "Plaster", "Window", "Glass",
+                "Steel", "Metal", "Asphalt", "Wood", "Stone", "Roof", "Bark", "Leaf", "Grass", "Soil"}},
+              {"texture", "Texture", "Texture", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+               "A texture of your own instead of the material's: a picture of its colour -- the other pictures of "
+               "the set beside it are found by their names (Poly Haven's _diff_, _rough_, _disp_; ambientCG's "
+               "_Color, _Roughness, _Displacement), or a folder's texture.txt. Laid on from three sides by where "
+               "the faces were before they moved: it goes with a piece that flies.",
+               {".jpg", ".jpeg", ".png", ".exr"},
+               {}},
+              {"texture_size", "Texture Size", "Texture", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, 1000.0f, "m",
+               "How many metres one picture covers. 0: as its texture.txt says, else 2 m."},
+              {"texture_tint", "Tint by Color", "Texture", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The colour Cd in place of the picture's own: its pattern lighter and darker round the faces' "
+               "colour. Off: the picture as it is."}});
     geometry("group_box", "Group by Box", "groupbox",
              "A group of the points inside a box: what Blast deletes, or keeps.",
              in,
@@ -3812,6 +3850,11 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     r.cloudDirection = f(*output, "render_cloud_direction");
     r.view = static_cast<render::Settings::View>(std::clamp(whole(*output, "render_view"), 0, 2));
     r.detail = std::clamp(f(*output, "render_detail"), 0.0f, 1.0f);
+    r.textures = f(*output, "render_textures") != 0.0f;
+    r.textureFolder = text(output->id, "render_texture_folder");
+    if (!r.textureFolder.empty() && !folder.empty() && std::filesystem::path(r.textureFolder).is_relative()) {
+        r.textureFolder = (std::filesystem::path(folder) / r.textureFolder).lexically_normal().string();
+    }
     // The camera of the shot.
     if (const Node* cam = upstream(*output, "camera")) {
         Camera& m = c.camera;

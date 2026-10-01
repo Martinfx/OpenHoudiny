@@ -190,6 +190,7 @@ public:
             for (size_t p = 0; p < glass.size(); ++p) glass[p] = cut && cut->contains(p) ? 2 : 1;
             auto cd = shard->primitives().create("Cd", AttrType::Vec3).write<Vec3>();
             std::fill(cd.begin(), cd.end(), tint);
+            setPrimitiveString(*shard, "material", "glass");
             if (!attribute.empty()) {
                 auto pp = shard->primitives().create(attribute, AttrType::Int).write<int32_t>();
                 std::fill(pp.begin(), pp.end(), number);

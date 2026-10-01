@@ -24,7 +24,8 @@
 //              joint at its end, the joint behind it where another leaf is --
 //              and the Plaster on the wall's faces in front of it: one piece,
 //              piece its number, Cd the brick's colour (each a shade of its
-//              own), the mortar's, the plaster's. Broken of those half as
+//              own), the mortar's, the plaster's -- material brick, mortar,
+//              plaster. Broken of those half as
 //              long again as they are wide are cut in two across, the halves
 //              one cluster held Strength times as hard as the mortar
 //              (clusterglue): a hard knock breaks them, the faces of the
@@ -171,6 +172,7 @@ struct Builder {
     std::vector<Vec3> points;
     std::vector<std::array<uint32_t, 4>> faces;
     std::vector<Vec3> color;
+    std::vector<uint8_t> stuff;  ///< a face's Stuff
     std::vector<int32_t> piece, cluster;
     std::vector<float> clusterGlue;
     std::vector<int32_t> pointPiece;
@@ -338,6 +340,13 @@ public:
         const std::string attribute = params_.getString("attribute", "piece");
         auto cd = out->primitives().create("Cd", AttrType::Vec3).write<Vec3>();
         std::copy(b.color.begin(), b.color.end(), cd.begin());
+        // What each face is, for a renderer (s@material).
+        for (const auto& [what, name] : {std::pair{Stuff::Brick, "brick"}, std::pair{Stuff::Mortar, "mortar"},
+                                         std::pair{Stuff::Plaster, "plaster"}}) {
+            std::vector<uint8_t> mask(b.stuff.size());
+            for (size_t i = 0; i < mask.size(); ++i) mask[i] = b.stuff[i] == static_cast<uint8_t>(what);
+            setPrimitiveString(*out, "material", name, mask);
+        }
         if (!attribute.empty()) {
             auto pp = out->primitives().create(attribute, AttrType::Int).write<int32_t>();
             std::copy(b.piece.begin(), b.piece.end(), pp.begin());
@@ -462,6 +471,7 @@ private:
             if (flip) std::swap(q[1], q[3]);
             b.faces.push_back(q);
             b.color.push_back(colour(what, broken));
+            b.stuff.push_back(static_cast<uint8_t>(what));
             b.piece.push_back(piece);
         };
         // Along: the faces at its start and end.

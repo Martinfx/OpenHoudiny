@@ -120,6 +120,7 @@ Geometry growGrassClump(const GrassSettings& s, uint64_t seed) {
     // letting through a share of the light that falls on them.
     auto translucency = geo.primitives().create("translucency", AttrType::Float).write<float>();
     std::fill(translucency.begin(), translucency.end(), 0.35f);
+    setPrimitiveString(geo, "material", "grass");
     return geo;
 }
 

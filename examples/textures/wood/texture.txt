@@ -1,0 +1,7 @@
+# The texture wood: what src/pg/render/Textures.cpp reads.
+size 1.200
+depth 0.00050
+mean 0.22788 0.14184 0.08235
+tint 1
+source Amazon Lumberyard Bistro (Amazon, CC-BY 4.0, https://developer.nvidia.com/orca/amazon-lumberyard-bistro), via pbrt-v4-scenes
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

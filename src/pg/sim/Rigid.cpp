@@ -2,6 +2,7 @@
 
 #include "pg/core/Half.h"
 #include "pg/core/Instances.h"
+#include "pg/core/Material.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Spatial.h"
 #include "pg/nodes/Rebuild.h"
@@ -1270,6 +1271,14 @@ std::shared_ptr<Geometry> posedPieces(const RigidFrame& f) {
         }
     }
     geo->points().erase("proxy");  // the rest's, not where the pieces are now
+    // Where each point was before it moved -- unless the pieces say: what a
+    // renderer draws on them goes with them (s@material: render/Cycles.cpp).
+    if (const AttributeArray* r = geo->points().find("rest"); !r || r->type() != AttrType::Vec3) {
+        geo->points().erase("rest");
+        auto rest = geo->points().create("rest", AttrType::Vec3).write<Vec3>();
+        const auto still = geo->positions();
+        std::copy(still.begin(), still.end(), rest.begin());
+    }
     auto v = geo->points().create("v", AttrType::Vec3).write<Vec3>();
     auto P = geo->positionsForWrite();
     AttributeArray* nAttr = geo->points().find("N");
@@ -1461,7 +1470,7 @@ namespace {
 
 /// The polylines of `bars` added to `geo` as tubes as thick as their width,
 /// six-sided: their points and quads, the points moving as v says, the
-/// corners' Cd `steel`.
+/// corners' Cd `steel`, the quads steel (s@material).
 void appendTubes(Geometry& geo, const Geometry& bars, const Vec3& steel) {
     constexpr int kSides = 6;
     const auto C = bars.positions();
@@ -1512,12 +1521,21 @@ void appendTubes(Geometry& geo, const Geometry& bars, const Vec3& steel) {
         auto w = n->write<Vec3>();
         std::copy(ringN.begin(), ringN.end(), w.begin() + static_cast<long>(first));
     }
+    // The bars bend: where they are now stands for where they were.
+    if (AttributeArray* r = geo.points().find("rest"); r && r->type() == AttrType::Vec3) {
+        auto w = r->write<Vec3>();
+        std::copy(ring.begin(), ring.end(), w.begin() + static_cast<long>(first));
+    }
     const size_t corners = geo.vertexCount();
+    const size_t prim0 = geo.primitiveCount();
     for (const auto& q : quads) geo.addPrimitive(q, true);
     if (AttributeArray* cd = geo.vertices().find("Cd"); cd && cd->type() == AttrType::Vec3) {
         auto w = cd->write<Vec3>();
         std::fill(w.begin() + static_cast<long>(corners), w.end(), steel);
     }
+    std::vector<uint8_t> tubes(geo.primitiveCount(), 0);
+    std::fill(tubes.begin() + static_cast<long>(prim0), tubes.end(), 1);
+    setPrimitiveString(geo, "material", "steel", tubes);
 }
 
 /// The tint of a chip of glass.
@@ -1567,6 +1585,32 @@ std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, co
     geo->detail().erase("Cd");
     auto cd = geo->vertices().create("Cd", AttrType::Vec3).write<Vec3>();
     std::copy(corners.begin(), corners.end(), cd.begin());
+    // What the faces a fracture cut are (s@material): the cap of a face
+    // takes the material of the face beside it -- plaster, paint, a
+    // window's -- but what is inside is no surface: broken concrete, the
+    // colour of the inside; what is the same all through -- brick, stone,
+    // wood, metal -- itself.
+    if (cut) {
+        std::vector<uint8_t> broken(nprims, 0);
+        bool any = false;
+        for (size_t p = 0; p < nprims; ++p) {
+            if (!cut->contains(p) || glassOf(glass, p) >= 0.5f) continue;
+            switch (materialPreset(primitiveString(*geo, "material", p))) {
+                case MaterialPreset::Brick:
+                case MaterialPreset::Stone:
+                case MaterialPreset::Wood:
+                case MaterialPreset::Bark:
+                case MaterialPreset::Steel:
+                case MaterialPreset::Metal:
+                case MaterialPreset::Glass:
+                    break;
+                default:
+                    broken[p] = 1;
+                    any = true;
+            }
+        }
+        if (any) setPrimitiveString(*geo, "material", "broken_concrete", broken);
+    }
     // The bars, where the pieces have taken them.
     if (f.rebar) appendTubes(*geo, *rebarBars(f), steel);
     // The grit: loose points, as big as it is, in the colour of a cut.

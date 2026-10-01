@@ -74,9 +74,11 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots = 400000, bool fac
 /// points' N where every point has a usable one, else the faces' round the
 /// corner within the viewport's crease; glass flat) and colour (Cd as
 /// displayOf finds it) -- the primitive each came from, and its glass: 0
-/// none, 1 a pane, 2 a crack.
+/// none, 1 a pane, 2 a crack. Where the points have rest (where they were
+/// before they moved), that of each corner too.
 struct ShadedTriangles {
     std::vector<Vec3> positions, normals, colors;  ///< three a triangle
+    std::vector<Vec3> rest;                        ///< three a triangle, or none
     std::vector<uint32_t> prims;                   ///< one a triangle
     std::vector<uint8_t> glass;                    ///< one a triangle
     size_t count() const { return prims.size(); }

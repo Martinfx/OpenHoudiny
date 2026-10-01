@@ -5,7 +5,9 @@
 
 #include "pg/core/Geometry.h"
 #include "pg/core/Instances.h"
+#include "pg/core/Material.h"
 #include "pg/core/Parallel.h"
+#include "pg/core/Selection.h"
 #include "pg/io/Obj.h"
 
 #include <algorithm>
@@ -377,6 +379,59 @@ public:
     }
 };
 
+/// What the primitives of a group -- all of them without one -- are made
+/// of, for a renderer: the string attribute `material`, one of the names of
+/// kMaterialNames; None takes it away.
+class MaterialNode : public Node {
+public:
+    explicit MaterialNode(std::string name) : Node("material", std::move(name)) {
+        setInputCount(1);
+        params_.setString("group", "");
+        params_.setInt("material", static_cast<int>(MaterialPreset::Concrete));
+        params_.setString("texture", "");
+        params_.setFloat("texture_size", 0.0f);
+        params_.setBool("texture_tint", false);
+    }
+
+    GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
+        auto geo = editableCopy(in.empty() ? nullptr : in[0]);
+        const std::string group = params_.getString("group");
+        error_.clear();
+        bool named = true;
+        const std::vector<uint8_t> picked =
+            group.empty() ? std::vector<uint8_t>() : selectElements(*geo, AttrClass::Primitive, group, &named);
+        if (!named) {
+            error_ = "no primitive group '" + group + "'";
+            return geo;
+        }
+        const int which = std::clamp(params_.evalInt("material", ctx, 1), 0, static_cast<int>(kMaterialPresets) - 1);
+        // An empty pattern picks every face; one that picks none, none.
+        if (!group.empty() && std::none_of(picked.begin(), picked.end(), [](uint8_t c) { return c != 0; })) return geo;
+        if (geo->primitiveCount() == 0) return geo;
+        setPrimitiveString(*geo, "material", std::string(kMaterialNames[static_cast<size_t>(which)]), picked);
+        // A texture of one's own (render/Textures.h): s@texture -- "" where
+        // the material's own -- f@texture_size, i@texture_tint.
+        const std::string texture = params_.getString("texture", "");
+        const bool has = geo->primitives().find("texture") != nullptr;
+        if (texture.empty() && !has) return geo;
+        setPrimitiveString(*geo, "texture", texture, picked);
+        const float size = std::max(params_.evalFloat("texture_size", ctx, 0.0f), 0.0f);
+        const int32_t tint = params_.evalBool("texture_tint", ctx, false) ? 1 : 0;
+        auto sizes = geo->primitives().create("texture_size", AttrType::Float).write<float>();
+        auto tints = geo->primitives().create("texture_tint", AttrType::Int).write<int32_t>();
+        for (size_t p = 0; p < sizes.size(); ++p) {
+            if (!picked.empty() && !picked[p]) continue;
+            sizes[p] = size;
+            tints[p] = tint;
+        }
+        return geo;
+    }
+    std::string cookError() const override { return error_; }
+
+private:
+    std::string error_;
+};
+
 }  // namespace
 
 std::shared_ptr<Geometry> scatterPoints(const Geometry& src, const ScatterRules& r) {
@@ -457,6 +512,7 @@ void registerSurfaceNodes() {
     r.add("copytopoints", [](const std::string& n) { return std::make_unique<CopyToPointsNode>(n); });
     r.add("unpack", [](const std::string& n) { return std::make_unique<UnpackNode>(n); });
     r.add("color", [](const std::string& n) { return std::make_unique<ColorNode>(n); });
+    r.add("material", [](const std::string& n) { return std::make_unique<MaterialNode>(n); });
 }
 
 }  // namespace pg

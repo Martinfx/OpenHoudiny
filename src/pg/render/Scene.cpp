@@ -2,6 +2,7 @@
 
 #include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
+#include "pg/render/Textures.h"
 #include "pg/sim/Display.h"
 
 #include <glm/gtc/quaternion.hpp>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <tuple>
 
 namespace pg::render {
 namespace {
@@ -27,10 +29,13 @@ struct MaterialNumber {
     const AttributeArray* prim;
     const AttributeArray* point;
     float detail;
+    bool given;  ///< the geometry has it, of one class or another
 
     MaterialNumber(const Geometry& geo, const char* name, float fallback)
         : prim(numberAttribute(geo.primitives(), name)), point(numberAttribute(geo.points(), name)), detail(fallback) {
-        if (const AttributeArray* d = numberAttribute(geo.detail(), name); d && d->size() > 0) detail = d->read<float>()[0];
+        const AttributeArray* d = numberAttribute(geo.detail(), name);
+        if (d && d->size() > 0) detail = d->read<float>()[0];
+        given = prim || point || (d && d->size() > 0);
     }
     float at(const Geometry& geo, uint32_t primitive) const {
         if (prim && primitive < prim->size()) return prim->read<float>()[primitive];
@@ -98,6 +103,31 @@ Box placedBox(const Placed& p, const Mesh& m) {
 
 }  // namespace
 
+PresetSurface presetSurface(MaterialPreset preset) {
+    switch (preset) {
+        case MaterialPreset::None: return {0.5f, 0.0f};
+        case MaterialPreset::Concrete: return {0.85f, 0.0f};
+        case MaterialPreset::BrokenConcrete: return {0.95f, 0.0f};
+        case MaterialPreset::Brick:
+        case MaterialPreset::BrickWall: return {0.85f, 0.0f};
+        case MaterialPreset::Mortar: return {0.95f, 0.0f};
+        case MaterialPreset::Plaster: return {0.8f, 0.0f};
+        case MaterialPreset::Window: return {0.04f, 0.0f};
+        case MaterialPreset::Glass: return {0.0f, 0.0f};
+        case MaterialPreset::Steel: return {0.45f, 0.8f};
+        case MaterialPreset::Metal: return {0.3f, 1.0f};
+        case MaterialPreset::Asphalt: return {0.9f, 0.0f};
+        case MaterialPreset::Wood: return {0.65f, 0.0f};
+        case MaterialPreset::Stone: return {0.75f, 0.0f};
+        case MaterialPreset::Roof: return {0.8f, 0.0f};
+        case MaterialPreset::Bark: return {0.9f, 0.0f};
+        case MaterialPreset::Leaf: return {0.5f, 0.0f};
+        case MaterialPreset::Grass: return {0.6f, 0.0f};
+        case MaterialPreset::Soil: return {0.95f, 0.0f};
+    }
+    return {};
+}
+
 std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine engine) {
     auto mesh = std::make_shared<Mesh>();
     const sim::ShadedTriangles tris = sim::shadedTriangles(geo);
@@ -108,28 +138,64 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     // in steps of a 256th.
     const MaterialNumber roughness(geo, "roughness", 0.5f), metallic(geo, "metallic", 0.0f),
         translucency(geo, "translucency", 0.0f);
-    std::map<std::array<int, 4>, uint16_t> known;
+    // What each primitive is made of (s@material): the preset of each name
+    // of its table.
+    const AttributeArray* named = geo.primitives().find("material");
+    if (named && named->type() != AttrType::String) named = nullptr;
+    std::vector<MaterialPreset> presetOfName;
+    if (named) {
+        for (const std::string& s : named->strings()) presetOfName.push_back(materialPreset(s));
+    }
+    auto presetOf = [&](uint32_t prim) {
+        if (!named || prim >= named->size()) return MaterialPreset::None;
+        const int32_t i = named->read<int32_t>()[prim];
+        return i >= 0 && static_cast<size_t>(i) < presetOfName.size() ? presetOfName[static_cast<size_t>(i)]
+                                                                      : MaterialPreset::None;
+    };
+    // Textures of their own (the Material node's): which, how big, and
+    // whether the colour Cd tints them.
+    const AttributeArray* textures = geo.primitives().find("texture");
+    if (textures && textures->type() != AttrType::String) textures = nullptr;
+    const MaterialNumber textureSize(geo, "texture_size", 0.0f);
+    const AttributeArray* tints = geo.primitives().find("texture_tint");
+    if (tints && tints->type() != AttrType::Int) tints = nullptr;
+    auto textureOfPrim = [&](uint32_t prim) -> const std::string& {
+        static const std::string none;
+        if (!textures || prim >= textures->size()) return none;
+        return textures->stringValue(textures->read<int32_t>()[prim]);
+    };
+    std::map<std::tuple<std::array<int, 5>, std::string, int>, uint16_t> known;
     std::vector<uint16_t> which(n);
     auto quantize = [](float x) { return static_cast<int>(std::lround(std::clamp(x, 0.0f, 1.0f) * 255.0f)); };
     for (size_t t = 0; t < n; ++t) {
         Material m;
         const uint32_t prim = tris.prims[t];
+        const MaterialPreset preset = presetOf(prim);
+        const std::string& texture = textureOfPrim(prim);
         if (water) {
             m.kind = Material::Kind::Water;
             m.roughness = 0.0f;
             m.ior = 1.33f;
-        } else if (tris.glass[t] == 1) {
+        } else if (tris.glass[t] == 1 || (tris.glass[t] == 0 && preset == MaterialPreset::Glass)) {
             m.kind = Material::Kind::Glass;
             m.roughness = 0.0f;
             m.ior = 1.5f;
         } else {
-            m.roughness = static_cast<float>(quantize(roughness.at(geo, prim))) / 255.0f;
-            m.metallic = static_cast<float>(quantize(metallic.at(geo, prim))) / 255.0f;
+            const PresetSurface base = presetSurface(preset);
+            m.preset = preset;
+            m.roughness = static_cast<float>(quantize(roughness.given ? roughness.at(geo, prim) : base.roughness)) / 255.0f;
+            m.metallic = static_cast<float>(quantize(metallic.given ? metallic.at(geo, prim) : base.metallic)) / 255.0f;
             m.translucency = static_cast<float>(quantize(translucency.at(geo, prim))) / 255.0f;
             if (tris.glass[t] == 2) m.roughness = 0.35f;  // a crack: a rough, white break in the glass
+            if (!texture.empty()) {
+                m.texture = texture;
+                m.textureSize = std::max(textureSize.at(geo, prim), 0.0f);
+                m.textureTint = static_cast<int8_t>(tints && prim < tints->size() && tints->read<int32_t>()[prim] != 0);
+            }
         }
-        const std::array<int, 4> key{static_cast<int>(m.kind), quantize(m.roughness), quantize(m.metallic),
-                                     quantize(m.translucency)};
+        const auto key = std::make_tuple(std::array<int, 5>{static_cast<int>(m.kind), quantize(m.roughness), quantize(m.metallic),
+                                                            quantize(m.translucency), static_cast<int>(m.preset)},
+                                         m.texture, static_cast<int>(std::lround(m.textureSize * 1000.0f)) * 3 + m.textureTint + 1);
         auto it = known.find(key);
         if (it == known.end()) {
             if (mesh->materials.size() >= 65535) {
@@ -142,6 +208,28 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
         which[t] = it->second;
     }
     for (const Material& m : mesh->materials) mesh->clear = mesh->clear || m.kind != Material::Kind::Surface;
+    // The windows' faces each a number of its own: of where its first
+    // triangle was before it moved, so that it stays the same while pieces
+    // come and go.
+    std::vector<float> random;
+    const bool windows = std::any_of(mesh->materials.begin(), mesh->materials.end(),
+                                     [](const Material& m) { return m.preset == MaterialPreset::Window; });
+    if (windows) {
+        random.resize(n);
+        const std::vector<Vec3>& still = tris.rest.empty() ? tris.positions : tris.rest;
+        size_t first = 0;
+        for (size_t t = 0; t < n; ++t) {
+            if (t == 0 || tris.prims[t] != tris.prims[t - 1]) first = t;
+            const Vec3 c = (still[3 * first] + still[3 * first + 1] + still[3 * first + 2]) / 3.0f;
+            uint64_t h = 0x9e3779b97f4a7c15ull;
+            for (int a = 0; a < 3; ++a) {
+                h ^= static_cast<uint64_t>(static_cast<int64_t>(std::lround(c[a] * 1000.0f)));
+                h *= 0xbf58476d1ce4e5b9ull;
+                h ^= h >> 31;
+            }
+            random[t] = static_cast<float>(h >> 40) / static_cast<float>(1u << 24);
+        }
+    }
 
     // Our own hierarchy, and the triangles in the order its leaves take
     // them; Embree's keeps them as they come.
@@ -164,6 +252,8 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     mesh->e2.resize(n);
     mesh->normals.resize(3 * n);
     mesh->colors.resize(3 * n);
+    if (!tris.rest.empty()) mesh->rest.resize(3 * n);
+    if (windows) mesh->random.resize(n);
     mesh->material.resize(n);
     parallelFor(n, 8192, [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
@@ -174,11 +264,13 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
             mesh->e2[i] = tris.positions[3 * t + 2] - a;
             for (size_t c = 0; c < 3; ++c) {
                 mesh->normals[3 * i + c] = tris.normals[3 * t + c];
+                if (!mesh->rest.empty()) mesh->rest[3 * i + c] = tris.rest[3 * t + c];
                 const Vec3 col = tris.colors[3 * t + c];
                 mesh->colors[3 * i + c] = Vec3(std::clamp(col.x, 0.0f, 1.0f), std::clamp(col.y, 0.0f, 1.0f),
                                                std::clamp(col.z, 0.0f, 1.0f));
             }
             mesh->material[i] = which[t];
+            if (windows) mesh->random[i] = random[t];
         }
     });
     if (embree) {
@@ -266,6 +358,15 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
         const Vec3 n = m.normals[3 * t] * w + m.normals[3 * t + 1] * triangle.u + m.normals[3 * t + 2] * triangle.v;
         hit.normal = dot(n, n) > 1e-20f ? normalize(p.turn(n)) : hit.face;
         hit.color = (m.colors[3 * t] * w + m.colors[3 * t + 1] * triangle.u + m.colors[3 * t + 2] * triangle.v) * p.tint;
+        hit.tint = p.tint;
+        if (m.rest.empty()) {
+            hit.rest = m.v0[t] + m.e1[t] * triangle.u + m.e2[t] * triangle.v;
+            hit.restFace = cross(m.e1[t], m.e2[t]);
+        } else {
+            const Vec3 &r0 = m.rest[3 * t], &r1 = m.rest[3 * t + 1], &r2 = m.rest[3 * t + 2];
+            hit.rest = r0 * w + r1 * triangle.u + r2 * triangle.v;
+            hit.restFace = cross(r1 - r0, r2 - r0);
+        }
         hit.material = &m.materials[m.material[t]];
         hit.floor = false;
         return true;

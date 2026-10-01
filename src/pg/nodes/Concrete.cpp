@@ -713,6 +713,17 @@ public:
             out->append(g);
         }
         if (!out->findGroup(group)) out->createGroup(group, AttrClass::Primitive);
+        // For a renderer (s@material): the faces of the cracks broken
+        // concrete; the rest what they were, concrete where they were not
+        // anything.
+        const Group* cut = out->findGroup(group);
+        std::vector<uint8_t> broken(out->primitiveCount()), plain(out->primitiveCount());
+        for (size_t p = 0; p < broken.size(); ++p) {
+            broken[p] = cut->contains(p);
+            plain[p] = !broken[p] && primitiveString(*out, "material", p).empty();
+        }
+        setPrimitiveString(*out, "material", "concrete", plain);
+        setPrimitiveString(*out, "material", "broken_concrete", broken);
         return out;
     }
 };

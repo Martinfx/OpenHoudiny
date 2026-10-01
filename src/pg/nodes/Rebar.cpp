@@ -300,6 +300,7 @@ public:
         auto width = out->points().create("width", AttrType::Float).write<float>();
         std::copy(widths.begin(), widths.end(), width.begin());
         for (const std::vector<uint32_t>& ids : bars) out->addPrimitive(ids, false);
+        if (out->primitiveCount() > 0) setPrimitiveString(*out, "material", "steel");
         return out;
     }
 };

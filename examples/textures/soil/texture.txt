@@ -1,0 +1,7 @@
+# The texture soil: what src/pg/render/Textures.cpp reads.
+size 2.500
+depth 0.00644
+mean 0.05040 0.03841 0.02899
+tint 1
+source Amazon Lumberyard Bistro (Amazon, CC-BY 4.0, https://developer.nvidia.com/orca/amazon-lumberyard-bistro), via pbrt-v4-scenes
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

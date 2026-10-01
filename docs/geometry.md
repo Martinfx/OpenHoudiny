@@ -53,6 +53,7 @@ nastaveným na ni.
 | **Switch** | Pustí dál jeden ze vstupů podle indexu |
 | **Attribute Create** | Atribut jedné hodnoty (číslo nebo vektor) na bodech, rozích, primitivech nebo celé geometrii |
 | **Color** | Barva `Cd` bodů nebo primitiv |
+| **Material** | Z čeho jsou plochy skupiny (beton, omítka, cihlová zeď, okno, ocel, dřevo…): atribut `material`, podle kterého Cycles a path tracer kreslí fotografie nebo vzory; s Texture vlastní texturu (Poly Haven, ambientCG) kladenou ze tří stran. Viz [materials.md](materials.md) |
 | **Group Box** | Skupina bodů uvnitř krabice |
 | **Group** | Skupina bodů nebo primitiv podle vzoru — čísla a rozsahy `0-9 12`, hrany `p3-4`, jiné skupiny, `*`, `^` ubírá; **Ctrl+G** ve viewportu ji udělá z vybraného ([editing.md](editing.md)) |
 | **Blast** | Smaže body vzoru (skupina, čísla, hrany) i s primitivy, které ztratí bod — nebo primitivy i s body, které používaly jen ony; nebo naopak nechá jen je (Keep). **Delete** ve viewportu ho udělá z vybraného |

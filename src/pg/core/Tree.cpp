@@ -490,6 +490,11 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
     // letting a share of the light through; the bark not.
     auto translucency = geo.primitives().create("translucency", AttrType::Float).write<float>();
     for (size_t i = 0; i < level.size(); ++i) translucency[prim0 + i] = level[i] < 0 ? 0.4f : 0.0f;
+    // And what each is (s@material): bark, a leaf.
+    std::vector<uint8_t> bark(geo.primitiveCount(), 0), leaves(geo.primitiveCount(), 0);
+    for (size_t i = 0; i < level.size(); ++i) (level[i] < 0 ? leaves : bark)[prim0 + i] = 1;
+    if (std::find(bark.begin(), bark.end(), 1) != bark.end()) setPrimitiveString(geo, "material", "bark", bark);
+    if (std::find(leaves.begin(), leaves.end(), 1) != leaves.end()) setPrimitiveString(geo, "material", "leaf", leaves);
 }
 
 void skeletonTree(const Tree& tree, int treeIndex, Geometry& geo) {

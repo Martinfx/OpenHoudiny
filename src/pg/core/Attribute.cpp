@@ -182,9 +182,14 @@ void AttributeSet::append(const AttributeSet& other) {
     const size_t addCount = other.elementCount_;
 
     // Attributes present only on the incoming side: create and back-fill zeros
-    // for the elements we already have, so the set stays rectangular.
+    // for the elements we already have, so the set stays rectangular. A
+    // string's zero is the first string of its table: "" there, so ours
+    // read as none rather than as the first of theirs.
     for (const auto& [name, attr] : other) {
-        if (!contains(name)) create(name, attr.type()).resize(oldCount);
+        if (contains(name)) continue;
+        AttributeArray& a = create(name, attr.type());
+        if (a.type() == AttrType::String) a.internString("");
+        a.resize(oldCount);
     }
 
     for (auto& [name, attr] : attrs_) {
@@ -193,6 +198,14 @@ void AttributeSet::append(const AttributeSet& other) {
             attr.append(*src);
         } else {
             attr.resize(oldCount + addCount);  // zero-fill the tail
+            if (attr.type() == AttrType::String && addCount > 0) {
+                // Theirs none too, whatever string our table starts with.
+                const int32_t none = attr.internString("");
+                if (none != 0) {
+                    auto w = attr.write<int32_t>();
+                    std::fill(w.begin() + static_cast<std::ptrdiff_t>(oldCount), w.end(), none);
+                }
+            }
         }
     }
     elementCount_ = oldCount + addCount;

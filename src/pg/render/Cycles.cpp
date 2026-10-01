@@ -1,5 +1,9 @@
 #include "pg/render/Cycles.h"
 
+#include "pg/render/Textures.h"
+
+#include <glm/common.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -387,6 +391,454 @@ Detail detailOf(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutpu
     return d;
 }
 
+/// `at` stretched: times `k`, axis by axis.
+ccl::ShaderOutput* stretched(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, const Vec3& k) {
+    auto* m = graph.create_node<ccl::VectorMathNode>();
+    m->set_math_type(ccl::NODE_VECTOR_MATH_MULTIPLY);
+    graph.connect(at, m->input("Vector1"));
+    m->set_vector2(ccl::make_float3(k.x, k.y, k.z));
+    return m->output("Vector");
+}
+
+/// `at` pushed about by noise `scale` to a unit, up to `amount` units: what
+/// makes cells and rings less regular.
+ccl::ShaderOutput* warped(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, float scale, float amount) {
+    auto* n = graph.create_node<ccl::NoiseTextureNode>();
+    n->set_scale(scale);
+    n->set_detail(2.0f);
+    if (at) graph.connect(at, n->input("Vector"));
+    auto* m = graph.create_node<ccl::VectorMathNode>();
+    m->set_math_type(ccl::NODE_VECTOR_MATH_MULTIPLY_ADD);
+    graph.connect(n->output("Color"), m->input("Vector1"));
+    m->set_vector2(ccl::make_float3(amount, amount, amount));
+    if (at) graph.connect(at, m->input("Vector3"));
+    return m->output("Vector");
+}
+
+/// Voronoi's cells, `scale` to a unit: how far `at` is from the middle of
+/// its cell, and from its edge (in cells); a colour of the cell's own.
+struct Cells {
+    ccl::ShaderOutput* distance;
+    ccl::ShaderOutput* edge;
+    ccl::ShaderOutput* color;
+};
+Cells cells(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, float scale) {
+    auto* v = graph.create_node<ccl::VoronoiTextureNode>();
+    v->set_scale(scale);
+    if (at) graph.connect(at, v->input("Vector"));
+    auto* e = graph.create_node<ccl::VoronoiTextureNode>();
+    e->set_scale(scale);
+    e->set_feature(ccl::NODE_VORONOI_DISTANCE_TO_EDGE);
+    if (at) graph.connect(at, e->input("Vector"));
+    return {v->output("Distance"), e->output("Distance"), v->output("Color")};
+}
+
+/// From `lo` where `x` is `from` or less to `hi` where it is `to` or more,
+/// smoothly.
+ccl::ShaderOutput* ramp(ccl::ShaderGraph& graph, ccl::ShaderOutput* x, float from, float to, float lo = 0.0f,
+                        float hi = 1.0f) {
+    auto* m = graph.create_node<ccl::MapRangeNode>();
+    m->set_range_type(ccl::NODE_MAP_RANGE_SMOOTHSTEP);
+    graph.connect(x, m->input("Value"));
+    m->set_from_min(from);
+    m->set_from_max(to);
+    m->set_to_min(lo);
+    m->set_to_max(hi);
+    m->set_clamp(true);
+    return m->output("Result");
+}
+
+/// A colour of its own.
+ccl::ShaderOutput* constant(ccl::ShaderGraph& graph, const Vec3& c) {
+    auto* k = graph.create_node<ccl::ColorNode>();
+    k->set_value(rgb(c));
+    return k->output("Color");
+}
+
+/// `a` and `b` mixed: `fac` of `b`.
+ccl::ShaderOutput* mixed(ccl::ShaderGraph& graph, ccl::ShaderOutput* a, ccl::ShaderOutput* b, ccl::ShaderOutput* fac) {
+    auto* m = graph.create_node<ccl::MixColorNode>();
+    m->set_blend_type(ccl::NODE_MIX_BLEND);
+    m->set_use_clamp(true);
+    graph.connect(a, m->input("A"));
+    graph.connect(b, m->input("B"));
+    graph.connect(fac, m->input("Factor"));
+    return m->output("Result");
+}
+
+/// A colour times a colour.
+ccl::ShaderOutput* tinted(ccl::ShaderGraph& graph, ccl::ShaderOutput* color, ccl::ShaderOutput* by) {
+    auto* m = graph.create_node<ccl::VectorMathNode>();
+    m->set_math_type(ccl::NODE_VECTOR_MATH_MULTIPLY);
+    graph.connect(color, m->input("Vector1"));
+    graph.connect(by, m->input("Vector2"));
+    return m->output("Vector");
+}
+
+/// A MathNode's `type` of `a` and `b` -- or of `a` and `bOut`.
+ccl::ShaderOutput* math(ccl::ShaderGraph& graph, ccl::NodeMathType type, ccl::ShaderOutput* a, float b,
+                        ccl::ShaderOutput* bOut = nullptr) {
+    auto* m = graph.create_node<ccl::MathNode>();
+    m->set_math_type(type);
+    graph.connect(a, m->input("Value1"));
+    m->set_value2(b);
+    if (bOut) graph.connect(bOut, m->input("Value2"));
+    return m->output("Value");
+}
+
+/// How light a colour is.
+ccl::ShaderOutput* lightness(ccl::ShaderGraph& graph, ccl::ShaderOutput* color) {
+    auto* bw = graph.create_node<ccl::RGBToBWNode>();
+    graph.connect(color, bw->input("Color"));
+    return bw->output("Val");
+}
+
+/// `color` lighter and darker as `n` (0..1, a half on the whole) goes: as
+/// much as `k` either way, the same on the whole.
+ccl::ShaderOutput* varied(ccl::ShaderGraph& graph, ccl::ShaderOutput* color, ccl::ShaderOutput* n, float k) {
+    return times(graph, color, scaled(graph, n, 2.0f * k, 1.0f - k));
+}
+
+/// The normal of a surface with bumps as high as `height` -- `distance`
+/// units for a height of 1 -- on `normal` (none: the surface's own).
+ccl::ShaderOutput* bumped(ccl::ShaderGraph& graph, ccl::ShaderOutput* height, float strength, float distance,
+                          ccl::ShaderOutput* normal = nullptr) {
+    auto* b = graph.create_node<ccl::BumpNode>();
+    graph.connect(height, b->input("Height"));
+    if (normal) graph.connect(normal, b->input("Normal"));
+    b->set_strength(std::clamp(strength, 0.0f, 1.0f));
+    b->set_distance(distance);
+    return b->output("Normal");
+}
+
+/// How a picture is laid on a surface from three sides (render/Textures.h,
+/// as the path tracer does): where on the picture each side looks, and how
+/// much of each -- as much as the surface faced that side, to the fourth
+/// power. `at` where the surface was before it moved, `face` the way it
+/// faced there (pg_rest, pg_rest_normal), `perUnit` pictures to a metre.
+struct Laid {
+    ccl::ShaderOutput* uv[3];
+    ccl::ShaderOutput* weight[3];
+};
+Laid laidOn(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutput* face, float perUnit) {
+    auto* p = graph.create_node<ccl::SeparateXYZNode>();
+    graph.connect(at, p->input("Vector"));
+    auto* n = graph.create_node<ccl::SeparateXYZNode>();
+    graph.connect(face, n->input("Vector"));
+    ccl::ShaderOutput* fourth[3];
+    const char* axis[3] = {"X", "Y", "Z"};
+    for (int i = 0; i < 3; ++i) {
+        ccl::ShaderOutput* square = math(graph, ccl::NODE_MATH_MULTIPLY, n->output(axis[i]), 0.0f, n->output(axis[i]));
+        fourth[i] = math(graph, ccl::NODE_MATH_MULTIPLY, square, 0.0f, square);
+    }
+    ccl::ShaderOutput* sum = math(graph, ccl::NODE_MATH_ADD, math(graph, ccl::NODE_MATH_ADD, fourth[0], 0.0f, fourth[1]), 0.0f,
+                                  fourth[2]);
+    sum = math(graph, ccl::NODE_MATH_MAXIMUM, sum, 1e-12f);
+    Laid laid;
+    for (int i = 0; i < 3; ++i) laid.weight[i] = math(graph, ccl::NODE_MATH_DIVIDE, fourth[i], 0.0f, sum);
+    // Each side's picture moved, so that the three do not line up.
+    auto uv = [&](const char* u, float du, const char* v, float dv) {
+        auto* c = graph.create_node<ccl::CombineXYZNode>();
+        graph.connect(scaled(graph, p->output(u), perUnit, du), c->input("X"));
+        graph.connect(scaled(graph, p->output(v), perUnit, dv), c->input("Y"));
+        return c->output("Vector");
+    };
+    laid.uv[0] = uv("Z", 0.31f, "Y", 0.17f);
+    laid.uv[1] = uv("X", 0.53f, "Z", 0.71f);
+    laid.uv[2] = uv("X", 0.0f, "Y", 0.0f);
+    return laid;
+}
+
+/// The picture `file` laid on so: its colour (sRGB) or its value (as it is).
+ccl::ShaderOutput* sampled(ccl::ShaderGraph& graph, const Laid& laid, const std::string& file, bool color) {
+    ccl::ShaderOutput* sum = nullptr;
+    for (int i = 0; i < 3; ++i) {
+        auto* image = graph.create_node<ccl::ImageTextureNode>();
+        image->set_filename(ccl::ustring(file));
+        image->set_colorspace(color ? ccl::u_colorspace_srgb : ccl::u_colorspace_raw);
+        graph.connect(laid.uv[i], image->input("Vector"));
+        ccl::ShaderOutput* part = color ? times(graph, image->output("Color"), laid.weight[i])
+                                        : math(graph, ccl::NODE_MATH_MULTIPLY, image->output("Color"), 0.0f, laid.weight[i]);
+        if (!sum) {
+            sum = part;
+        } else if (color) {
+            auto* add = graph.create_node<ccl::VectorMathNode>();
+            add->set_math_type(ccl::NODE_VECTOR_MATH_ADD);
+            graph.connect(sum, add->input("Vector1"));
+            graph.connect(part, add->input("Vector2"));
+            sum = add->output("Vector");
+        } else {
+            sum = math(graph, ccl::NODE_MATH_ADD, sum, 0.0f, part);
+        }
+    }
+    return sum;
+}
+
+/// What a material's pattern makes of a surface: its colour, and where it
+/// has them its roughness, how metal, its normal, and how strongly it
+/// reflects (Principled's Specular IOR Level: a half for most).
+struct Pattern {
+    ccl::ShaderOutput* color = nullptr;
+    ccl::ShaderOutput* roughness = nullptr;
+    ccl::ShaderOutput* metallic = nullptr;
+    ccl::ShaderOutput* normal = nullptr;
+    float specular = 0.5f;
+};
+
+/// A photograph laid on a wall goes round and round: over it, what a wall
+/// has on the scale of a building -- lighter and darker in patches metres
+/// across, dirt run down it in streaks -- as much as `amount`.
+ccl::ShaderOutput* weathered(ccl::ShaderGraph& graph, const Material& m, ccl::ShaderOutput* at, ccl::ShaderOutput* color,
+                             float amount) {
+    const float a = std::clamp(amount, 0.0f, 1.0f);
+    if (a <= 0.0f) return color;
+    float patches = 0.08f, streaks = 0.0f;
+    switch (m.preset) {
+        case MaterialPreset::Concrete: streaks = 0.22f; break;
+        case MaterialPreset::Plaster: streaks = 0.25f; break;
+        case MaterialPreset::BrickWall: streaks = 0.15f; break;
+        case MaterialPreset::Soil: patches = 0.15f; break;
+        case MaterialPreset::Roof: patches = 0.2f; break;  // puddles dried, tar patched
+        default: break;
+    }
+    ccl::ShaderOutput* c = varied(graph, color, noise(graph, at, 0.3f, 4.0f, 0.55f), patches * a);
+    if (streaks > 0.0f) {
+        ccl::ShaderOutput* runs = noise(graph, stretched(graph, at, Vec3(4.0f, 0.25f, 4.0f)), 1.5f, 5.0f, 0.6f);
+        c = times(graph, c, ramp(graph, runs, 0.5f, 0.78f, 1.0f, 1.0f - streaks * a));
+    }
+    return c;
+}
+
+/// The pattern of `m`'s preset on `color`: `at` where the surface was before
+/// it moved, in metres (Y up); `random`, 0..1, a number of the face it is of
+/// (windows'); `world` where it is now -- what plants' patches are of, the
+/// copies of one plant told apart by it. All of it as much as `amount`
+/// (Settings::detail); in three sizes, so that it shows from afar and from
+/// near: a building's stains and streaks, a hand's breadth of blotches,
+/// grain and pores. Each keeps the colour as it is on the whole.
+Pattern patternOf(ccl::ShaderGraph& graph, const Material& m, ccl::ShaderOutput* at, ccl::ShaderOutput* world,
+                  ccl::ShaderOutput* random, ccl::ShaderOutput* color, float amount) {
+    const float a = std::clamp(amount, 0.0f, 1.0f);
+    Pattern p;
+    p.color = color;
+    // The roughness `spread` either way of the material's as `n` goes.
+    auto rough = [&](ccl::ShaderOutput* n, float spread) {
+        return scaled(graph, n, 2.0f * spread * a, m.roughness - spread * a, nullptr, true);
+    };
+    // Dirt run down a wall in streaks: darker by up to `k` in them.
+    auto streaked = [&](ccl::ShaderOutput* c, float k) {
+        ccl::ShaderOutput* streaks = noise(graph, stretched(graph, at, Vec3(4.0f, 0.25f, 4.0f)), 1.5f, 5.0f, 0.6f);
+        return times(graph, c, ramp(graph, streaks, 0.5f, 0.78f, 1.0f, 1.0f - k * a));
+    };
+    switch (m.preset) {
+        case MaterialPreset::None:
+        case MaterialPreset::Glass:
+            break;
+        case MaterialPreset::Concrete: {
+            // Cast: lighter and darker in pours a few metres across and in
+            // blotches a hand wide, streaked by the rain, its sand, and
+            // the holes of the air in it.
+            ccl::ShaderOutput* pours = noise(graph, at, 0.3f, 4.0f, 0.55f);
+            ccl::ShaderOutput* blotches = noise(graph, at, 4.0f, 6.0f, 0.6f);
+            ccl::ShaderOutput* sand = noise(graph, at, 120.0f, 3.0f, 0.6f);
+            ccl::ShaderOutput* hole = ramp(graph, cells(graph, warped(graph, at, 30.0f, 0.004f), 30.0f).distance, 0.05f,
+                                           0.1f, 1.0f, 0.0f);
+            ccl::ShaderOutput* c = varied(graph, color, pours, 0.1f * a);
+            c = varied(graph, c, blotches, 0.12f * a);
+            c = varied(graph, c, sand, 0.05f * a);
+            c = streaked(c, 0.25f);
+            p.color = times(graph, c, scaled(graph, hole, -0.5f * a, 1.0f));
+            p.roughness = rough(blotches, 0.08f);
+            p.normal = bumped(graph, scaled(graph, sand, 0.6f, 0.0f, scaled(graph, hole, -1.0f, 0.0f)), 0.5f * a, 0.0015f);
+            break;
+        }
+        case MaterialPreset::BrokenConcrete: {
+            // A break: stones of the aggregate, sharp-edged, each a shade of
+            // its own -- greyer, browner, lighter, darker -- in the cement
+            // between them, the whole torn rough; darker down in it.
+            ccl::ShaderOutput* where = warped(graph, at, 12.0f, 0.012f);
+            const Cells stones = cells(graph, where, 22.0f);
+            ccl::ShaderOutput* stone = ramp(graph, stones.edge, 0.04f, 0.1f, 0.0f, a);
+            ccl::ShaderOutput* kind = lightness(graph, stones.color);
+            ccl::ShaderOutput* shade = scaled(graph, kind, 0.8f, 0.6f);  // 0.6..1.4
+            ccl::ShaderOutput* warm = mixed(graph, constant(graph, Vec3(0.92f, 0.95f, 1.0f)),
+                                            constant(graph, Vec3(1.1f, 1.0f, 0.85f)),
+                                            math(graph, ccl::NODE_MATH_FRACTION, scaled(graph, kind, 5.3f, 0.0f), 0.0f));
+            ccl::ShaderOutput* rock = tinted(graph, times(graph, color, shade), warm);
+            ccl::ShaderOutput* cement = varied(graph, color, noise(graph, at, 60.0f, 3.0f, 0.6f), 0.12f * a);
+            ccl::ShaderOutput* torn = noise(graph, at, 9.0f, 8.0f, 0.62f);
+            ccl::ShaderOutput* c = mixed(graph, cement, rock, stone);
+            // Down in the hollows, the light reaches less.
+            p.color = times(graph, c, ramp(graph, torn, 0.25f, 0.7f, 1.0f - 0.45f * a, 1.0f));
+            ccl::ShaderOutput* height = scaled(graph, torn, 1.0f, 0.0f, scaled(graph, stone, 0.25f, 0.0f));
+            p.normal = bumped(graph, height, 0.8f * a, 0.008f);
+            break;
+        }
+        case MaterialPreset::Brick:
+        case MaterialPreset::BrickWall: {
+            // Fired clay: each brick blotched lighter and darker, flecked
+            // with darker grains, its face pitted.
+            ccl::ShaderOutput* blotches = noise(graph, at, 9.0f, 5.0f, 0.6f);
+            ccl::ShaderOutput* flecks = ramp(graph, cells(graph, at, 45.0f).distance, 0.07f, 0.12f, 1.0f, 0.0f);
+            ccl::ShaderOutput* grain = noise(graph, at, 70.0f, 4.0f, 0.6f);
+            ccl::ShaderOutput* c = varied(graph, color, blotches, 0.22f * a);
+            c = varied(graph, c, grain, 0.08f * a);
+            p.color = times(graph, c, scaled(graph, flecks, -0.45f * a, 1.0f));
+            p.roughness = rough(blotches, 0.06f);
+            p.normal = bumped(graph, scaled(graph, grain, 1.0f, 0.0f, scaled(graph, flecks, -0.6f, 0.0f)), 0.6f * a, 0.0015f);
+            break;
+        }
+        case MaterialPreset::Mortar: {
+            // Sand and lime: grainy, dirtier here and there.
+            ccl::ShaderOutput* sand = noise(graph, at, 200.0f, 2.0f, 0.5f);
+            ccl::ShaderOutput* dirt = noise(graph, at, 6.0f, 4.0f, 0.55f);
+            ccl::ShaderOutput* c = varied(graph, color, sand, 0.15f * a);
+            p.color = varied(graph, c, dirt, 0.15f * a);
+            p.normal = bumped(graph, sand, 0.6f * a, 0.0012f);
+            break;
+        }
+        case MaterialPreset::Plaster: {
+            // Render on a wall: rough-cast, weathered in patches, dirt run
+            // down it in streaks.
+            ccl::ShaderOutput* cast = noise(graph, at, 50.0f, 8.0f, 0.62f);
+            ccl::ShaderOutput* weather = noise(graph, at, 0.6f, 5.0f, 0.6f);
+            ccl::ShaderOutput* patches = noise(graph, at, 5.0f, 5.0f, 0.6f);
+            ccl::ShaderOutput* c = varied(graph, color, weather, 0.1f * a);
+            c = varied(graph, c, patches, 0.06f * a);
+            c = varied(graph, c, cast, 0.05f * a);
+            p.color = streaked(c, 0.3f);
+            p.roughness = rough(weather, 0.08f);
+            p.normal = bumped(graph, cast, 0.6f * a, 0.0025f);
+            break;
+        }
+        case MaterialPreset::Window: {
+            // Glass with a room behind it: dark, or lighter -- curtains,
+            // blinds, a lamp -- warmer or cooler, room by room (`random`:
+            // the face's, the object's place added for copies of one).
+            auto* info = graph.create_node<ccl::ObjectInfoNode>();
+            auto* whose = graph.create_node<ccl::WhiteNoiseTextureNode>();
+            graph.connect(info->output("Location"), whose->input("Vector"));
+            ccl::ShaderOutput* r = math(graph, ccl::NODE_MATH_FRACTION,
+                                        math(graph, ccl::NODE_MATH_ADD, random, 0.0f, whose->output("Value")), 0.0f);
+            ccl::ShaderOutput* lit = scaled(graph, math(graph, ccl::NODE_MATH_POWER, r, 3.0f), 1.6f * a, 1.0f - 0.55f * a);
+            ccl::ShaderOutput* warmth = math(graph, ccl::NODE_MATH_FRACTION, scaled(graph, r, 7.13f, 0.0f), 0.0f);
+            ccl::ShaderOutput* tint = mixed(graph, constant(graph, Vec3(0.85f, 0.93f, 1.05f)),
+                                            constant(graph, Vec3(1.12f, 0.95f, 0.75f)), warmth);
+            p.color = times(graph, tinted(graph, color, tint), lit);
+            // Clean, or not so clean.
+            p.roughness = scaled(graph, noise(graph, at, 1.5f, 3.0f, 0.5f), 0.1f * a, m.roughness, nullptr, true);
+            p.specular = 0.75f;
+            break;
+        }
+        case MaterialPreset::Steel: {
+            // Rebar: dark steel, rusty in places -- rust rough, not metal.
+            ccl::ShaderOutput* rust = ramp(graph, noise(graph, at, 9.0f, 5.0f, 0.6f), 0.52f, 0.68f, 0.0f, 0.85f * a);
+            ccl::ShaderOutput* rusty = varied(graph, constant(graph, Vec3(0.26f, 0.12f, 0.06f)),
+                                              noise(graph, at, 60.0f, 3.0f, 0.5f), 0.25f);
+            p.color = mixed(graph, varied(graph, color, noise(graph, at, 30.0f, 3.0f, 0.5f), 0.15f * a), rusty, rust);
+            p.metallic = scaled(graph, rust, -m.metallic, m.metallic, nullptr, true);
+            p.roughness = scaled(graph, rust, 0.45f, m.roughness, nullptr, true);
+            p.normal = bumped(graph, noise(graph, at, 150.0f, 3.0f, 0.5f), 0.4f * a, 0.0008f);
+            break;
+        }
+        case MaterialPreset::Metal: {
+            // Sheet metal: smoother and rougher where it was handled, a
+            // little lighter and darker.
+            ccl::ShaderOutput* wear = noise(graph, at, 4.0f, 4.0f, 0.55f);
+            p.color = varied(graph, color, noise(graph, at, 1.0f, 3.0f, 0.5f), 0.06f * a);
+            p.roughness = rough(wear, 0.12f);
+            p.normal = bumped(graph, noise(graph, at, 300.0f, 2.0f, 0.5f), 0.15f * a, 0.0005f);
+            break;
+        }
+        case MaterialPreset::Asphalt: {
+            // Tar and stones a few millimetres across, worn lighter in the
+            // tracks, patched darker where it was mended.
+            const Cells stones = cells(graph, at, 110.0f);
+            ccl::ShaderOutput* stone = ramp(graph, stones.edge, 0.05f, 0.15f, 0.0f, a);
+            ccl::ShaderOutput* rock = times(graph, color, scaled(graph, lightness(graph, stones.color), 1.6f, 0.7f));
+            ccl::ShaderOutput* c = mixed(graph, color, rock, stone);
+            c = varied(graph, c, noise(graph, at, 0.4f, 4.0f, 0.55f), 0.2f * a);
+            ccl::ShaderOutput* mended = ramp(graph, noise(graph, at, 0.8f, 3.0f, 0.5f), 0.6f, 0.66f, 1.0f, 1.0f - 0.3f * a);
+            c = times(graph, c, mended);
+            p.color = varied(graph, c, noise(graph, at, 3.0f, 4.0f, 0.55f), 0.14f * a);
+            p.normal = bumped(graph, stone, 0.5f * a, 0.0012f);
+            break;
+        }
+        case MaterialPreset::Wood: {
+            // The grain: rings, wavy, fine fibres along them.
+            auto* wave = graph.create_node<ccl::WaveTextureNode>();
+            wave->set_wave_type(ccl::NODE_WAVE_RINGS);
+            wave->set_rings_direction(ccl::NODE_WAVE_RINGS_DIRECTION_Y);
+            wave->set_scale(3.0f);
+            wave->set_distortion(4.0f);
+            wave->set_detail(4.0f);
+            wave->set_detail_scale(1.2f);
+            graph.connect(stretched(graph, at, Vec3(1.0f, 0.15f, 1.0f)), wave->input("Vector"));
+            ccl::ShaderOutput* fibres = noise(graph, stretched(graph, at, Vec3(60.0f, 1.0f, 60.0f)), 1.0f, 4.0f, 0.6f);
+            ccl::ShaderOutput* c = varied(graph, color, wave->output("Fac"), 0.18f * a);
+            p.color = varied(graph, c, fibres, 0.1f * a);
+            p.roughness = rough(fibres, 0.1f);
+            p.normal = bumped(graph, fibres, 0.3f * a, 0.0008f);
+            break;
+        }
+        case MaterialPreset::Stone: {
+            // Grains of a few colours, larger patches, uneven.
+            const Cells grains = cells(graph, at, 60.0f);
+            ccl::ShaderOutput* c = varied(graph, color, lightness(graph, grains.color), 0.15f * a);
+            c = varied(graph, c, noise(graph, at, 3.0f, 5.0f, 0.6f), 0.14f * a);
+            p.color = varied(graph, c, noise(graph, at, 0.4f, 4.0f, 0.55f), 0.1f * a);
+            p.normal = bumped(graph, noise(graph, at, 18.0f, 6.0f, 0.6f), 0.5f * a, 0.003f);
+            break;
+        }
+        case MaterialPreset::Roof: {
+            // A flat roof: a membrane under fine gravel, stained by water.
+            const Cells gravel = cells(graph, at, 70.0f);
+            ccl::ShaderOutput* c = varied(graph, color, lightness(graph, gravel.color), 0.22f * a);
+            c = varied(graph, c, noise(graph, at, 0.4f, 4.0f, 0.55f), 0.15f * a);
+            p.color = varied(graph, c, noise(graph, at, 4.0f, 4.0f, 0.55f), 0.1f * a);
+            p.normal = bumped(graph, ramp(graph, gravel.edge, 0.0f, 0.2f), 0.5f * a, 0.0015f);
+            break;
+        }
+        case MaterialPreset::Bark: {
+            // Furrows up the trunk: darker in them, deep.
+            ccl::ShaderOutput* furrows = noise(graph, stretched(graph, at, Vec3(8.0f, 1.0f, 8.0f)), 2.5f, 6.0f, 0.6f);
+            ccl::ShaderOutput* ridge = ramp(graph, furrows, 0.35f, 0.6f);
+            p.color = times(graph, color, scaled(graph, ridge, 0.5f * a, 1.0f - 0.35f * a));
+            p.normal = bumped(graph, ridge, 0.9f * a, 0.01f);
+            break;
+        }
+        case MaterialPreset::Leaf: {
+            // Some leaves yellower, some darker -- in patches over the tree.
+            ccl::ShaderOutput* patch = noise(graph, world, 0.8f, 2.0f, 0.5f);
+            ccl::ShaderOutput* yellow = tinted(graph, color, constant(graph, Vec3(1.25f, 1.1f, 0.55f)));
+            p.color = varied(graph, mixed(graph, color, yellow, ramp(graph, patch, 0.55f, 0.8f, 0.0f, 0.5f * a)),
+                             noise(graph, world, 3.0f, 2.0f, 0.5f), 0.12f * a);
+            break;
+        }
+        case MaterialPreset::Grass: {
+            // Drier in patches a few metres across.
+            ccl::ShaderOutput* patch = noise(graph, world, 0.25f, 3.0f, 0.5f);
+            ccl::ShaderOutput* dry = times(graph, constant(graph, Vec3(1.45f, 1.2f, 0.55f)),
+                                           scaled(graph, lightness(graph, color), 0.85f, 0.0f));
+            ccl::ShaderOutput* c = mixed(graph, color, dry, ramp(graph, patch, 0.5f, 0.75f, 0.0f, 0.65f * a));
+            p.color = varied(graph, c, noise(graph, world, 2.0f, 2.0f, 0.5f), 0.1f * a);
+            break;
+        }
+        case MaterialPreset::Soil: {
+            // Crumbs and clods, darker where it is damp.
+            const Cells clods = cells(graph, warped(graph, at, 8.0f, 0.02f), 14.0f);
+            ccl::ShaderOutput* crumbs = noise(graph, at, 40.0f, 4.0f, 0.65f);
+            ccl::ShaderOutput* damp = noise(graph, at, 0.8f, 4.0f, 0.55f);
+            ccl::ShaderOutput* c = varied(graph, color, lightness(graph, clods.color), 0.15f * a);
+            c = varied(graph, c, crumbs, 0.12f * a);
+            p.color = times(graph, c, ramp(graph, damp, 0.5f, 0.75f, 1.0f, 1.0f - 0.35f * a));
+            p.normal = bumped(graph, scaled(graph, ramp(graph, clods.edge, 0.0f, 0.25f), 0.6f, 0.0f, crumbs), 0.6f * a, 0.004f);
+            break;
+        }
+    }
+    return p;
+}
+
 /// How bright Nishita's sun is at `elevation` radians, `size` radians across:
 /// its radiance times the square of its width (Cycles' own estimate), a
 /// quarter of pi of which is the light it sheds.
@@ -521,7 +973,7 @@ struct CyclesRender::Impl {
         ccl::Mesh* cycles = nullptr;
     };
     std::map<const Mesh*, KeptMesh> meshes;
-    std::map<std::pair<int, std::vector<float>>, ccl::Shader*> shaders;
+    std::map<std::tuple<int, std::vector<float>, std::string>, ccl::Shader*> shaders;
     std::vector<ccl::Object*> objects;   // this scene's
     std::vector<ccl::Geometry*> owned;   // its own geometry: the floor, the objects' meshes, the sun
     ccl::Shader* sunShader = nullptr;
@@ -549,15 +1001,22 @@ struct CyclesRender::Impl {
     /// The shader of a material: a Principled BSDF of the colour of the
     /// surface -- its attribute "Col" times its object's colour (an
     /// instance's tint) -- a translucent one mixed in by the translucency,
-    /// with the detail of a real surface (Settings::detail); glass; water,
-    /// bending light and taking on the Water Look's colour.
+    /// with the pattern of what it is made of (patternOf) or else the detail
+    /// of a real surface (Settings::detail); glass; water, bending light and
+    /// taking on the Water Look's colour.
     ccl::Shader* shaderOf(ccl::Scene* scene, const Material& m, const sim::Look& look) {
         const float detail = m.kind == Material::Kind::Surface ? std::clamp(settings.detail, 0.0f, 1.0f) : 0.0f;
-        std::vector<float> key = {m.roughness, m.metallic, m.translucency, m.ior, detail};
+        const TextureSet texture = textureOf(m, settings);
+        std::vector<float> key = {m.roughness, m.metallic, m.translucency, m.ior, detail, static_cast<float>(m.preset)};
         if (m.kind == Material::Kind::Water) {
             key.insert(key.end(), {waterGlow.x, waterGlow.y, waterGlow.z, look.waterClarity});
         }
-        const auto k = std::make_pair(static_cast<int>(m.kind), key);
+        if (texture.valid()) {
+            key.insert(key.end(), {texture.size, texture.depth, texture.mean.x, texture.mean.y, texture.mean.z,
+                                   texture.tint ? 1.0f : 0.0f});
+        }
+        const auto k = std::make_tuple(static_cast<int>(m.kind), key,
+                                       texture.color + '|' + texture.height + '|' + texture.roughness);
         if (auto it = shaders.find(k); it != shaders.end()) return it->second;
         auto graph = std::make_unique<ccl::ShaderGraph>();
         auto* attr = graph->create_node<ccl::AttributeNode>();
@@ -575,7 +1034,56 @@ struct CyclesRender::Impl {
                 auto* bsdf = principled(*graph);
                 bsdf->set_roughness(m.roughness);
                 bsdf->set_metallic(m.metallic);
-                if (detail > 0.0f) {
+                if (texture.valid()) {
+                    // Its photographs (render/Textures.h), laid on by where it
+                    // was before it moved: the colour -- round Cd, or as it
+                    // is -- bumps of its height, its roughness.
+                    auto* rest = graph->create_node<ccl::AttributeNode>();
+                    rest->set_attribute(ccl::ustring("pg_rest"));
+                    auto* face = graph->create_node<ccl::AttributeNode>();
+                    face->set_attribute(ccl::ustring("pg_rest_normal"));
+                    const Laid laid = laidOn(*graph, rest->output("Vector"), face->output("Vector"), 1.0f / texture.size);
+                    ccl::ShaderOutput* picture = sampled(*graph, laid, texture.color, true);
+                    if (texture.tint) {
+                        const Vec3 mean = glm::max(texture.mean, Vec3(1e-4f));
+                        color = tinted(*graph, color, tinted(*graph, picture, constant(*graph, Vec3(1.0f) / mean)));
+                    } else {
+                        color = tinted(*graph, picture, info->output("Color"));
+                    }
+                    // Weathered on the scale of a building, where it is a wall.
+                    color = weathered(*graph, m, rest->output("Vector"), color, detail);
+                    auto* most = graph->create_node<ccl::VectorMathNode>();
+                    most->set_math_type(ccl::NODE_VECTOR_MATH_MINIMUM);
+                    graph->connect(color, most->input("Vector1"));
+                    most->set_vector2(ccl::make_float3(0.95f, 0.95f, 0.95f));
+                    color = most->output("Vector");
+                    ccl::ShaderOutput* height = nullptr;
+                    if (!texture.height.empty()) {
+                        height = sampled(*graph, laid, texture.height, false);
+                        graph->connect(bumped(*graph, height, 1.0f, texture.depth), bsdf->input("Normal"));
+                    }
+                    if (!texture.roughness.empty()) {
+                        graph->connect(sampled(*graph, laid, texture.roughness, false), bsdf->input("Roughness"));
+                    } else if (height) {
+                        // Down in it, rougher; on top, worn smoother.
+                        graph->connect(scaled(*graph, height, -0.2f, m.roughness + 0.1f, nullptr, true), bsdf->input("Roughness"));
+                    }
+                } else if (detail > 0.0f && m.preset != MaterialPreset::None) {
+                    // Where it was before it moved (meshOf: pg_rest), a
+                    // number of its face (pg_random), where it is.
+                    auto* rest = graph->create_node<ccl::AttributeNode>();
+                    rest->set_attribute(ccl::ustring("pg_rest"));
+                    auto* random = graph->create_node<ccl::AttributeNode>();
+                    random->set_attribute(ccl::ustring("pg_random"));
+                    auto* where = graph->create_node<ccl::GeometryNode>();
+                    const Pattern p = patternOf(*graph, m, rest->output("Vector"), where->output("Position"),
+                                                random->output("Fac"), color, detail);
+                    color = p.color;
+                    if (p.roughness) graph->connect(p.roughness, bsdf->input("Roughness"));
+                    if (p.metallic) graph->connect(p.metallic, bsdf->input("Metallic"));
+                    if (p.normal) graph->connect(p.normal, bsdf->input("Normal"));
+                    bsdf->set_specular_ior_level(p.specular);
+                } else if (detail > 0.0f) {
                     // Leaves and blades are thin: their bumps small.
                     auto* where = graph->create_node<ccl::TextureCoordinateNode>();
                     const Detail d = detailOf(*graph, where->output("Object"), color, m.roughness, detail, 40.0f,
@@ -655,8 +1163,22 @@ struct CyclesRender::Impl {
     /// The Cycles mesh of ours: its triangles one by one, the normals and
     /// the colours of their corners; made once while ours lives.
     ccl::Mesh* meshOf(ccl::Scene* scene, const std::shared_ptr<const Mesh>& m, const sim::Look& look) {
+        // The shaders of its materials, as the settings have them now.
+        auto shadersOf = [&] {
+            ccl::array<ccl::Node*> used;
+            for (const Material& mat : m->materials) used.push_back_slow(shaderOf(scene, mat, look));
+            if (used.empty()) used.push_back_slow(shaderOf(scene, Material(), look));
+            return used;
+        };
         if (auto it = meshes.find(m.get()); it != meshes.end()) {
-            if (it->second.mesh.lock() == m) return it->second.cycles;
+            if (it->second.mesh.lock() == m) {
+                // Kept -- but Surface Detail or Textures may have changed
+                // what its materials are drawn with.
+                ccl::Mesh* kept = it->second.cycles;
+                ccl::array<ccl::Node*> used = shadersOf();
+                if (!(used == kept->get_used_shaders())) kept->set_used_shaders(used);
+                return kept;
+            }
             scene->delete_node(it->second.cycles);
             meshes.erase(it);
         }
@@ -670,9 +1192,7 @@ struct CyclesRender::Impl {
             verts[3 * t + 1] = ccl::make_float3(b.x, b.y, b.z);
             verts[3 * t + 2] = ccl::make_float3(c.x, c.y, c.z);
         }
-        ccl::array<ccl::Node*> used;
-        for (const Material& mat : m->materials) used.push_back_slow(shaderOf(scene, mat, look));
-        if (used.empty()) used.push_back_slow(shaderOf(scene, Material(), look));
+        ccl::array<ccl::Node*> used = shadersOf();
         // Counted before Cycles takes them: setting a node's array swaps it.
         const int kinds = static_cast<int>(used.size());
         mesh->set_used_shaders(used);
@@ -690,6 +1210,36 @@ struct CyclesRender::Impl {
             const Vec3 cc = i < m->colors.size() ? m->colors[i] : Vec3(0.8f, 0.8f, 0.8f);
             normals[i] = ccl::make_float3(nn.x, nn.y, nn.z);
             colors[i] = ccl::make_float3(cc.x, cc.y, cc.z);
+        }
+        // What a material's pattern is drawn by (patternOf): where the
+        // corners were before they moved -- where they are, for what never
+        // moved -- ours, in metres; and the windows' numbers.
+        const bool patterned = std::any_of(m->materials.begin(), m->materials.end(), [](const Material& mat) {
+            return mat.preset != MaterialPreset::None || !mat.texture.empty();
+        });
+        if (patterned) {
+            ccl::float3* rest = mesh->attributes.add(ccl::ustring("pg_rest"), ccl::TypePoint, ccl::ATTR_ELEMENT_VERTEX)->data_float3();
+            // ... and the way each face faced there, which way a picture is
+            // laid on it from (laidOn).
+            ccl::float3* faced =
+                mesh->attributes.add(ccl::ustring("pg_rest_normal"), ccl::TypeNormal, ccl::ATTR_ELEMENT_FACE)->data_float3();
+            const bool moved = m->rest.size() == 3 * n;
+            for (size_t t = 0; t < n; ++t) {
+                const Vec3 corner[3] = {m->v0[t], m->v0[t] + m->e1[t], m->v0[t] + m->e2[t]};
+                Vec3 r[3];
+                for (size_t c = 0; c < 3; ++c) {
+                    r[c] = moved ? m->rest[3 * t + c] : corner[c];
+                    rest[3 * t + c] = ccl::make_float3(r[c].x, r[c].y, r[c].z);
+                }
+                const Vec3 across = cross(r[1] - r[0], r[2] - r[0]);
+                const float l = length(across);
+                const Vec3 f = l > 0.0f ? across / l : Vec3(0.0f, 1.0f, 0.0f);
+                faced[t] = ccl::make_float3(f.x, f.y, f.z);
+            }
+        }
+        if (m->random.size() == n) {
+            float* random = mesh->attributes.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_float();
+            std::copy(m->random.begin(), m->random.end(), random);
         }
         meshes[m.get()] = {m, mesh};
         return mesh;

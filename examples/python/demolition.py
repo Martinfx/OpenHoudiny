@@ -47,10 +47,15 @@ void block(vector lo; vector hi; vector outside; vector inside; int fl; int kind
     out[4] = lo.z <= -hd + 0.001;
     out[5] = hi.z >= hd - 0.001;
     out[3] = kind == 3 || kind == 4;  // the parapet's top and the roof
+    // What each is made of, for the renderers: the walls and the parapet
+    // plastered, the roof's top a roof, the rest -- slabs, columns, the
+    // edges of the roof -- bare concrete.
+    string made = kind == 1 || kind == 3 ? "plaster" : "concrete";
     for (int k = 0; k < 6; k++) {
         setprimattrib(0, "Cd", f[k], out[k] ? outside : inside);
         setprimattrib(0, "floor", f[k], fl);
         setprimattrib(0, "kind", f[k], kind);
+        setprimattrib(0, "material", f[k], kind == 4 && k == 3 ? "roof" : made);
     }
 }
 

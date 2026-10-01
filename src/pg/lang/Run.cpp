@@ -153,6 +153,8 @@ bool apply(Deferred& d, Geometry& geo, std::vector<std::string>& warnings) {
             AttrType t;
             if (!toAttr(s.type, t)) continue;
             arr = &set.create(s.name, t);
+            // A new string's elements are 0: "" before what is written.
+            if (t == AttrType::String) arr->internString("");
         }
         const Type have = fromAttr(arr->type());
         if (have != s.type && !(isScalar(have) && isScalar(s.type)) && !(isVector(have) && isVector(s.type))) {

@@ -229,4 +229,13 @@ using GeometryPtr = std::shared_ptr<const Geometry>;
 /// This is how every node starts its cook.
 std::shared_ptr<Geometry> editableCopy(const GeometryPtr& in);
 
+/// The string attribute `name` of the primitives `mask` holds -- all of
+/// them for an empty mask -- set to `value`; made where there was none, the
+/// rest of the primitives "" in it. What a renderer reads a primitive's
+/// `material` from.
+void setPrimitiveString(Geometry& geo, const std::string& name, const std::string& value,
+                        std::span<const uint8_t> mask = {});
+/// The string attribute `name` of primitive `p`: "" where it has none.
+const std::string& primitiveString(const Geometry& geo, const std::string& name, size_t p);
+
 }  // namespace pg

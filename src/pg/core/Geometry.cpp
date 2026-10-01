@@ -593,4 +593,23 @@ std::shared_ptr<Geometry> editableCopy(const GeometryPtr& in) {
     return in ? std::make_shared<Geometry>(*in) : std::make_shared<Geometry>();
 }
 
+void setPrimitiveString(Geometry& geo, const std::string& name, const std::string& value, std::span<const uint8_t> mask) {
+    const bool had = geo.primitives().find(name) && geo.primitives().find(name)->type() == AttrType::String;
+    AttributeArray& a = geo.primitives().create(name, AttrType::String);
+    // A new one's elements are 0: "" before anything else.
+    if (!had) a.internString("");
+    const int32_t id = a.internString(value);
+    auto w = a.write<int32_t>();
+    for (size_t p = 0; p < w.size(); ++p) {
+        if (mask.empty() || (p < mask.size() && mask[p])) w[p] = id;
+    }
+}
+
+const std::string& primitiveString(const Geometry& geo, const std::string& name, size_t p) {
+    static const std::string none;
+    const AttributeArray* a = geo.primitives().find(name);
+    if (!a || a->type() != AttrType::String || p >= a->size()) return none;
+    return a->stringValue(a->read<int32_t>()[p]);
+}
+
 }  // namespace pg

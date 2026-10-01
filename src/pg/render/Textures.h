@@ -1,0 +1,88 @@
+#pragma once
+//
+// Pictures of surfaces: textures. A set is the pictures of one -- its colour,
+// how high it is (a height or displacement map) and how rough, where there
+// are these -- and how many metres one picture covers. Both renderers lay a
+// set on a surface from three sides at once, as much from each as the
+// surface faces that way, by where the surface was before it moved (the
+// point attribute rest): it goes with a piece that flies. Cycles takes its
+// height for bumps too.
+//
+// The sets that come with the program are in examples/textures, a folder
+// for each material (core/Material.h) that has one -- concrete, plaster,
+// brick_wall, wood, bark, soil -- made by tools/textures/prepare.py from the
+// photographs of pbrt-v4-scenes (CC-BY 4.0, examples/textures/README.md):
+// color.jpg, height.jpg and texture.txt. Any other set -- what Poly Haven or
+// ambientCG give away -- is found from a picture of it: the pictures beside
+// it whose names differ in what they are (_diff_ and _rough_ and _disp_,
+// _Color and _Roughness and _Displacement...).
+//
+#include "pg/core/Material.h"
+#include "pg/core/Types.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace pg::render {
+
+struct Material;
+struct Settings;
+
+struct TextureSet {
+    std::string color;      ///< the picture of its colour (sRGB); "" for no set
+    std::string height;     ///< how high (0 to 1), or ""
+    std::string roughness;  ///< how rough (0 to 1), or ""
+    float size = 2.0f;      ///< metres one picture covers
+    float depth = 0.01f;    ///< metres from the lowest of the height to the highest
+    Vec3 mean{0.5f, 0.5f, 0.5f};  ///< the average of its colour, linear light
+    /// The colour Cd in place of the picture's own: the picture lighter and
+    /// darker round it, its colour divided by `mean`. Else the picture as
+    /// it is -- a brick wall, its mortar lighter than its bricks.
+    bool tint = true;
+
+    bool valid() const { return !color.empty(); }
+    bool operator==(const TextureSet&) const = default;
+};
+
+/// The set `where` names -- a folder (its texture.txt, or pictures named as
+/// above), or one picture of a set -- read once and remembered; none for
+/// what is not one.
+TextureSet textureSet(const std::string& where);
+
+/// The folder of the sets that come with the program: $PG_TEXTURES when it
+/// is one, else examples/textures of the sources it was built from; "" if
+/// neither is there.
+std::string textureLibrary();
+
+/// The set of the material `preset` in `library`: its folder there, named as
+/// the material is (kMaterialNames); none where there is none.
+TextureSet presetTextureSet(const std::string& library, MaterialPreset preset);
+
+/// What a renderer lays on surfaces of `m` with `settings`: its own texture
+/// (the Material node's), else its material's from the library -- either as
+/// big as `m` says, if it does; none with textures off.
+TextureSet textureOf(const Material& m, const Settings& settings);
+
+/// A set's colour as the path tracer looks it up: linear light, tiling.
+struct TexturePicture {
+    int width = 0, height = 0;
+    std::vector<Vec3> pixels;  ///< the top row first
+    float size = 2.0f;         ///< metres one picture covers
+    Vec3 mean{0.5f, 0.5f, 0.5f};
+    bool tint = true;          ///< TextureSet::tint
+
+    /// The picture at (u, v) pictures from its corner, between pixels.
+    Vec3 at(float u, float v) const;
+    /// Laid from three sides at `rest`, the surface facing `face` there.
+    Vec3 onSurface(const Vec3& rest, const Vec3& face) const;
+    /// A surface of colour `color` -- Cd times its copy's `tint` -- with it
+    /// laid on: tinted, the colour times the picture over its mean; else
+    /// the picture times the tint. No more than 0.95.
+    Vec3 shade(const Vec3& color, const Vec3& tint, const Vec3& rest, const Vec3& face) const;
+};
+
+/// The picture of `set`, read once and remembered; null when it cannot be read.
+std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set);
+
+}  // namespace pg::render

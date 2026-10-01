@@ -314,10 +314,13 @@ add_library(pgsim
   src/pg/render/Scene.cpp
   src/pg/render/PathTracer.cpp
   src/pg/render/Save.cpp
+  src/pg/render/Textures.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp
 )
 target_link_libraries(pgsim PUBLIC pgcore)
+# The photographs of the materials that come with the program (render/Textures.h).
+target_compile_definitions(pgsim PRIVATE PG_TEXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/textures")
 if(MSVC)
   target_compile_options(pgsim PRIVATE /W4)
 else()
@@ -967,6 +970,7 @@ add_executable(pgtests
   tests/test_rebar.cpp
   tests/test_glass.cpp
   tests/test_bricks.cpp
+  tests/test_materials.cpp
   tests/test_constraints.cpp
   tests/test_debris.cpp
   tests/test_guide.cpp

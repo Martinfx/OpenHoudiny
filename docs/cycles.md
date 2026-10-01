@@ -93,6 +93,14 @@ tracer:
 | **Cloud Size**, **Cloud Wind**, **Cloud Direction** | jak velké jsou mraky (km, 1,5), jak rychle je nese vítr (m/s, 5) a kam (stupně od osy +x): snímek po snímku se posouvají |
 | **View** `agx_punchy` (výchozí), `agx`, `aces` | jak se světlo převede na obraz: AgX jako v Blenderu, jasné barvy přecházejí do bílé jako na filmu. `agx_punchy` přidá look Punchy z Blenderu (víc kontrastu a barev, střední tóny tmavší), `aces` je křivka viewportu. Platí pro Cycles i path tracer. |
 | **Surface Detail** 0–1 (1) | povrchy, které jsou ve scéně hladké, dostanou barvu a drsnost proměnlivou ve skvrnách metr až dva velkých a velkých jako dlaň, a drobné nerovnosti. Zem k tomu skvrny několika metrů. 0: hladké jako ve viewportu. |
+| **Textures**, **Texture Folder** | fotografie materiálů (beton, omítka, cihlová zeď, dřevo, kůra, půda, střechy) a textury z uzlů Material; vypnuté: jen vzory a barvy. Viz [materials.md](materials.md) |
+
+Plochy, které říkají, z čeho jsou (`s@material`), kreslí Cycles jako ten
+materiál: fotografií z knihovny programu, nebo vzorem (lom betonu
+s kamínky, okna s místnostmi, rezavá ocel), vždy kolem jejich barvy `Cd`.
+Generátory si materiál nastaví samy (Brick Wall, Concrete Fracture, Tree,
+Grass…) a ostatním plochám ho dá uzel **Material**. Podrobnosti jsou
+v [materials.md](materials.md).
 
 Síla oblohy je nastavená tak, že slunce dává stejné světlo jako slunce
 Looku. Test `render_cycles_lights_a_day_under_a_physical_sky` to ověřuje:
@@ -275,8 +283,8 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
 ## 9. Co zatím chybí
 
 - GPU (CUDA, OptiX, HIP, Metal): Cycles je postavený jen pro procesor.
-- Rozmazání pohybem, OSL shadery, textury a UV, materiály podle toho, co
-  povrch je (beton, cihly, sklo oken, asfalt).
+- Rozmazání pohybem, OSL shadery, UV a normálové mapy (textury se kladou
+  ze tří stran, reliéf je z výšky, [materials.md](materials.md)).
 - Mraky jako objem (stíny mraků na zemi, mraky, do kterých se dá vletět)
   a obloha z obrázku ve viewportu.
 - Plate (obraz na pozadí kamery). Holdout a shadow catcher na objektech

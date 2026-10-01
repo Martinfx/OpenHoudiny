@@ -29,11 +29,13 @@
 // each pixel sees (denoise()), keeping edges, a blade from the blade behind it.
 //
 #include "pg/render/Scene.h"
+#include "pg/render/Textures.h"
 
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace pg::render {
@@ -80,6 +82,12 @@ struct Settings {
     /// and roughness vary, small bumps catch the light -- 1 as stone,
     /// plaster and the ground are; 0 as flat as the viewport draws them.
     float detail = 1.0f;
+    /// The photographs of the materials and the Material nodes' textures
+    /// (render/Textures.h); off, their patterns and colours alone.
+    bool textures = true;
+    /// Where the materials' photographs are: "" for those that come with the
+    /// program (textureLibrary()).
+    std::string textureFolder;
 
     bool operator==(const Settings&) const = default;
 };
@@ -127,9 +135,13 @@ public:
 
 private:
     Image average(const std::vector<float>& sum, int channels) const;
+    /// The pictures of the scene's materials, as the settings have them.
+    void findTextures();
 
     std::shared_ptr<const Scene> scene_;
     Settings settings_;
+    /// What is laid on each material of the scene's meshes (render/Textures.h).
+    std::unordered_map<const Material*, std::shared_ptr<const TexturePicture>> textures_;
     float focus_ = 10.0f;
     mutable std::mutex mutex_;  // the sums, as a pass adds to them and a picture is taken of them
     int samples_ = 0;

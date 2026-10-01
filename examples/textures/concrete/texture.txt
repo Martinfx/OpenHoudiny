@@ -1,0 +1,7 @@
+# The texture concrete: what src/pg/render/Textures.cpp reads.
+size 3.000
+depth 0.00209
+mean 0.30820 0.30522 0.28590
+tint 1
+source Amazon Lumberyard Bistro (Amazon, CC-BY 4.0, https://developer.nvidia.com/orca/amazon-lumberyard-bistro), via pbrt-v4-scenes
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

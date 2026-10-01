@@ -1,0 +1,7 @@
+# The texture brick_wall: what src/pg/render/Textures.cpp reads.
+size 2.400
+depth 0.01302
+mean 0.07182 0.03473 0.03171
+tint 0
+source Amazon Lumberyard Bistro (Amazon, CC-BY 4.0, https://developer.nvidia.com/orca/amazon-lumberyard-bistro), via pbrt-v4-scenes
+license CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)

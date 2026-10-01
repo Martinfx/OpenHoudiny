@@ -203,10 +203,14 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
     std::vector<Vec3> made;
     if (!N) made = cornerNormals(P, tris, kCrease);
     const std::span<const Vec3> pointN = N ? N->read<Vec3>() : std::span<const Vec3>();
+    const AttributeArray* restAttr = geo.points().find("rest");
+    const std::span<const Vec3> rest =
+        restAttr && restAttr->type() == AttrType::Vec3 ? restAttr->read<Vec3>() : std::span<const Vec3>();
     const size_t n = tris.size();
     out.positions.resize(3 * n);
     out.normals.resize(3 * n);
     out.colors.resize(3 * n);
+    if (!rest.empty()) out.rest.resize(3 * n);
     out.glass.resize(n);
     parallelFor(n, 4096, [&](size_t begin, size_t end) {
         for (size_t t = begin; t < end; ++t) {
@@ -217,6 +221,7 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
             for (size_t c = 0; c < 3; ++c) {
                 const uint32_t p = tris[t][c];
                 out.positions[3 * t + c] = P[p];
+                if (!rest.empty()) out.rest[3 * t + c] = rest[p];
                 Vec3 nrm = N ? normalize(pointN[p]) : made[3 * t + c];
                 if (out.glass[t] != 0 && length(flat) > 0.5f) nrm = flat;  // glass is flat, as the viewport has it
                 out.normals[3 * t + c] = nrm;

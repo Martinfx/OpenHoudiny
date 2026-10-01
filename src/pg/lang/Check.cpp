@@ -1545,7 +1545,9 @@ bool bindAll(Run& run, Geometry& geo, const Checked& checked, std::string& error
                     error = "@" + b.name + ": no attributes of " + typeName(b.type);
                     return false;
                 }
-                set.create(b.name, at);
+                AttributeArray& made = set.create(b.name, at);
+                // A new string's elements are 0: "" before what is written.
+                if (at == AttrType::String) made.internString("");
             }
             b.kind = K::Attr;
         }

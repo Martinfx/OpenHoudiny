@@ -33,6 +33,7 @@
 // Water Look's colour with depth.
 //
 #include "pg/core/Geometry.h"
+#include "pg/core/Material.h"
 #include "pg/render/Bvh.h"
 #include "pg/render/Embree.h"
 #include "pg/render/Gas.h"
@@ -55,15 +56,49 @@ struct Material {
     float metallic = 0.0f;
     float translucency = 0.0f;
     float ior = 1.5f;
+    /// What it is made of (s@material): Cycles draws its pattern, both
+    /// renderers its photographs (render/Textures.h).
+    MaterialPreset preset = MaterialPreset::None;
+    /// A texture of its own (the Material node's s@texture): what names the
+    /// set; "" for its material's.
+    std::string texture;
+    /// How many metres one picture of it covers (f@texture_size): 0 as the
+    /// set says.
+    float textureSize = 0.0f;
+    /// Whether the colour Cd tints the pictures (i@texture_tint): -1 as the
+    /// set says (TextureSet::tint).
+    int8_t textureTint = -1;
 
+    /// A plain surface, as rough as `roughness`.
+    static Material surface(float roughness) {
+        Material m;
+        m.roughness = roughness;
+        return m;
+    }
     bool operator==(const Material&) const = default;
 };
+
+/// How rough and how metal a surface of `preset` is -- what both renderers
+/// make of it; the attributes roughness and metallic, where there are any,
+/// before it.
+struct PresetSurface {
+    float roughness = 0.5f;
+    float metallic = 0.0f;
+};
+PresetSurface presetSurface(MaterialPreset preset);
 
 /// Triangles for rays -- with our own hierarchy, in the order its leaves
 /// take them.
 struct Mesh {
     std::vector<Vec3> v0, e1, e2;       ///< a corner and the edges from it, one a triangle
     std::vector<Vec3> normals, colors;  ///< three a triangle
+    /// Three a triangle where the points had rest -- where they were before
+    /// they moved: what a material's pattern sticks to -- else none.
+    std::vector<Vec3> rest;
+    /// One a triangle where some of it is a window: a number 0..1 of the
+    /// face it is of, the same from frame to frame -- what tells one room
+    /// behind the glass from the next; else none.
+    std::vector<float> random;
     std::vector<uint16_t> material;     ///< one a triangle, into `materials`
     std::vector<Material> materials;
     Bvh bvh;                                   ///< our own: its leaves' items are the triangles' numbers
@@ -102,6 +137,11 @@ struct Hit {
     Vec3 normal;    ///< as it is shaded: smooth
     Vec3 face;      ///< the surface's own, as its corners turn
     Vec3 color;
+    /// Where on its mesh -- where it was before it moved, where the points
+    /// have rest -- and the way that face faced there (not of unit length):
+    /// what a texture is laid on by (render/Textures.h).
+    Vec3 rest, restFace;
+    Vec3 tint{1.0f, 1.0f, 1.0f};  ///< its copy's (an instance's): in `color` already
     const Material* material = nullptr;
     bool floor = false;
 };
@@ -112,8 +152,8 @@ struct Scene {
     std::vector<Placed> placed;
     std::vector<sim::Solid> solids;
     std::vector<sim::ShapeInstance> shapes;  ///< the solids' shapes, placed
-    Material floorMaterial{Material::Kind::Surface, 0.8f, 0.0f, 0.0f, 1.5f};
-    Material solidMaterial{Material::Kind::Surface, 0.6f, 0.0f, 0.0f, 1.5f};
+    Material floorMaterial = Material::surface(0.8f);
+    Material solidMaterial = Material::surface(0.6f);
     /// Our own engine: items below placed.size() are placed meshes, the
     /// rest solids. Embree's: the solids alone, item i shapes[i].
     Bvh top;

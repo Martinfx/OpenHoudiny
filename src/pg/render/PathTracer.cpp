@@ -172,8 +172,11 @@ struct Sample {
     float depth = kInfinity;
 };
 
-/// The light that comes along a camera ray, and what the ray first meets.
-Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float up, Rng& rng) {
+using Textures = std::unordered_map<const Material*, std::shared_ptr<const TexturePicture>>;
+
+/// The light that comes along a camera ray, and what the ray first meets;
+/// `textures` what is laid on the materials.
+Sample trace(const Scene& scene, const Settings& s, const Textures& textures, Vec3 origin, Vec3 dir, float up, Rng& rng) {
     Sample out;
     Vec3 light, beta(1.0f, 1.0f, 1.0f);
     const Vec3 sun = scene.sunRadiance();
@@ -190,6 +193,11 @@ Sample trace(const Scene& scene, const Settings& s, Vec3 origin, Vec3 dir, float
     for (;;) {
         Hit hit;
         const bool met = scene.intersect(origin, dir, kInfinity, rng.next(), hit);
+        if (met && !textures.empty()) {
+            if (const auto it = textures.find(hit.material); it != textures.end()) {
+                hit.color = it->second->shade(hit.color, hit.tint, hit.rest, hit.restFace);
+            }
+        }
         if (turns == 0 && met) {
             // What the camera ray meets, for the denoiser to go by -- the gas
             // before it comes in as a whole pixel sees it (PathTracer::pass).
@@ -358,7 +366,21 @@ float aces(float x) { return std::clamp(x * (2.51f * x + 0.03f) / (x * (2.43f * 
 
 void PathTracer::setScene(std::shared_ptr<const Scene> scene) {
     scene_ = std::move(scene);
+    findTextures();
     restart();
+}
+
+void PathTracer::findTextures() {
+    textures_.clear();
+    if (!scene_ || !settings_.textures) return;
+    for (const auto& mesh : scene_->meshes) {
+        if (!mesh) continue;
+        for (const Material& m : mesh->materials) {
+            const TextureSet set = textureOf(m, settings_);
+            if (!set.valid()) continue;
+            if (auto picture = texturePicture(set)) textures_[&m] = std::move(picture);
+        }
+    }
 }
 
 void PathTracer::setSettings(const Settings& settings) {
@@ -372,7 +394,9 @@ void PathTracer::setSettings(const Settings& settings) {
     a.samples = b.samples = 0;
     a.denoise = b.denoise = false;
     const bool same = a == b;
+    const bool textures = s.textures != settings_.textures || s.textureFolder != settings_.textureFolder;
     settings_ = s;
+    if (textures) findTextures();
     if (!same) restart();
 }
 
@@ -488,7 +512,7 @@ bool PathTracer::pass(const std::atomic<bool>* stop) {
                         origin = eye + right * (r * std::cos(phi)) + upAxis * (r * std::sin(phi));
                         dir = normalize(sharp - origin);
                     }
-                    const Sample got = trace(scene, s, origin, dir, 0.5f * (py + 1.0f), rng);
+                    const Sample got = trace(scene, s, textures_, origin, dir, 0.5f * (py + 1.0f), rng);
                     Vec3 c = got.color;
                     if (!(std::isfinite(c.x) && std::isfinite(c.y) && std::isfinite(c.z))) c = Vec3();
                     passColor_[3 * p] = c.x;
