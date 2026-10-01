@@ -132,7 +132,8 @@ hodnota 0 udělala z terénu zrcadlo.
   neprůhledného stojí v cestě. Sklem a vodou pak prochází plochu po
   ploše a bere si jejich barvu. Objekty (koule, kvádry) hledá vlastní
   hierarchie (`src/pg/render/Bvh.h`, SAH se 12 přihrádkami).
-- **Bez Embree** (`-DPG_EMBREE=OFF`, nebo `PG_RAYS=own` v prostředí)
+- **Bez Embree** (`-DPG_EMBREE=OFF`, `PG_RAYS=own` v prostředí, nebo
+  v buildu s thread sanitizerem, který vlákna Embree a TBB sledovat neumí)
   hledá paprsky vlastní hierarchie i v sítích. Výsledek je stejný až na
   zaokrouhlení: test `render_embree_meets_what_our_bvh_meets` porovná
   4 000 paprsků v obou (sítě, instance, sklo, objekty, podlaha, stíny).
@@ -162,17 +163,24 @@ hodnota 0 udělala z terénu zrcadlo.
 
 ## 6. Výkon
 
-Čtyři jádra (Xeon 2,8 GHz), RelWithDebInfo:
+Čtyři jádra (Xeon 2,8 GHz s AVX-512), RelWithDebInfo, oba sloupce měřené
+po sobě na stejném stroji:
 
-| scéna | rozlišení | vzorků | čas |
-|---|---|---|---|
-| louka zdálky (tráva, stromy, keře) | 480 × 270 | 1 průchod | 0,84 s |
-| louka zdálky | 640 × 360 | 64 | 96 s |
-| tráva zblízka (paprsky jdou hluboko do trávy) | 640 × 360 | 64 | 157 s |
+| scéna | rozlišení | vzorků | Embree | vlastní BVH |
+|---|---|---|---|---|
+| louka zdálky (tráva, stromy, keře) | 480 × 270 | 1 průchod | 1,2 s | 2,0 s |
+| louka zdálky | 640 × 360 | 64 | 60 s | 116 s |
+| tráva zblízka (paprsky jdou hluboko do trávy) | 640 × 360 | 64 | 85 s | 180 s |
 
-Uvaření louky, stavba scény (horní hierarchie přes 122 000 instancí)
-a odšumění trvají dohromady necelou sekundu. Zbytek je sledování paprsků
-hustou trávou.
+Jeden průchod v jiných scénách je s Embree 1,6× rychlejší u stromů
+(`tree_shapes`, 1,2 milionu trojúhelníků) a 1,5× u ulice. Stínové
+paprsky jsou rychlejší 2–5×. Stavba scény louky trvá s Embree 0,4 s,
+s vlastní hierarchií 0,8 s.
+
+Louku víc nezrychlí ani Embree. Má 122 000 malých trsů trávy
+(112 trojúhelníků v každém) a jejich obalové kvádry se překrývají.
+Paprsek u země jich projde průměrně 56, než trefí stéblo, a u každého se
+otáčí do prostoru trsu. Rychlejší by byly větší trsy s víc stébly.
 
 ## 7. Co zatím chybí
 

@@ -127,7 +127,8 @@ na Debianu 13 a Ubuntu 25.04), jinak ji CMake stáhne. Starší balíčky
 Paprsky path traceru hledá knihovna **Intel Embree 4** (Apache 2.0):
 `pkg install embree` na FreeBSD, `sudo apt install libembree-dev` na
 Debianu 13 a Ubuntu 24.04. Když v systému není, CMake ji stáhne a jednou
-postaví jen s tím, co path tracer potřebuje (pár minut). Bez ní
+postaví jen s tím, co path tracer potřebuje (na čtyřech jádrech asi
+11 minut). Bez ní
 (`-DPG_EMBREE=OFF`) path tracer použije vlastní BVH: stejný obraz, ale
 pomaleji ([docs/pathtracer.md](docs/pathtracer.md)).
 

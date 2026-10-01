@@ -363,8 +363,15 @@ endif()
 # (src/pg/render/Bvh.h), which stays for a build without it. The system's:
 # FreeBSD's graphics/embree, libembree-dev on Debian 13 and Ubuntu 24.04.
 # Else fetched and built with what the path tracer needs alone -- triangles
-# and instances, SSE2 and AVX2, its own threads -- a few minutes, once.
+# and instances, SSE2 to AVX2, its own threads -- once, for some minutes.
 option(PG_EMBREE "Path tracer rays through Intel Embree 4 (Apache 2.0), the system's or fetched; OFF: our own BVH" ON)
+if(PG_EMBREE AND PG_SANITIZE_THREAD)
+  # Embree and the TBB under it are not built with the thread sanitizer,
+  # which cannot follow how their threads hand memory to each other and
+  # reports races that are not: under it, our own BVH.
+  message(STATUS "Thread sanitizer: the path tracer uses its own BVH, not Embree")
+  set(PG_EMBREE OFF)
+endif()
 if(PG_EMBREE)
   find_package(embree 4 CONFIG QUIET)
   if(TARGET embree)
@@ -381,14 +388,9 @@ if(PG_EMBREE)
     endforeach()
     set(EMBREE_TASKING_SYSTEM INTERNAL CACHE STRING "" FORCE)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
-      # Kernels for the machines of the last twenty years and of the last ten.
-      set(EMBREE_MAX_ISA NONE CACHE STRING "" FORCE)
-      foreach(isa SSE2 AVX2)
-        set(EMBREE_ISA_${isa} ON CACHE BOOL "" FORCE)
-      endforeach()
-      foreach(isa SSE42 AVX AVX512)
-        set(EMBREE_ISA_${isa} OFF CACHE BOOL "" FORCE)
-      endforeach()
+      # Kernels from SSE2 to AVX2 -- the AVX2 ones build on the AVX ones --
+      # without AVX-512, which few machines have and which takes long to build.
+      set(EMBREE_MAX_ISA AVX2 CACHE STRING "" FORCE)
     endif()
     FetchContent_Declare(embree
       GIT_REPOSITORY https://github.com/RenderKit/embree.git
