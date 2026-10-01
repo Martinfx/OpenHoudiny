@@ -3,6 +3,8 @@
 #include "pg/render/Save.h"
 #include "pg/sim/WaterMesh.h"
 
+#include <chrono>
+
 namespace pg::editor {
 
 // Started once everything it uses is made: the members after thread_ are
@@ -129,14 +131,24 @@ void RenderView::run() {
             if (paused_ || !tracer_.scene() || tracer_.done() || pending_ || restart_) continue;
         }
         // A pass; the picture of all the passes so far, the noise taken out
-        // -- of a large one now and then: the first passes, every eighth, the last.
+        // -- after the first pass, the last, and in between when the passes
+        // since the last took as long as taking the noise out does: never
+        // more than half the time. Between them the last clean picture stays.
+        const double before = tracer_.seconds();
         if (!tracer_.pass(&interrupt_)) continue;
         // Only this thread changes the tracer: its picture is taken off the lock.
         const int n = tracer_.samples();
         const render::Settings s = tracer_.settings();
-        const bool small = static_cast<int64_t>(s.width) * s.height <= 1 << 20;
-        const bool denoise = s.denoise && (small || n <= 4 || n % 8 == 0 || n >= s.samples);
+        if (n <= 1) sinceDenoise_ = 0.0;
+        sinceDenoise_ += tracer_.seconds() - before;
+        const bool denoise = s.denoise && (n <= 1 || n >= s.samples || sinceDenoise_ >= denoiseCost_);
+        if (s.denoise && !denoise) continue;
+        const auto start = std::chrono::steady_clock::now();
         std::vector<uint8_t> picture = tracer_.display(denoise);
+        if (denoise) {
+            denoiseCost_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            sinceDenoise_ = 0.0;
+        }
         std::lock_guard<std::mutex> lock(mutex_);
         if (pending_ || restart_) continue;
         picture_ = std::move(picture);

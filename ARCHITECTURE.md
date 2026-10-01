@@ -24,7 +24,8 @@ Související dokumenty: [ROADMAP.md](ROADMAP.md) — cíl, co je hotové a dal�
 ├─────────────────────────────────────────────────────────────┤
 │  JÁDRO   cook engine · geometrie · atributy · paralelismus  │   hotovo
 ├─────────────────────────────────────────────────────────────┤
-│  Externí: Jolt, GLM, Embree, NanoVDB · USD · OpenSubdiv     │   Jolt, GLM, Embree, NanoVDB hotovo · kroky 2–3 · §5
+│  Externí: Jolt, GLM, Embree, NanoVDB, OIDN                  │   hotovo
+│           USD · OpenSubdiv                                  │   kroky 2–3 · §5
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -317,6 +318,7 @@ studia musí smět psát proprietární uzly.
 | Subdivize | OpenSubdiv | Apache 2.0 |
 | Booleany | **Manifold** | Apache 2.0 |
 | BVH, raycast | **Embree 4** (hotovo: paprsky path traceru, [docs/pathtracer.md](docs/pathtracer.md)) | Apache 2.0 |
+| Odšumění renderu | **Open Image Denoise 2** (hotovo: [docs/pathtracer.md](docs/pathtracer.md)) | Apache 2.0 |
 | Scéna, viewport, render | **OpenUSD + Hydra** | Apache 2.0 (mod.) |
 | Obrázky, barvy | OpenImageIO, OpenColorIO, OpenEXR | BSD / Apache 2.0 |
 | Materiály | MaterialX, OSL | Apache 2.0 / BSD |
@@ -498,12 +500,14 @@ src/pg/render/   Embree     paprsky přes Intel Embree 4: síť jako scéna Embr
                  Scene      scéna pro paprsky: sítě zobrazené geometrie, těles a vody,
                             instance jako umístění jedné sítě, objekty přesně; slunce, obloha
                             a podlaha z Looku; materiály z atributů
+                 Denoise    odšumění přes Intel Open Image Denoise: albedo a normály napřed,
+                            filtry jednou pro velikost; bez ní vlastní à-trous filtr
                  Gas        plyn snímku jako mřížka NanoVDB (dlaždice 8³ jsou listy), nejvíc
                             kouře a plamene v každé dlaždici; delta tracking s plameny,
                             ratio tracking pro stíny, pochod bez šumu pro odšumovač
                  PathTracer progresivní path tracer: GGX, průsvitnost, sklo a voda, kouř
-                            a oheň, slunce s MIS, tenká čočka, AOV, à-trous odšumění, ACES;
-                            deterministicky
+                            a oheň, slunce s MIS, tenká čočka, AOV, vlastní à-trous filtr
+                            (když není OIDN), ACES; deterministicky
                  Save       PNG, EXR se Z, albedem a normálami
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL bez závislostí
                  Preview    náhled shaderu na tělese
@@ -587,7 +591,7 @@ Prototyp existuje, aby **ověřil invarianty měřením**, ne aby byl produktem.
 | ✅ | **Řídký plyn**: Pyro Solver počítá a drží jen dlaždice 8 × 8 × 8 buněk, kde je plyn, a kolem, kam za krok doletí; tlak multigridem jen na nich; se všemi dlaždicemi bitově stejně jako hustá mřížka; snímky a cache (verze 10) jen s dlaždicemi s plynem; rozlišení až 1024; prach odstřelu ve 103,5 M voxelů za 19 minut ([docs/pyro.md §4](docs/pyro.md#řídká-mřížka-počítá-se-jen-tam-kde-je-plyn), `pgbench_pyro`) |
 | ✅ | Usměrněná simulace: Guide RBD Solveru (kusy posunuté a natočené, třeba klíčovaný Transform kolem Pivotu) vede slepená tělesa do pózy, která jejich body nejlépe položí na body Guide; síla, doba, dosah a puštění při prasknutí lepidla; atribut `guide`; z Guide se v každém snímku bere jen póza kusu; příklad `guided_fall` ([docs/destruction.md §3](docs/destruction.md#usměrněná-simulace-guide)) |
 | ✅ | Povrch vody jako uzavřená síť s rychlostí a pěnou (surface nets, uzel Liquid Surface) a objem na polygony (Convert Volume), bitově stejné na 1 i 4 vláknech |
-| ✅ | **Path tracer** na procesoru: paprsky přes Intel Embree 4 (bez ní vlastní BVH se SAH), instance jako umístění jedné sítě, slunce s MIS a obloha z Looku (jas podlahy sedí s viewportem na 0,4 %), GGX, průsvitnost trávy a listí, sklo a voda, kouř, oheň a prach přes NanoVDB (delta tracking, ratio tracking, barva kouře převedená na albedo rozptylu), tenká čočka, à-trous odšumění; deterministický na libovolném počtu vláken; záložka Render v editoru (vlastní vlákno, přerušení), `--renderer path`, EXR se Z, albedem a normálami ([docs/pathtracer.md](docs/pathtracer.md)) |
+| ✅ | **Path tracer** na procesoru: paprsky přes Intel Embree 4 (bez ní vlastní BVH se SAH), instance jako umístění jedné sítě, slunce s MIS a obloha z Looku (jas podlahy sedí s viewportem na 0,4 %), GGX, průsvitnost trávy a listí, sklo a voda, kouř, oheň a prach přes NanoVDB (delta tracking, ratio tracking, barva kouře převedená na albedo rozptylu), tenká čočka, odšumění přes Intel Open Image Denoise (bez ní vlastní à-trous filtr); deterministický na libovolném počtu vláken; záložka Render v editoru (vlastní vlákno, přerušení), `--renderer path`, EXR se Z, albedem a normálami ([docs/pathtracer.md](docs/pathtracer.md)) |
 | ✅ | Celý záběr do **USD** bez knihovny: tělesa jako transformace, drť, povrch vody, déšť, prach jako VDB, kamera, světla; co se mění, v souboru pro každý snímek (value clips); ověřeno Pixarovou knihovnou, 28 validátorů bez nálezu ([docs/usd.md](docs/usd.md)) |
 | ✅ | **Čtení USD** bez knihovny: `.usda`, `.usdc` (verze 0.4.0–0.10.0), `.usdz`; scéna složená jako v USD (sublayers, reference, payloady, varianty, třídy, value clips); kamera z matchmove (USD Camera) a geometrie (USD Import) v metrech s Y nahoru; transformace, skládání i geometrie sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)) |
 | ✅ | **Python API** `import pg` (pybind11): sítě, parametry, výrazy a klíče, vaření a simulace ze skriptu; atributy a data snímků jako pole numpy bez kopie (buffer protocol nad sdílenou pamětí jádra); cache, USD, render přes `prototype`; síť jako Python (`as_code()`) ([docs/python.md](docs/python.md)) |

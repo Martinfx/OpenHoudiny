@@ -3,13 +3,15 @@
 // what trying every triangle meets, and what each other meets, shadows
 // through glass included; instances as the copies they stand for; a render
 // the same however it is run; the sun lighting a floor as the viewport
-// lights it; the denoiser nearer the converged picture than the noise; the
-// Output's settings; the files; the materials vegetation brings.
+// lights it; the denoiser nearer the converged picture than the noise, Open
+// Image Denoise nearer still; the Output's settings; the files; the
+// materials vegetation brings.
 //
 #include "pg/core/Grass.h"
 #include "pg/core/Instances.h"
 #include "pg/core/Tree.h"
 #include "pg/io/Exr.h"
+#include "pg/render/Denoise.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Save.h"
 #include "pg/sim/Network.h"
@@ -384,6 +386,52 @@ TEST(render_denoiser_comes_nearer_the_converged_picture) {
     }
     std::printf("  rms %.4f raw, %.4f denoised\n", raw, clean);
     CHECK(clean < 0.6 * raw);
+}
+
+TEST(render_open_image_denoise_comes_nearer_than_our_filter) {
+    if (!oidnAvailable()) return;
+    // A few samples under an overcast sky -- the noise of the light, not
+    // of the edges -- the noise taken out by Open Image Denoise and by our
+    // own filter, against many.
+    Settings s;
+    s.width = 80;
+    s.height = 50;
+    s.denoise = false;
+    s.samples = 512;
+    PathTracer reference;
+    reference.setSettings(s);
+    reference.setScene(smallScene(80, 50, true));
+    while (!reference.done()) reference.pass();
+    const Image truth = reference.beauty();
+    s.samples = 4;
+    s.seed = 5;
+    PathTracer t;
+    t.setSettings(s);
+    t.setScene(smallScene(80, 50, true));
+    while (!t.done()) t.pass();
+    const Image noisy = t.beauty(), albedo = t.albedo(), normal = t.normal();
+    auto error = [&](const Image& img) {
+        double e = 0.0;
+        for (size_t i = 0; i < img.pixels.size(); ++i) {
+            const double a = std::min(img.pixels[i], 4.0f), b = std::min(truth.pixels[i], 4.0f);
+            e += (a - b) * (a - b);
+        }
+        return std::sqrt(e / static_cast<double>(img.pixels.size()));
+    };
+    Image a, b;
+    std::string why;
+    CHECK(oidnDenoise(noisy, albedo, normal, a, why));
+    CHECK(why.empty());
+    CHECK(oidnDenoise(noisy, albedo, normal, b, why));
+    CHECK(a.pixels == b.pixels);  // the same picture, the same again
+    const double raw = error(noisy), oidn = error(a);
+    const double own = error(denoise(noisy, albedo, normal, t.depth(), std::vector<float>(80 * 50, 0.01f)));
+    std::printf("  rms %.4f raw, %.4f our filter, %.4f %s\n", raw, own, oidn, oidnVersion().c_str());
+    CHECK(oidn < own && own < raw);
+    // denoised() takes it, unless told otherwise.
+    if (defaultDenoiser() == Denoiser::Oidn) CHECK(t.denoised().pixels == a.pixels);
+    // Pictures of different sizes: refused, with why.
+    CHECK(!oidnDenoise(noisy, Image(), normal, a, why) && !why.empty());
 }
 
 TEST(render_settings_come_from_the_output) {

@@ -23,9 +23,10 @@
 // A render is progressive: pass after pass adds a sample to every pixel,
 // the picture getting less noisy as the samples add up. The numbers each
 // sample takes come from its pixel and its number alone, so a render is the
-// same on any number of threads. An edge-avoiding filter guided by the
-// colour, the normal and the depth of what each pixel sees takes out what
-// noise is left (denoise), keeping edges, a blade from the blade behind it.
+// same on any number of threads. What noise is left, Intel Open Image
+// Denoise takes out (Denoise.h) -- or, in a build without it, an
+// edge-avoiding filter guided by the colour, the normal and the depth of what
+// each pixel sees (denoise()), keeping edges, a blade from the blade behind it.
 //
 #include "pg/render/Scene.h"
 
@@ -78,7 +79,8 @@ public:
 
     /// The average of the samples, linear light.
     Image beauty() const;
-    /// ... with the noise taken out.
+    /// ... with the noise taken out: by Open Image Denoise, else our own
+    /// filter (defaultDenoiser()).
     Image denoised() const;
     /// What the first surface each pixel sees is: its colour (1 for the sky),
     /// its normal, how far it is along the view (infinity for the sky).

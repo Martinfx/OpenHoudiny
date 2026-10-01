@@ -308,6 +308,7 @@ add_library(pgsim
   src/pg/sim/World.cpp
   src/pg/sim/UsdExport.cpp
   src/pg/render/Bvh.cpp
+  src/pg/render/Denoise.cpp
   src/pg/render/Embree.cpp
   src/pg/render/Gas.cpp
   src/pg/render/Scene.cpp
@@ -475,6 +476,74 @@ endif()
 if(PG_NANOVDB)
   target_include_directories(pgsim SYSTEM PRIVATE "${PG_NANOVDB_INCLUDE_DIR}")
   target_compile_definitions(pgsim PRIVATE PG_HAVE_NANOVDB)
+endif()
+
+# Denoising (src/pg/render/Denoise.cpp): Intel Open Image Denoise 2 (Apache
+# 2.0), a neural network trained on path-traced pictures. The system's:
+# FreeBSD's graphics/oidn, the packages of other systems. Else built from
+# its sources once -- statically, the CPU device alone, in a minute or two
+# -- which takes ISPC and TBB (Debian, Ubuntu: apt install ispc
+# libtbb-dev): 2.3.3, the newest the ISPC of Ubuntu 24.04 (1.22) builds --
+# 2.4 wants ISPC 1.29, 2.5 1.30. Without it, our own filter.
+option(PG_OIDN "Denoise with Intel Open Image Denoise 2: the system's, else built from its sources (needs ISPC and TBB); OFF: our own filter" ON)
+if(PG_OIDN AND (PG_SANITIZE OR PG_SANITIZE_THREAD))
+  # Its TBB is not built with the sanitizers -- and binds its threads through
+  # a library it opens in a way the address sanitizer cannot follow.
+  message(STATUS "Sanitizers: our own denoising filter, not Open Image Denoise")
+  set(PG_OIDN OFF)
+endif()
+if(PG_OIDN)
+  find_package(OpenImageDenoise 2 CONFIG QUIET)
+  if(TARGET OpenImageDenoise)
+    message(STATUS "Open Image Denoise ${OpenImageDenoise_VERSION}: the system's")
+  else()
+    find_program(PG_ISPC ispc)
+    find_package(TBB CONFIG QUIET)
+    # ISPC 1.21 or newer: an older one would stop Open Image Denoise's
+    # configuration, and ours with it.
+    set(PG_ISPC_VERSION "")
+    if(PG_ISPC)
+      execute_process(COMMAND "${PG_ISPC}" --version OUTPUT_VARIABLE PG_ISPC_TEXT ERROR_QUIET)
+      string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" PG_ISPC_VERSION "${PG_ISPC_TEXT}")
+    endif()
+    # Its sources build on Linux, Windows and macOS; on FreeBSD its port
+    # (pkg install oidn) is the way.
+    if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Windows|Darwin)$" AND PG_ISPC_VERSION AND
+       PG_ISPC_VERSION VERSION_GREATER_EQUAL 1.21 AND TARGET TBB::tbb)
+      include(FetchContent)
+      foreach(off OIDN_APPS OIDN_FILTER_RTLIGHTMAP OIDN_DEVICE_SYCL OIDN_DEVICE_CUDA OIDN_DEVICE_HIP OIDN_DEVICE_METAL
+                  OIDN_INSTALL_DEPENDENCIES)
+        set(${off} OFF CACHE BOOL "" FORCE)
+      endforeach()
+      foreach(on OIDN_STATIC_LIB OIDN_DEVICE_CPU OIDN_FILTER_RT)
+        set(${on} ON CACHE BOOL "" FORCE)
+      endforeach()
+      set(ISPC_EXECUTABLE "${PG_ISPC}" CACHE FILEPATH "" FORCE)
+      if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW)  # the files as unpacked now: rebuilt if the archive changes
+      endif()
+      FetchContent_Declare(oidn
+        URL https://github.com/RenderKit/oidn/releases/download/v2.3.3/oidn-2.3.3.src.tar.gz
+        URL_HASH SHA256=ccf221535b4007607fb53d3ff5afa74de25413bb8ef5d03d215f46c7cc2f96cf)
+      FetchContent_MakeAvailable(oidn)
+      if(TARGET OpenImageDenoise)
+        message(STATUS "Open Image Denoise 2.3.3: built from its sources")
+        # Its headers as the system's: our warnings are not about them.
+        get_target_property(PG_OIDN_INCLUDES OpenImageDenoise INTERFACE_INCLUDE_DIRECTORIES)
+        set_target_properties(OpenImageDenoise PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PG_OIDN_INCLUDES}")
+      endif()
+    endif()
+    if(NOT TARGET OpenImageDenoise)
+      message(WARNING "Open Image Denoise could not be had: our own filter takes the noise out. Install it "
+                      "(FreeBSD: pkg install oidn), or ISPC 1.21 or newer and TBB to build it (Debian, Ubuntu: "
+                      "apt install ispc libtbb-dev).")
+      set(PG_OIDN OFF)
+    endif()
+  endif()
+endif()
+if(PG_OIDN)
+  target_link_libraries(pgsim PRIVATE OpenImageDenoise)
+  target_compile_definitions(pgsim PRIVATE PG_HAVE_OIDN)
 endif()
 
 # The renderers: OpenGL through function pointers the caller loads, so they

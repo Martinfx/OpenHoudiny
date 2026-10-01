@@ -73,6 +73,8 @@ private:
     int pictureWidth_ = 0, pictureHeight_ = 0;
     bool fresh_ = false;
     std::string error_;
+    // Seconds the last noise taken out took, and the passes since took.
+    double denoiseCost_ = 0.0, sinceDenoise_ = 0.0;
 };
 
 }  // namespace pg::editor

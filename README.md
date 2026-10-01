@@ -39,7 +39,8 @@ okna.
 - **[docs/pathtracer.md](docs/pathtracer.md)** — pořádný render: path
   tracer na procesoru v záložce Render vedle Viewportu i z příkazové řádky;
   odražené světlo, měkké slunce, prosvítající tráva a listí, sklo a voda,
-  hloubka ostrosti, odšumění; nastavení v uzlu Output, PNG i EXR
+  hloubka ostrosti, odšumění neuronovou sítí (Intel Open Image Denoise);
+  nastavení v uzlu Output, PNG i EXR
 - **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
   geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
   primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání
@@ -141,12 +142,19 @@ z OpenVDB 13.1 s libc++ 18 (clang 18 na FreeBSD 14), protože potřebuje
 `std::atomic_ref`, které tahle libc++ nemá. Bez NanoVDB
 (`-DPG_NANOVDB=OFF`) path tracer plyn nevykreslí, viewport ano.
 
+Šum, který render nechá, odstraní **Intel Open Image Denoise 2**
+(Apache 2.0): `pkg install oidn` na FreeBSD. Když v systému není, CMake
+ji stáhne a jednou postaví ze zdrojů: verzi 2.3.3, staticky, jen pro
+procesor, asi za minutu. K tomu potřebuje ISPC 1.21 nebo novější a TBB
+(`sudo apt install ispc libtbb-dev` na Debianu a Ubuntu). Bez ní
+(`-DPG_OIDN=OFF`) odšumuje vlastní filtr.
+
 Výchozí build obsahuje editor: při konfiguraci stáhne Dear ImGui a GLFW,
 pokud v systému není (`sudo apt install libglfw3-dev`). Když najde vývojové
 soubory Pythonu (`python3-dev`), stáhne pybind11 a postaví i modul `pg` do
 `build/python` ([docs/python.md](docs/python.md)); jiný Python vybere
 `-DPython3_EXECUTABLE=…`. Bez editoru a bez Pythonu nemá build žádné
-externí závislosti kromě Jolt, GLM, Embree a NanoVDB, stačí C++20 a standardní
+externí závislosti kromě Jolt, GLM, Embree, NanoVDB a Open Image Denoise, stačí C++20 a standardní
 knihovna:
 
 ```bash

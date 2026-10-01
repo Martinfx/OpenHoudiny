@@ -1,6 +1,7 @@
 #include "pg/render/PathTracer.h"
 
 #include "pg/core/Parallel.h"
+#include "pg/render/Denoise.h"
 #include "pg/render/Random.h"
 
 #include <glm/common.hpp>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 
 namespace pg::render {
@@ -613,7 +615,16 @@ Image PathTracer::depth() const {
 }
 
 Image PathTracer::denoised() const {
-    const Image color = beauty(), a = albedo(), nrm = normal(), z = depth();
+    const Image color = beauty(), a = albedo(), nrm = normal();
+    // Open Image Denoise, where the build has it; else, or when it fails, our own filter.
+    if (defaultDenoiser() == Denoiser::Oidn) {
+        Image out;
+        std::string error;
+        if (oidnDenoise(color, a, nrm, out, error)) return out;
+        static std::once_flag said;
+        std::call_once(said, [&] { std::fprintf(stderr, "%s: our own filter takes the noise out\n", error.c_str()); });
+    }
+    const Image z = depth();
     std::vector<float> variance;
     {
         std::lock_guard<std::mutex> lock(mutex_);

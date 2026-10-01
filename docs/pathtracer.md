@@ -66,9 +66,10 @@ editoru.
 Render běží ve vlastním vlákně na všech jádrech a okno zůstává plynulé.
 Při odchodu na záložku Viewport se zastaví, takže viewport dostane
 procesor. Při změně scény se rozpracovaný průchod přeruší hned
-a začne nový. Obraz se po každém průchodu odšumí. Velký obraz (nad
-milion pixelů) se odšumí po prvních průchodech, potom po každém osmém
-a na konci.
+a začne nový. Obraz se odšumí po prvním průchodu, na konci a mezi tím
+vždy, když průchody od posledního odšumění trvaly aspoň tak dlouho jako
+odšumění samo. Odšumění tak nezabere víc než polovinu času. Mezi tím
+zůstane vidět poslední odšuměný obraz.
 
 Na čtyřjádrovém stroji bez grafické karty je první obraz louky
 (122 577 trsů trávy, 84 stromů) v 50 % panelu hotový asi za sekundu.
@@ -80,7 +81,7 @@ Použitelný je po 16–32 vzorcích, čistý po 128.
 |---|---|---|
 | Samples | 128 | vzorků na pixel, pak se render zastaví; víc je čistší, ale pomalejší |
 | Bounces | 4 | kolikrát se světlo nejvýš odrazí; 0 je jen přímé slunce a obloha |
-| Denoise | zapnuto | odšumění podle barvy, normály a hloubky |
+| Denoise | zapnuto | odšumění: Intel Open Image Denoise, bez ní vlastní filtr podle barvy, normály a hloubky |
 | F-Stop | 0 | clona objektivu; 0 znamená vše ostré, 2,8 malou hloubku ostrosti |
 | Focus | 0 m | vzdálenost ostrosti; 0 zaostří na to, co je uprostřed obrazu |
 | Clamp | 20 | nejvíc, kolik jeden odraz přidá pixelu; bere světlé tečky (fireflies) |
@@ -216,12 +217,32 @@ to oznámí.
   Na 2 vzorcích se liší většina pixelů, ale průměrně o 0,1 % jasu. Je to
   jiný šum, ne jiný obraz. Vlastní hierarchie dává stejný obraz na všech
   strojích a s GCC i clang.
-- **Odšumění**: à-trous vlnkový filtr (Dammertz a kol.) nad světlem, které
-  povrch dostal. Barva povrchu se vydělí a potom vrátí, takže textura
-  zůstane ostrá. Filtr se zastaví na hranách barvy, normály a hloubky
-  a tam, kde se pixely liší víc než o šum (rozptyl vzorků z okolí 5 × 5).
+- **Odšumění** (`src/pg/render/Denoise.h`): **Intel Open Image Denoise**
+  (Apache 2.0), neuronová síť natrénovaná na obrazech z path tracerů.
+  Používá ji Blender, Houdini (Karma), Arnold, V-Ray i Unreal. Dostane
+  světlo, albedo a normály pixelů. Albedo a normály nejdřív samostatně
+  odšumí, protože i v nich zůstává šum: z hloubky ostrosti, z plynu
+  a z listí a stébel, která pixel zakrývají jen zčásti. Teprve pak
+  odšumí světlo. Filtry se pro danou velikost obrazu připraví jednou.
+  Stejný obraz odšumí pokaždé stejně. Bez ní (`-DPG_OIDN=OFF`,
+  `PG_DENOISER=own` v prostředí, nebo v buildu se sanitizery)
+  odšumuje vlastní à-trous vlnkový filtr (Dammertz a kol.) nad světlem,
+  které povrch dostal. Barva povrchu se vydělí a potom vrátí, takže
+  textura zůstane ostrá. Filtr se zastaví na hranách barvy, normály
+  a hloubky a tam, kde se pixely liší víc než o šum (rozptyl vzorků
+  z okolí 5 × 5).
 - **Výstup**: expozice, tónová křivka ACES (Narkowicz) a gama 2,2, stejně
   jako viewport. EXR ukládá lineární světlo bez křivky.
+
+![Tráva zblízka po 16 vzorcích: bez odšumění, vlastní filtr, Open Image Denoise; vpravo 256 vzorků bez odšumění](img/pathtracer-denoise.jpg)
+
+Po 16 vzorcích se obraz z Open Image Denoise liší od obrazu s 256 vzorky
+o 0,040, z vlastního filtru o 0,051 a bez odšumění o 0,058 (odmocnina
+střední kvadratické odchylky zobrazených hodnot 0–1). Nejvíc pomůže
+v trávě: 0,027 proti 0,045. Test
+`render_open_image_denoise_comes_nearer_than_our_filter` měří totéž
+v lineárním světle pod zataženou oblohou po 4 vzorcích proti 512:
+0,020, 0,035 a 0,074.
 
 ## 7. Výkon
 
@@ -244,6 +265,13 @@ Louku víc nezrychlí ani Embree. Má 122 000 malých trsů trávy
 Paprsek u země jich projde průměrně 56, než trefí stéblo, a u každého se
 otáčí do prostoru trsu. Rychlejší by byly větší trsy s víc stébly.
 
+Odšumění na čtyřech jádrech (Xeon 2,1 GHz s AVX-512): Open Image Denoise
+potřebuje na obraz 640 × 360 0,8 s, na 1280 × 720 3,4 s a na
+1920 × 1080 7,9 s a až 1,6 GB paměti. Dvě třetiny času zaberou albedo
+a normály. Vlastní filtr je asi dvakrát rychlejší (0,4 s, 1,7 s
+a 4,3 s). Záložka Render proto odšumuje jen tak často, aby odšumění
+nezabralo víc než polovinu času.
+
 ## 8. Co zatím chybí
 
 - Déšť, drť jako body, plate a holdouty. Tyhle prvky kreslí jen
@@ -252,8 +280,6 @@ otáčí do prostoru trsu. Rychlejší by byly větší trsy s víc stébly.
 - Světlo plamenů dopadá na okolí jen odrazy, které plamen náhodou
   trefí. Plameny se nevzorkují přímo jako slunce, takže země u ohně má
   víc šumu.
-- Odšumění neuronovou sítí (Intel Open Image Denoise) místo à-trous
-  filtru.
 - Rozmazání pohybem (motion blur) a průchody pohybu a masek do EXR.
 - Textury a UV, normálové mapy, subsurface scattering.
 - Světla kromě slunce a oblohy (bodová, plošná), HDRI obloha.

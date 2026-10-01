@@ -4,6 +4,7 @@
 
 #include "Theme.h"
 #include "Widgets.h"
+#include "pg/render/Denoise.h"
 
 #include <cmath>
 #include <cstring>
@@ -104,9 +105,11 @@ void SimWorkspace::renderTab(int width, int height) {
     }
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", progress);
-    ImGui::SetItemTooltip("Rays through %s; the gas %s", render::rayEngineName(render::defaultRayEngine()).c_str(),
+    ImGui::SetItemTooltip("Rays through %s; the gas %s; the noise taken out by %s",
+                          render::rayEngineName(render::defaultRayEngine()).c_str(),
                           render::gasAvailable() ? ("through " + render::gasLibrary()).c_str()
-                                                 : "not rendered: built without NanoVDB");
+                                                 : "not rendered: built without NanoVDB",
+                          render::denoiserName(render::defaultDenoiser()).c_str());
 
     // What it renders: the picture's size -- the camera's, or the pane's --
     // times the scale.

@@ -79,6 +79,7 @@
 #include "pg/io/Export.h"
 #include "pg/io/Picture.h"
 #include "pg/io/Video.h"
+#include "pg/render/Denoise.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Save.h"
 #include "pg/sim/Cache.h"
@@ -1289,10 +1290,12 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             gas = pg::render::gasAvailable() ? "; the gas through " + pg::render::gasLibrary()
                                              : "; no gas: built without NanoVDB";
         }
-        char text[200];
+        const std::string denoised =
+            settings.denoise ? ", denoised by " + pg::render::denoiserName(pg::render::defaultDenoiser()) : std::string();
+        char text[280];
         std::snprintf(text, sizeof text, " through the path tracer (%s%s), %d samples a pixel%s",
                       pg::render::rayEngineName(builder.engine()).c_str(), gas.c_str(), settings.samples,
-                      settings.denoise ? ", denoised" : "");
+                      denoised.c_str());
         through = text;
     }
 #ifdef PG_CAN_RENDER
