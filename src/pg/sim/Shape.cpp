@@ -4,15 +4,13 @@
 
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtx/euler_angles.hpp>
+#include <glm/trigonometric.hpp>
 
 #include <algorithm>
 #include <cmath>
 
 namespace pg::sim {
 namespace {
-
-constexpr float kRadians = 0.01745329251994329577f;  // per degree
-constexpr float kDegrees = 57.2957795130823208768f;  // per radian
 
 float smoothstep(float edge0, float edge1, float x) {
     const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
@@ -84,9 +82,9 @@ Vec3 Rotation::toEuler(const Vec3& near) const {
     // cos b sin a is y.z, cos b cos a is z.z, sin c cos b is x.y, cos c cos b is x.x.
     const float sb = std::clamp(-x.z, -1.0f, 1.0f);
     if (std::fabs(sb) < 0.99999f) {
-        const float a = std::atan2(y.z, z.z) * kDegrees;
-        const float b = std::asin(sb) * kDegrees;
-        const float c = std::atan2(x.y, x.x) * kDegrees;
+        const float a = glm::degrees(std::atan2(y.z, z.z));
+        const float b = glm::degrees(std::asin(sb));
+        const float c = glm::degrees(std::atan2(x.y, x.x));
         // The same rotation, the other way round: a + 180, 180 - b, c + 180.
         const Vec3 one = unwrap(Vec3(a, b, c), near);
         const Vec3 other = unwrap(Vec3(a + 180.0f, 180.0f - b, c + 180.0f), near);
@@ -96,10 +94,10 @@ Vec3 Rotation::toEuler(const Vec3& near) const {
     // determined. Keep c where it was.
     const float c = near.z;
     if (sb > 0.0f) {
-        const float a = std::atan2(y.x, y.y) * kDegrees + c;
+        const float a = glm::degrees(std::atan2(y.x, y.y)) + c;
         return unwrap(Vec3(a, 90.0f, c), near);
     }
-    const float a = std::atan2(-y.x, y.y) * kDegrees - c;
+    const float a = glm::degrees(std::atan2(-y.x, y.y)) - c;
     return unwrap(Vec3(a, -90.0f, c), near);
 }
 
