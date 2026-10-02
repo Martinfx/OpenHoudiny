@@ -583,6 +583,7 @@ Parametry:
 | | `guide_reach` | Metry, o které se těleso smí vzdálit od místa, kde ho Guide má (zastavila ho zem nebo to, do čeho narazilo), než půjde svou cestou; 0 (výchozí) jakkoli daleko |
 | | `guide_let_go` | Kus, kterému praskne spoj, jde svou cestou: co Guide shodí, se tam, kde dopadne, volně rozpadne (výchozí zapnuto) |
 | Time | `substeps` | Kroky řešiče na snímek: víc pro rychlé kusy a vysoké stavby |
+| | `rest` | **Freeze at Rest** (výchozí zapnuto): těleso, které se půl sekundy nikam nepohnulo a leží na podlaze nebo na tom, co se nehýbe, zmrzne. Je statické a nic nestojí, dokud do něj něco nenarazí rychleji než 1 m/s, nepostrčí ho voda nebo plyn, neodpálí se v něm nálož nebo k němu nedojede klíčovaný objekt. S ním se probudí, co na něm leží. Hromady trosek se pak krokují mnohem rychleji ([níže](#jak-to-funguje)). Vypnuto: každé těleso se krokuje až do konce (v Houdini *Allow Deactivation* vypnuté) |
 | Dust | `dust` | Kolik prachu dá přetržený spoj |
 | | `impact_dust` | … tvrdý náraz a rozdrcený kus |
 | | `dust_size` | Jak velký je obláček (m) |
@@ -901,11 +902,47 @@ stejný:
   dvě stejně blízko, tu s nižším číslem tělesa a části. Pořadí, ve kterém
   je broad phase vydá, se totiž s vlákny může měnit.
 
-Věž z příkladu (593 kusů v 710 tělech, přes dva tisíce spojů) se krokuje
-za 5,3 ms na snímek na jednom vláknu a za 3,2 ms na čtyřech. Věž
-rozřezaná na 5 628 kusů za 78 ms na jednom a 31 ms na čtyřech
-(`./build/pgbench_rigid`, bez prachu). Skoro všechen čas je v řešiči
-kontaktů Joltu a roste s počtem těles, která se právě hýbou.
+Věž z příkladu (593 kusů v 710 tělech, přes dva tisíce spojů) se během
+pádu (180 snímků) krokuje za 4,1 ms na snímek na jednom vláknu a za
+3,2 ms na čtyřech. Věž rozřezaná na 5 628 kusů za 60–70 ms na jednom
+a 30 ms na čtyřech (`./build/pgbench_rigid`, bez prachu). Skoro všechen
+čas je v řešiči kontaktů Joltu a roste s počtem těles, která se právě
+hýbou.
+
+**Tělesa v klidu zmrznou** (`rest`, Freeze at Rest). Jolt sám uspí jen
+celý ostrov těles, který je v klidu. V hromadě trosek se ale vždycky
+něco chvěje, takže by Jolt krokoval všechno až do konce. Solver proto
+hlídá každé těleso sám. Těleso, které se půl sekundy nepohnulo o víc než
+2 cm (ani nejvzdálenějším rohem) a leží do 2 cm na tom, co se nehýbe,
+přepne na statické (`SetMotionType(Static)`). V Joltu pak nic nestojí.
+Pod ním může být podlaha, stojící kus, jiné zmrzlé těleso nebo klíčovaný
+objekt, který stojí. Kusy, které drží lepidlo ke stojícím, a kusy vedené
+Guide nezmrznou. Zmrzlé těleso probudí:
+
+- **náraz rychlejší než 1 m/s**, v posluchači kontaktů. Narážející musí
+  mít dost hybnosti: hmotnost × rychlost aspoň desetinu součtu hmotností
+  obou těles (přilepené by těleso rozjelo aspoň na 0,1 m/s). Drť a malé
+  úlomky proto hromadu neprobudí;
+- **to, co k němu letí.** Statické a dynamické těleso Jolt srazí, až když
+  se dotknou, a to už je pozdě: zmrzlé těleso by pak v tom podkroku stálo
+  jako zeď. Proto se v každém podkroku každému tělesu rychlejšímu než
+  1 m/s udělá kvádr, kterým za podkrok projde. Je to jeho obal posunutý
+  o rychlost × krok a zvětšený o to, co za krok opíše otáčením, plus
+  2 cm. Broad phase Joltu (`CollideAABox`) najde zmrzlá tělesa v cestě
+  a ta se probudí, když na ně letící má dost hybnosti (jako výš). Ptá se
+  z menší strany: kvádry letících proti zmrzlým, nebo obaly zmrzlých
+  proti letícím;
+- **voda nebo plyn**, které ho tlačí silou přes 5 % jeho váhy, látka,
+  která ho nese, nálož, která v něm vybuchne, a klíčovaný objekt, který
+  k němu dojede.
+
+S tělesem se probudí i to, co na něm leží, a to, co leží na tom. Zmrzne
+a probudí se ve stejném pořadí na jakémkoli počtu vláken, takže snímky
+zůstanou bitově stejné. Během pádu se tím věž nezrychlí: skoro všechno je
+v pohybu a hlídání stojí asi 2 % kroku. Usazená velká věž se ale krokuje
+za 2,1 ms na snímek místo 56 ms. Za 360 snímků je to v průměru 38 ms
+místo 61 ms (na jednom vláknu). Bez zmrazení zůstane ve snímku 360 vzhůru
+1 648 těles, se zmrazením je od snímku 300 zmrzlé všechno.
 
 - **Kusy a jejich části.** Kus je jedno tělo — nebo víc, když je
   z částí, které se nedotýkají. Každá část (uzavřený kus povrchu) naráží
@@ -1333,7 +1370,7 @@ drti; snímky verze 8 se čtou s drtí bez natočení.
 
 ## 6. Ověřování
 
-`tests/test_rigid.cpp` (17 testů), `tests/test_topology.cpp` (fracture)
+`tests/test_rigid.cpp` (18 testů), `tests/test_topology.cpp` (fracture)
 a testy expanze v `tests/test_pyro.cpp`:
 
 - kusy krychle jsou uzavřené a jejich objemy dají objem krychle; stejný hash
@@ -1344,6 +1381,12 @@ a testy expanze v `tests/test_pyro.cpp`:
   i s mezerami, 61 bodů v nich i mezi nimi, dva na jednom místě; totéž
   pro jediný kvádr;
 - kusy padají a dosednou na podlahu, v klidu, a každý kus si drží tvar;
+- trám položený přes kvádr v klidu zmrzne, s vypnutým `rest` ne. Kostka,
+  která mu na konec spadne z 10 m, ho přesto překlopí, jako by nikdy
+  nezmrzl: druhý konec vyletí stejně vysoko a trám se rozjede stejně
+  rychle, obojí na čtvrtinu. Bez buzení toho, k čemu něco letí, by zmrzlý
+  trám stál jako zeď a kostka by se od něj odrazila. Snímky jsou na 1 i 4
+  vláknech stejné;
 - slepená stavba stojí, jak je postavená, a pod závažím shozeným shora se
   lepidlo zlomí; klíčovaný objekt povalí slepenou zeď;
 - těla jsou části, které se dotýkají, a spoje jsou tam, kde se potkají

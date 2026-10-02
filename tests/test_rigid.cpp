@@ -4,7 +4,8 @@
 // a pull -- a wrecking ball -- puffing dust; the same frames on any number
 // of threads and from one solver to the next; the pieces posed, drawn and
 // brought back as geometry; the RBD Solver in a network, its pieces into
-// the water and the gas, and its frames through the cache.
+// the water and the gas, and its frames through the cache; a body at rest
+// frozen, and woken to take the knock of what falls on it.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -845,4 +846,67 @@ TEST(rigid_heavier_pieces_by_attribute) {
     // Tipped towards +x: the heavy end is down.
     const RigidPose p = solver.capture().poses[1];  // a copy: the frame is gone after this line
     CHECK(p.apply(Vec3(1.0f, 2.5f, 0.0f)).y < 2.0f);
+}
+
+TEST(rigid_bodies_at_rest_freeze_and_take_the_knock_of_what_falls_on_them) {
+    // A beam lying across a block -- frozen once it has lain still half a
+    // second -- and a heavy cube dropped onto one end of it from 10 m: it
+    // lands a second and a third in. Woken before the knock, the beam takes
+    // it as it does when nothing ever freezes: it tips over the block, its
+    // other end up. Frozen still at the knock, it would stand as a wall --
+    // the cube would bounce off it, and it would not move.
+    ThreadCountGuard guard;
+    Geometry cube = boxPiece(Vec3(1.2f, 10.0f, 0.0f), Vec3(0.5f), 1);
+    auto d = cube.primitives().create("density", AttrType::Float).write<float>();
+    std::fill(d.begin(), d.end(), 8000.0f);
+    RigidScene scene;
+    scene.pieces = together({boxPiece(Vec3(0.0f, 0.8f, 0.0f), Vec3(3.0f, 0.4f, 0.6f), 0), cube});
+    scene.solver.glue = 0.0f;
+    Collider block;
+    block.shape = Shape::Box;
+    block.center = Vec3(0.0f, 0.3f, 0.0f);
+    block.size = Vec3(1.0f, 0.6f, 1.0f);
+    block.node = 9;
+    scene.colliders.push_back(block);
+    struct Run {
+        std::vector<RigidFrame> frames;
+        int frozen = 0;  ///< bodies frozen 1.2 s in, the cube still falling
+    };
+    auto run = [&](bool rest, unsigned threads) {
+        TaskPool::instance().setThreadCount(threads);
+        RigidScene s = scene;
+        s.solver.rest = rest;
+        RigidSolver solver(s);
+        Run r;
+        for (int i = 1; i <= 75; ++i) {
+            solver.step();
+            if (i == 36) r.frozen = solver.times().frozen;
+            r.frames.push_back(solver.capture());
+        }
+        return r;
+    };
+    const Run frozen = run(true, 1), stepped = run(false, 1), four = run(true, 4);
+    // Lying still, the beam froze; with Freeze at Rest off nothing does.
+    CHECK_EQ(frozen.frozen, 1);
+    CHECK_EQ(stepped.frozen, 0);
+    // How high the beam's far end went, and how fast the beam went, after
+    // the knock: as when it never froze.
+    auto knocked = [](const Run& r, float& up, float& fastest) {
+        up = 0.0f;
+        fastest = 0.0f;
+        for (size_t k = 36; k < r.frames.size(); ++k) {
+            const RigidPose& beam = r.frames[k].poses[0];
+            up = std::max(up, beam.apply(Vec3(-1.5f, 0.8f, 0.0f)).y - 0.8f);
+            fastest = std::max(fastest, length(beam.velocity));
+        }
+    };
+    float up = 0.0f, fast = 0.0f, upStepped = 0.0f, fastStepped = 0.0f;
+    knocked(frozen, up, fast);
+    knocked(stepped, upStepped, fastStepped);
+    CHECK(upStepped > 0.2f);
+    CHECK(fastStepped > 0.5f);
+    CHECK(std::fabs(up - upStepped) < 0.25f * upStepped);
+    CHECK(std::fabs(fast - fastStepped) < 0.25f * fastStepped);
+    // The same frames on one thread and four.
+    for (size_t k = 0; k < frozen.frames.size(); ++k) CHECK(samePoses(frozen.frames[k], four.frames[k]));
 }

@@ -2,9 +2,10 @@
 // The rigid bodies against the ROADMAP's step 4: the tower of the demolition
 // example -- and the same tower cut in ten times the pieces -- fractured,
 // made into bodies, and stepped through its collapse, on one thread and on
-// all there are. The dust is left out: what is measured is the RBD Solver
-// -- and where its step's time goes (RigidSolver::times). That the frames
-// come out the same on any number of threads is checked as it goes.
+// all there are, and on one thread with every body stepped to the end
+// (Freeze at Rest off). The dust is left out: what is measured is the RBD
+// Solver -- and where its step's time goes (RigidSolver::times). That the
+// frames come out the same on any number of threads is checked as it goes.
 //
 #include "pg/core/Parallel.h"
 #include "pg/sim/Network.h"
@@ -101,6 +102,9 @@ void bench(int number, float size, int frames) {
     if (!tower(size, scene, compileMs)) return;
     const Run one = run(scene, 1, frames);
     const Run many = run(scene, all, frames);
+    sim::RigidScene stepped = scene;
+    stepped.solver.rest = false;
+    const Run awake = run(stepped, 1, frames);
     TaskPool::instance().setThreadCount(all);
     const sim::RigidFrame& last = one.frames.back();
     int pieces = 0;
@@ -112,6 +116,8 @@ void bench(int number, float size, int frames) {
     std::printf("  %d frames stepped, 1 thread         %8.1f ms a frame (worst %.0f ms)\n", frames, one.meanMs, one.worstMs);
     std::printf("  %d frames stepped, %u threads        %8.1f ms a frame (worst %.0f ms)\n", frames, all, many.meanMs,
                 many.worstMs);
+    std::printf("  ... every body stepped, 1 thread    %8.1f ms a frame (worst %.0f ms): Freeze at Rest off\n",
+                awake.meanMs, awake.worstMs);
     const double spent = std::max(one.spent.total(), 1e-9);
     std::printf("  where it goes, 1 thread: Jolt %.0f%%, the glue %.0f%%, the grit %.0f%%, the rest %.0f%%\n",
                 100.0 * one.spent.jolt / spent, 100.0 * one.spent.glue / spent, 100.0 * one.spent.grit / spent,

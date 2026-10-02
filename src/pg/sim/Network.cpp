@@ -1509,6 +1509,12 @@ std::vector<NodeType> buildTypes() {
            "lands."},
           {"substeps", "Substeps", "Time", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
            "Steps of the solver a frame: more for fast pieces and tall stacks, which then stand steadier."},
+          {"rest", "Freeze at Rest", "Time", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "A body that has come to rest -- gone nowhere for half a second, lying on the floor or on what "
+           "lies still -- is frozen and costs nothing, until something comes at it faster than 1 m/s, water "
+           "or the gas push it, a charge goes off in it or a keyed object reaches it; what lies on it wakes "
+           "with it. Piles of rubble step many times faster. Off: every body is stepped to the end -- "
+           "Houdini's Allow Deactivation off."},
           {"buoyancy", "Buoyancy", "Fluids", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 100.0f, "",
            "How much the water of the Liquid Solver holds the pieces up: 1 as much as the water they push aside "
            "weighs -- what is lighter than water (Density under 1000: wood) floats, rocking on the waves, the "
@@ -4016,6 +4022,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.bond = f(*solver, "bond") * 1e6f;
         s.stretch = f(*solver, "stretch");
         s.substeps = whole(*solver, "substeps");
+        s.rest = f(*solver, "rest") != 0.0f;
         s.dust = f(*solver, "dust");
         s.dustSize = f(*solver, "dust_size");
         s.impactDust = f(*solver, "impact_dust");

@@ -129,6 +129,12 @@ struct RigidSettings {
     float stretch = 0.1f;
     Vec3 gravity{0.0f, -9.81f, 0.0f};
     int substeps = 2;                 ///< steps of the solver a frame
+    /// Bodies at rest -- gone nowhere for half a second, lying on the floor
+    /// or on what lies still -- are frozen, nothing to step, until
+    /// something comes at them, a flow pushes them or a charge goes off in
+    /// them: a pile of rubble costs next to nothing. Off: every body is
+    /// stepped to the end.
+    bool rest = true;
     bool floor = true;                ///< a floor at y = 0
     float dust = 1.0f;                ///< smoke a broken joint gives off
     float impactDust = 1.0f;          ///< ... and a hard knock
@@ -544,6 +550,8 @@ public:
         int contacts = 0;    ///< contacts Jolt found in the step, a pair of parts each
         int still = 0;       ///< bodies going nowhere lately, not frozen yet
         int waiting = 0;     ///< ... of which lying on what may still go
+        int woken = 0;       ///< frozen bodies the step woke, before it and after
+        int froze = 0;       ///< ... and froze
         double total() const { return jolt + glue + grit + rest; }
     };
     const Times& times() const;

@@ -312,16 +312,26 @@ Testy to ověřují pro plyn, vodu, déšť i odstřel s prachem.
   Fracture řeže buňku jen z blízkých částí tělesa blízkými body, bit po
   bitu stejně: věž z 5 628 buněk za 1,0 s místo 13,5 s. Lepidlo hledá
   plochy zametáním místo každé s každou.
+- ✅ **Tělesa v klidu zmrznou** (Freeze at Rest, [docs/destruction.md §3](docs/destruction.md#jak-to-funguje)):
+  těleso, které se půl sekundy nepohnulo a leží na tom, co se nehýbe, je
+  v Joltu statické a nestojí nic. Probudí ho náraz s dost velkou
+  hybností, těleso, které k němu za podkrok doletí (zametené kvádry
+  v broad phase Joltu), voda, plyn, nálož nebo klíčovaný objekt; s ním
+  i to, co na něm leží. Usazená věž z 5 628 kusů se krokuje za 2,1 ms
+  na snímek místo 56 ms, snímky zůstávají na 1 i 4 vláknech bitově
+  stejné. Parametr `rest` (výchozí zapnuto).
 
 **Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu
 a sekundární lámání a desetkrát víc kusů za stejný čas na snímek. Beton,
 výztuž, sklo, sekundární lámání, stopy prachu a vlákna jsou. Rychlost
-splněná není: věž z příkladu (593 kusů) se krokuje za 3,2 ms na snímek na
-4 vláknech (5,3 ms na jednom), desetkrát víc kusů (5 628) za 31 ms (78 ms
-na jednom). Krok roste s počtem těles, která se hýbou, a skoro celý je
-v řešiči kontaktů Joltu; víc jader ho zrychlí, desetinásobek za stejný čas
-potřebuje řešič na GPU nebo úspornější kroky pro trosky, které se už
-skoro nehýbou (krok 5).
+splněná není. Věž z příkladu (593 kusů) se během pádu krokuje za 3,2 ms
+na snímek na 4 vláknech (4,1 ms na jednom), desetkrát víc kusů (5 628)
+za 30 ms (60–70 ms na jednom). Trosky, které se usadily, už nestojí
+skoro nic, protože zmrznou: usazená velká věž 2,1 ms na snímek místo
+56 ms, 360 snímků v průměru 38 ms místo 61 ms. Během pádu je krok skoro
+celý v řešiči kontaktů Joltu a roste s počtem těles, která se hýbou.
+Desetinásobek za stejný čas potřebuje levnější kontakty malých kusů nebo
+řešič na GPU (krok 5).
 
 ### Krok 5 — Měřítko
 
