@@ -115,12 +115,13 @@ void SimWorkspace::updateGeometry() {
         if (display) r.nodes.push_back(display);
         if (sheet_ && sheet) r.nodes.push_back(sheet);
         if (base) r.nodes.push_back(base);
-        cooker_->submit(std::move(r));
+        cookSerial_ = cooker_->submit(std::move(r));
         cookAsked_ = ImGui::GetTime();
     }
     if (synchronous_) cooker_->wait();  // screenshots: the geometry of this frame
     sim::Cooker::Result done;
     if (!cooker_->take(done)) return;
+    cookedSerial_ = done.serial;
     const auto shown = done.geometry.find(display);
     const GeometryPtr geo = shown != done.geometry.end() ? shown->second : nullptr;
     if (geo != renderer_.geometry()) {

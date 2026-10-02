@@ -32,11 +32,18 @@ V editoru:
 | snímek na obrazovce jako EXR s průchody | **File › Render Image…**, přípona `.exr` |
 | všechny snímky jako PNG | **File › Render Frames…** (složka) |
 | celý záběr jako video | **File › Render Video…**, nebo ikona filmu v záhlaví viewportu |
+| celý záběr z Cycles (path traceru) jako video | **File › Render Video with Cycles…**, nebo ikona filmu v záložce **Render** › **Video…** |
+| všechny snímky z Cycles jako PNG | **File › Render Frames with Cycles…**, nebo ikona filmu v záložce **Render** › **Frames (PNG)…** |
 | animovaný náhled shaderu | v síti Shaders **File › Save Preview Video…** (5 s, 720 × 720) |
 
 Render jde kamerou, pokud ji síť má připojenou do Outputu, v rozlišení jejího
 obrazu; jinak pohledem viewportu v jeho velikosti. Obrázek je vždy
 vyhlazený: kreslí se ve dvojnásobném rozlišení a zmenší se.
+
+Render Frames a Render Video kreslí snímky tak, jak je ukazuje viewport
+(OpenGL, rychle). Položky **with Cycles** je místo toho renderují
+sledováním světla rendererem záložky Render, Cycles nebo path tracerem
+([níž](#render-videa-přes-cycles)).
 
 ## 2. Render sekvence a videa v editoru
 
@@ -63,6 +70,46 @@ dopíše a jde přehrát, snímky PNG zůstanou ve složce.
 - Dialog nabízí složku, kam šel poslední render; jinak složku sítě, jinak
   aktuální složku — a když do ní nejde zapisovat (program spuštěný
   z nabídky prostředí bývá v `/`), domovskou.
+
+### Render videa přes Cycles
+
+**File › Render Video with Cycles…** (a **Render Frames with Cycles…**)
+vyrenderuje každý snímek záběru tak, jak ho renderuje záložka Render,
+jen do konce:
+
+- **Renderer** je ten, který má záložka Render zvolený: Cycles, nebo path
+  tracer (položky se podle toho jmenují „with the Path Tracer“).
+- **Vzorky, odšumění a vzhled** jsou z uzlu Output, sekce Render, stejně
+  jako `prototype sim … --renderer cycles`. Každý snímek má vlastní
+  session Cycles až do konce, takže obraz je stejný jako z příkazové
+  řádky.
+- **Velikost** je obraz kamery (bez kamery viewportu) krát měřítko
+  záložky Render (25 / 50 / 100 %). Rychlé video na zkoušku je tedy
+  50 % a pár vzorků, finální 100 %.
+- **Kamera:** záběr jde kamerou Outputu, pokud ji síť má, včetně
+  rozmazání pohybem kamery.
+- Render běží na **vlastním vlákně**. Okno s průběhem ukazuje poslední
+  hotový snímek, co se právě děje („Frame 41: 12 / 32 samples · 18 s“,
+  „Cycles gets the scene ready…“), kolik trvá snímek a kolik zbývá.
+  **Stop** (nebo Esc) zastaví i snímek, který se právě renderuje. Co se
+  stihlo, zůstane: video se dopíše, snímky PNG zůstanou ve složce.
+- Mezitím **záložka Render** ukazuje hotové snímky renderu a vlastní
+  render pozastaví (procesor patří renderu). Po skončení pokračuje.
+- Snímky, které simulace ještě nespočítala, render počká, stejně jako
+  u videa z viewportu. Na zobrazenou geometrii snímku (stromy, domy,
+  body z Liquid Points…) počká, až se uvaří.
+
+Totéž z příkazové řádky:
+
+```bash
+./build/prototype sim muj.pgsim zaber.mp4 --renderer cycles                # vzorky z Outputu
+./build/prototype sim muj.pgsim snimky/f.png --every 1 --renderer cycles   # očíslované PNG
+```
+
+Na čtyřech jádrech trvá snímek 1280 × 720 se 16 vzorky, plynem a stromy
+asi minutu: dvě sekundy videa jsou zhruba hodina.
+
+![Render videa přes Cycles: okno s posledním hotovým snímkem, vzorky snímku a odhadem času](img/editor-render-cycles.jpg)
 
 ## 3. Formáty videa
 
@@ -185,7 +232,8 @@ viz [cache.md](cache.md)).
 | `src/pg/io/Jpeg.h` | `encodeJpeg`, `writeJpeg`: baseline JPEG, 4:2:0, tabulky normy |
 | `src/pg/io/Video.h` | `openVideo` → `VideoWriter` (`add`, `finish`): AVI sám, ostatní rourou do ffmpeg; `videoExtensions`, `ffmpegAvailable`, `frameRate` |
 | `tools/prototype/Offscreen.h` | kontext bez okna pro `render` a `sim`: EGL, nebo skryté okno GLFW |
-| `tools/prototype/RenderJob.h` | render po snímcích na pozadí editoru, okno s průběhem a Stop |
+| `tools/prototype/RenderJob.h` | render po snímcích na pozadí editoru, okno s průběhem, posledním snímkem a Stop |
+| `tools/prototype/FrameRender.h` | snímek záběru do konce přes Cycles nebo path tracer na vlastním vlákně (Render Video with Cycles) |
 | `tests/test_video.cpp` | 5 testů: segmenty JPEG, struktura AVI a index, zlomky frekvence, chyby, dekódování přes ffmpeg |
 | `src/pg/io/Exr.h` | `formatExr`, `writeExr`: OpenEXR 2, řádky, half i float, RLE jako OpenEXR, textové a maticové atributy |
 | `src/pg/gl/Volume.h` | `VolumeRenderer::passes`, `readPasses`, `writePassesExr`: průchody a jejich zápis |

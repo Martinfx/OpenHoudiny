@@ -30,6 +30,12 @@ V editoru:
 4. Nastavení (vzorky, odrazy, odšumění, clona, ostrost, clamp, rozmazání
    pohybem, velikost slunce, obloha, převod barev, detail povrchů) je
    v uzlu **Output** v sekci **Render**, stejné pro oba renderery.
+5. Celý záběr do videa: ikona filmu v liště záložky (**Video…** nebo
+   **Frames (PNG)…**), nebo **File › Render Video with Cycles…**. Každý
+   snímek se vyrenderuje do konce s počtem vzorků z Outputu, ve velikosti
+   záložky (25 / 50 / 100 %) a kamerou záběru. Okno s průběhem ukazuje
+   poslední hotový snímek, vzorky snímku, který se právě renderuje, čas na
+   snímek a kolik zbývá. Viz [render.md](render.md#render-videa-přes-cycles).
 
 ![Záložka Render: louka přes Cycles, 54 ze 128 vzorků na pixel](img/cycles-tab.jpg)
 
@@ -320,6 +326,11 @@ dostane snímek, na kterém se zastaví.
 - `tools/prototype/RenderView.cpp`: vlákno záložky Render s oběma renderery.
   Novější scéna (další snímek při přehrávání) se vezme, až ta stávající
   ukáže obraz, nebo po 3 sekundách.
+- `tools/prototype/FrameRender.cpp`: snímek záběru do konce pro Render
+  Video a Render Frames s Cycles nebo path tracerem, na vlastním vlákně.
+  Každý snímek má vlastní session Cycles, stejně jako příkazová řádka.
+  Stop ji zruší (`Session::cancel`), takže render skončí hned, ne až po
+  snímku.
 - `CMakeLists.txt`: Cycles se konfiguruje jako samostatný projekt
   v `build/cycles-build` a jeho knihovny se postaví jako cíl `cycles_build`.
   Přepínače, cesty a knihovny se přečtou z jeho vlastního buildu.

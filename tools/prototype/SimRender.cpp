@@ -1,5 +1,7 @@
-// The Render tab: the scene the viewport shows, rendered by the path tracer
-// (RenderView) as it gets less noisy -- through the camera, or the view.
+// The Render tab: the scene the viewport shows, rendered by Cycles or the
+// path tracer (RenderView) as it gets less noisy -- through the camera, or
+// the view. And the shot rendered to the end by the same renderer, frame
+// after frame, into a video or numbered PNGs (FrameRender, RenderJob).
 #include "SimWorkspace.h"
 
 #include "Theme.h"
@@ -30,8 +32,8 @@ constexpr int kScales[] = {25, 50, 100};
 
 }  // namespace
 
-sim::Camera SimWorkspace::renderCamera(int width, int height) const {
-    if (throughCamera_ && compiled_.hasCamera) {
+sim::Camera SimWorkspace::renderCamera(int width, int height, bool camera) const {
+    if (camera && compiled_.hasCamera) {
         sim::Camera c = compiled_.cameraAt(current_);
         c.width = width;
         c.height = height;
@@ -45,21 +47,83 @@ sim::Camera SimWorkspace::renderCamera(int width, int height) const {
     return gl::cameraFrom(renderer_.orbit, c);
 }
 
-void SimWorkspace::renderTab(int width, int height) {
+RenderView& SimWorkspace::renderView() {
     if (!renderView_) {
         renderView_ = std::make_unique<RenderView>();
         // Cycles' first pictures are of fewer, larger pixels anyway: the
         // whole pane from the start.
         if (renderView_->engine() == RenderView::Engine::Cycles) renderScale_ = 2;
     }
-    if (renderAutoPaused_) {
+    return *renderView_;
+}
+
+RenderView::Request SimWorkspace::renderRequest(int width, int height, bool camera) {
+    RenderView::Request r;
+    r.input.geometry = renderer_.geometry();
+    r.input.look = renderer_.look;
+    if (levels_.empty()) {
+        r.frame = shown_;
+        r.input.solids = compiled_.solidsAt(current_);
+    }
+    r.input.camera = renderCamera(width, height, camera);
+    // Where the shot's camera is a frame before and after, for Cycles'
+    // blur.
+    const bool shot = camera && compiled_.hasCamera;
+    r.input.cameraMotion = shot && !compiled_.poses.empty();
+    if (r.input.cameraMotion) {
+        r.input.cameraBefore = compiled_.cameraAt(current_ - 1);
+        r.input.cameraAfter = compiled_.cameraAt(current_ + 1);
+    }
+    r.input.frameTime = compiled_.world.timeStep;
+    // Through the shot's camera, its plate behind the CG.
+    if (shot) {
+        const sim::Camera& c = compiled_.cameraAt(current_);
+        const std::string file = c.plateFile(current_);
+        if (file.empty()) {
+            renderPlate_.reset();
+        } else if (!renderPlate_ || renderPlate_->file != file || !(renderPlate_->camera == c.sanitized())) {
+            // One that cannot be read: none -- the viewport says why.
+            std::string why;
+            renderPlate_ = render::loadPlate(file, c, why);
+        }
+        r.input.plate = renderPlate_;
+    }
+    r.settings = compiled_.render;
+    r.settings.width = width;
+    r.settings.height = height;
+    r.input.sunAngle = r.settings.sunAngle;
+    r.input.time = static_cast<float>(current_ - 1) * compiled_.world.timeStep;
+    const sim::Domain dm = sceneBox();
+    r.input.domain.lo = dm.origin();
+    r.input.domain.hi = dm.origin() + dm.size();
+    return r;
+}
+
+void SimWorkspace::finalSize(int& width, int& height) const {
+    shotSize(width, height);
+    const float scale = static_cast<float>(kScales[renderScale_]) / 100.0f;
+    width = std::clamp(static_cast<int>(std::lround(static_cast<float>(width) * scale)), 16, 4096);
+    height = std::clamp(static_cast<int>(std::lround(static_cast<float>(height) * scale)), 16, 4096);
+}
+
+std::string SimWorkspace::finalRenderer() {
+    return renderView().engine() == RenderView::Engine::Cycles ? "Cycles" : "the Path Tracer";
+}
+
+void SimWorkspace::renderTab(int width, int height) {
+    renderView();
+    // While a render to the end runs, the tab shows its frames: its own
+    // render waits, paused.
+    const bool job = job_.running() && jobFinal_;
+    if (renderAutoPaused_ && !job) {
         renderView_->setPaused(false);
         renderAutoPaused_ = false;
     }
     const ImGuiIO& io = ImGui::GetIO();
     const render::Settings& fromOutput = compiled_.render;
 
-    // The toolbar: go on or stop, start again, how big, save; how far it got.
+    // The toolbar: go on or stop, start again, how big, save, the whole
+    // shot; how far it got.
     RenderView::Status st = renderView_->status();
     const bool paused = renderView_->paused();
     if (theme::iconButton("render.go", paused ? Icon::Play : Icon::Pause, paused ? "Go on rendering" : "Pause")) {
@@ -72,6 +136,23 @@ void SimWorkspace::renderTab(int width, int height) {
                           false, st.samples > 0)) {
         files_.open("Save render", {".png", ".exr"}, true, (fs::path(renderFolder()) / (stem() + "_render.png")).string());
         fileAction_ = FileAction::SaveRender;
+    }
+    ImGui::SameLine();
+    // Every frame of the shot rendered to the end by this tab's renderer:
+    // into a video, or a folder of PNGs.
+    const std::string with = finalRenderer();
+    if (theme::iconButton("render.shot", Icon::Film,
+                          ("Render the shot with " + with + ": every frame, to the end, into a video or PNGs\xe2\x80\xa6").c_str(),
+                          false, compiled_.ok)) {
+        ImGui::OpenPopup("render.shot.menu");
+    }
+    if (ImGui::BeginPopup("render.shot.menu")) {
+        int fw = 0, fh = 0;
+        finalSize(fw, fh);
+        ImGui::TextDisabled("With %s, %d \xc3\x97 %d, %d samples", with.c_str(), fw, fh, std::max(1, fromOutput.samples));
+        if (ImGui::MenuItem("Video\xe2\x80\xa6")) chooseVideo(true);
+        if (ImGui::MenuItem("Frames (PNG)\xe2\x80\xa6")) chooseFrames(true);
+        ImGui::EndPopup();
     }
     ImGui::SameLine();
     // Which renderer: Cycles, Blender's, when the build has it -- or ours.
@@ -162,11 +243,12 @@ void SimWorkspace::renderTab(int width, int height) {
     rh = std::clamp(static_cast<int>(std::lround(static_cast<float>(rh) * scale)), 16, 4096);
 
     // Asked again whenever what it shows changes: the network, the frame,
-    // the geometry, the view, the size.
+    // the geometry, the view, the size -- not while a render to the end
+    // runs: the tab shows its frames.
     render::Settings settings = fromOutput;
     settings.width = rw;
     settings.height = rh;
-    const sim::Camera cam = renderCamera(rw, rh);
+    const sim::Camera cam = renderCamera(rw, rh, throughCamera_);
     uint64_t key = mixed(0xcbf29ce484222325ull, static_cast<uint64_t>(compiledRevision_));
     key = mixed(key, static_cast<uint64_t>(current_));
     key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(shown_.get())));
@@ -177,42 +259,8 @@ void SimWorkspace::renderTab(int width, int height) {
         key = mixed(key, v);
     }
     key = mixed(key, static_cast<uint64_t>(rw) << 32 | static_cast<uint64_t>(rh));
-    if (key != renderKey_ || !(settings == renderSettings_)) {
-        RenderView::Request r;
-        r.input.geometry = renderer_.geometry();
-        r.input.look = renderer_.look;
-        if (levels_.empty()) {
-            r.frame = shown_;
-            r.input.solids = compiled_.solidsAt(current_);
-        }
-        r.input.camera = cam;
-        // Where the shot's camera is a frame before and after, for Cycles'
-        // blur.
-        r.input.cameraMotion = throughCamera_ && compiled_.hasCamera && !compiled_.poses.empty();
-        if (r.input.cameraMotion) {
-            r.input.cameraBefore = compiled_.cameraAt(current_ - 1);
-            r.input.cameraAfter = compiled_.cameraAt(current_ + 1);
-        }
-        r.input.frameTime = compiled_.world.timeStep;
-        // Through the shot's camera, its plate behind the CG.
-        if (throughCamera_ && compiled_.hasCamera) {
-            const sim::Camera& shot = compiled_.cameraAt(current_);
-            const std::string file = shot.plateFile(current_);
-            if (file.empty()) {
-                renderPlate_.reset();
-            } else if (!renderPlate_ || renderPlate_->file != file || !(renderPlate_->camera == shot.sanitized())) {
-                // One that cannot be read: none -- the viewport says why.
-                std::string why;
-                renderPlate_ = render::loadPlate(file, shot, why);
-            }
-            r.input.plate = renderPlate_;
-        }
-        r.input.sunAngle = settings.sunAngle;
-        r.input.time = static_cast<float>(current_ - 1) * compiled_.world.timeStep;
-        const sim::Domain dm = sceneBox();
-        r.input.domain.lo = dm.origin();
-        r.input.domain.hi = dm.origin() + dm.size();
-        r.settings = settings;
+    if (!job && (key != renderKey_ || !(settings == renderSettings_))) {
+        RenderView::Request r = renderRequest(rw, rh, throughCamera_);
         r.scene = key;
         renderView_->request(std::move(r));
         renderKey_ = key;
@@ -222,7 +270,7 @@ void SimWorkspace::renderTab(int width, int height) {
     // The newest picture into the texture.
     std::vector<uint8_t> rgba;
     int pw = 0, ph = 0;
-    if (renderView_->takePicture(rgba, pw, ph)) {
+    if (!job && renderView_->takePicture(rgba, pw, ph)) {
         if (!renderTexture_) gl_.GenTextures(1, &renderTexture_);
         gl_.BindTexture(gl::TEXTURE_2D, renderTexture_);
         gl_.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
@@ -291,6 +339,78 @@ void SimWorkspace::renderTab(int width, int height) {
     if (hovered && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_0, false)) setThroughCamera(!throughCamera_);
     if (!st.error.empty()) d->AddText(ImVec2(lo.x + theme::px(8.0f), lo.y + theme::px(8.0f)), IM_COL32(240, 120, 110, 255),
                                       st.error.c_str());
+}
+
+bool SimWorkspace::renderShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error) {
+    FrameRender& fr = *frameRender_;
+    const FrameRender::Progress p = fr.progress();
+    char line[160];
+    if (p.state == FrameRender::State::Done && jobFrame_ == frame) {
+        if (!fr.take(rgb, error)) return false;  // why: the job stops
+        showFinalFrame(rgb);
+        return true;
+    }
+    if (p.state == FrameRender::State::Building || p.state == FrameRender::State::Rendering) {
+        if (p.state == FrameRender::State::Building) {
+            std::snprintf(line, sizeof line, "Frame %d: making the scene\xe2\x80\xa6", frame);
+        } else if (p.samples == 0) {
+            // Cycles takes the scene in -- meshes, hierarchies, the gas --
+            // before the first sample.
+            std::snprintf(line, sizeof line, "Frame %d: %s gets the scene ready\xe2\x80\xa6  \xc2\xb7  %.0f s", frame,
+                          RenderView::engineName(jobEngine_), p.seconds);
+        } else {
+            std::snprintf(line, sizeof line, "Frame %d: %d / %d samples  \xc2\xb7  %.0f s", frame, p.samples, p.of, p.seconds);
+        }
+        job_.tell(line, p.of > 0 ? static_cast<float>(p.samples) / static_cast<float>(p.of) : 0.0f);
+        return false;
+    }
+    // Not started: the frame posed as the viewport shows it then -- the
+    // simulation's frame, the objects and the look, the displayed geometry
+    // cooked for it -- then rendered on the thread, through the shot's
+    // camera.
+    const std::shared_ptr<const sim::Frame> f = jobSimFrame(frame, error);
+    if (!f) return false;
+    current_ = frame;
+    if (f != shown_) {
+        shown_ = f;
+        renderer_.setFrame(*f);
+    }
+    pose(frame);
+    updatePieces();
+    updateGeometry();
+    if (cookedSerial_ != cookSerial_) {
+        std::snprintf(line, sizeof line, "Frame %d: cooking the geometry\xe2\x80\xa6", frame);
+        job_.tell(line);
+        return false;
+    }
+    jobFrame_ = frame;
+    fr.start(jobEngine_, renderRequest(jobWidth_, jobHeight_, true));
+    std::snprintf(line, sizeof line, "Frame %d: making the scene\xe2\x80\xa6", frame);
+    job_.tell(line);
+    return false;
+}
+
+void SimWorkspace::showFinalFrame(const std::vector<uint8_t>& rgb) {
+    const size_t n = static_cast<size_t>(jobWidth_) * static_cast<size_t>(jobHeight_);
+    if (rgb.size() < n * 3) return;
+    std::vector<uint8_t> rgba(n * 4);
+    for (size_t i = 0; i < n; ++i) {
+        rgba[4 * i] = rgb[3 * i];
+        rgba[4 * i + 1] = rgb[3 * i + 1];
+        rgba[4 * i + 2] = rgb[3 * i + 2];
+        rgba[4 * i + 3] = 255;
+    }
+    if (!renderTexture_) gl_.GenTextures(1, &renderTexture_);
+    gl_.BindTexture(gl::TEXTURE_2D, renderTexture_);
+    gl_.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
+    gl_.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+    gl_.PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+    gl_.TexImage2D(gl::TEXTURE_2D, 0, static_cast<gl::GLint>(gl::RGBA8), jobWidth_, jobHeight_, 0, gl::RGBA, gl::UNSIGNED_BYTE,
+                   rgba.data());
+    gl_.BindTexture(gl::TEXTURE_2D, 0);
+    renderTextureW_ = jobWidth_;
+    renderTextureH_ = jobHeight_;
+    jobShown_ = true;
 }
 
 void SimWorkspace::stopRender() {

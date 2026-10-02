@@ -17,7 +17,10 @@
 // Cache: sim/Cache.h); a geometry node's geometry -- the particles, the gas as
 // volumes -- is exported, a frame or every frame (io/Export.h). The shot is
 // rendered to a PNG, to numbered PNGs or to a video (io/Video.h), the last
-// two a frame at a time behind a modal that shows how far it got (RenderJob).
+// two a frame at a time behind a modal that shows how far it got (RenderJob)
+// -- drawn as the viewport draws it, or rendered to the end by the Render
+// tab's renderer, Cycles or the path tracer (FrameRender), on a thread of
+// its own.
 //
 // It starts on an empty scene; File > Examples has finished ones.
 //
@@ -38,6 +41,7 @@
 // its name -- to show on the asset's node.
 //
 #include "Bake.h"
+#include "FrameRender.h"
 #include "Gizmo.h"
 #include "NodeCanvas.h"
 #include "RenderJob.h"
@@ -198,17 +202,45 @@ private:
     bool renderImage(const std::string& path);
     // The Render tab (SimRender.cpp): the path tracer on the shown scene.
     void renderTab(int width, int height);
-    sim::Camera renderCamera(int width, int height) const;
+    /// The camera a render sees through: the shot's at the frame on screen
+    /// (`camera`, when there is one), else the view's -- `width` x `height`.
+    sim::Camera renderCamera(int width, int height, bool camera) const;
     void stopRender();
     void saveRender(const std::string& path);
     /// Every frame of the shot -- 1 to the Output's last, as the simulation
     /// gets there -- into `target`: a video when its extension is one's,
-    /// else a folder of numbered PNGs.
-    void startRender(const std::string& target);
+    /// else a folder of numbered PNGs. `final`: rendered to the end by the
+    /// Render tab's renderer, at its size; else drawn as the viewport draws.
+    void startRender(const std::string& target, bool final = false);
     /// Frame `frame` of the shot for the render job, posed and drawn as the
     /// viewport would show it then. False while the simulation has not got
     /// there; false with why when it will not.
     bool drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error);
+    /// The same rendered to the end by the Render tab's renderer, on a
+    /// thread of its own (FrameRender): false while that renders it -- the
+    /// job told how far it got -- or the simulation or the geometry has not
+    /// got there.
+    bool renderShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error);
+    /// Frame `frame` of the simulation for the render job: null while the
+    /// simulation is on its way there; null with why when it will not get
+    /// there.
+    std::shared_ptr<const sim::Frame> jobSimFrame(int frame, std::string& error);
+    /// A frame the job rendered to the end, into the Render tab's texture:
+    /// the tab and the job's modal show it.
+    void showFinalFrame(const std::vector<uint8_t>& rgb);
+    /// The Render tab's renderer, made at first need: Cycles' first
+    /// pictures are of fewer, larger pixels anyway, so with it the tab
+    /// renders the whole size from the start.
+    RenderView& renderView();
+    /// What the Render tab -- and a render to the end -- renders of the
+    /// frame on screen at `width` x `height`: through the shot's camera
+    /// (`camera`, when there is one), or the view.
+    RenderView::Request renderRequest(int width, int height, bool camera);
+    /// The size of a render to the end: the camera's picture, or the
+    /// viewport's, at the Render tab's scale.
+    void finalSize(int& width, int& height) const;
+    /// The renderer a render to the end renders with, as the menus name it.
+    std::string finalRenderer();
     /// Where a render goes by default: where the last one went, the
     /// network's folder, the current one if it can be written, or home.
     std::string renderFolder() const;
@@ -218,7 +250,9 @@ private:
     void notify(std::string text, std::string path, bool error, bool sticky = false);
     void drawNotice(ImDrawList* d, ImVec2 lo, ImVec2 hi);
     /// The dialog of Render Video: the kinds of file there are to write.
-    void chooseVideo();
+    /// `final`: rendered to the end by the Render tab's renderer.
+    void chooseVideo(bool final = false);
+    void chooseFrames(bool final = false);
     /// A network with no node: what a new scene is.
     bool emptyScene() const { return net_.nodes().empty(); }
     /// A network that shows geometry and simulates nothing -- a model, a
@@ -504,6 +538,8 @@ private:
     std::unique_ptr<sim::Cooker> cooker_;
     std::string cookKey_;          ///< what was last asked of it
     double cookAsked_ = 0.0;       ///< when (ImGui time)
+    uint64_t cookSerial_ = 0;      ///< ... its serial number
+    uint64_t cookedSerial_ = 0;    ///< the one of the geometry shown: cookSerial_ once it is that
     double cookMs_ = 0.0;          ///< how long the last cook took
     GeometryPtr sheetGeometry_;    ///< the spreadsheet's node's, as last cooked
     int sheetGeometryNode_ = 0;
@@ -630,8 +666,8 @@ private:
 
     ui::FileBrowser files_;
     enum class FileAction {
-        None, Open, SaveAs, Image, Frames, Video, MeshFile, ImportMesh, SaveCache, LoadCache, Bake, ExportGeometry, ExportFrames,
-        ExportUsd, OpenAsset, SaveAsset, SaveRender
+        None, Open, SaveAs, Image, Frames, Video, FinalFrames, FinalVideo, MeshFile, ImportMesh, SaveCache, LoadCache, Bake,
+        ExportGeometry, ExportFrames, ExportUsd, OpenAsset, SaveAsset, SaveRender
     } fileAction_ = FileAction::None;
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;
@@ -657,6 +693,15 @@ private:
     int jobWidth_ = 0, jobHeight_ = 0;  ///< the size of the job's frames, fixed when it starts
     int jobReturnFrame_ = 1;            ///< the play head, put back when the job ends
     bool jobWasPlaying_ = false;
+    // A job rendered to the end: by what, the frame it renders, whether the
+    // Render tab was going on (paused while the job renders), whether its
+    // texture holds the job's last frame.
+    bool jobFinal_ = false;
+    RenderView::Engine jobEngine_ = RenderView::Engine::PathTracer;
+    std::unique_ptr<FrameRender> frameRender_;
+    int jobFrame_ = 0;
+    bool jobPausedView_ = false;
+    bool jobShown_ = false;
     std::string renderFolder_;          ///< where the last render went
     // The Render tab.
     bool renderTabOn_ = false;

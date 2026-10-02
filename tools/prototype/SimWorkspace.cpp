@@ -551,6 +551,15 @@ void SimWorkspace::update(float dt) {
     std::string result, where;
     bool failed = false;
     if (job_.takeResult(result, failed, where)) {
+        if (jobFinal_) {
+            // What still renders stops; the Render tab goes on, and renders
+            // the frame on screen again.
+            frameRender_.reset();
+            if (jobPausedView_ && renderView_) renderView_->setPaused(false);
+            jobPausedView_ = false;
+            jobFinal_ = false;
+            renderKey_ = 0;
+        }
         current_ = jobReturnFrame_;
         playing_ = jobWasPlaying_;
         shown_.reset();  // the frame at the play head, again
@@ -1755,16 +1764,28 @@ void SimWorkspace::fileMenu() {
     }
     ImGui::SetItemTooltip("The frame on screen as a PNG -- through the camera, if there is one; as an EXR, in linear "
                           "light with its passes for compositing: depth, motion vectors, masks");
-    if (ImGui::MenuItem("Render Frames\xe2\x80\xa6", nullptr, false, compiled_.ok)) {
-        files_.openFolder("Render frames into a folder", true, (fs::path(renderFolder()) / (stem() + "_frames")).string());
-        fileAction_ = FileAction::Frames;
-    }
+    if (ImGui::MenuItem("Render Frames\xe2\x80\xa6", nullptr, false, compiled_.ok)) chooseFrames();
     ImGui::SetItemTooltip("Every frame of the shot as a PNG, numbered -- as the simulation gets there");
     if (ImGui::MenuItem("Render Video\xe2\x80\xa6", nullptr, false, compiled_.ok)) chooseVideo();
     ImGui::SetItemTooltip(io::ffmpegAvailable() ? "Every frame of the shot into a video: .mp4 (H.264), .mov, .mkv, "
                                                   ".webm (VP9), .gif -- through ffmpeg -- or .avi (Motion JPEG)"
                                                 : "Every frame of the shot into a video: .avi (Motion JPEG). With "
                                                   "ffmpeg installed also .mp4, .mov, .mkv, .webm and .gif");
+    // The same rendered to the end by the Render tab's renderer -- Cycles,
+    // or the path tracer -- as the Output's Render section sets it.
+    const std::string with = finalRenderer();
+    if (ImGui::MenuItem(("Render Frames with " + with + "\xe2\x80\xa6").c_str(), nullptr, false, compiled_.ok)) {
+        chooseFrames(true);
+    }
+    ImGui::SetItemTooltip("Every frame of the shot rendered to the end by %s -- the Output's samples, the Render tab's "
+                          "size -- as a PNG, numbered",
+                          with.c_str());
+    if (ImGui::MenuItem(("Render Video with " + with + "\xe2\x80\xa6").c_str(), nullptr, false, compiled_.ok)) {
+        chooseVideo(true);
+    }
+    ImGui::SetItemTooltip("Every frame of the shot rendered to the end by %s -- the Output's samples, the Render tab's "
+                          "size -- into a video",
+                          with.c_str());
     ImGui::Separator();
     const int shown = net_.displayed();
     if (ImGui::MenuItem("Export Geometry\xe2\x80\xa6", nullptr, false, shown != 0)) chooseExport(shown, false);
@@ -1946,7 +1967,8 @@ void SimWorkspace::helpMenu() {
 }
 
 void SimWorkspace::popups() {
-    job_.draw();
+    // A render to the end shows its last frame.
+    job_.draw(jobFinal_ && jobShown_ ? renderTexture_ : 0u, renderTextureW_, renderTextureH_);
     makeAssetDialog();
     wedgeDialog();
     std::string chosen;
@@ -1957,6 +1979,8 @@ void SimWorkspace::popups() {
         case FileAction::Image: renderImage(chosen); break;
         case FileAction::Frames:
         case FileAction::Video: startRender(chosen); break;
+        case FileAction::FinalFrames:
+        case FileAction::FinalVideo: startRender(chosen, true); break;
         case FileAction::MeshFile:
             if (net_.setText(fileNode_, fileParam_, chosen)) {
                 // An object that was no mesh becomes one.
@@ -2162,42 +2186,72 @@ bool SimWorkspace::renderImage(const std::string& path) {
     return true;
 }
 
-void SimWorkspace::startRender(const std::string& target) {
+void SimWorkspace::startRender(const std::string& target, bool final) {
     if (!compiled_.ok) {
         setMessage("Nothing to render: the network does not compile", true);
         return;
     }
     int width = 0, height = 0;
-    shotSize(width, height);
+    if (final) {
+        renderView();  // its scale, made at first need, is the size's
+        finalSize(width, height);
+    } else {
+        shotSize(width, height);
+    }
     jobWidth_ = width;
     jobHeight_ = height;
     jobReturnFrame_ = current_;
     jobWasPlaying_ = playing_;
+    jobFinal_ = final;
+    jobShown_ = false;
     playing_ = false;
     runner_->setRunning(true);  // the shot is simulated as it is rendered
     std::string error;
     if (!job_.start(target, shownPath(target), stem(), width, height, 1.0 / static_cast<double>(compiled_.world.timeStep), 1,
                     std::max(1, compiled_.frames),
-                    [this](int frame, std::vector<uint8_t>& rgb, std::string& why) { return drawShotFrame(frame, rgb, why); },
+                    [this](int frame, std::vector<uint8_t>& rgb, std::string& why) {
+                        return jobFinal_ ? renderShotFrame(frame, rgb, why) : drawShotFrame(frame, rgb, why);
+                    },
                     error)) {
         playing_ = jobWasPlaying_;
+        jobFinal_ = false;
         setMessage(error, true);
         notify(error, "", true);
         return;
     }
+    if (final) {
+        // Rendered on a thread of its own, frame after frame; the Render
+        // tab's render waits meanwhile -- the processor is the job's.
+        RenderView& view = renderView();
+        jobEngine_ = view.engine();
+        jobPausedView_ = !view.paused();
+        if (jobPausedView_) view.setPaused(true);
+        frameRender_ = std::make_unique<FrameRender>();
+        jobFrame_ = 0;
+        const render::Settings& s = compiled_.render;
+        char detail[160];
+        std::snprintf(detail, sizeof detail, "%s, %d \xc3\x97 %d, %d samples a pixel%s",
+                      RenderView::engineName(jobEngine_), width, height, std::max(1, s.samples),
+                      s.denoise ? ", denoised" : "");
+        job_.setDetail(detail);
+    }
     renderFolder_ = fs::path(target).parent_path().string();
 }
 
-bool SimWorkspace::drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error) {
-    const std::shared_ptr<const sim::Frame> f = runner_->frame(frame);
-    if (!f) {
-        if (runner_->busy()) return false;  // on its way there
+std::shared_ptr<const sim::Frame> SimWorkspace::jobSimFrame(int frame, std::string& error) {
+    std::shared_ptr<const sim::Frame> f = runner_->frame(frame);
+    if (!f && !runner_->busy()) {
         error = runner_->full()      ? "the cache is full (Simulation > Cache Size)"
                 : runner_->adopted() ? "the frames loaded from disk end"
                                      : "the simulation stopped";
         error += " at frame " + std::to_string(frame);
-        return false;
     }
+    return f;
+}
+
+bool SimWorkspace::drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error) {
+    const std::shared_ptr<const sim::Frame> f = jobSimFrame(frame, error);
+    if (!f) return false;
     // As the viewport shows it then: the frame, the objects and the look,
     // the displayed geometry.
     current_ = frame;
@@ -2219,11 +2273,18 @@ std::string SimWorkspace::renderFolder() const {
     return outputFolder();
 }
 
-void SimWorkspace::chooseVideo() {
+void SimWorkspace::chooseVideo(bool final) {
     const std::vector<std::string> kinds = io::videoExtensions();
-    files_.open(io::ffmpegAvailable() ? "Render video" : "Render video (.avi -- with ffmpeg also .mp4, .webm, .gif)", kinds,
-                true, (fs::path(renderFolder()) / (stem() + kinds.front())).string());
-    fileAction_ = FileAction::Video;
+    std::string title = final ? "Render video with " + finalRenderer() : std::string("Render video");
+    if (!io::ffmpegAvailable()) title += " (.avi -- with ffmpeg also .mp4, .webm, .gif)";
+    files_.open(title, kinds, true, (fs::path(renderFolder()) / (stem() + (final ? "_render" : "") + kinds.front())).string());
+    fileAction_ = final ? FileAction::FinalVideo : FileAction::Video;
+}
+
+void SimWorkspace::chooseFrames(bool final) {
+    files_.openFolder(final ? "Render frames with " + finalRenderer() + " into a folder" : std::string("Render frames into a folder"),
+                      true, (fs::path(renderFolder()) / (stem() + (final ? "_render" : "_frames"))).string());
+    fileAction_ = final ? FileAction::FinalFrames : FileAction::Frames;
 }
 
 void SimWorkspace::drawNotice(ImDrawList* d, ImVec2 lo, ImVec2 hi) {

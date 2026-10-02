@@ -23,8 +23,10 @@ double since(std::chrono::steady_clock::time_point t) {
 
 std::string duration(double seconds) {
     char buf[32];
+    const int s = static_cast<int>(seconds);
     if (seconds < 60.0) std::snprintf(buf, sizeof buf, "%.0f s", seconds);
-    else std::snprintf(buf, sizeof buf, "%d min %02d s", static_cast<int>(seconds) / 60, static_cast<int>(seconds) % 60);
+    else if (s < 3600) std::snprintf(buf, sizeof buf, "%d min %02d s", s / 60, s % 60);
+    else std::snprintf(buf, sizeof buf, "%d h %02d min", s / 3600, s / 60 % 60);
     return buf;
 }
 
@@ -65,10 +67,18 @@ bool RenderJob::start(const std::string& target, const std::string& shown, const
     written_ = 0;
     drawnMs_ = 0.0;
     draw_ = std::move(draw);
+    detail_.clear();
+    told_.clear();
+    toldDone_ = 0.0f;
     running_ = true;
     cancel_ = waiting_ = done_ = false;
-    started_ = std::chrono::steady_clock::now();
+    started_ = frameStarted_ = std::chrono::steady_clock::now();
     return true;
+}
+
+void RenderJob::tell(std::string what, float done) {
+    told_ = std::move(what);
+    toldDone_ = std::clamp(done, 0.0f, 1.0f);
 }
 
 void RenderJob::step(double budgetMs) {
@@ -80,7 +90,6 @@ void RenderJob::step(double budgetMs) {
     const auto t0 = std::chrono::steady_clock::now();
     while (next_ <= last_) {
         std::string error;
-        const auto t = std::chrono::steady_clock::now();
         if (!draw_(next_, rgb_, error)) {
             if (!error.empty()) {
                 finish(error, true);
@@ -90,6 +99,8 @@ void RenderJob::step(double budgetMs) {
             return;
         }
         waiting_ = false;
+        told_.clear();
+        toldDone_ = 0.0f;
         if (video_) {
             if (!video_->add(rgb_.data(), error)) {
                 finish(error, true);
@@ -104,7 +115,10 @@ void RenderJob::step(double budgetMs) {
                 return;
             }
         }
-        drawnMs_ += since(t);
+        // A frame takes from the first try at it to its writing: the
+        // waits for the simulation, or for Cycles, with it.
+        drawnMs_ += since(frameStarted_);
+        frameStarted_ = std::chrono::steady_clock::now();
         ++written_;
         ++next_;
         if (since(t0) >= budgetMs) break;
@@ -144,7 +158,7 @@ bool RenderJob::takeResult(std::string& message, bool& failed, std::string& path
     return true;
 }
 
-void RenderJob::draw() {
+void RenderJob::draw(unsigned preview, int previewWidth, int previewHeight) {
     if (running_ && !ImGui::IsPopupOpen(kPopup)) ImGui::OpenPopup(kPopup);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always,
@@ -164,18 +178,31 @@ void RenderJob::draw() {
     ImGui::PopFont();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("%s", shown_.c_str());
+    if (!detail_.empty()) ImGui::TextDisabled("%s", detail_.c_str());
     ImGui::PopTextWrapPos();
+    // The last frame drawn, as wide as the modal.
+    if (preview != 0 && previewWidth > 0 && previewHeight > 0) {
+        ImGui::Spacing();
+        const float w = ImGui::GetContentRegionAvail().x;
+        ImGui::Image(ImTextureRef(static_cast<ImTextureID>(preview)),
+                     ImVec2(w, w * static_cast<float>(previewHeight) / static_cast<float>(previewWidth)));
+    }
     ImGui::Spacing();
     char label[64];
     std::snprintf(label, sizeof label, "%d / %d", written_, total);
-    ImGui::ProgressBar(static_cast<float>(written_) / static_cast<float>(std::max(total, 1)), ImVec2(-1.0f, 0.0f), label);
-    if (waiting_) {
+    const float done = static_cast<float>(written_) + (waiting_ ? toldDone_ : 0.0f);
+    ImGui::ProgressBar(done / static_cast<float>(std::max(total, 1)), ImVec2(-1.0f, 0.0f), label);
+    if (waiting_ && !told_.empty()) {
+        ImGui::TextUnformatted(told_.c_str());
+    } else if (waiting_) {
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme::kYellow), "Waiting for the simulation to reach frame %d\xe2\x80\xa6",
                            next_);
-    } else if (written_ > 0) {
+    }
+    if (written_ > 0) {
         const double each = drawnMs_ / written_ / 1000.0;
-        ImGui::TextDisabled("%.2f s a frame  \xc2\xb7  %s left", each, duration(each * (total - written_)).c_str());
-    } else {
+        if (each < 60.0) ImGui::TextDisabled("%.2f s a frame  \xc2\xb7  %s left", each, duration(each * (total - written_)).c_str());
+        else ImGui::TextDisabled("%s a frame  \xc2\xb7  %s left", duration(each).c_str(), duration(each * (total - written_)).c_str());
+    } else if (!waiting_) {
         ImGui::TextDisabled("The first frame\xe2\x80\xa6");
     }
     ImGui::Spacing();

@@ -4,7 +4,7 @@
 // folder of numbered PNGs -- a few each frame of the window, with a modal
 // that shows how far it got and can stop it: Render Frames and Render Video
 // in the editor. A frame that is not ready yet (the simulation has not got
-// there) is waited for.
+// there, Cycles is still rendering it) is waited for.
 //
 #include "pg/io/Video.h"
 
@@ -32,8 +32,17 @@ public:
     bool running() const { return running_; }
     /// Renders for about `budgetMs`: at least a frame, when one is ready.
     void step(double budgetMs = 40.0);
-    /// The modal, while it runs: the progress, and Cancel.
-    void draw();
+    /// A line under the title, from start() on: how it renders -- the
+    /// renderer, the size, the samples.
+    void setDetail(std::string detail) { detail_ = std::move(detail); }
+    /// While the frame it is on is not drawn yet: what that waits on, as
+    /// the modal says it, and how far it is, 0 to 1 -- told by the drawing
+    /// as it returns false. Nothing told: the simulation. Forgotten once
+    /// the frame is drawn.
+    void tell(std::string what, float done = 0.0f);
+    /// The modal, while it runs: the progress, the last frame drawn when
+    /// there is one to show (`preview`, a GL texture of it), and Stop.
+    void draw(unsigned preview = 0, int previewWidth = 0, int previewHeight = 0);
     /// Once, after it stopped: what came of it, whether it went wrong, and
     /// the file or folder it wrote.
     bool takeResult(std::string& message, bool& failed, std::string& path);
@@ -42,9 +51,12 @@ private:
     void finish(const std::string& why, bool failed);
 
     bool running_ = false, cancel_ = false, waiting_ = false, done_ = false;
-    std::string target_, shown_, stem_;
+    std::string target_, shown_, stem_, detail_;
+    std::string told_;     // what the frame waits on (tell)
+    float toldDone_ = 0.0f;
     int width_ = 0, height_ = 0, first_ = 1, last_ = 0, next_ = 1, written_ = 0;
     double fps_ = 30.0, drawnMs_ = 0.0;
+    std::chrono::steady_clock::time_point frameStarted_;  // the first try at the frame it is on
     Draw draw_;
     std::unique_ptr<io::VideoWriter> video_;
     std::vector<uint8_t> rgb_;

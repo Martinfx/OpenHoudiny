@@ -804,6 +804,7 @@ if(PG_BUILD_GUI)
     tools/prototype/App.cpp
     tools/prototype/Bake.cpp
     tools/prototype/Editor.cpp
+    tools/prototype/FrameRender.cpp
     tools/prototype/Gizmo.cpp
     tools/prototype/NodeCanvas.cpp
     tools/prototype/RenderJob.cpp
