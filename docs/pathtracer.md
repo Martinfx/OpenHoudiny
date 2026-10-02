@@ -96,6 +96,7 @@ Použitelný je po 16–32 vzorcích, čistý po 128.
 | Focus | 0 m | vzdálenost ostrosti; 0 zaostří na to, co je uprostřed obrazu |
 | Clamp | 20 | nejvíc, kolik jeden odraz přidá pixelu; bere světlé tečky (fireflies) |
 | Sun Size | 0,53° | úhlový průměr slunce: větší slunce dává měkčí stíny |
+| Motion Blur | 0,5 snímku | jak dlouho je otevřená závěrka: v Cycles se to, co se hýbe, rozmaže po své dráze ([cycles.md](cycles.md#rozmazání-pohybem)); path tracer renderuje okamžik snímku |
 
 Světlo, obloha, podlaha, expozice a barva vody jsou ze stejného **Looku**
 jako ve viewportu, takže jas obou sedí. Test ověřuje, že podlaha na slunci

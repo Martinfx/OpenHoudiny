@@ -43,7 +43,8 @@ okna.
   obloha a slunce jako v Blenderu s nastavitelnými mraky nebo obloha
   z obrázku (HDRI), převod barev AgX, detail povrchů, odšumění Open Image
   Denoise; drť jako hranaté úlomky kamene a skla, kapky deště jako čárky
-  vody a mokrá zem, kam prší
+  vody a mokrá zem, kam prší; rozmazání pohybem, dokud je otevřená
+  závěrka (kusy, drť, látka, voda, kamera)
 - **[docs/materials.md](docs/materials.md)** — materiály a textury: plochy
   říkají, z čeho jsou (`s@material`: beton, lom betonu, omítka, cihla,
   okno, ocel, dřevo, kůra, dlažba, tašky, trávník…), generátory si je

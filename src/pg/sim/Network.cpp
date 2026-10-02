@@ -367,6 +367,11 @@ std::vector<ParamDef> renderParams() {
             {"render_clamp", "Clamp", "Render", K::Float, {20.0f, 0.0f, 0.0f}, 1.0f, 100.0f, 0.1f, kBig, "",
              "The most light a bounce may add to a pixel: no bright specks (fireflies) where light found a rare "
              "way, a little less of what is lit only that way."},
+            {"render_motion_blur", "Motion Blur", "Render", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f,
+             "frames",
+             "How much of a frame the shutter is open, about the frame: in Cycles what moves -- the pieces, the "
+             "grit, the cloth, the water, a moving camera -- blurs along its way over that time, as on film. 0.5 "
+             "half a frame (a 180\xc2\xb0 shutter), 0 all sharp. The path tracer renders the frame's moment."},
             {"render_sun_angle", "Sun Size", "Render", K::Float, {0.53f, 0.0f, 0.0f}, 0.1f, 5.0f, 0.01f, 30.0f,
              "\xc2\xb0",
              "How wide the sun is, degrees: 0.53 the real sun, sharp shadows near what casts them and soft far "
@@ -3834,6 +3839,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     r.focus = std::max(f(*output, "render_focus"), 0.0f);
     r.clamp = std::max(f(*output, "render_clamp"), 0.01f);
     r.sunAngle = std::clamp(f(*output, "render_sun_angle"), 0.01f, 30.0f);
+    r.shutter = std::clamp(f(*output, "render_motion_blur"), 0.0f, 1.0f);
     r.sky = static_cast<render::Settings::Sky>(std::clamp(whole(*output, "render_sky"), 0, 2));
     r.skyImage = text(output->id, "render_sky_image");
     if (!r.skyImage.empty() && !folder.empty() && std::filesystem::path(r.skyImage).is_relative()) {

@@ -11,9 +11,9 @@
 //          which a chip is goes by its id, so that it keeps its shape as it
 //          flies. As big as its pscale -- its farthest corner so far from
 //          its middle -- turned by its orient, a shade of its colour of its
-//          own: stones are not all alike. Stone is broken concrete, its
-//          photographs laid on as on a chip some 5 cm across; glass is
-//          glass.
+//          own: stones are not all alike -- flying at its velocity v. Stone
+//          is broken concrete, its photographs laid on as on a chip some
+//          5 cm across; glass is glass.
 //   rain   each drop the streak it falls in a share of a frame
 //          (Look::rainStreak) as the viewport draws it: from where it is,
 //          back along how fast it goes; a spindle as thick as a drop at its

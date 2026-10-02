@@ -5,7 +5,9 @@
 // the same however it is run; the sun lighting a floor as the viewport
 // lights it; the denoiser nearer the converged picture than the noise, Open
 // Image Denoise nearer still; the Output's settings; the files; the
-// materials vegetation brings.
+// materials vegetation brings. And what moves: how fast, in the scene --
+// each corner, each chip of grit -- and Cycles blurring it along its way
+// while the shutter is open, a moving camera too.
 //
 #include "pg/core/Grass.h"
 #include "pg/core/Instances.h"
@@ -15,6 +17,7 @@
 #include "pg/render/Denoise.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Save.h"
+#include "pg/sim/Display.h"
 #include "pg/sim/Network.h"
 
 #include "test_framework.h"
@@ -446,6 +449,7 @@ TEST(render_settings_come_from_the_output) {
     CHECK(net.setParam(out, "render_fstop", "2.8"));
     CHECK(net.setParam(out, "render_focus", "4.5"));
     CHECK(net.setParam(out, "render_sun_angle", "2"));
+    CHECK(net.setParam(out, "render_motion_blur", "0.25"));
     const sim::Compiled c = net.compile();
     CHECK_EQ(c.render.samples, 300);
     CHECK_EQ(c.render.bounces, 7);
@@ -453,10 +457,71 @@ TEST(render_settings_come_from_the_output) {
     CHECK_NEAR(c.render.fstop, 2.8f, 1e-5f);
     CHECK_NEAR(c.render.focus, 4.5f, 1e-5f);
     CHECK_NEAR(c.render.sunAngle, 2.0f, 1e-5f);
-    // Without them set: the defaults, saved and read back the same.
+    CHECK_NEAR(c.render.shutter, 0.25f, 1e-6f);
+    // Without them set: the defaults, saved and read back the same -- the
+    // shutter open half a frame.
+    CHECK_NEAR(Settings().shutter, 0.5f, 1e-6f);
     sim::Network plain;
     plain.add("output");
     CHECK(plain.compile().render == Settings());
+}
+
+TEST(render_scene_carries_how_fast_what_moves_goes) {
+    // Triangles whose points go as fast as they are far from the origin,
+    // that way: what each corner goes at -- in the order the triangles are
+    // in the hierarchy's leaves -- tells where it is.
+    auto geo = strewn(40, 5);
+    const std::vector<Vec3> P(geo->positions().begin(), geo->positions().end());
+    {
+        auto v = geo->points().create("v", AttrType::Vec3).write<Vec3>();
+        std::copy(P.begin(), P.end(), v.begin());
+    }
+    const sim::ShadedTriangles tris = sim::shadedTriangles(*geo);
+    CHECK_EQ(tris.velocities.size(), tris.positions.size());
+    for (size_t i = 0; i < tris.positions.size(); ++i) CHECK(length(tris.velocities[i] - tris.positions[i]) < 1e-6f);
+    sim::Camera cam = sim::Camera::lookingAt(Vec3(1.6f, 1.9f, 2.0f), Vec3(0.0f, 1.0f, 0.0f));
+    for (const RayEngine engine : engines()) {
+        SceneBuilder builder(engine);
+        const auto scene = builder.build(inputOf(geo, noFloor(), cam));
+        CHECK_EQ(scene->meshes.size(), 1u);
+        const Mesh& m = *scene->meshes[0];
+        CHECK_EQ(m.velocity.size(), 3 * m.count());
+        float off = 0.0f;
+        for (size_t t = 0; t < m.count() && m.velocity.size() == 3 * m.count(); ++t) {
+            const Vec3 corner[3] = {m.v0[t], m.v0[t] + m.e1[t], m.v0[t] + m.e2[t]};
+            for (size_t c = 0; c < 3; ++c) off = std::max(off, length(m.velocity[3 * t + c] - corner[c]));
+        }
+        CHECK(off < 1e-5f);
+    }
+    // Standing: none.
+    CHECK(SceneBuilder().build(inputOf(strewn(4, 5), noFloor(), cam))->meshes[0]->velocity.empty());
+    // A chip of grit flies as its point does.
+    auto grit = std::make_shared<Geometry>();
+    grit->addPoints(1);
+    grit->positionsForWrite()[0] = Vec3(0.0f, 1.0f, 0.0f);
+    grit->points().create("pscale", AttrType::Float).write<float>()[0] = 0.05f;
+    grit->points().create("v", AttrType::Vec3).write<Vec3>()[0] = Vec3(3.0f, 1.0f, -2.0f);
+    SceneInput in = inputOf(nullptr, noFloor(), cam);
+    in.bodies = grit;
+    const auto chips = SceneBuilder().build(in);
+    CHECK_EQ(chips->placed.size(), 1u);
+    if (!chips->placed.empty()) CHECK(length(chips->placed[0].velocity - Vec3(3.0f, 1.0f, -2.0f)) < 1e-6f);
+
+    // The camera between two frames: halfway along, its lens halfway, turned
+    // the shorter way round -- from 170 degrees to -170 through 180, not 0.
+    sim::Camera a, b;
+    a.position = Vec3(0.0f, 1.0f, 0.0f);
+    a.rotation = Vec3(0.0f, 170.0f, 0.0f);
+    a.focal = 30.0f;
+    b.position = Vec3(2.0f, 1.0f, 0.0f);
+    b.rotation = Vec3(0.0f, -170.0f, 0.0f);
+    b.focal = 50.0f;
+    const sim::Camera half = a.toward(b, 0.5f);
+    CHECK(length(half.position - Vec3(1.0f, 1.0f, 0.0f)) < 1e-5f);
+    CHECK_NEAR(half.focal, 40.0f, 1e-4f);
+    CHECK(dot(half.forward(), normalize(a.forward() + b.forward())) > 0.9999f);
+    CHECK(length(a.toward(b, 0.0f).forward() - a.forward()) < 1e-5f);
+    CHECK(length(a.toward(b, 1.0f).forward() - b.forward()) < 1e-5f);
 }
 
 TEST(render_saves_png_and_exr_with_passes) {
@@ -972,4 +1037,132 @@ TEST(render_cycles_clouds_cover_the_sky_and_drift_on_the_wind) {
     CHECK(cloudy.z / cloudy.x < 0.8f * clear.z / clear.x);
     CHECK(cloudy.y > clear.y);
     CHECK(moved > 0.02 * clear.z);
+}
+
+TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
+    if (!cyclesAvailable()) return;
+    // A white square 30 cm across, 3 m in front of the camera, flying
+    // sideways at 24 m/s: the shutter open half a frame of 1/24 s, it goes
+    // 25 cm while it is open -- seen smeared along its way, wider than it
+    // is, fainter; the light it sends the same. A chip of grit flying so
+    // the same; the square standing while the camera goes by the same.
+    const int w = 96, h = 64;
+    const sim::Camera cam = [&] {
+        sim::Camera c = sim::Camera::lookingAt(Vec3(0.0f, 1.0f, 3.0f), Vec3(0.0f, 1.0f, 0.0f));
+        c.width = w;
+        c.height = h;
+        return c;
+    }();
+    sim::Look look = noFloor();
+    look.lightIntensity = 0.0f;
+    look.skyIntensity = 1.0f;
+    look.skyColor = Vec3(1.0f);
+    const Vec3 fast(24.0f, 0.0f, 0.0f);
+    auto square = [](const Vec3& v) {
+        auto geo = std::make_shared<Geometry>();
+        geo->addPoints(4);
+        auto P = geo->positionsForWrite();
+        P[0] = Vec3(-0.15f, 0.85f, 0.0f);
+        P[1] = Vec3(0.15f, 0.85f, 0.0f);
+        P[2] = Vec3(0.15f, 1.15f, 0.0f);
+        P[3] = Vec3(-0.15f, 1.15f, 0.0f);
+        const uint32_t quad[4] = {0, 1, 2, 3};
+        geo->addPrimitive(quad, true);
+        auto cd = geo->points().create("Cd", AttrType::Vec3).write<Vec3>();
+        std::fill(cd.begin(), cd.end(), Vec3(0.9f));
+        if (v != Vec3(0.0f)) {
+            auto vel = geo->points().create("v", AttrType::Vec3).write<Vec3>();
+            std::fill(vel.begin(), vel.end(), v);
+        }
+        return geo;
+    };
+    auto chip = [](const Vec3& v) {
+        auto geo = std::make_shared<Geometry>();
+        geo->addPoints(1);
+        geo->positionsForWrite()[0] = Vec3(0.0f, 1.0f, 0.0f);
+        geo->points().create("pscale", AttrType::Float).write<float>()[0] = 0.15f;
+        geo->points().create("Cd", AttrType::Vec3).write<Vec3>()[0] = Vec3(0.9f);
+        geo->points().create("v", AttrType::Vec3).write<Vec3>()[0] = v;
+        return geo;
+    };
+    SceneBuilder builder;
+    auto render = [&](const SceneInput& in, float shutter) {
+        Settings s;
+        s.width = w;
+        s.height = h;
+        s.samples = 32;
+        s.denoise = false;
+        s.sky = Settings::Sky::Look;
+        s.detail = 0.0f;
+        s.shutter = shutter;
+        return cyclesRender(builder.build(in), s);
+    };
+    auto input = [&](GeometryPtr geo, GeometryPtr bodies) {
+        SceneInput in = inputOf(std::move(geo), look, cam);
+        in.bodies = std::move(bodies);
+        in.frameTime = 1.0f / 24.0f;
+        return in;
+    };
+    // Across the middle rows: how much brighter than the backdrop each
+    // column is; then how many columns are so much brighter, the most, and
+    // all of it.
+    auto across = [&](const Image& img) {
+        std::vector<double> e(static_cast<size_t>(w), 0.0);
+        for (int y = h / 2 - 3; y <= h / 2 + 3; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const float* p = &img.pixels[3 * (static_cast<size_t>(y) * w + static_cast<size_t>(x))];
+                e[static_cast<size_t>(x)] += (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / 7.0;
+            }
+        }
+        double back = 0.0;
+        for (size_t x = 0; x < 8; ++x) back += (e[x] + e[e.size() - 1 - x]) / 16.0;
+        for (double& v : e) v -= back;
+        return e;
+    };
+    struct Seen {
+        int wide = 0;
+        double peak = 0.0, light = 0.0;
+    };
+    auto seen = [&](const Image& img, double over) {
+        Seen s;
+        for (const double v : across(img)) {
+            s.wide += v > over;
+            s.peak = std::max(s.peak, v);
+            s.light += v;
+        }
+        return s;
+    };
+
+    // Standing -- or moving, the shutter shut: the same picture, to the bit.
+    const Image still = render(input(square(Vec3(0.0f)), nullptr), 0.5f);
+    CHECK(render(input(square(fast), nullptr), 0.0f).pixels == still.pixels);
+    const double over = 0.1 * seen(still, 0.0).peak;
+    const Seen sharp = seen(still, over);
+    SceneInput passing = input(square(Vec3(0.0f)), nullptr);
+    passing.cameraMotion = true;
+    passing.cameraBefore = passing.cameraAfter = cam;
+    passing.cameraBefore.position.x -= 1.0f;  // 1 m a frame: 25 cm while the shutter is open
+    passing.cameraAfter.position.x += 1.0f;
+    const Seen moving = seen(render(input(square(fast), nullptr), 0.5f), over);
+    const Seen camera = seen(render(passing, 0.5f), over);
+    std::printf("  the square %d columns wide, at most %.3f, %.2f in all; flying %d, %.3f, %.2f; the camera passing "
+                "%d, %.3f, %.2f\n",
+                sharp.wide, sharp.peak, sharp.light, moving.wide, moving.peak, moving.light, camera.wide, camera.peak,
+                camera.light);
+    CHECK(sharp.wide >= 8 && sharp.wide <= 13);
+    for (const Seen& b : {moving, camera}) {
+        CHECK(b.wide >= sharp.wide + 8);
+        CHECK(b.peak < 0.8 * sharp.peak);
+        CHECK(std::fabs(b.light / sharp.light - 1.0) < 0.15);
+    }
+    // A chip of grit: placed, it flies as its point does.
+    const Image chipStill = render(input(nullptr, chip(Vec3(0.0f))), 0.5f);
+    const double chipOver = 0.1 * seen(chipStill, 0.0).peak;
+    const Seen chipSharp = seen(chipStill, chipOver), chipFlying = seen(render(input(nullptr, chip(fast)), 0.5f), chipOver);
+    std::printf("  the chip %d columns wide, at most %.3f, %.2f in all; flying %d, %.3f, %.2f\n", chipSharp.wide,
+                chipSharp.peak, chipSharp.light, chipFlying.wide, chipFlying.peak, chipFlying.light);
+    CHECK(chipSharp.wide >= 4);
+    CHECK(chipFlying.wide >= chipSharp.wide + 8);
+    CHECK(chipFlying.peak < 0.8 * chipSharp.peak);
+    CHECK(std::fabs(chipFlying.light / chipSharp.light - 1.0) < 0.15);
 }

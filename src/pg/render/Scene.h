@@ -113,6 +113,10 @@ struct Mesh {
     /// face it is of, the same from frame to frame -- what tells one room
     /// behind the glass from the next; else none.
     std::vector<float> random;
+    /// Three a triangle where the points had a velocity v -- how fast each
+    /// corner goes, m/s: what Cycles blurs it along while the shutter is
+    /// open (Settings::shutter) -- else none.
+    std::vector<Vec3> velocity;
     std::vector<uint16_t> material;     ///< one a triangle, into `materials`
     std::vector<Material> materials;
     Bvh bvh;                                   ///< our own: its leaves' items are the triangles' numbers
@@ -142,6 +146,7 @@ struct Placed {
     Mat3 axes{1.0f};
     float scale = 1.0f;
     Vec3 tint{1.0f, 1.0f, 1.0f};
+    Vec3 velocity;  ///< m/s, where it flies -- a chip of grit: what Cycles blurs it along
 
     Vec3 toWorld(const Vec3& p) const { return at + (axes * p) * scale; }
     Vec3 turn(const Vec3& v) const { return axes * v; }
@@ -191,6 +196,12 @@ struct Scene {
     float sunCosine = 1.0f; ///< of the angle from the sun's middle to its rim
     float floorRadius = 1e30f;  ///< where the floor has faded out, from the origin
     sim::Camera camera;
+    /// Where the camera is a frame before and a frame after -- what Cycles
+    /// blurs a moving camera toward while the shutter is open -- as
+    /// `camera` when it stays (SceneInput::cameraBefore).
+    sim::Camera cameraBefore, cameraAfter;
+    bool cameraMoves = false;
+    float frameTime = 1.0f / 30.0f;  ///< seconds from a frame to the next (SceneInput::frameTime)
     float time = 0.0f;          ///< seconds into the shot (SceneInput::time)
     /// Where the rain wets what it falls on, as the viewport has it: within
     /// the drops' extent in x and z (wetLo to wetHi), drying off some 35 cm
@@ -232,6 +243,15 @@ struct SceneInput {
     std::vector<sim::Solid> solids;
     sim::Look look;
     sim::Camera camera;
+    /// Where the camera is a frame before this one and a frame after, when
+    /// it moves -- `cameraMotion`: as the shutter opens it is shutter / 2 of
+    /// the way to the one before, as it closes to the one after
+    /// (Settings::shutter), and Cycles blurs it between.
+    sim::Camera cameraBefore, cameraAfter;
+    bool cameraMotion = false;
+    /// Seconds from a frame to the next: how far what moves -- its velocity
+    /// v -- goes while the shutter is open.
+    float frameTime = 1.0f / 30.0f;
     float sunAngle = 0.53f;  ///< degrees across the sun's disc
     Box domain;              ///< the simulations' box, for how far the floor goes
     float time = 0.0f;       ///< seconds into the shot: how far the clouds have drifted

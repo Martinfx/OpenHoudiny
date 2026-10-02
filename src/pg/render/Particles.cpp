@@ -251,6 +251,7 @@ size_t placeChips(const Geometry& geo, Scene& scene) {
     const AttributeArray* orients = of("orient", AttrType::Vec4);
     const AttributeArray* ids = of("id", AttrType::Int);
     const AttributeArray* glassy = of("glass", AttrType::Int);
+    const AttributeArray* velocities = of("v", AttrType::Vec3);
     const auto P = geo.positions();
     const auto size = scales->read<float>();
     // Each shape's mesh among the scene's, once it is wanted.
@@ -274,6 +275,7 @@ size_t placeChips(const Geometry& geo, Scene& scene) {
         p.mesh = static_cast<uint32_t>(mesh);
         p.at = P[i];
         p.scale = size[i];
+        if (velocities) p.velocity = velocities->read<Vec3>()[i];
         // Turned as it tumbles; without its orient, a turn of its own.
         Quat q;
         if (orients) {

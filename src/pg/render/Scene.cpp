@@ -272,6 +272,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     mesh->normals.resize(3 * n);
     mesh->colors.resize(3 * n);
     if (!tris.rest.empty()) mesh->rest.resize(3 * n);
+    if (!tris.velocities.empty()) mesh->velocity.resize(3 * n);
     if (windows) mesh->random.resize(n);
     mesh->material.resize(n);
     parallelFor(n, 8192, [&](size_t begin, size_t end) {
@@ -284,6 +285,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
             for (size_t c = 0; c < 3; ++c) {
                 mesh->normals[3 * i + c] = tris.normals[3 * t + c];
                 if (!mesh->rest.empty()) mesh->rest[3 * i + c] = tris.rest[3 * t + c];
+                if (!mesh->velocity.empty()) mesh->velocity[3 * i + c] = tris.velocities[3 * t + c];
                 const Vec3 col = colored ? tris.colors[3 * t + c] : own[which[t]];
                 mesh->colors[3 * i + c] = Vec3(std::clamp(col.x, 0.0f, 1.0f), std::clamp(col.y, 0.0f, 1.0f),
                                                std::clamp(col.z, 0.0f, 1.0f));
@@ -594,6 +596,10 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     s.engine = engine_;
     s.look = in.look;
     s.camera = in.camera;
+    s.cameraMoves = in.cameraMotion;
+    s.cameraBefore = in.cameraMotion ? in.cameraBefore : in.camera;
+    s.cameraAfter = in.cameraMotion ? in.cameraAfter : in.camera;
+    s.frameTime = in.frameTime;
     s.time = in.time;
     s.sunDirection = normalize(in.look.lightDirection());
     s.sunLight = in.look.lightColor * in.look.lightIntensity;
@@ -615,6 +621,8 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
             const std::vector<Placement> places = placementsOf(*in.geometry);
             const AttributeArray* tint = in.geometry->points().find("tint");
             if (tint && tint->type() != AttrType::Vec3) tint = nullptr;
+            const AttributeArray* velocity = in.geometry->points().find("v");
+            if (velocity && velocity->type() != AttrType::Vec3) velocity = nullptr;
             for (size_t k = 0; k < byPrototype.size(); ++k) {
                 const GeometryPtr& proto = in.geometry->prototypes()[k];
                 if (byPrototype[k].empty() || !proto) continue;
@@ -631,6 +639,7 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
                     axesOf(pl.orient, p);
                     p.scale = pl.scale;
                     if (tint) p.tint = tint->read<Vec3>()[pt];
+                    if (velocity) p.velocity = velocity->read<Vec3>()[pt];
                     s.placed.push_back(p);
                 }
             }

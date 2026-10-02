@@ -49,6 +49,11 @@ struct Settings {
     float focus = 0.0f;              ///< m from the camera to what is sharp; 0: what is in the middle of the picture
     float clamp = 20.0f;             ///< the most a bounce adds to a pixel: no fireflies
     float sunAngle = 0.53f;          ///< degrees across the sun: larger, softer shadows
+    /// How much of a frame the camera's shutter is open, about the frame:
+    /// what moves -- the points' velocity v, a moving camera -- Cycles blurs
+    /// over that time, as a film camera does (0.5: half a frame, a 180°
+    /// shutter). 0: all sharp. The path tracer renders the frame's moment.
+    float shutter = 0.5f;
     uint32_t seed = 0;
     /// The sky Cycles lights the scene with: the look's sun and sky, as the
     /// viewport and the path tracer have them; a real day's, as Blender's

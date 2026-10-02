@@ -47,6 +47,11 @@ struct Camera {
     static Vec3 rotationFor(const Vec3& forward, const Vec3& up, const Vec3& near = Vec3());
     /// A camera at `position` that looks at `target`, level.
     static Camera lookingAt(const Vec3& position, const Vec3& target);
+    /// The camera `amount` of the way from this one to `to` (0 this one, 1
+    /// `to`): where it stands, which way it looks -- turned the shorter way
+    /// round -- and its lens; the rest this one's. What it is between two
+    /// frames, while the shutter is open.
+    Camera toward(const Camera& to, float amount) const;
 
     /// Finite, a lens and a picture that make sense.
     Camera sanitized() const;

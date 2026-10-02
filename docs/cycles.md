@@ -27,9 +27,9 @@ V editoru:
 3. Při přehrávání simulace ukáže záložka snímek po snímku, jak rychle se
    stihnou spočítat. Nově otevřená scéna se nejdřív ukáže, teprve potom
    se začne další snímek.
-4. Nastavení (vzorky, odrazy, odšumění, clona, ostrost, clamp, velikost
-   slunce, obloha, převod barev, detail povrchů) je v uzlu **Output**
-   v sekci **Render**, stejné pro oba renderery.
+4. Nastavení (vzorky, odrazy, odšumění, clona, ostrost, clamp, rozmazání
+   pohybem, velikost slunce, obloha, převod barev, detail povrchů) je
+   v uzlu **Output** v sekci **Render**, stejné pro oba renderery.
 
 ![Záložka Render: louka přes Cycles, 54 ze 128 vzorků na pixel](img/cycles-tab.jpg)
 
@@ -70,6 +70,7 @@ through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 | slunce | Sky `look`: vzdálené světlo (Sun) s úhlem Sun Size a stejnou silou jako náš; Sky `physical`: slunce oblohy Nishita |
 | obloha | Sky `physical`: obloha Nishita; Sky `look`: s **Sky Behind** obloha Looku jako obrázek všude kolem; bez Sky Behind vždy pozadí studia pro kameru |
 | kamera | záběr z kamery nebo pohled viewportu, objektiv, clona a ostrost z Output |
+| pohyb (rychlost `v` bodů, kamera v pohybu) | rozmazání po dráze, dokud je otevřená závěrka ([níže](#rozmazání-pohybem)) |
 
 Scéna je v Cycles otočená, protože Cycles má osu Z nahoru a my Y.
 Expozice zůstává stejná jako v path traceru i ve viewportu.
@@ -78,6 +79,50 @@ Expozice zůstává stejná jako v path traceru i ve viewportu.
 a pod vodou našel jen po lomených cestách (kaustikách), a místnost za oknem
 nebo dno bazénu by zůstaly tmavé. Stínové paprsky proto sklem a vodou
 projdou, jen trochu ztlumené, stejně jako v našem path traceru.
+
+### Rozmazání pohybem
+
+![Snímek 72 zřícení domu v Cycles, vlevo ostrý okamžik, vpravo závěrka otevřená půl snímku; dole výřez zvětšený 3,2krát: trám se při pádu otáčí a jeho volný konec, který letí nejrychleji, je rozmazaný nejvíc, drť je protažená do čárek a plot, který stojí, zůstal ostrý](img/cycles-motion-blur.jpg)
+
+Kamera nezachytí okamžik, ale čas, kdy je otevřená závěrka. Co se
+mezitím pohne, se rozmaže po své dráze. Cycles to umí stejně jako
+v Blenderu: každý paprsek dostane svůj okamžik mezi otevřením a zavřením
+závěrky a scénu vidí tak, jak v tu chvíli byla.
+
+Jak dlouho je závěrka otevřená, říká **Motion Blur** v uzlu **Output**
+v sekci **Render**: kolik snímku, kolem snímku. Výchozí je 0,5 snímku,
+jako u filmové kamery se závěrkou 180° (Shutter 0,5 v Blenderu). Při 24
+snímcích za sekundu je to 1/48 s. Hodnota 0 dává ostrý okamžik.
+
+| co se hýbe | odkud to Cycles ví | jak se to rozmaže |
+|---|---|---|
+| kusy RBD, pruty výztuže, látka, povrch vody, zobrazená geometrie | rychlost `v` bodů (m/s) | síť má tři kroky: rohy trojúhelníků na začátku, uprostřed a na konci závěrky, posunuté o `v` × čas |
+| drť (volné body s `pscale`) | rychlost `v` bodu | úlomek je objekt se třemi polohami, letí jako bod |
+| instance (Copy to Points) | rychlost `v` bodu instance | jako drť |
+| kamera záběru | kamera o snímek dřív a o snímek později | na začátku závěrky je o čtvrt cesty ke kameře předchozího snímku, na konci o čtvrt cesty k té dalšímu (při 0,5), otáčí se kratší cestou; mění-li se ohnisko, mění se i úhel záběru |
+
+Normály zůstávají ve všech krocích jako uprostřed. Cycles by si je
+spočítal z ploch a hladká voda by byla během závěrky hranatá. Kusy se
+během tak krátké doby otočí jen nepatrně, proto stačí posun po přímce.
+
+Rozmazání se zapne jen tehdy, když se něco hýbe. Scéna bez pohybu se
+renderuje stejně rychle jako dřív a obraz je bit po bitu stejný jako
+s nulovou závěrkou. Se závěrkou trvá render asi o 10 % déle (snímek 66
+zřícení domu, 1280 × 720, 32 vzorků: 124 s proti 112 s).
+
+Z příkazové řádky:
+
+```bash
+./build/prototype sim house_collapse dum.png --renderer cycles --frames 66 --start 66 \
+    --set output.render_motion_blur=0.5      # výchozí: půl snímku
+./build/prototype sim house_collapse dum.png --renderer cycles --frames 66 --start 66 \
+    --set output.render_motion_blur=0        # ostrý okamžik
+```
+
+Nerozmazává se zatím plyn (kouř, prach, oheň: snímky nemají rychlost
+plynu), objekty scény (koule, kvádry, …) a kapky deště. Kapky to
+nepotřebují, protože jsou už vykreslené jako čárky tak dlouhé, kolik
+kapka proletí za Streak snímku. Path tracer renderuje okamžik snímku.
 
 ## 3. Obloha, barvy a povrchy
 
@@ -183,6 +228,8 @@ se kterým testy Cycles s path tracerem porovnávají.
   tracer mu jen sníží drsnost. Oba ho ztmaví o polovinu.
 - **Déšť pod fyzikální oblohou je slabší**, protože kapky lámou skutečnou
   oblohu. Se Sky `look` mají čárky stejný kontrast jako v path traceru.
+- **Rozmazání pohybem** má jen Cycles ([§2](#rozmazání-pohybem)). Path
+  tracer renderuje okamžik snímku.
 
 ## 6. Build
 
@@ -251,6 +298,14 @@ dostane snímek, na kterém se zastaví.
   a hloubku pro EXR. Fyzikální obloha je uzel Sky Texture (Nishita) se
   světlem pozadí (`LIGHT_BACKGROUND`), detail povrchů jsou uzly Noise
   Texture a Bump v shaderu každého materiálu.
+- Rozmazání pohybem (`Cycles.cpp`): síť s rychlostmi (`Mesh::velocity`)
+  dostane `set_motion_steps(3)` a atributy
+  `ATTR_STD_MOTION_VERTEX_POSITION` (rohy na začátku a na konci závěrky)
+  a `ATTR_STD_MOTION_VERTEX_NORMAL`. Úlomek drti je objekt s `set_motion`
+  (tři polohy), kamera má `set_motion` se třemi maticemi a
+  `MOTION_POSITION_CENTER`. Integrátor má `set_motion_blur`, jen když se
+  něco hýbe. Síť, která se hýbe, se po změně Motion Blur postaví znovu,
+  ostatní zůstanou.
 - `src/pg/render/PathTracer.cpp`: `shown()` převádí lineární světlo na obraz
   (AgX, AgX Punchy, ACES) pro oba renderery.
 - `src/pg/render/Gas.h`: `Gas::dense` dává mřížky plynu pro renderer, který
@@ -289,12 +344,21 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
 - `render_cycles_draws_the_grit_and_the_wet` (`tests/test_particles.cpp`):
   úlomek je vidět a podlaha pod ním je ve stínu, mokrá podlaha je tmavší
   než suchá.
+- `render_scene_carries_how_fast_what_moves_goes`: každý roh trojúhelníku
+  i každý úlomek drti nese rychlost svého bodu. Kamera mezi dvěma snímky
+  je v půli cesty a otáčí se kratší cestou.
+- `render_cycles_blurs_what_moves_while_the_shutter_is_open`: čtverec
+  letící 24 m/s, úlomek drti a kamera, která jede kolem stojícího
+  čtverce, jsou rozmazané. Stopa je o víc než 8 pixelů širší, nejvyšší
+  jas je o víc než pětinu nižší a světla je stejně (do 15 %). S nulovou
+  závěrkou je obraz bit po bitu stejný jako bez pohybu.
 
 ## 9. Co zatím chybí
 
 - GPU (CUDA, OptiX, HIP, Metal): Cycles je postavený jen pro procesor.
-- Rozmazání pohybem, OSL shadery, UV a normálové mapy (textury se kladou
-  ze tří stran, reliéf je z výšky, [materials.md](materials.md)).
+- Rozmazání plynu a objektů scény ([§2](#rozmazání-pohybem)).
+- OSL shadery, UV a normálové mapy (textury se kladou ze tří stran,
+  reliéf je z výšky, [materials.md](materials.md)).
 - Mraky jako objem (stíny mraků na zemi, mraky, do kterých se dá vletět)
   a obloha z obrázku ve viewportu.
 - Plate (obraz na pozadí kamery). Holdout a shadow catcher na objektech

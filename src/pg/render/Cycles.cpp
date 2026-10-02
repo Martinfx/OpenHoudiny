@@ -1114,6 +1114,7 @@ struct CyclesRender::Impl {
     struct KeptMesh {
         std::weak_ptr<const Mesh> mesh;
         ccl::Mesh* cycles = nullptr;
+        float reach = 0.0f;  // how far its corners go either side of now (meshOf)
     };
     std::map<const Mesh*, KeptMesh> meshes;
     std::map<std::tuple<int, std::vector<float>, std::string>, ccl::Shader*> shaders;
@@ -1377,8 +1378,11 @@ struct CyclesRender::Impl {
     }
 
     /// The Cycles mesh of ours: its triangles one by one, the normals and
-    /// the colours of their corners; made once while ours lives.
-    ccl::Mesh* meshOf(ccl::Scene* scene, const std::shared_ptr<const Mesh>& m, const sim::Look& look) {
+    /// the colours of their corners; made once while ours lives. Where its
+    /// corners move, where they are `reach` seconds before and after now --
+    /// as the shutter opens and as it closes -- for Cycles to blur it
+    /// between; 0: sharp.
+    ccl::Mesh* meshOf(ccl::Scene* scene, const std::shared_ptr<const Mesh>& m, const sim::Look& look, float reach) {
         // The shaders of its materials, as the settings have them now.
         auto shadersOf = [&] {
             ccl::array<ccl::Node*> used;
@@ -1386,8 +1390,14 @@ struct CyclesRender::Impl {
             if (used.empty()) used.push_back_slow(shaderOf(scene, Material(), look));
             return used;
         };
+        // Sharp unless some corner goes somewhere.
+        const auto goes = [](const Vec3& v) { return v != Vec3(0.0f); };
+        if (m->velocity.size() != 3 * m->count() || std::none_of(m->velocity.begin(), m->velocity.end(), goes)) {
+            reach = 0.0f;
+        }
         if (auto it = meshes.find(m.get()); it != meshes.end()) {
-            if (it->second.mesh.lock() == m) {
+            // Kept, unless the shutter is open longer or shorter now.
+            if (it->second.mesh.lock() == m && it->second.reach == reach) {
                 // Kept -- but Surface Detail or Textures may have changed
                 // what its materials are drawn with.
                 ccl::Mesh* kept = it->second.cycles;
@@ -1457,7 +1467,27 @@ struct CyclesRender::Impl {
             float* random = mesh->attributes.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_float();
             std::copy(m->random.begin(), m->random.end(), random);
         }
-        meshes[m.get()] = {m, mesh};
+        // Moving: three steps of it, the shutter opening, now and the
+        // shutter closing -- the corners carried along how fast they go, a
+        // straight way so short -- Cycles' rays each at a moment between.
+        // Its normals as now: those Cycles would make of the steps are the
+        // faces', flat.
+        if (reach > 0.0f) {
+            mesh->set_motion_steps(3);
+            mesh->set_use_motion_blur(true);
+            ccl::float3* steps = mesh->attributes.add(ccl::ATTR_STD_MOTION_VERTEX_POSITION)->data_float3();
+            ccl::float3* turned = mesh->attributes.add(ccl::ATTR_STD_MOTION_VERTEX_NORMAL)->data_float3();
+            const ccl::array<ccl::float3>& now = mesh->get_verts();
+            const ccl::float3* normal = mesh->attributes.find(ccl::ATTR_STD_VERTEX_NORMAL)->data_float3();
+            for (size_t i = 0; i < 3 * n; ++i) {
+                const Vec3 v = m->velocity[i] * reach;
+                const ccl::float3 by = ccl::make_float3(v.x, v.y, v.z);
+                steps[i] = now[i] - by;          // the first step: as the shutter opens
+                steps[3 * n + i] = now[i] + by;  // the last: as it closes
+                turned[i] = turned[3 * n + i] = normal[i];
+            }
+        }
+        meshes[m.get()] = {m, mesh, reach};
         return mesh;
     }
 
@@ -1896,19 +1926,55 @@ struct CyclesRender::Impl {
         object->set_visibility(ccl::PATH_RAY_ALL_VISIBILITY & ~ccl::PATH_RAY_CAMERA);
     }
 
+    /// Where the camera stands and how it is turned, as Cycles places one:
+    /// looking along its +z, ours along its -z, its y up the picture.
+    static ccl::Transform cameraMatrix(const sim::Camera& c) {
+        const ccl::float3 r = toCycles(c.right()), u = toCycles(c.up()), f = toCycles(c.forward()), p = toCycles(c.position);
+        return ccl::make_transform(r.x, u.x, f.x, p.x, r.y, u.y, f.y, p.y, r.z, u.z, f.z, p.z);
+    }
+
     /// The camera: the shot's, looking along its -z, its y up the picture
     /// -- Cycles' looks along its +z; its lens, the f-number and the focus.
-    void camera(ccl::Scene* scene, const Scene& s, const Settings& settings) {
+    /// When it moves and what moves is blurred (`blur`), where it is as the
+    /// shutter opens and as it closes too. Whether it moves then.
+    bool camera(ccl::Scene* scene, const Scene& s, const Settings& settings, bool blur) {
         const sim::Camera& c = s.camera;
-        const Vec3 right = c.right(), up = c.up(), forward = c.forward();
-        const ccl::float3 r = toCycles(right), u = toCycles(up), f = toCycles(forward), p = toCycles(c.position);
+        const Vec3 forward = c.forward();
+        const ccl::Transform matrix = cameraMatrix(c);
         ccl::Camera* cam = scene->camera;
-        cam->set_matrix(ccl::make_transform(r.x, u.x, f.x, p.x, r.y, u.y, f.y, p.y, r.z, u.z, f.z, p.z));
+        cam->set_matrix(matrix);
         cam->set_camera_type(ccl::CAMERA_PERSPECTIVE);
-        const float fovY = c.fovY() * kPi / 180.0f;
         const float aspect = static_cast<float>(settings.width) / static_cast<float>(std::max(settings.height, 1));
         // Cycles' angle is across the shorter side of the picture.
-        cam->set_fov(aspect >= 1.0f ? fovY : 2.0f * std::atan(std::tan(0.5f * fovY) * aspect));
+        auto fovOf = [&](const sim::Camera& lens) {
+            const float y = lens.fovY() * kPi / 180.0f;
+            return aspect >= 1.0f ? y : 2.0f * std::atan(std::tan(0.5f * y) * aspect);
+        };
+        const float fovY = c.fovY() * kPi / 180.0f, fov = fovOf(c);
+        cam->set_fov(fov);
+        // As the shutter opens it is shutter / 2 of the way to where it is a
+        // frame before, as it closes to where it is a frame after.
+        ccl::array<ccl::Transform> motion;
+        float fovOpen = fov, fovClose = fov;
+        if (blur && s.cameraMoves) {
+            const float k = 0.5f * std::clamp(settings.shutter, 0.0f, 1.0f);
+            const sim::Camera open = c.toward(s.cameraBefore, k), close = c.toward(s.cameraAfter, k);
+            motion.resize(3);
+            motion[0] = cameraMatrix(open);
+            motion[1] = matrix;
+            motion[2] = cameraMatrix(close);
+            fovOpen = fovOf(open);
+            fovClose = fovOf(close);
+            if (motion[0] == matrix && motion[2] == matrix) motion.clear();
+        }
+        const bool zooms = fovOpen != fov || fovClose != fov;
+        const bool moves = !motion.empty() || zooms;
+        cam->set_motion(motion);
+        cam->set_use_perspective_motion(zooms);
+        cam->set_fov_pre(fovOpen);
+        cam->set_fov_post(fovClose);
+        cam->set_shuttertime(std::clamp(settings.shutter, 0.0f, 1.0f));
+        cam->set_motion_position(ccl::MOTION_POSITION_CENTER);
         {
             std::lock_guard<std::mutex> lock(pictures.mutex);
             pictures.tanY = std::tan(0.5f * fovY);
@@ -1934,6 +2000,7 @@ struct CyclesRender::Impl {
         cam->compute_auto_viewplane();
         cam->need_flags_update = true;
         cam->need_device_update = true;
+        return moves;
     }
 
     /// The smoke and the fire: a box round the cells that hold any, inside
@@ -2044,15 +2111,34 @@ struct CyclesRender::Impl {
             }
         }
 
+        // How far what moves goes either side of now while the shutter is
+        // open -- half of it, the shutter a share of a frame -- seconds.
+        const float reach = 0.5f * std::clamp(settings.shutter, 0.0f, 1.0f) * std::max(s.frameTime, 0.0f);
+        bool moves = false;
+
         // The meshes, where they stand -- each made (or found) once however
         // often it is placed: the grit's chips, a meadow's clumps. Rain
-        // casts no shadow.
+        // casts no shadow. What flies -- a chip of grit -- where it is as
+        // the shutter opens and as it closes too.
         std::vector<ccl::Mesh*> made(s.meshes.size(), nullptr);
         for (const Placed& p : s.placed) {
             if (p.mesh >= s.meshes.size() || !s.meshes[p.mesh] || s.meshes[p.mesh]->count() == 0) continue;
-            if (!made[p.mesh]) made[p.mesh] = meshOf(scene, s.meshes[p.mesh], s.look);
-            ccl::Object* object = place(scene, made[p.mesh], placement(p.axes, p.scale, p.at), p.tint);
+            if (!made[p.mesh]) {
+                made[p.mesh] = meshOf(scene, s.meshes[p.mesh], s.look, reach);
+                moves = moves || made[p.mesh]->get_use_motion_blur();
+            }
+            const ccl::Transform tfm = placement(p.axes, p.scale, p.at);
+            ccl::Object* object = place(scene, made[p.mesh], tfm, p.tint);
             if (!s.meshes[p.mesh]->shadows) object->set_visibility(ccl::PATH_RAY_ALL_VISIBILITY & ~ccl::PATH_RAY_SHADOW);
+            if (reach > 0.0f && p.velocity != Vec3(0.0f)) {
+                ccl::array<ccl::Transform> motion;
+                motion.resize(3);
+                motion[0] = placement(p.axes, p.scale, p.at - p.velocity * reach);
+                motion[1] = tfm;
+                motion[2] = placement(p.axes, p.scale, p.at + p.velocity * reach);
+                object->set_motion(motion);
+                moves = true;
+            }
         }
         // The scene's objects, each its own mesh, its colour its object's.
         const ccl::Transform turned = placement(Mat3(1.0f), 1.0f, Vec3());
@@ -2077,9 +2163,11 @@ struct CyclesRender::Impl {
         gas(scene, s);
         world(scene, s);
         sun(scene, s, settings);
-        camera(scene, s, settings);
+        if (camera(scene, s, settings, reach > 0.0f)) moves = true;
 
         ccl::Integrator* integrator = scene->integrator;
+        // Blurred along its way, what moves while the shutter is open.
+        integrator->set_motion_blur(reach > 0.0f && moves);
         integrator->set_max_bounce(settings.bounces);
         integrator->set_max_diffuse_bounce(settings.bounces);
         integrator->set_max_glossy_bounce(settings.bounces);

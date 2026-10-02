@@ -1197,6 +1197,14 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                                       : orbitCamera(viewTarget, viewYaw, viewPitch, viewDistance, width, height);
             in.camera.width = width;
             in.camera.height = height;
+            // Where the shot's camera is a frame before and after: Cycles
+            // blurs it between while the shutter is open.
+            in.cameraMotion = throughCamera && !c.poses.empty();
+            if (in.cameraMotion) {
+                in.cameraBefore = c.cameraAt(f - 1);
+                in.cameraAfter = c.cameraAt(f + 1);
+            }
+            in.frameTime = world.timeStep;
             in.sunAngle = settings.sunAngle;
             in.domain = domainBox;
             in.time = static_cast<float>(f - 1) * world.timeStep;

@@ -1270,7 +1270,10 @@ ho vyfotil soused z protějšího chodníku. Dům je postavený jako skutečný:
   `neighbours`: omítka, okna s pokoji, střechy, komíny).
 - **Světlo a kamera:** slunce 30° nad obzorem zleva zepředu, fyzikální
   obloha s mraky (`render_clouds 0,3`), AgX. Kamera stojí na protějším
-  chodníku ve výšce očí, objektiv 30 mm.
+  chodníku ve výšce očí, objektiv 30 mm. Cycles rozmaže letící kusy
+  a drť po jejich dráze, dokud je otevřená závěrka (Motion Blur, výchozí
+  půl snímku, [cycles.md](cycles.md#rozmazání-pohybem)). Obrázky v této
+  části jsou ještě ostré, renderované bez něj.
 
 Simulace trvá 356 ms na snímek (80 % času prach), 210 snímků za 75 s.
 Snímek 1920 × 1080 v Cycles s 64 vzorky a odšuměním trvá na čtyřech

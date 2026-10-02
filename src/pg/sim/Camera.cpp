@@ -4,6 +4,8 @@
 #include "pg/sim/Shared.h"
 #include "pg/usd/Geom.h"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -35,6 +37,16 @@ Camera Camera::lookingAt(const Vec3& position, const Vec3& target) {
     Camera c;
     c.position = position;
     c.rotation = rotationFor(target - position, Vec3(0.0f, 1.0f, 0.0f));
+    return c;
+}
+
+Camera Camera::toward(const Camera& to, float amount) const {
+    Camera c = *this;
+    c.position = position + (to.position - position) * amount;
+    // Turned along the arc between the two: slerp takes the shorter way.
+    const Quat a = glm::quat_cast(frame().matrix()), b = glm::quat_cast(to.frame().matrix());
+    c.rotation = Rotation::of(glm::mat3_cast(glm::slerp(a, b, amount))).toEuler(rotation);
+    c.focal = focal + (to.focal - focal) * amount;
     return c;
 }
 

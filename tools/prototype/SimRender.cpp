@@ -185,6 +185,14 @@ void SimWorkspace::renderTab(int width, int height) {
             r.input.solids = compiled_.solidsAt(current_);
         }
         r.input.camera = cam;
+        // Where the shot's camera is a frame before and after, for Cycles'
+        // blur.
+        r.input.cameraMotion = throughCamera_ && compiled_.hasCamera && !compiled_.poses.empty();
+        if (r.input.cameraMotion) {
+            r.input.cameraBefore = compiled_.cameraAt(current_ - 1);
+            r.input.cameraAfter = compiled_.cameraAt(current_ + 1);
+        }
+        r.input.frameTime = compiled_.world.timeStep;
         r.input.sunAngle = settings.sunAngle;
         r.input.time = static_cast<float>(current_ - 1) * compiled_.world.timeStep;
         const sim::Domain dm = sceneBox();
