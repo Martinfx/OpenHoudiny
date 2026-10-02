@@ -776,6 +776,19 @@ V-cyklus není přesně symetrický, proto se používá flexibilní varianta
 metody (β podle Polaka a Ribièra). Relativní reziduum 10⁻⁴ padne za 10 až
 20 iterací a počítá se jen v řádcích mřížky, kde voda je.
 
+**Uzavřené kapsy.** Voda, ke které se nedostane vzduch ani otevřená strana
+nádrže, je kapsa: třeba dvě buňky vody mezi bednou, dnem a stěnou. Tlak
+v ní je určený jen až na konstantu, a jen když do ní přitéká tolik, kolik
+odtéká. Těleso, které se do kapsy posune, tuhle rovnováhu poruší. Pak
+rovnice nemá řešení a sdružené gradienty utečou do nekonečna. Tak
+vybuchla povodeň s bednami: dvoubuněčná kapsa a tlak 10¹⁵. Řešič proto
+v každém kroku kapsy najde. Prohledá vodu do šířky od buněk u vzduchu přes
+otevřené stěny; co tak nenajde, jsou kapsy. Z pravé strany každé kapsy pak
+odečte její průměr, takže co do kapsy přitéká, vodu v ní stlačí ve všech
+buňkách stejně. Průměrný tlak kapsy zůstane takový, s jakým do kroku
+přišel. Hledání stojí asi 1–2 % času tlaku a výsledek je stejný na
+jakémkoli počtu vláken.
+
 **Determinismus.** Částice se každý krok seřadí do buněk stabilním
 counting sortem. Přenos na mřížku jde po vrstvách dvou buněk tlustých,
 nejdřív sudé, pak liché. Částice zapisuje nejdál do sousední vrstvy, takže
@@ -1090,9 +1103,13 @@ déšť se nahlásí; kamera se dívá, kam je natočená (i s jiným „nahoru�
 kolmo dolů), objektiv 38 mm má 35° a 12 mm pravý úhel, kamera je jedna na
 Output a patří do souboru.
 
-[`tests/test_liquid.cpp`](../tests/test_liquid.cpp) (13 testů): tlak
+[`tests/test_liquid.cpp`](../tests/test_liquid.cpp) (14 testů): tlak
 s volnou hladinou konverguje do 30 iterací a reziduum sedí i přepočítané
-z operátoru; stojatá voda zůstane stát a tlak na dně je `g × hloubka`;
+z operátoru; ve vodě zavřené v kapsách (48 buněk pod bednou, 2 mezi bednou
+a dnem), do kterých víc přitéká, než odtéká, se tlak spočítá do 30 iterací,
+zůstane konečný a každá kapsa si ponechá hladinu tlaku, se kterou přišla,
+bitově stejně na 1 i 4 vláknech (bez vyrovnání kapes řešení nekonverguje);
+stojatá voda zůstane stát a tlak na dně je `g × hloubka`;
 protržená přehrada doteče ke stěně a neztratí jedinou částici; koule vody
 padá volným pádem (rychlost `g t` na procento); zdroj `fill` naplní tvar
 osmi částicemi na buňku jednou, `flow` teče jen ve svém čase a tam, kam

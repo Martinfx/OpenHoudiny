@@ -1,6 +1,7 @@
 //
 // Water (src/pg/sim/Liquid.h, FreeSurface.h): the pressure of a free surface
-// solved to its tolerance; still water stays still with the pressure of its
+// solved to its tolerance, and in pockets shut in by solids with more flowing
+// in than out; still water stays still with the pressure of its
 // depth; a dam breaks and the water keeps its volume; a ball of water falls
 // as anything does; sources fill and pour; the water stays out of solids and
 // goes where the sides are open; frames hold its surface; and invariant I5 --
@@ -52,33 +53,61 @@ Vec3 centreOfMass(const LiquidSolver& sim) {
     return sum * (1.0f / static_cast<float>(std::max<size_t>(sim.particleCount(), 1)));
 }
 
-/// The pressure system of a grid of n cells a side whose cells below
-/// `level` are liquid: walls round it, open at the top.
-void pool(FreeSurfaceSolver& solver, int n, float level) {
-    std::vector<uint8_t> cells(static_cast<size_t>(n) * n * n);
-    Grid phi(n, n, n);
+/// The cells, surface and faces of a grid of n cells a side whose cells
+/// below `level` are liquid: walls round it, open at the top.
+struct Pool {
+    std::vector<uint8_t> cells;
+    Grid phi;
+    Grid open[3];
+};
+
+Pool poolOf(int n, float level) {
+    Pool p;
+    p.cells.resize(static_cast<size_t>(n) * n * n);
+    p.phi = Grid(n, n, n);
     for (int k = 0; k < n; ++k) {
         for (int j = 0; j < n; ++j) {
             for (int i = 0; i < n; ++i) {
                 const float d = static_cast<float>(j) + 0.5f - level;
-                phi.at(i, j, k) = d;
-                cells[phi.index(i, j, k)] = d < 0.0f ? FreeSurfaceSolver::Liquid : FreeSurfaceSolver::Air;
+                p.phi.at(i, j, k) = d;
+                p.cells[p.phi.index(i, j, k)] = d < 0.0f ? FreeSurfaceSolver::Liquid : FreeSurfaceSolver::Air;
             }
         }
     }
-    Grid open[3];
     for (int a = 0; a < 3; ++a) {
-        open[a] = Grid(n + (a == 0), n + (a == 1), n + (a == 2), 1.0f);
-        for (int k = 0; k < open[a].nz(); ++k) {
-            for (int j = 0; j < open[a].ny(); ++j) {
-                for (int i = 0; i < open[a].nx(); ++i) {
+        Grid& open = p.open[a];
+        open = Grid(n + (a == 0), n + (a == 1), n + (a == 2), 1.0f);
+        for (int k = 0; k < open.nz(); ++k) {
+            for (int j = 0; j < open.ny(); ++j) {
+                for (int i = 0; i < open.nx(); ++i) {
                     const int f = a == 0 ? i : a == 1 ? j : k;
-                    if (f == 0 || (a != 1 && f == n)) open[a].at(i, j, k) = 0.0f;  // floor and walls; the top is open
+                    if (f == 0 || (a != 1 && f == n)) open.at(i, j, k) = 0.0f;  // floor and walls; the top is open
                 }
             }
         }
     }
-    solver.setSystem(cells, open, phi);
+    return p;
+}
+
+/// The pressure system of poolOf(n, level).
+void pool(FreeSurfaceSolver& solver, int n, float level) {
+    const Pool p = poolOf(n, level);
+    solver.setSystem(p.cells, p.open, p.phi);
+}
+
+/// Closes the faces round the cells from `lo` up to `hi`: what is in them
+/// is shut in, as by solids round it.
+void wallIn(Pool& pool, const int lo[3], const int hi[3]) {
+    for (int a = 0; a < 3; ++a) {
+        for (int k = lo[2]; k < hi[2] + (a == 2); ++k) {
+            for (int j = lo[1]; j < hi[1] + (a == 1); ++j) {
+                for (int i = lo[0]; i < hi[0] + (a == 0); ++i) {
+                    const int f = a == 0 ? i : a == 1 ? j : k;
+                    if (f == lo[a] || f == hi[a]) pool.open[a].at(i, j, k) = 0.0f;
+                }
+            }
+        }
+    }
 }
 
 }  // namespace
@@ -115,6 +144,97 @@ TEST(liquid_free_surface_pressure_converges) {
     // last row of centres weighs that face 1 / 0.2.
     CHECK(std::fabs(FreeSurfaceSolver::surfaceFraction(-0.2f, 0.8f) - 0.2f) < 1e-6f);
     CHECK_EQ(FreeSurfaceSolver::surfaceFraction(-0.001f, 1.0f), FreeSurfaceSolver::kMinTheta);
+}
+
+TEST(liquid_pressure_of_a_pocket_shut_in_by_solids_stays_finite) {
+    // The pool of 32 cells a side, 20 deep, with water shut in it: a box of
+    // 48 cells and one of 2 -- water trapped under a crate, and between a
+    // crate and the floor -- and a single cell with no open face, which
+    // takes no part. More flows into the pockets than out of them, as when
+    // a crate moves in: no pressure solves that, and the conjugate gradients
+    // went off to 1e15 (the flood with the crates blew up so). Now what
+    // flows in squeezes a pocket alike in all its cells, its pressure keeps
+    // the level it came with, and the rest of the pool is solved as ever.
+    ThreadCountGuard guard;
+    const int n = 32;
+    Pool water = poolOf(n, 19.7f);
+    const int boxLo[3] = {4, 2, 4}, boxHi[3] = {8, 5, 8};
+    const int gapLo[3] = {20, 0, 20}, gapHi[3] = {22, 1, 21};
+    const int cellLo[3] = {26, 5, 26}, cellHi[3] = {27, 6, 27};
+    wallIn(water, boxLo, boxHi);
+    wallIn(water, gapLo, gapHi);
+    wallIn(water, cellLo, cellHi);
+    auto in = [](const int lo[3], const int hi[3], int i, int j, int k) {
+        return i >= lo[0] && i < hi[0] && j >= lo[1] && j < hi[1] && k >= lo[2] && k < hi[2];
+    };
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+    Grid rhs(n, n, n), start(n, n, n);
+    for (int k = 0; k < n; ++k) {
+        for (int j = 0; j < 20; ++j) {
+            for (int i = 0; i < n; ++i) {
+                float& b = rhs.at(i, j, k);
+                b = u(rng);
+                if (in(boxLo, boxHi, i, j, k)) {
+                    b += 0.5f;  // 24 more in than out
+                    start.at(i, j, k) = 5.0f;
+                } else if (in(gapLo, gapHi, i, j, k)) {
+                    b += 0.8f;
+                    start.at(i, j, k) = -2.0f;
+                }
+            }
+        }
+    }
+    Grid p[2];
+    for (int t = 0; t < 2; ++t) {
+        TaskPool::instance().setThreadCount(t == 0 ? 1u : 4u);
+        FreeSurfaceSolver solver;
+        solver.setSystem(water.cells, water.open, water.phi);
+        CHECK_EQ(solver.pockets(), size_t(2));
+        CHECK_EQ(solver.unknowns(), size_t(n * n * 20 - 1));
+        p[t] = start;
+        const int iterations = solver.solve(p[t], rhs, 1e-5f, 100);
+        CHECK(iterations > 0 && iterations <= 30);
+        CHECK(solver.residual() <= 1e-5);
+        // A p is the right-hand side, less each pocket's mean in it.
+        Grid ap(n, n, n);
+        solver.apply(p[t], ap);
+        double inflow[2] = {0.0, 0.0}, level[2] = {0.0, 0.0};
+        int cells[2] = {0, 0};
+        for (int k = 0; k < n; ++k) {
+            for (int j = 0; j < 20; ++j) {
+                for (int i = 0; i < n; ++i) {
+                    const int q = in(boxLo, boxHi, i, j, k) ? 0 : in(gapLo, gapHi, i, j, k) ? 1 : -1;
+                    if (q < 0) continue;
+                    inflow[q] += rhs.at(i, j, k);
+                    level[q] += p[t].at(i, j, k);
+                    ++cells[q];
+                }
+            }
+        }
+        double worst = 0.0, largest = 0.0, highest = 0.0;
+        for (int k = 0; k < n; ++k) {
+            for (int j = 0; j < 20; ++j) {
+                for (int i = 0; i < n; ++i) {
+                    if (in(cellLo, cellHi, i, j, k)) continue;
+                    const int q = in(boxLo, boxHi, i, j, k) ? 0 : in(gapLo, gapHi, i, j, k) ? 1 : -1;
+                    const double b = rhs.at(i, j, k) - (q < 0 ? 0.0 : inflow[q] / cells[q]);
+                    worst = std::max(worst, std::fabs(b - ap.at(i, j, k)));
+                    largest = std::max(largest, std::fabs(b));
+                    highest = std::max(highest, static_cast<double>(std::fabs(p[t].at(i, j, k))));
+                }
+            }
+        }
+        CHECK(worst <= 2e-5 * largest);
+        CHECK(std::isfinite(highest) && highest < 100.0);
+        // The levels the pockets came with.
+        CHECK(std::fabs(level[0] / cells[0] - 5.0) < 1e-4);
+        CHECK(std::fabs(level[1] / cells[1] + 2.0) < 1e-4);
+        // The cell with no open face holds no pressure.
+        CHECK_EQ(p[t].at(cellLo[0], cellLo[1], cellLo[2]), 0.0f);
+    }
+    // Invariant I5: the same bits on one thread and on four.
+    CHECK(std::memcmp(p[0].data(), p[1].data(), p[0].size() * sizeof(float)) == 0);
 }
 
 TEST(liquid_still_water_stays_still) {

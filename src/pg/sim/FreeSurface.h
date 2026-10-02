@@ -21,6 +21,14 @@
 //                              2002). Past an open side of the grid, theta is
 //                              1/2: the pressure is 0 on the side.
 //
+// Liquid that reaches no air -- a pocket shut in by solids and closed sides
+// -- has its pressure known only up to a constant, and only if as much flows
+// into it as out: a solid moving into a pocket, or the round-off of its
+// faces, leaves an equation no pressure solves, and conjugate gradients on it
+// go off to infinity. In a pocket, what flows in squeezes the liquid alike
+// in all its cells -- each pocket's mean taken off the right-hand side -- and
+// its pressure keeps the level it came with.
+//
 // Solved by conjugate gradients, preconditioned by a multigrid V-cycle
 // (McAdams, Sifakis and Teran 2010): the V-cycle alone struggles where the
 // surface is irregular, CG alone would take hundreds of iterations. On the
@@ -73,6 +81,8 @@ public:
     int levels() const { return static_cast<int>(levels_.size()); }
     /// Liquid cells of the finest grid that take part: those with an open face.
     size_t unknowns() const { return unknowns_; }
+    /// Pockets of the last system: liquid that reaches no air.
+    size_t pockets() const { return pocketStart_.empty() ? 0 : pocketStart_.size() - 1; }
 
     /// (A p)_c for the finest grid: for tests.
     void apply(const Grid& p, Grid& out) const;
@@ -87,7 +97,7 @@ private:
         Grid x, b, r;     // a correction, its right-hand side, its residual
         std::vector<uint8_t> rows;  // a row of cells (j + ny * k) with liquid in it: the others are skipped
     };
-    void build(Level& level, const Grid* phi) const;
+    void build(Level& level, const Grid* phi, std::vector<uint8_t>* links) const;
     void coarsen(const Level& fine, Level& coarse) const;
     void applyOn(const Level& level, const Grid& x, Grid& out) const;
     void residualOn(const Level& level, const Grid& x, const Grid& b, Grid& r) const;
@@ -97,6 +107,10 @@ private:
     void vcycle(size_t level);
     /// z = M^-1 r: one V-cycle from 0.
     void precondition(const Grid& r, Grid& z);
+    /// The pockets of the finest grid, from the liquid that reaches air.
+    void findPockets();
+    /// The conjugate gradients from p, to b.
+    int iterate(Grid& p, const Grid& b, float tolerance, int maxIterations);
 
     /// f(begin, end) for the cells of the rows with liquid in them, in
     /// chunks of whole rows; the chunks follow from the rows alone.
@@ -108,6 +122,12 @@ private:
 
     std::vector<Level> levels_;
     std::vector<uint32_t> activeRows_;  // the finest grid's rows with liquid, in order
+    // The pockets: the cells of each, one pocket after another, and where
+    // each starts in pocketCells_ (and where the last ends).
+    std::vector<uint32_t> pocketCells_, pocketStart_;
+    std::vector<uint8_t> links_;     // the finest grid's: which faces of a liquid cell lead on, to what
+    std::vector<uint32_t> reached_;  // findPockets': the cells the liquid reaches from the air
+    Grid b_;  // with pockets: the right-hand side less each pocket's mean
     Grid r_, rOld_, z_, d_, q_;
     size_t unknowns_ = 0;
     double residual_ = 0.0;

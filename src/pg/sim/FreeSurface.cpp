@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace pg::sim {
 namespace {
@@ -25,6 +26,13 @@ void forEachRow(int nx, int ny, int nz, const F& f) {
         }
     });
 }
+
+/// Of a liquid cell's links (FreeSurfaceSolver::links_): bit 2a + side for
+/// the face behind (side 0) or ahead (1) along axis a when it leads on into
+/// the liquid -- an open face between two liquid cells, one with a weight;
+/// kToAir when a face leads to air or out of an open side; kReached once a
+/// flood got to the cell.
+constexpr uint8_t kToAir = 64, kReached = 128;
 
 bool canHalve(const int n[3]) {
     return n[0] % 2 == 0 && n[1] % 2 == 0 && n[2] % 2 == 0 && std::min({n[0], n[1], n[2]}) >= 4;
@@ -71,7 +79,7 @@ float FreeSurfaceSolver::airWeight(float open, float phiLiquid, float phiAir) co
     return open / surfaceFraction(phiLiquid, phiAir);
 }
 
-void FreeSurfaceSolver::build(Level& L, const Grid* phi) const {
+void FreeSurfaceSolver::build(Level& L, const Grid* phi, std::vector<uint8_t>* links) const {
     const int nx = L.n[0], ny = L.n[1], nz = L.n[2];
     const int n[3] = {nx, ny, nz};
     auto at = [&](int i, int j, int k) {
@@ -94,13 +102,19 @@ void FreeSurfaceSolver::build(Level& L, const Grid* phi) const {
         });
     }
     // The diagonal: every open face of a liquid cell, towards liquid as it
-    // weighs, towards air as far as the surface is.
+    // weighs, towards air as far as the surface is. With `links`, which of
+    // those faces lead on into the liquid, which to air.
     L.diagonal = Grid(nx, ny, nz);
+    if (links) links->resize(L.cells.size());
     forEachRow(nx, ny, nz, [&](int j, int k) {
         for (int i = 0; i < nx; ++i) {
             const size_t c = at(i, j, k);
-            if (cells[c] != Liquid) continue;
+            if (cells[c] != Liquid) {
+                if (links) (*links)[c] = 0;
+                continue;
+            }
             float sum = 0.0f;
+            uint8_t bits = 0;
             const int here[3] = {i, j, k};
             for (int a = 0; a < 3; ++a) {
                 for (int side = 0; side < 2; ++side) {
@@ -112,19 +126,23 @@ void FreeSurfaceSolver::build(Level& L, const Grid* phi) const {
                     const int beyond = here[a] + (side == 0 ? -1 : 1);
                     if (beyond < 0 || beyond >= n[a]) {
                         sum += 2.0f * open;  // an open side: p = 0 on it, half a cell away
+                        bits |= kToAir;
                         continue;
                     }
                     const size_t nb = at(i + (a == 0 ? beyond - i : 0), j + (a == 1 ? beyond - j : 0),
                                          k + (a == 2 ? beyond - k : 0));
                     if (cells[nb] == Liquid) {
                         sum += open;
+                        bits |= static_cast<uint8_t>(1u << (2 * a + side));
                     } else {
                         const float theta = phi ? surfaceFraction(phi->data()[c], phi->data()[nb]) : 1.0f;
                         sum += open / theta;
+                        bits |= kToAir;
                     }
                 }
             }
             L.diagonal.data()[c] = sum;
+            if (links) (*links)[c] = bits;
         }
     });
     // A liquid cell with no open face takes no part.
@@ -181,7 +199,7 @@ void FreeSurfaceSolver::coarsen(const Level& fine, Level& coarse) const {
             }
         });
     }
-    build(coarse, nullptr);
+    build(coarse, nullptr, nullptr);
 }
 
 void FreeSurfaceSolver::setSystem(const std::vector<uint8_t>& cells, const Grid open[3], const Grid& phi) {
@@ -193,7 +211,7 @@ void FreeSurfaceSolver::setSystem(const std::vector<uint8_t>& cells, const Grid 
     fine.n[2] = phi.nz();
     fine.cells = cells;
     for (int a = 0; a < 3; ++a) fine.open[a] = open[a];
-    build(fine, &phi);
+    build(fine, &phi, &links_);
     unknowns_ = static_cast<size_t>(std::count(fine.cells.begin(), fine.cells.end(), static_cast<uint8_t>(Liquid)));
     levels_.push_back(std::move(fine));
     while (canHalve(levels_.back().n)) {
@@ -207,6 +225,58 @@ void FreeSurfaceSolver::setSystem(const std::vector<uint8_t>& cells, const Grid 
     for (size_t row = 0; row < f.rows.size(); ++row) {
         if (f.rows[row]) activeRows_.push_back(static_cast<uint32_t>(row));
     }
+    findPockets();
+    b_ = pockets() > 0 ? Grid(f.n[0], f.n[1], f.n[2]) : Grid();
+}
+
+void FreeSurfaceSolver::findPockets() {
+    pocketCells_.clear();
+    pocketStart_.clear();
+    const Level& L = levels_.front();
+    const size_t stride[3] = {1, static_cast<size_t>(L.n[0]), static_cast<size_t>(L.n[0]) * static_cast<size_t>(L.n[1])};
+    const uint8_t* cells = L.cells.data();
+    // From every cell next to air, through the liquid: breadth first, in the
+    // order of the cells, the same on any number of threads.
+    reached_.clear();
+    auto flood = [&](size_t from) {
+        for (size_t q = from; q < reached_.size(); ++q) {
+            const size_t c = reached_[q];
+            const uint8_t bits = links_[c];
+            for (int a = 0; a < 3; ++a) {
+                for (int side = 0; side < 2; ++side) {
+                    if (!(bits & (1u << (2 * a + side)))) continue;
+                    const size_t next = side == 0 ? c - stride[a] : c + stride[a];
+                    if (links_[next] & kReached) continue;
+                    links_[next] |= kReached;
+                    reached_.push_back(static_cast<uint32_t>(next));
+                }
+            }
+        }
+    };
+    for (const uint32_t row : activeRows_) {
+        const size_t first = static_cast<size_t>(row) * stride[1];
+        for (size_t c = first; c < first + stride[1]; ++c) {
+            if (cells[c] != Liquid || !(links_[c] & kToAir)) continue;
+            links_[c] |= kReached;
+            reached_.push_back(static_cast<uint32_t>(c));
+        }
+    }
+    flood(0);
+    if (reached_.size() == unknowns_) return;  // no pocket: the usual case
+    // What the air does not reach: pockets, each flooded from its first cell.
+    for (const uint32_t row : activeRows_) {
+        const size_t first = static_cast<size_t>(row) * stride[1];
+        for (size_t c = first; c < first + stride[1]; ++c) {
+            if (cells[c] != Liquid || (links_[c] & kReached)) continue;
+            const size_t from = reached_.size();
+            links_[c] |= kReached;
+            reached_.push_back(static_cast<uint32_t>(c));
+            flood(from);
+            pocketStart_.push_back(static_cast<uint32_t>(pocketCells_.size()));
+            pocketCells_.insert(pocketCells_.end(), reached_.begin() + static_cast<std::ptrdiff_t>(from), reached_.end());
+        }
+    }
+    pocketStart_.push_back(static_cast<uint32_t>(pocketCells_.size()));
 }
 
 void FreeSurfaceSolver::applyOn(const Level& L, const Grid& x, Grid& out) const {
@@ -385,12 +455,44 @@ void FreeSurfaceSolver::precondition(const Grid& r, Grid& z) {
 int FreeSurfaceSolver::solve(Grid& p, const Grid& rhs, float tolerance, int maxIterations) {
     residual_ = 0.0;
     if (levels_.empty()) return 0;
-    const Level& L = levels_.front();
-    const uint8_t* cells = L.cells.data();
+    const uint8_t* cells = levels_.front().cells.data();
     // Nothing outside the liquid.
     for (size_t c = 0; c < p.size(); ++c) {
         if (cells[c] != Liquid) p.data()[c] = 0.0f;
     }
+    const size_t pockets = this->pockets();
+    if (pockets == 0) return iterate(p, rhs, tolerance, maxIterations);
+    // In each pocket the right-hand side less its mean, which sums to 0; the
+    // mean of its pressure as it came, the level it keeps.
+    forActiveRows([&](size_t begin, size_t end) { std::copy(rhs.data() + begin, rhs.data() + end, b_.data() + begin); });
+    std::vector<double> level(pockets);
+    for (size_t q = 0; q < pockets; ++q) {
+        const uint32_t* first = pocketCells_.data() + pocketStart_[q];
+        const size_t count = pocketStart_[q + 1] - pocketStart_[q];
+        double inflow = 0.0, sum = 0.0;
+        for (size_t c = 0; c < count; ++c) {
+            inflow += rhs.data()[first[c]];
+            sum += p.data()[first[c]];
+        }
+        const float mean = static_cast<float>(inflow / static_cast<double>(count));
+        for (size_t c = 0; c < count; ++c) b_.data()[first[c]] -= mean;
+        level[q] = sum / static_cast<double>(count);
+    }
+    const int iterations = iterate(p, b_, tolerance, maxIterations);
+    for (size_t q = 0; q < pockets; ++q) {
+        const uint32_t* first = pocketCells_.data() + pocketStart_[q];
+        const size_t count = pocketStart_[q + 1] - pocketStart_[q];
+        double sum = 0.0;
+        for (size_t c = 0; c < count; ++c) sum += p.data()[first[c]];
+        const float shift = static_cast<float>(level[q] - sum / static_cast<double>(count));
+        for (size_t c = 0; c < count; ++c) p.data()[first[c]] += shift;
+    }
+    return iterations;
+}
+
+int FreeSurfaceSolver::iterate(Grid& p, const Grid& rhs, float tolerance, int maxIterations) {
+    const Level& L = levels_.front();
+    const uint8_t* cells = L.cells.data();
     // Every vector below is read in the rows with liquid alone: those rows of
     // r, z, d and q are what the iterations are about; elsewhere z and d stay
     // 0 (as set up), which is what the operator reads next to the liquid.
