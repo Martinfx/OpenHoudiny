@@ -1,5 +1,6 @@
 #include "RenderView.h"
 
+#include "pg/render/Plate.h"
 #include "pg/render/Save.h"
 #include "pg/sim/WaterMesh.h"
 
@@ -121,14 +122,7 @@ bool RenderView::save(const std::string& path, const std::string& comment, std::
             error = "nothing rendered yet";
             return false;
         }
-        render::Rendered r;
-        r.beauty = cycles_->beauty();
-        r.albedo = cycles_->albedo();
-        r.normal = cycles_->normal();
-        r.depth = cycles_->depth();
-        r.exposure = cyclesScene_->look.exposure;
-        r.view = cyclesSettings_.view;
-        return render::savePicture(r, path, comment, error);
+        return render::savePicture(cycles_->rendered(), path, comment, error);
     }
     return render::savePicture(tracer_, path, tracer_.settings().denoise, comment, error);
 }
@@ -267,14 +261,23 @@ void RenderView::run() {
                 }
                 if (scene) cycles_->start(scene, s);
             }
-            render::Image image;
-            if (cycles_ && cycles_->takePicture(image)) {
+            render::Image image, alpha, catcher;
+            if (cycles_ && cycles_->takePicture(image, &alpha, &catcher)) {
                 float exposure = 1.0f;
                 render::Settings::View view;
+                std::shared_ptr<const render::Scene> scene;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
-                    if (cyclesScene_) exposure = cyclesScene_->look.exposure;
+                    scene = cyclesScene_;
+                    if (scene) exposure = scene->look.exposure;
                     view = cyclesSettings_.view;
+                }
+                // Over a plate: the CG over it -- as the catchers relight it
+                // once the end has come.
+                if (scene && scene->plate) {
+                    image = render::overPlate(image, alpha, catcher,
+                                              render::plateSeen(*scene->plate, plateLight(scene->plate, view, exposure),
+                                                                scene->camera, image.width, image.height));
                 }
                 publish(image, exposure, view);
             }
@@ -301,13 +304,30 @@ void RenderView::run() {
         const bool denoise = s.denoise && (n <= 1 || n >= s.samples || sinceDenoise_ >= denoiseCost_);
         if (s.denoise && !denoise) continue;
         const auto start = Clock::now();
-        const render::Image image = denoise ? tracer_.denoised() : tracer_.beauty();
+        render::Image image = denoise ? tracer_.denoised() : tracer_.beauty();
         if (denoise) {
             denoiseCost_ = std::chrono::duration<double>(Clock::now() - start).count();
             sinceDenoise_ = 0.0;
         }
+        // Over a plate: the CG over it.
+        if (const auto& scene = tracer_.scene(); scene && scene->plate) {
+            image = render::overPlate(image, tracer_.alpha(), tracer_.catcher(denoise),
+                                      render::plateSeen(*scene->plate, tracer_.plateLight(), scene->camera, image.width,
+                                                        image.height));
+        }
         publish(image, tracer_.scene() ? tracer_.scene()->look.exposure : 1.0f, s.view);
     }
+}
+
+const render::Image& RenderView::plateLight(const std::shared_ptr<const render::Plate>& plate, render::Settings::View view,
+                                            float exposure) {
+    if (plate != plateOf_ || view != plateView_ || exposure != plateExposure_) {
+        plateLight_ = render::plateLight(*plate, view, exposure);
+        plateOf_ = plate;
+        plateView_ = view;
+        plateExposure_ = exposure;
+    }
+    return plateLight_;
 }
 
 }  // namespace pg::editor

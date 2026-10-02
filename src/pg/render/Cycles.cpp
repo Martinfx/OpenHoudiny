@@ -1,5 +1,6 @@
 #include "pg/render/Cycles.h"
 
+#include "pg/render/Plate.h"
 #include "pg/render/Textures.h"
 
 #include <glm/common.hpp>
@@ -153,6 +154,9 @@ private:
 struct Pictures {
     std::mutex mutex;
     Image beauty, albedo, normal, depth;
+    /// Over a plate: how much of each pixel the CG covers, and what the
+    /// plate is multiplied by there -- Cycles' shadow catcher pass.
+    Image alpha, catcher;
     bool fresh = false;
     bool denoise = false;
     // The lens: tangents of half the angle across and up the picture --
@@ -167,7 +171,7 @@ public:
     void write_render_tile(const Tile& tile) override { read(tile, true); }
 
 private:
-    enum class As { Light, Normal, Depth };
+    enum class As { Light, Alpha, Normal, Depth };
 
     void read(const Tile& tile, bool final) {
         const int w = tile.size.x, h = tile.size.y;
@@ -181,10 +185,11 @@ private:
         std::vector<float> buffer(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
         auto pass = [&](const char* name, int channels, Image& into, As as) {
             if (!tile.get_pass_pixels(name, channels, buffer.data())) return;
-            if (into.width != fw || into.height != fh || into.channels != std::min(channels, 3)) {
+            const int kept = as == As::Alpha ? 1 : std::min(channels, 3);
+            if (into.width != fw || into.height != fh || into.channels != kept) {
                 into.width = fw;
                 into.height = fh;
-                into.channels = std::min(channels, 3);
+                into.channels = kept;
                 into.pixels.assign(static_cast<size_t>(fw) * static_cast<size_t>(fh) * static_cast<size_t>(into.channels), 0.0f);
             }
             for (int y = 0; y < h; ++y) {
@@ -196,7 +201,9 @@ private:
                                              static_cast<size_t>(channels)];
                     float* q = &into.pixels[(static_cast<size_t>(row) * static_cast<size_t>(fw) + static_cast<size_t>(ox + x)) *
                                             static_cast<size_t>(into.channels)];
-                    if (as == As::Normal) {
+                    if (as == As::Alpha) {
+                        q[0] = std::clamp(p[3], 0.0f, 1.0f);
+                    } else if (as == As::Normal) {
                         const Vec3 n = fromCycles(p);
                         q[0] = n.x;
                         q[1] = n.y;
@@ -215,11 +222,15 @@ private:
             }
         };
         std::lock_guard<std::mutex> lock(out_.mutex);
+        // Over a plate, with catchers in the scene, Cycles gives the CG
+        // without them as "combined"; its alpha, how much the CG covers.
         pass("combined", 4, out_.beauty, As::Light);
+        pass("combined", 4, out_.alpha, As::Alpha);
         if (final) {
             pass("albedo", 3, out_.albedo, As::Light);
             pass("normal", 3, out_.normal, As::Normal);
             pass("depth", 1, out_.depth, As::Depth);
+            pass("catcher", 3, out_.catcher, As::Light);
         }
         out_.fresh = true;
     }
@@ -268,24 +279,29 @@ public:
         return width_ > 0 && height_ > 0;
     }
     void update_end() override {
-        Image image;
-        image.width = width_;
-        image.height = height_;
+        Image image, alpha;
+        image.width = alpha.width = width_;
+        image.height = alpha.height = height_;
         image.channels = 3;
+        alpha.channels = 1;
         image.pixels.resize(static_cast<size_t>(width_) * static_cast<size_t>(height_) * 3);
+        alpha.pixels.resize(static_cast<size_t>(width_) * static_cast<size_t>(height_));
         for (int y = 0; y < height_; ++y) {
             // Cycles' row y counts from the bottom.
             const ccl::half4* row = &pixels_[static_cast<size_t>(height_ - 1 - y) * static_cast<size_t>(width_)];
             float* q = &image.pixels[static_cast<size_t>(y) * static_cast<size_t>(width_) * 3];
+            float* a = &alpha.pixels[static_cast<size_t>(y) * static_cast<size_t>(width_)];
             for (int x = 0; x < width_; ++x) {
                 ccl::half4 p = row[x];
                 q[3 * x] = fromHalf(static_cast<unsigned short>(p.x));
                 q[3 * x + 1] = fromHalf(static_cast<unsigned short>(p.y));
                 q[3 * x + 2] = fromHalf(static_cast<unsigned short>(p.z));
+                a[x] = std::clamp(fromHalf(static_cast<unsigned short>(p.w)), 0.0f, 1.0f);
             }
         }
         std::lock_guard<std::mutex> lock(out_.mutex);
         out_.beauty = std::move(image);
+        out_.alpha = std::move(alpha);
         out_.fresh = true;
     }
     ccl::half4* map_texture_buffer() override { return pixels_.data(); }
@@ -1108,6 +1124,7 @@ struct CyclesRender::Impl {
     bool started = false;
     Pictures pictures;
     Settings settings;
+    std::shared_ptr<const Scene> scene;  // the last one started
 
     // What the last scenes made, kept for the next: our meshes' Cycles
     // meshes, the materials' shaders.
@@ -1877,7 +1894,9 @@ struct CyclesRender::Impl {
         used.push_back_slow(shader);
         dome->set_used_shaders(used);
         owned.push_back(dome);
-        place(scene, dome, ccl::transform_identity(), Vec3(1.0f, 1.0f, 1.0f));
+        // Over a plate, a real light -- the one that lit it: in Cycles' light
+        // without the CG, for its shadow catchers, as well.
+        place(scene, dome, ccl::transform_identity(), Vec3(1.0f, 1.0f, 1.0f))->set_is_shadow_catcher(s.plate != nullptr);
     }
 
     /// The look's sun: a distant light as wide as Sun Angle, lighting a
@@ -1924,6 +1943,8 @@ struct CyclesRender::Impl {
         const ccl::Transform tfm = ccl::make_transform(x.x, y.x, z.x, 0.0f, x.y, y.y, z.y, 0.0f, x.z, y.z, z.z, 0.0f);
         ccl::Object* object = place(scene, light, tfm, Vec3(1.0f, 1.0f, 1.0f));
         object->set_visibility(ccl::PATH_RAY_ALL_VISIBILITY & ~ccl::PATH_RAY_CAMERA);
+        // Over a plate, the real sun: the shadow catchers' light without the CG has it too.
+        object->set_is_shadow_catcher(s.plate != nullptr);
     }
 
     /// Where the camera stands and how it is turned, as Cycles places one:
@@ -2140,26 +2161,42 @@ struct CyclesRender::Impl {
                 moves = true;
             }
         }
-        // The scene's objects, each its own mesh, its colour its object's.
+        // The scene's objects, each its own mesh, its colour its object's;
+        // over a plate, the real things it shows -- holdouts, and shadow
+        // catchers, which Cycles relights with what the CG does to them.
+        const bool over = s.plate != nullptr;
+        bool catchers = false;
+        auto matte = [&](ccl::Object* object, sim::Matte m) {
+            if (!over) return;
+            object->set_use_holdout(m == sim::Matte::Holdout);
+            object->set_is_shadow_catcher(m == sim::Matte::Catcher);
+            catchers = catchers || m == sim::Matte::Catcher;
+        };
         const ccl::Transform turned = placement(Mat3(1.0f), 1.0f, Vec3());
         for (const sim::Solid& solid : s.solids) {
             std::vector<Vec3> points, normals;
             tessellate(solid.body.instance(), points, normals);
             if (points.empty()) continue;
             ccl::Mesh* mesh = ownMesh(scene, points, normals, Vec3(1.0f, 1.0f, 1.0f), shaderOf(scene, s.solidMaterial, s.look));
-            ccl::Object* object = place(scene, mesh, turned, solid.color);
-            if (solid.matte == sim::Matte::Holdout) object->set_use_holdout(true);
-            if (solid.matte == sim::Matte::Catcher) object->set_is_shadow_catcher(true);
+            matte(place(scene, mesh, turned, solid.color), solid.matte);
         }
-        // The floor: as far as it goes, a square round it, faded to a disc.
+        // The floor: as far as it goes, a square round it, faded to a disc;
+        // over a plate, the ground it was filmed on, as Floor over the Plate says.
         if (s.look.floor) {
             const bool horizon = skyKind(s) != Settings::Sky::Look && s.look.skyBehind;
             const float r = horizon ? 5000.0f : std::min(s.floorRadius, 1e5f);
             const Vec3 a(-r, 0.0f, -r), b(r, 0.0f, -r), c(r, 0.0f, r), d(-r, 0.0f, r), n(0.0f, 1.0f, 0.0f);
             ccl::Mesh* mesh = ownMesh(scene, {a, d, c, a, c, b}, {n, n, n, n, n, n}, s.look.groundColor,
                                       floorShader(scene, s, horizon));
-            place(scene, mesh, turned, Vec3(1.0f, 1.0f, 1.0f));
+            matte(place(scene, mesh, turned, Vec3(1.0f, 1.0f, 1.0f)), s.look.floorMatte);
         }
+        // Over a plate the camera sees through to it where the CG is not --
+        // through glass too, as Blender's Transparent Glass -- and the
+        // catchers' light comes apart, in a pass of its own.
+        scene->background->set_transparent(over);
+        scene->background->set_transparent_glass(over);
+        scene->background->set_transparent_roughness_threshold(0.1f);
+        scene->film->set_use_approximate_shadow_catcher(false);
         gas(scene, s);
         world(scene, s);
         sun(scene, s, settings);
@@ -2207,6 +2244,16 @@ struct CyclesRender::Impl {
         pass(ccl::PASS_DENOISING_ALBEDO, "albedo", ccl::PassMode::NOISY);
         pass(ccl::PASS_NORMAL, "normal", ccl::PassMode::NOISY);
         pass(ccl::PASS_DEPTH, "depth", ccl::PassMode::NOISY);
+        // What the plate is multiplied by: 1 where the CG changes nothing.
+        for (ccl::Pass* p : scene->passes) {
+            if (p->get_name() == ccl::ustring("catcher")) {
+                if (!catchers) {
+                    scene->delete_node(p);
+                }
+                break;
+            }
+        }
+        if (catchers) pass(ccl::PASS_SHADOW_CATCHER, "catcher", denoise ? ccl::PassMode::DENOISED : ccl::PassMode::NOISY);
     }
 };
 
@@ -2269,7 +2316,10 @@ void CyclesRender::start(std::shared_ptr<const Scene> scene, const Settings& set
         m.pictures.albedo = Image();
         m.pictures.normal = Image();
         m.pictures.depth = Image();
+        m.pictures.alpha = Image();
+        m.pictures.catcher = Image();
     }
+    m.scene = scene;
     {
         ccl::thread_scoped_lock lock(m.session->scene->mutex);
         m.sync(*scene, settings);
@@ -2319,12 +2369,47 @@ std::string CyclesRender::error() const {
     return impl_->session->progress.get_error_message();
 }
 
-bool CyclesRender::takePicture(Image& beauty) {
+bool CyclesRender::takePicture(Image& beauty, Image* alpha, Image* catcher) {
     std::lock_guard<std::mutex> lock(impl_->pictures.mutex);
     if (!impl_->pictures.fresh) return false;
     beauty = impl_->pictures.beauty;
+    if (alpha) *alpha = impl_->pictures.alpha;
+    if (catcher) *catcher = impl_->pictures.catcher;
     impl_->pictures.fresh = false;
     return true;
+}
+
+Image CyclesRender::alpha() const {
+    std::lock_guard<std::mutex> lock(impl_->pictures.mutex);
+    return impl_->pictures.alpha;
+}
+Image CyclesRender::catcher() const {
+    std::lock_guard<std::mutex> lock(impl_->pictures.mutex);
+    return impl_->pictures.catcher;
+}
+
+Rendered CyclesRender::rendered() const {
+    Rendered r;
+    {
+        std::lock_guard<std::mutex> lock(impl_->pictures.mutex);
+        r.beauty = impl_->pictures.beauty;
+        r.albedo = impl_->pictures.albedo;
+        r.normal = impl_->pictures.normal;
+        r.depth = impl_->pictures.depth;
+        if (impl_->scene && impl_->scene->plate) {
+            r.alpha = impl_->pictures.alpha;
+            r.catcher = impl_->pictures.catcher;
+        }
+    }
+    r.view = impl_->settings.view;
+    if (const auto& scene = impl_->scene) {
+        r.exposure = scene->look.exposure;
+        if (scene->plate) {
+            const Image light = plateLight(*scene->plate, r.view, r.exposure);
+            r.plate = plateSeen(*scene->plate, light, scene->camera, r.beauty.width, r.beauty.height);
+        }
+    }
+    return r;
 }
 
 Image CyclesRender::beauty() const {
@@ -2361,7 +2446,10 @@ bool CyclesRender::done() const { return true; }
 int CyclesRender::samples() const { return 0; }
 double CyclesRender::seconds() const { return 0.0; }
 std::string CyclesRender::error() const { return "built without Cycles"; }
-bool CyclesRender::takePicture(Image&) { return false; }
+bool CyclesRender::takePicture(Image&, Image*, Image*) { return false; }
+Image CyclesRender::alpha() const { return {}; }
+Image CyclesRender::catcher() const { return {}; }
+Rendered CyclesRender::rendered() const { return {}; }
 Image CyclesRender::beauty() const { return {}; }
 Image CyclesRender::albedo() const { return {}; }
 Image CyclesRender::normal() const { return {}; }

@@ -213,6 +213,15 @@ Plyn renderuje path tracer přes knihovnu **NanoVDB**. Bez ní
 (`-DPG_NANOVDB=OFF`) se plyn v path traceru nevykreslí a příkazová řádka
 to oznámí.
 
+### Nad plate
+
+Kamerou záběru s plate kreslí path tracer CG nad něj. Holdouty a shadow
+catchery jsou skutečné věci ze záběru: tam zůstane plate. Na catcheru
+path tracer spočítá, kolik světla mu CG vzalo (stíny, kouř) a přidalo
+(oheň, odražené světlo), a plate tím vynásobí. Sklem a vodou je plate
+vidět po lomeném paprsku. Podrobnosti jsou v
+[plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer).
+
 ## 6. Jak to funguje
 
 - **Scéna** (`src/pg/render/Scene.h`): trojúhelníky zobrazené geometrie
@@ -342,8 +351,8 @@ nezabralo víc než polovinu času.
 
 ## 8. Co zatím chybí
 
-- Plate a holdouty. Kreslí je jen viewport. Objemy zobrazené geometrie
-  (třeba z Convert Volume) také, path tracer kreslí plyn simulace.
+- Objemy zobrazené geometrie (třeba z Convert Volume): kreslí je jen
+  viewport, path tracer kreslí plyn simulace.
 - Vlnky po kapkách na vodě má jen síť vody (`waterMesh`), stékající
   stružky a mokré svislé stěny ne.
 - Světlo plamenů dopadá na okolí jen odrazy, které plamen náhodou

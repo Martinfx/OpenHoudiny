@@ -104,7 +104,8 @@ okna.
   pohybu a maskami pro compositing
 - **[docs/plate.md](docs/plate.md)** — obraz záběru (plate) za CG kamerou
   záběru: sekvence PNG, JPEG a EXR čtené bez knihoven, holdout a shadow
-  catcher, do EXR CG s alfou a průchodem `catcher`
+  catcher, do EXR CG s alfou a průchodem `catcher`; ve viewportu, v Cycles
+  i v path traceru
 
 > **Jméno.** Projekt se jmenuje **Prototype**; pracovní název byl příliš
 > podobný ochranné známce SideFX. Jmenný prostor v kódu zůstává neutrální

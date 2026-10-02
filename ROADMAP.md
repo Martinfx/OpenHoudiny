@@ -215,7 +215,8 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   a OpenEXR) za CG, když se díváte kamerou záběru; objekty a podlaha jako
   holdout nebo shadow catcher, který na sebe vezme stíny CG a světlo ohně;
   do EXR CG s alfou a průchod `catcher`. Kde CG nic nemění, vyjde plate
-  z renderu pixel po pixelu, jak do něj vešel.
+  z renderu pixel po pixelu, jak do něj vešel. Ve viewportu, v Cycles
+  (průhledný film, jeho shadow catchery) i v path traceru.
 
 **Hotovo, když:** scéna z kroku 2 jde postavit a spočítat čistě
 z Pythonu; výsledek se otevře v Blenderu a v usdview jako USD (kusy, drť,

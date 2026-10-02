@@ -2,6 +2,7 @@
 
 #include "pg/io/Exr.h"
 #include "pg/io/Picture.h"
+#include "pg/render/Plate.h"
 
 #include <cctype>
 #include <filesystem>
@@ -18,11 +19,21 @@ Rendered renderedOf(const PathTracer& tracer, bool denoise) {
     r.depth = tracer.depth();
     r.exposure = tracer.scene()->look.exposure;
     r.view = tracer.settings().view;
+    if (const auto& plate = tracer.scene()->plate) {
+        r.alpha = tracer.alpha();
+        r.catcher = tracer.catcher(denoise);
+        r.plate = plateSeen(*plate, tracer.plateLight(), tracer.scene()->camera, r.beauty.width, r.beauty.height);
+    }
     return r;
 }
 
+Image composited(const Rendered& rendered) {
+    if (rendered.plate.pixels.empty()) return rendered.beauty;
+    return overPlate(rendered.beauty, rendered.alpha, rendered.catcher, rendered.plate);
+}
+
 std::vector<uint8_t> displayRgb(const Rendered& rendered) {
-    const std::vector<uint8_t> rgba = toDisplay(rendered.beauty, rendered.exposure, rendered.view);
+    const std::vector<uint8_t> rgba = toDisplay(composited(rendered), rendered.exposure, rendered.view);
     std::vector<uint8_t> rgb(rgba.size() / 4 * 3);
     for (size_t p = 0; p < rgba.size() / 4; ++p) {
         rgb[3 * p] = rgba[4 * p];
@@ -74,10 +85,17 @@ bool savePicture(const Rendered& rendered, const std::string& path, const std::s
     channel("R", image, 0, true);
     channel("G", image, std::min(1, image.channels - 1), true);
     channel("B", image, std::min(2, image.channels - 1), true);
-    io::ExrChannel alpha;
-    alpha.name = "A";
-    alpha.values.assign(n, 1.0f);
-    out.channels.push_back(std::move(alpha));
+    // Over a plate, the CG alone: how much of each pixel it covers, and
+    // what the plate is multiplied by there.
+    const bool over = !rendered.plate.pixels.empty();
+    if (over && rendered.alpha.width == image.width && rendered.alpha.height == image.height) {
+        channel("A", rendered.alpha, 0, true);
+    } else {
+        io::ExrChannel alpha;
+        alpha.name = "A";
+        alpha.values.assign(n, 1.0f);
+        out.channels.push_back(std::move(alpha));
+    }
     channel("Z", rendered.depth, 0, false);
     channel("albedo.R", rendered.albedo, 0, true);
     channel("albedo.G", rendered.albedo, 1, true);
@@ -85,6 +103,11 @@ bool savePicture(const Rendered& rendered, const std::string& path, const std::s
     channel("N.X", rendered.normal, 0, true);
     channel("N.Y", rendered.normal, 1, true);
     channel("N.Z", rendered.normal, 2, true);
+    if (over) {
+        channel("catcher.R", rendered.catcher, 0, true);
+        channel("catcher.G", rendered.catcher, 1, true);
+        channel("catcher.B", rendered.catcher, 2, true);
+    }
     if (!comment.empty()) out.strings.push_back({"comment", comment});
     return io::writeExr(out, path, error);
 }

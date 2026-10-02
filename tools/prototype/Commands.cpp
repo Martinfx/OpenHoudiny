@@ -84,6 +84,7 @@
 #include "pg/render/Cycles.h"
 #include "pg/render/Denoise.h"
 #include "pg/render/PathTracer.h"
+#include "pg/render/Plate.h"
 #include "pg/render/Save.h"
 #include "pg/sim/Cache.h"
 #include "pg/sim/GeometryGraph.h"
@@ -759,13 +760,7 @@ bool cyclesRendered(const std::shared_ptr<const pg::render::Scene>& scene, const
         error = "Cycles: " + render.error();
         return false;
     }
-    pg::render::Rendered out;
-    out.beauty = render.beauty();
-    out.albedo = render.albedo();
-    out.normal = render.normal();
-    out.depth = render.depth();
-    out.exposure = scene->look.exposure;
-    out.view = s.view;
+    const pg::render::Rendered out = render.rendered();
     if (out.beauty.width != s.width || out.beauty.height != s.height) {
         error = "Cycles gave no picture";
         return false;
@@ -1205,6 +1200,13 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 in.cameraAfter = c.cameraAt(f + 1);
             }
             in.frameTime = world.timeStep;
+            // Through the shot's camera, its plate behind the CG.
+            if (throughCamera && !c.cameraAt(f).plate.empty()) {
+                const sim::Camera& shot = c.cameraAt(f);
+                std::string why;
+                in.plate = pg::render::loadPlate(shot.plateFile(f), shot, why);
+                if (!in.plate && plateErrors++ < 3) std::fprintf(stderr, "%s: %s\n", cmd, why.c_str());
+            }
             in.sunAngle = settings.sunAngle;
             in.domain = domainBox;
             in.time = static_cast<float>(f - 1) * world.timeStep;

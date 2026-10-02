@@ -132,6 +132,19 @@ public:
     Image albedo() const;
     Image normal() const;
     Image depth() const;
+    /// Over a plate (Scene::plate, Plate.h) the picture is the CG alone;
+    /// this how much of each pixel it covers, one channel -- and what the
+    /// plate is multiplied by there: 1 where the CG changes nothing, less in
+    /// its shadows on a catcher, more where its fire lights one. Without a
+    /// plate, none.
+    Image alpha() const;
+    /// `denoise`: the noise taken out by Open Image Denoise, where the build
+    /// has it, as Cycles takes it out of its shadow catcher pass -- the fire's
+    /// light on a catcher comes along a few rays.
+    Image catcher(bool denoise = false) const;
+    /// The plate in the renderer's light (plateLight): what glass and water
+    /// show of it; empty without one.
+    const Image& plateLight() const { return plateLight_; }
     /// As a screen shows it: exposure, the tone curve, gamma -- RGBA.
     std::vector<uint8_t> display(bool denoise) const;
 
@@ -140,6 +153,8 @@ public:
 
 private:
     Image average(const std::vector<float>& sum, int channels) const;
+    /// What the plate is multiplied by, as the samples have it (catcher).
+    Image catcherOf() const;
     /// The pictures of the scene's materials, as the settings have them.
     void findTextures();
 
@@ -157,6 +172,11 @@ private:
     /// is behind that shows, how far the gas is, the way the eye looks --
     /// made with the first pass; empty without gas.
     std::vector<float> gasSeen_;
+    /// Over a plate, the sums of: whether the CG covered the sample, whether
+    /// it met a catcher, and the catcher's light with the CG and without.
+    std::vector<float> cover_, caught_, with_, without_;
+    std::vector<float> passCover_, passCaught_, passWith_, passWithout_;
+    Image plateLight_;
     double seconds_ = 0.0;
     uint64_t paths_ = 0;
 };
@@ -169,6 +189,11 @@ std::vector<uint8_t> toDisplay(const Image& image, float exposure,
                                Settings::View view = Settings::View::AgXPunchy);
 /// One colour so: 0 to 1, as a screen shows it.
 Vec3 shown(const Vec3& linear, Settings::View view);
+/// The light `shown` shows as `display` -- a picture's colour, 0 to 1 --
+/// at exposure 1: its inverse. A colour no light shows as it (one too
+/// saturated for AgX), the light of the nearest that one does; white, the
+/// least light that shows as white.
+Vec3 unshown(const Vec3& display, Settings::View view);
 
 /// `beauty` with its noise taken out: an edge-avoiding a-trous wavelet
 /// filter (Dammertz et al.) over the light each surface gets -- its colour

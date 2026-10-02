@@ -7,7 +7,11 @@
 // Image Denoise nearer still; the Output's settings; the files; the
 // materials vegetation brings. And what moves: how fast, in the scene --
 // each corner, each chip of grit -- and Cycles blurring it along its way
-// while the shutter is open, a moving camera too.
+// while the shutter is open, a moving camera too. Over a plate: the light a
+// picture shows got back through the view transforms; the CG over the plate
+// in both renderers -- the plate as it went in where the CG changes nothing,
+// darker in its shadow on a catcher, hidden behind a holdout, seen through
+// glass -- and its passes in the EXR.
 //
 #include "pg/core/Grass.h"
 #include "pg/core/Instances.h"
@@ -16,6 +20,7 @@
 #include "pg/render/Cycles.h"
 #include "pg/render/Denoise.h"
 #include "pg/render/PathTracer.h"
+#include "pg/render/Plate.h"
 #include "pg/render/Save.h"
 #include "pg/sim/Display.h"
 #include "pg/sim/Network.h"
@@ -1165,4 +1170,245 @@ TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
     CHECK(chipFlying.wide >= chipSharp.wide + 8);
     CHECK(chipFlying.peak < 0.8 * chipSharp.peak);
     CHECK(std::fabs(chipFlying.light / chipSharp.light - 1.0) < 0.15);
+}
+
+TEST(render_unshown_gives_back_the_light_a_picture_shows) {
+    // Every grey, to the level; the colours of a photograph -- all but the
+    // most saturated -- to the level too, in each view.
+    std::mt19937 rng(7);
+    for (const Settings::View view : {Settings::View::AgXPunchy, Settings::View::AgX, Settings::View::Aces}) {
+        // But white in Punchy: its curve shows no more than 254.5 of 255.
+        int greys = 0;
+        for (int k = 0; k < 256; ++k) {
+            const float d = static_cast<float>(k) / 255.0f;
+            const Vec3 back = shown(unshown(Vec3(d), view), view);
+            const long slack = k == 255 && view == Settings::View::AgXPunchy ? 1 : 0;
+            bool same = true;
+            for (int c = 0; c < 3; ++c) same = same && std::lround(back[c] * 255.0f) >= k - slack && std::lround(back[c] * 255.0f) <= k;
+            greys += same;
+        }
+        int colours = 0, near = 0;
+        for (int i = 0; i < 4000; ++i) {
+            // As photographs have them: a grey, and a colour less than half its way off it.
+            const float grey = 0.5f + 0.5f * centred(rng);
+            const Vec3 d = glm::clamp(Vec3(grey) + centred3(rng) * (0.45f * std::min(grey, 1.0f - grey)), 0.0f, 1.0f);
+            const Vec3 q = glm::round(d * 255.0f) / 255.0f;
+            const Vec3 back = shown(unshown(q, view), view);
+            float off = 0.0f;
+            for (int c = 0; c < 3; ++c) off = std::max(off, std::fabs(std::round(back[c] * 255.0f) - q[c] * 255.0f));
+            colours += off < 0.5f;
+            near += off < 1.5f;
+        }
+        std::printf("  view %d: %d of 256 greys back to the level; colours: %d of 4000 to the level, %d within one\n",
+                    static_cast<int>(view), greys, colours, near);
+        CHECK_EQ(greys, 256);
+        CHECK(colours > 4000 * 98 / 100);
+        CHECK(near > 4000 * 999 / 1000);
+    }
+    // White: the least light that shows as white -- not infinitely much.
+    CHECK(unshown(Vec3(1.0f), Settings::View::AgXPunchy).x < 100.0f);
+}
+
+namespace {
+
+/// A shot over a plate: a grey box on the ground -- the ground the plate was
+/// filmed on, a catcher, as the floor over a plate is -- in the sun from the
+/// left; a holdout before a second box; a pane of glass. The plate a smooth
+/// picture as shown, 8 bits a channel.
+struct PlateShot {
+    SceneInput in;
+    std::shared_ptr<Plate> plate;
+    Vec3 boxTop{-0.9f, 0.8f, 0.0f};    // the first box's top
+    Vec3 shadow{-0.1f, 0.0f, 0.1f};    // the ground in its shadow
+    Vec3 holdout{1.1f, 0.35f, 1.3f};   // the holdout, the second box behind it
+    Vec3 pane{-0.9f, 0.3f, 2.5f};      // the glass, the ground behind it
+};
+
+PlateShot plateShot(int w, int h) {
+    PlateShot shot;
+    sim::Camera cam = sim::Camera::lookingAt(Vec3(0.0f, 1.6f, 5.0f), Vec3(0.0f, 0.4f, 0.0f));
+    cam.width = w;
+    cam.height = h;
+    shot.in.camera = cam;
+    // The sun from the left (-x), half way up: shadows fall towards +x.
+    shot.in.look.lightAzimuth = 180.0f;
+    shot.in.look.lightElevation = 45.0f;
+    shot.in.look.lightIntensity = 2.0f;
+    shot.in.look.skyIntensity = 0.5f;
+    shot.in.look.grid = false;
+    sim::Solid box, behind, holdout;
+    box.body.shape = behind.body.shape = holdout.body.shape = sim::Shape::Box;
+    box.body.center = Vec3(-0.9f, 0.4f, 0.0f);
+    box.body.size = Vec3(0.8f);
+    behind.body.center = Vec3(1.1f, 0.4f, -0.6f);
+    behind.body.size = Vec3(0.8f);
+    holdout.body.center = Vec3(1.1f, 0.35f, 1.2f);
+    holdout.body.size = Vec3(0.5f, 0.7f, 0.2f);
+    holdout.matte = sim::Matte::Holdout;
+    shot.in.solids = {box, behind, holdout};
+    // A pane of glass between the camera and the ground on the left.
+    auto glass = std::make_shared<Geometry>();
+    glass->addPoints(4);
+    auto P = glass->positionsForWrite();
+    P[0] = Vec3(-1.3f, 0.0f, 2.5f);
+    P[1] = Vec3(-0.5f, 0.0f, 2.5f);
+    P[2] = Vec3(-0.5f, 0.6f, 2.5f);
+    P[3] = Vec3(-1.3f, 0.6f, 2.5f);
+    const uint32_t quad[4] = {0, 1, 2, 3};
+    glass->addPrimitive(quad, true);
+    glass->primitives().create("glass", AttrType::Int).write<int32_t>()[0] = 1;
+    shot.in.geometry = glass;
+    auto plate = std::make_shared<Plate>();
+    plate->camera = cam;
+    io::Picture& p = plate->picture;
+    p.width = w;
+    p.height = h;
+    p.rgba.resize(4 * static_cast<size_t>(w) * static_cast<size_t>(h));
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            float* q = &p.rgba[4 * (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x))];
+            q[0] = std::round(255.0f * (0.3f + 0.35f * static_cast<float>(x) / static_cast<float>(w - 1))) / 255.0f;
+            q[1] = std::round(255.0f * (0.32f + 0.3f * static_cast<float>(y) / static_cast<float>(h - 1))) / 255.0f;
+            q[2] = std::round(255.0f * 0.42f) / 255.0f;
+            q[3] = 1.0f;
+        }
+    }
+    shot.plate = plate;
+    shot.in.plate = plate;
+    return shot;
+}
+
+/// The pixel `p` is seen in, through `c`'s lens, a picture w x h.
+std::pair<int, int> pixelOf(const sim::Camera& c, int w, int h, const Vec3& p) {
+    const Vec3 d = p - c.position;
+    const float z = dot(d, c.forward()), tanY = std::tan(c.fovY() * 3.14159265f / 360.0f);
+    const float tanX = tanY * static_cast<float>(w) / static_cast<float>(h);
+    const float u = dot(d, c.right()) / (z * tanX), v = dot(d, c.up()) / (z * tanY);
+    return {std::clamp(static_cast<int>(0.5f * (u + 1.0f) * static_cast<float>(w)), 0, w - 1),
+            std::clamp(static_cast<int>(0.5f * (1.0f - v) * static_cast<float>(h)), 0, h - 1)};
+}
+
+/// Over a plate, what a render made looks as it should: `name` the renderer's.
+void checkOverPlate(const PlateShot& shot, const Rendered& r, const char* name) {
+    const int w = shot.in.camera.width, h = shot.in.camera.height;
+    CHECK_EQ(r.alpha.width, w);
+    CHECK_EQ(r.catcher.width, w);
+    CHECK_EQ(r.plate.width, w);
+    if (r.alpha.width != w || r.catcher.width != w || r.plate.width != w) return;
+    const std::vector<uint8_t> shown = displayRgb(r);
+    auto byte = [&](int x, int y, int c) { return static_cast<int>(shown[3 * (static_cast<size_t>(y) * w + x) + c]); };
+    auto platebyte = [&](int x, int y, int c) {
+        return static_cast<int>(std::lround(shot.plate->picture.rgba[4 * (static_cast<size_t>(y) * w + x) + c] * 255.0f));
+    };
+    auto alphaAt = [&](const Vec3& p) {
+        const auto [x, y] = pixelOf(shot.in.camera, w, h, p);
+        return r.alpha.pixels[static_cast<size_t>(y) * w + x];
+    };
+    auto brightness = [&](const Vec3& p, bool plate) {
+        const auto [x, y] = pixelOf(shot.in.camera, w, h, p);
+        int sum = 0;
+        for (int c = 0; c < 3; ++c) sum += plate ? platebyte(x, y, c) : byte(x, y, c);
+        return sum;
+    };
+    // Above the horizon nothing covers the plate: it comes out as it went in.
+    int rows = 0, same = 0;
+    for (int y = 0; y < h / 10; ++y) {
+        for (int x = 0; x < w; ++x, ++rows) {
+            bool equal = true;
+            for (int c = 0; c < 3; ++c) equal = equal && std::abs(byte(x, y, c) - platebyte(x, y, c)) <= 1;
+            same += equal;
+        }
+    }
+    const auto [sx, sy] = pixelOf(shot.in.camera, w, h, shot.shadow);
+    const float shade = r.catcher.pixels[3 * (static_cast<size_t>(sy) * w + sx) + 1];
+    const auto [hx, hy] = pixelOf(shot.in.camera, w, h, shot.holdout);
+    int hidden = 0;
+    for (int c = 0; c < 3; ++c) hidden = std::max(hidden, std::abs(byte(hx, hy, c) - platebyte(hx, hy, c)));
+    std::printf("  %s: %d of %d pixels above the horizon the plate's; the box covers %.2f of its pixel, the holdout "
+                "%.2f; its shadow x %.2f, %d against %d; behind the holdout %d levels off the plate; through the "
+                "glass (it covers %.2f) %d against %d\n",
+                name, same, rows, alphaAt(shot.boxTop), alphaAt(shot.holdout), shade, brightness(shot.shadow, false),
+                brightness(shot.shadow, true), hidden, alphaAt(shot.pane), brightness(shot.pane, false),
+                brightness(shot.pane, true));
+    CHECK(same >= rows * 99 / 100);
+    CHECK(alphaAt(shot.boxTop) > 0.95f);
+    CHECK(alphaAt(shot.holdout) < 0.05f);
+    CHECK(hidden <= 2);
+    CHECK(shade < 0.8f);
+    CHECK(brightness(shot.shadow, false) < brightness(shot.shadow, true) * 85 / 100);
+    // Through the glass, the plate -- a little of the light reflected away.
+    CHECK(std::abs(brightness(shot.pane, false) - brightness(shot.pane, true)) < brightness(shot.pane, true) / 4);
+}
+
+}  // namespace
+
+TEST(render_the_path_tracer_draws_the_cg_over_a_plate) {
+    const int w = 80, h = 48;
+    PlateShot shot = plateShot(w, h);
+    Settings s;
+    s.width = w;
+    s.height = h;
+    s.samples = 64;
+    s.denoise = false;
+    PathTracer t;
+    t.setSettings(s);
+    SceneBuilder builder;
+    t.setScene(builder.build(shot.in));
+    while (!t.done()) t.pass();
+    const Rendered r = renderedOf(t, false);
+    checkOverPlate(shot, r, "the path tracer");
+    // Into an EXR: the CG alone, its alpha, what the plate is multiplied by.
+    const fs::path dir = fs::temp_directory_path() / "pg_test_plate";
+    fs::create_directories(dir);
+    std::string error;
+    CHECK(savePicture(r, (dir / "over.exr").string(), "", error));
+    io::ExrImage exr;
+    CHECK(io::readExr((dir / "over.exr").string(), exr, error));
+    std::set<std::string> names;
+    const io::ExrChannel* a = nullptr;
+    for (const auto& c : exr.channels) {
+        names.insert(c.name);
+        if (c.name == "A") a = &c;
+    }
+    for (const char* want : {"R", "G", "B", "A", "catcher.R", "catcher.G", "catcher.B", "Z"}) CHECK(names.count(want));
+    if (a) {
+        const auto [bx, by] = pixelOf(shot.in.camera, w, h, shot.boxTop);
+        CHECK(a->values[0] < 0.01f);
+        CHECK(a->values[static_cast<size_t>(by) * w + bx] > 0.95f);
+    }
+    fs::remove_all(dir);
+    // Without the plate, holdouts and catchers are drawn as themselves: the
+    // holdout, nothing of the CG over the plate, is there in its light.
+    shot.in.plate = nullptr;
+    t.setScene(builder.build(shot.in));
+    while (!t.done()) t.pass();
+    const Rendered plain = renderedOf(t, false);
+    CHECK(plain.alpha.pixels.empty() && plain.catcher.pixels.empty() && plain.plate.pixels.empty());
+    const auto [hx, hy] = pixelOf(shot.in.camera, w, h, shot.holdout);
+    const size_t held = 3 * (static_cast<size_t>(hy) * w + hx);
+    auto lightAt = [&](const Image& image) {
+        return std::max(image.pixels[held], std::max(image.pixels[held + 1], image.pixels[held + 2]));
+    };
+    std::printf("  the holdout's pixel: %.3f over the plate, %.3f without it\n", lightAt(r.beauty), lightAt(plain.beauty));
+    CHECK(lightAt(r.beauty) < 0.01f);
+    CHECK(lightAt(plain.beauty) > 0.05f);
+}
+
+TEST(render_cycles_draws_the_cg_over_a_plate) {
+    if (!cyclesAvailable()) return;
+    const int w = 80, h = 48;
+    const PlateShot shot = plateShot(w, h);
+    Settings s;
+    s.width = w;
+    s.height = h;
+    s.samples = 64;
+    s.denoise = false;
+    s.sky = Settings::Sky::Look;
+    s.detail = 0.0f;
+    SceneBuilder builder;
+    CyclesRender render;
+    render.start(builder.build(shot.in), s);
+    render.wait();
+    CHECK(render.error().empty());
+    checkOverPlate(shot, render.rendered(), "Cycles");
 }

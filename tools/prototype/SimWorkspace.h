@@ -667,6 +667,9 @@ private:
     int renderScale_ = 1;               ///< into 25, 50, 100 %
     uint64_t renderKey_ = 0;
     render::Settings renderSettings_;
+    /// The plate the Render tab's CG goes over: the shot camera's, of the
+    /// frame shown -- read once, kept while the file and the camera stay.
+    std::shared_ptr<const render::Plate> renderPlate_;
     struct Notice {
         std::string text, path;
         bool error = false;

@@ -30,6 +30,11 @@
 //                backdrop instead, without Sky Behind;
 //   camera       the shot's: its lens, the f-number and the distance in
 //                focus of the Output.
+//   plate        over one (Plate.h): the film transparent where the CG is
+//                not -- glass too -- the scene's holdouts and catchers, and
+//                the floor's, Cycles' own; its shadow catcher pass, what the
+//                plate is multiplied by. Without one, they are drawn as
+//                themselves.
 //
 // Cycles is Z up; ours, Y: the whole scene is turned onto its side for it.
 // The light it renders is ours -- linear, the same exposure, the same tone
@@ -40,6 +45,7 @@
 // build it with) the path tracer (PathTracer.h) renders.
 //
 #include "pg/render/PathTracer.h"
+#include "pg/render/Save.h"
 #include "pg/render/Scene.h"
 
 #include <cstdint>
@@ -85,8 +91,10 @@ public:
     std::string error() const;
 
     /// A picture newer than the last taken -- linear light, the noise taken
-    /// out when the settings ask for it -- false when there is none.
-    bool takePicture(Image& beauty);
+    /// out when the settings ask for it -- false when there is none. Over a
+    /// plate, the CG alone, with its alpha -- and at the end the catcher
+    /// pass (alpha(), catcher()).
+    bool takePicture(Image& beauty, Image* alpha = nullptr, Image* catcher = nullptr);
 
     /// After the end: the picture, and what the first surface each pixel
     /// sees is -- its colour, its normal, how far it is (as PathTracer's).
@@ -94,6 +102,15 @@ public:
     Image albedo() const;
     Image normal() const;
     Image depth() const;
+    /// Over a plate (Scene::plate, Plate.h) the picture is the CG alone:
+    /// this how much of each pixel it covers, one channel -- and what the
+    /// plate is multiplied by there, Cycles' shadow catcher pass (none
+    /// without catchers).
+    Image alpha() const;
+    Image catcher() const;
+    /// All of it, as a file takes it (Save.h): over a plate, with the
+    /// plate's light in each pixel.
+    Rendered rendered() const;
 
 private:
     struct Impl;

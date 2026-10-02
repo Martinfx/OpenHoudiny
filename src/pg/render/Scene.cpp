@@ -418,6 +418,7 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
                 hit.color = look.groundColor;
                 hit.material = &floorMaterial;
                 hit.floor = true;
+                hit.solid = -1;
                 return true;
             }
         }
@@ -444,6 +445,7 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
         }
         hit.material = &m.materials[m.material[t]];
         hit.floor = false;
+        hit.solid = -1;
         return true;
     }
     if (solidHit >= 0) {
@@ -453,7 +455,33 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
         hit.color = solids[static_cast<size_t>(solidHit)].color;
         hit.material = &solidMaterial;
         hit.floor = false;
+        hit.solid = solidHit;
         return true;
+    }
+    return false;
+}
+
+sim::Matte Scene::matteOf(const Hit& hit) const {
+    if (!plate) return sim::Matte::None;
+    if (hit.floor) return look.floorMatte;
+    return hit.solid >= 0 && static_cast<size_t>(hit.solid) < solids.size() ? solids[static_cast<size_t>(hit.solid)].matte
+                                                                              : sim::Matte::None;
+}
+
+bool Scene::realBlocks(const Vec3& origin, const Vec3& dir, float tMax) const {
+    for (size_t i = 0; i < solids.size() && i < shapes.size(); ++i) {
+        if (solids[i].matte == sim::Matte::None) continue;
+        float t = 0.0f;
+        Vec3 n;
+        if (shapes[i].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < tMax) return true;
+    }
+    // The floor, where it is a real thing too.
+    if (look.floor && look.floorMatte != sim::Matte::None && dir.y < -1e-9f && origin.y > 0.0f) {
+        const float t = -origin.y / dir.y;
+        if (t < tMax) {
+            const Vec3 at = origin + dir * t;
+            if (std::sqrt(at.x * at.x + at.z * at.z) < floorRadius) return true;
+        }
     }
     return false;
 }
@@ -601,6 +629,7 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     s.cameraAfter = in.cameraMotion ? in.cameraAfter : in.camera;
     s.frameTime = in.frameTime;
     s.time = in.time;
+    s.plate = in.plate;
     s.sunDirection = normalize(in.look.lightDirection());
     s.sunLight = in.look.lightColor * in.look.lightIntensity;
     s.skyLight = in.look.skyColor * in.look.skyIntensity;

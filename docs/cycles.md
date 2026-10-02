@@ -71,6 +71,7 @@ through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 | obloha | Sky `physical`: obloha Nishita; Sky `look`: s **Sky Behind** obloha Looku jako obrázek všude kolem; bez Sky Behind vždy pozadí studia pro kameru |
 | kamera | záběr z kamery nebo pohled viewportu, objektiv, clona a ostrost z Output |
 | pohyb (rychlost `v` bodů, kamera v pohybu) | rozmazání po dráze, dokud je otevřená závěrka ([níže](#rozmazání-pohybem)) |
+| plate kamery záběru | průhledný film, i přes sklo; holdouty a catchery (objekty i podlaha) jako holdouty a shadow catchery Cyclesu; slunce a obloha jako skutečná světla; průchod Shadow Catcher jako násobitel plate ([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)) |
 
 Scéna je v Cycles otočená, protože Cycles má osu Z nahoru a my Y.
 Expozice zůstává stejná jako v path traceru i ve viewportu.
@@ -306,6 +307,12 @@ dostane snímek, na kterém se zastaví.
   `MOTION_POSITION_CENTER`. Integrátor má `set_motion_blur`, jen když se
   něco hýbe. Síť, která se hýbe, se po změně Motion Blur postaví znovu,
   ostatní zůstanou.
+- Plate (`Cycles.cpp`, `Plate.h`): nad plate je film průhledný
+  (`Background::transparent`, `transparent_glass`). Objekty a podlaha mají
+  `set_use_holdout` nebo `set_is_shadow_catcher` a slunce i obloha mají
+  `set_is_shadow_catcher`, protože jsou to skutečná světla. Průchod
+  `PASS_SHADOW_CATCHER` se jmenuje „catcher“. Při čtení „combined“ dá
+  Cycles CG bez catcherů i s alfou a z toho `overPlate` složí obraz.
 - `src/pg/render/PathTracer.cpp`: `shown()` převádí lineární světlo na obraz
   (AgX, AgX Punchy, ACES) pro oba renderery.
 - `src/pg/render/Gas.h`: `Gas::dense` dává mřížky plynu pro renderer, který
@@ -347,6 +354,10 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
 - `render_scene_carries_how_fast_what_moves_goes`: každý roh trojúhelníku
   i každý úlomek drti nese rychlost svého bodu. Kamera mezi dvěma snímky
   je v půli cesty a otáčí se kratší cestou.
+- `render_cycles_draws_the_cg_over_a_plate`: nad plate je plate tam, kde
+  CG nic nemění, pixel po pixelu, CG kvádr ho zakryje, holdout odkryje,
+  stín na catcheru ho ztmaví a sklem prosvítá
+  ([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)).
 - `render_cycles_blurs_what_moves_while_the_shutter_is_open`: čtverec
   letící 24 m/s, úlomek drti a kamera, která jede kolem stojícího
   čtverce, jsou rozmazané. Stopa je o víc než 8 pixelů širší, nejvyšší
@@ -361,7 +372,5 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   reliéf je z výšky, [materials.md](materials.md)).
 - Mraky jako objem (stíny mraků na zemi, mraky, do kterých se dá vletět)
   a obloha z obrázku ve viewportu.
-- Plate (obraz na pozadí kamery). Holdout a shadow catcher na objektech
-  scény ano.
 - Plyn přímo jako NanoVDB v Cycles (bez husté mřížky): Cycles ho umí jen
   s OpenVDB.

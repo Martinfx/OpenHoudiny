@@ -6,6 +6,7 @@
 #include "Widgets.h"
 #include "pg/render/Cycles.h"
 #include "pg/render/Denoise.h"
+#include "pg/render/Plate.h"
 
 #include <cmath>
 #include <cstring>
@@ -193,6 +194,19 @@ void SimWorkspace::renderTab(int width, int height) {
             r.input.cameraAfter = compiled_.cameraAt(current_ + 1);
         }
         r.input.frameTime = compiled_.world.timeStep;
+        // Through the shot's camera, its plate behind the CG.
+        if (throughCamera_ && compiled_.hasCamera) {
+            const sim::Camera& shot = compiled_.cameraAt(current_);
+            const std::string file = shot.plateFile(current_);
+            if (file.empty()) {
+                renderPlate_.reset();
+            } else if (!renderPlate_ || renderPlate_->file != file || !(renderPlate_->camera == shot.sanitized())) {
+                // One that cannot be read: none -- the viewport says why.
+                std::string why;
+                renderPlate_ = render::loadPlate(file, shot, why);
+            }
+            r.input.plate = renderPlate_;
+        }
         r.input.sunAngle = settings.sunAngle;
         r.input.time = static_cast<float>(current_ - 1) * compiled_.world.timeStep;
         const sim::Domain dm = sceneBox();

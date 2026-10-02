@@ -10,7 +10,8 @@ plate. Prototype to umí celé:
 - objekty a podlaha mohou být skutečné věci ze záběru:
   - **holdout** schová CG, které je za ním, a ukáže tam plate;
   - **shadow catcher** udělá totéž a navíc na sebe vezme stíny CG a světlo ohně;
-- do **EXR** zapíše CG zvlášť s alfou a vedle ní průchod catcheru, pro compositing.
+- do **EXR** zapíše CG zvlášť s alfou a vedle ní průchod catcheru, pro compositing;
+- totéž umí finální render, **Cycles** i path tracer ([§4](#ve-finálním-renderu-cycles-a-path-tracer)).
 
 Kde CG nic nemění, vyjde plate z renderu pixel po pixelu, jak do něj
 vešel.
@@ -112,6 +113,56 @@ Ověřeno na příkladu `matchmove`: složení podle vzorce, protažené tónovo
 křivkou, dá PNG z rendereru. U 99,7 % pixelů na úroveň z 255, rozdíly
 zbývají jen na hranách, kde se vyhlazení 2 × 2 průměruje jinde.
 
+### Ve finálním renderu: Cycles a path tracer
+
+![Snímek 72 příkladu matchmove: vlevo plate, uprostřed Cycles (64 vzorků na pixel), vpravo path tracer (128 vzorků). Oheň svítí na podlahu a na bok bedny, kouř stíní zeď, stěny, trám a bedny zůstaly skutečné](img/plate-render.jpg)
+
+Plate jde i do finálního renderu, když se renderuje kamerou záběru:
+v `prototype sim … --renderer cycles` nebo `--renderer path` a v záložce
+**Render** editoru (pohled kamerou, klávesa **0**).
+
+```bash
+./build/prototype sim matchmove mm.png --renderer cycles             # snímek 72 nad plate
+./build/prototype sim matchmove mm.exr --renderer cycles --every 24  # CG, A a catcher pro compositing
+./build/prototype sim matchmove mm.png --renderer path --samples 128 # totéž přes path tracer
+```
+
+Renderer dá jen CG, kolik z pixelu zakrývá (alfa) a čím plate vynásobit
+(catcher). PNG a záložka Render ukážou `plate × catcher × (1 − A) + CG`
+v lineárním světle. EXR má kanály jako v tabulce výše (a k tomu `Z`,
+`albedo.*` a `N.*`, [cycles.md](cycles.md)). PNG a JPEG jdou do světla
+rendereru zpátky inverzí jeho view transformu (AgX, AgX Punchy nebo ACES,
+`unshown`), a tak kde CG nic nemění, vyjde plate pixel po pixelu stejný.
+Jedinou výjimkou je čistá bílá: AgX Punchy ukáže nejvýš 254,5 z 255,
+takže 255 vyjde jako 254.
+
+- **Cycles** renderuje na průhledný film, i přes sklo (Transparent Glass
+  jako v Blenderu). Holdouty a catchery, objekty i podlaha, jsou jeho
+  vlastní holdouty a shadow catchery. Slunce a obloha jsou skutečná
+  světla, která plate osvětlila (v Blenderu „shadow catcher“ u světla),
+  a proto svítí i ve světle bez CG. Násobitel plate je průchod Shadow
+  Catcher: světlo na catcheru s CG lomeno světlem bez CG, obojí sledováním
+  cest. Stíny CG, kouře i oheň v něm jsou celé a odšumí se spolu s obrazem.
+- **Path tracer:** kamerový paprsek, který skončí na plate, holdoutu nebo
+  catcheru, nechá pixel plate. Na catcheru spočítá světlo bílé matné
+  plochy s CG a bez něj ze stejných paprsků. S CG je to slunce za vším
+  (i za kouřem) a jeden směr oblohy, na kterém je obloha, nebo co pošle
+  CG: jeho světlo, světlo ohně. Bez CG je to slunce jen za skutečnými
+  věcmi a obloha mezi nimi. Kde CG nic nemění, jsou obě stejná a poměr
+  je přesně 1. Násobitel odšumí Open Image Denoise spolu s obrazem. Sklem
+  a vodou vidí kamera plate po lomeném paprsku. Ten je pak už v CG
+  a alfa skla je 1, kdežto v Cycles je sklo průhledné.
+- **Bez plate**, pohledem mimo kameru záběru nebo s kamerou bez plate, se
+  holdouty i catchery kreslí jako obyčejné objekty.
+
+Cycles a path tracer dávají nad plate podobný obraz. Stíny jsou v obou
+sledované paprsky, takže světlo ohně zastaví i zeď, kterou ve viewportu
+projde. Snímek 1280 × 720 na čtyřech jádrech trvá v Cycles se 64 vzorky
+7,6 min, v path traceru se 128 vzorky 2,2 min. EXR z Cycles složené
+podle vzorce a protažené tónovou křivkou dá PNG z rendereru: 98 % pixelů
+přesně, zbytek o 1 úroveň z 255, protože EXR drží hodnoty jako half
+float.
+
 ## 5. Obrázky bez knihoven
 
 Plate čtou vlastní čtečky v `src/pg/io`. Tytéž čtečky i zapisovače jsou
@@ -159,6 +210,25 @@ previz bez simulace.
   úhlem, měly ve stínech zobrazené geometrie pruhy. Stín se teď hledá kousek
   od povrchu po normále (půl druhého texelu mapy) a pruhy zmizely.
 
+- **Finální render nad plate** (`tests/test_render.cpp`): záběr s CG
+  kvádrem, jeho stínem na podlaze (catcher), holdoutem před druhým
+  kvádrem a sklem. Path tracer i Cycles:
+  - nad horizontem dají plate pixel po pixelu (320 z 320 pixelů);
+  - kvádr zakryje svůj pixel (alfa 1,00), holdout ho odkryje (0,00) a za
+    ním je plate na úroveň;
+  - stín kvádru vynásobí plate 0,17 (path tracer) a 0,22 (Cycles);
+  - přes sklo je plate o 7 až 8 % tmavší, o odraz na skle;
+  - EXR (z path traceru) má `A` a `catcher.R/G/B`;
+  - bez plate jsou holdout a catcher obyčejné objekty: pixel holdoutu má
+    v path traceru jeho světlo (0,13), nad plate z CG nic.
+- **Inverze view transformu** (`render_unshown_gives_back_the_light_a_picture_shows`):
+  všech 256 šedých se vrátí na úroveň v AgX, AgX Punchy (bílá na 254)
+  i ACES; barvy fotografie v AgX a ACES všechny, v AgX Punchy 3998 ze
+  4000, zbylé o jednu úroveň.
+- **Příklad `matchmove` bez ohně** v Cycles: násobitel 0,997 až 1,003
+  (1. a 99. percentil), obraz se od plate liší v průměru o 0,9 úrovně
+  z 255 (plate zmenšený na 640 × 360).
+
 ## 8. V kódu
 
 | soubor | co dělá |
@@ -169,6 +239,9 @@ previz bez simulace.
 | `src/pg/sim/Camera.h` | `Camera::plate`, `plateFrame`, `plateFile(frame)` |
 | `src/pg/sim/Look.h`, `Scene.h` | `Matte` (None, Holdout, Catcher), `Solid::matte`, `Look::floorMatte` |
 | `src/pg/gl/Volume.h` | `setPlate`, `clearPlate`: plate jako textura RGBA16F; v shaderu `plateAt`, `realSun`, `catcher`; průchod `catcher.*` v `writePassesExr` |
+| `src/pg/render/Plate.h` | finální render: `Plate`, `loadPlate`, `plateLight` (plate ve světle rendereru), `plateSeen` (v pixelech obrazu), `overPlate` (složení) |
+| `src/pg/render/PathTracer.h`, `Scene.h` | `unshown` (inverze view transformu); `PathTracer::alpha`, `catcher`; `Scene::plate`, `matteOf`, `realBlocks` |
+| `src/pg/render/Cycles.cpp` | průhledný film, holdouty a shadow catchery Cyclesu, slunce a obloha jako skutečná světla, průchod `catcher` |
 | `tools/prototype/SimViewport.cpp`, `Commands.cpp` | plate v editoru a v `prototype sim` |
 | `examples/usd/make_plate.py` | plate příkladu: kulisa kamerou z matchmove a „film“ |
 | `tests/test_picture.cpp` | 7 testů: PNG, JPEG a EXR proti knihovnám, jména sekvencí, vadné soubory, zápis a čtení zpět, plate a matte v síti |
@@ -185,7 +258,8 @@ previz bez simulace.
   buňkách podél nejdelší strany. To je hrubší než stíny, které má plate. Na
   hraně skutečného stínu, kam svítí oheň, proto může zůstat šev široký pixel
   nebo dva.
-- **Světlo ohně** prochází zdmi: renderer ho nestíní.
+- **Světlo ohně** prochází ve viewportu zdmi: viewport ho nestíní. Cycles
+  a path tracer ano.
 - **Zrno:** CG zrno plate nemá. Doladit ho je práce compositingu z EXR.
 - **Odrazy a osvětlení z plate:** CG nevidí plate jinak než jako pozadí.
   Voda v něm plate neodráží a HDRI z něj nesvítí.

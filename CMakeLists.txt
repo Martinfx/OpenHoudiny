@@ -314,6 +314,7 @@ add_library(pgsim
   src/pg/render/Scene.cpp
   src/pg/render/Particles.cpp
   src/pg/render/PathTracer.cpp
+  src/pg/render/Plate.cpp
   src/pg/render/Save.cpp
   src/pg/render/Textures.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp

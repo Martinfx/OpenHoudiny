@@ -78,6 +78,10 @@ private:
     /// The scene of `request`, built off the lock.
     std::shared_ptr<const render::Scene> build(Request& request);
     void publish(const render::Image& image, float exposure, render::Settings::View view);
+    /// The plate in Cycles' light (render::plateLight), made once for each
+    /// plate, view and exposure: Cycles' pictures come many a second.
+    const render::Image& plateLight(const std::shared_ptr<const render::Plate>& plate, render::Settings::View view,
+                                    float exposure);
 
     std::thread thread_;
     mutable std::mutex mutex_;
@@ -104,6 +108,11 @@ private:
     std::string error_;
     // Seconds the last noise taken out took, and the passes since took.
     double denoiseCost_ = 0.0, sinceDenoise_ = 0.0;
+    // The plate in Cycles' light, and what it is of (plateLight).
+    render::Image plateLight_;
+    std::shared_ptr<const render::Plate> plateOf_;
+    render::Settings::View plateView_ = render::Settings::View::AgXPunchy;
+    float plateExposure_ = 0.0f;
 };
 
 }  // namespace pg::editor

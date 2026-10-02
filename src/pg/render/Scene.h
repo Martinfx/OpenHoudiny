@@ -25,6 +25,10 @@
 //   gas      the smoke and the fire of the frame, as the Volume Look has
 //            them (Gas.h): rays go through it, scattered in the smoke, lit
 //            by the flames.
+//   plate    what the camera filmed, rendered through that camera (Plate.h):
+//            the CG goes over it, the objects that are holdouts and shadow
+//            catchers (sim::Matte) -- the floor too -- the real things it
+//            shows. Without it, they are drawn as themselves.
 //
 // What a surface is made of comes from attributes of its geometry -- of its
 // primitive, else its first point, else the detail -- as in Houdini:
@@ -55,6 +59,8 @@
 #include <vector>
 
 namespace pg::render {
+
+struct Plate;
 
 struct Material {
     /// Rain: a drop's streak (Particles.h) -- water where a ray meets it from
@@ -170,6 +176,7 @@ struct Hit {
     Vec3 tint{1.0f, 1.0f, 1.0f};  ///< its copy's (an instance's): in `color` already
     const Material* material = nullptr;
     bool floor = false;
+    int solid = -1;  ///< which of the scene's objects (Scene::solids), or -1
 };
 
 struct Scene {
@@ -203,6 +210,9 @@ struct Scene {
     bool cameraMoves = false;
     float frameTime = 1.0f / 30.0f;  ///< seconds from a frame to the next (SceneInput::frameTime)
     float time = 0.0f;          ///< seconds into the shot (SceneInput::time)
+    /// What the camera filmed, the CG goes over (SceneInput::plate); null
+    /// for none.
+    std::shared_ptr<const Plate> plate;
     /// Where the rain wets what it falls on, as the viewport has it: within
     /// the drops' extent in x and z (wetLo to wetHi), drying off some 35 cm
     /// out; how wet there (Look::wetness) -- 0 without rain.
@@ -231,6 +241,14 @@ struct Scene {
     /// How wet the rain has made a surface at `p` facing `n` (its side seen),
     /// 0 to 1: under it, and facing up -- as the viewport wets the floor.
     float wetAt(const Vec3& p, const Vec3& n) const;
+    /// What a surface met is over the plate: an object's matte, the floor's
+    /// (Look::floorMatte); Matte::None without a plate -- everything is
+    /// then drawn as itself.
+    sim::Matte matteOf(const Hit& hit) const;
+    /// Whether a holdout or a catcher -- one of the real things the plate
+    /// shows -- is in the way along the unit `dir` from `origin` before
+    /// `tMax`: what hides the light from a catcher in the real scene.
+    bool realBlocks(const Vec3& origin, const Vec3& dir, float tMax) const;
 };
 
 /// What a frame shows.
@@ -255,6 +273,9 @@ struct SceneInput {
     float sunAngle = 0.53f;  ///< degrees across the sun's disc
     Box domain;              ///< the simulations' box, for how far the floor goes
     float time = 0.0f;       ///< seconds into the shot: how far the clouds have drifted
+    /// What the camera filmed (loadPlate): when the shot is rendered through
+    /// that camera, the CG goes over it. Null: none.
+    std::shared_ptr<const Plate> plate;
 };
 
 /// Builds scenes, keeping the meshes of the prototypes that live on -- a
