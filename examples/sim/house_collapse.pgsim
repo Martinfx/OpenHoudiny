@@ -1,0 +1,416 @@
+pgsim 1
+# A family house collapses into its garden, seen from across the street on a
+# summer afternoon. It is built as a house is built: the openings first (a
+# point each), the walls round them -- blocks of fired clay laid course by
+# course in mortar by Brick Wall, a wall at a time in a For-Each loop,
+# plastered outside and in -- in pieces of masonry a few blocks each (RBD
+# Cluster), those in chunks glued harder inside; slabs of concrete (Concrete
+# Fracture), the gables, a roof of tiles on its rafters that breaks in strips
+# (Voronoi Fracture), a brick chimney, gutters and downpipes, windows in white
+# frames with their panes (Glass Fracture, a pane at a time in a For-Each
+# loop), a door of wood, on a plinth that stays. The walls of the ground
+# floor give way, the left side first (charges): their foot bursts to dust,
+# the rest comes loose, and what stood on them drops and breaks up where it
+# lands, the fence along the street catching what flies out. The dust -- the
+# Pyro Solver's -- rolls out over the garden and a breeze takes it off. The
+# street round it: a lawn with grass, paving, the road between kerbs, trees,
+# shrubs, the neighbours' houses, street lamps. prototype sim house_collapse
+# out.png --renderer cycles renders it through the camera in Cycles, the sky
+# physical.
+node 1 detail_wrangle 1 openings 0 0
+  param snippet "// The house's measures, and its openings: a point in the middle of each,\n// halfway through its wall -- N out of the wall, width and height, the wall\n// it is in (wall: 0 and 1 the front's ground and upper floor, 2 3 the\n// back's, 4 5 the left side's, 6 7 the right's) and what it is (kind:\n// window, door). The walls are laid round them, the windows and the door\n// set into them. A window runs from the third bed joint of its floor to\n// the ninth -- sill and head on a course of blocks (Course) -- the door\n// from the floor to the ninth. The measures go on as detail attributes:\n// the nodes that build the house read them from here.\nvoid opening(vector p; vector n; float w; float h; int wall; string kind) {\n    int pt = addpoint(0, p);\n    setpointattrib(0, \"N\", pt, n);\n    setpointattrib(0, \"width\", pt, w);\n    setpointattrib(0, \"height\", pt, h);\n    setpointattrib(0, \"wall\", pt, wall);\n    setpointattrib(0, \"kind\", pt, kind);\n}\n\nfloat width = ch(\"width\");\nfloat depth = ch(\"depth\");\nfloat t = ch(\"thickness\");\nfloat base = ch(\"plinth\");\nfloat storey = ch(\"storey\");\nfloat slab = ch(\"slab\");\nfloat c = ch(\"course\");\nsetdetailattrib(0, \"width\", width);\nsetdetailattrib(0, \"depth\", depth);\nsetdetailattrib(0, \"thickness\", t);\nsetdetailattrib(0, \"plinth\", base);\nsetdetailattrib(0, \"storey\", storey);\nsetdetailattrib(0, \"slab\", slab);\nsetdetailattrib(0, \"pitch\", ch(\"pitch\"));\nfloat zf = depth / 2 - t / 2;\nfloat xs = width / 2 - t / 2;\nfor (int fl = 0; fl < 2; fl++) {\n    float y0 = base + fl * (storey + slab);\n    float sill = y0 + 3 * c;\n    float head = y0 + 9 * c;\n    float mid = (sill + head) / 2;\n    float h = head - sill;\n    // The front: two wide windows, the door between them -- over it,\n    // upstairs, a narrower window.\n    opening(set(-3, mid, zf), set(0, 0, 1), 1.5, h, fl, \"window\");\n    opening(set(3, mid, zf), set(0, 0, 1), 1.5, h, fl, \"window\");\n    if (fl == 0) {\n        opening(set(0, (y0 + head) / 2, zf), set(0, 0, 1), 1.1, head - y0, 0, \"door\");\n    } else {\n        opening(set(0, mid, zf), set(0, 0, 1), 1.2, h, 1, \"window\");\n    }\n    // The back: three windows.\n    for (int k = -1; k <= 1; k++) {\n        opening(set(3 * k, mid, -zf), set(0, 0, -1), 1.2, h, 2 + fl, \"window\");\n    }\n    // The sides: a window into the front room, another into the back one.\n    for (int s = 0; s < 2; s++) {\n        float x = s == 0 ? -xs : xs;\n        vector n = set(s == 0 ? -1 : 1, 0, 0);\n        opening(set(x, mid, 1.7), n, 1.2, h, 4 + 2 * s + fl, \"window\");\n        opening(set(x, mid, -2.2), n, 1.2, h, 4 + 2 * s + fl, \"window\");\n    }\n}"
+  param width 10
+  param depth 8
+  param thickness 0.3
+  param plinth 0.45
+  param storey 2.75
+  param slab 0.25
+  param course 0.25
+  param pitch 40
+node 2 detail_wrangle 1 walls 0 110
+  param snippet "// The walls, floor by floor: each a solid of boxes round its openings (the\n// points of input 1) -- touching face to face, as Brick Wall takes them --\n// its number in wall, as the openings have it. The front and the back run\n// the house's whole width, the sides between them; inside, a wall down the\n// middle of each floor (8, 9: the group inner), a doorway through it.\n\nvoid box(vector lo; vector hi; int w) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));  // -x\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));  // +x\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));  // -y\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));  // +y\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));  // -z\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));  // +z\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"wall\", f[k], w);\n        setprimgroup(0, \"inner\", f[k], w >= 8);\n    }\n}\n\n// A wall from a0 to a1 along x (axis 0) or z (axis 2), c0 to c1 across it,\n// y0 to y1 up, round the openings in holes -- four numbers each: from, to\n// along it, from, to up -- cut into strips where an opening begins or ends.\nvoid wall(int axis; float a0; float a1; float c0; float c1; float y0; float y1; float holes[]; int w) {\n    float cuts[] = array(a0, a1);\n    for (int k = 0; k < len(holes); k += 4) {\n        append(cuts, holes[k]);\n        append(cuts, holes[k + 1]);\n    }\n    cuts = sort(cuts);\n    for (int i = 0; i + 1 < len(cuts); i++) {\n        float s = cuts[i];\n        float e = cuts[i + 1];\n        if (e - s < 0.0001) continue;\n        // The openings across this strip, from the bottom up.\n        float ys[];\n        for (int k = 0; k < len(holes); k += 4) {\n            if (holes[k] <= s + 0.0001 && holes[k + 1] >= e - 0.0001) {\n                append(ys, holes[k + 2]);\n                append(ys, holes[k + 3]);\n            }\n        }\n        ys = sort(ys);\n        float lo = y0;\n        for (int k = 0; k <= len(ys); k += 2) {\n            float top = k < len(ys) ? ys[k] : y1;\n            if (top - lo > 0.0001) {\n                if (axis == 0) box(set(s, lo, c0), set(e, top, c1), w);\n                else box(set(c0, lo, s), set(c1, top, e), w);\n            }\n            if (k < len(ys)) lo = ys[k + 1];\n        }\n    }\n}\n\nfloat hw = detail(1, \"width\") / 2;\nfloat hd = detail(1, \"depth\") / 2;\nfloat t = detail(1, \"thickness\");\nfloat base = detail(1, \"plinth\");\nfloat storey = detail(1, \"storey\");\nfloat slab = detail(1, \"slab\");\nfor (int w = 0; w < 10; w++) {\n    int fl = w < 8 ? w % 2 : w - 8;\n    int side = int(w / 2);\n    float y0 = base + fl * (storey + slab);\n    float y1 = y0 + storey;\n    float holes[];\n    for (int i = 0; i < npoints(1); i++) {\n        if (point(1, \"wall\", i) != w) continue;\n        vector p = point(1, \"P\", i);\n        vector n = point(1, \"N\", i);\n        float a = abs(n.z) > 0.5 ? p.x : p.z;\n        float hw2 = point(1, \"width\", i) / 2;\n        float hh = point(1, \"height\", i) / 2;\n        append(holes, a - hw2);\n        append(holes, a + hw2);\n        append(holes, p.y - hh);\n        append(holes, p.y + hh);\n    }\n    if (w >= 8) {\n        // The wall down the middle, its doorway: on the left downstairs,\n        // on the right upstairs -- eight courses high.\n        float d = fl == 0 ? -1.8 : 1.8;\n        float mz = ch(\"middle\");\n        append(holes, d - 0.45);\n        append(holes, d + 0.45);\n        append(holes, y0);\n        append(holes, y0 + 2.0);\n        wall(0, -hw + t, hw - t, mz - ch(\"inner_thickness\") / 2, mz + ch(\"inner_thickness\") / 2, y0, y1, holes, w);\n    } else if (side == 0) {\n        wall(0, -hw, hw, hd - t, hd, y0, y1, holes, w);\n    } else if (side == 1) {\n        wall(0, -hw, hw, -hd, -hd + t, y0, y1, holes, w);\n    } else if (side == 2) {\n        wall(2, -hd + t, hd - t, -hw, -hw + t, y0, y1, holes, w);\n    } else {\n        wall(2, -hd + t, hd - t, hw - t, hw, y0, y1, holes, w);\n    }\n}"
+  param middle -0.45
+  param inner_thickness 0.145
+node 3 blast 1 outer -120 220
+  param group "inner"
+node 4 blast 1 inner 120 220
+  param group "inner"
+  param invert on
+node 5 foreach_begin 1 each_wall -120 330
+  param attribute "wall"
+node 6 brick_wall 1 blocks -120 440
+  param bond stretcher
+  param width 0.27
+  param height 0.24
+  param plaster 0.015
+  param color 0.55 0.26 0.15
+  param variation 0.2
+  param mortar 0.6 0.58 0.54
+  param plastercolor 0.72 0.6 0.42
+  param broken 0
+node 7 primitive_wrangle 1 finish -120 550
+  param snippet "// Each wall's blocks numbered on from the walls before it -- no two share a\n// number -- with the wall and the floor they are of, and plastered as a\n// house is: the plaster outside the facade's colour (Plaster), inside white\n// (Inside) -- and the faces round the openings too, where Brick Wall leaves\n// the ends of the blocks bare: a face that looks along the wall, or up or\n// down within its height, with air in front of it -- outside the wall's\n// boxes (input 1).\nint it = detail(1, \"iteration\");\ni@piece += 100000 * (it + chi(\"first\"));\ni@wall = prim(1, \"wall\", 0);\ni@floor = i@wall < 8 ? i@wall % 2 : i@wall - 8;\ni@kind = i@wall < 8 ? 1 : 2;\nvector n = prim_normal(0, @primnum);\nvector lo = getbbox_min(1);\nvector hi = getbbox_max(1);\nvector size = hi - lo;\nvector across = size.x < size.z ? set(1, 0, 0) : set(0, 0, 1);\nvector out = across * (dot(getbbox_center(1), across) < 0 ? -1 : 1);\nif (s@material == \"plaster\" && dot(n, out) < -0.5) @Cd = chv(\"inside\");\nint level = abs(n.y) > 0.5;\nint edge = level && (@P.y < lo.y + 0.01 || @P.y > hi.y - 0.01);\nif (abs(dot(n, across)) < 0.5 && !edge) {\n    vector q = @P + n * 0.005;\n    int air = 1;\n    for (int b = 0; b + 5 < nprimitives(1); b += 6) {\n        vector a = set(1e9, 1e9, 1e9);\n        vector z = set(-1e9, -1e9, -1e9);\n        for (int f = 0; f < 2; f++) {\n            foreach (int pt; primpoints(1, b + f)) {\n                vector p = point(1, \"P\", pt);\n                a = set(min(a.x, p.x), min(a.y, p.y), min(a.z, p.z));\n                z = set(max(z.x, p.x), max(z.y, p.y), max(z.z, p.z));\n            }\n        }\n        if (q.x > a.x && q.x < z.x && q.y > a.y && q.y < z.y && q.z > a.z && q.z < z.z) air = 0;\n    }\n    if (air) {\n        @Cd = chv(\"plaster\");\n        s@material = \"plaster\";\n    }\n}"
+  param first 1
+  param inside 0.7 0.68 0.64
+  param plaster 0.72 0.6 0.42
+node 8 foreach_end 1 outer_walls -120 660
+node 9 foreach_begin 1 each_inner 120 330
+  param attribute "wall"
+node 10 brick_wall 1 partition 120 440
+  param bond stretcher
+  param length 0.5
+  param width 0.115
+  param height 0.24
+  param plaster 0.015
+  param color 0.55 0.26 0.15
+  param variation 0.2
+  param mortar 0.6 0.58 0.54
+  param plastercolor 0.7 0.68 0.64
+  param broken 0
+node 11 primitive_wrangle 1 finish_inner 120 550
+  param snippet "// Each wall's blocks numbered on from the walls before it -- no two share a\n// number -- with the wall and the floor they are of, and plastered as a\n// house is: the plaster outside the facade's colour (Plaster), inside white\n// (Inside) -- and the faces round the openings too, where Brick Wall leaves\n// the ends of the blocks bare: a face that looks along the wall, or up or\n// down within its height, with air in front of it -- outside the wall's\n// boxes (input 1).\nint it = detail(1, \"iteration\");\ni@piece += 100000 * (it + chi(\"first\"));\ni@wall = prim(1, \"wall\", 0);\ni@floor = i@wall < 8 ? i@wall % 2 : i@wall - 8;\ni@kind = i@wall < 8 ? 1 : 2;\nvector n = prim_normal(0, @primnum);\nvector lo = getbbox_min(1);\nvector hi = getbbox_max(1);\nvector size = hi - lo;\nvector across = size.x < size.z ? set(1, 0, 0) : set(0, 0, 1);\nvector out = across * (dot(getbbox_center(1), across) < 0 ? -1 : 1);\nif (s@material == \"plaster\" && dot(n, out) < -0.5) @Cd = chv(\"inside\");\nint level = abs(n.y) > 0.5;\nint edge = level && (@P.y < lo.y + 0.01 || @P.y > hi.y - 0.01);\nif (abs(dot(n, across)) < 0.5 && !edge) {\n    vector q = @P + n * 0.005;\n    int air = 1;\n    for (int b = 0; b + 5 < nprimitives(1); b += 6) {\n        vector a = set(1e9, 1e9, 1e9);\n        vector z = set(-1e9, -1e9, -1e9);\n        for (int f = 0; f < 2; f++) {\n            foreach (int pt; primpoints(1, b + f)) {\n                vector p = point(1, \"P\", pt);\n                a = set(min(a.x, p.x), min(a.y, p.y), min(a.z, p.z));\n                z = set(max(z.x, p.x), max(z.y, p.y), max(z.z, p.z));\n            }\n        }\n        if (q.x > a.x && q.x < z.x && q.y > a.y && q.y < z.y && q.z > a.z && q.z < z.z) air = 0;\n    }\n    if (air) {\n        @Cd = chv(\"plaster\");\n        s@material = \"plaster\";\n    }\n}"
+  param first 9
+  param inside 0.7 0.68 0.64
+  param plaster 0.7 0.68 0.64
+node 12 foreach_end 1 inner_walls 120 660
+node 13 detail_wrangle 1 slabs 360 110
+  param snippet "// The two slabs of concrete, on the walls of the floor below: the ceiling\n// of the ground floor and of the upper one -- the walls of the floor above\n// and the gables stand on them.\nvoid slab(float y0; float y1; float hw; float hd) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hw : -hw, i & 2 ? y1 : y0, i & 4 ? hd : -hd)));\n    }\n    addprim(0, \"poly\", p[0], p[4], p[6], p[2]);\n    addprim(0, \"poly\", p[1], p[3], p[7], p[5]);\n    addprim(0, \"poly\", p[0], p[1], p[5], p[4]);\n    addprim(0, \"poly\", p[2], p[6], p[7], p[3]);\n    addprim(0, \"poly\", p[0], p[2], p[3], p[1]);\n    addprim(0, \"poly\", p[4], p[5], p[7], p[6]);\n}\n\nfloat hw = detail(1, \"width\") / 2;\nfloat hd = detail(1, \"depth\") / 2;\nfloat base = detail(1, \"plinth\");\nfloat storey = detail(1, \"storey\");\nfloat s = detail(1, \"slab\");\nfor (int fl = 0; fl < 2; fl++) {\n    float y0 = base + storey + fl * (storey + s);\n    slab(y0, y0 + s, hw, hd);\n}"
+node 14 concrete_fracture 1 slab_pieces 360 220
+  param count 70
+  param seed 3
+  param uneven 0.6
+  param chips 0.12
+  param chipsize 0.05
+  param rough 0.015
+  param detail 0.08
+node 15 primitive_wrangle 1 slab_finish 360 330
+  param snippet "// The slabs' pieces numbered on past the walls', and their faces as the\n// house has them: the edges round the outside plastered as the facade, the\n// undersides -- the ceilings -- white, the floors concrete.\ni@piece += 2000000;\ni@kind = 3;\ni@floor = @P.y > detail(1, \"plinth\") + 2 * detail(1, \"storey\") ? 1 : 0;\nif (!@group_inside) {\n    vector n = prim_normal(0, @primnum);\n    if (abs(n.y) < 0.5) {\n        @Cd = chv(\"plaster\");\n        s@material = \"plaster\";\n    } else if (n.y < -0.5) {\n        @Cd = chv(\"inside\");\n        s@material = \"plaster\";\n    }\n}"
+  param plaster 0.72 0.6 0.42
+  param inside 0.7 0.68 0.64
+node 16 detail_wrangle 1 gables 600 110
+  param snippet "// A polygon through the points ids -- at ps -- turned to face away from mid.\nvoid facet(int ids[]; vector ps[]; vector mid; int piece; vector color; string material) {\n    vector n = set(0, 0, 0);\n    vector c = set(0, 0, 0);\n    int m = len(ps);\n    for (int i = 0; i < m; i++) {\n        vector a = ps[i];\n        vector b = ps[(i + 1) % m];\n        n += set((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));\n        c += a;\n    }\n    c = c / m;\n    int pts[];\n    if (dot(n, c - mid) >= 0) {\n        for (int i = 0; i < m; i++) append(pts, ids[i]);\n    } else {\n        for (int i = m - 1; i >= 0; i--) append(pts, ids[i]);\n    }\n    int pr = addprim(0, \"poly\", pts);\n    setprimattrib(0, \"piece\", pr, piece);\n    setprimattrib(0, \"Cd\", pr, color);\n    setprimattrib(0, \"material\", pr, material);\n}\n\n// A prism: the outline zy -- corners in z and y, in order round it -- from\n// x0 to x1, closed, its corners shared by its faces.\nvoid prism(vector zy[]; float x0; float x1; int piece; vector color; string material) {\n    int m = len(zy);\n    vector mid = set(0, 0, 0);\n    vector pa[];\n    vector pb[];\n    int a[];\n    int b[];\n    for (int i = 0; i < m; i++) {\n        append(pa, set(x0, zy[i].y, zy[i].z));\n        append(pb, set(x1, zy[i].y, zy[i].z));\n        append(a, addpoint(0, pa[i]));\n        append(b, addpoint(0, pb[i]));\n        mid += pa[i] + pb[i];\n    }\n    mid = mid / (2 * m);\n    facet(a, pa, mid, piece, color, material);\n    facet(b, pb, mid, piece, color, material);\n    for (int i = 0; i < m; i++) {\n        int j = (i + 1) % m;\n        int q[] = array(a[i], a[j], b[j], b[i]);\n        vector qp[] = array(pa[i], pa[j], pb[j], pb[i]);\n        facet(q, qp, mid, piece, color, material);\n    }\n}\n\n// The gables: on the slab over the upper floor at each end of the house,\n// up under the roof -- their tops lie in the roof's underside. A solid each,\n// for the Voronoi Fracture.\nfloat hw = detail(1, \"width\") / 2;\nfloat hd = detail(1, \"depth\") / 2;\nfloat t = detail(1, \"thickness\");\nfloat yp = detail(1, \"plinth\") + 2 * (detail(1, \"storey\") + detail(1, \"slab\"));\nfloat ridge = yp + hd * tan(radians(detail(1, \"pitch\")));\nvector zy[] = array(set(0, yp, -hd), set(0, yp, hd), set(0, ridge, 0));\nprism(zy, -hw, -hw + t, 0, chv(\"plaster\"), \"plaster\");\nprism(zy, hw - t, hw, 0, chv(\"plaster\"), \"plaster\");"
+  param plaster 0.72 0.6 0.42
+node 17 voronoi_fracture 1 gable_pieces 600 220
+  param count 30
+  param seed 5
+node 18 primitive_wrangle 1 gable_finish 600 330
+  param snippet "// The gables' pieces numbered on past the slabs'; where they broke, the\n// ceramic of the blocks shows.\ni@piece += 3000000;\ni@kind = 4;\ni@floor = 2;\nvector n = prim_normal(0, @primnum);\nif (@group_inside) {\n    @Cd = chv(\"block\");\n    s@material = \"brick\";\n} else if (abs(n.x) > 0.5 && @P.x * n.x < 0) {\n    @Cd = chv(\"inside\");\n}"
+  param block 0.55 0.26 0.15
+  param inside 0.7 0.68 0.64
+node 19 detail_wrangle 1 roof 840 110
+  param snippet "// A polygon through the points ids -- at ps -- turned to face away from mid.\nvoid facet(int ids[]; vector ps[]; vector mid; int piece; vector color; string material) {\n    vector n = set(0, 0, 0);\n    vector c = set(0, 0, 0);\n    int m = len(ps);\n    for (int i = 0; i < m; i++) {\n        vector a = ps[i];\n        vector b = ps[(i + 1) % m];\n        n += set((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));\n        c += a;\n    }\n    c = c / m;\n    int pts[];\n    if (dot(n, c - mid) >= 0) {\n        for (int i = 0; i < m; i++) append(pts, ids[i]);\n    } else {\n        for (int i = m - 1; i >= 0; i--) append(pts, ids[i]);\n    }\n    int pr = addprim(0, \"poly\", pts);\n    setprimattrib(0, \"piece\", pr, piece);\n    setprimattrib(0, \"Cd\", pr, color);\n    setprimattrib(0, \"material\", pr, material);\n}\n\n// A prism: the outline zy -- corners in z and y, in order round it -- from\n// x0 to x1, closed, its corners shared by its faces.\nvoid prism(vector zy[]; float x0; float x1; int piece; vector color; string material) {\n    int m = len(zy);\n    vector mid = set(0, 0, 0);\n    vector pa[];\n    vector pb[];\n    int a[];\n    int b[];\n    for (int i = 0; i < m; i++) {\n        append(pa, set(x0, zy[i].y, zy[i].z));\n        append(pb, set(x1, zy[i].y, zy[i].z));\n        append(a, addpoint(0, pa[i]));\n        append(b, addpoint(0, pb[i]));\n        mid += pa[i] + pb[i];\n    }\n    mid = mid / (2 * m);\n    facet(a, pa, mid, piece, color, material);\n    facet(b, pb, mid, piece, color, material);\n    for (int i = 0; i < m; i++) {\n        int j = (i + 1) % m;\n        int q[] = array(a[i], a[j], b[j], b[i]);\n        vector qp[] = array(pa[i], pa[j], pb[j], pb[i]);\n        facet(q, qp, mid, piece, color, material);\n    }\n}\n\n// The roof: a slope on each side of the ridge, rafters and battens and\n// tiles -- Thickness of them -- out over the walls by Eaves at the bottom\n// and Verge at the gables, its underside on the tops of the front and back\n// walls' slab and on the gables.\nfloat hw = detail(1, \"width\") / 2;\nfloat hd = detail(1, \"depth\") / 2;\nfloat yp = detail(1, \"plinth\") + 2 * (detail(1, \"storey\") + detail(1, \"slab\"));\nfloat tn = tan(radians(detail(1, \"pitch\")));\nfloat th = ch(\"thickness\") / cos(radians(detail(1, \"pitch\")));\nfloat ov = ch(\"eaves\");\nfloat x = hw + ch(\"verge\");\nfloat ridge = yp + hd * tn;\nfor (int s = -1; s <= 1; s += 2) {\n    vector zy[] = array(set(0, ridge, 0), set(0, yp - ov * tn, s * (hd + ov)),\n                        set(0, yp - ov * tn + th, s * (hd + ov)), set(0, ridge + th, 0));\n    prism(zy, -x, x, 0, set(0.5, 0.5, 0.5), \"roof_tiles\");\n}"
+  param thickness 0.28
+  param eaves 0.55
+  param verge 0.45
+node 20 detail_wrangle 1 roof_seeds 1080 110
+  param snippet "// Where the roof breaks: points down each slope, Size apart along the\n// ridge and Length down the slope, a little off a grid -- strips of it\n// between the rafters, as a roof of timber breaks.\nfloat hw = detail(1, \"width\") / 2;\nfloat hd = detail(1, \"depth\") / 2;\nfloat yp = detail(1, \"plinth\") + 2 * (detail(1, \"storey\") + detail(1, \"slab\"));\nfloat a = radians(detail(1, \"pitch\"));\nfloat size = ch(\"size\");\nfloat x0 = hw + ch(\"verge\");\nfloat run = (hd + ch(\"eaves\")) / cos(a);\nfloat mid = yp + hd * tan(a) + 0.5 * ch(\"thickness\") / cos(a);\nint nx = int(rint(2 * x0 / size));\nint ns = max(1, int(rint(run / ch(\"length\"))));\nint k = 0;\nfor (int s = -1; s <= 1; s += 2) {\n    for (int i = 0; i < nx; i++) {\n        for (int j = 0; j < ns; j++) {\n            float u = -x0 + (i + 0.5 + 0.7 * (rand(k * 3 + 1) - 0.5)) * 2 * x0 / nx;\n            float d = (j + 0.5 + 0.7 * (rand(k * 3 + 2) - 0.5)) * run / ns;\n            addpoint(0, set(u, mid - d * sin(a), s * d * cos(a)));\n            k++;\n        }\n    }\n}"
+  param size 1
+  param length 2.2
+  expr verge "ch(\"../roof/verge\")"
+  expr eaves "ch(\"../roof/eaves\")"
+  expr thickness "ch(\"../roof/thickness\")"
+node 21 voronoi_fracture 1 roof_pieces 840 220
+node 22 primitive_wrangle 1 roof_finish 840 330
+  param snippet "// The roof's pieces numbered on past the gables', light -- timber and\n// tiles, not stone -- and their faces as a roof has them: tiles on top,\n// boards under the eaves, the fascia boards dark; inside each break the\n// timber of the rafters.\ni@piece += 4000000;\ni@kind = 5;\ni@floor = 3;\nf@density = 420;\nvector n = prim_normal(0, @primnum);\nif (@group_inside) {\n    @Cd = set(0.4, 0.27, 0.15);\n    s@material = \"wood\";\n} else if (n.y > 0.3) {\n    @Cd = chv(\"tiles\");\n    s@material = \"roof_tiles\";\n} else if (n.y < -0.3) {\n    @Cd = set(0.42, 0.3, 0.18);\n    s@material = \"wood\";\n} else {\n    @Cd = set(0.12, 0.08, 0.05);\n    s@material = \"wood\";\n}"
+  param tiles 0.075 0.08 0.085
+node 23 detail_wrangle 1 chimney 1080 220
+  param snippet "// A polygon through the points ids -- at ps -- turned to face away from mid.\nvoid facet(int ids[]; vector ps[]; vector mid; int piece; vector color; string material) {\n    vector n = set(0, 0, 0);\n    vector c = set(0, 0, 0);\n    int m = len(ps);\n    for (int i = 0; i < m; i++) {\n        vector a = ps[i];\n        vector b = ps[(i + 1) % m];\n        n += set((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));\n        c += a;\n    }\n    c = c / m;\n    int pts[];\n    if (dot(n, c - mid) >= 0) {\n        for (int i = 0; i < m; i++) append(pts, ids[i]);\n    } else {\n        for (int i = m - 1; i >= 0; i--) append(pts, ids[i]);\n    }\n    int pr = addprim(0, \"poly\", pts);\n    setprimattrib(0, \"piece\", pr, piece);\n    setprimattrib(0, \"Cd\", pr, color);\n    setprimattrib(0, \"material\", pr, material);\n}\n\n// A prism: the outline zy -- corners in z and y, in order round it -- from\n// x0 to x1, closed, its corners shared by its faces.\nvoid prism(vector zy[]; float x0; float x1; int piece; vector color; string material) {\n    int m = len(zy);\n    vector mid = set(0, 0, 0);\n    vector pa[];\n    vector pb[];\n    int a[];\n    int b[];\n    for (int i = 0; i < m; i++) {\n        append(pa, set(x0, zy[i].y, zy[i].z));\n        append(pb, set(x1, zy[i].y, zy[i].z));\n        append(a, addpoint(0, pa[i]));\n        append(b, addpoint(0, pb[i]));\n        mid += pa[i] + pb[i];\n    }\n    mid = mid / (2 * m);\n    facet(a, pa, mid, piece, color, material);\n    facet(b, pb, mid, piece, color, material);\n    for (int i = 0; i < m; i++) {\n        int j = (i + 1) % m;\n        int q[] = array(a[i], a[j], b[j], b[i]);\n        vector qp[] = array(pa[i], pa[j], pb[j], pb[i]);\n        facet(q, qp, mid, piece, color, material);\n    }\n}\n\n// The chimney: brick, through the back slope of the roof near the ridge --\n// standing on the roof's tiles, its foot cut to their slope -- and a cap of\n// concrete on top.\nfloat hd = detail(1, \"depth\") / 2;\nfloat yp = detail(1, \"plinth\") + 2 * (detail(1, \"storey\") + detail(1, \"slab\"));\nfloat a = radians(detail(1, \"pitch\"));\nfloat top = yp + hd * tan(a) + ch(\"thickness\") / cos(a);  // the ridge's top\nvector c = chv(\"center\");\nvector s = chv(\"size\");\nfloat z0 = c.z - s.z / 2;\nfloat z1 = c.z + s.z / 2;\nfloat h = top + ch(\"height\");\n// The back slope's top: down from the ridge as z goes out.\nvector zy[] = array(set(0, top + z0 * tan(a), z0), set(0, top + z1 * tan(a), z1), set(0, h, z1), set(0, h, z0));\nprism(zy, c.x - s.x / 2, c.x + s.x / 2, 0, chv(\"color\"), \"brick_wall\");\nvector cap[] = array(set(0, h, z0 - 0.05), set(0, h, z1 + 0.05), set(0, h + 0.08, z1 + 0.05), set(0, h + 0.08, z0 - 0.05));\nprism(cap, c.x - s.x / 2 - 0.05, c.x + s.x / 2 + 0.05, 1, set(0.42, 0.41, 0.39), \"concrete\");"
+  param center 2.2 0 -1.65
+  param size 0.6 0 0.5
+  param height 1
+  param color 0.3 0.12 0.08
+  expr thickness "ch(\"../roof/thickness\")"
+node 24 voronoi_fracture 1 chimney_pieces 1080 330
+  param count 7
+  param seed 2
+node 25 primitive_wrangle 1 chimney_finish 1080 440
+  param snippet "// The chimney's pieces numbered on past the roof's, the bricks inside it\n// where it broke.\ni@piece += 5000000;\ni@kind = 6;\ni@floor = 3;\nif (@group_inside) {\n    @Cd = chv(\"color\") * 1.2;\n    s@material = \"brick\";\n}"
+  param color 0.36 0.15 0.1
+node 26 detail_wrangle 1 windows 1320 110
+  param snippet "// A box in the frame of an opening: lo to hi along u (the wall), v (up)\n// and n (out of the wall), from o.\nvoid lbox(vector o; vector u; vector v; vector n; vector lo; vector hi; int piece; vector color; string material) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        vector l = set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z);\n        append(p, addpoint(0, o + u * l.x + v * l.y + n * l.z));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"piece\", f[k], piece);\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], material);\n    }\n}\n\n// The windows and the door, set into their openings (the points of input\n// 1): round each window a frame, and a mullion down the middle of a wide\n// one -- white, a piece a window -- set back Reveal from the face of the\n// wall; under it a sill of sheet metal out over the wall. The door, of\n// wood, in a frame of wood. The panes are the node panes'.\nfloat t2 = detail(1, \"thickness\") / 2;\nfloat back = ch(\"reveal\");\nfloat fw = ch(\"frame\");\nfloat fd = ch(\"frame_depth\");\nvector white = chv(\"color\");\nfor (int i = 0; i < npoints(1); i++) {\n    vector o = point(1, \"P\", i);\n    vector n = point(1, \"N\", i);\n    vector v = set(0, 1, 0);\n    vector u = cross(v, n);\n    float w = point(1, \"width\", i) / 2;\n    float h = point(1, \"height\", i) / 2;\n    int piece = 6000000 + 10 * i;\n    float s1 = t2 - back;\n    float s0 = s1 - fd;\n    if (point(1, \"kind\", i) == \"door\") {\n        vector wood = chv(\"door\");\n        lbox(o, u, v, n, set(-w, -h, s0), set(-w + fw, h, s1), piece, wood, \"wood\");\n        lbox(o, u, v, n, set(w - fw, -h, s0), set(w, h, s1), piece, wood, \"wood\");\n        lbox(o, u, v, n, set(-w + fw, h - fw, s0), set(w - fw, h, s1), piece, wood, \"wood\");\n        lbox(o, u, v, n, set(-w + fw, -h, s0 + 0.02), set(w - fw, h - fw, s0 + 0.07), piece + 1, wood * 0.8, \"wood\");\n        continue;\n    }\n    lbox(o, u, v, n, set(-w, h - fw, s0), set(w, h, s1), piece, white, \"none\");\n    lbox(o, u, v, n, set(-w, -h, s0), set(w, -h + fw, s1), piece, white, \"none\");\n    lbox(o, u, v, n, set(-w, -h + fw, s0), set(-w + fw, h - fw, s1), piece, white, \"none\");\n    lbox(o, u, v, n, set(w - fw, -h + fw, s0), set(w, h - fw, s1), piece, white, \"none\");\n    if (w > 0.5) lbox(o, u, v, n, set(-0.06, -h + fw, s0), set(0.06, h - fw, s1), piece, white, \"none\");\n    lbox(o, u, v, n, set(-w, -h, s1), set(w, -h + 0.03, t2 + 0.05), piece + 1, chv(\"sill\"), \"metal\");\n}"
+  param reveal 0.1
+  param frame 0.08
+  param frame_depth 0.08
+  param color 0.86 0.86 0.84
+  param door 0.2 0.11 0.06
+  param sill 0.32 0.32 0.33
+node 27 primitive_wrangle 1 frames 1320 220
+  param snippet "// The frames and the door: numbered, light.\ni@kind = 7;\nf@density = 700;"
+node 28 detail_wrangle 1 panes 1560 110
+  param snippet "// The panes of the windows: one in each half of a wide window, either side\n// of its mullion, one in a narrow one -- set into the middle of the frame's\n// depth, touching it all round. A box each, numbered (pane), for the loop\n// that breaks them one by one.\nfloat t2 = detail(1, \"thickness\") / 2;\nfloat fw = ch(\"frame\");\nfloat s = t2 - ch(\"reveal\") - ch(\"frame_depth\") / 2;\nfloat g = ch(\"thickness\") / 2;\nint pane = 0;\nfor (int i = 0; i < npoints(1); i++) {\n    if (point(1, \"kind\", i) != \"window\") continue;\n    vector o = point(1, \"P\", i);\n    vector n = point(1, \"N\", i);\n    vector v = set(0, 1, 0);\n    vector u = cross(v, n);\n    float w = point(1, \"width\", i) / 2;\n    float h = point(1, \"height\", i) / 2;\n    float left[];\n    float right[];\n    if (w > 0.5) {\n        left = array(-w + fw, 0.06);\n        right = array(-0.06, w - fw);\n    } else {\n        left = array(-w + fw);\n        right = array(w - fw);\n    }\n    for (int k = 0; k < len(left); k++) {\n        vector lo = set(left[k], -h + fw, s - g);\n        vector hi = set(right[k], h - fw, s + g);\n        int p[];\n        for (int j = 0; j < 8; j++) {\n            vector l = set(j & 1 ? hi.x : lo.x, j & 2 ? hi.y : lo.y, j & 4 ? hi.z : lo.z);\n            append(p, addpoint(0, o + u * l.x + v * l.y + n * l.z));\n        }\n        int f[];\n        append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n        append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n        append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n        append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n        append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n        append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n        for (int m = 0; m < 6; m++) setprimattrib(0, \"pane\", f[m], pane);\n        pane++;\n    }\n}"
+  param thickness 0.02
+  expr frame "ch(\"../windows/frame\")"
+  expr reveal "ch(\"../windows/reveal\")"
+  expr frame_depth "ch(\"../windows/frame_depth\")"
+node 29 foreach_begin 1 each_pane 1560 220
+  param attribute "pane"
+node 30 point_wrangle 1 canon 1560 330
+  param snippet "// The pane laid at the middle of the world facing z -- where Glass Fracture\n// strikes it (Impact 0 0 0) -- turned in its plane and shifted a little\n// each time round, so that no two break alike.\nint it = detail(0, \"iteration\");\nvector c = getbbox_center(0);\nvector s = getbbox_size(0);\nvector p = @P - c;\nif (s.x < s.z) p = set(p.z, p.y, -p.x);\nfloat a = radians(360 * rand(it * 7.13 + 0.5));\np = set(p.x * cos(a) - p.y * sin(a), p.x * sin(a) + p.y * cos(a), p.z);\n@P = p + set(rand(it * 3.1 + 0.2) - 0.5, rand(it * 5.3 + 0.7) - 0.5, 0) * 0.3;"
+node 31 glass_fracture 1 glass 1560 440
+  param impact 0 0 0
+  param radials 7
+  param first 0.1
+  param growth 1.8
+  param rings 3
+  param split 0.9
+  param tint 0.8 0.88 0.86
+node 32 point_wrangle 1 uncanon 1560 550
+  param snippet "// The shards put back where the pane was (input 1): what canon did, undone.\nint it = detail(1, \"iteration\");\nvector c = getbbox_center(1);\nvector s = getbbox_size(1);\nvector p = @P - set(rand(it * 3.1 + 0.2) - 0.5, rand(it * 5.3 + 0.7) - 0.5, 0) * 0.3;\nfloat a = -radians(360 * rand(it * 7.13 + 0.5));\np = set(p.x * cos(a) - p.y * sin(a), p.x * sin(a) + p.y * cos(a), p.z);\nif (s.x < s.z) p = set(-p.z, p.y, p.x);\n@P = p + c;"
+node 33 primitive_wrangle 1 glass_number 1560 660
+  param snippet "// The shards numbered on past everything else, a thousand numbers a pane.\ni@piece += 7000000 + 1000 * detail(1, \"iteration\");\ni@kind = 8;\nf@density = 2500;"
+node 34 foreach_end 1 shards 1560 770
+node 35 detail_wrangle 1 plinth 1800 110
+  param snippet "// The plinth the house stands on -- its foundations, a piece that does not\n// move -- its top the floor of the ground floor; two steps up to the door.\nvoid box(vector lo; vector hi) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    addprim(0, \"poly\", p[0], p[4], p[6], p[2]);\n    addprim(0, \"poly\", p[1], p[3], p[7], p[5]);\n    addprim(0, \"poly\", p[0], p[1], p[5], p[4]);\n    addprim(0, \"poly\", p[2], p[6], p[7], p[3]);\n    addprim(0, \"poly\", p[0], p[2], p[3], p[1]);\n    addprim(0, \"poly\", p[4], p[5], p[7], p[6]);\n}\n\nfloat hw = detail(1, \"width\") / 2;\nfloat hd = detail(1, \"depth\") / 2;\nfloat base = detail(1, \"plinth\");\nbox(set(-hw, 0, -hd), set(hw, base, hd));\nbox(set(-0.9, 0, hd), set(0.9, base * 2 / 3, hd + 0.35));\nbox(set(-0.9, 0, hd + 0.35), set(0.9, base / 3, hd + 0.7));"
+node 36 primitive_wrangle 1 plinth_finish 1800 220
+  param snippet "// One piece that does not move: its sides a darker plaster, the floor and\n// the steps concrete.\ni@piece = 1;\ni@kind = 0;\nvector n = prim_normal(0, @primnum);\nif (abs(n.y) < 0.5 && @P.z < detail(1, \"depth\") / 2 + 0.01) {\n    @Cd = chv(\"color\");\n    s@material = \"plaster\";\n} else {\n    @Cd = set(0.4, 0.39, 0.37);\n    s@material = \"concrete\";\n}"
+  param color 0.24 0.23 0.22
+node 37 merge 1 all_walls 0 770
+node 38 rbd_cluster 1 masonry 0 880
+  param count 900
+  param seed 4
+  param strength 1
+node 39 primitive_wrangle 1 wall_pieces 0 990
+  param snippet "// A wall does not come apart block by block: a few blocks, mortared\n// together, go as one -- a piece of masonry. Each of Masonry's clusters is\n// one piece now, its blocks and their mortar still drawn.\ni@piece = 100000 + i@cluster;\ni@cluster = 0;"
+node 40 rbd_cluster 1 wall_chunks 0 1100
+  param count 170
+  param seed 6
+node 41 detail_wrangle 1 gutters 1800 330
+  param snippet "// A box in the frame of an opening: lo to hi along u (the wall), v (up)\n// and n (out of the wall), from o.\nvoid lbox(vector o; vector u; vector v; vector n; vector lo; vector hi; int piece; vector color; string material) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        vector l = set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z);\n        append(p, addpoint(0, o + u * l.x + v * l.y + n * l.z));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"piece\", f[k], piece);\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], material);\n    }\n}\n\n// The gutters along the eaves -- hung on the fascia, in lengths -- and the\n// downpipes from them down the front corners of the house: sheet metal,\n// anthracite.\nfloat hw = detail(1, \"width\") / 2;\nfloat hd = detail(1, \"depth\") / 2;\nfloat yp = detail(1, \"plinth\") + 2 * (detail(1, \"storey\") + detail(1, \"slab\"));\nfloat a = radians(detail(1, \"pitch\"));\nfloat ov = ch(\"eaves\");\nfloat x = hw + ch(\"verge\");\nfloat yo = yp - ov * tan(a);\nvector c = chv(\"color\");\nvector o = set(0, 0, 0);\nvector X = set(1, 0, 0);\nvector Y = set(0, 1, 0);\nvector Z = set(0, 0, 1);\nint piece = 5100000;\nfor (int s = -1; s <= 1; s += 2) {\n    float z0 = s * (hd + ov);\n    float z1 = z0 + s * 0.12;\n    for (int k = 0; k < 3; k++) {\n        float x0 = -x + k * 2 * x / 3;\n        float x1 = x0 + 2 * x / 3;\n        lbox(o, X, Y, Z, set(x0, yo - 0.05, min(z0, z1)), set(x1, yo + 0.07, max(z0, z1)), piece, c, \"metal\");\n        piece++;\n    }\n}\nfor (int s = -1; s <= 1; s += 2) {\n    float px = s * (hw - 0.3);\n    float top = yo - 0.05 - 0.08;\n    for (int k = 0; k < 3; k++) {\n        lbox(o, X, Y, Z, set(px - 0.05, k * top / 3, hd), set(px + 0.05, (k + 1) * top / 3, hd + 0.1), piece, c, \"metal\");\n        piece++;\n    }\n    lbox(o, X, Y, Z, set(px - 0.05, top, hd), set(px + 0.05, yo - 0.05, hd + ov + 0.06), piece, c, \"metal\");\n    piece++;\n}"
+  param color 0.12 0.12 0.13
+  expr eaves "ch(\"../roof/eaves\")"
+  expr verge "ch(\"../roof/verge\")"
+node 42 primitive_wrangle 1 gutter_pieces 1800 440
+  param snippet "// The gutters and the downpipes: thin metal, held less than the mortar holds.\ni@kind = 7;\nf@density = 800;"
+node 43 detail_wrangle 1 front_fence 2040 660
+  param snippet "// The fence along the street, in pieces -- what flies out of the house\n// breaks it: posts set in the ground (post: they stay), two rails across\n// them, pickets a hand apart nailed to the rails; a gate's width open at\n// the path and at the drive. Each a piece of its own.\nint piece = 8000000;\nvoid part(vector lo; vector hi; int piece; int post; vector color) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"piece\", f[k], piece);\n        setprimattrib(0, \"post\", f[k], post);\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], \"wood\");\n    }\n}\n\nvector c = chv(\"color\");\nfloat z = ch(\"z\");\nfloat runs[] = array(-16, -0.75, 0.75, 5.95, 9.05, 16);\nfor (int r = 0; r < len(runs); r += 2) {\n    float a = runs[r];\n    float b = runs[r + 1];\n    int posts = int(ceil((b - a) / 2.4));\n    for (int i = 0; i <= posts; i++) {\n        float x = a + (b - a) * i / posts;\n        part(set(x - 0.05, 0, z - 0.1), set(x + 0.05, 1.2, z), piece, 1, c * 0.8);\n        piece++;\n        if (i == posts) continue;\n        float x1 = a + (b - a) * (i + 1) / posts;\n        for (int k = 0; k < 2; k++) {\n            float y = k == 0 ? 0.25 : 0.85;\n            part(set(x, y, z), set(x1, y + 0.07, z + 0.04), piece, 0, c * 0.9);\n            piece++;\n        }\n    }\n    int n = int((b - a) / 0.14);\n    for (int i = 0; i < n; i++) {\n        float x = a + (i + 0.5) * (b - a) / n;\n        float h = 1.05 + 0.03 * (rand(i * 1.3 + a) - 0.5);\n        part(set(x - 0.045, 0, z + 0.04), set(x + 0.045, h, z + 0.062), piece, 0, c * (0.85 + 0.3 * rand(i * 7.1 + a)));\n        piece++;\n    }\n}"
+  param color 0.33 0.21 0.12
+  param z 9.5
+node 44 primitive_wrangle 1 fence_pieces 2040 770
+  param snippet "// The fence: wood, light; its posts stay where they are set.\ni@kind = 9;\nf@density = 550;"
+node 45 merge 1 house 840 880
+node 46 primitive_wrangle 1 charges 840 990
+  param snippet "// The collapse. The walls of the ground floor give way, the left side\n// first, the right a moment (Lag) later: their foot -- Blast Height of them\n// -- bursts to dust (vanish), and of the masonry above it a share\n// (Pulverized) goes the same way, the rest coming loose (release), pushed\n// out of the house (kick). What stood on them -- the upper floor, the\n// slabs, the gables and the roof -- drops, leaning to the left, and breaks\n// up where it lands: the walls of the upper floor crush to dust under what\n// falls on them (crush), the slabs only under a hard blow; the roof, light,\n// breaks into strips. Glass and frames hold less than the mortar.\nfloat fire = ch(\"fire\");\nfloat lag = ch(\"lag\");\nfloat push = ch(\"push\");\nfloat base = detail(1, \"plinth\");\ni@active = i@kind != 0 && !(i@kind == 9 && i@post == 1);\nf@glue = 1;\nf@release = 0;\ni@vanish = 0;\nv@kick = set(0, 0, 0);\nf@crush = 0;\nif (i@kind == 1 || i@kind == 2) {\n    f@crush = ch(\"crush\");\n    if (i@floor == 0) {\n        float y = @P.y - base;\n        f@release = fire + lag * smoothstep(-4, 4, @P.x) + 0.05 * y + 0.06 * rand(i@piece);\n        i@vanish = rand(i@piece + 3) < (y < ch(\"blast_height\") ? 0.85 : ch(\"pulverized\"));\n        vector away = set(@P.x, 0, @P.z);\n        v@kick = normalize(away) * push * (0.3 + 0.7 * rand(i@piece + 17)) * (i@kind == 1 ? 1 : 0.3)\n               + set(0, 0.3 * rand(i@piece + 23), 0);\n    }\n}\nif (i@kind == 3) {\n    f@glue = 2;\n    f@crush = ch(\"crush_slabs\");\n}\nif (i@kind == 5) f@glue = 0.35;\nif (i@kind == 7) f@glue = 0.6;\nif (i@kind == 8) f@glue = 0.4;\nif (i@kind == 9) f@glue = 0.5;"
+  param fire 1
+  param lag 0.3
+  param push 0.8
+  param crush 4
+  param blast_height 0.6
+  param pulverized 0.35
+  param crush_slabs 5
+node 47 rbd_solver 1 rbd 840 1100
+  param density 900
+  param friction 0.9
+  param bounce 0.05
+  param glue 120
+  param substeps 4
+  param dust 1.5
+  param impact_dust 2
+  param dust_size 0.6
+  param debris 0.8
+  param trail 0.5
+  param air 2
+  param color 0.72 0.6 0.42
+  param inside_color 0.52 0.32 0.22
+node 48 turbulence 1 billows 1080 1100
+  param strength 1.5
+  param scale 2
+  param speed 0.5
+node 49 pyro_solver 2 dust 1080 1210
+  param size 40 20 40
+  param resolution 192
+  param buoyancy 0.12
+  param weight 0.3
+  param vorticity 3
+  param cooling 1.5
+  param smoke_decay 0.06
+node 50 wind 1 breeze 1080 1320
+  param direction -0.55 0 -0.85
+  param speed 1.6
+  param strength 0.8
+  param gusts 0.3
+node 51 volume_look 2 dust_look 1320 1210
+  param smoke_color 0.52 0.47 0.4
+  param smoke_density 6
+  param occlusion 1
+node 52 detail_wrangle 1 ground 2040 110
+  param snippet "void box(vector lo; vector hi; vector color; string material) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], material);\n    }\n}\n\n// The ground round the house: a lawn out to the neighbours and beyond, the\n// street in front -- asphalt between two kerbs, a pavement of paving\n// either side -- a path of paving from the door to the gate and a drive\n// along the right side of the house.\nfloat far = 120;\nbox(set(-far, -0.05, -far), set(far, 0.004, far), chv(\"lawn\"), \"lawn\");\nbox(set(-far, -0.05, 11.55), set(far, 0.02, 17.45), chv(\"asphalt\"), \"asphalt\");\nbox(set(-far, -0.05, 9.6), set(far, 0.1, 11.4), chv(\"paving\"), \"paving\");\nbox(set(-far, -0.05, 17.6), set(far, 0.1, 19.6), chv(\"paving\"), \"paving\");\nbox(set(-far, -0.05, 11.4), set(far, 0.14, 11.55), set(0.42, 0.41, 0.39), \"concrete\");\nbox(set(-far, -0.05, 17.45), set(far, 0.14, 17.6), set(0.42, 0.41, 0.39), \"concrete\");\nbox(set(-0.7, -0.05, 4.7), set(0.7, 0.03, 9.6), chv(\"paving\") * 1.15, \"paving\");\nbox(set(6.0, -0.05, -2.0), set(9.0, 0.03, 9.6), chv(\"paving\"), \"paving\");"
+  param lawn 0.1 0.17 0.045
+  param asphalt 0.06 0.06 0.065
+  param paving 0.22 0.21 0.2
+node 53 detail_wrangle 1 fence 2040 220
+  param snippet "void box(vector lo; vector hi; vector color; string material) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], material);\n    }\n}\n\n// The wooden fence down the sides of the garden: posts, two rails, pickets\n// a hand apart. Along the street it is the node front_fence's.\nvoid run(vector a; vector b; vector color) {\n    vector d = b - a;\n    float len = length(d);\n    vector x = d / len;\n    vector side = set(-x.z, 0, x.x);\n    int posts = int(ceil(len / 2.4));\n    for (int i = 0; i <= posts; i++) {\n        vector p = a + d * (i / posts);\n        box(p - set(0.05, 0, 0.05), p + set(0.05, 1.2, 0.05), color * 0.8, \"wood\");\n    }\n    for (int r = 0; r < 2; r++) {\n        float y = r == 0 ? 0.25 : 0.85;\n        vector lo = a + side * 0.05 + set(0, y, 0);\n        vector hi = b + side * 0.09 + set(0, y + 0.07, 0);\n        box(set(min(lo.x, hi.x), lo.y, min(lo.z, hi.z)), set(max(lo.x, hi.x), hi.y, max(lo.z, hi.z)), color * 0.9, \"wood\");\n    }\n    int n = int(len / 0.14);\n    for (int i = 0; i < n; i++) {\n        vector p = a + x * ((i + 0.5) * len / n) + side * 0.1;\n        float h = 1.05 + 0.03 * (rand(i * 1.3 + a.x) - 0.5);\n        vector lo = p - x * 0.045;\n        vector hi = p + x * 0.045 + side * 0.022 + set(0, h, 0);\n        box(set(min(lo.x, hi.x), 0, min(lo.z, hi.z)), set(max(lo.x, hi.x), hi.y, max(lo.z, hi.z)),\n            color * (0.85 + 0.3 * rand(i * 7.1 + a.z)), \"wood\");\n    }\n}\n\nvector c = chv(\"color\");\nrun(set(-16, 0, -18), set(-16, 0, 9.4), c);\nrun(set(16, 0, 9.4), set(16, 0, -18), c);"
+  param color 0.33 0.21 0.12
+node 54 detail_wrangle 1 neighbours 2040 330
+  param snippet "void box(vector lo; vector hi; vector color; string material) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], material);\n    }\n}\n\n// The neighbours' houses, as the house was before: walls of plaster on a\n// darker plinth, windows with rooms behind them in white frames, a door, a\n// roof of tiles over the gables with a chimney -- standing still, set apart\n// by Center, turned by Turn (0: facing the street), their own colours.\nvoid face(vector o; vector u; vector v; float w; float h; vector color; string material) {\n    int a = addpoint(0, o - u * w - v * h);\n    int b = addpoint(0, o + u * w - v * h);\n    int c = addpoint(0, o + u * w + v * h);\n    int d = addpoint(0, o - u * w + v * h);\n    int f = addprim(0, \"poly\", a, b, c, d);\n    setprimattrib(0, \"Cd\", f, color);\n    setprimattrib(0, \"material\", f, material);\n}\n\nvoid tri(vector a; vector b; vector c; vector color; string material) {\n    int f = addprim(0, \"poly\", addpoint(0, a), addpoint(0, b), addpoint(0, c));\n    setprimattrib(0, \"Cd\", f, color);\n    setprimattrib(0, \"material\", f, material);\n}\n\nvoid quad(vector a; vector b; vector c; vector d; vector color; string material) {\n    int f = addprim(0, \"poly\", addpoint(0, a), addpoint(0, b), addpoint(0, c), addpoint(0, d));\n    setprimattrib(0, \"Cd\", f, color);\n    setprimattrib(0, \"material\", f, material);\n}\n\nvoid house(vector at; float w; float d; float eave; float pitch; vector wall; vector roof) {\n    float hw = w / 2;\n    float hd = d / 2;\n    box(at + set(-hw, 0, -hd), at + set(hw, 0.5, hd), wall * 0.4, \"plaster\");\n    box(at + set(-hw, 0.5, -hd), at + set(hw, eave, hd), wall, \"plaster\");\n    // The gables, and the roof over them.\n    float ridge = eave + hd * tan(radians(pitch));\n    for (int s = -1; s <= 1; s += 2) {\n        tri(at + set(s * hw, eave, -hd), at + set(s * hw, eave, hd), at + set(s * hw, ridge, 0), wall, \"plaster\");\n    }\n    float ov = 0.5;\n    float x = hw + 0.4;\n    float yo = eave - ov * tan(radians(pitch));\n    float th = 0.25;\n    for (int s = -1; s <= 1; s += 2) {\n        vector e0 = at + set(-x, yo, s * (hd + ov));\n        vector e1 = at + set(x, yo, s * (hd + ov));\n        vector r0 = at + set(-x, ridge, 0);\n        vector r1 = at + set(x, ridge, 0);\n        vector up = set(0, th, 0);\n        if (s > 0) {\n            quad(e0 + up, e1 + up, r1 + up, r0 + up, roof, \"roof_tiles\");\n            quad(e0, r0, r1, e1, set(0.4, 0.29, 0.18), \"wood\");\n            quad(e0, e1, e1 + up, e0 + up, set(0.12, 0.08, 0.05), \"wood\");\n        } else {\n            quad(e1 + up, e0 + up, r0 + up, r1 + up, roof, \"roof_tiles\");\n            quad(e1, r1, r0, e0, set(0.4, 0.29, 0.18), \"wood\");\n            quad(e1, e0, e0 + up, e1 + up, set(0.12, 0.08, 0.05), \"wood\");\n        }\n        quad(e0, e0 + up, r0 + up, r0, set(0.12, 0.08, 0.05), \"wood\");\n        quad(e1, r1, r1 + up, e1 + up, set(0.12, 0.08, 0.05), \"wood\");\n    }\n    box(at + set(hw * 0.4, ridge - 1.0, -1.2), at + set(hw * 0.4 + 0.55, ridge + 0.9, -0.7), set(0.3, 0.13, 0.09), \"brick_wall\");\n    // Windows on each floor, the door in the middle of the front.\n    vector white = set(0.82, 0.82, 0.8);\n    int floors = int((eave - 0.5) / 2.9);\n    for (int fl = 0; fl < floors; fl++) {\n        float y = 0.5 + fl * 3.0 + 1.55;\n        for (int k = -1; k <= 1; k++) {\n            vector o = at + set(k * w / 3.2, y, hd + 0.004);\n            if (fl == 0 && k == 0) {\n                face(o + set(0, -0.45, 0), set(1, 0, 0), set(0, 1, 0), 0.55, 1.15, white, \"none\");\n                face(o + set(0, -0.48, 0.003), set(1, 0, 0), set(0, 1, 0), 0.47, 1.1, set(0.25, 0.14, 0.08), \"wood\");\n                continue;\n            }\n            face(o, set(1, 0, 0), set(0, 1, 0), 0.68, 0.78, white, \"none\");\n            face(o + set(0, 0, 0.003), set(1, 0, 0), set(0, 1, 0), 0.6, 0.7, set(0.5, 0.5, 0.5), \"window\");\n            vector b = at + set(k * w / 3.2, y, -hd - 0.004);\n            face(b, set(-1, 0, 0), set(0, 1, 0), 0.68, 0.78, white, \"none\");\n            face(b - set(0, 0, 0.003), set(-1, 0, 0), set(0, 1, 0), 0.6, 0.7, set(0.5, 0.5, 0.5), \"window\");\n        }\n        for (int s = -1; s <= 1; s += 2) {\n            for (int k = -1; k <= 1; k += 2) {\n                vector o = at + set(s * (hw + 0.004), y, k * d / 4);\n                face(o, set(0, 0, -s), set(0, 1, 0), 0.6, 0.78, white, \"none\");\n                face(o + set(s * 0.003, 0, 0), set(0, 0, -s), set(0, 1, 0), 0.52, 0.7, set(0.5, 0.5, 0.5), \"window\");\n            }\n        }\n    }\n}\n\nhouse(set(-20, 0, 0.5), 9, 8.5, 6.4, 38, chv(\"left_wall\"), chv(\"left_roof\"));\nhouse(set(21, 0, -0.5), 11, 9, 3.6, 42, chv(\"right_wall\"), chv(\"right_roof\"));\nhouse(set(-7, 0, -30), 10, 8, 6.4, 40, set(0.75, 0.74, 0.7), set(0.3, 0.11, 0.07));\nhouse(set(12, 0, -31), 9, 8, 6.4, 40, set(0.62, 0.66, 0.6), set(0.08, 0.085, 0.09));\nhouse(set(-34, 0, -1), 10, 8, 6.4, 38, set(0.74, 0.66, 0.54), set(0.28, 0.1, 0.06));\nhouse(set(36, 0, 0), 9, 8.5, 6.4, 40, set(0.8, 0.79, 0.75), set(0.3, 0.12, 0.07));"
+  param left_wall 0.78 0.77 0.72
+  param left_roof 0.3 0.1 0.06
+  param right_wall 0.8 0.7 0.45
+  param right_roof 0.08 0.085 0.09
+node 55 detail_wrangle 1 lamps 2040 440
+  param snippet "void box(vector lo; vector hi; vector color; string material) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], material);\n    }\n}\n\n// Street lamps along the near pavement: a grey steel pole, an arm and a lamp.\nfor (int i = 0; i < 2; i++) {\n    float x = -14 + i * 29;\n    vector g = set(0.22, 0.23, 0.24);\n    box(set(x - 0.07, 0, 11.0), set(x + 0.07, 6.0, 11.14), g, \"metal\");\n    box(set(x - 0.05, 5.85, 11.14), set(x + 0.05, 5.95, 12.3), g, \"metal\");\n    box(set(x - 0.16, 5.75, 12.2), set(x + 0.16, 5.88, 12.75), g * 0.7, \"metal\");\n}"
+node 56 detail_wrangle 1 tree_spots 2280 110
+  param snippet "// Where the trees stand: in the gardens -- a big one by the fence on the\n// left, a smaller one on the right, more behind the house -- and the rows\n// of a park behind the houses at the back; pscale how big each is.\nvoid tree(vector p; float s) {\n    int pt = addpoint(0, p);\n    setpointattrib(0, \"pscale\", pt, s);\n}\ntree(set(-10.5, 0, 5.5), 1.25);\ntree(set(12.5, 0, 6.5), 0.85);\ntree(set(-11, 0, -10), 1.1);\ntree(set(10, 0, -12), 1.2);\ntree(set(-2, 0, -15), 1.0);\ntree(set(-27, 0, 8), 1.1);\ntree(set(28, 0, 7), 1.0);\nfor (int i = 0; i < 26; i++) {\n    float x = -60 + i * 4.8 + 2.5 * (rand(i * 3.7) - 0.5);\n    float z = -44 - 8 * rand(i * 5.1 + 0.3);\n    if (abs(x + 7) < 6 || abs(x - 12) < 5) z -= 6;\n    tree(set(x, 0, z), 1.1 + 0.6 * rand(i * 2.9 + 0.1));\n}"
+node 57 tree 1 trees 2280 220
+  param height 9
+  param radius 0.26
+  param sizevariation 0.25
+  param crown 0.3
+  param forks 3
+  param forkheight 0.4
+  param forkangle 28
+  param length1 0.55
+  param branches3 4
+  param leaves 12
+  param leafsize 0.22
+  param leafcolor 0.07 0.15 0.035
+  param sides 8
+  param segment 0.35
+  param output instances
+  param variants 5
+node 58 detail_wrangle 1 shrub_spots 2520 110
+  param snippet "// Shrubs along the fence inside the garden and by the corners of the house.\nvoid shrub(vector p; float s) {\n    int pt = addpoint(0, p);\n    setpointattrib(0, \"pscale\", pt, s);\n}\nfor (int i = 0; i < 22; i++) {\n    float x = -15.2 + i * 0.7 + 0.3 * rand(i);\n    if (x > -1.6 && x < 1.6) continue;\n    if (x > 5.4) break;\n    shrub(set(x, 0, 8.7 + 0.3 * rand(i + 9)), 0.9 + 0.5 * rand(i * 1.7));\n}\nfor (int i = 0; i < 8; i++) {\n    shrub(set(10.0 + i * 0.75, 0, 8.6 + 0.3 * rand(i + 30)), 0.9 + 0.5 * rand(i * 2.3));\n}\nshrub(set(-5.9, 0, 4.4), 1.3);\nshrub(set(-6.6, 0, 3.4), 1.0);\nshrub(set(5.6, 0, 4.6), 0.8);"
+node 59 tree 1 shrubs 2520 220
+  param height 1.3
+  param radius 0.025
+  param sizevariation 0.35
+  param tip 0.3
+  param crown 0.02
+  param forks 5
+  param forkheight 0.03
+  param forkangle 38
+  param levels 2
+  param branches1 10
+  param angle1 50
+  param length1 0.7
+  param branches2 6
+  param leaves 14
+  param leafsize 0.07
+  param leafcolor 0.06 0.13 0.03
+  param sides 5
+  param segment 0.1
+  param output instances
+  param variants 4
+node 60 grid 1 front_lawn 2760 110
+  param sizex 31
+  param sizez 4.8
+  param rows 25
+  param cols 150
+  param center 0 0.004 7.1
+node 61 point_wrangle 1 lawn 2760 220
+  param snippet "// The lawn of the front garden, as grass grows: where it may (grass) -- not\n// on the path or the drive, thinner by the house and the fence.\nfloat path = @P.x > -0.8 && @P.x < 0.8 ? 1 : 0;\nfloat drive = @P.x > 5.9 && @P.x < 9.1 ? 1 : 0;\nf@grass = (1 - max(path, drive)) * smoothstep(4.7, 5.3, @P.z) * (1 - smoothstep(9.0, 9.35, @P.z));\n@P.y = 0.004;"
+node 62 grass 1 grass 2760 330
+  param density 45
+  param densityattribute "grass"
+  param blades 12
+  param height 0.11
+  param heightvariation 0.45
+  param width 0.004
+  param bend 0.35
+  param lean 22
+  param rootcolor 0.035 0.07 0.015
+  param tipcolor 0.13 0.22 0.05
+  param dry 0.12
+  param variation 0.3
+node 63 merge 1 street 2280 550
+  display
+node 64 output 2 output 1560 1100
+  param frames 210
+  param light_azimuth 140
+  param light_elevation 30
+  param light_color 1 0.93 0.82
+  param light_intensity 3.2
+  param sky_color 0.55 0.68 0.9
+  param sky_intensity 0.5
+  param ground_color 0.1 0.13 0.06
+  param grid off
+  param sky_behind on
+  param render_samples 64
+  param render_bounces 6
+  param render_clouds 0.3
+  param render_view agx
+node 65 camera 1 camera 1560 1210
+  param center 9.5 1.65 21
+  param rotation 6 25.5 0
+  param focal 30
+link 1.geometry -> 2.input1
+link 2.geometry -> 3.geometry
+link 2.geometry -> 4.geometry
+link 3.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 7.geometry
+link 5.geometry -> 7.input1
+link 7.geometry -> 8.geometry
+link 4.geometry -> 9.geometry
+link 9.geometry -> 10.geometry
+link 10.geometry -> 11.geometry
+link 9.geometry -> 11.input1
+link 11.geometry -> 12.geometry
+link 1.geometry -> 13.input1
+link 13.geometry -> 14.geometry
+link 14.geometry -> 15.geometry
+link 1.geometry -> 15.input1
+link 1.geometry -> 16.input1
+link 16.geometry -> 17.geometry
+link 17.geometry -> 18.geometry
+link 1.geometry -> 19.input1
+link 1.geometry -> 20.input1
+link 19.geometry -> 21.geometry
+link 20.geometry -> 21.points
+link 21.geometry -> 22.geometry
+link 1.geometry -> 23.input1
+link 23.geometry -> 24.geometry
+link 24.geometry -> 25.geometry
+link 1.geometry -> 26.input1
+link 26.geometry -> 27.geometry
+link 1.geometry -> 28.input1
+link 28.geometry -> 29.geometry
+link 29.geometry -> 30.geometry
+link 30.geometry -> 31.geometry
+link 31.geometry -> 32.geometry
+link 29.geometry -> 32.input1
+link 32.geometry -> 33.geometry
+link 29.geometry -> 33.input1
+link 33.geometry -> 34.geometry
+link 1.geometry -> 35.input1
+link 35.geometry -> 36.geometry
+link 1.geometry -> 36.input1
+link 8.geometry -> 37.geometry
+link 12.geometry -> 37.geometry
+link 37.geometry -> 38.geometry
+link 38.geometry -> 39.geometry
+link 39.geometry -> 40.geometry
+link 1.geometry -> 41.input1
+link 41.geometry -> 42.geometry
+link 43.geometry -> 44.geometry
+link 40.geometry -> 45.geometry
+link 15.geometry -> 45.geometry
+link 18.geometry -> 45.geometry
+link 22.geometry -> 45.geometry
+link 25.geometry -> 45.geometry
+link 27.geometry -> 45.geometry
+link 42.geometry -> 45.geometry
+link 34.geometry -> 45.geometry
+link 44.geometry -> 45.geometry
+link 36.geometry -> 45.geometry
+link 45.geometry -> 46.geometry
+link 1.geometry -> 46.input1
+link 46.geometry -> 47.pieces
+link 47.dust -> 49.sources
+link 47.collider -> 49.colliders
+link 48.force -> 49.forces
+link 50.force -> 49.forces
+link 49.gas -> 51.gas
+link 56.geometry -> 57.points
+link 58.geometry -> 59.points
+link 60.geometry -> 61.geometry
+link 61.geometry -> 62.surface
+link 52.geometry -> 63.geometry
+link 53.geometry -> 63.geometry
+link 54.geometry -> 63.geometry
+link 55.geometry -> 63.geometry
+link 57.geometry -> 63.geometry
+link 59.geometry -> 63.geometry
+link 62.geometry -> 63.geometry
+link 47.look -> 64.look
+link 51.look -> 64.look
+link 65.camera -> 64.camera

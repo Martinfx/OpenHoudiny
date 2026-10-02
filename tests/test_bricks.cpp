@@ -5,7 +5,8 @@
 // openings, plaster on the faces, some bricks cut in two and held harder
 // -- whatever way the wall stands, the same every time; and the RBD Solver
 // with them: the wall stands on its mortar, and a knock breaks it along its
-// joints.
+// joints -- and the family house of the example house_collapse, built of
+// them.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -431,4 +432,52 @@ TEST(brick_wall_in_a_network) {
     CHECK(cc.world.hasRigid);
     CHECK(cc.world.rigid.rebar != nullptr);
     if (cc.world.rigid.rebar) CHECK_EQ(cc.world.rigid.rebar->primitiveCount(), size_t(8 + 21));
+}
+
+TEST(house_collapse_in_a_network) {
+    // The family house of the example: walls of blocks in pieces of masonry
+    // a few blocks each, glued in chunks; slabs, gables, the roof, the
+    // chimney, frames, gutters and glass; the fence along the street; the
+    // plinth and the fence's posts stay. The charges are in the walls of the
+    // ground floor, and nowhere else.
+    Network net;
+    CHECK(Network::example("house_collapse", net));
+    Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);
+    CHECK(c.ok);
+    CHECK(c.world.hasRigid && c.world.hasGas);
+    const Geometry& pieces = *c.world.rigid.pieces;
+    const auto& prims = pieces.primitives();
+    for (const char* name : {"piece", "kind", "floor", "active", "release", "vanish", "cluster", "glass"}) {
+        if (!prims.find(name)) ::testing::fail(__FILE__, __LINE__, std::string("no attribute ") + name);
+    }
+    const auto piece = prims.find("piece")->read<int32_t>();
+    const auto kind = prims.find("kind")->read<int32_t>();
+    const auto floor = prims.find("floor")->read<int32_t>();
+    const auto active = prims.find("active")->read<int32_t>();
+    const auto release = prims.find("release")->read<float>();
+    const auto cluster = prims.find("cluster")->read<int32_t>();
+    // Each piece as its first primitive has it, as the solver takes it.
+    std::map<int32_t, size_t> first;
+    for (size_t i = 0; i < piece.size(); ++i) first.emplace(piece[i], i);
+    std::map<int32_t, int> perKind;
+    std::set<int32_t> chunks;
+    int still = 0, charged = 0;
+    for (const auto& [p, i] : first) {
+        ++perKind[kind[i]];
+        if (kind[i] == 1 || kind[i] == 2) chunks.insert(cluster[i]);
+        if (!active[i]) ++still;
+        if (release[i] > 0.0f) {
+            ++charged;
+            CHECK((kind[i] == 1 || kind[i] == 2) && floor[i] == 0);
+        }
+    }
+    CHECK(first.size() > 2000);
+    CHECK_EQ(perKind[0], 1);                            // the plinth
+    CHECK(perKind[1] + perKind[2] == 900);              // masonry: a few blocks a piece
+    CHECK(chunks.size() > 100 && chunks.size() <= 170);  // in chunks
+    CHECK(perKind[3] > 50 && perKind[4] > 20 && perKind[5] > 40 && perKind[6] > 3);
+    CHECK(perKind[8] > 500);                            // the shards of the panes
+    CHECK(perKind[9] > 200);                            // the fence
+    CHECK(charged > 200 && charged < 500);
+    CHECK(still > 10);                                  // the plinth and the fence's posts
 }

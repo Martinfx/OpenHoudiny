@@ -368,7 +368,11 @@ příklad **constraint_network**: síť vazeb zeslabená podél čáry — koule
 vylomí roh zdi a zeď praskne přesně po ní; příklad **debris_stairs**:
 podetnutý betonový sloup se skácí ze schodů a drť zůstane ležet na
 stupních; příklad **guided_fall**: odstřelený komín padne podle Guide
-přesně do ulice mezi dva domy a na silnici se rozlomí.
+přesně do ulice mezi dva domy a na silnici se rozlomí; příklad
+**house_collapse**: rodinný dům postavený jako skutečný (zdi z tvárnic
+v cyklu For-Each, stropy, střecha s taškami, okna se skly, okapy, plot) se
+zřítí do zahrady a oblak prachu se plazí ulicí se stromy a sousedními
+domy, fotorealisticky v Cycles ([destruction.md](docs/destruction.md#dvanáctý-příklad-zřícení-rodinného-domu)).
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

@@ -1198,6 +1198,113 @@ rozpíná — tlačí ho do všech stran, jako výbuch nebo vzduch vytlačený
 zřícením. Pyro Solver ji sečte s expanzí hořícího paliva, započte do
 tlaku a plyn, který se rozpíná, ředí.
 
+### Dvanáctý příklad: zřícení rodinného domu
+
+![Rodinný dům se hroutí do zahrady: patro padá do prachu z rozdrceného přízemí, střecha se láme, kusy zdiva letí k plotu; vyfoceno z protějšího chodníku, Cycles](img/house-collapse.jpg)
+
+```
+./build/prototype sim house_collapse dum.png --renderer cycles --frames 72   # snímek 72 v Cycles
+./build/prototype sim house_collapse - --cache dum                            # 210 snímků (7 s) do cache
+./build/prototype sim house_collapse dum.png --from-cache dum --start 66 --frames 66 \
+    --renderer cycles --samples 64 --size 1920x1080                           # snímek 66 z cache
+```
+
+Příklad **house_collapse** ([examples/sim/house_collapse.pgsim](../examples/sim/house_collapse.pgsim))
+je zřícení dvoupatrového rodinného domu se sedlovou střechou tak, jak by
+ho vyfotil soused z protějšího chodníku. Dům je postavený jako skutečný:
+
+- **Nejdřív otvory.** Wrangle `openings` dá bod doprostřed každého okna
+  a dveří: kam se dívá (`N`), šířku, výšku, zeď (`wall`) a druh
+  (`kind`). Míry domu (10 × 8 m, zdi 30 cm, sokl 45 cm, patra 2,75 m,
+  stropy 25 cm, sklon střechy 40°) uloží jako atributy detailu a ostatní
+  uzly je čtou odtud. Parapety a nadpraží leží na ložných spárách: okno
+  sahá od třetí do deváté vrstvy tvárnic.
+- **Zdi.** Wrangle `walls` složí každou zeď z kvádrů kolem otvorů (pruhy
+  mezi hranami otvorů) a For-Each je po jedné předá uzlu Brick Wall.
+  Obvodové zdi jsou z keramických tvárnic 250 × 270 × 240 mm na maltu,
+  příčka uprostřed z příčkovek 500 × 115 × 240 mm. Omítka je zvenku
+  béžová, uvnitř bílá. Wrangle `finish` kusy očísluje a omítne i ostění,
+  které Brick Wall nechá holé: plochy podél zdi, před kterými už zeď
+  není. Dohromady 2 878 tvárnic.
+- **Kusy zdiva.** Nálož přetrhne všechny spoje svého kusu, takže zeď
+  z jednotlivých tvárnic by se rozsypala jako stavebnice. RBD Cluster
+  `masonry` proto spojí vždy dvě až čtyři sousední tvárnice i s maltou
+  do jednoho kusu zdiva (900 kusů) a druhý RBD Cluster je seskupí do 170
+  ker s pětkrát pevnějším lepidlem. Zeď se pak láme ve spárách na kusy
+  zdiva a kry, jako opravdová.
+- **Stropy, štíty, střecha.** Dva stropy rozláme Concrete Fracture
+  (94 kusů s odprýsklými rohy), jejich hrany jsou omítnuté jako fasáda
+  a podhledy bílé. Štíty (30 kusů) a komín (7) rozřeže Voronoi Fracture.
+  Střecha jsou dva hranoly se sklonem 40° a přesahy. Voronoi ji rozřeže
+  na pruhy podél krokví (body po 1 m podél hřebene a po 2,2 m po spádu,
+  66 kusů). Nahoře je taška (`roof_tiles`, položená po ploše), zespodu
+  a v lomech dřevo, hustota 420 kg/m³.
+- **Okna a dveře.** Wrangle `windows` usadí do otvorů bílé rámy se
+  středním sloupkem a plechové parapety, wrangle `panes` do nich skla.
+  For-Each je rozbije po jednom: tabuli posune do počátku, natočí a
+  trochu posune (aby se žádné dvě nerozbily stejně), Glass Fracture ji
+  rozbije a wrangle `uncanon` vrátí střepy na místo. Z 26 tabulí je
+  1 033 střepů. K tomu okapy a svody (`gutters`), dřevěné dveře a sokl
+  se dvěma schody, který se nehýbe.
+- **Plot do ulice** je také z kusů: sloupky stojí (`post`), latě
+  a plaňky jsou k nim přilepené. Co z domu vyletí, plot zastaví, nebo
+  z něj vyláme plaňky.
+- **Nálože** (`charges`) jsou jen ve zdech přízemí. Odpálí se v 1 s,
+  zleva doprava s rozestupem 0,3 s (`lag`). Pata zdí (0,6 m) se z 85 %
+  rozletí na prach, výš 35 % kusů, zbytek se uvolní a vystrčí ven
+  (`kick`). Co na přízemí stálo, spadne nakloněné doleva a rozláme se
+  tam, kde dopadne. Zdi patra se rozdrtí jen tvrdou ranou (`crush 4`),
+  stropy drží dvakrát pevněji, střecha třetinou a sklo, rámy a plot
+  slaběji.
+- **RBD Solver:** 2 421 kusů, 900 kg/m³ (dutá keramika), tření 0,9,
+  odraz 0,05, lepidlo 120 kPa, 4 podkroky, prach z lomů i nárazů, drť
+  a stopy prachu za kusy.
+- **Prach:** Pyro Solver 40 × 20 × 40 m se 192 buňkami (21 cm), řídce.
+  Turbulence ho rozvíří a Wind (vánek 1,6 m/s pryč od kamery) ho odnáší:
+  po dopadu se oblak plazí zahradou a pomalu odkrývá sutiny. Volume Look
+  ho barví šedohnědě.
+- **Ulice kolem:** trávník (materiál `lawn`) s trávou z uzlu Grass
+  (4 870 trsů), cesta a příjezd z dlažby, chodníky, asfaltová silnice
+  mezi obrubníky, dřevěný plot po stranách, stromy a keře z uzlu Tree
+  (instance), pouliční lampy a šest sousedních domů (wrangle
+  `neighbours`: omítka, okna s pokoji, střechy, komíny).
+- **Světlo a kamera:** slunce 30° nad obzorem zleva zepředu, fyzikální
+  obloha s mraky (`render_clouds 0,3`), AgX. Kamera stojí na protějším
+  chodníku ve výšce očí, objektiv 30 mm.
+
+Simulace trvá 356 ms na snímek (80 % času prach), 210 snímků za 75 s.
+Snímek 1920 × 1080 v Cycles s 64 vzorky a odšuměním trvá na čtyřech
+jádrech 7 až 18 minut podle toho, kolik prachu je v záběru; náhled
+640 × 360 s 16 vzorky asi minutu.
+
+![Zřícení domu po snímcích 36, 54, 66, 72, 84 a 200: dům stojí; přízemí se drolí a z oken stříká prach; patro padá do prachu; střecha se láme a padá; oblak prachu ji pohltí; prach se plazí zahradou a vánek ho odnáší](img/house-collapse-sequence.jpg)
+
+Kamera je jen parametr, takže jiný záběr téhož okamžiku nepotřebuje novou
+simulaci. Stačí cache a `--set`, třeba z příjezdové cesty objektivem
+24 mm:
+
+```
+./build/prototype sim house_collapse z_prijezdu.png --from-cache dum --start 69 --frames 69 \
+    --set 'camera.center={7.6, 1.5, 12.5}' --set 'camera.rotation={9.7, 31.3, 0}' \
+    --set camera.focal=24 --renderer cycles --samples 64 --size 1920x1080
+```
+
+![Tentýž dům ve snímku 69 z příjezdové cesty: přízemí se rozpadá na kusy zdiva, patro i střecha se propadají do prachu, okapy letí vzduchem, na dlažbu a trávník dopadá drť](img/house-collapse-driveway.jpg)
+
+```
+[openings] ─┬▶ [walls] ─▶ [outer], [inner] ─▶ For-Each: [Brick Wall] ─▶ [finish]
+            │                 ─▶ [masonry] ─▶ [wall_pieces] ─▶ [wall_chunks] ────────────┐
+            ├▶ [slabs] ─▶ [Concrete Fracture] ─▶ [slab_finish] ─────────────────────────┤
+            ├▶ [gables], [roof] + [roof_seeds], [chimney] ─▶ [Voronoi Fracture] ─▶ … ───┤
+            ├▶ [windows] ─▶ [frames];  [gutters] ─▶ [gutter_pieces] ────────────────────┤
+            ├▶ [panes] ─▶ For-Each: [canon] ─▶ [Glass Fracture] ─▶ [uncanon] ─▶ … ──────┤
+            └▶ [plinth] ─▶ [plinth_finish];  [front_fence] ─▶ [fence_pieces] ───────────┴▶ [house] ─▶ [charges]
+[charges] ─▶ [RBD Solver] ─Look─────────────────────────────────▶ [Output] ◀─ [camera]
+               │ Dust, Collider ─▶ [Pyro Solver] ◀─Forces─ [Turbulence], [Wind]
+                                   └─▶ [Volume Look] ─Look─▶ [Output]
+[ground], [fence], [neighbours], [lamps], [trees], [shrubs], [grass] ─▶ [street]   (zobrazená: ulice)
+```
+
 ---
 
 ## 5. Snímky a cache
