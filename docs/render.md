@@ -107,6 +107,8 @@ Když má kamera **plate** (obraz záběru), je v `R`, `G`, `B` jen CG a `A`
 říká, kolik z pixelu zakrývá. Kanály `catcher.R/G/B` pak říkají, čím
 plate vynásobit tam, kde na něj CG vrhá stín nebo svítí oheň. Záběr je
 `plate × catcher × (1 − A) + RGB` ([plate.md](plate.md#4-exr-pro-compositing-nad-plate)).
+Stejné kanály dá i EXR z Cycles a z path traceru
+([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)).
 
 Jak se to počítá: renderer kreslí v režimu průchodů do 16bitových floatů
 a vedle obrazu do dvou dalších cílů (MRT). Povrchy se nejdřív rasterizují

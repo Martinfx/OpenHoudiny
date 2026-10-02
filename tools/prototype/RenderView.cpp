@@ -303,15 +303,20 @@ void RenderView::run() {
         sinceDenoise_ += tracer_.seconds() - before;
         const bool denoise = s.denoise && (n <= 1 || n >= s.samples || sinceDenoise_ >= denoiseCost_);
         if (s.denoise && !denoise) continue;
+        // Over a plate the catcher's noise is taken out as well: the time
+        // that takes is the cost too.
+        const auto& scene = tracer_.scene();
+        const bool over = scene && scene->plate;
         const auto start = Clock::now();
         render::Image image = denoise ? tracer_.denoised() : tracer_.beauty();
+        const render::Image catcher = over ? tracer_.catcher(denoise) : render::Image();
         if (denoise) {
             denoiseCost_ = std::chrono::duration<double>(Clock::now() - start).count();
             sinceDenoise_ = 0.0;
         }
         // Over a plate: the CG over it.
-        if (const auto& scene = tracer_.scene(); scene && scene->plate) {
-            image = render::overPlate(image, tracer_.alpha(), tracer_.catcher(denoise),
+        if (over) {
+            image = render::overPlate(image, tracer_.alpha(), catcher,
                                       render::plateSeen(*scene->plate, tracer_.plateLight(), scene->camera, image.width,
                                                         image.height));
         }

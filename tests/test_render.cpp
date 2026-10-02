@@ -897,7 +897,9 @@ TEST(render_cycles_surface_detail_makes_a_flat_surface_uneven) {
         Settings s;
         s.width = 48;
         s.height = 48;
-        s.samples = 32;
+        // Without a denoiser -- the sanitizers' builds -- the noise is
+        // taken down by samples.
+        s.samples = cyclesDenoiser().empty() ? 256 : 32;
         s.denoise = true;
         s.sky = Settings::Sky::Look;
         s.detail = detail;
