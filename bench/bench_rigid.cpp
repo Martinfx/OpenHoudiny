@@ -2,9 +2,9 @@
 // The rigid bodies against the ROADMAP's step 4: the tower of the demolition
 // example -- and the same tower cut in ten times the pieces -- fractured,
 // made into bodies, and stepped through its collapse, on one thread and on
-// all there are. The dust is left out: what is measured is the RBD Solver.
-// That the frames come out the same on any number of threads is checked as
-// it goes.
+// all there are. The dust is left out: what is measured is the RBD Solver
+// -- and where its step's time goes (RigidSolver::times). That the frames
+// come out the same on any number of threads is checked as it goes.
 //
 #include "pg/core/Parallel.h"
 #include "pg/sim/Network.h"
@@ -58,6 +58,7 @@ bool tower(float size, sim::RigidScene& scene, double& compileMs) {
 
 struct Run {
     double makeMs = 0.0, meanMs = 0.0, worstMs = 0.0;
+    sim::RigidSolver::Times spent;  ///< summed over the steps
     std::vector<sim::RigidFrame> frames;
 };
 
@@ -74,6 +75,11 @@ Run run(const sim::RigidScene& scene, unsigned threads, int frames) {
         const double ms = since(t0);
         sum += ms;
         r.worstMs = std::max(r.worstMs, ms);
+        const sim::RigidSolver::Times& t = solver.times();
+        r.spent.jolt += t.jolt;
+        r.spent.glue += t.glue;
+        r.spent.grit += t.grit;
+        r.spent.rest += t.rest;
         r.frames.push_back(solver.capture());
     }
     r.meanMs = sum / std::max(frames, 1);
@@ -106,6 +112,10 @@ void bench(int number, float size, int frames) {
     std::printf("  %d frames stepped, 1 thread         %8.1f ms a frame (worst %.0f ms)\n", frames, one.meanMs, one.worstMs);
     std::printf("  %d frames stepped, %u threads        %8.1f ms a frame (worst %.0f ms)\n", frames, all, many.meanMs,
                 many.worstMs);
+    const double spent = std::max(one.spent.total(), 1e-9);
+    std::printf("  where it goes, 1 thread: Jolt %.0f%%, the glue %.0f%%, the grit %.0f%%, the rest %.0f%%\n",
+                100.0 * one.spent.jolt / spent, 100.0 * one.spent.glue / spent, 100.0 * one.spent.grit / spent,
+                100.0 * one.spent.rest / spent);
     std::printf("  joints broken %zu, grit %zu, the same frames on 1 and %u threads: %s\n", last.broken,
                 last.debris.size() / 4, all, same(one.frames, many.frames) ? "yes" : "NO");
 }

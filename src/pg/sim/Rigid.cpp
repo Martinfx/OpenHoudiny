@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -33,6 +34,7 @@
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollidePointResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
@@ -42,6 +44,7 @@
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLockMulti.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
@@ -1687,6 +1690,22 @@ constexpr float kMaxSwell = 20.0f;  // 1/s: the most a puff swells
 constexpr float kCarry = 0.985f;
 /// Marks the user data of a still piece's body, above its number.
 constexpr uint64_t kStillTag = 1ull << 62;
+/// At rest -- gone no farther than so many metres, its farthest corner
+/// too, in so many seconds (a pile jitters: fast, going nowhere), lying on
+/// what does not move (within kRestGap of it) -- a body is frozen: a
+/// static one, no work to Jolt, until something comes at it faster than
+/// kWakeSpeed, water or wind pushes it with more than so much of its
+/// weight, a charge goes off in it or a keyed object comes.
+constexpr float kRestMove = 0.02f;
+constexpr float kRestTime = 0.5f;
+constexpr float kRestGap = 0.02f;
+constexpr float kWakeSpeed = 1.0f;
+constexpr float kWakeForce = 0.05f;
+/// Not on yet: frozen, the tower of 5 628 pieces steps in 62 ms a frame on
+/// one thread instead of 75, but what it does to the examples, the tests
+/// and the same bits on any number of threads is still to be gone through.
+/// Off, the solver steps as it did, to the bit.
+constexpr bool kFreezeAtRest = false;
 /// Grit: how hard the air holds a bit back -- as a stone of 2400 kg/m^3,
 /// its drag a pull of 1.5e-4 v^2 / r (m/s^2), a chip of glass three times
 /// as hard -- how much of the way it went into what it knocks into it keeps
@@ -1923,6 +1942,13 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         Vec3 before, beforeSpin;       ///< its velocity before the step, at its centre of mass
         float lift = 0.0f;             ///< how much of gravity the guide held off this step
         Vec3 flowed;                   ///< how much the water and the gas changed its velocity this step
+        float reach = 1.0f;            ///< metres from its middle to its farthest corner
+        float slowFor = 0.0f;          ///< seconds it has been all but still: since restAt
+        JPH::RVec3 restAt;             ///< where its centre of mass was, and how it was turned, when that began
+        JPH::Quat restTurn = JPH::Quat::sIdentity();
+        bool frozen = false;           ///< at rest: a static body, nothing to Jolt, until woken
+        std::vector<int> holdsUp;      ///< the frozen clusters lying on it: woken with it
+        std::vector<JPH::BodyID> liesOn;  ///< the keyed objects it lies on, frozen: woken when one moves
     };
     std::vector<Cluster> clusters;
     struct Object {
@@ -1966,12 +1992,14 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         int step = 0;              ///< the collision step of Jolt's update it came in
     };
     std::vector<Knock> knocks;
+    std::vector<int> nudged;  ///< frozen clusters something came at this step: woken after it
     // Jolt calls back from its jobs, on any of its threads and in no set
     // order: the knocks are gathered under a lock, each with the collision
     // step it came in (counted by OnStep, which comes before a step's
     // collisions), and put in order after the update.
     std::mutex knocking;
     std::atomic<int> collisionStep{0};
+    std::atomic<int> manifolds{0};  ///< contacts the step found, knocks or not
     // The bars: where each runs through which piece, and what became of each
     // stretch of one -- slid out of its piece, torn after it -- how far it
     // has slid out of its piece so far, how much longer the bar after it got.
@@ -1989,6 +2017,7 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
     uint64_t random = 0x2545F4914F6CDD1Dull;
     float time = 0.0f;
     float gritScale = 1.0f;  ///< grit as big as the scene's dust: a town's is stones, a model's sand
+    Times times;             ///< the last step's
 
     Impl() {
         broadPhase.MapObjectToBroadPhaseLayer(Layers::still, JPH::BroadPhaseLayer(0));
@@ -2049,12 +2078,23 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         });
     }
     void knock(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, JPH::ContactSettings&) {
+        manifolds.fetch_add(1, std::memory_order_relaxed);
         if (m.mRelativeContactPointsOn1.empty()) return;
         const JPH::RVec3 p = m.GetWorldSpaceContactPointOn1(0);
         const JPH::Vec3 rel = b2.GetPointVelocity(p) - b1.GetPointVelocity(p);
         const float speed = -rel.Dot(m.mWorldSpaceNormal);
-        if (speed < kKnockSpeed) return;
+        if (speed < kWakeSpeed) return;
         Knock k;
+        whoIs(b1, m.mSubShapeID1, k.cluster[0], k.piece[0]);
+        whoIs(b2, m.mSubShapeID2, k.cluster[1], k.piece[1]);
+        // Something coming at a frozen body wakes it, after the step.
+        for (const int c : k.cluster) {
+            if (c >= 0 && clusters[static_cast<size_t>(c)].frozen) {
+                const std::lock_guard<std::mutex> lock(knocking);
+                nudged.push_back(c);
+            }
+        }
+        if (speed < kKnockSpeed) return;
         k.at = ours(p);
         k.normal = ours(m.mWorldSpaceNormal);
         k.velocity = ours((b1.GetPointVelocity(p) + b2.GetPointVelocity(p)) * 0.5f);
@@ -2063,8 +2103,6 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         const float inverse = (b1.IsDynamic() ? b1.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f) +
                               (b2.IsDynamic() ? b2.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f);
         k.impulse = inverse > 0.0f ? (1.0f + settings.bounce) * speed / inverse : 0.0f;
-        whoIs(b1, m.mSubShapeID1, k.cluster[0], k.piece[0]);
-        whoIs(b2, m.mSubShapeID2, k.cluster[1], k.piece[1]);
         // A body pressed on the still piece it is glued to -- a keyed
         // object pushing the wall on its foundation -- knocks nothing: they
         // are one, as the pieces of a body are.
@@ -2202,7 +2240,9 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         out.normal = ours(body.GetWorldSpaceSurfaceNormal(hit.mHit.mSubShapeID2, at));
         out.velocity = ours(body.GetPointVelocity(at));
         out.body = hit.mHit.mBodyID;
-        out.moves = !body.IsStatic();
+        // A piece's body, frozen at rest or not, and a keyed object move: grit rides them.
+        const uint64_t tag = body.GetUserData();
+        out.moves = !body.IsStatic() || (tag != 0 && !(tag & kStillTag));
         return true;
     }
 
@@ -2607,6 +2647,9 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         c.id = body->GetID();
         c.alive = true;
         c.mass = 1.0f / std::max(body->GetMotionProperties()->GetInverseMass(), 1e-12f);
+        c.reach = 0.5f * shape->GetLocalBounds().GetSize().Length();
+        c.restAt = body->GetCenterOfMassPosition();
+        c.restTurn = body->GetRotation();
         bi.AddBody(c.id, JPH::EActivation::Activate);
         for (const int k : members) pieces[static_cast<size_t>(k)].cluster = index;
         // Held where it is glued to still pieces.
@@ -2650,6 +2693,9 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         Cluster& old = clusters[static_cast<size_t>(ci)];
         if (!old.alive) return;
         JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        // What lay frozen on it lies on nothing now.
+        for (const int up : old.holdsUp) wake(up);
+        old.holdsUp.clear();
         // The groups: the pieces still there, joined by joints that hold.
         std::vector<int> members;
         for (const int k : old.pieces) {
@@ -2710,6 +2756,164 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
             }
         }
         return false;
+    }
+
+    // --- At rest ---
+
+    /// Whether body `c` lies on what does not move -- the floor, a still
+    /// piece, a frozen body, a keyed object standing still -- within
+    /// kRestGap; and on which frozen bodies and keyed objects. Found in one
+    /// order whatever order the query hands them over in.
+    bool supported(const Cluster& c, std::vector<int>& frozenUnder, std::vector<JPH::BodyID>& objectsUnder) const {
+        frozenUnder.clear();
+        objectsUnder.clear();
+        JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+        {
+            const JPH::BodyLockRead lock(physics.GetBodyLockInterfaceNoLock(), c.id);
+            if (!lock.Succeeded()) return false;
+            const JPH::Body& body = lock.GetBody();
+            JPH::CollideShapeSettings settings;
+            settings.mMaxSeparationDistance = kRestGap;
+            const JPH::IgnoreSingleBodyFilter itself(c.id);
+            physics.GetNarrowPhaseQuery().CollideShape(body.GetShape(), JPH::Vec3::sOne(), body.GetCenterOfMassTransform(),
+                                                       settings, JPH::RVec3::sZero(), hits, {}, {}, itself);
+        }
+        std::vector<JPH::BodyID> ids;
+        for (const JPH::CollideShapeResult& h : hits.mHits) ids.push_back(h.mBodyID2);
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        bool held = false;
+        for (const JPH::BodyID& id : ids) {
+            const JPH::BodyLockRead lock(physics.GetBodyLockInterfaceNoLock(), id);
+            if (!lock.Succeeded()) continue;
+            const JPH::Body& b = lock.GetBody();
+            if (b.IsKinematic()) {
+                // A keyed object standing still holds it up; one on its way does not.
+                if (b.GetLinearVelocity().IsNearZero() && b.GetAngularVelocity().IsNearZero()) {
+                    held = true;
+                    objectsUnder.push_back(id);
+                }
+                continue;
+            }
+            if (!b.IsStatic()) continue;  // awake, or asleep for now: it may go
+            const uint64_t tag = b.GetUserData();
+            if (tag == 0 || (tag & kStillTag)) {  // the floor, a still piece
+                held = true;
+                continue;
+            }
+            const int other = static_cast<int>(tag) - 1;
+            if (other >= 0 && static_cast<size_t>(other) < clusters.size() && clusters[static_cast<size_t>(other)].frozen) {
+                held = true;
+                frozenUnder.push_back(other);
+            }
+        }
+        return held;
+    }
+
+    /// Freezes body `ci`, lying on the frozen bodies `frozenUnder` and the
+    /// keyed objects `objectsUnder`: a static body until woken.
+    void freeze(int ci, const std::vector<int>& frozenUnder, const std::vector<JPH::BodyID>& objectsUnder) {
+        Cluster& c = clusters[static_cast<size_t>(ci)];
+        physics.GetBodyInterfaceNoLock().SetMotionType(c.id, JPH::EMotionType::Static, JPH::EActivation::DontActivate);
+        c.frozen = true;
+        c.slowFor = 0.0f;
+        c.before = c.beforeSpin = Vec3();
+        c.liesOn = objectsUnder;
+        for (const int under : frozenUnder) clusters[static_cast<size_t>(under)].holdsUp.push_back(ci);
+    }
+
+    /// Wakes a frozen body: a dynamic one again, with what lies on it, and
+    /// what lies on that.
+    void wake(int ci) {
+        std::vector<int> queue{ci};
+        for (size_t at = 0; at < queue.size(); ++at) {
+            Cluster& c = clusters[static_cast<size_t>(queue[at])];
+            if (!c.alive || !c.frozen) continue;
+            JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+            bi.SetMotionType(c.id, JPH::EMotionType::Dynamic, JPH::EActivation::Activate);
+            c.frozen = false;
+            c.slowFor = 0.0f;
+            c.restAt = bi.GetCenterOfMassPosition(c.id);
+            c.restTurn = bi.GetRotation(c.id);
+            c.liesOn.clear();
+            for (const int up : c.holdsUp) queue.push_back(up);
+            c.holdsUp.clear();
+        }
+    }
+
+    /// Wakes the frozen bodies a keyed object on its way reaches in the
+    /// step -- Jolt tests nothing between what is keyed and what is static
+    /// -- and those lying on it.
+    void wakeInTheWay(float dt) {
+        for (const Object& o : objects) {
+            JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+            {
+                const JPH::BodyLockRead lock(physics.GetBodyLockInterfaceNoLock(), o.body);
+                if (!lock.Succeeded()) continue;
+                const JPH::Body& b = lock.GetBody();
+                const JPH::Vec3 v = b.GetLinearVelocity(), w = b.GetAngularVelocity();
+                if (v.IsNearZero() && w.IsNearZero()) continue;
+                for (size_t ci = 0; ci < clusters.size(); ++ci) {
+                    const Cluster& c = clusters[ci];
+                    if (c.alive && c.frozen && std::find(c.liesOn.begin(), c.liesOn.end(), o.body) != c.liesOn.end()) {
+                        wake(static_cast<int>(ci));
+                    }
+                }
+                JPH::CollideShapeSettings settings;
+                const float reach = 0.5f * b.GetShape()->GetLocalBounds().GetSize().Length();
+                settings.mMaxSeparationDistance = (v.Length() + w.Length() * reach) * dt + kRestGap;
+                const JPH::IgnoreSingleBodyFilter itself(o.body);
+                physics.GetNarrowPhaseQuery().CollideShape(b.GetShape(), JPH::Vec3::sOne(), b.GetCenterOfMassTransform(),
+                                                           settings, JPH::RVec3::sZero(), hits, {}, {}, itself);
+            }
+            std::vector<int> reached;
+            for (const JPH::CollideShapeResult& h : hits.mHits) {
+                const JPH::BodyLockRead lock(physics.GetBodyLockInterfaceNoLock(), h.mBodyID2);
+                if (!lock.Succeeded()) continue;
+                const uint64_t tag = lock.GetBody().GetUserData();
+                if (tag == 0 || (tag & kStillTag)) continue;
+                const int c = static_cast<int>(tag) - 1;
+                if (c >= 0 && static_cast<size_t>(c) < clusters.size() && clusters[static_cast<size_t>(c)].frozen) reached.push_back(c);
+            }
+            std::sort(reached.begin(), reached.end());
+            for (const int c : reached) wake(c);
+        }
+    }
+
+    /// Freezes the bodies at rest: gone nowhere for kRestTime, lying on
+    /// what does not move. Asked again a little later when they lie on
+    /// what may still go.
+    void rest(float dt) {
+        const JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        std::vector<int> frozenUnder;
+        std::vector<JPH::BodyID> objectsUnder;
+        for (size_t ci = 0; ci < clusters.size(); ++ci) {
+            Cluster& c = clusters[ci];
+            if (!c.alive || c.frozen || !c.anchors.empty()) continue;
+            bool guided = false;
+            for (const int k : c.pieces) guided = guided || pieces[static_cast<size_t>(k)].guided;
+            if (guided) {
+                c.slowFor = 0.0f;
+                continue;
+            }
+            const JPH::RVec3 at = bi.GetCenterOfMassPosition(c.id);
+            const JPH::Quat turn = bi.GetRotation(c.id);
+            const float moved = static_cast<float>((at - c.restAt).Length());
+            const float turned = 2.0f * std::acos(std::min(std::fabs(turn.Dot(c.restTurn)), 1.0f)) * c.reach;
+            if (std::max(moved, turned) > kRestMove) {
+                c.restAt = at;
+                c.restTurn = turn;
+                c.slowFor = 0.0f;
+                continue;
+            }
+            c.slowFor += dt;
+            if (c.slowFor < kRestTime) continue;
+            if (supported(c, frozenUnder, objectsUnder)) {
+                freeze(static_cast<int>(ci), frozenUnder, objectsUnder);
+            } else {
+                c.slowFor = kRestTime - 6.0f * dt;
+            }
+        }
     }
 
     /// The bodies glued to still pieces back where they were built, still:
@@ -3241,6 +3445,11 @@ void RigidSolver::setGuide(std::shared_ptr<const RigidGuide> guide, float streng
 void RigidSolver::step() {
     Impl& m = *impl_;
     if (m.pieces.empty()) return;
+    using Clock = std::chrono::steady_clock;
+    auto msSince = [](Clock::time_point t0) { return std::chrono::duration<double, std::milli>(Clock::now() - t0).count(); };
+    Clock::time_point t0 = Clock::now();
+    Times& times = m.times;
+    times = Times();
     const RigidSettings& s = scene_.solver;
     const int substeps = std::clamp(s.substeps, 1, 16);
     const float dt = std::max(s.timeStep, 1e-5f);
@@ -3291,6 +3500,8 @@ void RigidSolver::step() {
     }
     mend();
     for (const int k : kicked) {
+        const int c = m.pieces[static_cast<size_t>(k)].cluster;
+        if (c >= 0) m.wake(c);
         const JPH::BodyID id = m.bodyOf(k);
         if (id.IsInvalid()) continue;
         bi.SetLinearVelocity(id, bi.GetLinearVelocity(id) + jolt(m.pieces[static_cast<size_t>(k)].kick));
@@ -3310,6 +3521,13 @@ void RigidSolver::step() {
         Impl::Cluster& c = m.clusters[static_cast<size_t>(p.cluster)];
         // Held by a still piece, it stays where it was built.
         if (!c.alive || !c.anchors.empty() || c.mass <= 0.0f) continue;
+        if (c.frozen) {
+            // Frozen at rest: carried (the cloth), or pushed with a good
+            // part of its weight, it wakes; else it lies.
+            const bool carried = push.shift != Vec3() || push.velocity != Vec3() || push.spin != Vec3();
+            if (!carried && length(push.force) < kWakeForce * c.mass * length(s.gravity)) continue;
+            m.wake(p.cluster);
+        }
         if (push.shift != Vec3() || push.velocity != Vec3() || push.spin != Vec3()) {
             // The cloth held it back, or threw it: where and how fast it
             // went as the cloth stepped it.
@@ -3325,6 +3543,9 @@ void RigidSolver::step() {
         c.flowed += push.force * (dt / c.mass);
     }
 
+    // A keyed object on its way wakes the frozen bodies it reaches.
+    if (kFreezeAtRest) m.wakeInTheWay(dt);
+
     // The step, and how each body moved before it.
     for (Impl::Cluster& c : m.clusters) {
         if (!c.alive) continue;
@@ -3332,8 +3553,17 @@ void RigidSolver::step() {
         c.beforeSpin = ours(bi.GetAngularVelocity(c.id));
     }
     m.knocks.clear();
+    m.nudged.clear();
+    m.manifolds.store(0, std::memory_order_relaxed);
     m.collisionStep.store(0, std::memory_order_relaxed);
+    times.rest = msSince(t0);
+    t0 = Clock::now();
     m.physics.Update(dt, substeps, &m.temp, m.jobs.get());
+    times.jolt = msSince(t0);
+    times.awake = static_cast<int>(m.physics.GetNumActiveBodies(JPH::EBodyType::RigidBody));
+    times.knocks = static_cast<int>(m.knocks.size());
+    times.contacts = m.manifolds.load(std::memory_order_relaxed);
+    t0 = Clock::now();
     m.orderKnocks();
     m.time += dt;
     // The bars take the step: those that gave slid out of their pieces, or
@@ -3358,7 +3588,7 @@ void RigidSolver::step() {
         // A body held by a still piece does not move: how the step moved
         // it -- a keyed object pushing it against its foundation -- is not a
         // knock to share among all that touches it.
-        if (!cl.alive || knocksOn[c] == 0 || !cl.anchors.empty()) continue;
+        if (!cl.alive || knocksOn[c] == 0 || !cl.anchors.empty() || cl.frozen) continue;
         const Vec3 change =
             ours(bi.GetLinearVelocity(cl.id)) - cl.before - s.gravity * (dt * (1.0f - cl.lift)) - cl.flowed;
         took[c] = cl.mass * length(change) / static_cast<float>(knocksOn[c]);
@@ -3377,8 +3607,17 @@ void RigidSolver::step() {
         }
     }
     mend();
+    // What something came at wakes -- with what lies on it -- and what has
+    // come to rest freezes.
+    std::sort(m.nudged.begin(), m.nudged.end());
+    m.nudged.erase(std::unique(m.nudged.begin(), m.nudged.end()), m.nudged.end());
+    for (const int c : m.nudged) m.wake(c);
+    m.nudged.clear();
     m.settleHeld();
     m.letGo();
+    if (kFreezeAtRest) m.rest(dt);
+    times.glue = msSince(t0);
+    t0 = Clock::now();
 
     // The knocks: the hardest first, dust and grit where they were.
     std::sort(m.knocks.begin(), m.knocks.end(), [](const Impl::Knock& a, const Impl::Knock& b) {
@@ -3413,6 +3652,8 @@ void RigidSolver::step() {
     // by itself, what it reads of the bodies the same for all: on as many
     // threads as there are, the same bits.
     // Grit thrown out this step has no flow of its own: still air.
+    times.rest += msSince(t0);
+    t0 = Clock::now();
     const std::vector<uint16_t>& flows = m.flow.gritFlow;
     const size_t flowing = std::min(flows.size() / 3, m.flow.gritWet.size());
     parallelFor(m.grit.size(), 256, [&](size_t begin, size_t end) {
@@ -3431,7 +3672,16 @@ void RigidSolver::step() {
     m.grit.erase(std::remove_if(m.grit.begin(), m.grit.end(), [](const Impl::Grit& q) { return q.p.y < -100.0f; }),
                  m.grit.end());
     if (m.grit.size() > kMaxGrit) m.grit.erase(m.grit.begin(), m.grit.end() - static_cast<long>(kMaxGrit));
+    times.grit = msSince(t0);
+    for (const Impl::Cluster& c : m.clusters) {
+        times.bodies += c.alive ? 1 : 0;
+        times.frozen += c.alive && c.frozen ? 1 : 0;
+        times.still += c.alive && !c.frozen && c.slowFor > 0.0f ? 1 : 0;
+        times.waiting += c.alive && !c.frozen && c.slowFor >= kRestTime - 6.0f * dt - 1e-6f && c.slowFor < kRestTime ? 1 : 0;
+    }
 }
+
+const RigidSolver::Times& RigidSolver::times() const { return impl_->times; }
 
 void RigidSolver::setFlow(RigidFlow flow) {
     if (impl_) impl_->flow = std::move(flow);
@@ -3676,6 +3926,10 @@ void RigidSolver::setGuide(std::shared_ptr<const RigidGuide>, float) {}
 RigidFlow RigidSolver::feel(const RigidFluids&) const { return {}; }
 void RigidSolver::setFlow(RigidFlow) {}
 void RigidSolver::step() {}
+const RigidSolver::Times& RigidSolver::times() const {
+    static const Times none;
+    return none;
+}
 RigidFrame RigidSolver::capture() const {
     RigidFrame f;
     f.pieces = scene_.pieces;

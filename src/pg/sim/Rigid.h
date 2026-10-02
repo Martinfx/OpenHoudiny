@@ -531,6 +531,23 @@ public:
     void setFlow(RigidFlow flow);
     void step();
 
+    /// Where the last step's time went, milliseconds, and what it stepped.
+    struct Times {
+        double jolt = 0.0;   ///< Jolt: the contacts and the constraints
+        double glue = 0.0;   ///< the knocks breaking the glue, the bodies coming apart
+        double grit = 0.0;   ///< the grit flying
+        double rest = 0.0;   ///< the charges, the guide, the flows, the dust, the bars
+        int bodies = 0;      ///< bodies of pieces that move
+        int frozen = 0;      ///< ... of which frozen at rest: static until something comes at them
+        int awake = 0;       ///< Jolt's active bodies after the step: those not asleep
+        int knocks = 0;      ///< knocks the step found
+        int contacts = 0;    ///< contacts Jolt found in the step, a pair of parts each
+        int still = 0;       ///< bodies going nowhere lately, not frozen yet
+        int waiting = 0;     ///< ... of which lying on what may still go
+        double total() const { return jolt + glue + grit + rest; }
+    };
+    const Times& times() const;
+
     const RigidScene& scene() const { return scene_; }
     /// How many bodies it simulates.
     size_t pieceCount() const;
