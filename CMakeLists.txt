@@ -816,8 +816,10 @@ if(PG_BUILD_GUI)
     tools/prototype/SimViewport.cpp
     tools/prototype/SimRender.cpp
     tools/prototype/RenderView.cpp
+    tools/prototype/SimThumbnails.cpp
     tools/prototype/SimWorkspace.cpp
     tools/prototype/Theme.cpp
+    tools/prototype/Thumbnails.cpp
     tools/prototype/Wedge.cpp
     tools/prototype/Widgets.cpp)
 endif()

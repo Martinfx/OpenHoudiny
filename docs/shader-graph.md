@@ -92,6 +92,7 @@ vpravo dole **síť**. Rozhraní mezi panely jdou táhnout.
 | Zarámovat / uspořádat | F (výběr, jinak vše) / L: automatické rozložení do sloupců podle toku |
 | Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
 | Náhled | levé tažení otáčí, pravé a kolečko přibližují; v hlavičce těleso (billboard pro efekty), animace, výchozí kamera, PNG |
+| Vzorky v uzlech | každý uzel ukazuje svůj první výstup na tělese náhledu; View → Node Thumbnails, Thumbnail v menu uzlu |
 | Kód | výběr cíle, záložky vertex/fragment, Copy |
 | Chyby | tlačítko Problems v hlavičce kódu; klik na chybu vybere uzel a posune na něj plátno |
 | Soubor | Ctrl+S, Ctrl+O (dialog se složkami a soubory `.pgsg`), File → Export Shaders… (všechny cíle naráz) |
@@ -108,6 +109,15 @@ vpravo dole **síť**. Rozhraní mezi panely jdou táhnout.
 - Bez výběru ukazuje panel parametrů přehled grafu a **uniformy**: mění
   hodnotu v běžícím shaderu, bez rekompilace.
 - Uzel s chybou má červený odznak; tooltip nad ním chybu vypíše.
+- **Vzorek v uzlu**: pod piny je první výstup uzlu (který se dá převést na
+  barvu) jako barva na tělese náhledu, neprůhledně — jako náhledy uzlů
+  v Blenderu. Je to kopie grafu, ve které výstup napájí ten uzel: generátor
+  z ní přeloží jen to, co do uzlu vede. Surface Output ukazuje celý shader.
+  Kreslí se jen uzly na obrazovce, po každé změně grafu znovu (nejvýš tři za
+  snímek okna); posuvníky uniform je mění nejvýš čtyřikrát za sekundu. Billboard
+  je vidět zpředu, rovina shora.
+
+![Síť mramoru se vzorky v uzlech: Position, šum, sinus, žilky, barvy, Lambert, odlesk a výsledný mramor v Surface Output](img/shader-swatches.jpg)
 - Titulek okna ukazuje jméno souboru, hvězdička značí neuložené změny.
 
 ## 3. Jak to funguje

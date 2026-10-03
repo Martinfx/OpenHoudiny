@@ -349,11 +349,14 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     example_ = example;
     savedText_ = net_.save();
     history_.reset(savedText_);
-    canvas_.clearSelection();
+    canvas_.setView({});  // no selection, no room made for the last network's thumbnails
     canvas_.frame();
-    // The frames of what was open before are not this network's.
+    // The frames of what was open before are not this network's; nor are
+    // the pictures in its nodes.
     runner_->clear();
     shown_.reset();
+    clearThumbnails();
+    thumbnailsHidden_.clear();
     // A scene too big to simulate whole as it is worked on opens in the
     // preview (its Output's Open in Preview); the next that does not, out
     // of it again -- unless it was asked for.
@@ -560,6 +563,7 @@ void SimWorkspace::update(float dt) {
     updatePieces();
     updateGeometry();
     updateGuides();
+    updateThumbnails();
 
     // Rendering frames or a video: a few a frame of the window.
     job_.step();
@@ -680,6 +684,8 @@ std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
             c.problemText += (c.problemText.empty() ? "" : "\n") + e->second;
         }
         c.summary = summaryOf(net_, n, compiled);
+        c.thumbnail = showsThumbnail(n);
+        c.thumbnailTexture = c.thumbnail && thumbs_ ? static_cast<ImTextureID>(thumbs_->texture(n.id)) : 0;
         if (t && std::string(t->core ? t->core : "") == "asset" && c.summary.empty()) {
             const auto def = sim::AssetLibrary::instance().find(n.type);
             c.summary = "asset, version " + std::to_string(def ? def->version : 0);
@@ -894,6 +900,18 @@ void SimWorkspace::nodeMenu(int id) {
     if (ImGui::MenuItem("Delete", "Del")) removeNodes(std::vector<int>(canvas_.selection().begin(), canvas_.selection().end()));
     ImGui::Separator();
     if (ImGui::MenuItem("Frame", "F")) canvas_.frame(true);
+    if (thumbKindOf(*n) != ThumbKind::None) {
+        const bool on = !thumbnailsHidden_.count(id);
+        if (ImGui::MenuItem("Thumbnail", nullptr, on, thumbnails_)) {
+            for (const int chosen : canvas_.selection()) {
+                if (on) thumbnailsHidden_.insert(chosen);
+                else thumbnailsHidden_.erase(chosen);
+            }
+        }
+        ImGui::SetItemTooltip(thumbnails_ ? "A picture of what the node makes, in the node: its geometry, its shape, "
+                                            "what it simulates, what the camera sees"
+                                          : "Thumbnails are off: View > Node Thumbnails");
+    }
     if (const auto def = sim::AssetLibrary::instance().find(n->type)) {
         ImGui::Separator();
         if (ImGui::MenuItem("Edit Contents", "I")) enterRequest_ = id;
@@ -1879,6 +1897,9 @@ void SimWorkspace::menus() {
             framed_ = false;
         }
         if (ImGui::MenuItem("Frame the Network", "F")) canvas_.frame();
+        if (ImGui::MenuItem("Node Thumbnails", nullptr, thumbnails_)) thumbnails_ = !thumbnails_;
+        ImGui::SetItemTooltip("A picture in each node of what it makes: a geometry node's geometry, an object's "
+                              "shape, a solver's frame, the Output's shot. A node's menu hides its own.");
         ImGui::Separator();
         if (ImGui::MenuItem("Look Through the Camera", "0", throughCamera_, compiled_.hasCamera)) {
             setThroughCamera(!throughCamera_);

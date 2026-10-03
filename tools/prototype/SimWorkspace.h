@@ -47,6 +47,7 @@
 #include "RenderJob.h"
 #include "RenderView.h"
 #include "SimRunner.h"
+#include "Thumbnails.h"
 #include "Wedge.h"
 #include "Workspace.h"
 
@@ -175,6 +176,25 @@ private:
     int sheetNode() const;
     /// The spreadsheet: the current node's geometry, or the displayed one's.
     void spreadsheet();
+
+    // --- thumbnails (SimThumbnails.cpp) ------------------------------------------------
+    /// What a node's thumbnail shows, by what the node is; None: it has none.
+    enum class ThumbKind { None, Geometry, Object, Source, Gas, Water, Pieces, Cloth, Rain, Camera, Output };
+    static ThumbKind thumbKindOf(const sim::Node& n);
+    /// The node shows a thumbnail: its kind has one, thumbnails are on, and
+    /// its own is not hidden.
+    bool showsThumbnail(const sim::Node& n) const;
+    /// The geometry nodes whose thumbnails are on screen: what the cooker is
+    /// asked for after what the viewport shows.
+    std::vector<int> thumbnailGeometryWanted() const;
+    /// A geometry node's geometry, as a cook made it: what its thumbnail
+    /// shows, stamped anew when it changes.
+    void noteThumbnailGeometry(int node, const GeometryPtr& geometry);
+    /// Draws the thumbnails on screen that are out of date -- a few a frame
+    /// of the window -- and forgets those of nodes gone.
+    void updateThumbnails();
+    /// Forgets every thumbnail: another network shows.
+    void clearThumbnails();
 
     // --- the viewport -------------------------------------------------------------------
     std::shared_ptr<const sim::Frame> frameToShow() const;
@@ -502,6 +522,7 @@ private:
         std::shared_ptr<const sim::Network> snapshot;  ///< `net`, for the cooker
         std::string folder;
         NodeCanvas::View view;
+        std::set<int> thumbnailsHidden;
         int instance = 0;  ///< the asset node gone into
     };
     std::vector<Level> levels_;
@@ -549,6 +570,24 @@ private:
     GeometryPtr sheetGeometry_;    ///< the spreadsheet's node's, as last cooked
     int sheetGeometryNode_ = 0;
     bool synchronous_ = false;
+
+    // Thumbnails: the pictures in the nodes.
+    bool thumbnails_ = true;              ///< View > Node Thumbnails
+    std::set<int> thumbnailsHidden_;      ///< nodes whose own was hidden (their menu)
+    std::unique_ptr<gl::VolumeRenderer> thumbRenderer_;  ///< draws them; made when one is first wanted
+    std::string thumbRendererLog_;        ///< why it could not be made
+    std::unique_ptr<Thumbnails> thumbs_;
+    /// The geometry nodes' geometry as cooks last made it: a stamp that
+    /// changes with it, and the network's revision when it last did -- a
+    /// change of the network shows at once, one of the frame as it plays.
+    struct ThumbGeometry {
+        GeometryPtr geometry;
+        uint64_t stamp = 0, revision = 0;
+    };
+    std::map<int, ThumbGeometry> thumbGeometry_;
+    uint64_t thumbStamp_ = 0;
+    std::string thumbCookKey_;            ///< what the cooker was last asked for them
+    uint64_t thumbSerial_ = 0;            ///< ... that request's serial
 
     // Playback.
     int current_ = 1;

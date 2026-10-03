@@ -129,7 +129,7 @@ const char* fileLabel(const ShaderFile& f) {
 }  // namespace
 
 ShaderWorkspace::ShaderWorkspace(const gl::Api& gl, std::vector<std::string> libraryFiles, std::string examplesDir)
-    : libraryFiles_(std::move(libraryFiles)), examplesDir_(std::move(examplesDir)), preview_(gl) {
+    : libraryFiles_(std::move(libraryFiles)), examplesDir_(std::move(examplesDir)), preview_(gl), gl_(gl) {
     reloadLibrary();
     newGraph();
 }
@@ -150,6 +150,8 @@ void ShaderWorkspace::reloadLibrary() {
     }
     library_ = std::move(lib);
     compiledRevision_ = ~0ull;
+    swatchRevision_ = ~0ull;
+    swatchFailed_.clear();
     if (!problems.empty()) setMessage(problems, true);
     else setMessage("Library: " + std::to_string(library_.size()) + " nodes");
 }
@@ -164,8 +166,9 @@ void ShaderWorkspace::newGraph() {
     path_.clear();
     savedText_ = graph_.save();
     history_.reset(savedText_);
-    canvas_.clearSelection();
+    canvas_.setView({});  // no selection, no room made for the last graph's thumbnails
     canvas_.frame();
+    clearSwatches();
     uniformValues_.clear();
     preview_.resetUniformValues();
     compiledRevision_ = ~0ull;
@@ -189,8 +192,9 @@ bool ShaderWorkspace::open(const std::string& path) {
     path_ = path;
     savedText_ = graph_.save();
     history_.reset(savedText_);
-    canvas_.clearSelection();
+    canvas_.setView({});
     canvas_.frame();
+    clearSwatches();
     uniformValues_.clear();
     preview_.resetUniformValues();
     compiledRevision_ = ~0ull;
@@ -219,6 +223,7 @@ void ShaderWorkspace::restore(const std::string& state) {
     if (!ShaderGraph::load(state, g, error)) return;
     graph_ = std::move(g);
     compiledRevision_ = ~0ull;
+    swatchRevision_ = ~0ull;  // a graph loaded counts its revisions anew
 }
 
 void ShaderWorkspace::exportShaders(const std::string& dir) {
@@ -320,6 +325,7 @@ void ShaderWorkspace::update(float dt) {
     recompile();
     pollValidation();
     history_.track(graph_.save(), settled());
+    updateSwatches();
     job_.step();
     std::string result, where;
     bool failed = false;
@@ -410,6 +416,8 @@ std::vector<CanvasNode> ShaderWorkspace::canvasNodes() const {
             c.problem = 2;
             c.problemText = it->second;
         }
+        c.thumbnail = showsThumbnail(n);
+        c.thumbnailTexture = c.thumbnail && swatches_ ? static_cast<ImTextureID>(swatches_->texture(n.id)) : 0;
         out.push_back(std::move(c));
     }
     return out;
@@ -537,6 +545,17 @@ void ShaderWorkspace::nodeMenu(int id) {
         for (int i : chosen) graph_.removeNode(i);
     }
     if (ImGui::MenuItem("Frame", "F")) canvas_.frame(true);
+    if (def && (def->isOutput || !def->outputs.empty())) {
+        const bool on = !thumbnailsHidden_.count(id);
+        if (ImGui::MenuItem("Thumbnail", nullptr, on, thumbnails_)) {
+            for (const int i : chosen) {
+                if (on) thumbnailsHidden_.insert(i);
+                else thumbnailsHidden_.erase(i);
+            }
+        }
+        ImGui::SetItemTooltip(thumbnails_ ? "A swatch in the node: what its first output is, on the preview's mesh"
+                                          : "Thumbnails are off: View > Node Thumbnails");
+    }
     if (def && !def->description.empty()) {
         ImGui::Separator();
         ImGui::PushTextWrapPos(theme::px(320.0f));
@@ -955,6 +974,13 @@ void ShaderWorkspace::editMenu() {
 }
 
 void ShaderWorkspace::menus() {
+    if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Frame the Network", "F")) canvas_.frame();
+        if (ImGui::MenuItem("Node Thumbnails", nullptr, thumbnails_)) thumbnails_ = !thumbnails_;
+        ImGui::SetItemTooltip("A swatch in each node of what its first output is, on the preview's mesh. A "
+                              "node's menu hides its own.");
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Library")) {
         if (ImGui::MenuItem("Reload", "Ctrl+R")) reloadLibrary();
         if (ImGui::MenuItem("Add Library File\xe2\x80\xa6")) {
@@ -1008,6 +1034,138 @@ void ShaderWorkspace::popups() {
         case FileAction::None: break;
     }
     fileAction_ = FileAction::None;
+}
+
+// --- thumbnails: the swatches -------------------------------------------------------------
+
+bool ShaderWorkspace::showsThumbnail(const GraphNode& n) const {
+    if (!thumbnails_ || thumbnailsHidden_.count(n.id)) return false;
+    const NodeDef* def = library_.find(n.type);
+    return def && (def->isOutput || !def->outputs.empty());
+}
+
+GeneratedShader ShaderWorkspace::swatchShader(int id) const {
+    const GraphNode* n = graph_.node(id);
+    const NodeDef* def = n ? library_.find(n->type) : nullptr;
+    if (!def) return {};
+    if (def->isOutput) return previewShader_;  // the graph's own: what the preview shows
+    // The graph with the node's first output -- the first an output can take
+    // -- as the colour, nothing moving the vertices, drawn opaque.
+    ShaderGraph g = graph_;
+    int out = 0;
+    for (const GraphNode& m : g.nodes()) {
+        const NodeDef* d = library_.find(m.type);
+        if (d && d->isOutput) out = m.id;
+    }
+    if (!out) out = g.addNode("surface_output", 0.0f, 0.0f, &library_);
+    const NodeDef* outDef = g.node(out) ? library_.find(g.node(out)->type) : nullptr;
+    if (!outDef) return {};
+    for (const PortDef& p : outDef->inputs) g.disconnect(out, p.name);
+    if (outDef->param("blend")) g.setParam(out, "blend", "opaque");
+    const PortDef* colour = nullptr;
+    for (const PortDef& p : outDef->inputs) {
+        if (p.stage == Stage::Fragment) colour = &p;
+    }
+    if (!colour) return {};
+    for (const OutputDef& o : def->outputs) {
+        if (g.connect(id, o.name, out, colour->name, library_)) {
+            return generate(g, library_, *TargetRegistry::instance().find("glsl330"));
+        }
+    }
+    return {};
+}
+
+void ShaderWorkspace::clearSwatches() {
+    if (swatches_) swatches_->clear();
+    thumbnailsHidden_.clear();
+    swatchFailed_.clear();
+    swatchRevision_ = ~0ull;
+}
+
+void ShaderWorkspace::updateSwatches() {
+    std::set<int> alive;
+    for (const GraphNode& n : graph_.nodes()) alive.insert(n.id);
+    if (swatches_) swatches_->keep(alive);
+    for (auto it = swatchFailed_.begin(); it != swatchFailed_.end();) {
+        it = alive.count(it->first) ? std::next(it) : swatchFailed_.erase(it);
+    }
+    const std::vector<int> shown = canvas_.thumbnailsShown();
+    if (!thumbnails_ || shown.empty()) return;
+    if (!swatchRenderer_) {
+        swatchRenderer_ = std::make_unique<gl::PreviewRenderer>(gl_);
+        swatches_ = std::make_unique<Thumbnails>(gl_);
+    }
+    // What every swatch shows: the graph, as its text says -- a graph
+    // loaded counts its revisions anew -- and the preview's mesh. The
+    // sliders' values change them as often as the swatches may be drawn.
+    if (graph_.revision() != swatchRevision_) {
+        swatchRevision_ = graph_.revision();
+        const std::string text = graph_.save();
+        swatchKey_ = mixKey(1469598103934665603ull, text.data(), text.size());
+    }
+    const uint64_t key = mixKey(swatchKey_, preview_.mesh());
+    uint64_t live = 1469598103934665603ull;
+    for (const auto& [name, value] : uniformValues_) {
+        live = mixKey(live, name.data(), name.size());
+        live = mixKey(live, value.type);
+        live = mixKey(live, value.v);
+    }
+    const double now = ImGui::GetTime();
+    struct Due {
+        int urgency;
+        double drawn;
+        size_t order;
+        int node;
+    };
+    std::vector<Due> due;
+    for (size_t i = 0; i < shown.size(); ++i) {
+        const GraphNode* n = graph_.node(shown[i]);
+        if (!n || !showsThumbnail(*n)) continue;
+        if (const auto f = swatchFailed_.find(n->id); f != swatchFailed_.end() && f->second == key) continue;
+        if (const int urgency = swatches_->stale(n->id, key, live, now)) {
+            due.push_back({urgency, swatches_->drawnAt(n->id), i, n->id});
+        }
+    }
+    std::sort(due.begin(), due.end(), [](const Due& a, const Due& b) {
+        if (a.urgency != b.urgency) return a.urgency < b.urgency;
+        if (a.drawn != b.drawn) return a.drawn < b.drawn;
+        return a.order < b.order;
+    });
+    const auto start = std::chrono::steady_clock::now();
+    auto ms = [](std::chrono::steady_clock::time_point t) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+    };
+    int drawn = 0;
+    for (const Due& d : due) {
+        if (drawn >= 3 || (drawn > 0 && ms(start) > 8.0)) break;
+        const auto t0 = std::chrono::steady_clock::now();
+        const GeneratedShader shader = swatchShader(d.node);
+        std::string log;
+        gl::PreviewRenderer& r = *swatchRenderer_;
+        if (!shader.ok() || !shader.fileFor(Stage::Vertex) || !shader.fileFor(Stage::Fragment) ||
+            !r.setProgram(shader.fileFor(Stage::Vertex)->text, shader.fileFor(Stage::Fragment)->text, log)) {
+            swatchFailed_[d.node] = key;  // not again until the graph changes
+            continue;
+        }
+        r.setUniforms(shader.uniforms);
+        r.resetUniformValues();
+        for (const auto& [name, value] : uniformValues_) r.setUniformValue(name, value);
+        r.setBlend(shader.blend);
+        r.setMesh(preview_.mesh());
+        // The mesh filling the picture's height: a billboard -- upright,
+        // turned to the eye -- seen straight on, a plane from above.
+        r.orbit = gl::Orbit{};
+        r.orbit.distance = 3.7f;  // the ball, of radius 1, whole
+        if (preview_.mesh() == gl::MeshKind::Billboard) {
+            r.orbit.pitch = 0.0f;
+            r.orbit.distance = 3.2f;
+        } else if (preview_.mesh() == gl::MeshKind::Plane) {
+            r.orbit.pitch = 55.0f;
+        }
+        r.render(2 * Thumbnails::kWidth, 2 * Thumbnails::kHeight, time_);
+        swatches_->take(d.node, r.colorTexture(), key, live, now, ms(t0));
+        ++drawn;
+    }
 }
 
 std::string ShaderWorkspace::status() const {

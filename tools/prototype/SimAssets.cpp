@@ -57,8 +57,11 @@ bool SimWorkspace::enterAsset(int id) {
     up.history = std::move(history_);
     up.geometry = std::move(geometry_);
     up.view = canvas_.view();
+    up.thumbnailsHidden = std::move(thumbnailsHidden_);
     up.instance = id;
     levels_.push_back(std::move(up));
+    thumbnailsHidden_.clear();
+    clearThumbnails();  // the inside's nodes are others
     ++levelsRevision_;
 
     net_ = *def->net;
@@ -97,6 +100,8 @@ bool SimWorkspace::leaveAsset() {
     history_ = std::move(up.history);
     geometry_ = std::move(up.geometry);
     canvas_.setView(up.view);
+    thumbnailsHidden_ = std::move(up.thumbnailsHidden);
+    clearThumbnails();
     exprMode_.clear();
     editKey_.clear();
     nameEditNode_ = 0;

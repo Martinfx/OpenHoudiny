@@ -105,8 +105,7 @@ void SimWorkspace::updateGeometry() {
     std::snprintf(key, sizeof key, "%llu/%llu/%d/%d/%d/%d/%p/%s", static_cast<unsigned long long>(net_.revision()),
                   static_cast<unsigned long long>(levelsRevision_), shownFrame(), display, sheet_ ? sheet : 0, base,
                   static_cast<const void*>(simFrame.get()), folder().c_str());
-    if (key != cookKey_) {
-        cookKey_ = key;
+    auto request = [&] {
         sim::Cooker::Request r;
         for (const Level& l : levels_) r.levels.push_back({l.snapshot, l.folder, l.instance});
         r.levels.push_back({std::make_shared<const sim::Network>(net_), folder(), 0});
@@ -115,30 +114,64 @@ void SimWorkspace::updateGeometry() {
         if (display) r.nodes.push_back(display);
         if (sheet_ && sheet) r.nodes.push_back(sheet);
         if (base) r.nodes.push_back(base);
-        cookSerial_ = cooker_->submit(std::move(r));
+        return r;
+    };
+    if (key != cookKey_) {
+        cookKey_ = key;
+        cookSerial_ = cooker_->submit(request());
         cookAsked_ = ImGui::GetTime();
     }
+    // What a cook made: what the viewport shows, the spreadsheet, the
+    // thumbnails.
+    auto taken = [&] {
+        sim::Cooker::Result done;
+        if (!cooker_->take(done)) return;
+        // Every geometry node cooked: what its thumbnail shows.
+        for (const auto& [id, geo] : done.geometry) noteThumbnailGeometry(id, geo);
+        if (done.serial == thumbSerial_) return;  // for the thumbnails alone: what is shown is as it was
+        cookedSerial_ = done.serial;
+        const auto shown = done.geometry.find(display);
+        const GeometryPtr geo = shown != done.geometry.end() ? shown->second : nullptr;
+        if (geo != renderer_.geometry()) {
+            renderer_.setGeometry(geo);
+            viewDirty_ = true;
+        }
+        const auto sheetGeo = done.geometry.find(sheet);
+        sheetGeometry_ = sheetGeo != done.geometry.end() ? sheetGeo->second : nullptr;
+        sheetGeometryNode_ = sheet;
+        const auto baseGeo = base ? done.geometry.find(base) : done.geometry.end();
+        softBase_ = baseGeo != done.geometry.end() ? baseGeo->second : nullptr;
+        softBaseNode_ = softBase_ ? base : 0;
+        // What went wrong the last time each node cooked.
+        cookErrors_ = std::move(done.errors);
+        cookWarnings_ = std::move(done.warnings);
+        cookLogs_ = std::move(done.logs);
+        cookMs_ = done.ms;
+    };
     if (synchronous_) cooker_->wait();  // screenshots: the geometry of this frame
-    sim::Cooker::Result done;
-    if (!cooker_->take(done)) return;
-    cookedSerial_ = done.serial;
-    const auto shown = done.geometry.find(display);
-    const GeometryPtr geo = shown != done.geometry.end() ? shown->second : nullptr;
-    if (geo != renderer_.geometry()) {
-        renderer_.setGeometry(geo);
-        viewDirty_ = true;
+    taken();
+    // What is shown cooked, the geometry nodes whose thumbnails are on
+    // screen: a request of their own, given up for the next change -- what
+    // is shown always cooks first.
+    if (cookedSerial_ == cookSerial_ && !cooker_->busy()) {
+        sim::Cooker::Request r = request();
+        std::string thumbKey = key;
+        for (const int id : thumbnailGeometryWanted()) {
+            if (std::find(r.nodes.begin(), r.nodes.end(), id) != r.nodes.end()) continue;
+            r.nodes.push_back(id);
+            thumbKey += "," + std::to_string(id);
+        }
+        if (thumbKey != thumbCookKey_) {
+            thumbCookKey_ = thumbKey;
+            if (thumbKey != key) {
+                thumbSerial_ = cooker_->submit(std::move(r));
+                if (synchronous_) {
+                    cooker_->wait();
+                    taken();
+                }
+            }
+        }
     }
-    const auto sheetGeo = done.geometry.find(sheet);
-    sheetGeometry_ = sheetGeo != done.geometry.end() ? sheetGeo->second : nullptr;
-    sheetGeometryNode_ = sheet;
-    const auto baseGeo = base ? done.geometry.find(base) : done.geometry.end();
-    softBase_ = baseGeo != done.geometry.end() ? baseGeo->second : nullptr;
-    softBaseNode_ = softBase_ ? base : 0;
-    // What went wrong the last time each node cooked.
-    cookErrors_ = std::move(done.errors);
-    cookWarnings_ = std::move(done.warnings);
-    cookLogs_ = std::move(done.logs);
-    cookMs_ = done.ms;
 }
 
 void SimWorkspace::spreadsheet() {

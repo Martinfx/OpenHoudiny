@@ -59,6 +59,7 @@ inline constexpr GLenum RGBA32F = 0x8814, TEXTURE2 = 0x84C2, TEXTURE3 = 0x84C3, 
                          TEXTURE6 = 0x84C6, TEXTURE7 = 0x84C7, R32F = 0x822E;
 inline constexpr GLenum RG8 = 0x822B, TEXTURE8 = 0x84C8, TEXTURE9 = 0x84C9, TEXTURE10 = 0x84CA;
 inline constexpr GLenum RGBA16F = 0x881A, COLOR_ATTACHMENT1 = 0x8CE1, COLOR_ATTACHMENT2 = 0x8CE2;
+inline constexpr GLenum READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9;
 
 // name, return type, parameters -- one list drives the struct and the loader.
 #define PG_GL_FUNCTIONS(X)                                                                         \
@@ -137,7 +138,8 @@ inline constexpr GLenum RGBA16F = 0x881A, COLOR_ATTACHMENT1 = 0x8CE1, COLOR_ATTA
     X(BindRenderbuffer, void, (GLenum, GLuint))                                                    \
     X(DeleteRenderbuffers, void, (GLsizei, const GLuint*))                                         \
     X(RenderbufferStorage, void, (GLenum, GLenum, GLsizei, GLsizei))                               \
-    X(FramebufferRenderbuffer, void, (GLenum, GLenum, GLenum, GLuint))
+    X(FramebufferRenderbuffer, void, (GLenum, GLenum, GLenum, GLuint))                             \
+    X(BlitFramebuffer, void, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum))
 
 using Proc = void (*)();
 using GetProc = Proc (*)(const char* name);

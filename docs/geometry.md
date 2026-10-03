@@ -184,6 +184,43 @@ Water Look má přepínač **Surface**: vypnutý hladinu nekreslí — voda se
 simuluje dál a je vidět jen to, co z ní ukazuje síť (částice přes Liquid
 Points).
 
+## 3a. Náhledy v uzlech
+
+Každý uzel sítě má pod piny obrázek toho, co dělá (16 : 10) — jako
+miniatury uzlů v Substance Designeru nebo náhledy v Blenderu:
+
+| uzel | obrázek |
+|---|---|
+| geometrický (Box, Wrangle, Merge, Fracture…, asset) | jeho geometrie ve snímku na obrazovce, osvětlená, v tmavém studiu, zarámovaná, shora ze tří čtvrtin |
+| Object | jeho tvar v jeho barvě |
+| Pyro Source, Water Source | tvar zdroje: oheň oranžově, kouř šedě, voda modře |
+| Pyro Solver, Volume Look | plyn snímku na obrazovce, zarámovaný na místo, kde plyn je, ve světle scény |
+| Liquid Solver, Water Look | voda snímku |
+| RBD Solver, Cloth Solver | kusy, látka |
+| Rain | kapky |
+| Camera | scéna jejím pohledem (USD Camera, jen když se jí dívá Output) |
+| Output | záběr: scéna kamerou výstupu, bez kamery tak, jak ji zarámuje viewport |
+
+Síly obrázek nemají. **View → Node Thumbnails** náhledy vypne a zapne pro
+celou síť, **Thumbnail** v menu uzlu (pravé tlačítko) pro vybrané uzly.
+
+Obrázek se kreslí znovu, jen když se změní, co ukazuje: po úpravě uzlu nebo
+toho, co do něj vede, hned; snímek, který se při přehrávání mění, nejvýš
+čtyřikrát za sekundu — a když kreslení trvá dlouho, tím řidčeji, aby
+nezabralo víc než dvacetinu času. Kreslí se jen obrázky uzlů na obrazovce,
+nejvýš tři za snímek okna, nejdřív ty, které ještě žádný nemají. Geometrii
+pro ně uvaří vařič ve vlastním požadavku, až když je uvařené, co ukazuje
+viewport: změna sítě vždy uvaří nejdřív zobrazený uzel. Plyn a voda jdou do
+náhledů na hrubší mřížce (nejvýš 2 miliony buněk), takže velká scéna
+(`flood_crates_hd`) nedrží v grafické kartě druhou plnou kopii.
+
+Síť rozložená bez náhledů — všechny příklady — by se s nimi překrývala.
+Uzel pod uzlem s obrázkem se proto kreslí níž, o kolik obrázek nad ním
+vyrostl; pozice v síti zůstanou, soubor se nezmění. Uzel přetažený myší
+nebo rozložený (**L**) stojí tam, kde je nakreslený.
+
+![Síť flood_crates s náhledy: bedny, betonové bloky, kusy RBD, voda, zdroj, výstup a kamera](img/node-thumbnails.jpg)
+
 ## 4. Tabulka atributů
 
 Tlačítko s tabulkou v záhlaví panelu parametrů přepne na **Geometry

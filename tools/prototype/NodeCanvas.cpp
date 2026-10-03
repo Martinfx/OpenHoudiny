@@ -18,6 +18,9 @@ constexpr float kPad = 10.0f;
 constexpr float kPinRadius = 5.0f;
 constexpr float kMinWidth = 150.0f;
 constexpr float kRounding = 6.0f;
+// A thumbnail: as wide as the node less a margin each side, 16 by 10.
+constexpr float kThumbMargin = 6.0f;
+constexpr float kThumbAspect = 1.6f;
 // On screen, in pixels of kFont: from how big the title is written on a node
 // (below it, the name goes beside the node), and its pins' names and summary.
 constexpr float kWordsAt = 8.5f;
@@ -55,6 +58,7 @@ struct NodeCanvas::Layout {
     float height = kHeader;
     int rows = 0;
     bool summary = false;
+    float thumbTop = 0.0f, thumbHeight = 0.0f;  ///< the thumbnail, from the node's top; 0 high: none
 };
 
 NodeCanvas::Layout NodeCanvas::layoutOf(const CanvasNode& n) const {
@@ -72,6 +76,11 @@ NodeCanvas::Layout NodeCanvas::layoutOf(const CanvasNode& n) const {
     l.rows = static_cast<int>(std::max(n.inputs.size(), n.outputs.size()));
     l.summary = !n.summary.empty();
     l.height = kHeader + static_cast<float>(l.rows) * kRow + (l.summary ? 18.0f : 0.0f) + (l.rows ? 8.0f : 6.0f);
+    if (n.thumbnail) {
+        l.thumbTop = l.height;
+        l.thumbHeight = std::round((l.width - 2.0f * kThumbMargin) / kThumbAspect);
+        l.height += l.thumbHeight + kThumbMargin;
+    }
     return l;
 }
 
@@ -105,6 +114,44 @@ void NodeCanvas::toggle(int node) {
 }
 
 void NodeCanvas::frame(bool selectionOnly) { frameRequest_ = selectionOnly ? 2 : 1; }
+
+std::vector<int> NodeCanvas::thumbnailsShown() const {
+    return drawnFrame_ >= ImGui::GetFrameCount() - 1 ? thumbnailsShown_ : std::vector<int>();
+}
+
+void NodeCanvas::makeRoom(const std::vector<CanvasNode>& nodes) {
+    // Top to bottom: each node as low as the nodes it is under need --
+    // their bottoms with their thumbnails, and the gap there was, a little
+    // at least (nodes that overlapped part), a little at most. Under a node
+    // is below its middle, over it by more than a sliver: one beside it
+    // stays beside it.
+    constexpr float kMinGap = 6.0f, kMaxGap = 16.0f, kSliver = 8.0f;
+    std::vector<const CanvasNode*> order;
+    for (const CanvasNode& n : nodes) order.push_back(&n);
+    std::stable_sort(order.begin(), order.end(), [](const CanvasNode* a, const CanvasNode* b) { return a->y < b->y; });
+    struct Placed {
+        float left, right;
+        float top, bottom;  // as it stands, without a thumbnail
+        float drawn;        // its bottom, as it is drawn
+        bool grew;          // it has a thumbnail
+    };
+    std::vector<Placed> placed;
+    lift_.clear();
+    for (const CanvasNode* n : order) {
+        const Layout l = layoutOf(*n);
+        float y = n->y;
+        for (const Placed& p : placed) {
+            if (std::min(p.right, n->x + l.width) - std::max(p.left, n->x) <= kSliver) continue;
+            if (n->y < 0.5f * (p.top + p.bottom)) continue;
+            // Below one that did not grow: as far below it as it was.
+            const float gap = n->y - p.bottom;
+            y = std::max(y, p.drawn + (p.grew ? std::clamp(gap, kMinGap, kMaxGap) : gap));
+        }
+        if (y > n->y) lift_[n->id] = y - n->y;
+        placed.push_back(
+            {n->x, n->x + l.width, n->y, n->y + (n->thumbnail ? l.thumbTop : l.height), y + l.height, n->thumbnail});
+    }
+}
 
 void NodeCanvas::reveal(int node) { revealNode_ = node; }
 
@@ -196,6 +243,7 @@ void NodeCanvas::layOut(const std::vector<CanvasNode>& nodes, const std::vector<
         for (size_t i : byColumn[col]) {
             const Layout l = layoutOf(*chosen[i]);
             model.move(chosen[i]->id, std::round(x), std::round(y));
+            lift_.erase(chosen[i]->id);
             y += l.height + gapY;
             width = std::max(width, l.width);
         }
@@ -335,6 +383,22 @@ void NodeCanvas::drawNode(ImDrawList* d, const CanvasNode& n, bool selected, boo
                    n.summary.c_str());
     }
 
+    // The thumbnail: the picture, or -- until one is drawn -- the icon in
+    // its room.
+    if (n.thumbnail) {
+        const ImVec2 tlo = lo + ImVec2(kThumbMargin, l.thumbTop) * s;
+        const ImVec2 thi = tlo + ImVec2(l.width - 2.0f * kThumbMargin, l.thumbHeight) * s;
+        const float tr = 4.0f * s;
+        d->AddRectFilled(tlo, thi, theme::fade(IM_COL32(24, 25, 29, 255), a), tr);
+        if (n.thumbnailTexture) {
+            d->AddImageRounded(ImTextureRef(n.thumbnailTexture), tlo, thi, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f),
+                               theme::fade(IM_COL32_WHITE, a), tr);
+        } else {
+            theme::drawIcon(d, n.icon, (tlo + thi) * 0.5f, 22.0f * s, theme::fade(IM_COL32(255, 255, 255, 36), a));
+        }
+        d->AddRect(tlo, thi, theme::fade(IM_COL32(255, 255, 255, 20), a), tr);
+    }
+
     // The outline: the selection in the accent colour.
     if (selected) {
         const bool current = n.id == current_;
@@ -414,8 +478,23 @@ void NodeCanvas::drawNames(ImDrawList* d, const std::vector<const CanvasNode*>& 
     }
 }
 
-void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, const std::vector<CanvasLink>& links,
+void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& given, const std::vector<CanvasLink>& links,
                       const CanvasModel& model) {
+    // Room for the thumbnails: made again when a node's comes or goes --
+    // not for a node new to the network, which stands where it was put.
+    bool remake = thumbnailOf_.empty() && !given.empty();
+    std::map<int, bool> thumbnails;
+    for (const CanvasNode& n : given) {
+        thumbnails[n.id] = n.thumbnail;
+        const auto was = thumbnailOf_.find(n.id);
+        if (was != thumbnailOf_.end() && was->second != n.thumbnail) remake = true;
+    }
+    thumbnailOf_ = std::move(thumbnails);
+    if (remake) makeRoom(given);
+    for (auto it = lift_.begin(); it != lift_.end();) it = thumbnailOf_.count(it->first) ? std::next(it) : lift_.erase(it);
+    // Everything below sees the nodes where they are drawn.
+    std::vector<CanvasNode> nodes = given;
+    for (CanvasNode& n : nodes) n.y += liftOf(n.id);
     ImGui::PushID(id);
     ImGuiIO& io = ImGui::GetIO();
     origin_ = ImGui::GetCursorScreenPos();
@@ -634,7 +713,7 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
         if (dragMoved_ && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) && model.move) {
             const ImVec2 delta = io.MouseDelta * (1.0f / s);
             for (int nodeId : selection_) {
-                if (const CanvasNode* n = find(nodeId)) model.move(nodeId, n->x + delta.x, n->y + delta.y);
+                if (const CanvasNode* n = find(nodeId)) model.move(nodeId, n->x + delta.x, n->y + delta.y - liftOf(nodeId));
             }
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -642,10 +721,12 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
                 selection_ = {pressedNode_};
                 current_ = pressedNode_;
             }
-            // Where they came to rest, in whole units: files that diff well.
+            // Where they came to rest, in whole units: files that diff well
+            // -- and where they are drawn, room for thumbnails or not.
             if (dragMoved_ && model.move) {
                 for (int nodeId : selection_) {
                     if (const CanvasNode* n = find(nodeId)) model.move(nodeId, std::round(n->x), std::round(n->y));
+                    lift_.erase(nodeId);
                 }
             }
             drag_ = Drag::None;
@@ -756,9 +837,17 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
         if (lit) col = theme::shade(col, 0.3f);
         drawLink(d, a, b, col, static_cast<int>(i) == hoverLink ? thickness * 1.6f : thickness);
     }
+    thumbnailsShown_.clear();
+    drawnFrame_ = ImGui::GetFrameCount();
     for (const CanvasNode* n : order) {
         drawNode(d, *n, selection_.count(n->id) > 0, n->id == hoverNode && drag_ == Drag::None, hot, hotAccepts);
+        if (!n->thumbnail) continue;
+        const Layout l = layoutOf(*n);
+        const ImVec2 a = toScreen(ImVec2(n->x, n->y + l.thumbTop)), b = a + ImVec2(l.width, l.thumbHeight) * s;
+        if (a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y) thumbnailsShown_.push_back(n->id);
     }
+    // The selected were drawn last: first in the list.
+    std::reverse(thumbnailsShown_.begin(), thumbnailsShown_.end());
     if (kFont * s < kWordsAt) drawNames(d, order, hoverNode);
     if (drag_ == Drag::Link) {
         if (const CanvasNode* n = find(linkFrom_.node)) {

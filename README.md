@@ -16,8 +16,9 @@ okna.
   ve viewportu, proudění na 3D mřížce, multigrid, voda z částic, déšť ve
   větru, objemové vykreslování, hladina s odrazy a lomem a kamera záběru
 - **[docs/geometry.md](docs/geometry.md)** — geometrie v téže síti (uzly
-  jako SOP v Houdini): display flag, viewport, tabulka atributů, geometrie
-  jako tvar překážek a zdrojů, simulace zpátky jako body a objemy
+  jako SOP v Houdini): display flag, viewport, náhled v každém uzlu, tabulka
+  atributů, geometrie jako tvar překážek a zdrojů, simulace zpátky jako body
+  a objemy
 - **[docs/editing.md](docs/editing.md)** — úpravy geometrie ve viewportu
   jako v Houdini: body, hrany a plochy vybrané myší (klik, obdélník, laso,
   štětec; jen viditelné, nebo i skryté), úchyt je posune, otočí
@@ -71,8 +72,8 @@ okna.
 - **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
   body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
   Houdini, Blender a renderery; bake na pozadí s průběhem, zrušením
-  a pokračováním z checkpointu, náhled v polovičním rozlišení, wedge
-  (varianty parametru) a profil kroku
+  a pokračováním z checkpointu, náhled na hrubších mřížkách (jak jemných,
+  řekne uzel Output), wedge (varianty parametru) a profil kroku
 - **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi
   Fracture, tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
   které nárazy lámou, nálože, drcení na prach, drť jako částice, které
@@ -199,7 +200,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ```bash
 ./build/pgtests            # 384 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 7 trosky ve vodě a v plynu, 25 shader graf, 98 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 11 checkpointy, bake, náhled a profil, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
 ctest --test-dir build -R python                   # 46 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
-./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti
+./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna
@@ -287,7 +288,9 @@ odstřikuje a na vodě dělá kroužky; podlaha je mokrá. Všechno je
 deterministické na libovolném počtu vláken. Uzel kamery určuje záběr:
 editor se jí dívá (s rámečkem obrazu) a render i `prototype sim` jdou
 jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
-vlastní plátno uzlů se zoomem, panel parametrů, viewport (plyn na podlaze
+vlastní plátno uzlů se zoomem a v každém uzlu náhledem toho, co dělá
+(geometrie, tvar objektu, snímek řešiče, záběr kamery; u shaderů vzorek
+výstupu uzlu), panel parametrů, viewport (plyn na podlaze
 se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
 se simulací ve vlastním vlákně, undo/redo a dvaceti šesti příklady. Ve viewportu se
 pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění

@@ -10,6 +10,7 @@
 #include "imgui.h"
 
 #include <cmath>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -286,6 +287,64 @@ TEST(tab_header_switches_on_a_click) {
     io.AddMouseButtonEvent(0, false);
     draw();
     CHECK_EQ(current, 1);
+}
+
+TEST(node_thumbnails_make_room_without_moving_the_network) {
+    // Two nodes one over the other, as a network laid out without
+    // thumbnails has them: the upper one's picture pushes the lower one down
+    // as they are drawn -- where it stands in the network stays.
+    Headless ui;
+    NodeCanvas canvas;
+    auto node = [](int id, float y) {
+        CanvasNode n;
+        n.id = id;
+        n.title = "box" + std::to_string(id);
+        n.y = y;
+        n.outputs = {{"Geometry"}};
+        return n;
+    };
+    std::vector<CanvasNode> nodes = {node(1, 0.0f), node(2, 60.0f)};
+    std::map<int, ImVec2> moved;
+    CanvasModel model;
+    model.move = [&](int id, float x, float y) { moved[id] = ImVec2(x, y); };
+    auto draw = [&] { ui.frame([&] { canvas.draw("net", nodes, {}, model); }); };
+    draw();
+    CHECK(canvas.view().lift.empty());  // without pictures: as they stand
+    CHECK(canvas.thumbnailsShown().empty());
+
+    for (CanvasNode& n : nodes) n.thumbnail = true;
+    draw();
+    const std::map<int, float> lift = canvas.view().lift;
+    CHECK(!lift.count(1));  // the upper stays
+    // The lower goes down by the picture -- 138 by 86 under a node 150 wide,
+    // and a margin -- and the gap there was, a little at least.
+    CHECK(lift.count(2) && std::fabs(lift.at(2) - 96.0f) < 0.5f);
+    CHECK(moved.empty());  // the network is as it was
+    CHECK_EQ(canvas.thumbnailsShown().size(), size_t(2));
+
+    // A node new to the network stands where it was put: the others stay.
+    nodes.push_back(node(3, 400.0f));
+    nodes.back().thumbnail = true;
+    draw();
+    CHECK(canvas.view().lift == lift);
+
+    // Laid out, every node goes where it is drawn: the room in the network itself.
+    canvas.arrange();
+    draw();
+    CHECK(canvas.view().lift.empty());
+    CHECK_EQ(moved.size(), size_t(3));
+    for (const auto& [a, pa] : moved) {
+        for (const auto& [b, pb] : moved) {
+            // Stacked in one column, each below the other's picture.
+            if (a < b && std::fabs(pa.x - pb.x) < 1.0f) CHECK(std::fabs(pa.y - pb.y) >= 150.0f);
+        }
+    }
+
+    // Pictures off: drawn as they stand, no room kept.
+    for (CanvasNode& n : nodes) n.thumbnail = false;
+    draw();
+    CHECK(canvas.view().lift.empty());
+    CHECK(canvas.thumbnailsShown().empty());
 }
 
 TEST(node_names_cover_no_node_and_no_name) {

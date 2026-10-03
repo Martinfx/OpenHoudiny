@@ -23,6 +23,7 @@
 #include "imgui.h"
 
 #include <functional>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -51,6 +52,11 @@ struct CanvasNode {
     int problem = 0;               ///< 0 none, 1 a warning, 2 an error
     std::string problemText;
     std::string summary;           ///< a line in the body, dim; empty: none
+    /// A picture of what the node makes, under its pins (Thumbnails.h):
+    /// room for it on the node, 16 by 10, and the picture in it once one
+    /// is drawn -- until then the room stays, the node's icon in it.
+    bool thumbnail = false;
+    ImTextureID thumbnailTexture = 0;  ///< a texture of the window's renderer, bottom row first; 0: none yet
 };
 
 struct CanvasLink {
@@ -111,13 +117,17 @@ public:
         float zoom = 1.0f;
         std::set<int> selection;
         int current = 0;
+        std::map<int, float> lift;     ///< nodes drawn lower than they stand, to make room for thumbnails
+        std::map<int, bool> thumbnail; ///< which had one
     };
-    View view() const { return {pan_, zoom_, selection_, current_}; }
+    View view() const { return {pan_, zoom_, selection_, current_, lift_, thumbnailOf_}; }
     void setView(const View& v) {
         pan_ = v.pan;
         zoom_ = v.zoom;
         selection_ = v.selection;
         current_ = v.current;
+        lift_ = v.lift;
+        thumbnailOf_ = v.thumbnail;
         firstDraw_ = false;
     }
 
@@ -141,6 +151,10 @@ public:
     void arrange(bool selectionOnly = false);
 
     float zoom() const { return zoom_; }
+    /// The nodes whose thumbnails were on screen at the last draw, the
+    /// selected first: those worth drawing pictures for. Empty when the
+    /// canvas was not drawn in the last frame of the window.
+    std::vector<int> thumbnailsShown() const;
 
 private:
     struct Layout;  // where a node's parts are, in world units
@@ -158,6 +172,15 @@ private:
     void drawNames(ImDrawList* d, const std::vector<const CanvasNode*>& order, int hovered) const;
     void layOut(const std::vector<CanvasNode>& nodes, const std::vector<CanvasLink>& links, const CanvasModel& model,
                 bool selectionOnly);
+    /// Room for the thumbnails in a network laid out without them: each
+    /// node drawn lower by as much as the nodes above it -- over it, in a
+    /// column -- grew into it. The network's places stay; a node moved,
+    /// or laid out, is drawn where it goes from then on.
+    void makeRoom(const std::vector<CanvasNode>& nodes);
+    float liftOf(int node) const {
+        const auto it = lift_.find(node);
+        return it != lift_.end() ? it->second : 0.0f;
+    }
 
     ImVec2 origin_{0.0f, 0.0f};  // screen position of the canvas's top left
     ImVec2 size_{0.0f, 0.0f};
@@ -183,6 +206,10 @@ private:
     PinRef menuPin_;
     int menuNode_ = 0;
     std::string dropWhy_;             // why the pin under the mouse will not take the link
+    std::vector<int> thumbnailsShown_;  // at the last draw
+    int drawnFrame_ = -1;               // ImGui's frame count then
+    std::map<int, float> lift_;         // makeRoom's: how much lower each node is drawn
+    std::map<int, bool> thumbnailOf_;   // whether each node had a thumbnail at the last draw
 };
 
 }  // namespace pg::editor
