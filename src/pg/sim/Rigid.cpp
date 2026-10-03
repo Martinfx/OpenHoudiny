@@ -1719,6 +1719,10 @@ constexpr float kSpeculative = 0.005f;
 /// tower of 5 628 pieces falls 30 % faster.
 constexpr float kReuseMove = 0.005f;
 constexpr float kReuseTurn = 0.0872665f;  // 5 degrees
+/// How far a piece may stay sunk into what it lies on, metres: what sinks
+/// further is pushed back out to this. Jolt's 2 cm is a game's: a box that
+/// came down fast lay 2 cm deep in the floor, a brick a third of its height.
+constexpr float kSlop = 0.005f;
 /// Grit: how hard the air holds a bit back -- as a stone of 2400 kg/m^3,
 /// its drag a pull of 1.5e-4 v^2 / r (m/s^2), a chip of glass three times
 /// as hard -- how much of the way it went into what it knocks into it keeps
@@ -3302,6 +3306,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     {
         JPH::PhysicsSettings ps = m.physics.GetPhysicsSettings();
         ps.mSpeculativeContactDistance = kSpeculative;
+        ps.mPenetrationSlop = kSlop;
         ps.mBodyPairCacheMaxDeltaPositionSq = kReuseMove * kReuseMove;
         ps.mBodyPairCacheCosMaxDeltaRotationDiv2 = std::cos(0.5f * kReuseTurn);
         m.physics.SetPhysicsSettings(ps);

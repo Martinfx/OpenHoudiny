@@ -904,20 +904,23 @@ stejný:
 
 Věž z příkladu (593 kusů v 710 tělech, přes dva tisíce spojů) se během
 pádu (180 snímků) krokuje za 3,2 ms na snímek na jednom vláknu a za
-2,1 ms na čtyřech. Věž rozřezaná na 5 628 kusů za 39 ms na jednom
-a 19 ms na čtyřech (`./build/pgbench_rigid`, bez prachu). Skoro všechen
+2,1 ms na čtyřech. Věž rozřezaná na 5 628 kusů za 44 ms na jednom
+a 19,5 ms na čtyřech (`./build/pgbench_rigid`, bez prachu). Skoro všechen
 čas je v Joltu: dvě třetiny v testech kolizí dvojic konvexních obalů (GJK
 a EPA), pětina v řešiči kontaktů. Roste s počtem těles, která se právě
 hýbou.
 
 **Levnější kontakty.** V hromadě je každý kus blízko mnoha jiných a Jolt
 v každém kroku testuje každou dvojici, která je dost blízko. Solver mu
-proto nastavuje dvě věci jinak, než je jeho výchozí:
+proto nastavuje tři věci jinak, než je jeho výchozí:
 
 - **spekulativní kontakty** hledá jen 5 mm dopředu místo 2 cm. Méně
   dvojic, které se nedotýkají, projde drahým testem. Co přiletí rychleji
-  než 5 mm za krok, se o pár milimetrů zanoří, než ho kontakt vytlačí.
-  Dřív to platilo pro to, co letělo rychleji než 2 cm za krok;
+  než 5 mm za krok, se zanoří, než ho kontakt vytlačí. Dřív to platilo
+  pro to, co letělo rychleji než 2 cm za krok;
+- **zanoření**: vytlačí ho zpátky až na 5 mm. Jolt má výchozí 2 cm, to je
+  měřítko her: krabice, která rychle dopadla, ležela 2 cm v podlaze,
+  cihla by zapadla o třetinu své výšky. Velkou věž to zpomalí asi o 5 %;
 - **kontakty dvojice**, která se od minulého kroku vůči sobě posunula
   o méně než 5 mm a otočila o méně než 5°, si nechá a nehledá je znovu.
   Jolt má výchozí 1 mm a 2°. Usazující se hromada je skoro celá z takových
