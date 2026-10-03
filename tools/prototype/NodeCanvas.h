@@ -65,6 +65,19 @@ struct PinRef {
     bool output = false;
 };
 
+/// A node on screen and the size of its name, for placeNames.
+struct NameRoom {
+    ImVec2 lo, hi;  ///< the node
+    ImVec2 size;    ///< its name
+};
+
+/// Where the names of nodes go when the network is too far out to write
+/// them on the nodes: under a node, else at its right -- each only where it
+/// covers neither a node nor a name placed before it, taken in `order`. For
+/// each node, the top left of its name; false where it found no room.
+std::vector<std::pair<bool, ImVec2>> placeNames(const std::vector<NameRoom>& nodes, const std::vector<size_t>& order,
+                                                 float gap);
+
 /// What the canvas asks of the network it shows.
 struct CanvasModel {
     /// Could `from` (an output) feed `to` (an input)? If not, why.
@@ -141,6 +154,8 @@ private:
     void drawNode(ImDrawList* d, const CanvasNode& n, bool selected, bool hovered, const PinRef* hot,
                   bool hotAccepts) const;
     void drawLink(ImDrawList* d, ImVec2 a, ImVec2 b, ImU32 color, float thickness) const;
+    /// Zoomed far out: the nodes' names beside them, where they fit.
+    void drawNames(ImDrawList* d, const std::vector<const CanvasNode*>& order, int hovered) const;
     void layOut(const std::vector<CanvasNode>& nodes, const std::vector<CanvasLink>& links, const CanvasModel& model,
                 bool selectionOnly);
 

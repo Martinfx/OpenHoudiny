@@ -1,9 +1,12 @@
 #include "Widgets.h"
 
+#include "imgui_internal.h"
 #include "misc/cpp/imgui_stdlib.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 
@@ -25,6 +28,17 @@ std::string lower(std::string s) {
     return s;
 }
 
+/// A dialog's main button: in the accent colour, white letters.
+bool accentButton(const char* label, ImVec2 size) {
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(IM_COL32(204, 110, 38, 255)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(IM_COL32(226, 130, 54, 255)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::vec(IM_COL32(182, 96, 30, 255)));
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(IM_COL32(255, 255, 255, 255)));
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(4);
+    return clicked;
+}
+
 }  // namespace
 
 std::string sizeText(uintmax_t bytes) {
@@ -37,7 +51,12 @@ std::string sizeText(uintmax_t bytes) {
 
 // --- panels ------------------------------------------------------------------------------
 
-PanelHeader panelHeader(theme::Icon icon, const char* title, const char* info) {
+namespace {
+
+/// A header's strip across the window and its icon; the cursor goes on
+/// under it -- unless `advance` is false, for what is put into the strip
+/// first (then the caller ends with the strip's Dummy).
+PanelHeader headerStrip(theme::Icon icon, bool advance = true) {
     PanelHeader h;
     const float height = ImGui::GetFrameHeight() + theme::px(6.0f);
     h.min = ImGui::GetCursorScreenPos();
@@ -46,18 +65,129 @@ PanelHeader panelHeader(theme::Icon icon, const char* title, const char* info) {
     ImDrawList* d = ImGui::GetWindowDrawList();
     d->AddRectFilled(h.min, h.max, theme::kHeader);
     d->AddLine(ImVec2(h.min.x, h.max.y - 0.5f), ImVec2(h.max.x, h.max.y - 0.5f), IM_COL32(0, 0, 0, 90));
-    const float cy = (h.min.y + h.max.y) * 0.5f;
-    theme::drawIcon(d, icon, ImVec2(h.min.x + theme::px(16.0f), cy), theme::px(14.0f), theme::kTextDim);
+    theme::drawIcon(d, icon, ImVec2(h.min.x + theme::px(16.0f), (h.min.y + h.max.y) * 0.5f), theme::px(14.0f),
+                    theme::kTextDim);
+    if (advance) ImGui::Dummy(ImVec2(h.max.x - h.min.x, height));
+    return h;
+}
+
+}  // namespace
+
+PanelHeader panelHeader(theme::Icon icon, const char* title, const char* info) {
+    PanelHeader h = headerStrip(icon);
+    ImDrawList* d = ImGui::GetWindowDrawList();
     ImFont* bold = theme::fonts().bold;
     const float size = ImGui::GetFontSize();
-    const ImVec2 at(h.min.x + theme::px(30.0f), cy - size * 0.5f);
+    const ImVec2 at(h.min.x + theme::px(30.0f), (h.min.y + h.max.y - size) * 0.5f);
     d->AddText(bold, size, at, theme::kText, title);
     if (info && *info) {
         const float w = bold->CalcTextSizeA(size, FLT_MAX, 0.0f, title).x;
         d->AddText(ImVec2(at.x + w + theme::px(10.0f), at.y), theme::kTextDim, info);
     }
-    ImGui::Dummy(ImVec2(h.max.x - h.min.x, height));
     return h;
+}
+
+PanelHeader tabHeader(theme::Icon icon, int& current, const std::vector<const char*>& tabs, const char* info) {
+    PanelHeader h = headerStrip(icon, false);
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImFont* bold = theme::fonts().bold;
+    const float size = ImGui::GetFontSize();
+    const float pad = theme::px(10.0f);
+    const float ty = (h.min.y + h.max.y - size) * 0.5f;
+    float x = h.min.x + theme::px(30.0f) - pad;  // the first tab's text where a title's would be
+    for (size_t i = 0; i < tabs.size(); ++i) {
+        const float w = bold->CalcTextSizeA(size, FLT_MAX, 0.0f, tabs[i]).x + 2.0f * pad;
+        ImGui::SetCursorScreenPos(ImVec2(x, h.min.y));
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::InvisibleButton("##tab", ImVec2(w, h.max.y - h.min.y))) current = static_cast<int>(i);
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const bool on = current == static_cast<int>(i);
+        if (hovered && !on) {
+            d->AddRectFilled(ImVec2(x, h.min.y + theme::px(4.0f)), ImVec2(x + w, h.max.y - theme::px(4.0f)),
+                             theme::fade(IM_COL32_WHITE, 0.05f), theme::px(4.0f));
+        }
+        d->AddText(bold, size, ImVec2(x + pad, ty), on || hovered ? theme::kText : theme::kTextDim, tabs[i]);
+        if (on) {
+            d->AddRectFilled(ImVec2(x + pad * 0.6f, h.max.y - theme::px(3.0f)), ImVec2(x + w - pad * 0.6f, h.max.y - theme::px(1.0f)),
+                             theme::kAccent, theme::px(1.0f));
+        }
+        x += w;
+    }
+    if (info && *info) d->AddText(ImVec2(x + pad, ty), theme::kTextDim, info);
+    // The strip's own item last: the cursor goes on under it.
+    ImGui::SetCursorScreenPos(h.min);
+    ImGui::Dummy(ImVec2(h.max.x - h.min.x, h.max.y - h.min.y));
+    return h;
+}
+
+ImVec2 overlayText(ImDrawList* d, ImVec2 at, ImU32 color, const char* text, ImFont* font, float size) {
+    if (!font) font = ImGui::GetFont();
+    if (size <= 0.0f) size = ImGui::GetFontSize();
+    const ImVec2 t = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    const float px = theme::px(6.0f), py = theme::px(2.5f);
+    d->AddRectFilled(ImVec2(at.x - px, at.y - py), ImVec2(at.x + t.x + px, at.y + t.y + py), IM_COL32(16, 17, 20, 168),
+                     theme::px(5.0f));
+    d->AddText(font, size, at, color, text);
+    return t;
+}
+
+namespace {
+
+// What a menu item declares as its icon: an em space, as wide as the text is
+// tall -- Dear ImGui keeps a column that wide for every item of the menu,
+// and the drawn icon goes into it.
+constexpr const char* kIconRoom = "\xe2\x80\x83";
+
+void menuIcon(ImVec2 at, theme::Icon icon, ImU32 color, bool enabled) {
+    const float h = ImGui::GetTextLineHeight();
+    theme::drawIcon(ImGui::GetWindowDrawList(), icon, ImVec2(at.x + h * 0.5f, at.y + h * 0.5f), h * 0.95f,
+                    enabled ? color : theme::fade(color, 0.4f));
+}
+
+}  // namespace
+
+bool iconMenuItem(theme::Icon icon, ImU32 color, const char* label, const char* shortcut, bool selected, bool enabled) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::MenuItemEx(label, kIconRoom, shortcut, selected, enabled);
+    menuIcon(at, icon, color, enabled);
+    return clicked;
+}
+
+bool beginIconMenu(theme::Icon icon, ImU32 color, const char* label, bool enabled) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const bool open = ImGui::BeginMenuEx(label, kIconRoom, enabled);
+    // Drawn into the parent menu: when the submenu is open, its window is
+    // the current one.
+    ImDrawList* d = open ? ImGui::GetCurrentWindow()->ParentWindow->DrawList : ImGui::GetWindowDrawList();
+    const float h = ImGui::GetTextLineHeight();
+    theme::drawIcon(d, icon, ImVec2(at.x + h * 0.5f, at.y + h * 0.5f), h * 0.95f, enabled ? color : theme::fade(color, 0.4f));
+    return open;
+}
+
+int dialogButtons(const std::vector<const char*>& labels, bool firstEnabled) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float gap = theme::px(8.0f);
+    std::vector<float> widths;
+    float total = 0.0f;
+    for (const char* l : labels) {
+        widths.push_back(std::max(theme::px(96.0f), ImGui::CalcTextSize(l).x + 2.0f * style.FramePadding.x));
+        total += widths.back() + (widths.size() > 1 ? gap : 0.0f);
+    }
+    ImGui::Dummy(ImVec2(0.0f, theme::px(4.0f)));
+    const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), right - total));
+    int clicked = -1;
+    for (size_t i = 0; i < labels.size(); ++i) {
+        if (i > 0) ImGui::SameLine(0.0f, gap);
+        const bool main = i == 0;
+        ImGui::BeginDisabled(main && !firstEnabled);
+        if (main ? accentButton(labels[i], ImVec2(widths[i], 0.0f)) : ImGui::Button(labels[i], ImVec2(widths[i], 0.0f))) {
+            clicked = static_cast<int>(i);
+        }
+        ImGui::EndDisabled();
+    }
+    return clicked;
 }
 
 bool headerButton(PanelHeader& header, const char* id, theme::Icon icon, const char* tooltip, bool on, bool enabled) {
@@ -69,6 +199,16 @@ bool headerButton(PanelHeader& header, const char* id, theme::Icon icon, const c
     header.right -= theme::px(2.0f);
     ImGui::SetCursorScreenPos(back);
     return clicked;
+}
+
+bool closePopupOnEscape() {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    if (g.OpenPopupStack.empty() || !ImGui::IsKeyPressed(ImGuiKey_Escape, false)) return false;
+    const ImGuiWindow* top = g.OpenPopupStack.back().Window;
+    if (top && (top->Flags & ImGuiWindowFlags_Modal)) return false;
+    ImGui::ClosePopupToLevel(g.OpenPopupStack.Size - 1, true);
+    ImGui::SetKeyOwner(ImGuiKey_Escape, ImGui::GetID("##escape"), ImGuiInputFlags_LockThisFrame);
+    return true;
 }
 
 void splitter(const char* id, bool vertical, float& size, float min, float max, float length) {
@@ -209,13 +349,56 @@ bool exprButton(const char* id, bool active, const char* tooltip) {
     return clicked;
 }
 
+namespace {
+
+/// A slider filled from its left end to the value, with no knob: `widget`
+/// draws Dear ImGui's slider with its frame and grab left out, over a frame
+/// and a fill painted behind it once `fraction` -- the value's place in the
+/// range -- is known.
+template <class Widget, class Fraction>
+bool filledSlider(const Widget& widget, const Fraction& fraction) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    // The frame's colours as they are now: a keyed parameter tints them.
+    const ImU32 frame = ImGui::GetColorU32(ImGuiCol_FrameBg), frameHovered = ImGui::GetColorU32(ImGuiCol_FrameBgHovered),
+                frameActive = ImGui::GetColorU32(ImGuiCol_FrameBgActive);
+    ImDrawListSplitter layers;  // its own: one inside a table's stacks
+    layers.Split(d, 2);
+    layers.SetCurrentChannel(d, 1);
+    const ImVec4 none(0.0f, 0.0f, 0.0f, 0.0f);
+    for (const ImGuiCol c : {ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive, ImGuiCol_SliderGrab,
+                             ImGuiCol_SliderGrabActive}) {
+        ImGui::PushStyleColor(c, none);
+    }
+    const bool changed = widget();
+    ImGui::PopStyleColor(5);
+    const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+    const bool active = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
+    layers.SetCurrentChannel(d, 0);
+    const float r = ImGui::GetStyle().FrameRounding;
+    d->AddRectFilled(lo, hi, active ? frameActive : hovered ? frameHovered : frame, r);
+    const float t = std::clamp(fraction(), 0.0f, 1.0f);
+    const float x = lo.x + (hi.x - lo.x) * t;
+    if (x > lo.x + 1.0f) {
+        d->AddRectFilled(lo, ImVec2(x, hi.y), theme::fade(theme::kAccent, active ? 0.5f : hovered ? 0.42f : 0.34f), r,
+                         x >= hi.x - r ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersLeft);
+    }
+    layers.Merge(d);
+    return changed;
+}
+
+}  // namespace
+
 bool sliderFloat(const char* id, float& v, float min, float max, const char* format) {
     // Past the ends when typed (Ctrl + click): a slider's range is where it
     // is useful, not a limit.
-    return ImGui::SliderFloat(id, &v, min, max, format, ImGuiSliderFlags_None);
+    return filledSlider([&] { return ImGui::SliderFloat(id, &v, min, max, format, ImGuiSliderFlags_None); },
+                        [&] { return max > min ? (v - min) / (max - min) : 0.0f; });
 }
 
-bool sliderInt(const char* id, int& v, int min, int max) { return ImGui::SliderInt(id, &v, min, max); }
+bool sliderInt(const char* id, int& v, int min, int max, const char* format) {
+    return filledSlider([&] { return ImGui::SliderInt(id, &v, min, max, format); },
+                        [&] { return max > min ? static_cast<float>(v - min) / static_cast<float>(max - min) : 0.0f; });
+}
 
 bool dragVector(const char* id, float v[3], float speed, const char* format) {
     ImGui::PushID(id);
@@ -304,6 +487,142 @@ void note(const char* text) {
     ImGui::TextUnformatted(text);
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
+}
+
+bool beginRows(const char* id) {
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(theme::px(6.0f), theme::px(2.0f)));
+    const bool open = ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings);
+    ImGui::PopStyleVar();
+    if (open) {
+        ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+    }
+    return open;
+}
+
+void rowStart(const char* label) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kTextDim));
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
+    ImGui::TableSetColumnIndex(1);
+}
+
+void row(const char* label, const char* fmt, ...) {
+    rowStart(label);
+    va_list args;
+    va_start(args, fmt);
+    ImGui::TextV(fmt, args);
+    va_end(args);
+}
+
+void endRows() { ImGui::EndTable(); }
+
+void keysHelp(const std::vector<KeyHelp>& keys, const std::vector<const char*>& commands) {
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(theme::px(8.0f), theme::px(2.0f)));
+    if (ImGui::BeginTable("##keys", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) {
+        for (const KeyHelp& k : keys) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            if (!k.keys || !*k.keys) {
+                // A group's title, with room above it after the first.
+                if (ImGui::TableGetRowIndex() > 0) ImGui::Dummy(ImVec2(0.0f, theme::px(6.0f)));
+                ImGui::PushFont(theme::fonts().bold, 0.0f);
+                ImGui::TextUnformatted(k.what);
+                ImGui::PopFont();
+                continue;
+            }
+            ImGui::TextUnformatted(k.keys);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kTextDim));
+            ImGui::TextUnformatted(k.what);
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleVar();
+    if (!commands.empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("The same from the command line:");
+        ImGui::PushFont(theme::fonts().mono, 0.0f);
+        for (const char* c : commands) ImGui::TextUnformatted(c);
+        ImGui::PopFont();
+    }
+}
+
+// --- a list to pick from by typing -------------------------------------------------------
+
+void PickList::begin(std::string& search, float width) {
+    width_ = width;
+    if (ImGui::IsWindowAppearing()) {
+        search.clear();
+        cursor_ = 0;
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(width);
+    ImGui::InputTextWithHint("##search", "Search nodes\xe2\x80\xa6", &search);
+    if (search != last_) {
+        last_ = search;
+        cursor_ = 0;
+    }
+    // The keys move through what was listed the frame before.
+    moved_ = false;
+    if (shown_ > 0 && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        cursor_ = (cursor_ + 1) % shown_;
+        moved_ = true;
+    }
+    if (shown_ > 0 && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        cursor_ = (cursor_ + shown_ - 1) % shown_;
+        moved_ = true;
+    }
+    enter_ = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+    count_ = 0;
+    ImGui::Dummy(ImVec2(0.0f, theme::px(2.0f)));
+    // A list of a fixed height, which scrolls: the menu's size is known from
+    // its first frame, so it opens where it was asked for -- moved only as
+    // far as it must to be all in the window.
+    const float height = std::min(theme::px(440.0f), std::max(theme::px(160.0f), ImGui::GetMainViewport()->WorkSize.y * 0.55f));
+    ImGui::BeginChild("##list", ImVec2(width, height));
+}
+
+void PickList::heading(const char* text, ImU32 dot) {
+    if (count_ > 0) ImGui::Dummy(ImVec2(0.0f, theme::px(3.0f)));
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    if (dot) {
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + theme::px(5.0f), at.y + ImGui::GetTextLineHeight() * 0.5f),
+                                                    theme::px(3.5f), dot);
+        ImGui::SetCursorScreenPos(ImVec2(at.x + theme::px(14.0f), at.y));
+    }
+    ImGui::TextDisabled("%s", text);
+}
+
+bool PickList::item(const char* id, const char* label, theme::Icon icon, ImU32 iconColor, const char* help) {
+    const bool lit = count_++ == cursor_;
+    ImGui::PushID(id);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    bool chosen = ImGui::Selectable("##item", lit, 0, ImVec2(width_ - theme::px(14.0f), 0.0f));
+    if (lit && moved_) ImGui::SetScrollHereY(0.5f);
+    if (help && *help && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(theme::px(320.0f));
+        ImGui::TextUnformatted(help);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const float h = ImGui::GetTextLineHeight();
+    theme::drawIcon(d, icon, ImVec2(p.x + theme::px(12.0f), p.y + h * 0.5f), h * 0.85f, iconColor);
+    d->AddText(ImVec2(p.x + theme::px(26.0f), p.y), theme::kText, label);
+    ImGui::PopID();
+    return chosen || (lit && enter_);
+}
+
+void PickList::end() {
+    if (count_ == 0) ImGui::TextDisabled("Nothing fits");
+    ImGui::EndChild();
+    shown_ = count_;
+    cursor_ = shown_ > 0 ? std::clamp(cursor_, 0, shown_ - 1) : 0;
 }
 
 // --- the timeline ------------------------------------------------------------------------
@@ -580,7 +899,7 @@ bool FileBrowser::draw(std::string& chosen) {
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();  // a name can be typed at once
     const bool enter = ImGui::InputText("##name", &name_, ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
-    const bool pressed = ImGui::Button(folders_ ? "Choose" : save_ ? "Save" : "Open", ImVec2(theme::px(92.0f), 0.0f)) || enter;
+    const bool pressed = accentButton(folders_ ? "Choose" : save_ ? "Save" : "Open", ImVec2(theme::px(92.0f), 0.0f)) || enter;
     if (pressed && folders_) {
         // The folder named, or with no name the one open.
         const fs::path p = name_.empty() ? dir_ : typed(name_).is_absolute() ? typed(name_) : dir_ / name_;

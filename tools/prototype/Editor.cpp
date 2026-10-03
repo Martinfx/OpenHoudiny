@@ -144,17 +144,23 @@ void Editor::frame(float dt) {
     Workspace& w = current();
     w.update(dt);
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Q)) quit_ = true;
-    if (!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) w.shortcuts();
+    const bool popup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    ui::closePopupOnEscape();
+    if (!popup) w.shortcuts();
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
+    // No padding round the panels; the frame padding sets the menu bar's
+    // height. Both only for the window: the menus open from the bar with
+    // the style's own.
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(theme::px(8.0f), theme::px(6.0f)));
     ImGui::Begin("prototype", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoBringToFrontOnFocus |
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(theme::px(8.0f), theme::px(6.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(theme::px(10.0f), theme::px(6.0f)));
     menuBar();
     ImGui::PopStyleVar(2);
@@ -241,10 +247,7 @@ void Editor::frame(float dt) {
         ImGui::TextDisabled("Geometry: nodes like Houdini's SOPs, attributes, wrangle.");
         ImGui::TextDisabled("Simulations: smoke and fire, water, rain -- cached, exported, rendered.");
         ImGui::TextDisabled("Shaders: GLSL, Vulkan GLSL, HLSL and more from one graph.");
-        ImGui::Spacing();
-        if (ImGui::Button("Close", ImVec2(theme::px(120.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            ImGui::CloseCurrentPopup();
-        }
+        if (ui::dialogButtons({"Close"}) == 0 || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar(2);

@@ -340,7 +340,7 @@ private:
     int pickAt(const ViewCamera& cam, ImVec2 mouse) const;
     /// Where the ray under a point of the screen meets the floor.
     Vec3 floorPoint(const ViewCamera& cam, ImVec2 screen) const;
-    void viewTools(ImVec2 at);
+    void viewTools(ImVec2 at, float bottom);
     void viewMenu();
     /// The items that add to the scene, what they add placed at `at`. True
     /// when something was added.
@@ -525,6 +525,7 @@ private:
 
     NodeCanvas canvas_;
     std::string search_;
+    ui::PickList addList_;  ///< the network's add menu
     std::string nameEdit_;
     int nameEditNode_ = 0;
     bool nameActive_ = false;  ///< the name is being typed in
@@ -649,6 +650,7 @@ private:
     std::vector<std::pair<Vec3, uint32_t>> numberAt_;
     std::string numbersKey_;
     std::string pickedSearch_;  ///< what Tab's menu is searched for
+    ui::PickList pickedList_;
     // The brush.
     bool paint_ = false;
     bool stroking_ = false;                 ///< the button is down, painting

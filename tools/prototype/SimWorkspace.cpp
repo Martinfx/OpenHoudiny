@@ -286,6 +286,11 @@ std::string helpFor(const sim::ParamDef& d) {
     return h;
 }
 
+/// "1 source", "3 sources".
+std::string counted(size_t n, const char* one, const char* many) {
+    return std::to_string(n) + " " + (n == 1 ? one : many);
+}
+
 bool readFile(const std::string& path, std::string& out) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
@@ -777,12 +782,7 @@ int SimWorkspace::addNode(const std::string& type, ImVec2 at, const PinRef* pend
 }
 
 bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
-    if (ImGui::IsWindowAppearing()) {
-        search_.clear();
-        ImGui::SetKeyboardFocusHere();
-    }
-    ImGui::SetNextItemWidth(theme::px(250.0f));
-    ImGui::InputTextWithHint("##search", "Search nodes\xe2\x80\xa6", &search_);
+    addList_.begin(search_, theme::px(270.0f));
     std::string q = search_;
     for (char& ch : q) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
@@ -812,9 +812,7 @@ bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
         return label.find(q) != std::string::npos || category.find(q) != std::string::npos ||
                std::string(t.name).find(q) != std::string::npos;
     };
-    const sim::NodeType* first = nullptr;
     const sim::NodeType* chosen = nullptr;
-    ImGui::Dummy(ImVec2(0.0f, theme::px(2.0f)));
     const std::vector<const sim::NodeType*> all = sim::allNodeTypes();
     for (const char* category : sim::nodeCategories()) {
         std::vector<const sim::NodeType*> types;
@@ -827,35 +825,12 @@ bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
             types.push_back(t);
         }
         if (types.empty()) continue;
-        // The category, in its colour.
-        const ImVec2 at0 = ImGui::GetCursorScreenPos();
-        ImDrawList* d = ImGui::GetWindowDrawList();
-        d->AddCircleFilled(ImVec2(at0.x + theme::px(5.0f), at0.y + ImGui::GetTextLineHeight() * 0.5f), theme::px(3.5f),
-                           categoryColor(category));
-        ImGui::SetCursorScreenPos(ImVec2(at0.x + theme::px(14.0f), at0.y));
-        ImGui::TextDisabled("%s", category);
+        addList_.heading(category, categoryColor(category));
         for (const sim::NodeType* t : types) {
-            if (!first) first = t;
-            ImGui::PushID(t->name);
-            const ImVec2 p = ImGui::GetCursorScreenPos();
-            if (ImGui::Selectable("##t", false, 0, ImVec2(theme::px(250.0f), 0.0f))) chosen = t;
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(theme::px(320.0f));
-                ImGui::TextUnformatted(t->help);
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            const float h = ImGui::GetTextLineHeight();
-            theme::drawIcon(d, typeIcon(t), ImVec2(p.x + theme::px(12.0f), p.y + h * 0.5f), h * 0.85f,
-                            theme::shade(typeColor(*t), 0.35f));
-            d->AddText(ImVec2(p.x + theme::px(26.0f), p.y), theme::kText, t->label);
-            ImGui::PopID();
+            if (addList_.item(t->name, t->label, typeIcon(t), theme::shade(typeColor(*t), 0.35f), t->help)) chosen = t;
         }
-        ImGui::Dummy(ImVec2(0.0f, theme::px(3.0f)));
     }
-    if (!first) ImGui::TextDisabled("Nothing fits");
-    if (first && ImGui::IsKeyPressed(ImGuiKey_Enter)) chosen = first;
+    addList_.end();
     if (chosen) {
         addNode(chosen->name, at, pending);
         return true;
@@ -866,12 +841,7 @@ bool SimWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
 bool SimWorkspace::pickedMenu() {
     // Tab in the viewport: the geometry nodes, those that take a group --
     // what is picked goes into it -- first.
-    if (ImGui::IsWindowAppearing()) {
-        pickedSearch_.clear();
-        ImGui::SetKeyboardFocusHere();
-    }
-    ImGui::SetNextItemWidth(theme::px(250.0f));
-    ImGui::InputTextWithHint("##search", "Search nodes\xe2\x80\xa6", &pickedSearch_);
+    pickedList_.begin(pickedSearch_, theme::px(270.0f));
     std::string q = pickedSearch_;
     for (char& ch : q) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     auto fits = [&](const sim::NodeType& t) {
@@ -883,7 +853,6 @@ bool SimWorkspace::pickedMenu() {
         return label.find(q) != std::string::npos || std::string(t.name).find(q) != std::string::npos;
     };
     const size_t picked = elementCount();
-    const sim::NodeType* first = nullptr;
     const sim::NodeType* chosen = nullptr;
     auto list = [&](const char* heading, bool withGroup) {
         std::vector<const sim::NodeType*> types;
@@ -891,33 +860,14 @@ bool SimWorkspace::pickedMenu() {
             if (fits(*t) && (t->param("group") != nullptr) == withGroup) types.push_back(t);
         }
         if (types.empty()) return;
-        ImGui::TextDisabled("%s", heading);
+        pickedList_.heading(heading);
         for (const sim::NodeType* t : types) {
-            if (!first) first = t;
-            ImGui::PushID(t->name);
-            const ImVec2 p = ImGui::GetCursorScreenPos();
-            if (ImGui::Selectable("##t", false, 0, ImVec2(theme::px(250.0f), 0.0f))) chosen = t;
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(theme::px(320.0f));
-                ImGui::TextUnformatted(t->help);
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            const float h = ImGui::GetTextLineHeight();
-            ImDrawList* d = ImGui::GetWindowDrawList();
-            theme::drawIcon(d, typeIcon(t), ImVec2(p.x + theme::px(12.0f), p.y + h * 0.5f), h * 0.85f,
-                            theme::shade(typeColor(*t), 0.35f));
-            d->AddText(ImVec2(p.x + theme::px(26.0f), p.y), theme::kText, t->label);
-            ImGui::PopID();
+            if (pickedList_.item(t->name, t->label, typeIcon(t), theme::shade(typeColor(*t), 0.35f), t->help)) chosen = t;
         }
-        ImGui::Dummy(ImVec2(0.0f, theme::px(3.0f)));
     };
-    ImGui::Dummy(ImVec2(0.0f, theme::px(2.0f)));
     list(picked ? "On what is picked" : "On all of it -- nothing is picked", true);
     list("After the shown node", false);
-    if (!first) ImGui::TextDisabled("Nothing fits");
-    if (first && ImGui::IsKeyPressed(ImGuiKey_Enter)) chosen = first;
+    pickedList_.end();
     if (!chosen) return false;
     applyToPicked(chosen->name);
     return true;
@@ -1392,7 +1342,7 @@ void SimWorkspace::nodeParameters(const sim::Node& node, const sim::NodeType& ty
                 case sim::ParamKind::Float: edited = ui::sliderFloat("##v", v[0], p.min, p.max, format.c_str()); break;
                 case sim::ParamKind::Int: {
                     int i = static_cast<int>(std::lround(v[0]));
-                    edited = ImGui::SliderInt("##v", &i, static_cast<int>(p.min), static_cast<int>(p.max), format.c_str());
+                    edited = ui::sliderInt("##v", i, static_cast<int>(p.min), static_cast<int>(p.max), format.c_str());
                     v[0] = static_cast<float>(i);
                     break;
                 }
@@ -1531,75 +1481,79 @@ void SimWorkspace::networkOverview() {
              "Liquid Solver for water, the Rain; what they simulate goes through a look to the Output.");
     ImGui::Spacing();
     if (ui::section("Simulation")) {
-        if (compiled_.ok && compiled_.world.any()) {
-            auto domainLines = [&](const char* what, const sim::Domain& dm) {
+        if (compiled_.ok && compiled_.world.any() && ui::beginRows("facts")) {
+            auto domainRows = [&](const char* what, const sim::Domain& dm) {
                 const Vec3 sz = dm.size();
-                ImGui::Text("%-11s %.2f \xc3\x97 %.2f \xc3\x97 %.2f m", what, static_cast<double>(sz.x),
-                            static_cast<double>(sz.y), static_cast<double>(sz.z));
-                ImGui::Text("Cells       %d \xc3\x97 %d \xc3\x97 %d  (%.2f million)", dm.cells[0], dm.cells[1], dm.cells[2],
-                            static_cast<double>(dm.cellCount()) / 1e6);
+                ui::row(what, "%.2f \xc3\x97 %.2f \xc3\x97 %.2f m", static_cast<double>(sz.x), static_cast<double>(sz.y),
+                        static_cast<double>(sz.z));
+                ui::row("Cells", "%d \xc3\x97 %d \xc3\x97 %d  (%.2f million)", dm.cells[0], dm.cells[1], dm.cells[2],
+                        static_cast<double>(dm.cellCount()) / 1e6);
             };
             if (compiled_.world.hasGas) {
                 const sim::Scene& gas = compiled_.world.gas;
-                domainLines("Gas", gas.sanitized().solver.domain());
-                ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", gas.emitters.size(),
-                            gas.forces.size(), gas.colliders.size());
+                domainRows("Gas", gas.sanitized().solver.domain());
+                ui::row("Inputs", "%s \xc2\xb7 %s \xc2\xb7 %s", counted(gas.emitters.size(), "source", "sources").c_str(),
+                        counted(gas.forces.size(), "force", "forces").c_str(),
+                        counted(gas.colliders.size(), "collider", "colliders").c_str());
                 const std::shared_ptr<const sim::Frame> f = frameToShow();
                 if (f && !f->gasTiles.empty()) {
                     const double held = static_cast<double>(f->gasTiles.size()) * sim::Tiles::kCells;
-                    ImGui::Text("With gas    %.2f million  (%.1f %%)", held / 1e6,
-                                100.0 * held / static_cast<double>(std::max<size_t>(f->domain.cellCount(), 1)));
+                    ui::row("With gas", "%.2f million  (%.1f %%)", held / 1e6,
+                            100.0 * held / static_cast<double>(std::max<size_t>(f->domain.cellCount(), 1)));
                     ImGui::SetItemTooltip("Sparse: the cells of the tiles of 8 \xc3\x97 8 \xc3\x97 8 this frame has gas in -- "
                                           "all of the gas it keeps");
                 }
             }
             if (compiled_.world.hasWater) {
                 const sim::LiquidScene& water = compiled_.world.water;
-                domainLines("Water", water.sanitized().solver.domain());
-                ImGui::Text("Sources %zu \xc2\xb7 forces %zu \xc2\xb7 colliders %zu", water.sources.size(),
-                            water.forces.size(), water.colliders.size());
+                domainRows("Water", water.sanitized().solver.domain());
+                ui::row("Inputs", "%s \xc2\xb7 %s \xc2\xb7 %s", counted(water.sources.size(), "source", "sources").c_str(),
+                        counted(water.forces.size(), "force", "forces").c_str(),
+                        counted(water.colliders.size(), "collider", "colliders").c_str());
                 const std::shared_ptr<const sim::Frame> f = frameToShow();
                 if (f && !f->water.empty()) {
-                    ImGui::Text("Particles   %zu  (%.0f litres)", f->water.particles, f->water.litres);
+                    ui::row("Particles", "%zu  (%.0f litres)", f->water.particles, f->water.litres);
                 }
             }
             if (compiled_.world.hasRain) {
                 const sim::RainScene& rain = compiled_.world.rain;
                 const Vec3& sz = rain.rain.size;
-                ImGui::Text("Rain        %.2f \xc3\x97 %.2f m cloud, %.0f m up", static_cast<double>(sz.x),
-                            static_cast<double>(sz.z), static_cast<double>(rain.rain.center.y));
-                ImGui::Text("Forces %zu \xc2\xb7 colliders %zu", rain.forces.size(), rain.colliders.size());
+                ui::row("Rain", "%.2f \xc3\x97 %.2f m cloud, %.0f m up", static_cast<double>(sz.x), static_cast<double>(sz.z),
+                        static_cast<double>(rain.rain.center.y));
+                ui::row("Inputs", "%s \xc2\xb7 %s", counted(rain.forces.size(), "force", "forces").c_str(),
+                        counted(rain.colliders.size(), "collider", "colliders").c_str());
                 const std::shared_ptr<const sim::Frame> f = frameToShow();
                 if (f && !f->rain.empty()) {
-                    ImGui::Text("Drops       %zu  (%zu droplets)", f->rain.dropCount(), f->rain.dropletCount());
+                    ui::row("Drops", "%zu  (%zu droplets)", f->rain.dropCount(), f->rain.dropletCount());
                 }
             }
             if (compiled_.hasCamera) {
                 const sim::Camera& cam = compiled_.camera;
                 const sim::Node* n = net_.node(cam.node);
-                ImGui::Text("Camera      %s  %.0f mm  %d \xc3\x97 %d", n ? n->name.c_str() : "", static_cast<double>(cam.focal),
-                            cam.width, cam.height);
+                ui::row("Camera", "%s  %.0f mm  %d \xc3\x97 %d", n ? n->name.c_str() : "", static_cast<double>(cam.focal),
+                        cam.width, cam.height);
             }
-            ImGui::Text("Frames      %d at %.0f fps  (%.1f s)", compiled_.frames,
-                        1.0 / static_cast<double>(compiled_.world.timeStep),
-                        compiled_.frames * static_cast<double>(compiled_.world.timeStep));
-            ImGui::Text("Cache       %d frames, %.0f MB", runner_->cached(),
-                        static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
+            ui::row("Frames", "%d at %.0f fps  (%.1f s)", compiled_.frames, 1.0 / static_cast<double>(compiled_.world.timeStep),
+                    compiled_.frames * static_cast<double>(compiled_.world.timeStep));
+            ui::row("Cache", "%d frames, %.0f MB", runner_->cached(), static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
             if (runner_->adopted()) {
                 fs::path from(cacheFolder_);
                 if (!from.has_filename()) from = from.parent_path();  // "cache/"
-                ImGui::TextDisabled("            from %s", from.filename().string().c_str());
+                ui::rowStart("");
+                ImGui::TextDisabled("from %s", from.filename().string().c_str());
                 ImGui::SetItemTooltip("Read from %s rather than simulated -- until what is simulated changes",
                                       cacheFolder_.c_str());
             } else if (runner_->stepMs() > 0.0) {
-                ImGui::Text("Step        %.0f ms", runner_->stepMs());
+                ui::row("Step", "%.0f ms", runner_->stepMs());
             }
             if (preview_) {
-                ImGui::TextColored(theme::vec(theme::kYellow), "Preview     grids half as fine");
+                ui::rowStart("Preview");
+                ImGui::TextColored(theme::vec(theme::kYellow), "grids half as fine");
                 ImGui::SetItemTooltip("Simulation > Preview Resolution; a bake is at the full resolution");
             }
             if (bake_.running() || bake_.ended()) bakePanel();
             if (wedge_.any()) wedgePanel();
+            ui::endRows();
         } else if (compiled_.model) {
             ImGui::TextDisabled("Nothing: the scene is the geometry shown.");
         } else {
@@ -1923,47 +1877,45 @@ void SimWorkspace::menus() {
 }
 
 void SimWorkspace::helpMenu() {
-    ImGui::TextDisabled("Network");
-    ImGui::TextUnformatted("Tab, right click          add a node");
-    ImGui::TextUnformatted("Drag from a pin           link; into space: add a node, linked");
-    ImGui::TextUnformatted("Drag a linked input       move the link, or drop it");
-    ImGui::TextUnformatted("Wheel, middle drag        zoom, pan");
-    ImGui::TextUnformatted("F / Del / Ctrl+D / B      frame, delete, duplicate, bypass");
-    ImGui::Separator();
-    ImGui::TextDisabled("Viewport");
-    ImGui::TextUnformatted("Click                     select (Shift, Ctrl: add)");
-    ImGui::TextUnformatted("Q  W  E  R                select, move, rotate, scale");
-    ImGui::TextUnformatted("Drag a handle             move, turn, size (Ctrl: snap)");
-    ImGui::TextUnformatted("Shift+A, right click      add an object, a source, a force");
-    ImGui::TextUnformatted("Del, Ctrl+D, F, Esc       delete, duplicate, frame, cancel");
-    ImGui::TextUnformatted("Left drag                 orbit");
-    ImGui::TextUnformatted("Middle / Shift+left drag  pan");
-    ImGui::TextUnformatted("Right drag, wheel         zoom");
-    ImGui::TextUnformatted("Double click              frame what is clicked, or the domain");
-    ImGui::TextUnformatted("0, Ctrl+Alt+0             look through the camera, camera from view");
-    ImGui::Separator();
-    ImGui::TextDisabled("Editing the displayed geometry");
-    ImGui::TextUnformatted("1  2  3  4                objects; points, edges, primitives");
-    ImGui::TextUnformatted("Click, left drag          pick one, a box (Shift adds, Ctrl takes away)");
-    ImGui::TextUnformatted("S, H                      box, lasso or brush; what is hidden too");
-    ImGui::TextUnformatted("Alt / Space + left drag   orbit, while picking or painting");
-    ImGui::TextUnformatted("W  E  R, drag a handle    move, turn, size what is picked (an Edit node)");
-    ImGui::TextUnformatted("O, [ ], wheel in a drag   soft selection, its radius");
-    ImGui::TextUnformatted("Ctrl+G, Del               a group of it, delete it (Group, Blast)");
-    ImGui::TextUnformatted("Ctrl+A, Ctrl+I, Esc       pick all, the others, none");
-    ImGui::TextUnformatted("P, [ ], Shift+wheel       paint an attribute (Ctrl: erase), brush size");
-    ImGui::TextUnformatted("U                         sculpt: push (Ctrl: pull), Shift: smooth, grab, flatten");
-    ImGui::TextUnformatted("Tab, N                    a node on what is picked (PolyExtrude...), numbers");
-    ImGui::Separator();
-    ImGui::TextDisabled("Timeline");
-    ImGui::TextUnformatted("Space  Home  End  Left  Right");
-    ImGui::Separator();
-    ImGui::TextDisabled("The same from the command line:");
-    ImGui::TextUnformatted("  prototype sim campfire fire.png --every 10");
-    ImGui::TextUnformatted("  prototype sim campfire fire.mp4            (every frame, a video)");
-    ImGui::TextUnformatted("  prototype sim my.pgsim out.png --set fire.fuel=20");
-    ImGui::TextUnformatted("  prototype sim my.pgsim - --cache my_cache");
-    ImGui::TextUnformatted("  prototype sim campfire_vdb - --export-node volumes --export 'fire.$F4.vdb'");
+    ui::keysHelp({{"", "Network"},
+                  {"Tab, right click", "add a node"},
+                  {"Drag from a pin", "link; into space: add a node, linked"},
+                  {"Drag a linked input", "move the link, or drop it"},
+                  {"Wheel, middle drag", "zoom, pan"},
+                  {"F  Del  Ctrl+D  B", "frame, delete, duplicate, bypass"},
+                  {"L  R", "lay out, the display flag"},
+                  {"", "Viewport"},
+                  {"Click", "select (Shift, Ctrl: add)"},
+                  {"Q  W  E  R", "select, move, rotate, scale"},
+                  {"Drag a handle", "move, turn, size (Ctrl: snap)"},
+                  {"Shift+A, right click", "add an object, a source, a force"},
+                  {"Del  Ctrl+D  F  Esc", "delete, duplicate, frame, cancel"},
+                  {"Left drag", "orbit"},
+                  {"Middle, Shift+left drag", "pan"},
+                  {"Right drag, wheel", "zoom"},
+                  {"Double click", "frame what is clicked, or the domain"},
+                  {"0  Ctrl+Alt+0", "look through the camera, camera from view"},
+                  {"", "Editing the displayed geometry"},
+                  {"1  2  3  4", "objects; points, edges, primitives"},
+                  {"Click, left drag", "pick one, a box (Shift adds, Ctrl takes away)"},
+                  {"S  H", "box, lasso or brush; what is hidden too"},
+                  {"Alt, Space + left drag", "orbit, while picking or painting"},
+                  {"W  E  R, drag a handle", "move, turn, size what is picked (an Edit node)"},
+                  {"O  [  ], wheel in a drag", "soft selection, its radius"},
+                  {"Ctrl+G  Del", "a group of it, delete it (Group, Blast)"},
+                  {"Ctrl+A  Ctrl+I  Esc", "pick all, the others, none"},
+                  {"P  [  ], Shift+wheel", "paint an attribute (Ctrl: erase), brush size"},
+                  {"U", "sculpt: push (Ctrl: pull), Shift: smooth, grab, flatten"},
+                  {"Tab  N", "a node on what is picked (PolyExtrude\xe2\x80\xa6), numbers"},
+                  {"", "Timeline"},
+                  {"Space", "play, pause"},
+                  {"Home  End", "the first frame, the last one ready"},
+                  {"Left  Right", "a frame back, a frame on"}},
+                 {"prototype sim campfire fire.png --every 10",
+                  "prototype sim campfire fire.mp4             (every frame, a video)",
+                  "prototype sim my.pgsim out.png --set fire.fuel=20",
+                  "prototype sim my.pgsim - --cache my_cache",
+                  "prototype sim campfire_vdb - --export-node volumes --export 'fire.$F4.vdb'"});
 }
 
 void SimWorkspace::popups() {
@@ -2484,26 +2436,32 @@ void SimWorkspace::pollBake() {
 }
 
 void SimWorkspace::bakePanel() {
+    // Rows of the overview's table.
     const sim::CacheInfo& p = bake_.progress();
     const int of = std::max(1, bake_.frames());
     char line[160];
     if (bake_.running()) {
         std::snprintf(line, sizeof line, "%d / %d", p.frames, of);
-        ImGui::TextUnformatted("Bake       ");
-        ImGui::SameLine();
+        ui::rowStart("Bake");
         ImGui::ProgressBar(static_cast<float>(p.frames) / static_cast<float>(of), ImVec2(-1.0f, 0.0f), line);
         std::string when = p.stepMs > 0.0 ? Bake::duration(p.stepMs / 1000.0) + " a frame" : std::string("starting");
         if (bake_.secondsLeft() > 0.0) when += ", " + Bake::duration(bake_.secondsLeft()) + " left";
-        ImGui::TextDisabled("            %s", when.c_str());
-        if (p.checkpoint > 0) ImGui::TextDisabled("            checkpoint at frame %d", p.checkpoint);
+        ui::rowStart("");
+        ImGui::TextDisabled("%s", when.c_str());
+        if (p.checkpoint > 0) {
+            ui::rowStart("");
+            ImGui::TextDisabled("checkpoint at frame %d", p.checkpoint);
+        }
+        ui::rowStart("");
         if (ImGui::SmallButton("Cancel Bake")) bake_.cancel();
         ImGui::SetItemTooltip("Stops the bake: the frames written stay, and its last checkpoint.");
     } else if (bake_.failed()) {
-        ImGui::TextColored(theme::vec(bake_.cancelled() ? theme::kYellow : theme::kRed), "Bake        %s at %d / %d",
+        ui::rowStart("Bake");
+        ImGui::TextColored(theme::vec(bake_.cancelled() ? theme::kYellow : theme::kRed), "%s at %d / %d",
                            bake_.cancelled() ? "cancelled" : "stopped", p.frames, of);
         if (!bake_.why().empty()) ImGui::SetItemTooltip("%s", bake_.why().c_str());
     } else {
-        ImGui::Text("Bake        %d frames in %s", of, Bake::duration(bake_.seconds()).c_str());
+        ui::row("Bake", "%d frames in %s", of, Bake::duration(bake_.seconds()).c_str());
     }
 }
 
@@ -2602,8 +2560,8 @@ void SimWorkspace::wedgeDialog() {
         ImGui::TextUnformatted(wedgeError_.c_str());
         ImGui::PopStyleColor();
     }
-    ImGui::Spacing();
-    if (ImGui::Button("Bake the Wedge", ImVec2(theme::px(140.0f), 0.0f))) {
+    const int button = ui::dialogButtons({"Bake the Wedge", "Cancel"});
+    if (button == 0) {
         std::string error;
         if (wedge_.start(net_, wedgeNode_, wedgeParam_, values, wedgeFolder_, folder(), compiled_.frames, error)) {
             wedgeShown_ = -1;
@@ -2614,25 +2572,22 @@ void SimWorkspace::wedgeDialog() {
             wedgeError_ = error;
         }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(theme::px(120.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        ImGui::CloseCurrentPopup();
-    }
+    if (button == 1 || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
 void SimWorkspace::wedgePanel() {
+    // Rows of the overview's table: the parameter, then a row a variant.
     const auto& variants = wedge_.variants();
-    ImGui::Text("Wedge       %s.%s", wedge_.nodeName().c_str(), wedge_.param().c_str());
+    ui::row("Wedge", "%s.%s", wedge_.nodeName().c_str(), wedge_.param().c_str());
     ImGui::SetItemTooltip("%s", wedge_.root().c_str());
     for (size_t i = 0; i < variants.size(); ++i) {
         const Wedge::Variant& v = variants[i];
         ImGui::PushID(static_cast<int>(i));
         char value[48];
-        std::snprintf(value, sizeof value, "  %s %-8.4g", static_cast<int>(i) == wedgeShown_ ? "\xe2\x96\xb6" : " ",
+        std::snprintf(value, sizeof value, "%s %.4g", static_cast<int>(i) == wedgeShown_ ? "\xe2\x96\xb6" : " ",
                       static_cast<double>(v.value));
-        ImGui::TextUnformatted(value);
-        ImGui::SameLine(theme::px(110.0f));
+        ui::rowStart(value);
         using S = Wedge::Variant::State;
         const bool baking = v.state == S::Baking;
         if (baking) {
@@ -2644,12 +2599,12 @@ void SimWorkspace::wedgePanel() {
             ImGui::ProgressBar(static_cast<float>(p.frames) / static_cast<float>(std::max(1, wedge_.frames())),
                                ImVec2(theme::px(200.0f), 0.0f), line);
         } else if (v.state == S::Done) {
-            ImGui::TextDisabled("%-26s", ("baked in " + Bake::duration(v.seconds)).c_str());
+            ImGui::TextDisabled("baked in %s", Bake::duration(v.seconds).c_str());
         } else if (v.state == S::Failed) {
-            ImGui::TextColored(theme::vec(theme::kRed), "%-26s", "failed");
+            ImGui::TextColored(theme::vec(theme::kRed), "failed");
             ImGui::SetItemTooltip("%s", v.why.c_str());
         } else {
-            ImGui::TextDisabled("%-26s", v.state == S::Waiting ? "waiting" : "cancelled");
+            ImGui::TextDisabled("%s", v.state == S::Waiting ? "waiting" : "cancelled");
         }
         if (v.state == S::Done || baking) {
             ImGui::SameLine();
@@ -2659,6 +2614,7 @@ void SimWorkspace::wedgePanel() {
         ImGui::PopID();
     }
     if (wedge_.running()) {
+        ui::rowStart("");
         if (ImGui::SmallButton("Cancel Wedge")) wedge_.cancel();
         ImGui::SetItemTooltip("Stops the variant baking and those waiting; what is baked stays");
     }

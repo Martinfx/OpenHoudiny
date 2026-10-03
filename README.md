@@ -199,6 +199,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ```bash
 ./build/pgtests            # 384 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 7 trosky ve vodě a v plynu, 25 shader graf, 98 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 11 checkpointy, bake, náhled a profil, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
 ctest --test-dir build -R python                   # 46 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna

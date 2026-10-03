@@ -486,13 +486,7 @@ bool ShaderWorkspace::addMenu(ImVec2 at, const PinRef* pending) {
         if (defs.empty()) continue;
         if (q.empty()) {
             // Categories as submenus while nothing is searched: the library is long.
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            const ImVec2 p = ImGui::GetCursorScreenPos();
-            const bool open = ImGui::BeginMenu(("      " + category).c_str());
-            const float h = ImGui::GetTextLineHeight();
-            theme::drawIcon(dl, categoryIcon(category), ImVec2(p.x + theme::px(10.0f), p.y + h * 0.55f), h * 0.85f,
-                            theme::shade(categoryColor(category), 0.4f));
-            if (open) {
+            if (ui::beginIconMenu(categoryIcon(category), theme::shade(categoryColor(category), 0.4f), category.c_str())) {
                 for (const NodeDef* d : defs) {
                     if (ImGui::MenuItem(d->label.c_str())) chosen = d;
                     if (!d->description.empty()) ImGui::SetItemTooltip("%s", d->description.c_str());
@@ -984,19 +978,17 @@ void ShaderWorkspace::menus() {
 }
 
 void ShaderWorkspace::helpMenu() {
-    ImGui::TextDisabled("Network");
-    ImGui::TextUnformatted("Tab, right click          add a node");
-    ImGui::TextUnformatted("Drag from a pin           link; into space: add a node, linked");
-    ImGui::TextUnformatted("Drag a linked input       move the link, or drop it");
-    ImGui::TextUnformatted("Wheel, middle drag        zoom, pan");
-    ImGui::TextUnformatted("F / Del / Ctrl+D          frame, delete, duplicate");
-    ImGui::Separator();
-    ImGui::TextUnformatted("Drag / wheel on the preview    orbit / zoom");
-    ImGui::TextUnformatted("F5                             validate with glslangValidator");
-    ImGui::TextUnformatted("Ctrl+R                         reload the node libraries");
-    ImGui::Separator();
-    ImGui::TextDisabled("The same from the command line:");
-    ImGui::TextUnformatted("  prototype list | gen | check | render ...     prototype help");
+    ui::keysHelp({{"", "Network"},
+                  {"Tab, right click", "add a node"},
+                  {"Drag from a pin", "link; into space: add a node, linked"},
+                  {"Drag a linked input", "move the link, or drop it"},
+                  {"Wheel, middle drag", "zoom, pan"},
+                  {"F  Del  Ctrl+D", "frame, delete, duplicate"},
+                  {"", "Preview and code"},
+                  {"Drag, wheel on the preview", "orbit, zoom"},
+                  {"F5", "validate with glslangValidator"},
+                  {"Ctrl+R", "reload the node libraries"}},
+                 {"prototype list | gen | check | render ...", "prototype help"});
 }
 
 void ShaderWorkspace::popups() {

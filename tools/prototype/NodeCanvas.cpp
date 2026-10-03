@@ -18,6 +18,10 @@ constexpr float kPad = 10.0f;
 constexpr float kPinRadius = 5.0f;
 constexpr float kMinWidth = 150.0f;
 constexpr float kRounding = 6.0f;
+// On screen, in pixels of kFont: from how big the title is written on a node
+// (below it, the name goes beside the node), and its pins' names and summary.
+constexpr float kWordsAt = 8.5f;
+constexpr float kLabelsAt = 9.0f;
 
 ImVec2 operator+(ImVec2 a, ImVec2 b) { return ImVec2(a.x + b.x, a.y + b.y); }
 ImVec2 operator-(ImVec2 a, ImVec2 b) { return ImVec2(a.x - b.x, a.y - b.y); }
@@ -256,9 +260,10 @@ void NodeCanvas::drawNode(ImDrawList* d, const CanvasNode& n, bool selected, boo
     d->AddLine(lo + ImVec2(r, 0.5f), ImVec2(hi.x - r, lo.y + 0.5f), theme::fade(IM_COL32(255, 255, 255, 40), a));
 
     // Zoomed far out, text too small to read is left out: the shapes and
-    // the colours still show the network.
-    const bool words = kFont * s >= 6.5f;
-    const bool labels = kFont * s >= 8.5f;
+    // the colours still show the network, and the names go beside the nodes
+    // (drawNames).
+    const bool words = kFont * s >= kWordsAt;
+    const bool labels = kFont * s >= kLabelsAt;
 
     // Header: icon, title, subtitle, problem badge.
     const float cy = lo.y + kHeader * 0.5f * s;
@@ -267,16 +272,6 @@ void NodeCanvas::drawNode(ImDrawList* d, const CanvasNode& n, bool selected, boo
     if (words) {
         d->AddText(f.bold, kFont * s, ImVec2(lo.x + 30.0f * s, titleY), theme::fade(IM_COL32(255, 255, 255, 245), a),
                    n.title.c_str());
-    }
-    if (!words) {
-        // Too far out for the text on it: its name under it, small but
-        // readable -- as Houdini writes it beside a node -- so a whole
-        // network fitted into the panel still says what is what.
-        const float size = theme::px(11.0f);
-        const float w = textWidth(f.bold, size, n.title);
-        const ImVec2 at(std::floor((lo.x + hi.x - w) * 0.5f), std::floor(hi.y + 3.0f * theme::px(1.0f)));
-        d->AddText(f.bold, size, at + ImVec2(1.0f, 1.0f), theme::fade(IM_COL32(0, 0, 0, 170), a), n.title.c_str());
-        d->AddText(f.bold, size, at, theme::fade(IM_COL32(228, 230, 236, 255), a), n.title.c_str());
     }
     if (labels && !n.subtitle.empty()) {
         const float x = lo.x + (40.0f + textWidth(f.bold, kFont, n.title)) * s;
@@ -349,6 +344,73 @@ void NodeCanvas::drawNode(ImDrawList* d, const CanvasNode& n, bool selected, boo
     } else {
         d->AddRect(lo, hi, hovered ? IM_COL32(120, 124, 136, 255) : theme::fade(IM_COL32(70, 72, 80, 255), a), r, 0,
                    1.0f);
+    }
+}
+
+std::vector<std::pair<bool, ImVec2>> placeNames(const std::vector<NameRoom>& nodes, const std::vector<size_t>& order,
+                                                 float gap) {
+    struct Box {
+        ImVec2 lo, hi;
+    };
+    auto overlaps = [](const Box& a, const Box& b) {
+        return a.lo.x < b.hi.x && b.lo.x < a.hi.x && a.lo.y < b.hi.y && b.lo.y < a.hi.y;
+    };
+    std::vector<std::pair<bool, ImVec2>> at(nodes.size(), {false, ImVec2(0.0f, 0.0f)});
+    std::vector<Box> placed;
+    for (const size_t i : order) {
+        const NameRoom& n = nodes[i];
+        // Under the node, else at its right.
+        const ImVec2 tries[2] = {ImVec2(std::floor((n.lo.x + n.hi.x - n.size.x) * 0.5f), std::floor(n.hi.y + gap)),
+                                 ImVec2(std::floor(n.hi.x + gap * 2.0f), std::floor((n.lo.y + n.hi.y - n.size.y) * 0.5f))};
+        for (const ImVec2& p : tries) {
+            const Box label{p - ImVec2(gap, 1.0f), p + n.size + ImVec2(gap, 1.0f)};
+            bool free = true;
+            for (size_t k = 0; k < nodes.size() && free; ++k) free = k == i || !overlaps(label, {nodes[k].lo, nodes[k].hi});
+            for (size_t k = 0; k < placed.size() && free; ++k) free = !overlaps(label, placed[k]);
+            if (!free) continue;
+            placed.push_back(label);
+            at[i] = {true, p};
+            break;
+        }
+    }
+    return at;
+}
+
+void NodeCanvas::drawNames(ImDrawList* d, const std::vector<const CanvasNode*>& order, int hovered) const {
+    // Too far out for the text on the nodes: their names beside them, small
+    // but readable -- as Houdini writes them -- so a whole network fitted into
+    // the panel still says what is what. Only those that fit (placeNames):
+    // the current, the selected, the hovered, the displayed, those with a
+    // problem and the most linked come first.
+    const float s = scaleOf(zoom_);
+    const theme::Fonts& f = theme::fonts();
+    const float size = theme::px(11.0f);
+    std::vector<NameRoom> rooms;
+    std::vector<std::pair<int, size_t>> ranked;
+    for (size_t i = 0; i < order.size(); ++i) {
+        const CanvasNode& n = *order[i];
+        const Layout l = layoutOf(n);
+        const ImVec2 lo = toScreen(ImVec2(n.x, n.y));
+        rooms.push_back({lo, lo + ImVec2(l.width, l.height) * s, ImVec2(textWidth(f.bold, size, n.title), size)});
+        int links = 0;
+        for (const CanvasPin& p : n.inputs) links += p.links;
+        for (const CanvasPin& p : n.outputs) links += p.links;
+        const int score = (n.id == current_ ? 4000 : 0) + (selection_.count(n.id) ? 2000 : 0) +
+                          (n.id == hovered ? 1000 : 0) + (n.displayed ? 400 : 0) + (n.problem ? 200 : 0) +
+                          (n.dimmed ? -100 : 0) + std::min(links, 50);
+        ranked.push_back({-score, i});
+    }
+    std::stable_sort(ranked.begin(), ranked.end());
+    std::vector<size_t> rank;
+    for (const auto& r : ranked) rank.push_back(r.second);
+    const std::vector<std::pair<bool, ImVec2>> at = placeNames(rooms, rank, theme::px(3.0f));
+    for (size_t i = 0; i < order.size(); ++i) {
+        if (!at[i].first) continue;
+        const CanvasNode& n = *order[i];
+        const float a = n.dimmed ? 0.55f : 1.0f;
+        const ImU32 color = selection_.count(n.id) ? theme::kAccentHover : IM_COL32(228, 230, 236, 255);
+        d->AddText(f.bold, size, at[i].second + ImVec2(1.0f, 1.0f), theme::fade(IM_COL32(0, 0, 0, 190), a), n.title.c_str());
+        d->AddText(f.bold, size, at[i].second, theme::fade(color, a), n.title.c_str());
     }
 }
 
@@ -697,6 +759,7 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
     for (const CanvasNode* n : order) {
         drawNode(d, *n, selection_.count(n->id) > 0, n->id == hoverNode && drag_ == Drag::None, hot, hotAccepts);
     }
+    if (kFont * s < kWordsAt) drawNames(d, order, hoverNode);
     if (drag_ == Drag::Link) {
         if (const CanvasNode* n = find(linkFrom_.node)) {
             const CanvasPin* p = pinDef(linkFrom_);
@@ -730,12 +793,15 @@ void NodeCanvas::draw(const char* id, const std::vector<CanvasNode>& nodes, cons
         if (onFlag) {
             ImGui::SetTooltip(n->displayed ? "Displayed: its geometry shows in the viewport. Click (or R) to hide it."
                                            : "Display flag: show this node's geometry in the viewport (R)");
-        } else if (n && n->problem && !n->problemText.empty()) {
-            const float flag = n->displayable ? 20.0f * s : 0.0f;
-            const ImVec2 corner = toScreen(ImVec2(n->x + layoutOf(*n).width, n->y));
-            if (mouse.x > corner.x - 28.0f * s - flag && mouse.y < corner.y + kHeader * s) {
-                ImGui::SetTooltip("%s", n->problemText.c_str());
-            }
+        } else if (n && n->problem && !n->problemText.empty() &&
+                   mouse.x > toScreen(ImVec2(n->x + layoutOf(*n).width, n->y)).x - 28.0f * s - (n->displayable ? 20.0f * s : 0.0f) &&
+                   mouse.y < toScreen(ImVec2(n->x, n->y)).y + kHeader * s) {
+            ImGui::SetTooltip("%s", n->problemText.c_str());
+        } else if (n && kFont * s < kWordsAt) {
+            // Too far out to read it on the node: its name, whether or not
+            // it found room beside it.
+            if (n->subtitle.empty()) ImGui::SetTooltip("%s", n->title.c_str());
+            else ImGui::SetTooltip("%s  \xc2\xb7  %s", n->title.c_str(), n->subtitle.c_str());
         }
     }
 

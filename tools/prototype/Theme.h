@@ -39,10 +39,13 @@ ImU32 shade(ImU32 c, float amount);
 
 // --- fonts ---------------------------------------------------------------------------
 
+/// The text's size in pixels at the usual density.
+inline constexpr float kFontSize = 14.0f;
+
 struct Fonts {
-    ImFont* regular = nullptr;
-    ImFont* bold = nullptr;
-    ImFont* mono = nullptr;
+    ImFont* regular = nullptr;  ///< Inter Regular
+    ImFont* bold = nullptr;     ///< Inter SemiBold: titles, names
+    ImFont* mono = nullptr;     ///< code
 };
 const Fonts& fonts();
 

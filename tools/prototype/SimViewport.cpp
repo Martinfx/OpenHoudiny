@@ -52,11 +52,7 @@ const Vec3 kPalette[] = {{0.72f, 0.36f, 0.27f}, {0.32f, 0.5f, 0.72f}, {0.44f, 0.
 
 /// A menu item with an icon in front.
 bool iconItem(Icon icon, ImU32 color, const char* label, const char* shortcut = nullptr) {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = ImGui::GetTextLineHeight();
-    const bool clicked = ImGui::MenuItem((std::string("      ") + label).c_str(), shortcut);
-    theme::drawIcon(ImGui::GetWindowDrawList(), icon, ImVec2(p.x + h * 0.55f, p.y + h * 0.5f), h * 0.95f, color);
-    return clicked;
+    return ui::iconMenuItem(icon, color, label, shortcut);
 }
 
 /// What objects and forces are linked into: the solvers, and the rain.
@@ -745,18 +741,34 @@ void SimWorkspace::frameSelection() {
 
 // --- the toolbar and the menu ---------------------------------------------------------------
 
-void SimWorkspace::viewTools(ImVec2 at) {
-    const float side = theme::px(28.0f), gap = theme::px(2.0f), pad = theme::px(3.0f), space = theme::px(8.0f);
-    const float height = 18.0f * side + 14.0f * gap + 3.0f * space + 2.0f * pad;
-    ImDrawList* d = ImGui::GetWindowDrawList();
-    toolsLo_ = at;
-    toolsHi_ = ImVec2(at.x + side + 2.0f * pad, at.y + height);
-    d->AddRectFilled(toolsLo_, toolsHi_, IM_COL32(24, 25, 29, 215), theme::px(7.0f));
-    float y = at.y + pad;
+void SimWorkspace::viewTools(ImVec2 at, float bottom) {
+    // 18 buttons in four groups, down to `bottom` at most: smaller buttons
+    // where the view is short, and past that a second column.
+    const int buttons = 18, groups = 4;
+    const float gap = theme::px(2.0f), pad = theme::px(3.0f), space = theme::px(8.0f);
+    const float fixed = static_cast<float>(buttons - groups) * gap + static_cast<float>(groups - 1) * space + 2.0f * pad;
+    const float room = std::max(bottom - at.y, theme::px(120.0f));
+    const float side = std::clamp((room - fixed) / static_cast<float>(buttons), theme::px(20.0f), theme::px(28.0f));
+    const float top = at.y + pad, limit = at.y + room - pad;
+    float x = at.x + pad, y = top, lowest = top;
     auto place = [&]() {
-        ImGui::SetCursorScreenPos(ImVec2(at.x + pad, y));
+        if (y + side > limit + 0.5f && y > top) {  // on in the next column
+            x += side + gap;
+            y = top;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
         y += side + gap;
+        lowest = std::max(lowest, y);
     };
+    auto group = [&]() {
+        if (y > top) y += space - gap;
+    };
+    // The buttons over their panel, which is drawn behind them once its
+    // size is known.
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImDrawListSplitter layers;
+    layers.Split(d, 2);
+    layers.SetCurrentChannel(d, 1);
     struct Tool {
         GizmoMode mode;
         Icon icon;
@@ -782,7 +794,7 @@ void SimWorkspace::viewTools(ImVec2 at) {
                           soft.on && editingElements() && !paint_, editingElements() && !paint_, side)) {
         setSoft(!soft.on);
     }
-    y += space - gap;
+    group();
     // What a click picks: objects, or the displayed geometry's points,
     // edges, primitives; and the brush.
     struct Kind {
@@ -846,7 +858,7 @@ void SimWorkspace::viewTools(ImVec2 at) {
         numbers_ = !numbers_;
         numbersKey_.clear();
     }
-    y += space - gap;
+    group();
     place();
     if (theme::iconButton("axes", localAxes_ ? Icon::Local : Icon::World,
                           localAxes_ ? "Local axes: the gizmo turns with the object. Click for the world's."
@@ -859,7 +871,7 @@ void SimWorkspace::viewTools(ImVec2 at) {
                           snap_, true, side)) {
         snap_ = !snap_;
     }
-    y += space - gap;
+    group();
     place();
     if (theme::iconButton("add", Icon::Plus, "Add an object, a source, a force (Shift+A)", false, true, side)) {
         addAt_ = floorPoint(camera_, ImVec2(camera_.lo.x + camera_.size.x * 0.5f, camera_.lo.y + camera_.size.y * 0.5f));
@@ -869,6 +881,11 @@ void SimWorkspace::viewTools(ImVec2 at) {
     if (theme::iconButton("frame", Icon::Frame, "Frame the selection (F), or everything", false, true, side)) {
         frameSelection();
     }
+    layers.SetCurrentChannel(d, 0);
+    toolsLo_ = at;
+    toolsHi_ = ImVec2(x + side + pad, lowest - gap + pad);
+    d->AddRectFilled(toolsLo_, toolsHi_, IM_COL32(24, 25, 29, 215), theme::px(7.0f));
+    layers.Merge(d);
 }
 
 void SimWorkspace::viewMenu() {
@@ -1113,7 +1130,10 @@ void SimWorkspace::viewport(ImVec2 size) {
     (void)size;
     const sim::Domain dm = sceneBox();
     const std::string info = gridsText();
-    ui::PanelHeader h = ui::panelHeader(Icon::Viewport, "Viewport", info.c_str());
+    // Two tabs in the header: the viewport, and the render of what it shows.
+    int tab = renderTabOn_ ? 1 : 0;
+    ui::PanelHeader h = ui::tabHeader(Icon::Viewport, tab, {"Viewport", "Render"}, info.c_str());
+    renderTabOn_ = tab == 1;
     if (ui::headerButton(h, "image", Icon::Camera, "Render this frame to a PNG\xe2\x80\xa6")) {
         files_.open("Render image", {".png"}, true, (fs::path(renderFolder()) / (stem() + ".png")).string());
         fileAction_ = FileAction::Image;
@@ -1160,18 +1180,6 @@ void SimWorkspace::viewport(ImVec2 size) {
         viewDirty_ = true;
     }
 
-    // Two tabs: the viewport, and the render of what it shows.
-    if (ImGui::BeginTabBar("view.tabs")) {
-        if (ImGui::BeginTabItem("Viewport")) {
-            renderTabOn_ = false;
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Render")) {
-            renderTabOn_ = true;
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
     if (renderTabOn_) {
         const ImVec2 room = ImGui::GetContentRegionAvail();
         renderTab(static_cast<int>(room.x), static_cast<int>(room.y));
@@ -1448,31 +1456,36 @@ void SimWorkspace::viewport(ImVec2 size) {
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) gizmoOwnsMouse_ = gizmo_.dragging();
     viewKeys(overView || (viewHovered && !onTools));
 
-    // Overlays: what is shown, the state of things.
+    // Overlays: what is shown, the state of things -- each on a dark pill,
+    // read over a white sky as over a black floor.
     const float pad = theme::px(10.0f);
-    if (!rendererLog_.empty()) d->AddText(ImVec2(lo.x + pad, lo.y + pad), theme::kRed, rendererLog_.c_str());
+    const float line = ImGui::GetFontSize() * 1.6f;  // a pill's line
+    if (!rendererLog_.empty()) ui::overlayText(d, ImVec2(lo.x + pad, lo.y + pad), theme::kRed, rendererLog_.c_str());
     char text[160];
     const int cached = runner_->cached();
-    float textY = lo.y + pad;
+    const float textY = lo.y + pad;
     if (shown_) {
         std::snprintf(text, sizeof text, "Frame %d  \xc2\xb7  %.2f s", shown_->number, static_cast<double>(shown_->time));
-        d->AddText(theme::fonts().bold, ImGui::GetFontSize(), ImVec2(lo.x + pad, textY), IM_COL32(235, 236, 240, 230), text);
+        ui::overlayText(d, ImVec2(lo.x + pad, textY), IM_COL32(235, 236, 240, 240), text, theme::fonts().bold);
         if (current_ > cached) {
             std::snprintf(text, sizeof text, "simulating\xe2\x80\xa6 %d of %d", cached, current_);
-            d->AddText(ImVec2(lo.x + pad, textY + ImGui::GetFontSize() * 1.3f), theme::kAccentHover, text);
+            ui::overlayText(d, ImVec2(lo.x + pad, textY + line), theme::kAccentHover, text);
         }
     } else if (!levels_.empty() || editingAsset()) {
         // Inside an asset: its geometry, at the play head.
         std::snprintf(text, sizeof text, "Frame %d  \xc2\xb7  inside %s", current_,
                       (net_.asset().label.empty() ? net_.asset().name : net_.asset().label).c_str());
-        d->AddText(theme::fonts().bold, ImGui::GetFontSize(), ImVec2(lo.x + pad, textY), IM_COL32(235, 236, 240, 230), text);
+        ui::overlayText(d, ImVec2(lo.x + pad, textY), IM_COL32(235, 236, 240, 240), text, theme::fonts().bold);
     } else if (compiled_.ok) {
-        d->AddText(ImVec2(lo.x + pad, textY), theme::kAccentHover, gizmo_.dragging() ? "let go to simulate" : "simulating\xe2\x80\xa6");
+        ui::overlayText(d, ImVec2(lo.x + pad, textY), theme::kAccentHover,
+                        gizmo_.dragging() ? "let go to simulate" : "simulating\xe2\x80\xa6");
     }
-    // The geometry still cooking, a while after it was asked for: said.
+    // The toolbar goes under those two lines; the geometry still cooking, a
+    // while after it was asked for, is said beside its top.
+    const float toolsTop = textY + 2.0f * line;
     if (cooker_->busy() && ImGui::GetTime() - cookAsked_ > 0.25) {
-        const float y = lo.y + pad + ImGui::GetFontSize() * (shown_ ? 2.6f : 1.3f);
-        d->AddText(ImVec2(lo.x + pad + theme::px(44.0f), y), theme::kAccentHover, "cooking\xe2\x80\xa6");
+        ui::overlayText(d, ImVec2(lo.x + pad + theme::px(48.0f), toolsTop + theme::px(4.0f)), theme::kAccentHover,
+                        "cooking\xe2\x80\xa6");
     }
     // What is selected, or under the mouse, at the bottom.
     const int named = hovered_ ? hovered_ : canvas_.current();
@@ -1483,20 +1496,19 @@ void SimWorkspace::viewport(ImVec2 size) {
                      (cut = elementsText.rfind("  \xc2\xb7  ")) != std::string::npos;) {
         elementsText.erase(cut);
     }
+    auto bottomRight = [&](const char* t, ImU32 color) {
+        const ImVec2 ts = ImGui::CalcTextSize(t);
+        ui::overlayText(d, ImVec2(hi.x - ts.x - pad - theme::px(4.0f), hi.y - ts.y - pad), color, t);
+    };
     if (!elementsText.empty()) {
-        const ImVec2 ts = ImGui::CalcTextSize(elementsText.c_str());
-        d->AddText(ImVec2(hi.x - ts.x - pad, hi.y - ts.y - pad), hoverElement_ >= 0 ? theme::kText : theme::kAccentHover,
-                   elementsText.c_str());
+        bottomRight(elementsText.c_str(), hoverElement_ >= 0 ? theme::kText : theme::kAccentHover);
     } else if (const sim::Node* n = net_.node(named)) {
         const sim::NodeType* t = sim::findNodeType(n->type);
         std::snprintf(text, sizeof text, "%s  %s%s", n->name.c_str(), t ? t->label : n->type.c_str(),
                       hovered_ && hovered_ != canvas_.current() ? "" : "  \xc2\xb7  selected");
-        const ImVec2 ts = ImGui::CalcTextSize(text);
-        d->AddText(ImVec2(hi.x - ts.x - pad, hi.y - ts.y - pad), hovered_ ? theme::kText : theme::kAccentHover, text);
+        bottomRight(text, hovered_ ? theme::kText : theme::kAccentHover);
     } else if (!emptyScene() && (!compiled_.solids.empty() || compiled_.ok)) {
-        const char* hint = "Click to select  \xc2\xb7  W E R move, rotate, scale  \xc2\xb7  Shift+A add";
-        const ImVec2 ts = ImGui::CalcTextSize(hint);
-        d->AddText(ImVec2(hi.x - ts.x - pad, hi.y - ts.y - pad), theme::kTextFaint, hint);
+        bottomRight("Click to select  \xc2\xb7  W E R move, rotate, scale  \xc2\xb7  Shift+A add", theme::kTextDim);
     }
     if (emptyScene()) {
         // Where to begin, in the middle of the view.
@@ -1538,8 +1550,9 @@ void SimWorkspace::viewport(ImVec2 size) {
     drawGnomon(d, ImVec2(lo.x, hi.y));
     drawNotice(d, lo, hi);
 
-    // The toolbar, on the left under the frame's number.
-    viewTools(ImVec2(lo.x + pad, lo.y + pad + ImGui::GetFontSize() * 2.6f));
+    // The toolbar, on the left under the frame's number, ending above the
+    // axes in the corner.
+    viewTools(ImVec2(lo.x + pad, toolsTop), hi.y - theme::px(84.0f));
     d->PopClipRect();
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::px(8.0f), theme::px(8.0f)));

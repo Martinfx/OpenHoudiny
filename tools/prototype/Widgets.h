@@ -23,8 +23,36 @@ struct PanelHeader {
     float right = 0.0f;  ///< where the next button from the right ends
 };
 PanelHeader panelHeader(theme::Icon icon, const char* title, const char* info = nullptr);
+/// A panel's header whose title is tabs: the one shown, `current`, bright
+/// over an accent line; a click on another shows it. The information follows
+/// the tabs.
+PanelHeader tabHeader(theme::Icon icon, int& current, const std::vector<const char*>& tabs, const char* info = nullptr);
 bool headerButton(PanelHeader& header, const char* id, theme::Icon icon, const char* tooltip, bool on = false,
                   bool enabled = true);
+
+/// Text over the viewport or a picture, on a dark pill so that it reads over
+/// a white sky as over a black floor. `at` is the top left of the text.
+/// Returns the text's size.
+ImVec2 overlayText(ImDrawList* d, ImVec2 at, ImU32 color, const char* text, ImFont* font = nullptr, float size = 0.0f);
+
+/// A menu item with a drawn icon in the menu's icon column: the labels of
+/// all its items -- with an icon or without -- start at one place.
+bool iconMenuItem(theme::Icon icon, ImU32 color, const char* label, const char* shortcut = nullptr, bool selected = false,
+                  bool enabled = true);
+/// A submenu with an icon, the same way.
+bool beginIconMenu(theme::Icon icon, ImU32 color, const char* label, bool enabled = true);
+
+/// The buttons at the foot of a dialog, at its right, a fixed width each:
+/// the first does what the dialog is for, in the accent colour; the rest
+/// (Cancel) plain. The index of the one clicked, -1 for none.
+int dialogButtons(const std::vector<const char*>& labels, bool firstEnabled = true);
+
+/// Escape pressed: the menu or popup on top closes -- what Dear ImGui does
+/// only with its keyboard navigation on, which the editor's own keys keep
+/// off. A modal dialog is left to its own Cancel. The key is used up for the
+/// frame, so the panels under the popup do not take it too. True when a
+/// popup closed. Before the windows of the frame are drawn.
+bool closePopupOnEscape();
 
 /// A bar between two panes, dragged to resize the one before it: `size`,
 /// kept within [min, max]. `vertical`: the bar is vertical (panes side by side).
@@ -55,7 +83,7 @@ int keyButton(const char* id, int state, const char* tooltip);
 bool exprButton(const char* id, bool active, const char* tooltip);
 
 bool sliderFloat(const char* id, float& v, float min, float max, const char* format);
-bool sliderInt(const char* id, int& v, int min, int max);
+bool sliderInt(const char* id, int& v, int min, int max, const char* format = "%d");
 /// Three numbers side by side, x red, y green, z blue.
 bool dragVector(const char* id, float v[3], float speed, const char* format);
 bool colorEdit(const char* id, float v[3]);
@@ -64,10 +92,51 @@ bool toggle(const char* id, bool& v);
 /// A few choices as buttons side by side.
 bool segmented(const char* id, int& v, const std::vector<const char*>& labels);
 
-/// Text that wraps, dim: help under a header.
 /// A file's size as people read it: "812 B", "8.1 KB", "4.4 MB".
 std::string sizeText(uintmax_t bytes);
+/// Text that wraps, dim: help under a header.
 void note(const char* text);
+
+/// Facts as rows -- a label, dim, and its value -- the values in a column of
+/// their own, as wide as the widest label leaves:
+///   if (ui::beginRows("facts")) { ui::row("Cells", "%d", n); ...; ui::endRows(); }
+bool beginRows(const char* id);
+/// A row's label; what is drawn next goes into its value's column.
+void rowStart(const char* label);
+void row(const char* label, const char* fmt, ...) IM_FMTARGS(2);
+void endRows();
+
+/// A key and what it does, for a help menu; with no keys, the title of the
+/// group after it.
+struct KeyHelp {
+    const char* keys;
+    const char* what;
+};
+/// The keys in a column, what they do in the next, the groups under bold
+/// titles; then the same from the command line, in code's letters.
+void keysHelp(const std::vector<KeyHelp>& keys, const std::vector<const char*>& commands);
+
+/// A list to pick one from by typing -- the menus that add a node: a search
+/// field, then the items under headings in a list that scrolls beneath it,
+/// no taller than most of the window. Up and Down move the lit item, Enter
+/// takes it; the field starts empty and focused each time the menu opens.
+class PickList {
+public:
+    /// The field, and the list's start: inside the open popup, every frame.
+    void begin(std::string& search, float width);
+    /// A heading over the items after it; `dot` its colour, 0 for none.
+    void heading(const char* text, ImU32 dot = 0);
+    /// An item: true when it is clicked, or lit when Enter is pressed.
+    bool item(const char* id, const char* label, theme::Icon icon, ImU32 iconColor, const char* help);
+    /// The list's end; says so when nothing fits.
+    void end();
+
+private:
+    float width_ = 0.0f;
+    int cursor_ = 0, count_ = 0, shown_ = 0;
+    bool moved_ = false, enter_ = false;
+    std::string last_;
+};
 
 // --- the timeline ------------------------------------------------------------------------
 

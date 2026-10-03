@@ -93,18 +93,31 @@ se přepíná přepínačem uprostřed horní lišty.
 
 | panel | co ukazuje |
 |---|---|
-| **Viewport** (vlevo nahoře) | scéna: plyn na podlaze se stínem, objekty, vodítka; výběr kliknutím a gizmo |
+| **Viewport** (vlevo nahoře) | scéna: plyn na podlaze se stínem, objekty, vodítka; výběr kliknutím a gizmo. Záložka **Render** vedle něj v hlavičce panelu ukazuje tutéž scénu z path traceru nebo z Cycles |
 | **Časová osa** (vlevo dole) | přehrávání, snímky v cache, přehrávací hlava |
 | **Parameters** (vpravo nahoře) | parametry vybraného uzlu; bez výběru přehled sítě |
 | **Network** (vpravo dole) | síť uzlů |
 
 Rozhraní mezi panely jdou táhnout.
 
+Písmo rozhraní je **Inter** (Regular a SemiBold, licence SIL OFL 1.1),
+zakompilované v programu: na každém systému stejné, s češtinou a se značkami,
+které editor píše (×, ·, …, šipky). Znaky, které Inter nemá, doplní systémové
+DejaVu, je-li nainstalované; kód má neproporcionální DejaVu Sans Mono, jinak
+vlastní písmo Dear ImGui. Pomocné texty ve viewportu (číslo snímku,
+„simulating…“, nápověda dole, vybraný uzel) leží na tmavých štítcích, takže
+se čtou nad bílou oblohou stejně jako nad tmavou podlahou. Lišta nástrojů
+vlevo se do nízkého okna vejde: nejdřív zmenší tlačítka, pak pokračuje
+druhým sloupcem, a nikdy nepřekryje osy v rohu. **Escape** zavře otevřené
+menu nebo nabídku, jen tu nejvyšší (dialogy mají vlastní Cancel), a dál do
+panelů pod ní nedojde. Help má zkratky v tabulce, klávesy v jednom sloupci a
+co dělají ve druhém. Dialogy mají tlačítka vpravo, to hlavní oranžové.
+
 ### Síť
 
 | akce | jak |
 |---|---|
-| přidat uzel | **Tab** nebo pravé tlačítko do prázdna: nabídka s hledáním, Enter vezme první |
+| přidat uzel | **Tab** nebo pravé tlačítko do prázdna: nabídka s hledáním u myši; šipky nahoru a dolů posunou zvýrazněný uzel, Enter ho vezme. Seznam pod polem hledání se posouvá, nabídka se vždy vejde do okna |
 | spojit | táhnout z pinu na pin; zelená = pasuje, červená = nepasuje a tooltip řekne proč |
 | přidat rovnou spojený uzel | táhnout z pinu do prázdna: nabídne jen uzly, které k pinu pasují |
 | přesunout nebo zrušit spoj | táhnout za připojený vstup; puštěný do prázdna zanikne. Ctrl+klik na spoj ho zruší |
@@ -118,14 +131,21 @@ Klávesy patří panelu pod myší, jako v Houdini. Hlavička uzlu má barvu
 kategorie, pod názvem je shrnutí toho, co uzel dělá (`fuel 14 · heat 1`).
 Uzel, který nevede na výstup, je tlumený. Problém ukáže červený nebo žlutý
 odznak; tooltip nad ním řekne, co je špatně. Při velkém oddálení se texty
-na uzlech schovají a jméno uzlu se píše pod ním malým, ale čitelným
-písmem jako v Houdini. Síť s desítkami uzlů, kterou editor po otevření
-celou vměstná do panelu, tak pořád ukazuje, co je co.
+na uzlech schovají (dokud by byly menší než asi 8 pixelů) a jméno uzlu se
+píše vedle něj malým, ale čitelným písmem jako v Houdini: pod uzel, a
+když tam není místo, napravo od něj. Jméno se napíše jen tam, kde nepřekryje
+jiný uzel ani jiné jméno. Přednost má aktuální a vybraný uzel, pak uzel pod
+myší, zobrazený, s problémem a nakonec ten nejvíc propojený. Ostatní jména
+ukáže tooltip nad uzlem. Síť s desítkami uzlů, kterou editor po otevření
+celou vměstná do panelu, je tak čitelná a texty se nepřekrývají.
 
 ### Parametry
 
 Parametry jsou rozdělené do sekcí, které jdou sbalit. Popisek se rozsvítí,
-když se hodnota liší od výchozí; ikona ↺ vpravo ji vrátí. Tooltip nad
+když se hodnota liší od výchozí; ikona ↺ vpravo ji vrátí. Posuvník je
+vyplněný od levého kraje po hodnotu. Přehled sítě (plyn, buňky, vstupy,
+kamera, snímky, cache, bake, wedge) má popisky v jednom sloupci a hodnoty v
+druhém. Tooltip nad
 popiskem vysvětlí, co parametr dělá, a uvede jeho jméno pro `--set` a
 rozsah posuvníku. Posuvník má rozsah, kde je parametr užitečný. Ctrl+klik
 dovolí napsat číslo i mimo něj, meze drží jen fyzikální smysl (třeba žádné
@@ -1155,6 +1175,25 @@ měřítko, výběr více objektů, duplikace, mazání, přidání přes Shift+
 kontextovou nabídku. Žádný data race ani chyba paměti v našem kódu;
 hlášení zbyla jen uvnitř X11, GLX a Mesy, které pro sanitizery nejsou
 instrumentované.
+
+Rozhraní editoru má vlastní testy, které nepotřebují okno ani OpenGL:
+[`tests/test_editor_ui.cpp`](../tests/test_editor_ui.cpp), program
+`pgeditortests` (v `ctest` jako `editor_ui`), 8 testů. Dear ImGui v nich
+běží jen v paměti: snímky se staví, vstup se do nich vkládá, nic se
+nekreslí. Ověřují:
+
+- písmo je zakompilovaný Inter (Regular i SemiBold) a má české znaky i
+  značky, které editor píše;
+- Escape zavře jen nejvyšší menu: podmenu, pak menu. Dialog nechá dialogu.
+  Stisk, který menu zavřel, už nedojde k panelu pod ním;
+- nabídka uzlů vezme šipkami zvýrazněný uzel Enterem, šipka nahoru z prvního
+  přejde na poslední; nabídka se 150 uzly otevřená u spodního okraje se
+  celá vejde do okna;
+- řádky přehledu mají hodnoty v jednom sloupci, za nejširším popiskem;
+- záložka v hlavičce panelu se přepne kliknutím;
+- jména uzlů v oddálené síti nepřekryjí žádný uzel ani jiné jméno: síť
+  120 uzlů hustší, než jsou jména široká, a dva uzly nad sebou, kde jméno
+  horního musí jít napravo.
 
 ## 10. Jak přidat uzel
 

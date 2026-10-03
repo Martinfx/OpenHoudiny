@@ -161,14 +161,21 @@ void SimWorkspace::makeAssetDialog() {
                                                          .c_str());
     ImGui::TextDisabled("in their place a node of it; what comes into them comes into it.");
     ImGui::Spacing();
-    ImGui::SetNextItemWidth(theme::px(260.0f));
+    // The names before the fields, as in a parameter pane.
+    auto labelled = [](const char* text) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(text);
+        ImGui::SameLine(theme::px(60.0f));
+        ImGui::SetNextItemWidth(theme::px(320.0f));
+    };
+    labelled("Label");
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     const std::string before = nameFromLabel(assetLabel_);
-    if (ImGui::InputText("Label", &assetLabel_) && (assetName_.empty() || assetName_ == before)) {
+    if (ImGui::InputText("##label", &assetLabel_) && (assetName_.empty() || assetName_ == before)) {
         assetName_ = nameFromLabel(assetLabel_);
     }
-    ImGui::SetNextItemWidth(theme::px(260.0f));
-    ImGui::InputText("Name", &assetName_);
+    labelled("Name");
+    ImGui::InputText("##name", &assetName_);
     ImGui::SetItemTooltip("Its node type: letters, digits and _ -- what a network's file calls it");
     const std::string file = (fs::path(sim::AssetLibrary::userFolder()) / (assetName_ + ".pgasset")).string();
     ImGui::TextDisabled("Saved to %s", file.c_str());
@@ -179,11 +186,9 @@ void SimWorkspace::makeAssetDialog() {
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
     }
-    ImGui::Spacing();
-    const bool make = ImGui::Button("Make", ImVec2(theme::px(120.0f), 0.0f)) ||
-                      (ImGui::IsKeyPressed(ImGuiKey_Enter) && !ImGui::IsAnyItemActive());
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(theme::px(120.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    const int button = ui::dialogButtons({"Make", "Cancel"});
+    const bool make = button == 0 || (ImGui::IsKeyPressed(ImGuiKey_Enter) && !ImGui::IsAnyItemActive());
+    if (button == 1 || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         ImGui::CloseCurrentPopup();
     } else if (make) {
         sim::AssetInfo info;

@@ -7,6 +7,13 @@
 #include <initializer_list>
 
 namespace pg::editor::theme {
+
+// Inter Regular and SemiBold (tools/prototype/fonts), compiled in by CMake.
+extern const unsigned char kInterRegular[];
+extern const int kInterRegularSize;
+extern const unsigned char kInterSemiBold[];
+extern const int kInterSemiBoldSize;
+
 namespace {
 
 Fonts gFonts;
@@ -136,7 +143,9 @@ void apply(float dpi) {
     c[ImGuiCol_NavWindowingDimBg] = ImVec4(0, 0, 0, 0.3f);
     c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.45f);
 
-    // System fonts when there are any; Dear ImGui's own otherwise.
+    // Inter, compiled in: Regular for the text, SemiBold for titles. Letters
+    // it has not -- it carries Latin, Czech among it, and the signs the
+    // editor writes -- come from a system font behind it, when there is one.
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
     const std::string sans = findFont({"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -154,13 +163,26 @@ void apply(float dpi) {
                                        "/usr/local/share/fonts/dejavu/DejaVuSansMono.ttf",
                                        "/System/Library/Fonts/Menlo.ttc",
                                        "C:/Windows/Fonts/consola.ttf"});
-    const float size = 15.0f;
-    gFonts.regular = !sans.empty() ? io.Fonts->AddFontFromFileTTF(sans.c_str(), size) : nullptr;
+    const float size = kFontSize;
+    auto inter = [&](const unsigned char* data, int bytes, const std::string& behind) {
+        ImFontConfig cfg;
+        cfg.FontDataOwnedByAtlas = false;  // the program's own bytes
+        ImFont* font = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(data), bytes, size, &cfg);
+        if (font && !behind.empty()) {
+            ImFontConfig merge;
+            merge.MergeMode = true;
+            io.Fonts->AddFontFromFileTTF(behind.c_str(), size, &merge);
+        }
+        return font;
+    };
+    gFonts.regular = inter(kInterRegular, kInterRegularSize, sans);
     if (!gFonts.regular) gFonts.regular = io.Fonts->AddFontDefault();
-    gFonts.bold = !bold.empty() ? io.Fonts->AddFontFromFileTTF(bold.c_str(), size) : nullptr;
+    gFonts.bold = inter(kInterSemiBold, kInterSemiBoldSize, bold.empty() ? sans : bold);
     if (!gFonts.bold) gFonts.bold = gFonts.regular;
+    // Code wants its columns: a monospaced face -- the system's, or Dear
+    // ImGui's own.
     gFonts.mono = !mono.empty() ? io.Fonts->AddFontFromFileTTF(mono.c_str(), size - 1.0f) : nullptr;
-    if (!gFonts.mono) gFonts.mono = gFonts.regular;
+    if (!gFonts.mono) gFonts.mono = io.Fonts->AddFontDefaultVector();
     io.FontDefault = gFonts.regular;
     s.FontSizeBase = size;
     s.FontScaleDpi = gDpi;

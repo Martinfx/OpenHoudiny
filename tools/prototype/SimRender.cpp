@@ -157,7 +157,14 @@ void SimWorkspace::renderTab(int width, int height) {
     ImGui::SameLine();
     // Which renderer: Cycles, Blender's, when the build has it -- or ours.
     const RenderView::Engine engine = renderView_->engine();
-    ImGui::SetNextItemWidth(theme::px(104.0f));
+    // A combo as wide as its longest choice and its arrow.
+    auto comboWidth = [](std::initializer_list<const char*> choices) {
+        float w = 0.0f;
+        for (const char* c : choices) w = std::max(w, ImGui::CalcTextSize(c).x);
+        return w + 2.0f * ImGui::GetStyle().FramePadding.x + ImGui::GetFrameHeight() + theme::px(2.0f);
+    };
+    ImGui::SetNextItemWidth(comboWidth({RenderView::engineName(RenderView::Engine::Cycles),
+                                        RenderView::engineName(RenderView::Engine::PathTracer)}));
     if (ImGui::BeginCombo("##render.engine", RenderView::engineName(engine))) {
         for (const RenderView::Engine e : {RenderView::Engine::Cycles, RenderView::Engine::PathTracer}) {
             const bool can = e != RenderView::Engine::Cycles || render::cyclesAvailable();
@@ -172,7 +179,7 @@ void SimWorkspace::renderTab(int width, int height) {
                                                     : "Cycles: not in this build (it needs OpenImageIO)");
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(theme::px(70.0f));
+    ImGui::SetNextItemWidth(comboWidth({"100 %"}));
     char scaleText[16];
     std::snprintf(scaleText, sizeof scaleText, "%d %%", kScales[renderScale_]);
     if (ImGui::BeginCombo("##render.scale", scaleText)) {
@@ -337,8 +344,18 @@ void SimWorkspace::renderTab(int width, int height) {
     }
     // 0: through the camera, or not -- as in the viewport.
     if (hovered && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_0, false)) setThroughCamera(!throughCamera_);
-    if (!st.error.empty()) d->AddText(ImVec2(lo.x + theme::px(8.0f), lo.y + theme::px(8.0f)), IM_COL32(240, 120, 110, 255),
-                                      st.error.c_str());
+    if (!st.error.empty()) {
+        ui::overlayText(d, ImVec2(lo.x + theme::px(10.0f), lo.y + theme::px(10.0f)), IM_COL32(240, 120, 110, 255),
+                        st.error.c_str());
+    } else if (!(renderTexture_ && renderTextureW_ > 0) || (job && !jobShown_)) {
+        // Nothing to show yet: what it waits for, in the middle.
+        const char* what = job ? "Rendering the shot\xe2\x80\xa6"
+                           : st.building ? "Building the scene\xe2\x80\xa6"
+                                         : "Starting the render\xe2\x80\xa6";
+        const ImVec2 t = ImGui::CalcTextSize(what);
+        ui::overlayText(d, ImVec2(std::floor((lo.x + hi.x - t.x) * 0.5f), std::floor((lo.y + hi.y - t.y) * 0.5f)),
+                        theme::kTextDim, what);
+    }
 }
 
 bool SimWorkspace::renderShotFrame(int frame, std::vector<uint8_t>& rgb, std::string& error) {
