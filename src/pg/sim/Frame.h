@@ -166,6 +166,11 @@ struct Frame {
     /// The gas of every cell of the domain, as `fields` holds it when not
     /// sparse: `fields` itself, or `scratch`, made from the tiles.
     const std::vector<uint16_t>& denseFields(std::vector<uint16_t>& scratch) const;
+    /// The gas of every cell of the grid `factor` times as coarse as
+    /// `domain` -- 2, 4 or 8, which divides its cells --, as `fields` holds
+    /// it when not sparse: the mean of the cells under each. For a picture
+    /// that cannot hold them all.
+    void coarseFields(int factor, std::vector<uint16_t>& out) const;
 };
 
 struct Look;

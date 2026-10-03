@@ -16,7 +16,6 @@ namespace pg::gl {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
-constexpr float kFovY = VolumeRenderer::kFovY;
 constexpr float kNear = 0.02f, kFar = 500.0f;
 
 const char* kFullScreen = R"(#version 330 core
@@ -1914,18 +1913,40 @@ void VolumeRenderer::setDomain(const sim::Domain& domain) {
     }
 }
 
-void VolumeRenderer::setFrame(const sim::Frame& frame) {
-    setWater(frame.water);
-    setRain(frame.rain);
-    const int nx = frame.domain.cells[0], ny = frame.domain.cells[1], nz = frame.domain.cells[2];
-    // A sparse frame's tiles, into every cell: what the texture holds.
-    std::vector<uint16_t> scratch;
-    const std::vector<uint16_t>& fields = frame.fields.empty() ? frame.fields : frame.denseFields(scratch);
-    if (fields.size() != 3 * frame.domain.cellCount() || nx <= 0) {
+void VolumeRenderer::setFrame(const sim::Frame& frame, unsigned layers) {
+    if (layers & kWater) setWater(frame.water);
+    else hasWater_ = false;
+    if (layers & kRain) {
+        setRain(frame.rain);
+    } else {
+        hasRain_ = false;
+        hasRipples_ = false;
+    }
+    if (!(layers & kGas) || frame.fields.empty()) {
         hasFrame_ = false;  // no gas in this frame
         return;
     }
-    setDomain(frame.domain);
+    // Every cell, as the texture holds them -- of a grid coarse enough to
+    // fit the budget -- from a sparse frame's tiles too.
+    sim::Domain grid = frame.domain;
+    int factor = 1;
+    while (grid.cellCount() > texelBudget && factor < 8 && frame.domain.cells[0] % (2 * factor) == 0 &&
+           frame.domain.cells[1] % (2 * factor) == 0 && frame.domain.cells[2] % (2 * factor) == 0) {
+        factor *= 2;
+        for (int a = 0; a < 3; ++a) grid.cells[a] = frame.domain.cells[a] / factor;
+        grid.voxel = frame.domain.voxel * static_cast<float>(factor);
+    }
+    std::vector<uint16_t> scratch;
+    const std::vector<uint16_t>* texels = &scratch;
+    if (factor > 1) frame.coarseFields(factor, scratch);
+    else texels = &frame.denseFields(scratch);
+    const std::vector<uint16_t>& fields = *texels;
+    const int nx = grid.cells[0], ny = grid.cells[1], nz = grid.cells[2];
+    if (fields.size() != 3 * grid.cellCount() || nx <= 0) {
+        hasFrame_ = false;
+        return;
+    }
+    setDomain(grid);
     if (!fields_) gl_.GenTextures(1, &fields_);
     gl_.ActiveTexture(TEXTURE0);
     gl_.BindTexture(TEXTURE_3D, fields_);
@@ -1956,11 +1977,11 @@ void VolumeRenderer::setWater(const sim::WaterFrame& water) {
         return;
     }
     // Every cell, as the texture holds them -- of a grid coarse enough to
-    // fit: at most 2^28 of them, 2048 a side.
+    // fit: at most the budget of them, 2048 a side.
     sim::Domain grid = water.domain;
     int factor = 1;
     auto tooBig = [&] {
-        return grid.cellCount() > (size_t(1) << 28) || std::max({grid.cells[0], grid.cells[1], grid.cells[2]}) > 2048;
+        return grid.cellCount() > texelBudget || std::max({grid.cells[0], grid.cells[1], grid.cells[2]}) > 2048;
     };
     while (tooBig() && factor < 8 && water.domain.cells[0] % (2 * factor) == 0 && water.domain.cells[1] % (2 * factor) == 0 &&
            water.domain.cells[2] % (2 * factor) == 0) {

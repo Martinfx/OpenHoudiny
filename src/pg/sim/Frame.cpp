@@ -230,6 +230,42 @@ bool WaterFrame::fits() const {
     return both.empty() && cells.size() == 2 * Tiles::kCells * tiles.size();
 }
 
+void Frame::coarseFields(int factor, std::vector<uint16_t>& out) const {
+    const int f = factor;
+    const int n[3] = {domain.cells[0] / f, domain.cells[1] / f, domain.cells[2] / f};
+    const size_t count = static_cast<size_t>(n[0]) * static_cast<size_t>(n[1]) * static_cast<size_t>(n[2]);
+    // The sums of the cells under each coarse one: smoke, temperature, flame.
+    std::vector<float> sum(3 * count, 0.0f);
+    auto add = [&](size_t from, int i, int j, int k) {
+        const size_t to = 3 * (static_cast<size_t>(i / f) +
+                               static_cast<size_t>(n[0]) * (static_cast<size_t>(j / f) +
+                                                            static_cast<size_t>(n[1]) * static_cast<size_t>(k / f)));
+        for (size_t ch = 0; ch < 3; ++ch) sum[to + ch] += fromHalf(fields[from + ch]);
+    };
+    if (gasTiles.empty()) {
+        // Each coarse layer of z apart: what it sums is its own.
+        pg::parallelFor(static_cast<size_t>(n[2]), 1, [&](size_t begin, size_t end) {
+            for (int k = static_cast<int>(begin) * f; k < static_cast<int>(end) * f; ++k) {
+                for (int j = 0; j < domain.cells[1]; ++j) {
+                    for (int i = 0; i < domain.cells[0]; ++i) {
+                        add(3 * (static_cast<size_t>(i) + static_cast<size_t>(domain.cells[0]) *
+                                                              (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) *
+                                                                                            static_cast<size_t>(k))),
+                            i, j, k);
+                    }
+                }
+            }
+        });
+    } else {
+        // A tile covers whole coarse cells, which no other tile does; where
+        // no tile is, there is no gas.
+        forTileCells(domain, gasTiles, [&](size_t s, int i, int j, int k, size_t l) { add(3 * (s * Tiles::kCells + l), i, j, k); });
+    }
+    out.resize(3 * count);
+    const float under = 1.0f / static_cast<float>(f * f * f);
+    for (size_t c = 0; c < 3 * count; ++c) out[c] = toHalf(sum[c] * under);
+}
+
 void WaterFrame::coarseCells(int factor, std::vector<uint8_t>& out) const {
     const int f = factor;
     const int n[3] = {domain.cells[0] / f, domain.cells[1] / f, domain.cells[2] / f};

@@ -699,6 +699,26 @@ TEST(sparse_gas_frames_keep_their_tiles_alone) {
     size_t some = 0;
     for (const uint16_t v : dense) some += v != 0;
     CHECK_EQ(some, 2u);
+    // Coarser grids: the means of the cells under each -- the same from the
+    // tiles as from every cell.
+    std::vector<uint16_t> half;
+    f.coarseFields(2, half);
+    CHECK_EQ(half.size(), 3 * size_t(8 * 4 * 12));
+    CHECK_EQ(sim::fromHalf(half[3 * 7 + 1]), 0.25f);                    // x 15 of 14..15
+    CHECK_EQ(sim::fromHalf(half[3 * (4 + 8 * (0 + 4 * 8))]), 0.0625f);  // x 9, y 1, z 16
+    CHECK_EQ(sim::fromHalf(half[0]), 0.0f);
+    for (const int factor : {2, 4, 8}) {
+        sim::Frame all = f;
+        all.gasTiles.clear();
+        all.fields = dense;
+        std::vector<uint16_t> a, b;
+        f.coarseFields(factor, a);
+        all.coarseFields(factor, b);
+        CHECK(a == b);
+        float total = 0.0f;
+        for (size_t c = 0; c < a.size(); c += 3) total += sim::fromHalf(a[c]);
+        CHECK_EQ(total * static_cast<float>(factor * factor * factor), 0.5f);  // the smoke, all of it
+    }
     // Through a file, and refused where the tiles do not fit the grid.
     sim::Frame back;
     std::string error;

@@ -157,9 +157,12 @@ public:
     /// Compiles the shaders. False, with the driver's message in `log`, if not.
     bool init(std::string& log);
 
-    /// The gas and the water to draw. Until the first frame -- or after
-    /// clearFrame() -- the floor and the solids alone.
-    void setFrame(const sim::Frame& frame);
+    /// What of a frame setFrame takes: its gas, its water, its rain.
+    enum Layer : unsigned { kGas = 1, kWater = 2, kRain = 4, kAllLayers = 7 };
+    /// The gas and the water to draw -- of `layers`; the rest as if the
+    /// frame had none. Until the first frame -- or after clearFrame() --
+    /// the floor and the solids alone.
+    void setFrame(const sim::Frame& frame, unsigned layers = kAllLayers);
     void clearFrame();
     /// Gas is drawn: the last frame had some.
     bool hasFrame() const { return hasFrame_; }
@@ -261,6 +264,10 @@ public:
 
     Orbit orbit;
     sim::Look look;
+    /// The most cells the gas and the water each go to the GPU with: a grid
+    /// with more is drawn 2, 4 or 8 times as coarse, its cells the means of
+    /// those under them. Taken at the next setFrame.
+    size_t texelBudget = size_t(1) << 28;
 
     static constexpr int kMaxSolids = 16;
     /// Meshes that cast shadows; more are drawn, without.
