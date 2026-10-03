@@ -72,14 +72,19 @@ const std::vector<uint16_t>& Frame::denseFields(std::vector<uint16_t>& scratch) 
 }
 
 Frame capture(const PyroSolver& sim) {
-    Frame f;
+    Frame f = gasFrame(sim.domain(), sim.tiles(), sim.density(), sim.temperature(), sim.flame());
     f.number = sim.frame();
     f.time = sim.time();
-    f.domain = sim.domain();
-    const float* smoke = sim.density().data();
-    const float* heat = sim.temperature().data();
-    const float* flame = sim.flame().data();
-    const Tiles& tiles = sim.tiles();
+    return f;
+}
+
+Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smokeGrid, const SparseGrid& heatGrid,
+               const SparseGrid& flameGrid) {
+    Frame f;
+    f.domain = domain;
+    const float* smoke = smokeGrid.data();
+    const float* heat = heatGrid.data();
+    const float* flame = flameGrid.data();
     if (tiles.all()) {
         // Every cell, x fastest.
         f.fields.assign(3 * f.domain.cellCount(), 0);

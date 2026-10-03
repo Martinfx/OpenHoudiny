@@ -27,6 +27,7 @@ World World::sanitized() const {
     w.timeStep = std::clamp(w.timeStep, 1e-4f, 1.0f);
     w.gas.solver.timeStep = w.timeStep;
     w.gas = w.gas.sanitized();
+    w.upres = w.upres.sanitized();
     w.water.solver.timeStep = w.timeStep;
     w.water = w.water.sanitized();
     w.rain.rain.timeStep = w.timeStep;
@@ -58,6 +59,7 @@ Domain sceneDomain(const World& world) {
 
 WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     if (world_.hasGas) gas_ = std::make_unique<PyroSolver>(world_.gas);
+    if (world_.hasGas && world_.hasUpres) upres_ = std::make_unique<UpresSolver>(world_.upres);
     if (world_.hasWater) water_ = std::make_unique<LiquidSolver>(world_.water);
     if (world_.hasRain) rain_ = std::make_unique<RainSolver>(world_.rain);
     if (world_.hasRigid) rigid_ = std::make_unique<RigidSolver>(world_.rigid);
@@ -86,6 +88,7 @@ float msSince(Clock::time_point t0) {
 void WorldSolver::step() {
     profile_ = Frame::Profile();
     const PyroSolver::Times before = gas_ ? gas_->times() : PyroSolver::Times();
+    const UpresSolver::Times upresBefore = upres_ ? upres_->times() : UpresSolver::Times();
     const LiquidSolver::Times waterBefore = water_ ? water_->times() : LiquidSolver::Times();
     Clock::time_point t0 = Clock::now();
     prepare();
@@ -94,6 +97,17 @@ void WorldSolver::step() {
         t0 = Clock::now();
         cloth_->step();
         profile_.cloth = msSince(t0);
+    }
+    if (upres_) {
+        // Before the gas: with the flow it is about to carry its own with.
+        t0 = Clock::now();
+        upres_->step(*gas_);
+        profile_.upres = msSince(t0);
+        const UpresSolver::Times& now = upres_->times();
+        const double stages[6] = {now.tiles - upresBefore.tiles, now.solids - upresBefore.solids,
+                                  now.emit - upresBefore.emit,   now.swirl - upresBefore.swirl,
+                                  now.advect - upresBefore.advect, now.combust - upresBefore.combust};
+        for (int s = 0; s < 6; ++s) profile_.upresStages[s] = static_cast<float>(stages[s]);
     }
     if (gas_) {
         t0 = Clock::now();
@@ -272,8 +286,9 @@ RigidFluids WorldSolver::fluids() const {
 // The state: "pgstate", a version, the frame; what the water, the gas and
 // the cloth did to the pieces in each step so far (version 2); then each
 // part there is -- the gas, the water (its grids on their tiles, version 4),
-// the rain, the cloth, torn or not (version 3) -- as its saveState() writes
-// it. The pieces' is not: they are stepped again, with those flows.
+// the rain, the cloth, torn or not (version 3), the gas's upres -- as its
+// saveState() writes it. The pieces' is not: they are stepped again, with
+// those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
 constexpr uint32_t kStateVersion = 4;
@@ -285,8 +300,8 @@ std::string WorldSolver::saveState() const {
     out.pod(kStateVersion);
     out.pod(static_cast<int32_t>(frame_));
     out.pod(time_);
-    const uint8_t parts =
-        (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) | (cloth_ ? 16u : 0u);
+    const uint8_t parts = (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) |
+                          (cloth_ ? 16u : 0u) | (upres_ ? 32u : 0u);
     out.pod(parts);
     out.pod(static_cast<uint64_t>(flows_.size()));
     for (const RigidFlow& f : flows_) {
@@ -298,6 +313,7 @@ std::string WorldSolver::saveState() const {
     if (water_) water_->saveState(out);
     if (rain_) rain_->saveState(out);
     if (cloth_) cloth_->saveState(out);
+    if (upres_) upres_->saveState(out);
     return out.take();
 }
 
@@ -321,8 +337,8 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
                 std::to_string(kStateVersion) + ")";
         return false;
     }
-    const uint8_t mine =
-        (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) | (cloth_ ? 16u : 0u);
+    const uint8_t mine = (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) |
+                         (cloth_ ? 16u : 0u) | (upres_ ? 32u : 0u);
     if (!in.pod(frame) || !in.pod(time) || !in.pod(parts) || frame < 0) {
         error = "the simulation state is cut short";
         return false;
@@ -358,7 +374,8 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
         time_ += world_.timeStep;
     }
     const bool read = (!gas_ || gas_->loadState(in)) && (!water_ || water_->loadState(in)) &&
-                      (!rain_ || rain_->loadState(in)) && (!cloth_ || cloth_->loadState(in));
+                      (!rain_ || rain_->loadState(in)) && (!cloth_ || cloth_->loadState(in)) &&
+                      (!upres_ || upres_->loadState(in, *gas_));
     if (!read || !in.done()) {
         error = "the simulation state does not fit this world: another grid, or a file cut short";
         return false;
@@ -382,7 +399,8 @@ World preview(const World& world, float fraction) {
 
 Frame WorldSolver::capture() const {
     Frame f;
-    if (gas_) f = sim::capture(*gas_);
+    if (upres_) f = sim::capture(*upres_);
+    else if (gas_) f = sim::capture(*gas_);
     if (water_) f.water = sim::capture(*water_, world_.keepParticles);
     if (rain_) f.rain = sim::capture(*rain_);
     if (rigid_) f.rigid = rigid_->capture();

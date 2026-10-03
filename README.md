@@ -205,6 +205,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna
 ./build/pgbench_pyro 96 576 # prach odstřelu v rozlišeních: čas fází, paměť, kolik domény prach zabírá (--dense: hustě)
+./build/pgbench_pyro 64 --example campfire --upres 3 # táborák s upresem: čas a paměť jemné mřížky
 ./build/pgdemo out.obj --frames 24
 ./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
 ./build/prototype --example campfire               # příklad simulace: táborák
@@ -278,7 +279,10 @@ atraktor, odpor), řešič, vzhled a výstup. Řešič počítá proudění plyn
 mřížka MAC, advekce MacCormack, hoření s rozpínáním, vorticity confinement
 a tlak přes multigrid, který zná podlahu i překážky. Mřížka je řídká jako
 v Sparse Pyro: počítají se jen dlaždice 8 × 8 × 8 buněk, kde je plyn, takže
-prach odstřelu ve 103,5 milionu voxelů trvá 19 minut. Vodu nesou částice
+prach odstřelu ve 103,5 milionu voxelů trvá 19 minut. Uzel Pyro Upres nese
+plyn hrubé simulace na dvakrát až čtyřikrát jemnější mřížce a přidá víry,
+které hrubá mřížka neudrží (curl noise unášený s prouděním): táborák
+spočítaný v rozlišení 64 má kresbu simulace ve 192 za polovinu času. Vodu nesou částice
 (FLIP) a mřížka jí drží objem: tlak s volnou hladinou (ghost fluid, stěny
 částečně zakryté tělesy) řeší metoda sdružených gradientů s multigridem.
 Voda padá, tříští se, obtéká tělesa a plní nádrže; v obraze odráží oblohu

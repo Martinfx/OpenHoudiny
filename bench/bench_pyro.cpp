@@ -7,9 +7,12 @@
 // which keeps only that, would store.
 //
 //   pgbench_pyro [RESOLUTION...] [--frames N] [--dense] [--set PARAM=VALUE]... [--example NAME]
+//                [--upres SCALE]
 //
 // --example steps another example's gas instead: its first Pyro Solver.
-// --set changes a parameter of that Pyro Solver.
+// --set changes a parameter of that Pyro Solver. --upres puts a Pyro Upres
+// of that scale after it: how long its frames take, where their time goes
+// and how much of the fine grid it works on.
 //
 #include "pg/core/Parallel.h"
 #include "pg/sim/Network.h"
@@ -75,7 +78,25 @@ Share share(const sim::PyroSolver& s, float slow) {
     return r;
 }
 
-bool bench(const std::string& example, int resolution, int frames, bool sparse, const std::vector<std::string>& sets) {
+/// Of the fine grid's tiles: how many are worked on, and how many of them
+/// hold smoke, heat or flame.
+Share share(const sim::UpresSolver& u) {
+    Share r;
+    const sim::Tiles& tiles = u.tiles();
+    r.tiles = tiles.stored().size();
+    for (size_t s = 0; s < tiles.stored().size(); ++s) {
+        const size_t base = s * sim::Tiles::kCells;
+        bool any = false;
+        for (const sim::SparseGrid* g : {&u.density(), &u.temperature(), &u.flame()}) {
+            for (int c = 0; c < sim::Tiles::kCells && !any; ++c) any = g->data()[base + static_cast<size_t>(c)] > 1e-4f;
+        }
+        r.gas += any ? 1u : 0u;
+    }
+    return r;
+}
+
+bool bench(const std::string& example, int resolution, int frames, bool sparse, const std::vector<std::string>& sets,
+           int upres) {
     sim::Network net;
     std::string error;
     if (!sim::Network::load(sim::Network::exampleText(example), net, error)) {
@@ -98,6 +119,16 @@ bool bench(const std::string& example, int resolution, int frames, bool sparse, 
     for (const std::string& set : sets) {
         const size_t eq = set.find('=');
         if (eq != std::string::npos) net.setParam(dust->id, set.substr(0, eq), set.substr(eq + 1));
+    }
+    if (upres > 0) {
+        // The Pyro Upres between the solver and whatever takes its gas.
+        const int id = dust->id;
+        const int node = net.add("pyro_upres");
+        net.setParam(node, "scale", std::to_string(upres));
+        for (const sim::Link& l : std::vector<sim::Link>(net.links())) {
+            if (l.from == id && l.output == "gas") net.connect(node, "gas", l.to, l.input);
+        }
+        net.connect(id, "gas", node, "gas");
     }
     const sim::Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);
     if (!c.ok || !c.world.hasGas) {
@@ -131,6 +162,29 @@ bool bench(const std::string& example, int resolution, int frames, bool sparse, 
                         100.0 * static_cast<double>(gas.activeCells()) / static_cast<double>(d.cellCount()), peakMb(),
                         gas.meanDivergence());
         }
+    }
+    if (const sim::UpresSolver* u = world.upres()) {
+        const sim::Domain& fine = u->domain();
+        const sim::UpresSolver::Times& t = u->times();
+        const Share s = share(*u);
+        std::printf("  upres %d: %d x %d x %d fine cells; %.0f ms a frame; %zu tiles worked on, %.0f%% with gas, "
+                    "%.1f%% of the fine grid\n",
+                    fine.cells[0] / std::max(d.cells[0], 1), fine.cells[0], fine.cells[1], fine.cells[2],
+                    t.total() / frames, s.tiles, 100.0 * static_cast<double>(s.gas) / static_cast<double>(std::max<size_t>(s.tiles, 1)),
+                    100.0 * static_cast<double>(u->activeCells()) / static_cast<double>(fine.cellCount()));
+        std::printf("  the upres's time: tiles %.0f%%, solids %.0f%%, emit %.0f%%, swirl %.0f%%, advect %.0f%%, "
+                    "combust %.0f%%\n",
+                    100.0 * t.tiles / t.total(), 100.0 * t.solids / t.total(), 100.0 * t.emit / t.total(),
+                    100.0 * t.swirl / t.total(), 100.0 * t.advect / t.total(), 100.0 * t.combust / t.total());
+        uint64_t print = 1469598103934665603ull;
+        for (const sim::SparseGrid* g : {&u->density(), &u->temperature(), &u->flame()}) {
+            for (const float v : g->values()) {
+                uint32_t b;
+                std::memcpy(&b, &v, sizeof b);
+                print = (print ^ b) * 1099511628211ull;
+            }
+        }
+        std::printf("  fingerprint of the upres's last frame: %016llx\n", static_cast<unsigned long long>(print));
     }
     const sim::PyroSolver::Times& t = gas.times();
     std::printf("  a frame: gas %.0f ms, the whole world %.0f ms\n", gasMs / frames, worldMs / frames);
@@ -166,7 +220,7 @@ bool bench(const std::string& example, int resolution, int frames, bool sparse, 
 
 int main(int argc, char** argv) {
     std::vector<int> resolutions;
-    int frames = 120;
+    int frames = 120, upres = 0;
     bool sparse = true;
     std::string example = "demolition";
     std::vector<std::string> sets;
@@ -176,13 +230,14 @@ int main(int argc, char** argv) {
         else if (s == "--example" && a + 1 < argc) example = argv[++a];
         else if (s == "--set" && a + 1 < argc) sets.push_back(argv[++a]);
         else if (s == "--dense") sparse = false;
+        else if (s == "--upres" && a + 1 < argc) upres = std::atoi(argv[++a]);
         else resolutions.push_back(std::atoi(argv[a]));
     }
     if (resolutions.empty()) resolutions = {96, 176};
     std::printf("gas -- benchmarks\n");
     std::printf("hardware threads available: %u\n", TaskPool::instance().threadCount());
     for (const int r : resolutions) {
-        if (!bench(example, r, frames, sparse, sets)) return 1;
+        if (!bench(example, r, frames, sparse, sets, upres)) return 1;
     }
     return 0;
 }

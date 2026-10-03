@@ -212,6 +212,24 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         return std::to_string(d.cells[0]) + " \xc3\x97 " + std::to_string(d.cells[1]) + " \xc3\x97 " +
                std::to_string(d.cells[2]) + " cells";
     }
+    if (t == "pyro_upres") {
+        // How much finer, and the grid it makes of the solver's linked in.
+        std::string s = number(v("scale")) + " \xc3\x97 finer";
+        for (const sim::Link& l : net.linksInto(n.id, "gas")) {
+            const sim::Node* from = net.node(l.from);
+            if (!from || from->type != "pyro_solver") continue;
+            sim::Scene scene;
+            const sim::ParamValue size = net.param(from->id, "size");
+            scene.solver.size = Vec3(size[0], size[1], size[2]);
+            scene.solver.resolution = static_cast<int>(net.value(from->id, "resolution"));
+            sim::UpresSettings u;
+            u.scale = static_cast<int>(v("scale"));
+            const sim::Domain d = u.domain(scene.sanitized().solver.domain());
+            s += dot + std::to_string(d.cells[0]) + " \xc3\x97 " + std::to_string(d.cells[1]) + " \xc3\x97 " +
+                 std::to_string(d.cells[2]);
+        }
+        return s;
+    }
     if (t == "water_source") {
         std::string s = shapeOf() + dot;
         if (static_cast<int>(v("mode")) == 1) {
@@ -1520,6 +1538,12 @@ void SimWorkspace::networkOverview() {
             if (compiled_.world.hasGas) {
                 const sim::Scene& gas = compiled_.world.gas;
                 domainRows("Gas", gas.sanitized().solver.domain());
+                if (compiled_.world.hasUpres) {
+                    const sim::Domain fine = compiled_.world.upres.domain(gas.sanitized().solver.domain());
+                    ui::row("Upres", "%d \xc3\x97 %d \xc3\x97 %d  (%.2f million)", fine.cells[0], fine.cells[1],
+                            fine.cells[2], static_cast<double>(fine.cellCount()) / 1e6);
+                    ImGui::SetItemTooltip("The Pyro Upres's grid: the frames keep its gas");
+                }
                 ui::row("Inputs", "%s \xc2\xb7 %s \xc2\xb7 %s", counted(gas.emitters.size(), "source", "sources").c_str(),
                         counted(gas.forces.size(), "force", "forces").c_str(),
                         counted(gas.colliders.size(), "collider", "colliders").c_str());
@@ -2026,7 +2050,10 @@ std::string SimWorkspace::gridsText() const {
     if (!compiled_.ok || !compiled_.world.any()) return cells(runner_->domain()) + " cells";
     const sim::World& w = compiled_.world;
     std::string text;
-    if (w.hasGas) text = cells(w.gas.sanitized().solver.domain()) + " cells";
+    if (w.hasGas) {
+        text = cells(w.gas.sanitized().solver.domain()) + " cells";
+        if (w.hasUpres) text += dot + "upres " + cells(w.upres.domain(w.gas.sanitized().solver.domain()));
+    }
     if (w.hasWater) {
         if (!text.empty()) text = "gas " + text + dot;
         text += "water " + cells(w.water.sanitized().solver.domain());
@@ -2532,6 +2559,11 @@ void SimWorkspace::profilePanel(const sim::Frame& f) {
         bar("Gas", p.gas, total, false);
         static const char* stages[8] = {"solids", "tiles", "emit", "advect", "combust", "forces", "project", "dissipate"};
         for (int s = 0; s < 8; ++s) bar(stages[s], p.gasStages[s], total, true);
+    }
+    if (compiled_.world.hasGas && compiled_.world.hasUpres) {
+        bar("Upres", p.upres, total, false);
+        static const char* stages[6] = {"tiles", "solids", "emit", "swirl", "advect", "combust"};
+        for (int s = 0; s < 6; ++s) bar(stages[s], p.upresStages[s], total, true);
     }
     if (compiled_.world.hasWater) {
         bar("Water", p.water, total, false);

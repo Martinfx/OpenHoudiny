@@ -192,6 +192,12 @@ void SparseGrid::retile(std::shared_ptr<const Tiles> tiles) {
     cache();
 }
 
+void SparseGrid::reshape(std::shared_ptr<const Tiles> tiles) {
+    tiles_ = std::move(tiles);
+    data_.resize(tiles_->stored().size() * Tiles::kCells);
+    cache();
+}
+
 Grid SparseGrid::dense() const {
     Grid g(nx(), ny(), nz());
     pg::parallelFor(static_cast<size_t>(nz()), 1, [&](size_t begin, size_t end) {

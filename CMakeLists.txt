@@ -305,6 +305,7 @@ add_library(pgsim
   src/pg/sim/Rain.cpp
   src/pg/sim/Scene.cpp
   src/pg/sim/Shape.cpp
+  src/pg/sim/Upres.cpp
   src/pg/sim/World.cpp
   src/pg/sim/UsdExport.cpp
   src/pg/render/Bvh.cpp
@@ -1022,6 +1023,7 @@ add_executable(pgtests
   tests/test_guide.cpp
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
+  tests/test_upres.cpp
   tests/test_sim_network.cpp
   tests/test_sim_geometry.cpp
   tests/test_animation.cpp

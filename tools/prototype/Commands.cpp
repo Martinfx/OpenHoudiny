@@ -1110,10 +1110,12 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             spent.rigid += p.rigid;
             spent.scenes += p.scenes;
             spent.gas += p.gas;
+            spent.upres += p.upres;
             spent.water += p.water;
             spent.rain += p.rain;
             spent.cloth += p.cloth;
             for (int s = 0; s < 8; ++s) spent.gasStages[s] += p.gasStages[s];
+            for (int s = 0; s < 6; ++s) spent.upresStages[s] += p.upresStages[s];
             for (int s = 0; s < 9; ++s) spent.waterStages[s] += p.waterStages[s];
             if (draws || !o.cacheDir.empty() || (inRange && !o.exportPattern.empty())) {
                 current = std::make_shared<const sim::Frame>(solver->capture());
@@ -1332,6 +1334,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         const sim::Domain& d = solver->gas()->domain();
         what += ", gas " + std::to_string(d.cells[0]) + " x " + std::to_string(d.cells[1]) + " x " +
                 std::to_string(d.cells[2]) + " cells";
+        if (const sim::UpresSolver* u = solver->upres()) {
+            const sim::Domain& f = u->domain();
+            what += ", upres " + std::to_string(f.cells[0]) + " x " + std::to_string(f.cells[1]) + " x " +
+                    std::to_string(f.cells[2]);
+        }
     }
     if (solver && world.hasWater) {
         const sim::Domain& d = solver->water()->domain();
@@ -1420,6 +1427,17 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             for (int s = 0; s < 8; ++s) {
                 char text[48];
                 std::snprintf(text, sizeof text, "%s%s %.0f%%", s ? ", " : "", stages[s], share(spent.gasStages[s]));
+                line += text;
+            }
+            line += ")";
+        }
+        add("upres", spent.upres, world.hasGas && world.hasUpres);
+        if (world.hasGas && world.hasUpres) {
+            static const char* stages[6] = {"tiles", "solids", "emit", "swirl", "advect", "combust"};
+            line += " (";
+            for (int s = 0; s < 6; ++s) {
+                char text[48];
+                std::snprintf(text, sizeof text, "%s%s %.0f%%", s ? ", " : "", stages[s], share(spent.upresStages[s]));
                 line += text;
             }
             line += ")";

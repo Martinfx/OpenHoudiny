@@ -321,6 +321,62 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     CHECK(!c.isActive(loose));
 }
 
+TEST(sim_network_pyro_upres_makes_the_gas_finer) {
+    // Solver -> Pyro Upres -> look: the gas simulated as the solver says, the
+    // frames kept as the upres makes them.
+    int ids[4];
+    Network net = chain(ids);
+    const int upres = net.add("pyro_upres", 430, 0);
+    CHECK(upres != 0);
+    CHECK(net.connect(ids[1], "gas", upres, "gas"));
+    CHECK(net.connect(upres, "gas", ids[2], "gas"));
+    CHECK(net.setParam(upres, "scale", "3"));
+    CHECK(net.setParam(upres, "turbulence", "1.5"));
+    Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK(!c.errors());
+    CHECK(c.world.hasGas && c.world.hasUpres);
+    CHECK_EQ(c.solver, ids[1]);
+    CHECK_EQ(c.upres, upres);
+    CHECK(c.isActive(upres));
+    CHECK_EQ(c.world.upres.scale, 3);
+    CHECK_EQ(c.world.upres.turbulence, 1.5f);
+    CHECK_EQ(c.world.upres.node, upres);
+    // A Gas Volume of the upres or of the solver gives the frame's gas: no
+    // complaint either way.
+    const int volume = net.add("gas_volume", 430, 200);
+    CHECK(net.connect(upres, "gas", volume, "gas"));
+    c = net.compile();
+    CHECK(!mentions(c, volume, "not simulated"));
+    CHECK(net.connect(ids[1], "gas", volume, "gas"));
+    c = net.compile();
+    CHECK(!mentions(c, volume, "not simulated"));
+    // Saved and read back, the same.
+    Network back;
+    std::string error;
+    CHECK(Network::load(net.save(), back, error));
+    CHECK(back.compile().world.upres == c.world.upres);
+    // Bypassed: the solver's gas, as it is.
+    CHECK(net.setBypass(upres, true));
+    c = net.compile();
+    CHECK(c.ok);
+    CHECK(!c.world.hasUpres);
+    CHECK_EQ(c.upres, 0);
+    CHECK_EQ(c.solver, ids[1]);
+    CHECK(net.setBypass(upres, false));
+    // Its scale, keyed, holds its first value: the fine grid cannot change.
+    CHECK(net.setKey(upres, "scale", 1.0f, ParamValue{2.0f, 0.0f, 0.0f}));
+    CHECK(net.setKey(upres, "scale", 30.0f, ParamValue{4.0f, 0.0f, 0.0f}));
+    c = net.compile();
+    CHECK(mentions(c, upres, "cannot change"));
+    // Nothing linked into it: nothing to make finer, nothing drawn.
+    net.resetParam(upres, "scale");
+    CHECK(net.disconnect({ids[1], "gas", upres, "gas"}));
+    c = net.compile();
+    CHECK(mentions(c, upres, "No gas to make finer"));
+    CHECK(!c.world.hasGas);
+}
+
 TEST(sim_network_output_says_how_the_preview_simulates) {
     // How fine the editor's preview makes the grids, and whether it opens the
     // network in it: the Output's -- a scene too big to simulate whole while

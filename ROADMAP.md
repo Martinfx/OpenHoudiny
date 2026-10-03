@@ -357,7 +357,13 @@ takže zjednodušit nejde co. Desetinásobek za stejný čas potřebuje
   dlaždicemi bitově stejně jako hustá voda. Rozlišení až 1024. Příklad
   `flood_crates_hd`: 512 × 128 × 256 buněk a 17,6 milionu částic, 30 s až
   2,5 minuty na snímek na 4 jádrech, 2,2 až 5,7 GB paměti.
-- **GPU**; **upres**: jemná turbulence doplněná do hrubé simulace.
+- ✅ **Upres** ([docs/pyro.md §4](docs/pyro.md#upres-hrubá-simulace-jemný-obraz)):
+  uzel Pyro Upres nese plyn řešiče na dvakrát až čtyřikrát jemnější řídké
+  mřížce, zdroje a hoření v jemném rozlišení, víry z curl noise unášeného
+  s prouděním podle vířivosti hrubé simulace. Příklad `campfire_upres`:
+  řešič 64 s upresem ×3 za 177 ms a 167 MB na snímek proti 358 ms a 334 MB
+  řešiče ve 192.
+- **GPU** pro řešiče.
 - **Packed primitives, instance a out-of-core** — miliony kusů a data
   větší než paměť.
 - **Viewport pro velké cache**: zástupné tvary, přehrávání z disku.

@@ -1411,6 +1411,29 @@ std::vector<NodeType> buildTypes() {
          pyroSolverParams(false),
          2});
     t.push_back(
+        {"pyro_upres", "Pyro Upres", "Simulation",
+         "The gas of a Pyro Solver again, on a grid 2 to 4 times as fine: the solver's motion as it is, with "
+         "the small whirls its grid cannot hold, and the sources, the burning and the flames as fine as the "
+         "grid. A quick coarse simulation drawn with the detail of a big one -- work on the solver at a "
+         "resolution that runs quickly, add this for the final look. Link a Pyro Solver into Gas, and this "
+         "into a Volume Look: the frames keep its gas instead of the solver's. Bypassed, the solver's is drawn.",
+         {{"gas", "Gas", PinType::Gas}},
+         {{"gas", "Gas", PinType::Gas}},
+         {{"scale", "Upres", "Upres", K::Int, {2.0f, 0.0f, 0.0f}, 2.0f, 4.0f, 2.0f, 4.0f, "\xc3\x97",
+           "Fine cells along each side of a cell of the solver's: 2 is eight times the cells, 3 twenty-seven "
+           "times, 4 sixty-four -- and as much more work and memory where there is gas."},
+          {"turbulence", "Turbulence", "Whirls", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "How strongly the fine gas whirls where the solver's flow swirls: 1 as a turbulent flow would, "
+           "more for wilder fire, 0 for none -- the solver's gas carried finer, no new whirls."},
+          {"swirl_size", "Swirl Size", "Whirls", K::Float, {2.0f, 0.0f, 0.0f}, 0.5f, 8.0f, 0.25f, 64.0f, "cells",
+           "The largest whirls it adds, in cells of the solver's grid -- smaller ones down to a few fine cells "
+           "with them. 2: what the solver just cannot hold; more, larger whirls of its own."},
+          {"swirl_life", "Swirl Life", "Whirls", K::Float, {0.5f, 0.0f, 0.0f}, 0.05f, 3.0f, 0.01f, 100.0f, "s",
+           "How long a pattern of whirls is carried with the gas before it fades into a new one: short, "
+           "restless; long, whirls that stretch out with the flow."},
+          seed("Whirls", "Another number, other whirls.")},
+         1});
+    t.push_back(
         {"liquid_solver", "Liquid Solver", "Simulation",
          "Simulates water in a box standing on the floor (FLIP): particles carry it, a grid keeps its volume. "
          "It falls, splashes, piles up and flows round the colliders; the forces push it about.",
@@ -1742,7 +1765,8 @@ std::vector<NodeType> buildTypes() {
 
     for (NodeType& type : t) {
         const std::string c = type.category;
-        type.bypassable = c == "Objects" || c == "Sources" || c == "Forces" || c == "Geometry";
+        type.bypassable = c == "Objects" || c == "Sources" || c == "Forces" || c == "Geometry" ||
+                          std::string(type.name) == "pyro_upres";
     }
     return t;
 }
@@ -3554,6 +3578,8 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
         w.animation = {};
         w.timeStep = c.world.timeStep;
         w.hasGas = c.world.hasGas;
+        w.hasUpres = c.world.hasUpres;
+        w.upres = c.world.upres;
         w.hasWater = c.world.hasWater;
         w.hasRain = c.world.hasRain;
         w.hasRigid = c.world.hasRigid;
@@ -3637,6 +3663,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
         }
         for (const std::string& name : changing) {
             const bool fixed = (n.type == "pyro_solver" && (name == "size" || name == "resolution")) ||
+                               n.type == "pyro_upres" ||
                                (n.type == "liquid_solver" &&
                                 (name == "size" || name == "resolution" || name == "closed_sides" || name == "sparse")) ||
                                (n.type == "output" && (name == "frames" || name == "fps")) ||
@@ -4443,13 +4470,49 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             k.flameRange = f(*look, "flame_range");
             k.fireLight = f(*look, "fire_light");
             const Node* solver = upstream(*look, "gas");
-            if (!solver) {
-                problem(L::Error, look->id, "No gas to draw: link a Pyro Solver into Gas.");
+            // Through a Pyro Upres -- the gas it makes finer, of the Pyro
+            // Solver linked into it -- or past it, bypassed.
+            const Node* upres = nullptr;
+            for (int hops = 0; solver && solver->type == "pyro_upres" && hops < 16; ++hops) {
+                if (!solver->bypass) {
+                    if (!upres) {
+                        upres = solver;
+                    } else {
+                        problem(L::Warning, solver->id, "Another Pyro Upres: only " + upres->name + " makes the gas finer.");
+                    }
+                }
+                c.active.push_back(solver->id);
+                const Node* from = upstream(*solver, "gas");
+                if (!from) problem(L::Error, solver->id, "No gas to make finer: link a Pyro Solver into Gas.");
+                solver = from;
+            }
+            if (!solver || solver->type != "pyro_solver") {
+                if (!upres && !solver) problem(L::Error, look->id, "No gas to draw: link a Pyro Solver into Gas.");
                 continue;
             }
             c.solver = solver->id;
             c.active.push_back(solver->id);
             compileGas(solver);
+            if (upres) {
+                c.upres = upres->id;
+                c.world.hasUpres = true;
+                UpresSettings& u = c.world.upres;
+                u.scale = whole(*upres, "scale");
+                u.turbulence = f(*upres, "turbulence");
+                u.swirlSize = f(*upres, "swirl_size");
+                u.swirlLife = f(*upres, "swirl_life");
+                u.seed = static_cast<uint32_t>(whole(*upres, "seed"));
+                u.node = upres->id;
+                // The fine grid at most 2048 cells along its longest side.
+                const Domain coarse = c.world.gas.sanitized().solver.domain();
+                const Domain fine = u.domain(coarse);
+                const int got = fine.cells[0] / std::max(coarse.cells[0], 1);
+                if (got < u.sanitized().scale) {
+                    problem(L::Warning, upres->id,
+                            "Only " + std::to_string(got) +
+                                " \xc3\x97 finer: the fine grid stops at 2048 cells along its longest side.");
+                }
+            }
         } else if (look->type == "rain") {
             if (c.rain) {
                 problem(L::Warning, look->id, "Another Rain: only " + node(c.rain)->name + " falls.");
@@ -4539,9 +4602,13 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         }
         if (!back) continue;
         const Node* from = upstream(n, back->input);
+        // A Gas Volume linked to the solver or to its upres gives the
+        // frame's gas: the upres's, finer, when there is one.
+        const bool simulated =
+            from && (from->id == back->simulated || (n.type == "gas_volume" && c.upres && from->id == c.upres));
         if (!from) {
             problem(L::Warning, n.id, std::string("Nothing comes in: link a ") + back->solver + " into it.");
-        } else if (from->id != back->simulated) {
+        } else if (!simulated) {
             problem(L::Warning, n.id, from->name + " is not simulated -- it does not reach the Output -- so this is empty.");
         } else if (n.type == "liquid_points") {
             c.world.keepParticles = true;

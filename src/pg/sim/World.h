@@ -6,7 +6,9 @@
 // step. The pieces are stepped first: the water, the gas and the rain go
 // round them where they have got to, and the dust of their broken glue
 // puffs into the gas. The rain falls into the water: it is stepped after
-// it, and rings its surface.
+// it, and rings its surface. A Pyro Upres steps just before the gas, with
+// the flow the gas is about to carry its own with; the frames keep its
+// finer gas instead of the solver's.
 //
 // Plain data, compared as a whole, as the scene of each part is: the
 // editor's runner starts again exactly when the World differs.
@@ -18,6 +20,7 @@
 #include "pg/sim/Rain.h"
 #include "pg/sim/Rigid.h"
 #include "pg/sim/Scene.h"
+#include "pg/sim/Upres.h"
 
 #include <memory>
 #include <string>
@@ -41,6 +44,8 @@ struct World {
     float timeStep = 1.0f / 30.0f;  ///< seconds a frame, for every part
     bool hasGas = false;
     Scene gas;                       ///< the Pyro Solver's, when hasGas
+    bool hasUpres = false;
+    UpresSettings upres;             ///< the Pyro Upres's, when hasUpres (and hasGas)
     bool hasWater = false;
     LiquidScene water;               ///< the Liquid Solver's, when hasWater
     bool hasRain = false;
@@ -104,6 +109,8 @@ public:
     float time() const { return time_; }
     PyroSolver* gas() { return gas_.get(); }
     const PyroSolver* gas() const { return gas_.get(); }
+    UpresSolver* upres() { return upres_.get(); }
+    const UpresSolver* upres() const { return upres_.get(); }
     LiquidSolver* water() { return water_.get(); }
     const LiquidSolver* water() const { return water_.get(); }
     RainSolver* rain() { return rain_.get(); }
@@ -123,6 +130,7 @@ private:
     World world_;
     Frame::Profile profile_;  // of the last step
     std::unique_ptr<PyroSolver> gas_;
+    std::unique_ptr<UpresSolver> upres_;
     std::unique_ptr<LiquidSolver> water_;
     std::unique_ptr<RainSolver> rain_;
     std::unique_ptr<RigidSolver> rigid_;

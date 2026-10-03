@@ -133,7 +133,8 @@ struct NodeType {
     std::vector<ParamDef> params;
     int version = 1;
     /// Objects, sources, forces and geometry nodes can be bypassed: left out
-    /// -- a geometry node passes its first input on -- kept in place.
+    /// -- a geometry node passes its first input on -- kept in place. So can
+    /// a Pyro Upres: the solver's gas goes on through it.
     bool bypassable = false;
     Handles handles = {};
     /// A geometry node: the type of the core's cook engine (pg/nodes) that
@@ -283,6 +284,7 @@ struct Compiled {
     /// editor dims the others.
     std::vector<int> active;
     int output = 0, lookNode = 0, solver = 0;  ///< the Output, the Volume Look, the Pyro Solver; 0 if none
+    int upres = 0;                             ///< the Pyro Upres between them; 0 if none
     int waterLook = 0, liquidSolver = 0;       ///< the Water Look, the Liquid Solver; 0 if none
     int rain = 0;                              ///< the Rain; 0 if none
     int rigid = 0;                             ///< the RBD Solver; 0 if none

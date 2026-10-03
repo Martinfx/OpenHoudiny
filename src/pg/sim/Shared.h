@@ -31,6 +31,16 @@ Vec3 fixDirection(const Vec3& v, const Vec3& fallback);
 void sanitize(std::vector<Force>& forces);
 void sanitize(std::vector<Collider>& colliders);
 
+// --- sources (Pyro.cpp) ---------------------------------------------------------------
+
+/// What the sources of `scene` give over dt at `time` to the cells of
+/// `fuel`, `smoke` and `heat` -- grids of one set of tiles over `domain`, a
+/// Pyro Solver's or its upres's -- and how fast they make the gas there
+/// swell, added to `expansion`. None to the cells `solid` marks (above 0.5),
+/// when there is one.
+void emitScalars(const Scene& scene, float time, float dt, const Domain& domain, const SparseGrid* solid,
+                 SparseGrid& fuel, SparseGrid& smoke, SparseGrid& heat, SparseGrid& expansion);
+
 // --- loops and noise -----------------------------------------------------------------
 
 /// f(i, j, k) for every cell of a box of cells [x0, x1) x [y0, y1) x [z0, z1),

@@ -449,56 +449,89 @@ void PyroSolver::step() {
 
 // --- emit ------------------------------------------------------------------------
 
+namespace {
+
+/// A source at a time: its shape there, and the noise its output flickers
+/// with -- noise that rises with the gas.
+struct Source {
+    const Emitter& e;
+    ShapeInstance shape;
+    uint32_t seed;
+    float rise;
+
+    Source(const Emitter& emitter, const Scene& scene, float time)
+        : e(emitter),
+          shape(emitter.shapeAt(time)),
+          seed(emitter.seed * 7919u + scene.solver.seed),
+          rise(time * std::max(length(emitter.velocity), 0.2f)) {}
+
+    /// How much of the source is at a world point: 1 inside, easing to 0 at
+    /// its surface.
+    float weight(const Vec3& p) const { return shape.falloff(p); }
+    float flicker(const Vec3& p) const {
+        if (e.flicker <= 0.0f) return 1.0f;
+        const float s = 1.0f / e.flickerSize;
+        const float noise = noise3(p.x * s, (p.y - rise) * s, p.z * s, seed);
+        return std::max(0.0f, 1.0f + e.flicker * 1.5f * (2.0f * noise - 1.0f));
+    }
+    /// The cells of `domain` it can reach, and one more face along each
+    /// axis: [lo, hi).
+    void reach(const Domain& domain, int lo[3], int hi[3]) const {
+        const float h = domain.voxel;
+        const Vec3 origin = domain.origin();
+        Vec3 reachLo, reachHi;
+        shape.bounds(reachLo, reachHi);
+        for (int a = 0; a < 3; ++a) {
+            lo[a] = std::clamp(static_cast<int>(std::floor((reachLo[a] - origin[a]) / h)) - 1, 0, domain.cells[a]);
+            hi[a] = std::clamp(static_cast<int>(std::ceil((reachHi[a] - origin[a]) / h)) + 1, 0, domain.cells[a]);
+        }
+    }
+};
+
+}  // namespace
+
+void detail::emitScalars(const Scene& scene, float time, float dt, const Domain& domain, const SparseGrid* solid,
+                         SparseGrid& fuel, SparseGrid& smoke, SparseGrid& heat, SparseGrid& expansion) {
+    const float h = domain.voxel;
+    const Vec3 o = domain.origin();
+    for (const Emitter& e : scene.emitters) {
+        if (!e.activeAt(time)) continue;
+        const Source source(e, scene, time);
+        int lo[3], hi[3];
+        source.reach(domain, lo, hi);
+        forEachIn(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], [&](int i, int j, int k) {
+            if (!smoke.has(i, j, k)) return;
+            const size_t c = smoke.index(i, j, k);
+            if (solid && solid->data()[c] > 0.5f) return;
+            const Vec3 p(o.x + (static_cast<float>(i) + 0.5f) * h, o.y + (static_cast<float>(j) + 0.5f) * h,
+                         o.z + (static_cast<float>(k) + 0.5f) * h);
+            const float w = source.weight(p);
+            if (w <= 0.0f) return;
+            const float amount = dt * w * source.flicker(p);
+            fuel.data()[c] += e.fuel * amount;
+            smoke.data()[c] += e.smoke * amount;
+            heat.data()[c] += e.heat * amount;
+            expansion.data()[c] += e.expansion * w;
+        });
+    }
+}
+
 void PyroSolver::emit(float dt) {
-    const float h = domain_.voxel;
-    const Vec3 origin = domain_.origin();
-    const int n[3] = {nx_, ny_, nz_};
     // What swells this step: the sources ask for it here, the burning adds
     // its own (combust).
     expansion_.fill(0.0f);
+    detail::emitScalars(scene_, time_, dt, domain_, anySolid_ ? &solid_ : nullptr, fuel_, density_, temperature_,
+                        expansion_);
     for (const Emitter& e : scene_.emitters) {
         if (!e.activeAt(time_)) continue;
-        // How much of the source is at a world point: 1 inside, easing to 0
-        // at its surface.
-        const ShapeInstance shape = e.shapeAt(time_);
-        auto weight = [&](const Vec3& p) { return shape.falloff(p); };
-        const uint32_t seed = e.seed * 7919u + scene_.solver.seed;
-        // Its output flickers with noise that rises with the gas.
-        const float rise = time_ * std::max(length(e.velocity), 0.2f);
-        auto flicker = [&](const Vec3& p) {
-            if (e.flicker <= 0.0f) return 1.0f;
-            const float s = 1.0f / e.flickerSize;
-            const float noise = noise3(p.x * s, (p.y - rise) * s, p.z * s, seed);
-            return std::max(0.0f, 1.0f + e.flicker * 1.5f * (2.0f * noise - 1.0f));
-        };
-
-        // The cells the source can reach, and one more face along each axis.
-        Vec3 reachLo, reachHi;
-        shape.bounds(reachLo, reachHi);
+        const Source source(e, scene_, time_);
         int lo[3], hi[3];
-        for (int a = 0; a < 3; ++a) {
-            lo[a] = std::clamp(static_cast<int>(std::floor((reachLo[a] - origin[a]) / h)) - 1, 0, n[a]);
-            hi[a] = std::clamp(static_cast<int>(std::ceil((reachHi[a] - origin[a]) / h)) + 1, 0, n[a]);
-        }
-        forEachIn(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], [&](int i, int j, int k) {
-            if (!density_.has(i, j, k)) return;
-            const size_t c = density_.index(i, j, k);
-            if (anySolid_ && solid_.data()[c] > 0.5f) return;
-            const Vec3 p = worldAt(static_cast<float>(i) + 0.5f, static_cast<float>(j) + 0.5f,
-                                   static_cast<float>(k) + 0.5f);
-            const float w = weight(p);
-            if (w <= 0.0f) return;
-            const float amount = dt * w * flicker(p);
-            fuel_.data()[c] += e.fuel * amount;
-            density_.data()[c] += e.smoke * amount;
-            temperature_.data()[c] += e.heat * amount;
-            expansion_.data()[c] += e.expansion * w;
-        });
+        source.reach(domain_, lo, hi);
 
         // Push the gas the source's way -- along its own axes -- and across it
         // a little, so a plume does not stay a column. A moving source drags
         // the gas along.
-        const Vec3 push = shape.turn().apply(e.velocity) + e.motionVelocityAt(time_) + e.moving;
+        const Vec3 push = source.shape.turn().apply(e.velocity) + e.motionVelocityAt(time_) + e.moving;
         const float speed = length(push);
         if (speed <= 0.0f) continue;
         const Vec3 along = push * (1.0f / speed);
@@ -511,17 +544,18 @@ void PyroSolver::emit(float dt) {
                           const Vec3 p = worldAt(static_cast<float>(i) + faceOffset(a, 0),
                                                  static_cast<float>(j) + faceOffset(a, 1),
                                                  static_cast<float>(k) + faceOffset(a, 2));
-                          const float w = weight(p);
+                          const float w = source.weight(p);
                           if (w <= 0.0f) return;
-                          const float m = flicker(p);
+                          const float m = source.flicker(p);
                           float& v = vel.ref(i, j, k);
                           const float target = push[a] * w * (0.6f + 0.4f * m);
                           if (push[a] > 0.0f) v = std::max(v, target);
                           else if (push[a] < 0.0f) v = std::min(v, target);
                           if (e.flicker > 0.0f && across > 0.0f) {
                               const float s = 6.0f / (e.flickerSize * 14.0f);  // broader than the flicker
-                              const float wobble = noise3(p.x * s + 11.0f * static_cast<float>(a),
-                                                          (p.y - rise) * s, p.z * s, seed + 1u + static_cast<uint32_t>(a));
+                              const float wobble =
+                                  noise3(p.x * s + 11.0f * static_cast<float>(a), (p.y - source.rise) * s, p.z * s,
+                                         source.seed + 1u + static_cast<uint32_t>(a));
                               v += speed * 0.3f * e.flicker * across * w * (wobble - 0.5f);
                           }
                       });

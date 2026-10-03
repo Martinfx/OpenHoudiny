@@ -179,7 +179,7 @@ SimWorkspace::ThumbKind SimWorkspace::thumbKindOf(const sim::Node& n) {
     const std::string& y = n.type;
     if (y == "object") return ThumbKind::Object;
     if (y == "pyro_source" || y == "water_source") return ThumbKind::Source;
-    if (y == "pyro_solver" || y == "volume_look") return ThumbKind::Gas;
+    if (y == "pyro_solver" || y == "pyro_upres" || y == "volume_look") return ThumbKind::Gas;
     if (y == "liquid_solver" || y == "water_look") return ThumbKind::Water;
     if (y == "rbd_solver") return ThumbKind::Pieces;
     if (y == "cloth_solver") return ThumbKind::Cloth;
@@ -317,7 +317,10 @@ void SimWorkspace::updateThumbnails() {
                 return true;
             }
             case ThumbKind::Gas: {
-                if (!frame || frame->fields.empty() || (id != compiled_.solver && id != compiled_.lookNode)) return false;
+                if (!frame || frame->fields.empty() ||
+                    (id != compiled_.solver && id != compiled_.upres && id != compiled_.lookNode)) {
+                    return false;
+                }
                 p.frame = frame;
                 p.layers = gl::VolumeRenderer::kGas;
                 p.look = sceneLook();

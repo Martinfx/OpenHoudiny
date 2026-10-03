@@ -24,6 +24,8 @@ namespace pg::sim {
 class LiquidSolver;
 class PyroSolver;
 class RainSolver;
+class SparseGrid;
+class Tiles;
 
 /// The water of a frame, as it is drawn.
 struct WaterFrame {
@@ -145,15 +147,16 @@ struct Frame {
     double stepMs = 0.0;  ///< how long the step to it took
     /// Where the time of that step went, milliseconds: each part -- the
     /// pieces, what goes between them and the rest (their colliders and
-    /// dust into the scenes), the gas, the water, the rain -- and the gas's
-    /// stages, as PyroSolver::Times names them. Kept in memory, not in the
-    /// cache: a frame read back has none.
+    /// dust into the scenes), the gas, its upres, the water, the rain -- and
+    /// the gas's stages, as PyroSolver::Times names them. Kept in memory,
+    /// not in the cache: a frame read back has none.
     struct Profile {
-        float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, water = 0.0f, rain = 0.0f, cloth = 0.0f;
+        float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, upres = 0.0f, water = 0.0f, rain = 0.0f, cloth = 0.0f;
         float gasStages[8] = {};  ///< solids, tiles, emit, advect, combust, forces, project, dissipate
+        float upresStages[6] = {};  ///< tiles, solids, emit, swirl, advect, combust (UpresSolver::Times)
         /// solids, sort, emit, to grid, extrapolate, forces, project, to particles, advect
         float waterStages[9] = {};
-        float total() const { return rigid + scenes + gas + water + rain + cloth; }
+        float total() const { return rigid + scenes + gas + upres + water + rain + cloth; }
     } profile;
 
     size_t bytes() const {
@@ -181,6 +184,11 @@ std::shared_ptr<Geometry> drawnBodies(const Frame& frame, const Look& look);
 
 /// The solver's gas as a frame.
 Frame capture(const PyroSolver& sim);
+/// Smoke, heat and flame -- grids on `tiles` over `domain`, a solver's or
+/// its upres's -- as a frame's gas: every cell when every tile is kept, else
+/// the tiles that hold any.
+Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke, const SparseGrid& heat,
+               const SparseGrid& flame);
 /// The solver's water, as a frame holds it -- and its particles, when
 /// `particles` is set.
 WaterFrame capture(const LiquidSolver& sim, bool particles = false);

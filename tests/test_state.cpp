@@ -86,6 +86,29 @@ TEST(state_resumes_the_pieces_and_their_dust_to_the_bit) {
     checkResume(sim::preview(exampleWorld("demolition"), 0.25f), 30, 36);
 }
 
+TEST(state_resumes_the_upres_to_the_bit) {
+    // The fine gas, the noise its whirls are carried in -- across a layer
+    // starting afresh -- and the solids it keeps out of, found again.
+    sim::World w = sim::preview(exampleWorld("campfire"), 0.25f);
+    w.hasUpres = true;
+    w.upres.scale = 2;
+    w.upres.swirlLife = 0.2f;
+    sim::Collider ball;
+    ball.center = Vec3(0.0f, 0.7f, 0.0f);
+    ball.size = Vec3(0.3f);
+    w.gas.colliders.push_back(ball);
+    checkResume(w, 8, 15);
+    // Without the upres, another world.
+    sim::World plain = w;
+    plain.hasUpres = false;
+    sim::WorldSolver without(plain);
+    without.step();
+    sim::WorldSolver with(w);
+    std::string error;
+    CHECK(!with.loadState(without.saveState(), error));
+    CHECK(error.find("other parts") != std::string::npos);
+}
+
 TEST(state_of_another_world_or_cut_short_is_refused) {
     const sim::World fire = sim::preview(exampleWorld("campfire"), 0.5f);
     sim::WorldSolver solver(fire);

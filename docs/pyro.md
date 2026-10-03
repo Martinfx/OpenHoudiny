@@ -391,6 +391,20 @@ palivo), nebo jen kde je kouř.
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |
 | Dissipation | `cooling`, `smoke_decay` |
 
+**Pyro Upres** (Simulation): plyn Pyro Solveru znovu, na mřížce dvakrát až
+čtyřikrát jemnější, s víry, které hrubá mřížka neudrží
+([§4](#upres-hrubá-simulace-jemný-obraz)). Pyro Solver do jeho vstupu Gas,
+jeho výstup Gas do Volume Look (nebo do Gas Volume): snímky pak drží jeho
+plyn místo plynu řešiče. Obejitý (bypass) pustí dál plyn řešiče.
+
+| sekce | parametry |
+|---|---|
+| Upres | `scale` (kolik jemných buněk připadne na buňku řešiče podél každé osy: 2 je osmkrát víc buněk, 3 sedmadvacetkrát, 4 čtyřiašedesátkrát; jemná mřížka má nejvýš 2048 buněk podél nejdelší strany) |
+| Whirls | `turbulence` (jak silně jemný plyn víří, kde se točí proudění řešiče: 1 jako v turbulentním proudění, víc pro divočejší oheň, 0 bez nových vírů — jen jemněji nesený plyn řešiče), `swirl_size` (největší přidané víry v buňkách řešiče, menší se přidají s nimi), `swirl_life` (sekundy, po které se vzor vírů nese s plynem, než přejde v nový), `seed` |
+
+Žádný parametr upresu nejde animovat: mřížka i víry jsou dané prvním
+snímkem.
+
 **Volume Look** (Render): barva a hustota kouře, `occlusion`; jas ohně,
 teplota, kde začne žhnout (`flame_start`) a kde žhne do běla
 (`flame_range`), `fire_light` (jak oheň svítí na kouř, podlahu a
@@ -484,6 +498,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
+| `campfire_upres` | upres: táborák spočítaný v rozlišení 64 a nakreslený ve 192 — Pyro Upres ×3 přidá víry, které hrubá mřížka neudrží: plameny se trhají, saze se na okrajích kudrnatí; za polovinu času a paměti simulace ve 192 ([§4](#upres-hrubá-simulace-jemný-obraz)) |
 | `demolition` | destrukce: odstřel věžáku mezi domy — nálože v přízemí, věž se zřítí do svého půdorysu a patra se drtí; prach z nárazů, drcení a přetržených spojů žene vytlačený vzduch do ulic ([destruction.md](destruction.md)) |
 | `wall_collapse` | destrukce zblízka: průčelí cihlového domu vyletí do ulice, kusy se kutálejí ke kameře těsně nad asfaltem a prach prosvítí nízké slunce ([destruction.md](destruction.md)) |
 | `concrete_wall` | železobeton: demoliční koule prorazí zeď na soklu — Concrete Fracture s hrubými lomy a odprýsklými rohy, síť prutů (Rebar), na které kusy kolem díry visí, `rings 2` drží škodu kolem koule, prach z lomů ([destruction.md](destruction.md#2-concrete-fracture)) |
@@ -709,6 +724,70 @@ podle teploty, vypadal by jako svítící sloup vysoký jako celý kouř. Houdin
 to řeší stejně jako tahle simulace: **teplo** zvedá plyn a chladne pomalu,
 **plamen** je čerstvě hořící palivo a vydrží zlomek sekundy (`flame_life`).
 Oheň se kreslí z plamene a barvu dostane podle teploty.
+
+### Upres: hrubá simulace, jemný obraz
+
+![Táborák po 72 snímcích: řešič v rozlišení 64, tentýž s upresem ×3 a řešič spočítaný přímo ve 192](img/pyro-upres.jpg)
+
+Dvakrát jemnější mřížka má osmkrát víc buněk a každá stojí tlak, síly
+i advekci rychlosti. Produkce proto ladí simulaci nahrubo, kde běží
+rychle, a jemný detail k ní přidá zvlášť: upres (v Houdini Pyro Upres).
+Uzel **Pyro Upres** ([`src/pg/sim/Upres.h`](../src/pg/sim/Upres.h)) vezme
+pohyb plynu tak, jak ho spočítal řešič, a nese jím jemnou kopii toho, co
+plyn nese — kouř, teplo, palivo a plamen — na mřížce `scale`krát jemnější.
+Do řešiče nic nevrací. Tlak, vztlak ani síly se na jemné mřížce nepočítají,
+proto je o tolik levnější.
+
+Každý snímek, těsně před krokem řešiče (s prouděním, kterým řešič v tom
+kroku ponese svůj plyn, takže se oba drží spolu):
+
+1. **dlaždice**: jemná mřížka je řídká, v dlaždicích 8 × 8 × 8 jemných
+   buněk. Počítají se ty s plynem a se zdroji a kolem nich tak daleko, kam
+   plyn za krok doletí — podle proudění v té dlaždici, ne podle nejrychlejšího
+   místa domény;
+2. **zdroje** přidají palivo, kouř a teplo přímo v jemném rozlišení: okraje
+   zdroje a jeho blikotání jsou jemné jako mřížka (stejný kód jako v řešiči,
+   který řešiči dává bitově stejné snímky jako dřív);
+3. **advekce** MacCormack jako v řešiči, všechna čtyři pole najednou:
+   proudění řešiče interpolované do jemných buněk a k němu víry;
+4. **hoření** a **slábnutí** jako v řešiči.
+
+Víry jsou **curl noise** (Bridson, Hourihan a Nordenstam, 2007): rotace
+tří šumů, tedy proudění, které plyn nestlačuje ani neředí. Jsou tak silné,
+jako by byly víry té velikosti v turbulentním proudění: vířivost proudění
+řešiče krát buňka (rychlost přes buňku, kterou hrubá mřížka nerozliší),
+zvětšená třetí odmocninou toho, kolik buněk víry měří (Kolmogorov). Kde se
+proudění netočí, víry nejsou: kouř, který stojí, zůstane klidný (test:
+s víry i bez nich bitově stejný). U překážek také ne, plyn tam jde, kudy ho
+těleso pustí. `swirl_size` je v buňkách řešiče (výchozí 2: to, co hrubá
+mřížka právě neudrží); menší oktávy se přidají až k zhruba třem jemným
+buňkám, každá o třetinu oktávy slabší.
+
+Šum se nese s prouděním: jeho souřadnice se unášejí na mřížce řešiče,
+takže víry jdou s plynem a natahují se s ním, místo aby plyn protékal
+stojícím vzorem. Natažený šum by se ale brzy rozpadl na pruhy, proto jsou
+souřadnice ve dvou vrstvách, které se po `swirl_life` sekundách střídavě
+obnoví a prolnou (Neyret, 2003). Váhy sin a cos, jejichž čtverce dávají 1,
+drží sílu vírů stálou. Šum se jednou spočítá do periodické dlaždice 64³
+vzorků a čte se trilineárně, jako drží svůj šum wavelet turbulence (Kim
+a kol., 2008); je to asi desetkrát rychlejší než ho počítat v každé buňce.
+
+Snímky drží plyn upresu místo plynu řešiče: viewport, path tracer a
+Cycles, cache, export do OpenVDB a USD i uzel Gas Volume dostanou jemnou
+mřížku, jako by ji spočítal řešič. Obejitý upres pustí dál plyn řešiče:
+pohyb se ladí nahrubo a upres se zapne na finální obraz. Je v checkpointu
+a z uloženého stavu pokračuje bitově stejně, jako by se nezastavil, a na
+libovolném počtu vláken dá stejné bity.
+
+Na obrázku je příklad `campfire_upres` po 72 snímcích. Vlevo řešič
+v rozlišení 64, uprostřed tentýž s upresem ×3 (144 × 192 × 144 jemných
+buněk), vpravo řešič spočítaný přímo ve 192. Upres nevymyslí velké valící
+se víry, které spočítá jemný řešič — hrubá mřížka je nemá —, ale přidá
+jemnou kresbu: plameny se trhají, kouř se na okrajích kudrnatí a pohyb
+celku zůstane ten, který se ladil nahrubo. Kolik to stojí, je v
+[§8](#upres-za-řešičem).
+
+![Editor: táborák s uzlem Pyro Upres mezi řešičem a vzhledem, v informacích jemná mřížka 144 × 192 × 144](img/editor-upres.jpg)
 
 ## 5. Voda
 
@@ -1146,6 +1225,28 @@ než starý hustý řešič.
 
 ![Prach odstřelu ve 103,5 milionu voxelů: snímky 60, 90, 120 a 150](img/demolition-576.jpg)
 
+### Upres za řešičem
+
+`pgbench_pyro --upres K` dá za řešič Pyro Upres a vypíše, kolik trvá
+jeho snímek, kam jde čas a kolik jemné mřížky počítá. Táborák, 60 snímků,
+4 jádra, v ms za snímek (řešič + upres) a nejvíc paměti za běh:
+
+| simulace | mřížka obrazu | ms/snímek | paměť |
+|---|---|---|---|
+| řešič 64 | 48 × 64 × 48 | 38 | 24 MB |
+| řešič 64 + upres ×2 | 96 × 128 × 96 | 38 + 53 | 84 MB |
+| řešič 128 | 88 × 128 × 88 | 147 | 116 MB |
+| řešič 64 + upres ×3 | 144 × 192 × 144 | 39 + 138 | 167 MB |
+| řešič 96 + upres ×2 | 128 × 192 × 128 | 79 + 125 | 205 MB |
+| řešič 192 | 128 × 192 × 128 | 358 | 334 MB |
+| řešič 64 + upres ×4 | 192 × 256 × 192 | 38 + 244 | 290 MB |
+| řešič 256 | 176 × 256 × 176 | 739 | 672 MB |
+
+Upres je 1,6× až 2,6× rychlejší než řešič se stejně jemnou mřížkou a bere
+asi polovinu paměti. Z jeho času jde 80 až 88 % na advekci, zbytek na
+dlaždice a víry; počítá se třetina až polovina jemné mřížky a necelá
+polovina těch dlaždic má plyn (zbytek je okraj, kam plyn může doletět).
+
 Simulace dodržuje invariant I5 jádra: stejná scéna dá **bitově stejná**
 pole na libovolném počtu vláken. Každá smyčka je `pg::parallelFor` přes řádky
 buněk nebo dlaždice, každou buňku zapisuje právě jeden kus práce a mezi
@@ -1182,7 +1283,23 @@ všechny síly a překážka, porovnání všech polí na 1 a na 4 vláknech.
 - nesmyslné vstupy (NaN, nulový krok, záporné rychlosti) řešič opraví;
 - stíny; half float: přesné, zaokrouhlení k sudé, nekonečno, NaN.
 
-[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (20 testů):
+[`tests/test_upres.cpp`](../tests/test_upres.cpp) (7 testů): mřížka
+upresu je mřížka řešiče `scale`krát jemnější (2 až 4, nejvýš 2048 buněk);
+bez vírů nese stejně kouře jako řešič (±15 %, naměřeno 9 %) se stejným
+těžištěm (do 0,75 buňky řešiče, naměřeno 0,23) a počítá méně než polovinu
+jemné mřížky; víry zjemní kouř i plamen (rozdíly mezi sousedními buňkami
+přes 1,3× větší, naměřeno 2,1× a 1,9×), plynu nechají stejně (±20 %) a
+nejsou rychlejší než nejrychlejší proudění řešiče; kouř, který stojí, je
+s víry i bez nich bitově stejný; do koule nad zdrojem se nedostane žádný
+kouř; bitově stejný výsledek na 1 a na 4 vláknech (i s pohyblivým zdrojem
+a překážkou); vyhledání rohů pro více mřížek naráz čte bitově jako
+`sample()`. V `test_state.cpp` upres pokračuje z checkpointu bitově stejně
+(i přes obnovu vrstvy šumu a s překážkou) a stav bez upresu se do světa
+s upresem nenačte; v `test_sim_network.cpp` se uzel přeloží do světa,
+obejitý pustí plyn řešiče, klíčované měřítko se nahlásí a bez řešiče na
+vstupu je chyba.
+
+[`tests/test_sim_network.cpp`](../tests/test_sim_network.cpp) (22 testů):
 tabulka typů uzlů je konzistentní (a každá výchozí hodnota se zapíše a
 přečte zpět stejně), jména a spoje, meze parametrů včetně čísel, která
 se čtou stejně s každou standardní knihovnou, soubory tam a zpět, co se ze
@@ -1368,6 +1485,13 @@ to stojí. Oproti produkci:
 - R. Bridson: *Fluid Simulation for Computer Graphics*, 2. vyd., CRC Press 2015.
 - W. L. Briggs, V. E. Henson, S. F. McCormick: *A Multigrid Tutorial*, SIAM 2000.
 - M. Wrenninge: *Production Volume Rendering*, CRC Press 2012.
+- T. Kim, N. Thürey, D. James, M. Gross: *Wavelet Turbulence for Fluid
+  Simulation*, SIGGRAPH 2008 — upres: šum přidaný do hrubé simulace podle
+  energie, kterou mřížka nerozliší.
+- R. Bridson, J. Hourihan, M. Nordenstam: *Curl-Noise for Procedural Fluid
+  Flow*, SIGGRAPH 2007.
+- F. Neyret: *Advected Textures*, SCA 2003 — dvě vrstvy unášených
+  souřadnic, které se střídavě obnovují a prolínají.
 - M. Pharr, W. Jakob, G. Humphreys: *Physically Based Rendering*, 4. vyd.,
   kap. 11 a 14.
 - J. Jimenez: *Next Generation Post Processing in Call of Duty: Advanced

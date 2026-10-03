@@ -176,6 +176,74 @@ public:
     }
     float sample(float x, float y, float z, bool zeroOutside, float& lo, float& hi) const;
 
+    /// Where a trilinear lookup at (x, y, z) reads -- the eight cells
+    /// sample() reads, as places in data(), -1 where not stored (the
+    /// background) -- and how far between them it is. The same for every
+    /// grid of these tiles: many are sampled for the price of one lookup,
+    /// each to the bit as sample() would.
+    struct Corners {
+        int64_t at[8];
+        float tx, ty, tz;
+    };
+    [[gnu::always_inline]] void cornersAt(float x, float y, float z, Corners& out) const {
+        const int nx = n_[0], ny = n_[1], nz = n_[2];
+        const float fx = std::max(0.0f, std::min(x - 0.5f, static_cast<float>(nx - 1)));
+        const float fy = std::max(0.0f, std::min(y - 0.5f, static_cast<float>(ny - 1)));
+        const float fz = std::max(0.0f, std::min(z - 0.5f, static_cast<float>(nz - 1)));
+        const int i = static_cast<int>(fx), j = static_cast<int>(fy), k = static_cast<int>(fz);
+        out.tx = fx - static_cast<float>(i);
+        out.ty = fy - static_cast<float>(j);
+        out.tz = fz - static_cast<float>(k);
+        const int di = i + 1 < nx ? 1 : 0, dj = j + 1 < ny ? 1 : 0, dk = k + 1 < nz ? 1 : 0;
+        constexpr int kLast = Tiles::kSide - 1;
+        const int li = i & kLast, lj = j & kLast, lk = k & kLast;
+        const size_t tile = static_cast<size_t>(i >> Tiles::kLog) + tx_ * static_cast<size_t>(j >> Tiles::kLog) +
+                            txy_ * static_cast<size_t>(k >> Tiles::kLog);
+        const bool cx = li + di > kLast, cy = lj + dj > kLast, cz = lk + dk > kLast;
+        if (!(cx || cy || cz)) {
+            const int32_t s = slots_[tile];
+            if (s < 0) {
+                for (int64_t& a : out.at) a = -1;
+                return;
+            }
+            const int64_t base = static_cast<int64_t>(s) * Tiles::kCells + static_cast<int64_t>(local(i, j, k));
+            const int64_t ox = di, oy = dj ? Tiles::kSide : 0, oz = dk ? Tiles::kSide * Tiles::kSide : 0;
+            out.at[0] = base;
+            out.at[1] = base + ox;
+            out.at[2] = base + oy;
+            out.at[3] = base + oy + ox;
+            out.at[4] = base + oz;
+            out.at[5] = base + oz + ox;
+            out.at[6] = base + oz + oy;
+            out.at[7] = base + oz + oy + ox;
+            return;
+        }
+        const int32_t* t = slots_ + tile;
+        const size_t sx = cx ? 1u : 0u, sy = cy ? tx_ : 0u, sz = cz ? txy_ : 0u;
+        const int32_t s[8] = {t[0], t[sx], t[sy], t[sy + sx], t[sz], t[sz + sx], t[sz + sy], t[sz + sy + sx]};
+        const int64_t px[2] = {li, (li + di) & kLast};
+        const int64_t py[2] = {lj * Tiles::kSide, ((lj + dj) & kLast) * Tiles::kSide};
+        const int64_t pz[2] = {lk * Tiles::kSide * Tiles::kSide, ((lk + dk) & kLast) * Tiles::kSide * Tiles::kSide};
+        for (int q = 0; q < 8; ++q) {
+            out.at[q] = s[q] < 0 ? -1
+                                 : static_cast<int64_t>(s[q]) * Tiles::kCells + px[q & 1] + py[(q >> 1) & 1] + pz[q >> 2];
+        }
+    }
+    /// The value at a lookup cornersAt() made -- on a grid of these tiles.
+    [[gnu::always_inline]] float sampleAt(const Corners& at) const {
+        float c[8];
+        for (int q = 0; q < 8; ++q) c[q] = at.at[q] < 0 ? background_ : data_[static_cast<size_t>(at.at[q])];
+        return lerp(c, at);
+    }
+    /// ... and the least and the most of the eight, as sample() gives them.
+    [[gnu::always_inline]] float sampleAt(const Corners& at, float& lo, float& hi) const {
+        float c[8];
+        for (int q = 0; q < 8; ++q) c[q] = at.at[q] < 0 ? background_ : data_[static_cast<size_t>(at.at[q])];
+        lo = std::min({c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]});
+        hi = std::max({c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]});
+        return lerp(c, at);
+    }
+
     /// Every stored value.
     void fill(float value);
     float* data() { return data_.data(); }
@@ -190,12 +258,22 @@ public:
 
     /// Keeps the values of the tiles both keep; the rest the background.
     void retile(std::shared_ptr<const Tiles> tiles);
+    /// Onto `tiles` as scratch: the values whatever they come to -- to be
+    /// written before they are read -- and the memory kept.
+    void reshape(std::shared_ptr<const Tiles> tiles);
     /// Every cell, as a dense grid.
     Grid dense() const;
 
 private:
     /// The table, its strides and the grid's size, from tiles_.
     void cache();
+    /// Trilinear between eight values, as sample() does it.
+    [[gnu::always_inline]] static float lerp(const float c[8], const Corners& at) {
+        const float x00 = c[0] + (c[1] - c[0]) * at.tx, x10 = c[2] + (c[3] - c[2]) * at.tx;
+        const float x01 = c[4] + (c[5] - c[4]) * at.tx, x11 = c[6] + (c[7] - c[6]) * at.tx;
+        const float y0 = x00 + (x10 - x00) * at.ty, y1 = x01 + (x11 - x01) * at.ty;
+        return y0 + (y1 - y0) * at.tz;
+    }
     /// The eight values a trilinear lookup at cell (i, j, k) reads -- with
     /// the next cell along each axis di, dj, dk (0 or 1) on -- x fastest:
     /// from one tile mostly, else from each of the tiles they lie in.
