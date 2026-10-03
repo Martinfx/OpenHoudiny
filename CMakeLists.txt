@@ -288,6 +288,7 @@ add_library(pgsim
   src/pg/sim/Rigid.cpp
   src/pg/sim/Camera.cpp
   src/pg/sim/Frame.cpp
+  src/pg/sim/FrameStore.cpp
   src/pg/sim/WaterMesh.cpp
   src/pg/sim/FreeSurface.cpp
   src/pg/sim/Cache.cpp
@@ -1024,6 +1025,7 @@ add_executable(pgtests
   tests/test_shader_graph.cpp
   tests/test_pyro.cpp
   tests/test_upres.cpp
+  tests/test_frame_store.cpp
   tests/test_sim_network.cpp
   tests/test_sim_geometry.cpp
   tests/test_animation.cpp

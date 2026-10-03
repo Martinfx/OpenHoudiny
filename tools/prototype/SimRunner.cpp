@@ -20,6 +20,26 @@ SimRunner::~SimRunner() {
     if (thread_.joinable()) thread_.join();
 }
 
+void SimRunner::prepareFor(const sim::World& world) {
+    // The pieces and the cloth of this world -- and what is worked out from
+    // them, kept from one frame to the next: a frame read back from disk
+    // has their poses, not their geometry.
+    struct Memo {
+        sim::RigidScene rigid;
+        sim::ClothScene cloth;
+        std::shared_ptr<const sim::RigidLayout> layout;
+        std::shared_ptr<const sim::RigidRebar> rebar;
+        std::shared_ptr<const sim::RigidGlue> glue;
+    };
+    auto memo = std::make_shared<Memo>();
+    memo->rigid = world.rigid;
+    memo->cloth = world.cloth;
+    store_.setPrepare([memo](sim::Frame& f) {
+        sim::adoptPieces(f, memo->rigid, &memo->layout, &memo->rebar, &memo->glue);
+        sim::adoptCloth(f, memo->cloth);
+    });
+}
+
 void SimRunner::set(const sim::World& world, int frames) {
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -28,66 +48,14 @@ void SimRunner::set(const sim::World& world, int frames) {
             started_ = true;
             world_ = safe;
             fresh_ = true;
-            adopted_ = false;
-            cache_.clear();
-            bytes_ = 0;
             folder_.clear();
-            read_.clear();
-            askedAt_.clear();
-            readBytes_ = 0;
+            prepareFor(safe);
+            store_.clear();
             ++generation_;
             domain_ = safe.hasGas ? safe.gas.solver.domain() : sim::Domain();
         }
         frames_ = std::max(1, frames);
-        if (static_cast<int>(cache_.size()) > frames_) {
-            cache_.resize(static_cast<size_t>(frames_));
-            bytes_ = 0;
-            for (const auto& f : cache_) bytes_ += f->bytes();
-        }
-    }
-    wake_.notify_all();
-}
-
-void SimRunner::adopt(const sim::World& world, int frames, std::vector<std::shared_ptr<const sim::Frame>> loaded) {
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        const sim::World safe = world.sanitized();
-        started_ = true;
-        world_ = safe;
-        fresh_ = false;  // the thread's solver stays as it is, unused
-        adopted_ = true;
-        frames_ = std::max(1, frames);
-        if (static_cast<int>(loaded.size()) > frames_) loaded.resize(static_cast<size_t>(frames_));
-        cache_ = std::move(loaded);
-        bytes_ = 0;
-        for (const auto& f : cache_) bytes_ += f->bytes();
-        folder_.clear();
-        read_.clear();
-        askedAt_.clear();
-        readBytes_ = 0;
-        ++generation_;  // a frame simulated meanwhile belongs to no one
-        domain_ = safe.hasGas ? safe.gas.solver.domain() : sim::Domain();
-    }
-    wake_.notify_all();
-}
-
-void SimRunner::clear() {
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        started_ = false;
-        fresh_ = false;
-        adopted_ = false;
-        world_ = sim::World();
-        frames_ = 0;
-        cache_.clear();
-        bytes_ = 0;
-        folder_.clear();
-        read_.clear();
-        askedAt_.clear();
-        readBytes_ = 0;
-        ++generation_;  // a frame simulated meanwhile belongs to no one
-        stepMs_ = 0.0;
-        domain_ = sim::Domain();
+        if (store_.count() > frames_) store_.truncate(frames_);
     }
     wake_.notify_all();
 }
@@ -99,23 +67,12 @@ void SimRunner::stream(const sim::World& world, int frames, const std::string& f
         started_ = true;
         world_ = safe;
         fresh_ = false;  // the thread's solver stays as it is, unused
-        adopted_ = true;
         frames_ = std::max(1, frames);
-        cache_.clear();
-        bytes_ = 0;
         folder_ = folder;
-        onDisk_ = 0;
-        read_.clear();
-        askedAt_.clear();
-        readBytes_ = 0;
+        prepareFor(safe);
+        store_.stream(folder, 0);
         ++generation_;  // a frame simulated meanwhile belongs to no one
         domain_ = safe.hasGas ? safe.gas.solver.domain() : sim::Domain();
-    }
-    {
-        std::lock_guard<std::mutex> lock(loading_);
-        layout_.reset();
-        rebar_.reset();
-        glue_.reset();
     }
     refresh();
     wake_.notify_all();
@@ -123,9 +80,11 @@ void SimRunner::stream(const sim::World& world, int frames, const std::string& f
 
 void SimRunner::refresh() {
     std::string folder;
+    int frames = 0;
     {
         std::lock_guard<std::mutex> lock(mu_);
         folder = folder_;
+        frames = frames_;
     }
     if (folder.empty()) return;
     sim::CacheInfo info;
@@ -133,7 +92,7 @@ void SimRunner::refresh() {
     const int count = sim::readCacheInfo(folder, info, error) ? info.frames : 0;
     std::lock_guard<std::mutex> lock(mu_);
     if (folder != folder_) return;  // streaming another meanwhile
-    onDisk_ = std::clamp(count, 0, frames_);
+    store_.found(std::clamp(count, 0, frames));
 }
 
 std::string SimRunner::folder() const {
@@ -141,58 +100,26 @@ std::string SimRunner::folder() const {
     return folder_;
 }
 
-std::shared_ptr<const sim::Frame> SimRunner::load(int number) const {
-    std::string folder;
-    sim::RigidScene rigid;
-    sim::ClothScene cloth;
-    unsigned generation = 0;
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        folder = folder_;
-        rigid = world_.rigid;
-        cloth = world_.cloth;
-        generation = generation_;
-    }
-    // One read at a time: two asking for the same frame read it once.
-    std::lock_guard<std::mutex> reading(loading_);
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (generation != generation_) return nullptr;
-        if (auto it = read_.find(number); it != read_.end()) return it->second;
-    }
-    auto frame = std::make_shared<sim::Frame>();
-    std::string error;
-    if (!sim::readFrame(folder, number, *frame, error)) return nullptr;
-    frame->number = number;
-    sim::adoptPieces(*frame, rigid, &layout_, &rebar_, &glue_);
-    sim::adoptCloth(*frame, cloth);
-    std::lock_guard<std::mutex> lock(mu_);
-    if (generation != generation_) return nullptr;  // another world or folder meanwhile
-    read_[number] = frame;
-    askedAt_[number] = ++asks_;
-    readBytes_ += frame->bytes();
-    // Past the budget: the frames asked for longest ago go -- never the one
-    // just read.
-    while (readBytes_ > budget_ && read_.size() > 1) {
-        auto oldest = askedAt_.begin();
-        for (auto it = askedAt_.begin(); it != askedAt_.end(); ++it) {
-            if (it->second < oldest->second) oldest = it;
-        }
-        if (oldest->first == number) break;
-        readBytes_ -= read_[oldest->first]->bytes();
-        read_.erase(oldest->first);
-        askedAt_.erase(oldest);
-    }
-    return frame;
-}
+bool SimRunner::fromDisk() const { return store_.streaming(); }
 
-bool SimRunner::adopted() const {
-    std::lock_guard<std::mutex> lock(mu_);
-    return adopted_;
+void SimRunner::clear() {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        started_ = false;
+        fresh_ = false;
+        world_ = sim::World();
+        frames_ = 0;
+        folder_.clear();
+        store_.clear();
+        ++generation_;  // a frame simulated meanwhile belongs to no one
+        stepMs_ = 0.0;
+        domain_ = sim::Domain();
+    }
+    wake_.notify_all();
 }
 
 bool SimRunner::more() const {
-    return fresh_ || (!adopted_ && static_cast<int>(cache_.size()) < frames_);
+    return fresh_ || (!store_.streaming() && store_.count() < frames_);
 }
 
 void SimRunner::setRunning(bool on) {
@@ -207,48 +134,46 @@ void SimRunner::hold(bool on) {
 }
 
 void SimRunner::setBudget(size_t bytes) {
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        budget_ = bytes;
-    }
+    store_.setBudget(bytes);
     wake_.notify_all();
 }
 
-int SimRunner::cached() const {
-    std::lock_guard<std::mutex> lock(mu_);
-    return folder_.empty() ? static_cast<int>(cache_.size()) : onDisk_;
+size_t SimRunner::budget() const { return store_.budget(); }
+
+void SimRunner::setSpill(bool on) {
+    store_.setSpill(on, size_t(64) << 30);
+    wake_.notify_all();
 }
 
-std::shared_ptr<const sim::Frame> SimRunner::frame(int number) const {
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (folder_.empty()) {
-            if (number < 1 || number > static_cast<int>(cache_.size())) return nullptr;
-            return cache_[static_cast<size_t>(number - 1)];
-        }
-        if (number < 1 || number > onDisk_) return nullptr;
-        if (auto it = read_.find(number); it != read_.end()) {
-            askedAt_[number] = ++asks_;
-            return it->second;
-        }
-    }
-    return load(number);
-}
+bool SimRunner::spill() const { return store_.spilling(); }
+
+int SimRunner::cached() const { return store_.count(); }
+
+std::shared_ptr<const sim::Frame> SimRunner::frame(int number) const { return store_.get(number); }
+
+std::shared_ptr<const sim::Frame> SimRunner::ready(int number) const { return store_.ready(number); }
+
+std::vector<std::pair<int, int>> SimRunner::inMemory() const { return store_.inMemory(); }
+
+void SimRunner::setPlayhead(int frame, int direction) { store_.setPlayhead(frame, direction); }
 
 bool SimRunner::busy() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return running_ && !hold_ && more() && bytes_ < budget_;
+    return running_ && !hold_ && more() && store_.room();
 }
 
 bool SimRunner::full() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return bytes_ >= budget_ && !adopted_ && static_cast<int>(cache_.size()) < frames_;
+    return !fresh_ && !store_.streaming() && store_.count() < frames_ && !store_.room();
 }
 
-size_t SimRunner::bytes() const {
-    std::lock_guard<std::mutex> lock(mu_);
-    return folder_.empty() ? bytes_ : readBytes_;
-}
+size_t SimRunner::bytes() const { return store_.memoryBytes(); }
+
+int SimRunner::spilledFrames() const { return store_.spilledFrames(); }
+
+size_t SimRunner::spilledBytes() const { return store_.spilledBytes(); }
+
+std::string SimRunner::spillError() const { return store_.spillError(); }
 
 double SimRunner::stepMs() const {
     std::lock_guard<std::mutex> lock(mu_);
@@ -271,13 +196,20 @@ bool SimRunner::advance() {
     sim::World world;
     {
         std::lock_guard<std::mutex> lock(mu_);
-        if (!running_ || hold_ || !more() || bytes_ >= budget_) return false;
+        if (!running_ || hold_ || !more() || !store_.room()) return false;
+        // Frames cut short and wanted again: the solver is past them, and
+        // goes from the start.
+        if (!fresh_ && solver_ && solver_->frame() != store_.count()) {
+            store_.clear();
+            ++generation_;
+            fresh_ = true;
+        }
         if (fresh_) {
             world = world_;
             restart = true;
             fresh_ = false;
         }
-        generation = generation_;
+        generation = store_.generation();
     }
     // A new world: from the start, with a solver made off the lock -- it
     // allocates the grids, which takes a moment.
@@ -288,12 +220,12 @@ bool SimRunner::advance() {
     auto f = std::make_shared<sim::Frame>(solver_->capture());
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     f->stepMs = ms;
-    std::lock_guard<std::mutex> lock(mu_);
-    // The world changed while this frame was simulated: it belongs to no one.
-    if (generation != generation_ || fresh_) return true;
-    bytes_ += f->bytes();
-    cache_.push_back(std::move(f));
-    stepMs_ = ms;
+    // Kept -- spilled to disk, past the budget -- unless the world changed
+    // while it was simulated: then it belongs to no one.
+    if (store_.add(std::move(f), generation)) {
+        std::lock_guard<std::mutex> lock(mu_);
+        stepMs_ = ms;
+    }
     return true;
 }
 
@@ -301,8 +233,10 @@ void SimRunner::loop() {
     for (;;) {
         {
             std::unique_lock<std::mutex> lock(mu_);
-            wake_.wait(lock, [&] {
-                return quit_ || (running_ && !hold_ && more() && bytes_ < budget_);
+            // Waiting on the store's room too: a budget raised, spilling let
+            // on, wakes it; a second at most between looks.
+            wake_.wait_for(lock, std::chrono::seconds(1), [&] {
+                return quit_ || (running_ && !hold_ && more() && store_.room());
             });
             if (quit_) return;
         }

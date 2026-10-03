@@ -40,6 +40,13 @@ using theme::Icon;
 /// A bake saves its state every this many frames.
 constexpr int kCheckpointEvery = 10;
 
+/// The texels a frame's gas or water may take on the GPU: as many as the
+/// renderer takes; while frames change, some 4 million -- a grid two to eight
+/// times as coarse, sent and drawn 8 to 512 times quicker (View > Proxies).
+constexpr size_t kFullTexels = size_t(1) << 28, kProxyTexels = size_t(1) << 22;
+/// The play head this long still: a frame drawn coarser is drawn as it is.
+constexpr double kRestSeconds = 0.35;
+
 ImU32 categoryColor(const std::string& c) {
     if (c == "Geometry") return IM_COL32(148, 74, 110, 255);
     if (c == "Objects") return IM_COL32(70, 98, 150, 255);
@@ -521,11 +528,13 @@ void SimWorkspace::updatePieces() {
 }
 
 std::shared_ptr<const sim::Frame> SimWorkspace::frameToShow() const {
-    // The frame at the play head -- or, while the simulation has not got
-    // there yet, the latest before it.
     const int cached = runner_->cached();
     if (cached == 0) return nullptr;
-    return runner_->frame(std::min(current_, cached));
+    return readyFrame(std::min(current_, cached));
+}
+
+std::shared_ptr<const sim::Frame> SimWorkspace::readyFrame(int n) const {
+    return synchronous_ ? runner_->frame(n) : runner_->ready(n);
 }
 
 void SimWorkspace::update(float dt) {
@@ -546,14 +555,15 @@ void SimWorkspace::update(float dt) {
         pollBake();
     }
 
-    // Playback at the network's frame rate, never past what is simulated.
+    // Playback at the network's frame rate, never past what is simulated --
+    // nor onto a frame still being read from disk: it waits for it.
     const int cached = runner_->cached();
     if (playing_ && compiled_.ok) {
         const double frameTime = compiled_.world.timeStep;
         clock_ += synchronous_ ? frameTime : static_cast<double>(dt);
         while (clock_ >= frameTime) {
             clock_ -= frameTime;
-            if (current_ < compiled_.frames && current_ < cached) {
+            if (current_ < compiled_.frames && current_ < cached && readyFrame(current_ + 1)) {
                 ++current_;
             } else if (current_ >= compiled_.frames && loop_ && cached >= compiled_.frames && !synchronous_) {
                 current_ = 1;
@@ -566,14 +576,35 @@ void SimWorkspace::update(float dt) {
         clock_ = 0.0;
     }
 
+    // Which way the play head goes -- what is read ahead from disk follows.
+    if (current_ != lastCurrent_) direction_ = current_ < lastCurrent_ ? -1 : 1;
+    if (playing_) direction_ = 1;
+    lastCurrent_ = current_;
+    runner_->setPlayhead(current_, direction_);
+
     // The frame on screen. While a simulation that started again has no
-    // frame yet, the last one stays: dragging a slider does not flicker.
+    // frame yet, or the play head's is still being read from disk, the last
+    // one stays: dragging a slider, scrubbing a big cache, does not flicker.
     std::shared_ptr<const sim::Frame> f = levels_.empty() ? frameToShow() : nullptr;  // inside an asset: its geometry alone
-    if (!f && shown_ && levels_.empty() && (runner_->busy() || gizmo_.dragging())) f = shown_;
+    if (!f && shown_ && levels_.empty() && (runner_->cached() > 0 || runner_->busy() || gizmo_.dragging())) f = shown_;
+    // Big frames: coarser while they change, so that playing and scrubbing
+    // keep up; as they are once the frame shown rests -- the play head
+    // stopped, or playing on at the end of the cache.
+    const double now = ImGui::GetTime();
+    auto upload = [&](const sim::Frame& frame, bool coarse) {
+        renderer_.texelBudget = coarse ? kProxyTexels : kFullTexels;
+        renderer_.setFrame(frame);
+        shownProxy_ = coarse && (frame.domain.cellCount() > kProxyTexels || frame.water.domain.cellCount() > kProxyTexels);
+    };
     if (f != shown_) {
+        const bool moving = playing_ || now - shownAt_ < kRestSeconds;
         shown_ = f;
-        if (f) renderer_.setFrame(*f);
+        shownAt_ = now;
+        if (f) upload(*f, proxies_ && moving && !synchronous_);
         else renderer_.clearFrame();
+        viewDirty_ = true;
+    } else if (shown_ && shownProxy_ && now - shownAt_ >= kRestSeconds) {
+        upload(*shown_, false);
         viewDirty_ = true;
     }
     if (!shown_) renderer_.setDomain(runner_->domain());
@@ -1587,8 +1618,24 @@ void SimWorkspace::networkOverview() {
             }
             ui::row("Frames", "%d at %.0f fps  (%.1f s)", compiled_.frames, 1.0 / static_cast<double>(compiled_.world.timeStep),
                     compiled_.frames * static_cast<double>(compiled_.world.timeStep));
-            ui::row("Cache", "%d frames, %.0f MB", runner_->cached(), static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
-            if (runner_->adopted()) {
+            int inMemory = 0;
+            for (const auto& [first, last] : runner_->inMemory()) inMemory += last - first + 1;
+            ui::row("Cache", "%d frames  \xc2\xb7  %d in memory, %.0f MB", runner_->cached(), inMemory,
+                    static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0));
+            ImGui::SetItemTooltip("Simulation > Cache Size: the most the frames take in memory -- %.0f MB",
+                                  static_cast<double>(runner_->budget()) / (1024.0 * 1024.0));
+            if (runner_->spilledFrames() > 0) {
+                ui::row("On Disk", "%d frames, %.0f MB", runner_->spilledFrames(),
+                        static_cast<double>(runner_->spilledBytes()) / (1024.0 * 1024.0));
+                ImGui::SetItemTooltip("Past the cache's size: in a folder of the editor's own, read back as they are "
+                                      "played, deleted when the frames are thrown away");
+            }
+            if (!runner_->spillError().empty()) {
+                ui::rowStart("");
+                ImGui::TextColored(theme::vec(theme::kRed), "nothing more to disk");
+                ImGui::SetItemTooltip("%s", runner_->spillError().c_str());
+            }
+            if (runner_->fromDisk()) {
                 fs::path from(cacheFolder_);
                 if (!from.has_filename()) from = from.parent_path();  // "cache/"
                 ui::rowStart("");
@@ -1692,6 +1739,7 @@ void SimWorkspace::bottom(ImVec2 size) {
     s.frames = std::max(1, compiled_.frames);
     s.current = current_;
     s.cached = runner_->cached();
+    s.memory = runner_->inMemory();
     s.simulating = runner_->busy();
     s.playing = playing_;
     s.loop = loop_;
@@ -1854,10 +1902,18 @@ void SimWorkspace::menus() {
         }
         ImGui::SetItemTooltip("Throws the cached frames away and simulates from frame 1.");
         if (ImGui::BeginMenu("Cache Size")) {
-            for (int mb : {512, 1024, 2048, 4096}) {
+            for (int mb : {512, 1024, 2048, 4096, 8192}) {
                 const std::string label = mb < 1024 ? std::to_string(mb) + " MB" : std::to_string(mb / 1024) + " GB";
-                if (ImGui::MenuItem(label.c_str())) runner_->setBudget(static_cast<size_t>(mb) << 20);
+                if (ImGui::MenuItem(label.c_str(), nullptr, runner_->budget() == static_cast<size_t>(mb) << 20)) {
+                    runner_->setBudget(static_cast<size_t>(mb) << 20);
+                }
             }
+            ImGui::Separator();
+            bool spill = runner_->spill();
+            if (ImGui::MenuItem("Past It to Disk", nullptr, &spill)) runner_->setSpill(spill);
+            ImGui::SetItemTooltip("Frames past the cache's size go to a folder of the editor's own and are read back "
+                                  "as they are played: a simulation longer than the memory plays whole. Off, the "
+                                  "simulation waits when the cache is full.");
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -1921,6 +1977,9 @@ void SimWorkspace::menus() {
             framed_ = false;
         }
         if (ImGui::MenuItem("Frame the Network", "F")) canvas_.frame();
+        if (ImGui::MenuItem("Proxies", nullptr, proxies_)) proxies_ = !proxies_;
+        ImGui::SetItemTooltip("Big frames of gas and water drawn on a coarser grid while they change -- "
+                              "playing, scrubbing -- and as they are once the play head rests.");
         if (ImGui::MenuItem("Node Thumbnails", nullptr, thumbnails_)) thumbnails_ = !thumbnails_;
         ImGui::SetItemTooltip("A picture in each node of what it makes: a geometry node's geometry, an object's "
                               "shape, a solver's frame, the Output's shot. A node's menu hides its own.");
@@ -2091,11 +2150,17 @@ std::string SimWorkspace::status() const {
     if (geometryOnly()) return std::to_string(net_.nodes().size()) + " nodes  \xc2\xb7  " + gridsText();
     char text[240], step[32];
     // Frames from disk were not simulated: no time a step.
-    if (runner_->adopted()) std::snprintf(step, sizeof step, "from disk");
+    if (runner_->fromDisk()) std::snprintf(step, sizeof step, "from disk");
     else std::snprintf(step, sizeof step, "%.0f ms a step", runner_->stepMs());
-    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %s  \xc2\xb7  cache %d / %d (%.0f MB)%s  \xc2\xb7  %s",
+    char spilled[48] = "";
+    if (runner_->spilledFrames() > 0) {
+        std::snprintf(spilled, sizeof spilled, ", %.1f GB on disk",
+                      static_cast<double>(runner_->spilledBytes()) / (1024.0 * 1024.0 * 1024.0));
+    }
+    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %s  \xc2\xb7  cache %d / %d (%.0f MB%s)%s  \xc2\xb7  %s",
                   net_.nodes().size(), gridsText().c_str(), runner_->cached(), compiled_.frames,
-                  static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), runner_->full() ? " full" : "", step);
+                  static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), spilled, runner_->full() ? " full" : "",
+                  step);
     std::string line = text;
     if (preview_) line += "  \xc2\xb7  preview";
     if (wedge_.running()) {
@@ -2266,7 +2331,7 @@ std::shared_ptr<const sim::Frame> SimWorkspace::jobSimFrame(int frame, std::stri
     std::shared_ptr<const sim::Frame> f = runner_->frame(frame);
     if (!f && !runner_->busy()) {
         error = runner_->full()      ? "the cache is full (Simulation > Cache Size)"
-                : runner_->adopted() ? "the frames loaded from disk end"
+                : runner_->fromDisk() ? "the frames loaded from disk end"
                                      : "the simulation stopped";
         error += " at frame " + std::to_string(frame);
     }
@@ -2415,6 +2480,8 @@ bool SimWorkspace::saveCache(const std::string& folder) {
     setMessage(text);
     return true;
 }
+
+void SimWorkspace::setCacheSize(size_t bytes) { runner_->setBudget(bytes); }
 
 bool SimWorkspace::loadCache(const std::string& chosen) {
     // A file in the folder -- its cache.txt -- stands for the folder.

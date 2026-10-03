@@ -2,25 +2,32 @@
 //
 // Runs a simulation on a thread of its own and keeps its frames: the cache
 // the timeline plays and scrubs. A scene that differs starts it again from
-// frame 1; until the cache holds as many frames as asked for -- or as many as
-// its budget of memory allows -- it simulates ahead.
+// frame 1; until the cache holds as many frames as asked for it simulates
+// ahead.
+//
+// The frames are kept by a sim::FrameStore, within a budget of memory: past
+// it, those furthest from the play head are spilled to disk and read back
+// as they are played -- so a simulation longer than the memory still plays
+// whole -- or, with spilling off, the simulation waits there. A cache on
+// disk is played the same way (stream()): read ahead of the play head on a
+// thread of the store's own -- a cache bigger than the memory, a bake still
+// writing it. The timeline asks with ready(), which never waits; what needs
+// a frame now -- an export, a render -- with frame().
 //
 // Frames are kept as half floats (sim::Frame), shared: the renderer reads
-// one while the thread adds the next. Frames read from a cache on disk take
-// the place of simulated ones (adopt()) -- or stay on disk, read as they are
-// asked for (stream()): a cache bigger than the memory, a bake that is still
-// writing it.
+// one while the thread adds the next.
 //
 #include "pg/sim/Frame.h"
+#include "pg/sim/FrameStore.h"
 #include "pg/sim/World.h"
 
 #include <atomic>
 #include <condition_variable>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace pg::editor {
@@ -37,22 +44,17 @@ public:
     /// What to simulate, and how many frames. Another world throws the
     /// frames away and starts again; only another count keeps them.
     void set(const sim::World& world, int frames);
-    /// Frames from elsewhere -- a cache on disk -- as the world's frames
-    /// 1, 2, 3...: they are shown in place of simulated ones, and nothing is
-    /// simulated after them -- there is no solver to go on from -- until
-    /// set() brings another world.
-    void adopt(const sim::World& world, int frames, std::vector<std::shared_ptr<const sim::Frame>> loaded);
     /// The frames of a cache folder as the world's frames, read from disk
-    /// when asked for -- the latest read kept, as many as the budget holds --
-    /// and nothing simulated, until set() brings another world. A bake may
-    /// still be writing them: refresh() finds those written since.
+    /// as they are played, and nothing simulated, until set() brings
+    /// another world. A bake may still be writing them: refresh() finds
+    /// those written since.
     void stream(const sim::World& world, int frames, const std::string& folder);
     /// Streaming: the frames on disk now, as its cache.txt says.
     void refresh();
     /// The folder streamed from; empty when not streaming.
     std::string folder() const;
-    /// The frames are adopted or streamed ones, not simulated.
-    bool adopted() const;
+    /// The frames are read from a cache on disk, not simulated.
+    bool fromDisk() const;
     /// Nothing to simulate: the frames and the world go, and the next set()
     /// starts again whatever it brings -- another network, or none.
     void clear();
@@ -64,15 +66,34 @@ public:
     void hold(bool on);
     /// The most memory the frames may take.
     void setBudget(size_t bytes);
+    size_t budget() const;
+    /// Past the budget, frames go to disk (on), or the simulation waits.
+    void setSpill(bool on);
+    bool spill() const;
 
-    /// Frames 1 .. cached() are ready.
+    /// Frames 1 .. cached() are there: in memory or on disk.
     int cached() const;
-    /// Frame `number` (1-based), or null if it is not ready.
+    /// Frame `number` (1-based), read from disk now if it must be; null if
+    /// it is not there.
     std::shared_ptr<const sim::Frame> frame(int number) const;
+    /// Frame `number` if it is in memory; else null, and it is read next.
+    /// Never waits: what the timeline plays.
+    std::shared_ptr<const sim::Frame> ready(int number) const;
+    /// The runs of frames in memory, first and last of each.
+    std::vector<std::pair<int, int>> inMemory() const;
+    /// Where the timeline is, and which way it plays: what is kept, and
+    /// read ahead.
+    void setPlayhead(int frame, int direction);
     /// True while there is more to simulate and room for it.
     bool busy() const;
+    /// The memory is full, and nothing may go to disk: the simulation waits.
     bool full() const;
+    /// Memory the frames take; and what was spilled to disk, frames and bytes.
     size_t bytes() const;
+    int spilledFrames() const;
+    size_t spilledBytes() const;
+    /// Why spilling stopped; empty if it did not.
+    std::string spillError() const;
     double stepMs() const;
     /// Bumped whenever the frames are thrown away.
     unsigned generation() const;
@@ -88,9 +109,8 @@ private:
     void loop();
     /// Simulates the next frame; false if there was nothing to do.
     bool advance();
-    /// Streaming: frame `number` read from disk into the frames kept, the
-    /// least recently asked for let go past the budget.
-    std::shared_ptr<const sim::Frame> load(int number) const;
+    /// What frames of `world` read from disk need: its pieces and cloth.
+    void prepareFor(const sim::World& world);
 
     const bool synchronous_;
     mutable std::mutex mu_;
@@ -102,29 +122,16 @@ private:
     sim::World world_;
     bool started_ = false;  // set() was called
     bool fresh_ = false;    // world_ differs from what the solver runs
-    bool adopted_ = false;  // the frames came from adopt()
     int frames_ = 0;
-    std::vector<std::shared_ptr<const sim::Frame>> cache_;
-    size_t bytes_ = 0, budget_ = size_t(1536) << 20;
     unsigned generation_ = 0;
     double stepMs_ = 0.0;
     sim::Domain domain_;
-    // Streaming: the folder, the frames on disk, those read -- by number, and
-    // when last asked for -- and the pieces the frames get (adoptPieces).
-    std::string folder_;
-    int onDisk_ = 0;
-    mutable std::map<int, std::shared_ptr<const sim::Frame>> read_;
-    mutable std::map<int, uint64_t> askedAt_;
-    mutable uint64_t asks_ = 0;
-    mutable size_t readBytes_ = 0;
-    mutable std::mutex loading_;  // one read at a time; guards the memos
-    mutable std::shared_ptr<const sim::RigidLayout> layout_;
-    mutable std::shared_ptr<const sim::RigidRebar> rebar_;
-    mutable std::shared_ptr<const sim::RigidGlue> glue_;
+    std::string folder_;  // streaming: the cache's
 
     std::atomic<bool> running_{true};
     std::atomic<bool> hold_{false};
     std::unique_ptr<sim::WorldSolver> solver_;  // the thread's (or the caller's in synchronous mode)
+    mutable sim::FrameStore store_;             // the frames
 };
 
 }  // namespace pg::editor

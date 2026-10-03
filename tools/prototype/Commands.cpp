@@ -1636,9 +1636,11 @@ void printUsage(std::FILE* out) {
 #ifdef PG_HAVE_GUI
                  "  prototype [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]\n"
                  "            [--library FILE]... [--target NAME] [--mesh NAME] [--size WxH]\n"
-                 "            [--screenshot OUT.png [--frames N]] [--script FILE]\n"
+                 "            [--cache DIR] [--cache-size MB] [--screenshot OUT.png [--frames N]] [--script FILE]\n"
                  "                   the node editor -- what runs without a command: an empty scene,\n"
-                 "                   an example with --example, shaders with --shaders\n"
+                 "                   an example with --example, shaders with --shaders; --cache plays\n"
+                 "                   the frames of a cache on disk, read as they are played; --cache-size\n"
+                 "                   the most memory the frames take, past it they go to disk (1536)\n"
 #else
                  "  prototype [NETWORK.pgsim | GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
 #endif

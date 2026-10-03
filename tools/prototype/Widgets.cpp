@@ -679,11 +679,23 @@ TimelineActions timeline(const char* id, const TimelineState& s) {
     const float mid = (trackTop + trackBottom) * 0.5f + theme::px(4.0f);
     d->AddRectFilled(ImVec2(x0, mid - theme::px(3.0f)), ImVec2(x1, mid + theme::px(3.0f)), IM_COL32(24, 25, 28, 255),
                      theme::px(3.0f));
-    // What is simulated: the cache.
+    // What is simulated: the cache -- dimmer where it is on disk only, as
+    // bright as before where it is in memory.
     if (s.cached > 0) {
         const float cx = xOf(static_cast<float>(std::min(s.cached, frames)));
+        const bool all = s.memory.empty() || (s.memory.size() == 1 && s.memory[0].first <= 1 && s.memory[0].second >= s.cached);
         d->AddRectFilled(ImVec2(x0, mid - theme::px(3.0f)), ImVec2(std::max(cx, x0 + 2.0f), mid + theme::px(3.0f)),
-                         theme::kAccentDim, theme::px(3.0f));
+                         all ? theme::kAccentDim : theme::fade(theme::kAccentDim, 0.4f), theme::px(3.0f));
+        if (!all) {
+            const float half = 0.5f * (x1 - x0) / static_cast<float>(std::max(1, frames - 1));
+            for (const auto& [first, last] : s.memory) {
+                if (first > frames) continue;
+                const float a = std::max(x0, xOf(static_cast<float>(first)) - half);
+                const float b = std::min(cx, xOf(static_cast<float>(std::min(last, frames))) + half);
+                d->AddRectFilled(ImVec2(a, mid - theme::px(3.0f)), ImVec2(std::max(b, a + 2.0f), mid + theme::px(3.0f)),
+                                 theme::kAccentDim, theme::px(1.0f));
+            }
+        }
     }
     if (s.simulating && s.cached < frames) {
         const float cx = xOf(static_cast<float>(s.cached + 1));

@@ -1465,10 +1465,17 @@ void SimWorkspace::viewport(ImVec2 size) {
     const int cached = runner_->cached();
     const float textY = lo.y + pad;
     if (shown_) {
-        std::snprintf(text, sizeof text, "Frame %d  \xc2\xb7  %.2f s", shown_->number, static_cast<double>(shown_->time));
+        // Drawn coarser while it changes (View > Proxies): said so.
+        std::snprintf(text, sizeof text, "Frame %d  \xc2\xb7  %.2f s%s", shown_->number, static_cast<double>(shown_->time),
+                      shownProxy_ ? "  \xc2\xb7  proxy" : "");
         ui::overlayText(d, ImVec2(lo.x + pad, textY), IM_COL32(235, 236, 240, 240), text, theme::fonts().bold);
         if (current_ > cached) {
             std::snprintf(text, sizeof text, "simulating\xe2\x80\xa6 %d of %d", cached, current_);
+            ui::overlayText(d, ImVec2(lo.x + pad, textY + line), theme::kAccentHover, text);
+        } else if (shown_->number != current_ && levels_.empty()) {
+            // Scrubbed to a frame on disk only: the last one shown stays
+            // until it is read.
+            std::snprintf(text, sizeof text, "reading frame %d\xe2\x80\xa6", current_);
             ui::overlayText(d, ImVec2(lo.x + pad, textY + line), theme::kAccentHover, text);
         }
     } else if (!levels_.empty() || editingAsset()) {

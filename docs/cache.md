@@ -126,9 +126,8 @@ V editoru, menu **Simulation**:
   checkpoint ve složce patří téže síti.
 
 **Přehrávání z disku.** Load Cache i bake čtou snímky až ve chvíli, kdy
-jsou potřeba. V paměti drží nejvýš tolik, kolik dovolí Cache Size; nejdéle
-nepoužité snímky uvolní. Cache větší než paměť se tak dá přehrát
-a scrubovat. Dřív se načítala celá.
+jsou potřeba, napřed před přehrávací hlavou; cache větší než paměť se dá
+přehrát i scrubovat. Viz [Velké cache ve viewportu](#velké-cache-ve-viewportu).
 
 **Checkpoint** (`checkpoint.pgstate`) je celý stav simulace
 (`WorldSolver::saveState`), ne snímek v poloviční přesnosti:
@@ -253,6 +252,56 @@ není tlak, ale advekce (MacCormack pro kouř, teplotu a rychlost). Profil
 se drží jen v paměti. Snímek přečtený z disku ho nemá a formát cache se
 nemění.
 
+### Velké cache ve viewportu
+
+Snímky simulace drží `sim::FrameStore`: v paměti nejvýš tolik, kolik dovolí
+**Simulation › Cache Size** (512 MB až 8 GB, výchozí 1,5 GB, z příkazové
+řádky `prototype --cache-size MB`). Co se nevejde, jde na disk a čte se
+zpátky, jak se přehrává — jako v Houdini, kde cache v paměti doplňuje cache
+na disku.
+
+![Editor přehrává 150 snímků povodně z disku s cache 64 MB: na časové ose tmavý pás všech snímků na disku a světlý pás těch 70 v paměti kolem přehrávací hlavy (víc před ní než za ní); v přehledu „150 frames · 70 in memory, 63 MB“](img/editor-big-cache.jpg)
+
+- **Odkládání na disk** (Cache Size › **Past It to Disk**, zapnuté):
+  simulace delší, než se vejde do paměti, běží dál. Snímky nejdál od
+  přehrávací hlavy se zapíšou do dočasné složky editoru
+  (`prototype-frames-<pid>-<n>` v systémovém temp) a z paměti zmizí;
+  přehraje se celá. Složka se smaže se snímky (jiná síť, změna parametru,
+  konec editoru). Vypnuté: plná paměť simulaci zastaví („cache … full“),
+  jako dřív. Když disk nestačí (plný disk, nejvýš 64 GB), přehled ukáže
+  „nothing more to disk“ a simulace čeká.
+- **Čtení dopředu.** Vlastní vlákno čte snímky před přehrávací hlavou ve
+  směru přehrávání, kolik jich rozpočet unese (nejvýš 240), za ní polovinu
+  té vzdálenosti. Z paměti jdou nejdřív snímky nejdál od hlavy, ty za ní
+  dvakrát dřív než ty před ní. Časová osa se nikdy nezastaví čekáním na
+  disk: přehrávání jde na další snímek, až je načtený, scrub ukazuje
+  poslední snímek s nápisem „reading frame N…“, dokud nepřijde ten pod
+  hlavou. Export, render a video si snímek počkají.
+- **Časová osa** ukazuje, co kde je: tmavý pás snímky na disku, světlé pásy
+  snímky v paměti. Přehled: „Cache 150 frames · 70 in memory, 63 MB“
+  a „On Disk 150 frames, 120 MB“; stavový řádek „cache 150 / 150 (63 MB,
+  0.1 GB on disk)“.
+- **Zástupné mřížky** (View › **Proxies**, zapnuté): velké snímky plynu
+  a vody jdou na GPU při přehrávání a scrubu na hrubší mřížce, nejvýš
+  ~4 miliony buněk (2×, 4× nebo 8× hrubší, buňka je průměr těch pod ní).
+  Jakmile se snímek 0,35 s nemění, nahraje se celý. V rohu viewportu je
+  „Frame 8 · 0.27 s · proxy“. Malé snímky (táborák, povodeň ve 96) se
+  nezmenšují.
+
+Změřeno na 4 jádrech:
+
+| | |
+|---|---|
+| `flood_crates` (voda 96 × 24 × 48), 150 snímků, Cache Size 64 MB | 59–70 snímků v paměti (~0,9 MB na snímek), 120 MB odloženo na disk; simulace doběhne celá a přehraje se celá |
+| `flood_crates_hd` (512 × 128 × 256, 17,6 milionu částic) z disku | snímek 23–27 MB; přečtení 57–89 ms (průměr ~70 ms), přehrávání z disku ~15 snímků/s; 8 snímků v paměti 195 MB |
+| tamtéž, voda na GPU | 16,8 milionu buněk; při přehrávání zástupná mřížka 256 × 64 × 128 = 2,1 milionu (8× méně dat) |
+
+V kódu: `FrameStore::get(n)` počká (export, render), `ready(n)` nikdy —
+vrátí snímek, je-li v paměti, jinak null a snímek zařadí ke čtení jako
+první. `setPlayhead(frame, direction)` řídí, co se drží a co se čte dopředu.
+Snímky přidává simulace (`add`) s číslem generace: snímek simulace, která
+mezitím skončila (jiná síť), se nepřidá.
+
 ## 4. Export
 
 | přípona | co zapíše | kdo to čte |
@@ -362,7 +411,8 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 | `src/pg/sim/Cache.h` | `formatFrame` / `parseFrame`, `writeFrame` / `readFrame`, `writeCacheInfo` / `readCacheInfo` (i průběh bake), `networkHash`, `writeCheckpoint` / `readCheckpoint`, `writeWhole` (zápis přes `.part`) |
 | `src/pg/sim/State.h` | `StateWriter` / `StateReader`: stav řešiče jako bajty, čtení hlídá každou délku |
 | `src/pg/sim/World.h` | `WorldSolver::saveState` / `loadState` (tělesa se spočítají znovu), `preview` |
-| `tools/prototype/SimRunner.h` | `stream`: snímky čtené z disku podle potřeby, nejdéle nepoužité uvolní; `refresh` najde nové od bake; `adopt`: snímky v paměti |
+| `src/pg/sim/FrameStore.h` | snímky v paměti v rozpočtu, odložené na disk za ním, čtení dopředu před přehrávací hlavou na vlastním vlákně; `get` (počká) a `ready` (nikdy) |
+| `tools/prototype/SimRunner.h` | simulace na vlastním vlákně, snímky ve `FrameStore`; `stream`: cache z disku; `refresh` najde nové od bake |
 | `tools/prototype/Bake.h` | proces bake (`posix_spawn`), průběh, odhad, zrušení, `canResume` |
 | `tools/prototype/Wedge.h` | wedge: fronta bake, jeden na hodnotu parametru, `wedge.txt` |
 | `src/pg/sim/Frame.h` | `Frame::Profile`: kam šel čas kroku (části, fáze plynu); `WorldSolver::profile` |
@@ -391,6 +441,13 @@ Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
 - složka cache s `cache.txt` (fps 30, ne 29.999998) a hash sítě bez poloh
   uzlů.
 
+`tests/test_frame_store.cpp`, 5 testů: co se vejde, zůstane v paměti;
+za rozpočtem se snímky odloží na disk a přečtou zpátky bajt po bajtu stejné
+(a `clear` složku smaže); bez odkládání je plno; cache z disku se čte
+dopředu před hlavou i dozadu, co hlava opustí, jde z paměti, chybějící
+soubor vrátí null; a totéž z několika vláken naráz se simulací, časovou
+osou a exportem (i pod ThreadSanitizerem bez hlášení).
+
 `tests/test_state.cpp`, 11 testů: pokračování z checkpointu bitově stejné
 jako nepřerušená simulace (řídký a hustý plyn, zdroj v pohybu, voda, déšť
 na vodě, odstřel s prachem; každý snímek po obnovení porovnaný jako bajty
@@ -415,6 +472,10 @@ s průběhem tam a zpět; checkpoint na disku přepsaný celý; profil kroku
   převede. Tuhá tělesa se při obnovení počítají znovu od začátku. U odstřelu
   (593 kusů, plyn 96 buněk) obnovení na snímku 120 trvá 0,6 s a checkpoint
   má 23 MB; u tisíců kusů a dlouhých záběrů to bude víc.
+- Snímek odložený na disk je ve formátu cache (poloviční přesnost,
+  komprese nul), ne komprimovaný jako VDB nebo Alembic; čtení je omezené
+  rychlostí disku a rozbalením (~340 MB/s na snímek). Zástupné mřížky
+  zmenšují jen to, co jde na GPU, ne částice ani čtení.
 - Bake běží na tomtéž stroji jako editor (proces, ne fronta farmy)
   a jen na Linuxu (`/proc/self/exe`, `posix_spawn`).
 - PLY čte jen prvky `vertex` a `face`, ostatní přeskočí.

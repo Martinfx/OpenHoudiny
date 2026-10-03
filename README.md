@@ -73,7 +73,8 @@ okna.
   body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
   Houdini, Blender a renderery; bake na pozadí s průběhem, zrušením
   a pokračováním z checkpointu, náhled na hrubších mřížkách (jak jemných,
-  řekne uzel Output), wedge (varianty parametru) a profil kroku
+  řekne uzel Output), wedge (varianty parametru), profil kroku a velké
+  cache ve viewportu (odložené na disk, čtené dopředu, zástupné mřížky)
 - **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi
   Fracture, tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
   které nárazy lámou, nálože, drcení na prach, drť jako částice, které

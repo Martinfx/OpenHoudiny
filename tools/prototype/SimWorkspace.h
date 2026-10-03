@@ -102,6 +102,11 @@ public:
     void newNetwork();
     /// Selects a node by name, as if clicked: for screenshots.
     void selectNode(const std::string& name);
+    /// The frames of the cache in `folder` in place of simulated ones, read
+    /// as they are played (Simulation > Load Cache from Disk).
+    bool openCache(const std::string& folder) { return loadCache(folder); }
+    /// The most memory the frames take (Simulation > Cache Size).
+    void setCacheSize(size_t bytes);
     /// What the viewport's gizmo does: select, move, rotate, scale.
     void setTool(GizmoMode tool) { tool_ = tool; }
 
@@ -197,7 +202,14 @@ private:
     void clearThumbnails();
 
     // --- the viewport -------------------------------------------------------------------
+    /// The frame at the play head -- or, while the simulation has not got
+    /// there yet, the latest before it -- if it is in memory: never waits
+    /// for one read from disk (null meanwhile; it is read next).
     std::shared_ptr<const sim::Frame> frameToShow() const;
+    /// Frame `n` if it is in memory, as frameToShow(); in a synchronous
+    /// window -- screenshots, scripts -- read now, so that N frames of the
+    /// window are N frames of the timeline.
+    std::shared_ptr<const sim::Frame> readyFrame(int n) const;
     /// The frame the viewport shows: the simulation's frame on screen, else
     /// the play head's.
     int shownFrame() const { return shown_ ? shown_->number : current_; }
@@ -593,6 +605,12 @@ private:
     int current_ = 1;
     bool playing_ = true, loop_ = true;
     double clock_ = 0.0;
+    int lastCurrent_ = 1, direction_ = 1;  ///< which way the play head went: what is read ahead
+    /// Big frames drawn coarser while they change -- playing, scrubbing --
+    /// and as they are when the play head rests (View > Proxies).
+    bool proxies_ = true;
+    bool shownProxy_ = false;   ///< what is drawn is the coarser one
+    double shownAt_ = 0.0;      ///< when the frame on screen was put there
 
     // What the viewport shows, to draw again only when it changes.
     std::shared_ptr<const sim::Frame> shown_;

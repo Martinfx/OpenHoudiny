@@ -363,10 +363,16 @@ takže zjednodušit nejde co. Desetinásobek za stejný čas potřebuje
   s prouděním podle vířivosti hrubé simulace. Příklad `campfire_upres`:
   řešič 64 s upresem ×3 za 177 ms a 167 MB na snímek proti 358 ms a 334 MB
   řešiče ve 192.
+- ✅ **Viewport pro velké cache** ([docs/cache.md](docs/cache.md#velké-cache-ve-viewportu)):
+  snímky v paměti v rozpočtu (Cache Size), za ním odložené na disk a čtené
+  zpátky; cache z disku čtená dopředu před přehrávací hlavou na vlastním
+  vlákně, časová osa nikdy nečeká; pásy paměti a disku na časové ose;
+  zástupné mřížky plynu a vody při přehrávání (nejvýš ~4 miliony buněk),
+  plné po zastavení. `flood_crates_hd` (24 MB na snímek) se z disku
+  přehrává ~15 snímků/s; 150 snímků povodně s cache 64 MB doběhne celých.
 - **GPU** pro řešiče.
 - **Packed primitives, instance a out-of-core** — miliony kusů a data
   větší než paměť.
-- **Viewport pro velké cache**: zástupné tvary, přehrávání z disku.
 
 **Hotovo, když:** prach odstřelu má 100 milionů voxelů a spočítá se na
 jednom stroji přes noc. **Splněno:** prach příkladu `demolition` s

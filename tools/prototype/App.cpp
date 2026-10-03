@@ -1,11 +1,14 @@
 // The editor's window -- what `prototype` opens when it is given no command:
 //
 //   prototype [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]
-//            [--library FILE]... [--target NAME] [--mesh NAME]
+//            [--library FILE]... [--target NAME] [--mesh NAME] [--cache DIR] [--cache-size MB]
 //            [--size WxH] [--screenshot OUT.png [--frames N]] [--script FILE]
 //
 // It opens on the Simulation network, with the campfire example -- or the
-// file given, in the network it belongs to. --screenshot draws N frames
+// file given, in the network it belongs to. --cache plays the frames of a
+// cache on disk in place of simulating them, read as they are played;
+// --cache-size the most memory the frames take (Simulation > Cache Size),
+// past it they go to disk. --screenshot draws N frames
 // (default 30), saves the window as a PNG and quits: how the editor is tested
 // on a machine without a display (under xvfb-run). Then each frame of the
 // window is one step of the simulation, so N frames show frame N.
@@ -258,10 +261,10 @@ bool saveWindow(const pg::gl::Api& gl, int w, int h, const std::string& path) {
 namespace pg::editor {
 
 int runEditor(int argc, char** argv) {
-    std::string path, screenshot, target, mesh, example, select, scriptPath;
+    std::string path, screenshot, target, mesh, example, select, scriptPath, cache;
     std::vector<std::string> libraries;
     bool shaders = false;
-    int frames = 30, width = 1600, height = 960;
+    int frames = 30, width = 1600, height = 960, cacheMb = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
@@ -293,6 +296,11 @@ int runEditor(int argc, char** argv) {
         } else if (a == "--script") {
             if (!(v = next())) return usage();
             scriptPath = v;
+        } else if (a == "--cache") {
+            if (!(v = next())) return usage();
+            cache = v;
+        } else if (a == "--cache-size") {
+            if (!(v = next()) || (cacheMb = std::atoi(v)) < 16) return usage();
         } else if (a == "--shaders") {
             shaders = true;
         } else if (!a.empty() && a[0] == '-') {
@@ -387,6 +395,11 @@ int runEditor(int argc, char** argv) {
         }
         if (shaders) editor.showShaders();
         if (!select.empty()) editor.simulation().selectNode(select);
+        if (cacheMb > 0) editor.simulation().setCacheSize(static_cast<size_t>(cacheMb) << 20);
+        if (!cache.empty() && !editor.simulation().openCache(cache)) {
+            std::fprintf(stderr, "prototype: %s\n", editor.simulation().message().c_str());
+            status = 1;
+        }
 
         int frame = 0;
         std::string title;

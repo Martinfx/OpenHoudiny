@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace pg::editor::ui {
@@ -144,6 +145,9 @@ struct TimelineState {
     int frames = 150;      ///< the range is 1 .. frames
     int current = 1;       ///< the play head
     int cached = 0;        ///< frames 1 .. cached are ready to show
+    /// Of those, the runs in memory, first and last of each -- the rest are
+    /// read from disk as they are played. Empty: all of them.
+    std::vector<std::pair<int, int>> memory;
     bool simulating = false;
     bool playing = false;
     bool loop = true;
