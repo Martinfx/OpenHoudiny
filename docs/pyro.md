@@ -736,7 +736,7 @@ připojit do obou řešičů najednou.
 | uzel | parametry |
 |---|---|
 | **Water Source** (Sources) | `shape`, `file`, `center`, `rotation`, `size` jako u objektu; `mode`: `fill` naplní tvar vodou jednou, když zdroj začne (blok vody, bazén), `flow` z něj vodu vylévá (hadice, fontána, pramen); `velocity` rychlost vytékající vody v osách zdroje; `seed`; `start`, `end` |
-| **Liquid Solver** (Simulation) | Domain: `size`, `resolution` (buněk podél nejdelší strany, 16 až 256), `closed_sides` (nádrž se stěnami; vypnuté: voda přetéká okraji a mizí); Motion: `gravity`, `flip` (Splash: 1 živá, stříkající voda, 0 hladká a hustá; běžně 0,9 až 0,98); Time: `substeps`, `seed` |
+| **Liquid Solver** (Simulation) | Domain: `size`, `resolution` (buněk podél nejdelší strany, 16 až 256), `closed_sides` (nádrž se stěnami; vypnuté: voda přetéká okraji a mizí), `sparse` (počítat jen dlaždice kolem vody, výchozí zapnuto; vypnuté: všechny dlaždice, stejná voda bit po bitu, víc paměti a času); Motion: `gravity`, `flip` (Splash: 1 živá, stříkající voda, 0 hladká a hustá; běžně 0,9 až 0,98); Time: `substeps`, `seed` |
 | **Water Look** (Render) | `color` (barva hluboké vody), `clarity` (jak daleko je do vody vidět, v metrech), `foam` (jak bílá je pěna a tříšť), `surface` (kreslit hladinu; vypnutá: voda se simuluje, vidět jsou jen její částice přes Liquid Points) |
 
 Ve viewportu se voda přidá přes **Shift+A → Water**: *Block of Water*,
@@ -773,6 +773,22 @@ Jeden podkrok ([`src/pg/sim/Liquid.h`](../src/pg/sim/Liquid.h)):
 
 Podkroků je tolik, aby se žádná částice nepohnula o víc než dvě buňky,
 nejméně `substeps`.
+
+**Řídká voda.** Mřížky vody se drží v dlaždicích 8 × 8 × 8 buněk
+([`SparseGrid.h`](../src/pg/sim/SparseGrid.h)) jako u řídkého plynu, ale jen
+tam, kde voda je: dlaždice s částicemi, dlaždice zdrojů, které se chystají
+vylít, a všechny dlaždice kolem nich. Všechno, co podkrok dělá, sahá od
+částic jen pár buněk (jádro částice 1,2 buňky, rychlost přenesená za vodu
+4 vrstvy, sousedé tlaku), tedy hluboko do dlaždice kolem. Vzduch nad jezerem
+ani prázdná polovina domény povodně nestojí paměť ani čas. Co se děje mimo
+dlaždice, se k částicím nikdy nedostane, takže řídká voda je hustá voda bit
+po bitu: `sparse` vypnuté drží všechny dlaždice a test to ověřuje na nádrži
+s hadicí, pohyblivým tělesem, větrem a víry. Částice se třídí do buněk
+v pořadí celé mřížky (x nejrychleji, pak y, pak z), ne po dlaždicích, aby
+stěny a buňky sbíraly jejich příspěvky ve stejném pořadí. Tělesa mají
+dlaždice vlastní, kolem každého collideru: vzdálenost v rozích buněk,
+otevřenost stěn a buňky se středem v tělese. Tlak se zatím řeší na celé
+mřížce, na dlaždice se přesune v dalším kroku.
 
 **Tlak s volnou hladinou** ([`FreeSurface.h`](../src/pg/sim/FreeSurface.h)).
 Rovnice je stejná jako u plynu, jen se řeší na buňkách vody a tlak na

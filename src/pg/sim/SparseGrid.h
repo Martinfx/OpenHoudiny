@@ -6,7 +6,8 @@
 //
 // Cells, positions and sampling are those of Grid (Grid.h): cell (i, j, k)
 // covers [i, i+1) x [j, j+1) x [k, k+1) and its value sits at its centre. A
-// cell that is not stored reads 0 -- still, empty air.
+// cell that is not stored reads the grid's background: 0 -- still, empty air
+// -- unless the grid was made with another, as a distance far from anything.
 //
 // Fields of one shape share their Tiles, so a cell has the same index() in
 // each: a loop over the active cells reads and writes all of them at once.
@@ -104,14 +105,17 @@ public:
     SparseGrid() = default;
     /// Every tile stored, every cell `value`.
     SparseGrid(int nx, int ny, int nz, float value = 0.0f);
-    /// The tiles `tiles` keeps, all 0.
-    explicit SparseGrid(std::shared_ptr<const Tiles> tiles);
+    /// The tiles `tiles` keeps, every value `background` -- what the cells
+    /// not stored read too.
+    explicit SparseGrid(std::shared_ptr<const Tiles> tiles, float background = 0.0f);
 
     int nx() const { return tiles_ ? tiles_->nx() : 0; }
     int ny() const { return tiles_ ? tiles_->ny() : 0; }
     int nz() const { return tiles_ ? tiles_->nz() : 0; }
     const Tiles& tiles() const { return *tiles_; }
     const std::shared_ptr<const Tiles>& shared() const { return tiles_; }
+    /// What a cell that is not stored reads.
+    float background() const { return background_; }
 
     /// Is cell (i, j, k) stored (its tile is), and does it count?
     bool stored(int i, int j, int k) const { return slotOf(i, j, k) >= 0; }
@@ -132,10 +136,11 @@ public:
                Tiles::kSide * (static_cast<size_t>(j & (Tiles::kSide - 1)) +
                                Tiles::kSide * static_cast<size_t>(k & (Tiles::kSide - 1)));
     }
-    /// The value of a cell inside the grid; 0 where it is not stored.
+    /// The value of a cell inside the grid; the background where it is not
+    /// stored.
     float at(int i, int j, int k) const {
         const int32_t s = slotOf(i, j, k);
-        return s < 0 ? 0.0f : data_[static_cast<size_t>(s) * Tiles::kCells + local(i, j, k)];
+        return s < 0 ? background_ : data_[static_cast<size_t>(s) * Tiles::kCells + local(i, j, k)];
     }
     /// A stored cell's value, to write. (Not an overload of at(): a read in a
     /// method that may write would take it, and fail where nothing is stored.)
@@ -155,11 +160,11 @@ public:
     size_t size() const { return data_.size(); }
     const std::vector<float>& values() const { return data_; }
 
-    /// Over every cell of the grid, those not stored as 0.
+    /// Over every cell of the grid, those not stored as the background.
     float max() const;
     double sum() const;
 
-    /// Keeps the values of the tiles both keep; the rest 0.
+    /// Keeps the values of the tiles both keep; the rest the background.
     void retile(std::shared_ptr<const Tiles> tiles);
     /// Every cell, as a dense grid.
     Grid dense() const;
@@ -170,6 +175,7 @@ private:
 
     std::shared_ptr<const Tiles> tiles_;
     std::vector<float> data_;
+    float background_ = 0.0f;
     const int32_t* slots_ = nullptr;
     size_t tx_ = 0, txy_ = 0;
 };

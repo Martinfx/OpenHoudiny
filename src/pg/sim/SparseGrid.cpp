@@ -89,8 +89,8 @@ SparseGrid::SparseGrid(int nx, int ny, int nz, float value)
     cache();
 }
 
-SparseGrid::SparseGrid(std::shared_ptr<const Tiles> tiles)
-    : tiles_(std::move(tiles)), data_(tiles_->stored().size() * Tiles::kCells, 0.0f) {
+SparseGrid::SparseGrid(std::shared_ptr<const Tiles> tiles, float background)
+    : tiles_(std::move(tiles)), data_(tiles_->stored().size() * Tiles::kCells, background), background_(background) {
     cache();
 }
 
@@ -114,8 +114,45 @@ inline bool outside(float x, float y, float z, int nx, int ny, int nz) {
 }  // namespace
 
 float SparseGrid::sample(float x, float y, float z, bool zeroOutside) const {
-    float lo, hi;
-    return sample(x, y, z, zeroOutside, lo, hi);
+    const int nx = this->nx(), ny = this->ny(), nz = this->nz();
+    if (zeroOutside && outside(x, y, z, nx, ny, nz)) return 0.0f;
+    // The sample below without the bounds: the solvers' lookups, many a step.
+    const float fx = std::max(0.0f, std::min(x - 0.5f, static_cast<float>(nx - 1)));
+    const float fy = std::max(0.0f, std::min(y - 0.5f, static_cast<float>(ny - 1)));
+    const float fz = std::max(0.0f, std::min(z - 0.5f, static_cast<float>(nz - 1)));
+    const int i = static_cast<int>(fx), j = static_cast<int>(fy), k = static_cast<int>(fz);
+    const int di = i + 1 < nx ? 1 : 0, dj = j + 1 < ny ? 1 : 0, dk = k + 1 < nz ? 1 : 0;
+    const float tx = fx - static_cast<float>(i), ty = fy - static_cast<float>(j), tz = fz - static_cast<float>(k);
+    constexpr int kLast = Tiles::kSide - 1;
+    float c000, c100, c010, c110, c001, c101, c011, c111;
+    if ((i & kLast) + di <= kLast && (j & kLast) + dj <= kLast && (k & kLast) + dk <= kLast) {
+        const int32_t s = slotOf(i, j, k);
+        if (s < 0) return background_;
+        const float* c = data_.data() + static_cast<size_t>(s) * Tiles::kCells + local(i, j, k);
+        const size_t ox = static_cast<size_t>(di), oy = dj ? Tiles::kSide : 0u,
+                     oz = dk ? Tiles::kSide * Tiles::kSide : 0u;
+        c000 = c[0];
+        c100 = c[ox];
+        c010 = c[oy];
+        c110 = c[oy + ox];
+        c001 = c[oz];
+        c101 = c[oz + ox];
+        c011 = c[oz + oy];
+        c111 = c[oz + oy + ox];
+    } else {
+        c000 = at(i, j, k);
+        c100 = at(i + di, j, k);
+        c010 = at(i, j + dj, k);
+        c110 = at(i + di, j + dj, k);
+        c001 = at(i, j, k + dk);
+        c101 = at(i + di, j, k + dk);
+        c011 = at(i, j + dj, k + dk);
+        c111 = at(i + di, j + dj, k + dk);
+    }
+    const float x00 = c000 + (c100 - c000) * tx, x10 = c010 + (c110 - c010) * tx;
+    const float x01 = c001 + (c101 - c001) * tx, x11 = c011 + (c111 - c011) * tx;
+    const float y0 = x00 + (x10 - x00) * ty, y1 = x01 + (x11 - x01) * ty;
+    return y0 + (y1 - y0) * tz;
 }
 
 float SparseGrid::sample(float x, float y, float z, bool zeroOutside, float& lo, float& hi) const {
@@ -137,8 +174,8 @@ float SparseGrid::sample(float x, float y, float z, bool zeroOutside, float& lo,
         // The eight in one tile: one look in the table.
         const int32_t s = slotOf(i, j, k);
         if (s < 0) {
-            lo = hi = 0.0f;
-            return 0.0f;
+            lo = hi = background_;
+            return background_;
         }
         const float* c = data_.data() + static_cast<size_t>(s) * Tiles::kCells + local(i, j, k);
         const size_t ox = static_cast<size_t>(di), oy = dj ? Tiles::kSide : 0u,
@@ -174,8 +211,8 @@ void SparseGrid::fill(float value) { std::fill(data_.begin(), data_.end(), value
 float SparseGrid::max() const {
     if (!tiles_ || nx() <= 0 || ny() <= 0 || nz() <= 0) return 0.0f;
     bool any = false;
-    float m = 0.0f;
-    if (!tiles_->all()) any = true;  // a cell not stored: 0
+    float m = background_;
+    if (!tiles_->all()) any = true;  // a cell not stored: the background
     for (size_t s = 0; s < tiles_->stored().size(); ++s) {
         int c[3];
         tiles_->corner(tiles_->stored()[s], c[0], c[1], c[2]);
@@ -206,7 +243,7 @@ double SparseGrid::sum() const {
 }
 
 void SparseGrid::retile(std::shared_ptr<const Tiles> tiles) {
-    std::vector<float> next(tiles->stored().size() * Tiles::kCells, 0.0f);
+    std::vector<float> next(tiles->stored().size() * Tiles::kCells, background_);
     if (tiles_) {
         const Tiles& from = *tiles_;
         const std::vector<uint32_t>& to = tiles->stored();

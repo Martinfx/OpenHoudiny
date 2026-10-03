@@ -237,7 +237,7 @@ WaterFrame capture(const LiquidSolver& sim, bool particles) {
             }
         }
     });
-    const Grid* v[3] = {&sim.velocity(0), &sim.velocity(1), &sim.velocity(2)};
+    const SparseGrid* v[3] = {&sim.velocity(0), &sim.velocity(1), &sim.velocity(2)};
     w.flow.assign(3 * d.cellCount(), 0);
     uint16_t* flow = w.flow.data();
     pg::parallelFor(static_cast<size_t>(nz), 1, [&](size_t begin, size_t end) {

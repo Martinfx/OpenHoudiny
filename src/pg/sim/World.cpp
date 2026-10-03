@@ -271,12 +271,12 @@ RigidFluids WorldSolver::fluids() const {
 
 // The state: "pgstate", a version, the frame; what the water, the gas and
 // the cloth did to the pieces in each step so far (version 2); then each
-// part there is -- the gas, the water, the rain, the cloth, torn or not
-// (version 3) -- as its saveState() writes it. The pieces' is not: they are
-// stepped again, with those flows.
+// part there is -- the gas, the water (its grids on their tiles, version 4),
+// the rain, the cloth, torn or not (version 3) -- as its saveState() writes
+// it. The pieces' is not: they are stepped again, with those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
-constexpr uint32_t kStateVersion = 3;
+constexpr uint32_t kStateVersion = 4;
 }  // namespace
 
 std::string WorldSolver::saveState() const {

@@ -1419,6 +1419,10 @@ std::vector<NodeType> buildTypes() {
            "eight times the work."},
           {"closed_sides", "Closed Sides", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "Walls round the four sides: a tank. Off, the water runs off the edges and is gone."},
+          {"sparse", "Sparse", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "Work only where the water is -- in tiles of 8 cells a side, and those round them: the air above "
+           "it and the empty part of the box cost nothing. Off: every tile, the same water to the bit, in "
+           "more memory and time."},
           {"gravity", "Gravity", "Motion", K::Float, {9.81f, 0.0f, 0.0f}, 0.0f, 20.0f, -100.0f, 100.0f,
            "m/s\xc2\xb2", "How hard the water is pulled down."},
           {"flip", "Splash", "Motion", K::Float, {0.95f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
@@ -3627,7 +3631,8 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
         }
         for (const std::string& name : changing) {
             const bool fixed = (n.type == "pyro_solver" && (name == "size" || name == "resolution")) ||
-                               (n.type == "liquid_solver" && (name == "size" || name == "resolution" || name == "closed_sides")) ||
+                               (n.type == "liquid_solver" &&
+                                (name == "size" || name == "resolution" || name == "closed_sides" || name == "sparse")) ||
                                (n.type == "output" && (name == "frames" || name == "fps")) ||
                                (n.type == "rbd_solver" && name != "color" && name != "inside_color" && name != "rebar_color") ||
                                (n.type == "cloth_solver" && name != "color");
@@ -4342,6 +4347,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.size = v3(*solver, "size");
         s.resolution = whole(*solver, "resolution");
         s.closedSides = f(*solver, "closed_sides") != 0.0f;
+        s.sparse = f(*solver, "sparse") != 0.0f;
         s.timeStep = c.world.timeStep;
         s.substeps = whole(*solver, "substeps");
         s.flip = f(*solver, "flip");

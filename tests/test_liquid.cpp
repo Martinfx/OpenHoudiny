@@ -249,7 +249,7 @@ TEST(liquid_still_water_stays_still) {
     CHECK(particles > 0);
     const float h = sim.cellSize();
     // p = g * depth, per unit density, at the centre of the bottom cell.
-    const Grid& p = sim.pressure();
+    const SparseGrid& p = sim.pressure();
     const int column = sim.domain().cells[0] / 2;
     const float bottom = p.at(column, 0, column);
     const float want = 9.81f * (0.3f - 0.5f * h);
@@ -365,8 +365,8 @@ TEST(liquid_water_stays_out_of_solids) {
     LiquidSolver sim(s);
     // The faces inside the box are closed; those far from it open.
     const int mid = sim.domain().cells[0] / 2;
-    CHECK_EQ(sim.open(1).at(mid, 4, mid), 0.0f);
-    CHECK_EQ(sim.open(1).at(1, 20, 1), 1.0f);
+    CHECK_EQ(sim.open(1, mid, 4, mid), 0.0f);
+    CHECK_EQ(sim.open(1, 1, 20, 1), 1.0f);
     for (int f = 0; f < 30; ++f) sim.step();
     const float h = sim.cellSize();
     int inside = 0, beside = 0;
@@ -568,6 +568,121 @@ TEST(liquid_is_bitwise_identical_across_thread_counts) {
     CHECK(std::memcmp(one.positions().data(), four.positions().data(), one.particleCount() * sizeof(Vec3)) == 0);
     CHECK(std::memcmp(one.velocities().data(), four.velocities().data(), one.particleCount() * sizeof(Vec3)) == 0);
     CHECK(std::memcmp(one.pressure().data(), four.pressure().data(), one.pressure().size() * sizeof(float)) == 0);
+}
+
+TEST(liquid_sparse_is_the_dense_water_to_the_bit) {
+    // A dam in one end of a tall tank, a hose that pours later, a ball the
+    // water flows past as it moves, a box away from the water, a wind and
+    // whirls: kept in the tiles round the water, it is the water of every
+    // tile -- particles, pressure, surface, level and frames alike.
+    LiquidScene s = tank(Vec3(2.0f, 1.5f, 1.0f), 48, block(Vec3(-0.7f, 0.3f, 0.0f), Vec3(0.6f, 0.6f, 1.0f)));
+    WaterSource hose = block(Vec3(0.6f, 1.1f, 0.2f), Vec3(0.1f, 0.1f, 0.1f));
+    hose.shape = Shape::Cylinder;
+    hose.mode = WaterMode::Flow;
+    hose.velocity = Vec3(0.0f, -1.0f, 0.0f);
+    hose.start = 0.1f;
+    hose.end = 0.3f;
+    s.sources.push_back(hose);
+    Collider ball;
+    ball.center = Vec3(-0.45f, 0.15f, 0.0f);
+    ball.size = Vec3(0.2f);
+    ball.velocity = Vec3(0.5f, 0.0f, 0.0f);
+    s.colliders.push_back(ball);
+    Collider box;
+    box.shape = Shape::Box;
+    box.center = Vec3(0.75f, 0.15f, -0.3f);
+    box.size = Vec3(0.3f, 0.3f, 0.3f);
+    s.colliders.push_back(box);
+    Force wind;
+    wind.kind = ForceKind::Wind;
+    wind.speed = 3.0f;
+    s.forces.push_back(wind);
+    Force whirl;
+    whirl.kind = ForceKind::Turbulence;
+    whirl.strength = 1.0f;
+    s.forces.push_back(whirl);
+    LiquidScene all = s;
+    all.solver.sparse = false;
+    LiquidSolver sparse(s), dense(all);
+    CHECK(dense.tiles().all());
+    size_t fewest = dense.tiles().stored().size();
+    for (int f = 0; f < 12; ++f) {
+        sparse.step();
+        dense.step();
+        fewest = std::min(fewest, sparse.tiles().stored().size());
+    }
+    CHECK(fewest < dense.tiles().stored().size() / 2);  // the air above the dam is not kept
+    const size_t n = sparse.particleCount();
+    CHECK_EQ(n, dense.particleCount());
+    CHECK(n > 0);
+    CHECK(std::memcmp(sparse.positions().data(), dense.positions().data(), n * sizeof(Vec3)) == 0);
+    CHECK(std::memcmp(sparse.velocities().data(), dense.velocities().data(), n * sizeof(Vec3)) == 0);
+    CHECK(std::memcmp(sparse.foam().data(), dense.foam().data(), n * sizeof(float)) == 0);
+    CHECK(sparse.ids() == dense.ids());
+    // The grids, where the water is, and the surface everywhere -- as far as
+    // the particles reach where no tile is kept.
+    const Domain& d = sparse.domain();
+    int differ = 0;
+    for (int k = 0; k < d.cells[2]; ++k) {
+        for (int j = 0; j < d.cells[1]; ++j) {
+            for (int i = 0; i < d.cells[0]; ++i) {
+                if (sparse.surface().at(i, j, k) != dense.surface().at(i, j, k)) ++differ;
+                if (sparse.pressure().at(i, j, k) != dense.pressure().at(i, j, k)) ++differ;
+            }
+        }
+    }
+    CHECK_EQ(differ, 0);
+    for (size_t p = 0; p < n; p += 7) {
+        const Vec3& x = sparse.positions()[p];
+        CHECK(sparse.velocityAt(x) == dense.velocityAt(x));
+        CHECK_EQ(sparse.distanceToSurface(x + Vec3(0.0f, 0.3f, 0.0f)), dense.distanceToSurface(x + Vec3(0.0f, 0.3f, 0.0f)));
+    }
+    CHECK(sparse.waterLevel().height == dense.waterLevel().height);
+    const WaterFrame a = capture(sparse), b = capture(dense);
+    CHECK(a.cells == b.cells);
+    CHECK(a.flow == b.flow);
+}
+
+TEST(liquid_keeps_the_tiles_round_the_water_and_its_sources) {
+    // A pool in a corner of a big tank, a fill source high above it that
+    // starts later: the tiles kept are those of the water and the ones round
+    // them -- not the air above it -- and the source's once it is about to
+    // pour.
+    WaterSource pool = block(Vec3(-1.6f, 0.15f, -0.6f), Vec3(0.5f, 0.3f, 0.5f));
+    LiquidScene s = tank(Vec3(4.0f, 2.0f, 2.0f), 128, pool);
+    WaterSource late = block(Vec3(1.5f, 1.6f, 0.6f), Vec3(0.2f, 0.2f, 0.2f));
+    late.start = 0.5f;
+    s.sources.push_back(late);
+    LiquidSolver sim(s);
+    // Before the first step: the pool's source.
+    CHECK(sim.tiles().stored().size() > 0);
+    CHECK(sim.tiles().stored().size() < sim.tiles().tileCount() / 10);
+    sim.step();
+    // Every particle in a kept tile, and every tile round its tile too.
+    const Domain& d = sim.domain();
+    const Vec3 o = d.origin();
+    int outside = 0;
+    for (const Vec3& p : sim.positions()) {
+        const int c[3] = {static_cast<int>((p.x - o.x) / d.voxel), static_cast<int>((p.y - o.y) / d.voxel),
+                          static_cast<int>((p.z - o.z) / d.voxel)};
+        for (int q = 0; q < 27; ++q) {
+            const int x = c[0] + 8 * (q % 3 - 1), y = c[1] + 8 * (q / 3 % 3 - 1), z = c[2] + 8 * (q / 9 - 1);
+            if (x < 0 || y < 0 || z < 0 || x >= d.cells[0] || y >= d.cells[1] || z >= d.cells[2]) continue;
+            if (!sim.tiles().has(x, y, z)) ++outside;
+        }
+    }
+    CHECK_EQ(outside, 0);
+    // The far corner and the air above the pool: not kept.
+    CHECK(!sim.tiles().has(d.cells[0] - 1, d.cells[1] - 1, d.cells[2] - 1));
+    CHECK(!sim.tiles().has(4, d.cells[1] - 4, 4));
+    // The late source: kept from the step before it pours, and filled.
+    const int si = static_cast<int>((1.5f - o.x) / d.voxel), sj = static_cast<int>((1.6f - o.y) / d.voxel),
+              sk = static_cast<int>((0.6f - o.z) / d.voxel);
+    CHECK(!sim.tiles().has(si, sj, sk));
+    const size_t before = sim.particleCount();
+    while (sim.time() < 0.55f) sim.step();  // a step from 0.5 on: it pours
+    CHECK(sim.particleCount() > before);
+    CHECK(sim.tiles().has(si, sj - 8, sk));  // its water, falling
 }
 
 TEST(liquid_scenes_out_of_range_are_made_safe) {

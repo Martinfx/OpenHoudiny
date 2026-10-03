@@ -4,8 +4,8 @@
 // example has them -- at the resolutions asked for. How long a frame of the
 // water takes and where its time goes, how much memory the whole run holds,
 // and how much of the domain the water takes: the 8^3 tiles with particles
-// in them, and those with the tiles round them -- what a sparse grid, which
-// keeps only the water and the reach of a step, would store.
+// in them, and the tiles the solver keeps -- those and the tiles round them
+// (all of them with --set sparse=0).
 //
 //   pgbench_liquid [RESOLUTION...] [--frames N] [--set PARAM=VALUE]... [--example NAME]
 //
@@ -47,7 +47,7 @@ double peakMb() {
 }
 
 /// Of the 8^3 tiles of the domain: how many hold a particle, and how many
-/// are such a tile or next to one (the 26 round it).
+/// the solver keeps.
 struct Share {
     size_t tiles = 0, water = 0, reach = 0;
 };
@@ -57,29 +57,15 @@ Share share(const sim::LiquidSolver& s) {
     const int t[3] = {(d.cells[0] + 7) / 8, (d.cells[1] + 7) / 8, (d.cells[2] + 7) / 8};
     Share r;
     r.tiles = static_cast<size_t>(t[0]) * static_cast<size_t>(t[1]) * static_cast<size_t>(t[2]);
-    std::vector<uint8_t> water(r.tiles, 0), reach(r.tiles, 0);
+    std::vector<uint8_t> water(r.tiles, 0);
     const Vec3 lo = d.origin();
     for (const Vec3& p : s.positions()) {
         int c[3];
         for (int a = 0; a < 3; ++a) c[a] = std::clamp(static_cast<int>(std::floor((p[a] - lo[a]) / d.voxel)) / 8, 0, t[a] - 1);
         water[static_cast<size_t>(c[0]) + static_cast<size_t>(t[0]) * (static_cast<size_t>(c[1]) + static_cast<size_t>(t[1]) * static_cast<size_t>(c[2]))] = 1;
     }
-    for (int k = 0; k < t[2]; ++k) {
-        for (int j = 0; j < t[1]; ++j) {
-            for (int i = 0; i < t[0]; ++i) {
-                if (!water[static_cast<size_t>(i) + static_cast<size_t>(t[0]) * (static_cast<size_t>(j) + static_cast<size_t>(t[1]) * static_cast<size_t>(k))]) continue;
-                ++r.water;
-                for (int z = std::max(k - 1, 0); z <= std::min(k + 1, t[2] - 1); ++z) {
-                    for (int y = std::max(j - 1, 0); y <= std::min(j + 1, t[1] - 1); ++y) {
-                        for (int x = std::max(i - 1, 0); x <= std::min(i + 1, t[0] - 1); ++x) {
-                            reach[static_cast<size_t>(x) + static_cast<size_t>(t[0]) * (static_cast<size_t>(y) + static_cast<size_t>(t[1]) * static_cast<size_t>(z))] = 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    for (const uint8_t v : reach) r.reach += v;
+    for (const uint8_t v : water) r.water += v;
+    r.reach = s.tiles().stored().size();
     return r;
 }
 
@@ -119,7 +105,7 @@ bool bench(const std::string& example, int resolution, int frames, const std::ve
            std::to_string(d.voxel).substr(0, 5) + " m, " + std::to_string(d.cellCount() / 1000000) + "." +
            std::to_string(d.cellCount() / 100000 % 10) + " M voxels");
     std::printf("  %5s %10s %10s %9s %8s %8s %9s %8s\n", "frame", "water ms", "world ms", "particles", "water",
-                "reach", "substeps", "MB");
+                "kept", "substeps", "MB");
     double waterMs = 0.0, worldMs = 0.0;
     sim::LiquidSolver::Times before = liquid.times();
     for (int f = 1; f <= frames; ++f) {
