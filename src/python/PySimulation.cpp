@@ -210,10 +210,20 @@ void bindSimulation(py::module_& m) {
             return rows(p.f, v.data(), v.size(), 1);
         })
         .def("water_flow", [](const PyFrame& p) {
-            const sim::WaterFrame& w = p.f->water;
+            // A sparse frame's tiles into every cell: a frame of its own, that
+            // the array keeps.
+            FramePtr f = p.f;
+            if (!f->water.flowTiles.empty() && f->water.hasFlow()) {
+                auto dense = std::make_shared<sim::Frame>();
+                dense->water.domain = f->water.domain;
+                std::vector<uint16_t> scratch;
+                dense->water.flow = f->water.denseFlow(scratch);
+                f = dense;
+            }
+            const sim::WaterFrame& w = f->water;
             const sim::Domain d = w.flowDomain();
             const bool some = !w.flow.empty() && w.flow.size() == 3 * d.cellCount();
-            return halves(p.f, some ? w.flow.data() : nullptr,
+            return halves(f, some ? w.flow.data() : nullptr,
                           {some ? d.cells[0] : 0, some ? d.cells[1] : 0, some ? d.cells[2] : 0, 3},
                           {6, 6 * d.cells[0], 6 * d.cells[0] * d.cells[1], 2});
         })

@@ -1414,9 +1414,9 @@ std::vector<NodeType> buildTypes() {
          {{"liquid", "Liquid", PinType::Liquid}},
          {{"size", "Size", "Domain", K::Vector, {2.0f, 1.0f, 1.2f}, 0.1f, 5.0f, 0.1f, 1000.0f, "m",
            "Width, height and depth of the box the water lives in. It stands on the floor, centred."},
-          {"resolution", "Resolution", "Domain", K::Int, {64.0f, 0.0f, 0.0f}, 16.0f, 192.0f, 16.0f, 256.0f, "",
+          {"resolution", "Resolution", "Domain", K::Int, {64.0f, 0.0f, 0.0f}, 16.0f, 192.0f, 16.0f, 1024.0f, "",
            "Cells along the longest side; eight particles fill a cell. Twice as many: finer splashes, and "
-           "eight times the work."},
+           "eight times the work -- of the water: sparse, the air round it costs nothing."},
           {"closed_sides", "Closed Sides", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "Walls round the four sides: a tank. Off, the water runs off the edges and is gone."},
           {"sparse", "Sparse", "Domain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",

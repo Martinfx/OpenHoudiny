@@ -126,6 +126,22 @@ std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations)
 /// so what it holds is closed where it ends. The points carry N.
 std::shared_ptr<Geometry> volumeToMesh(const Volume& volume, float iso, bool insideBelow);
 
+/// A volume kept in tiles of 8 x 8 x 8 voxels, only some of them -- as a
+/// sparse simulation keeps its fields: a voxel of a tile not kept holds
+/// `background`. Voxels, origin and size as Volume's.
+struct TiledVolume {
+    Vec3 origin;
+    float voxel = 1.0f;
+    int res[3] = {0, 0, 0};
+    std::vector<uint32_t> tiles;  ///< the tiles kept, by number (x fastest), in order
+    std::vector<float> values;    ///< their 512 voxels each in turn, x fastest within a tile
+    float background = 0.0f;
+};
+
+/// volumeToMesh() of the volume the tiles make, looking only round them:
+/// the same polygons, in the same order, as over every voxel.
+std::shared_ptr<Geometry> volumeToMesh(const TiledVolume& volume, float iso, bool insideBelow);
+
 /// Parse/run error of a `pointwrangle` node; empty if it is fine.
 std::string wrangleError(const Node& node);
 

@@ -130,18 +130,144 @@ Frame capture(const PyroSolver& sim) {
     return f;
 }
 
+namespace {
+
+/// Where tile `tile` is in a sorted list of tiles, -1 when it is not there.
+int64_t slotIn(const std::vector<uint32_t>& tiles, uint32_t tile) {
+    const auto found = std::lower_bound(tiles.begin(), tiles.end(), tile);
+    return found == tiles.end() || *found != tile ? -1 : static_cast<int64_t>(found - tiles.begin());
+}
+
+/// The number of the tile of cell (i, j, k) of a domain.
+uint32_t tileOfCell(const Domain& d, int i, int j, int k) {
+    size_t t[3];
+    tileCounts(d, t);
+    return static_cast<uint32_t>(static_cast<size_t>(i >> Tiles::kLog) +
+                                 t[0] * (static_cast<size_t>(j >> Tiles::kLog) + t[1] * static_cast<size_t>(k >> Tiles::kLog)));
+}
+
+/// `values` of `width` a cell, kept in `tiles` of `d`, into every cell of
+/// it, x fastest; `background` (`width` of them) where no tile is kept.
+template <class T>
+void spreadTiles(const Domain& d, const std::vector<uint32_t>& tiles, const std::vector<T>& values, size_t width,
+                 const T* background, std::vector<T>& out) {
+    out.resize(width * d.cellCount());
+    pg::parallelFor(d.cellCount(), 65536, [&](size_t begin, size_t end) {
+        for (size_t c = begin; c < end; ++c) std::copy(background, background + width, out.begin() + static_cast<std::ptrdiff_t>(width * c));
+    });
+    size_t t[3];
+    tileCounts(d, t);
+    const size_t nx = static_cast<size_t>(d.cells[0]), ny = static_cast<size_t>(d.cells[1]);
+    pg::parallelFor(tiles.size(), 16, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            const size_t tile = tiles[s];
+            const int c[3] = {static_cast<int>(tile % t[0]) * Tiles::kSide, static_cast<int>((tile / t[0]) % t[1]) * Tiles::kSide,
+                              static_cast<int>(tile / (t[0] * t[1])) * Tiles::kSide};
+            for (int z = 0; z < Tiles::kSide && c[2] + z < d.cells[2]; ++z) {
+                for (int y = 0; y < Tiles::kSide && c[1] + y < d.cells[1]; ++y) {
+                    for (int x = 0; x < Tiles::kSide && c[0] + x < d.cells[0]; ++x) {
+                        const size_t from = width * (s * Tiles::kCells + SparseGrid::local(x, y, z));
+                        const size_t cell = static_cast<size_t>(c[0] + x) + nx * (static_cast<size_t>(c[1] + y) + ny * static_cast<size_t>(c[2] + z));
+                        for (size_t w = 0; w < width; ++w) out[width * cell + w] = values[from + w];
+                    }
+                }
+            }
+        }
+    });
+}
+
+}  // namespace
+
+int64_t WaterFrame::cellOf(int i, int j, int k) const {
+    if (tiles.empty()) {
+        return 2 * static_cast<int64_t>(static_cast<size_t>(i) +
+                                        static_cast<size_t>(domain.cells[0]) *
+                                            (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k)));
+    }
+    const int64_t slot = slotIn(tiles, tileOfCell(domain, i, j, k));
+    return slot < 0 ? -1 : 2 * (slot * Tiles::kCells + static_cast<int64_t>(SparseGrid::local(i, j, k)));
+}
+
 float WaterFrame::distance(int i, int j, int k) const {
-    const size_t cell = static_cast<size_t>(i) +
-                        static_cast<size_t>(domain.cells[0]) *
-                            (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k));
-    return (static_cast<float>(cells[2 * cell]) / 255.0f * 2.0f - 1.0f) * band;
+    const int64_t c = cellOf(i, j, k);
+    if (c < 0) return band;
+    return (static_cast<float>(cells[static_cast<size_t>(c)]) / 255.0f * 2.0f - 1.0f) * band;
 }
 
 float WaterFrame::foam(int i, int j, int k) const {
-    const size_t cell = static_cast<size_t>(i) +
-                        static_cast<size_t>(domain.cells[0]) *
-                            (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k));
-    return static_cast<float>(cells[2 * cell + 1]) / 255.0f;
+    const int64_t c = cellOf(i, j, k);
+    return c < 0 ? 0.0f : static_cast<float>(cells[static_cast<size_t>(c) + 1]) / 255.0f;
+}
+
+bool WaterFrame::fits() const {
+    if (tiles.empty()) return cells.size() == 2 * domain.cellCount();
+    size_t t[3];
+    tileCounts(domain, t);
+    for (size_t s = 0; s < tiles.size(); ++s) {
+        if (tiles[s] >= t[0] * t[1] * t[2] || (s > 0 && tiles[s - 1] >= tiles[s])) return false;
+    }
+    return cells.size() == 2 * Tiles::kCells * tiles.size();
+}
+
+void WaterFrame::coarseCells(int factor, std::vector<uint8_t>& out) const {
+    const int f = factor;
+    const int n[3] = {domain.cells[0] / f, domain.cells[1] / f, domain.cells[2] / f};
+    const size_t count = static_cast<size_t>(n[0]) * static_cast<size_t>(n[1]) * static_cast<size_t>(n[2]);
+    const uint32_t under = static_cast<uint32_t>(f * f * f);
+    // The sums of the cells under each coarse one, distance and foam.
+    std::vector<uint32_t> sum(2 * count, 0);
+    auto coarse = [&](int i, int j, int k) {
+        return static_cast<size_t>(i / f) +
+               static_cast<size_t>(n[0]) * (static_cast<size_t>(j / f) + static_cast<size_t>(n[1]) * static_cast<size_t>(k / f));
+    };
+    if (tiles.empty()) {
+        pg::parallelFor(static_cast<size_t>(n[2]), 1, [&](size_t begin, size_t end) {
+            for (int k = static_cast<int>(begin) * f; k < static_cast<int>(end) * f; ++k) {
+                for (int j = 0; j < domain.cells[1]; ++j) {
+                    for (int i = 0; i < domain.cells[0]; ++i) {
+                        const size_t c = 2 * (static_cast<size_t>(i) + static_cast<size_t>(domain.cells[0]) *
+                                                                            (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k)));
+                        const size_t to = coarse(i, j, k);
+                        sum[2 * to] += cells[c];
+                        sum[2 * to + 1] += cells[c + 1];
+                    }
+                }
+            }
+        });
+    } else {
+        // Far from the water, without foam, but in the tiles kept; a tile
+        // covers whole coarse cells, which no other tile does.
+        for (size_t c = 0; c < count; ++c) sum[2 * c] = 255u * under;
+        size_t t[3];
+        tileCounts(domain, t);
+        pg::parallelFor(tiles.size(), 16, [&](size_t begin, size_t end) {
+            for (size_t s = begin; s < end; ++s) {
+                const size_t tile = tiles[s];
+                const int c[3] = {static_cast<int>(tile % t[0]) * Tiles::kSide, static_cast<int>((tile / t[0]) % t[1]) * Tiles::kSide,
+                                  static_cast<int>(tile / (t[0] * t[1])) * Tiles::kSide};
+                for (int z = 0; z < Tiles::kSide && c[2] + z < domain.cells[2]; ++z) {
+                    for (int y = 0; y < Tiles::kSide && c[1] + y < domain.cells[1]; ++y) {
+                        for (int x = 0; x < Tiles::kSide && c[0] + x < domain.cells[0]; ++x) {
+                            const size_t from = 2 * (s * Tiles::kCells + SparseGrid::local(x, y, z));
+                            const size_t to = coarse(c[0] + x, c[1] + y, c[2] + z);
+                            sum[2 * to] = sum[2 * to] + cells[from] - 255u;
+                            sum[2 * to + 1] += cells[from + 1];
+                        }
+                    }
+                }
+            }
+        });
+    }
+    out.resize(2 * count);
+    for (size_t c = 0; c < 2 * count; ++c) out[c] = static_cast<uint8_t>((sum[c] + under / 2) / under);
+}
+
+const std::vector<uint8_t>& WaterFrame::denseCells(std::vector<uint8_t>& scratch) const {
+    if (tiles.empty()) return cells;
+    // Far from the water: as far as the band, without foam.
+    const uint8_t far[2] = {255, 0};
+    spreadTiles<uint8_t>(domain, tiles, cells, 2, far, scratch);
+    return scratch;
 }
 
 Domain WaterFrame::flowDomain() const {
@@ -151,9 +277,22 @@ Domain WaterFrame::flowDomain() const {
     return d;
 }
 
+bool WaterFrame::hasFlow() const {
+    if (flow.empty()) return false;
+    if (flowTiles.empty()) return flow.size() == 3 * flowDomain().cellCount();
+    return flow.size() == 3 * Tiles::kCells * flowTiles.size();
+}
+
+const std::vector<uint16_t>& WaterFrame::denseFlow(std::vector<uint16_t>& scratch) const {
+    if (flowTiles.empty()) return flow;
+    const uint16_t still[3] = {0, 0, 0};
+    spreadTiles<uint16_t>(flowDomain(), flowTiles, flow, 3, still, scratch);
+    return scratch;
+}
+
 Vec3 WaterFrame::flowAt(const Vec3& p) const {
+    if (!hasFlow()) return {};
     const Domain d = flowDomain();
-    if (flow.size() != 3 * d.cellCount() || flow.empty()) return {};
     // In cells, from the first cell's centre.
     const Vec3 g = (p - d.origin()) * (1.0f / d.voxel) - Vec3(0.5f, 0.5f, 0.5f);
     int i0[3];
@@ -171,8 +310,16 @@ Vec3 WaterFrame::flowAt(const Vec3& p) const {
                   k = std::min(i0[2] + dk, d.cells[2] - 1);
         const float w = (di ? t[0] : 1.0f - t[0]) * (dj ? t[1] : 1.0f - t[1]) * (dk ? t[2] : 1.0f - t[2]);
         if (w == 0.0f) continue;
-        const size_t cell = static_cast<size_t>(i) +
-                            static_cast<size_t>(d.cells[0]) * (static_cast<size_t>(j) + static_cast<size_t>(d.cells[1]) * static_cast<size_t>(k));
+        size_t cell;
+        if (flowTiles.empty()) {
+            cell = static_cast<size_t>(i) +
+                   static_cast<size_t>(d.cells[0]) * (static_cast<size_t>(j) + static_cast<size_t>(d.cells[1]) * static_cast<size_t>(k));
+        } else {
+            // A cell of a tile not kept moves with no flow: it adds nothing.
+            const int64_t slot = slotIn(flowTiles, tileOfCell(d, i, j, k));
+            if (slot < 0) continue;
+            cell = static_cast<size_t>(slot) * Tiles::kCells + SparseGrid::local(i, j, k);
+        }
         v = v + Vec3(fromHalf(flow[3 * cell]), fromHalf(flow[3 * cell + 1]), fromHalf(flow[3 * cell + 2])) * w;
     }
     return v;
@@ -201,66 +348,129 @@ WaterFrame capture(const LiquidSolver& sim, bool particles) {
     w.band = 1.5f * d.voxel;
     w.particles = sim.particleCount();
     w.litres = sim.volume();
-    Grid distance, foam;
+    SparseGrid distance, foam;
     sim.surfaceField(2, w.band, distance, foam);
-    w.cells.resize(2 * distance.size());
+    const Tiles& fine = distance.tiles();
     const float* dist = distance.data();
     const float* white = foam.data();
-    uint8_t* out = w.cells.data();
     const float scale = 0.5f / w.band;
-    pg::parallelFor(distance.size(), 16384, [&](size_t begin, size_t end) {
-        for (size_t c = begin; c < end; ++c) {
-            const float x = std::clamp(dist[c] * scale + 0.5f, 0.0f, 1.0f);
-            out[2 * c] = static_cast<uint8_t>(std::lround(x * 255.0f));
-            out[2 * c + 1] = static_cast<uint8_t>(std::lround(std::clamp(white[c], 0.0f, 1.0f) * 255.0f));
+    auto distanceByte = [&](float x) {
+        return static_cast<uint8_t>(std::lround(std::clamp(x * scale + 0.5f, 0.0f, 1.0f) * 255.0f));
+    };
+    auto foamByte = [](float x) { return static_cast<uint8_t>(std::lround(std::clamp(x, 0.0f, 1.0f) * 255.0f)); };
+    if (fine.all()) {
+        // Every cell, x fastest.
+        w.cells.resize(2 * w.domain.cellCount());
+        uint8_t* out = w.cells.data();
+        const size_t nx = static_cast<size_t>(w.domain.cells[0]), ny = static_cast<size_t>(w.domain.cells[1]);
+        forEachCounted(fine, [&](int i, int j, int k, size_t c) {
+            const size_t cell = static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * static_cast<size_t>(k));
+            out[2 * cell] = distanceByte(dist[c]);
+            out[2 * cell + 1] = foamByte(white[c]);
+        });
+    } else {
+        // Sparse: the tiles with anything but the far air in them; one, of
+        // far air, when there is none.
+        const std::vector<uint32_t>& stored = fine.stored();
+        std::vector<uint8_t> any(stored.size(), 0);
+        pg::parallelFor(stored.size(), 16, [&](size_t begin, size_t end) {
+            for (size_t s = begin; s < end; ++s) {
+                const size_t base = s * Tiles::kCells;
+                for (size_t c = base; c < base + Tiles::kCells && !any[s]; ++c) {
+                    any[s] = distanceByte(dist[c]) != 255 || foamByte(white[c]) != 0;
+                }
+            }
+        });
+        std::vector<size_t> slots;
+        for (size_t s = 0; s < stored.size(); ++s) {
+            if (!any[s]) continue;
+            w.tiles.push_back(stored[s]);
+            slots.push_back(s);
         }
-    });
+        if (w.tiles.empty()) {
+            w.tiles.push_back(0);
+            w.cells.assign(2 * Tiles::kCells, 0);
+            for (size_t c = 0; c < Tiles::kCells; ++c) w.cells[2 * c] = 255;
+        } else {
+            w.cells.resize(2 * Tiles::kCells * slots.size());
+            uint8_t* out = w.cells.data();
+            pg::parallelFor(slots.size(), 16, [&](size_t begin, size_t end) {
+                for (size_t t = begin; t < end; ++t) {
+                    const size_t from = slots[t] * Tiles::kCells, to = t * Tiles::kCells;
+                    for (size_t c = 0; c < Tiles::kCells; ++c) {
+                        out[2 * (to + c)] = distanceByte(dist[from + c]);
+                        out[2 * (to + c) + 1] = foamByte(white[from + c]);
+                    }
+                }
+            });
+        }
+    }
 
     // The velocity at the centre of each cell of the solver's -- the mean of
     // its faces' -- in the water and a cell round what is near its surface;
-    // 0 further out, where the air has only what gravity gave it.
+    // 0 further out, where the air has only what gravity gave it. Near: a
+    // fine cell of it within the band. All that is in the solver's tiles.
     const int nx = d.cells[0], ny = d.cells[1], nz = d.cells[2];
-    auto cellOf = [&](int i, int j, int k) {
-        return static_cast<size_t>(i) + static_cast<size_t>(nx) * (static_cast<size_t>(j) + static_cast<size_t>(ny) * static_cast<size_t>(k));
-    };
-    std::vector<uint8_t> near(d.cellCount(), 0);
-    pg::parallelFor(static_cast<size_t>(nz), 1, [&](size_t begin, size_t end) {
-        for (int k = static_cast<int>(begin); k < static_cast<int>(end); ++k) {
-            for (int j = 0; j < ny; ++j) {
-                for (int i = 0; i < nx; ++i) {
-                    bool in = false;
-                    for (int q = 0; q < 8 && !in; ++q) {
-                        in = distance.at(2 * i + (q & 1), 2 * j + ((q >> 1) & 1), 2 * k + ((q >> 2) & 1)) < w.band;
-                    }
-                    near[cellOf(i, j, k)] = in;
-                }
-            }
+    const Tiles& tiles = sim.tiles();
+    const SparseGrid& at = sim.surface();  // the solver's cells, as they are kept
+    std::vector<uint8_t> near(at.size(), 0);
+    forEachCounted(tiles, [&](int i, int j, int k, size_t c) {
+        bool in = false;
+        for (int q = 0; q < 8 && !in; ++q) {
+            in = distance.at(2 * i + (q & 1), 2 * j + ((q >> 1) & 1), 2 * k + ((q >> 2) & 1)) < w.band;
         }
+        near[c] = in;
     });
     const SparseGrid* v[3] = {&sim.velocity(0), &sim.velocity(1), &sim.velocity(2)};
-    w.flow.assign(3 * d.cellCount(), 0);
-    uint16_t* flow = w.flow.data();
-    pg::parallelFor(static_cast<size_t>(nz), 1, [&](size_t begin, size_t end) {
-        for (int k = static_cast<int>(begin); k < static_cast<int>(end); ++k) {
-            for (int j = 0; j < ny; ++j) {
-                for (int i = 0; i < nx; ++i) {
-                    bool kept = false;
-                    for (int dk = -1; dk <= 1 && !kept; ++dk) {
-                        for (int dj = -1; dj <= 1 && !kept; ++dj) {
-                            for (int di = -1; di <= 1 && !kept; ++di) {
-                                const int a = i + di, b = j + dj, c = k + dk;
-                                kept = a >= 0 && b >= 0 && c >= 0 && a < nx && b < ny && c < nz && near[cellOf(a, b, c)];
-                            }
-                        }
-                    }
-                    if (!kept) continue;
-                    const size_t c = cellOf(i, j, k);
-                    flow[3 * c] = toHalf(0.5f * (v[0]->at(i, j, k) + v[0]->at(i + 1, j, k)));
-                    flow[3 * c + 1] = toHalf(0.5f * (v[1]->at(i, j, k) + v[1]->at(i, j + 1, k)));
-                    flow[3 * c + 2] = toHalf(0.5f * (v[2]->at(i, j, k) + v[2]->at(i, j, k + 1)));
+    std::vector<uint8_t> kept(at.size(), 0);
+    std::vector<uint8_t> anyKept(tiles.stored().size(), 0);
+    forEachCounted(tiles, [&](int i, int j, int k, size_t c) {
+        bool keep = false;
+        for (int dk = -1; dk <= 1 && !keep; ++dk) {
+            for (int dj = -1; dj <= 1 && !keep; ++dj) {
+                for (int di = -1; di <= 1 && !keep; ++di) {
+                    const int a = i + di, b = j + dj, e = k + dk;
+                    if (a < 0 || b < 0 || e < 0 || a >= nx || b >= ny || e >= nz) continue;
+                    const int64_t g = at.find(a, b, e);
+                    keep = g >= 0 && near[static_cast<size_t>(g)];
                 }
             }
         }
+        kept[c] = keep;
+        if (keep) anyKept[c / Tiles::kCells] = 1;
+    });
+    auto flowOf = [&](int i, int j, int k, uint16_t* out) {
+        out[0] = toHalf(0.5f * (v[0]->at(i, j, k) + v[0]->at(i + 1, j, k)));
+        out[1] = toHalf(0.5f * (v[1]->at(i, j, k) + v[1]->at(i, j + 1, k)));
+        out[2] = toHalf(0.5f * (v[2]->at(i, j, k) + v[2]->at(i, j, k + 1)));
+    };
+    if (tiles.all()) {
+        w.flow.assign(3 * d.cellCount(), 0);
+        uint16_t* flow = w.flow.data();
+        forEachCounted(tiles, [&](int i, int j, int k, size_t c) {
+            if (!kept[c]) return;
+            flowOf(i, j, k, flow + 3 * (static_cast<size_t>(i) + static_cast<size_t>(nx) * (static_cast<size_t>(j) + static_cast<size_t>(ny) * static_cast<size_t>(k))));
+        });
+        return w;
+    }
+    // Sparse: the solver's tiles with any flow kept; one, still, when none has.
+    std::vector<int64_t> slotOf(tiles.stored().size(), -1);
+    for (size_t s = 0; s < tiles.stored().size(); ++s) {
+        if (!anyKept[s]) continue;
+        slotOf[s] = static_cast<int64_t>(w.flowTiles.size());
+        w.flowTiles.push_back(tiles.stored()[s]);
+    }
+    if (w.flowTiles.empty()) {
+        w.flowTiles.push_back(0);
+        w.flow.assign(3 * Tiles::kCells, 0);
+        return w;
+    }
+    w.flow.assign(3 * Tiles::kCells * w.flowTiles.size(), 0);
+    uint16_t* flow = w.flow.data();
+    forEachCounted(tiles, [&](int i, int j, int k, size_t c) {
+        if (!kept[c]) return;
+        const int64_t slot = slotOf[c / Tiles::kCells];
+        flowOf(i, j, k, flow + 3 * (static_cast<size_t>(slot) * Tiles::kCells + c % Tiles::kCells));
     });
     return w;
 }

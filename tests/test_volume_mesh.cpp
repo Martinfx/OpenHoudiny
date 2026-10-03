@@ -3,16 +3,18 @@
 // of a ball is a closed mesh -- each edge between two faces, turned
 // alike --, round and as big as the ball, its normals outward; what fills
 // the grid is closed where the grid ends; the same bits on any number of
-// threads.
+// threads, and from a volume kept in tiles as from every voxel.
 //
 #include "pg/core/Parallel.h"
 #include "pg/nodes/Nodes.h"
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <utility>
+#include <vector>
 
 using namespace pg;
 
@@ -162,4 +164,75 @@ TEST(volume_mesh_is_the_same_on_any_number_of_threads_and_as_the_node_gives_it) 
     CHECK_EQ(node->cookNode(CookContext{}, in)->pointCount(), size_t(0));  // nothing above 2
     node->setInt("inside", 1);
     CHECK_EQ(node->cookNode(CookContext{}, in)->primitiveCount(), size_t(6 * 4));  // all below 2
+}
+
+TEST(volume_mesh_of_tiles_is_that_of_every_voxel) {
+    // Two balls' distances, cut off at a band, in a grid whose sides are no
+    // whole number of tiles -- the second ball through the grid's +x side;
+    // kept, the tiles with anything nearer than the band.
+    const int n[3] = {37, 29, 45};
+    const float voxel = 0.05f, band = 0.12f, r = 0.4f;
+    const Vec3 origin(-0.4f, 0.1f, -1.0f);
+    const Vec3 centres[2] = {origin + Vec3(0.6f, 0.7f, 1.1f), origin + Vec3(1.7f, 0.6f, 1.3f)};
+    auto distance = [&](int i, int j, int k) {
+        const Vec3 p = origin + Vec3((static_cast<float>(i) + 0.5f) * voxel, (static_cast<float>(j) + 0.5f) * voxel,
+                                     (static_cast<float>(k) + 0.5f) * voxel);
+        return std::min(std::min(length(p - centres[0]), length(p - centres[1])) - r, band);
+    };
+    std::vector<float> every;
+    for (int k = 0; k < n[2]; ++k) {
+        for (int j = 0; j < n[1]; ++j) {
+            for (int i = 0; i < n[0]; ++i) every.push_back(distance(i, j, k));
+        }
+    }
+    const Volume whole = Volume::make("surface", origin, voxel, n[0], n[1], n[2], every);
+    TiledVolume tiled;
+    tiled.origin = origin;
+    tiled.voxel = voxel;
+    for (int a = 0; a < 3; ++a) tiled.res[a] = n[a];
+    tiled.background = band;
+    const int t[3] = {(n[0] + 7) / 8, (n[1] + 7) / 8, (n[2] + 7) / 8};
+    for (int tz = 0; tz < t[2]; ++tz) {
+        for (int ty = 0; ty < t[1]; ++ty) {
+            for (int tx = 0; tx < t[0]; ++tx) {
+                std::vector<float> values;
+                bool near = false;
+                for (int z = 0; z < 8; ++z) {
+                    for (int y = 0; y < 8; ++y) {
+                        for (int x = 0; x < 8; ++x) {
+                            const int i = 8 * tx + x, j = 8 * ty + y, k = 8 * tz + z;
+                            // Beyond the grid: inside, were it read.
+                            const bool real = i < n[0] && j < n[1] && k < n[2];
+                            values.push_back(real ? distance(i, j, k) : -1.0f);
+                            near = near || (real && values.back() < band);
+                        }
+                    }
+                }
+                if (!near) continue;
+                tiled.tiles.push_back(static_cast<uint32_t>(tx + t[0] * (ty + t[1] * tz)));
+                tiled.values.insert(tiled.values.end(), values.begin(), values.end());
+            }
+        }
+    }
+    CHECK(!tiled.tiles.empty());
+    CHECK(tiled.tiles.size() < static_cast<size_t>(t[0] * t[1] * t[2]));
+    for (const float iso : {0.0f, 0.05f, -0.1f}) {
+        const auto a = volumeToMesh(tiled, iso, true), b = volumeToMesh(whole, iso, true);
+        CHECK(a->pointCount() > 100);
+        CHECK_EQ(a->hash(), b->hash());
+    }
+    // A background inside -- here above iso -- reaches the sides: as every voxel too.
+    CHECK_EQ(volumeToMesh(tiled, 0.0f, false)->hash(), volumeToMesh(whole, 0.0f, false)->hash());
+    // No tiles: the background alone, outside.
+    TiledVolume none = tiled;
+    none.tiles.clear();
+    none.values.clear();
+    CHECK_EQ(volumeToMesh(none, 0.0f, true)->pointCount(), size_t(0));
+    // Tiles out of order, or fewer values than they need: nothing.
+    TiledVolume wrong = tiled;
+    std::swap(wrong.tiles.front(), wrong.tiles.back());
+    CHECK_EQ(volumeToMesh(wrong, 0.0f, true)->pointCount(), size_t(0));
+    wrong = tiled;
+    wrong.values.pop_back();
+    CHECK_EQ(volumeToMesh(wrong, 0.0f, true)->pointCount(), size_t(0));
 }

@@ -180,6 +180,7 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
     const sim::RainFrame &r = a.rain, &s = b.rain;
     return a.number == b.number && a.time == b.time && a.stepMs == b.stepMs && a.domain == b.domain &&
            a.fields == b.fields && a.gasTiles == b.gasTiles && w.domain == x.domain && w.band == x.band && w.cells == x.cells &&
+           w.tiles == x.tiles && w.flowTiles == x.flowTiles &&
            w.particles == x.particles && w.litres == x.litres && w.velocities == x.velocities &&
            w.whiteness == x.whiteness && w.positions.size() == x.positions.size() &&
            std::equal(w.positions.begin(), w.positions.end(), x.positions.begin(),
@@ -711,6 +712,93 @@ TEST(sparse_gas_frames_keep_their_tiles_alone) {
     }
 }
 
+TEST(frames_of_version_12_still_read_without_sparse_water) {
+    // As version 12 wrote it: without the water's tiles at the end -- every
+    // cell of its grids, as a dense solver's frame still has them.
+    const sim::Frame f = madeUpFrame();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - 2 * 8);  // version 13's two counts, 0
+    bytes[8] = 12;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.water.tiles.empty() && back.water.flowTiles.empty());
+}
+
+TEST(sparse_water_frames_keep_their_tiles_alone) {
+    // A grid of 16 x 8 x 24 cells is 2 x 1 x 3 tiles; two of them near the
+    // water. The flow's grid, half as fine -- 8 x 4 x 12 cells, 1 x 1 x 2
+    // tiles --, has one.
+    sim::Frame f;
+    sim::WaterFrame& w = f.water;
+    w.domain.cells[0] = 16;
+    w.domain.cells[1] = 8;
+    w.domain.cells[2] = 24;
+    w.domain.voxel = 0.0625f;  // the cells' centres exactly where they are
+    w.band = 0.125f;
+    w.tiles = {1, 4};
+    w.cells.assign(2 * 512 * 2, 0);
+    for (size_t c = 0; c < w.cells.size(); c += 2) w.cells[c] = 255;
+    w.cells[2 * 7] = 0;                      // tile 1, cell (7, 0, 0): x 15, in the water
+    w.cells[2 * (512 + 9) + 1] = 255;        // tile 4, cell (1, 1, 0): x 1, y 1, z 16, white
+    w.flowTiles = {1};
+    w.flow.assign(3 * 512, 0);
+    w.flow[3 * 2] = sim::toHalf(1.5f);       // tile 1, cell (2, 0, 0): x 2, z 8
+    CHECK(w.fits() && w.hasFlow());
+    CHECK_EQ(w.distance(15, 0, 0), -w.band);
+    CHECK_EQ(w.distance(0, 0, 0), w.band);   // a tile not kept: far from the water
+    CHECK_EQ(w.foam(1, 1, 16), 1.0f);
+    CHECK_EQ(w.foam(1, 1, 0), 0.0f);
+    const sim::Domain d = w.flowDomain();
+    const Vec3 centre = d.origin() + Vec3(2.5f * d.voxel, 0.5f * d.voxel, 8.5f * d.voxel);
+    CHECK(w.flowAt(centre) == Vec3(1.5f, 0.0f, 0.0f));
+    CHECK(w.flowAt(d.origin() + Vec3(0.5f * d.voxel)) == Vec3());  // a tile not kept: still
+    // Every cell, and every cell of coarser grids: their means.
+    std::vector<uint8_t> scratch;
+    const std::vector<uint8_t>& all = w.denseCells(scratch);
+    CHECK_EQ(all.size(), 2 * w.domain.cellCount());
+    CHECK_EQ(all[2 * 15], 0);
+    CHECK_EQ(all[2 * (1 + 16 * (1 + 8 * 16)) + 1], 255);
+    CHECK_EQ(all[2 * 3], 255);
+    std::vector<uint8_t> half;
+    w.coarseCells(2, half);
+    CHECK_EQ(half.size(), 2 * size_t(8 * 4 * 12));
+    CHECK_EQ(half[2 * 7], (7 * 255 + 4) / 8);         // one of the eight in the water
+    CHECK_EQ(half[2 * (0 + 8 * (0 + 4 * 8)) + 1], (255 + 4) / 8);  // one of the eight white
+    CHECK_EQ(half[2 * 1], 255);
+    for (const int factor : {2, 4, 8}) {
+        // As from every cell.
+        sim::WaterFrame dense = w;
+        dense.tiles.clear();
+        dense.cells = all;
+        std::vector<uint8_t> a, b;
+        w.coarseCells(factor, a);
+        dense.coarseCells(factor, b);
+        CHECK(a == b);
+    }
+    std::vector<uint16_t> flowScratch;
+    const std::vector<uint16_t>& flow = w.denseFlow(flowScratch);
+    CHECK_EQ(flow.size(), 3 * d.cellCount());
+    CHECK_EQ(sim::fromHalf(flow[3 * (2 + 8 * 4 * 8)]), 1.5f);
+    // Through a file, and refused where the tiles do not fit the grids.
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(sim::formatFrame(f), back, error));
+    CHECK(sameFrame(f, back));
+    for (const std::vector<uint32_t>& wrong : {std::vector<uint32_t>{4, 1}, std::vector<uint32_t>{1, 6},
+                                               std::vector<uint32_t>{1}}) {
+        sim::Frame bad = f;
+        bad.water.tiles = wrong;
+        CHECK(!sim::parseFrame(sim::formatFrame(bad), back, error));
+    }
+    for (const std::vector<uint32_t>& wrong : {std::vector<uint32_t>{2}, std::vector<uint32_t>{0, 1}}) {
+        sim::Frame bad = f;
+        bad.water.flowTiles = wrong;
+        CHECK(!sim::parseFrame(sim::formatFrame(bad), back, error));
+    }
+}
+
 TEST(frames_that_are_not_what_they_say_are_refused) {
     const std::string bytes = sim::formatFrame(madeUpFrame());
     sim::Frame f;
@@ -721,7 +809,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 13;
+    newer[8] = 14;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

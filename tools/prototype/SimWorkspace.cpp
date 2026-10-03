@@ -230,7 +230,7 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
     if (t == "liquid_solver") {
         const sim::ParamValue size = net.param(n.id, "size");
         const sim::Domain d = sim::Domain::ofBox(Vec3(size[0], size[1], size[2]),
-                                                 std::clamp(static_cast<int>(v("resolution")), 16, 256));
+                                                 std::clamp(static_cast<int>(v("resolution")), 16, 1024));
         return std::to_string(d.cells[0]) + " \xc3\x97 " + std::to_string(d.cells[1]) + " \xc3\x97 " +
                std::to_string(d.cells[2]) + " cells" + dot + (v("closed_sides") != 0.0f ? "tank" : "open");
     }

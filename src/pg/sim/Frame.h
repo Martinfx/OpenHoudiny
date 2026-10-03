@@ -7,7 +7,8 @@
 //          binary16) -- six bytes a cell, a quarter of what the solver holds;
 //          from a sparse solver, only the tiles that hold any;
 //   water  the distance to the water's surface and how white it is, on a
-//          grid twice as fine as the liquid solver's, a byte each;
+//          grid twice as fine as the liquid solver's, a byte each; from a
+//          sparse solver, only the tiles near the water;
 //   rain   where each drop and droplet is and how fast it goes, and the
 //          ripples on the water.
 //
@@ -29,8 +30,15 @@ struct WaterFrame {
     Domain domain;       ///< the grid of `cells`: where the solver's domain is, twice as fine
     float band = 0.0f;   ///< distances beyond +-band are cut off, world units
     /// Per cell in turn, x fastest: the distance to the surface -- 0 at -band
-    /// (in the water) to 255 at +band -- and the foam, 0 to 255.
+    /// (in the water) to 255 at +band -- and the foam, 0 to 255. Sparse: of
+    /// the cells of the tiles in `tiles` alone.
     std::vector<uint8_t> cells;
+    /// Sparse: the tiles of 8 x 8 x 8 cells of `domain` near the water, by
+    /// number (x fastest, as Tiles numbers them), in order; `cells` holds
+    /// their 512 cells each in turn, x fastest within the tile, and a cell of
+    /// a tile not here is as far from the water as the band, without foam.
+    /// Empty: `cells` holds every cell of the domain.
+    std::vector<uint32_t> tiles;
     size_t particles = 0;  ///< the solver's, when the frame was taken
     double litres = 0.0;
     /// The particles themselves, when the world keeps them
@@ -44,24 +52,47 @@ struct WaterFrame {
     /// How fast the water goes at the centre of each cell of the solver's
     /// grid -- half as fine as `domain` -- three half floats a cell, x
     /// fastest: what moves its surface, for motion blur. In the water and
-    /// some two cells round its surface; 0 further. Empty in a frame cached
-    /// before it was kept.
+    /// some two cells round its surface; 0 further. Sparse: of the cells of
+    /// the solver's tiles in `flowTiles` alone, 512 each in turn. Empty in a
+    /// frame cached before it was kept.
     std::vector<uint16_t> flow;
+    /// Sparse: the tiles of the solver's grid with any flow, by number, in
+    /// order. Empty: `flow` holds every cell (or nothing).
+    std::vector<uint32_t> flowTiles;
 
     bool empty() const { return cells.empty(); }
     size_t bytes() const {
-        return cells.size() + positions.size() * sizeof(Vec3) + velocities.size() * sizeof(uint16_t) + whiteness.size() +
-               ids.size() * sizeof(uint32_t) + flow.size() * sizeof(uint16_t);
+        return cells.size() + tiles.size() * sizeof(uint32_t) + positions.size() * sizeof(Vec3) +
+               velocities.size() * sizeof(uint16_t) + whiteness.size() + ids.size() * sizeof(uint32_t) +
+               flow.size() * sizeof(uint16_t) + flowTiles.size() * sizeof(uint32_t);
     }
     /// The distance at cell (i, j, k), world units, below 0 in the water.
     float distance(int i, int j, int k) const;
     /// The foam there, 0 to 1.
     float foam(int i, int j, int k) const;
+    /// Where cell (i, j, k)'s two bytes are in `cells`; -1 in a tile not kept.
+    int64_t cellOf(int i, int j, int k) const;
+    /// Whether `cells` holds what it says: every cell of the domain, or of
+    /// each of `tiles` -- tiles of the domain, in order.
+    bool fits() const;
+    /// Every cell, as `cells` holds them when not sparse: `cells` itself, or
+    /// `scratch`, made from the tiles.
+    const std::vector<uint8_t>& denseCells(std::vector<uint8_t>& scratch) const;
+    /// Every cell of the grid `factor` times as coarse as `domain` -- 2, 4 or
+    /// 8, which divides its cells --, x fastest, two bytes each as in
+    /// `cells`: the mean of the cells under it, rounded. For a picture that
+    /// cannot hold them all.
+    void coarseCells(int factor, std::vector<uint8_t>& out) const;
     /// The grid of `flow`: the solver's.
     Domain flowDomain() const;
+    /// Whether `flow` holds the flow, dense or sparse, whole.
+    bool hasFlow() const;
     /// The flow at a world point, trilinear between the cells' centres, the
     /// nearest cell's beyond them; 0 without it.
     Vec3 flowAt(const Vec3& p) const;
+    /// Every cell's flow, as `flow` holds it when not sparse: `flow` itself,
+    /// or `scratch`, made from the tiles.
+    const std::vector<uint16_t>& denseFlow(std::vector<uint16_t>& scratch) const;
 };
 
 /// The rain of a frame, as it is drawn.

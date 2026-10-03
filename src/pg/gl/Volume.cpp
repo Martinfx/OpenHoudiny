@@ -1951,17 +1951,37 @@ void VolumeRenderer::setFrame(const sim::Frame& frame) {
 }
 
 void VolumeRenderer::setWater(const sim::WaterFrame& water) {
-    const int nx = water.domain.cells[0], ny = water.domain.cells[1], nz = water.domain.cells[2];
-    if (water.cells.size() != 2 * water.domain.cellCount() || nx <= 0) {
+    if (water.empty() || !water.fits() || water.domain.cells[0] <= 0) {
         hasWater_ = false;
         return;
     }
+    // Every cell, as the texture holds them -- of a grid coarse enough to
+    // fit: at most 2^28 of them, 2048 a side.
+    sim::Domain grid = water.domain;
+    int factor = 1;
+    auto tooBig = [&] {
+        return grid.cellCount() > (size_t(1) << 28) || std::max({grid.cells[0], grid.cells[1], grid.cells[2]}) > 2048;
+    };
+    while (tooBig() && factor < 8 && water.domain.cells[0] % (2 * factor) == 0 && water.domain.cells[1] % (2 * factor) == 0 &&
+           water.domain.cells[2] % (2 * factor) == 0) {
+        factor *= 2;
+        for (int a = 0; a < 3; ++a) grid.cells[a] = water.domain.cells[a] / factor;
+        grid.voxel = water.domain.voxel * static_cast<float>(factor);
+    }
+    std::vector<uint8_t> scratch;
+    const std::vector<uint8_t>* texels = &scratch;
+    if (factor == 1) {
+        texels = &water.denseCells(scratch);
+    } else {
+        water.coarseCells(factor, scratch);
+    }
+    const int nx = grid.cells[0], ny = grid.cells[1], nz = grid.cells[2];
     if (!water_) gl_.GenTextures(1, &water_);
     gl_.ActiveTexture(TEXTURE0);
     gl_.BindTexture(TEXTURE_3D, water_);
     gl_.PixelStorei(UNPACK_ALIGNMENT, 2);
     if (waterSize_[0] != nx || waterSize_[1] != ny || waterSize_[2] != nz) {
-        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(RG8), nx, ny, nz, 0, RG, UNSIGNED_BYTE, water.cells.data());
+        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(RG8), nx, ny, nz, 0, RG, UNSIGNED_BYTE, texels->data());
         gl_.TexParameteri(TEXTURE_3D, TEXTURE_MIN_FILTER, LINEAR);
         gl_.TexParameteri(TEXTURE_3D, TEXTURE_MAG_FILTER, LINEAR);
         for (GLenum wrap : {TEXTURE_WRAP_S, TEXTURE_WRAP_T, TEXTURE_WRAP_R}) gl_.TexParameteri(TEXTURE_3D, wrap, CLAMP_TO_EDGE);
@@ -1969,11 +1989,11 @@ void VolumeRenderer::setWater(const sim::WaterFrame& water) {
         waterSize_[1] = ny;
         waterSize_[2] = nz;
     } else {
-        gl_.TexSubImage3D(TEXTURE_3D, 0, 0, 0, 0, nx, ny, nz, RG, UNSIGNED_BYTE, water.cells.data());
+        gl_.TexSubImage3D(TEXTURE_3D, 0, 0, 0, 0, nx, ny, nz, RG, UNSIGNED_BYTE, texels->data());
     }
     gl_.BindTexture(TEXTURE_3D, 0);
     gl_.PixelStorei(UNPACK_ALIGNMENT, 4);
-    waterDomain_ = water.domain;
+    waterDomain_ = grid;
     waterBand_ = water.band;
     hasWater_ = true;
 }

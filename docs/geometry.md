@@ -260,6 +260,9 @@ síť algoritmem *surface nets* (Gibson 1998):
 Vyjde uzavřená síť čtyřúhelníků s hladkými normálami (z ploch kolem bodu).
 Je uzavřená i u podlahy a stěn nádrže: renderer potřebuje uzavřené těleso
 vody, aby jím lámal světlo. Ostré hrany a rohy se zaoblí asi o čtvrt buňky.
+Snímek z řídkého řešiče nese jen dlaždice 8 × 8 × 8 buněk blízko vody
+a síť se staví jen kolem nich (`TiledVolume` v
+[`Nodes.h`](../src/pg/nodes/Nodes.h)); vyjde stejná jako přes všechny buňky.
 
 - **`v`** je rychlost vody v místě bodu, z rychlosti, kterou snímek nese na
   mřížce řešiče (formát cache 5): podle ní renderer rozmaže pohyb. Snímek

@@ -22,8 +22,9 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // fast the grit goes; 5: how fast the water goes, on the solver's grid;
 // 6: what became of the bars; 7: which grit is glass, which bodies came
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
-// grit is turned.
-constexpr uint32_t kVersion = 12;
+// grit is turned; 10: a sparse gas's tiles; 11: the cloth; 12: the cloth
+// torn; 13: a sparse liquid's tiles.
+constexpr uint32_t kVersion = 13;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -138,17 +139,17 @@ public:
         const float x = f32(), y = f32();
         return {x, y, f32()};
     }
-    /// A grid of a sensible size -- up to 1024 cells a side, 2^27 in all:
-    /// the solvers' grids go to 256, the water's drawn one to twice that --
+    /// A grid of a sensible size -- up to 2048 cells a side, 2^33 in all:
+    /// the solvers' grids go to 1024, the water's drawn one to twice that --
     /// with a voxel of a size.
     Domain domain() {
         Domain d;
         for (int& c : d.cells) c = i32();
         d.voxel = f32();
         for (const int c : d.cells) {
-            if (c < 0 || c > 1024) ok_ = false;
+            if (c < 0 || c > 2048) ok_ = false;
         }
-        if (!ok_ || d.cellCount() > (size_t(1) << 27) || !(d.voxel > 0.0f && d.voxel < 1e6f)) {
+        if (!ok_ || d.cellCount() > (size_t(1) << 33) || !(d.voxel > 0.0f && d.voxel < 1e6f)) {
             ok_ = false;
             d = Domain();
         }
@@ -195,14 +196,22 @@ public:
             ok_ = false;
             return;
         }
-        v.assign(static_cast<size_t>(n), 0);
-        size_t i = 0;
-        while (ok_ && i < v.size()) {
+        // The runs first: that they come to the count, their values there --
+        // what is not a frame's says so before it takes the memory.
+        const size_t start = pos_;
+        for (size_t i = 0; i < n;) {
             const size_t zeros = u32(), literals = u32();
-            if (!ok_ || zeros + literals > v.size() - i || (zeros == 0 && literals == 0)) {
+            if (!ok_ || zeros + literals > n - i || (zeros == 0 && literals == 0) || literals > (data_.size() - pos_) / 2) {
                 ok_ = false;
                 return;
             }
+            i += zeros + literals;
+            pos_ += 2 * literals;
+        }
+        pos_ = start;
+        v.assign(static_cast<size_t>(n), 0);
+        for (size_t i = 0; i < v.size();) {
+            const size_t zeros = u32(), literals = u32();
             i += zeros;
             for (size_t k = 0; k < literals; ++k) v[i++] = u16();
         }
@@ -317,6 +326,10 @@ std::string formatFrame(const Frame& f) {
     out.words(f.cloth.copies);
     out.words(f.cloth.corners);
     out.words(f.cloth.cuts);
+    // Version 13: a sparse liquid's tiles -- the water's cells and flow
+    // above hold theirs alone.
+    out.words(w.tiles);
+    out.words(w.flowTiles);
     return std::move(out.bytes);
 }
 
@@ -390,7 +403,17 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         in.words(f.rigid.debrisIds);
         in.floats(f.rigid.debrisVelocity);
     }
-    if (version >= 5) in.halves(w.flow, 3 * w.flowDomain().cellCount());
+    // Every cell's, or -- sparse, from version 13 -- its tiles', which come
+    // last: at most every tile, whole.
+    const Domain flowGrid = w.flowDomain();
+    const size_t flowTileCount = static_cast<size_t>((flowGrid.cells[0] + Tiles::kSide - 1) / Tiles::kSide) *
+                                 static_cast<size_t>((flowGrid.cells[1] + Tiles::kSide - 1) / Tiles::kSide) *
+                                 static_cast<size_t>((flowGrid.cells[2] + Tiles::kSide - 1) / Tiles::kSide);
+    if (version >= 13) {
+        in.halvesAtMost(w.flow, 3 * std::max(flowGrid.cellCount(), Tiles::kCells * flowTileCount));
+    } else if (version >= 5) {
+        in.halves(w.flow, 3 * flowGrid.cellCount());
+    }
     if (version >= 6) in.bytesOf(f.rigid.rebarState);
     if (version >= 7) {
         in.bytesOf(f.rigid.debrisGlass);
@@ -436,6 +459,10 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
             return false;
         }
     }
+    if (version >= 13) {
+        in.words(w.tiles);
+        in.words(w.flowTiles);
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -451,12 +478,20 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         error = "the frame's gas does not fit its grid";
         return false;
     }
+    // The water: every cell of its grids, or 512 for each of their tiles.
+    bool flowFits = w.flow.empty() || w.hasFlow();
+    for (size_t t = 0; t < w.flowTiles.size() && flowFits; ++t) {
+        flowFits = w.flowTiles[t] < flowTileCount && (t == 0 || w.flowTiles[t - 1] < w.flowTiles[t]);
+    }
+    if ((w.cells.empty() ? !w.tiles.empty() : !w.fits()) || !flowFits) {
+        error = "the frame's water does not fit its grid";
+        return false;
+    }
     // What is drawn from it indexes these by the sizes it gives.
     // Numbers and velocities: none, or one for each.
     auto fits = [](size_t have, size_t each) { return have == 0 || have == each; };
     const RigidFrame& b = f.rigid;
-    if ((!w.cells.empty() && w.cells.size() != 2 * w.domain.cellCount()) ||
-        (!w.whiteness.empty() && w.whiteness.size() != w.positions.size()) || r.drops.size() % 6 != 0 ||
+    if ((!w.whiteness.empty() && w.whiteness.size() != w.positions.size()) || r.drops.size() % 6 != 0 ||
         r.droplets.size() % 6 != 0 || b.debris.size() % 4 != 0 || !fits(w.ids.size(), w.positions.size()) ||
         !fits(r.dropIds.size(), r.dropCount()) || !fits(r.dropletIds.size(), r.dropletCount()) ||
         !fits(b.debrisIds.size(), b.debris.size() / 4) || !fits(b.debrisVelocity.size(), 3 * (b.debris.size() / 4)) ||

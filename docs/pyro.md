@@ -736,7 +736,7 @@ připojit do obou řešičů najednou.
 | uzel | parametry |
 |---|---|
 | **Water Source** (Sources) | `shape`, `file`, `center`, `rotation`, `size` jako u objektu; `mode`: `fill` naplní tvar vodou jednou, když zdroj začne (blok vody, bazén), `flow` z něj vodu vylévá (hadice, fontána, pramen); `velocity` rychlost vytékající vody v osách zdroje; `seed`; `start`, `end` |
-| **Liquid Solver** (Simulation) | Domain: `size`, `resolution` (buněk podél nejdelší strany, 16 až 256), `closed_sides` (nádrž se stěnami; vypnuté: voda přetéká okraji a mizí), `sparse` (počítat jen dlaždice kolem vody, výchozí zapnuto; vypnuté: všechny dlaždice, stejná voda bit po bitu, víc paměti a času); Motion: `gravity`, `flip` (Splash: 1 živá, stříkající voda, 0 hladká a hustá; běžně 0,9 až 0,98); Time: `substeps`, `seed` |
+| **Liquid Solver** (Simulation) | Domain: `size`, `resolution` (buněk podél nejdelší strany, 16 až 1024), `closed_sides` (nádrž se stěnami; vypnuté: voda přetéká okraji a mizí), `sparse` (počítat jen dlaždice kolem vody, výchozí zapnuto; vypnuté: všechny dlaždice, stejná voda bit po bitu, víc paměti a času); Motion: `gravity`, `flip` (Splash: 1 živá, stříkající voda, 0 hladká a hustá; běžně 0,9 až 0,98); Time: `substeps`, `seed` |
 | **Water Look** (Render) | `color` (barva hluboké vody), `clarity` (jak daleko je do vody vidět, v metrech), `foam` (jak bílá je pěna a tříšť), `surface` (kreslit hladinu; vypnutá: voda se simuluje, vidět jsou jen její částice přes Liquid Points) |
 
 Ve viewportu se voda přidá přes **Shift+A → Water**: *Block of Water*,
@@ -861,6 +861,21 @@ aby tříšť držela pohromadě), pole se vyhladí a **přepočítá na skuteč
 vzdálenost** (fast sweeping, Zhao 2005). Na tom záleží: paprsek pak může po
 poli bezpečně skákat a tenký plát vody nepřeskočí. Vzdálenost a pěna
 zaberou po bajtu na buňku.
+
+Z řídkého řešiče nese snímek jen **dlaždice** 8 × 8 × 8 buněk blízko vody
+(`WaterFrame::tiles`); buňka mimo ně je vzduch dál, než sahá pásmo
+vzdálenosti, bez pěny. Rychlost vody, ze které má povrch `v` pro rozmazání
+pohybem, nese jen v dlaždicích řešiče, kde nějaká je (`flowTiles`). Cache
+je tak 2,3× až 3,3× menší (12 snímků `dam_break`: 5,2 MB místo 17,1 MB,
+`splash`: 14,7 MB místo 47,8 MB) a na velké doméně, kde voda zabírá
+zlomek, o to víc. Povrch (`waterMesh`: uzel Liquid Surface, export USD,
+Cycles) staví surface nets jen kolem dlaždic: krychle, jejíž rohy leží
+všechny mimo ně, je celá ve vzduchu, takže síť vyjde stejná, body
+i čtyřúhelníky ve stejném pořadí, jako přes všechny buňky. Viewport nahraje
+do 3D textury všechny buňky; mřížku větší než 2²⁸ buněk nebo 2048 na stranu
+zmenší na průměry bloků 2, 4 nebo 8 buněk. Na všech devíti vodních
+příkladech je export USD (síť, `v`, `foam`) z řídkého řešiče, z hustého
+i z řídké cache stejný bit po bitu.
 
 Shader hledá hladinu **sphere tracingem** a v místě dopadu:
 

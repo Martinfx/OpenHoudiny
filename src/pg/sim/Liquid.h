@@ -99,7 +99,7 @@ struct WaterSource {
 
 struct LiquidSettings {
     Vec3 size{2.0f, 1.0f, 1.2f};   ///< the domain, world units: it stands on the floor, centred
-    /// Cells along the longest side, 16 to 256; the counts are multiples of 8.
+    /// Cells along the longest side, 16 to 1024; the counts are multiples of 8.
     int resolution = 64;
     /// Walls round the four sides: a tank. Without them the water runs off
     /// the sides and is gone.
@@ -231,10 +231,13 @@ public:
     /// The velocity of the collider nearest a world point; 0 when none moves.
     Vec3 solidVelocity(const Vec3& p) const;
 
-    /// The water's surface on a grid `factor` times finer than the solver's,
-    /// for drawing: the signed distance at its cell centres, world units,
-    /// clamped to [-band, band]; and the foam there, 0 to 1.
-    void surfaceField(int factor, float band, Grid& distance, Grid& foam) const;
+    /// The water's surface on a grid `factor` (1 or 2) times finer than the
+    /// solver's, for drawing: the signed distance at its cell centres, world
+    /// units, clamped to [-band, band]; and the foam there, 0 to 1. On the
+    /// tiles under the solver's: the cells of the rest are as far as the
+    /// band, without foam (the grids' backgrounds) -- what they would hold
+    /// with every tile kept.
+    void surfaceField(int factor, float band, SparseGrid& distance, SparseGrid& foam) const;
 
     float cellSize() const { return domain_.voxel; }
     /// The world position of a point given in cell units.

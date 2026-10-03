@@ -11,6 +11,7 @@
 #include "pg/sim/FreeSurface.h"
 #include "pg/sim/Frame.h"
 #include "pg/sim/Liquid.h"
+#include "pg/sim/WaterMesh.h"
 
 #include "test_framework.h"
 
@@ -577,7 +578,11 @@ TEST(liquid_frames_hold_how_fast_the_water_goes) {
     const WaterFrame f = capture(sim);
     const Domain d = f.flowDomain();
     CHECK(d == sim.domain());
-    CHECK_EQ(f.flow.size(), 3 * d.cellCount());
+    // Sparse, the solver's tiles round the water alone.
+    CHECK(f.hasFlow());
+    CHECK(!f.flowTiles.empty());
+    CHECK_EQ(f.flow.size(), 3 * Tiles::kCells * f.flowTiles.size());
+    CHECK(f.flowTiles.size() < sim.tiles().tileCount());
     float fastest = 0.0f, worst = 0.0f;
     for (int k = 0; k < d.cells[2]; ++k) {
         for (int j = 0; j < d.cells[1]; ++j) {
@@ -744,9 +749,18 @@ TEST(liquid_sparse_is_the_dense_water_to_the_bit) {
         CHECK_EQ(sparse.distanceToSurface(x + Vec3(0.0f, 0.3f, 0.0f)), dense.distanceToSurface(x + Vec3(0.0f, 0.3f, 0.0f)));
     }
     CHECK(sparse.waterLevel().height == dense.waterLevel().height);
+    // The frames: the sparse one's tiles, the rest far air, still -- every
+    // cell as the dense one's; and so the surface made of them.
     const WaterFrame a = capture(sparse), b = capture(dense);
-    CHECK(a.cells == b.cells);
-    CHECK(a.flow == b.flow);
+    CHECK(!a.tiles.empty() && !a.flowTiles.empty());
+    CHECK(b.tiles.empty() && b.flowTiles.empty());
+    CHECK(a.cells.size() < b.cells.size() / 2);
+    std::vector<uint8_t> cells;
+    std::vector<uint16_t> flow;
+    CHECK(a.denseCells(cells) == b.cells);
+    CHECK(a.denseFlow(flow) == b.flow);
+    CHECK_EQ(waterMesh(a)->hash(), waterMesh(b)->hash());
+    CHECK(waterMesh(a)->pointCount() > 1000);
 }
 
 TEST(liquid_keeps_the_tiles_round_the_water_and_its_sources) {
@@ -800,13 +814,14 @@ TEST(liquid_scenes_out_of_range_are_made_safe) {
     s.sources[0].size = Vec3(0.0f);
     s.sources[0].velocity = Vec3(std::nanf(""), 1e30f, 0.0f);
     const LiquidScene safe = s.sanitized();
-    CHECK(safe.solver.resolution <= 256);
+    CHECK(safe.solver.resolution <= 1024);
     CHECK(safe.solver.timeStep > 0.0f);
     CHECK(safe.solver.flip >= 0.0f && safe.solver.flip <= 1.0f);
     CHECK(safe.solver.size.x > 0.0f && safe.solver.size.z <= 1000.0f);
     CHECK(safe.sources[0].size.x > 0.0f);
     CHECK(std::isfinite(safe.sources[0].velocity.x) && safe.sources[0].velocity.y <= 1000.0f);
-    // And it runs.
+    // And it runs -- at a resolution a test can afford.
+    s.solver.resolution = 48;
     LiquidSolver sim(s);
     sim.step();
     CHECK(std::isfinite(sim.maxSpeed()));

@@ -154,26 +154,27 @@ std::shared_ptr<const Tiles> finer(const Tiles& tiles) {
 /// to their neighbours; the rest are swept in all eight diagonal directions,
 /// each solving |grad d| = 1 from the neighbours behind it (Zhao 2005). A
 /// distance a ray can step along safely: the averaged spheres are not one.
-void redistance(Grid& phi, float scale, float band) {
-    const int nx = phi.nx(), ny = phi.ny(), nz = phi.nz();
-    const size_t sy = static_cast<size_t>(nx), sz = sy * static_cast<size_t>(ny);
+/// On the kept tiles of `phi`, in the order of the cells of the whole grid
+/// each sweep: a cell not kept is far, as far as the band -- its
+/// background, `band` cells in `scale`.
+void redistance(SparseGrid& phi, float scale, float band) {
+    constexpr int kLast = Tiles::kSide - 1;
+    const Tiles& tiles = phi.tiles();
+    const int n[3] = {phi.nx(), phi.ny(), phi.nz()};
     std::vector<float> d(phi.size(), band);
     std::vector<uint8_t> fixed(phi.size(), 0);
     const float* v = phi.data();
     // 1. At the surface: a plane through the crossings along each axis.
-    detail::forEachCell(phi, [&](int i, int j, int k) {
-        const size_t c = phi.index(i, j, k);
+    forEachCounted(tiles, [&](int i, int j, int k, size_t c) {
         const bool inside = v[c] < 0.0f;
         const int at[3] = {i, j, k};
-        const int n[3] = {nx, ny, nz};
-        const size_t step[3] = {1, sy, sz};
         float sum = 0.0f;
         for (int a = 0; a < 3; ++a) {
             float nearest = 2.0f;
             for (int side = -1; side <= 1; side += 2) {
                 const int b = at[a] + side;
                 if (b < 0 || b >= n[a]) continue;
-                const float w = v[side < 0 ? c - step[a] : c + step[a]];
+                const float w = phi.at(a == 0 ? b : i, a == 1 ? b : j, a == 2 ? b : k);
                 if ((w < 0.0f) == inside) continue;
                 nearest = std::min(nearest, v[c] / (v[c] - w));
             }
@@ -184,30 +185,43 @@ void redistance(Grid& phi, float scale, float band) {
             fixed[c] = 1;
         }
     });
-    // 2. Out from there.
+    // 2. Out from there. A neighbour in the same tile is a step away in d.
+    constexpr size_t kStep[3] = {1, Tiles::kSide, Tiles::kSide * Tiles::kSide};
+    auto beside = [&](size_t c, int i, int j, int k, int a, int side) {
+        const int l = (a == 0 ? i : a == 1 ? j : k) & kLast;
+        if (side < 0 ? l > 0 : l < kLast) return d[side < 0 ? c - kStep[a] : c + kStep[a]];
+        const int64_t g = phi.find(i + (a == 0 ? side : 0), j + (a == 1 ? side : 0), k + (a == 2 ? side : 0));
+        return g < 0 ? band : d[static_cast<size_t>(g)];
+    };
+    const int tilesX = tiles.tilesX();
     for (int sweep = 0; sweep < 8; ++sweep) {
         const int di = sweep & 1 ? -1 : 1, dj = sweep & 2 ? -1 : 1, dk = sweep & 4 ? -1 : 1;
-        for (int k = dk > 0 ? 0 : nz - 1; k >= 0 && k < nz; k += dk) {
-            for (int j = dj > 0 ? 0 : ny - 1; j >= 0 && j < ny; j += dj) {
-                for (int i = di > 0 ? 0 : nx - 1; i >= 0 && i < nx; i += di) {
-                    const size_t c = phi.index(i, j, k);
-                    if (fixed[c]) continue;
-                    float a = std::min(i > 0 ? d[c - 1] : band, i < nx - 1 ? d[c + 1] : band);
-                    float b = std::min(j > 0 ? d[c - sy] : band, j < ny - 1 ? d[c + sy] : band);
-                    float e = std::min(k > 0 ? d[c - sz] : band, k < nz - 1 ? d[c + sz] : band);
-                    if (a > b) std::swap(a, b);
-                    if (b > e) std::swap(b, e);
-                    if (a > b) std::swap(a, b);
-                    if (a >= band) continue;
-                    float u = a + 1.0f;
-                    if (u > b) {
-                        u = 0.5f * (a + b + std::sqrt(std::max(2.0f - (a - b) * (a - b), 0.0f)));
-                        if (u > e) {
-                            const float sum = a + b + e;
-                            u = (sum + std::sqrt(std::max(sum * sum - 3.0f * (a * a + b * b + e * e - 1.0f), 0.0f))) / 3.0f;
+        for (int k = dk > 0 ? 0 : n[2] - 1; k >= 0 && k < n[2]; k += dk) {
+            for (int j = dj > 0 ? 0 : n[1] - 1; j >= 0 && j < n[1]; j += dj) {
+                for (int t = di > 0 ? 0 : tilesX - 1; t >= 0 && t < tilesX; t += di) {
+                    const int32_t slot = phi.slotOf(t * Tiles::kSide, j, k);
+                    if (slot < 0) continue;  // far: nothing there changes
+                    const int i0 = t * Tiles::kSide, i1 = std::min(i0 + Tiles::kSide, n[0]);
+                    for (int i = di > 0 ? i0 : i1 - 1; i >= i0 && i < i1; i += di) {
+                        const size_t c = static_cast<size_t>(slot) * Tiles::kCells + SparseGrid::local(i, j, k);
+                        if (fixed[c]) continue;
+                        float a = std::min(i > 0 ? beside(c, i, j, k, 0, -1) : band, i < n[0] - 1 ? beside(c, i, j, k, 0, 1) : band);
+                        float b = std::min(j > 0 ? beside(c, i, j, k, 1, -1) : band, j < n[1] - 1 ? beside(c, i, j, k, 1, 1) : band);
+                        float e = std::min(k > 0 ? beside(c, i, j, k, 2, -1) : band, k < n[2] - 1 ? beside(c, i, j, k, 2, 1) : band);
+                        if (a > b) std::swap(a, b);
+                        if (b > e) std::swap(b, e);
+                        if (a > b) std::swap(a, b);
+                        if (a >= band) continue;
+                        float u = a + 1.0f;
+                        if (u > b) {
+                            u = 0.5f * (a + b + std::sqrt(std::max(2.0f - (a - b) * (a - b), 0.0f)));
+                            if (u > e) {
+                                const float sum = a + b + e;
+                                u = (sum + std::sqrt(std::max(sum * sum - 3.0f * (a * a + b * b + e * e - 1.0f), 0.0f))) / 3.0f;
+                            }
                         }
+                        d[c] = std::min(d[c], u);
                     }
-                    d[c] = std::min(d[c], u);
                 }
             }
         }
@@ -226,7 +240,7 @@ LiquidScene LiquidScene::sanitized() const {
     LiquidScene s = *this;
     LiquidSettings& v = s.solver;
     v.size = fix(v.size, 0.1f, 1000.0f, ds.size);
-    v.resolution = std::clamp(v.resolution, 16, 256);
+    v.resolution = std::clamp(v.resolution, 16, 1024);
     v.timeStep = fix(v.timeStep, 1e-4f, 1.0f, ds.timeStep);
     v.substeps = std::clamp(v.substeps, 1, 16);
     v.flip = fix(v.flip, 0.0f, 1.0f, ds.flip);
@@ -1551,13 +1565,17 @@ double LiquidSolver::volume() const {
     return static_cast<double>(position_.size()) * h * h * h / 8.0 * 1000.0;
 }
 
-void LiquidSolver::surfaceField(int factor, float band, Grid& distance, Grid& foam) const {
+void LiquidSolver::surfaceField(int factor, float band, SparseGrid& distance, SparseGrid& foam) const {
     factor = std::clamp(factor, 1, 2);  // twice as fine at most: bySlabs() needs it
-    const int fx = n_[0] * factor, fy = n_[1] * factor, fz = n_[2] * factor;
-    distance = Grid(fx, fy, fz, band);
-    foam = Grid(fx, fy, fz, 0.0f);
-    if (position_.empty()) return;
+    const int fn[3] = {n_[0] * factor, n_[1] * factor, n_[2] * factor};
+    // On the tiles under the solver's: the particles' spheres, the smoothing
+    // and the sweeps reach a few cells, all well inside them. The cells of
+    // the tiles not kept are far from the water, without foam -- as they
+    // would be on every tile.
     const std::shared_ptr<const Tiles> tiles = factor == 1 ? tiles_ : finer(*tiles_);
+    distance = SparseGrid(tiles, band);
+    foam = SparseGrid(tiles, 0.0f);
+    if (position_.empty()) return;
     SparseGrid weight, centre[3], radius, white;
     splat(factor, tiles, weight, centre, &radius, white);
     const float h = domain_.voxel;
@@ -1569,28 +1587,26 @@ void LiquidSolver::surfaceField(int factor, float band, Grid& distance, Grid& fo
                      (static_cast<float>(k) + 0.5f) * inv);
         const float d =
             sphereDistance(x, w, Vec3(centre[0].data()[c], centre[1].data()[c], centre[2].data()[c]), radius.data()[c]) * h;
-        distance.at(i, j, k) = std::clamp(d, -band, band);
-        foam.at(i, j, k) = std::clamp(white.data()[c] / w, 0.0f, 1.0f);
+        distance.data()[c] = std::clamp(d, -band, band);
+        foam.data()[c] = std::clamp(white.data()[c] / w, 0.0f, 1.0f);
     });
     // Both smoothed -- 1 2 1 along each axis -- or the particles show
     // through: as bumps, as a surface that frays where they are few, as
     // speckled foam. The foam twice as much: it is a haze, not a surface.
-    for (Grid* field : {&distance, &foam}) {
-        Grid other = *field;
+    for (SparseGrid* field : {&distance, &foam}) {
+        SparseGrid other = *field;
         const int passes = field == &foam ? 6 : 3;
         for (int pass = 0; pass < passes; ++pass) {
             const int a = pass % 3;
-            const Grid& from = pass % 2 == 0 ? *field : other;
-            Grid& to = pass % 2 == 0 ? other : *field;
-            const int n = a == 0 ? fx : a == 1 ? fy : fz;
-            const size_t stride =
-                a == 0 ? 1 : a == 1 ? static_cast<size_t>(fx) : static_cast<size_t>(fx) * static_cast<size_t>(fy);
-            forEachCell(from, [&](int i, int j, int k) {
-                const size_t c = from.index(i, j, k);
+            const SparseGrid& from = pass % 2 == 0 ? *field : other;
+            SparseGrid& to = pass % 2 == 0 ? other : *field;
+            const float* f = from.data();
+            float* t = to.data();
+            forEachCounted(*tiles, [&](int i, int j, int k, size_t c) {
                 const int at = a == 0 ? i : a == 1 ? j : k;
-                const float left = at > 0 ? from.data()[c - stride] : from.data()[c];
-                const float right = at < n - 1 ? from.data()[c + stride] : from.data()[c];
-                to.data()[c] = 0.25f * left + 0.5f * from.data()[c] + 0.25f * right;
+                const float left = at > 0 ? from.at(i - (a == 0), j - (a == 1), k - (a == 2)) : f[c];
+                const float right = at < fn[a] - 1 ? from.at(i + (a == 0), j + (a == 1), k + (a == 2)) : f[c];
+                t[c] = 0.25f * left + 0.5f * f[c] + 0.25f * right;
             });
         }
         if (passes % 2 == 1) *field = other;  // the last pass went into `other`
