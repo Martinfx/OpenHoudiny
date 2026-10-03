@@ -1051,6 +1051,9 @@ target_compile_definitions(pgbench_rigid PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CU
 add_executable(pgbench_pyro bench/bench_pyro.cpp)
 target_link_libraries(pgbench_pyro PRIVATE pgsim)
 target_compile_definitions(pgbench_pyro PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
+add_executable(pgbench_liquid bench/bench_liquid.cpp)
+target_link_libraries(pgbench_liquid PRIVATE pgsim)
+target_compile_definitions(pgbench_liquid PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim")
 
 add_executable(pgdemo cli/demo_main.cpp)
 target_link_libraries(pgdemo PRIVATE pgcore)

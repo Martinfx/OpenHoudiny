@@ -1114,6 +1114,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             spent.rain += p.rain;
             spent.cloth += p.cloth;
             for (int s = 0; s < 8; ++s) spent.gasStages[s] += p.gasStages[s];
+            for (int s = 0; s < 9; ++s) spent.waterStages[s] += p.waterStages[s];
             if (draws || !o.cacheDir.empty() || (inRange && !o.exportPattern.empty())) {
                 current = std::make_shared<const sim::Frame>(solver->capture());
             }
@@ -1424,6 +1425,17 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             line += ")";
         }
         add("water", spent.water, world.hasWater);
+        if (world.hasWater) {
+            static const char* stages[9] = {"solids", "sort",    "emit",         "to grid", "extrapolate",
+                                            "forces", "project", "to particles", "advect"};
+            line += " (";
+            for (int s = 0; s < 9; ++s) {
+                char text[48];
+                std::snprintf(text, sizeof text, "%s%s %.0f%%", s ? ", " : "", stages[s], share(spent.waterStages[s]));
+                line += text;
+            }
+            line += ")";
+        }
         add("rain", spent.rain, world.hasRain);
         add("cloth", spent.cloth, world.hasCloth);
         std::printf("%s\n", line.c_str());

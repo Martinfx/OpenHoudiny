@@ -5,6 +5,7 @@
 #include "pg/sim/State.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -15,6 +16,8 @@ using detail::fix;
 using detail::forEachCell;
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
 
 constexpr float kHuge = std::numeric_limits<float>::max();
 /// A particle's radius, cells: eight to a cell, half a cell apart, each a
@@ -342,6 +345,12 @@ Vec3 LiquidSolver::solidVelocity(const Vec3& p) const {
 }
 
 void LiquidSolver::updateSolids() {
+    const auto started = Clock::now();
+    struct Count {
+        double& ms;
+        Clock::time_point t0;
+        ~Count() { ms += std::chrono::duration<double, std::milli>(Clock::now() - t0).count(); }
+    } count{times_.solids, started};
     const int nx = n_[0], ny = n_[1], nz = n_[2];
     const float h = domain_.voxel;
     shapes_.clear();
@@ -487,13 +496,23 @@ void LiquidSolver::step() {
         left -= dt;
         ++lastSubsteps_;
     }
+    const auto t0 = Clock::now();
     sortParticles();  // for the questions asked between steps
+    times_.sort += std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     ++frame_;
 }
 
 void LiquidSolver::substep(float dt) {
+    auto t0 = Clock::now();
+    auto lap = [&](double& stage) {
+        const auto now = Clock::now();
+        stage += std::chrono::duration<double, std::milli>(now - t0).count();
+        t0 = now;
+    };
     sortParticles();
+    lap(times_.sort);
     emit();
+    lap(times_.emit);
     toGrid();
     // The velocity the particles brought, carried out past the water -- the
     // FLIP update subtracts it, so it has to be there wherever a particle
@@ -504,13 +523,20 @@ void LiquidSolver::substep(float dt) {
         uint8_t* valid = valid_[a].data();
         for (size_t f = 0; f < valid_[a].size(); ++f) valid[f] = w[f] > 1e-6f && o[f] > 0.0f;
     }
+    lap(times_.toGrid);
     extrapolate(kExtrapolation);
     for (int a = 0; a < 3; ++a) std::copy(vel_[a].values().begin(), vel_[a].values().end(), old_[a].data());
+    lap(times_.extrapolate);
     addForces(dt);
+    lap(times_.forces);
     project(dt);
+    lap(times_.project);
     extrapolate(kExtrapolation);
+    lap(times_.extrapolate);
     toParticles(dt);
+    lap(times_.toParticles);
     advect(dt);
+    lap(times_.advect);
     time_ += dt;
     ++substepCount_;
 }

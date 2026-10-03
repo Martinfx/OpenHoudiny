@@ -86,6 +86,7 @@ float msSince(Clock::time_point t0) {
 void WorldSolver::step() {
     profile_ = Frame::Profile();
     const PyroSolver::Times before = gas_ ? gas_->times() : PyroSolver::Times();
+    const LiquidSolver::Times waterBefore = water_ ? water_->times() : LiquidSolver::Times();
     Clock::time_point t0 = Clock::now();
     prepare();
     profile_.scenes = msSince(t0) - profile_.rigid;
@@ -122,6 +123,19 @@ void WorldSolver::step() {
         const float solidsInScenes = std::min(profile_.scenes, static_cast<float>(stages[0]));
         profile_.scenes -= solidsInScenes;
         profile_.gas += solidsInScenes;
+    }
+    if (water_) {
+        // The same for the water: its solids are found as the pieces move.
+        const LiquidSolver::Times& now = water_->times();
+        const double stages[9] = {now.solids - waterBefore.solids,         now.sort - waterBefore.sort,
+                                  now.emit - waterBefore.emit,             now.toGrid - waterBefore.toGrid,
+                                  now.extrapolate - waterBefore.extrapolate, now.forces - waterBefore.forces,
+                                  now.project - waterBefore.project,       now.toParticles - waterBefore.toParticles,
+                                  now.advect - waterBefore.advect};
+        for (int s = 0; s < 9; ++s) profile_.waterStages[s] = static_cast<float>(stages[s]);
+        const float solidsInScenes = std::min(profile_.scenes, static_cast<float>(stages[0]));
+        profile_.scenes -= solidsInScenes;
+        profile_.water += solidsInScenes;
     }
     ++frame_;
     time_ += world_.timeStep;

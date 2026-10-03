@@ -114,6 +114,8 @@ struct Frame {
     struct Profile {
         float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, water = 0.0f, rain = 0.0f, cloth = 0.0f;
         float gasStages[8] = {};  ///< solids, tiles, emit, advect, combust, forces, project, dissipate
+        /// solids, sort, emit, to grid, extrapolate, forces, project, to particles, advect
+        float waterStages[9] = {};
         float total() const { return rigid + scenes + gas + water + rain + cloth; }
     } profile;
 

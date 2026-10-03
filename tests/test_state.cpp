@@ -222,3 +222,20 @@ TEST(profile_says_where_the_time_of_a_step_went) {
     CHECK(sim::parseFrame(sim::formatFrame(f), back, error));
     CHECK_EQ(back.profile.total(), 0.0f);
 }
+
+TEST(profile_says_where_the_water_spent_its_step) {
+    // The flood with the crates: the water's stages are its time, the solids
+    // found as the crates move among them.
+    sim::WorldSolver solver(sim::preview(exampleWorld("flood_crates"), 0.5f));
+    for (int f = 0; f < 3; ++f) solver.step();
+    const sim::Frame::Profile& p = solver.capture().profile;
+    CHECK(p.water > 0.0f);
+    float stages = 0.0f;
+    for (const float s : p.waterStages) {
+        CHECK(s >= 0.0f);
+        stages += s;
+    }
+    CHECK(p.waterStages[6] > 0.0f);  // the pressure
+    CHECK(stages <= p.water * 1.01f + 0.5f);
+    CHECK(stages >= p.water * 0.5f);
+}

@@ -2530,7 +2530,12 @@ void SimWorkspace::profilePanel(const sim::Frame& f) {
         static const char* stages[8] = {"solids", "tiles", "emit", "advect", "combust", "forces", "project", "dissipate"};
         for (int s = 0; s < 8; ++s) bar(stages[s], p.gasStages[s], total, true);
     }
-    if (compiled_.world.hasWater) bar("Water", p.water, total, false);
+    if (compiled_.world.hasWater) {
+        bar("Water", p.water, total, false);
+        static const char* stages[9] = {"solids",      "sort",    "emit",         "to grid", "extrapolate",
+                                        "forces",      "project", "to particles", "advect"};
+        for (int s = 0; s < 9; ++s) bar(stages[s], p.waterStages[s], total, true);
+    }
     if (compiled_.world.hasRain) bar("Rain", p.rain, total, false);
     if (compiled_.world.hasCloth) bar("Cloth", p.cloth, total, false);
     ui::note("Of the whole step. Frames read from disk say nothing: a bake's time is in its bake.log.");

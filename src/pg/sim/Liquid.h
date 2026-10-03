@@ -158,6 +158,22 @@ public:
     int lastSubsteps() const { return lastSubsteps_; }
     int lastIterations() const { return lastIterations_; }
 
+    /// Milliseconds each stage has taken, summed over the steps since the
+    /// solver was made -- where the time of a step goes. `solids`: the
+    /// colliders' distance, the open faces and their velocity, whenever they
+    /// move; `sort`: the particles into their cells; `toGrid`: their
+    /// velocities onto the faces and the surface into the cells;
+    /// `extrapolate`: the velocity carried out past the water, twice a
+    /// substep.
+    struct Times {
+        double solids = 0.0, sort = 0.0, emit = 0.0, toGrid = 0.0, extrapolate = 0.0, forces = 0.0, project = 0.0,
+               toParticles = 0.0, advect = 0.0;
+        double total() const {
+            return solids + sort + emit + toGrid + extrapolate + forces + project + toParticles + advect;
+        }
+    };
+    const Times& times() const { return times_; }
+
     /// All the next step needs of what it has come to (State.h); not the
     /// scene, which the solver it is loaded into has already.
     void saveState(StateWriter& out) const;
@@ -266,6 +282,7 @@ private:
     int frame_ = 0;
     float time_ = 0.0f;
     int lastSubsteps_ = 0, lastIterations_ = 0;
+    Times times_;
 };
 
 }  // namespace pg::sim
