@@ -39,6 +39,12 @@ struct WaterFrame {
     /// a tile not here is as far from the water as the band, without foam.
     /// Empty: `cells` holds every cell of the domain.
     std::vector<uint32_t> tiles;
+    /// Sparse: the tiles deep in the water -- every cell of them as far into
+    /// it as the band, without foam --, by number, in order, kept without
+    /// their cells: in neither `tiles` nor `cells`. None on a side of the
+    /// domain or beside a tile far from the water: the surface passes by
+    /// none of them.
+    std::vector<uint32_t> deepTiles;
     size_t particles = 0;  ///< the solver's, when the frame was taken
     double litres = 0.0;
     /// The particles themselves, when the world keeps them
@@ -62,7 +68,7 @@ struct WaterFrame {
 
     bool empty() const { return cells.empty(); }
     size_t bytes() const {
-        return cells.size() + tiles.size() * sizeof(uint32_t) + positions.size() * sizeof(Vec3) +
+        return cells.size() + (tiles.size() + deepTiles.size()) * sizeof(uint32_t) + positions.size() * sizeof(Vec3) +
                velocities.size() * sizeof(uint16_t) + whiteness.size() + ids.size() * sizeof(uint32_t) +
                flow.size() * sizeof(uint16_t) + flowTiles.size() * sizeof(uint32_t);
     }
@@ -73,7 +79,7 @@ struct WaterFrame {
     /// Where cell (i, j, k)'s two bytes are in `cells`; -1 in a tile not kept.
     int64_t cellOf(int i, int j, int k) const;
     /// Whether `cells` holds what it says: every cell of the domain, or of
-    /// each of `tiles` -- tiles of the domain, in order.
+    /// each of `tiles` -- tiles of the domain, in order, none of them deep.
     bool fits() const;
     /// Every cell, as `cells` holds them when not sparse: `cells` itself, or
     /// `scratch`, made from the tiles.

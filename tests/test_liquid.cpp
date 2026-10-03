@@ -15,6 +15,7 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
@@ -761,6 +762,42 @@ TEST(liquid_sparse_is_the_dense_water_to_the_bit) {
     CHECK(a.denseFlow(flow) == b.flow);
     CHECK_EQ(waterMesh(a)->hash(), waterMesh(b)->hash());
     CHECK(waterMesh(a)->pointCount() > 1000);
+}
+
+TEST(liquid_frames_keep_the_deep_water_without_its_cells) {
+    // A block of water standing in a tank: the tiles of the frame deep in
+    // it -- off the sides, kept tiles all round -- are kept without their
+    // cells; the frame is the dense one's all the same, and so is the
+    // surface made of it, to the bit.
+    LiquidScene s = tank(Vec3(2.0f, 1.5f, 2.0f), 48, block(Vec3(0.0f, 0.45f, 0.0f), Vec3(1.2f, 0.9f, 1.2f)));
+    LiquidScene all = s;
+    all.solver.sparse = false;
+    LiquidSolver sparse(s), dense(all);
+    sparse.step();
+    dense.step();
+    const WaterFrame a = capture(sparse), b = capture(dense);
+    CHECK(a.fits());
+    CHECK(!a.tiles.empty());
+    CHECK(a.deepTiles.size() > 50);
+    CHECK(b.tiles.empty() && b.deepTiles.empty());
+    const int t[3] = {a.domain.cells[0] / 8, a.domain.cells[1] / 8, a.domain.cells[2] / 8};
+    int loose = 0;
+    for (const uint32_t tile : a.deepTiles) {
+        const int c[3] = {static_cast<int>(tile) % t[0], static_cast<int>(tile) / t[0] % t[1], static_cast<int>(tile) / (t[0] * t[1])};
+        for (int q = 0; q < 27; ++q) {
+            const int x = c[0] + q % 3 - 1, y = c[1] + q / 3 % 3 - 1, z = c[2] + q / 9 - 1;
+            const uint32_t n = static_cast<uint32_t>(x + t[0] * (y + t[1] * z));
+            const bool kept = x >= 0 && y >= 0 && z >= 0 && x < t[0] && y < t[1] && z < t[2] &&
+                              (std::binary_search(a.tiles.begin(), a.tiles.end(), n) ||
+                               std::binary_search(a.deepTiles.begin(), a.deepTiles.end(), n));
+            if (!kept) ++loose;
+        }
+        CHECK_EQ(a.distance(8 * c[0] + 3, 8 * c[1] + 4, 8 * c[2] + 5), -a.band);
+    }
+    CHECK_EQ(loose, 0);
+    std::vector<uint8_t> cells;
+    CHECK(a.denseCells(cells) == b.cells);
+    CHECK_EQ(waterMesh(a)->hash(), waterMesh(b)->hash());
 }
 
 TEST(liquid_keeps_the_tiles_round_the_water_and_its_sources) {

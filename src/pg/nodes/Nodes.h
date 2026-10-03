@@ -136,6 +136,11 @@ struct TiledVolume {
     std::vector<uint32_t> tiles;  ///< the tiles kept, by number (x fastest), in order
     std::vector<float> values;    ///< their 512 voxels each in turn, x fastest within a tile
     float background = 0.0f;
+    /// Tiles whose every voxel holds `fill`, by number, in order, kept
+    /// without their values -- none of them in `tiles`, on a side of the
+    /// volume or beside a tile of the background: deep in what it holds.
+    std::vector<uint32_t> filled;
+    float fill = 0.0f;
 };
 
 /// volumeToMesh() of the volume the tiles make, looking only round them:

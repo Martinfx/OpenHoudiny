@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 
 namespace pg::sim {
 
@@ -146,6 +147,29 @@ uint32_t tileOfCell(const Domain& d, int i, int j, int k) {
                                  t[0] * (static_cast<size_t>(j >> Tiles::kLog) + t[1] * static_cast<size_t>(k >> Tiles::kLog)));
 }
 
+/// f(s, i, j, k, l) for each cell (i, j, k) of `d` in each of `tiles` --
+/// s the tile's place among them, l the cell's within it -- the tiles in
+/// parallel.
+template <class F>
+void forTileCells(const Domain& d, const std::vector<uint32_t>& tiles, const F& f) {
+    size_t t[3];
+    tileCounts(d, t);
+    pg::parallelFor(tiles.size(), 16, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            const size_t tile = tiles[s];
+            const int c[3] = {static_cast<int>(tile % t[0]) * Tiles::kSide, static_cast<int>((tile / t[0]) % t[1]) * Tiles::kSide,
+                              static_cast<int>(tile / (t[0] * t[1])) * Tiles::kSide};
+            for (int z = 0; z < Tiles::kSide && c[2] + z < d.cells[2]; ++z) {
+                for (int y = 0; y < Tiles::kSide && c[1] + y < d.cells[1]; ++y) {
+                    for (int x = 0; x < Tiles::kSide && c[0] + x < d.cells[0]; ++x) {
+                        f(s, c[0] + x, c[1] + y, c[2] + z, SparseGrid::local(x, y, z));
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// `values` of `width` a cell, kept in `tiles` of `d`, into every cell of
 /// it, x fastest; `background` (`width` of them) where no tile is kept.
 template <class T>
@@ -155,25 +179,20 @@ void spreadTiles(const Domain& d, const std::vector<uint32_t>& tiles, const std:
     pg::parallelFor(d.cellCount(), 65536, [&](size_t begin, size_t end) {
         for (size_t c = begin; c < end; ++c) std::copy(background, background + width, out.begin() + static_cast<std::ptrdiff_t>(width * c));
     });
-    size_t t[3];
-    tileCounts(d, t);
     const size_t nx = static_cast<size_t>(d.cells[0]), ny = static_cast<size_t>(d.cells[1]);
-    pg::parallelFor(tiles.size(), 16, [&](size_t begin, size_t end) {
-        for (size_t s = begin; s < end; ++s) {
-            const size_t tile = tiles[s];
-            const int c[3] = {static_cast<int>(tile % t[0]) * Tiles::kSide, static_cast<int>((tile / t[0]) % t[1]) * Tiles::kSide,
-                              static_cast<int>(tile / (t[0] * t[1])) * Tiles::kSide};
-            for (int z = 0; z < Tiles::kSide && c[2] + z < d.cells[2]; ++z) {
-                for (int y = 0; y < Tiles::kSide && c[1] + y < d.cells[1]; ++y) {
-                    for (int x = 0; x < Tiles::kSide && c[0] + x < d.cells[0]; ++x) {
-                        const size_t from = width * (s * Tiles::kCells + SparseGrid::local(x, y, z));
-                        const size_t cell = static_cast<size_t>(c[0] + x) + nx * (static_cast<size_t>(c[1] + y) + ny * static_cast<size_t>(c[2] + z));
-                        for (size_t w = 0; w < width; ++w) out[width * cell + w] = values[from + w];
-                    }
-                }
-            }
-        }
+    forTileCells(d, tiles, [&](size_t s, int i, int j, int k, size_t l) {
+        const size_t from = width * (s * Tiles::kCells + l);
+        const size_t cell = static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * static_cast<size_t>(k));
+        for (size_t w = 0; w < width; ++w) out[width * cell + w] = values[from + w];
     });
+}
+
+/// Is `tiles`, of a grid of `count` tiles, in order and within it?
+bool inOrder(const std::vector<uint32_t>& tiles, size_t count) {
+    for (size_t s = 0; s < tiles.size(); ++s) {
+        if (tiles[s] >= count || (s > 0 && tiles[s - 1] >= tiles[s])) return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -190,7 +209,7 @@ int64_t WaterFrame::cellOf(int i, int j, int k) const {
 
 float WaterFrame::distance(int i, int j, int k) const {
     const int64_t c = cellOf(i, j, k);
-    if (c < 0) return band;
+    if (c < 0) return !deepTiles.empty() && slotIn(deepTiles, tileOfCell(domain, i, j, k)) >= 0 ? -band : band;
     return (static_cast<float>(cells[static_cast<size_t>(c)]) / 255.0f * 2.0f - 1.0f) * band;
 }
 
@@ -200,13 +219,15 @@ float WaterFrame::foam(int i, int j, int k) const {
 }
 
 bool WaterFrame::fits() const {
-    if (tiles.empty()) return cells.size() == 2 * domain.cellCount();
+    if (tiles.empty()) return deepTiles.empty() && cells.size() == 2 * domain.cellCount();
     size_t t[3];
     tileCounts(domain, t);
-    for (size_t s = 0; s < tiles.size(); ++s) {
-        if (tiles[s] >= t[0] * t[1] * t[2] || (s > 0 && tiles[s - 1] >= tiles[s])) return false;
-    }
-    return cells.size() == 2 * Tiles::kCells * tiles.size();
+    const size_t count = t[0] * t[1] * t[2];
+    if (!inOrder(tiles, count) || !inOrder(deepTiles, count)) return false;
+    // A tile is kept one way or the other.
+    std::vector<uint32_t> both;
+    std::set_intersection(tiles.begin(), tiles.end(), deepTiles.begin(), deepTiles.end(), std::back_inserter(both));
+    return both.empty() && cells.size() == 2 * Tiles::kCells * tiles.size();
 }
 
 void WaterFrame::coarseCells(int factor, std::vector<uint8_t>& out) const {
@@ -235,28 +256,17 @@ void WaterFrame::coarseCells(int factor, std::vector<uint8_t>& out) const {
             }
         });
     } else {
-        // Far from the water, without foam, but in the tiles kept; a tile
-        // covers whole coarse cells, which no other tile does.
+        // Far from the water, without foam, but in the tiles kept -- and
+        // deep in it in the deep ones; a tile covers whole coarse cells,
+        // which no other tile does.
         for (size_t c = 0; c < count; ++c) sum[2 * c] = 255u * under;
-        size_t t[3];
-        tileCounts(domain, t);
-        pg::parallelFor(tiles.size(), 16, [&](size_t begin, size_t end) {
-            for (size_t s = begin; s < end; ++s) {
-                const size_t tile = tiles[s];
-                const int c[3] = {static_cast<int>(tile % t[0]) * Tiles::kSide, static_cast<int>((tile / t[0]) % t[1]) * Tiles::kSide,
-                                  static_cast<int>(tile / (t[0] * t[1])) * Tiles::kSide};
-                for (int z = 0; z < Tiles::kSide && c[2] + z < domain.cells[2]; ++z) {
-                    for (int y = 0; y < Tiles::kSide && c[1] + y < domain.cells[1]; ++y) {
-                        for (int x = 0; x < Tiles::kSide && c[0] + x < domain.cells[0]; ++x) {
-                            const size_t from = 2 * (s * Tiles::kCells + SparseGrid::local(x, y, z));
-                            const size_t to = coarse(c[0] + x, c[1] + y, c[2] + z);
-                            sum[2 * to] = sum[2 * to] + cells[from] - 255u;
-                            sum[2 * to + 1] += cells[from + 1];
-                        }
-                    }
-                }
-            }
+        forTileCells(domain, tiles, [&](size_t s, int i, int j, int k, size_t l) {
+            const size_t from = 2 * (s * Tiles::kCells + l);
+            const size_t to = coarse(i, j, k);
+            sum[2 * to] = sum[2 * to] + cells[from] - 255u;
+            sum[2 * to + 1] += cells[from + 1];
         });
+        forTileCells(domain, deepTiles, [&](size_t, int i, int j, int k, size_t) { sum[2 * coarse(i, j, k)] -= 255u; });
     }
     out.resize(2 * count);
     for (size_t c = 0; c < 2 * count; ++c) out[c] = static_cast<uint8_t>((sum[c] + under / 2) / under);
@@ -264,9 +274,14 @@ void WaterFrame::coarseCells(int factor, std::vector<uint8_t>& out) const {
 
 const std::vector<uint8_t>& WaterFrame::denseCells(std::vector<uint8_t>& scratch) const {
     if (tiles.empty()) return cells;
-    // Far from the water: as far as the band, without foam.
+    // Far from the water: as far as the band, without foam; deep in it, as
+    // far into it.
     const uint8_t far[2] = {255, 0};
     spreadTiles<uint8_t>(domain, tiles, cells, 2, far, scratch);
+    const size_t nx = static_cast<size_t>(domain.cells[0]), ny = static_cast<size_t>(domain.cells[1]);
+    forTileCells(domain, deepTiles, [&](size_t, int i, int j, int k, size_t) {
+        scratch[2 * (static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * static_cast<size_t>(k)))] = 0;
+    });
     return scratch;
 }
 
@@ -369,8 +384,8 @@ WaterFrame capture(const LiquidSolver& sim, bool particles) {
             out[2 * cell + 1] = foamByte(white[c]);
         });
     } else {
-        // Sparse: the tiles with anything but the far air in them; one, of
-        // far air, when there is none.
+        // Sparse: the tiles with anything but the far air in them -- those
+        // deep in the water apart; one, of far air, when there is none.
         const std::vector<uint32_t>& stored = fine.stored();
         std::vector<uint8_t> any(stored.size(), 0);
         pg::parallelFor(stored.size(), 16, [&](size_t begin, size_t end) {
@@ -381,9 +396,43 @@ WaterFrame capture(const LiquidSolver& sim, bool particles) {
                 }
             }
         });
+        // Deep in the water: every cell as far into it as the band, without
+        // foam, and every tile round it in the domain and with anything in
+        // it -- the surface passes by none: kept without its cells.
+        size_t t[3];
+        tileCounts(w.domain, t);
+        std::vector<uint8_t> deep(stored.size(), 0);
+        pg::parallelFor(stored.size(), 16, [&](size_t begin, size_t end) {
+            for (size_t s = begin; s < end; ++s) {
+                const size_t base = s * Tiles::kCells;
+                bool all = any[s] != 0;
+                for (size_t c = base; c < base + Tiles::kCells && all; ++c) {
+                    all = distanceByte(dist[c]) == 0 && foamByte(white[c]) == 0;
+                }
+                if (!all) continue;
+                const size_t tile = stored[s];
+                const int at[3] = {static_cast<int>(tile % t[0]), static_cast<int>((tile / t[0]) % t[1]),
+                                   static_cast<int>(tile / (t[0] * t[1]))};
+                for (int q = 0; q < 27 && all; ++q) {
+                    const int x = at[0] + q % 3 - 1, y = at[1] + q / 3 % 3 - 1, z = at[2] + q / 9 - 1;
+                    if (x < 0 || y < 0 || z < 0 || static_cast<size_t>(x) >= t[0] || static_cast<size_t>(y) >= t[1] ||
+                        static_cast<size_t>(z) >= t[2]) {
+                        all = false;
+                        break;
+                    }
+                    const int32_t n = distance.slotOf(x * Tiles::kSide, y * Tiles::kSide, z * Tiles::kSide);
+                    all = n >= 0 && any[static_cast<size_t>(n)];
+                }
+                deep[s] = all;
+            }
+        });
         std::vector<size_t> slots;
         for (size_t s = 0; s < stored.size(); ++s) {
             if (!any[s]) continue;
+            if (deep[s]) {
+                w.deepTiles.push_back(stored[s]);
+                continue;
+            }
             w.tiles.push_back(stored[s]);
             slots.push_back(s);
         }

@@ -74,7 +74,7 @@ std::shared_ptr<Geometry> waterMesh(const WaterFrame& water, const RainFrame* ri
     auto distance = [&](size_t c) { return (static_cast<float>(cells[2 * c]) / 255.0f * 2.0f - 1.0f) * water.band; };
 
     // The distance to the surface, as a volume: below 0 in the water. Sparse,
-    // as tiles, the rest as far as the band.
+    // as tiles, the rest as far as the band -- but the tiles deep in it.
     std::shared_ptr<Geometry> geo;
     if (water.tiles.empty()) {
         std::vector<float> field(d.cellCount());
@@ -90,6 +90,9 @@ std::shared_ptr<Geometry> waterMesh(const WaterFrame& water, const RainFrame* ri
         field.tiles = water.tiles;
         field.values.resize(Tiles::kCells * water.tiles.size());
         field.background = water.band;
+        // Deep in the water: as far into it as the band, as a byte of 0 says.
+        field.filled = water.deepTiles;
+        field.fill = -water.band;
         pg::parallelFor(field.values.size(), 65536, [&](size_t begin, size_t end) {
             for (size_t c = begin; c < end; ++c) field.values[c] = distance(c);
         });

@@ -23,8 +23,8 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 6: what became of the bars; 7: which grit is glass, which bodies came
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned; 10: a sparse gas's tiles; 11: the cloth; 12: the cloth
-// torn; 13: a sparse liquid's tiles.
-constexpr uint32_t kVersion = 13;
+// torn; 13: a sparse liquid's tiles; 14: its tiles deep in the water.
+constexpr uint32_t kVersion = 14;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -330,6 +330,7 @@ std::string formatFrame(const Frame& f) {
     // above hold theirs alone.
     out.words(w.tiles);
     out.words(w.flowTiles);
+    out.words(w.deepTiles);  // version 14: deep in the water, without their cells
     return std::move(out.bytes);
 }
 
@@ -463,6 +464,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         in.words(w.tiles);
         in.words(w.flowTiles);
     }
+    if (version >= 14) in.words(w.deepTiles);
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -483,7 +485,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     for (size_t t = 0; t < w.flowTiles.size() && flowFits; ++t) {
         flowFits = w.flowTiles[t] < flowTileCount && (t == 0 || w.flowTiles[t - 1] < w.flowTiles[t]);
     }
-    if ((w.cells.empty() ? !w.tiles.empty() : !w.fits()) || !flowFits) {
+    if ((w.cells.empty() ? !w.tiles.empty() || !w.deepTiles.empty() : !w.fits()) || !flowFits) {
         error = "the frame's water does not fit its grid";
         return false;
     }

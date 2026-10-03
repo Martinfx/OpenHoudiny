@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <vector>
 
 namespace pg {
@@ -38,28 +39,49 @@ struct DenseValues {
 };
 
 /// The values of a TiledVolume whose background is outside: those of its
-/// tiles, the background in the others.
+/// tiles, its fill in the filled ones, the background in the others.
 class TiledValues {
 public:
     static constexpr int kLog = 3, kSide = 8, kCells = 512;
+    static constexpr int32_t kBackground = -1, kFilled = -2;
 
     explicit TiledValues(const TiledVolume& v)
-        : values_(v.values.data()), tiles_(v.tiles), background_(v.background) {
+        : values_(v.values.data()), tiles_(v.tiles), background_(v.background), fill_(v.fill) {
         for (int a = 0; a < 3; ++a) {
             n_[a] = v.res[a];
             t_[a] = (v.res[a] + kSide - 1) >> kLog;
         }
-        slot_.assign(static_cast<size_t>(t_[0]) * static_cast<size_t>(t_[1]) * static_cast<size_t>(t_[2]), -1);
+        slot_.assign(static_cast<size_t>(t_[0]) * static_cast<size_t>(t_[1]) * static_cast<size_t>(t_[2]), kBackground);
         for (size_t s = 0; s < tiles_.size(); ++s) slot_[tiles_[s]] = static_cast<int32_t>(s);
+        for (const uint32_t t : v.filled) slot_[t] = kFilled;
     }
 
     float operator()(int i, int j, int k) const {
         const int32_t s = slot_[static_cast<size_t>(i >> kLog) +
                                 static_cast<size_t>(t_[0]) * (static_cast<size_t>(j >> kLog) +
                                                               static_cast<size_t>(t_[1]) * static_cast<size_t>(k >> kLog))];
-        if (s < 0) return background_;
+        if (s < 0) return s == kFilled ? fill_ : background_;
         return values_[static_cast<size_t>(s) * kCells + static_cast<size_t>(i & (kSide - 1)) +
                        kSide * (static_cast<size_t>(j & (kSide - 1)) + kSide * static_cast<size_t>(k & (kSide - 1)))];
+    }
+
+    /// Is each of `filled` off the sides of the volume, with kept or filled
+    /// tiles all round it? Then no cube the surface passes through has a
+    /// sample in it but those that have one in a kept tile too.
+    bool filledWithin(const std::vector<uint32_t>& filled) const {
+        const size_t tx = static_cast<size_t>(t_[0]), txy = tx * static_cast<size_t>(t_[1]);
+        for (const uint32_t t : filled) {
+            const int c[3] = {static_cast<int>(t % tx), static_cast<int>(t / tx % static_cast<size_t>(t_[1])),
+                              static_cast<int>(t / txy)};
+            for (int q = 0; q < 27; ++q) {
+                const int x = c[0] + q % 3 - 1, y = c[1] + q / 3 % 3 - 1, z = c[2] + q / 9 - 1;
+                if (x < 0 || y < 0 || z < 0 || x >= t_[0] || y >= t_[1] || z >= t_[2]) return false;
+                if (slot_[static_cast<size_t>(x) + tx * static_cast<size_t>(y) + txy * static_cast<size_t>(z)] == kBackground) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /// f(i, j) for the cubes of layer k the surface may pass through, in the
@@ -125,9 +147,9 @@ public:
 private:
     const float* values_;
     const std::vector<uint32_t>& tiles_;
-    float background_;
+    float background_, fill_;
     int n_[3], t_[3];
-    std::vector<int32_t> slot_;  // per tile of the volume, its place in tiles_, -1 when not kept
+    std::vector<int32_t> slot_;  // per tile of the volume, its place in tiles_, else kBackground or kFilled
 };
 
 /// The samples of a volume, one more all round than it has -- outside,
@@ -367,16 +389,24 @@ std::shared_ptr<Geometry> volumeToMesh(const TiledVolume& volume, float iso, boo
     }
     const size_t tiles = static_cast<size_t>((n[0] + kSide - 1) / kSide) * static_cast<size_t>((n[1] + kSide - 1) / kSide) *
                          static_cast<size_t>((n[2] + kSide - 1) / kSide);
-    if (!std::is_sorted(volume.tiles.begin(), volume.tiles.end()) ||
-        std::adjacent_find(volume.tiles.begin(), volume.tiles.end()) != volume.tiles.end() ||
-        (!volume.tiles.empty() && volume.tiles.back() >= tiles)) {
-        return std::make_shared<Geometry>();
-    }
+    // Tiles of the volume, in order, each once; none both kept and filled.
+    auto inOrder = [&](const std::vector<uint32_t>& list) {
+        for (size_t s = 0; s < list.size(); ++s) {
+            if (list[s] >= tiles || (s > 0 && list[s - 1] >= list[s])) return false;
+        }
+        return true;
+    };
+    std::vector<uint32_t> both;
+    std::set_intersection(volume.tiles.begin(), volume.tiles.end(), volume.filled.begin(), volume.filled.end(),
+                          std::back_inserter(both));
+    if (!inOrder(volume.tiles) || !inOrder(volume.filled) || !both.empty()) return std::make_shared<Geometry>();
+    TiledValues values(volume);
     const float b = volume.background;
-    if (insideBelow ? b < iso : b > iso) {
-        // A background inside meets the volume's sides everywhere: every voxel, then.
+    if ((insideBelow ? b < iso : b > iso) || !values.filledWithin(volume.filled)) {
+        // A background inside meets the volume's sides everywhere, and the
+        // surface may pass by a filled tile not deep in the rest: every
+        // voxel, then.
         std::vector<float> all(static_cast<size_t>(n[0]) * static_cast<size_t>(n[1]) * static_cast<size_t>(n[2]));
-        const TiledValues values(volume);
         pg::parallelFor(static_cast<size_t>(n[2]), 1, [&](size_t begin, size_t end) {
             for (int k = static_cast<int>(begin); k < static_cast<int>(end); ++k) {
                 for (int j = 0; j < n[1]; ++j) {
@@ -389,7 +419,7 @@ std::shared_ptr<Geometry> volumeToMesh(const TiledVolume& volume, float iso, boo
         });
         return volumeToMesh(Volume::make("tiled", volume.origin, volume.voxel, n[0], n[1], n[2], std::move(all)), iso, insideBelow);
     }
-    return Mesher<TiledValues>(volume.origin, volume.voxel, TiledValues(volume), iso, insideBelow, n).run();
+    return Mesher<TiledValues>(volume.origin, volume.voxel, std::move(values), iso, insideBelow, n).run();
 }
 
 void registerVolumeNodes() {

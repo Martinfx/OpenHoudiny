@@ -67,9 +67,10 @@ cache/fire/
   (kvaternion v poloviční přesnosti, po načtení znovu jednotkový; [drť jako částice](destruction.md#drť-jako-částice)),
   a od verze 10 řídký plyn: jen dlaždice 8 × 8 × 8 buněk, ve kterých nějaký
   je, a jejich čísla na konci snímku ([pyro.md](pyro.md#řídká-mřížka-počítá-se-jen-tam-kde-je-plyn)),
-  od verze 11 a 12 látka, i roztržená ([cloth.md](cloth.md)), a od verze 13
+  od verze 11 a 12 látka, i roztržená ([cloth.md](cloth.md)), od verze 13
   řídká voda: hladina jen v dlaždicích blízko vody, rychlost vody jen
-  v dlaždicích řešiče, kde nějaká je, a čísla dlaždic opět na konci snímku
+  v dlaždicích řešiče, kde nějaká je, a čísla dlaždic opět na konci snímku,
+  a od verze 14 dlaždice hluboko ve vodě jen svými čísly
   ([pyro.md](pyro.md#jak-se-voda-kreslí));
   klidová geometrie kusů, pruty i síť vazeb jsou
   v síti uzlů a snímek načtený z disku je dostane od ní. Binárně, little-endian,

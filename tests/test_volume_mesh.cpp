@@ -236,3 +236,78 @@ TEST(volume_mesh_of_tiles_is_that_of_every_voxel) {
     wrong.values.pop_back();
     CHECK_EQ(volumeToMesh(wrong, 0.0f, true)->pointCount(), size_t(0));
 }
+
+TEST(volume_mesh_of_tiles_deep_inside_is_that_of_every_voxel) {
+    // A big ball's distance, cut off at a band: the tiles deep in it -- all
+    // of it at -band, off the grid's sides, kept tiles all round -- kept
+    // without their values, filled; as every voxel all the same.
+    const int n = 40;
+    const float voxel = 0.05f, band = 0.12f, r = 0.75f;
+    const Vec3 origin(-1.0f, 0.0f, -1.0f), centre(0.0f, 1.0f, 0.0f);
+    auto distance = [&](int i, int j, int k) {
+        const Vec3 p = origin + Vec3((static_cast<float>(i) + 0.5f) * voxel, (static_cast<float>(j) + 0.5f) * voxel,
+                                     (static_cast<float>(k) + 0.5f) * voxel);
+        return std::clamp(length(p - centre) - r, -band, band);
+    };
+    std::vector<float> every;
+    for (int k = 0; k < n; ++k) {
+        for (int j = 0; j < n; ++j) {
+            for (int i = 0; i < n; ++i) every.push_back(distance(i, j, k));
+        }
+    }
+    const int t = n / 8;
+    std::vector<int> kind(static_cast<size_t>(t * t * t), 0);  // 0 background, 1 kept, 2 all -band
+    for (int tile = 0; tile < t * t * t; ++tile) {
+        bool near = false, deep = true;
+        for (int q = 0; q < 512; ++q) {
+            const float d = distance(8 * (tile % t) + q % 8, 8 * (tile / t % t) + q / 8 % 8, 8 * (tile / (t * t)) + q / 64);
+            near = near || d < band;
+            deep = deep && d == -band;
+        }
+        kind[static_cast<size_t>(tile)] = deep ? 2 : near ? 1 : 0;
+    }
+    TiledVolume tiled;
+    tiled.origin = origin;
+    tiled.voxel = voxel;
+    tiled.res[0] = tiled.res[1] = tiled.res[2] = n;
+    tiled.background = band;
+    tiled.fill = -band;
+    for (int tile = 0; tile < t * t * t; ++tile) {
+        if (kind[static_cast<size_t>(tile)] == 0) continue;
+        bool within = kind[static_cast<size_t>(tile)] == 2;
+        for (int q = 0; q < 27 && within; ++q) {
+            const int x = tile % t + q % 3 - 1, y = tile / t % t + q / 3 % 3 - 1, z = tile / (t * t) + q / 9 - 1;
+            within = x >= 0 && y >= 0 && z >= 0 && x < t && y < t && z < t && kind[static_cast<size_t>(x + t * (y + t * z))] != 0;
+        }
+        if (within) {
+            tiled.filled.push_back(static_cast<uint32_t>(tile));
+            continue;
+        }
+        tiled.tiles.push_back(static_cast<uint32_t>(tile));
+        for (int q = 0; q < 512; ++q) {
+            tiled.values.push_back(distance(8 * (tile % t) + q % 8, 8 * (tile / t % t) + q / 8 % 8, 8 * (tile / (t * t)) + q / 64));
+        }
+    }
+    CHECK(!tiled.filled.empty());
+    const Volume whole = Volume::make("surface", origin, voxel, n, n, n, every);
+    const auto mesh = volumeToMesh(tiled, 0.0f, true);
+    CHECK(mesh->pointCount() > 1000);
+    CHECK_EQ(mesh->hash(), volumeToMesh(whole, 0.0f, true)->hash());
+    // A filled tile on a side of the grid -- here the corner tile, of the
+    // background before: every voxel looked at, as a dense volume with it.
+    TiledVolume corner = tiled;
+    corner.filled.insert(corner.filled.begin(), 0u);
+    std::vector<float> withCorner = every;
+    for (int q = 0; q < 512; ++q) withCorner[static_cast<size_t>(q % 8 + n * (q / 8 % 8 + n * (q / 64)))] = -band;
+    const auto cornered = volumeToMesh(corner, 0.0f, true);
+    CHECK_EQ(cornered->hash(), volumeToMesh(Volume::make("surface", origin, voxel, n, n, n, withCorner), 0.0f, true)->hash());
+    CHECK(cornered->pointCount() > mesh->pointCount());
+    // A tile both kept and filled, or filled ones out of order: nothing.
+    TiledVolume wrong = tiled;
+    wrong.filled.push_back(wrong.tiles.back());
+    std::sort(wrong.filled.begin(), wrong.filled.end());
+    CHECK_EQ(volumeToMesh(wrong, 0.0f, true)->pointCount(), size_t(0));
+    wrong = tiled;
+    std::reverse(wrong.filled.begin(), wrong.filled.end());
+    CHECK(wrong.filled.size() < 2 || volumeToMesh(wrong, 0.0f, true)->pointCount() == 0);
+}

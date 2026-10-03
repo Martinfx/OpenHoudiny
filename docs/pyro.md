@@ -864,7 +864,10 @@ zaberou po bajtu na buňku.
 
 Z řídkého řešiče nese snímek jen **dlaždice** 8 × 8 × 8 buněk blízko vody
 (`WaterFrame::tiles`); buňka mimo ně je vzduch dál, než sahá pásmo
-vzdálenosti, bez pěny. Rychlost vody, ze které má povrch `v` pro rozmazání
+vzdálenosti, bez pěny. Dlaždice **hluboko ve vodě** (každá buňka dál pod
+hladinou, než sahá pásmo, a bez pěny) nese jen svým číslem
+(`deepTiles`), pokud neleží na kraji domény a všech 26 dlaždic kolem ní
+vodu má: kolem takové dlaždice hladina projít nemůže. Rychlost vody, ze které má povrch `v` pro rozmazání
 pohybem, nese jen v dlaždicích řešiče, kde nějaká je (`flowTiles`). Cache
 je tak 2,3× až 3,3× menší (12 snímků `dam_break`: 5,2 MB místo 17,1 MB,
 `splash`: 14,7 MB místo 47,8 MB) a na velké doméně, kde voda zabírá
