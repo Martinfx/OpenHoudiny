@@ -292,7 +292,12 @@ std::vector<ParamDef> pyroSolverParams(bool withFrameRate) {
           {"cooling", "Cooling", "Dissipation", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "1/s",
            "How fast heat fades."},
           {"smoke_decay", "Smoke Decay", "Dissipation", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "1/s",
-           "How fast smoke thins out."}};
+           "How fast smoke thins out."},
+          {"quench", "Quench", "Water", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "How hard the water of a Liquid Solver and the drops of a Rain put the fire out where they get into "
+           "the gas: they cool it, soak its fuel and the sources they fall on. 0: they do not."},
+          {"steam", "Steam", "Water", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
+           "Smoke -- steam -- for each unit of heat the water takes."}};
     if (!withFrameRate) {
         p.erase(std::remove_if(p.begin(), p.end(), [](const ParamDef& d) { return std::string(d.name) == "fps"; }), p.end());
     }
@@ -1727,6 +1732,9 @@ std::vector<NodeType> buildTypes() {
                    "Droplets a drop throws up where it lands on something solid."},
                   {"ripples", "Ripples", "Rain", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 20.0f, "",
                    "How hard a drop rings the water it falls in."},
+                  {"fill", "Fill", "Rain", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 20.0f, 0.0f, 1000.0f, "mm/s",
+                   "How fast the water the drops fall into rises, as if all the rain fell into it: 0 not at all "
+                   "-- a raindrop is too little water to show; 5 to 20 fills a pool in a shot."},
                   seed("Rain", "Another number: the drops at other places."),
                   {"start", "Start", "Time", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "s",
                    "When it starts to rain."},
@@ -4429,6 +4437,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.flameLife = f(*solver, "flame_life");
         s.cooling = f(*solver, "cooling");
         s.smokeDecay = f(*solver, "smoke_decay");
+        s.quench = f(*solver, "quench");
+        s.steam = f(*solver, "steam");
 
         bool dust = false;
         for (const Node* n : feeding(solver, "sources")) {
@@ -4658,6 +4668,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             r.speed = f(*look, "speed");
             r.splash = f(*look, "splash");
             r.ripples = f(*look, "ripples");
+            r.fill = f(*look, "fill");
             r.seed = static_cast<uint32_t>(whole(*look, "seed"));
             r.start = f(*look, "start");
             r.end = f(*look, "end");

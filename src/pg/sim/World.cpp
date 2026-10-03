@@ -78,6 +78,8 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
         grainsPush_ = grains_ && world_.rigid.intoGrains;
         coupled_ = fluidsPush_ || clothPushes_ || grainsPush_;
     }
+    // The water and the rain put the fire out.
+    quenches_ = gas_ && (water_ || rain_) && world_.gas.solver.quench > 0.0f;
 }
 
 namespace {
@@ -132,6 +134,15 @@ void WorldSolver::step() {
     if (rain_) {
         t0 = Clock::now();
         rain_->step(water_.get());
+        // The drops that fell into the water add to it.
+        if (water_ && !rain_->intoWater().empty()) {
+            std::vector<Vec3> at, velocity;
+            for (const RainParticle& d : rain_->intoWater()) {
+                at.push_back(d.position);
+                velocity.push_back(d.velocity);
+            }
+            water_->pour(at, velocity, rain_->dropVolume());
+        }
         profile_.rain = msSince(t0);
     }
     if (gas_) {
@@ -281,6 +292,33 @@ void WorldSolver::prepare() {
         }
         gas_->setScene(gas);
     }
+    if (quenches_) {
+        // The water in the gas this step: the water's particles and the
+        // drops' way down, as they were at the end of the last -- in the
+        // gas's box.
+        PyroSolver::Water wet;
+        const Domain& d = gas_->domain();
+        const Vec3 lo = d.origin(), hi = d.origin() + d.size();
+        auto inside = [&](const Vec3& p) {
+            return p.x >= lo.x && p.y >= lo.y && p.z >= lo.z && p.x < hi.x && p.y < hi.y && p.z < hi.z;
+        };
+        if (water_) {
+            const float h = water_->cellSize();
+            wet.particleVolume = 0.125f * h * h * h;
+            for (const Vec3& p : water_->positions()) {
+                if (inside(p)) wet.particles.push_back(p);
+            }
+        }
+        if (rain_) {
+            for (const RainParticle& r : rain_->drops()) {
+                const Vec3 to = r.position + r.velocity * world_.timeStep;
+                if (!inside(r.position) && !inside(to)) continue;
+                wet.dropFrom.push_back(r.position);
+                wet.dropTo.push_back(to);
+            }
+        }
+        gas_->setWater(wet);
+    }
     if (water_ && (animated || piecesIntoWater)) {
         LiquidScene water = now.water;
         water.solver.timeStep = world_.timeStep;
@@ -314,13 +352,15 @@ RigidFluids WorldSolver::fluids() const {
 
 // The state: "pgstate", a version, the frame; what the water, the gas and
 // the cloth did to the pieces in each step so far (version 2); then each
-// part there is -- the gas, the water (its grids on their tiles, version 4),
+// part there is -- the gas, the water (its grids on their tiles, version 4;
+// the rain poured into it that is not a particle yet, version 5),
 // the rain, the cloth, torn or not (version 3), the gas's upres, the grains
-// -- as its saveState() writes it. The pieces' is not: they are stepped again, with
+// -- as its saveState() writes it; the gas with how soaked its sources are
+// (version 5). The pieces' is not: they are stepped again, with
 // those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
-constexpr uint32_t kStateVersion = 4;
+constexpr uint32_t kStateVersion = 5;
 }  // namespace
 
 std::string WorldSolver::saveState() const {

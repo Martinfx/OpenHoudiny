@@ -1040,6 +1040,7 @@ add_executable(pgtests
   tests/test_coupling.cpp
   tests/test_cloth.cpp
   tests/test_grains.cpp
+  tests/test_quench.cpp
   tests/test_edit.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp

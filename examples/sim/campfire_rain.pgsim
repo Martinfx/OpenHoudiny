@@ -1,0 +1,37 @@
+pgsim 1
+# A campfire in the rain: it burns for a second, then a downpour comes. The
+# drops that fall through the flames cool them and put them out, those
+# that fall on the fire soak it, and it gives less and less: in a few
+# seconds the flames are gone and white steam rises off the wet logs.
+node 1 pyro_source 2 fire 0 0
+  param fuel 14
+  param heat 1
+  param velocity 0 0.4 0
+  param flicker 0.7
+node 2 turbulence 1 turbulence 0 96
+  param strength 3.5
+node 3 pyro_solver 2 solver 250 28
+  param buoyancy 0.9
+  param vorticity 0.9
+  param cooling 1.5
+  param smoke_decay 0.15
+node 4 volume_look 2 look 490 28
+  param smoke_color 0.5 0.49 0.47
+  param smoke_density 24
+  param fire_light 3
+node 5 output 2 output 720 28
+  param frames 180
+node 6 rain 1 rain 490 180
+  param size 1.6 0.4 1.6
+  param rate 2500
+  param start 1
+node 7 object 1 logs 0 200
+  param center 0 0.05 0
+  param size 0.4 0.1 0.4
+  param color 0.16 0.1 0.06
+link 1.source -> 3.sources
+link 2.force -> 3.forces
+link 3.gas -> 4.gas
+link 4.look -> 5.look
+link 6.look -> 5.look
+link 7.collider -> 6.colliders

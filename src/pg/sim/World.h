@@ -9,7 +9,10 @@
 // it, and rings its surface. A Pyro Upres steps just before the gas, with
 // the flow the gas is about to carry its own with; the frames keep its
 // finer gas instead of the solver's. The grains fall with the cloth, before
-// the gas, on the pieces where they have got to, and push them back.
+// the gas, on the pieces where they have got to, and push them back. The
+// water and the rain's drops, where they were at the end of the last step,
+// put out the fire they get into (PyroSolver::setWater); the drops that
+// land in the water add to it (RainSettings::fill).
 //
 // Plain data, compared as a whole, as the scene of each part is: the
 // editor's runner starts again exactly when the World differs.
@@ -151,6 +154,7 @@ private:
     bool fluidsPush_ = false;   // the water or the gas
     bool clothPushes_ = false;  // the cloth they fall on
     bool grainsPush_ = false;   // the grains that fall on them
+    bool quenches_ = false;     // the water and the rain get into the gas
     std::vector<RigidFlow> flows_;
 };
 

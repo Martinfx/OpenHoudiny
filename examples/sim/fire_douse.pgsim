@@ -1,0 +1,48 @@
+pgsim 1
+# A campfire doused with a bucket of water: it burns for a second and a
+# half, then a ball of water falls on it. Where the water gets into the
+# flames it cools them and soaks the fuel, the fire under it is soaked
+# through and dies; a burst of steam rolls up off it, and the water runs
+# away over the ground.
+node 1 pyro_source 2 fire 0 0
+  param fuel 14
+  param heat 1
+  param velocity 0 0.4 0
+  param flicker 0.7
+node 2 turbulence 1 turbulence 0 96
+  param strength 3.5
+node 3 pyro_solver 2 solver 250 28
+  param buoyancy 0.9
+  param vorticity 0.9
+  param cooling 1.5
+  param smoke_decay 0.15
+  param steam 1.5
+node 4 volume_look 2 look 490 28
+  param smoke_color 0.5 0.49 0.47
+  param smoke_density 24
+  param fire_light 3
+node 5 output 2 output 720 28
+  param frames 120
+node 6 water_source 1 bucket 0 300
+  param shape sphere
+  param center 0.05 1.05 0
+  param size 0.32 0.32 0.32
+  param velocity 0 -1.5 0
+  param start 1.5
+node 7 liquid_solver 1 water 250 300
+  param size 1.6 1.4 1.6
+  param resolution 80
+  param closed_sides off
+node 8 water_look 1 water_look 490 300
+node 9 object 1 logs 0 200
+  param center 0 0.05 0
+  param size 0.4 0.1 0.4
+  param color 0.16 0.1 0.06
+link 1.source -> 3.sources
+link 2.force -> 3.forces
+link 3.gas -> 4.gas
+link 4.look -> 5.look
+link 6.water -> 7.sources
+link 7.liquid -> 8.liquid
+link 8.look -> 5.look
+link 9.collider -> 7.colliders

@@ -390,6 +390,7 @@ palivo), nebo jen kde je kouř.
 | Motion | `buoyancy`, `weight` (tíha kouře), `vorticity` (víry, které hrubá mřížka rozmaže) |
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |
 | Dissipation | `cooling`, `smoke_decay` |
+| Water | `quench` (jak silně voda Liquid Solveru a kapky Rain hasí oheň, do kterého se dostanou: 0 vůbec), `steam` (kolik kouře — páry — udělá každá jednotka tepla, kterou voda vezme); viz [quench.md](quench.md) |
 
 **Pyro Upres** (Simulation): plyn Pyro Solveru znovu, na mřížce dvakrát až
 čtyřikrát jemnější, s víry, které hrubá mřížka neudrží
@@ -498,6 +499,9 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
+| `campfire_rain` | voda a oheň: táborák hoří vteřinu, pak přijde liják — kapky, které propadnou plameny, je chladí, ty, které padnou na oheň, ho promočí; za pár sekund plameny zmizí a z mokrých polen stoupá pára ([quench.md](quench.md)) |
+| `fire_douse` | táborák uhašený kbelíkem vody: koule vody spadne na oheň, plameny zmizí během pár snímků, vyvalí se oblak páry a voda odteče po zemi ([quench.md](quench.md)) |
+| `rain_fill` | liják plní kamennou nádrž: každá kapka, která padne do vody, ji rozvlní a přidá do ní — hladina stoupne za pět sekund o 7 cm a zaleje schod ([quench.md](quench.md)) |
 | `campfire_upres` | upres: táborák spočítaný v rozlišení 64 a nakreslený ve 192 — Pyro Upres ×3 přidá víry, které hrubá mřížka neudrží: plameny se trhají, saze se na okrajích kudrnatí; za polovinu času a paměti simulace ve 192 ([§4](#upres-hrubá-simulace-jemný-obraz)) |
 | `demolition` | destrukce: odstřel věžáku mezi domy — nálože v přízemí, věž se zřítí do svého půdorysu a patra se drtí; prach z nárazů, drcení a přetržených spojů žene vytlačený vzduch do ulic ([destruction.md](destruction.md)) |
 | `wall_collapse` | destrukce zblízka: průčelí cihlového domu vyletí do ulice, kusy se kutálejí ke kameře těsně nad asfaltem a prach prosvítí nízké slunce ([destruction.md](destruction.md)) |
@@ -1037,7 +1041,7 @@ kouř, tříšť vody i kapky pak jdou po stejném větru.
 
 | uzel | parametry |
 |---|---|
-| **Rain** (Simulation) | Cloud: `center`, `size` (mrak: kapky vznikají v tomto kvádru a prší pod ním); Rain: `rate` (kapek za sekundu na m²: 100 mrholení, 800 déšť, 3 000 liják), `speed` (rychlost pádu v m/s: kolem 7 pro déšť, méně pro mrholení), `splash` (kolik kapiček odletí od pevného povrchu), `ripples` (jak silně kapka rozvlní vodu), `seed`; Time: `start`, `end`; Look: `color`, `opacity`, `streak` (délka čáry jako podíl snímku: pohybová neostrost), `wet` (jak mokrá je podlaha) |
+| **Rain** (Simulation) | Cloud: `center`, `size` (mrak: kapky vznikají v tomto kvádru a prší pod ním); Rain: `rate` (kapek za sekundu na m²: 100 mrholení, 800 déšť, 3 000 liják), `speed` (rychlost pádu v m/s: kolem 7 pro déšť, méně pro mrholení), `splash` (kolik kapiček odletí od pevného povrchu), `ripples` (jak silně kapka rozvlní vodu), `fill` (o kolik milimetrů za sekundu stoupá voda, do které kapky padají — jako by do ní padal všechen déšť pod mrakem; 0 nic, skutečná kapka je na to příliš málo vody; 5 až 20 naplní bazén během záběru, [quench.md](quench.md)), `seed`; Time: `start`, `end`; Look: `color`, `opacity`, `streak` (délka čáry jako podíl snímku: pohybová neostrost), `wet` (jak mokrá je podlaha) |
 | **RBD Solver** (Simulation) | Pieces: `attribute`; Physics: `density`, `friction`, `bounce`, `gravity`, `floor`; Glue: `glue` (pevnost lepidla v kPa, 0 bez lepidla); Time: `substeps`, `rest` (tělesa v klidu zmrznou, dokud do nich něco nenarazí); Dust: `dust`, `impact_dust`, `dust_size`, `debris`, `air`; Look: `color`, `inside_color`, `inside_group`. Vstupy Pieces (geometrie s `piece`) a Colliders; výstupy Look (do Outputu: kusy se kreslí, kam dopadly), Rigid (do RBD Pieces), Collider (kusy jako pohyblivé překážky vody, plynu a deště) a Dust (zdroj kouře pro Pyro Solver); [destruction.md](destruction.md) |
 
 Ve viewportu je déšť v **Shift+A → Weather**:

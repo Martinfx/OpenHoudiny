@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <unordered_map>
 #include <utility>
 
 namespace pg::sim {
@@ -72,6 +73,8 @@ void PyroSolver::reset() {
     frame_ = 0;
     time_ = 0.0f;
     times_ = Times{};
+    wet_.clear();
+    soaked_.clear();
     updateSolids();
 }
 
@@ -114,6 +117,7 @@ void PyroSolver::saveState(StateWriter& out) const {
         out.list(blocked_[a]);
         out.list(blockedVel_[a]);
     }
+    out.list(soaked_);
 }
 
 bool PyroSolver::loadState(StateReader& in) {
@@ -154,6 +158,8 @@ bool PyroSolver::loadState(StateReader& in) {
             if (f >= vel[a].size()) return in.fail();
         }
     }
+    std::vector<float> soaked;
+    if (!in.list(soaked)) return false;
     retile(cells);
     for (int a = 0; a < 3; ++a) {
         // Onto the faces retile() made, which the other face fields share.
@@ -164,6 +170,7 @@ bool PyroSolver::loadState(StateReader& in) {
     SparseGrid* mine[6] = {&density_, &temperature_, &fuel_, &flame_, &pressure_, &solid_};
     for (int f = 0; f < 6; ++f) *mine[f] = std::move(fields[f]);
     solidCells_ = std::move(solidCells);
+    soaked_ = std::move(soaked);
     anySolid_ = anySolid != 0;
     frame_ = frame;
     time_ = time;
@@ -434,6 +441,7 @@ void PyroSolver::step() {
         lap(t0, times_.emit);
         advect(dt);
         lap(t0, times_.advect);
+        quench(dt);
         combust(dt);
         lap(t0, times_.combust);
         addForces(dt);
@@ -491,11 +499,15 @@ struct Source {
 }  // namespace
 
 void detail::emitScalars(const Scene& scene, float time, float dt, const Domain& domain, const SparseGrid* solid,
-                         SparseGrid& fuel, SparseGrid& smoke, SparseGrid& heat, SparseGrid& expansion) {
+                         SparseGrid& fuel, SparseGrid& smoke, SparseGrid& heat, SparseGrid& expansion,
+                         const std::vector<float>* soaked) {
     const float h = domain.voxel;
     const Vec3 o = domain.origin();
-    for (const Emitter& e : scene.emitters) {
+    for (size_t index = 0; index < scene.emitters.size(); ++index) {
+        const Emitter& e = scene.emitters[index];
         if (!e.activeAt(time)) continue;
+        const float give = soaked && index < soaked->size() ? std::exp(-(*soaked)[index]) : 1.0f;
+        if (give <= 0.0f) continue;
         const Source source(e, scene, time);
         int lo[3], hi[3];
         source.reach(domain, lo, hi);
@@ -507,11 +519,11 @@ void detail::emitScalars(const Scene& scene, float time, float dt, const Domain&
                          o.z + (static_cast<float>(k) + 0.5f) * h);
             const float w = source.weight(p);
             if (w <= 0.0f) return;
-            const float amount = dt * w * source.flicker(p);
+            const float amount = dt * w * source.flicker(p) * give;
             fuel.data()[c] += e.fuel * amount;
             smoke.data()[c] += e.smoke * amount;
             heat.data()[c] += e.heat * amount;
-            expansion.data()[c] += e.expansion * w;
+            expansion.data()[c] += e.expansion * w * give;
         });
     }
 }
@@ -521,7 +533,7 @@ void PyroSolver::emit(float dt) {
     // its own (combust).
     expansion_.fill(0.0f);
     detail::emitScalars(scene_, time_, dt, domain_, anySolid_ ? &solid_ : nullptr, fuel_, density_, temperature_,
-                        expansion_);
+                        expansion_, &soaked_);
     for (const Emitter& e : scene_.emitters) {
         if (!e.activeAt(time_)) continue;
         const Source source(e, scene_, time_);
@@ -681,6 +693,123 @@ void PyroSolver::combust(float dt) {
         flame_.data()[c] += burnt;
         expansion_.data()[c] += burnt * s.expansion / dt;
     });
+}
+
+// --- water ---------------------------------------------------------------------------
+
+namespace {
+
+// How fast water puts out the gas of a cell, 1/s at Quench 1: a cell full
+// of a Liquid Solver's water, all but a twentieth of its heat in a frame.
+constexpr float kWaterRate = 90.0f;
+// A Rain's drop cools a column of the air it falls through as wide as
+// this, m^2 -- the spray it breaks into, the air it drags down -- as fast
+// as kDropRate would a cell it filled. Over a while each cell then gets as
+// much of it as rain falls, whatever the cells' size: a downpour of 2500
+// drops a second on a square metre cools the gas some 3 times a second.
+constexpr float kDropReach = 1e-4f;
+constexpr float kDropRate = 12.0f;
+// How fast the water a source gets soaks it, for each 1/s of that: under
+// water a fire is out in a few frames; in a downpour, in a few seconds.
+constexpr float kSoak = 0.4f;
+// The heat the water takes: what is left of it in the steam, which rises a
+// little.
+constexpr float kSteamWarmth = 0.1f;
+
+}  // namespace
+
+void PyroSolver::setWater(const Water& water) {
+    wet_.clear();
+    if (water.empty()) return;
+    const float h = domain_.voxel;
+    const Vec3 o = domain_.origin();
+    const int n[3] = {nx_, ny_, nz_};
+    // Each cell's rate, summed in the order the water is given: the same
+    // bits whatever the map does.
+    std::unordered_map<uint64_t, float> rate;
+    auto add = [&](const Vec3& p, float r) {
+        const int i = static_cast<int>(std::floor((p.x - o.x) / h));
+        const int j = static_cast<int>(std::floor((p.y - o.y) / h));
+        const int k = static_cast<int>(std::floor((p.z - o.z) / h));
+        if (i < 0 || j < 0 || k < 0 || i >= nx_ || j >= ny_ || k >= nz_) return;
+        rate[numberOf(i, j, k, n)] += r;
+    };
+    const float particle = kWaterRate * water.particleVolume / (h * h * h);
+    for (const Vec3& p : water.particles) add(p, particle);
+    // A drop along its way, at every half cell of it: the air it goes
+    // through this step, over the step's time.
+    const float perCell = kDropRate * kDropReach / (h * h * h * scene_.solver.timeStep);
+    const size_t drops = std::min(water.dropFrom.size(), water.dropTo.size());
+    for (size_t d = 0; d < drops; ++d) {
+        const Vec3 a = water.dropFrom[d], b = water.dropTo[d];
+        const float way = length(b - a);
+        const int samples = std::clamp(static_cast<int>(std::ceil(way / (0.5f * h))), 1, 4096);
+        const float each = way / static_cast<float>(samples);
+        for (int s = 0; s < samples; ++s) {
+            const float t = (static_cast<float>(s) + 0.5f) / static_cast<float>(samples);
+            add(a + (b - a) * t, perCell * std::max(each, 0.5f * h));
+        }
+    }
+    wet_.assign(rate.begin(), rate.end());
+    std::sort(wet_.begin(), wet_.end());
+}
+
+void PyroSolver::quench(float dt) {
+    const SolverSettings& s = scene_.solver;
+    if (wet_.empty() || s.quench <= 0.0f) return;
+    const int64_t nx = nx_, nxy = static_cast<int64_t>(nx_) * ny_;
+    auto cellOf = [&](uint64_t number, int& i, int& j, int& k) {
+        k = static_cast<int>(static_cast<int64_t>(number) / nxy);
+        const int64_t rest = static_cast<int64_t>(number) - static_cast<int64_t>(k) * nxy;
+        j = static_cast<int>(rest / nx);
+        i = static_cast<int>(rest - static_cast<int64_t>(j) * nx);
+    };
+    // The gas where the water is: each cell its own, nothing summed across.
+    pg::parallelFor(wet_.size(), 4096, [&](size_t begin, size_t end) {
+        for (size_t w = begin; w < end; ++w) {
+            int i, j, k;
+            cellOf(wet_[w].first, i, j, k);
+            if (!density_.has(i, j, k)) continue;
+            const size_t c = density_.index(i, j, k);
+            const float share = 1.0f - std::exp(-s.quench * wet_[w].second * dt);
+            const float taken = temperature_.data()[c] * share;
+            temperature_.data()[c] -= taken * (1.0f - kSteamWarmth);
+            density_.data()[c] += taken * s.steam;
+            fuel_.data()[c] -= fuel_.data()[c] * share;
+            flame_.data()[c] -= flame_.data()[c] * share;
+        }
+    });
+    // The sources of fire it falls on soak: by how much water the cells of
+    // each get, on the average over the source.
+    soaked_.resize(scene_.emitters.size(), 0.0f);
+    const float h = domain_.voxel;
+    const Vec3 o = domain_.origin();
+    for (size_t e = 0; e < scene_.emitters.size(); ++e) {
+        const Emitter& emitter = scene_.emitters[e];
+        if (!emitter.activeAt(time_) || (emitter.fuel <= 0.0f && emitter.heat <= 0.0f)) continue;
+        const Source source(emitter, scene_, time_);
+        int lo[3], hi[3];
+        source.reach(domain_, lo, hi);
+        auto centre = [&](int i, int j, int k) {
+            return Vec3(o.x + (static_cast<float>(i) + 0.5f) * h, o.y + (static_cast<float>(j) + 0.5f) * h,
+                        o.z + (static_cast<float>(k) + 0.5f) * h);
+        };
+        double weight = 0.0;
+        for (int k = lo[2]; k < hi[2]; ++k) {
+            for (int j = lo[1]; j < hi[1]; ++j) {
+                for (int i = lo[0]; i < hi[0]; ++i) weight += source.weight(centre(i, j, k));
+            }
+        }
+        if (weight <= 0.0) continue;
+        double water = 0.0;
+        for (const auto& [number, r] : wet_) {
+            int i, j, k;
+            cellOf(number, i, j, k);
+            if (i < lo[0] || j < lo[1] || k < lo[2] || i >= hi[0] || j >= hi[1] || k >= hi[2]) continue;
+            water += static_cast<double>(r) * source.weight(centre(i, j, k));
+        }
+        soaked_[e] += dt * s.quench * kSoak * static_cast<float>(water / weight);
+    }
 }
 
 // --- forces --------------------------------------------------------------------------

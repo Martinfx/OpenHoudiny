@@ -37,9 +37,11 @@ void sanitize(std::vector<Collider>& colliders);
 /// `fuel`, `smoke` and `heat` -- grids of one set of tiles over `domain`, a
 /// Pyro Solver's or its upres's -- and how fast they make the gas there
 /// swell, added to `expansion`. None to the cells `solid` marks (above 0.5),
-/// when there is one.
+/// when there is one. `soaked`, when there is one, how soaked each source
+/// is (PyroSolver::soaked): it gives exp(-soaked) of what it would.
 void emitScalars(const Scene& scene, float time, float dt, const Domain& domain, const SparseGrid* solid,
-                 SparseGrid& fuel, SparseGrid& smoke, SparseGrid& heat, SparseGrid& expansion);
+                 SparseGrid& fuel, SparseGrid& smoke, SparseGrid& heat, SparseGrid& expansion,
+                 const std::vector<float>* soaked = nullptr);
 
 // --- loops and noise -----------------------------------------------------------------
 

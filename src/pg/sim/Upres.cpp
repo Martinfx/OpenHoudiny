@@ -238,7 +238,7 @@ void UpresSolver::step(const PyroSolver& gas) {
         // The sources, at the fine resolution.
         expansion_.fill(0.0f);
         detail::emitScalars(scene, time_, dt, domain_, anySolid_ ? &solid_ : nullptr, fuel_, density_, temperature_,
-                            expansion_);
+                            expansion_, &gas.soaked());
         lap(t0, times_.emit);
         renewLayers();
         advectShift(dt);

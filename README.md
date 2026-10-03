@@ -92,6 +92,10 @@ okna.
   Vellum Grains): zrna s třením a kohezí, hromady tak strmé, jak tření
   drží, mokrý písek stojí; sypání proudem, kolize s objekty, obousměrná
   vazba s kusy RBD, vítr a proud plynu
+- **[docs/quench.md](docs/quench.md)** — voda a oheň: voda Liquid Solveru
+  a kapky deště hasí oheň, do kterého se dostanou (chladí, promáčí palivo
+  a zdroje, stoupá pára), táborák v lijáku uhasne, kbelík vody ho uhasí
+  během pár snímků; liják plní bazén, do kterého padá
 - **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
   parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
   cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)

@@ -20,6 +20,14 @@
 //   6. dissipate smoke thins out, heat cools, flames die; where the gas
 //                swells, what it carries thins out with it.
 //
+// Water in the gas (setWater) -- the particles of a Liquid Solver, the drops
+// of a Rain on their way down -- puts the fire out, after the gas is
+// carried and before it burns: each cell it is in cools by a share of its
+// heat, its fuel soaks and its flame goes out, as fast as there is water in
+// it; the heat it takes rises as steam, smoke a little warm. A source of
+// fire the water falls on soaks too, and gives less and less: a campfire in
+// the rain dies down, and stays out.
+//
 // Heat and flame are separate, as in Houdini: heat lifts the gas and fades
 // slowly, the flame -- fuel burning -- shows for a fraction of a second. A
 // renderer draws the fire from the flame, coloured by the heat; drawn from the
@@ -50,6 +58,8 @@
 #include "pg/sim/SparseGrid.h"
 
 #include <array>
+#include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace pg::sim {
@@ -94,6 +104,21 @@ public:
     /// ... at a world point; still air outside the domain.
     Vec3 flowAt(const Vec3& p) const;
 
+    /// Water in the gas for the next step: where it is (World gives it).
+    struct Water {
+        std::vector<Vec3> particles;     ///< a Liquid Solver's, each `particleVolume` of water
+        float particleVolume = 0.0f;     ///< m^3
+        /// A Rain's drops: the way each goes through the air this step.
+        std::vector<Vec3> dropFrom, dropTo;
+        bool empty() const { return particles.empty() && dropFrom.empty(); }
+    };
+    void setWater(const Water& water);
+    /// How soaked each source is (by its index in the scene): it gives
+    /// exp(-soaked) of what it would. Empty: none is.
+    const std::vector<float>& soaked() const { return soaked_; }
+    /// Cells the water is in this step, in the order of their numbers.
+    size_t wetCells() const { return wet_.size(); }
+
     int nx() const { return nx_; }
     int ny() const { return ny_; }
     int nz() const { return nz_; }
@@ -108,6 +133,8 @@ public:
     void emit(float dt);
     void advect(float dt);
     void combust(float dt);
+    /// The water cools the gas, soaks its fuel and its sources (setWater).
+    void quench(float dt);
     void addForces(float dt);
     void project();
     void dissipate(float dt);
@@ -174,6 +201,10 @@ private:
     SparseGrid pressure_, divergence_;
     PoissonSolver poisson_;
     std::vector<std::array<Grid, 3>> noise_;  // a turbulence force's coarse lattices
+    // The water of this step: each wet cell's number and how fast its water
+    // puts it out, 1/s, in the order of the numbers.
+    std::vector<std::pair<uint64_t, float>> wet_;
+    std::vector<float> soaked_;                // each source's
     int frame_ = 0;
     float time_ = 0.0f;
     Times times_;

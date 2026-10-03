@@ -749,8 +749,15 @@ TEST(sim_network_examples_all_run) {
         for (int f = 0; f < 3; ++f) sim.step();
         CHECK_EQ(sim.frame(), 3);
         if (sim.gas()) CHECK(std::isfinite(sim.gas()->density().sum()));
-        if (sim.water()) CHECK(sim.water()->particleCount() > 0 && std::isfinite(sim.water()->maxSpeed()));
-        if (sim.rain()) CHECK(!sim.rain()->drops().empty());
+        if (sim.water()) {
+            // Water from the start, unless every source of it starts later.
+            const auto& sources = sim.water()->scene().sources;
+            const bool later = !sources.empty() && std::all_of(sources.begin(), sources.end(),
+                                                               [](const WaterSource& s) { return s.start > 0.1f; });
+            CHECK((later || sim.water()->particleCount() > 0) && std::isfinite(sim.water()->maxSpeed()));
+        }
+        // Rain falls from the start, unless it starts later.
+        if (sim.rain() && sim.rain()->scene().rain.start <= 0.0f) CHECK(!sim.rain()->drops().empty());
     }
 }
 

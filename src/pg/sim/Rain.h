@@ -16,7 +16,8 @@
 //                          pushes the surface down, and a height field --
 //                          the wave equation on a grid over the water --
 //                          carries it out as ripples; a droplet or two
-//                          jumps up.
+//                          jumps up; with Fill, it adds its water to the
+//                          water (LiquidSolver::pour): a pool fills up.
 //
 // The water's surface is the Liquid Solver's (Liquid.h), where there is one.
 //
@@ -46,6 +47,10 @@ struct RainSettings {
     float speed = 7.0f;      ///< how fast a drop falls once it has settled, m/s
     float splash = 3.0f;     ///< droplets a drop throws up where it lands on something solid
     float ripples = 1.0f;    ///< how hard a drop rings the water
+    /// Millimetres a second the water the drops land in rises by, as if all
+    /// of the box's rain fell into it: 0 none -- a raindrop is too little
+    /// water to show; a pool filling up in a shot is some 5 to 20.
+    float fill = 0.0f;
     float start = 0.0f, end = 0.0f;  ///< seconds; end at or before start: it never stops
     uint32_t seed = 1;
     float timeStep = 1.0f / 30.0f;
@@ -110,6 +115,11 @@ public:
     /// Drops that landed in the last step: on solids, and in the water.
     int lastLandings() const { return lastSolid_; }
     int lastSplashes() const { return lastWater_; }
+    /// The drops that landed in the water in the last step, as they went
+    /// in: what fills it (LiquidSolver::pour).
+    const std::vector<RainParticle>& intoWater() const { return intoWater_; }
+    /// m^3 of water each drop is: Fill spread over the drops.
+    float dropVolume() const;
 
 private:
     void spawn(float dt, const LiquidSolver* water);
@@ -132,6 +142,7 @@ private:
     uint64_t made_ = 0;             // drops made so far: each one's number
     uint32_t splashed_ = 0;         // droplets made so far: the next one's number
     int lastSolid_ = 0, lastWater_ = 0;
+    std::vector<RainParticle> intoWater_;
 };
 
 }  // namespace pg::sim

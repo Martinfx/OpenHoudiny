@@ -268,6 +268,7 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         std::string s = number(v("rate")) + " /m\xc2\xb2s" + dot + number(v("speed")) + " m/s";
         if (v("end") > v("start")) s += dot + number(v("start")) + "\xe2\x80\x93" + number(v("end")) + " s";
         else if (v("start") > 0.0f) s += dot + "from " + number(v("start")) + " s";
+        if (v("fill") > 0.0f) s += dot + "fills " + number(v("fill")) + " mm/s";
         return s;
     }
     if (t == "grain_solver") {

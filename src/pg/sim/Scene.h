@@ -189,6 +189,14 @@ struct SolverSettings {
     float cooling = 1.0f;         ///< per second
     float smokeDecay = 0.1f;      ///< per second
 
+    /// How hard water puts the fire out where it gets into the gas -- the
+    /// particles of a Liquid Solver, the drops of a Rain: it cools the gas,
+    /// soaks the fuel, quenches the flame, and soaks the sources it falls
+    /// on, which then give less and less. 0: it does nothing.
+    float quench = 1.0f;
+    /// Smoke -- steam -- for each unit of heat the water takes.
+    float steam = 1.0f;
+
     Domain domain() const;
     bool operator==(const SolverSettings&) const = default;
 };

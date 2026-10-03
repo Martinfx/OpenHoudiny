@@ -165,6 +165,14 @@ public:
     /// as it was (its size, resolution and sides, sparse or not).
     void setScene(const LiquidScene& scene);
 
+    /// Water poured in from outside -- the drops of a Rain that landed in
+    /// it: `volume` m^3 at each place, with its velocity. A particle is
+    /// added as it adds up to one's worth, in a free eighth of a cell near
+    /// where it went in, from the water's top layer up: on the water, not
+    /// in it. What is short of one waits for the next (and is kept in the
+    /// state).
+    void pour(const std::vector<Vec3>& at, const std::vector<Vec3>& velocity, float volume);
+
     /// The scene, sanitized.
     const LiquidScene& scene() const { return scene_; }
     const Domain& domain() const { return domain_; }
@@ -343,6 +351,7 @@ private:
     FreeSurfaceSolver pressureSolver_;
     std::vector<std::array<Grid, 3>> noise_;  // a turbulence force's lattices
     std::vector<uint8_t> filled_;      // a fill source has filled its shape
+    double poured_ = 0.0;              // m^3 poured in that is not a particle yet
     uint32_t substepCount_ = 0;
     int frame_ = 0;
     float time_ = 0.0f;

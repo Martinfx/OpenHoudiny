@@ -57,6 +57,7 @@ RainScene RainScene::sanitized() const {
     r.speed = fix(r.speed, 0.1f, 50.0f, d.speed);
     r.splash = fix(r.splash, 0.0f, 20.0f, d.splash);
     r.ripples = fix(r.ripples, 0.0f, 20.0f, d.ripples);
+    r.fill = fix(r.fill, 0.0f, 1000.0f, d.fill);
     r.start = fix(r.start, 0.0f, kHuge, 0.0f);
     r.end = fix(r.end, 0.0f, kHuge, 0.0f);
     r.timeStep = fix(r.timeStep, 1e-4f, 1.0f, d.timeStep);
@@ -331,10 +332,14 @@ void RainSolver::move(float dt, const LiquidSolver* water) {
         for (size_t i = begin; i < end; ++i) {
             RainParticle& d = drops_[i];
             d.velocity = push(d.position, d.velocity, r.speed);
-            const Vec3 next = d.position + d.velocity * dt;
+            Vec3 next = d.position + d.velocity * dt;
             Vec3 n;
-            if (water && water->distanceToSurface(next) < 0.0f) {
+            // A step of a fast drop is longer than shallow water is deep: one
+            // that would end under the floor is asked where it reaches it.
+            const Vec3 reached(next.x, std::max(next.y, 1e-3f), next.z);
+            if (water && water->distanceToSurface(reached) < 0.0f) {
                 landed[i] = 2;
+                next = reached;
             } else if (solidAt(next, n)) {
                 landed[i] = 1;
                 normal[i] = n;
@@ -348,6 +353,7 @@ void RainSolver::move(float dt, const LiquidSolver* water) {
     // Where they landed, in the order of the drops: spray off solids,
     // rings on the water.
     lastSolid_ = lastWater_ = 0;
+    intoWater_.clear();
     std::vector<RainParticle> kept;
     kept.reserve(drops_.size());
     const uint32_t seed = r.seed * 2654435761u + 17u;
@@ -360,6 +366,7 @@ void RainSolver::move(float dt, const LiquidSolver* water) {
         const uint64_t id = (static_cast<uint64_t>(frame_) << 32) ^ (static_cast<uint64_t>(i) * 2654435761ull);
         if (landed[i] == 2) {
             ++lastWater_;
+            if (r.fill > 0.0f) intoWater_.push_back(d);
             ring(d.position, r.ripples);
             if (r.ripples > 0.0f && random3(id, 0, seed).x < 0.5f) {
                 RainParticle jump;
@@ -413,6 +420,12 @@ void RainSolver::move(float dt, const LiquidSolver* water) {
         if (!gone[i]) droplets_[k++] = droplets_[i];
     }
     droplets_.resize(k);
+}
+
+float RainSolver::dropVolume() const {
+    const RainSettings& r = scene_.rain;
+    // Fill mm a second over a square metre, shared by the drops falling on it.
+    return r.rate > 0.0f ? 0.001f * r.fill / r.rate : 0.0f;
 }
 
 void RainSolver::step(const LiquidSolver* water) {

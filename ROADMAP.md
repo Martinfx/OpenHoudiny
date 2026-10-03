@@ -402,7 +402,10 @@ Seřazeno podle poměru hodnota / náklad:
 2. **Vazby mezi řešiči** — ✅ trosky ve vodě a v plynu: voda je nadnáší
    a unáší, proud plynu unáší drť, obousměrně s vodou i plynem, které jdou
    kolem kusů ([destruction.md](docs/destruction.md#jedenáctý-příklad-povodeň-na-dvoře)).
-   Zbývá: voda uhasí oheň, déšť v kouři, déšť přidá vodu do bazénu.
+   ✅ Voda a oheň: voda a kapky deště hasí oheň, chladí plyn, promáčí
+   palivo i zdroje a dělají páru; déšť plní vodu, do které padá; korekce
+   objemu FLIPu ([quench.md](docs/quench.md)). Zbývá: pole páry, odpařování
+   vody žárem, hašení jemných polí upresu.
 3. **Render pro finální obraz** — ✅ Cycles z Blenderu jako knihovna
    ([cycles.md](docs/cycles.md)) a vlastní path tracer na procesoru
    ([pathtracer.md](docs/pathtracer.md)): povrchy, sklo a voda, hloubka

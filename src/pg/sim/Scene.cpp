@@ -112,6 +112,8 @@ Scene Scene::sanitized() const {
     v.flameLife = fix(v.flameLife, 0.0f, kHuge, ds.flameLife);
     v.cooling = fix(v.cooling, 0.0f, kHuge, ds.cooling);
     v.smokeDecay = fix(v.smokeDecay, 0.0f, kHuge, ds.smokeDecay);
+    v.quench = fix(v.quench, 0.0f, 100.0f, ds.quench);
+    v.steam = fix(v.steam, 0.0f, 100.0f, ds.steam);
 
     const Emitter de;
     for (Emitter& e : s.emitters) {

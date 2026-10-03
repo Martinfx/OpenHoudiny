@@ -120,6 +120,13 @@ TEST(state_resumes_the_grains_and_the_pieces_they_push_to_the_bit) {
     checkResume(sand, 6, 12);
 }
 
+TEST(state_resumes_the_quenched_fire_and_the_filling_water_to_the_bit) {
+    // The campfire in the rain, its source soaked some way by then.
+    checkResume(sim::preview(exampleWorld("campfire_rain"), 0.4f), 40, 46);
+    // The rain filling a basin: what it poured that is not a particle yet.
+    checkResume(sim::preview(exampleWorld("rain_fill"), 0.5f), 10, 16);
+}
+
 TEST(state_of_another_world_or_cut_short_is_refused) {
     const sim::World fire = sim::preview(exampleWorld("campfire"), 0.5f);
     sim::WorldSolver solver(fire);

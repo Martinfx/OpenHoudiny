@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 namespace pg::sim {
 
@@ -46,6 +47,13 @@ constexpr float kWindOnWater = 1.2e-3f;
 /// the first, spray the wind carries; above the second, the body of the
 /// water.
 constexpr float kSprayCrowd = 12.0f, kBodyCrowd = 40.0f;
+/// A cell of water holding more particles than this -- 8 fill it, a few
+/// more come and go as it flows -- is let swell back, a share of the excess
+/// each substep: FLIP keeps the flow from squeezing the grid's water, not
+/// the particles in it, and water poured on top (pour()) would sink into
+/// the water and pack it rather than raise it.
+constexpr float kPacked = 10.0f;
+constexpr float kSwell = 0.3f;
 
 /// How much of the segment between two corners is inside (distance < 0).
 float insideFraction(float a, float b) {
@@ -360,6 +368,7 @@ void LiquidSolver::saveState(StateWriter& out) const {
     out.list(foam_);
     out.list(id_);
     out.list(filled_);
+    out.pod(poured_);
     // The grids, on their tiles.
     out.tiles(*tiles_);
     for (int a = 0; a < 3; ++a) out.values(vel_[a]);
@@ -375,10 +384,11 @@ bool LiquidSolver::loadState(StateReader& in) {
     std::vector<float> foam;
     std::vector<uint32_t> id;
     std::vector<uint8_t> filled;
+    double poured = 0.0;
     std::shared_ptr<const Tiles> tiles;
     if (!in.pod(n[0]) || !in.pod(n[1]) || !in.pod(n[2]) || !in.pod(frame) || !in.pod(time) || !in.pod(count) ||
         !in.pod(made) || !in.pod(substeps) || !in.pod(iterations) || !in.list(position) || !in.list(velocity) ||
-        !in.list(foam) || !in.list(id) || !in.list(filled) || !in.tiles(tiles)) {
+        !in.list(foam) || !in.list(id) || !in.list(filled) || !in.pod(poured) || !in.tiles(tiles)) {
         return false;
     }
     // Of this grid.
@@ -404,6 +414,7 @@ bool LiquidSolver::loadState(StateReader& in) {
     foam_ = std::move(foam);
     id_ = std::move(id);
     filled_ = std::move(filled);
+    poured_ = poured;
     retile(tiles);
     // Onto the faces retile() made, which the other face grids share.
     for (int a = 0; a < 3; ++a) std::copy(vel[a].values().begin(), vel[a].values().end(), vel_[a].data());
@@ -950,6 +961,83 @@ void LiquidSolver::emit() {
     if (added) sortParticles();
 }
 
+void LiquidSolver::pour(const std::vector<Vec3>& at, const std::vector<Vec3>& velocity, float volume) {
+    if (!(volume > 0.0f) || at.empty()) return;
+    const float h = domain_.voxel;
+    const double particle = 0.125 * static_cast<double>(h) * h * h;
+    const int nx = n_[0], ny = n_[1], nz = n_[2];
+    const uint32_t seed = scene_.solver.seed * 31u + 0x5bd1e995u;
+    // The eighths of the cells particles are in -- as emit() finds them --
+    // and those this has filled.
+    std::unordered_map<uint64_t, unsigned> filled;
+    auto taken = [&](int i, int j, int k) {
+        const uint64_t number =
+            static_cast<uint64_t>(i) +
+            static_cast<uint64_t>(nx) * (static_cast<uint64_t>(j) + static_cast<uint64_t>(ny) * static_cast<uint64_t>(k));
+        unsigned mask = 0;
+        const int64_t c = phi_.find(i, j, k);
+        if (c >= 0 && static_cast<size_t>(c) < cellStart_.size()) {
+            for (uint32_t p = cellStart_[c]; p < cellStart_[c] + cellCount_[c]; ++p) {
+                const Vec3& g = cellPos_[p];
+                mask |= 1u << ((g.x - static_cast<float>(i) >= 0.5f ? 1u : 0u) |
+                               (g.y - static_cast<float>(j) >= 0.5f ? 2u : 0u) |
+                               (g.z - static_cast<float>(k) >= 0.5f ? 4u : 0u));
+            }
+        }
+        auto it = filled.find(number);
+        if (it != filled.end()) mask |= it->second;
+        return std::make_pair(number, mask);
+    };
+    // The lower eighths first: the water piles up from below.
+    constexpr int kOrder[8] = {0, 1, 4, 5, 2, 3, 6, 7};
+    bool added = false;
+    for (size_t d = 0; d < at.size(); ++d) {
+        poured_ += volume;
+        // As many particles as it has added up to, each in a free eighth of a
+        // cell near where it went in, the first up from the water's top
+        // layer: on top of the water, not in it. A particle put among others in a full cell would
+        // be lost: nothing pushes them apart again.
+        while (poured_ >= particle) {
+            poured_ -= particle;
+            const int n = static_cast<int>(made_ & 0x7FFFFFFFu);
+            const Vec3 g = toCells(at[d]);
+            const int i = std::clamp(static_cast<int>(std::floor(g.x)) +
+                                         static_cast<int>(detail::hash(n, 1, 0, seed) % 3u) - 1, 0, nx - 1);
+            const int k = std::clamp(static_cast<int>(std::floor(g.z)) +
+                                         static_cast<int>(detail::hash(n, 2, 0, seed) % 3u) - 1, 0, nz - 1);
+            bool placed = false;
+            for (int j = std::clamp(static_cast<int>(std::floor(g.y)), 0, ny - 1); j < ny && !placed; ++j) {
+                // Not into the gaps deep in the water: from its top layer up.
+                if (solidCellAt(i, j, k) || phi_.at(i, j, k) < -h) continue;
+                const auto [number, mask] = taken(i, j, k);
+                if (mask == 0xFFu) continue;
+                for (const int sub : kOrder) {
+                    if (mask & (1u << sub)) continue;
+                    const Vec3 q(static_cast<float>(i) + 0.5f * static_cast<float>(sub & 1) +
+                                     0.5f * unit(detail::hash(n, 3, 0, seed)),
+                                 static_cast<float>(j) + 0.5f * static_cast<float>((sub >> 1) & 1) +
+                                     0.5f * unit(detail::hash(n, 4, 0, seed)),
+                                 static_cast<float>(k) + 0.5f * static_cast<float>(sub >> 2) +
+                                     0.5f * unit(detail::hash(n, 5, 0, seed)));
+                    const Vec3 p = worldAt(q.x, q.y, q.z);
+                    filled[number] = mask | (1u << sub);
+                    if (anySolid_ && solidDistance(p) < kMargin * h) break;
+                    position_.push_back(p);
+                    // The drop's own speed goes into the splash and the
+                    // rings: into the body of the water, a little of it.
+                    velocity_.push_back(d < velocity.size() ? velocity[d] * 0.1f : Vec3());
+                    foam_.push_back(0.0f);
+                    id_.push_back(made_++);
+                    added = placed = true;
+                    break;
+                }
+            }
+            if (!placed) ++made_;  // the next one tries elsewhere
+        }
+    }
+    if (added) sortParticles();
+}
+
 void LiquidSolver::splat(int factor, const std::shared_ptr<const Tiles>& tiles, SparseGrid& weight,
                          SparseGrid* centre, SparseGrid* radius, SparseGrid& foam) const {
     // Reaching less than a cell and a quarter, a particle writes no further
@@ -1164,6 +1252,10 @@ void LiquidSolver::project(float dt) {
     // faces: those behind it in its own tile of faces, those ahead in the
     // same or -- the last layer -- the next.
     float* rhs = rhs_.data();
+    // How much each cell of water should swell, where it is packed.
+    const bool packed = std::any_of(cellCount_.begin(), cellCount_.end(),
+                                    [](uint32_t n) { return static_cast<float>(n) > kPacked; });
+    const float swell = kSwell * h * h / (dt * dt * 8.0f);
     forEachTile(*tiles_, [&](size_t slot, const int c[3], const int e[3]) {
         const size_t base = slot * Tiles::kCells;
         FaceSolids own[3], next[3];
@@ -1202,6 +1294,11 @@ void LiquidSolver::project(float dt) {
                         out = a == 0 ? ahead - behind : out + ahead - behind;
                     }
                     rhs[base + local] = -(h / dt) * out;
+                    // A divergence of kSwell x the excess (in cells' worth)
+                    // over dt: out of a packed cell flows that share of it.
+                    if (packed && static_cast<float>(cellCount_[base + local]) > kPacked) {
+                        rhs[base + local] += swell * (static_cast<float>(cellCount_[base + local]) - kPacked);
+                    }
                 }
             }
         }
