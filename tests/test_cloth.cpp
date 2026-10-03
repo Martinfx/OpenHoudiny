@@ -368,6 +368,32 @@ TEST(cloth_tears_where_it_is_pulled_too_far) {
     CHECK(moved > 0);
 }
 
+TEST(cloth_a_border_pulled_too_far_holds_and_is_not_torn_again_and_again) {
+    // One quad hung by its top corners, a heavy weight on each of the
+    // others: its sides stretch past where they would tear. They are edges
+    // of one face -- the border -- and torn they would open nothing. They
+    // hold, and the links are not made again substep after substep, as they
+    // were: on the lips of a torn tarp, that took more than all the rest.
+    auto g = sheet(1, 1, Vec3(1.0f, 0.0f, 1.0f), Vec3());
+    for (Vec3& p : g->positionsForWrite()) p = Vec3(p.x, 1.5f - p.z, 0.0f);
+    pin(*g, {0, 1});
+    auto mass = g->points().create("mass", AttrType::Float).write<float>();
+    mass[0] = mass[1] = 0.1f;
+    mass[2] = mass[3] = 500.0f;
+    ClothScene s = sceneOf(g);
+    s.solver.tear = 0.1f;
+    ClothSolver solver(s);
+    float longest = 0.0f;
+    for (int f = 0; f < 24; ++f) {
+        solver.step();
+        const std::vector<Vec3>& x = solver.positions();
+        longest = std::max({longest, length(x[2] - x[0]), length(x[3] - x[1])});
+    }
+    if (!(longest > 1.1f)) ::testing::fail(__FILE__, __LINE__, "the sides stretched to " + std::to_string(longest) + " only");
+    CHECK_EQ(solver.tornPoints(), 0u);
+    CHECK_EQ(solver.relinks(), 0u);
+}
+
 TEST(cloth_a_rope_parts_and_a_balloon_bursts) {
     // A rope with a weight at its end, pinned at its top: torn, it parts in
     // two lines, and the weight falls.

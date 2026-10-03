@@ -87,7 +87,9 @@ Geometrie zapojená do vstupu **Geometry** určuje, co se simuluje:
 × svou klidovou délku, se přetrhne. Kde přetržené hrany oddělí plochy kolem
 bodu, bod se rozdělí na dva a látka se tam otevře. Lano se rozpojí na dvě.
 Z balonu, který se roztrhne, je obyčejná látka (splaskne). Bodový atribut
-`tear` práh násobí: 3 zesílený lem, 0,5 perforace.
+`tear` práh násobí: 3 zesílený lem, 0,5 perforace. Hrana jediné plochy,
+tedy okraj látky nebo okraj díry, se netrhá, protože by nic neoddělila.
+Natáhne se a táhne za sousední hrany, které se pak přetrhnou.
 
 Body s atributem `pin` = 1 se samy nehýbou. Jdou tam, kde je má
 geometrie v aktuálním snímku, takže animovaná geometrie (třeba
@@ -163,7 +165,11 @@ velkém kroku.
 5. **Trhání:** hrany natažené přes práh se přetrhnou. Body, jejichž
    plochy přetržení rozdělí na nesouvislé části, se rozdělí. Každá další
    část dostane vlastní kopii bodu na stejném místě a se stejnou rychlostí.
-   Vazby, hmotnosti a balony se pak sestaví znovu z nové topologie.
+   Vazby, hmotnosti a balony se pak sestaví znovu z nové topologie. Hrany
+   jediné plochy se netrhají. Dřív se trhaly, nic neotevřely a vazba se
+   při sestavení vrátila. Natažený okraj díry se tak trhal v každém
+   podkroku znovu a celá látka se pokaždé sestavovala od začátku. U
+   plachty v příkladu tarp to stálo víc než celý zbytek kroku.
 6. **Kolize** s podlahou a objekty (vzdálenostní funkce tvarů) a tření:
    posun podél povrchu se ubere úměrně hloubce průniku. Co se hýbe (kusy,
    animované objekty), jde v podkrocích plynule z místa, kde bylo na
@@ -245,6 +251,9 @@ bit po bitu stejný na jednom i na čtyřech vláknech.
   (`adoptCloth`) → checkpoint, který pokračuje bit po bitu;
 - záclona se závažím se bez Tear jen natáhne, s Tear se roztrhne a
   závaží spadne; odtržené body mají atributy svých původních bodů;
+- čtverec zavěšený za horní rohy s 500 kg na dolních: jeho boky se natáhnou
+  přes práh, ale jsou to hrany jediné plochy, takže drží. Vazby se ani
+  jednou nesestaví znovu (bez opravy 393krát za 24 snímků);
 - lano se závažím se přetrhne na dvě čáry; nafouknutý balon praskne;
 - roztržená látka: 1 a 4 vlákna, stav, cache a zpět bit po bitu;
 - příklad tarp: bedny zůstanou na plachtě a samy ji neroztrhnou, blok ji

@@ -163,6 +163,9 @@ public:
     const std::vector<Reaction>& reactions() const { return reactions_; }
     /// How many points it has: the geometry's, and those torn off them.
     size_t tornPoints() const { return x_.size() - (scene_.geometry ? scene_.geometry->pointCount() : 0); }
+    /// How many times a tear has made the links again since it was made --
+    /// each time it opened something: an edge between two faces, a rope.
+    size_t relinks() const { return relinks_; }
 
     /// Constraints by kind: stretch and shear, bend, balloons.
     size_t stretchCount() const { return stretchCount_; }
@@ -227,6 +230,7 @@ private:
     std::vector<uint32_t> nearStart_, near_;      // each point's constrained neighbours, sorted
     std::vector<Balloon> balloons_;
     size_t stretchCount_ = 0, bendCount_ = 0;
+    size_t relinks_ = 0;
     float selfRadius_ = 0.01f;
     int frame_ = 0;
     float time_ = 0.0f;

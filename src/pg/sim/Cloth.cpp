@@ -291,15 +291,13 @@ void ClothSolver::connect() {
     std::vector<std::array<uint32_t, 3>> ropeBends;
     // A torn edge the faces on either side no longer share has opened: it
     // is two edges now, each of one face, each holding its length.
-    {
-        std::map<uint64_t, int> faceEdges;  // edge -> how many faces have it
-        for (size_t p = 0; p < geo->primitiveCount(); ++p) {
-            const size_t first = geo->primitiveVertexStart(p), count = geo->primitiveVertexCount(p);
-            if (!geo->primitiveClosed(p) || count < 3) continue;
-            for (size_t k = 0; k < count; ++k) ++faceEdges[pairKey(corner_[first + k], corner_[first + (k + 1) % count])];
-        }
-        std::erase_if(cut_, [&](uint64_t key) { return faceEdges[key] < 2; });
+    std::map<uint64_t, int> faceEdges;  // edge -> how many faces have it
+    for (size_t p = 0; p < geo->primitiveCount(); ++p) {
+        const size_t first = geo->primitiveVertexStart(p), count = geo->primitiveVertexCount(p);
+        if (!geo->primitiveClosed(p) || count < 3) continue;
+        for (size_t k = 0; k < count; ++k) ++faceEdges[pairKey(corner_[first + k], corner_[first + (k + 1) % count])];
     }
+    std::erase_if(cut_, [&](uint64_t key) { return faceEdges[key] < 2; });
     for (size_t p = 0; p < geo->primitiveCount(); ++p) {
         const size_t first = geo->primitiveVertexStart(p), count = geo->primitiveVertexCount(p);
         if (count < 2) continue;
@@ -317,8 +315,10 @@ void ClothSolver::connect() {
             continue;
         }
         for (size_t k = 0; k < count; ++k) {
+            // An edge of one face -- the border, or the lip of a tear --
+            // holds: torn, it would open nothing, and be linked again here.
             const uint32_t a = at(k), b = at((k + 1) % count);
-            if (!isCut(a, b)) link(a, b, stretchCompliance, true, kNone);
+            if (!isCut(a, b)) link(a, b, stretchCompliance, faceEdges[pairKey(a, b)] >= 2, kNone);
         }
         if (count == 4) {
             link(at(0), at(2), 1.0f / s.shear, false, kNone);
@@ -853,6 +853,7 @@ void ClothSolver::step() {
         solveLinks(h);
         if (s.tear > 0.0f && tear()) {
             // Torn: points split off, the links made again.
+            ++relinks_;
             n = x_.size();
             accel.resize(n);
             touched_.resize(n, -1);
