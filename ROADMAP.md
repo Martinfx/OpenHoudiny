@@ -333,7 +333,7 @@ a sekundární lámání a desetkrát víc kusů za stejný čas na snímek. Bet
 výztuž, sklo, sekundární lámání, stopy prachu a vlákna jsou. Rychlost
 splněná není. Věž z příkladu (593 kusů) se během pádu krokuje za 2,1 ms
 na snímek na 4 vláknech (3,2 ms na jednom), desetkrát víc kusů (5 628)
-za 19 ms (39 ms na jednom), tedy za devětkrát delší čas. Trosky, které
+za 19,5 ms (44 ms na jednom), tedy za devětkrát delší čas. Trosky, které
 se usadily, už nestojí skoro nic, protože zmrznou: usazená velká věž
 1,9 ms na snímek, 360 snímků v průměru 27 ms místo 61 ms před zmrazením
 a levnějšími kontakty. Během pádu je krok skoro celý v Joltu, ve
