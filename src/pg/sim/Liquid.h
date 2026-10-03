@@ -262,6 +262,22 @@ private:
     float solidVelocityAt(int axis, int i, int j, int k) const;
     /// The cells of a shape's box, inside the grid: [c0, c1) along each axis.
     void boxCells(const ShapeInstance& shape, int c0[3], int c1[3]) const;
+    /// The solids on the tile of faces along `axis` holding face (i, j, k),
+    /// read face by face without looking them up: how open each is, and
+    /// what a moving solid pushes it with.
+    struct FaceSolids {
+        const float* open = nullptr;      // the tile's openness, as kept; null: every face open
+        const float* velocity = nullptr;  // a moving solid's velocity; null: none
+        int n = 0;                        // faces 0 and n lie on the sides of the grid
+        bool closedLo = false, closedHi = false;
+        /// Face `local` of the tile (SparseGrid::local()), `at` along the axis.
+        float openAt(size_t local, int at) const {
+            if ((at == 0 && closedLo) || (at == n && closedHi)) return 0.0f;
+            return open ? open[local] : 1.0f;
+        }
+        float velocityAt(size_t local) const { return velocity ? velocity[local] : 0.0f; }
+    };
+    FaceSolids faceSolids(int axis, int i, int j, int k) const;
     void emit();
     void toGrid();
     void addForces(float dt);
@@ -311,13 +327,13 @@ private:
     std::vector<uint8_t> cells_;       // FreeSurfaceSolver::Cell of each kept cell
     // The solids, in tiles of their own round the colliders: their distance
     // at the grid's corners -- (nx+1) x (ny+1) x (nz+1), far where not kept
-    // -- and, on the tiles of cells that reach those corners, how open each
-    // face is (1 where not kept: the walls are open() 's), which cells hold
-    // a solid's centre, and the velocity of a moving solid on its faces.
+    // -- and, on the tiles of cells that reach those corners, which cells
+    // hold a solid's centre and how open each face is, with the walls, on
+    // this grid and on the pressure's coarser ones; and the velocity of a
+    // moving solid on its faces.
     SparseGrid solidPhi_;
-    std::shared_ptr<const Tiles> solidTiles_;
-    SparseGrid solidOpen_[3], solidVel_[3];
-    std::vector<uint8_t> solidCell_;   // per kept cell of solidTiles_
+    SolidLevels solids_;
+    SparseGrid solidVel_[3];
     bool anySolid_ = false;
     bool movingSolid_ = false;         // a collider moves: solidVel_ holds its velocity
     std::vector<ShapeInstance> shapes_;  // the colliders, placed

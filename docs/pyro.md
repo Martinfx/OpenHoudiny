@@ -787,8 +787,25 @@ s hadicí, pohyblivým tělesem, větrem a víry. Částice se třídí do buně
 v pořadí celé mřížky (x nejrychleji, pak y, pak z), ne po dlaždicích, aby
 stěny a buňky sbíraly jejich příspěvky ve stejném pořadí. Tělesa mají
 dlaždice vlastní, kolem každého collideru: vzdálenost v rozích buněk,
-otevřenost stěn a buňky se středem v tělese. Tlak se zatím řeší na celé
-mřížce, na dlaždice se přesune v dalším kroku.
+otevřenost stěn a buňky se středem v tělese.
+
+Tlak ([`FreeSurface.h`](../src/pg/sim/FreeSurface.h)) se řeší na dlaždicích
+vody a každá hrubší mřížka multigridu na dlaždicích nad dlaždicemi té
+jemnější. Hrubá buňka ale sahá dál než dlaždice pod ní (na druhé mřížce
+o čtyři jemné buňky, na čtvrté o šestnáct), proto se stěny a tělesa drží na
+každé mřížce zvlášť, nezávisle na vodě (`SolidLevels`): buňka mimo dlaždice
+vody je pevná a stěna otevřená přesně tak, jako by byla na husté mřížce.
+Součty metody sdružených gradientů jdou v pořadí řádků celé mřížky, ať
+dlaždice leží jakkoli. Tlak je tak stejný bit po bitu jako na husté mřížce;
+ověřují to otisky všech vodních příkladů a test s bazénem v rohu nádrže
+a pevným blokem daleko od něj.
+
+Povodeň s bednami (`pgbench_liquid`, 60 snímků, 4 vlákna): na rozlišení 192
+(192 × 48 × 96 buněk) hustá voda 1495 ms na snímek a 259 MB, řídká 1444 ms
+a 231 MB. Na 256 × 64 × 128, dokud voda nezaplní většinu domény, je řídká
+2× až 2,4× rychlejší (snímky 10 a 20: 1,7 a 4,3 s místo 4,2 a 8,9 s)
+a potřebuje 425 MB místo 601 MB. Malou doménu, kterou voda vyplní (dam
+break na 64), počítají obě stejně rychle.
 
 **Tlak s volnou hladinou** ([`FreeSurface.h`](../src/pg/sim/FreeSurface.h)).
 Rovnice je stejná jako u plynu, jen se řeší na buňkách vody a tlak na

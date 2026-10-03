@@ -109,11 +109,21 @@ void bySlabs(const std::vector<uint32_t>& layerStart, int nz, const F& f) {
     }
 }
 
-/// Where cell (i, j, k) of a sparse grid is in its data(), -1 when its tile
-/// is not kept.
-inline int64_t find(const SparseGrid& g, int i, int j, int k) {
-    const int32_t s = g.slotOf(i, j, k);
-    return s < 0 ? -1 : static_cast<int64_t>(s) * Tiles::kCells + static_cast<int64_t>(SparseGrid::local(i, j, k));
+/// f(slot, corner, extent) for every kept tile of `tiles`, in parallel: its
+/// first cell and how many of its cells along each axis count.
+template <class F>
+void forEachTile(const Tiles& tiles, const F& f, size_t grain = 4) {
+    const std::vector<uint32_t>& stored = tiles.stored();
+    const int n[3] = {tiles.nx(), tiles.ny(), tiles.nz()};
+    pg::parallelFor(stored.size(), grain, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            int c[3], e[3];
+            tiles.corner(stored[s], c[0], c[1], c[2]);
+            for (int a = 0; a < 3; ++a) e[a] = std::min(Tiles::kSide, n[a] - c[a]);
+            if (tiles.state(stored[s]) == Tiles::FirstLayer) e[tiles.axis()] = std::min(e[tiles.axis()], 1);
+            f(s, c, e);
+        }
+    });
 }
 
 /// The tiles of a grid twice as fine as one of `tiles`: each tile the eight
@@ -257,6 +267,10 @@ LiquidSolver::LiquidSolver(const LiquidScene& scene) : scene_(scene.sanitized())
     phi_ = SparseGrid(none, kReach * domain_.voxel);  // no water anywhere near: as far as a particle reaches
     pressure_ = SparseGrid(none);
     retile(none);
+    // The floor, and the sides of a tank; the sky open.
+    const bool tank = scene_.solver.closedSides;
+    const bool closed[6] = {tank, tank, true, false, tank, tank};
+    solids_ = SolidLevels(n_[0], n_[1], n_[2], closed);
     layerStart_.assign(static_cast<size_t>(n_[2]) + 1, 0);
     noise_.assign(scene_.forces.size(), {});
     filled_.assign(scene_.sources.size(), 0);
@@ -486,7 +500,7 @@ void LiquidSolver::updateSolids() {
             }
         }
     }
-    solidTiles_ = std::make_shared<const Tiles>(nx, ny, nz, std::move(state), -1);
+    const auto tiles = std::make_shared<const Tiles>(nx, ny, nz, std::move(state), -1);
 
     // How open each face is: what the solids leave of it, the floor always
     // closed, the sides closed round a tank, the top open to the sky.
@@ -495,9 +509,10 @@ void LiquidSolver::updateSolids() {
         const int f = a == 0 ? i : a == 1 ? j : k;
         return (a == 1 && f == 0) || (a != 1 && closedSides && (f == 0 || f == n_[a]));
     };
+    SparseGrid faces[3];
     for (int a = 0; a < 3; ++a) {
-        solidOpen_[a] = SparseGrid(Tiles::faces(*solidTiles_, a), 1.0f);
-        SparseGrid& open = solidOpen_[a];
+        faces[a] = SparseGrid(Tiles::faces(*tiles, a), 1.0f);
+        SparseGrid& open = faces[a];
         forEachCounted(open.tiles(), [&](int i, int j, int k, size_t f) {
             if (wall(a, i, j, k)) {
                 open.data()[f] = 0.0f;
@@ -519,18 +534,19 @@ void LiquidSolver::updateSolids() {
             open.data()[f] = left < kLeastOpen ? 0.0f : left;
         });
     }
-    solidCell_.assign(solidTiles_->stored().size() * Tiles::kCells, 0);
-    forEachCounted(*solidTiles_, [&](int i, int j, int k, size_t c) {
+    std::vector<uint8_t> solid(tiles->stored().size() * Tiles::kCells, 0);
+    forEachCounted(*tiles, [&](int i, int j, int k, size_t c) {
         float sum = 0.0f;
         for (int q = 0; q < 8; ++q) sum += solidPhi_.at(i + (q & 1), j + ((q >> 1) & 1), k + (q >> 2));
-        solidCell_[c] = sum < 0.0f ? 1 : 0;
+        solid[c] = sum < 0.0f ? 1 : 0;
     });
+    solids_.set(tiles, std::move(solid), faces);
     // Moving solids: on each face they cover, the velocity of the nearest
     // one there -- what the water next to it is pushed with.
     movingSolid_ = anySolid_ && std::any_of(scene_.colliders.begin(), scene_.colliders.end(),
                                             [](const Collider& c) { return c.moves(); });
     for (int a = 0; a < 3; ++a) {
-        solidVel_[a] = SparseGrid(Tiles::faces(*solidTiles_, a));
+        solidVel_[a] = SparseGrid(Tiles::faces(*tiles, a));
         if (!movingSolid_) continue;
         SparseGrid& vel = solidVel_[a];
         forEachCounted(vel.tiles(), [&](int i, int j, int k, size_t f) {
@@ -542,20 +558,25 @@ void LiquidSolver::updateSolids() {
     }
 }
 
-float LiquidSolver::open(int axis, int i, int j, int k) const {
-    const int f = axis == 0 ? i : axis == 1 ? j : k;
-    if (axis == 1 && f == 0) return 0.0f;  // the floor
-    if (axis != 1 && scene_.solver.closedSides && (f == 0 || f == n_[axis])) return 0.0f;  // a wall
-    return solidOpen_[axis].at(i, j, k);  // 1 away from the solids
-}
+float LiquidSolver::open(int axis, int i, int j, int k) const { return solids_.open(0, axis, i, j, k); }
 
-bool LiquidSolver::solidCellAt(int i, int j, int k) const {
-    const int32_t s = solidTiles_->slot(solidTiles_->tileOf(i, j, k));
-    return s >= 0 && solidCell_[static_cast<size_t>(s) * Tiles::kCells + SparseGrid::local(i, j, k)] != 0;
-}
+bool LiquidSolver::solidCellAt(int i, int j, int k) const { return solids_.solid(0, i, j, k); }
 
 float LiquidSolver::solidVelocityAt(int axis, int i, int j, int k) const {
     return movingSolid_ ? solidVel_[axis].at(i, j, k) : 0.0f;
+}
+
+LiquidSolver::FaceSolids LiquidSolver::faceSolids(int axis, int i, int j, int k) const {
+    FaceSolids s;
+    s.open = solids_.openTile(0, axis, i, j, k);
+    if (movingSolid_) {
+        const int32_t slot = solidVel_[axis].slotOf(i, j, k);
+        if (slot >= 0) s.velocity = solidVel_[axis].data() + static_cast<size_t>(slot) * Tiles::kCells;
+    }
+    s.n = n_[axis];
+    s.closedLo = solids_.closed(2 * axis);
+    s.closedHi = solids_.closed(2 * axis + 1);
+    return s;
 }
 
 void LiquidSolver::boxCells(const ShapeInstance& shape, int c0[3], int c1[3]) const {
@@ -648,8 +669,18 @@ void LiquidSolver::substep(float dt) {
         const float* w = weight_[a].data();
         uint8_t* valid = valid_[a].data();
         std::fill(valid_[a].begin(), valid_[a].end(), uint8_t{0});
-        forEachCounted(*faces_[a], [&](int i, int j, int k, size_t f) {
-            valid[f] = w[f] > 1e-6f && open(a, i, j, k) > 0.0f;
+        forEachTile(*faces_[a], [&](size_t slot, const int c[3], const int e[3]) {
+            const FaceSolids solids = faceSolids(a, c[0], c[1], c[2]);
+            const size_t base = slot * Tiles::kCells;
+            for (int z = 0; z < e[2]; ++z) {
+                for (int y = 0; y < e[1]; ++y) {
+                    for (int x = 0; x < e[0]; ++x) {
+                        const size_t local = SparseGrid::local(x, y, z);
+                        const int at = c[a] + (a == 0 ? x : a == 1 ? y : z);
+                        valid[base + local] = w[base + local] > 1e-6f && solids.openAt(local, at) > 0.0f;
+                    }
+                }
+            }
         });
     }
     lap(times_.toGrid);
@@ -1014,7 +1045,7 @@ void LiquidSolver::addForces(float dt) {
     std::vector<float> crowd;  // made when a wind needs it
     // The particles round a cell: none round one whose tile is not kept.
     auto crowdAt = [&](int i, int j, int k) {
-        const int64_t c = find(phi_, i, j, k);
+        const int64_t c = phi_.find(i, j, k);
         return c < 0 ? 0.0f : crowd[static_cast<size_t>(c)];
     };
     for (size_t f = 0; f < scene_.forces.size(); ++f) {
@@ -1060,7 +1091,7 @@ std::vector<float> LiquidSolver::crowdOfCells() const {
         forEachCounted(*tiles_, [&](int i, int j, int k, size_t c) {
             const int at[3] = {i, j, k};
             auto beside = [&](int side) {
-                const int64_t g = find(phi_, i + (axis == 0 ? side : 0), j + (axis == 1 ? side : 0), k + (axis == 2 ? side : 0));
+                const int64_t g = phi_.find(i + (axis == 0 ? side : 0), j + (axis == 1 ? side : 0), k + (axis == 2 ? side : 0));
                 return g < 0 ? 0.0f : from[static_cast<size_t>(g)];
             };
             float sum = from[c];
@@ -1073,141 +1104,220 @@ std::vector<float> LiquidSolver::crowdOfCells() const {
 }
 
 void LiquidSolver::project(float dt) {
+    constexpr int kLast = Tiles::kSide - 1;
+    constexpr size_t kStep[3] = {1, Tiles::kSide, Tiles::kSide * Tiles::kSide};
     const float h = domain_.voxel;
-    const int nx = n_[0], ny = n_[1], nz = n_[2];
-    // What flows out of each cell of water, through the open part of its faces.
+    const int n[3] = {n_[0], n_[1], n_[2]};
+    // What flows out of each cell of water, through the open part of its
+    // faces: those behind it in its own tile of faces, those ahead in the
+    // same or -- the last layer -- the next.
     float* rhs = rhs_.data();
-    forEachCounted(*tiles_, [&](int i, int j, int k, size_t c) {
-        if (cells_[c] != FreeSurfaceSolver::Liquid) {
-            rhs[c] = 0.0f;
-            return;
-        }
-        // Through the open part of a face the water's velocity, through the
-        // rest the solid's (Batty, Bertails and Bridson).
-        auto flux = [&](int a, int fi, int fj, int fk) {
-            const float o = open(a, fi, fj, fk);
-            const float u = o * vel_[a].at(fi, fj, fk);
-            return movingSolid_ ? u + (1.0f - o) * solidVelocityAt(a, fi, fj, fk) : u;
-        };
-        const float out = flux(0, i + 1, j, k) - flux(0, i, j, k) + flux(1, i, j + 1, k) - flux(1, i, j, k) +
-                          flux(2, i, j, k + 1) - flux(2, i, j, k);
-        rhs[c] = -(h / dt) * out;
-    });
-    {
-        // The pressure, on the whole grid for now: the kept cells spread out
-        // on it, the rest air -- or a solid's -- as far from the water as the
-        // particles reach, open as the solids leave them.
-        std::vector<uint8_t> cells(domain_.cellCount());
-        Grid phi(nx, ny, nz), b(nx, ny, nz), p(nx, ny, nz), faces[3];
-        detail::forEachIn(0, nx, 0, ny, 0, nz, [&](int i, int j, int k) {
-            const size_t d = phi.index(i, j, k);
-            const int64_t c = find(phi_, i, j, k);
-            if (c < 0) {
-                cells[d] = solidCellAt(i, j, k) ? FreeSurfaceSolver::Solid : FreeSurfaceSolver::Air;
-                phi.data()[d] = phi_.background();
-                return;
-            }
-            cells[d] = cells_[static_cast<size_t>(c)];
-            phi.data()[d] = phi_.data()[c];
-            b.data()[d] = rhs_.data()[c];
-            p.data()[d] = pressure_.data()[c];
-        });
+    forEachTile(*tiles_, [&](size_t slot, const int c[3], const int e[3]) {
+        const size_t base = slot * Tiles::kCells;
+        FaceSolids own[3], next[3];
+        const float* velOwn[3];
+        const float* velNext[3];
         for (int a = 0; a < 3; ++a) {
-            faces[a] = Grid(nx + (a == 0), ny + (a == 1), nz + (a == 2));
-            forEachCell(faces[a], [&](int i, int j, int k) { faces[a].at(i, j, k) = open(a, i, j, k); });
+            own[a] = faceSolids(a, c[0], c[1], c[2]);
+            int d[3] = {c[0], c[1], c[2]};
+            d[a] += Tiles::kSide;
+            next[a] = faceSolids(a, d[0], d[1], d[2]);
+            velOwn[a] = vel_[a].data() + static_cast<size_t>(vel_[a].slotOf(c[0], c[1], c[2])) * Tiles::kCells;
+            velNext[a] = vel_[a].data() + static_cast<size_t>(vel_[a].slotOf(d[0], d[1], d[2])) * Tiles::kCells;
         }
-        pressureSolver_.setSystem(cells, faces, phi);
-        lastIterations_ += pressureSolver_.solve(p, b, kTolerance, kMaxIterations);
-        float* pressure = pressure_.data();
-        forEachCounted(*tiles_, [&](int i, int j, int k, size_t c) { pressure[c] = p.at(i, j, k); });
-    }
+        for (int z = 0; z < e[2]; ++z) {
+            for (int y = 0; y < e[1]; ++y) {
+                for (int x = 0; x < e[0]; ++x) {
+                    const size_t local = SparseGrid::local(x, y, z);
+                    if (cells_[base + local] != FreeSurfaceSolver::Liquid) {
+                        rhs[base + local] = 0.0f;
+                        continue;
+                    }
+                    const int l[3] = {x, y, z};
+                    // Through the open part of a face the water's velocity,
+                    // through the rest the solid's (Batty, Bertails and Bridson).
+                    auto flux = [&](const FaceSolids& solids, const float* vel, size_t face, int at) {
+                        const float o = solids.openAt(face, at);
+                        const float u = o * vel[face];
+                        return movingSolid_ ? u + (1.0f - o) * solids.velocityAt(face) : u;
+                    };
+                    float out = 0.0f;
+                    for (int a = 0; a < 3; ++a) {
+                        const int at = c[a] + l[a];
+                        const float ahead = l[a] < kLast ? flux(own[a], velOwn[a], local + kStep[a], at + 1)
+                                                         : flux(next[a], velNext[a], local - kLast * kStep[a], at + 1);
+                        const float behind = flux(own[a], velOwn[a], local, at);
+                        out = a == 0 ? ahead - behind : out + ahead - behind;
+                    }
+                    rhs[base + local] = -(h / dt) * out;
+                }
+            }
+        }
+    });
+    pressureSolver_.setSystem(tiles_, cells_, phi_, solids_);
+    lastIterations_ += pressureSolver_.solve(pressure_, rhs_, kTolerance, kMaxIterations);
 
     // The gradient of the pressure, off each face next to water. Past the
     // surface the pressure is 0 where the surface crosses the face; past an
     // open side, on the side.
     const float scale = dt / h;
-    const int n[3] = {nx, ny, nz};
     const float* pressure = pressure_.data();
     const float* phi = phi_.data();
-    // Water in cell (i, j, k), and where it is kept: a cell not kept is air.
-    auto wet = [&](int i, int j, int k, int64_t& at) {
-        at = find(phi_, i, j, k);
-        return at >= 0 && cells_[static_cast<size_t>(at)] == FreeSurfaceSolver::Liquid;
-    };
+    const float far = phi_.background();
     for (int a = 0; a < 3; ++a) {
         float* v = vel_[a].data();
         const float* weight = weight_[a].data();
         uint8_t* valid = valid_[a].data();
-        forEachCounted(*faces_[a], [&](int i, int j, int k, size_t f) {
-            if (open(a, i, j, k) <= 0.0f) {  // a wall: nothing through it -- but what a moving solid carries
-                v[f] = movingSolid_ ? solidVelocityAt(a, i, j, k) : 0.0f;
-                valid[f] = 0;
-                return;
+        forEachTile(*faces_[a], [&](size_t slot, const int c[3], const int e[3]) {
+            const size_t base = slot * Tiles::kCells;
+            const FaceSolids solids = faceSolids(a, c[0], c[1], c[2]);
+            // The cells either side: ahead of a face, those of the tile of
+            // cells where it is; behind, those too, but for the first layer,
+            // whose are the tile's before it.
+            const int32_t mine = c[a] < n[a] ? phi_.slotOf(c[0], c[1], c[2]) : -1;
+            int32_t before = -1;
+            if (c[a] > 0) {
+                int d[3] = {c[0], c[1], c[2]};
+                d[a] -= Tiles::kSide;
+                before = phi_.slotOf(d[0], d[1], d[2]);
             }
-            const int at = a == 0 ? i : a == 1 ? j : k;
-            const bool hasBehind = at > 0, hasAhead = at < n[a];
-            const int bi = i - (a == 0), bj = j - (a == 1), bk = k - (a == 2);
-            int64_t behind = -1, ahead = -1;
-            const bool wetBehind = hasBehind && wet(bi, bj, bk, behind);
-            const bool wetAhead = hasAhead && wet(i, j, k, ahead);
-            if (!wetBehind && !wetAhead) {
-                valid[f] = weight[f] > 1e-6f;  // spray: as the particles fly
-                return;
+            for (int z = 0; z < e[2]; ++z) {
+                for (int y = 0; y < e[1]; ++y) {
+                    for (int x = 0; x < e[0]; ++x) {
+                        const size_t local = SparseGrid::local(x, y, z);
+                        const size_t f = base + local;
+                        const int la = a == 0 ? x : a == 1 ? y : z;
+                        const int at = c[a] + la;
+                        if (solids.openAt(local, at) <= 0.0f) {  // a wall: nothing through it -- but what a moving solid carries
+                            v[f] = movingSolid_ ? solids.velocityAt(local) : 0.0f;
+                            valid[f] = 0;
+                            continue;
+                        }
+                        const bool hasBehind = at > 0, hasAhead = at < n[a];
+                        const int64_t ahead = hasAhead && mine >= 0 ? static_cast<int64_t>(mine) * Tiles::kCells + static_cast<int64_t>(local) : -1;
+                        int64_t behind = -1;
+                        if (hasBehind) {
+                            if (la > 0) behind = mine < 0 ? -1 : static_cast<int64_t>(mine) * Tiles::kCells + static_cast<int64_t>(local - kStep[a]);
+                            else if (before >= 0) behind = static_cast<int64_t>(before) * Tiles::kCells + static_cast<int64_t>(local + kLast * kStep[a]);
+                        }
+                        const bool wetBehind = behind >= 0 && cells_[static_cast<size_t>(behind)] == FreeSurfaceSolver::Liquid;
+                        const bool wetAhead = ahead >= 0 && cells_[static_cast<size_t>(ahead)] == FreeSurfaceSolver::Liquid;
+                        if (!wetBehind && !wetAhead) {
+                            valid[f] = weight[f] > 1e-6f;  // spray: as the particles fly
+                            continue;
+                        }
+                        float drop;  // pressure ahead - pressure behind
+                        if (wetBehind && wetAhead) {
+                            drop = pressure[ahead] - pressure[behind];
+                        } else if (wetBehind) {
+                            const float theta =
+                                hasAhead ? FreeSurfaceSolver::surfaceFraction(phi[behind], ahead >= 0 ? phi[ahead] : far) : 0.5f;
+                            drop = -pressure[behind] / theta;
+                        } else {
+                            const float theta =
+                                hasBehind ? FreeSurfaceSolver::surfaceFraction(phi[ahead], behind >= 0 ? phi[behind] : far) : 0.5f;
+                            drop = pressure[ahead] / theta;
+                        }
+                        v[f] -= scale * drop;
+                        valid[f] = 1;
+                    }
+                }
             }
-            float drop;  // pressure ahead - pressure behind
-            if (wetBehind && wetAhead) {
-                drop = pressure[ahead] - pressure[behind];
-            } else if (wetBehind) {
-                const float theta = hasAhead ? FreeSurfaceSolver::surfaceFraction(phi[behind], phi_.at(i, j, k)) : 0.5f;
-                drop = -pressure[behind] / theta;
-            } else {
-                const float theta = hasBehind ? FreeSurfaceSolver::surfaceFraction(phi[ahead], phi_.at(bi, bj, bk)) : 0.5f;
-                drop = pressure[ahead] / theta;
-            }
-            v[f] -= scale * drop;
-            valid[f] = 1;
         });
     }
 }
 
 void LiquidSolver::extrapolate(int layers) {
+    constexpr int kLast = Tiles::kSide - 1;
+    constexpr int64_t kStep[3] = {1, Tiles::kSide, Tiles::kSide * Tiles::kSide};
     for (int a = 0; a < 3; ++a) {
         SparseGrid& vel = vel_[a];
         float* v = vel.data();
         std::vector<uint8_t>& valid = valid_[a];
         std::vector<uint8_t> next;
-        const int fx = vel.nx(), fy = vel.ny(), fz = vel.nz();
+        const Tiles& tiles = *faces_[a];
+        const std::vector<uint32_t>& stored = tiles.stored();
+        const int fn[3] = {vel.nx(), vel.ny(), vel.nz()};
+        // Each kept tile of faces: where it is, the faces of it that count,
+        // and the tiles beside it -- looked up once, not for every face.
+        struct Around {
+            int corner[3] = {0, 0, 0}, extent[3] = {0, 0, 0};
+            int64_t beside[6] = {-1, -1, -1, -1, -1, -1};
+        };
+        std::vector<Around> around(stored.size());
+        pg::parallelFor(stored.size(), 64, [&](size_t begin, size_t end) {
+            for (size_t s = begin; s < end; ++s) {
+                Around& w = around[s];
+                tiles.corner(stored[s], w.corner[0], w.corner[1], w.corner[2]);
+                for (int b = 0; b < 3; ++b) w.extent[b] = std::min(Tiles::kSide, fn[b] - w.corner[b]);
+                if (tiles.state(stored[s]) == Tiles::FirstLayer) w.extent[a] = std::min(w.extent[a], 1);
+                for (int d = 0; d < 6; ++d) {
+                    int c[3] = {w.corner[0], w.corner[1], w.corner[2]};
+                    c[d / 2] += d % 2 == 0 ? -Tiles::kSide : Tiles::kSide;
+                    if (c[d / 2] < 0 || c[d / 2] >= fn[d / 2]) continue;
+                    const int32_t slot = vel.slotOf(c[0], c[1], c[2]);
+                    if (slot >= 0) w.beside[d] = static_cast<int64_t>(slot) * Tiles::kCells;
+                }
+            }
+        });
         for (int layer = 0; layer < layers; ++layer) {
             next = valid;
             // Only faces not yet known are written, only known ones read --
             // and a face whose tile is not kept is not known.
-            forEachCounted(*faces_[a], [&](int i, int j, int k, size_t f) {
-                if (valid[f]) return;
-                float sum = 0.0f;
-                int count = 0;
-                auto take = [&](int ti, int tj, int tk) {
-                    const int64_t g = find(vel, ti, tj, tk);
-                    if (g >= 0 && valid[static_cast<size_t>(g)]) {
-                        sum += v[g];
-                        ++count;
+            pg::parallelFor(stored.size(), 4, [&](size_t begin, size_t end) {
+                for (size_t s = begin; s < end; ++s) {
+                    const Around& w = around[s];
+                    const int64_t base = static_cast<int64_t>(s) * Tiles::kCells;
+                    for (int z = 0; z < w.extent[2]; ++z) {
+                        for (int y = 0; y < w.extent[1]; ++y) {
+                            for (int x = 0; x < w.extent[0]; ++x) {
+                                const int l[3] = {x, y, z};
+                                const int64_t local = static_cast<int64_t>(SparseGrid::local(x, y, z));
+                                const int64_t f = base + local;
+                                if (valid[static_cast<size_t>(f)]) continue;
+                                float sum = 0.0f;
+                                int count = 0;
+                                auto take = [&](int64_t g) {
+                                    if (g >= 0 && valid[static_cast<size_t>(g)]) {
+                                        sum += v[g];
+                                        ++count;
+                                    }
+                                };
+                                // Behind and ahead along x, then y, then z.
+                                for (int b = 0; b < 3; ++b) {
+                                    const int at = w.corner[b] + l[b];
+                                    if (at > 0) {
+                                        take(l[b] > 0 ? f - kStep[b]
+                                                      : w.beside[2 * b] < 0 ? -1 : w.beside[2 * b] + local + kLast * kStep[b]);
+                                    }
+                                    if (at < fn[b] - 1) {
+                                        take(l[b] < kLast ? f + kStep[b]
+                                                          : w.beside[2 * b + 1] < 0 ? -1 : w.beside[2 * b + 1] + local - kLast * kStep[b]);
+                                    }
+                                }
+                                if (count > 0) {
+                                    v[f] = sum / static_cast<float>(count);
+                                    next[static_cast<size_t>(f)] = 1;
+                                }
+                            }
+                        }
                     }
-                };
-                if (i > 0) take(i - 1, j, k);
-                if (i < fx - 1) take(i + 1, j, k);
-                if (j > 0) take(i, j - 1, k);
-                if (j < fy - 1) take(i, j + 1, k);
-                if (k > 0) take(i, j, k - 1);
-                if (k < fz - 1) take(i, j, k + 1);
-                if (count > 0) {
-                    v[f] = sum / static_cast<float>(count);
-                    next[f] = 1;
                 }
             });
             valid.swap(next);
         }
         // Walls stay walls.
-        forEachCounted(*faces_[a], [&](int i, int j, int k, size_t f) {
-            if (open(a, i, j, k) <= 0.0f) v[f] = 0.0f;
+        forEachTile(tiles, [&](size_t slot, const int c[3], const int e[3]) {
+            const FaceSolids solids = faceSolids(a, c[0], c[1], c[2]);
+            const size_t base = slot * Tiles::kCells;
+            for (int z = 0; z < e[2]; ++z) {
+                for (int y = 0; y < e[1]; ++y) {
+                    for (int x = 0; x < e[0]; ++x) {
+                        const size_t local = SparseGrid::local(x, y, z);
+                        if (solids.openAt(local, c[a] + (a == 0 ? x : a == 1 ? y : z)) <= 0.0f) v[base + local] = 0.0f;
+                    }
+                }
+            }
         });
     }
 }
@@ -1265,7 +1375,7 @@ WaterLevel LiquidSolver::waterLevel() const {
                 // water, and the solids in it, to the first air.
                 int j = 0, top = -1;
                 while (j < ny) {
-                    const int64_t c = find(phi_, i, j, k);
+                    const int64_t c = phi_.find(i, j, k);
                     if (c < 0) {
                         j = (j | (Tiles::kSide - 1)) + 1;
                         continue;

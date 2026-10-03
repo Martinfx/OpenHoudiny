@@ -237,6 +237,112 @@ TEST(liquid_pressure_of_a_pocket_shut_in_by_solids_stays_finite) {
     CHECK(std::memcmp(p[0].data(), p[1].data(), p[0].size() * sizeof(float)) == 0);
 }
 
+TEST(liquid_pressure_on_the_tiles_round_the_water_is_that_of_the_whole_grid) {
+    // A pool in a corner of a closed tank, a solid block far from it: kept
+    // in the tiles round the pool -- the block in its own, on every grid of
+    // the multigrid -- the pressure is that of the whole grid, to the bit.
+    const int n[3] = {64, 32, 48};
+    const float far = 3.0f;
+    auto inBlock = [](int i, int j, int k) { return i >= 40 && i < 56 && j < 16 && k >= 30 && k < 46; };
+    // The tiles kept: the pool's and those round them.
+    const int tn[3] = {n[0] / 8, n[1] / 8, n[2] / 8};
+    std::vector<uint8_t> state(static_cast<size_t>(tn[0] * tn[1] * tn[2]), Tiles::Off);
+    for (int c = 0; c < tn[2]; ++c) {
+        for (int b = 0; b < tn[1]; ++b) {
+            for (int a = 0; a < tn[0]; ++a) {
+                if (a <= 3 && b <= 2 && c <= 3) state[static_cast<size_t>(a + tn[0] * (b + tn[1] * c))] = Tiles::Whole;
+            }
+        }
+    }
+    const auto tiles = std::make_shared<const Tiles>(n[0], n[1], n[2], state, -1);
+    // The whole grid: the pool, air -- as far as the background past the
+    // kept tiles -- the block, walls round the sides and the floor.
+    std::vector<uint8_t> cells(static_cast<size_t>(n[0] * n[1] * n[2]), FreeSurfaceSolver::Air);
+    Grid phi(n[0], n[1], n[2], far), open[3];
+    for (int k = 0; k < n[2]; ++k) {
+        for (int j = 0; j < n[1]; ++j) {
+            for (int i = 0; i < n[0]; ++i) {
+                const size_t c = phi.index(i, j, k);
+                if (inBlock(i, j, k)) cells[c] = FreeSurfaceSolver::Solid;
+                if (!tiles->has(i, j, k)) continue;
+                const float d = std::max({static_cast<float>(i) - 19.5f, static_cast<float>(j) - 9.6f,
+                                          static_cast<float>(k) - 19.5f});
+                phi.at(i, j, k) = d;
+                if (d < 0.0f) cells[c] = FreeSurfaceSolver::Liquid;
+            }
+        }
+    }
+    for (int a = 0; a < 3; ++a) {
+        open[a] = Grid(n[0] + (a == 0), n[1] + (a == 1), n[2] + (a == 2), 1.0f);
+        for (int k = 0; k < open[a].nz(); ++k) {
+            for (int j = 0; j < open[a].ny(); ++j) {
+                for (int i = 0; i < open[a].nx(); ++i) {
+                    const int f = a == 0 ? i : a == 1 ? j : k;
+                    const bool side = f == 0 || (f == n[a] && a != 1);
+                    // The block's faces closed, a sliver of those round it.
+                    const bool block = inBlock(i, j, k) || inBlock(i - (a == 0), j - (a == 1), k - (a == 2));
+                    if (side || block) open[a].at(i, j, k) = 0.0f;
+                    else if (inBlock(i + 1, j, k) || inBlock(i, j + 1, k)) open[a].at(i, j, k) = 0.4f;
+                }
+            }
+        }
+    }
+    std::mt19937 rng(3);
+    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+    Grid rhs(n[0], n[1], n[2]), whole(n[0], n[1], n[2]);
+    for (size_t c = 0; c < rhs.size(); ++c) {
+        if (cells[c] == FreeSurfaceSolver::Liquid) rhs.data()[c] = u(rng);
+    }
+    FreeSurfaceSolver dense;
+    dense.setSystem(cells, open, phi);
+    const int denseIterations = dense.solve(whole, rhs, 1e-5f, 100);
+    CHECK(denseIterations > 0);
+
+    // The same on the kept tiles: the walls as walls, the block on its own.
+    const bool closed[6] = {true, true, true, false, true, true};
+    SolidLevels solids(n[0], n[1], n[2], closed);
+    std::vector<uint8_t> blockState(state.size(), Tiles::Off);
+    for (int c = 3; c <= 5; ++c) {
+        for (int b = 0; b <= 2; ++b) {
+            for (int a = 4; a <= 7; ++a) blockState[static_cast<size_t>(a + tn[0] * (b + tn[1] * c))] = Tiles::Whole;
+        }
+    }
+    const auto blockTiles = std::make_shared<const Tiles>(n[0], n[1], n[2], blockState, -1);
+    std::vector<uint8_t> solid(blockTiles->stored().size() * Tiles::kCells, 0);
+    forEachCounted(*blockTiles, [&](int i, int j, int k, size_t c) { solid[c] = inBlock(i, j, k) ? 1 : 0; });
+    SparseGrid faces[3];
+    for (int a = 0; a < 3; ++a) {
+        faces[a] = SparseGrid(Tiles::faces(*blockTiles, a), 1.0f);
+        forEachCounted(faces[a].tiles(), [&](int i, int j, int k, size_t f) { faces[a].data()[f] = open[a].at(i, j, k); });
+    }
+    solids.set(blockTiles, solid, faces);
+    CHECK(!solids.solid(0, 1, 1, 1) && solids.solid(0, 45, 5, 35) && solids.solid(2, 11, 1, 9));
+    CHECK_EQ(solids.open(0, 1, 3, 0, 3), 0.0f);  // the floor
+    CHECK_EQ(solids.open(0, 1, 3, n[1], 3), 1.0f);  // the sky
+    std::vector<uint8_t> kept(tiles->stored().size() * Tiles::kCells, FreeSurfaceSolver::Air);
+    SparseGrid distance(tiles, far), b(tiles), p(tiles);
+    forEachCounted(*tiles, [&](int i, int j, int k, size_t c) {
+        kept[c] = cells[phi.index(i, j, k)];
+        distance.data()[c] = phi.at(i, j, k);
+        b.data()[c] = rhs.at(i, j, k);
+    });
+    FreeSurfaceSolver sparse;
+    sparse.setSystem(tiles, kept, distance, solids);
+    CHECK_EQ(sparse.levels(), dense.levels());
+    CHECK_EQ(sparse.unknowns(), dense.unknowns());
+    CHECK_EQ(sparse.solve(p, b, 1e-5f, 100), denseIterations);
+    CHECK_EQ(sparse.residual(), dense.residual());
+    int differ = 0;
+    for (int k = 0; k < n[2]; ++k) {
+        for (int j = 0; j < n[1]; ++j) {
+            for (int i = 0; i < n[0]; ++i) {
+                if (p.at(i, j, k) != whole.at(i, j, k)) ++differ;
+            }
+        }
+    }
+    CHECK_EQ(differ, 0);
+}
+
 TEST(liquid_still_water_stays_still) {
     // A tank 0.3 m full -- the water from wall to wall: a domain has a
     // multiple of 8 cells along each side, and 24 fit 1 m -- after two

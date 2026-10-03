@@ -7,9 +7,10 @@
 // in them, and the tiles the solver keeps -- those and the tiles round them
 // (all of them with --set sparse=0).
 //
-//   pgbench_liquid [RESOLUTION...] [--frames N] [--set PARAM=VALUE]... [--example NAME]
+//   pgbench_liquid [RESOLUTION...] [--frames N] [--set PARAM=VALUE]... [--example NAME] [--threads N]
 //
-// --set changes a parameter of the Liquid Solver.
+// --set changes a parameter of the Liquid Solver; --threads runs on N
+// threads (all there are by default) -- the same water on any number.
 //
 #include "pg/core/Parallel.h"
 #include "pg/sim/Liquid.h"
@@ -162,6 +163,7 @@ int main(int argc, char** argv) {
         if (s == "--frames" && a + 1 < argc) frames = std::max(1, std::atoi(argv[++a]));
         else if (s == "--example" && a + 1 < argc) example = argv[++a];
         else if (s == "--set" && a + 1 < argc) sets.push_back(argv[++a]);
+        else if (s == "--threads" && a + 1 < argc) TaskPool::instance().setThreadCount(static_cast<unsigned>(std::max(1, std::atoi(argv[++a]))));
         else resolutions.push_back(std::atoi(argv[a]));
     }
     if (resolutions.empty()) resolutions = {96, 192};

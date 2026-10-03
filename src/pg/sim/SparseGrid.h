@@ -109,9 +109,9 @@ public:
     /// not stored read too.
     explicit SparseGrid(std::shared_ptr<const Tiles> tiles, float background = 0.0f);
 
-    int nx() const { return tiles_ ? tiles_->nx() : 0; }
-    int ny() const { return tiles_ ? tiles_->ny() : 0; }
-    int nz() const { return tiles_ ? tiles_->nz() : 0; }
+    int nx() const { return n_[0]; }
+    int ny() const { return n_[1]; }
+    int nz() const { return n_[2]; }
     const Tiles& tiles() const { return *tiles_; }
     const std::shared_ptr<const Tiles>& shared() const { return tiles_; }
     /// What a cell that is not stored reads.
@@ -131,6 +131,11 @@ public:
     size_t index(int i, int j, int k) const {
         return static_cast<size_t>(slotOf(i, j, k)) * Tiles::kCells + local(i, j, k);
     }
+    /// Where cell (i, j, k) is in data(), -1 when its tile is not kept.
+    int64_t find(int i, int j, int k) const {
+        const int32_t s = slotOf(i, j, k);
+        return s < 0 ? -1 : static_cast<int64_t>(s) * Tiles::kCells + static_cast<int64_t>(local(i, j, k));
+    }
     static size_t local(int i, int j, int k) {
         return static_cast<size_t>(i & (Tiles::kSide - 1)) +
                Tiles::kSide * (static_cast<size_t>(j & (Tiles::kSide - 1)) +
@@ -149,7 +154,26 @@ public:
     float clamped(int i, int j, int k) const;
 
     /// Trilinear interpolation at a position in cell units, as Grid::sample.
-    float sample(float x, float y, float z, bool zeroOutside = false) const;
+    /// (In line, the lookups with it: the solvers make millions a step.)
+    [[gnu::always_inline]] float sample(float x, float y, float z, bool zeroOutside = false) const {
+        const int nx = n_[0], ny = n_[1], nz = n_[2];
+        if (zeroOutside && (x < 0.0f || y < 0.0f || z < 0.0f || x > static_cast<float>(nx) ||
+                            y > static_cast<float>(ny) || z > static_cast<float>(nz))) {
+            return 0.0f;
+        }
+        // As Grid: cell centres at the integers, a NaN on 0.
+        const float fx = std::max(0.0f, std::min(x - 0.5f, static_cast<float>(nx - 1)));
+        const float fy = std::max(0.0f, std::min(y - 0.5f, static_cast<float>(ny - 1)));
+        const float fz = std::max(0.0f, std::min(z - 0.5f, static_cast<float>(nz - 1)));
+        const int i = static_cast<int>(fx), j = static_cast<int>(fy), k = static_cast<int>(fz);
+        const float tx = fx - static_cast<float>(i), ty = fy - static_cast<float>(j), tz = fz - static_cast<float>(k);
+        float c[8];
+        corners(i, j, k, i + 1 < nx ? 1 : 0, j + 1 < ny ? 1 : 0, k + 1 < nz ? 1 : 0, c);
+        const float x00 = c[0] + (c[1] - c[0]) * tx, x10 = c[2] + (c[3] - c[2]) * tx;
+        const float x01 = c[4] + (c[5] - c[4]) * tx, x11 = c[6] + (c[7] - c[6]) * tx;
+        const float y0 = x00 + (x10 - x00) * ty, y1 = x01 + (x11 - x01) * ty;
+        return y0 + (y1 - y0) * tz;
+    }
     float sample(float x, float y, float z, bool zeroOutside, float& lo, float& hi) const;
 
     /// Every stored value.
@@ -170,14 +194,58 @@ public:
     Grid dense() const;
 
 private:
-    /// The table and its strides, from tiles_.
+    /// The table, its strides and the grid's size, from tiles_.
     void cache();
+    /// The eight values a trilinear lookup at cell (i, j, k) reads -- with
+    /// the next cell along each axis di, dj, dk (0 or 1) on -- x fastest:
+    /// from one tile mostly, else from each of the tiles they lie in.
+    [[gnu::always_inline]] void corners(int i, int j, int k, int di, int dj, int dk, float c[8]) const {
+        constexpr int kLast = Tiles::kSide - 1;
+        const int li = i & kLast, lj = j & kLast, lk = k & kLast;
+        const size_t tile = static_cast<size_t>(i >> Tiles::kLog) + tx_ * static_cast<size_t>(j >> Tiles::kLog) +
+                            txy_ * static_cast<size_t>(k >> Tiles::kLog);
+        const bool cx = li + di > kLast, cy = lj + dj > kLast, cz = lk + dk > kLast;
+        const float* d = data_.data();
+        if (!(cx || cy || cz)) {
+            // The eight in one tile: one look in the table.
+            const int32_t s = slots_[tile];
+            if (s < 0) {
+                for (int q = 0; q < 8; ++q) c[q] = background_;
+                return;
+            }
+            const float* p = d + static_cast<size_t>(s) * Tiles::kCells + local(i, j, k);
+            const size_t ox = static_cast<size_t>(di), oy = dj ? Tiles::kSide : 0u,
+                         oz = dk ? Tiles::kSide * Tiles::kSide : 0u;
+            c[0] = p[0];
+            c[1] = p[ox];
+            c[2] = p[oy];
+            c[3] = p[oy + ox];
+            c[4] = p[oz];
+            c[5] = p[oz + ox];
+            c[6] = p[oz + oy];
+            c[7] = p[oz + oy + ox];
+            return;
+        }
+        // Across the edge of a tile: each corner from the tile it lies in.
+        const int32_t* t = slots_ + tile;
+        const size_t sx = cx ? 1u : 0u, sy = cy ? tx_ : 0u, sz = cz ? txy_ : 0u;
+        const int32_t s[8] = {t[0], t[sx], t[sy], t[sy + sx], t[sz], t[sz + sx], t[sz + sy], t[sz + sy + sx]};
+        const size_t x[2] = {static_cast<size_t>(li), static_cast<size_t>((li + di) & kLast)};
+        const size_t y[2] = {static_cast<size_t>(lj) * Tiles::kSide, static_cast<size_t>((lj + dj) & kLast) * Tiles::kSide};
+        const size_t z[2] = {static_cast<size_t>(lk) * Tiles::kSide * Tiles::kSide,
+                             static_cast<size_t>((lk + dk) & kLast) * Tiles::kSide * Tiles::kSide};
+        for (int q = 0; q < 8; ++q) {
+            c[q] = s[q] < 0 ? background_
+                            : d[static_cast<size_t>(s[q]) * Tiles::kCells + x[q & 1] + y[(q >> 1) & 1] + z[q >> 2]];
+        }
+    }
 
     std::shared_ptr<const Tiles> tiles_;
     std::vector<float> data_;
     float background_ = 0.0f;
     const int32_t* slots_ = nullptr;
     size_t tx_ = 0, txy_ = 0;
+    int n_[3] = {0, 0, 0};
 };
 
 /// f(i, j, k, index) for every cell of `tiles` that counts, in parallel,
