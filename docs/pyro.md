@@ -403,7 +403,7 @@ Camera bere jednu kameru: pohled, kterým se renderuje.
 
 | sekce | parametry |
 |---|---|
-| Output | `frames` (délka časové osy), `fps` (snímků za sekundu pro všechny řešiče) |
+| Output | `frames` (délka časové osy), `fps` (snímků za sekundu pro všechny řešiče), `preview` (jak jemné mřížky plynu a vody počítá náhled editoru, Simulation → Preview Resolution: 0,5 poloviční, 0,25 čtvrtinové), `open_preview` (editor síť otevře rovnou v náhledu: scéna, kterou nejde při práci počítat celou) |
 | Sun | `light_azimuth`, `light_elevation`, `light_color`, `light_intensity` |
 | Sky | `sky_color`, `sky_intensity` |
 | Image | `exposure`, `floor` (vypnutá podlaha nic neschovává: i geometrie pod y = 0, třeba údolí terénu, je vidět), `ground_color` (barva země: asfalt, beton, prach), `grid` (mřížka na zemi po 10 cm a po metru; pro záběr vypnout), `sky_behind` (za scénou obloha místo tmavého pozadí studia: opar nejsvětlejší u obzoru a záře kolem slunce — venku, kouř proti světlu) |

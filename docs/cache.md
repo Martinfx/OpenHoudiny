@@ -104,9 +104,12 @@ a snímky přehrává, jak přibývají.
 
 V editoru, menu **Simulation**:
 
-- **Preview Resolution** — plyn a voda na mřížkách polovičního rozlišení
-  (táborák 32 × 48 × 32 místo 64 × 96 × 64, krok 63 ms místo ~400 ms).
-  Na ladění zdrojů, sil a načasování. Přehled ukáže „Preview — grids half
+- **Preview Resolution** — plyn a voda na hrubších mřížkách, ve výchozím
+  stavu polovičních (táborák 32 × 48 × 32 místo 64 × 96 × 64, krok 63 ms
+  místo ~400 ms). Na ladění zdrojů, sil a načasování. Jak jemné mřížky
+  náhled počítá, říká parametr **Preview** uzlu Output (0,25 čtvrtinové);
+  **Open in Preview** síť otevře rovnou v náhledu — scénu, která se celá
+  počítá hodiny (`flood_crates_hd`). Přehled ukáže „Preview — grids half
   as fine“, stavový řádek „preview“. Bake je vždy v plném rozlišení.
 - **Bake to Disk…** — složka (výchozí `<síť>_bake`) a v ní celý záběr
   v plném rozlišení: editor zapíše síť do `network.pgsim` a spustí

@@ -427,7 +427,13 @@ std::vector<ParamDef> outputParams() {
         {"frames", "Frames", "Output", K::Int, {150.0f, 0.0f, 0.0f}, 1.0f, 1000.0f, 1.0f, 100000.0f, "",
          "How many frames to simulate: the length of the timeline."},
         {"fps", "Frame Rate", "Output", K::Float, {30.0f, 0.0f, 0.0f}, 10.0f, 120.0f, 1.0f, 10000.0f, "fps",
-         "Frames a second. Each frame moves every simulation on by 1/fps seconds."}};
+         "Frames a second. Each frame moves every simulation on by 1/fps seconds."},
+        {"preview", "Preview", "Output", K::Float, {0.5f, 0.0f, 0.0f}, 0.1f, 1.0f, 0.05f, 1.0f, "",
+         "How fine the gas's and the water's grids are in the editor's preview (Simulation > Preview "
+         "Resolution): 0.5 half as fine, 0.25 a quarter -- a big scene worked on quickly. A bake is at the full "
+         "resolution."},
+        {"open_preview", "Open in Preview", "Output", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+         "The editor opens the network in its preview: a scene too big to simulate whole while it is worked on."}};
     // The sun, the sky and the image, as the Volume Look had them.
     for (ParamDef d : legacyVolumeLookParams()) {
         if (!isEnvironment(d.name)) continue;
@@ -3821,6 +3827,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     c.output = output->id;
     c.active.push_back(output->id);
     c.frames = std::max(1, whole(*output, "frames"));
+    c.preview = std::clamp(f(*output, "preview"), 0.05f, 1.0f);
+    c.openInPreview = f(*output, "open_preview") != 0.0f;
 
     auto upstream = [&](const Node& n, const char* input) -> const Node* {
         const std::vector<Link> in = linksInto(n.id, input);

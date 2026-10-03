@@ -321,6 +321,46 @@ TEST(sim_network_compiles_to_the_scene_and_the_look) {
     CHECK(!c.isActive(loose));
 }
 
+TEST(sim_network_output_says_how_the_preview_simulates) {
+    // How fine the editor's preview makes the grids, and whether it opens the
+    // network in it: the Output's -- a scene too big to simulate whole while
+    // it is worked on opens a quarter as fine.
+    int ids[4];
+    Network net = chain(ids);
+    net.setParam(ids[1], "resolution", "128");
+    Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK_EQ(c.preview, 0.5f);
+    CHECK(!c.openInPreview);
+    CHECK(net.save().find("preview") == std::string::npos);  // as it was: nothing written
+
+    CHECK(net.setParam(ids[3], "preview", "0.25"));
+    CHECK(net.setParam(ids[3], "open_preview", "on"));
+    c = net.compile();
+    CHECK_EQ(c.preview, 0.25f);
+    CHECK(c.openInPreview);
+    CHECK_EQ(c.world.gas.solver.resolution, 128);  // the bake's
+    CHECK_EQ(preview(c.world, c.preview).gas.solver.resolution, 32);
+
+    // Saved and read back, the same.
+    const std::string text = net.save();
+    CHECK(text.find("  param preview 0.25\n  param open_preview on\n") != std::string::npos);
+    Network back;
+    std::string error;
+    std::vector<std::string> warnings;
+    CHECK(Network::load(text, back, error, &warnings));
+    CHECK(warnings.empty());
+    CHECK_EQ(back.compile().preview, 0.25f);
+    CHECK(back.compile().openInPreview);
+    CHECK_EQ(back.save(), text);
+
+    // Kept to what a preview can be.
+    CHECK(net.setParam(ids[3], "preview", "0"));
+    CHECK_EQ(net.compile().preview, 0.05f);
+    CHECK(net.setParam(ids[3], "preview", "3"));
+    CHECK_EQ(net.compile().preview, 1.0f);
+}
+
 TEST(sim_network_model_is_no_problem) {
     // Geometry shown and nothing simulated -- a model, a landscape: nothing
     // is missing, with an Output (its sun, its camera) or without one.

@@ -37,9 +37,6 @@ namespace {
 
 using theme::Icon;
 
-/// Simulation > Preview Resolution: the grids of the gas and the water this
-/// much as fine.
-constexpr float kPreview = 0.5f;
 /// A bake saves its state every this many frames.
 constexpr int kCheckpointEvery = 10;
 
@@ -357,6 +354,19 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     // The frames of what was open before are not this network's.
     runner_->clear();
     shown_.reset();
+    // A scene too big to simulate whole as it is worked on opens in the
+    // preview (its Output's Open in Preview); the next that does not, out
+    // of it again -- unless it was asked for.
+    const bool opensInPreview = std::any_of(net_.nodes().begin(), net_.nodes().end(), [&](const sim::Node& n) {
+        return n.type == "output" && net_.param(n.id, "open_preview")[0] != 0.0f;
+    });
+    if (opensInPreview && !preview_) {
+        preview_ = true;
+        forcedPreview_ = true;
+    } else if (!opensInPreview && forcedPreview_) {
+        preview_ = false;
+        forcedPreview_ = false;
+    }
     compiledRevision_ = ~0ull;
     recompile();
     current_ = 1;
@@ -385,7 +395,7 @@ bool SimWorkspace::open(const std::string& path) {
     load(net, path, "");
     if (!warnings.empty()) setMessage(path + ": " + warnings.front(), true);
     else if (editingAsset()) setMessage("Opened the asset " + path + ": Ctrl+S saves a new version, every instance following");
-    else setMessage("Opened " + path);
+    else setMessage("Opened " + path + previewNote());
     return true;
 }
 
@@ -393,7 +403,7 @@ bool SimWorkspace::openExample(const std::string& name) {
     sim::Network net;
     if (!sim::Network::example(name, net)) return false;
     load(net, "", name);
-    setMessage("Example " + name + ": File > Save As keeps your changes");
+    setMessage("Example " + name + ": File > Save As keeps your changes" + previewNote());
     return true;
 }
 
@@ -449,7 +459,7 @@ void SimWorkspace::recompile() {
     if (net_.revision() == compiledRevision_) return;
     compiledRevision_ = net_.revision();
     compiled_ = net_.compile(folder(), geometry_.get());
-    if (compiled_.ok && preview_) compiled_.world = sim::preview(compiled_.world, kPreview);
+    if (compiled_.ok && preview_) compiled_.world = sim::preview(compiled_.world, compiled_.preview);
     if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
     else if (!simulates(net_)) runner_->clear();  // nothing left that simulates: its frames go too
     current_ = std::clamp(current_, 1, std::max(1, compiled_.frames));
@@ -1548,8 +1558,9 @@ void SimWorkspace::networkOverview() {
             }
             if (preview_) {
                 ui::rowStart("Preview");
-                ImGui::TextColored(theme::vec(theme::kYellow), "grids half as fine");
-                ImGui::SetItemTooltip("Simulation > Preview Resolution; a bake is at the full resolution");
+                ImGui::TextColored(theme::vec(theme::kYellow), "grids %s", previewFineness().c_str());
+                ImGui::SetItemTooltip("Simulation > Preview Resolution -- how fine, the Output's Preview; a bake is "
+                                      "at the full resolution");
             }
             if (bake_.running() || bake_.ended()) bakePanel();
             if (wedge_.any()) wedgePanel();
@@ -1823,12 +1834,13 @@ void SimWorkspace::menus() {
         ImGui::Separator();
         if (ImGui::MenuItem("Preview Resolution", nullptr, preview_)) {
             preview_ = !preview_;
+            forcedPreview_ = false;  // asked for: kept from network to network
             compiledRevision_ = ~0ull;  // the world again, at the other grids
             recompile();
             shown_.reset();
         }
-        ImGui::SetItemTooltip("The gas and the water on grids half as fine: quick to work on. A bake is always at the "
-                              "full resolution.");
+        ImGui::SetItemTooltip("The gas and the water on coarser grids -- as fine as the Output's Preview says, half "
+                              "by default: quick to work on. A bake is always at the full resolution.");
         if (ImGui::MenuItem("Bake to Disk\xe2\x80\xa6", nullptr, false, compiled_.ok && !bake_.running() && !wedge_.running())) {
             files_.openFolder("Bake into a folder", true,
                               bakeFolder_.empty() ? (fs::path(outputFolder()) / (stem() + "_bake")).string() : bakeFolder_);
@@ -1958,6 +1970,18 @@ void SimWorkspace::popups() {
 
 sim::Domain SimWorkspace::sceneBox() const {
     return compiled_.ok && compiled_.world.any() ? gl::sceneDomain(compiled_.world) : runner_->domain();
+}
+
+std::string SimWorkspace::previewFineness() const {
+    const float f = compiled_.preview;
+    if (f == 0.5f) return "half as fine";
+    if (f == 0.25f) return "a quarter as fine";
+    return std::to_string(std::lround(f * 100.0f)) + "% as fine";
+}
+
+std::string SimWorkspace::previewNote() const {
+    if (!forcedPreview_) return "";
+    return " -- in the preview, its grids " + previewFineness() + "; Simulation > Bake to Disk for the full resolution";
 }
 
 std::string SimWorkspace::gridsText() const {

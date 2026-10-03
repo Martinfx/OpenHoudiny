@@ -274,6 +274,10 @@ struct Compiled {
     /// whether a solver collides with it or not.
     std::vector<Solid> solids;
     int frames = 150;  ///< how long the simulation runs, from the Output
+    /// How fine the editor's preview simulates the gas and the water
+    /// (sim::preview), and whether it opens the network in it: the Output's.
+    float preview = 0.5f;
+    bool openInPreview = false;
     std::vector<Problem> problems;
     /// The nodes that take part in what is simulated, by id, sorted: the
     /// editor dims the others.

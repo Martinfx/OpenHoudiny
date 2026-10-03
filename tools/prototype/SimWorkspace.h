@@ -324,6 +324,10 @@ private:
     sim::Domain sceneBox() const;
     /// "72 × 96 × 72 cells", "water 48 × 24 × 24 · 46 k particles", or both.
     std::string gridsText() const;
+    /// How fine the preview's grids are: "half as fine", "a quarter as fine".
+    std::string previewFineness() const;
+    /// What a status message adds when the network opened in the preview.
+    std::string previewNote() const;
     /// The selected nodes the gizmo can move, turn or size.
     std::vector<int> movable() const;
     /// The tool the gizmo is for `nodes`: the chosen one, or the first they allow.
@@ -677,6 +681,7 @@ private:
 
     // Preview and bakes.
     bool preview_ = false;     ///< the gas and the water simulated on coarser grids (sim::preview)
+    bool forcedPreview_ = false;  ///< preview_ set by the network opened (its Output's Open in Preview)
     Bake bake_;
     std::string bakeFolder_;   ///< where the last bake went
     double bakePolled_ = 0.0;  ///< when the bake and the frames on disk were last looked at (ImGui time)
