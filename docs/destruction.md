@@ -903,11 +903,41 @@ stejný:
   je broad phase vydá, se totiž s vlákny může měnit.
 
 Věž z příkladu (593 kusů v 710 tělech, přes dva tisíce spojů) se během
-pádu (180 snímků) krokuje za 4,1 ms na snímek na jednom vláknu a za
-3,2 ms na čtyřech. Věž rozřezaná na 5 628 kusů za 60–70 ms na jednom
-a 30 ms na čtyřech (`./build/pgbench_rigid`, bez prachu). Skoro všechen
-čas je v řešiči kontaktů Joltu a roste s počtem těles, která se právě
+pádu (180 snímků) krokuje za 3,2 ms na snímek na jednom vláknu a za
+2,1 ms na čtyřech. Věž rozřezaná na 5 628 kusů za 39 ms na jednom
+a 19 ms na čtyřech (`./build/pgbench_rigid`, bez prachu). Skoro všechen
+čas je v Joltu: dvě třetiny v testech kolizí dvojic konvexních obalů (GJK
+a EPA), pětina v řešiči kontaktů. Roste s počtem těles, která se právě
 hýbou.
+
+**Levnější kontakty.** V hromadě je každý kus blízko mnoha jiných a Jolt
+v každém kroku testuje každou dvojici, která je dost blízko. Solver mu
+proto nastavuje dvě věci jinak, než je jeho výchozí:
+
+- **spekulativní kontakty** hledá jen 5 mm dopředu místo 2 cm. Méně
+  dvojic, které se nedotýkají, projde drahým testem. Co přiletí rychleji
+  než 5 mm za krok, se o pár milimetrů zanoří, než ho kontakt vytlačí.
+  Dřív to platilo pro to, co letělo rychleji než 2 cm za krok;
+- **kontakty dvojice**, která se od minulého kroku vůči sobě posunula
+  o méně než 5 mm a otočila o méně než 5°, si nechá a nehledá je znovu.
+  Jolt má výchozí 1 mm a 2°. Usazující se hromada je skoro celá z takových
+  dvojic.
+
+Velká věž pak padá o 30 % rychleji: ve snímcích 61–180 za 57 ms na
+snímek místo 82 ms na jednom vláknu. Hromada vypadá stejně. Rozptyl,
+počet spadlých kusů i drť zůstávají v mezích, které dá změna tření
+o 0,1 %. Průměrná výška kusů je o centimetr nižší (0,81 m proti
+0,82–0,86 m). Všech třináct příkladů s tělesy vypadá na posledním snímku
+věrohodně a všechny testy projdou. V příkladech, kde většinu času stojí
+prach, voda nebo drť, je zrychlení 0–6 %. Vyzkoušené a nepoužité:
+
+- větší zaoblení obalů (10 % kusu, −10 %): bedny se kutálejí a spolu
+  s kratšími spekulativními kontakty dopadly na plachtu tak, že ji
+  roztrhly;
+- kontakty podržené do 1 cm a 10° ušetří o 4 % víc, ale hromada se
+  usadí nápadně jinak (pětkrát víc zmrzlých těles);
+- méně iterací řešiče (6 místo 10) a rovina místo kvádru podlahy ušetří
+  pod 2 %.
 
 **Tělesa v klidu zmrznou** (`rest`, Freeze at Rest). Jolt sám uspí jen
 celý ostrov těles, který je v klidu. V hromadě trosek se ale vždycky
@@ -940,9 +970,10 @@ S tělesem se probudí i to, co na něm leží, a to, co leží na tom. Zmrzne
 a probudí se ve stejném pořadí na jakémkoli počtu vláken, takže snímky
 zůstanou bitově stejné. Během pádu se tím věž nezrychlí: skoro všechno je
 v pohybu a hlídání stojí asi 2 % kroku. Usazená velká věž se ale krokuje
-za 2,1 ms na snímek místo 56 ms. Za 360 snímků je to v průměru 38 ms
-místo 61 ms (na jednom vláknu). Bez zmrazení zůstane ve snímku 360 vzhůru
-1 648 těles, se zmrazením je od snímku 300 zmrzlé všechno.
+za 1,9 ms na snímek místo 27 ms. Za 360 snímků je to v průměru 27 ms
+místo 41 ms (na jednom vláknu). Se zmrazením je ve snímku 300 zmrzlých
+1 810 těles z 1 818. Bez něj je jich vzhůru 1 718 a Jolt je sám uspí až
+kolem snímku 360.
 
 - **Kusy a jejich části.** Kus je jedno tělo — nebo víc, když je
   z částí, které se nedotýkají. Každá část (uzavřený kus povrchu) naráží

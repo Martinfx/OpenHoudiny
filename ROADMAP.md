@@ -317,20 +317,29 @@ Testy to ověřují pro plyn, vodu, déšť i odstřel s prachem.
   v Joltu statické a nestojí nic. Probudí ho náraz s dost velkou
   hybností, těleso, které k němu za podkrok doletí (zametené kvádry
   v broad phase Joltu), voda, plyn, nálož nebo klíčovaný objekt; s ním
-  i to, co na něm leží. Usazená věž z 5 628 kusů se krokuje za 2,1 ms
-  na snímek místo 56 ms, snímky zůstávají na 1 i 4 vláknech bitově
-  stejné. Parametr `rest` (výchozí zapnuto).
+  i to, co na něm leží. Usazená věž z 5 628 kusů se krokuje za 1,9 ms
+  na snímek místo 27 ms (před levnějšími kontakty 2,1 místo 56 ms),
+  snímky zůstávají na 1 i 4 vláknech bitově stejné. Parametr `rest`
+  (výchozí zapnuto).
+- ✅ **Levnější kontakty** ([docs/destruction.md §3](docs/destruction.md#jak-to-funguje)):
+  Jolt hledá spekulativní kontakty 5 mm dopředu místo 2 cm a podrží
+  kontakty dvojice, která se pohnula o méně než 5 mm a 5° (místo 1 mm
+  a 2°). Velká věž padá o 30 % rychleji, hromada i všechny příklady
+  vypadají stejně. Cestou opravena látka, která natažený okraj díry
+  trhala znovu v každém podkroku: plachta o 23 % rychlejší, bitově stejná.
 
 **Hotovo, když:** odstřel z kroku 2 má beton, sklo a výztuž, stopy prachu
 a sekundární lámání a desetkrát víc kusů za stejný čas na snímek. Beton,
 výztuž, sklo, sekundární lámání, stopy prachu a vlákna jsou. Rychlost
-splněná není. Věž z příkladu (593 kusů) se během pádu krokuje za 3,2 ms
-na snímek na 4 vláknech (4,1 ms na jednom), desetkrát víc kusů (5 628)
-za 30 ms (60–70 ms na jednom). Trosky, které se usadily, už nestojí
-skoro nic, protože zmrznou: usazená velká věž 2,1 ms na snímek místo
-56 ms, 360 snímků v průměru 38 ms místo 61 ms. Během pádu je krok skoro
-celý v řešiči kontaktů Joltu a roste s počtem těles, která se hýbou.
-Desetinásobek za stejný čas potřebuje levnější kontakty malých kusů nebo
+splněná není. Věž z příkladu (593 kusů) se během pádu krokuje za 2,1 ms
+na snímek na 4 vláknech (3,2 ms na jednom), desetkrát víc kusů (5 628)
+za 19 ms (39 ms na jednom), tedy za devětkrát delší čas. Trosky, které
+se usadily, už nestojí skoro nic, protože zmrznou: usazená velká věž
+1,9 ms na snímek, 360 snímků v průměru 27 ms místo 61 ms před zmrazením
+a levnějšími kontakty. Během pádu je krok skoro celý v Joltu, ve
+srážkách dvojic konvexních obalů, a roste s počtem těles, která se
+hýbou. Kusy věže nejsou malé (0,4–0,75 m, v průměru 11 bodů v obalu),
+takže zjednodušit nejde co. Desetinásobek za stejný čas potřebuje
 řešič na GPU (krok 5).
 
 ### Krok 5 — Měřítko

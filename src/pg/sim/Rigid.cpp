@@ -1706,6 +1706,19 @@ constexpr float kWakeForce = 0.05f;
 /// ... and only when what comes at it would set it moving at least so
 /// fast, m/s, stuck to it: a chip does not wake a boulder.
 constexpr float kWakeGain = 0.1f;
+/// Contacts: Jolt finds them speculatively this close ahead, metres. In a
+/// pile every piece is near many, and each pair near enough is tested every
+/// step: Jolt's 2 cm tested far more pairs than touch. What comes in faster
+/// than this a step sinks in a little before its contact pushes it back --
+/// as what came faster than 2 cm a step did.
+constexpr float kSpeculative = 0.005f;
+/// ... and keeps the contacts of a pair that moved less than so far and
+/// turned less than so much against each other since the last step,
+/// metres and radians, instead of finding them again (Jolt: 1 mm and 2
+/// degrees): a settling pile is mostly such pairs. With kSpeculative the
+/// tower of 5 628 pieces falls 30 % faster.
+constexpr float kReuseMove = 0.005f;
+constexpr float kReuseTurn = 0.0872665f;  // 5 degrees
 /// Grit: how hard the air holds a bit back -- as a stone of 2400 kg/m^3,
 /// its drag a pull of 1.5e-4 v^2 / r (m/s^2), a chip of glass three times
 /// as hard -- how much of the way it went into what it knocks into it keeps
@@ -3286,6 +3299,13 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     m.physics.Init(static_cast<JPH::uint>(all), 0, static_cast<JPH::uint>(std::max<size_t>(4096, all * 32)),
                    static_cast<JPH::uint>(std::max<size_t>(4096, all * 32)), m.broadPhase, *m.objectVsBroadPhase, m.pairs);
     m.physics.SetGravity(jolt(s.gravity));
+    {
+        JPH::PhysicsSettings ps = m.physics.GetPhysicsSettings();
+        ps.mSpeculativeContactDistance = kSpeculative;
+        ps.mBodyPairCacheMaxDeltaPositionSq = kReuseMove * kReuseMove;
+        ps.mBodyPairCacheCosMaxDeltaRotationDiv2 = std::cos(0.5f * kReuseTurn);
+        m.physics.SetPhysicsSettings(ps);
+    }
     m.physics.SetContactListener(&m);
     m.physics.AddStepListener(&m);
     // Jolt's jobs on the task pool's threads: one, and they run here, one
