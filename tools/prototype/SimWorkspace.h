@@ -184,7 +184,7 @@ private:
 
     // --- thumbnails (SimThumbnails.cpp) ------------------------------------------------
     /// What a node's thumbnail shows, by what the node is; None: it has none.
-    enum class ThumbKind { None, Geometry, Object, Source, Gas, Water, Pieces, Cloth, Rain, Camera, Output };
+    enum class ThumbKind { None, Geometry, Object, Source, Gas, Water, Pieces, Cloth, Grains, Rain, Camera, Output };
     static ThumbKind thumbKindOf(const sim::Node& n);
     /// The node shows a thumbnail: its kind has one, thumbnails are on, and
     /// its own is not hidden.

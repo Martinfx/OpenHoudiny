@@ -109,6 +109,17 @@ TEST(state_resumes_the_upres_to_the_bit) {
     CHECK(error.find("other parts") != std::string::npos);
 }
 
+TEST(state_resumes_the_grains_and_the_pieces_they_push_to_the_bit) {
+    // Gravel down a chute into two boxes it pushes: the grains, their
+    // numbers and colours, and what they did to the pieces in each step --
+    // the pieces stepped again with it.
+    checkResume(exampleWorld("gravel_slide"), 26, 36);
+    // Poured sand: grains still being made when it stopped.
+    sim::World sand = exampleWorld("sand_pour");
+    sand.grains.solver.substeps = 4;
+    checkResume(sand, 6, 12);
+}
+
 TEST(state_of_another_world_or_cut_short_is_refused) {
     const sim::World fire = sim::preview(exampleWorld("campfire"), 0.5f);
     sim::WorldSolver solver(fire);

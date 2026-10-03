@@ -13,6 +13,7 @@
 //          ripples on the water.
 //
 #include "pg/sim/Cloth.h"
+#include "pg/sim/Grains.h"
 #include "pg/sim/Rigid.h"
 #include "pg/sim/Scene.h"
 
@@ -144,6 +145,7 @@ struct Frame {
     RainFrame rain;       ///< empty without rain
     RigidFrame rigid;     ///< empty without rigid bodies
     ClothFrame cloth;     ///< empty without cloth
+    GrainFrame grains;    ///< empty without grains
     double stepMs = 0.0;  ///< how long the step to it took
     /// Where the time of that step went, milliseconds: each part -- the
     /// pieces, what goes between them and the rest (their colliders and
@@ -151,19 +153,22 @@ struct Frame {
     /// the gas's stages, as PyroSolver::Times names them. Kept in memory,
     /// not in the cache: a frame read back has none.
     struct Profile {
-        float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, upres = 0.0f, water = 0.0f, rain = 0.0f, cloth = 0.0f;
+        float rigid = 0.0f, scenes = 0.0f, gas = 0.0f, upres = 0.0f, water = 0.0f, rain = 0.0f, cloth = 0.0f,
+              grains = 0.0f;
         float gasStages[8] = {};  ///< solids, tiles, emit, advect, combust, forces, project, dissipate
         float upresStages[6] = {};  ///< tiles, solids, emit, swirl, advect, combust (UpresSolver::Times)
         /// solids, sort, emit, to grid, extrapolate, forces, project, to particles, advect
         float waterStages[9] = {};
-        float total() const { return rigid + scenes + gas + upres + water + rain + cloth; }
+        float total() const { return rigid + scenes + gas + upres + water + rain + cloth + grains; }
     } profile;
 
     size_t bytes() const {
         return sizeof(Frame) + fields.size() * sizeof(uint16_t) + gasTiles.size() * sizeof(uint32_t) + water.bytes() +
-               rain.bytes() + rigid.bytes() + cloth.bytes();
+               rain.bytes() + rigid.bytes() + cloth.bytes() + grains.bytes();
     }
-    bool empty() const { return fields.empty() && water.empty() && rain.empty() && rigid.empty() && cloth.empty(); }
+    bool empty() const {
+        return fields.empty() && water.empty() && rain.empty() && rigid.empty() && cloth.empty() && grains.empty();
+    }
     /// The field `channel` (0 smoke, 1 temperature, 2 flame) of cell (i, j, k).
     float at(int channel, int i, int j, int k) const;
     /// The gas of every cell of the domain, as `fields` holds it when not
@@ -178,8 +183,9 @@ struct Frame {
 
 struct Look;
 /// What the looks draw of a frame's bodies, as one geometry: the pieces of
-/// an RBD Solver linked into the Output (drawnPieces) and the cloth of a
-/// Cloth Solver (drawnCloth). Null when there is neither.
+/// an RBD Solver linked into the Output (drawnPieces), the cloth of a Cloth
+/// Solver (drawnCloth) and the grains of a Grain Solver (grainPoints: loose
+/// points, drawn as chips of stone). Null when there is none of them.
 std::shared_ptr<Geometry> drawnBodies(const Frame& frame, const Look& look);
 
 /// The solver's gas as a frame.

@@ -23,8 +23,9 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // 6: what became of the bars; 7: which grit is glass, which bodies came
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned; 10: a sparse gas's tiles; 11: the cloth; 12: the cloth
-// torn; 13: a sparse liquid's tiles; 14: its tiles deep in the water.
-constexpr uint32_t kVersion = 14;
+// torn; 13: a sparse liquid's tiles; 14: its tiles deep in the water;
+// 15: the grains.
+constexpr uint32_t kVersion = 15;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -331,6 +332,15 @@ std::string formatFrame(const Frame& f) {
     out.words(w.tiles);
     out.words(w.flowTiles);
     out.words(w.deepTiles);  // version 14: deep in the water, without their cells
+    // Version 15: the grains -- where each is, how fast it goes, how big it
+    // is, its number and its colour.
+    const GrainFrame& g = f.grains;
+    out.u64(g.positions.size());
+    for (const Vec3& p : g.positions) out.vec3(p);
+    out.halves(g.velocities);
+    out.halves(g.radii);
+    out.words(g.ids);
+    out.bytesOf(g.colors);
     return std::move(out.bytes);
 }
 
@@ -465,6 +475,21 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         in.words(w.flowTiles);
     }
     if (version >= 14) in.words(w.deepTiles);
+    if (version >= 15) {
+        GrainFrame& g = f.grains;
+        g.positions.resize(in.count(12));
+        for (Vec3& p : g.positions) p = in.vec3();
+        in.halves(g.velocities, 3 * g.positions.size());
+        in.halves(g.radii, g.positions.size());
+        in.words(g.ids);
+        in.bytesOf(g.colors);
+        // Halves of zeros come back as none: a grain standing still.
+        if (g.velocities.empty()) g.velocities.assign(3 * g.positions.size(), 0);
+        if (in.ok() && !g.fits()) {
+            error = "the frame's grains do not fit together";
+            return false;
+        }
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;

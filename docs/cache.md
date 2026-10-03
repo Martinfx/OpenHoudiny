@@ -70,8 +70,9 @@ cache/fire/
   od verze 11 a 12 látka, i roztržená ([cloth.md](cloth.md)), od verze 13
   řídká voda: hladina jen v dlaždicích blízko vody, rychlost vody jen
   v dlaždicích řešiče, kde nějaká je, a čísla dlaždic opět na konci snímku,
-  a od verze 14 dlaždice hluboko ve vodě jen svými čísly
-  ([pyro.md](pyro.md#jak-se-voda-kreslí));
+  od verze 14 dlaždice hluboko ve vodě jen svými čísly
+  ([pyro.md](pyro.md#jak-se-voda-kreslí)) a od verze 15 zrna Grain
+  Solveru: polohy, rychlosti, poloměry, čísla a barvy ([grains.md](grains.md));
   klidová geometrie kusů, pruty i síť vazeb jsou
   v síti uzlů a snímek načtený z disku je dostane od ní. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.

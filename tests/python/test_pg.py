@@ -371,6 +371,28 @@ class Simulations(unittest.TestCase):
         self.assertTrue(np.all(sheet.points["v"][:, 1] < 0.0))
 
     @needs_numpy
+    def test_the_grains_of_a_frame(self):
+        net = pg.Network()
+        box = net.add("box", size=(0.2, 0.2, 0.2), center=(0, 0.3, 0))
+        points = net.add("scatter", count=200, seed=3)
+        grains = net.add("grain_solver", radius=0.008, friction=0.6)
+        out = net.add("output", frames=20)
+        box.connect(points).connect(grains)
+        net.connect(grains, out)  # its Look
+        self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+        sim = net.simulate()
+        for f in sim.run(15):
+            pass
+        sand = sim.current.grains()
+        # Points closer than their grains are wide are thinned out.
+        self.assertTrue(100 < sand.point_count <= 200)
+        for name in ("v", "pscale", "id", "Cd", "orient"):
+            self.assertIn(name, sand.points)
+        self.assertTrue(np.all(sand.P[:, 1] < 0.4))  # they fell
+        self.assertTrue(np.all(sand.P[:, 1] > 0.005))  # onto the floor, not through it
+        self.assertEqual(len(set(sand.points["id"].tolist())), sand.point_count)
+
+    @needs_numpy
     def test_concrete_breaks_rough_over_a_plain_proxy(self):
         net = pg.Network()
         box = net.add("box", size=(2, 1, 0.3), center=(0, 0.5, 0))

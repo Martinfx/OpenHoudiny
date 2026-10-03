@@ -714,3 +714,42 @@ TEST(usd_export_the_cloth_goes_to_a_layer_a_frame_torn_as_it_is) {
     CHECK(layer.find("primvars:pin") == std::string::npos);
     CHECK(layer.find("primvars:tear") == std::string::npos);
 }
+
+TEST(usd_export_the_grains_go_to_a_layer_a_frame) {
+    // The gravel: a point a stone each frame, in its layer -- as wide as it
+    // is, with its velocity, number, colour and how it is turned.
+    TempFolder dir("usd_grains");
+    sim::Network net;
+    CHECK(sim::Network::example("gravel_slide", net));
+    sim::Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);
+    CHECK(c.ok);
+    sim::WorldSolver solver(c.world);
+    sim::UsdExport usd(dir / "gravel.usda", "geometry", 1.0f / c.world.timeStep);
+    std::string error;
+    sim::Frame last;
+    for (int f = 1; f <= 3; ++f) {
+        solver.step();
+        last = solver.capture();
+        CHECK(usd.add(last, nullptr, nullptr, c.lookAt(f), error));
+    }
+    CHECK(usd.finish(error));
+    CHECK(last.grains.size() > 100);
+    const usda::Stage s = usd.stage();
+    const usda::Prim* grains = find(s, {"World", "grains"});
+    CHECK(grains != nullptr);
+    if (!grains) return;
+    CHECK_EQ(grains->type, std::string("Points"));
+    const std::string text = s.text();
+    CHECK(text.find("string primPath = \"/World/grains\"") != std::string::npos);
+    const std::string layer = fileText(dir / "gravel_frames/gravel.0003.usda");
+    for (const char* name : {"point3f[] points.timeSamples", "float[] widths.timeSamples", "int64[] ids.timeSamples",
+                             "vector3f[] velocities.timeSamples", "color3f[] primvars:displayColor.timeSamples",
+                             "quatf[] primvars:orient.timeSamples"}) {
+        CHECK(layer.find(name) != std::string::npos);
+    }
+    const size_t at = layer.find("point3f[] points.timeSamples");
+    if (at != std::string::npos) {
+        const size_t open = layer.find("3: ", at);
+        CHECK_EQ(parseTuples(layer.substr(open, layer.find('\n', open) - open)).size(), last.grains.size());
+    }
+}

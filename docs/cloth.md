@@ -276,7 +276,8 @@ Příklady projdou testem formátu a testem „všechny příklady běží“.
   (těžké body na lehké látce) se proto trhá dřív, než by odpovídalo tuhosti.
   Víc podkroků to zmírní.
 - Z roztržené látky se může utrhnout drobný cár a odletět.
-- Žádné granuláty ani tvarové vazby (*shape matching*). Měkká tělesa jsou
+- Žádné tvarové vazby (*shape matching*). Granuláty počítá samostatný
+  Grain Solver ([grains.md](grains.md)). Měkká tělesa jsou
   zatím jen balony.
 - Renderer kreslí látku neprůsvitnou, bez prosvítání tenké tkaniny.
 

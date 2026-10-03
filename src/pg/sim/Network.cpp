@@ -1299,6 +1299,12 @@ std::vector<NodeType> buildTypes() {
              "look draws it already.",
              {{"cloth", "Cloth", PinType::Cloth}}, {});
 
+    geometry("grain_points", "Grain Points", "grain_points",
+             "The grains of a Grain Solver at the frame, as points: P where each is, v how fast it goes, pscale "
+             "its radius, id its own number -- the same from frame to frame --, Cd its colour and orient how it "
+             "is turned -- to copy stones onto, to export, to mesh. The solver's look draws them already.",
+             {{"grains", "Grains", PinType::Grains}}, {});
+
     // --- objects ----------------------------------------------------------------------
     t.push_back({"object", "Object", "Objects",
                  "A solid in the scene: a ball, a box, a column, a cone, a ring. It is drawn and casts shadows; "
@@ -1636,6 +1642,61 @@ std::vector<NodeType> buildTypes() {
            "Steps a frame. More: stiffer and steadier -- fast collisions, heavy points on light ones."},
           {"color", "Color", "Look", K::Color, {0.62f, 0.2f, 0.16f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "The colour of the cloth where it has no Cd of its own."}},
+         1});
+
+    t.push_back(
+        {"grain_solver", "Grain Solver", "Simulation",
+         "Sand, gravel, soil (as Houdini's Vellum Grains): each point of the geometry linked into Geometry is a "
+         "grain -- its pscale the radius, Cd its colour, v how fast it starts -- that the others push away and "
+         "hold back by friction. Poured, they pile up as steep as Friction holds; wet (Cohesion), they cling "
+         "together and stand. With Emit Frames above 1 the points are taken again each frame, where no grain "
+         "is in the way: a stream from a spout, a chute. They fall on the floor, the objects and the pieces of "
+         "an RBD Solver linked into Colliders -- and push the pieces --, and the wind of the Forces and a Pyro "
+         "Solver's gas blow them, as hard as Air Drag says. Link it into the Output's Looks: it is simulated "
+         "and drawn; Grain Points brings the grains back as points.",
+         {{"geometry", "Geometry", PinType::Geometry},
+          {"colliders", "Colliders", PinType::Collider, true},
+          {"forces", "Forces", PinType::Force, true}},
+         {{"look", "Look", PinType::Look}, {"grains", "Grains", PinType::Grains}},
+         {{"radius", "Radius", "Grains", K::Float, {0.01f, 0.0f, 0.0f}, 0.002f, 0.1f, 1e-4f, 1.0f, "m",
+           "How big a grain is -- its radius -- where its point has no pscale: 0.005 fine sand clumped, 0.02 "
+           "gravel, 0.05 stones. Smaller grains are more of them: slower."},
+          {"size_variance", "Size Variance", "Grains", K::Float, {0.2f, 0.0f, 0.0f}, 0.0f, 0.6f, 0.0f, 0.9f, "",
+           "Each grain this much bigger or smaller, at random: 0.2 from 80 to 120 percent. Grains all of a size "
+           "pack like oranges in a crate."},
+          {"density", "Density", "Grains", K::Float, {1600.0f, 0.0f, 0.0f}, 100.0f, 3000.0f, 1.0f, 1e5f, "kg/m\xc2\xb3",
+           "How heavy the grains are, the gaps between them in it: 1600 dry sand, 1500 gravel, 2000 wet "
+           "sand. Grains against grains: as much as each is bigger; against the pieces of an RBD Solver: how hard "
+           "they push them."},
+          {"friction", "Friction", "Grains", K::Float, {0.6f, 0.0f, 0.0f}, 0.0f, 1.5f, 0.0f, 10.0f, "",
+           "How hard the grains hold each other back -- and the floor and the objects them: 0 ball bearings "
+           "that run flat, 0.3 a pile of about 20 degrees, 0.6 dry sand at about 35, 1 gravel."},
+          {"cohesion", "Cohesion", "Grains", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "How hard grains a little apart are pulled together, and cling: 0 dry sand that runs, 0.5 damp, 1 "
+           "wet sand that stands as a wall -- snow, soil, mud."},
+          {"rest_speed", "Rest Speed", "Grains", K::Float, {0.01f, 0.0f, 0.0f}, 0.0f, 0.1f, 0.0f, 10.0f, "m/s",
+           "A grain that touches something and goes slower than this stays where it was: a pile settles and "
+           "stays. 0: it creeps."},
+          {"emit_frames", "Emit Frames", "Emission", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 240.0f, 1.0f, 100000.0f, "",
+           "On how many frames from the first the points are made grains: 1 once; more, a stream -- each frame "
+           "again, where no grain is in the way."},
+          {"max_grains", "Max Grains", "Emission", K::Int, {1000000.0f, 0.0f, 0.0f}, 1000.0f, 2000000.0f, 0.0f,
+           20000000.0f, "", "No more grains than this: the stream stops."},
+          {"floor", "Floor", "Collisions", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "A floor at height 0."},
+          {"air_drag", "Air Drag", "Air", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "1/s",
+           "How fast a grain takes the speed of the air it is in -- the wind of the Forces, the flow of a Pyro "
+           "Solver's gas: 0 not at all, 1 sand, 5 dust."},
+          {"damping", "Damping", "Air", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "1/s",
+           "How fast their motion dies away of itself."},
+          {"gravity", "Gravity", "Air", K::Float, {9.81f, 0.0f, 0.0f}, 0.0f, 20.0f, -100.0f, 100.0f, "m/s\xc2\xb2",
+           "How hard they are pulled down."},
+          {"substeps", "Substeps", "Time", K::Int, {10.0f, 0.0f, 0.0f}, 2.0f, 40.0f, 1.0f, 200.0f, "",
+           "Steps a frame. More: grains that go faster, piles of more grains that sink less into each other."},
+          {"iterations", "Iterations", "Time", K::Int, {4.0f, 0.0f, 0.0f}, 1.0f, 12.0f, 1.0f, 50.0f, "",
+           "Passes over the contacts a step: more, grains that sink less into each other."},
+          {"color", "Color", "Look", K::Color, {0.76f, 0.64f, 0.45f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of the grains whose points have no Cd of their own."}},
          1});
 
     // --- render ---------------------------------------------------------------------
@@ -2043,6 +2104,7 @@ const char* pinTypeName(PinType type) {
         case PinType::Rain: return "rain";
         case PinType::Rigid: return "rigid";
         case PinType::Cloth: return "cloth";
+        case PinType::Grains: return "grains";
     }
     return "?";
 }
@@ -3502,6 +3564,7 @@ struct Network::CompileMemo {
     std::map<int, std::shared_ptr<const Geometry>> constraints;  // ... and its network of glue
     std::map<int, RigidGuideRest> guideRest;                     // ... and its pieces as a guide reads them
     std::map<int, std::shared_ptr<const Geometry>> cloth;    // a Cloth Solver's geometry at frame 1, by node
+    std::map<int, std::shared_ptr<const Geometry>> grains;   // a Grain Solver's, by node
     std::unique_ptr<GeometryGraph> own;
     GeometryGraph* cooker = nullptr;
 };
@@ -3668,7 +3731,8 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
                                 (name == "size" || name == "resolution" || name == "closed_sides" || name == "sparse")) ||
                                (n.type == "output" && (name == "frames" || name == "fps")) ||
                                (n.type == "rbd_solver" && name != "color" && name != "inside_color" && name != "rebar_color") ||
-                               (n.type == "cloth_solver" && name != "color");
+                               (n.type == "cloth_solver" && name != "color") ||
+                               (n.type == "grain_solver" && name != "color");
             if (fixed) {
                 c.problems.push_back({Problem::Level::Warning, n.id,
                                       "'" + name + "' cannot change as the simulation runs: its value at frame 1 holds."});
@@ -3730,7 +3794,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             stack.pop_back();
             if (!n) continue;
             if (n->type == "liquid_points" || n->type == "liquid_surface" || n->type == "rain_points" ||
-                n->type == "gas_volume" || n->type == "rbd_pieces" || n->type == "cloth_geometry") {
+                n->type == "gas_volume" || n->type == "rbd_pieces" || n->type == "cloth_geometry" ||
+                n->type == "grain_points") {
                 return true;
             }
             for (const Link& l : links_) {
@@ -4276,6 +4341,71 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         return &cs;
     };
 
+    // The grains of a Grain Solver: its settings, its points -- as they are
+    // at frame 1 -- and what they fall on.
+    auto compileGrains = [&](const Node* solver) -> GrainScene* {
+        GrainScene& gs = c.world.grains;
+        if (c.grains == solver->id) return &gs;
+        if (c.grains) {
+            problem(L::Warning, solver->id, "Another Grain Solver: only " + node(c.grains)->name + " is simulated.");
+            return nullptr;
+        }
+        c.grains = solver->id;
+        c.active.push_back(solver->id);
+        c.world.hasGrains = true;
+        GrainSettings& s = gs.solver;
+        s.radius = f(*solver, "radius");
+        s.sizeVariance = f(*solver, "size_variance");
+        s.density = f(*solver, "density");
+        s.friction = f(*solver, "friction");
+        s.cohesion = f(*solver, "cohesion");
+        s.restSpeed = f(*solver, "rest_speed");
+        s.emitFrames = whole(*solver, "emit_frames");
+        s.maxGrains = whole(*solver, "max_grains");
+        s.floor = f(*solver, "floor") != 0.0f;
+        s.airDrag = f(*solver, "air_drag");
+        s.damping = f(*solver, "damping");
+        s.gravity = Vec3(0.0f, -f(*solver, "gravity"), 0.0f);
+        s.substeps = whole(*solver, "substeps");
+        s.iterations = whole(*solver, "iterations");
+        s.timeStep = c.world.timeStep;
+        gs.node = solver->id;
+        const std::vector<Link> in = linksInto(solver->id, "geometry");
+        if (in.empty()) {
+            problem(L::Warning, solver->id, "No grains: link points into Geometry -- a Scatter in a box, a grid of "
+                                            "points.");
+        } else {
+            startCooker();
+            const int from = in.front().from;
+            if (fromSimulation(from)) {
+                problem(L::Warning, solver->id, "Its geometry comes from a simulation, which has not run when the "
+                                                "grains are made: nothing to simulate.");
+            } else {
+                auto rest = memo.grains.find(solver->id);
+                if (rest == memo.grains.end()) {
+                    const GeometryPtr geo = cooker->cook(from, 1, firstStep);
+                    const std::string error = cooker->error(from);
+                    if (!error.empty()) problem(L::Warning, from, error);
+                    if (!geo || geo->pointCount() == 0) {
+                        problem(L::Warning, solver->id, "The geometry linked into Geometry has no points: no grains.");
+                    }
+                    rest = memo.grains.emplace(solver->id, geo && geo->pointCount() > 0 ? geo : nullptr).first;
+                }
+                gs.geometry = rest->second;
+            }
+        }
+        gs.forces = forcesOf(solver);
+        for (const Node* n : feeding(solver, "colliders")) {
+            if (n->type == "rbd_solver") {
+                if (RigidScene* r = compileRigid(n)) r->intoGrains = true;
+                continue;
+            }
+            gs.colliders.push_back(colliderOf(*n));
+            c.active.push_back(n->id);
+        }
+        return &gs;
+    };
+
     // The gas of a Pyro Solver: its settings, and what feeds it.
     auto compileGas = [&](const Node* solver) {
         c.world.hasGas = true;
@@ -4553,6 +4683,10 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             if (!compileCloth(look)) continue;
             k.cloth = true;
             k.clothColor = v3(*look, "color");
+        } else if (look->type == "grain_solver") {
+            if (!compileGrains(look)) continue;
+            k.grains = true;
+            k.grainColor = v3(*look, "color");
         } else if (look->type == "rbd_solver") {
             if (!compileRigid(look)) continue;
             k.pieces = true;
@@ -4593,7 +4727,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                           {"rain_points", "rain", c.rain, "Rain"},
                           {"gas_volume", "gas", c.solver, "Pyro Solver"},
                           {"rbd_pieces", "rigid", c.rigid, "RBD Solver"},
-                          {"cloth_geometry", "cloth", c.cloth, "Cloth Solver"}};
+                          {"cloth_geometry", "cloth", c.cloth, "Cloth Solver"},
+                          {"grain_points", "grains", c.grains, "Grain Solver"}};
     for (const Node& n : nodes_) {
         if (n.bypass) continue;
         const Back* back = nullptr;

@@ -61,7 +61,10 @@ ImU32 categoryColor(const std::string& c) {
 /// Whether a network has a node that simulates: a solver, the rain.
 bool simulates(const sim::Network& net) {
     for (const sim::Node& n : net.nodes()) {
-        if (n.type == "pyro_solver" || n.type == "liquid_solver" || n.type == "rain") return true;
+        if (n.type == "pyro_solver" || n.type == "liquid_solver" || n.type == "rain" || n.type == "cloth_solver" ||
+            n.type == "grain_solver" || n.type == "rbd_solver") {
+            return true;
+        }
     }
     return false;
 }
@@ -126,7 +129,10 @@ Icon typeIcon(const sim::NodeType* t) {
     if (name == "sphere") return Icon::Sphere;
     if (name == "box") return Icon::Box;
     if (name == "tube") return Icon::Cylinder;
-    if (name == "scatter" || name == "point_cloud" || name == "liquid_points" || name == "rain_points") return Icon::Points;
+    if (name == "scatter" || name == "point_cloud" || name == "liquid_points" || name == "rain_points" ||
+        name == "grain_points") {
+        return Icon::Points;
+    }
     if (name == "point_wrangle") return Icon::Code;
     if (name == "liquid_surface") return Icon::Drop;
     if (name == "file") return Icon::File;
@@ -157,6 +163,7 @@ ImU32 pinColor(sim::PinType t) {
         case sim::PinType::Rain: return IM_COL32(150, 172, 210, 255);
         case sim::PinType::Rigid: return IM_COL32(214, 160, 96, 255);
         case sim::PinType::Cloth: return IM_COL32(200, 96, 150, 255);
+        case sim::PinType::Grains: return IM_COL32(214, 186, 120, 255);
     }
     return IM_COL32_WHITE;
 }
@@ -261,6 +268,12 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         std::string s = number(v("rate")) + " /m\xc2\xb2s" + dot + number(v("speed")) + " m/s";
         if (v("end") > v("start")) s += dot + number(v("start")) + "\xe2\x80\x93" + number(v("end")) + " s";
         else if (v("start") > 0.0f) s += dot + "from " + number(v("start")) + " s";
+        return s;
+    }
+    if (t == "grain_solver") {
+        std::string s = number(2000.0f * v("radius")) + " mm" + dot + "friction " + number(v("friction"));
+        if (v("cohesion") > 0.0f) s += dot + "wet";
+        if (v("emit_frames") > 1.0f) s += dot + "poured " + std::to_string(static_cast<int>(v("emit_frames"))) + " frames";
         return s;
     }
     if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames" + dot + number(v("fps")) + " fps";
@@ -513,13 +526,15 @@ void SimWorkspace::pose(int frame) {
 
 void SimWorkspace::updatePieces() {
     const sim::Look& look = renderer_.look;
-    // The pieces and the cloth, drawn with the displayed geometry.
-    const bool bodies = shown_ && ((look.pieces && !shown_->rigid.empty()) || (look.cloth && !shown_->cloth.empty()));
+    // The pieces, the cloth and the grains, drawn with the displayed geometry.
+    const bool bodies = shown_ && ((look.pieces && !shown_->rigid.empty()) || (look.cloth && !shown_->cloth.empty()) ||
+                                   (look.grains && !shown_->grains.empty()));
     const std::shared_ptr<const sim::Frame> f = levels_.empty() && bodies ? shown_ : nullptr;
-    char key[240];
-    std::snprintf(key, sizeof key, "%g %g %g %g %g %g %s %d %g %g %g", look.piecesColor.x, look.piecesColor.y,
-                  look.piecesColor.z, look.piecesInside.x, look.piecesInside.y, look.piecesInside.z,
-                  look.insideGroup.c_str(), look.cloth ? 1 : 0, look.clothColor.x, look.clothColor.y, look.clothColor.z);
+    char key[320];
+    std::snprintf(key, sizeof key, "%g %g %g %g %g %g %s %d %g %g %g %d %g %g %g", look.piecesColor.x,
+                  look.piecesColor.y, look.piecesColor.z, look.piecesInside.x, look.piecesInside.y, look.piecesInside.z,
+                  look.insideGroup.c_str(), look.cloth ? 1 : 0, look.clothColor.x, look.clothColor.y, look.clothColor.z,
+                  look.grains ? 1 : 0, look.grainColor.x, look.grainColor.y, look.grainColor.z);
     if (f == piecesFrame_ && (!f || key == piecesKey_)) return;
     piecesFrame_ = f;
     piecesKey_ = key;
@@ -1610,6 +1625,15 @@ void SimWorkspace::networkOverview() {
                     ui::row("Drops", "%zu  (%zu droplets)", f->rain.dropCount(), f->rain.dropletCount());
                 }
             }
+            if (compiled_.world.hasGrains) {
+                const sim::GrainScene& grains = compiled_.world.grains;
+                ui::row("Grains", "%.1f mm across \xc2\xb7 friction %.2f%s", 2000.0 * static_cast<double>(grains.solver.radius),
+                        static_cast<double>(grains.solver.friction), grains.solver.cohesion > 0.0f ? " \xc2\xb7 wet" : "");
+                ui::row("Inputs", "%s \xc2\xb7 %s", counted(grains.forces.size(), "force", "forces").c_str(),
+                        counted(grains.colliders.size(), "collider", "colliders").c_str());
+                const std::shared_ptr<const sim::Frame> f = frameToShow();
+                if (f && !f->grains.empty()) ui::row("Count", "%zu grains", f->grains.size());
+            }
             if (compiled_.hasCamera) {
                 const sim::Camera& cam = compiled_.camera;
                 const sim::Node* n = net_.node(cam.node);
@@ -2131,6 +2155,13 @@ std::string SimWorkspace::gridsText() const {
         std::snprintf(buf, sizeof buf, "rain %.0f k drops", f ? static_cast<double>(f->rain.dropCount()) / 1000.0 : 0.0);
         text += buf;
     }
+    if (w.hasGrains) {
+        const std::shared_ptr<const sim::Frame> f = frameToShow();
+        if (!text.empty()) text += dot;
+        char buf[48];
+        std::snprintf(buf, sizeof buf, "%.1f k grains", f ? static_cast<double>(f->grains.size()) / 1000.0 : 0.0);
+        text += buf;
+    }
     return text;
 }
 
@@ -2157,8 +2188,12 @@ std::string SimWorkspace::status() const {
         std::snprintf(spilled, sizeof spilled, ", %.1f GB on disk",
                       static_cast<double>(runner_->spilledBytes()) / (1024.0 * 1024.0 * 1024.0));
     }
-    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %s  \xc2\xb7  cache %d / %d (%.0f MB%s)%s  \xc2\xb7  %s",
-                  net_.nodes().size(), gridsText().c_str(), runner_->cached(), compiled_.frames,
+    // What is simulated, when there is something to say of it -- the pieces
+    // and the cloth alone have no grids.
+    std::string grids = gridsText();
+    if (!grids.empty()) grids += "  \xc2\xb7  ";
+    std::snprintf(text, sizeof text, "%zu nodes  \xc2\xb7  %scache %d / %d (%.0f MB%s)%s  \xc2\xb7  %s",
+                  net_.nodes().size(), grids.c_str(), runner_->cached(), compiled_.frames,
                   static_cast<double>(runner_->bytes()) / (1024.0 * 1024.0), spilled, runner_->full() ? " full" : "",
                   step);
     std::string line = text;
@@ -2640,6 +2675,7 @@ void SimWorkspace::profilePanel(const sim::Frame& f) {
     }
     if (compiled_.world.hasRain) bar("Rain", p.rain, total, false);
     if (compiled_.world.hasCloth) bar("Cloth", p.cloth, total, false);
+    if (compiled_.world.hasGrains) bar("Grains", p.grains, total, false);
     ui::note("Of the whole step. Frames read from disk say nothing: a bake's time is in its bake.log.");
 }
 

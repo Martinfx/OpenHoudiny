@@ -172,6 +172,18 @@ public:
     }
 };
 
+/// The grains at the frame, as points (grainPoints): P, v, pscale, id, Cd,
+/// orient.
+class GrainPointsNode : public FrameNode {
+public:
+    explicit GrainPointsNode(std::string name) : FrameNode("grain_points", std::move(name)) { setInputCount(0); }
+
+    GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
+        if (!frame_ || frame_->grains.empty()) return std::make_shared<Geometry>();
+        return grainPoints(frame_->grains, Vec3(0.76f, 0.64f, 0.45f));
+    }
+};
+
 /// The glue between the pieces as a network (rigidNetwork): a point at each
 /// body's middle, a line for each joint, its strength a share of the RBD
 /// Solver's Glue.
@@ -215,6 +227,7 @@ void registerSimGeometryNodes() {
         r.add("gas_volume", [](const std::string& n) { return std::make_unique<GasVolumeNode>(n); });
         r.add("rbd_pieces", [](const std::string& n) { return std::make_unique<RbdPiecesNode>(n); });
         r.add("cloth_geometry", [](const std::string& n) { return std::make_unique<ClothGeometryNode>(n); });
+        r.add("grain_points", [](const std::string& n) { return std::make_unique<GrainPointsNode>(n); });
         r.add("rbd_constraints", [](const std::string& n) { return std::make_unique<RbdConstraintsNode>(n); });
         return true;
     }();

@@ -56,6 +56,10 @@ struct Look {
     bool cloth = false;           ///< drawn: the solver is linked into the Output
     Vec3 clothColor{0.62f, 0.2f, 0.16f};    ///< where it has no Cd of its own
 
+    // The grains of a Grain Solver (Grains.h: grainPoints)
+    bool grains = false;          ///< drawn: the solver is linked into the Output
+    Vec3 grainColor{0.76f, 0.64f, 0.45f};   ///< where they have no Cd of their own: sand
+
     // Light
     float lightAzimuth = 169.0f;  ///< degrees round the vertical, from +x towards +z
     float lightElevation = 38.0f; ///< degrees above the horizon

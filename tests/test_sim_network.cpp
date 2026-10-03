@@ -377,6 +377,62 @@ TEST(sim_network_pyro_upres_makes_the_gas_finer) {
     CHECK(!c.world.hasGas);
 }
 
+TEST(sim_network_grain_solver_makes_grains_of_points) {
+    // Points -> Grain Solver -> Output: the grains in the world and drawn,
+    // what they fall on among its colliders, an RBD Solver's pieces pushed
+    // back; Grain Points brings them back.
+    Network net;
+    const int points = net.add("point_cloud");
+    const int grains = net.add("grain_solver", 300, 0);
+    const int out = net.add("output", 600, 0);
+    CHECK(net.setParam(points, "count", "200"));
+    CHECK(net.setParam(grains, "friction", "0.8"));
+    CHECK(net.setParam(grains, "cohesion", "0.5"));
+    CHECK(net.setParam(grains, "emit_frames", "12"));
+    CHECK(net.connect(points, "geometry", grains, "geometry"));
+    CHECK(net.connect(grains, "look", out, "look"));
+    Compiled c = net.compile();
+    CHECK(c.ok);
+    CHECK(!c.errors());
+    CHECK(c.world.hasGrains);
+    CHECK_EQ(c.grains, grains);
+    CHECK(c.isActive(grains));
+    CHECK(c.look.grains);
+    CHECK(c.world.grains.geometry && c.world.grains.geometry->pointCount() == 200);
+    CHECK_EQ(c.world.grains.solver.friction, 0.8f);
+    CHECK_EQ(c.world.grains.solver.cohesion, 0.5f);
+    CHECK_EQ(c.world.grains.solver.emitFrames, 12);
+    // What they fall on: an object, and the pieces of an RBD Solver, which
+    // they push.
+    const int box = net.add("object", 0, 200);
+    CHECK(net.connect(box, "collider", grains, "colliders"));
+    const int block = net.add("box", 0, 300);
+    const int rbd = net.add("rbd_solver", 300, 300);
+    CHECK(net.connect(block, "geometry", rbd, "pieces"));
+    CHECK(net.connect(rbd, "collider", grains, "colliders"));
+    c = net.compile();
+    CHECK(c.ok);
+    CHECK_EQ(c.world.grains.colliders.size(), size_t(1));
+    CHECK(c.world.hasRigid && c.world.rigid.intoGrains);
+    // Grain Points: from what is simulated.
+    const int back = net.add("grain_points", 600, 200);
+    CHECK(net.connect(grains, "grains", back, "grains"));
+    c = net.compile();
+    CHECK(!mentions(c, back, "not simulated"));
+    // Without points, a warning, and nothing to make grains of.
+    Network bare;
+    const int lone = bare.add("grain_solver");
+    const int end = bare.add("output", 300, 0);
+    CHECK(bare.connect(lone, "look", end, "look"));
+    c = bare.compile();
+    CHECK(mentions(c, lone, "No grains"));
+    // Saved and read back, the same.
+    Network again;
+    std::string error;
+    CHECK(Network::load(net.save(), again, error));
+    CHECK(again.compile().world.grains.solver == net.compile().world.grains.solver);
+}
+
 TEST(sim_network_output_says_how_the_preview_simulates) {
     // How fine the editor's preview makes the grids, and whether it opens the
     // network in it: the Output's -- a scene too big to simulate whole while

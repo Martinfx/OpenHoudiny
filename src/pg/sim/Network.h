@@ -59,7 +59,7 @@ namespace pg::sim {
 class GeometryGraph;
 
 /// What flows along a link. An output links only to an input of its type.
-enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid, Camera, Geometry, Rain, Rigid, Cloth };
+enum class PinType : uint8_t { Source, Force, Collider, Gas, Look, Water, Liquid, Camera, Geometry, Rain, Rigid, Cloth, Grains };
 const char* pinTypeName(PinType type);
 
 struct PinDef {
@@ -289,6 +289,7 @@ struct Compiled {
     int rain = 0;                              ///< the Rain; 0 if none
     int rigid = 0;                             ///< the RBD Solver; 0 if none
     int cloth = 0;                             ///< the Cloth Solver; 0 if none
+    int grains = 0;                            ///< the Grain Solver; 0 if none
     /// The camera the Output renders through (its node in camera.node), if
     /// one is linked into it: otherwise the renders frame the scene.
     bool hasCamera = false;

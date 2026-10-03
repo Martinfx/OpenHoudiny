@@ -293,6 +293,7 @@ add_library(pgsim
   src/pg/sim/FreeSurface.cpp
   src/pg/sim/Cache.cpp
   src/pg/sim/Cloth.cpp
+  src/pg/sim/Grains.cpp
   src/pg/sim/Display.cpp
   src/pg/sim/GeometryGraph.cpp
   src/pg/sim/Grid.cpp
@@ -1038,6 +1039,7 @@ add_executable(pgtests
   tests/test_state.cpp
   tests/test_coupling.cpp
   tests/test_cloth.cpp
+  tests/test_grains.cpp
   tests/test_edit.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp

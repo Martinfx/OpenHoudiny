@@ -292,6 +292,39 @@ struct UsdExport::Impl {
         scene.grow(box);
     }
 
+    /// The grains at frame f: a point a grain, as wide as it is, with its
+    /// velocity, its number, its colour -- the frame's, else the look's --
+    /// and how it is turned (grainPoints): stones copied onto them turn so.
+    void sampleGrains(usda::Stage& layer, int f, const GrainFrame& g, const Vec3& color) {
+        const std::shared_ptr<Geometry> points = grainPoints(g, color);
+        const size_t n = points->pointCount();
+        const auto P = points->positions();
+        const auto v = points->points().find("v")->read<Vec3>();
+        const auto pscale = points->points().find("pscale")->read<float>();
+        const auto cd = points->points().find("Cd")->read<Vec3>();
+        const auto orient = points->points().find("orient")->read<Vec4>();
+        std::vector<Vec3> at(P.begin(), P.end()), velocity(v.begin(), v.end()), colors(cd.begin(), cd.end());
+        std::vector<float> width, turn;
+        usda::Bounds box;
+        float widest = 0.0f;
+        for (size_t i = 0; i < n; ++i) {
+            width.push_back(2.0f * pscale[i]);
+            widest = std::max(widest, width.back());
+            box.grow(at[i]);
+            turn.insert(turn.end(), {orient[i].x, orient[i].y, orient[i].z, orient[i].w});
+        }
+        std::vector<usda::Field> fields = {{"float3[]", "extent", "", box.extent(0.5f * widest)},
+                                           {"int64[]", "ids", "", idList(g.ids)},
+                                           {"point3f[]", "points", "", usda::tuples(at)},
+                                           {"vector3f[]", "velocities", "", usda::tuples(velocity)},
+                                           {"float[]", "widths", usda::interpolation("vertex"), usda::numbers(width)},
+                                           {"color3f[]", "primvars:displayColor", usda::interpolation("vertex"),
+                                            usda::tuples(colors)},
+                                           {"quatf[]", "primvars:orient", usda::interpolation("vertex"), quaternions(turn)}};
+        sample(layer, "/World/grains", "Points", f, std::move(fields));
+        scene.grow(box);
+    }
+
     /// The bars at frame f, where the pieces have taken them: a linear curve
     /// for each stretch of one, as thick as it is, and how fast each point
     /// goes. False if there are none.
@@ -459,7 +492,8 @@ UsdExport::UsdExport(std::string path, std::string geometryName, float fps) : im
     impl_->geometryName = usda::identifier(geometryName.empty() ? "geometry" : geometryName);
     // Not the name of another prim of the stage.
     for (const char* taken :
-         {"Looks", "pieces", "grit", "rebar", "cloth", "water", "rain", "gas", "camera", "sun", "sky", "ground"}) {
+         {"Looks", "pieces", "grit", "rebar", "cloth", "grains", "water", "rain", "gas", "camera", "sun", "sky",
+          "ground"}) {
         if (impl_->geometryName == taken) impl_->geometryName += "_geometry";
     }
     const fs::path p(impl_->path);
@@ -570,6 +604,15 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
     // The cloth -- when it is drawn.
     if (!frame.cloth.empty() && look.cloth && m.sampleCloth(layer, f, frame.cloth, look.clothColor)) {
         Impl::ClipSet& set = m.clipSets["/World/cloth"];
+        set.frames.push_back(f);
+        set.present.push_back(f);
+        named = true;
+    }
+
+    // The grains -- when they are drawn.
+    if (!frame.grains.empty() && frame.grains.fits() && look.grains) {
+        m.sampleGrains(layer, f, frame.grains, look.grainColor);
+        Impl::ClipSet& set = m.clipSets["/World/grains"];
         set.frames.push_back(f);
         set.present.push_back(f);
         named = true;
@@ -801,6 +844,11 @@ usda::Stage UsdExport::stage() const {
         Prim& cloth = m.clippedPrim(world, "/World/cloth", "Xform", m.clipSets.at("/World/cloth").present);
         cloth.metadata.push_back(kBinding);
         cloth.relate("material:binding", kSurface);
+    }
+    if (m.clipSets.count("/World/grains")) {
+        Prim& grains = m.clippedPrim(world, "/World/grains", "Points", m.clipSets.at("/World/grains").present);
+        grains.metadata.push_back(kBinding);
+        grains.relate("material:binding", kSurface);
     }
     if (m.clipSets.count("/World/water")) {
         Prim& water = m.clippedPrim(world, "/World/water", "Mesh", m.clipSets.at("/World/water").present);

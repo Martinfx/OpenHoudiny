@@ -1,0 +1,35 @@
+pgsim 1
+# Sand poured from a spout onto a crate: the stream lands on its edge,
+# piles up on the lid as steep as the sand's friction holds, runs off its
+# sides and heaps on the ground round it. A Grain Solver: a box of points
+# above the crate, taken again each frame where no grain is in the way --
+# the stream; each grain a sandy colour of its own.
+node 1 point_cloud 1 spout 0 0
+  param count 4000
+  param center 0 0 0
+node 2 transform 1 place 230 0
+  param t 0.1 1.3 0
+  param s 0.09 0.05 0.09
+node 3 point_wrangle 1 falling 460 0
+  param snippet "// As fast as the stream is where it is: lower in the spout it has fallen\n// longer -- a stream, not a puff a frame. Each grain its own shade of sand.\nfloat fallen = (1.325 - @P.y) / 1.5;\nv@v = set(0, -1.5 - 9.81 * fallen, 0);\nfloat k = rand(@ptnum);\nv@Cd = {0.86, 0.64, 0.36} * (0.8 + 0.3 * k);"
+node 4 grain_solver 1 sand 690 0
+  param radius 0.005
+  param friction 0.65
+  param emit_frames 150
+node 5 object 1 crate 460 160
+  param shape box
+  param center 0 0.2 0
+  param size 0.5 0.4 0.5
+  param color 0.5 0.36 0.22
+node 6 output 2 output 920 0
+  param frames 210
+node 7 camera 1 camera 920 160
+  param center 1.25 1.05 1.6
+  param rotation -20 38 0
+  param focal 32
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.geometry
+link 5.collider -> 4.colliders
+link 4.look -> 6.look
+link 7.camera -> 6.camera

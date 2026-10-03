@@ -88,6 +88,10 @@ okna.
   přišpendlené body nesené animací, kolize s objekty, kusy RBD i sebou
   samou, vítr a proud plynu; trhání a obousměrná vazba s tuhými tělesy
   (plachta chytá bedny, betonový blok ji prorazí)
+- **[docs/grains.md](docs/grains.md)** — písek, štěrk a zemina (obdoba
+  Vellum Grains): zrna s třením a kohezí, hromady tak strmé, jak tření
+  drží, mokrý písek stojí; sypání proudem, kolize s objekty, obousměrná
+  vazba s kusy RBD, vítr a proud plynu
 - **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
   parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
   cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)

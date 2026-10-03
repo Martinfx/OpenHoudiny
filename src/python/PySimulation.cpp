@@ -319,6 +319,11 @@ void bindSimulation(py::module_& m) {
             const std::shared_ptr<Geometry> g = p.f->cloth.empty() ? nullptr : sim::posedCloth(p.f->cloth);
             return g ? PyGeometry(g) : PyGeometry();
         })
+        .def("grains", [](const PyFrame& p) {
+            // As Grain Points gives them: P, v, pscale, id, Cd, orient.
+            if (p.f->grains.empty()) return PyGeometry();
+            return PyGeometry(sim::grainPoints(p.f->grains, Vec3(0.76f, 0.64f, 0.45f)));
+        })
         .def("network", [](const PyFrame& p) { return PyGeometry(sim::rigidNetwork(p.f->rigid)); })
         .def("joint_state", [](const PyFrame& p) {
             const auto& v = p.f->rigid.jointState;

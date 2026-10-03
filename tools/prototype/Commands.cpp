@@ -1114,6 +1114,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             spent.water += p.water;
             spent.rain += p.rain;
             spent.cloth += p.cloth;
+            spent.grains += p.grains;
             for (int s = 0; s < 8; ++s) spent.gasStages[s] += p.gasStages[s];
             for (int s = 0; s < 6; ++s) spent.upresStages[s] += p.upresStages[s];
             for (int s = 0; s < 9; ++s) spent.waterStages[s] += p.waterStages[s];
@@ -1456,6 +1457,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         }
         add("rain", spent.rain, world.hasRain);
         add("cloth", spent.cloth, world.hasCloth);
+        add("grains", spent.grains, world.hasGrains);
         std::printf("%s\n", line.c_str());
     }
     if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());

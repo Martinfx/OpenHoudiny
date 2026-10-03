@@ -846,6 +846,12 @@ class Frame:
         parted. Empty without cloth."""
         return Geometry(self._f.cloth())
 
+    def grains(self):
+        """The Grain Solver's grains as points -- as Grain Points gives them:
+        P, the velocity v, pscale (the radius), id (the same from frame to
+        frame), Cd and orient. Empty without grains."""
+        return Geometry(self._f.grains())
+
     def save(self, folder):
         """Into a cache folder, as frame.NNNN.pgframe. Returns the file."""
         os.makedirs(folder, exist_ok=True)

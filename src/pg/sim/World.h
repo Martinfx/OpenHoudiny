@@ -8,13 +8,15 @@
 // puffs into the gas. The rain falls into the water: it is stepped after
 // it, and rings its surface. A Pyro Upres steps just before the gas, with
 // the flow the gas is about to carry its own with; the frames keep its
-// finer gas instead of the solver's.
+// finer gas instead of the solver's. The grains fall with the cloth, before
+// the gas, on the pieces where they have got to, and push them back.
 //
 // Plain data, compared as a whole, as the scene of each part is: the
 // editor's runner starts again exactly when the World differs.
 //
 #include "pg/sim/Cloth.h"
 #include "pg/sim/Frame.h"
+#include "pg/sim/Grains.h"
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Pyro.h"
 #include "pg/sim/Rain.h"
@@ -54,6 +56,8 @@ struct World {
     RigidScene rigid;                ///< the RBD Solver's, when hasRigid
     bool hasCloth = false;
     ClothScene cloth;                ///< the Cloth Solver's, when hasCloth
+    bool hasGrains = false;
+    GrainScene grains;               ///< the Grain Solver's, when hasGrains
     /// Frames keep the water's particles: something makes points of them
     /// (Liquid Points). They cost some 19 bytes a particle a frame.
     bool keepParticles = false;
@@ -66,7 +70,7 @@ struct World {
     const World& at(int frame) const;
 
     /// True when there is anything to simulate.
-    bool any() const { return hasGas || hasWater || hasRain || hasRigid || hasCloth; }
+    bool any() const { return hasGas || hasWater || hasRain || hasRigid || hasCloth || hasGrains; }
     /// Each part sanitized (Scene::sanitized), and the one time step in each.
     World sanitized() const;
 
@@ -119,6 +123,8 @@ public:
     const RigidSolver* rigid() const { return rigid_.get(); }
     ClothSolver* cloth() { return cloth_.get(); }
     const ClothSolver* cloth() const { return cloth_.get(); }
+    GrainSolver* grains() { return grains_.get(); }
+    const GrainSolver* grains() const { return grains_.get(); }
 
 private:
     /// What a step does before the gas, the water and the rain move: the
@@ -135,6 +141,7 @@ private:
     std::unique_ptr<RainSolver> rain_;
     std::unique_ptr<RigidSolver> rigid_;
     std::unique_ptr<ClothSolver> cloth_;
+    std::unique_ptr<GrainSolver> grains_;
     int frame_ = 0;
     float time_ = 0.0f;
     /// The water and the gas push the pieces (RigidSolver::feel): what they
@@ -143,6 +150,7 @@ private:
     bool coupled_ = false;      // something pushes the pieces: the flows are kept
     bool fluidsPush_ = false;   // the water or the gas
     bool clothPushes_ = false;  // the cloth they fall on
+    bool grainsPush_ = false;   // the grains that fall on them
     std::vector<RigidFlow> flows_;
 };
 

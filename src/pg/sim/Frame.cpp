@@ -594,18 +594,23 @@ RainFrame capture(const RainSolver& sim) {
 }
 
 std::shared_ptr<Geometry> drawnBodies(const Frame& frame, const Look& look) {
-    std::shared_ptr<Geometry> pieces, cloth;
+    std::shared_ptr<Geometry> all;
+    auto add = [&](std::shared_ptr<Geometry> part) {
+        if (!part || part->pointCount() == 0) return;
+        if (!all) {
+            all = std::move(part);
+            return;
+        }
+        auto both = std::make_shared<Geometry>(*all);
+        both->append(*part);
+        all = std::move(both);
+    };
     if (look.pieces && !frame.rigid.empty()) {
-        pieces = drawnPieces(frame.rigid, look.piecesColor, look.piecesInside, look.insideGroup, look.rebarColor);
+        add(drawnPieces(frame.rigid, look.piecesColor, look.piecesInside, look.insideGroup, look.rebarColor));
     }
-    if (look.cloth && !frame.cloth.empty()) cloth = drawnCloth(frame.cloth, look.clothColor);
-    if (!pieces) return cloth;
-    if (cloth) {
-        auto both = std::make_shared<Geometry>(*pieces);
-        both->append(*cloth);
-        return both;
-    }
-    return pieces;
+    if (look.cloth && !frame.cloth.empty()) add(drawnCloth(frame.cloth, look.clothColor));
+    if (look.grains && !frame.grains.empty()) add(grainPoints(frame.grains, look.grainColor));
+    return all;
 }
 
 }  // namespace pg::sim

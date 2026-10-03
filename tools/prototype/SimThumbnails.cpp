@@ -6,8 +6,8 @@
 //   an object, a source    its shape, in its colour -- a source of fire
 //                          orange, of smoke grey, of water blue
 //   a solver, a look       what is simulated at the frame on screen -- the
-//                          gas, the water, the pieces, the cloth, the rain --
-//                          in the scene's light
+//                          gas, the water, the pieces, the cloth, the
+//                          grains, the rain -- in the scene's light
 //   a camera, the Output   the scene through the camera; an Output without
 //                          one, as the viewport frames it
 //
@@ -183,6 +183,7 @@ SimWorkspace::ThumbKind SimWorkspace::thumbKindOf(const sim::Node& n) {
     if (y == "liquid_solver" || y == "water_look") return ThumbKind::Water;
     if (y == "rbd_solver") return ThumbKind::Pieces;
     if (y == "cloth_solver") return ThumbKind::Cloth;
+    if (y == "grain_solver") return ThumbKind::Grains;
     if (y == "rain") return ThumbKind::Rain;
     if (y == "camera" || y == "usd_camera") return ThumbKind::Camera;
     if (y == "output") return ThumbKind::Output;
@@ -345,13 +346,21 @@ void SimWorkspace::updateThumbnails() {
                 return true;
             }
             case ThumbKind::Pieces:
-            case ThumbKind::Cloth: {
-                const bool pieces = thumbKindOf(n) == ThumbKind::Pieces;
-                if (!frame || id != (pieces ? compiled_.rigid : compiled_.cloth)) return false;
-                if (pieces ? frame->rigid.empty() : frame->cloth.empty()) return false;
+            case ThumbKind::Cloth:
+            case ThumbKind::Grains: {
+                const ThumbKind kind = thumbKindOf(n);
+                const int solver = kind == ThumbKind::Pieces  ? compiled_.rigid
+                                   : kind == ThumbKind::Cloth ? compiled_.cloth
+                                                              : compiled_.grains;
+                if (!frame || id != solver) return false;
+                const bool empty = kind == ThumbKind::Pieces  ? frame->rigid.empty()
+                                   : kind == ThumbKind::Cloth ? frame->cloth.empty()
+                                                              : frame->grains.empty();
+                if (empty) return false;
                 sim::Look k = sceneLook();
-                k.pieces = pieces;
-                k.cloth = !pieces;
+                k.pieces = kind == ThumbKind::Pieces;
+                k.cloth = kind == ThumbKind::Cloth;
+                k.grains = kind == ThumbKind::Grains;
                 if (full) p.pieces = sim::drawnBodies(*frame, k);
                 p.look = k;
                 p.key = revision;

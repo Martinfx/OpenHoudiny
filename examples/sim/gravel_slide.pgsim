@@ -1,0 +1,80 @@
+pgsim 1
+# Gravel let go at the top of a chute: it slides down, spreads over the
+# ground in a fan and knocks into two cardboard boxes at the bottom, pushing
+# them along (both ways: the RBD Solver among the Grain Solver's colliders).
+# Stones of all sizes from 2.5 to 6 cm, grey and brown; with Friction 0.45
+# they slide off a chute at 35 degrees, piling up where the crates stop them.
+node 1 point_cloud 1 heap 0 0
+  param count 16000
+  param center 0 0 0
+node 2 transform 1 place 230 0
+  param t -1.05 1.4 0
+  param s 0.42 0.4 0.52
+node 3 point_wrangle 1 stones 460 0
+  param snippet "// Stones of all sizes, grey and brown.\nfloat k = rand(@ptnum);\n@pscale = 0.0125 + 0.0175 * k * k;\nfloat warm = rand(@ptnum + 7);\nfloat shade = 0.7 + 0.5 * rand(@ptnum + 13);\nv@Cd = lerp({0.5, 0.5, 0.49}, {0.52, 0.42, 0.32}, warm) * shade;"
+node 4 grain_solver 1 gravel 690 0
+  param radius 0.02
+  param size_variance 0.1
+  param density 1500
+  param friction 0.45
+node 5 object 1 chute 460 160
+  param shape box
+  param center -0.75 0.62 0
+  param rotation 0 0 -35
+  param size 1.5 0.05 0.62
+  param color 0.42 0.4 0.38
+node 6 object 1 side_a 460 220
+  param shape box
+  param center -0.75 0.72 0.33
+  param rotation 0 0 -35
+  param size 1.5 0.25 0.04
+  param color 0.42 0.4 0.38
+node 7 object 1 side_b 460 280
+  param shape box
+  param center -0.75 0.72 -0.33
+  param rotation 0 0 -35
+  param size 1.5 0.25 0.04
+  param color 0.42 0.4 0.38
+node 15 object 1 back 460 340
+  param shape box
+  param center -1.38 1.12 0
+  param rotation 0 0 -35
+  param size 0.04 0.4 0.62
+  param color 0.42 0.4 0.38
+node 8 box 1 box_a 0 400
+  param size 0.32 0.32 0.32
+  param center 0.55 0.16 0.22
+node 9 box 1 box_b 0 460
+  param size 0.32 0.32 0.32
+  param center 0.65 0.16 -0.25
+node 10 merge 1 boxes 230 430
+node 11 primitive_wrangle 1 cardboard 460 430
+  param snippet "// Cardboard boxes, empty: two kilograms each.\nf@density = 60;\nv@Cd = set(0.66, 0.5, 0.33);"
+node 12 rbd_solver 1 rbd 690 430
+  param friction 0.5
+  param glue 0
+  param dust 0
+  param impact_dust 0
+  param debris 0
+  param inside_color 0.66 0.5 0.33
+node 13 output 2 output 920 0
+  param frames 120
+node 14 camera 1 camera 920 160
+  param center 1.6 1.35 2.3
+  param rotation -20 25 0
+  param focal 28
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.geometry
+link 5.collider -> 4.colliders
+link 6.collider -> 4.colliders
+link 7.collider -> 4.colliders
+link 15.collider -> 4.colliders
+link 8.geometry -> 10.geometry
+link 9.geometry -> 10.geometry
+link 10.geometry -> 11.geometry
+link 11.geometry -> 12.pieces
+link 12.collider -> 4.colliders
+link 4.look -> 13.look
+link 12.look -> 13.look
+link 14.camera -> 13.camera

@@ -396,7 +396,9 @@ Seřazeno podle poměru hodnota / náklad:
    i sebou samou, vzduch, vítr a proud plynu, deterministicky na
    libovolném počtu vláken, trhání (body se dělí, lana se rozpojí, balony
    praskají) a obousměrná vazba s kusy RBD ([cloth.md](docs/cloth.md)).
-   Zbývá: kolize hran a trojúhelníků, tvarové vazby, granuláty.
+   Zbývá: kolize hran a trojúhelníků, tvarové vazby. ✅ Granuláty: Grain
+   Solver, písek a štěrk s třením a kohezí, sypání, obousměrná vazba s kusy
+   RBD ([grains.md](docs/grains.md)).
 2. **Vazby mezi řešiči** — ✅ trosky ve vodě a v plynu: voda je nadnáší
    a unáší, proud plynu unáší drť, obousměrně s vodou i plynem, které jdou
    kolem kusů ([destruction.md](docs/destruction.md#jedenáctý-příklad-povodeň-na-dvoře)).

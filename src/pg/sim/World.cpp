@@ -36,6 +36,8 @@ World World::sanitized() const {
     w.rigid = w.rigid.sanitized();
     w.cloth.solver.timeStep = w.timeStep;
     w.cloth = w.cloth.sanitized();
+    w.grains.solver.timeStep = w.timeStep;
+    w.grains = w.grains.sanitized();
     return w;
 }
 
@@ -64,6 +66,7 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
     if (world_.hasRain) rain_ = std::make_unique<RainSolver>(world_.rain);
     if (world_.hasRigid) rigid_ = std::make_unique<RigidSolver>(world_.rigid);
     if (world_.hasCloth) cloth_ = std::make_unique<ClothSolver>(world_.cloth);
+    if (world_.hasGrains) grains_ = std::make_unique<GrainSolver>(world_.grains);
     // The water holds the pieces up and drags them, the gas blows the grit
     // and them about -- when there are any, and their share is not 0.
     if (rigid_) {
@@ -71,7 +74,9 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
         fluidsPush_ = (water_ && (r.buoyancy > 0.0f || r.waterDrag > 0.0f)) || (gas_ && r.airDrag > 0.0f);
         // The cloth the pieces fall on holds them back.
         clothPushes_ = cloth_ && world_.rigid.intoCloth;
-        coupled_ = fluidsPush_ || clothPushes_;
+        // So do the grains.
+        grainsPush_ = grains_ && world_.rigid.intoGrains;
+        coupled_ = fluidsPush_ || clothPushes_ || grainsPush_;
     }
 }
 
@@ -97,6 +102,11 @@ void WorldSolver::step() {
         t0 = Clock::now();
         cloth_->step();
         profile_.cloth = msSince(t0);
+    }
+    if (grains_) {
+        t0 = Clock::now();
+        grains_->step();
+        profile_.grains = msSince(t0);
     }
     if (upres_) {
         // Before the gas: with the flow it is about to carry its own with.
@@ -174,15 +184,19 @@ void WorldSolver::prepare() {
                 rigid_->setFlow(flows_[at]);
             } else {
                 RigidFlow flow = fluidsPush_ ? rigid_->feel(fluids()) : RigidFlow();
+                auto pushed = [&](uint32_t piece, const Vec3& shift, const Vec3& velocity, const Vec3& spin) {
+                    RigidFlow::Push push;
+                    push.piece = piece;
+                    push.shift = shift;
+                    push.velocity = velocity;
+                    push.spin = spin;
+                    flow.pushes.push_back(push);
+                };
                 if (clothPushes_) {
-                    for (const ClothSolver::Reaction& r : cloth_->reactions()) {
-                        RigidFlow::Push push;
-                        push.piece = r.piece;
-                        push.shift = r.shift;
-                        push.velocity = r.velocity;
-                        push.spin = r.spin;
-                        flow.pushes.push_back(push);
-                    }
+                    for (const ClothSolver::Reaction& r : cloth_->reactions()) pushed(r.piece, r.shift, r.velocity, r.spin);
+                }
+                if (grainsPush_) {
+                    for (const GrainSolver::Reaction& r : grains_->reactions()) pushed(r.piece, r.shift, r.velocity, r.spin);
                 }
                 flows_.push_back(std::move(flow));
                 rigid_->setFlow(flows_.back());
@@ -196,9 +210,12 @@ void WorldSolver::prepare() {
     const bool piecesIntoWater = rigid_ && rigid.intoWater;
     const bool piecesIntoRain = rigid_ && rigid.intoRain;
     const bool piecesIntoCloth = rigid_ && rigid.intoCloth;
+    const bool piecesIntoGrains = rigid_ && rigid.intoGrains;
     // The pieces where they are now, as colliders -- once for all.
     std::vector<Collider> pieces;
-    if (rigid_ && (rigid.intoGas || piecesIntoWater || piecesIntoRain || piecesIntoCloth)) pieces = rigid_->colliders();
+    if (rigid_ && (rigid.intoGas || piecesIntoWater || piecesIntoRain || piecesIntoCloth || piecesIntoGrains)) {
+        pieces = rigid_->colliders();
+    }
     // The cloth: its objects, the pieces where they are, where its pins go;
     // the gas as it was at the end of the last step blows it.
     if (cloth_) {
@@ -209,6 +226,18 @@ void WorldSolver::prepare() {
         if (gas_) {
             const PyroSolver* gas = gas_.get();
             cloth_->setAir([gas](const Vec3& p) { return gas->flowAt(p); });
+        }
+    }
+    // The grains: their objects, the pieces where they are; the gas as it
+    // was at the end of the last step blows them.
+    if (grains_) {
+        GrainScene grains = now.grains;
+        grains.solver.timeStep = world_.timeStep;
+        if (piecesIntoGrains) grains.colliders.insert(grains.colliders.end(), pieces.begin(), pieces.end());
+        grains_->setScene(grains);
+        if (gas_) {
+            const PyroSolver* gas = gas_.get();
+            grains_->setAir([gas](const Vec3& p) { return gas->flowAt(p); });
         }
     }
     if (gas_ && (animated || piecesIntoGas)) {
@@ -286,8 +315,8 @@ RigidFluids WorldSolver::fluids() const {
 // The state: "pgstate", a version, the frame; what the water, the gas and
 // the cloth did to the pieces in each step so far (version 2); then each
 // part there is -- the gas, the water (its grids on their tiles, version 4),
-// the rain, the cloth, torn or not (version 3), the gas's upres -- as its
-// saveState() writes it. The pieces' is not: they are stepped again, with
+// the rain, the cloth, torn or not (version 3), the gas's upres, the grains
+// -- as its saveState() writes it. The pieces' is not: they are stepped again, with
 // those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
@@ -301,7 +330,7 @@ std::string WorldSolver::saveState() const {
     out.pod(static_cast<int32_t>(frame_));
     out.pod(time_);
     const uint8_t parts = (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) |
-                          (cloth_ ? 16u : 0u) | (upres_ ? 32u : 0u);
+                          (cloth_ ? 16u : 0u) | (upres_ ? 32u : 0u) | (grains_ ? 64u : 0u);
     out.pod(parts);
     out.pod(static_cast<uint64_t>(flows_.size()));
     for (const RigidFlow& f : flows_) {
@@ -314,6 +343,7 @@ std::string WorldSolver::saveState() const {
     if (rain_) rain_->saveState(out);
     if (cloth_) cloth_->saveState(out);
     if (upres_) upres_->saveState(out);
+    if (grains_) grains_->saveState(out);
     return out.take();
 }
 
@@ -338,7 +368,7 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
         return false;
     }
     const uint8_t mine = (gas_ ? 1u : 0u) | (water_ ? 2u : 0u) | (rain_ ? 4u : 0u) | (rigid_ ? 8u : 0u) |
-                         (cloth_ ? 16u : 0u) | (upres_ ? 32u : 0u);
+                         (cloth_ ? 16u : 0u) | (upres_ ? 32u : 0u) | (grains_ ? 64u : 0u);
     if (!in.pod(frame) || !in.pod(time) || !in.pod(parts) || frame < 0) {
         error = "the simulation state is cut short";
         return false;
@@ -362,7 +392,8 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
         }
     }
     if (steps != (coupled_ ? static_cast<uint64_t>(frame) : 0u)) {
-        error = "the simulation state is of another world: the water, the gas and the cloth push its pieces otherwise";
+        error = "the simulation state is of another world: the water, the gas, the cloth and the grains push its pieces "
+                "otherwise";
         return false;
     }
     flows_ = std::move(flows);
@@ -375,7 +406,7 @@ bool WorldSolver::loadState(std::string_view bytes, std::string& error) {
     }
     const bool read = (!gas_ || gas_->loadState(in)) && (!water_ || water_->loadState(in)) &&
                       (!rain_ || rain_->loadState(in)) && (!cloth_ || cloth_->loadState(in)) &&
-                      (!upres_ || upres_->loadState(in, *gas_));
+                      (!upres_ || upres_->loadState(in, *gas_)) && (!grains_ || grains_->loadState(in));
     if (!read || !in.done()) {
         error = "the simulation state does not fit this world: another grid, or a file cut short";
         return false;
@@ -405,6 +436,7 @@ Frame WorldSolver::capture() const {
     if (rain_) f.rain = sim::capture(*rain_);
     if (rigid_) f.rigid = rigid_->capture();
     if (cloth_) f.cloth = cloth_->capture();
+    if (grains_) f.grains = grains_->capture();
     f.number = frame_;
     f.time = time_;
     f.profile = profile_;

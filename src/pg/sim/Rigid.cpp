@@ -3336,7 +3336,7 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     const std::span<const Vec3> at = geo->positions();
     int pieceCount = 0;
     const std::vector<int32_t> pieceOf = pieceOfPrimitives(*geo, scene_.attribute, pieceCount);
-    const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain || scene_.intoCloth;
+    const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain || scene_.intoCloth || scene_.intoGrains;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
     for (size_t k = 0; k < count; ++k) {
