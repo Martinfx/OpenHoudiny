@@ -350,8 +350,14 @@ takže zjednodušit nejde co. Desetinásobek za stejný čas potřebuje
   (verze 10) jen s dlaždicemi, kde plyn je. Se všemi dlaždicemi počítá
   bitově stejně jako hustá mřížka. Buňky, které zabírají kusy, se hledají
   jen v jejich obalech (dřív 40 % času prachu). Rozlišení až 1024.
-- **Řídká voda a GPU**; **upres**: jemná turbulence doplněná do hrubé
-  simulace.
+- ✅ **Řídká voda** ([docs/pyro.md §5](docs/pyro.md#velký-běh)): mřížky
+  vody v dlaždicích 8 × 8 × 8 jen kolem částic, tlak s volnou hladinou na
+  nich; snímky a cache (verze 13 a 14) jen s dlaždicemi u hladiny, dlaždice
+  hluboko ve vodě jen číslem; povrch surface nets jen kolem nich. Se všemi
+  dlaždicemi bitově stejně jako hustá voda. Rozlišení až 1024. Příklad
+  `flood_crates_hd`: 512 × 128 × 256 buněk a 17,6 milionu částic, 30 s až
+  2,5 minuty na snímek na 4 jádrech, 2,2 až 5,7 GB paměti.
+- **GPU**; **upres**: jemná turbulence doplněná do hrubé simulace.
 - **Packed primitives, instance a out-of-core** — miliony kusů a data
   větší než paměť.
 - **Viewport pro velké cache**: zástupné tvary, přehrávání z disku.

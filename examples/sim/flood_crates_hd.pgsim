@@ -1,0 +1,106 @@
+pgsim 1
+# flood_crates at the resolution of a final shot: the water's grid 512 x 128
+# x 256 cells (16.7 million, 1.6 cm a cell), 17.6 million particles -- sparse,
+# so that only the tiles round the water are worked on and kept, the air
+# above the yard costing nothing. A dam breaks at the end of a walled yard
+# and the water sweeps through it: the wooden crates float up, rock on the
+# waves and are carried off, the stack toppling; the concrete blocks stay
+# where they stand and the water breaks round them. The yard is walled where
+# the water's tank has its sides -- plastered walls, the one in front lower
+# than the dam, for the camera to look over -- on paving that goes on beyond
+# them.
+#
+# The editor opens it in the preview, its grids a quarter as fine (Output >
+# Preview): quick to work on. Simulation > Bake to Disk simulates the whole
+# shot at the full resolution in a process of its own, holding 2 GB to 6 GB
+# of memory. prototype sim flood_crates_hd out.mp4 --renderer cycles renders it
+# through the camera in Cycles; --preview 0.25 first, for a quick look.
+node 1 water_source 1 dam 0 0
+  param center -3.25 0.7 0
+  param size 1.5 1.4 4
+node 2 box 1 crate_a 0 140
+  param size 0.5 0.5 0.5
+  param center 0.2 0.25 -0.9
+node 3 box 1 crate_b 0 200
+  param size 0.5 0.5 0.5
+  param center 0.22 0.77 -0.88
+node 4 box 1 crate_c 0 260
+  param size 0.5 0.5 0.5
+  param center 0.18 1.29 -0.9
+node 5 box 1 crate_d 0 320
+  param size 0.5 0.5 0.5
+  param center 0.5 0.25 0.5
+node 6 box 1 crate_e 0 380
+  param size 0.6 0.4 0.4
+  param center -0.4 0.2 0.9
+node 7 merge 1 crates 230 260
+node 8 primitive_wrangle 1 wood 460 260
+  param snippet "// Wooden crates: hollow, lighter than water -- a third as heavy.\nf@density = 350;\nv@Cd = set(0.6, 0.45, 0.28);\ns@material = \"wood\";"
+node 9 box 1 block_a 0 460
+  param size 0.6 0.6 0.6
+  param center 1.7 0.3 -0.2
+node 10 box 1 block_b 0 520
+  param size 0.6 0.6 0.6
+  param center 1.8 0.3 0.8
+node 11 merge 1 blocks 230 490
+node 12 primitive_wrangle 1 concrete 460 490
+  param snippet "// Concrete: two and a half times as heavy as water -- it stays.\nf@density = 2400;\nv@Cd = set(0.5, 0.49, 0.47);\ns@material = \"concrete\";"
+node 13 merge 1 pieces 690 380
+node 14 rbd_solver 1 rbd 920 380
+  param density 350
+  param friction 0.5
+  param glue 0
+  param substeps 3
+  param dust 0
+  param impact_dust 0
+  param debris 0
+  param inside_color 0.6 0.45 0.28
+node 15 liquid_solver 1 water 920 60
+  param size 8 2 4
+  param resolution 512
+node 16 water_look 1 look 1150 60
+node 17 output 2 output 1380 200
+  param frames 120
+  param preview 0.25
+  param open_preview on
+  param light_azimuth 130
+  param light_elevation 40
+  param light_color 1 0.94 0.85
+  param light_intensity 3
+  param sky_intensity 0.5
+  param ground_color 0.2 0.19 0.18
+  param grid off
+  param sky_behind on
+  param render_samples 64
+  param render_bounces 12
+  param render_clouds 0.3
+  param render_view agx
+node 19 detail_wrangle 1 yard 1150 360
+  param snippet "// The yard round the water: paving -- on beyond the walls -- and plastered\n// walls round it where the water's tank has its sides, a coping of concrete\n// on them; the one in front lower, for the camera to look over. Scenery:\n// drawn, not simulated -- the tank holds the water, its sides are these.\nvoid box(vector lo; vector hi; vector color; string material) {\n    int p[];\n    for (int i = 0; i < 8; i++) {\n        append(p, addpoint(0, set(i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z)));\n    }\n    int f[];\n    append(f, addprim(0, \"poly\", p[0], p[4], p[6], p[2]));\n    append(f, addprim(0, \"poly\", p[1], p[3], p[7], p[5]));\n    append(f, addprim(0, \"poly\", p[0], p[1], p[5], p[4]));\n    append(f, addprim(0, \"poly\", p[2], p[6], p[7], p[3]));\n    append(f, addprim(0, \"poly\", p[0], p[2], p[3], p[1]));\n    append(f, addprim(0, \"poly\", p[4], p[5], p[7], p[6]));\n    for (int k = 0; k < 6; k++) {\n        setprimattrib(0, \"Cd\", f[k], color);\n        setprimattrib(0, \"material\", f[k], material);\n    }\n}\n\n// A wall along x or z from a to b, from the ground to height h, its coping.\nvoid wall(vector a; vector b; float h) {\n    float c = 0.03;\n    vector wall = chv(\"walls\");\n    vector coping = set(0.46, 0.45, 0.43);\n    box(a, b + set(0, h, 0), wall, \"plaster\");\n    box(a + set(-c, h, -c), b + set(c, h + 0.08, c), coping, \"concrete\");\n}\n\nfloat far = 40;\nfloat t = 0.25;\nfloat h = ch(\"height\");\n// Just under the water's floor: the water closes on it.\nbox(set(-far, -0.1, -far), set(far, -0.002, far), chv(\"paving\"), \"paving\");\nwall(set(-4 - t, 0, -2 - t), set(4 + t, 0, -2), h);\nwall(set(-4 - t, 0, -2), set(-4, 0, 2 + t), h);\nwall(set(4, 0, -2), set(4 + t, 0, 2 + t), h);\nwall(set(-4, 0, 2), set(4, 0, 2 + t), ch(\"front\"));"
+  param walls 0.78 0.74 0.66
+  param height 2.2
+  param paving 0.26 0.25 0.23
+  param front 1.5
+  display
+node 18 camera 1 camera 1380 360
+  param center 4.6 5.4 5.6
+  param rotation -40 39 0
+  param focal 28
+link 1.water -> 15.sources
+link 2.geometry -> 7.geometry
+link 3.geometry -> 7.geometry
+link 4.geometry -> 7.geometry
+link 5.geometry -> 7.geometry
+link 6.geometry -> 7.geometry
+link 7.geometry -> 8.geometry
+link 9.geometry -> 11.geometry
+link 10.geometry -> 11.geometry
+link 11.geometry -> 12.geometry
+link 8.geometry -> 13.geometry
+link 12.geometry -> 13.geometry
+link 13.geometry -> 14.pieces
+link 14.collider -> 15.colliders
+link 15.liquid -> 16.liquid
+link 16.look -> 17.look
+link 14.look -> 17.look
+link 18.camera -> 17.camera

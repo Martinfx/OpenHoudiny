@@ -1257,6 +1257,23 @@ Příkaz `prototype sim flood_crates out.mp4` záběr vyrenderuje kamerou.
 
 ![Povodeň na dvoře, snímky 30, 60, 90 a 150: vlna zvedne bedny a převrhne stoh, na konci plavou bedny rozptýlené po dvoře a betonové bloky stojí](img/flood-crates.jpg)
 
+**Velká verze** `flood_crates_hd`: tentýž dvůr ve finálním rozlišení. Voda
+má mřížku 512 × 128 × 256 (16,7 milionu buněk po 1,6 cm) a 17,6 milionu
+částic a je řídká: počítají a drží se jen dlaždice kolem vody
+([pyro.md](pyro.md#velký-běh)). Dvůr má omítnuté zdi tam, kde
+má nádrž vody stěny; přední je nižší než hráz, aby přes ni kamera viděla.
+Dole je dlažba, bedny jsou dřevěné a bloky betonové, s materiály pro Cycles.
+Editor příklad otevře v náhledu se čtvrtinovými mřížkami (128 × 32 × 64,
+275 tisíc částic, asi 0,3 s na snímek). Celý záběr spočítá Simulation →
+Bake to Disk v samostatném procesu. Na čtyřech jádrech trvá snímek 30 s,
+dokud voda stojí v nádrži, a až 2,5 minuty, když se vlna rozlije po celém
+dvoře; proces přitom drží 2,2 až 5,7 GB. Render v Cycles (64 vzorků,
+1280 × 720) trvá 2 až 4 minuty na snímek:
+`prototype sim flood_crates_hd out.mp4 --renderer cycles`. Obrázky jsou ze
+44 snímků, které spočítal velký běh.
+
+![Velká povodeň v Cycles, snímky 12, 24, 35 a 44: hráz se protrhne, vlna se přežene dvorem a roztříští o bedny a betonové bloky](img/flood-crates-hd.jpg)
+
 **Prach.** Výstup Dust do Sources Pyro Solveru: každý obláček je koule
 velikosti obláčku, která dává kouř `4 × síla`, jen trochu tepla (prach
 se valí víc, než stoupá), rychlost obláčku a jeho expanzi; kouř vychází

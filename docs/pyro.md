@@ -906,6 +906,31 @@ zabere přenos na mřížku, polovinu tlak. Vlákna poolu po dávce práce ješt
 chvíli hlídají další, než usnou: probudit spící vlákno trvá déle než
 mnohá dávka. To zrychlilo i plyn.
 
+### Velký běh
+
+Příklad `flood_crates_hd` je povodeň s bednami v rozlišení finálního
+záběru: 512 × 128 × 256 buněk po 1,6 cm (16,7 milionu) a 17,6 milionu
+částic. `pgbench_liquid 512 --cache DIR` ji na čtyřech jádrech počítal
+1 h 14 min, 44 snímků, a zapsal je do cache, ze které se renderuje:
+
+| snímek | s na snímek | dlaždic s částicemi | dlaždic v řešiči | podkroků | paměť |
+|---|---|---|---|---|---|
+| 10 | 31 | 14,6 % | 17,7 % | 6 | 2,2 GB |
+| 20 | 65 | 16,6 % | 24,1 % | 12 | 2,7 GB |
+| 30 | 123 | 24,7 % | 42,4 % | 16 | 4,1 GB |
+| 40 | 146 | 37,6 % | 67,5 % | 12 | 5,7 GB |
+
+Řídký řešič ušetří nejvíc na začátku, kdy voda stojí v nádrži: drží necelou
+pětinu dlaždic. Doména je nízká (2 m) a vlna, která se rozlije po celém
+dvoře, jich zabere dvě třetiny; snímek pak trvá přes dvě minuty, i proto,
+že rychlá voda chce víc podkroků. Celých 120 snímků by trvalo odhadem 5 až
+6 hodin. Snímek v cache má 28 MB na snímku 10 a 121 MB na snímku 44 (všech
+44 dohromady 2,5 GB); vzít ho z řešiče a zapsat trvalo 5,7 s na snímku 10
+a 19 s na snímku 40, od té doby o pětinu méně. Render v Cycles (1280 × 720,
+64 vzorků, Open Image Denoise) trvá 2 až 4 minuty na snímek a drží až
+8,8 GB: hladina je pole na mřížce dvakrát jemnější než řešič (1024 × 256
+× 512) a síť z něj má na snímku 44 3,7 milionu čtyřúhelníků.
+
 ## 6. Déšť a vítr
 
 ![Déšť na jezírku a táborák v bouřce](img/rain.png)
