@@ -8,11 +8,16 @@
 // (all of them with --set sparse=0).
 //
 //   pgbench_liquid [RESOLUTION...] [--frames N] [--set PARAM=VALUE]... [--example NAME] [--threads N]
+//                  [--cache DIR]
 //
 // --set changes a parameter of the Liquid Solver; --threads runs on N
 // threads (all there are by default) -- the same water on any number.
+// --cache writes every frame to DIR as prototype sim --cache does, timed
+// apart ("frame ms": the frame taken from the solvers and written): a run
+// to render from, with --from-cache and the same --set.
 //
 #include "pg/core/Parallel.h"
+#include "pg/sim/Cache.h"
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Network.h"
 #include "pg/sim/World.h"
@@ -70,7 +75,8 @@ Share share(const sim::LiquidSolver& s) {
     return r;
 }
 
-bool bench(const std::string& example, int resolution, int frames, const std::vector<std::string>& sets) {
+bool bench(const std::string& example, int resolution, int frames, const std::vector<std::string>& sets,
+           const std::string& cache) {
     sim::Network net;
     std::string error;
     if (!sim::Network::load(sim::Network::exampleText(example), net, error)) {
@@ -105,9 +111,10 @@ bool bench(const std::string& example, int resolution, int frames, const std::ve
            std::to_string(d.cells[1]) + " x " + std::to_string(d.cells[2]) + " cells of " +
            std::to_string(d.voxel).substr(0, 5) + " m, " + std::to_string(d.cellCount() / 1000000) + "." +
            std::to_string(d.cellCount() / 100000 % 10) + " M voxels");
-    std::printf("  %5s %10s %10s %9s %8s %8s %9s %8s\n", "frame", "water ms", "world ms", "particles", "water",
-                "kept", "substeps", "MB");
-    double waterMs = 0.0, worldMs = 0.0;
+    std::printf("  %5s %10s %10s %10s %9s %8s %8s %9s %8s\n", "frame", "water ms", "world ms", "frame ms", "particles",
+                "water", "kept", "substeps", "MB");
+    double waterMs = 0.0, worldMs = 0.0, frameMs = 0.0, frameAll = 0.0;
+    size_t cacheBytes = 0;
     sim::LiquidSolver::Times before = liquid.times();
     for (int f = 1; f <= frames; ++f) {
         const auto t0 = Clock::now();
@@ -117,13 +124,39 @@ bool bench(const std::string& example, int resolution, int frames, const std::ve
         const double w = liquid.times().total() - before.total();
         before = liquid.times();
         waterMs += w;
+        if (!cache.empty()) {
+            const auto t1 = Clock::now();
+            const sim::Frame frame = world.capture();
+            if (!sim::writeFrame(frame, cache, error)) {
+                std::printf("  the cache: %s\n", error.c_str());
+                return false;
+            }
+            frameMs = since(t1);
+            frameAll += frameMs;
+            cacheBytes += frame.bytes();
+        }
         if (f % 10 == 0 || f == frames) {
             const Share s = share(liquid);
-            std::printf("  %5d %10.0f %10.0f %9zu %7.1f%% %7.1f%% %9d %8.0f\n", f, w, ms, liquid.particleCount(),
-                        100.0 * static_cast<double>(s.water) / static_cast<double>(s.tiles),
+            std::printf("  %5d %10.0f %10.0f %10.0f %9zu %7.1f%% %7.1f%% %9d %8.0f\n", f, w, ms, frameMs,
+                        liquid.particleCount(), 100.0 * static_cast<double>(s.water) / static_cast<double>(s.tiles),
                         100.0 * static_cast<double>(s.reach) / static_cast<double>(s.tiles), liquid.lastSubsteps(),
                         peakMb());
+            std::fflush(stdout);  // a long run into a file: as it goes
         }
+    }
+    if (!cache.empty()) {
+        // Done: the note a reader -- prototype sim --from-cache -- goes by.
+        sim::CacheInfo info;
+        info.frames = frames;
+        info.fps = 1.0f / c.world.timeStep;
+        info.network = sim::networkHash(net.save());
+        info.stepMs = worldMs / frames;
+        if (!sim::writeCacheInfo(cache, info, error)) {
+            std::printf("  the cache: %s\n", error.c_str());
+            return false;
+        }
+        std::printf("  frames taken and written: %.0f ms a frame, %.1f MB a frame in memory\n", frameAll / frames,
+                    static_cast<double>(cacheBytes) / frames / (1024.0 * 1024.0));
     }
     const sim::LiquidSolver::Times& t = liquid.times();
     std::printf("  a frame: water %.0f ms, the whole world %.0f ms\n", waterMs / frames, worldMs / frames);
@@ -156,13 +189,14 @@ bool bench(const std::string& example, int resolution, int frames, const std::ve
 int main(int argc, char** argv) {
     std::vector<int> resolutions;
     int frames = 120;
-    std::string example = "flood_crates";
+    std::string example = "flood_crates", cache;
     std::vector<std::string> sets;
     for (int a = 1; a < argc; ++a) {
         const std::string s = argv[a];
         if (s == "--frames" && a + 1 < argc) frames = std::max(1, std::atoi(argv[++a]));
         else if (s == "--example" && a + 1 < argc) example = argv[++a];
         else if (s == "--set" && a + 1 < argc) sets.push_back(argv[++a]);
+        else if (s == "--cache" && a + 1 < argc) cache = argv[++a];
         else if (s == "--threads" && a + 1 < argc) TaskPool::instance().setThreadCount(static_cast<unsigned>(std::max(1, std::atoi(argv[++a]))));
         else resolutions.push_back(std::atoi(argv[a]));
     }
@@ -170,7 +204,7 @@ int main(int argc, char** argv) {
     std::printf("water -- benchmarks\n");
     std::printf("hardware threads available: %u\n", TaskPool::instance().threadCount());
     for (const int r : resolutions) {
-        if (!bench(example, r, frames, sets)) return 1;
+        if (!bench(example, r, frames, sets, cache)) return 1;
     }
     return 0;
 }
