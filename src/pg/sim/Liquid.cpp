@@ -185,7 +185,9 @@ void redistance(SparseGrid& phi, float scale, float band) {
             fixed[c] = 1;
         }
     });
-    // 2. Out from there. A neighbour in the same tile is a step away in d.
+    // 2. Out from there, a sweep at a time in the order of the cells of the
+    // whole grid: a cell after those behind it along each axis, before
+    // those ahead. A neighbour in the same tile is a step away in d.
     constexpr size_t kStep[3] = {1, Tiles::kSide, Tiles::kSide * Tiles::kSide};
     auto beside = [&](size_t c, int i, int j, int k, int a, int side) {
         const int l = (a == 0 ? i : a == 1 ? j : k) & kLast;
@@ -193,42 +195,74 @@ void redistance(SparseGrid& phi, float scale, float band) {
         const int64_t g = phi.find(i + (a == 0 ? side : 0), j + (a == 1 ? side : 0), k + (a == 2 ? side : 0));
         return g < 0 ? band : d[static_cast<size_t>(g)];
     };
-    const int tilesX = tiles.tilesX();
-    for (int sweep = 0; sweep < 8; ++sweep) {
-        const int di = sweep & 1 ? -1 : 1, dj = sweep & 2 ? -1 : 1, dk = sweep & 4 ? -1 : 1;
-        for (int k = dk > 0 ? 0 : n[2] - 1; k >= 0 && k < n[2]; k += dk) {
-            for (int j = dj > 0 ? 0 : n[1] - 1; j >= 0 && j < n[1]; j += dj) {
-                for (int t = di > 0 ? 0 : tilesX - 1; t >= 0 && t < tilesX; t += di) {
-                    const int32_t slot = phi.slotOf(t * Tiles::kSide, j, k);
-                    if (slot < 0) continue;  // far: nothing there changes
-                    const int i0 = t * Tiles::kSide, i1 = std::min(i0 + Tiles::kSide, n[0]);
-                    for (int i = di > 0 ? i0 : i1 - 1; i >= i0 && i < i1; i += di) {
-                        const size_t c = static_cast<size_t>(slot) * Tiles::kCells + SparseGrid::local(i, j, k);
-                        if (fixed[c]) continue;
-                        float a = std::min(i > 0 ? beside(c, i, j, k, 0, -1) : band, i < n[0] - 1 ? beside(c, i, j, k, 0, 1) : band);
-                        float b = std::min(j > 0 ? beside(c, i, j, k, 1, -1) : band, j < n[1] - 1 ? beside(c, i, j, k, 1, 1) : band);
-                        float e = std::min(k > 0 ? beside(c, i, j, k, 2, -1) : band, k < n[2] - 1 ? beside(c, i, j, k, 2, 1) : band);
-                        if (a > b) std::swap(a, b);
-                        if (b > e) std::swap(b, e);
-                        if (a > b) std::swap(a, b);
-                        if (a >= band) continue;
-                        float u = a + 1.0f;
-                        if (u > b) {
-                            u = 0.5f * (a + b + std::sqrt(std::max(2.0f - (a - b) * (a - b), 0.0f)));
-                            if (u > e) {
-                                const float sum = a + b + e;
-                                u = (sum + std::sqrt(std::max(sum * sum - 3.0f * (a * a + b * b + e * e - 1.0f), 0.0f))) / 3.0f;
-                            }
+    // The cells of the tile in slot s, in the order of the sweep `dir`.
+    const std::vector<uint32_t>& stored = tiles.stored();
+    auto sweepTile = [&](size_t s, const int dir[3]) {
+        int c0[3];
+        tiles.corner(stored[s], c0[0], c0[1], c0[2]);
+        int e[3];
+        for (int a = 0; a < 3; ++a) e[a] = std::min(Tiles::kSide, n[a] - c0[a]);
+        for (int z = dir[2] > 0 ? 0 : e[2] - 1; z >= 0 && z < e[2]; z += dir[2]) {
+            for (int y = dir[1] > 0 ? 0 : e[1] - 1; y >= 0 && y < e[1]; y += dir[1]) {
+                for (int x = dir[0] > 0 ? 0 : e[0] - 1; x >= 0 && x < e[0]; x += dir[0]) {
+                    const int i = c0[0] + x, j = c0[1] + y, k = c0[2] + z;
+                    const size_t c = s * Tiles::kCells + SparseGrid::local(x, y, z);
+                    if (fixed[c]) continue;
+                    float a = std::min(i > 0 ? beside(c, i, j, k, 0, -1) : band, i < n[0] - 1 ? beside(c, i, j, k, 0, 1) : band);
+                    float b = std::min(j > 0 ? beside(c, i, j, k, 1, -1) : band, j < n[1] - 1 ? beside(c, i, j, k, 1, 1) : band);
+                    float f = std::min(k > 0 ? beside(c, i, j, k, 2, -1) : band, k < n[2] - 1 ? beside(c, i, j, k, 2, 1) : band);
+                    if (a > b) std::swap(a, b);
+                    if (b > f) std::swap(b, f);
+                    if (a > b) std::swap(a, b);
+                    if (a >= band) continue;
+                    float u = a + 1.0f;
+                    if (u > b) {
+                        u = 0.5f * (a + b + std::sqrt(std::max(2.0f - (a - b) * (a - b), 0.0f)));
+                        if (u > f) {
+                            const float sum = a + b + f;
+                            u = (sum + std::sqrt(std::max(sum * sum - 3.0f * (a * a + b * b + f * f - 1.0f), 0.0f))) / 3.0f;
                         }
-                        d[c] = std::min(d[c], u);
                     }
+                    d[c] = std::min(d[c], u);
                 }
             }
+        }
+    };
+    // A tile's cells reach only those of the tiles beside it, one further
+    // along an axis: the tiles as far in along the sweep -- tiles in x, y
+    // and z together -- touch none of each other's. Plane after plane, the
+    // tiles of one at once: the cells see what they would one after another.
+    const int t[3] = {tiles.tilesX(), tiles.tilesY(), tiles.tilesZ()};
+    const size_t planes = static_cast<size_t>(t[0] + t[1] + t[2] - 2);
+    std::vector<uint32_t> start(planes + 1), order(stored.size());
+    for (int sweep = 0; sweep < 8; ++sweep) {
+        const int dir[3] = {sweep & 1 ? -1 : 1, sweep & 2 ? -1 : 1, sweep & 4 ? -1 : 1};
+        auto planeOf = [&](size_t s) {
+            int c[3];
+            tiles.corner(stored[s], c[0], c[1], c[2]);
+            size_t p = 0;
+            for (int a = 0; a < 3; ++a) {
+                const int at = c[a] >> Tiles::kLog;
+                p += static_cast<size_t>(dir[a] > 0 ? at : t[a] - 1 - at);
+            }
+            return p;
+        };
+        std::fill(start.begin(), start.end(), 0u);
+        for (size_t s = 0; s < stored.size(); ++s) ++start[planeOf(s) + 1];
+        for (size_t p = 0; p < planes; ++p) start[p + 1] += start[p];
+        std::vector<uint32_t> at(start.begin(), start.end() - 1);
+        for (size_t s = 0; s < stored.size(); ++s) order[at[planeOf(s)]++] = static_cast<uint32_t>(s);
+        for (size_t p = 0; p < planes; ++p) {
+            pg::parallelFor(start[p + 1] - start[p], 1, [&](size_t begin, size_t end) {
+                for (size_t q = begin; q < end; ++q) sweepTile(order[start[p] + q], dir);
+            });
         }
     }
     // 3. The sign back, in the units asked for.
     float* out = phi.data();
-    for (size_t c = 0; c < phi.size(); ++c) out[c] = (out[c] < 0.0f ? -d[c] : d[c]) * scale;
+    pg::parallelFor(phi.size(), 65536, [&](size_t begin, size_t end) {
+        for (size_t c = begin; c < end; ++c) out[c] = (out[c] < 0.0f ? -d[c] : d[c]) * scale;
+    });
 }
 
 }  // namespace
@@ -952,19 +986,23 @@ void LiquidSolver::splat(int factor, const std::shared_ptr<const Tiles>& tiles, 
         const int k0 = std::max(static_cast<int>(std::ceil(q.z - 0.5f - reach)), 0);
         const int k1 = std::min(static_cast<int>(std::floor(q.z - 0.5f + reach)), fz - 1);
         const float white = foam_[p];
+        if (i0 > i1) return;  // beyond the grid: nothing to write
         for (int k = k0; k <= k1; ++k) {
             const float dz = static_cast<float>(k) + 0.5f - q.z;
             for (int j = j0; j <= j1; ++j) {
                 const float dy = static_cast<float>(j) + 0.5f - q.y;
                 const float dyz = dy * dy + dz * dz;
                 if (dyz >= reach2) continue;
-                for (int i = i0; i <= i1; ++i) {
+                // Along x a cell is the next one in its tile; looked up again
+                // in the next tile.
+                size_t c = weight.index(i0, j, k);
+                for (int i = i0; i <= i1; ++i, ++c) {
+                    if (i > i0 && (i & (Tiles::kSide - 1)) == 0) c = weight.index(i, j, k);
                     const float dx = static_cast<float>(i) + 0.5f - q.x;
                     const float d2 = dx * dx + dyz;
                     if (d2 >= reach2) continue;
                     const float s = 1.0f - d2 / reach2;
                     const float w = s * s * s;
-                    const size_t c = weight.index(i, j, k);
                     sums[0][c] += w;
                     sums[1][c] += w * g.x;
                     sums[2][c] += w * g.y;
@@ -1602,10 +1640,14 @@ void LiquidSolver::surfaceField(int factor, float band, SparseGrid& distance, Sp
             SparseGrid& to = pass % 2 == 0 ? other : *field;
             const float* f = from.data();
             float* t = to.data();
+            // A neighbour in the same tile is a step away.
+            const size_t step = a == 0 ? 1 : a == 1 ? Tiles::kSide : Tiles::kSide * Tiles::kSide;
             forEachCounted(*tiles, [&](int i, int j, int k, size_t c) {
-                const int at = a == 0 ? i : a == 1 ? j : k;
-                const float left = at > 0 ? from.at(i - (a == 0), j - (a == 1), k - (a == 2)) : f[c];
-                const float right = at < fn[a] - 1 ? from.at(i + (a == 0), j + (a == 1), k + (a == 2)) : f[c];
+                const int at = a == 0 ? i : a == 1 ? j : k, l = at & (Tiles::kSide - 1);
+                const float left = at == 0 ? f[c] : l > 0 ? f[c - step] : from.at(i - (a == 0), j - (a == 1), k - (a == 2));
+                const float right = at == fn[a] - 1        ? f[c]
+                                    : l < Tiles::kSide - 1 ? f[c + step]
+                                                           : from.at(i + (a == 0), j + (a == 1), k + (a == 2));
                 t[c] = 0.25f * left + 0.5f * f[c] + 0.25f * right;
             });
         }
