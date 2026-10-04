@@ -115,11 +115,14 @@ add_library(pgcore
   src/pg/nodes/Rebuild.cpp
   src/pg/nodes/Volumes.cpp
   src/pg/nodes/Usd.cpp
+  src/pg/nodes/Abc.cpp
+  src/pg/nodes/Vdb.cpp
   src/pg/nodes/Edit.cpp
   src/pg/nodes/Trees.cpp
   src/pg/nodes/Grass.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
+  src/pg/io/VdbRead.cpp
   src/pg/io/Jpeg.cpp
   src/pg/io/Video.cpp
   src/pg/io/Ply.cpp
@@ -128,6 +131,8 @@ add_library(pgcore
   src/pg/io/Exr.cpp
   src/pg/io/ExrRead.cpp
   src/pg/io/Inflate.cpp
+  src/pg/io/Lz4.cpp
+  src/pg/io/Blosc.cpp
   src/pg/io/Png.cpp
   src/pg/io/JpegDecode.cpp
   src/pg/io/Picture.cpp
@@ -136,6 +141,9 @@ add_library(pgcore
   src/pg/usd/Crate.cpp
   src/pg/usd/Stage.cpp
   src/pg/usd/Geom.cpp
+  src/pg/io/Ogawa.cpp
+  src/pg/abc/Archive.cpp
+  src/pg/abc/Geom.cpp
 )
 target_include_directories(pgcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 find_package(Threads REQUIRED)
@@ -313,6 +321,8 @@ add_library(pgsim
   src/pg/sim/Upres.cpp
   src/pg/sim/World.cpp
   src/pg/sim/UsdExport.cpp
+  src/pg/sim/AbcExport.cpp
+  src/pg/sim/VdbGas.cpp
   src/pg/render/Bvh.cpp
   src/pg/render/Denoise.cpp
   src/pg/render/Embree.cpp
@@ -1046,6 +1056,8 @@ add_executable(pgtests
   tests/test_quench.cpp
   tests/test_shatter.cpp
   tests/test_grit_grains.cpp
+  tests/test_alembic.cpp
+  tests/test_vdb_read.cpp
   tests/test_edit.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp

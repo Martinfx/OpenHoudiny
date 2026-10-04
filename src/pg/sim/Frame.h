@@ -212,6 +212,11 @@ Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke
 /// cells' middles, the tiles it is in taken on: the upres carries none of
 /// its own.
 void addCoarseSteam(Frame& fine, const PyroSolver& coarse, int scale);
+
+/// The gas of `frame` as volumes on its grid, every cell: density,
+/// temperature and flame -- and steam, where there is any. None without
+/// gas. What goes to OpenVDB files beside an exported shot.
+std::vector<Volume> gasVolumes(const Frame& frame);
 /// The solver's water, as a frame holds it -- and its particles, when
 /// `particles` is set.
 WaterFrame capture(const LiquidSolver& sim, bool particles = false);

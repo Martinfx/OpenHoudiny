@@ -71,4 +71,15 @@ bool cameraFromUsd(const std::string& file, const std::string& prim, float frame
                    int height, bool metres, Camera& out, std::string& error, std::vector<std::string>* warnings = nullptr,
                    bool* varies = nullptr, double* timeCode = nullptr);
 
+/// The camera of an Alembic file at the program's frame `frame` -- read at
+/// (frame + offset) / fps seconds, as Houdini, Maya and Blender write frame
+/// f: object `object` (its path, /camera/cameraShape), the file's first
+/// camera when empty. Placed as the file places it -- Alembic keeps no
+/// units: a unit a metre, Y up -- its lens fitted as cameraFromUsd fits
+/// one. False, with why, for a file or object that is not there or not a
+/// camera.
+bool cameraFromAlembic(const std::string& file, const std::string& object, float frame, float fps, float offset,
+                       int width, int height, Camera& out, std::string& error,
+                       std::vector<std::string>* warnings = nullptr, bool* varies = nullptr);
+
 }  // namespace pg::sim

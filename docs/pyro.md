@@ -500,6 +500,9 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
+| `vdb_fireball` | čtení OpenVDB: ohnivá koule ze souboru — VDB Gas ji přehraje jako plyn, nic se nesimuluje, oheň svítí na bedny ([vdb.md](vdb.md)) |
+| `vdb_rock` | čtení OpenVDB: proud vody narazí na balvan z level setu, ze kterého VDB Import udělal polygony a Object překážku ([vdb.md](vdb.md)) |
+| `alembic_shot` | Alembic: kulisa a jedoucí kamera z Blenderu, oheň mezi bednami a jeho kouř podél zadní zdi ([alembic.md](alembic.md)) |
 | `campfire_rain` | voda a oheň: táborák hoří vteřinu, pak přijde liják — kapky, které propadnou plameny, je chladí, ty, které padnou na oheň, ho promočí; za pár sekund plameny zmizí a z mokrých polen stoupá bílá pára ([quench.md](quench.md)) |
 | `fire_douse` | táborák uhašený kbelíkem vody: koule vody spadne na oheň, plameny zmizí během pár snímků, tmavým kouřem se vyvalí bílý oblak páry a voda odteče po zemi ([quench.md](quench.md)) |
 | `fire_hose` | hašení hadicí: proud vody míří dvě sekundy do ohně z polen — malá část se ho v plamenech odpaří, zbytek oheň postupně uhasí; bílá pára stoupá tmavým kouřem a nahoře řídne ([quench.md](quench.md)) |

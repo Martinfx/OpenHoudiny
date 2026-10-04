@@ -14,6 +14,11 @@
 // put out the fire they get into (PyroSolver::setWater); the drops that
 // land in the water add to it (RainSettings::fill).
 //
+// The gas may be read rather than simulated: OpenVDB files played back a
+// file a frame (VDB Gas, VdbGas.h), on a domain that holds them all. Then
+// nothing simulates it -- it pushes nothing, nothing puts it out -- and it
+// is drawn, rendered and exported as a solver's would be.
+//
 // Plain data, compared as a whole, as the scene of each part is: the
 // editor's runner starts again exactly when the World differs.
 //
@@ -26,6 +31,7 @@
 #include "pg/sim/Rigid.h"
 #include "pg/sim/Scene.h"
 #include "pg/sim/Upres.h"
+#include "pg/sim/VdbGas.h"
 
 #include <memory>
 #include <string>
@@ -49,6 +55,9 @@ struct World {
     float timeStep = 1.0f / 30.0f;  ///< seconds a frame, for every part
     bool hasGas = false;
     Scene gas;                       ///< the Pyro Solver's, when hasGas
+    /// The files the gas is read from, when it is (VDB Gas): `gas` is then
+    /// only its domain.
+    VdbGas vdbGas;
     bool hasUpres = false;
     UpresSettings upres;             ///< the Pyro Upres's, when hasUpres (and hasGas)
     bool hasWater = false;
@@ -114,8 +123,12 @@ public:
     const Frame::Profile& profile() const { return profile_; }
     int frame() const { return frame_; }
     float time() const { return time_; }
+    /// The Pyro Solver; null when the gas is read from files (World::vdbGas).
     PyroSolver* gas() { return gas_.get(); }
     const PyroSolver* gas() const { return gas_.get(); }
+    /// Why the gas of the last frame could not be read from its file;
+    /// empty when it was, or is simulated.
+    const std::string& gasFileError() const { return gasFileError_; }
     UpresSolver* upres() { return upres_.get(); }
     const UpresSolver* upres() const { return upres_.get(); }
     LiquidSolver* water() { return water_.get(); }
@@ -139,6 +152,11 @@ private:
     World world_;
     Frame::Profile profile_;  // of the last step
     std::unique_ptr<PyroSolver> gas_;
+    // The gas read from files: the domain it is laid on, the last frame's.
+    bool playback_ = false;
+    Domain gasDomain_;
+    Frame played_;
+    std::string gasFileError_;
     std::unique_ptr<UpresSolver> upres_;
     std::unique_ptr<LiquidSolver> water_;
     std::unique_ptr<RainSolver> rain_;

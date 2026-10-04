@@ -4,6 +4,7 @@
 
 #include "pg/gl/Png.h"
 #include "pg/io/Export.h"
+#include "pg/sim/AbcExport.h"
 #include "pg/sim/UsdExport.h"
 #include "pg/io/Video.h"
 #include "pg/sim/Asset.h"
@@ -58,11 +59,12 @@ ImU32 categoryColor(const std::string& c) {
     return IM_COL32(110, 60, 60, 255);
 }
 
-/// Whether a network has a node that simulates: a solver, the rain.
+/// Whether a network has a node that simulates: a solver, the rain -- or
+/// plays gas back from files.
 bool simulates(const sim::Network& net) {
     for (const sim::Node& n : net.nodes()) {
         if (n.type == "pyro_solver" || n.type == "liquid_solver" || n.type == "rain" || n.type == "cloth_solver" ||
-            n.type == "grain_solver" || n.type == "rbd_solver") {
+            n.type == "grain_solver" || n.type == "rbd_solver" || n.type == "vdb_gas") {
             return true;
         }
     }
@@ -307,12 +309,17 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
     }
     if (t == "sphere") return "radius " + number(v("radius")) + " m";
     if (t == "tube") return "radius " + number(v("radius")) + dot + number(v("height")) + " m";
-    if (t == "file") {
+    if (t == "file" || t == "usd_import" || t == "alembic_import" || t == "vdb_import" || t == "vdb_gas") {
         const std::string file = net.text(n.id, "file");
-        return file.empty() ? std::string("no file") : fs::path(file).filename().string();
+        std::string s = file.empty() ? std::string("no file") : fs::path(file).filename().string();
+        // The gas read from files: the domain they are laid on.
+        if (t == "vdb_gas" && c.ok && c.solver == n.id && c.world.vdbGas.any()) {
+            const sim::Domain d = c.world.gas.sanitized().solver.domain();
+            s += dot + std::to_string(d.cells[0]) + times + std::to_string(d.cells[1]) + times + std::to_string(d.cells[2]) + " cells";
+        }
+        return s;
     }
     if (t == "attribute_create") return "@" + net.text(n.id, "name");
-    (void)c;
     return {};
 }
 
@@ -1892,6 +1899,10 @@ void SimWorkspace::fileMenu() {
     ImGui::SetItemTooltip("The shot as one USD stage, for Houdini, Blender or a renderer: every frame cached -- the "
                           "displayed geometry, the pieces moving, the grit, the gas (VDB files beside it), the camera "
                           "and the light");
+    if (ImGui::MenuItem("Export Alembic\xe2\x80\xa6", nullptr, false, compiled_.ok && runner_->cached() > 0)) chooseAlembic();
+    ImGui::SetItemTooltip("The shot as one Alembic archive (.abc), for Houdini, Maya, Blender, Nuke or a renderer: every "
+                          "frame cached -- the displayed geometry, the pieces moving, the grit, the grains, the water, the "
+                          "rain, the cloth, the camera; the gas in VDB files beside it");
 }
 
 void SimWorkspace::editMenu() {
@@ -2103,6 +2114,7 @@ void SimWorkspace::popups() {
         case FileAction::ExportGeometry: exportGeometry(fileNode_, chosen); break;
         case FileAction::ExportFrames: exportFrames(fileNode_, chosen); break;
         case FileAction::ExportUsd: exportUsd(chosen); break;
+        case FileAction::ExportAlembic: exportAlembic(chosen); break;
         case FileAction::OpenAsset: open(chosen); break;
         case FileAction::SaveAsset: commitAsset(chosen); break;
         case FileAction::SaveRender: saveRender(chosen); break;
@@ -2672,7 +2684,9 @@ void SimWorkspace::profilePanel(const sim::Frame& f) {
         bar("Pieces", p.rigid, total, false);
         bar("Into scenes", p.scenes, total, false);
     }
-    if (compiled_.world.hasGas) {
+    if (compiled_.world.hasGas && compiled_.world.vdbGas.any()) {
+        bar("Gas read", p.gas, total, false);  // from files: no stages
+    } else if (compiled_.world.hasGas) {
         bar("Gas", p.gas, total, false);
         static const char* stages[8] = {"solids", "tiles", "emit", "advect", "combust", "forces", "project", "dissipate"};
         for (int s = 0; s < 8; ++s) bar(stages[s], p.gasStages[s], total, true);
@@ -2928,6 +2942,38 @@ bool SimWorkspace::exportUsd(const std::string& path) {
     if (usd.bodies() > 0) text += ", " + std::to_string(usd.bodies()) + " bodies";
     if (usd.frameFiles() > 0) text += ", what changes every frame in " + std::to_string(usd.frameFiles()) + " layers beside it";
     if (usd.gasFiles() > 0) text += ", the gas in " + std::to_string(usd.gasFiles()) + " VDB files";
+    setMessage(text);
+    return true;
+}
+
+void SimWorkspace::chooseAlembic() {
+    files_.open("Export Alembic", {".abc"}, true, (fs::path(outputFolder()) / (stem() + ".abc")).string());
+    fileAction_ = FileAction::ExportAlembic;
+}
+
+bool SimWorkspace::exportAlembic(const std::string& path) {
+    const int shown = net_.displayed();
+    const sim::Node* n = shown ? net_.node(shown) : nullptr;
+    const bool withGeometry = n && geometry_->contains(shown);
+    sim::AbcExport abc(path, withGeometry ? n->name : std::string("geometry"), 1.0f / compiled_.world.timeStep);
+    const int cached = runner_->cached();
+    std::string error;
+    for (int f = 1; f <= cached; ++f) {
+        const std::shared_ptr<const sim::Frame> frame = runner_->frame(f);
+        if (!frame) continue;
+        const GeometryPtr geo = withGeometry ? geometry_->cook(shown, f, compiled_.world.timeStep) : nullptr;
+        if (!abc.add(*frame, geo, compiled_.hasCamera ? &compiled_.cameraAt(f) : nullptr, compiled_.lookAt(f), error)) {
+            setMessage(error, true);
+            return false;
+        }
+    }
+    if (!abc.finish(error)) {
+        setMessage(error, true);
+        return false;
+    }
+    std::string text = "Exported " + std::to_string(abc.frames()) + " frames as Alembic to " + shownPath(path);
+    if (abc.bodies() > 0) text += ", " + std::to_string(abc.bodies()) + " bodies";
+    if (abc.gasFiles() > 0) text += ", the gas in " + std::to_string(abc.gasFiles()) + " VDB files";
     setMessage(text);
     return true;
 }

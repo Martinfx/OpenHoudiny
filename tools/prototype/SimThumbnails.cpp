@@ -179,13 +179,13 @@ SimWorkspace::ThumbKind SimWorkspace::thumbKindOf(const sim::Node& n) {
     const std::string& y = n.type;
     if (y == "object") return ThumbKind::Object;
     if (y == "pyro_source" || y == "water_source") return ThumbKind::Source;
-    if (y == "pyro_solver" || y == "pyro_upres" || y == "volume_look") return ThumbKind::Gas;
+    if (y == "pyro_solver" || y == "pyro_upres" || y == "vdb_gas" || y == "volume_look") return ThumbKind::Gas;
     if (y == "liquid_solver" || y == "water_look") return ThumbKind::Water;
     if (y == "rbd_solver") return ThumbKind::Pieces;
     if (y == "cloth_solver") return ThumbKind::Cloth;
     if (y == "grain_solver") return ThumbKind::Grains;
     if (y == "rain") return ThumbKind::Rain;
-    if (y == "camera" || y == "usd_camera") return ThumbKind::Camera;
+    if (y == "camera" || y == "usd_camera" || y == "alembic_camera") return ThumbKind::Camera;
     if (y == "output") return ThumbKind::Output;
     return ThumbKind::None;  // the forces
 }

@@ -113,6 +113,15 @@ okna.
   reference, payloady, varianty, třídy, value clips), kamera z matchmove
   jako kamera záběru, kulisa a modely jako geometrie v síti; ověřené proti
   knihovně USD
+- **[docs/alembic.md](docs/alembic.md)** — Alembic bez knihovny: celý
+  záběr jako jeden archiv `.abc` (geometrie, kusy jako tělesa v pohybu,
+  drť, zrna, voda, déšť, látka, kamera; plyn jako VDB vedle) a čtení
+  geometrie a kamery z Blenderu, Mayi nebo Houdini jako uzly sítě;
+  ověřené Blenderem
+- **[docs/vdb.md](docs/vdb.md)** — čtení OpenVDB bez knihovny: kouř
+  a oheň z Houdini, Blenderu nebo EmberGenu přehraný jako plyn záběru
+  (VDB Gas), level set jako překážka nebo tvar zdroje (VDB Import); zip,
+  Blosc, half, dlaždice, ověřené na souborech z OpenVDB 10 a 13
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem; EXR v lineárním světle s hloubkou, vektory
@@ -212,8 +221,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 384 testů: 65 jádro, 27 jazyk wrangle a výrazy, 7 digital assets, 13 topologie, fracture, smyčky a vaření na pozadí, 17 tuhá tělesa, 10 beton a kry, 8 výztuž, 8 sklo, 7 cihly, 7 síť vazeb, 8 drť, 6 usměrněná simulace, 7 trosky ve vodě a v plynu, 25 shader graf, 98 simulace (i řídká mřížka), voda, déšť, geometrie, animace, 19 cache a export, 11 checkpointy, bake, náhled a profil, 10 zápis USD, 16 čtení USD, 3 EXR, 5 video, 7 obrázky a plate
-ctest --test-dir build -R python                   # 46 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgtests            # 600 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 53 plyn (řídká mřížka, upres, hašení), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 35 shader graf a materiály, 39 render, EXR, obrázky a video, 55 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 21 stromy a vegetace
+ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
@@ -236,6 +245,10 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype sim campfire_vdb - --cache cache/fire                          # simulace jednou, na disk
 ./build/prototype sim campfire_vdb fire.png --from-cache cache/fire --every 10   # render z cache
 ./build/prototype sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
+./build/prototype sim vdb_fireball fireball.png     # ohnivá koule ze souboru VDB: přehraná, ne simulovaná
+./build/prototype sim vdb_rock rock.png --every 15  # proud vody narazí na balvan z level setu VDB
+./build/prototype sim demolition - --export demolition.abc   # celý odstřel jako jeden archiv Alembic
+./build/prototype sim alembic_shot shot.png --every 24       # oheň v kulise z Blenderu, přes kameru z Alembicu
 ./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # částice do PLY
 ./build/prototype --example street                 # ulice ze tří digital assetů Building
 ./build/prototype --example meadow                 # louka u lesa: tráva, keře a stromy jako instance
@@ -446,6 +459,21 @@ modely nebo cache jako geometrii (normály, uv, barvy, primvars, subsety
 jako skupiny) v metrech s Y nahoru, i když soubor přišel z Mayi
 v centimetrech se Z nahoru. Transformace, skládání, geometrie i value
 clips sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)).
+
+**Alembic**: celý záběr jde do jednoho archivu `.abc` (`--export
+shot.abc`, v editoru File › Export Alembic…): zobrazená geometrie, kusy
+jako tělesa v pohybu, drť, zrna, výztuž, látka, povrch vody, déšť a kamera;
+plyn jako VDB vedle. Uzly **Alembic Import** a **Alembic Camera** čtou
+geometrii a kameru z Blenderu, Mayi nebo Houdini. Kontejner Ogawa
+i schémata jsou vlastní, bez knihovny; Blender archivy prototypu čte
+a kusy odstřelu v něm stojí tam, kde v simulaci ([docs/alembic.md](docs/alembic.md)).
+
+**Čtení OpenVDB**: **VDB Gas** přehraje kouř a oheň z Houdini, Blenderu
+nebo EmberGenu jako plyn záběru, soubor na snímek: Volume Look ho kreslí
+a renderuje jako plyn Pyro Solveru. **VDB Import** dá mřížky jako objemy,
+nebo polygony level setu jako překážku či tvar zdroje. Čtečka zvládne zip,
+Blosc, half floaty, dlaždice, instance i otočené mřížky a čte voxel po
+voxelu, co zapsalo OpenVDB 10 i 13 ([docs/vdb.md](docs/vdb.md)).
 
 **Plate**: obraz záběru, sekvence PNG, JPEG nebo EXR, jde za CG, když se
 díváte kamerou záběru, v editoru i v renderu. Čtečky jsou vlastní, bez

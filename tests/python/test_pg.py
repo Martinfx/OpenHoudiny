@@ -705,6 +705,25 @@ class Simulations(unittest.TestCase):
         dropped = run(1 / 3, 60)
         self.assertLess(abs(float(dropped.centres[0][1]) - 0.5), 0.02)
 
+    def test_the_shot_to_alembic(self):
+        net = self.pond()
+        folder = tempfile.mkdtemp()
+        try:
+            sim = net.simulate()
+            path = sim.export_alembic(os.path.join(folder, "pond.abc"), frames=3)
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(5), b"Ogawa")
+            # Read back as a network reads it: the water's surface at frame 3,
+            # face for face.
+            back = pg.Network()
+            read = back.add("alembic_import", "read")
+            read["file"] = path
+            read["objects"] = "/water"
+            surface = sim.current.water.surface()
+            self.assertEqual(back.cook(read, frame=3).primitive_count, surface.primitive_count)
+        finally:
+            shutil.rmtree(folder)
+
     def test_the_shot_to_usd(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

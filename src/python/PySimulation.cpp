@@ -4,6 +4,7 @@
 #include "Bindings.h"
 #include "PyNetwork.h"
 
+#include "pg/sim/AbcExport.h"
 #include "pg/sim/Cache.h"
 #include "pg/sim/Frame.h"
 #include "pg/sim/Rigid.h"
@@ -157,6 +158,12 @@ struct PySimulation {
 
 struct PyUsdExport {
     std::unique_ptr<sim::UsdExport> usd;
+    PySimulation* sim = nullptr;
+    int node = 0;
+};
+
+struct PyAbcExport {
+    std::unique_ptr<sim::AbcExport> abc;
     PySimulation* sim = nullptr;
     int node = 0;
 };
@@ -492,6 +499,39 @@ void bindSimulation(py::module_& m) {
         .def_property_readonly("bodies", [](const PyUsdExport& u) { return u.usd->bodies(); })
         .def_property_readonly("gas_files", [](const PyUsdExport& u) { return u.usd->gasFiles(); })
         .def_property_readonly("frame_files", [](const PyUsdExport& u) { return u.usd->frameFiles(); });
+
+    py::class_<PyAbcExport>(m, "AbcExport", "A simulated shot out to Alembic, a frame at a time (AbcExport.h).")
+        .def(py::init([](const std::string& path, PySimulation& sim, int node) {
+            auto a = std::make_unique<PyAbcExport>();
+            a->sim = &sim;
+            a->node = node;
+            const sim::Node* n = node ? sim.net.node(node) : nullptr;
+            if (node && !n) throw Error("no node " + std::to_string(node) + " in the network");
+            a->abc = std::make_unique<sim::AbcExport>(path, n ? n->name : std::string("geometry"), 1.0f / sim.world.timeStep);
+            return a;
+        }), py::arg("path"), py::arg("simulation"), py::arg("node") = 0, py::keep_alive<1, 3>())
+        .def("add", [](PyAbcExport& a) {
+            PySimulation& s = *a.sim;
+            if (!s.current) throw Error("no frame yet: step the simulation first");
+            const GeometryPtr geo = a.node ? s.cook(a.node) : nullptr;
+            const int f = s.current->number;
+            std::string error;
+            bool ok = false;
+            {
+                py::gil_scoped_release release;
+                ok = a.abc->add(*s.current, geo, s.compiled.hasCamera ? &s.compiled.cameraAt(f) : nullptr,
+                                s.compiled.lookAt(f), error);
+            }
+            if (!ok) throw Error(error);
+        })
+        .def("finish", [](PyAbcExport& a) {
+            std::string error;
+            if (!a.abc->finish(error)) throw Error(error);
+            return a.abc->path();
+        })
+        .def_property_readonly("frames", [](const PyAbcExport& a) { return a.abc->frames(); })
+        .def_property_readonly("bodies", [](const PyAbcExport& a) { return a.abc->bodies(); })
+        .def_property_readonly("gas_files", [](const PyAbcExport& a) { return a.abc->gasFiles(); });
 
     m.def("read_cache_info", [](const std::string& folder) {
         sim::CacheInfo info;

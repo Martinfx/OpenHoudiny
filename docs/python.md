@@ -147,6 +147,7 @@ simulace čte snímky z cache.
 | kamera | `sim.camera()`: poloha, otočení, ohnisko, rozměry obrazu v tomto snímku |
 | cache | `frame.save("cache")`, `sim.write_cache_info("cache")`, `sim.cache("cache", frames=120)`, `pg.Frame.read("cache", 7)` |
 | USD | `with pg.UsdExport("shot.usda", sim) as usd:` a po každém kroku `usd.add()`, nebo `sim.export_usd("shot.usda")` ([usd.md](usd.md)) |
+| Alembic | `with pg.AbcExport("shot.abc", sim) as abc:` a po každém kroku `abc.add()`, nebo `sim.export_alembic("shot.abc")` ([alembic.md](alembic.md)) |
 | obraz | `net.render("out.png" \| ".exr" \| ".mp4", frames=…, every=…, size="1920x1080", from_cache="cache")`, `pg.run("sim", …)` |
 
 - **Póza tělesa:** bod `p` v klidové poloze je teď v `rotate(rotations[b], p) + translations[b]`.
@@ -237,9 +238,9 @@ pg.write_picture("plate.1001.jpg", pixels, quality=92)
 ## 7. Jak to funguje
 
 ```
-pg/__init__.py      třídy Network, Node, Geometry, Simulation, Frame, UsdExport, UsdStage, UsdPrim (Python);
+pg/__init__.py      třídy Network, Node, Geometry, Simulation, Frame, UsdExport, AbcExport, UsdStage, UsdPrim (Python);
                     read_picture, write_picture
-_pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdExport, usd::Stage
+_pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdExport, AbcExport, usd::Stage
 ```
 
 - **Pole bez kopie:** `_pg.Array` je objekt s buffer protocolem (PEP 3118). Nese ukazatel

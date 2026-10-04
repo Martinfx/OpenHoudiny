@@ -60,8 +60,10 @@ Domain sceneDomain(const World& world) {
 }
 
 WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
-    if (world_.hasGas) gas_ = std::make_unique<PyroSolver>(world_.gas);
-    if (world_.hasGas && world_.hasUpres) upres_ = std::make_unique<UpresSolver>(world_.upres);
+    playback_ = world_.hasGas && world_.vdbGas.any();
+    if (world_.hasGas && !playback_) gas_ = std::make_unique<PyroSolver>(world_.gas);
+    if (playback_) gasDomain_ = world_.gas.solver.domain();
+    if (gas_ && world_.hasUpres) upres_ = std::make_unique<UpresSolver>(world_.upres);
     if (world_.hasWater) water_ = std::make_unique<LiquidSolver>(world_.water);
     if (world_.hasRain) rain_ = std::make_unique<RainSolver>(world_.rain);
     if (world_.hasRigid) rigid_ = std::make_unique<RigidSolver>(world_.rigid);
@@ -125,6 +127,19 @@ void WorldSolver::step() {
     if (gas_) {
         t0 = Clock::now();
         gas_->step();
+        profile_.gas = msSince(t0);
+    }
+    if (playback_) {
+        // The gas of the frame this step makes, from its file.
+        t0 = Clock::now();
+        gasFileError_.clear();
+        if (!vdbGasFrame(world_.vdbGas, gasDomain_, frame_ + 1, played_, gasFileError_)) {
+            // A file that cannot be read: no gas this frame -- and why.
+            played_ = Frame();
+            played_.domain = gasDomain_;
+            played_.gasTiles = {0};
+            played_.fields.assign(3 * Tiles::kCells, 0);
+        }
         profile_.gas = msSince(t0);
     }
     if (evaporates_) {
@@ -501,6 +516,11 @@ Frame WorldSolver::capture() const {
         addCoarseSteam(f, *gas_, world_.upres.scale);
     } else if (gas_) {
         f = sim::capture(*gas_);
+    } else if (playback_) {
+        f.domain = played_.domain;
+        f.fields = played_.fields;
+        f.gasTiles = played_.gasTiles;
+        f.steam = played_.steam;
     }
     if (water_) f.water = sim::capture(*water_, world_.keepParticles);
     if (rain_) f.rain = sim::capture(*rain_);

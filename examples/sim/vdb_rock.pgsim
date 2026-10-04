@@ -1,0 +1,28 @@
+pgsim 1
+# A stream of water against a boulder read from an OpenVDB file
+# (examples/vdb/rock.vdb, made by make_vdb.py): a level set -- distances
+# from its surface, below 0 inside -- as Houdini keeps a shape to collide
+# with. VDB Import's Surface makes polygons of it, where the distances
+# cross 0; an Object of them stands in the water's way, and the stream
+# heaps up against it and runs round it.
+node 1 vdb_import 1 rock 0 0
+  param file "../vdb/rock.vdb"
+  param surface on
+node 2 object 1 boulder 0 110
+  param color 0.46 0.43 0.4
+node 3 water_source 1 stream 250 0
+  param center -1.1 0.3 0.05
+  param size 0.12 0.24 0.5
+  param mode flow
+  param velocity 2.2 0.3 0
+  param end 1.2
+node 4 liquid_solver 1 solver 500 60
+  param size 3 1.2 2
+node 5 water_look 1 look 750 60
+node 6 output 2 output 1000 60
+  param frames 60
+link 1.geometry -> 2.shape
+link 2.collider -> 4.colliders
+link 3.water -> 4.sources
+link 4.liquid -> 5.liquid
+link 5.look -> 6.look

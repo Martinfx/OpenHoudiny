@@ -5,8 +5,10 @@ vykreslí jinou kamerou nebo jiným vzhledem a vyexportují bez nového
 počítání — v editoru, z příkazové řádky, na jiném stroji. Geometrie
 libovolného uzlu (částice vody, kapky deště, plyn jako objemy, polygony) jde
 ven v souborech, které čtou ostatní programy: body do **PLY**, objemy do
-**OpenVDB**, polygony do **OBJ**, snímek po snímku. Záběr tak jde do Houdini,
-do Blenderu a do rendererů.
+**OpenVDB**, polygony do **OBJ**, snímek po snímku. Celý záběr jde i do
+**USD** a **Alembicu** jako jedna scéna ([usd.md](usd.md),
+[alembic.md](alembic.md)). Záběr tak jde do Houdini, do Blenderu a do
+rendererů.
 
 ![Editor: snímky táboráku načtené z disku (přehled: „from fire_cache“, stavový řádek: „from disk“) a menu Simulation s Save Cache a Load Cache](img/editor-cache.png)
 
@@ -365,6 +367,10 @@ i ve snímku cache).
 Gas Volume dává mřížky `density`, `temperature` a `flame`: tak je
 pojmenovávají pyro shadery Houdini a Blenderu.
 
+Zpátky je čte uzel **VDB Gas**: přehraje soubory jako plyn záběru, v každé
+buňce stejný half jako simulace. Soubory jiných programů čte i **VDB
+Import** — jako objemy, nebo jako polygony jejich povrchu ([vdb.md](vdb.md)).
+
 ## 5. Příkazová řádka
 
 ```
@@ -381,7 +387,7 @@ prototype sim NETWORK.pgsim|EXAMPLE OUT.png|- [--frames N] [--start N] [--every 
 | `--preview F` | plyn a voda na mřížkách F-krát tak jemných (0.5: poloviční rozlišení, nejméně 16 buněk) |
 | `--from-cache DIR` | snímky čte ze složky místo simulace; `--frames N` jich vezme nejvýš N |
 | `--start N`, `--end N` | obrázky a export jen od snímku N (do `--end`, což je totéž co `--frames`) — díl záběru pro jeden stroj farmy; cache se čte od N, simulace ale začíná snímkem 1 a do cache jde každý snímek |
-| `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. Výjimka: `.usda` bez `$F` je celý záběr jako jedna scéna, to, co se mění, v souborech po snímcích vedle ní ([usd.md](usd.md)). |
+| `--export PATH` | geometrii zobrazeného uzlu z každého snímku do souboru; `$F4` je číslo snímku na čtyři cifry, `$F` bez nul. Bez nich se číslo vloží před příponu (`fire.vdb` → `fire.0007.vdb`). Složky se vytvoří. Výjimky: `.usda` bez `$F` je celý záběr jako jedna scéna, to, co se mění, v souborech po snímcích vedle ní ([usd.md](usd.md)); `.abc` je celý záběr jako jeden archiv Alembic ([alembic.md](alembic.md)). |
 | `--export-node NODE` | geometrie uzlu `NODE` místo zobrazeného |
 | `--folder DIR` | relativní cesty sítě (meshe, soubory OBJ) čte z `DIR`, ne ze složky jejího souboru — pro síť uloženou jinam, jak to dělá `Network.render` v Pythonu ([python.md](python.md)) |
 | `-` místo `OUT.png` | žádný obrázek, jen cache a export — funguje i v buildu bez EGL |
@@ -468,7 +474,8 @@ s průběhem tam a zpět; checkpoint na disku přepsaný celý; profil kroku
 
 ## 8. Omezení
 
-- VDB se jen zapisuje, a jen husté float mřížky. Rychlost plynu (`vel`)
+- VDB se zapisuje jen jako float mřížky. Čte se víc: komprimované, half,
+  level sety, vektory ([vdb.md](vdb.md)). Rychlost plynu (`vel`)
   snímek nedrží, takže ve VDB není a renderer z ní motion blur neudělá.
   Hladina vody jako level set také ne — voda jde ven jako částice nebo jako
   povrch (Liquid Surface, v USD `/World/water`).
@@ -488,4 +495,5 @@ s průběhem tam a zpět; checkpoint na disku přepsaný celý; profil kroku
 - Bake běží na tomtéž stroji jako editor (proces, ne fronta farmy)
   a jen na Linuxu (`/proc/self/exe`, `posix_spawn`).
 - PLY čte jen prvky `vertex` a `face`, ostatní přeskočí.
-- Alembic chybí.
+- Alembic je jen celý záběr jako jeden archiv (`--export záběr.abc`,
+  [alembic.md](alembic.md)), ne soubor na snímek.

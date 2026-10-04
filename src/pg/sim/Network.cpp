@@ -85,6 +85,20 @@ ParamDef usdFile(const char* help) {
             {".usd", ".usda", ".usdc", ".usdz"}, {}};
 }
 
+ParamDef abcFile(const char* help) {
+    return {"file", "File", "File", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help, {".abc"}, {}};
+}
+
+ParamDef vdbFile(const char* help) {
+    return {"file", "File", "File", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help, {".vdb"}, {}};
+}
+
+ParamDef abcFrameOffset() {
+    return {"offset", "Frame Offset", "Time", K::Float, {0.0f, 0.0f, 0.0f}, -100.0f, 100.0f, -1e6f, 1e6f, "",
+            "Frame f reads the file at f / fps seconds -- the Output's frame rate -- as Houdini, Maya and Blender "
+            "write frame f; a file of another rate plays at its own speed. This moves it by as many frames."};
+}
+
 ParamDef plateFile(const char* help) {
     return {"plate", "Plate", "Plate", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "", help,
             {".exr", ".png", ".jpg", ".jpeg"}, {}};
@@ -758,6 +772,59 @@ std::vector<NodeType> buildTypes() {
                          "when the stage says none -- and Y up. Off: as the file has them."),
                   toggle("subsets", "Subsets as Groups", true, "A mesh's subsets of faces as primitive groups of their names."),
                   toggle("path", "Path Attribute", true, "Each primitive's prim, as the text attribute path.")});
+    }
+    {
+        auto toggle = [](const char* name, const char* label, bool on, const char* help) {
+            return ParamDef{name, label, "Import", K::Toggle, {on ? 1.0f : 0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "", help};
+        };
+        geometry("alembic_import", "Alembic Import", "abcimport",
+                 "Geometry from an Alembic file (.abc) -- a cache from Houdini, Maya or Blender, as it plays: meshes "
+                 "and subdivision surfaces with their normals, uv, colours and other parameters; points (pscale from "
+                 "their widths, id, v); curves as lines; each where its transforms put it. Each primitive's object in "
+                 "`path`, a mesh's face sets as groups. Read at each frame.",
+                 {},
+                 {abcFile("An Alembic file. A relative path is read from the network's folder; a file that changes is "
+                          "read again."),
+                  text("objects", "Objects", "Import", "",
+                       "Which objects to read, with all that is under them: paths separated by spaces (/pieces "
+                       "/city). Empty: the whole archive."),
+                  abcFrameOffset(),
+                  toggle("hidden", "Hidden", false, "Read the objects that are not visible at the frame, too."),
+                  toggle("facesets", "Face Sets as Groups", true, "A mesh's face sets as primitive groups of their names."),
+                  toggle("path", "Path Attribute", true, "Each primitive's object, as the text attribute path.")});
+    }
+    {
+        auto toggle = [](const char* name, const char* label, const char* section, bool on, const char* help) {
+            return ParamDef{name, label, section, K::Toggle, {on ? 1.0f : 0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "", help};
+        };
+        geometry("vdb_import", "VDB Import", "vdbimport",
+                 "Volumes from an OpenVDB file (.vdb) -- smoke, fire, a distance field from Houdini, Blender, EmberGen "
+                 "-- each grid a volume of its name (density, temperature, a vector's vel.x, vel.y, vel.z), every "
+                 "voxel of the box its active ones are in. A numbered sequence of files is read a file a frame. With "
+                 "Surface, the polygons of what the grids hold: an Object to collide with, the shape of a Pyro or "
+                 "Water Source.",
+                 {},
+                 {vdbFile("An OpenVDB file, or a numbered sequence of them: smoke.$F4.vdb, smoke.####.vdb, read "
+                          "frame by frame. A relative path is read from the network's folder; a file that changes "
+                          "is read again."),
+                  text("grids", "Grids", "Import", "",
+                       "Which grids to read, by name, separated by spaces (density temperature). Empty: all of "
+                       "them."),
+                  {"offset", "Frame Offset", "Time", K::Int, {0.0f, 0.0f, 0.0f}, -100.0f, 100.0f, -1e6f, 1e6f, "",
+                   "Frame f of a sequence reads its file f + this: a sequence that begins at 1001 is read from "
+                   "frame 1 at 1000."},
+                  toggle("zup", "Z Up", "Import", false,
+                         "The file's world has z up, as Blender's: turned about x so that y is, the vectors with "
+                         "it. Houdini's and EmberGen's have y up, as the program's."),
+                  {"maxvoxels", "Max Voxels", "Import", K::Float, {32.0f, 0.0f, 0.0f}, 1.0f, 256.0f, 0.001f, 4096.0f,
+                   "million",
+                   "A grid of more voxels than this, in its box, is averaged down -- 2 x 2 x 2 voxels into one, or "
+                   "more -- until it fits, and the node says so: a volume holds every voxel of its box."},
+                  toggle("surface", "Surface", "Surface", false,
+                         "The polygons of what the grids hold instead of the volumes: a level set (a distance, "
+                         "inside below 0) where it crosses 0, a density where it crosses Iso."),
+                  {"iso", "Iso", "Surface", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, -kBig, kBig, "",
+                   "Where the surface of a grid that is not a level set is: inside, its values are above this."}});
     }
     geometry("transform", "Transform", "transform",
              "Moves, turns and sizes what comes in: scale, then rotate -- both about the pivot -- then "
@@ -1493,6 +1560,42 @@ std::vector<NodeType> buildTypes() {
           seed("Whirls", "Another number, other whirls.")},
          1});
     t.push_back(
+        {"vdb_gas", "VDB Gas", "Simulation",
+         "Smoke and fire simulated elsewhere -- Houdini, Blender, EmberGen -- played back from OpenVDB files, a "
+         "file a frame: link it into a Volume Look as a Pyro Solver's gas, and it is drawn, rendered, cached and "
+         "exported as that would be. Its density, temperature and flame grids are laid on a domain that holds "
+         "every frame's, standing on the floor round the y axis: each voxel at most half a voxel from where it "
+         "was. Nothing simulates it -- it pushes nothing, the water does not put it out.",
+         {},
+         {{"gas", "Gas", PinType::Gas}},
+         {vdbFile("An OpenVDB file, or a numbered sequence of them: smoke.$F4.vdb, smoke.####.vdb -- a file a "
+                  "frame. A relative path is read from the network's folder; files that change are read again."),
+          {"offset", "Frame Offset", "Time", K::Int, {0.0f, 0.0f, 0.0f}, -100.0f, 100.0f, -1e6f, 1e6f, "",
+           "Frame f reads the file of frame f + this: a sequence that begins at 1001 plays from frame 1 at 1000."},
+          {"move", "Move", "Place", K::Vector, {0.0f, 0.0f, 0.0f}, -5.0f, 5.0f, -kBig, kBig, "m",
+           "Moves the gas from where the files put it: up, off the floor, to the middle of the scene."},
+          {"zup", "Z Up", "Place", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The files' world has z up, as Blender's: turned about x so that y is. Houdini's and EmberGen's have "
+           "y up, as the program's."},
+          text("density", "Density", "Grids", "density",
+               "The grid the smoke is read from: names separated by spaces, the first the file has. Empty: none."),
+          text("temperature", "Temperature", "Grids", "temperature heat",
+               "The grid the heat is read from -- what colours the fire: Houdini's and EmberGen's temperature, "
+               "Blender's heat."),
+          text("flame", "Flame", "Grids", "flame flames fire", "The grid the fire is read from: where it glows."),
+          text("steam", "Steam", "Grids", "", "A grid read as steam, white; empty: none."),
+          {"density_scale", "Density Scale", "Scale", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, kBig, "",
+           "The smoke, times this: thicker or thinner than the files have it."},
+          {"temperature_scale", "Temperature Scale", "Scale", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, kBig,
+           "", "The heat, times this: the scale of another program's temperature made this one's."},
+          {"flame_scale", "Flame Scale", "Scale", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, kBig, "",
+           "The fire, times this."},
+          {"resolution", "Resolution", "Domain", K::Int, {512.0f, 0.0f, 0.0f}, 64.0f, 1024.0f, 16.0f, 1024.0f,
+           "cells",
+           "The domain's cells along its longest side, at the most: files it would be finer for are averaged "
+           "down, 2 x 2 x 2 voxels into a cell or more."}},
+         1});
+    t.push_back(
         {"liquid_solver", "Liquid Solver", "Simulation",
          "Simulates water in a box standing on the floor (FLIP): particles carry it, a grid keeps its volume. "
          "It falls, splashes, piles up and flows round the colliders; the forces push it about.",
@@ -1867,6 +1970,28 @@ std::vector<NodeType> buildTypes() {
                                    "1001.")},
                  1});
     t.back().handles = {"center", "rotation", nullptr, nullptr, nullptr, nullptr};
+    t.push_back({"alembic_camera", "Alembic Camera", "Render",
+                 "A camera from an Alembic file -- a matchmove's, a layout's -- where it stands, which way it looks and "
+                 "its lens at each frame, as the file has them. Linked into the Output's Camera, it is what renders "
+                 "look through.",
+                 {},
+                 {{"camera", "Camera", PinType::Camera}},
+                 {abcFile("An Alembic file with the camera. A relative path is read from the network's folder."),
+                  {"object", "Object", "Camera", K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+                   "The camera's object: /camera/cameraShape. Empty: the file's first camera."},
+                  abcFrameOffset(),
+                  {"width", "Width", "Image", K::Int, {1920.0f, 0.0f, 0.0f}, 16.0f, 3840.0f, 16.0f, 8192.0f, "px",
+                   "The picture's width. The lens is fitted to it: what the camera sees from side to side is what "
+                   "its film back (horizontal aperture) and focal length say."},
+                  {"height", "Height", "Image", K::Int, {0.0f, 0.0f, 0.0f}, 0.0f, 2160.0f, 0.0f, 8192.0f, "px",
+                   "The picture's height. 0: as the film back is shaped -- width x vertical / horizontal aperture."},
+                  plateFile("The plate: the footage this camera was matched to, drawn behind the CG when you "
+                            "look through the camera and in renders -- a picture (.exr, .png, .jpg) or a numbered "
+                            "sequence: plate.####.exr, plate.$F4.exr, plate.%04d.exr. A relative path is read "
+                            "from the network's folder."),
+                  plateFrame(1.0f, "The number of the plate's frame at frame 1: 1001 for a plate numbered from "
+                                   "1001.")},
+                 1});
     t.push_back({"usd_camera", "USD Camera", "Render",
                  "A camera from a USD file -- a matchmove's, a layout's -- where it stands, which way it looks and "
                  "its lens at each frame, as the file has them. Linked into the Output's Camera, it is what renders "
@@ -3735,7 +3860,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
     }
     // A camera from a file turns as the file says; of the angles that say
     // it, those nearest the frame before -- no flips from 180 to -180.
-    if (const Node* cam = node(c.camera.node); cam && cam->type == "usd_camera") {
+    if (const Node* cam = node(c.camera.node); cam && (cam->type == "usd_camera" || cam->type == "alembic_camera")) {
         for (size_t k = 1; k < c.poses.size(); ++k) {
             Camera& now = c.poses[k].camera;
             now.rotation = Camera::rotationFor(now.forward(), now.up(), c.poses[k - 1].camera.rotation);
@@ -3942,7 +4067,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     c.model = c.display && std::all_of(nodes_.begin(), nodes_.end(), [](const Node& n) {
         const NodeType* t = findNodeType(n.type);
         return n.bypass || !t || t->core || n.type == "output" || n.type == "camera" || n.type == "usd_camera" ||
-               n.type == "object";
+               n.type == "alembic_camera" || n.type == "object";
     });
     auto done = [&]() {
         // What feeds geometry that takes part -- into a shape, or shown --
@@ -4084,6 +4209,28 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             // The plate's frames follow the shot's time codes: 1001 at the frame that reads 1001.
             m.plateFrame = whole(*cam, "plate_frame");
             if (m.plateFrame == 0) m.plateFrame = static_cast<int>(std::lround(timeCode)) - (static_cast<int>(std::lround(frame)) - 1);
+        } else if (cam->type == "alembic_camera") {
+            // A matchmove's camera, at this frame, from its Alembic file.
+            std::string file = text(cam->id, "file");
+            if (!file.empty() && !folder.empty() && std::filesystem::path(file).is_relative()) {
+                file = (std::filesystem::path(folder) / file).lexically_normal().string();
+            }
+            std::string error;
+            std::vector<std::string> warnings;
+            bool varies = false;
+            if (file.empty()) {
+                problem(L::Error, cam->id, "no file: which Alembic file has the camera?");
+            } else if (cameraFromAlembic(file, text(cam->id, "object"), frame, 1.0f / c.world.timeStep,
+                                         f(*cam, "offset"), whole(*cam, "width"), whole(*cam, "height"), m, error,
+                                         &warnings, &varies)) {
+                for (const std::string& w : warnings) problem(L::Warning, cam->id, w);
+                c.fileAnimation = c.fileAnimation || varies;
+                c.hasCamera = true;
+            } else {
+                problem(L::Error, cam->id, error);
+            }
+            m.node = cam->id;
+            m.plateFrame = whole(*cam, "plate_frame");
         } else {
             m.position = v3(*cam, "center");
             m.rotation = v3(*cam, "rotation");
@@ -4505,6 +4652,50 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     };
 
     // The gas of a Pyro Solver: its settings, and what feeds it.
+    // The gas read from OpenVDB files: a domain that holds every frame's.
+    auto compileVdbGas = [&](const Node* n) {
+        VdbGas g;
+        g.file = text(n->id, "file");
+        if (!g.file.empty() && !folder.empty() && std::filesystem::path(g.file).is_relative()) {
+            g.file = (std::filesystem::path(folder) / g.file).lexically_normal().string();
+        }
+        g.offset = whole(*n, "offset");
+        g.move = v3(*n, "move");
+        g.zUp = f(*n, "zup") != 0.0f;
+        g.density = text(n->id, "density");
+        g.temperature = text(n->id, "temperature");
+        g.flame = text(n->id, "flame");
+        g.steam = text(n->id, "steam");
+        g.densityScale = std::max(f(*n, "density_scale"), 0.0f);
+        g.temperatureScale = std::max(f(*n, "temperature_scale"), 0.0f);
+        g.flameScale = std::max(f(*n, "flame_scale"), 0.0f);
+        g.resolution = whole(*n, "resolution");
+        if (g.file.empty()) {
+            problem(L::Error, n->id, "No file: which OpenVDB files hold the gas?");
+            return;
+        }
+        Domain d;
+        int factor = 1;
+        std::vector<std::string> notes;
+        std::string error;
+        if (!vdbGasDomain(g, c.frames, d, factor, notes, error)) {
+            problem(L::Error, n->id, error);
+            return;
+        }
+        for (const std::string& note : notes) problem(L::Warning, n->id, note);
+        c.world.hasGas = true;
+        c.world.vdbGas = g;
+        Scene& scene = c.world.gas;
+        scene = Scene();
+        scene.emitters.clear();
+        scene.forces.clear();
+        scene.colliders.clear();
+        SolverSettings& s = scene.solver;
+        s.size = d.size();
+        s.resolution = std::max({d.cells[0], d.cells[1], d.cells[2]});
+        s.sparse = true;
+        s.timeStep = c.world.timeStep;
+    };
     auto compileGas = [&](const Node* solver) {
         c.world.hasGas = true;
         SolverSettings& s = c.world.gas.solver;
@@ -4721,8 +4912,20 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 if (!from) problem(L::Error, solver->id, "No gas to make finer: link a Pyro Solver into Gas.");
                 solver = from;
             }
+            if (solver && solver->type == "vdb_gas") {
+                // Read from files, not simulated: nothing makes it finer.
+                if (upres) {
+                    problem(L::Warning, upres->id,
+                            "A Pyro Upres makes a Pyro Solver's gas finer: " + solver->name +
+                                " reads its files as they are.");
+                }
+                c.solver = solver->id;
+                c.active.push_back(solver->id);
+                compileVdbGas(solver);
+                continue;
+            }
             if (!solver || solver->type != "pyro_solver") {
-                if (!upres && !solver) problem(L::Error, look->id, "No gas to draw: link a Pyro Solver into Gas.");
+                if (!upres && !solver) problem(L::Error, look->id, "No gas to draw: link a Pyro Solver or a VDB Gas into Gas.");
                 continue;
             }
             c.solver = solver->id;

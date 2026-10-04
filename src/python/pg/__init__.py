@@ -17,9 +17,9 @@ parameters, linked output to input. Geometry nodes cook to Geometry, whose
 attributes come as numpy arrays over the core's own memory -- read only,
 as the core shares it between geometries; set_attribute() and the tables'
 item assignment copy new values in. A Simulation steps a network frame by
-frame (or reads the frames back from a cache); UsdExport writes the shot to
-USD as it goes, and UsdStage reads USD -- a matchmove's camera, a set --
-with the program's own reader. Pictures and videos are drawn by the program `prototype`
+frame (or reads the frames back from a cache); UsdExport and AbcExport write
+the shot to USD and to Alembic as it goes, and UsdStage reads USD -- a
+matchmove's camera, a set -- with the program's own reader. Pictures and videos are drawn by the program `prototype`
 (Network.render), so the module itself needs no OpenGL.
 
 Without numpy the arrays are memoryviews of the same memory.
@@ -46,7 +46,7 @@ except ImportError:  # the package copied out of its build
     _build = None
 
 __all__ = [
-    "Error", "Network", "Node", "Geometry", "Simulation", "Frame", "UsdExport", "UsdStage", "UsdPrim",
+    "Error", "Network", "Node", "Geometry", "Simulation", "Frame", "UsdExport", "AbcExport", "UsdStage", "UsdPrim",
     "node_types", "node_type", "examples", "assets", "load_assets", "read_picture", "write_picture", "run",
 ]
 
@@ -1065,6 +1065,15 @@ class Simulation:
                 usd.add()
         return path
 
+    def export_alembic(self, path, frames=None, node="displayed"):
+        """Simulates on, writing the shot to one Alembic archive
+        (docs/alembic.md). `node`: the geometry node in it -- the displayed
+        one, or None."""
+        with AbcExport(path, self, node=node) as abc:
+            for _ in self.run(frames):
+                abc.add()
+        return path
+
     def __repr__(self):
         return f"<pg.Simulation at frame {self.frame} of {self.frames}>"
 
@@ -1098,6 +1107,44 @@ class UsdExport:
     bodies = property(lambda self: self._u.bodies)
     frame_files = property(lambda self: self._u.frame_files)
     gas_files = property(lambda self: self._u.gas_files)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, value, trace):
+        if kind is None:
+            self.finish()
+        return False
+
+
+class AbcExport:
+    """The shot to Alembic a frame at a time: add() after each step, finish()
+    at the end -- or as a context:
+
+        with pg.AbcExport("shot.abc", sim) as abc:
+            for frame in sim.run():
+                abc.add()
+    """
+
+    def __init__(self, path, simulation, node="displayed"):
+        if node == "displayed":
+            node = simulation._s.displayed or None
+        id = simulation.network._id(node) if node is not None else 0
+        folder = os.path.dirname(os.path.abspath(path))
+        os.makedirs(folder, exist_ok=True)
+        self._a = _pg.AbcExport(os.fspath(path), simulation._s, id)
+        self.path = path
+
+    def add(self):
+        """The simulation's current frame."""
+        self._a.add()
+
+    def finish(self):
+        return self._a.finish()
+
+    frames = property(lambda self: self._a.frames)
+    bodies = property(lambda self: self._a.bodies)
+    gas_files = property(lambda self: self._a.gas_files)
 
     def __enter__(self):
         return self

@@ -293,6 +293,8 @@ void registerBuiltinNodes() {
         registerTreeNodes();
         registerGrassNodes();
         registerUsdNodes();
+        registerAlembicNodes();
+        registerVdbNodes();
         return true;
     }();
     (void)once;

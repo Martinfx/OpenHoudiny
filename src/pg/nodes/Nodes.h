@@ -24,6 +24,8 @@ void registerGlassNodes();
 void registerBrickNodes();
 void registerVolumeNodes();
 void registerUsdNodes();
+void registerAlembicNodes();
+void registerVdbNodes();
 void registerEditNodes();
 void registerTreeNodes();
 void registerGrassNodes();

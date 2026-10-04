@@ -332,6 +332,9 @@ private:
     /// (pg/sim/UsdExport.h).
     void chooseUsd();
     bool exportUsd(const std::string& path);
+    /// ... as an Alembic archive (pg/sim/AbcExport.h).
+    void chooseAlembic();
+    bool exportAlembic(const std::string& path);
 
     // --- the camera (SimViewport.cpp) ---------------------------------------------------
     /// Looks through the Output's camera, or stops.
@@ -730,7 +733,7 @@ private:
     ui::FileBrowser files_;
     enum class FileAction {
         None, Open, SaveAs, Image, Frames, Video, FinalFrames, FinalVideo, MeshFile, ImportMesh, SaveCache, LoadCache, Bake,
-        ExportGeometry, ExportFrames, ExportUsd, OpenAsset, SaveAsset, SaveRender
+        ExportGeometry, ExportFrames, ExportUsd, ExportAlembic, OpenAsset, SaveAsset, SaveRender
     } fileAction_ = FileAction::None;
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;

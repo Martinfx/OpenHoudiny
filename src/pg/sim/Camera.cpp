@@ -1,5 +1,6 @@
 #include "pg/sim/Camera.h"
 
+#include "pg/abc/Geom.h"
 #include "pg/io/Picture.h"
 #include "pg/sim/Shared.h"
 #include "pg/usd/Geom.h"
@@ -115,6 +116,58 @@ bool cameraFromUsd(const std::string& file, const std::string& prim, float frame
         }
     }
     if (varies) *varies = usd::cameraVaries(*stage, *p);
+    return true;
+}
+
+bool cameraFromAlembic(const std::string& file, const std::string& object, float frame, float fps, float offset,
+                       int width, int height, Camera& out, std::string& error, std::vector<std::string>* warnings,
+                       bool* varies) {
+    const auto archive = abc::ArchiveReader::openCached(file, error);
+    if (!archive) return false;
+    const abc::ObjectReader* camera = nullptr;
+    const auto all = abc::cameras(*archive);
+    if (object.empty()) {
+        if (all.empty()) {
+            error = "no camera in " + file;
+            return false;
+        }
+        camera = all.front();
+    } else {
+        for (const abc::ObjectReader* o : archive->objects()) {
+            if (o->path == object) camera = o;
+        }
+        if (!camera) {
+            error = "no object " + object + " in " + file;
+            return false;
+        }
+        if (std::find(all.begin(), all.end(), camera) == all.end()) {
+            error = object + " is not a camera";
+            return false;
+        }
+    }
+    const double rate = fps > 0.0f ? fps : 30.0f;
+    abc::Matrix w;
+    abc::Lens lens;
+    if (!abc::cameraAt(*archive, *camera, (static_cast<double>(frame) + offset) / rate, w, lens, error)) return false;
+    // Its matrix's rows: its x, y and z in the world, then where it is.
+    const Vec3 y(static_cast<float>(w[4]), static_cast<float>(w[5]), static_cast<float>(w[6]));
+    const Vec3 z(static_cast<float>(w[8]), static_cast<float>(w[9]), static_cast<float>(w[10]));
+    out.position = Vec3(static_cast<float>(w[12]), static_cast<float>(w[13]), static_cast<float>(w[14]));
+    out.rotation = Camera::rotationFor(z * -1.0f, y);
+    // The film back in mm (Alembic keeps it in cm).
+    const double h = lens.horizontalAperture > 0.0 ? 10.0 * lens.horizontalAperture : 36.0;
+    const double v = lens.verticalAperture > 0.0 ? 10.0 * lens.verticalAperture : 24.0;
+    out.width = std::clamp(width, 16, 8192);
+    double tall = height > 0 ? height : out.width * v / h;
+    if (!(tall >= 16.0)) tall = 16.0;  // NaN too
+    out.height = static_cast<int>(std::lround(std::min(tall, 8192.0)));
+    // Our picture is 24 mm high: as wide a view as the film back's width.
+    out.focal = static_cast<float>(24.0 * out.aspect() * lens.focalLength / h);
+    out = out.sanitized();
+    if (warnings && (lens.horizontalOffset != 0.0 || lens.verticalOffset != 0.0)) {
+        warnings->push_back(camera->path + " shifts its film back (film offset): drawn without the shift");
+    }
+    if (varies) *varies = abc::cameraVaries(*archive, *camera);
     return true;
 }
 

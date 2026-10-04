@@ -54,6 +54,7 @@
 // stage -- the geometry, the pieces, the grit, the water's surface, the
 // rain, the gas (VDB files beside it), the camera and the light; what
 // changes every frame in a layer a frame beside it (pg/sim/UsdExport.h).
+// An .abc is the whole shot as one Alembic archive (pg/sim/AbcExport.h).
 // '-' for OUT.png draws nothing: the cache and the export alone, which need
 // no OpenGL.
 //
@@ -89,6 +90,7 @@
 #include "pg/sim/Cache.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
+#include "pg/sim/AbcExport.h"
 #include "pg/sim/UsdExport.h"
 #include "pg/sim/WaterMesh.h"
 #include "pg/sim/World.h"
@@ -849,13 +851,20 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         exported = n->id;
     }
     // A .usda: the whole shot, as one USD stage -- with or without geometry.
+    // An .abc: as one Alembic archive.
     std::unique_ptr<sim::UsdExport> usd;
+    std::unique_ptr<sim::AbcExport> abc;
     if (sim::isUsdPath(o.exportPattern) && o.exportPattern.find("$F") == std::string::npos) {
         const sim::Node* n = exported ? net.node(exported) : nullptr;
         usd = std::make_unique<sim::UsdExport>(o.exportPattern, n ? n->name : std::string("geometry"),
                                                1.0f / c.world.sanitized().timeStep);
     }
-    if (!o.exportPattern.empty() && !exported && !usd) {
+    if (sim::isAlembicPath(o.exportPattern)) {
+        const sim::Node* n = exported ? net.node(exported) : nullptr;
+        abc = std::make_unique<sim::AbcExport>(o.exportPattern, n ? n->name : std::string("geometry"),
+                                               1.0f / c.world.sanitized().timeStep);
+    }
+    if (!o.exportPattern.empty() && !exported && !usd && !abc) {
         std::fprintf(stderr, "%s: --export writes the displayed geometry, and no node is displayed: give one the "
                              "display flag, or name it with --export-node\n", cmd);
         return 1;
@@ -1165,6 +1174,12 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
                 return 1;
             }
+        } else if (abc) {
+            const GeometryPtr geo = exported ? geometry.cook(exported, f, world.timeStep) : nullptr;
+            if (!abc->add(*current, geo, c.hasCamera ? &c.cameraAt(f) : nullptr, c.lookAt(f), error)) {
+                std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+                return 1;
+            }
         } else if (!o.exportPattern.empty()) {
             const GeometryPtr geo = geometry.cook(exported, f, world.timeStep);
             lastExport = pg::io::framePath(o.exportPattern, f);
@@ -1317,6 +1332,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
+    if (abc && !abc->finish(error)) {
+        std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
+        return 1;
+    }
     if (!o.cacheDir.empty()) {
         // Done: the note says so, and the checkpoint has served.
         sim::CacheInfo info;
@@ -1333,9 +1352,9 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     }
     std::string what;
     if (solver && world.hasGas) {
-        const sim::Domain& d = solver->gas()->domain();
-        what += ", gas " + std::to_string(d.cells[0]) + " x " + std::to_string(d.cells[1]) + " x " +
-                std::to_string(d.cells[2]) + " cells";
+        const sim::Domain d = solver->gas() ? solver->gas()->domain() : world.sanitized().gas.solver.domain();
+        what += std::string(world.vdbGas.any() ? ", gas read from files on " : ", gas ") + std::to_string(d.cells[0]) +
+                " x " + std::to_string(d.cells[1]) + " x " + std::to_string(d.cells[2]) + " cells";
         if (const sim::UpresSolver* u = solver->upres()) {
             const sim::Domain& f = u->domain();
             what += ", upres " + std::to_string(f.cells[0]) + " x " + std::to_string(f.cells[1]) + " x " +
@@ -1422,8 +1441,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         };
         add("pieces", spent.rigid, world.hasRigid);
         add("into scenes", spent.scenes, world.hasRigid);
-        add("gas", spent.gas, world.hasGas);
-        if (world.hasGas) {
+        // The gas read from files has no stages: reading them is all it does.
+        const bool simulatedGas = world.hasGas && !world.vdbGas.any();
+        add(simulatedGas ? "gas" : "gas read", spent.gas, world.hasGas);
+        if (simulatedGas) {
             static const char* stages[8] = {"solids", "tiles", "emit", "advect", "combust", "forces", "project", "dissipate"};
             line += " (";
             for (int s = 0; s < 8; ++s) {
@@ -1471,6 +1492,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         if (usd->gasFiles() > 0) beside += ", the gas in " + std::to_string(usd->gasFiles()) + " VDB files";
         std::printf("exported %d frames as USD to %s: %d bodies%s\n", usd->frames(), usd->path().c_str(), usd->bodies(),
                     beside.c_str());
+    }
+    if (abc) {
+        std::printf("exported %d frames as Alembic to %s: %d bodies%s\n", abc->frames(), abc->path().c_str(),
+                    abc->bodies(),
+                    abc->gasFiles() > 0 ? (", the gas in " + std::to_string(abc->gasFiles()) + " VDB files").c_str() : "");
     }
     return 0;
 }
@@ -1677,7 +1703,8 @@ void printUsage(std::FILE* out) {
                  "                   .ply points, .obj polygons, .vdb volumes, .usda; a .usda without $F: the\n"
                  "                   whole shot as one USD stage -- geometry, pieces, grit, water, rain, gas (VDB\n"
                  "                   beside it), camera, light; what changes every frame in a layer a frame\n"
-                 "                   beside it (NAME_frames/).\n"
+                 "                   beside it (NAME_frames/); an .abc: the whole shot as one Alembic\n"
+                 "                   archive -- geometry, pieces, grit, grains, water, rain, cloth, camera.\n"
                  "                   '-' for OUT.png: no pictures. --threads N: on N threads (all there are\n"
                  "                   by default) -- the same frames on any number.\n"
                  "                   --start N: pictures and export from frame N on (a farm's share of a shot);\n"

@@ -1,6 +1,6 @@
 # Roadmapa
 
-> Stav dokumentu: **v3** · Poslední aktualizace: 2026-10-02
+> Stav dokumentu: **v3** · Poslední aktualizace: 2026-10-04
 >
 > Živý dokument. Verze 1 (2026-09-21) plánovala headless knihovnu pro
 > geometrii, GUI až ve třetí fázi a simulace po verzi 1.0. Cíl se změnil:
@@ -28,7 +28,7 @@ Houdini:
 | Procedurálnost | Výrazy a odkazy v parametrech, subnety a digital assets, smyčky |
 | Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; tuhá tělesa a destrukce; látky, lana a měkká tělesa (XPBD) |
 | Obraz | Viewport, kamera, render záběru do obrázků a videa |
-| Pipeline | Příkazová řádka, cache na disku, export (PLY, OBJ, OpenVDB, USD), Python API |
+| Pipeline | Příkazová řádka, cache na disku, export (PLY, OBJ, OpenVDB, USD, Alembic), čtení USD, Alembic a OpenVDB, Python API |
 
 Inspirace v Houdini je koncepční. Implementace je **clean room**: žádný HDK,
 žádný reverse engineering, žádné přebírání dokumentace.
@@ -79,7 +79,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Render | Cycles z Blenderu jako knihovna (sítě a instance, Principled BSDF, sklo a voda, kouř a oheň, fyzikální obloha jako v Blenderu, převod barev AgX, detail povrchů, hloubka ostrosti, rozmazání pohybem, Open Image Denoise), výchozí v záložce Render, `--renderer cycles`; vlastní path tracer na procesoru přes Intel Embree 4 a NanoVDB jako druhá volba (`--renderer path`); PNG a EXR s průchody; oba nad plate záběru s holdouty a shadow catchery | [docs/cycles.md](docs/cycles.md), [docs/pathtracer.md](docs/pathtracer.md), [docs/plate.md](docs/plate.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
-| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť a zrna jako kamínky, povrch vody, déšť, prach a pára, kamera, světla; co se mění, v souboru pro každý snímek) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
+| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť a zrna jako kamínky, povrch vody, déšť, prach a pára, kamera, světla; co se mění, v souboru pro každý snímek) a do Alembicu; čtení Alembicu a OpenVDB (kouř z jiných programů přehraný jako plyn, level set jako překážka) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md), [docs/alembic.md](docs/alembic.md), [docs/vdb.md](docs/vdb.md) |
 | Obraz | Kamera záběru, render do PNG, sekvence a videa | [docs/render.md](docs/render.md) |
 
 ### Co měření změnilo
@@ -189,6 +189,19 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   snímku, USD Import kulisu a modely jako geometrii v metrech s Y nahoru;
   `prototype usd`, `pg.UsdStage`. Ověřeno proti knihovně USD; ukázka
   [examples/sim/matchmove.pgsim](examples/sim/matchmove.pgsim).
+- ✅ **Alembic** (bez knihovny; [docs/alembic.md](docs/alembic.md)): celý
+  záběr jako jeden archiv `.abc` — zobrazená geometrie, kusy jako tělesa
+  v pohybu (tvar jednou, pak Xform), drť, zrna, výztuž, látka, voda, déšť,
+  kamera; plyn jako VDB vedle — a uzly Alembic Import a Alembic Camera.
+  Ověřeno Blenderem 4.5 (Alembic 1.8.3) oběma směry; ukázka
+  [examples/sim/alembic_shot.pgsim](examples/sim/alembic_shot.pgsim).
+- ✅ **OpenVDB — čtení** (bez knihovny; [docs/vdb.md](docs/vdb.md)): zip,
+  Blosc (LZ4, zlib, BloscLZ), half, neaktivní hodnoty, dlaždice, instance,
+  proudy, otočené mřížky; VDB Gas přehraje kouř a oheň jiných programů
+  jako plyn záběru, VDB Import dá objemy nebo polygony level setu.
+  Ověřeno na souborech z OpenVDB 10 a 13; ukázky
+  [examples/sim/vdb_fireball.pgsim](examples/sim/vdb_fireball.pgsim)
+  a [examples/sim/vdb_rock.pgsim](examples/sim/vdb_rock.pgsim).
 - ✅ **`v` a stabilní `id`** u všech částic (drť, voda, déšť): z nich
   renderery počítají rozmazání pohybem a instancování. Nesou je snímky
   (cache formát 4), uzly Liquid Points, Rain Points a RBD Pieces (`grit`)
@@ -447,7 +460,9 @@ Seřazeno podle poměru hodnota / náklad:
    vlastními renderery.
 4. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
    hrdlem (kritérium M5 výše).
-5. **Alembic, čtení VDB, MaterialX.**
+5. **Výměna dat** — ✅ Alembic (zápis i čtení, [alembic.md](docs/alembic.md))
+   a čtení OpenVDB ([vdb.md](docs/vdb.md)). Zbývá: MaterialX, zápis VDB
+   s kompresí, rychlost plynu (`vel`) ve snímcích a souborech.
 6. **Build podle VFX Reference Platform** — Rocky Linux a knihovny ve
    verzích, se kterými počítají pipeline studií.
 7. **Úpravy geometrie ve viewportu** — ✅ body, hrany a plochy vybrané

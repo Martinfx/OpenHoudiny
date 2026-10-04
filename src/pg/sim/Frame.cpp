@@ -736,4 +736,28 @@ std::shared_ptr<Geometry> drawnBodies(const Frame& frame, const Look& look) {
     return all;
 }
 
+std::vector<Volume> gasVolumes(const Frame& frame) {
+    std::vector<Volume> volumes;
+    const Domain& d = frame.domain;
+    const size_t cells = d.cellCount();
+    std::vector<uint16_t> scratch;
+    const std::vector<uint16_t>& gas = frame.fields.empty() ? frame.fields : frame.denseFields(scratch);
+    if (gas.empty() || gas.size() < 3 * cells) return volumes;
+    const char* names[3] = {"density", "temperature", "flame"};
+    for (int channel = 0; channel < 3; ++channel) {
+        std::vector<float> values(cells);
+        for (size_t c = 0; c < cells; ++c) values[c] = fromHalf(gas[3 * c + static_cast<size_t>(channel)]);
+        volumes.push_back(
+            Volume::make(names[channel], d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2], std::move(values)));
+    }
+    std::vector<uint16_t> steamScratch;
+    const std::vector<uint16_t>& steam = frame.denseSteam(steamScratch);
+    if (steam.size() == cells) {
+        std::vector<float> values(cells);
+        for (size_t c = 0; c < cells; ++c) values[c] = fromHalf(steam[c]);
+        volumes.push_back(Volume::make("steam", d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2], std::move(values)));
+    }
+    return volumes;
+}
+
 }  // namespace pg::sim

@@ -13,7 +13,9 @@ stejné, na kterém stojí `pgdemo`. Geometrie se:
 - **vrací ze simulací** — částice vody, kapky deště a mřížky plynu jako body
   a objemy, které jdou dál upravovat dalšími uzly;
 - **exportuje** — do PLY, OBJ a OpenVDB, snímek po snímku
-  ([cache.md](cache.md)).
+  ([cache.md](cache.md));
+- **čte** — z OBJ, USD, Alembicu a OpenVDB ([usd-import.md](usd-import.md),
+  [alembic.md](alembic.md), [vdb.md](vdb.md)).
 
 ![Editor: částice vody jako body obarvené wranglem podle rychlosti, tabulka jejich atributů a síť s display flagem na uzlu speed_color](img/editor-geometry.png)
 
@@ -77,7 +79,10 @@ nastaveným na ni.
 | **Liquid Points** | Částice vody z Liquid Solveru: `P`, rychlost `v`, pěna `foam`, číslo `id` (stejné ze snímku na snímek) |
 | **Liquid Surface** | Voda z Liquid Solveru jako povrch, ze kterého ji renderer renderuje: uzavřená síť kolem ní s normálami `N`, rychlostí `v` a pěnou `foam`; s Ripples i vlnky od deště. Viz níže |
 | **Rain Points** | Kapky deště a kapičky odstřiků: `P`, `v`, `droplet` (1 u kapičky), `id` (kapičky od 2³⁰) |
-| **Gas Volume** | Plyn z Pyro Solveru jako tři objemy: `density` (kouř), `temperature`, `flame` |
+| **Gas Volume** | Plyn z Pyro Solveru (nebo z VDB Gas) jako tři objemy: `density` (kouř), `temperature`, `flame` |
+| **USD Import** | Geometrie scény USD (`.usda`, `.usdc`, `.usdz`) v daném snímku, složené jako v USD, v metrech s Y nahoru ([usd-import.md](usd-import.md)) |
+| **Alembic Import** | Geometrie souboru Alembic (`.abc`) v daném snímku, kam ji dají transformace: polygony, body, křivky, atributy, FaceSety jako skupiny ([alembic.md](alembic.md)) |
+| **VDB Import** | Mřížky souboru OpenVDB jako objemy, číslovaná sekvence soubor na snímek; se Surface polygony jejich povrchu — level set kolem nuly, hustota kolem Iso ([vdb.md](vdb.md)) |
 | **Voronoi Fracture** | Uzavřené těleso rozřezané na kusy — buňky bodů z druhého vstupu, nebo Count náhodných uvnitř — každý uzavřený, s číslem `piece` a řeznými plochami ve skupině `inside`; viz [destruction.md](destruction.md) |
 | **RBD Pieces** | Kusy z RBD Solveru tam, kam ve snímku dopadly: body posunuté a otočené, rychlost `v`; s `grit` i drť jako body (`pscale`, `v`, `id`) |
 
