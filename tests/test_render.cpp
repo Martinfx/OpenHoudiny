@@ -928,12 +928,15 @@ TEST(render_cycles_lights_the_scene_with_a_sky_picture) {
     // Strength 2; seen straight up, the sky's blue; turned, the bright
     // quarter goes round.
     const std::string file = (std::filesystem::temp_directory_path() / "pg_test_sky.exr").string();
-    {
+    // The picture in `space`, its chromaticities saying so.
+    auto writeSky = [&](LinearSpace space) {
         io::ExrImage sky;
         sky.width = 64;
         sky.height = 32;
+        sky.hasChromaticities = space != LinearSpace::Rec709;
+        sky.chromaticities = chromaticitiesOf(space);
         const char* names[3] = {"R", "G", "B"};
-        const float above[3] = {0.2f, 0.35f, 0.9f}, below[3] = {0.3f, 0.2f, 0.1f};
+        const Vec3 above = fromRec709(Vec3(0.2f, 0.35f, 0.9f), space), below = fromRec709(Vec3(0.3f, 0.2f, 0.1f), space);
         for (int c = 0; c < 3; ++c) {
             io::ExrChannel ch;
             ch.name = names[c];
@@ -948,7 +951,8 @@ TEST(render_cycles_lights_the_scene_with_a_sky_picture) {
         }
         std::string error;
         CHECK(io::writeExr(sky, file, error));
-    }
+    };
+    writeSky(LinearSpace::Rec709);
     auto render = [&](const sim::Camera& c, float rotation, float strength, bool behind) {
         sim::Camera cam = c;
         cam.width = 32;
@@ -997,6 +1001,12 @@ TEST(render_cycles_lights_the_scene_with_a_sky_picture) {
     }
     std::printf("  turned round: the view's blue %.3f to %.3f\n", least, most);
     CHECK(most > 2.0f * least);
+    // The same sky from an ACES pipeline, in ACEScg: Cycles reads its pixels
+    // as they are, the shader brings them to Rec. 709 -- the same light.
+    writeSky(LinearSpace::ACEScg);
+    const Vec3 cg = render(down, 0.0f, 1.0f, false);
+    std::printf("  the sky in ACEScg: the floor %.3f %.3f %.3f\n", cg.x, cg.y, cg.z);
+    for (int c = 0; c < 3; ++c) CHECK(std::fabs(cg[c] / floor[c] - 1.0f) < 0.02f);
     std::filesystem::remove(file);
 }
 
@@ -1178,7 +1188,8 @@ TEST(render_unshown_gives_back_the_light_a_picture_shows) {
     // Every grey, to the level; the colours of a photograph -- all but the
     // most saturated -- to the level too, in each view.
     std::mt19937 rng(7);
-    for (const Settings::View view : {Settings::View::AgXPunchy, Settings::View::AgX, Settings::View::Aces}) {
+    for (const Settings::View view : {Settings::View::AgXPunchy, Settings::View::AgX, Settings::View::Aces,
+                                      Settings::View::Aces1, Settings::View::Aces2, Settings::View::Standard}) {
         // But white in Punchy: its curve shows no more than 254.5 of 255.
         int greys = 0;
         for (int k = 0; k < 256; ++k) {

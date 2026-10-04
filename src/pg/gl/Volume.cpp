@@ -3555,7 +3555,7 @@ VolumeRenderer::PassImage VolumeRenderer::readPasses(int factor) const {
 }
 
 bool writePassesExr(const VolumeRenderer& renderer, const std::string& path, const std::string& comment,
-                    std::string& error) {
+                    std::string& error, LinearSpace space) {
     using Surface = VolumeRenderer::Surface;
     VolumeRenderer::PassImage p = renderer.readPasses(2);
     if (p.width == 0) {
@@ -3565,7 +3565,18 @@ bool writePassesExr(const VolumeRenderer& renderer, const std::string& path, con
     io::ExrImage img;
     img.width = p.width;
     img.height = p.height;
+    img.hasChromaticities = true;
+    img.chromaticities = chromaticitiesOf(space);
     const size_t n = static_cast<size_t>(p.width) * static_cast<size_t>(p.height);
+    if (space != LinearSpace::Rec709) {
+        for (size_t i = 0; i < n; ++i) {
+            float* c = &p.rgba[4 * i];
+            const Vec3 to = fromRec709(Vec3(c[0], c[1], c[2]), space);
+            c[0] = to.x;
+            c[1] = to.y;
+            c[2] = to.z;
+        }
+    }
     const char* rgba[4] = {"R", "G", "B", "A"};
     for (int c = 0; c < 4; ++c) {
         io::ExrChannel ch{rgba[c], true, std::vector<float>(n)};

@@ -6,7 +6,9 @@
 // path tracer, or from what any renderer made (Cycles.h). Over a plate
 // (Plate.h) the PNG is the CG over it; the EXR the CG alone, its alpha (A)
 // and what the plate is multiplied by (catcher.*), for compositing:
-// plate x catcher x (1 - A) + RGB.
+// plate x catcher x (1 - A) + RGB. The EXR's light and albedo are in the
+// colour space the settings ask (Settings::exrSpace), its chromaticities
+// saying which.
 //
 #include "pg/render/PathTracer.h"
 
@@ -25,6 +27,7 @@ struct Rendered {
     Image alpha, catcher, plate;
     float exposure = 1.0f;
     Settings::View view = Settings::View::AgXPunchy;  ///< how a PNG shows its light
+    LinearSpace space = LinearSpace::Rec709;           ///< what an EXR's light and colours are in
 };
 
 /// The path tracer's: `denoise`, the picture with the noise taken out.

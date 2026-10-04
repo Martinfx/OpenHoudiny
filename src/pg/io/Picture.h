@@ -9,7 +9,9 @@
 //   .jpg .jpeg    baseline and progressive, grey and YCbCr, any
 //                 subsampling; sRGB
 //   .exr          lines of pixels, uncompressed or RLE, ZIP, PIZ, PXR24,
-//                 B44 or B44A; half, float and uint channels; linear
+//                 B44 or B44A; half, float and uint channels; linear --
+//                 light of another space than Rec. 709 (ACEScg, ACES2065-1:
+//                 the file's chromaticities say so) brought to it
 //
 // A picture keeps its values as the file has them: PNG's and JPEG's as
 // they are shown (sRGB, 0 to 1), EXR's in linear light. What they are in

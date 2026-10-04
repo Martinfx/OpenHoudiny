@@ -19,6 +19,7 @@ Rendered renderedOf(const PathTracer& tracer, bool denoise) {
     r.depth = tracer.depth();
     r.exposure = tracer.scene()->look.exposure;
     r.view = tracer.settings().view;
+    r.space = tracer.settings().exrSpace;
     if (const auto& plate = tracer.scene()->plate) {
         r.alpha = tracer.alpha();
         r.catcher = tracer.catcher(denoise);
@@ -69,6 +70,23 @@ bool savePicture(const Rendered& rendered, const std::string& path, const std::s
     io::ExrImage out;
     out.width = image.width;
     out.height = image.height;
+    out.hasChromaticities = true;
+    out.chromaticities = chromaticitiesOf(rendered.space);
+    // The light and the colours in the space asked for.
+    auto inSpace = [&](const Image& from) {
+        if (rendered.space == LinearSpace::Rec709 || from.channels < 3) return from;
+        Image to = from;
+        const size_t k = static_cast<size_t>(from.channels);
+        for (size_t p = 0; p + 1 <= to.pixels.size() / k; ++p) {
+            float* v = &to.pixels[p * k];
+            const Vec3 c = fromRec709(Vec3(v[0], v[1], v[2]), rendered.space);
+            v[0] = c.x;
+            v[1] = c.y;
+            v[2] = c.z;
+        }
+        return to;
+    };
+    const Image light = inSpace(image), albedo = inSpace(rendered.albedo);
     // A pass the renderer did not make, or of another size: left out.
     auto channel = [&](const char* name, const Image& from, int c, bool half) {
         if (from.width != image.width || from.height != image.height || c >= from.channels ||
@@ -82,9 +100,9 @@ bool savePicture(const Rendered& rendered, const std::string& path, const std::s
         for (size_t p = 0; p < n; ++p) ch.values[p] = from.pixels[p * static_cast<size_t>(from.channels) + static_cast<size_t>(c)];
         out.channels.push_back(std::move(ch));
     };
-    channel("R", image, 0, true);
-    channel("G", image, std::min(1, image.channels - 1), true);
-    channel("B", image, std::min(2, image.channels - 1), true);
+    channel("R", light, 0, true);
+    channel("G", light, std::min(1, light.channels - 1), true);
+    channel("B", light, std::min(2, light.channels - 1), true);
     // Over a plate, the CG alone: how much of each pixel it covers, and
     // what the plate is multiplied by there.
     const bool over = !rendered.plate.pixels.empty();
@@ -97,9 +115,9 @@ bool savePicture(const Rendered& rendered, const std::string& path, const std::s
         out.channels.push_back(std::move(alpha));
     }
     channel("Z", rendered.depth, 0, false);
-    channel("albedo.R", rendered.albedo, 0, true);
-    channel("albedo.G", rendered.albedo, 1, true);
-    channel("albedo.B", rendered.albedo, 2, true);
+    channel("albedo.R", albedo, 0, true);
+    channel("albedo.G", albedo, 1, true);
+    channel("albedo.B", albedo, 2, true);
     channel("N.X", rendered.normal, 0, true);
     channel("N.Y", rendered.normal, 1, true);
     channel("N.Z", rendered.normal, 2, true);

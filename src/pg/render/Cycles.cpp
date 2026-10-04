@@ -1,5 +1,6 @@
 #include "pg/render/Cycles.h"
 
+#include "pg/io/Exr.h"
 #include "pg/render/Plate.h"
 #include "pg/render/Textures.h"
 
@@ -1597,7 +1598,9 @@ struct CyclesRender::Impl {
     bool physicalSky(const Scene& s) const { return skyKind(s) == Settings::Sky::Physical; }
 
     /// The sky picture all round, turned as Sky Rotation says; looked up
-    /// the way `at` gives, else the ray's.
+    /// the way `at` gives, else the ray's. An EXR whose chromaticities say
+    /// it is in another space (ACEScg, ACES2065-1) comes to Rec. 709 --
+    /// Cycles reads its pixels as they are.
     ccl::ShaderOutput* imageSky(ccl::ShaderGraph& graph, ccl::ShaderOutput* at = nullptr) const {
         auto* env = graph.create_node<ccl::EnvironmentTextureNode>();
         env->set_filename(ccl::ustring(settings.skyImage));
@@ -1605,7 +1608,21 @@ struct CyclesRender::Impl {
         env->set_interpolation(ccl::INTERPOLATION_LINEAR);
         env->tex_mapping.rotation = ccl::make_float3(0.0f, 0.0f, settings.skyRotation * kPi / 180.0f);
         if (at) graph.connect(at, env->input("Vector"));
-        return env->output("Color");
+        Chromaticities space{};
+        if (!io::exrChromaticities(settings.skyImage, space) || isRec709(space)) return env->output("Color");
+        // Each channel of Rec. 709 a row of the matrix times the colour.
+        const Mat3 m = toRec709From(space);
+        auto* out = graph.create_node<ccl::CombineColorNode>();
+        out->set_color_type(ccl::NODE_COMBSEP_COLOR_RGB);
+        const char* channels[3] = {"Red", "Green", "Blue"};
+        for (int r = 0; r < 3; ++r) {
+            auto* dot = graph.create_node<ccl::VectorMathNode>();
+            dot->set_math_type(ccl::NODE_VECTOR_MATH_DOT_PRODUCT);
+            dot->set_vector2(ccl::make_float3(m[0][r], m[1][r], m[2][r]));
+            graph.connect(env->output("Color"), dot->input("Vector1"));
+            graph.connect(dot->output("Value"), out->input(channels[r]));
+        }
+        return out->output("Color");
     }
 
     /// The sky's light from along `at` (the ray's way without it), before
@@ -2420,6 +2437,7 @@ Rendered CyclesRender::rendered() const {
         }
     }
     r.view = impl_->settings.view;
+    r.space = impl_->settings.exrSpace;
     if (const auto& scene = impl_->scene) {
         r.exposure = scene->look.exposure;
         if (scene->plate) {

@@ -1298,7 +1298,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         volume->render(width * 2, height * 2);  // 2x, averaged down: anti-aliasing
         if (exr) {
             last = o.every > 0 ? numbered(outPath, f) : outPath;
-            if (!gl::writePassesExr(*volume, last, "prototype sim " + network + ", frame " + std::to_string(f), error)) {
+            if (!gl::writePassesExr(*volume, last, "prototype sim " + network + ", frame " + std::to_string(f), error,
+                                    c.render.exrSpace)) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
                 return 1;
             }

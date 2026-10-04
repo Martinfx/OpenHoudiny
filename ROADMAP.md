@@ -76,7 +76,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Geometrie v editoru | 30 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture, Convert Volume, Liquid Surface), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Stromy | Uzel Tree: kmen s vidlicí, tři úrovně větví, sedm tvarů koruny, listy a jehličí, les na bodech, `flex` pro vítr, kostra pro vlastní listy; deterministicky na libovolném počtu vláken | [docs/trees.md](docs/trees.md) |
 | Vegetace | Instance: body, které zastupují prototypy (GPU instancing, USD PointInstancer, Unpack); uzel Grass (trsy trávy), stromy a keře jako varianty; Scatter s hustotou, maskou, sklonem a odstupem; louka u lesa ve větru | [docs/vegetation.md](docs/vegetation.md) |
-| Render | Cycles z Blenderu jako knihovna (sítě a instance, Principled BSDF, sklo a voda, kouř a oheň, fyzikální obloha jako v Blenderu, převod barev AgX, detail povrchů, hloubka ostrosti, rozmazání pohybem, Open Image Denoise), výchozí v záložce Render, `--renderer cycles`; vlastní path tracer na procesoru přes Intel Embree 4 a NanoVDB jako druhá volba (`--renderer path`); PNG a EXR s průchody; oba nad plate záběru s holdouty a shadow catchery | [docs/cycles.md](docs/cycles.md), [docs/pathtracer.md](docs/pathtracer.md), [docs/plate.md](docs/plate.md) |
+| Render | Cycles z Blenderu jako knihovna (sítě a instance, Principled BSDF, sklo a voda, kouř a oheň, fyzikální obloha jako v Blenderu, převod barev AgX, detail povrchů, hloubka ostrosti, rozmazání pohybem, Open Image Denoise), výchozí v záložce Render, `--renderer cycles`; vlastní path tracer na procesoru přes Intel Embree 4 a NanoVDB jako druhá volba (`--renderer path`); pohledy AgX, ACES 1.0 a ACES 2.0 jako v OpenColorIO; PNG a EXR s průchody v Rec. 709, ACEScg nebo ACES2065-1; oba nad plate záběru s holdouty a shadow catchery | [docs/cycles.md](docs/cycles.md), [docs/pathtracer.md](docs/pathtracer.md), [docs/color.md](docs/color.md), [docs/plate.md](docs/plate.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
 | Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť a zrna jako kamínky, povrch vody, déšť, prach a pára, kamera, světla; co se mění, v souboru pro každý snímek) a do Alembicu; čtení Alembicu a OpenVDB (kouř z jiných programů přehraný jako plyn, level set jako překážka) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md), [docs/alembic.md](docs/alembic.md), [docs/vdb.md](docs/vdb.md) |
@@ -455,8 +455,11 @@ Seřazeno podle poměru hodnota / náklad:
    ([cycles.md](docs/cycles.md#rozmazání-pohybem)); CG nad plate záběru,
    holdouty a shadow catchery v obou rendererech, do EXR s alfou
    a průchodem `catcher` ([plate.md](docs/plate.md#ve-finálním-renderu-cycles-a-path-tracer)).
+   ✅ ACES: pohledy ACES 1.0 a 2.0 jako v konfiguracích OpenColorIO
+   (od OpenColorIO 2.6 nejvýš o setinu stupně z 255), EXR v ACEScg
+   a ACES2065-1 s chromaticities a jejich čtení ([color.md](docs/color.md)).
    Zbývá: Cycles na GPU, rozmazání plynu a objektů scény, UV a normálové
-   mapy, barevná správa OCIO/ACES. Do té doby renderují studia náročné záběry přes USD
+   mapy, čtení konfigurací OCIO. Do té doby renderují studia náročné záběry přes USD
    vlastními renderery.
 4. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
    hrdlem (kritérium M5 výše).

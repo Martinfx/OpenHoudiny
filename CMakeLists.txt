@@ -77,6 +77,7 @@ target_compile_definitions(pgmath INTERFACE GLM_FORCE_CTOR_INIT GLM_FORCE_XYZW_O
 
 add_library(pgcore
   src/pg/core/Types.cpp
+  src/pg/core/ColorSpace.cpp
   src/pg/core/Attribute.cpp
   src/pg/core/Geometry.cpp
   src/pg/core/Parallel.cpp
@@ -330,6 +331,7 @@ add_library(pgsim
   src/pg/render/Scene.cpp
   src/pg/render/Particles.cpp
   src/pg/render/PathTracer.cpp
+  src/pg/render/Aces.cpp
   src/pg/render/Plate.cpp
   src/pg/render/Save.cpp
   src/pg/render/Textures.cpp
@@ -1058,6 +1060,7 @@ add_executable(pgtests
   tests/test_grit_grains.cpp
   tests/test_alembic.cpp
   tests/test_vdb_read.cpp
+  tests/test_aces.cpp
   tests/test_edit.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp

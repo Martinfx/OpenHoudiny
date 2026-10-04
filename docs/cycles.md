@@ -146,7 +146,8 @@ tracer:
 | **Sky Sun** | k obrázku i slunce Looku: ostré stíny pod oblohou bez vlastního slunce |
 | **Clouds** 0–1 (0) | kolik oblohy pokrývají mraky: 0 jasno, 0,3 pár mraků, 0,6 polojasno, 1 zataženo (slunce skoro schované, stíny měkké) |
 | **Cloud Size**, **Cloud Wind**, **Cloud Direction** | jak velké jsou mraky (km, 1,5), jak rychle je nese vítr (m/s, 5) a kam (stupně od osy +x): snímek po snímku se posouvají |
-| **View** `agx_punchy` (výchozí), `agx`, `aces` | jak se světlo převede na obraz: AgX jako v Blenderu, jasné barvy přecházejí do bílé jako na filmu. `agx_punchy` přidá look Punchy z Blenderu (víc kontrastu a barev, střední tóny tmavší), `aces` je křivka viewportu. Platí pro Cycles i path tracer. |
+| **View** `agx_punchy` (výchozí), `agx`, `aces`, `aces1`, `aces2`, `standard` | jak se světlo převede na obraz: AgX jako v Blenderu, jasné barvy přecházejí do bílé jako na filmu. `agx_punchy` přidá look Punchy z Blenderu (víc kontrastu a barev, střední tóny tmavší), `aces` je křivka viewportu, `aces1` a `aces2` jsou ACES 1.0 a 2.0 jako v OpenColorIO, `standard` sRGB bez křivky ([color.md](color.md)). Platí pro Cycles i path tracer. |
+| **EXR Color Space** `rec709` (výchozí), `acescg`, `aces2065_1` | v jakém prostoru je světlo v EXR; atribut chromaticities to říká ([color.md §3](color.md#3-exr-v-prostorech-aces)) |
 | **Surface Detail** 0–1 (1) | povrchy, které jsou ve scéně hladké, dostanou barvu a drsnost proměnlivou ve skvrnách metr až dva velkých a velkých jako dlaň, a drobné nerovnosti. Zem k tomu skvrny několika metrů. 0: hladké jako ve viewportu. |
 | **Textures**, **Texture Folder** | fotografie materiálů (beton a jeho lom, omítka, cihlová zeď, malta, kov, asfalt, dřevo, střechy a tašky, dlažba, kůra, půda, trávník, písek) a textury z uzlů Material; vypnuté: jen vzory a barvy. Viz [materials.md](materials.md) |
 
@@ -323,7 +324,8 @@ dostane snímek, na kterém se zastaví.
   `PASS_SHADOW_CATCHER` se jmenuje „catcher“. Při čtení „combined“ dá
   Cycles CG bez catcherů i s alfou a z toho `overPlate` složí obraz.
 - `src/pg/render/PathTracer.cpp`: `shown()` převádí lineární světlo na obraz
-  (AgX, AgX Punchy, ACES) pro oba renderery.
+  (AgX, AgX Punchy, ACES Fit, a přes `Aces.h` ACES 1.0 a 2.0) pro oba
+  renderery.
 - `src/pg/render/Gas.h`: `Gas::dense` dává mřížky plynu pro renderer, který
   čte husté mřížky.
 - `tools/prototype/RenderView.cpp`: vlákno záložky Render s oběma renderery.

@@ -28,6 +28,7 @@
 // edge-avoiding filter guided by the colour, the normal and the depth of what
 // each pixel sees (denoise()), keeping edges, a blade from the blade behind it.
 //
+#include "pg/core/ColorSpace.h"
 #include "pg/render/Scene.h"
 #include "pg/render/Textures.h"
 
@@ -79,10 +80,16 @@ struct Settings {
     float cloudDirection = 0.0f;
     /// How light becomes the picture: AgX, as Blender shows it -- bright
     /// colours go towards white as on film -- with Blender's look Punchy,
-    /// more contrast and colour, or as it is; or ACES (Narkowicz's fit), as
-    /// the viewport.
-    enum class View : uint8_t { AgXPunchy, AgX, Aces };
+    /// more contrast and colour, or as it is; ACES (Narkowicz's fit of its
+    /// curve), as the viewport; ACES 1.0 and ACES 2.0, as OpenColorIO's ACES
+    /// configs show them on an sRGB screen (Aces.h); Standard, the light as
+    /// it is in sRGB, white and brighter clipped.
+    enum class View : uint8_t { AgXPunchy, AgX, Aces, Aces1, Aces2, Standard };
     View view = View::AgXPunchy;
+    /// The colour space an EXR's light goes out in, its chromaticities
+    /// saying so: linear Rec. 709 as the renderers have it, or ACES's
+    /// ACEScg or ACES2065-1 (core/ColorSpace.h).
+    LinearSpace exrSpace = LinearSpace::Rec709;
     /// What Cycles adds to surfaces that are flat in the scene: their colour
     /// and roughness vary, small bumps catch the light -- 1 as stone,
     /// plaster and the ground are; 0 as flat as the viewport draws them.
@@ -184,7 +191,8 @@ private:
 /// Linear light as a screen shows it: times `exposure`, then AgX -- as
 /// Blender's view transform (Sobotka's, the polynomial fit of its curve),
 /// with its look Punchy or not -- or ACES (Narkowicz's fit) and gamma 2.2,
-/// as the viewport's; RGBA, alpha 255.
+/// as the viewport's, or ACES 1.0 or 2.0 (Aces.h), or sRGB as it is; RGBA,
+/// alpha 255.
 std::vector<uint8_t> toDisplay(const Image& image, float exposure,
                                Settings::View view = Settings::View::AgXPunchy);
 /// One colour so: 0 to 1, as a screen shows it.

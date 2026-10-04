@@ -436,11 +436,21 @@ std::vector<ParamDef> renderParams() {
              "m/s", "How fast the wind takes the clouds over the sky, frame after frame."},
             {"render_cloud_direction", "Cloud Direction", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 360.0f, -360.0f,
              720.0f, "\xc2\xb0", "Which way the wind takes the clouds, degrees round from +x."},
-            {"render_view", "View", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+            {"render_view", "View", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 5.0f, "",
              "How the light becomes the picture. AgX: as Blender shows it, bright colours going towards white as "
-             "on film -- Punchy with Blender's look of more contrast and colour. ACES: as the viewport.",
-             {"agx_punchy", "agx", "aces"},
-             {"AgX Punchy", "AgX", "ACES"}},
+             "on film -- Punchy with Blender's look of more contrast and colour. ACES Fit: the viewport's quick "
+             "curve. ACES 1.0 and ACES 2.0: as OpenColorIO's ACES configs show the light on an sRGB screen "
+             "(SDR Video; SDR 100 nits) -- 2.0 keeps hues as bright colours go white. Standard: sRGB as it is, "
+             "white and brighter clipped.",
+             {"agx_punchy", "agx", "aces", "aces1", "aces2", "standard"},
+             {"AgX Punchy", "AgX", "ACES Fit", "ACES 1.0", "ACES 2.0", "Standard"}},
+            {"render_exr_space", "EXR Color Space", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f,
+             "",
+             "The colour space an EXR's light is written in -- a render's or the viewport's: linear Rec. 709 "
+             "(sRGB), as the renderers work in, or ACES's ACEScg or ACES2065-1 for an ACES pipeline. The file's "
+             "chromaticities say which.",
+             {"rec709", "acescg", "aces2065_1"},
+             {"Linear Rec.709 (sRGB)", "ACEScg", "ACES2065-1"}},
             {"render_detail", "Surface Detail", "Render", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
              "What Cycles adds to surfaces the scene has flat: colour and roughness that vary, small bumps that "
              "catch the light -- as stone, plaster and the ground are. 0: as flat as the viewport draws them."},
@@ -4174,7 +4184,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     r.cloudSize = std::clamp(f(*output, "render_cloud_size"), 0.01f, 100.0f);
     r.cloudWind = std::max(f(*output, "render_cloud_wind"), 0.0f);
     r.cloudDirection = f(*output, "render_cloud_direction");
-    r.view = static_cast<render::Settings::View>(std::clamp(whole(*output, "render_view"), 0, 2));
+    r.view = static_cast<render::Settings::View>(std::clamp(whole(*output, "render_view"), 0, 5));
+    r.exrSpace = static_cast<LinearSpace>(std::clamp(whole(*output, "render_exr_space"), 0, 2));
     r.detail = std::clamp(f(*output, "render_detail"), 0.0f, 1.0f);
     r.textures = f(*output, "render_textures") != 0.0f;
     r.textureFolder = text(output->id, "render_texture_folder");

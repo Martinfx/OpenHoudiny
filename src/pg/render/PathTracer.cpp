@@ -1,6 +1,7 @@
 #include "pg/render/PathTracer.h"
 
 #include "pg/core/Parallel.h"
+#include "pg/render/Aces.h"
 #include "pg/render/Denoise.h"
 #include "pg/render/Plate.h"
 #include "pg/render/Random.h"
@@ -932,6 +933,15 @@ const Mat3 kAgxOutset(1.19687900512017f, -0.0528968517574562f, -0.05297163551444
 }  // namespace
 
 Vec3 shown(const Vec3& linear, Settings::View view) {
+    switch (view) {
+        case Settings::View::Aces1: return acesShown(linear, AcesOutput::V1);
+        case Settings::View::Aces2: return acesShown(linear, AcesOutput::V2);
+        case Settings::View::Standard:
+            return {std::clamp(srgbEncoded(std::clamp(linear.x, 0.0f, 1.0f)), 0.0f, 1.0f),
+                    std::clamp(srgbEncoded(std::clamp(linear.y, 0.0f, 1.0f)), 0.0f, 1.0f),
+                    std::clamp(srgbEncoded(std::clamp(linear.z, 0.0f, 1.0f)), 0.0f, 1.0f)};
+        default: break;
+    }
     if (view == Settings::View::Aces) {
         return {std::pow(aces(std::max(linear.x, 0.0f)), 1.0f / 2.2f), std::pow(aces(std::max(linear.y, 0.0f)), 1.0f / 2.2f),
                 std::pow(aces(std::max(linear.z, 0.0f)), 1.0f / 2.2f)};
@@ -964,6 +974,12 @@ Vec3 shown(const Vec3& linear, Settings::View view) {
 
 Vec3 unshown(const Vec3& display, Settings::View view) {
     const Vec3 d = glm::clamp(display, 0.0f, 1.0f);
+    switch (view) {
+        case Settings::View::Aces1: return acesUnshown(d, AcesOutput::V1);
+        case Settings::View::Aces2: return acesUnshown(d, AcesOutput::V2);
+        case Settings::View::Standard: return {srgbDecoded(d.x), srgbDecoded(d.y), srgbDecoded(d.z)};
+        default: break;
+    }
     if (view == Settings::View::Aces) {
         // Narkowicz's fit of x is y: x the root of a quadratic.
         Vec3 out;

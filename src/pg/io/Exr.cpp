@@ -142,6 +142,11 @@ std::string formatExr(const ExrImage& image) {
         o.f32(0.0f);
     });
     out.attribute("screenWindowWidth", "float", [](Bytes& o) { o.f32(1.0f); });
+    if (image.hasChromaticities) {
+        out.attribute("chromaticities", "chromaticities", [&](Bytes& o) {
+            for (const float x : image.chromaticities) o.f32(x);
+        });
+    }
     for (const auto& [attr, text] : image.strings) {
         out.attribute(attr, "string", [&](Bytes& o) { o.b.append(text); });
     }

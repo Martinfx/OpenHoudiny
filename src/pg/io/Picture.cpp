@@ -71,6 +71,18 @@ bool fromExr(const ExrImage& image, Picture& out, std::string& error) {
         for (int c = 0; c < 3; ++c) out.rgba[i * 4 + static_cast<size_t>(c)] = rgb[c]->values[i];
         if (alpha) out.rgba[i * 4 + 3] = alpha->values[i];
     }
+    // Light of another space than the renderers' -- an ACES pipeline's
+    // ACEScg or ACES2065-1, as its chromaticities say -- in Rec. 709.
+    if (image.hasChromaticities && !isRec709(image.chromaticities) && rgb[0] != rgb[1]) {
+        const Mat3 m = toRec709From(image.chromaticities);
+        for (size_t i = 0; i < n; ++i) {
+            float* p = &out.rgba[i * 4];
+            const Vec3 c = m * Vec3(p[0], p[1], p[2]);
+            p[0] = c.x;
+            p[1] = c.y;
+            p[2] = c.z;
+        }
+    }
     return true;
 }
 

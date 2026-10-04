@@ -2298,7 +2298,8 @@ bool SimWorkspace::renderImage(const std::string& path) {
         if (renderer_.passes.moving) renderer_.passes.next = gl::orbitThrough(compiled_.cameraAt(current_ + 1), 1.0f);
         renderShot(width, height, current_);
         std::string error;
-        const bool written = gl::writePassesExr(renderer_, path, "prototype " + stem() + ", frame " + std::to_string(current_), error);
+        const bool written = gl::writePassesExr(renderer_, path, "prototype " + stem() + ", frame " + std::to_string(current_),
+                                                error, compiled_.render.exrSpace);
         renderer_.passes.on = false;
         if (!written) {
             setMessage(error, true);

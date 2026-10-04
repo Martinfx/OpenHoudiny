@@ -122,6 +122,9 @@ okna.
   a oheň z Houdini, Blenderu nebo EmberGenu přehraný jako plyn záběru
   (VDB Gas), level set jako překážka nebo tvar zdroje (VDB Import); zip,
   Blosc, half, dlaždice, ověřené na souborech z OpenVDB 10 a 13
+- **[docs/color.md](docs/color.md)** — barvy: pohledy AgX, ACES 1.0
+  a ACES 2.0 jako v konfiguracích OpenColorIO, EXR v ACEScg
+  a ACES2065-1; ověřené proti OpenColorIO 2.6
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
   pozadí editoru s průběhem; EXR v lineárním světle s hloubkou, vektory
@@ -221,7 +224,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 600 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 53 plyn (řídká mřížka, upres, hašení), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 35 shader graf a materiály, 39 render, EXR, obrázky a video, 55 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 21 stromy a vegetace
+./build/pgtests            # 605 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 53 plyn (řídká mřížka, upres, hašení), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 35 shader graf a materiály, 44 render, barvy ACES, EXR, obrázky a video, 55 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 21 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
@@ -474,6 +477,13 @@ a renderuje jako plyn Pyro Solveru. **VDB Import** dá mřížky jako objemy,
 nebo polygony level setu jako překážku či tvar zdroje. Čtečka zvládne zip,
 Blosc, half floaty, dlaždice, instance i otočené mřížky a čte voxel po
 voxelu, co zapsalo OpenVDB 10 i 13 ([docs/vdb.md](docs/vdb.md)).
+
+**ACES**: pohled (View) uzlu Output převádí světlo na obraz jako AgX
+z Blenderu, nebo jako ACES 1.0 či ACES 2.0 tak, jak je ukazují konfigurace
+OpenColorIO pro ACES; od OpenColorIO 2.6 se liší nejvýš o setinu stupně
+z 255. EXR jde ven v lineárním Rec. 709, ACEScg nebo ACES2065-1
+s atributem chromaticities a EXR v ACES se při čtení převede
+([docs/color.md](docs/color.md)).
 
 **Plate**: obraz záběru, sekvence PNG, JPEG nebo EXR, jde za CG, když se
 díváte kamerou záběru, v editoru i v renderu. Čtečky jsou vlastní, bez

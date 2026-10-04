@@ -42,6 +42,7 @@
 //
 // Needs a current OpenGL 3.3 core context.
 //
+#include "pg/core/ColorSpace.h"
 #include "pg/core/Geometry.h"
 #include "pg/core/Types.h"
 #include "pg/gl/Camera.h"
@@ -143,9 +144,10 @@ class VolumeRenderer;
 /// linear light (R, G, B, A, halves), the depth along the view (Z, a float,
 /// infinity where nothing is), the motion to the next frame in pixels, right
 /// and up (forward.u, forward.v), a mask for each kind of surface and one
-/// for the smoke (mask.*); `comment` in the header. False, with why.
+/// for the smoke (mask.*); `comment` in the header. The light in `space`,
+/// its chromaticities saying so (core/ColorSpace.h). False, with why.
 bool writePassesExr(const VolumeRenderer& renderer, const std::string& path, const std::string& comment,
-                    std::string& error);
+                    std::string& error, LinearSpace space = LinearSpace::Rec709);
 
 class VolumeRenderer {
 public:

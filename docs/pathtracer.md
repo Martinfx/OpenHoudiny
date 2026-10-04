@@ -12,7 +12,7 @@ Výchozí renderer záložky Render je dnes **Cycles** z Blenderu
 ([cycles.md](cycles.md)). Path tracer se v záložce vybere v liště volbou
 **Path tracer** a renderuje i v buildu bez Cycles. Fyzikální oblohu
 a detail povrchů má jen Cycles. Převod barev (View: AgX Punchy, AgX,
-ACES) mají oba ([cycles.md §3](cycles.md#3-obloha-barvy-a-povrchy)).
+ACES Fit, ACES 1.0, ACES 2.0, Standard) mají oba ([color.md](color.md)).
 
 ![Louka: vlevo viewport (OpenGL), vpravo path tracer, 64 vzorků na pixel](img/pathtracer-meadow.jpg)
 
@@ -309,8 +309,10 @@ vidět po lomeném paprsku. Podrobnosti jsou v
   textura zůstane ostrá. Filtr se zastaví na hranách barvy, normály
   a hloubky a tam, kde se pixely liší víc než o šum (rozptyl vzorků
   z okolí 5 × 5).
-- **Výstup**: expozice, tónová křivka ACES (Narkowicz) a gama 2,2, stejně
-  jako viewport. EXR ukládá lineární světlo bez křivky.
+- **Výstup**: expozice a pohled z Outputu: AgX, ACES 1.0 a 2.0 jako
+  v OpenColorIO, nebo tónová křivka ACES (Narkowicz) a gama 2,2 jako
+  viewport ([color.md](color.md)). EXR ukládá lineární světlo bez křivky,
+  v Rec. 709, ACEScg nebo ACES2065-1.
 
 ![Tráva zblízka po 16 vzorcích: bez odšumění, vlastní filtr, Open Image Denoise; vpravo 256 vzorků bez odšumění](img/pathtracer-denoise.jpg)
 

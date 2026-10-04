@@ -484,7 +484,8 @@ public:
     Reader(std::span<const uint8_t> bytes, ExrImage& out, std::string& error)
         : b_(bytes.data()), n_(bytes.size()), out_(out), error_(error) {}
 
-    bool run() {
+    /// The header, and the pixels unless `headerOnly`.
+    bool run(bool headerOnly = false) {
         if (n_ < 8 || le32(b_) != 20000630u) return fail("not an OpenEXR file");
         const uint32_t version = le32(b_ + 4);
         if ((version & 0xFF) != 2) return fail("an OpenEXR file of version " + std::to_string(version & 0xFF));
@@ -493,7 +494,7 @@ public:
         if (version & 0x1000) return fail("an OpenEXR file of several parts");
         size_t at = 8;
         if (!header(at)) return false;
-        return pixels(at);
+        return headerOnly || pixels(at);
     }
 
 private:
@@ -555,6 +556,12 @@ private:
                 (name == "dataWindow" ? hasData_ : hasDisplay_) = true;
             } else if (type == "string") {
                 out_.strings.emplace_back(name, std::string(reinterpret_cast<const char*>(v), size));
+            } else if (type == "chromaticities" && size >= 32) {
+                for (size_t k = 0; k < 8; ++k) {
+                    const uint32_t bits = le32(v + 4 * k);
+                    std::memcpy(&out_.chromaticities[k], &bits, 4);
+                }
+                out_.hasChromaticities = true;
             } else if (type == "m44f" && size >= 64) {
                 std::array<float, 16> m{};
                 for (int k = 0; k < 16; ++k) {
@@ -684,6 +691,21 @@ bool readExr(const std::string& path, ExrImage& out, std::string& error) {
         error = path + ": " + error;
         return false;
     }
+    return true;
+}
+
+bool exrChromaticities(const std::string& path, Chromaticities& out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    // The header comes first, and is small: what of it a megabyte holds.
+    std::vector<uint8_t> bytes(size_t(1) << 20);
+    in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    bytes.resize(static_cast<size_t>(in.gcount()));
+    ExrImage image;
+    std::string error;
+    Reader r(bytes, image, error);
+    if (!r.run(true) || !image.hasChromaticities) return false;
+    out = image.chromaticities;
     return true;
 }
 
