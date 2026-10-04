@@ -3,11 +3,12 @@ pgsim 1
 # scattered over its middle, a wrangle that makes the ones higher up more
 # likely conifers; a Tree on each point -- broadleaves forking into leaders
 # on the rest, spruces on the conifers -- each its own: its number grows it,
-# Size Variation sizes it. The wind is a wrangle after the hill and the trees
-# are merged: it bends each tree from its foot by flex, how far along the
-# wood a point is -- the trunk stands, the crown sways, the twigs more, in
-# gusts that run across the hill; the hill, without flex, stays. Only the
-# points move, so the viewport sends only their places to the GPU.
+# Size Variation sizes it. The wind is Plant Wind after the hill and the
+# trees are merged: it bows each tree from its foot by flex, how far along
+# the wood a point is -- the trunk stands, the crown sways, the twigs more,
+# the leaves flap, in gusts that run across the hill; the hill, of no flex,
+# stays. Only the points move, so the viewport sends only their places to
+# the GPU; v goes with them, for motion blur.
 node 1 grid 1 land 0 0
   param sizex 160
   param sizez 160
@@ -68,9 +69,9 @@ node 10 tree 1 spruces 130 770
   param sides 8
   param segment 0.4
 node 11 merge 1 forest 0 880
-node 12 point_wrangle 1 wind 0 990
-  param snippet "// Bent from the foot: the further along the wood, the more.\nfloat f = @flex * @flex;\nfloat gust = 0.6 + 0.4 * sin(@Time * 0.8 - @P.x * 0.12);\nfloat sway = 0.5 + sin(@Time * 2.1 - @P.x * 0.2 + @P.z * 0.07);\n@P.x += ch(\"strength\") * f * gust * sway;\n@P.z += 0.3 * ch(\"strength\") * f * sin(@Time * 1.4 + @P.z * 0.25);\n// The twigs and leaves flutter.\n@P.y += 0.02 * max(@flex - 0.6, 0) * sin(@Time * 12.0 + (@P.x + @P.z) * 2.0);"
-  param strength 0.12
+node 12 plant_wind 1 wind 0 990
+  param strength 9
+  param gustsize 40
   display
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.geometry

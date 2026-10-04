@@ -751,6 +751,36 @@ std::vector<NodeType> buildTypes() {
                "The points, each standing for its clump, drawn instanced. Off: the clumps made copies of -- "
                "geometry every node can change, as heavy as its blades."}},
              {"center", nullptr, nullptr, nullptr, nullptr, "height"});
+    geometry("plant_wind", "Plant Wind", "plantwind",
+             "Trees and grass in the wind, frame by frame: each plant bowed from its foot as the wind blows "
+             "-- stiff at the foot, more and more up the wood (point flex, as Tree and Grass give it), turned "
+             "rather than shifted, so nothing stretches -- gusts running across along the wind, each plant "
+             "wavering of its own, leaves flapping, the tips of blades tossing; and v, how fast each point "
+             "goes, for motion blur. Points standing for plants (instances) stand for their plant bent ahead "
+             "into the nearest of a few shapes -- Directions ways round, Steps far -- tilted the rest of the "
+             "way: only the points change, and the same in the viewport and both renderers.",
+             in,
+             {{"direction", "Direction", "Wind", K::Float, {0.0f, 0.0f, 0.0f}, -180.0f, 180.0f, -360.0f, 360.0f,
+               "\xc2\xb0", "The way it blows, degrees from +x toward -z: 0 along +x, 90 along -z."},
+              {"strength", "Strength", "Wind", K::Float, {14.0f, 0.0f, 0.0f}, 0.0f, 45.0f, 0.0f, 90.0f, "\xc2\xb0",
+               "How far the plants bow at their tops, in a gust of the mean."},
+              {"gust", "Gusts", "Wind", K::Float, {0.6f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The share of it that comes in gusts: 0 steady, 1 all gusts and lulls."},
+              {"gustspeed", "Gust Speed", "Wind", K::Float, {6.0f, 0.0f, 0.0f}, 0.0f, 20.0f, -kBig, kBig, "m/s",
+               "How fast the gusts run across, along the wind."},
+              {"gustsize", "Gust Size", "Wind", K::Float, {25.0f, 0.0f, 0.0f}, 1.0f, 100.0f, 0.01f, kBig, "m",
+               "How far from one gust to the next."},
+              {"turbulence", "Turbulence", "Wind", K::Float, {0.25f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 2.0f, "",
+               "How much each plant wavers of its own, along the wind and across it."},
+              {"flutter", "Flutter", "Leaves", K::Float, {20.0f, 0.0f, 0.0f}, 0.0f, 60.0f, 0.0f, 90.0f, "\xc2\xb0",
+               "How far leaves flap about their stalks, and the tips of blades toss, at the wind's strength."},
+              {"flutterspeed", "Flutter Speed", "Leaves", K::Float, {3.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "1/s",
+               "Flaps a second."},
+              seed("Wind", "Another number: each plant wavering, each leaf flapping, otherwise."),
+              {"directions", "Directions", "Instances", K::Int, {8.0f, 0.0f, 0.0f}, 1.0f, 16.0f, 1.0f, 32.0f, "",
+               "Ways round each plant its bent shapes go: more, nearer the wind's way; each a plant held."},
+              {"steps", "Steps", "Instances", K::Int, {4.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
+               "How far, in steps up to the most the plants bow: more, smoother; each a plant held."}});
     {
         ParamDef f = file("An OBJ file: its points, polygons and lines. A relative path is read from the "
                           "network's folder; a file that changes is read again.");

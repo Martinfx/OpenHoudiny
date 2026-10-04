@@ -2424,6 +2424,10 @@ void VolumeRenderer::syncMeshes() {
 }
 
 void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
+    // The plants' copies at the levels of detail they look big enough for,
+    // and the billboards they need pictured -- before the buffer is bound.
+    seeFrom(eye);
+    prepareImpostors();
     const bool resized = width != gWidth_ || height != gHeight_;
     if (!gFbo_) {
         gl_.GenFramebuffers(1, &gFbo_);
@@ -2500,7 +2504,6 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
         gl_.Uniform2f(location(geoProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
         gl_.Uniform3f(location(geoProgram_, "u_eye"), eye.x, eye.y, eye.z);
         bindPictures(geoProgram_);
-        seeFrom(eye);
         // The displayed geometry, then the pieces: what each is, for the masks.
         gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Geometry));
         if (shownElements_ > 0) {
@@ -2751,13 +2754,6 @@ void VolumeRenderer::uploadInstances() {
                 }
                 gl_.BindVertexArray(0);
                 gpu.elements = static_cast<GLsizei>(m.indices.size());
-                // The last level a billboard, its pictures of the plant in full.
-                if (level == levels - 1 && levels > 1 && impostorProgram_) {
-                    const auto full = std::find_if(kept.begin(), kept.end(), [&](const InstancedGpu& g) {
-                        return g.prototype == prototype && g.level == 0;
-                    });
-                    if (full != kept.end()) captureImpostor(gpu, *full, k);
-                }
             }
             gpu.which = k;
             gpu.levels = levels;
@@ -2904,6 +2900,25 @@ void VolumeRenderer::captureImpostor(InstancedGpu& gpu, const InstancedGpu& full
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
     gl_.DeleteFramebuffers(1, &fbo);
     gl_.DeleteRenderbuffers(1, &depth);
+}
+
+void VolumeRenderer::prepareImpostors() {
+    if (!impostorProgram_) return;
+    int pictured = 0;
+    for (const InstancedGpu& gpu : instanced_) pictured += gpu.atlas ? 1 : 0;
+    for (InstancedGpu& gpu : instanced_) {
+        // A billboard is pictured when a copy is first far enough for it --
+        // no more than kMostImpostors: past them, the plant's mesh.
+        if (gpu.levels < 2 || gpu.level != gpu.levels - 1 || gpu.atlas || gpu.pictureTried || gpu.instances == 0) continue;
+        if (pictured >= kMostImpostors) break;
+        gpu.pictureTried = true;
+        const auto full = std::find_if(instanced_.begin(), instanced_.end(), [&](const InstancedGpu& g) {
+            return g.prototype == gpu.prototype && g.level == 0 && g.vao;
+        });
+        if (full == instanced_.end()) continue;
+        captureImpostor(gpu, *full, gpu.which);
+        pictured += gpu.atlas ? 1 : 0;
+    }
 }
 
 void VolumeRenderer::drawImpostors(const Vec3& eye) {

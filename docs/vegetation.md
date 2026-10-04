@@ -169,28 +169,14 @@ meadow, uzel `shrubs`).
 
 ## 6. Vítr na instancích
 
-Instance se ve větru nedeformují. Celý trs se ohne od kořene a strom se
-zakývá od paty. Stačí k tomu otočit `orient` bodů. Wrangle `wind`
-z příkladu meadow:
-
-```c
-// Nárazy větru běží přes louku a ohýbají trsy od kořene.
-float gust = 0.5 + 0.5 * sin(@Time * 1.6 - @P.x * 0.3 + 3.0 * noise(@P * 0.12));
-float bow = 0.08 + 0.22 * gust * gust + 0.05 * sin(@Time * 5.0 + @ptnum * 0.37);
-p@orient = qmultiply(quaternion(ch("strength") * bow, set(0, 0, -1)), p@orient);
-```
-
-`quaternion(úhel, osa)` je otočení kolem osy −z, takže vítr fouká
-ve směru +x. `qmultiply` ho přidá k otočení, které trs měl. Fáze závisí
-na poloze a šumu, takže nárazy běží přes louku jako vlny. Každý trs má
-navíc vlastní rychlé chvění podle `@ptnum`. Stromy a keře kývá wrangle
-`sway` s dvanáctkrát menším úhlem.
-
-Wrangle mění jen `orient`. Polohy, prototypy a ostatní atributy zůstávají
-sdílené se vstupem. Snímek louky se proto uvaří za 31–39 ms a viewport
-posílá na GPU jen nová umístění. Ohyb stébla podél jeho délky (podle
-`flex`) by potřeboval stébla jako geometrii nebo vítr ve shaderu, viz
-oddíl 10.
+Vítr dělá uzel **Plant Wind** ([trees.md](trees.md#5-vítr)). Na
+instancích předohne každou rostlinu do několika tvarů (8 směrů × 4 kroky)
+a každý bod přesměruje na nejbližší tvar ve vlastním natočení rostliny.
+Zbytek ohybu dorovná naklopením `orient`. Stébla se tak ohýbají podél
+délky, ne jen jako celý trs, a stejně ve viewportu, v obou rendererech
+i v USD. Mění se jen `instance` a `orient` bodů. Polohy a ostatní atributy
+zůstávají sdílené se vstupem a předohnuté tvary jsou stejné objekty
+snímek co snímek, takže je viewport má na GPU jednou.
 
 ## 7. Příklad meadow
 
@@ -251,15 +237,16 @@ Na tomto stroji (release, všechna vlákna):
 
 | Co | Čas |
 |---|---|
-| celá louka, první snímek (terén, 122 577 trsů, 13 variant stromů a keřů) | 148 ms |
-| další snímek ve větru (jen wrangle `wind`, `sway` a Merge) | 31–39 ms |
+| celá louka, první snímek (terén, 122 577 trsů, 13 variant stromů a keřů, předohnutí 312 tvarů pro vítr) | 453 ms |
+| další snímek ve větru (jen Plant Wind `wind`, `sway` a Merge) | 57 ms |
 | Grass: rozházet 192 000 kandidátů, prořídit, 8 trsů | 35 ms |
 | Unpack trávy na 17,7 milionu bodů | 2,6 s |
 
 Render snímku 1600 × 900 přes softwarový OpenGL (llvmpipe, bez grafické
-karty) trvá i s vařením sítě 7,6 s. S obrázky listů a trávy (alfa výřez
-a mipmapy na procesoru) a s focením billboardů je to víc než 5,4 s bez
-obrázků, ale stále méně než 8,1 s bez úrovní detailu. Na grafické kartě je
+karty) trvá i s vařením sítě 11 s. Viewport musí poprvé nahrát 333
+rostlin (21 vypěstovaných a jejich tvary ohnuté větrem), každou ve čtyřech
+úrovních detailu, s obrázky listů a trávy (alfa výřez a mipmapy na
+procesoru). Další snímky posílají jen nová umístění. Na grafické kartě je
 to zlomek.
 
 **Úrovně detailu (LOD).** Viewport kreslí každou kopii rostliny podle
@@ -305,8 +292,6 @@ Cycles a path tracer kreslí vše v plné podobě, instance je nestojí paměť.
 
 ## 10. Co zatím chybí
 
-- Ohyb stébel ve větru podél délky (ve shaderu podle `flex`), ne jen
-  otočení trsu.
 - Šlapání a interakce (tráva ohnutá tělesem nebo postavou).
 - Ekosystém: druhy, které si konkurují o místo a světlo, a jejich rozšíření
   podle vlhkosti a stínu.

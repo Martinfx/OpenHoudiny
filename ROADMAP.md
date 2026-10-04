@@ -518,8 +518,11 @@ Seřazeno podle poměru hodnota / náklad:
    ✅ Viewport klade fotky a obrázky listů jako renderery (UV, tři strany,
    normálové mapy, alfa výřez), vzdálené rostliny jako billboardy
    a úrovně detailu se prolínají.
-   Zbývá: prořezávání obálkou, ohyb
-   stébel ve shaderu, vítr jako simulace ohybu, kořeny, ekosystém druhů.
+   ✅ Uzel Plant Wind: ohyb od paty podle `flex` bez natahování, poryvy,
+   třepetání listů, `v` pro rozmazání; instance předohnuté do několika
+   tvarů.
+   Zbývá: prořezávání obálkou, vítr jako dynamická simulace (pružné
+   větve s setrvačností), kořeny, ekosystém druhů.
 
 ---
 

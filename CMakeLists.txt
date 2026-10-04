@@ -93,6 +93,7 @@ add_library(pgcore
   src/pg/core/Chips.cpp
   src/pg/core/Instances.cpp
   src/pg/core/Lod.cpp
+  src/pg/core/Wind.cpp
   src/pg/core/Grass.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp
@@ -122,6 +123,7 @@ add_library(pgcore
   src/pg/nodes/Edit.cpp
   src/pg/nodes/Trees.cpp
   src/pg/nodes/Grass.cpp
+  src/pg/nodes/Wind.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/VdbRead.cpp

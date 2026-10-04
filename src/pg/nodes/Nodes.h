@@ -29,6 +29,7 @@ void registerVdbNodes();
 void registerEditNodes();
 void registerTreeNodes();
 void registerGrassNodes();
+void registerWindNodes();
 
 /// How Scatter places its points.
 struct ScatterRules {

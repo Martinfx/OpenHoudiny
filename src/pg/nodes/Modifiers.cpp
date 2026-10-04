@@ -292,6 +292,7 @@ void registerBuiltinNodes() {
         registerEditNodes();
         registerTreeNodes();
         registerGrassNodes();
+        registerWindNodes();
         registerUsdNodes();
         registerAlembicNodes();
         registerVdbNodes();

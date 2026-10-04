@@ -411,6 +411,7 @@ private:
         GLsizei elements = 0, instances = 0;
         size_t capacity = 0;  // floats the placements' buffer holds
         GLuint atlas = 0, impostorVao = 0;  // the last level's: its billboard's pictures, its cards
+        bool pictureTried = false;          // ... taken, or tried
         size_t which = 0;     // its prototype's place in instances_
         int level = 0;        // its level of detail (sim::kDetailKeep)
         int levels = 1;       // how many its prototype has: a plant's 3
@@ -438,7 +439,10 @@ private:
     void drawInstances(bool shadow);
     /// The plants far away as billboards (kImpostorViews pictures round
     /// each, kImpostorTexels square), into the meshes' buffer.
-    static constexpr int kImpostorViews = 8, kImpostorTexels = 128;
+    static constexpr int kImpostorViews = 8, kImpostorTexels = 128, kMostImpostors = 48;
+    /// The billboards the copies far away need, pictured -- outside any
+    /// frame buffer of the render.
+    void prepareImpostors();
     GLuint impostorProgram_ = 0, impostorQuad_ = 0;
     /// The pictures of `gpu`'s billboard: the plant in full (`full`'s
     /// mesh) from eight sides, as the meshes' buffer has it.

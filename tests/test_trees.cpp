@@ -21,6 +21,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 
 using namespace pg;
 using namespace pg::sim;
@@ -295,6 +296,13 @@ TEST(tree_mesh_tubes_are_closed_and_turned_out_the_leaves_face_their_way) {
     CHECK(geo.points().find("Cd") != nullptr);
     // Each stem's faces: every edge between two of them, once each way --
     // closed and wound alike -- but round a branch's base, inside its parent.
+    // The points by where they are: the trunk's foot has points of its own
+    // (facing down), where its ring's are.
+    std::map<std::tuple<float, float, float>, uint32_t> welded;
+    std::vector<uint32_t> weldOf(geo.pointCount());
+    for (uint32_t i = 0; i < geo.pointCount(); ++i) {
+        weldOf[i] = welded.emplace(std::make_tuple(P[i].x, P[i].y, P[i].z), i).first->second;
+    }
     std::map<int, std::map<std::pair<uint32_t, uint32_t>, int>> edges;
     size_t leafPrims = 0;
     for (size_t p = 0; p < geo.primitiveCount(); ++p) {
@@ -309,7 +317,9 @@ TEST(tree_mesh_tubes_are_closed_and_turned_out_the_leaves_face_their_way) {
             continue;
         }
         CHECK_EQ(level[p], t.stems[static_cast<size_t>(stem[p])].level);
-        for (size_t k = 0; k < corners.size(); ++k) edges[stem[p]][{corners[k], corners[(k + 1) % corners.size()]}]++;
+        for (size_t k = 0; k < corners.size(); ++k) {
+            edges[stem[p]][{weldOf[corners[k]], weldOf[corners[(k + 1) % corners.size()]]}]++;
+        }
         // Turned out: away from the stem's centre line.
         if (corners.size() == 4) {
             const TreeStem& st = t.stems[static_cast<size_t>(stem[p])];

@@ -201,6 +201,7 @@ private:
 
     GeometryPtr made_;  ///< the geometry last made -- held, so no buffer of it is taken for a new one
     bool pointNormals_ = false, moving_ = false, rest_ = false;
+    bool creased_ = false;  ///< some corners without a point normal of their own: creased
     std::vector<std::array<uint32_t, 3>> tris_;  ///< the fan of every closed polygon, glass too: its faces bend the normals
     std::vector<uint32_t> drawn_;                ///< the triangles drawn -- not glass -- in order
     std::vector<uint32_t> start_, around_;       ///< the triangles round each point: around_[start_[p], start_[p + 1])

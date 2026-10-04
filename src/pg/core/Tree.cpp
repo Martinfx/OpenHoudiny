@@ -403,7 +403,7 @@ void primitiveInts(Geometry& geo, const char* name, size_t first, const std::vec
 }  // namespace
 
 void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& geo) {
-    std::vector<Vec3> P, Cd;
+    std::vector<Vec3> P, Cd, N;
     std::vector<float> flex;
     std::vector<uint32_t> corners, sizes;
     std::vector<Vec3> uvs;  // each corner's, as Houdini keeps it: (u, v, 0)
@@ -451,13 +451,16 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
             const float bend = (st.path + st.length * static_cast<float>(i) / static_cast<float>(m - 1)) * perHeight;
             for (uint32_t k = 0; k < sides; ++k) {
                 const float a = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(sides);
-                P.push_back(st.points[i] + (normal * std::cos(a) + binormal * std::sin(a)) * st.radius[i]);
+                const Vec3 out = normal * std::cos(a) + binormal * std::sin(a);
+                P.push_back(st.points[i] + out * st.radius[i]);
+                N.push_back(out);
                 Cd.push_back(colour);
                 flex.push_back(bend);
             }
         }
         const uint32_t tip = first + static_cast<uint32_t>(P.size());
         P.push_back(st.points[m - 1]);
+        N.push_back(normalize(st.points[m - 1] - st.points[m - 2]));
         Cd.push_back(colour);
         flex.push_back((st.path + st.length) * perHeight);
         const uint32_t rings = static_cast<uint32_t>(m - 1);
@@ -476,11 +479,19 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
                     {barkUv(fk, rings - 1), barkUv(fk + 1.0f, rings - 1), barkUv(fk + 0.5f, m - 1)}, st.level, id);
         }
         if (st.level == 0) {
-            // The trunk's foot, closed: its face turned down, its uv the
-            // bark seen from below.
+            // The trunk's foot, closed: its face turned down -- points of
+            // its own, facing down -- its uv the bark seen from below.
+            const uint32_t cap = first + static_cast<uint32_t>(P.size());
+            const Vec3 down = -normalize(st.points[1] - st.points[0]);
+            for (uint32_t k = 0; k < sides; ++k) {
+                P.push_back(P[base - first + k]);
+                N.push_back(down);
+                Cd.push_back(colour);
+                flex.push_back(flex[base - first + k]);
+            }
             for (uint32_t k = 0; k < sides; ++k) {
                 const float a = 2.0f * kPi * static_cast<float>(sides - 1 - k) / static_cast<float>(sides);
-                corners.push_back(base + sides - 1 - k);
+                corners.push_back(cap + sides - 1 - k);
                 uvs.push_back(Vec3(0.5f - 0.5f * std::cos(a), 0.5f + 0.5f * std::sin(a), 0.0f) * (girth / kPi / kBarkPicture));
             }
             sizes.push_back(sides);
@@ -501,6 +512,7 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
         for (const auto& [u, v] : blade) {
             P.push_back(leaf.at + leaf.along * (u * leaf.size) + across * (v * leaf.size) +
                         leaf.facing * (0.15f * std::fabs(v) * leaf.size));
+            N.push_back(leaf.facing);
             Cd.push_back(leaf.color);
             flex.push_back((leaf.path + u * leaf.size) * perHeight);
             // Seen from the way it faces: up it along, to the right across.
@@ -520,6 +532,11 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
     std::copy(Cd.begin(), Cd.end(), outCd.begin() + first);
     auto outFlex = geo.points().create("flex", AttrType::Float).write<float>();
     std::copy(flex.begin(), flex.end(), outFlex.begin() + first);
+    // The way each point faces, smooth round the stems: what the viewport
+    // and the renderers shade by -- the same however the wind bends the
+    // tree (core/Wind.h turns them with it).
+    auto outN = geo.points().create("N", AttrType::Vec3).write<Vec3>();
+    std::copy(N.begin(), N.end(), outN.begin() + first);
     const size_t prim0 = geo.primitiveCount();
     const size_t vertex0 = geo.vertexCount();
     size_t at = 0;

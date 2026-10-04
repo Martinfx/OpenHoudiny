@@ -581,7 +581,8 @@ TEST(meadow_example_the_wind_turns_only_the_points) {
     g.sync(meadow);
     const GeometryPtr a = g.cook(wind, 1), b = g.cook(wind, 30);
     CHECK(a && b && a->pointCount() == b->pointCount() && a->pointCount() > 100);
-    CHECK_EQ(a->prototypeCount(), size_t(8));
+    // The eight clumps, and those of them bent ahead (Plant Wind).
+    CHECK(a->prototypeCount() >= size_t(8) && b->prototypeCount() >= size_t(8));
     for (size_t k = 0; k < 8; ++k) CHECK(a->prototypes()[k] == b->prototypes()[k]);  // grown once
     CHECK(a->positions().data() == b->positions().data());  // the places shared, not copied
     const auto oa = a->points().find("orient")->read<Vec4>(), ob = b->points().find("orient")->read<Vec4>();
@@ -594,6 +595,6 @@ TEST(meadow_example_the_wind_turns_only_the_points) {
     // The whole of it: the ground, the grass, the trees and the shrubs.
     const GeometryPtr all = g.cook(meadow.displayed(), 1);
     CHECK(all != nullptr);
-    CHECK_EQ(all->prototypeCount(), size_t(8 + 5 + 4 + 4));
+    CHECK(all->prototypeCount() >= size_t(8 + 5 + 4 + 4));
     CHECK(instanceCount(*all) > 100);
 }

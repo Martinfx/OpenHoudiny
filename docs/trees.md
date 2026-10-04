@@ -150,12 +150,14 @@ Ve viewportu má vybraný uzel v režimu objektů (**1**) úchyt jako Tube:
 
 **Mesh.** Kmen a každá větev jsou trubky: kolem každého bodu osy je
 prstenec stěn a na špičce kužel. Kmen je uzavřený i u paty, takže je to
-uzavřené těleso. Báze větve je uvnitř rodiče. Stěny jsou otočené ven,
+uzavřené těleso (podstava má vlastní body na místech bodů prstence, aby
+mohla hledět dolů). Báze větve je uvnitř rodiče. Stěny jsou otočené ven,
 listy jsou polygony otočené lícem tam, kam hledí.
 
 | Atribut | Třída | Co je v něm |
 |---|---|---|
 | `Cd` | bod | barva kůry a listů |
+| `N` | bod | kam bod hledí: hladce dokola větví, list tam, kam hledí jeho čepel; podstava kmene má vlastní body otočené dolů. Vítr (Plant Wind) je otáčí s body |
 | `flex` | bod | vzdálenost po dřevě od paty stromu jako podíl výšky: 0 u země, 1 na vrcholu kmene, na konečcích větví víc — o kolik vítr strom ohne (níže) |
 | `uv` | vrchol | souřadnice textury: na kůře u dokola a v nahoru po větvi, list ve své čtvrtině obrázku listů (níže) |
 | `level` | primitivum | −1 list, 0 kmen (a vůdčí větve), 1–3 úrovně větví |
@@ -228,34 +230,54 @@ Příklad **forest** ([examples/sim/forest.pgsim](../examples/sim/forest.pgsim))
 Atribut `flex` říká, jak daleko po dřevě od paty stromu bod je (jako podíl
 výšky stromu). U země je 0, na vrcholu kmene 1, na konečcích větví víc.
 Každý prstenec trubky i každý bod listu má `flex` svého místa na ose.
-Posun podle `flex` proto nerozbije kůru ani spoje větví. Wrangle `wind`
-z příkladu forest:
 
-```c
-// Ohnuté od paty: čím dál po dřevě, tím víc.
-float f = @flex * @flex;
-float gust = 0.6 + 0.4 * sin(@Time * 0.8 - @P.x * 0.12);
-float sway = 0.5 + sin(@Time * 2.1 - @P.x * 0.2 + @P.z * 0.07);
-@P.x += ch("strength") * f * gust * sway;
-@P.z += 0.3 * ch("strength") * f * sin(@Time * 1.4 + @P.z * 0.25);
-// Větvičky a listy se chvějí.
-@P.y += 0.02 * max(@flex - 0.6, 0) * sin(@Time * 12.0 + (@P.x + @P.z) * 2.0);
-```
+Uzel **Plant Wind** (`src/pg/core/Wind.h`) ohýbá rostliny ve větru, snímek
+po snímku:
 
-Pata stromu (`flex` 0) stojí, kmen se ohýbá málo (`flex²`) a koruna víc.
-Fáze závisí na poloze, takže nárazy větru běží přes kopec a nepohybují
-všemi stromy naráz. Nad `flex` 0,6 se větvičky a listy ještě chvějí.
-**Strength** je posuvník z `ch()`. Posun jde do strany, strom se neotáčí,
-takže u velkých výchylek by se větve trochu natáhly. Pro vítr v záběru to
-nevadí.
+- **Ohyb od paty.** Každý bod se otočí kolem paty své rostliny o úhel
+  ohybu krát `flex²`. Kmen u země stojí, koruna se ohne, konečky větví
+  nejvíc. Bod se otáčí, neposouvá, takže se nic nenatáhne (test: nejvýš
+  1e-6 m na stromu 7 m). Rostlina je jedno stéblo (`blade`), jinak jeden
+  strom (`tree`), jinak celá geometrie. Pata je bod s nejmenším `flex`.
+  Plochy bez `flex` (kopec, ke kterému Merge doplnil nulu) zůstanou.
+- **Poryvy.** Vlny podél větru, **Gust Size** metrů od sebe, běží
+  krajinou rychlostí **Gust Speed**. Rostlina o tolik metrů dál má
+  o sekundu později stejný ohyb. **Gusts** je podíl větru, který přichází
+  v poryvech: 0 stálý vítr, 1 jen poryvy a utišení.
+- **Turbulence.** Každá rostlina se kývá po svém, po větru i napříč,
+  jinou rychlostí a fází.
+- **Třepetání (Flutter).** Listy (`level` −1) se kmitají kolem stopky,
+  napříč listem. Špičky stébel (`flex` nad 0,4) poskakují, každé stéblo
+  ve svém čase. **Flutter Speed** je počet kmitů za sekundu.
+- **Rychlost `v`.** Kolik se bod pohne za 1/240 s. Cycles a path tracer
+  podle ní rozmažou pohyb, viewport ji posílá do průchodu pohybu.
 
-Wrangle mění jen polohy bodů, topologii a barvy nechává sdílené se
-vstupem. Viewport proto při přehrávání nahrává do GPU jen nové polohy
-a normály ([geometry.md](geometry.md)). Proto je vítr až za Merge s kopcem:
-Merge za ním by každý snímek vyrobil novou geometrii a viewport by ji
-stavěl celou znovu. Proto také trubky nemají nikdy šest stěn: jejich hrany
-by svíraly přesně 60°, tedy práh, kde viewport hranu láme, a ve větru by
-jednou byly hladké a podruhé ostré.
+| Parametr | Co dělá |
+|---|---|
+| **Direction** | odkud kam fouká, stupně od +x k −z |
+| **Strength** | o kolik stupňů se vršky rostlin ohnou v průměrném poryvu (výchozí 14°) |
+| **Gusts**, **Gust Speed**, **Gust Size** | poryvy: podíl, rychlost, vzdálenost |
+| **Turbulence** | kývání každé rostliny po svém |
+| **Flutter**, **Flutter Speed** | třepetání listů a špiček stébel |
+| **Seed** | jiné kývání a třepetání |
+| **Directions**, **Steps** | u instancí: kolika směry a kolika kroky se rostliny předohnou |
+
+**Na instancích** se rostlina neohýbá bod po bodu, protože ji drží
+prototyp sdílený tisíci bodů. Plant Wind proto pro každý bod spočítá ohyb
+ve vlastním natočení rostliny. Prototyp předohne do nejbližšího
+z Directions × Steps tvarů (výchozí 8 směrů × 4 kroky do největšího ohybu)
+a bod přesměruje na ten tvar. Zbytek ohybu dorovná naklopením `orient` od
+paty (o polovinu zbývajícího úhlu, zhruba tolik, kolik ohyb posune
+vršek). Předohnuté tvary si uzel pamatuje mezi snímky. Jsou to tytéž
+prototypy, takže viewport je má na GPU jednou a v dalších snímcích posílá
+jen nová umístění. Louka 5000 trsů: 71 tvarů, ve všech snímcích stejných.
+Stejně to vidí viewport, Cycles, path tracer i export do USD. Každý tvar
+je ovšem rostlina navíc v paměti. Pro velké stromy proto stačí méně tvarů
+(příklad meadow: stromy 4 směry × 2 kroky, tráva 8 × 4).
+
+Příklad forest má Plant Wind za Merge kopce se stromy. Příklad meadow má
+jeden na trávě (Strength 22°, poryvy po 12 m) a druhý na stromech
+a keřích (4°).
 
 ## 6. Vlastní listy
 
@@ -321,5 +343,6 @@ trubky s plochami otočenými ven a tvar koruny podle Shape.
   navzájem nebo překážkám.
 - **Kořeny** nad zemí. Úrovně detailu a billboardy pro vzdálený les už
   viewport má ([vegetation.md](vegetation.md#9-výkon)).
-- **Vítr jako simulace** ohybu větví. Teď je to kinematický posun
-  wranglem.
+- **Vítr jako dynamická simulace**: pružné větve se setrvačností, které
+  se po poryvu dokmitají. Plant Wind je kinematický, ohyb plyne přímo
+  z času.

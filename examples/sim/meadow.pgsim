@@ -8,9 +8,11 @@ pgsim 1
 # eight kinds of clump for 120 000 of them, two million blades. Scatter
 # keeps the trees 3.5 m apart where the wood is; a Tree grows five
 # broadleaves for them to stand for, another four spruces, and a Tree forked
-# from the ground four shrubs. The wind is a wrangle on the points: gusts
-# that run across the meadow bow the clumps from their roots (p@orient), the
-# trees sway a little -- only the points change, the plants are held once.
+# from the ground four shrubs. The wind is Plant Wind on the points: gusts
+# that run across the meadow bow the clumps, the trees and shrubs a little --
+# each point standing for its plant bent ahead into the nearest of a few
+# shapes, tilted the rest of the way: only the points change, the plants
+# are held once.
 node 1 grid 1 land 0 0
   param sizex 80
   param sizez 60
@@ -27,9 +29,9 @@ node 3 grass 1 grass -250 230
   param tipcolor 0.2 0.31 0.07
   param dry 0.18
   param variation 0.35
-node 4 point_wrangle 1 wind -250 340
-  param snippet "// Gusts running across the meadow bow the clumps from their roots.\nfloat gust = 0.5 + 0.5 * sin(@Time * 1.6 - @P.x * 0.3 + 3.0 * noise(@P * 0.12));\nfloat bow = 0.08 + 0.22 * gust * gust + 0.05 * sin(@Time * 5.0 + @ptnum * 0.37);\np@orient = qmultiply(quaternion(ch(\"strength\") * bow, set(0, 0, -1)), p@orient);"
-  param strength 1
+node 4 plant_wind 1 wind -250 340
+  param strength 22
+  param gustsize 12
 node 5 scatter 1 tree_spots 0 230
   param mode density
   param density 0.08
@@ -112,9 +114,12 @@ node 12 tree 1 shrubs 250 340
   param output instances
   param variants 4
 node 13 merge 1 trees 0 670
-node 14 point_wrangle 1 sway 0 780
-  param snippet "// The trees and shrubs sway a little, from their feet.\nfloat gust = 0.5 + 0.5 * sin(@Time * 1.6 - @P.x * 0.3 + 3.0 * noise(@P * 0.12));\np@orient = qmultiply(quaternion(ch(\"strength\") * 0.012 * gust * sin(@Time * 1.1 + @ptnum), set(0, 0, -1)), p@orient);"
-  param strength 1
+node 14 plant_wind 1 sway 0 780
+  param strength 4
+  param gustsize 12
+  param flutter 15
+  param directions 4
+  param steps 2
 node 15 merge 1 meadow 0 890
   display
 link 1.geometry -> 2.geometry

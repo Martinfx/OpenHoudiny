@@ -100,7 +100,8 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
 
 /// Its stems as tubes -- closed over their tips, the trunk over its foot
 /// too; a branch's base inside its parent -- and its leaves as polygons,
-/// added to `geo`: point Cd and flex -- how far along the wood from the
+/// added to `geo`: point Cd, N -- round the stems, the way each leaf faces
+/// -- and flex -- how far along the wood from the
 /// tree's foot, a share of its height: 0 at the ground, 1 about the crown's
 /// top, what wind bends a tree by --; vertex uv -- round and up the bark,
 /// a picture a metre of it, and each leaf in its quarter of the leaf picture

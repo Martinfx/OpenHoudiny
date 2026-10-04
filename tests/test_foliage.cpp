@@ -7,7 +7,9 @@
 // through there, in both renderers and both ray engines; the viewport's
 // mesh carrying how much light each face lets through; plants thinned for
 // far away -- fewer leaves and blades, as much foliage -- and the copies
-// drawn at the level of detail they look big enough for.
+// drawn at the level of detail they look big enough for; wind bowing the
+// plants from their feet, nothing stretched, gusts running along it, and
+// the plants points stand for bent ahead into a few shapes.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -16,6 +18,7 @@
 #include "pg/core/Lod.h"
 #include "pg/core/Material.h"
 #include "pg/core/Tree.h"
+#include "pg/core/Wind.h"
 #include "pg/io/Picture.h"
 #include "pg/nodes/Nodes.h"
 #include "pg/render/Cycles.h"
@@ -30,6 +33,7 @@
 #include "test_framework.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <functional>
@@ -548,4 +552,137 @@ TEST(foliage_the_viewport_lays_pictures_on_as_the_renderers_do) {
     sim::DisplayMesh leafMesh;
     leafMesher.make(box, leafMesh);
     CHECK(leafMesh.pictures.empty() && leafMesh.textures.empty());
+}
+
+TEST(foliage_the_wind_bows_plants_from_their_feet) {
+    // A tree and the ground merged: the ground (flex 0) stays; the tree's
+    // foot stays, every point as far from it as before -- turned, not
+    // stretched -- and its top bowed the way of the wind; v how fast.
+    TreeSettings ts;
+    ts.levels = 2;
+    Geometry tree;
+    meshTree(growTree(ts, Vec3(), 1.0f, 2), ts, 0, tree);
+    Geometry ground;
+    ground.addPoints(3);
+    {
+        auto P = ground.positionsForWrite();
+        P[0] = Vec3(-5.0f, 0.0f, -5.0f);
+        P[1] = Vec3(5.0f, 0.0f, -5.0f);
+        P[2] = Vec3(0.0f, 0.0f, 5.0f);
+        const uint32_t tri[3] = {0, 1, 2};
+        ground.addPrimitive(tri, true);
+        ground.points().create("flex", AttrType::Float);
+        ground.primitives().create("tree", AttrType::Int);
+    }
+    Geometry both = ground;
+    both.append(tree);
+    WindSettings s;
+    s.turbulence = 0.0f;
+    s.flutter = 0.0f;
+    Geometry blown = both;
+    blowPlants(blown, s, 0.7f);
+    const auto before = both.positions(), after = blown.positions();
+    const auto flex = both.points().find("flex")->read<float>();
+    for (size_t p = 0; p < 3; ++p) CHECK(after[p] == before[p]);
+    // The foot: the trunk's ring at the ground.
+    Vec3 foot(0.0f);
+    float least = 1e9f;
+    for (size_t p = 3; p < before.size(); ++p) {
+        if (flex[p] < least) least = flex[p], foot = before[p];
+    }
+    float stretched = 0.0f, topMoved = 0.0f;
+    Vec3 top = foot;
+    size_t topAt = 0;
+    for (size_t p = 3; p < before.size(); ++p) {
+        stretched = std::max(stretched, std::fabs(length(after[p] - foot) - length(before[p] - foot)));
+        if (before[p].y > top.y) top = before[p], topAt = p;
+    }
+    topMoved = after[topAt].x - before[topAt].x;
+    const Vec3 bend = windBend(s, foot, 0.7f, 0);
+    std::printf("  the top %.2f m up bowed %.3f m along the wind (bend %.3f rad), stretched at most %.2g m\n", top.y,
+                topMoved, length(bend), stretched);
+    CHECK(stretched < 1e-4f);
+    CHECK(topMoved > 0.5f * top.y * std::sin(0.5f * length(bend)));
+    CHECK(std::fabs(after[topAt].z - before[topAt].z) < 0.05f * topMoved);  // along +x, the wind's way
+    const AttributeArray* v = blown.points().find("v");
+    CHECK(v != nullptr);
+    Geometry later = both;
+    blowPlants(later, s, 0.7f + 1.0f / 240.0f);
+    const Vec3 moved = (later.positions()[topAt] - after[topAt]) * 240.0f;
+    CHECK(length(v->read<Vec3>()[topAt] - moved) < 1e-3f + 0.01f * length(moved));
+
+    // Gusts run along the wind at their speed: a plant gust-speed metres
+    // on, a second later, bows as this one does now.
+    WindSettings steady = s;
+    steady.gust = 1.0f;
+    for (const float t : {0.0f, 0.4f, 1.3f}) {
+        const Vec3 here = windBend(steady, Vec3(2.0f, 0.0f, 3.0f), t, 5);
+        const Vec3 there = windBend(steady, Vec3(2.0f + steady.gustSpeed, 0.0f, 3.0f), t + 1.0f, 5);
+        CHECK(length(here - there) < 1e-4f);
+    }
+
+    // Points standing for clumps: the places shared, the clumps bent ahead
+    // into a few shapes -- the same plants frame after frame -- the points
+    // standing for them, tilted the rest of the way.
+    registerBuiltinNodes();
+    Graph g;
+    Node* grass = g.create("grass", "grass");
+    grass->setInt("variants", 3);
+    Node* grid = g.create("grid", "ground");
+    grid->setFloat("sizex", 10.0f);
+    grid->setFloat("sizez", 10.0f);
+    CHECK(grass->setInput(0, grid));
+    Node* wind = g.create("plantwind", "wind");
+    CHECK(wind->setInput(0, grass));
+    CookEngine engine;
+    CookContext at1, at2;
+    at1.time = 0.5;
+    at2.time = 1.5;
+    const GeometryPtr meadow = engine.cook(*grass, at1);
+    const GeometryPtr a = engine.cook(*wind, at1), b = engine.cook(*wind, at2);
+    CHECK(a && b && a->pointCount() == meadow->pointCount());
+    CHECK(a->positions().data() == meadow->positions().data());
+    CHECK(a->prototypeCount() > 3 && a->prototypeCount() <= 3 * (1 + 8 * 4));
+    for (size_t k = 0; k < 3; ++k) CHECK(a->prototypes()[k] == meadow->prototypes()[k]);
+    std::set<const Geometry*> shapesA, shapesB;
+    for (size_t k = 3; k < a->prototypeCount(); ++k) shapesA.insert(a->prototypes()[k].get());
+    for (size_t k = 3; k < b->prototypeCount(); ++k) shapesB.insert(b->prototypes()[k].get());
+    size_t again = 0;
+    for (const Geometry* shape : shapesB) again += shapesA.count(shape);
+    std::printf("  %zu clumps: %zu bent shapes at 0.5 s, %zu at 1.5 s, %zu of them the same plants\n", a->pointCount(),
+                shapesA.size(), shapesB.size(), again);
+    CHECK(again > 0);
+    const auto instance = a->points().find("instance")->read<int32_t>();
+    for (const int32_t k : instance) CHECK(k >= 0 && static_cast<size_t>(k) < a->prototypeCount());
+    // Each clump's blades bowed the way of the wind, near enough: the bent
+    // shape's tips, turned as the point is, go along +x.
+    const auto orient = a->points().find("orient")->read<Vec4>();
+    size_t along = 0, bent = 0;
+    for (size_t p = 0; p < a->pointCount(); ++p) {
+        if (instance[p] < 3) continue;
+        ++bent;
+        const Geometry& shape = *a->prototypes()[static_cast<size_t>(instance[p])];
+        const Geometry& was = *meadow->prototypes()[static_cast<size_t>(meadow->points().find("instance")->read<int32_t>()[p])];
+        Vec3 shift(0.0f);
+        for (size_t q = 0; q < shape.pointCount(); ++q) shift = shift + (shape.positions()[q] - was.positions()[q]);
+        if (quatRotate(orient[p], shift).x > 0.0f) ++along;
+    }
+    CHECK(bent > 0 && along > bent * 9 / 10);
+
+    // The meadow example in the wind: its first frame, and those after --
+    // only the points that stand for plants made again.
+    sim::Network meadowNet;
+    CHECK(sim::Network::example("meadow", meadowNet));
+    sim::GeometryGraph graph;
+    graph.sync(meadowNet);
+    const auto t0 = std::chrono::steady_clock::now();
+    const GeometryPtr first = graph.cook(meadowNet.displayed(), 1);
+    const auto t1 = std::chrono::steady_clock::now();
+    for (int frame = 2; frame <= 6; ++frame) CHECK(graph.cook(meadowNet.displayed(), frame) != nullptr);
+    const auto t2 = std::chrono::steady_clock::now();
+    const GeometryPtr sixth = graph.cook(meadowNet.displayed(), 6);
+    std::printf("  the meadow: its first frame %.0f ms, each after %.0f ms; %zu plants held (of %zu grown)\n",
+                std::chrono::duration<double, std::milli>(t1 - t0).count(),
+                std::chrono::duration<double, std::milli>(t2 - t1).count() / 5.0, sixth->prototypeCount(), size_t(21));
+    CHECK(first && sixth && first->pointCount() == sixth->pointCount());
 }
