@@ -13,6 +13,12 @@
 #include "pg/core/Geometry.h"
 
 #include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <span>
+#include <tuple>
 
 namespace pg {
 
@@ -42,5 +48,34 @@ void blowPlants(Geometry& geo, const WindSettings& s, float time);
 /// way, as many radians as its length -- each of its plants (as above) from
 /// its own foot; no flutter.
 Geometry bentPlant(const Geometry& plant, const Vec3& bend);
+
+/// The plants of `geo` each bowed by what `bendOf` says for its foot and
+/// its own number (as windBend's): P and N, in place; no flutter, no v.
+void bowPlants(Geometry& geo, const std::function<Vec3(const Vec3& foot, uint64_t plant)>& bendOf);
+
+/// The shapes plants are bent ahead into, kept from one cook to the next:
+/// the same plants frame after frame -- what the viewport keeps on the GPU.
+class BentShapes {
+public:
+    /// `plant` bent `way` of `ways` round it, `step` of `steps` of `most`
+    /// radians: made once, then the same.
+    std::shared_ptr<const Geometry> shape(const std::shared_ptr<const Geometry>& plant, int way, int ways, int step,
+                                          int steps, float most);
+
+private:
+    struct Entry {
+        std::shared_ptr<const Geometry> of, bent;  // `of` held: its pointer names it
+    };
+    std::mutex mutex_;
+    std::map<std::tuple<const Geometry*, int, int, int, int, float>, Entry> made_;
+};
+
+/// The points of `geo` that stand for plants with flex (Instances.h), each
+/// bowed by `bends[p]` -- level, the world's way, radians at the plant's
+/// top -- standing for its plant bent ahead into the nearest of `ways` x
+/// `steps` shapes up to `most` radians (in the plant's own turn), tilted
+/// from its foot the rest of the way: instance and orient written; the
+/// shapes added to its prototypes. The other points as they are.
+void bowInstances(Geometry& geo, std::span<const Vec3> bends, int ways, int steps, float most, BentShapes& shapes);
 
 }  // namespace pg

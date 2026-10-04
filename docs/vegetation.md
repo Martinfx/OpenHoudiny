@@ -178,6 +178,19 @@ i v USD. Mění se jen `instance` a `orient` bodů. Polohy a ostatní atributy
 zůstávají sdílené se vstupem a předohnuté tvary jsou stejné objekty
 snímek co snímek, takže je viewport má na GPU jednou.
 
+### Šlapání: Plant Trample
+
+Uzel **Plant Trample** ohne trávu a keře tam, kde něco šlápne: nohy, kola,
+těleso, které spadlo. Druhý vstup jsou body šlápnutí: `pscale` krát
+**Radius** je šířka stopy, `time` je kdy (stopy postavy v čase). Rostliny
+v okruhu se ohnou od paty pryč od středu stopy, uprostřed o **Flatten**
+(70°), na okraji vůbec. Po šlápnutí se během **Recovery** sekund zase
+narovnávají (za tu dobu na třetinu ohybu, 0 = zůstanou ležet). Stopy
+s časem v budoucnu ještě nepůsobí. Na instancích to funguje jako u větru:
+předohnuté tvary (Directions × Steps) a dorovnání naklopením, takže se
+mění jen body. Test: trsy u stopy se odkloní v průměru o 6,7 cm, vzdálené
+vůbec, před šlápnutím nic, po 40 s jsou zase rovné.
+
 ## 7. Příklad meadow
 
 [examples/sim/meadow.pgsim](../examples/sim/meadow.pgsim):
@@ -206,6 +219,45 @@ Příklad je model bez kamery a uzlu Output. Obrázky nahoře jsou z jeho
 kopie s přidanou kamerou a výstupem se sluncem a oblohou (Sky Behind).
 
 ![Editor s příkladem meadow: krajina ve viewportu, parametry uzlu Grass, síť](img/vegetation-editor.jpg)
+
+## 7b. Ekosystém
+
+Uzel **Ecosystem** nechá rostlinné společenstvo vyrůst za roky, podle
+modelu Deussena a kol. (1998). Tři druhy, každý se svými parametry:
+
+| Parametr | Co dělá |
+|---|---|
+| **Share** | kolik jich je na začátku proti ostatním |
+| **Crown** | poloměr koruny vzrostlé rostliny (kolik stíní) |
+| **Growth**, **Life** | za kolik let doroste, kolik let žije (±20 %) |
+| **Shade Tolerance** | jak snáší stín jiných: 0 pod korunou uschne, 1 roste dál |
+| **Moisture**, **Moisture Range** | jak vlhkou půdu má rád a jak daleko od ní ještě prospívá |
+| **Seed Distance**, **Seedlings** | jak daleko padají semena a kolik semenáčků vzejde za rok |
+
+Rok po roku: rostliny rostou. Kde se koruny potkají, menší strádá podle
+toho, jak moc se překrývají a jak málo snáší stín (i stínomilné o čtvrtinu
+méně, ale strádají). Rostliny chřadnou tam, kde jim půda nesedí, umírají
+stářím a vzrostlé kolem sebe vysévají. Semenáček vzejde na nejbližším
+volném místě, ne tam, kde se mu nedaří, a pod cizí korunou jen podle své
+snášenlivosti stínu. Místa jsou body vstupu (Scatter po terénu tak hustě,
+jak by rostliny mohly stát) a vlhkost bere z jejich atributu
+**Moisture Attribute**. Výstup je bod na každé živé rostlině se
+`species`, skupinou druhu (`species1` až `species3`), `age`, `pscale`
+(0,15 semenáček, 1 vzrostlý), `orient` a `id` (číslo místa). Na skupiny
+se pak pěstují stromy uzlem Tree. Stejné nastavení a seed dají stejné
+společenstvo.
+
+Výchozí druhy: **průkopník** (bříza: roste rychle, žije krátce, stín
+nesnáší, sucho), **velikán** (dub: pomalý, dlouhověký, sucho) a **stínomilný**
+(smrk, buk: snese stín, vlhko).
+
+Příklad **ecosystem**: kopcovitá půda s potokem, 2588 míst. Po 120
+letech zbyde 948 rostlin: 495 bříz (půda v průměru 0,25 vlhká, věk
+9 let), 67 dubů (0,24; 85 let) a 386 smrků (0,83; 24 let). Smrky lemují
+potok, duby stojí na suchých hřbetech a břízy zarůstají mezery po padlých
+stromech.
+
+![Příklad ecosystem: smrky podél potoka, duby a břízy na suchu, mladé stromy v mezerách](img/ecosystem.jpg)
 
 ## 8. Export
 
@@ -292,6 +344,7 @@ Cycles a path tracer kreslí vše v plné podobě, instance je nestojí paměť.
 
 ## 10. Co zatím chybí
 
-- Šlapání a interakce (tráva ohnutá tělesem nebo postavou).
-- Ekosystém: druhy, které si konkurují o místo a světlo, a jejich rozšíření
-  podle vlhkosti a stínu.
+- Interakce s tělesy simulace přímo (teď stopy jako body s časem).
+- Ekosystém ve 3D: světlo podle výšky korun (teď soutěží jen kruhy korun
+  v půdorysu), keře a byliny jako další patra, sukcese po požáru nebo
+  vichřici.

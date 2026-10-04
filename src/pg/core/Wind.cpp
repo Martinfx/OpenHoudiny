@@ -1,5 +1,7 @@
 #include "pg/core/Wind.h"
 
+#include "pg/core/Instances.h"
+
 #include <glm/gtx/rotate_vector.hpp>
 
 #include <algorithm>
@@ -235,6 +237,112 @@ Geometry bentPlant(const Geometry& plant, const Vec3& bend) {
         std::copy(normals.begin(), normals.end(), N.begin());
     }
     return out;
+}
+
+void bowPlants(Geometry& geo, const std::function<Vec3(const Vec3& foot, uint64_t plant)>& bendOf) {
+    const AttributeArray* flexAttr = geo.points().find("flex");
+    if (!flexAttr || flexAttr->type() != AttrType::Float || geo.pointCount() == 0) return;
+    const std::vector<float> flex(flexAttr->read<float>().begin(), flexAttr->read<float>().end());
+    const Plants plants = plantsOf(geo, flex);
+    const std::vector<float> bowing = bowingFlex(geo, flex);
+    std::vector<Vec3> bend(plants.foot.size());
+    for (size_t k = 0; k < bend.size(); ++k) bend[k] = bendOf(plants.foot[k], plants.key[k]);
+    const AttributeArray* nAttr = geo.points().find("N");
+    std::vector<Vec3> normals;
+    if (nAttr && nAttr->type() == AttrType::Vec3) normals.assign(nAttr->read<Vec3>().begin(), nAttr->read<Vec3>().end());
+    auto P = geo.positionsForWrite();
+    for (size_t p = 0; p < P.size(); ++p) {
+        const int32_t k = plants.of[p];
+        if (k < 0) continue;
+        P[p] = bowed(P[p], plants.foot[static_cast<size_t>(k)], bowing[p], bend[static_cast<size_t>(k)],
+                     normals.empty() ? nullptr : &normals[p]);
+    }
+    if (!normals.empty()) {
+        auto N = geo.points().create("N", AttrType::Vec3).write<Vec3>();
+        std::copy(normals.begin(), normals.end(), N.begin());
+    }
+}
+
+std::shared_ptr<const Geometry> BentShapes::shape(const std::shared_ptr<const Geometry>& plant, int way, int ways, int step,
+                                                  int steps, float most) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (made_.size() > 4096) made_.clear();
+    const auto key = std::make_tuple(plant.get(), way, ways, step, steps, most);
+    auto it = made_.find(key);
+    if (it == made_.end()) {
+        const float angle = 2.0f * kPi * static_cast<float>(way) / static_cast<float>(ways);
+        const Vec3 bend = Vec3(std::cos(angle), 0.0f, std::sin(angle)) * (most * static_cast<float>(step) / static_cast<float>(steps));
+        it = made_.emplace(key, Entry{plant, std::make_shared<const Geometry>(bentPlant(*plant, bend))}).first;
+    }
+    return it->second.bent;
+}
+
+void bowInstances(Geometry& geo, std::span<const Vec3> bends, int ways, int steps, float most, BentShapes& shapes) {
+    if (geo.prototypeCount() == 0) return;
+    const AttributeArray* instAttr = geo.points().find("instance");
+    if (!instAttr || instAttr->type() != AttrType::Int) return;
+    const auto protos = geo.prototypes();  // a copy: shapes are added as it goes
+    std::vector<uint8_t> bends_(protos.size(), 0);
+    bool any = false;
+    for (size_t k = 0; k < protos.size(); ++k) {
+        const AttributeArray* flex = protos[k] ? protos[k]->points().find("flex") : nullptr;
+        bends_[k] = flex && flex->type() == AttrType::Float ? 1 : 0;
+        any = any || bends_[k];
+    }
+    if (!any) return;
+    ways = std::max(ways, 1);
+    steps = std::max(steps, 1);
+    most = std::max(most, 1e-6f);
+    const std::vector<int32_t> instance(instAttr->read<int32_t>().begin(), instAttr->read<int32_t>().end());
+    const AttributeArray* nAttr = geo.points().find("N");
+    const auto N = nAttr && nAttr->type() == AttrType::Vec3 ? nAttr->read<Vec3>() : std::span<const Vec3>();
+    const AttributeArray* oAttr = geo.points().find("orient");
+    const bool hadOrient = oAttr && oAttr->type() == AttrType::Vec4;
+    std::vector<Vec4> orient(geo.pointCount());
+    for (size_t p = 0; p < orient.size(); ++p) {
+        orient[p] = hadOrient ? oAttr->read<Vec4>()[p]
+                              : !N.empty() && dot(N[p], N[p]) > 1e-12f ? quatUpTo(normalize(N[p])) : Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    }
+    const float stepSize = most / static_cast<float>(steps);
+    const float wayStep = 2.0f * kPi / static_cast<float>(ways);
+    std::map<std::tuple<size_t, int, int>, int32_t> made;  // prototype, way, step -> its index
+    std::vector<int32_t> standsFor = instance;
+    for (size_t p = 0; p < standsFor.size() && p < bends.size(); ++p) {
+        const int32_t k = instance[p];
+        if (k < 0 || static_cast<size_t>(k) >= protos.size() || !bends_[static_cast<size_t>(k)]) continue;
+        // In the plant's own turn.
+        const Vec4 q = orient[p];
+        Vec3 local = quatRotate(Vec4(-q.x, -q.y, -q.z, q.w), bends[p]);
+        local.y = 0.0f;
+        const int step = std::min(static_cast<int>(std::floor(length(local) / stepSize + 0.5f)), steps);
+        Vec3 shaped(0.0f);
+        if (step > 0) {
+            int way = static_cast<int>(std::floor(std::atan2(local.z, local.x) / wayStep + 0.5f));
+            way = ((way % ways) + ways) % ways;
+            const float angle = static_cast<float>(way) * wayStep;
+            shaped = Vec3(std::cos(angle), 0.0f, std::sin(angle)) * (static_cast<float>(step) * stepSize);
+            const auto key = std::make_tuple(static_cast<size_t>(k), way, step);
+            auto it = made.find(key);
+            if (it == made.end()) {
+                const auto bent = shapes.shape(protos[static_cast<size_t>(k)], way, ways, step, steps, most);
+                it = made.emplace(key, static_cast<int32_t>(geo.addPrototype(bent))).first;
+            }
+            standsFor[p] = it->second;
+        }
+        // The rest of the way: the plant tilted from its foot -- about half
+        // as far as bowing moves its top.
+        const Vec3 rest = local - shaped;
+        const float tilt = 0.5f * length(rest);
+        if (tilt > 1e-6f) {
+            const Vec3 axis = normalize(cross(Vec3(0.0f, 1.0f, 0.0f), rest));
+            const float h = std::sin(0.5f * tilt);
+            orient[p] = quatMultiply(q, Vec4(axis.x * h, axis.y * h, axis.z * h, std::cos(0.5f * tilt)));
+        }
+    }
+    auto outInstance = geo.points().create("instance", AttrType::Int).write<int32_t>();
+    std::copy(standsFor.begin(), standsFor.end(), outInstance.begin());
+    auto outOrient = geo.points().create("orient", AttrType::Vec4).write<Vec4>();
+    std::copy(orient.begin(), orient.end(), outOrient.begin());
 }
 
 }  // namespace pg

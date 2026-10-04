@@ -114,6 +114,18 @@ TreeStem growStem(int level, const Vec3& base, const Vec3& dir, float length, fl
     return st;
 }
 
+/// Whether `p` is inside the pruning envelope of a tree standing at `base`,
+/// `height` tall, its crown from `crownFoot` up (TreeSettings::prune).
+bool inEnvelope(const TreeSettings& s, const Vec3& base, float height, float crownFoot, const Vec3& p) {
+    const float up = (p.y - base.y - crownFoot) / std::max(height - crownFoot, 1e-3f);
+    if (up < 0.0f || up > 1.0f) return false;
+    const float peak = std::clamp(s.prunePeak, 0.01f, 0.99f);
+    const float shape = up < peak ? std::pow(up / peak, std::max(s.prunePowerLow, 0.0f))
+                                  : std::pow((1.0f - up) / (1.0f - peak), std::max(s.prunePowerHigh, 0.0f));
+    const float out = std::hypot(p.x - base.x, p.z - base.z);
+    return out <= std::max(s.pruneWidth, 0.0f) * height * shape;
+}
+
 /// A colour a little lighter or darker than `c`, and a little warmer.
 Vec3 shade(const Vec3& c, float variation, Random& random) {
     const float light = 1.0f + 0.5f * variation * random.centred();
@@ -275,8 +287,28 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
                 if (reach < minLength) continue;
                 const float r0 = pr * std::clamp(s.thickness, 0.05f, 0.95f);
                 const int pieces = std::clamp(static_cast<int>(std::ceil(reach / pieceLength)), 3, 60);
-                Random grow(seed, 3, (static_cast<uint64_t>(pi) << 16) | static_cast<uint64_t>(k));
+                const uint64_t own = (static_cast<uint64_t>(pi) << 16) | static_cast<uint64_t>(k);
+                Random grow(seed, 3, own);
                 TreeStem branch = growStem(level, at, way, reach, r0, r0 * 0.15f, pieces, turn, grow);
+                if (s.prune > 0.0f) {
+                    // Out of the envelope: cut back toward where it leaves it,
+                    // as far as Prune says -- grown again as long, its
+                    // wandering the same.
+                    size_t inside = branch.points.size();
+                    for (size_t i = 1; i < branch.points.size(); ++i) {
+                        if (!inEnvelope(s, base, height, crownFoot, branch.points[i])) {
+                            inside = i - 1;
+                            break;
+                        }
+                    }
+                    if (inside < branch.points.size()) {
+                        const float kept = reach * static_cast<float>(inside) / static_cast<float>(pieces);
+                        const float cut = reach + std::clamp(s.prune, 0.0f, 1.0f) * (kept - reach);
+                        if (cut < minLength) continue;
+                        Random again(seed, 3, own);
+                        branch = growStem(level, at, way, cut, r0, r0 * 0.15f, pieces, turn, again);
+                    }
+                }
                 branch.parent = static_cast<int>(pi);
                 branch.along = t;
                 branch.path = parent.path + t * parent.length;
@@ -288,13 +320,39 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
         if (parentsBegin == parentsEnd) break;
     }
 
+    // Roots out from the trunk's foot: just above the ground, out and down
+    // into it, thick where they leave the trunk -- its buttresses.
+    if (s.roots > 0 && tree.stems.size() < kMostStems) {
+        const int count = std::min(s.roots, 16);
+        Random roots(seed, 7);
+        const float offset = 2.0f * kPi * roots.unit();
+        Turning turn;
+        turn.wander = 0.5f * wobble;
+        turn.sag = 0.6f;
+        for (int k = 0; k < count; ++k) {
+            const float a = offset + 2.0f * kPi * (static_cast<float>(k) + 0.3f * roots.centred()) / static_cast<float>(count);
+            const Vec3 side(std::cos(a), 0.0f, std::sin(a));
+            const float dip = (12.0f + 10.0f * roots.unit()) * kPi / 180.0f;
+            const Vec3 at = base + side * (0.5f * radius) + kUp * (0.8f * radius);
+            const float length = std::max(s.rootLength, 0.0f) * height * (0.75f + 0.5f * roots.unit());
+            if (length < minLength) continue;
+            const int pieces = std::clamp(static_cast<int>(std::ceil(length / (0.5f * segment))), 4, 60);
+            Random grow(seed, 8, static_cast<uint64_t>(k));
+            TreeStem root = growStem(1, at, side * std::cos(dip) - kUp * std::sin(dip), length, 0.55f * radius,
+                                     0.08f * radius, pieces, turn, grow);
+            root.parent = 0;
+            root.root = true;
+            tree.stems.push_back(std::move(root));
+        }
+    }
+
     // Leaves on the twigs -- the stems nothing grows from -- and a tuft at
     // the tip of the others, the young wood: none on the trunk below the
-    // crown, none where it forks -- it goes on as its leaders.
+    // crown, none where it forks -- it goes on as its leaders; none on roots.
     if (s.leaves > 0) {
         std::vector<uint8_t> bare(tree.stems.size(), 1), forked(tree.stems.size(), 0);
         for (const TreeStem& st : tree.stems) {
-            if (st.parent < 0) continue;
+            if (st.parent < 0 || st.root) continue;
             const size_t parent = static_cast<size_t>(st.parent);
             bare[parent] = 0;
             if (st.level == tree.stems[parent].level) forked[parent] = 1;
@@ -302,7 +360,7 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
         const int tuft = std::max(1, s.leaves / 3);
         for (size_t si = 0; si < tree.stems.size(); ++si) {
             const TreeStem& st = tree.stems[si];
-            if (forked[si]) continue;
+            if (forked[si] || st.root) continue;
             const int count = bare[si] ? s.leaves : tuft;
             const float t0 = !bare[si] ? 0.85f : st.level == 0 ? std::clamp(s.crown, 0.0f, 0.95f) : 0.25f;
             Random leafRandom(seed, 4, si);
@@ -448,7 +506,8 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
             normal = normal - tangent * dot(normal, tangent);
             normal = length(normal) > 1e-6f ? normalize(normal) : perpendicular(tangent);
             const Vec3 binormal = cross(tangent, normal);
-            const float bend = (st.path + st.length * static_cast<float>(i) / static_cast<float>(m - 1)) * perHeight;
+            // A root stays where it is in the wind: flex 0 all along.
+            const float bend = st.root ? 0.0f : (st.path + st.length * static_cast<float>(i) / static_cast<float>(m - 1)) * perHeight;
             for (uint32_t k = 0; k < sides; ++k) {
                 const float a = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(sides);
                 const Vec3 out = normal * std::cos(a) + binormal * std::sin(a);
@@ -462,7 +521,7 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
         P.push_back(st.points[m - 1]);
         N.push_back(normalize(st.points[m - 1] - st.points[m - 2]));
         Cd.push_back(colour);
-        flex.push_back((st.path + st.length) * perHeight);
+        flex.push_back(st.root ? 0.0f : (st.path + st.length) * perHeight);
         const uint32_t rings = static_cast<uint32_t>(m - 1);
         const int id = static_cast<int>(si);
         for (uint32_t i = 0; i + 1 < rings; ++i) {
@@ -585,7 +644,8 @@ void skeletonTree(const Tree& tree, int treeIndex, Geometry& geo) {
             pscale[p] = st.radius[i];
             Cd[p] = colour;
             N[p] = normalize(st.points[std::min(i + 1, st.points.size() - 1)] - st.points[i == 0 ? 0 : i - 1]);
-            flex[p] = (st.path + st.length * static_cast<float>(i) / static_cast<float>(st.points.size() - 1)) * perHeight;
+            flex[p] = st.root ? 0.0f
+                              : (st.path + st.length * static_cast<float>(i) / static_cast<float>(st.points.size() - 1)) * perHeight;
             orient[p] = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
             line.push_back(static_cast<uint32_t>(p));
         }

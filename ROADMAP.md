@@ -521,8 +521,10 @@ Seřazeno podle poměru hodnota / náklad:
    ✅ Uzel Plant Wind: ohyb od paty podle `flex` bez natahování, poryvy,
    třepetání listů, `v` pro rozmazání; instance předohnuté do několika
    tvarů.
-   Zbývá: prořezávání obálkou, vítr jako dynamická simulace (pružné
-   větve s setrvačností), kořeny, ekosystém druhů.
+   ✅ Prořezávání obálkou a kořeny (Tree), šlapání (Plant Trample),
+   ekosystém tří druhů za roky (Ecosystem, příklad **ecosystem**).
+   Zbývá: vítr jako dynamická simulace (pružné větve se setrvačností),
+   ekosystém ve 3D (světlo podle výšky), vyhýbání se větví překážkám.
 
 ---
 

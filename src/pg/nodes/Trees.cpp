@@ -76,6 +76,13 @@ public:
         params_.setFloat("gravity", d.gravity);
         params_.setFloat("up", d.up);
         params_.setFloat("wobble", d.wobble);
+        params_.setFloat("prune", d.prune);
+        params_.setFloat("prunewidth", d.pruneWidth);
+        params_.setFloat("prunepeak", d.prunePeak);
+        params_.setFloat("prunepowerlow", d.prunePowerLow);
+        params_.setFloat("prunepowerhigh", d.prunePowerHigh);
+        params_.setInt("roots", d.roots);
+        params_.setFloat("rootlength", d.rootLength);
         params_.setFloat("thickness", d.thickness);
         for (size_t l = 0; l < 3; ++l) {
             const std::string n = std::to_string(l + 1);
@@ -112,6 +119,13 @@ public:
         s.gravity = std::max(params_.evalFloat("gravity", ctx, d.gravity), 0.0f);
         s.up = std::max(params_.evalFloat("up", ctx, d.up), 0.0f);
         s.wobble = std::max(params_.evalFloat("wobble", ctx, d.wobble), 0.0f);
+        s.prune = std::clamp(params_.evalFloat("prune", ctx, d.prune), 0.0f, 1.0f);
+        s.pruneWidth = std::max(params_.evalFloat("prunewidth", ctx, d.pruneWidth), 0.0f);
+        s.prunePeak = std::clamp(params_.evalFloat("prunepeak", ctx, d.prunePeak), 0.0f, 1.0f);
+        s.prunePowerLow = std::max(params_.evalFloat("prunepowerlow", ctx, d.prunePowerLow), 0.0f);
+        s.prunePowerHigh = std::max(params_.evalFloat("prunepowerhigh", ctx, d.prunePowerHigh), 0.0f);
+        s.roots = std::clamp(params_.evalInt("roots", ctx, d.roots), 0, 16);
+        s.rootLength = std::max(params_.evalFloat("rootlength", ctx, d.rootLength), 0.0f);
         s.thickness = std::clamp(params_.evalFloat("thickness", ctx, d.thickness), 0.05f, 0.95f);
         for (size_t l = 0; l < 3; ++l) {
             const std::string n = std::to_string(l + 1);

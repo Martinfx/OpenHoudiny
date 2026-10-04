@@ -129,6 +129,12 @@ trojúhelníků z paty pokryje přesně, i ten zubatý.
 | Level 1 / 2 / 3 | Branches | 28 / 7 / 5 | kolik větví na rodiče |
 | | Angle | 55° / 45° / 40° | odklon od rodiče |
 | | Length | 0,5 / 0,45 / 0,4 | délka jako podíl rodiče (první úroveň: kmene) |
+| Prune | Prune | 0 | jak moc se větve, které by vyrostly z obálky, zkrátí k ní (Weber a Penn): 0 vůbec, 1 přesně k ní |
+| | Prune Width | 0,5 | šířka obálky v nejširším místě, kolem kmene, jako podíl výšky |
+| | Prune Peak | 0,5 | kde je obálka nejširší, nahoru od paty koruny |
+| | Power Low / High | 0,5 / 0,5 | jak se obálka zužuje pod nejširším místem a nad ním: 1 kužel, pod 1 plnější, nad 1 štíhlejší |
+| Roots | Roots | 0 | kořeny z paty kmene: nad zemí, pak dolů do ní (náběhy starého stromu); ve větru se nehýbou |
+| | Root Length | 0,15 | délka kořenů jako podíl délky kmene |
 | Leaves | Leaves | 10 | listů na větvičku |
 | | Leaf Size | 0,12 m | délka listu |
 | | Leaf Shape | Broad | Broad, Narrow, Needles |
@@ -139,6 +145,16 @@ trojúhelníků z paty pokryje přesně, i ten zubatý.
 | | Segment | 0,25 m | délka kousku kmene; větve o čtvrtinu jemněji na úroveň |
 | | Output | Mesh | Mesh (síť), Skeleton (kostra), nebo Instances: Variants stromů a bod pro každý strom ([vegetation.md](vegetation.md)) |
 | | Variants | 8 | u Instances: kolik různých stromů se vypěstuje — ty, které by vyrostly na prvních bodech |
+
+**Prořezávání a kořeny.** Větev, která by vyrostla z obálky, se znovu
+vypěstuje kratší, se stejným bloudivým tvarem: Prune 1 ji zkrátí k místu,
+kde obálku opouští, 0,5 napůl. Z obálky pak nevyčnívá nic (test: 100 %
+bodů větví uvnitř, bez prořezávání 63 %). Hodí se na živý plot, tvarovaný
+strom, nebo korunu držící se svého obrysu. Kořeny vyrůstají z paty kmene
+kousek nad zemí do stran a dolů do ní. Nemají listy ani větve a jejich
+`flex` je 0, takže je vítr neohýbá.
+
+![Vlevo strom s kořeny, vpravo stejný strom s korunou prořezanou obálkou](img/trees-prune-roots.jpg)
 
 Ve viewportu má vybraný uzel v režimu objektů (**1**) úchyt jako Tube:
 **W** posouvá Center, **R** mění Height (nahoru) a Radius kmene (do stran)
@@ -339,10 +355,10 @@ trubky s plochami otočenými ven a tvar koruny podle Shape.
 
 ## 9. Co zatím chybí
 
-- **Prořezávání obálkou** (Prune u Webera a Penna) a vyhýbání se větví
-  navzájem nebo překážkám.
-- **Kořeny** nad zemí. Úrovně detailu a billboardy pro vzdálený les už
-  viewport má ([vegetation.md](vegetation.md#9-výkon)).
+- **Vyhýbání se větví** navzájem nebo překážkám (prořezávání obálkou už
+  je, oddíl 2).
+- **Kořeny** v zemi do hloubky a kořeny, které se přizpůsobí terénu
+  (teď vycházejí z paty stejně na rovině i na svahu).
 - **Vítr jako dynamická simulace**: pružné větve se setrvačností, které
   se po poryvu dokmitají. Plant Wind je kinematický, ohyb plyne přímo
   z času.

@@ -293,6 +293,7 @@ void registerBuiltinNodes() {
         registerTreeNodes();
         registerGrassNodes();
         registerWindNodes();
+        registerEcosystemNodes();
         registerUsdNodes();
         registerAlembicNodes();
         registerVdbNodes();

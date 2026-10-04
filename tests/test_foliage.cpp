@@ -13,6 +13,7 @@
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
+#include "pg/core/Ecosystem.h"
 #include "pg/core/Grass.h"
 #include "pg/core/Instances.h"
 #include "pg/core/Lod.h"
@@ -685,4 +686,200 @@ TEST(foliage_the_wind_bows_plants_from_their_feet) {
                 std::chrono::duration<double, std::milli>(t1 - t0).count(),
                 std::chrono::duration<double, std::milli>(t2 - t1).count() / 5.0, sixth->prototypeCount(), size_t(21));
     CHECK(first && sixth && first->pointCount() == sixth->pointCount());
+}
+
+TEST(foliage_an_ecosystem_sorts_its_kinds_by_the_ground_and_the_shade) {
+    // The example: what is left after 120 years -- each kind most where the
+    // ground suits it.
+    sim::Network net;
+    CHECK(sim::Network::example("ecosystem", net));
+    int places = -1, wood = -1;
+    for (const auto& n : net.nodes()) {
+        if (n.name == "places") places = n.id;
+        if (n.name == "wood") wood = n.id;
+    }
+    CHECK(places >= 0 && wood >= 0);
+    sim::GeometryGraph g;
+    g.sync(net);
+    const GeometryPtr ground = g.cook(places, 1);
+    const GeometryPtr plants = g.cook(wood, 1);
+    CHECK(ground && plants && plants->pointCount() > 0);
+    const auto wet = ground->points().find("moisture")->read<float>();
+    const auto species = plants->points().find("species")->read<int32_t>();
+    const auto id = plants->points().find("id")->read<int32_t>();
+    const auto age = plants->points().find("age")->read<float>();
+    double moisture[3] = {0, 0, 0}, ages[3] = {0, 0, 0};
+    size_t count[3] = {0, 0, 0};
+    for (size_t i = 0; i < plants->pointCount(); ++i) {
+        const int k = species[i];
+        CHECK(k >= 0 && k < 3);
+        CHECK(plants->findGroup("species" + std::to_string(k + 1))->contains(i));
+        moisture[k] += wet[static_cast<size_t>(id[i])];
+        ages[k] += age[i];
+        ++count[k];
+    }
+    std::printf("  %zu places, %zu plants after 120 years: birches %zu (ground %.2f wet, %.0f years), oaks %zu (%.2f, %.0f), "
+                "spruces %zu (%.2f, %.0f)\n",
+                ground->pointCount(), plants->pointCount(), count[0], moisture[0] / std::max<size_t>(count[0], 1),
+                ages[0] / std::max<size_t>(count[0], 1), count[1], moisture[1] / std::max<size_t>(count[1], 1),
+                ages[1] / std::max<size_t>(count[1], 1), count[2], moisture[2] / std::max<size_t>(count[2], 1),
+                ages[2] / std::max<size_t>(count[2], 1));
+    for (int k = 0; k < 3; ++k) CHECK(count[k] > 0);
+    CHECK(moisture[2] / count[2] > moisture[1] / count[1] + 0.1);  // spruces wetter than oaks
+}
+
+TEST(foliage_trees_are_pruned_to_their_envelope_and_stand_on_roots) {
+    // Pruned: the branches kept to the envelope, the wild tree's reach out
+    // of it.
+    TreeSettings wild;
+    wild.levels = 2;
+    wild.height = 6.0f;
+    TreeSettings kept = wild;
+    kept.prune = 1.0f;
+    kept.pruneWidth = 0.3f;
+    auto inside = [&](const Tree& t) {
+        size_t in = 0, all = 0;
+        for (const TreeStem& st : t.stems) {
+            if (st.level == 0) continue;
+            for (const Vec3& p : st.points) {
+                const float up = (p.y - kept.crown * t.height) / ((1.0f - kept.crown) * t.height);
+                const float shape = up < 0.5f ? std::pow(std::max(up, 0.0f) / 0.5f, 0.5f) : std::pow(std::max(1.0f - up, 0.0f) / 0.5f, 0.5f);
+                in += std::hypot(p.x, p.z) <= kept.pruneWidth * t.height * shape + 0.05f * t.height ? 1 : 0;
+                ++all;
+            }
+        }
+        return static_cast<double>(in) / static_cast<double>(std::max<size_t>(all, 1));
+    };
+    const double wildIn = inside(growTree(wild, Vec3(), 1.0f, 3)), keptIn = inside(growTree(kept, Vec3(), 1.0f, 3));
+    std::printf("  branch points in the envelope: wild %.0f %%, pruned %.0f %%\n", 100.0 * wildIn, 100.0 * keptIn);
+    CHECK(keptIn > 0.95 && wildIn < 0.8);
+
+    // Roots: out from the foot, down into the ground at their tips, no
+    // leaves on them, still in the wind (flex 0).
+    TreeSettings rooted = wild;
+    rooted.roots = 6;
+    rooted.leaves = 5;
+    const Tree t = growTree(rooted, Vec3(), 1.0f, 3);
+    size_t roots = 0;
+    for (size_t i = 0; i < t.stems.size(); ++i) {
+        const TreeStem& st = t.stems[i];
+        if (!st.root) continue;
+        ++roots;
+        CHECK(st.points.front().y > 0.0f && st.points.back().y < 0.0f);
+        CHECK(std::hypot(st.points.back().x, st.points.back().z) > std::hypot(st.points.front().x, st.points.front().z));
+        for (const TreeLeaf& leaf : t.leaves) CHECK(leaf.stem != static_cast<int>(i));
+    }
+    CHECK_EQ(roots, size_t(6));
+    Geometry geo;
+    meshTree(t, rooted, 0, geo);
+    const auto flex = geo.points().find("flex")->read<float>();
+    const auto P = geo.positions();
+    size_t below = 0;
+    for (size_t p = 0; p < P.size(); ++p) {
+        if (P[p].y < -0.05f) {
+            ++below;
+            CHECK(flex[p] == 0.0f);
+        }
+    }
+    CHECK(below > 0);
+}
+
+TEST(foliage_trodden_grass_lies_down_and_gets_up_again) {
+    // Clumps on a lawn, a foot set down at the middle at 1 s: those round
+    // it bowed away from it, those far off not; before 1 s none; long
+    // after, upright again.
+    registerBuiltinNodes();
+    Graph g;
+    Node* grid = g.create("grid", "lawn");
+    grid->setFloat("sizex", 3.0f);
+    grid->setFloat("sizez", 3.0f);
+    Node* grass = g.create("grass", "grass");
+    grass->setFloat("density", 30.0f);
+    grass->setInt("variants", 2);
+    CHECK(grass->setInput(0, grid));
+    auto foot = std::make_shared<Geometry>();
+    foot->addPoints(1);
+    foot->points().create("time", AttrType::Float).write<float>()[0] = 1.0f;
+    foot->points().create("pscale", AttrType::Float).write<float>()[0] = 1.5f;  // 0.6 m across
+    Node* trample = g.create("planttrample", "trample");
+    CHECK(trample->setInput(0, grass));
+    CookEngine engine;
+    const GeometryPtr lawn = engine.cook(*grass, CookContext{});
+    auto at = [&](double time) {
+        CookContext c;
+        c.time = time;
+        const GeometryPtr in[2] = {lawn, foot};
+        return trample->cookNode(c, in);
+    };
+    // How far each clump's blades lean away from the foot: their points'
+    // shift from the upright clump, along the way from the foot, at their
+    // place.
+    auto lean = [&](const GeometryPtr& g2, size_t p) {
+        const auto inst = g2->points().find("instance")->read<int32_t>();
+        const Geometry& shape = *g2->prototypes()[static_cast<size_t>(inst[p])];
+        const Geometry& was = *lawn->prototypes()[static_cast<size_t>(lawn->points().find("instance")->read<int32_t>()[p])];
+        Vec3 shift(0.0f);
+        for (size_t q = 0; q < shape.pointCount(); ++q) shift = shift + (shape.positions()[q] - was.positions()[q]);
+        shift = quatRotate(g2->points().find("orient")->read<Vec4>()[p], shift) / static_cast<float>(shape.pointCount());
+        Vec3 away = lawn->positions()[p];
+        away.y = 0.0f;
+        return length(away) > 1e-4f ? dot(shift, normalize(away)) : 0.0f;
+    };
+    const GeometryPtr before = at(0.5), during = at(1.2), after = at(40.0);
+    float nearLean = 0.0f, farLean = 0.0f, beforeLean = 0.0f, afterLean = 0.0f;
+    size_t nearCount = 0, farCount = 0;
+    for (size_t p = 0; p < lawn->pointCount(); ++p) {
+        const Vec3 q = lawn->positions()[p];
+        const float d = std::hypot(q.x, q.z);
+        if (d < 0.35f && d > 0.05f) {
+            nearLean += lean(during, p);
+            beforeLean += std::fabs(lean(before, p));
+            afterLean += std::fabs(lean(after, p));
+            ++nearCount;
+        } else if (d > 1.0f) {
+            farLean += std::fabs(lean(during, p));
+            ++farCount;
+        }
+    }
+    std::printf("  %zu clumps by the foot lean away %.3f m on average, %zu far off %.4f; before %.4f, long after %.4f\n",
+                nearCount, nearLean / nearCount, farCount, farLean / farCount, beforeLean / nearCount, afterLean / nearCount);
+    CHECK(nearCount > 3 && farCount > 3);
+    CHECK(nearLean / nearCount > 0.03f);
+    CHECK(farLean / farCount < 1e-4f && beforeLean / nearCount < 1e-4f && afterLean / nearCount < 1e-3f);
+}
+
+TEST(foliage_an_ecosystem_is_the_same_for_the_same_seed) {
+    std::vector<Vec3> places;
+    std::vector<float> wet;
+    for (int x = 0; x < 60; ++x) {
+        for (int z = 0; z < 60; ++z) {
+            places.push_back(Vec3(static_cast<float>(x), 0.0f, static_cast<float>(z)));
+            wet.push_back(static_cast<float>(x) / 59.0f);
+        }
+    }
+    EcosystemSettings s;
+    s.species = {Species{}, Species{}};
+    s.species[0].moisture = 0.1f;
+    s.species[1].moisture = 0.9f;
+    s.species[0].tolerance = s.species[1].tolerance = 0.25f;
+    s.years = 60;
+    const auto a = growEcosystem(places, wet, s), b = growEcosystem(places, wet, s);
+    CHECK(a.size() == b.size() && !a.empty());
+    for (size_t i = 0; i < a.size() && i < b.size(); ++i) CHECK(a[i].place == b[i].place && a[i].species == b[i].species);
+    // Each on its side: the dry kind west, the wet east.
+    double x[2] = {0, 0};
+    size_t n[2] = {0, 0};
+    for (const EcoPlant& p : a) x[p.species] += places[p.place].x, ++n[p.species];
+    CHECK(n[0] > 0 && n[1] > 0 && x[0] / n[0] < 20.0 && x[1] / n[1] > 40.0);
+    // Grown crowns hardly over each other: shade thins them.
+    size_t grown = 0, crowded = 0;
+    for (const EcoPlant& p : a) {
+        if (p.size < 1.0f) continue;
+        ++grown;
+        for (const EcoPlant& q : a) {
+            if (&q != &p && q.size >= 1.0f && length(places[p.place] - places[q.place]) < 1.0f * s.species[0].crown) ++crowded;
+        }
+    }
+    std::printf("  %zu plants, %zu grown, %zu pairs of grown ones within a crown's radius\n", a.size(), grown, crowded / 2);
+    CHECK(grown > 0 && crowded / 2 < grown / 4 + 1);
 }

@@ -64,6 +64,18 @@ struct TreeSettings {
     float variation = 0.3f;  ///< how much the leaves, and the trees, differ in shade
     int sides = 10;          ///< faces round the trunk; two fewer round each level of branches, never six
     float segment = 0.25f;   ///< m, how long a piece of the trunk is; branches in pieces as fine
+    /// Pruning to an envelope, as Weber and Penn's: how much a branch that
+    /// would reach out of it is cut back to it, 0 not at all to 1 to it.
+    /// The envelope: round the trunk, `pruneWidth` of the height across at
+    /// its widest, `prunePeak` up the crown from its foot; below and above
+    /// that narrowing as the powers say (1 a cone, below 1 fuller, above 1
+    /// leaner).
+    float prune = 0.0f;
+    float pruneWidth = 0.5f;
+    float prunePeak = 0.5f;
+    float prunePowerLow = 0.5f, prunePowerHigh = 0.5f;
+    int roots = 0;            ///< roots out from the trunk's foot, above the ground then down into it
+    float rootLength = 0.15f;  ///< how long, a share of the trunk's
 };
 
 /// A trunk or a branch: a curve from its base to its tip.
@@ -75,6 +87,7 @@ struct TreeStem {
     std::vector<float> radius;  ///< at each point
     float length = 0.0f;        ///< m
     float path = 0.0f;          ///< m along the wood from the tree's foot to its base
+    bool root = false;          ///< a root: no leaves, still in the wind
 };
 
 /// A leaf: its base on its stem, which way it points and which way it faces.

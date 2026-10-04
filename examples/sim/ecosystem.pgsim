@@ -1,0 +1,95 @@
+pgsim 1
+# A wood that grew by itself: an Ecosystem of three kinds over 120 years on
+# a hilly ground with a stream winding through it. A wrangle raises the
+# ground and paints it wet along the stream and in the hollows; Scatter
+# offers places where a tree could stand; Ecosystem lets birches (pioneers:
+# fast, short-lived, bearing no shade), oaks (slow giants of the dry) and
+# spruces (shade bearers of the wet) start, grow, shade each other, wither
+# where the ground does not suit them, die of age and seed round themselves.
+# What is left: spruces along the stream, oaks on the dry rises, birches in
+# the gaps the old ones left -- each kind grown by a Tree on its group,
+# young ones smaller (pscale).
+node 1 grid 1 ground 0 0
+  param sizex 120
+  param sizez 120
+  param rows 100
+  param cols 100
+node 2 point_wrangle 1 terrain 0 110
+  param snippet "// Gentle hills, above the floor.\n@P.y = 2.2 + 3.0 * (noise(@P * 0.025) - 0.5) + 0.8 * (noise(@P * 0.09) - 0.5);\n// A stream winding across, and the hollows: wet.\nfloat d = abs(@P.z - 18.0 * sin(@P.x * 0.035));\nf@moisture = clamp(exp(-d * d / 300.0) + 0.6 * (1.0 - smoothstep(1.6, 2.8, @P.y)) * 0.5, 0.0, 1.0);\n@Cd = lerp(set(0.16, 0.13, 0.07), set(0.06, 0.1, 0.035), f@moisture) * (0.85 + 0.3 * noise(@P * 0.4));"
+node 3 scatter 1 places 0 220
+  param mode density
+  param density 0.3
+  param seed 5
+  param mindistance 1.2
+node 4 ecosystem 1 wood 0 330
+  param years 120
+node 5 blast 1 birch_spots -230 440
+  param group "species1"
+  param invert on
+node 6 blast 1 oak_spots 0 440
+  param group "species2"
+  param invert on
+node 7 blast 1 spruce_spots 230 440
+  param group "species3"
+  param invert on
+node 8 tree 1 birches -230 550
+  param shape flame
+  param height 9
+  param radius 0.13
+  param gravity 0.4
+  param leafsize 0.1
+  param barkcolor 0.62 0.6 0.55
+  param leafcolor 0.13 0.25 0.05
+  param sides 8
+  param output instances
+  param variants 4
+node 9 tree 1 oaks 0 550
+  param height 10
+  param radius 0.32
+  param crown 0.3
+  param forks 3
+  param forkheight 0.4
+  param forkangle 32
+  param length1 0.6
+  param roots 6
+  param leaves 12
+  param leafsize 0.18
+  param leafcolor 0.07 0.15 0.035
+  param sides 8
+  param output instances
+  param variants 4
+node 10 tree 1 spruces 230 550
+  param shape conical
+  param height 14
+  param radius 0.22
+  param crown 0.08
+  param levels 2
+  param gravity 0.35
+  param up 0.05
+  param branches1 70
+  param angle1 80
+  param length1 0.28
+  param branches2 12
+  param angle2 55
+  param leaves 14
+  param leafsize 0.22
+  param leafshape needles
+  param barkcolor 0.1 0.08 0.065
+  param leafcolor 0.035 0.08 0.035
+  param output instances
+  param variants 4
+node 11 merge 1 landscape 0 660
+  display
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 4.places
+link 4.geometry -> 5.geometry
+link 4.geometry -> 6.geometry
+link 4.geometry -> 7.geometry
+link 5.geometry -> 8.points
+link 6.geometry -> 9.points
+link 7.geometry -> 10.points
+link 2.geometry -> 11.geometry
+link 8.geometry -> 11.geometry
+link 9.geometry -> 11.geometry
+link 10.geometry -> 11.geometry

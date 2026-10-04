@@ -652,6 +652,22 @@ std::vector<NodeType> buildTypes() {
         for (auto&& d : level(1, "Level 1", 28, 55.0f, 0.5f)) p.push_back(d);
         for (auto&& d : level(2, "Level 2", 7, 45.0f, 0.45f)) p.push_back(d);
         for (auto&& d : level(3, "Level 3", 5, 40.0f, 0.4f)) p.push_back(d);
+        p.push_back({"prune", "Prune", "Prune", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "How much a branch that would reach out of the envelope is cut back to it, as Weber and "
+                     "Penn prune: 0 not at all, 1 to it -- a hedge, a topiary, a crown kept to its outline."});
+        p.push_back({"prunewidth", "Prune Width", "Prune", K::Float, {0.5f, 0.0f, 0.0f}, 0.05f, 1.5f, 0.0f, kBig, "",
+                     "How wide the envelope is at its widest, round the trunk: a share of the height."});
+        p.push_back({"prunepeak", "Prune Peak", "Prune", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "Where it is widest, up the crown from its foot."});
+        p.push_back({"prunepowerlow", "Power Low", "Prune", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, kBig, "",
+                     "How it narrows below its widest: 1 a cone, below 1 fuller, above 1 leaner."});
+        p.push_back({"prunepowerhigh", "Power High", "Prune", K::Float, {0.5f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, kBig, "",
+                     "How it narrows above its widest."});
+        p.push_back({"roots", "Roots", "Roots", K::Int, {0.0f, 0.0f, 0.0f}, 0.0f, 12.0f, 0.0f, 16.0f, "",
+                     "Roots out from the trunk's foot -- above the ground at first, then down into it: an old "
+                     "tree's buttresses. They stay still in the wind."});
+        p.push_back({"rootlength", "Root Length", "Roots", K::Float, {0.15f, 0.0f, 0.0f}, 0.0f, 0.5f, 0.0f, kBig, "",
+                     "How long they are, a share of the trunk's length."});
         p.push_back({"leaves", "Leaves", "Leaves", K::Int, {10.0f, 0.0f, 0.0f}, 0.0f, 60.0f, 0.0f, 500.0f, "",
                      "How many leaves grow on each twig -- each branch nothing grows from."});
         p.push_back({"leafsize", "Leaf Size", "Leaves", K::Float, {0.12f, 0.0f, 0.0f}, 0.01f, 0.5f, 1e-4f, kBig, "m",
@@ -751,6 +767,61 @@ std::vector<NodeType> buildTypes() {
                "The points, each standing for its clump, drawn instanced. Off: the clumps made copies of -- "
                "geometry every node can change, as heavy as its blades."}},
              {"center", nullptr, nullptr, nullptr, nullptr, "height"});
+    {
+        std::vector<ParamDef> p = {
+            {"years", "Years", "Ecosystem", K::Int, {80.0f, 0.0f, 0.0f}, 0.0f, 300.0f, 0.0f, 2000.0f, "",
+             "How long the community grows: young, a pioneer wood; old, the giants and shade bearers."},
+            seed("Ecosystem", "Another number: other first plants, other seeds, other fates."),
+            {"start", "Start", "Ecosystem", K::Float, {0.02f, 0.0f, 0.0f}, 0.0f, 0.2f, 0.0f, kBig, "1/m\xc2\xb2",
+             "How many plants a square metre there are at the start, anywhere."},
+            text("moistureattribute", "Moisture Attribute", "Ecosystem", "moisture",
+                 "A point attribute of the places, 0 dry to 1 wet -- painted, or a wrangle's: in a valley, by "
+                 "a stream. Empty, or none: 0.5 everywhere.")};
+        const char* names[3] = {"Species 1", "Species 2", "Species 3"};
+        const float defaults[3][9] = {{1.0f, 2.5f, 10.0f, 60.0f, 0.1f, 0.45f, 0.45f, 12.0f, 1.2f},
+                                      {0.6f, 5.0f, 40.0f, 300.0f, 0.35f, 0.3f, 0.3f, 6.0f, 0.4f},
+                                      {0.6f, 3.0f, 30.0f, 200.0f, 0.85f, 0.75f, 0.3f, 7.0f, 0.6f}};
+        static const char* const keys[3][10] = {
+            {"s1_on", "s1_share", "s1_crown", "s1_growth", "s1_life", "s1_shade", "s1_moisture", "s1_tolerance",
+             "s1_seeding", "s1_seeds"},
+            {"s2_on", "s2_share", "s2_crown", "s2_growth", "s2_life", "s2_shade", "s2_moisture", "s2_tolerance",
+             "s2_seeding", "s2_seeds"},
+            {"s3_on", "s3_share", "s3_crown", "s3_growth", "s3_life", "s3_shade", "s3_moisture", "s3_tolerance",
+             "s3_seeding", "s3_seeds"}};
+        for (int k = 0; k < 3; ++k) {
+            const char* const* key = keys[k];
+            const float* d = defaults[k];
+            p.push_back({key[0], "On", names[k], K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                         "Whether this kind grows at all."});
+            p.push_back({key[1], "Share", names[k], K::Float, {d[0], 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
+                         "How many of it start, against the others."});
+            p.push_back({key[2], "Crown", names[k], K::Float, {d[1], 0.0f, 0.0f}, 0.2f, 10.0f, 0.05f, kBig, "m",
+                         "How wide its crown spreads, grown: the radius it shades."});
+            p.push_back({key[3], "Growth", names[k], K::Float, {d[2], 0.0f, 0.0f}, 1.0f, 100.0f, 1.0f, kBig, "yr",
+                         "Years it takes to grow to it."});
+            p.push_back({key[4], "Life", names[k], K::Float, {d[3], 0.0f, 0.0f}, 5.0f, 500.0f, 1.0f, kBig, "yr",
+                         "Years it lives, give or take a fifth."});
+            p.push_back({key[5], "Shade Tolerance", names[k], K::Float, {d[4], 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                         "How well it bears another's shade: 0 it withers under a crown, 1 it grows on."});
+            p.push_back({key[6], "Moisture", names[k], K::Float, {d[5], 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                         "How wet it likes the ground, 0 dry to 1 wet."});
+            p.push_back({key[7], "Moisture Range", names[k], K::Float, {d[6], 0.0f, 0.0f}, 0.05f, 1.0f, 0.01f, kBig, "",
+                         "How far from that it still does well."});
+            p.push_back({key[8], "Seed Distance", names[k], K::Float, {d[7], 0.0f, 0.0f}, 0.5f, 30.0f, 0.1f, kBig, "m",
+                         "How far its seeds fall round it."});
+            p.push_back({key[9], "Seedlings", names[k], K::Float, {d[8], 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, kBig, "1/yr",
+                         "Seedlings a grown plant brings up a year, where there is room."});
+        }
+        geometry("ecosystem", "Ecosystem", "ecosystem",
+                 "A plant community grown over years (after Deussen et al.): plants of three kinds start where the "
+                 "ground lets them, grow their crowns year by year, shade each other where the crowns meet -- the "
+                 "smaller suffering, the more the less it bears shade -- wither where the ground is too wet or too "
+                 "dry for them, die of age, and the grown ones seed round themselves. Places in: points where a "
+                 "plant could stand, a Scatter over a terrain, each as wet as its moisture says. Out: the plants "
+                 "alive, a point each -- species, a group of each kind (species1, 2, 3), age, pscale (how grown), "
+                 "orient -- for Tree or Copy to Points to grow each kind on.",
+                 {{"places", "Places", PinType::Geometry}}, std::move(p));
+    }
     geometry("plant_wind", "Plant Wind", "plantwind",
              "Trees and grass in the wind, frame by frame: each plant bowed from its foot as the wind blows "
              "-- stiff at the foot, more and more up the wood (point flex, as Tree and Grass give it), turned "
@@ -781,6 +852,24 @@ std::vector<NodeType> buildTypes() {
                "Ways round each plant its bent shapes go: more, nearer the wind's way; each a plant held."},
               {"steps", "Steps", "Instances", K::Int, {4.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
                "How far, in steps up to the most the plants bow: more, smoother; each a plant held."}});
+    geometry("plant_trample", "Plant Trample", "planttrample",
+             "Grass and shrubs flattened where something treads -- feet, wheels, a body that fell -- and "
+             "straightening again: each plant round a tread bowed away from it, Flatten at its middle, none "
+             "at its edge, from its foot as the wind bows it (point flex), then up again over Recovery "
+             "seconds. Treads are points: pscale times Radius how wide, time when (a trail of footsteps); "
+             "none yet where their time is still to come. Points standing for plants stand for them bent "
+             "ahead, as Plant Wind's.",
+             {{"geometry", "Plants", PinType::Geometry}, {"treads", "Treads", PinType::Geometry}},
+             {{"radius", "Radius", "Trample", K::Float, {0.4f, 0.0f, 0.0f}, 0.05f, 3.0f, 0.001f, kBig, "m",
+               "How far round a tread the plants bow, times its pscale."},
+              {"flatten", "Flatten", "Trample", K::Float, {70.0f, 0.0f, 0.0f}, 0.0f, 89.0f, 0.0f, 89.0f, "\xc2\xb0",
+               "How far over the plants go where it trod: 90 flat on the ground."},
+              {"recovery", "Recovery", "Trample", K::Float, {4.0f, 0.0f, 0.0f}, 0.0f, 30.0f, 0.0f, kBig, "s",
+               "How long they take to straighten -- by then a third as bent. 0: they stay down."},
+              {"directions", "Directions", "Instances", K::Int, {8.0f, 0.0f, 0.0f}, 1.0f, 16.0f, 1.0f, 32.0f, "",
+               "Ways round each plant its flattened shapes go; each a plant held."},
+              {"steps", "Steps", "Instances", K::Int, {4.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
+               "How far, in steps up to Flatten; each a plant held."}});
     {
         ParamDef f = file("An OBJ file: its points, polygons and lines. A relative path is read from the "
                           "network's folder; a file that changes is read again.");

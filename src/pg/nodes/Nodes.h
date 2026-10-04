@@ -30,6 +30,7 @@ void registerEditNodes();
 void registerTreeNodes();
 void registerGrassNodes();
 void registerWindNodes();
+void registerEcosystemNodes();
 
 /// How Scatter places its points.
 struct ScatterRules {
