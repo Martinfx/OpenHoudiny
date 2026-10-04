@@ -479,6 +479,9 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     const Glass glass(geo);
     const AttributeArray* N = usableNormals(geo);
     const AttributeArray* v = pointVectors(geo, "v");
+    const AttributeArray* through = geo.primitives().find("translucency");
+    if (through && through->type() != AttrType::Float) through = nullptr;
+    const auto throughOf = through ? through->read<float>() : std::span<const float>();
     pointNormals_ = N != nullptr;
     moving_ = v != nullptr;
     rest_ = !geo.volumes().empty();
@@ -546,16 +549,19 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     mesh.places.reserve(points * 6);
     mesh.colors.reserve(points * 3);
     if (moving_) mesh.velocities.reserve(points * 3);
+    if (through) mesh.translucency.reserve(points);
     mesh.indices.resize(count);
     for (size_t k = 0; k < count; ++k) {
         const uint32_t t = drawn_[k / 3];
         const uint32_t p = tris_[t][k % 3];
         const Vec3 n = pointNormals_ ? pointN[p] : normal[k];
         const Vec3 c = colors.at(owner[t], corners[t][k % 3], p);
+        const float lets = through ? std::clamp(throughOf[owner[t]], 0.0f, 1.0f) : 0.0f;
         int32_t found = -1, last = -1;
         for (int32_t w = firstVertex[p]; w >= 0; w = nextVertex[static_cast<size_t>(w)]) {
             const size_t at = static_cast<size_t>(w);
-            if (sameBits(&mesh.places[at * 6 + 3], n) && sameBits(&mesh.colors[at * 3], c)) {
+            if (sameBits(&mesh.places[at * 6 + 3], n) && sameBits(&mesh.colors[at * 3], c) &&
+                (!through || mesh.translucency[at] == lets)) {
                 found = w;
                 break;
             }
@@ -571,6 +577,7 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
             const Vec3& at = P[p];
             mesh.places.insert(mesh.places.end(), {at.x, at.y, at.z, n.x, n.y, n.z});
             mesh.colors.insert(mesh.colors.end(), {c.x, c.y, c.z});
+            if (through) mesh.translucency.push_back(lets);
             if (moving_) mesh.velocities.insert(mesh.velocities.end(), {pointV[p].x, pointV[p].y, pointV[p].z});
             growMesh(mesh, at);
         }

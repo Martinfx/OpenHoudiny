@@ -123,6 +123,9 @@ struct DisplayMesh {
     std::vector<float> places;      ///< six floats a vertex: position, normal
     std::vector<float> colors;      ///< three floats a vertex
     std::vector<float> velocities;  ///< three floats a vertex, its point's v; empty when the points have none
+    /// One float a vertex: how much light its face lets through (primitive
+    /// translucency -- leaves, blades of grass); empty when it has none.
+    std::vector<float> translucency;
     std::vector<uint32_t> indices;  ///< three vertices a triangle
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};  ///< the box round the vertices
 

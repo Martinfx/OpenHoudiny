@@ -512,7 +512,8 @@ Seřazeno podle poměru hodnota / náklad:
    ✅ UV na kůře, listech a stéblech; kůra s normálovou mapou podle UV,
    listy z obrázku knihovny s alfa výřezem a tráva z obrázku stébla
    v Cycles i path traceru (příklad **foliage**, [trees.md](docs/trees.md)).
-   Zbývá: průsvitnost listů a stébel ve viewportu, prořezávání obálkou, LOD a billboardy pro vzdálený les a trávu, ohyb
+   ✅ Průsvitnost listů a stébel proti slunci i ve viewportu.
+   Zbývá: prořezávání obálkou, LOD a billboardy pro vzdálený les a trávu, ohyb
    stébel ve shaderu, vítr jako simulace ohybu, kořeny, ekosystém druhů.
 
 ---

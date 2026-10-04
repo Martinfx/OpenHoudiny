@@ -113,6 +113,7 @@ inline constexpr GLenum READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9;
     X(EnableVertexAttribArray, void, (GLuint))                                                     \
     X(VertexAttribPointer, void, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))         \
     X(DisableVertexAttribArray, void, (GLuint))                                                    \
+    X(VertexAttrib1f, void, (GLuint, GLfloat))                                                     \
     X(VertexAttrib3f, void, (GLuint, GLfloat, GLfloat, GLfloat))                                   \
     X(VertexAttrib4f, void, (GLuint, GLfloat, GLfloat, GLfloat, GLfloat))                          \
     X(VertexAttribDivisor, void, (GLuint, GLuint))                                                 \

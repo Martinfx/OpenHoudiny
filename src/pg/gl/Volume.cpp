@@ -355,7 +355,7 @@ uniform ivec3 u_glowDims;      // blocks
 uniform vec3 u_glowCell;       // the size of one, world units
 uniform vec3 u_backgroundTop, u_backgroundBottom;
 uniform bool u_hasMeshes;
-uniform sampler2D u_meshG;     // the rasterised meshes: normal (octahedral), which solid, distance (< 0: none)
+uniform sampler2D u_meshG;     // the rasterised meshes: normal (octahedral; the displayed geometry's translucency on its x), which solid, distance (< 0: none)
 
 vec3 octDecode(vec2 f) {
     vec3 n = vec3(f, 1.0 - abs(f.x) - abs(f.y));
@@ -611,12 +611,18 @@ vec3 wetten(vec3 lit, vec3 p, vec3 n, vec3 view) {
 // An object: as shade(), with a soft highlight of the sun, and the rim of a
 // selected (or hovered) one in the colour of the selection -- `mark` 1 for
 // hovered, 2 for selected.
-vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark) {
+vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark, float through) {
     float ndl = max(dot(n, u_lightDir), 0.0);
     float sun = ndl > 0.0 ? sunAt(p, n) : 0.0;
     vec3 sky = u_sky * (0.6 + 0.4 * n.y);
     vec3 half_ = normalize(u_lightDir - view);
-    vec3 c = wetten(albedo * (u_light * sun * ndl + sky + fireGlow(p, n)), p, n, view) +
+    // A thin face -- a leaf, a blade -- lets `through` of the light through:
+    // that much less from its side of the sun, and the sun behind it
+    // glowing through it in its colour (as the renderers' translucent BSDF).
+    float behind = through > 0.0 ? max(-dot(n, u_lightDir), 0.0) : 0.0;
+    float sunBehind = behind > 0.0 ? sunAt(p, -n) : 0.0;
+    vec3 c = wetten(albedo * (u_light * (sun * ndl * (1.0 - through) + sunBehind * behind * through) + sky + fireGlow(p, n)),
+                    p, n, view) +
              u_light * sun * 0.12 * pow(max(dot(n, half_), 0.0), 40.0) * ndl;
     if (mark > 0.5) {
         float rim = pow(1.0 - abs(dot(n, view)), 2.0);
@@ -625,7 +631,7 @@ vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark) {
     return c;
 }
 
-vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) { return shadeSurface(p, n, view, u_solidE[i].rgb, u_solidE[i].w); }
+vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) { return shadeSurface(p, n, view, u_solidE[i].rgb, u_solidE[i].w, 0.0); }
 
 // --- the plate: what the camera filmed, behind it all ----------------------------
 uniform bool u_hasPlate;
@@ -840,6 +846,7 @@ void main() {
     // The meshes' buffer: a solid's index, or -- below 0 -- the displayed
     // geometry's colour, 8 bits a channel.
     bool displayed = false;
+    float through = 0.0;  // how much light it lets through: a leaf, a blade
     vec3 displayColor = vec3(0.0);
     bool fromMesh = false;
     vec4 meshAux = vec4(0.0);
@@ -849,8 +856,11 @@ void main() {
             tSolid = g.w;
             fromMesh = true;
             meshAux = texelFetch(u_meshAux, ivec2(gl_FragCoord.xy), 0);
-            normal = octDecode(g.xy);
             displayed = g.z < -0.5;
+            // The displayed geometry's translucency, off the normal's x.
+            float level = displayed ? floor((g.x + 2.0) / 4.0) : 0.0;
+            through = level / 15.0;
+            normal = octDecode(vec2(g.x - 4.0 * level, g.y));
             if (displayed) {
                 float code = -g.z - 1.0;
                 float b = floor(code / 65536.0);
@@ -881,7 +891,7 @@ void main() {
         if (matte == 2) relit = catcher(u_eye + dir * tSolid, normal);
     } else if (tSolid < floorAt && tSolid < 1e29) {
         tEnd = tSolid;
-        surface = displayed ? shadeSurface(u_eye + dir * tSolid, normal, dir, displayColor, 0.0)
+        surface = displayed ? shadeSurface(u_eye + dir * tSolid, normal, dir, displayColor, 0.0, through)
                             : shadeSolid(u_eye + dir * tSolid, normal, dir, which);
         cover = 1.0;
         surfaceClass = fromMesh && meshAux.w > 0.0 ? meshAux.z : 4.0;
@@ -1083,15 +1093,18 @@ layout(location = 3) in vec3 a_velocity;  // world units a second
 layout(location = 4) in vec4 i_place;
 layout(location = 5) in vec4 i_turn;
 layout(location = 6) in vec4 i_tint;
+layout(location = 7) in float a_through;  // how much light its face lets through: a leaf's, a blade's
 uniform mat4 u_viewProj, u_nextViewProj;
 uniform float u_frameTime;                // seconds to the next frame
 out vec3 v_world, v_normal, v_color;
+out float v_through;
 out vec4 v_now, v_next;                   // on the screen now, and where it moves by the next frame
 vec3 turned(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }
 void main() {
     v_world = i_place.xyz + turned(i_turn, a_position * i_place.w);
     v_normal = turned(i_turn, a_normal);
     v_color = a_color * i_tint.rgb;
+    v_through = a_through;
     gl_Position = u_viewProj * vec4(v_world, 1.0);
     v_now = gl_Position;
     v_next = u_nextViewProj * vec4(v_world + turned(i_turn, a_velocity) * u_frameTime, 1.0);
@@ -1100,6 +1113,7 @@ void main() {
 
 const char* kGeoFragment = R"(#version 330 core
 in vec3 v_world, v_normal, v_color;
+in float v_through;
 in vec4 v_now, v_next;
 layout(location = 0) out vec4 o_g;
 layout(location = 1) out vec4 o_aux;  // the passes: motion in pixels, and what it is
@@ -1113,7 +1127,11 @@ void main() {
     if (dot(n, view) > 0.0) n = -n;  // both sides
     n /= abs(n.x) + abs(n.y) + abs(n.z);
     vec3 c = floor(clamp(v_color, 0.0, 1.0) * 255.0 + 0.5);
-    o_g = vec4(n.z >= 0.0 ? n.xy : octWrap(n.xy), -1.0 - (c.r + c.g * 256.0 + c.b * 65536.0), length(view));
+    // How much light it lets through, in 15ths, four times over on the
+    // normal's x (within -1 to 1): the colour fills the rest.
+    vec2 o = n.z >= 0.0 ? n.xy : octWrap(n.xy);
+    o.x += 4.0 * floor(clamp(v_through, 0.0, 1.0) * 15.0 + 0.5);
+    o_g = vec4(o, -1.0 - (c.r + c.g * 256.0 + c.b * 65536.0), length(view));
     o_aux = vec4((v_next.xy / v_next.w - v_now.xy / v_now.w) * 0.5 * u_viewport, u_class, 1.0);
 }
 )";
@@ -1838,7 +1856,7 @@ VolumeRenderer::~VolumeRenderer() {
         if (a) gl_.DeleteVertexArrays(1, &a);
     }
     for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_, geoVelocityBuffer_, shownPlaces_, shownColors_, shownVelocities_,
-                     shownIndices_}) {
+                     shownIndices_, shownThrough_}) {
         if (b) gl_.DeleteBuffers(1, &b);
     }
     for (GLuint t : {auxTex_[0], auxTex_[1], gAux_, plateTex_}) {
@@ -2397,12 +2415,13 @@ void VolumeRenderer::uploadShownMesh(bool all) {
     const sim::DisplayMesh& m = shownMesh_;
     if (!shownVao_) {
         gl_.GenVertexArrays(1, &shownVao_);
-        GLuint buffers[4] = {};
-        gl_.GenBuffers(4, buffers);
+        GLuint buffers[5] = {};
+        gl_.GenBuffers(5, buffers);
         shownPlaces_ = buffers[0];
         shownColors_ = buffers[1];
         shownVelocities_ = buffers[2];
         shownIndices_ = buffers[3];
+        shownThrough_ = buffers[4];
         all = true;
     }
     auto bytes = [](const auto& v) { return static_cast<GLsizeiptr>(v.size() * sizeof(v[0])); };
@@ -2419,6 +2438,7 @@ void VolumeRenderer::uploadShownMesh(bool all) {
         gl_.BufferData(ARRAY_BUFFER, bytes(m.colors), m.colors.data(), STATIC_DRAW);
         gl_.EnableVertexAttribArray(2);
         gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
+        throughArray(shownThrough_, m.translucency);
         // The triangles: bound with the vertex array, and kept by it.
         gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, shownIndices_);
         gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
@@ -2460,7 +2480,7 @@ bool VolumeRenderer::hasInstances() const {
 
 void VolumeRenderer::releaseInstanced(InstancedGpu& gpu) {
     if (gpu.vao) gl_.DeleteVertexArrays(1, &gpu.vao);
-    for (GLuint b : {gpu.places, gpu.colors, gpu.indices, gpu.placements}) {
+    for (GLuint b : {gpu.places, gpu.colors, gpu.indices, gpu.placements, gpu.through}) {
         if (b) gl_.DeleteBuffers(1, &b);
     }
     gpu = InstancedGpu();
@@ -2485,12 +2505,13 @@ void VolumeRenderer::uploadInstances() {
             gpu.mesher.make(prototype->prototypeCount() > 0 ? GeometryPtr(unpackInstances(*prototype)) : prototype, gpu.mesh);
             const sim::DisplayMesh& m = gpu.mesh;
             gl_.GenVertexArrays(1, &gpu.vao);
-            GLuint buffers[4] = {};
-            gl_.GenBuffers(4, buffers);
+            GLuint buffers[5] = {};
+            gl_.GenBuffers(5, buffers);
             gpu.places = buffers[0];
             gpu.colors = buffers[1];
             gpu.indices = buffers[2];
             gpu.placements = buffers[3];
+            gpu.through = buffers[4];
             const GLsizei six = 6 * static_cast<GLsizei>(sizeof(float)), three = 3 * static_cast<GLsizei>(sizeof(float));
             gl_.BindVertexArray(gpu.vao);
             gl_.BindBuffer(ARRAY_BUFFER, gpu.places);
@@ -2504,6 +2525,7 @@ void VolumeRenderer::uploadInstances() {
             gl_.EnableVertexAttribArray(2);
             gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
             gl_.DisableVertexAttribArray(3);  // not moving: the velocity everything without its own reads
+            throughArray(gpu.through, m.translucency);
             gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, gpu.indices);
             gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
             // Where each instance goes: three vectors of it, one set an instance.
@@ -2549,6 +2571,19 @@ void VolumeRenderer::placeUninstanced() {
     gl_.VertexAttrib4f(4, 0.0f, 0.0f, 0.0f, 1.0f);  // here, as big as it is
     gl_.VertexAttrib4f(5, 0.0f, 0.0f, 0.0f, 1.0f);  // not turned
     gl_.VertexAttrib4f(6, 1.0f, 1.0f, 1.0f, 1.0f);  // its own colour
+    gl_.VertexAttrib1f(7, 0.0f);                    // letting no light through, unless it says
+}
+
+void VolumeRenderer::throughArray(GLuint buffer, const std::vector<float>& translucency) {
+    if (translucency.empty()) {
+        gl_.DisableVertexAttribArray(7);
+        return;
+    }
+    gl_.BindBuffer(ARRAY_BUFFER, buffer);
+    gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(translucency.size() * sizeof(float)), translucency.data(),
+                   STATIC_DRAW);
+    gl_.EnableVertexAttribArray(7);
+    gl_.VertexAttribPointer(7, 1, FLOAT, 0, static_cast<GLsizei>(sizeof(float)), nullptr);
 }
 
 void VolumeRenderer::setPieces(const GeometryPtr& pieces) {

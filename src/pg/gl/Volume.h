@@ -379,7 +379,7 @@ private:
     // The displayed node's polygons, indexed: the vertices' places (position
     // and normal, attributes 0 and 1), colours (2), velocities (3), and the
     // triangles.
-    GLuint shownVao_ = 0, shownPlaces_ = 0, shownColors_ = 0, shownVelocities_ = 0, shownIndices_ = 0;
+    GLuint shownVao_ = 0, shownPlaces_ = 0, shownColors_ = 0, shownVelocities_ = 0, shownIndices_ = 0, shownThrough_ = 0;
     GLsizei shownElements_ = 0;
     // What stands on the displayed geometry's points (Instances.h): each
     // prototype's polygons once -- made when it is new -- and where each of
@@ -389,7 +389,7 @@ private:
         GeometryPtr prototype;  // held: its pointer names it
         sim::DisplayMesher mesher;
         sim::DisplayMesh mesh;
-        GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0;
+        GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0, through = 0;
         GLsizei elements = 0, instances = 0;
         size_t capacity = 0;  // floats the placements' buffer holds
     };
@@ -397,6 +397,10 @@ private:
     sim::DisplayInstances instances_;
     void uploadInstances();
     void releaseInstanced(InstancedGpu& gpu);
+    /// The bound vertex array's attribute 7 -- how much light each vertex's
+    /// face lets through -- from `translucency` into `buffer`; none there
+    /// when it is empty.
+    void throughArray(GLuint buffer, const std::vector<float>& translucency);
     bool hasInstances() const;
     /// Draws the instances, with the program that places them in use.
     void drawInstances();

@@ -4,7 +4,8 @@
 // quarter of the leaf picture; once across and up a blade of grass -- none
 // mirrored, and the library's bark, leaves and grass laid on by it; leaves
 // cut out by their picture's alpha -- seen through and letting the sun
-// through there, in both renderers and both ray engines.
+// through there, in both renderers and both ray engines; the viewport's
+// mesh carrying how much light each face lets through.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -18,6 +19,7 @@
 #include "pg/render/PathTracer.h"
 #include "pg/render/Scene.h"
 #include "pg/render/Textures.h"
+#include "pg/sim/Display.h"
 
 #include "test_framework.h"
 
@@ -327,4 +329,39 @@ TEST(foliage_leaves_are_cut_out_by_their_pictures_alpha) {
         CHECK(right.x > 4.0f * right.y);
     }
     fs::remove_all(dir);
+}
+
+TEST(foliage_the_viewport_knows_what_lets_light_through) {
+    // A tree's leaves 0.4, its bark nothing; grass 0.35; a box without the
+    // attribute none at all.
+    TreeSettings ts;
+    ts.levels = 1;
+    auto tree = std::make_shared<Geometry>();
+    meshTree(growTree(ts, Vec3(), 1.0f, 3), ts, 0, *tree);
+    sim::DisplayMesher mesher;
+    sim::DisplayMesh mesh;
+    mesher.make(tree, mesh);
+    CHECK_EQ(mesh.translucency.size(), mesh.vertexCount());
+    std::set<float> seen(mesh.translucency.begin(), mesh.translucency.end());
+    CHECK(seen == std::set<float>({0.0f, 0.4f}));
+    // Leaf vertices green, bark brown: the 0.4s are the leaves'.
+    for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+        if (mesh.translucency[v] > 0.0f) CHECK(mesh.colors[3 * v + 1] > mesh.colors[3 * v]);
+    }
+    sim::DisplayMesher grassMesher;
+    sim::DisplayMesh blades;
+    grassMesher.make(std::make_shared<Geometry>(growGrassClump(GrassSettings(), 2)), blades);
+    CHECK(!blades.translucency.empty() && std::all_of(blades.translucency.begin(), blades.translucency.end(),
+                                                      [](float t) { return t == 0.35f; }));
+    auto bare = std::make_shared<Geometry>();
+    bare->addPoints(3);
+    const uint32_t tri[3] = {0, 1, 2};
+    bare->addPrimitive(tri, true);
+    auto P = bare->positionsForWrite();
+    P[1] = Vec3(1.0f, 0.0f, 0.0f);
+    P[2] = Vec3(0.0f, 1.0f, 0.0f);
+    sim::DisplayMesher bareMesher;
+    sim::DisplayMesh none;
+    bareMesher.make(bare, none);
+    CHECK(none.vertexCount() == 3 && none.translucency.empty());
 }

@@ -260,14 +260,22 @@ Render snímku 1600 × 900 přes softwarový OpenGL (llvmpipe, bez grafické
 karty) trvá 6–15 s, protože tráva má přes 13 milionů trojúhelníků. Na
 grafické kartě je to zlomek.
 
+**Průsvitnost ve viewportu.** Listy a stébla propouštějí světlo
+(primitivní `translucency`: list 0,4, stéblo 0,35) i ve viewportu, nejen
+v Cycles a v path traceru. Ze strany slunce svítí o tolik méně, proti
+slunci prosvítají ve své barvě, pokud je slunce nad nimi vidět (stín
+viewportu). Je to stejný model jako Translucent BSDF rendererů. Viewport
+nese průsvitnost v G-bufferu v patnáctinách. U listu zespodu pod sluncem
+s průsvitností 0,5 přibude ve viewportu 0,66 světla, které má list shora
+bez průsvitnosti, v path traceru 0,52 (rozdíl dělá Fresnel).
+
 ## 10. Co zatím chybí
 
 - LOD: tráva v dálce jako řidší trsy nebo billboardy a ořez podle kamery.
 - Ohyb stébel ve větru podél délky (ve shaderu podle `flex`), ne jen
   otočení trsu.
-- Průsvitnost stébel a listů proti slunci ve viewportu (Cycles i path
-  tracer ji mají: [cycles.md](cycles.md), [pathtracer.md](pathtracer.md)),
-  textury ve viewportu (renderery je mají, [trees.md](trees.md)).
+- Textury listů a stébel ve viewportu (renderery je mají,
+  [trees.md](trees.md)).
 - Šlapání a interakce (tráva ohnutá tělesem nebo postavou).
 - Ekosystém: druhy, které si konkurují o místo a světlo, a jejich rozšíření
   podle vlhkosti a stínu.
