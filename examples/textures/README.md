@@ -17,24 +17,27 @@ a jmenuje se jako materiál:
 | `roof` | fotky z `concrete`, šestimetrová dlaždice (ploché střechy) | 6 m |
 | `roof_tiles` | břidlicové tašky v řadách, kladené podél střechy (`projection face`) | 1,8 m |
 | `paving` | dlažba z kostek asi 18 × 14 cm | 1,3 m |
-| `bark` | kůra lípy | 1 m |
+| `bark` | kůra lípy (s normálovou mapou) | 1 m |
+| `leaf` | listy po čtvrtinách: dva široké, úzký, jehličí; alfa výřez a normálová mapa (`alpha 1`), kladené podle UV | — |
+| `grass` | stéblo trávy podle UV | — |
 | `soil` | vlhká hlína | 2,5 m |
 | `lawn` | trávník | 1,5 m |
 | `sand` | písek | 1,2 m |
 
 V každé složce je:
 
-- `color.jpg` — barva (sRGB), nejvýš 1024 × 1024,
+- `color.jpg` — barva (sRGB), nejvýš 1024 × 1024 (`color.png` s alfou
+  u listů),
 - `height.jpg` — výška 0–1; Cycles z ní dělá reliéf,
-- `normal.jpg` (`brick_wall`, `wood`, `bark`) — normálová mapa ze sklonů
+- `normal.jpg` (`brick_wall`, `wood`, `bark`; `normal.png` u `leaf`) — normálová mapa ze sklonů
   výšky pro kladení podle UV,
 - `texture.txt` — `size` (kolik metrů jedna dlaždice pokryje), `depth`
   (kolik metrů je mezi nejnižším a nejvyšším místem výšky), `mean`
   (průměrná barva, lineární), `tint` (1: barva `Cd` povrchu nahradí barvu
   fotky a fotka kolem ní jen světlá a tmavne; 0: fotka jak je),
   `projection face` (klade se podél šikmé plochy, aby řady zůstaly
-  vodorovné; jinak ze tří stran), `pictures` (fotky jiné složky), `source`
-  a `license`.
+  vodorovné; jinak ze tří stran), `alpha 1` (alfa kanál barvy vyřízne
+  povrch), `pictures` (fotky jiné složky), `source` a `license`.
 
 Sady vyrábí skript [tools/textures/prepare.py](../../tools/textures/prepare.py)
 z fotografií v repozitářích [pbrt-v4-scenes](https://github.com/mmp/pbrt-v4-scenes)
@@ -66,6 +69,9 @@ se pod licencí **[CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)**:
   `textures/grass.png`, `textures/sand.jpg`).
 
 Zbytek programu má svou vlastní licenci; tyto soubory pod ni nespadají.
+Výjimkou jsou `leaf` a `grass`: ty nakreslil skript
+[tools/textures/foliage.py](../../tools/textures/foliage.py) bez
+fotografií a patří pod licenci programu.
 
 ## Vlastní textury
 

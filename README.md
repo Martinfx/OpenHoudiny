@@ -226,7 +226,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 619 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 22 stromy a vegetace
+./build/pgtests            # 620 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 23 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
@@ -257,6 +257,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # částice do PLY
 ./build/prototype --example street                 # ulice ze tří digital assetů Building
 ./build/prototype --example meadow                 # louka u lesa: tráva, keře a stromy jako instance
+./build/prototype sim foliage f.png --renderer cycles   # lípa a smrk v trávě: listy s alfa výřezem, kůra podle UV
 ./build/prototype cook street street.obj --set tower.floors=12   # geometrie bez okna, do OBJ
 ./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
 ./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)

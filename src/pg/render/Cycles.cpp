@@ -652,6 +652,22 @@ ccl::ShaderOutput* sampledByUv(ccl::ShaderGraph& graph, const std::string& file,
     return image->output("Color");
 }
 
+/// How much of a surface there is, laid on by uv: the alpha of `file`
+/// (`channel`), or its grey.
+ccl::ShaderOutput* coverageByUv(ccl::ShaderGraph& graph, const std::string& file, bool channel) {
+    auto* where = graph.create_node<ccl::TextureCoordinateNode>();
+    auto* image = graph.create_node<ccl::ImageTextureNode>();
+    image->set_filename(ccl::ustring(file));
+    image->set_colorspace(ccl::u_colorspace_raw);
+    // The colour and the alpha each as they are: not one over the other.
+    image->set_alpha_type(ccl::IMAGE_ALPHA_CHANNEL_PACKED);
+    graph.connect(where->output("UV"), image->input("Vector"));
+    if (channel) return image->output("Alpha");
+    auto* grey = graph.create_node<ccl::RGBToBWNode>();
+    graph.connect(image->output("Color"), grey->input("Color"));
+    return grey->output("Val");
+}
+
 /// The normal a normal map `file` gives, laid on by uv, as strongly as
 /// `strength`: in the tangent space Cycles makes of the uv (MikkTSpace) --
 /// its green flipped first for one of DirectX's.
@@ -1251,11 +1267,11 @@ struct CyclesRender::Impl {
         if (texture.valid()) {
             key.insert(key.end(), {texture.size, texture.depth, texture.mean.x, texture.mean.y, texture.mean.z,
                                    texture.tint ? 1.0f : 0.0f, m.byUv ? 1.0f : 0.0f, m.normalStrength,
-                                   texture.normalDirectX ? 1.0f : 0.0f});
+                                   texture.normalDirectX ? 1.0f : 0.0f, texture.alphaChannel ? 1.0f : 0.0f});
         }
         const auto k = std::make_tuple(static_cast<int>(m.kind), key,
                                        texture.color + '|' + texture.height + '|' + texture.roughness + '|' +
-                                           texture.normal);
+                                           texture.normal + '|' + texture.alpha);
         if (auto it = shaders.find(k); it != shaders.end()) return it->second;
         auto graph = std::make_unique<ccl::ShaderGraph>();
         auto* attr = graph->create_node<ccl::AttributeNode>();
@@ -1355,6 +1371,16 @@ struct CyclesRender::Impl {
                     graph->connect(surface, mix->input("Closure1"));
                     graph->connect(through->output("BSDF"), mix->input("Closure2"));
                     surface = mix->output("Closure");
+                }
+                if (m.byUv && !texture.alpha.empty()) {
+                    // Cut out where its alpha has none: there, nothing --
+                    // rays and shadows pass (Cycles' transparent shadows).
+                    auto* none = graph->create_node<ccl::TransparentBsdfNode>();
+                    auto* cut = graph->create_node<ccl::MixClosureNode>();
+                    graph->connect(coverageByUv(*graph, texture.alpha, texture.alphaChannel), cut->input("Fac"));
+                    graph->connect(none->output("BSDF"), cut->input("Closure1"));
+                    graph->connect(surface, cut->input("Closure2"));
+                    surface = cut->output("Closure");
                 }
                 break;
             }
@@ -2354,7 +2380,9 @@ struct CyclesRender::Impl {
         integrator->set_max_glossy_bounce(settings.bounces);
         integrator->set_max_transmission_bounce(std::max(settings.bounces, 8));
         integrator->set_max_volume_bounce(settings.bounces);
-        integrator->set_transparent_max_bounce(16);
+        // Past many cut-out edges of leaves, one behind another, as many as
+        // ours (Scene::intersect).
+        integrator->set_transparent_max_bounce(64);
         integrator->set_sample_clamp_indirect(settings.clamp);
         integrator->set_seed(static_cast<int>(settings.seed));
         integrator->set_use_adaptive_sampling(!interactive);

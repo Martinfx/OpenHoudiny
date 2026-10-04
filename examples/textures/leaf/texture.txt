@@ -1,0 +1,9 @@
+# The texture leaf: what src/pg/render/Textures.cpp reads.
+size 1.000
+depth 0.00100
+mean 0.06514 0.20314 0.02229
+tint 1
+projection uv
+alpha 1
+source drawn by tools/textures/foliage.py: two broad leaves, a narrow one, a spray of needles
+license the program's own

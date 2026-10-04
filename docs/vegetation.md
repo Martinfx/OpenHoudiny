@@ -117,7 +117,9 @@ těžké jako všechna jejich stébla.
 
 Prototyp trsu má bodové `Cd` a `flex`, tedy jak daleko po stéble bod je
 (0 u kořene, 1 na špičce), vrcholové `uv` (u jednou přes šířku stébla, v od
-kořene 0 po špičku 1) a primitivní `blade`. Kořeny sedí kousek pod
+kořene 0 po špičku 1) a primitivní `blade`. Podle `uv` na stéblo jde
+obrázek trávy z knihovny (`examples/textures/grass`: střední žilka
+a proužky podél), v Cycles i v path traceru. Kořeny sedí kousek pod
 zemí (0,6 Spread, nejvýš pětina výšky). Trs na svahu totiž stojí svisle
 a jeho kořeny do kopce nesmí viset ve vzduchu.
 
@@ -265,7 +267,7 @@ grafické kartě je to zlomek.
   otočení trsu.
 - Průsvitnost stébel a listů proti slunci ve viewportu (Cycles i path
   tracer ji mají: [cycles.md](cycles.md), [pathtracer.md](pathtracer.md)),
-  textury, UV.
+  textury ve viewportu (renderery je mají, [trees.md](trees.md)).
 - Šlapání a interakce (tráva ohnutá tělesem nebo postavou).
 - Ekosystém: druhy, které si konkurují o místo a světlo, a jejich rozšíření
   podle vlhkosti a stínu.

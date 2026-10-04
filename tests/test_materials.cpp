@@ -471,13 +471,15 @@ TEST(materials_texture_sets_are_found_from_a_picture_or_a_folder) {
     const std::string library = render::textureLibrary();
     CHECK(!library.empty());
     const std::set<MaterialPreset> patterned = {MaterialPreset::None,  MaterialPreset::Brick, MaterialPreset::Window,
-                                                MaterialPreset::Glass, MaterialPreset::Steel, MaterialPreset::Stone,
-                                                MaterialPreset::Leaf,  MaterialPreset::Grass};
+                                                MaterialPreset::Glass, MaterialPreset::Steel, MaterialPreset::Stone};
     for (size_t i = 0; i < kMaterialPresets; ++i) {
         const auto p = static_cast<MaterialPreset>(i);
         const render::TextureSet set = render::presetTextureSet(library, p);
         CHECK_EQ(set.valid(), !patterned.count(p));
         if (!set.valid()) continue;
+        // Leaves and grass: pictures drawn for uv alone, without a height.
+        CHECK_EQ(set.onlyByUv, laidByUv(p) && p != MaterialPreset::Bark);
+        if (set.onlyByUv) continue;
         CHECK(!set.height.empty());
         CHECK(set.size > 0.2f && set.size < 10.0f);
         CHECK(set.tint == (p != MaterialPreset::BrickWall));

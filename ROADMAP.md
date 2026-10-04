@@ -470,8 +470,8 @@ Seřazeno podle poměru hodnota / náklad:
 4. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
    hrdlem (kritérium M5 výše).
 5. **Výměna dat** — ✅ Alembic (zápis i čtení, [alembic.md](docs/alembic.md))
-   a čtení OpenVDB ([vdb.md](docs/vdb.md)). Zbývá: MaterialX, zápis VDB
-   s kompresí, rychlost plynu (`vel`) ve snímcích a souborech.
+   a čtení OpenVDB ([vdb.md](docs/vdb.md)), rychlost plynu (`vel`) ve
+   snímcích, VDB a USD. Zbývá: MaterialX, zápis VDB s kompresí.
 6. **Build podle VFX Reference Platform** — Rocky Linux a knihovny ve
    verzích, se kterými počítají pipeline studií.
 7. **Úpravy geometrie ve viewportu** — ✅ body, hrany a plochy vybrané
@@ -509,9 +509,10 @@ Seřazeno podle poměru hodnota / náklad:
    a odstupem; Copy to Points s instancemi a kusy podle atributu. Příklad
    meadow: 122 577 trsů (1,9 milionu stébel), 84 stromů a 65 keřů
    za 148 ms, snímek ve větru 31–39 ms ([vegetation.md](docs/vegetation.md)).
-   Kůra má fotografii, listy a tráva skvrny ([materials.md](docs/materials.md)).
-   Zbývá: UV a textury listů, průsvitnost listů a stébel,
-   prořezávání obálkou, LOD a billboardy pro vzdálený les a trávu, ohyb
+   ✅ UV na kůře, listech a stéblech; kůra s normálovou mapou podle UV,
+   listy z obrázku knihovny s alfa výřezem a tráva z obrázku stébla
+   v Cycles i path traceru (příklad **foliage**, [trees.md](docs/trees.md)).
+   Zbývá: průsvitnost listů a stébel ve viewportu, prořezávání obálkou, LOD a billboardy pro vzdálený les a trávu, ohyb
    stébel ve shaderu, vítr jako simulace ohybu, kořeny, ekosystém druhů.
 
 ---

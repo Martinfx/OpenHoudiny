@@ -425,6 +425,9 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   (`tests/test_uv.cpp`): fotka podle UV a normálová mapa v obou
   rendererech stejně, i na kouli (do 5 %,
   [materials.md](materials.md#podle-uv-a-normálové-mapy)).
+- `foliage_leaves_are_cut_out_by_their_pictures_alpha`
+  (`tests/test_foliage.cpp`): alfa výřez listů. Vyříznutou půlkou desky
+  je vidět zem osvětlená jako bez desky, v Cycles i path traceru (do 2 %).
 
 ## 9. Co zatím chybí
 

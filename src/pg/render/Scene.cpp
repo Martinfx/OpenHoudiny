@@ -357,12 +357,21 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
                 which[t] = 0;
                 continue;
             }
+            // Cut out where its pictures' alpha has none: its own set's, or
+            // its material's in the library.
+            if (m.byUv) {
+                const TextureSet set = !m.texture.empty() ? textureSet(m.texture) : presetTextureSet(textureLibrary(), m.preset);
+                m.cutout = !set.alpha.empty();
+            }
             it = known.emplace(key, static_cast<uint16_t>(mesh->materials.size())).first;
             mesh->materials.push_back(m);
         }
         which[t] = it->second;
     }
-    for (const Material& m : mesh->materials) mesh->clear = mesh->clear || m.kind != Material::Kind::Surface;
+    for (const Material& m : mesh->materials) {
+        mesh->clear = mesh->clear || m.kind != Material::Kind::Surface;
+        mesh->cutout = mesh->cutout || m.cutout;
+    }
     // The colour of each material, for geometry with none of its own: the
     // viewport's grey where it is of none, or is glass or water.
     std::vector<Vec3> own;
@@ -535,7 +544,32 @@ sim::Camera Scene::cameraAt(float time) const {
     return time < 0.0f ? camera.toward(cameraBefore, -time / frameTime) : camera.toward(cameraAfter, time / frameTime);
 }
 
-bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time) const {
+bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time,
+                      const Coverage* coverage) const {
+    // Past what is cut out, face after face: each there as often as its
+    // coverage says, by a number of its own made of `fade`.
+    Vec3 from = origin;
+    float gone = 0.0f;
+    uint32_t bits = 0;
+    std::memcpy(&bits, &fade, sizeof bits);
+    for (uint32_t layer = 0;; ++layer) {
+        if (!intersectWhole(from, dir, tMax - gone, fade, hit, time)) return false;
+        if (!coverage || !hit.material || !hit.material->cutout || layer >= 64) break;
+        uint32_t h = bits ^ (layer + 1) * 0x9E3779B9u;
+        h = (h ^ (h >> 16)) * 0x7FEB352Du;
+        h = (h ^ (h >> 15)) * 0x846CA68Bu;
+        h ^= h >> 16;
+        if (static_cast<float>(h >> 8) * (1.0f / 16777216.0f) < coverage->at(*hit.material, hit.uv)) break;
+        const float step = hit.t + std::max(hit.t * 1e-5f, 1e-5f);
+        from = from + dir * step;
+        gone += step;
+        if (gone >= tMax) return false;
+    }
+    hit.t += gone;
+    return true;
+}
+
+bool Scene::intersectWhole(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time) const {
     float best = tMax;
     int placedHit = -1, solidHit = -1;
     TriangleHit triangle;
@@ -678,11 +712,17 @@ bool Scene::realBlocks(const Vec3& origin, const Vec3& dir, float tMax, float ti
 namespace {
 
 /// Light through a clear triangle -- glass or water: what it does not
-/// reflect, tinted a little at each face; water a little less. False -- no
+/// reflect, tinted a little at each face; water a little less -- or past
+/// one cut out, at (u, v) on it, as much as is not there. False -- no
 /// light at all -- for an opaque one.
-bool passThrough(const Mesh& m, uint32_t t, const Placed& p, Vec3& through) {
+bool passThrough(const Mesh& m, uint32_t t, float u, float v, const Placed& p, const Coverage* coverage, Vec3& through) {
     const Material& mat = m.materials[m.material[t]];
-    if (mat.kind == Material::Kind::Surface) return false;
+    if (mat.kind == Material::Kind::Surface) {
+        if (!mat.cutout || !coverage || m.uv.empty()) return false;
+        const Vec2 uv = m.uv[3 * t] * (1.0f - u - v) + m.uv[3 * t + 1] * u + m.uv[3 * t + 2] * v;
+        through = through * (1.0f - std::clamp(coverage->at(mat, uv), 0.0f, 1.0f));
+        return std::max({through.x, through.y, through.z}) > 1e-4f;
+    }
     if (mat.kind == Material::Kind::Rain) return true;  // casts no shadow
     if (mat.kind == Material::Kind::Glass) {
         const Vec3 c = (m.colors[3 * t] + m.colors[3 * t + 1] + m.colors[3 * t + 2]) * (1.0f / 3.0f) * p.tint;
@@ -695,7 +735,7 @@ bool passThrough(const Mesh& m, uint32_t t, const Placed& p, Vec3& through) {
 
 }  // namespace
 
-Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax, float time) const {
+Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax, float time, const Coverage* coverage) const {
     Vec3 through(1.0f, 1.0f, 1.0f);
     bool blocked = false;
     if (embree) {
@@ -709,12 +749,13 @@ Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax, float
             return !blocked;
         });
         if (blocked || embree->blocked(origin, dir, tMax, time)) return {};
-        // Through the glass and the water, face after face, from the nearest.
+        // Through the glass and the water and past what is cut out, face
+        // after face, from the nearest -- no light past 256 of them.
         float from = 0.0f;
         EmbreeHit e;
-        for (int faces = 0; faces < 256 && embree->nearestClear(origin, dir, from, tMax, e, time); ++faces) {
+        for (int faces = 0; embree->nearestClear(origin, dir, from, tMax, e, time); ++faces) {
             const Placed& p = placed[e.placed];
-            if (!passThrough(*meshes[p.mesh], e.triangle, p, through)) return {};
+            if (faces >= 256 || !passThrough(*meshes[p.mesh], e.triangle, e.u, e.v, p, coverage, through)) return {};
             from = e.t + std::max(e.t * 1e-6f, 1e-6f);
         }
         return through;
@@ -747,7 +788,7 @@ Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax, float
                     if (v < 0.0f || u + v > 1.0f) continue;
                     const float h = dot(k.e2, q) * inv;
                     if (h <= 0.0f || h >= tMax) continue;
-                    if (!passThrough(m, t, p, through)) {
+                    if (!passThrough(m, t, u, v, p, coverage, through)) {
                         blocked = true;
                         return false;
                     }

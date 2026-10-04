@@ -227,8 +227,37 @@ dá výška (Cycles).
   mikroplošek GGX podle Conty Estevez a kol. 2019). Bez toho by na kouli
   s normálovou mapou byly ostré švy.
 
-Knihovna má normálové mapy u cihlové zdi (`brick_wall`) a dřeva (`wood`).
-Spočítal je ze sklonů výšky `tools/textures/prepare.py --normals`.
+Knihovna má normálové mapy u cihlové zdi (`brick_wall`), dřeva (`wood`)
+a kůry (`bark`). Spočítal je ze sklonů výšky `tools/textures/prepare.py
+--normals`.
+
+**Alfa výřez.** Sada s alfou vyřízne povrch tam, kde alfa je 0, pokud se
+klade podle UV. Je to okraj listu, mezery mezi jehlicemi. Alfa se najde
+takto: v `texture.txt` řádek `alpha 1` (alfa kanál `color.png`), obrázek
+`opacity` ve složce, u cizích sad `_opacity`, `_alpha` nebo `_mask` vedle
+fotky (bere se šedá), jinak alfa kanál samotné fotky barvy, pokud nějaké
+pixely vynechává. Průměrná barva sady (`mean`) se počítá jen z toho, co
+tam je.
+
+- **Cycles:** shader se smíchá s Transparent BSDF podle alfy. Paprsky
+  i stíny projdou (průhledné stíny Cycles), až 64 vrstev za sebou.
+- **Path tracer:** paprsek, který potká vyříznutou plochu, ji projde
+  s pravděpodobností 1 − alfa a pokračuje dál (až 64 vrstev). Stínový
+  paprsek se ztlumí o alfu, takže stín listu má měkký okraj jako
+  v Cycles. Sítě s výřezem jdou v Embree mezi „průhledné“, které stínový
+  paprsek prochází plocha po ploše jako sklo.
+
+Knihovna má obrázky listů a trávy kreslené skriptem
+`tools/textures/foliage.py` (bez fotografií, žádná cizí licence): `leaf`
+je čtvrtinami dva široké listy, úzký list a větvička jehličí, s alfou
+a normálovou mapou žilek; `grass` je stéblo se střední žilkou a proužky.
+Uzly Tree a Grass jim dávají UV ([trees.md](trees.md)).
+
+Ověření alfy (`tests/test_foliage.cpp`): červená deska metr nad zemí
+s levou polovinou alfa 0. Shora je levou polovinou vidět zem, osvětlenou
+sluncem stejně jako bez desky (path tracer 1,044 proti 1,057, Cycles
+1,073 proti 1,082), pravá polovina je červená. V obou enginech (náš BVH
+i Embree) projde levou půlkou stínový paprsek celý a pravou nic.
 
 Ověření (`tests/test_uv.cpp`): fotka ze čtyř barev položená podle UV dá
 v obou rendererech každou čtvrtinu na svém místě. Rovina se sluncem 30°

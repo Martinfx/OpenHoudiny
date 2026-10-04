@@ -258,7 +258,7 @@ std::shared_ptr<const EmbreeScene> EmbreeScene::build(const std::vector<std::sha
         if (m >= meshes.size() || !meshes[m] || !meshes[m]->embree) continue;  // nothing there to meet
         all.push_back(i);
         if (!meshes[m]->shadows) continue;  // rain: seen, casting no shadow
-        (meshes[m]->clear ? clear : opaque).push_back(i);
+        (meshes[m]->clear || meshes[m]->cutout ? clear : opaque).push_back(i);
     }
     std::shared_ptr<EmbreeScene> s(new EmbreeScene());
     s->sweep_ = sweep;

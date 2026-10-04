@@ -233,6 +233,16 @@ struct Sample {
 
 using Textures = std::unordered_map<const Material*, SurfacePictures>;
 
+/// How much of a surface cut out is there: its alpha picture's, by uv.
+struct PictureCoverage final : Coverage {
+    const Textures& textures;
+    explicit PictureCoverage(const Textures& t) : textures(t) {}
+    float at(const Material& m, const Vec2& uv) const override {
+        const auto it = textures.find(&m);
+        return it == textures.end() || !it->second.alpha ? 1.0f : it->second.alpha->at(uv.x, uv.y).x;
+    }
+};
+
 /// The plate as a camera ray that went through glass or water sees it: its
 /// light (plateLight) where the camera that filmed it looked that way.
 struct PlateSight {
@@ -268,6 +278,7 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
 /// are equal.
 void catcherLight(const Scene& scene, const Settings& s, const Textures& textures, const Hit& hit, const Vec3& dir,
                   Rng& rng, Vec3& with, Vec3& without, float time) {
+    const PictureCoverage cover(textures);
     with = without = Vec3(0.0f);
     Vec3 face = hit.face, n = hit.normal;
     if (dot(face, dir) > 0.0f) {
@@ -288,7 +299,7 @@ void catcherLight(const Scene& scene, const Settings& s, const Textures& texture
             const float pdfSun = 1.0f / (2.0f * kPi * std::max(1.0f - scene.sunCosine, 1e-9f)), pdfSky = c / kPi;
             const Vec3 light = scene.sunRadiance() * (pdfSky * pdfSun / (pdfSun * pdfSun + pdfSky * pdfSky));
             if (!scene.realBlocks(from, wl, kInfinity, time)) without = without + light;
-            Vec3 through = scene.transmittance(from, wl, kInfinity, time);
+            Vec3 through = scene.transmittance(from, wl, kInfinity, time, &cover);
             if (scene.gas && largest(through) > 0.0f) {
                 through = through * scene.gas->transmittance(from, wl, 0.0f, kInfinity, scene.gasLook, rng, time);
             }
@@ -303,7 +314,7 @@ void catcherLight(const Scene& scene, const Settings& s, const Textures& texture
     if (scene.realBlocks(from, wi, kInfinity, time)) {
         // Behind a real thing: what the CG in front of it sends, if any.
         Hit h;
-        if (!scene.intersect(from, wi, kInfinity, rng.next(), h, time) || scene.matteOf(h) != sim::Matte::None) return;
+        if (!scene.intersect(from, wi, kInfinity, rng.next(), h, time, &cover) || scene.matteOf(h) != sim::Matte::None) return;
     } else {
         without = without + scene.sky(wi);
         if (largest(scene.sunLight) > 0.0f && dot(wi, scene.sunDirection) >= scene.sunCosine) {
@@ -324,6 +335,7 @@ void catcherLight(const Scene& scene, const Settings& s, const Textures& texture
 /// the frame's moment, while the shutter is open.
 Sample trace(const Scene& scene, const Settings& s, const Textures& textures, const PlateSight* plate, Vec3 origin,
              Vec3 dir, float up, Rng& rng, bool camera, float firstPdf, float time) {
+    const PictureCoverage cover(textures);
     Sample out;
     Vec3 light, beta(1.0f, 1.0f, 1.0f);
     const Vec3 sun = scene.sunRadiance();
@@ -342,7 +354,7 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
     bool seenThrough = over;
     for (;;) {
         Hit hit;
-        const bool met = scene.intersect(origin, dir, kInfinity, rng.next(), hit, time);
+        const bool met = scene.intersect(origin, dir, kInfinity, rng.next(), hit, time, &cover);
         // A streak of rain: its drop there as much of the time as its
         // opacity says -- met from the front; passed through the rest of the
         // time, and from behind (the light that went in comes out bent once,
@@ -410,7 +422,7 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
                 const float u2 = rng.next();
                 const Vec3 wl = sampleCone(scene.sunDirection, scene.sunCosine, u1, u2);
                 const float p = phase(dot(wl, dir));
-                Vec3 through = scene.transmittance(at, wl, kInfinity, time);
+                Vec3 through = scene.transmittance(at, wl, kInfinity, time, &cover);
                 if (largest(through) > 0.0f) through = through * gas->transmittance(at, wl, 0.0f, kInfinity, gasLook, rng, time);
                 if (largest(through) > 0.0f) {
                     const float w = pdfSun * pdfSun / (pdfSun * pdfSun + p * p);
@@ -551,7 +563,7 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
             const float side = dot(face, wl);
             if (largest(f) > 0.0f && side != 0.0f && (dot(n, wl) > 0.0f) == (side > 0.0f)) {
                 const Vec3 from = hit.position + face * (side > 0.0f ? eps : -eps);
-                Vec3 through = scene.transmittance(from, wl, kInfinity, time);
+                Vec3 through = scene.transmittance(from, wl, kInfinity, time, &cover);
                 if (gas && largest(through) > 0.0f) through = through * gas->transmittance(from, wl, 0.0f, kInfinity, gasLook, rng, time);
                 if (largest(through) > 0.0f) {
                     const float w = pdfSun * pdfSun / (pdfSun * pdfSun + pdf * pdf);
@@ -604,11 +616,12 @@ void PathTracer::findTextures() {
             if (!set.valid()) continue;
             SurfacePictures pictures;
             pictures.color = texturePicture(set);
+            if (m.cutout) pictures.alpha = alphaPicture(set);
             if (m.byUv && m.normalStrength > 0.0f) {
                 pictures.normal = normalPicture(set);
                 pictures.directX = set.normalDirectX;
             }
-            if (pictures.color || pictures.normal) textures_[&m] = std::move(pictures);
+            if (pictures.color || pictures.normal || pictures.alpha) textures_[&m] = std::move(pictures);
         }
     }
 }
@@ -743,6 +756,7 @@ bool PathTracer::pass(const std::atomic<bool>* stop) {
     // each finds first would be as noisy as the light.
     std::vector<float> seen;
     if (scene.gas && sample == 0) {
+        const PictureCoverage cover(textures_);
         seen.assign(5 * n, 1.0f);
         parallelFor(static_cast<size_t>(h), 4, [&](size_t y0, size_t y1) {
             for (size_t y = y0; y < y1; ++y) {
@@ -752,7 +766,7 @@ bool PathTracer::pass(const std::atomic<bool>* stop) {
                     const float py = 1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(h) * 2.0f;
                     const Vec3 dir = normalize(forward + right * (px * tanX) + upAxis * (py * tanY));
                     Hit hit;
-                    const float tMax = scene.intersect(eye, dir, kInfinity, 0.5f, hit) ? hit.t : kInfinity;
+                    const float tMax = scene.intersect(eye, dir, kInfinity, 0.5f, hit, 0.0f, &cover) ? hit.t : kInfinity;
                     scene.gas->seen(eye, dir, tMax, scene.gasLook, seen[5 * p], seen[5 * p + 1]);
                     seen[5 * p + 2] = -dir.x;
                     seen[5 * p + 3] = -dir.y;

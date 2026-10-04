@@ -173,7 +173,15 @@ nebo vpravo nahoře (náhodně), úzký vlevo dole, jehličí vpravo dole. Pata
 listu je uprostřed spodní hrany čtvrtiny, špička uprostřed horní. Nic
 není zrcadlově. Materiály `bark` a `leaf` se podle UV kladou samy
 (Projection Auto, [materials.md](materials.md)), kůra i s normálovou
-mapou.
+mapou. Obrázek listu leží uvnitř polygonu listu a jeho okraj (zoubky,
+zaoblení, mezery mezi jehlicemi) vyřízne alfa, v Cycles i v path traceru.
+Viewport kreslí polygon. Barva `Cd` list tónuje, takže odstíny listů
+zůstávají.
+
+![Příklad foliage: lípa a mladý smrk v trávě, nahoře Cycles, dole path tracer; listy, jehličí a stébla z obrázků knihovny podle UV, okraje listů vyřízne alfa](img/foliage.jpg)
+
+Příklad `foliage` (`./build/prototype sim foliage f.png --renderer cycles`):
+lípa a mladý smrk v trávě, nahoře Cycles, dole path tracer.
 
 **Skeleton.** Každá větev je otevřená lomená čára bodů své osy, s poloměrem
 v `pscale` a směrem v `N`; primitiva nesou `level`, `stem`, `parent` (číslo
@@ -310,8 +318,6 @@ trubky s plochami otočenými ven a tvar koruny podle Shape.
 
 ## 9. Co zatím chybí
 
-- **Textury.** Kůra i listy mají jen barvu `Cd`, nemají UV ani průsvitnost
-  listů.
 - **Prořezávání obálkou** (Prune u Webera a Penna) a vyhýbání se větví
   navzájem nebo překážkám.
 - **Kořeny** nad zemí a **LOD**: zjednodušené stromy a billboardy pro

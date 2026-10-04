@@ -1,0 +1,8 @@
+# The texture grass: what src/pg/render/Textures.cpp reads.
+size 1.000
+depth 0.00100
+mean 0.10994 0.24285 0.02930
+tint 1
+projection uv
+source drawn by tools/textures/foliage.py: one blade, its midrib and streaks
+license the program's own

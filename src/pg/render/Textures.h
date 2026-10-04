@@ -26,7 +26,8 @@
 // a picture a unit of uv -- and its normal map, if it has one, bends the
 // light: in the tangent space of the uv (Mesh::tangents), its green up the
 // picture as OpenGL has it, or down it for one of DirectX's (_nor_dx_,
-// _NormalDX).
+// _NormalDX). A set with an alpha cuts the surface out where it has none
+// (Material::cutout): the leaves of the library's leaf picture.
 //
 #include "pg/core/Material.h"
 #include "pg/core/Types.h"
@@ -50,6 +51,14 @@ struct TextureSet {
     /// The normal map's green up the picture's rows, as DirectX has it --
     /// not down them, as OpenGL and Blender do.
     bool normalDirectX = false;
+    /// How much of the surface there is (0 none, 1 all of it): the picture
+    /// whose alpha says so -- the colour's own (texture.txt: alpha 1) -- or
+    /// whose grey does (opacity.png beside texture.txt; someone else's
+    /// _opacity_, _alpha_, _mask_, else the alpha of their colour where it
+    /// leaves some out); "" for a surface whole everywhere. Cut
+    /// out where it is laid on by uv: a leaf's edge.
+    std::string alpha;
+    bool alphaChannel = false;  ///< `alpha` read from the picture's alpha, not its grey
     float size = 2.0f;      ///< metres one picture covers
     float depth = 0.01f;    ///< metres from the lowest of the height to the highest
     Vec3 mean{0.5f, 0.5f, 0.5f};  ///< the average of its colour, linear light
@@ -60,6 +69,9 @@ struct TextureSet {
     /// Laid along each face where it slopes (texture.txt: projection face),
     /// not from three sides: rows that must stay level.
     bool alongFace = false;
+    /// Made to be laid on by uv alone (texture.txt: projection uv) -- a
+    /// leaf, a blade of grass: none where a surface has no uv.
+    bool onlyByUv = false;
 
     bool valid() const { return !color.empty(); }
     bool operator==(const TextureSet&) const = default;
@@ -112,12 +124,17 @@ std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set);
 /// where it is laid on by uv (Material::byUv).
 struct SurfacePictures {
     std::shared_ptr<const TexturePicture> color, normal;
+    std::shared_ptr<const TexturePicture> alpha;  ///< where it is cut out (Material::cutout)
     bool directX = false;  ///< TextureSet::normalDirectX
 };
 
 /// The normal map of `set`, its values as they are (not light), read once
 /// and remembered; null for none, or one that cannot be read.
 std::shared_ptr<const TexturePicture> normalPicture(const TextureSet& set);
+
+/// How much of the surface there is, by `set`'s alpha (TextureSet::alpha),
+/// in each pixel's red; read once and remembered; null for none.
+std::shared_ptr<const TexturePicture> alphaPicture(const TextureSet& set);
 
 /// The unit normal `n` bent as the normal map `map` says at `uv`, as strongly
 /// as `strength`: in the space of `tangent` (across n, the way u goes) and

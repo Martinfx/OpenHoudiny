@@ -93,6 +93,10 @@ struct Material {
     /// How strongly the set's normal map bends the light, laid on by uv
     /// (f@texture_normal): 0 not at all.
     float normalStrength = 1.0f;
+    /// Laid on by uv, its set has an alpha (TextureSet::alpha): the surface
+    /// cut out where the picture has none -- a leaf's edge. Rays and shadows
+    /// pass there (Coverage).
+    bool cutout = false;
 
     /// A plain surface, as rough as `roughness`.
     static Material surface(float roughness) {
@@ -150,6 +154,7 @@ struct Mesh {
     std::shared_ptr<const EmbreeMesh> embree;  ///< Embree's: its triangles' numbers are ours
     Box box;
     bool clear = false;   ///< some of it is glass or water
+    bool cutout = false;  ///< some of it is cut out (Material::cutout)
     bool shadows = true;  ///< it casts shadows -- rain casts none
     size_t count() const { return v0.size(); }
 };
@@ -190,6 +195,13 @@ struct Placed {
     /// their length's share, so a ray's t is the same in both.
     Vec3 toLocal(const Vec3& p) const { return ((p - at) * axes) * (1.0f / scale); }
     Vec3 dirToLocal(const Vec3& v) const { return (v * axes) * (1.0f / scale); }
+};
+
+/// How much of a surface there is where a ray meets it, as a renderer has
+/// its pictures' alpha (Material::cutout): 0 none, 1 all of it.
+struct Coverage {
+    virtual ~Coverage() = default;
+    virtual float at(const Material& m, const Vec2& uv) const = 0;
 };
 
 /// Where a ray met a surface.
@@ -268,13 +280,20 @@ struct Scene {
 
     /// The first surface a ray from `origin` along the unit `dir` meets
     /// before `tMax`. `fade`, in [0, 1): whether the floor, fading out far
-    /// away, is there where the ray meets it. What moves, where it is
+    /// away, is there where the ray meets it -- and, by a number made of
+    /// it, whether a surface cut out (Material::cutout) is: as often as
+    /// `coverage` says; with none, it is whole. What moves, where it is
     /// `time` seconds from the frame's moment (within `sweep`).
-    bool intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time = 0.0f) const;
+    bool intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time = 0.0f,
+                   const Coverage* coverage = nullptr) const;
     /// How much of the light from along `dir` gets to `origin` from `tMax`
     /// away: 0 behind something opaque; through glass and water, tinted --
-    /// as if they did not bend it.
-    Vec3 transmittance(const Vec3& origin, const Vec3& dir, float tMax, float time = 0.0f) const;
+    /// as if they did not bend it; past a surface cut out, as much as
+    /// `coverage` says is not there.
+    Vec3 transmittance(const Vec3& origin, const Vec3& dir, float tMax, float time = 0.0f,
+                       const Coverage* coverage = nullptr) const;
+    /// As intersect, every surface whole.
+    bool intersectWhole(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time = 0.0f) const;
 
     /// The light of the sky from along the unit `dir`: the look's sky --
     /// with Sky Behind, hazy towards the horizon and glowing round the sun,

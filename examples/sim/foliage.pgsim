@@ -1,0 +1,58 @@
+pgsim 1
+# Foliage close up: a lime and a young spruce in a patch of grass, their
+# leaves, needles and blades of the library's pictures laid on by the uv the
+# Tree and Grass nodes give them -- each leaf cut out of its quarter of the
+# leaf picture by its alpha, the bark round and up the stems with its normal
+# map -- the same in Cycles and the path tracer.
+#   prototype sim foliage foliage.png --renderer cycles
+node 1 grid 1 patch 0 0
+  param sizex 7
+  param sizez 5
+  param rows 30
+  param cols 40
+node 6 point_wrangle 1 ground 0 110
+  param snippet "@P.y += 0.01;"
+node 7 material 1 soil 0 220
+  param material soil
+node 2 grass 1 grass 230 220
+  param density 160
+  param height 0.35
+  param dry 0.12
+node 3 tree 1 lime 230 0
+  param shape hemispherical
+  param height 2.6
+  param radius 0.09
+  param center -1.2 0 -0.6
+  param crown 0.3
+  param levels 2
+  param leaves 14
+  param leafsize 0.16
+  param leafcolor 0.12 0.26 0.05
+node 4 tree 1 spruce 460 0
+  param shape conical
+  param height 2.8
+  param radius 0.07
+  param center 1.5 0 -0.9
+  param crown 0.08
+  param levels 2
+  param gravity 0.35
+  param up 0.05
+  param branches1 40
+  param angle1 80
+  param length1 0.3
+  param branches2 10
+  param angle2 55
+  param leaves 12
+  param leafsize 0.2
+  param leafshape needles
+  param barkcolor 0.1 0.08 0.065
+  param leafcolor 0.035 0.08 0.035
+node 5 merge 1 foliage 230 330
+  display
+link 1.geometry -> 6.geometry
+link 6.geometry -> 7.geometry
+link 7.geometry -> 2.surface
+link 7.geometry -> 5.geometry
+link 2.geometry -> 5.geometry
+link 3.geometry -> 5.geometry
+link 4.geometry -> 5.geometry
