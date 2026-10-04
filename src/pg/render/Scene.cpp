@@ -10,9 +10,12 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <numeric>
 #include <tuple>
+#include <unordered_map>
 
 namespace pg::render {
 namespace {
@@ -48,6 +51,86 @@ struct MaterialNumber {
         return detail;
     }
 };
+
+/// The tangent of each corner of `tris` (Mesh::tangents): of each
+/// triangle, the way u goes along it -- and v, for which way round -- summed
+/// over the corners that are one (the same place, normal and uv, the uv not
+/// mirrored one way and the other), each as wide an angle as it has there;
+/// made a unit long across the corner's normal.
+std::vector<Vec4> cornerTangents(const sim::ShadedTriangles& tris) {
+    const size_t n = tris.count();
+    std::vector<Vec4> out(3 * n, Vec4(1.0f, 0.0f, 0.0f, 1.0f));
+    if (tris.uvs.size() != 3 * n) return out;
+    std::vector<Vec3> du(3 * n, Vec3(0.0f)), dv(3 * n, Vec3(0.0f));
+    std::vector<int8_t> side(n, 1);
+    for (size_t t = 0; t < n; ++t) {
+        const Vec3* p = &tris.positions[3 * t];
+        const Vec2* q = &tris.uvs[3 * t];
+        const Vec3 e1 = p[1] - p[0], e2 = p[2] - p[0];
+        const Vec2 d1 = q[1] - q[0], d2 = q[2] - q[0];
+        const float r = d1.x * d2.y - d2.x * d1.y;
+        if (!(std::fabs(r) > 1e-20f) || !std::isfinite(r)) continue;
+        side[t] = r > 0.0f ? 1 : -1;
+        const Vec3 tu = (e1 * d2.y - e2 * d1.y) / r, tv = (e2 * d1.x - e1 * d2.x) / r;
+        for (int c = 0; c < 3; ++c) {
+            // The angle at the corner.
+            const Vec3 a = p[(c + 1) % 3] - p[c], b = p[(c + 2) % 3] - p[c];
+            const float la = length(a), lb = length(b);
+            const float angle = la > 0.0f && lb > 0.0f ? std::acos(std::clamp(dot(a, b) / (la * lb), -1.0f, 1.0f)) : 0.0f;
+            du[3 * t + static_cast<size_t>(c)] = tu * angle;
+            dv[3 * t + static_cast<size_t>(c)] = tv * angle;
+        }
+    }
+    // The corners that are one: the bits of their place, normal and uv,
+    // and which way round their uv goes.
+    struct Key {
+        std::array<uint32_t, 8> bits;
+        int8_t side;
+        bool operator==(const Key&) const = default;
+    };
+    struct Hash {
+        size_t operator()(const Key& k) const {
+            uint64_t h = 0x9e3779b97f4a7c15ull ^ static_cast<uint64_t>(k.side + 2);
+            for (const uint32_t b : k.bits) {
+                h ^= b + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                h *= 0xbf58476d1ce4e5b9ull;
+            }
+            return static_cast<size_t>(h ^ (h >> 31));
+        }
+    };
+    auto bitsOf = [](float x) {
+        uint32_t b;
+        x = x == 0.0f ? 0.0f : x;  // -0 is 0
+        std::memcpy(&b, &x, sizeof b);
+        return b;
+    };
+    std::unordered_map<Key, std::pair<Vec3, Vec3>, Hash> sums;
+    sums.reserve(3 * n);
+    std::vector<Key> keys(3 * n);
+    for (size_t i = 0; i < 3 * n; ++i) {
+        const Vec3& p = tris.positions[i];
+        const Vec3& nn = tris.normals[i];
+        const Vec2& q = tris.uvs[i];
+        keys[i] = {{bitsOf(p.x), bitsOf(p.y), bitsOf(p.z), bitsOf(nn.x), bitsOf(nn.y), bitsOf(nn.z), bitsOf(q.x), bitsOf(q.y)},
+                   side[i / 3]};
+        auto& sum = sums[keys[i]];
+        sum.first = sum.first + du[i];
+        sum.second = sum.second + dv[i];
+    }
+    for (size_t i = 0; i < 3 * n; ++i) {
+        const auto& [su, sv] = sums[keys[i]];
+        const Vec3 nn = tris.normals[i];
+        Vec3 t = su - nn * dot(nn, su);
+        if (!(dot(t, t) > 1e-30f)) {
+            // No way u goes: any way across the normal.
+            t = std::fabs(nn.x) < 0.9f ? cross(nn, Vec3(1.0f, 0.0f, 0.0f)) : cross(nn, Vec3(0.0f, 1.0f, 0.0f));
+            t = cross(t, nn);
+        }
+        t = normalize(t);
+        out[i] = Vec4(t, dot(cross(nn, t), sv) < 0.0f ? -1.0f : 1.0f);
+    }
+    return out;
+}
 
 float smoothstep(float a, float b, float x) {
     const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
@@ -212,6 +295,12 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     const MaterialNumber textureSize(geo, "texture_size", 0.0f);
     const AttributeArray* tints = geo.primitives().find("texture_tint");
     if (tints && tints->type() != AttrType::Int) tints = nullptr;
+    // How the pictures are laid on (0 auto, 1 by uv, 2 from three sides) and
+    // how strongly a normal map bends the light.
+    const AttributeArray* projections = geo.primitives().find("texture_projection");
+    if (projections && projections->type() != AttrType::Int) projections = nullptr;
+    const MaterialNumber normalStrength(geo, "texture_normal", 1.0f);
+    const bool hasUv = tris.uvs.size() == 3 * n;
     auto textureOfPrim = [&](uint32_t prim) -> const std::string& {
         static const std::string none;
         if (!textures || prim >= textures->size()) return none;
@@ -220,7 +309,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     // Geometry with no colour of its own: each surface its material's.
     const bool colored = geo.vertices().find("Cd") || geo.points().find("Cd") || geo.primitives().find("Cd") ||
                          geo.detail().find("Cd");
-    std::map<std::tuple<std::array<int, 5>, std::string, int>, uint16_t> known;
+    std::map<std::tuple<std::array<int, 7>, std::string, int>, uint16_t> known;
     std::vector<uint16_t> which(n);
     auto quantize = [](float x) { return static_cast<int>(std::lround(std::clamp(x, 0.0f, 1.0f) * 255.0f)); };
     for (size_t t = 0; t < n; ++t) {
@@ -248,9 +337,17 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
                 m.textureSize = std::max(textureSize.at(geo, prim), 0.0f);
                 m.textureTint = static_cast<int8_t>(tints && prim < tints->size() && tints->read<int32_t>()[prim] != 0);
             }
+            // By uv where the triangles have it: asked for, or -- Auto -- a
+            // texture of one's own (the material's photographs are made to
+            // be laid on from three sides, so many metres a picture).
+            const int32_t how = projections && prim < projections->size() ? projections->read<int32_t>()[prim] : 0;
+            m.byUv = hasUv && (how == 1 || (how == 0 && !texture.empty()));
+            m.normalStrength = std::round(std::clamp(normalStrength.at(geo, prim), 0.0f, 10.0f) * 100.0f) / 100.0f;
         }
-        const auto key = std::make_tuple(std::array<int, 5>{static_cast<int>(m.kind), quantize(m.roughness), quantize(m.metallic),
-                                                            quantize(m.translucency), static_cast<int>(m.preset)},
+        const auto key = std::make_tuple(std::array<int, 7>{static_cast<int>(m.kind), quantize(m.roughness), quantize(m.metallic),
+                                                            quantize(m.translucency), static_cast<int>(m.preset),
+                                                            static_cast<int>(m.byUv),
+                                                            static_cast<int>(std::lround(m.normalStrength * 100.0f))},
                                          m.texture, static_cast<int>(std::lround(m.textureSize * 1000.0f)) * 3 + m.textureTint + 1);
         auto it = known.find(key);
         if (it == known.end()) {
@@ -326,6 +423,13 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     if (!tris.velocities.empty()) mesh->velocity.resize(3 * n);
     if (windows) mesh->random.resize(n);
     mesh->material.resize(n);
+    // The uv and its tangents, where a material lays its pictures on by it.
+    std::vector<Vec4> tangents;
+    if (hasUv && std::any_of(mesh->materials.begin(), mesh->materials.end(), [](const Material& m) { return m.byUv; })) {
+        tangents = cornerTangents(tris);
+        mesh->uv.resize(3 * n);
+        mesh->tangents.resize(3 * n);
+    }
     parallelFor(n, 8192, [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
             const size_t t = mesh->bvh.items[i];
@@ -337,6 +441,10 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
                 mesh->normals[3 * i + c] = tris.normals[3 * t + c];
                 if (!mesh->rest.empty()) mesh->rest[3 * i + c] = tris.rest[3 * t + c];
                 if (!mesh->velocity.empty()) mesh->velocity[3 * i + c] = tris.velocities[3 * t + c];
+                if (!mesh->uv.empty()) {
+                    mesh->uv[3 * i + c] = tris.uvs[3 * t + c];
+                    mesh->tangents[3 * i + c] = tangents[3 * t + c];
+                }
                 const Vec3 col = colored ? tris.colors[3 * t + c] : own[which[t]];
                 mesh->colors[3 * i + c] = Vec3(std::clamp(col.x, 0.0f, 1.0f), std::clamp(col.y, 0.0f, 1.0f),
                                                std::clamp(col.z, 0.0f, 1.0f));
@@ -512,6 +620,15 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
             const Vec3 &r0 = m.rest[3 * t], &r1 = m.rest[3 * t + 1], &r2 = m.rest[3 * t + 2];
             hit.rest = r0 * w + r1 * triangle.u + r2 * triangle.v;
             hit.restFace = cross(r1 - r0, r2 - r0);
+        }
+        if (m.uv.empty()) {
+            hit.uv = Vec2(0.0f);
+            hit.tangent = Vec3(0.0f);
+        } else {
+            hit.uv = m.uv[3 * t] * w + m.uv[3 * t + 1] * triangle.u + m.uv[3 * t + 2] * triangle.v;
+            const Vec4 k = m.tangents[3 * t] * w + m.tangents[3 * t + 1] * triangle.u + m.tangents[3 * t + 2] * triangle.v;
+            hit.tangent = p.turn(Vec3(k));
+            hit.handed = m.tangents[3 * t].w < 0.0f ? -1.0f : 1.0f;
         }
         hit.material = &m.materials[m.material[t]];
         hit.floor = false;

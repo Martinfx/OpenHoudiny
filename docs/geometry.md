@@ -29,6 +29,7 @@ stejné, na kterém stojí `pgdemo`. Geometrie se:
 ./build/prototype --example rock_garden        # kameny z kopií koule, déšť na nich
 ./build/prototype --example foreach_city       # městský blok: smyčka For-Each přes 25 věží
 ./build/prototype --example tree_shapes        # sedm druhů stromů z uzlu Tree (trees.md)
+./build/prototype --example uv_props           # UV Project: bedna, sloup a koule s fotkami podle UV
 ./build/prototype --example forest             # les na kopci ve větru
 ./build/prototype --example meadow             # louka u lesa: tráva, keře a stromy jako instance (vegetation.md)
 ./build/prototype sim rock_garden rocks.png    # bez okna: poslední snímek do PNG
@@ -49,13 +50,14 @@ nastaveným na ni.
 | **Point Cloud** | Volné body v krychli, stejné pro stejné seed |
 | **Tree** | Strom, jak roste rostlina: kmen (i rozdělený do vůdčích větví), až tři úrovně větví kolem rodiče o zlatý úhel, ohnuté gravitací a ke světlu, listy na větvičkách; sedm tvarů koruny (smrk, dub, bříza, topol, akácie, vrba, lípa); na každém bodě vstupu jeden strom (les, každý jiný podle `id`); síť (kůra, listy, `flex` pro vítr), kostra (osy a body listů s `orient`), nebo instance: Variants stromů a bod pro každý strom lesa. Viz [trees.md](trees.md) |
 | **Grass** | Tráva: trsy stébel z jednoho kořene, stébla se zužují, naklánějí a ohýbají, od kořene tmavá, ke špičce světlá, některá suchá; po povrchu Density trsů na m² jako instance (Variants trsů jednou, bod pro každý trs s `orient`, `pscale`, `tint`), podle atributu hustoty a sklonu; bez vstupu jeden trs. Viz [vegetation.md](vegetation.md) |
-| **File** | Body, polygony a čáry ze souboru OBJ; relativní cesta od složky sítě; soubor, který se změní, se načte znovu |
+| **File** | Body, polygony a čáry ze souboru OBJ, s texturovými souřadnicemi `vt` jako `uv` rohů; relativní cesta od složky sítě; soubor, který se změní, se načte znovu |
 | **Transform** | Posun, rotace, měřítko po osách a celkové; rotace a měřítko kolem bodu **Pivot** (třeba hrany, přes kterou se věc převrací) |
 | **Merge** | Spojí geometrie ve vstupu, který bere libovolně spojů — v pořadí spojů |
 | **Switch** | Pustí dál jeden ze vstupů podle indexu |
 | **Attribute Create** | Atribut jedné hodnoty (číslo nebo vektor) na bodech, rozích, primitivech nebo celé geometrii |
 | **Color** | Barva `Cd` bodů nebo primitiv |
-| **Material** | Z čeho jsou plochy skupiny (beton, omítka, cihlová zeď, okno, ocel, dřevo, dlažba, tašky, trávník…): atribut `material`, podle kterého Cycles a path tracer kreslí fotografie nebo vzory; s Texture vlastní texturu (Poly Haven, ambientCG) kladenou ze tří stran. Viz [materials.md](materials.md) |
+| **Material** | Z čeho jsou plochy skupiny (beton, omítka, cihlová zeď, okno, ocel, dřevo, dlažba, tašky, trávník…): atribut `material`, podle kterého Cycles a path tracer kreslí fotografie nebo vzory; s Texture vlastní texturu (Poly Haven, ambientCG) kladenou ze tří stran nebo podle UV (Projection), s normálovou mapou (Normal Strength). Viz [materials.md](materials.md) |
+| **UV Project** | Texturové souřadnice `uv` na rozích ploch skupiny: z roviny podél osy, šest stran krabice (Box), jednou dokola válce nebo koule; podle nich renderery kladou fotky a ohýbají světlo normálovou mapou ([materials.md](materials.md#podle-uv-a-normálové-mapy)) |
 | **Group Box** | Skupina bodů uvnitř krabice |
 | **Group** | Skupina bodů nebo primitiv podle vzoru — čísla a rozsahy `0-9 12`, hrany `p3-4`, jiné skupiny, `*`, `^` ubírá; **Ctrl+G** ve viewportu ji udělá z vybraného ([editing.md](editing.md)) |
 | **Blast** | Smaže body vzoru (skupina, čísla, hrany) i s primitivy, které ztratí bod — nebo primitivy i s body, které používaly jen ony; nebo naopak nechá jen je (Keep). **Delete** ve viewportu ho udělá z vybraného |
@@ -79,7 +81,7 @@ nastaveným na ni.
 | **Liquid Points** | Částice vody z Liquid Solveru: `P`, rychlost `v`, pěna `foam`, číslo `id` (stejné ze snímku na snímek) |
 | **Liquid Surface** | Voda z Liquid Solveru jako povrch, ze kterého ji renderer renderuje: uzavřená síť kolem ní s normálami `N`, rychlostí `v` a pěnou `foam`; s Ripples i vlnky od deště. Viz níže |
 | **Rain Points** | Kapky deště a kapičky odstřiků: `P`, `v`, `droplet` (1 u kapičky), `id` (kapičky od 2³⁰) |
-| **Gas Volume** | Plyn z Pyro Solveru (nebo z VDB Gas) jako tři objemy: `density` (kouř), `temperature`, `flame` |
+| **Gas Volume** | Plyn z Pyro Solveru (nebo z VDB Gas) jako objemy: `density` (kouř), `temperature`, `flame`, pára `steam`, je-li, a rychlost `vel.x`, `vel.y`, `vel.z` na blocích 2 × 2 × 2 buněk |
 | **USD Import** | Geometrie scény USD (`.usda`, `.usdc`, `.usdz`) v daném snímku, složené jako v USD, v metrech s Y nahoru ([usd-import.md](usd-import.md)) |
 | **Alembic Import** | Geometrie souboru Alembic (`.abc`) v daném snímku, kam ji dají transformace: polygony, body, křivky, atributy, FaceSety jako skupiny ([alembic.md](alembic.md)) |
 | **VDB Import** | Mřížky souboru OpenVDB jako objemy, číslovaná sekvence soubor na snímek; se Surface polygony jejich povrchu — level set kolem nuly, hustota kolem Iso ([vdb.md](vdb.md)) |

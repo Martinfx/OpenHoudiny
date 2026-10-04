@@ -419,14 +419,18 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   (`tests/test_gas.cpp`): koule ohně letící 12 m/s se za půl snímku
   protáhne o 25 cm. Rozptyl světla po sloupcích obrazu naroste o tolik,
   kolik dává rovnoměrná stopa té délky (L²/12): v Cycles o 3,33 px²,
-  v path traceru o 3,47 px², podle výpočtu o 3,34 px². Světla je stejně
+  v path traceru o 3,41 px², podle výpočtu o 3,34 px². Světla je stejně
   (do 5 %).
+- `uv_the_renderers_lay_a_picture_on_by_uv_and_bend_the_light_by_its_normal_map`
+  (`tests/test_uv.cpp`): fotka podle UV a normálová mapa v obou
+  rendererech stejně, i na kouli (do 5 %,
+  [materials.md](materials.md#podle-uv-a-normálové-mapy)).
 
 ## 9. Co zatím chybí
 
 - GPU (CUDA, OptiX, HIP, Metal): Cycles je postavený jen pro procesor.
-- OSL shadery, UV a normálové mapy (textury se kladou ze tří stran,
-  reliéf je z výšky, [materials.md](materials.md)).
+- OSL shadery. Normálové mapy jen s UV, ze tří stran dělá reliéf výška
+  ([materials.md](materials.md#podle-uv-a-normálové-mapy)).
 - Mraky jako objem (stíny mraků na zemi, mraky, do kterých se dá vletět)
   a obloha z obrázku ve viewportu.
 - Plyn přímo jako NanoVDB v Cycles (bez husté mřížky): Cycles ho umí jen

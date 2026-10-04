@@ -1053,6 +1053,7 @@ add_executable(pgtests
   tests/test_glass.cpp
   tests/test_bricks.cpp
   tests/test_materials.cpp
+  tests/test_uv.cpp
   tests/test_particles.cpp
   tests/test_constraints.cpp
   tests/test_debris.cpp

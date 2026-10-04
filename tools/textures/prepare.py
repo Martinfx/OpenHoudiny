@@ -7,6 +7,10 @@ made of: for each material a folder of
                map where the source has one (which way its green channel
                points decided by which way it integrates), else the
                lightness of the colour -- darker lower
+  normal.jpg   for some (Set.normals): the way the surface faces, x y z in red
+               green blue, green up the picture as OpenGL has it -- the
+               slopes of height.jpg, what a surface laid on by uv bends
+               the light by
   texture.txt  how many metres the picture covers, how deep its height is,
                its average colour, whether the colour Cd tints it, whether
                it is laid along a sloping face (projection face), where it
@@ -25,6 +29,10 @@ What renders it: src/pg/render/Textures.h. The sources, fetched with git
 and run as
 
   tools/textures/prepare.py pbrt-v4-scenes babylon-assets examples/textures
+
+The normal maps alone, from the library as it is:
+
+  tools/textures/prepare.py --normals examples/textures brick_wall wood
 """
 
 import os
@@ -44,7 +52,7 @@ class Set:
     the surface in them is."""
 
     def __init__(self, repo, color, normal, metres, source, tint=True, light_depth=None, brushed=False,
-                 along_face=False):
+                 along_face=False, normals=False):
         self.repo = repo              # "pbrt" or "babylon": which checkout
         self.color = color            # the colour picture, in that checkout
         self.normal = normal          # its normal map, or None
@@ -54,6 +62,7 @@ class Set:
         self.light_depth = light_depth  # metres deep, where the height is the lightness
         self.brushed = brushed        # colour from the relief: a dark picture of 10 greys
         self.along_face = along_face  # laid along a sloping face: rows that stay level
+        self.normals = normals        # a normal map too (normal.jpg), of its height
 
 
 SETS = {
@@ -64,9 +73,9 @@ SETS = {
     # A brick wall's mortar is lighter than its bricks: tinted by a brick's
     # colour, it would be white.
     "brick_wall": Set("pbrt", "bistro/textures/MASTER_Brick_Small_Red_BaseColor.png",
-                      "bistro/textures/MASTER_Brick_Small_Red_Normal.png", 2.4, BISTRO, tint=False),
+                      "bistro/textures/MASTER_Brick_Small_Red_Normal.png", 2.4, BISTRO, tint=False, normals=True),
     "wood": Set("pbrt", "bistro/textures/MASTER_Wood_Brown_BaseColor.png",
-                "bistro/textures/MASTER_Wood_Brown_Normal.png", 1.2, BISTRO),
+                "bistro/textures/MASTER_Wood_Brown_Normal.png", 1.2, BISTRO, normals=True),
     "bark": Set("pbrt", "bistro/textures/Foliage_Linde_Tree_Large_Trunk_BaseColor.png",
                 "bistro/textures/Foliage_Linde_Tree_Large_Trunk_Normal.png", 1.0, BISTRO),
     "soil": Set("pbrt", "bistro/textures/Pavement_Ground_Wet_BaseColor.png",
@@ -158,6 +167,27 @@ def brushed_colour(color_path, h, size):
     return Image.fromarray(grey, "L").convert("RGB")
 
 
+def normals_from_height(folder):
+    """normal.jpg of a folder of the library: the slopes of its height.jpg,
+    as deep as its texture.txt says over as many metres -- the picture
+    tiling, so the slopes wrap round its edges."""
+    with open(os.path.join(folder, "texture.txt")) as f:
+        said = dict(line.split(" ", 1) for line in f.read().splitlines() if line and not line.startswith("#"))
+    metres, depth = float(said["size"]), float(said["depth"])
+    h = np.asarray(Image.open(os.path.join(folder, "height.jpg")).convert("L"), dtype=np.float64) / 255.0 * depth
+    pixel = metres / h.shape[1]
+    across = (np.roll(h, -1, axis=1) - np.roll(h, 1, axis=1)) / (2.0 * pixel)
+    down = (np.roll(h, -1, axis=0) - np.roll(h, 1, axis=0)) / (2.0 * pixel)  # rows go down the picture
+    # Facing (-dh/dx, -dh/dy, 1), y up the picture.
+    n = np.stack([-across, down, np.ones_like(h)], axis=2)
+    n /= np.linalg.norm(n, axis=2, keepdims=True)
+    rgb = np.round((n * 0.5 + 0.5) * 255.0).astype(np.uint8)
+    Image.fromarray(rgb, "RGB").save(os.path.join(folder, "normal.jpg"), quality=92, optimize=True)
+    tilt = np.degrees(np.arccos(np.clip(n[:, :, 2], -1.0, 1.0)))
+    print("%-15s normal map: tilted %.1f degrees on the whole, %.1f at the most" %
+          (os.path.basename(folder), float(tilt.mean()), float(np.percentile(tilt, 99.5))))
+
+
 def main(pbrt, babylon, out):
     roots = {"pbrt": pbrt, "babylon": babylon}
     os.makedirs(out, exist_ok=True)
@@ -202,6 +232,8 @@ def main(pbrt, babylon, out):
             f.write("license %s\n" % LICENCE)
         print("%-15s %.1f m, depth %4.1f mm, mean %s, height from %s" %
               (name, spec.metres, depth * 1000.0, np.round(mean, 3), how))
+        if spec.normals:
+            normals_from_height(folder)
     for name, (pictures, metres) in ALIASES.items():
         folder = os.path.join(out, name)
         os.makedirs(folder, exist_ok=True)
@@ -223,4 +255,8 @@ def main(pbrt, babylon, out):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    if sys.argv[1] == "--normals":
+        for name in sys.argv[3:]:
+            normals_from_height(os.path.join(sys.argv[2], name))
+    else:
+        main(sys.argv[1], sys.argv[2], sys.argv[3])

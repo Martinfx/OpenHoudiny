@@ -52,9 +52,10 @@ okna.
   okno, ocel, dřevo, kůra, dlažba, tašky, trávník…), generátory si je
   nastaví samy, uzel Material komukoli; Cycles kreslí fotografie z knihovny
   (Bistro a Babylon.js, CC-BY 4.0) nebo procedurální vzory, path tracer
-  fotografie bez reliéfu; tašky podél střechy, řady vodorovně; geometrie
-  bez `Cd` v barvách svých materiálů; vlastní textury z Poly Haven
-  a ambientCG; textura jde s kusem, který letí
+  fotografie s reliéfem z normálových map; tašky podél střechy, řady
+  vodorovně; geometrie bez `Cd` v barvách svých materiálů; vlastní textury
+  z Poly Haven a ambientCG; ze tří stran, nebo podle UV (uzel UV Project,
+  importy) s normálovými mapami; textura jde s kusem, který letí
 - **[docs/pathtracer.md](docs/pathtracer.md)** — vlastní path tracer na
   procesoru, druhá volba záložky Render a `--renderer path`; odražené
   světlo, měkké slunce, prosvítající tráva a listí, sklo a voda, drť,
@@ -225,7 +226,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 611 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 35 shader graf a materiály, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 21 stromy a vegetace
+./build/pgtests            # 618 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 21 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py

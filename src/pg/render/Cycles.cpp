@@ -641,6 +641,38 @@ ccl::ShaderOutput* sampled(ccl::ShaderGraph& graph, const Laid& laid, const std:
     return sum;
 }
 
+/// The picture `file` laid on by the corners' uv (the mesh's ATTR_STD_UV), a
+/// picture a unit of it: its colour (sRGB) or its values as they are.
+ccl::ShaderOutput* sampledByUv(ccl::ShaderGraph& graph, const std::string& file, bool color) {
+    auto* where = graph.create_node<ccl::TextureCoordinateNode>();
+    auto* image = graph.create_node<ccl::ImageTextureNode>();
+    image->set_filename(ccl::ustring(file));
+    image->set_colorspace(color ? ccl::u_colorspace_srgb : ccl::u_colorspace_raw);
+    graph.connect(where->output("UV"), image->input("Vector"));
+    return image->output("Color");
+}
+
+/// The normal a normal map `file` gives, laid on by uv, as strongly as
+/// `strength`: in the tangent space Cycles makes of the uv (MikkTSpace) --
+/// its green flipped first for one of DirectX's.
+ccl::ShaderOutput* normalMapped(ccl::ShaderGraph& graph, const std::string& file, bool directX, float strength) {
+    ccl::ShaderOutput* map = sampledByUv(graph, file, false);
+    if (directX) {
+        auto* parts = graph.create_node<ccl::SeparateColorNode>();
+        graph.connect(map, parts->input("Color"));
+        auto* back = graph.create_node<ccl::CombineColorNode>();
+        graph.connect(parts->output("Red"), back->input("Red"));
+        graph.connect(scaled(graph, parts->output("Green"), -1.0f, 1.0f), back->input("Green"));
+        graph.connect(parts->output("Blue"), back->input("Blue"));
+        map = back->output("Color");
+    }
+    auto* bent = graph.create_node<ccl::NormalMapNode>();
+    bent->set_space(ccl::NODE_NORMAL_MAP_TANGENT);
+    bent->set_strength(strength);
+    graph.connect(map, bent->input("Color"));
+    return bent->output("Normal");
+}
+
 /// What a material's pattern makes of a surface: its colour, and where it
 /// has them its roughness, how metal, its normal, and how strongly it
 /// reflects (Principled's Specular IOR Level: a half for most).
@@ -1218,10 +1250,12 @@ struct CyclesRender::Impl {
         if (m.kind == Material::Kind::Rain) key.push_back(m.opacity);
         if (texture.valid()) {
             key.insert(key.end(), {texture.size, texture.depth, texture.mean.x, texture.mean.y, texture.mean.z,
-                                   texture.tint ? 1.0f : 0.0f});
+                                   texture.tint ? 1.0f : 0.0f, m.byUv ? 1.0f : 0.0f, m.normalStrength,
+                                   texture.normalDirectX ? 1.0f : 0.0f});
         }
         const auto k = std::make_tuple(static_cast<int>(m.kind), key,
-                                       texture.color + '|' + texture.height + '|' + texture.roughness);
+                                       texture.color + '|' + texture.height + '|' + texture.roughness + '|' +
+                                           texture.normal);
         if (auto it = shaders.find(k); it != shaders.end()) return it->second;
         auto graph = std::make_unique<ccl::ShaderGraph>();
         auto* attr = graph->create_node<ccl::AttributeNode>();
@@ -1241,15 +1275,22 @@ struct CyclesRender::Impl {
                 bsdf->set_metallic(m.metallic);
                 if (texture.valid()) {
                     // Its photographs (render/Textures.h), laid on by where it
-                    // was before it moved: the colour -- round Cd, or as it
-                    // is -- bumps of its height, its roughness.
+                    // was before it moved -- or by the corners' uv: the colour
+                    // -- round Cd, or as it is -- bumps of its height or the
+                    // bends of its normal map, its roughness.
                     auto* rest = graph->create_node<ccl::AttributeNode>();
                     rest->set_attribute(ccl::ustring("pg_rest"));
-                    auto* face = graph->create_node<ccl::AttributeNode>();
-                    face->set_attribute(ccl::ustring("pg_rest_normal"));
-                    const Laid laid =
-                        laidOn(*graph, rest->output("Vector"), face->output("Vector"), 1.0f / texture.size, texture.alongFace);
-                    ccl::ShaderOutput* picture = sampled(*graph, laid, texture.color, true);
+                    Laid laid;
+                    if (!m.byUv) {
+                        auto* face = graph->create_node<ccl::AttributeNode>();
+                        face->set_attribute(ccl::ustring("pg_rest_normal"));
+                        laid = laidOn(*graph, rest->output("Vector"), face->output("Vector"), 1.0f / texture.size,
+                                      texture.alongFace);
+                    }
+                    auto pictureOf = [&](const std::string& file, bool colour) {
+                        return m.byUv ? sampledByUv(*graph, file, colour) : sampled(*graph, laid, file, colour);
+                    };
+                    ccl::ShaderOutput* picture = pictureOf(texture.color, true);
                     if (texture.tint) {
                         const Vec3 mean = glm::max(texture.mean, Vec3(1e-4f));
                         color = tinted(*graph, color, tinted(*graph, picture, constant(*graph, Vec3(1.0f) / mean)));
@@ -1264,12 +1305,16 @@ struct CyclesRender::Impl {
                     most->set_vector2(ccl::make_float3(0.95f, 0.95f, 0.95f));
                     color = most->output("Vector");
                     ccl::ShaderOutput* height = nullptr;
-                    if (!texture.height.empty()) {
-                        height = sampled(*graph, laid, texture.height, false);
+                    const bool mapped = m.byUv && !texture.normal.empty() && m.normalStrength > 0.0f;
+                    if (!texture.height.empty()) height = pictureOf(texture.height, false);
+                    if (mapped) {
+                        graph->connect(normalMapped(*graph, texture.normal, texture.normalDirectX, m.normalStrength),
+                                       bsdf->input("Normal"));
+                    } else if (height) {
                         graph->connect(bumped(*graph, height, 1.0f, texture.depth), bsdf->input("Normal"));
                     }
                     if (!texture.roughness.empty()) {
-                        graph->connect(sampled(*graph, laid, texture.roughness, false), bsdf->input("Roughness"));
+                        graph->connect(pictureOf(texture.roughness, false), bsdf->input("Roughness"));
                     } else if (height) {
                         // Down in it, rougher; on top, worn smoother.
                         graph->connect(scaled(*graph, height, -0.2f, m.roughness + 0.1f, nullptr, true), bsdf->input("Roughness"));
@@ -1480,6 +1525,12 @@ struct CyclesRender::Impl {
                 const Vec3 f = l > 0.0f ? across / l : Vec3(0.0f, 1.0f, 0.0f);
                 faced[t] = ccl::make_float3(f.x, f.y, f.z);
             }
+        }
+        // The corners' uv, where a material lays its pictures on by it:
+        // what Cycles makes the tangents of a normal map of, too.
+        if (m->uv.size() == 3 * n) {
+            ccl::float2* uv = mesh->attributes.add(ccl::ATTR_STD_UV, ccl::ustring("uv"))->data_float2();
+            for (size_t i = 0; i < 3 * n; ++i) uv[i] = ccl::make_float2(m->uv[i].x, m->uv[i].y);
         }
         if (m->random.size() == n) {
             float* random = mesh->attributes.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_float();

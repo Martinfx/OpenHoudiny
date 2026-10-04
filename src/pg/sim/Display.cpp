@@ -209,12 +209,23 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
     const AttributeArray* vAttr = geo.points().find("v");
     const std::span<const Vec3> v =
         vAttr && vAttr->type() == AttrType::Vec3 ? vAttr->read<Vec3>() : std::span<const Vec3>();
+    // Texture coordinates: the corners', else the points' -- two parts or
+    // three (u, v, 0).
+    auto uvOf = [](const AttributeArray* a) {
+        return a && (a->type() == AttrType::Vec2 || a->type() == AttrType::Vec3) ? a : nullptr;
+    };
+    const AttributeArray* vertexUv = uvOf(geo.vertices().find("uv"));
+    const AttributeArray* pointUv = vertexUv ? nullptr : uvOf(geo.points().find("uv"));
+    auto uvAt = [&](const AttributeArray& a, size_t i) {
+        return a.type() == AttrType::Vec2 ? a.read<Vec2>()[i] : Vec2(a.read<Vec3>()[i]);
+    };
     const size_t n = tris.size();
     out.positions.resize(3 * n);
     out.normals.resize(3 * n);
     out.colors.resize(3 * n);
     if (!rest.empty()) out.rest.resize(3 * n);
     if (!v.empty()) out.velocities.resize(3 * n);
+    if (vertexUv || pointUv) out.uvs.resize(3 * n);
     out.glass.resize(n);
     parallelFor(n, 4096, [&](size_t begin, size_t end) {
         for (size_t t = begin; t < end; ++t) {
@@ -227,6 +238,8 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
                 out.positions[3 * t + c] = P[p];
                 if (!rest.empty()) out.rest[3 * t + c] = rest[p];
                 if (!v.empty()) out.velocities[3 * t + c] = v[p];
+                if (vertexUv) out.uvs[3 * t + c] = uvAt(*vertexUv, corners[t][c]);
+                else if (pointUv) out.uvs[3 * t + c] = uvAt(*pointUv, p);
                 Vec3 nrm = N ? normalize(pointN[p]) : made[3 * t + c];
                 if (out.glass[t] != 0 && length(flat) > 0.5f) nrm = flat;  // glass is flat, as the viewport has it
                 out.normals[3 * t + c] = nrm;

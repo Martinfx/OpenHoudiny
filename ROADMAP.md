@@ -447,7 +447,8 @@ Seřazeno podle poměru hodnota / náklad:
    Image Denoise; materiály podle toho, z čeho povrch je (`s@material`:
    beton, omítka, cihla, okno, ocel, dlažba, tašky, trávník…), fotografie
    povrchů z knihovny (patnáct sad) a vlastní textury kladené ze tří stran
-   nebo podél plochy podle polohy kusu před pohybem
+   nebo podél plochy podle polohy kusu před pohybem, nebo podle UV (uzel
+   UV Project, importy) s normálovými mapami
    ([materials.md](docs/materials.md)); drť jako hranaté úlomky kamene
    a skla, déšť jako čárky vody a mokrý povrch, kam prší
    ([pathtracer.md](docs/pathtracer.md#drť-déšť-a-mokrý-povrch)); v obou
@@ -461,7 +462,10 @@ Seřazeno podle poměru hodnota / náklad:
    a ACES2065-1 s chromaticities a jejich čtení ([color.md](docs/color.md)).
    ✅ Rozmazání plynu (rychlost ve snímcích, z VDB i do VDB) a objektů
    scény v Cycles i v path traceru, který rozmazává i vše ostatní.
-   Zbývá: Cycles na GPU, UV a normálové mapy, čtení konfigurací OCIO. Do té doby renderují studia náročné záběry přes USD
+   ✅ UV a normálové mapy: uzel UV Project, `vt` z OBJ, fotky podle UV
+   a normálové mapy (OpenGL i DirectX) v obou rendererech, tečny jako
+   MikkTSpace ([materials.md](docs/materials.md#podle-uv-a-normálové-mapy)).
+   Zbývá: Cycles na GPU, čtení konfigurací OCIO. Do té doby renderují studia náročné záběry přes USD
    vlastními renderery.
 4. **JIT pro wrangle** (LLVM ORC nebo Warp) — až bude interpret úzkým
    hrdlem (kritérium M5 výše).

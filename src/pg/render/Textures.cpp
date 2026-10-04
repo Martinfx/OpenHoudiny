@@ -22,7 +22,7 @@ namespace {
 namespace fs = std::filesystem;
 
 /// What a picture of a set is, as its name says.
-enum class Role { None, Color, Height, Roughness, Other };
+enum class Role { None, Color, Height, Roughness, Normal, Other };
 
 Role roleOf(const std::string& token) {
     static const std::map<std::string, Role> roles = {
@@ -32,9 +32,10 @@ Role roleOf(const std::string& token) {
         {"disp", Role::Height},        {"displacement", Role::Height}, {"height", Role::Height},
         {"bump", Role::Height},        {"di", Role::Height},         {"dis", Role::Height},
         {"rough", Role::Roughness},    {"roughness", Role::Roughness},
-        {"nor", Role::Other},          {"normal", Role::Other},      {"nrm", Role::Other},
-        {"normalgl", Role::Other},     {"normaldx", Role::Other},    {"gl", Role::Other},
-        {"dx", Role::Other},           {"ao", Role::Other},          {"ambientocclusion", Role::Other},
+        {"nor", Role::Normal},         {"normal", Role::Normal},     {"nrm", Role::Normal},
+        {"normalgl", Role::Normal},    {"normaldx", Role::Normal},   {"norm", Role::Normal},
+        {"gl", Role::Other},           {"dx", Role::Other},          {"opengl", Role::Other},
+        {"directx", Role::Other},      {"ao", Role::Other},          {"ambientocclusion", Role::Other},
         {"occlusion", Role::Other},    {"arm", Role::Other},         {"metal", Role::Other},
         {"metallic", Role::Other},     {"metalness", Role::Other},   {"spec", Role::Other},
         {"specular", Role::Other},     {"opacity", Role::Other},     {"alpha", Role::Other},
@@ -46,7 +47,12 @@ Role roleOf(const std::string& token) {
 
 /// A picture's name taken apart: what it is, and the rest of the name -- the
 /// same for every picture of one set.
-std::pair<Role, std::string> nameOf(const fs::path& file) {
+struct Name {
+    Role role = Role::None;
+    std::string key;
+    bool directX = false;  // a normal map of DirectX's: _nor_dx_, _NormalDX
+};
+Name nameOf(const fs::path& file) {
     std::string stem = file.stem().string();
     for (char& c : stem) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     std::vector<std::string> tokens;
@@ -59,17 +65,17 @@ std::pair<Role, std::string> nameOf(const fs::path& file) {
             token.clear();
         }
     }
-    Role role = Role::None;
-    std::string key;
+    Name name;
     for (const std::string& t : tokens) {
         const Role r = roleOf(t);
         if (r != Role::None) {
-            if (role == Role::None || role == Role::Other) role = r;
+            if (name.role == Role::None || name.role == Role::Other) name.role = r;
+            if (t == "dx" || t == "normaldx" || t == "directx") name.directX = true;
             continue;
         }
-        key += t + "_";
+        name.key += t + "_";
     }
-    return {role, key};
+    return name;
 }
 
 bool isPicture(const fs::path& p) {
@@ -124,6 +130,10 @@ TextureSet readFolder(const fs::path& folder) {
             std::string how;
             if (words >> how) set.alongFace = how == "face";
         }
+        if (key == "normal") {
+            std::string how;
+            if (words >> how) set.normalDirectX = how == "dx" || how == "directx";
+        }
     }
     auto picture = [&](const char* name) {
         for (const char* ext : {".jpg", ".png", ".jpeg", ".exr"}) {
@@ -136,6 +146,7 @@ TextureSet readFolder(const fs::path& folder) {
     set.color = picture("color");
     set.height = picture("height");
     set.roughness = picture("roughness");
+    set.normal = picture("normal");
     set.size = std::max(set.size, 1e-3f);
     set.depth = std::max(set.depth, 0.0f);
     if (set.valid() && !hasMean) set.mean = meanOf(set.color);
@@ -146,16 +157,26 @@ TextureSet readFolder(const fs::path& folder) {
 /// names differ only in what they are.
 TextureSet readSiblings(const fs::path& file) {
     TextureSet set;
-    const auto [role, key] = nameOf(file);
+    const Name name = nameOf(file);
     std::error_code ec;
-    if (role == Role::None || role == Role::Color) set.color = file.string();
+    if (name.role == Role::None || name.role == Role::Color) set.color = file.string();
+    // In the order the folder lists them: the same set whatever it is.
+    std::vector<fs::path> beside;
     for (const auto& entry : fs::directory_iterator(file.parent_path(), ec)) {
-        if (!entry.is_regular_file(ec) || !isPicture(entry.path())) continue;
-        const auto [r, k] = nameOf(entry.path());
-        if (k != key) continue;
-        if (r == Role::Color && set.color.empty()) set.color = entry.path().string();
-        if (r == Role::Height && set.height.empty()) set.height = entry.path().string();
-        if (r == Role::Roughness && set.roughness.empty()) set.roughness = entry.path().string();
+        if (entry.is_regular_file(ec) && isPicture(entry.path())) beside.push_back(entry.path());
+    }
+    std::sort(beside.begin(), beside.end());
+    for (const fs::path& path : beside) {
+        const Name other = nameOf(path);
+        if (other.key != name.key) continue;
+        if (other.role == Role::Color && set.color.empty()) set.color = path.string();
+        if (other.role == Role::Height && set.height.empty()) set.height = path.string();
+        if (other.role == Role::Roughness && set.roughness.empty()) set.roughness = path.string();
+        // A normal map: OpenGL's rather than DirectX's, where there are both.
+        if (other.role == Role::Normal && (set.normal.empty() || (set.normalDirectX && !other.directX))) {
+            set.normal = path.string();
+            set.normalDirectX = other.directX;
+        }
     }
     if (!set.valid()) return set;
     set.size = 2.0f;
@@ -185,7 +206,7 @@ TextureSet textureSet(const std::string& where) {
         if (!set.valid()) {
             // Someone else's pictures in a folder of their own: the colour's.
             for (const auto& entry : fs::directory_iterator(path, ec)) {
-                if (entry.is_regular_file(ec) && isPicture(entry.path()) && nameOf(entry.path()).first == Role::Color) {
+                if (entry.is_regular_file(ec) && isPicture(entry.path()) && nameOf(entry.path()).role == Role::Color) {
                     set = readSiblings(entry.path());
                     break;
                 }
@@ -280,33 +301,30 @@ Vec3 TexturePicture::onSurface(const Vec3& rest, const Vec3& face) const {
     return c;
 }
 
-Vec3 TexturePicture::shade(const Vec3& color, const Vec3& copyTint, const Vec3& rest, const Vec3& face) const {
-    const Vec3 picture = onSurface(rest, face);
+Vec3 TexturePicture::shade(const Vec3& color, const Vec3& copyTint, const Vec3& rest, const Vec3& face, const Vec2* uv) const {
+    const Vec3 picture = uv ? at(uv->x, uv->y) : onSurface(rest, face);
     const Vec3 c = tint ? color * picture / glm::max(mean, Vec3(1e-4f)) : picture * copyTint;
     return glm::min(c, Vec3(0.95f));
 }
 
-std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set) {
-    static std::mutex mutex;
-    static std::map<std::string, std::shared_ptr<const TexturePicture>> pictures;
-    if (!set.valid()) return nullptr;
-    std::lock_guard<std::mutex> lock(mutex);
-    std::ostringstream key;
-    key << set.color << '|' << set.size << '|' << set.tint << '|' << set.alongFace << '|' << set.mean.x << ' '
-        << set.mean.y << ' ' << set.mean.z;
-    if (const auto it = pictures.find(key.str()); it != pictures.end()) return it->second;
+namespace {
+
+/// The picture of `file` -- light, or (`values`) as it is -- no more than
+/// 1024 across; null when it cannot be read.
+std::shared_ptr<TexturePicture> loadPicture(const std::string& file, bool values) {
     io::Picture picture;
     std::string error;
     std::shared_ptr<TexturePicture> out;
-    if (io::readPicture(set.color, picture, error) && !picture.empty()) {
+    if (io::readPicture(file, picture, error) && !picture.empty()) {
         // No more than 1024 across: halved, four pixels averaged, until so.
         int w = picture.width, h = picture.height;
         std::vector<Vec3> px(static_cast<size_t>(w) * static_cast<size_t>(h));
         for (int y = 0; y < h; ++y) {
             for (int x = 0; x < w; ++x) {
                 const float* p = picture.pixel(x, y);
-                Vec3 c = picture.linear ? Vec3(p[0], p[1], p[2])
-                                        : Vec3(io::srgbToLinear(p[0]), io::srgbToLinear(p[1]), io::srgbToLinear(p[2]));
+                Vec3 c = picture.linear || values
+                             ? Vec3(p[0], p[1], p[2])
+                             : Vec3(io::srgbToLinear(p[0]), io::srgbToLinear(p[1]), io::srgbToLinear(p[2]));
                 px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = c;
             }
         }
@@ -333,6 +351,23 @@ std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set) {
         out->width = w;
         out->height = h;
         out->pixels = std::move(px);
+    }
+    return out;
+}
+
+}  // namespace
+
+std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set) {
+    static std::mutex mutex;
+    static std::map<std::string, std::shared_ptr<const TexturePicture>> pictures;
+    if (!set.valid()) return nullptr;
+    std::lock_guard<std::mutex> lock(mutex);
+    std::ostringstream key;
+    key << set.color << '|' << set.size << '|' << set.tint << '|' << set.alongFace << '|' << set.mean.x << ' '
+        << set.mean.y << ' ' << set.mean.z;
+    if (const auto it = pictures.find(key.str()); it != pictures.end()) return it->second;
+    std::shared_ptr<TexturePicture> out = loadPicture(set.color, false);
+    if (out) {
         out->size = set.size;
         out->mean = set.mean;
         out->tint = set.tint;
@@ -340,6 +375,39 @@ std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set) {
     }
     pictures[key.str()] = out;
     return out;
+}
+
+std::shared_ptr<const TexturePicture> normalPicture(const TextureSet& set) {
+    static std::mutex mutex;
+    static std::map<std::string, std::shared_ptr<const TexturePicture>> pictures;
+    if (set.normal.empty()) return nullptr;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (const auto it = pictures.find(set.normal); it != pictures.end()) return it->second;
+    std::shared_ptr<const TexturePicture> out = loadPicture(set.normal, true);
+    pictures[set.normal] = out;
+    return out;
+}
+
+Vec3 bentNormal(const TexturePicture& map, bool directX, const Vec2& uv, const Vec3& n, const Vec3& tangent, float handed,
+                float strength, const Vec3& face) {
+    if (!(strength > 0.0f) || !(dot(tangent, tangent) > 0.0f)) return n;
+    // The way the picture says the surface faces, its own x y z from 0..1;
+    // tilted as strongly as asked -- weaker, its z toward 1, as Cycles has it.
+    const Vec3 c = map.at(uv.x, uv.y);
+    Vec3 m(2.0f * c.x - 1.0f, (2.0f * c.y - 1.0f) * (directX ? -1.0f : 1.0f), 2.0f * c.z - 1.0f);
+    m.x *= strength;
+    m.y *= strength;
+    m.z = std::max(1.0f + (m.z - 1.0f) * std::min(strength, 1.0f), 1e-3f);
+    // Its space: the tangent made across n again, and the way v goes.
+    const Vec3 t = normalize(tangent - n * dot(n, tangent));
+    const Vec3 b = cross(n, t) * handed;
+    Vec3 bent = normalize(t * m.x + b * m.y + n * m.z);
+    if (!std::isfinite(bent.x) || !std::isfinite(bent.y) || !std::isfinite(bent.z)) return n;
+    // Not past the surface: a light that comes from behind it is none.
+    const Vec3 f = dot(face, n) < 0.0f ? -face : face;
+    const float above = dot(bent, f);
+    if (above < 0.05f) bent = normalize(bent + f * (0.05f - above));
+    return bent;
 }
 
 }  // namespace pg::render

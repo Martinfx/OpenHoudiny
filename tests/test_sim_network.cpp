@@ -735,7 +735,7 @@ TEST(sim_network_examples_all_run) {
                                         [](const Node& n) { return n.type == "output"; });
         if (model) continue;
         const Compiled c = net.compile(PG_SIM_EXAMPLES_DIR);  // where their meshes are
-        CHECK(c.ok);
+        if (!c.ok) ::testing::fail(__FILE__, __LINE__, name + ": " + (c.problems.empty() ? "not compiled" : c.problems[0].message));
         for (const Problem& p : c.problems) {
             // A plate is footage: filmed, or made (examples/usd/make_plate.py
             // makes matchmove's), and not kept in the repository.

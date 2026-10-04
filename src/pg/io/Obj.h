@@ -5,12 +5,15 @@
 //
 // Read: points (`v`), polygons (`f`, closed) and polylines (`l`, open); a
 // corner may be written `a`, `a/b`, `a//c` or `a/b/c`, and a negative number
-// counts back from the last point. Normals, texture coordinates, materials,
-// groups and smoothing: skipped. Numbers are read the same whatever the
-// locale says a decimal point is.
+// counts back from the last point or texture coordinate. Texture
+// coordinates (`vt`) the corners name become uv on the vertices, (u, v, 0)
+// -- 0 for a corner naming one that is not there.
+// Normals, materials, groups and smoothing: skipped. Numbers are read the
+// same whatever the locale says a decimal point is.
 //
-// Written: the points, then the primitives -- closed ones as `f`, open ones
-// as `l`. Attributes other than P and volumes do not go into an OBJ.
+// Written: the points, uv as `vt` -- a corner's or a point's -- then the
+// primitives, closed ones as `f`, open ones as `l`. Other attributes and
+// volumes do not go into an OBJ.
 //
 #include "pg/core/Geometry.h"
 

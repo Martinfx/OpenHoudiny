@@ -81,6 +81,9 @@ struct ShadedTriangles {
     std::vector<Vec3> positions, normals, colors;  ///< three a triangle
     std::vector<Vec3> rest;                        ///< three a triangle, or none
     std::vector<Vec3> velocities;                  ///< three a triangle, or none: m/s
+    /// Three a triangle where the corners or the points have uv -- what a
+    /// picture is laid on by -- else none.
+    std::vector<Vec2> uvs;
     std::vector<uint32_t> prims;                   ///< one a triangle
     std::vector<uint8_t> glass;                    ///< one a triangle
     size_t count() const { return prims.size(); }

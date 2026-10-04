@@ -1,6 +1,7 @@
 // Nodes that read, sample and build on surfaces: a file, points scattered
 // over a surface, normals, copies onto points -- or instances of them, and
-// the copies made of instances -- a colour.
+// the copies made of instances -- a colour, a material, texture
+// coordinates.
 #include "pg/nodes/Nodes.h"
 
 #include "pg/core/Geometry.h"
@@ -391,6 +392,8 @@ public:
         params_.setString("texture", "");
         params_.setFloat("texture_size", 0.0f);
         params_.setBool("texture_tint", false);
+        params_.setInt("texture_projection", 0);  // auto, uv, three sides
+        params_.setFloat("texture_normal", 1.0f);
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
@@ -409,6 +412,26 @@ public:
         if (!group.empty() && std::none_of(picked.begin(), picked.end(), [](uint8_t c) { return c != 0; })) return geo;
         if (geo->primitiveCount() == 0) return geo;
         setPrimitiveString(*geo, "material", std::string(kMaterialNames[static_cast<size_t>(which)]), picked);
+        // How the pictures are laid on (i@texture_projection: 0 auto, 1 by
+        // uv, 2 from three sides) and how strongly a normal map bends the
+        // light (f@texture_normal, 1 where none is said): where not as by
+        // default, or where an earlier one said otherwise.
+        const int32_t projection = std::clamp(params_.evalInt("texture_projection", ctx, 0), 0, 2);
+        if (projection != 0 || geo->primitives().find("texture_projection")) {
+            auto how = geo->primitives().create("texture_projection", AttrType::Int).write<int32_t>();
+            for (size_t p = 0; p < how.size(); ++p) {
+                if (picked.empty() || picked[p]) how[p] = projection;
+            }
+        }
+        const float strength = std::max(params_.evalFloat("texture_normal", ctx, 1.0f), 0.0f);
+        if (strength != 1.0f || geo->primitives().find("texture_normal")) {
+            const bool fresh = geo->primitives().find("texture_normal") == nullptr;
+            auto bends = geo->primitives().create("texture_normal", AttrType::Float).write<float>();
+            for (size_t p = 0; p < bends.size(); ++p) {
+                if (picked.empty() || picked[p]) bends[p] = strength;
+                else if (fresh) bends[p] = 1.0f;
+            }
+        }
         // A texture of one's own (render/Textures.h): s@texture -- "" where
         // the material's own -- f@texture_size, i@texture_tint.
         const std::string texture = params_.getString("texture", "");
@@ -423,6 +446,149 @@ public:
             if (!picked.empty() && !picked[p]) continue;
             sizes[p] = size;
             tints[p] = tint;
+        }
+        return geo;
+    }
+    std::string cookError() const override { return error_; }
+
+private:
+    std::string error_;
+};
+
+/// Texture coordinates on the corners of the faces of a group -- all of them
+/// without one: the vertex attribute uv, (u, v, 0) as Houdini keeps it --
+/// what a picture is laid on by where the Material node's Projection says
+/// UV. Projected from `center`, `scale` metres one picture:
+///   planar       along `axis`, as seen from its + side, the picture upright
+///                (from above, x across and -z up);
+///   box          each face along the axis it faces most, as seen from
+///                outside -- a box's six sides each a picture, none mirrored;
+///   cylindrical  round `axis`: u once round, from behind and to the right as
+///                seen from its front (+z for y), v along it;
+///   spherical    round `axis` as the cylinder, v from the lower pole (0) to
+///                the upper (1).
+/// Round ones keep each face whole: a face across the seam has its u past 1
+/// on that side, and a corner on a pole the u of the rest of its face.
+class UvProjectNode : public Node {
+public:
+    explicit UvProjectNode(std::string name) : Node("uvproject", std::move(name)) {
+        setInputCount(1);
+        params_.setString("group", "");
+        params_.setInt("projection", 0);  // planar, box, cylindrical, spherical
+        params_.setInt("axis", 1);        // x, y, z
+        params_.setVec3("center", Vec3(0.0f));
+        params_.setFloat("scale", 1.0f);
+    }
+
+    GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
+        auto geo = editableCopy(in.empty() ? nullptr : in[0]);
+        error_.clear();
+        const std::string group = params_.getString("group");
+        bool named = true;
+        const std::vector<uint8_t> picked =
+            group.empty() ? std::vector<uint8_t>() : selectElements(*geo, AttrClass::Primitive, group, &named);
+        if (!named) {
+            error_ = "no primitive group '" + group + "'";
+            return geo;
+        }
+        if (geo->primitiveCount() == 0) return geo;
+        const int projection = std::clamp(params_.evalInt("projection", ctx, 0), 0, 3);
+        const int axis = std::clamp(params_.evalInt("axis", ctx, 1), 0, 2);
+        const Vec3 center = params_.evalVec3("center", ctx, Vec3(0.0f));
+        const float scale = std::max(params_.evalFloat("scale", ctx, 1.0f), 1e-6f);
+
+        // The corners' uv as they were -- a two-part one taken on -- the
+        // faces outside the group keeping theirs.
+        std::vector<Vec3> was;
+        if (const AttributeArray* old = geo->vertices().find("uv")) {
+            if (old->type() == AttrType::Vec2) {
+                for (const Vec2& t : old->read<Vec2>()) was.emplace_back(t.x, t.y, 0.0f);
+            } else if (old->type() == AttrType::Vec3) {
+                was.assign(old->read<Vec3>().begin(), old->read<Vec3>().end());
+            }
+        }
+        auto uv = geo->vertices().create("uv", AttrType::Vec3).write<Vec3>();
+        if (was.size() == uv.size()) std::copy(was.begin(), was.end(), uv.begin());
+
+        // The two axes across `along`, seen from its + side, upright: x
+        // across and y up from +z; -z across from +x; x across and -z up
+        // from above -- and from the - side, across the other way.
+        auto across = [](int along, float side, const Vec3& d) {
+            switch (along) {
+                case 0: return Vec2(-d.z * side, d.y);
+                case 1: return Vec2(d.x, -d.z * side);
+                default: return Vec2(d.x * side, d.y);
+            }
+        };
+        const auto P = geo->positions();
+        // Round the axis: the share of a turn from behind, through the front
+        // (a half) to the right -- the front and the right of y +z and +x, of
+        // z -y and +x, of x +y and +z -- and the distance from it.
+        const Vec3 rights[3] = {Vec3(0.0f, 0.0f, 1.0f), Vec3(1.0f, 0.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f)};
+        const Vec3 fronts[3] = {Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f), Vec3(0.0f, -1.0f, 0.0f)};
+        auto round = [&](const Vec3& d, float& turn, float& off) {
+            const float right = dot(d, rights[axis]), front = dot(d, fronts[axis]);
+            off = std::sqrt(front * front + right * right);
+            turn = std::atan2(right, front) / (2.0f * 3.14159265f) + 0.5f;
+        };
+        for (size_t prim = 0; prim < geo->primitiveCount(); ++prim) {
+            if (!picked.empty() && !picked[prim]) continue;
+            const auto pts = geo->primitivePoints(prim);
+            const size_t first = geo->primitiveVertexStart(prim);
+            if (pts.empty()) continue;
+            std::vector<Vec3> corner(pts.size());
+            if (projection <= 1) {
+                // Planar, or box: along the axis the face faces most.
+                int along = axis;
+                float side = 1.0f;
+                if (projection == 1) {
+                    const Vec3 n = polygonNormal(*geo, pts);
+                    along = std::fabs(n.x) >= std::fabs(n.y) && std::fabs(n.x) >= std::fabs(n.z) ? 0
+                            : std::fabs(n.y) >= std::fabs(n.z)                                  ? 1
+                                                                                                : 2;
+                    side = n[along] < 0.0f ? -1.0f : 1.0f;
+                }
+                for (size_t k = 0; k < pts.size(); ++k) {
+                    const Vec2 t = across(along, side, (P[pts[k]] - center) / scale);
+                    corner[k] = Vec3(t.x, t.y, 0.0f);
+                }
+            } else {
+                // Round: once round in u, the face kept whole across the seam
+                // and over a pole.
+                std::vector<float> turn(pts.size()), off(pts.size());
+                float most = 0.0f;
+                for (size_t k = 0; k < pts.size(); ++k) {
+                    round(P[pts[k]] - center, turn[k], off[k]);
+                    most = std::max(most, off[k]);
+                }
+                const float lo = *std::min_element(turn.begin(), turn.end());
+                const float hi = *std::max_element(turn.begin(), turn.end());
+                if (hi - lo > 0.5f) {
+                    for (float& t : turn) {
+                        if (t < 0.5f) t += 1.0f;
+                    }
+                }
+                // A corner on the axis: the u of the rest of its face.
+                const auto onAxis = [&](size_t k) { return off[k] <= 1e-5f * std::max(most, 1e-6f); };
+                float sum = 0.0f;
+                int count = 0;
+                for (size_t k = 0; k < pts.size(); ++k) {
+                    if (onAxis(k)) continue;
+                    sum += turn[k];
+                    ++count;
+                }
+                for (size_t k = 0; k < pts.size(); ++k) {
+                    if (onAxis(k) && count > 0) turn[k] = sum / static_cast<float>(count);
+                    const Vec3 d = P[pts[k]] - center;
+                    float v = d[axis] / scale;
+                    if (projection == 3) {
+                        const float r = length(d);
+                        v = r > 0.0f ? std::asin(std::clamp(d[axis] / r, -1.0f, 1.0f)) / 3.14159265f + 0.5f : 0.5f;
+                    }
+                    corner[k] = Vec3(turn[k], v, 0.0f);
+                }
+            }
+            for (size_t k = 0; k < pts.size() && first + k < uv.size(); ++k) uv[first + k] = corner[k];
         }
         return geo;
     }
@@ -513,6 +679,7 @@ void registerSurfaceNodes() {
     r.add("unpack", [](const std::string& n) { return std::make_unique<UnpackNode>(n); });
     r.add("color", [](const std::string& n) { return std::make_unique<ColorNode>(n); });
     r.add("material", [](const std::string& n) { return std::make_unique<MaterialNode>(n); });
+    r.add("uvproject", [](const std::string& n) { return std::make_unique<UvProjectNode>(n); });
 }
 
 }  // namespace pg

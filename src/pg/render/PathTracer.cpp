@@ -66,6 +66,31 @@ Vec3 schlick(const Vec3& f0, float c) {
 
 /// How much light a smooth boundary reflects, `cosi` the cosine on the
 /// side it comes from, `eta` the index beyond over the index before.
+/// A shading normal `n` that turns away from the eye -- `toEye`, a unit
+/// way -- turned toward the face `ng` (on the eye's side) just as far as
+/// lifts what it reflects of the eye over the surface: no light from below
+/// it, and no edge where a smooth or a bent normal would give way to the
+/// face's own. Cycles' ensure_valid_specular_reflection.
+Vec3 facingNormal(const Vec3& ng, const Vec3& toEye, const Vec3& n) {
+    const float iz = dot(toEye, ng);
+    const float least = std::min(0.9f * iz, 0.01f);
+    const Vec3 r = n * (2.0f * dot(n, toEye)) - toEye;
+    if (dot(ng, r) >= least) return n;
+    // In the plane of ng and n: n' as far over toward ng as reflects the eye
+    // `least` above the surface.
+    Vec3 x = n - ng * dot(n, ng);
+    const float lx = length(x);
+    if (!(lx > 1e-12f)) return ng;
+    x = x / lx;
+    const float ix = dot(toEye, x);
+    const float a = ix * ix + iz * iz, b = 2.0f * (a + iz * least), c = (least + iz) * (least + iz);
+    if (!(a > 0.0f)) return ng;
+    const float root = std::sqrt(std::max(b * b - 4.0f * a * c, 0.0f));
+    const float nz2 = ix < 0.0f ? 0.25f * (b + root) / a : 0.25f * (b - root) / a;
+    const float nz = std::sqrt(std::clamp(nz2, 0.0f, 1.0f)), nx = std::sqrt(std::clamp(1.0f - nz2, 0.0f, 1.0f));
+    return normalize(x * nx + ng * nz);
+}
+
 float fresnelDielectric(float cosi, float eta) {
     const float sint2 = std::max(0.0f, 1.0f - cosi * cosi) / (eta * eta);
     if (sint2 >= 1.0f) return 1.0f;
@@ -78,14 +103,39 @@ float fresnelDielectric(float cosi, float eta) {
 
 /// An opaque surface as it scatters light: diffusely, off a GGX sheen, and
 /// -- a thin one -- through to its other side. Directions leave it.
+/// The light a diffuse surface whose normal a map bent gets from along `wi`
+/// (local, the bent normal z), `smooth` its normal unbent: none from behind
+/// that, and less as it grazes it -- as GGX would shadow microfacets
+/// leaning as far as the bend, so no edge where it turns away. Cycles'
+/// bump_shadowing_term (Conty Estevez, Lecocq and Stein 2019).
+float bumpShadowing(const Vec3& smooth, const Vec3& wi) {
+    const float cosSi = dot(smooth, wi), cosSn = smooth.z, cosNi = wi.z;
+    if (cosSi * cosSn * cosNi < 0.0f) return 0.0f;
+    const float ci = std::fabs(cosSi), cd = std::fabs(cosSn);
+    if (cd >= 1.0f || ci >= 1.0f) return 1.0f;
+    if (ci < 1e-6f) return 0.0f;
+    const float alpha2 = std::clamp(0.125f * (1.0f / (cd * cd) - 1.0f), 0.0f, 1.0f);
+    const float tan2 = 1.0f / (ci * ci) - 1.0f;
+    return 2.0f / (1.0f + std::sqrt(1.0f + alpha2 * tan2));
+}
+
 struct Surface {
     Frame frame;
     Vec3 wo;  // towards the eye, local
     Vec3 albedo, f0, fo;
     float a2 = 0.25f, kd = 1.0f, kt = 0.0f;
     float pD = 1.0f, pT = 0.0f, pS = 0.0f;
+    /// The normal before a map bent it, local; none where it is not bent.
+    bool bent = false;
+    Vec3 smooth;
 
-    Surface(const Vec3& color, const Material& m, const Vec3& toEye, const Vec3& normal) : frame(normal) {
+    /// `unbent`: the normal before a normal map bent it to `normal`, or null.
+    Surface(const Vec3& color, const Material& m, const Vec3& toEye, const Vec3& normal, const Vec3* unbent = nullptr)
+        : frame(normal) {
+        if (unbent) {
+            bent = true;
+            smooth = frame.toLocal(*unbent);
+        }
         wo = frame.toLocal(toEye);
         wo.z = std::max(wo.z, 1e-4f);
         albedo = clamp01(color);
@@ -112,7 +162,8 @@ struct Surface {
         const Vec3 wi = frame.toLocal(wiWorld);
         pdf = 0.0f;
         if (wi.z > 0.0f) {
-            const Vec3 diffuse = albedo * (Vec3(1.0f, 1.0f, 1.0f) - fo) * (kd / kPi);
+            Vec3 diffuse = albedo * (Vec3(1.0f, 1.0f, 1.0f) - fo) * (kd / kPi);
+            if (bent) diffuse = diffuse * bumpShadowing(smooth, wi);
             const Vec3 h = normalize(wo + wi);
             const float d = ggxD(h.z, a2);
             const float oh = std::max(dot(wo, h), 1e-6f);
@@ -180,7 +231,7 @@ struct Sample {
     Vec3 with, without;
 };
 
-using Textures = std::unordered_map<const Material*, std::shared_ptr<const TexturePicture>>;
+using Textures = std::unordered_map<const Material*, SurfacePictures>;
 
 /// The plate as a camera ray that went through glass or water sees it: its
 /// light (plateLight) where the camera that filmed it looked that way.
@@ -298,9 +349,24 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
         // as Cycles has it).
         const bool past = met && hit.material->kind == Material::Kind::Rain &&
                           (dot(hit.face, dir) >= 0.0f || rng.next() >= hit.material->opacity);
+        // The normal as it was before a normal map bent it, if one did.
+        Vec3 unbent;
+        bool bent = false;
         if (met && !textures.empty()) {
             if (const auto it = textures.find(hit.material); it != textures.end()) {
-                hit.color = it->second->shade(hit.color, hit.tint, hit.rest, hit.restFace);
+                // By uv, where the material is laid on so: its picture, and
+                // its normal map bending the light.
+                const Material& m = *hit.material;
+                const SurfacePictures& pictures = it->second;
+                if (pictures.color) {
+                    hit.color = pictures.color->shade(hit.color, hit.tint, hit.rest, hit.restFace, m.byUv ? &hit.uv : nullptr);
+                }
+                if (m.byUv && pictures.normal) {
+                    unbent = hit.normal;
+                    bent = true;
+                    hit.normal = bentNormal(*pictures.normal, pictures.directX, hit.uv, hit.normal, hit.tangent, hit.handed,
+                                            m.normalStrength, hit.face);
+                }
             }
         }
         if (camera && turns == 0 && met && !past) {
@@ -452,14 +518,17 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
             continue;
         }
 
-        // An opaque surface, seen from the side the ray came from.
+        // An opaque surface, seen from the side the ray came from; its normal
+        // -- smooth, or bent by a normal map -- turned no further from the
+        // eye than reflects it over the surface.
         seenThrough = false;
         Vec3 face = hit.face, n = hit.normal;
         if (dot(face, dir) > 0.0f) {
             face = face * -1.0f;
             n = n * -1.0f;
+            unbent = unbent * -1.0f;
         }
-        if (dot(n, dir) >= 0.0f) n = face;
+        n = facingNormal(face, dir * -1.0f, n);
         // Wet where the rain falls: darker, and smoother -- a film of water on it.
         const float wet = scene.wetAt(hit.position, n);
         Material wetted;
@@ -469,7 +538,7 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
             wetted.translucency = m.translucency;
         }
         const Surface surface(wet > 0.0f ? hit.color * (1.0f - 0.5f * wet) : hit.color, wet > 0.0f ? wetted : m,
-                              dir * -1.0f, n);
+                              dir * -1.0f, n, bent ? &unbent : nullptr);
 
         // The sun, directly: a point of its disc, if nothing is in the way.
         if (sunOn) {
@@ -533,7 +602,13 @@ void PathTracer::findTextures() {
         for (const Material& m : mesh->materials) {
             const TextureSet set = textureOf(m, settings_);
             if (!set.valid()) continue;
-            if (auto picture = texturePicture(set)) textures_[&m] = std::move(picture);
+            SurfacePictures pictures;
+            pictures.color = texturePicture(set);
+            if (m.byUv && m.normalStrength > 0.0f) {
+                pictures.normal = normalPicture(set);
+                pictures.directX = set.normalDirectX;
+            }
+            if (pictures.color || pictures.normal) textures_[&m] = std::move(pictures);
         }
     }
 }

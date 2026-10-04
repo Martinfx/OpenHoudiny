@@ -86,6 +86,13 @@ struct Material {
     /// Whether the colour Cd tints the pictures (i@texture_tint): -1 as the
     /// set says (TextureSet::tint).
     int8_t textureTint = -1;
+    /// Its pictures laid on by the corners' uv (Mesh::uv), a picture a unit
+    /// of it -- as the Material node's Projection says, where the triangles
+    /// have uv -- not from three sides.
+    bool byUv = false;
+    /// How strongly the set's normal map bends the light, laid on by uv
+    /// (f@texture_normal): 0 not at all.
+    float normalStrength = 1.0f;
 
     /// A plain surface, as rough as `roughness`.
     static Material surface(float roughness) {
@@ -123,6 +130,16 @@ struct Mesh {
     /// corner goes, m/s: what the renderers blur it along while the shutter
     /// is open (Settings::shutter) -- else none.
     std::vector<Vec3> velocity;
+    /// Three a triangle where a material lays its pictures on by uv
+    /// (Material::byUv) and the corners had uv; else none.
+    std::vector<Vec2> uv;
+    /// Three a triangle with `uv`: the way u goes along the surface at the
+    /// corner, a unit long and across its normal -- the mean of the
+    /// triangles round a corner of the same place, normal and uv, as
+    /// MikkTSpace makes it -- and in w, +1 where v goes along normal x
+    /// tangent, -1 where the uv is mirrored. The space a normal map bends the
+    /// normal in.
+    std::vector<Vec4> tangents;
     /// Seconds either side of now its triangles may be met moving along
     /// their velocity -- half a frame, the longest a shutter is open: its
     /// hierarchy's boxes take them in. 0: met as they are now.
@@ -186,6 +203,12 @@ struct Hit {
     /// have rest -- and the way that face faced there (not of unit length):
     /// what a texture is laid on by (render/Textures.h).
     Vec3 rest, restFace;
+    /// Where on its pictures, laid on by uv (Mesh::uv); and the way u goes
+    /// there, across the normal (0 for none), v going along normal x
+    /// tangent times `handed`.
+    Vec2 uv;
+    Vec3 tangent;
+    float handed = 1.0f;
     Vec3 tint{1.0f, 1.0f, 1.0f};  ///< its copy's (an instance's): in `color` already
     const Material* material = nullptr;
     bool floor = false;

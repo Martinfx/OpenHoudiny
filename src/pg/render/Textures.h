@@ -18,7 +18,15 @@
 // examples/textures/README.md): color.jpg, height.jpg and texture.txt. Any
 // other set -- what Poly Haven or ambientCG give away -- is found from a
 // picture of it: the pictures beside it whose names differ in what they are
-// (_diff_ and _rough_ and _disp_, _Color and _Roughness and _Displacement...).
+// (_diff_ and _rough_ and _disp_ and _nor_gl_, _Color and _Roughness and
+// _Displacement and _NormalGL...).
+//
+// Where the geometry has texture coordinates (uv on its corners) and the
+// material asks for them (Material::byUv), a set is laid on by them instead,
+// a picture a unit of uv -- and its normal map, if it has one, bends the
+// light: in the tangent space of the uv (Mesh::tangents), its green up the
+// picture as OpenGL has it, or down it for one of DirectX's (_nor_dx_,
+// _NormalDX).
 //
 #include "pg/core/Material.h"
 #include "pg/core/Types.h"
@@ -36,6 +44,12 @@ struct TextureSet {
     std::string color;      ///< the picture of its colour (sRGB); "" for no set
     std::string height;     ///< how high (0 to 1), or ""
     std::string roughness;  ///< how rough (0 to 1), or ""
+    /// Its normal map -- the way the surface faces at each pixel, x y z in
+    /// red green blue from 0 to 1 -- or "".
+    std::string normal;
+    /// The normal map's green up the picture's rows, as DirectX has it --
+    /// not down them, as OpenGL and Blender do.
+    bool normalDirectX = false;
     float size = 2.0f;      ///< metres one picture covers
     float depth = 0.01f;    ///< metres from the lowest of the height to the highest
     Vec3 mean{0.5f, 0.5f, 0.5f};  ///< the average of its colour, linear light
@@ -86,11 +100,31 @@ struct TexturePicture {
     Vec3 onSurface(const Vec3& rest, const Vec3& face) const;
     /// A surface of colour `color` -- Cd times its copy's `tint` -- with it
     /// laid on: tinted, the colour times the picture over its mean; else
-    /// the picture times the tint. No more than 0.95.
-    Vec3 shade(const Vec3& color, const Vec3& tint, const Vec3& rest, const Vec3& face) const;
+    /// the picture times the tint. No more than 0.95. By `uv` where there is
+    /// one: a picture a unit of it.
+    Vec3 shade(const Vec3& color, const Vec3& tint, const Vec3& rest, const Vec3& face, const Vec2* uv = nullptr) const;
 };
 
 /// The picture of `set`, read once and remembered; null when it cannot be read.
 std::shared_ptr<const TexturePicture> texturePicture(const TextureSet& set);
+
+/// What the path tracer lays on a material: its picture, and its normal map
+/// where it is laid on by uv (Material::byUv).
+struct SurfacePictures {
+    std::shared_ptr<const TexturePicture> color, normal;
+    bool directX = false;  ///< TextureSet::normalDirectX
+};
+
+/// The normal map of `set`, its values as they are (not light), read once
+/// and remembered; null for none, or one that cannot be read.
+std::shared_ptr<const TexturePicture> normalPicture(const TextureSet& set);
+
+/// The unit normal `n` bent as the normal map `map` says at `uv`, as strongly
+/// as `strength`: in the space of `tangent` (across n, the way u goes) and
+/// n x tangent times `handed` (the way v goes); `directX` its green the
+/// other way. Never further than just above the surface the ray met --
+/// `face` its normal on n's side.
+Vec3 bentNormal(const TexturePicture& map, bool directX, const Vec2& uv, const Vec3& n, const Vec3& tangent, float handed,
+                float strength, const Vec3& face);
 
 }  // namespace pg::render

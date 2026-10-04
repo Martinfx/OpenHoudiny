@@ -168,7 +168,7 @@ private:
     std::shared_ptr<const Scene> scene_;
     Settings settings_;
     /// What is laid on each material of the scene's meshes (render/Textures.h).
-    std::unordered_map<const Material*, std::shared_ptr<const TexturePicture>> textures_;
+    std::unordered_map<const Material*, SurfacePictures> textures_;
     float focus_ = 10.0f;
     mutable std::mutex mutex_;  // the sums, as a pass adds to them and a picture is taken of them
     int samples_ = 0;

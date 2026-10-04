@@ -882,8 +882,10 @@ std::vector<NodeType> buildTypes() {
     // The names in the order of kMaterialNames (core/Material.h), "none" for "".
     geometry("material", "Material", "material",
              "What the faces of a group are made of -- or all of them -- for the renderers: the string attribute "
-             "material, and a texture of your own if you give one (texture, texture_size, texture_tint). Brick "
-             "Wall, Concrete Fracture, Tree, Grass and Glass Fracture set theirs themselves.",
+             "material, and a texture of your own if you give one (texture, texture_size, texture_tint), how the "
+             "pictures are laid on (texture_projection) and how strongly a normal map bends the light "
+             "(texture_normal). Brick Wall, Concrete Fracture, Tree, Grass and Glass Fracture set theirs "
+             "themselves.",
              in,
              {text("group", "Group", "Material", "",
                    "Which faces: a group's name, numbers and ranges -- 0-9 12 -- * or empty for all."),
@@ -902,16 +904,49 @@ std::vector<NodeType> buildTypes() {
                 "Roof Tiles", "Lawn", "Sand"}},
               {"texture", "Texture", "Texture", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
                "A texture of your own instead of the material's: a picture of its colour -- the other pictures of "
-               "the set beside it are found by their names (Poly Haven's _diff_, _rough_, _disp_; ambientCG's "
-               "_Color, _Roughness, _Displacement), or a folder's texture.txt. Laid on from three sides by where "
-               "the faces were before they moved: it goes with a piece that flies.",
+               "the set beside it are found by their names (Poly Haven's _diff_, _rough_, _disp_, _nor_gl_; "
+               "ambientCG's _Color, _Roughness, _Displacement, _NormalGL), or a folder's texture.txt. Laid on by "
+               "the faces' uv where they have it, else from three sides by where they were before they moved: it "
+               "goes with a piece that flies.",
                {".jpg", ".jpeg", ".png", ".exr"},
                {}},
               {"texture_size", "Texture Size", "Texture", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, 1000.0f, "m",
                "How many metres one picture covers. 0: as its texture.txt says, else 2 m."},
               {"texture_tint", "Tint by Color", "Texture", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "The colour Cd in place of the picture's own: its pattern lighter and darker round the faces' "
-               "colour. Off: the picture as it is."}});
+               "colour. Off: the picture as it is."},
+              {"texture_projection", "Projection", "Texture", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f,
+               "",
+               "How the pictures are laid on. Auto: a texture of your own by the corners' uv where the faces have "
+               "it (UV Project, imported geometry), the rest from three sides. UV: by uv -- a picture a unit of it, "
+               "the material's photographs too. Three Sides: from three sides, by where the faces were before they "
+               "moved, a picture as many metres as Texture Size.",
+               {"auto", "uv", "sides"},
+               {"Auto", "UV", "Three Sides"}},
+              {"texture_normal", "Normal Strength", "Texture", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 10.0f,
+               "",
+               "How strongly the set's normal map (_nor_gl_, _NormalGL, normal.png) bends the light where the "
+               "pictures are laid on by uv: 0 flat, 1 as the map has it."}});
+    geometry("uv_project", "UV Project", "uvproject",
+             "Texture coordinates on the corners of the faces of a group -- or all of them: the vertex attribute uv "
+             "(u, v, 0), what the renderers lay a picture on by where the Material node's Projection is UV or "
+             "Auto. Imported geometry (USD, Alembic, OBJ) brings its own.",
+             in,
+             {text("group", "Group", "UV", "", "Which faces: a group's name, numbers and ranges -- 0-9 12 -- * or empty for all."),
+              {"projection", "Projection", "UV", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 3.0f, "",
+               "Planar: along Axis, as seen from its + side. Box: each face along the axis it faces most, as seen "
+               "from outside -- the six sides of a box each a picture. Cylindrical: once round Axis in u, along it "
+               "in v. Spherical: once round in u, from pole to pole in v.",
+               {"planar", "box", "cylindrical", "spherical"},
+               {"Planar", "Box", "Cylindrical", "Spherical"}},
+              {"axis", "Axis", "UV", K::Choice, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+               "Along which axis a plane is seen, round which a cylinder or a sphere turns.", {"x", "y", "z"},
+               {"X", "Y", "Z"}},
+              vec("center", "Center", "UV", Vec3(0.0f, 0.0f, 0.0f), -5.0f, 5.0f, "m",
+                  "Where the projection is from: a plane's corner of a picture, a cylinder's axis, a sphere's middle."),
+              {"scale", "Scale", "UV", K::Float, {1.0f, 0.0f, 0.0f}, 0.01f, 10.0f, 0.001f, kBig, "m",
+               "How many metres one picture covers: across a plane and a box, along a cylinder. Round it, a "
+               "picture once round."}});
     geometry("group_box", "Group by Box", "groupbox",
              "A group of the points inside a box: what Blast deletes, or keeps.",
              in,

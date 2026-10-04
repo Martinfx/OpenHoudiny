@@ -5,8 +5,9 @@ dřevo, dlažba, taškové střechy, trávník… Řekne to řetězcovým atribu
 primitiv `material`.
 Renderery podle něj kreslí povrch: Cycles fotografií, pokud ji knihovna
 má, jinak procedurálním vzorem, a vždy s drsností a kovovostí toho
-materiálu. Path tracer klade stejné fotografie, ale bez reliéfu, a bere
-drsnost a kovovost.
+materiálu. Path tracer klade stejné fotografie, reliéf jen z normálové
+mapy, a bere drsnost a kovovost. Fotka se klade ze tří stran, nebo podle
+texturových souřadnic UV, mají-li je plochy ([níže](#podle-uv-a-normálové-mapy)).
 
 ![Vzorník materiálů v Cycles](img/materials.jpg)
 
@@ -32,6 +33,8 @@ střechy.*
 ./build/prototype sim demolition odstrel.png --renderer cycles
 # Bez fotografií (jen vzory a barvy):
 ./build/prototype sim street ulice.png --renderer cycles --set output.render_textures=0
+# Podle UV: bedna, sloup a koule s fotkami a normálovými mapami.
+./build/prototype sim uv_props uv.png --renderer cycles
 ```
 
 Ve wrangle stačí jeden řádek:
@@ -132,8 +135,8 @@ dlaždice v metrech, hloubku reliéfu, průměrnou barvu, `tint` a případně
 pbrt-v4-scenes) a z BabylonJS/Assets a šíří se pod licencí CC-BY 4.0;
 autoři jsou uvedeni v README knihovny.
 
-**Jak se fotka klade.** Geometrie nemá UV, takže se fotka promítá ze tří
-stran najednou (triplanárně). Z každé osy přispívá tolik, kolik se tím směrem
+**Jak se fotka klade.** Bez UV ([níže](#podle-uv-a-normálové-mapy)) se
+fotka promítá ze tří stran najednou (triplanárně). Z každé osy přispívá tolik, kolik se tím směrem
 plocha dívala, umocněno na čtvrtou. Stěna má tedy fotku zepředu, podlaha
 shora a šikmá plocha prolnutí obou. Promítá se podle `rest` a normály v
 `rest`, takže letící kus nese svou kresbu. Každá ze tří projekcí je posunutá,
@@ -163,8 +166,75 @@ Uzel **Material** má sekci Texture:
 | **Texture Size** | kolik metrů pokryje jedna dlaždice (0: podle `texture.txt`, jinak 2 m) |
 | **Tint by Color** | zapnuto: barva `Cd` místo barvy fotky (fotka kolem ní světlá a tmavne); vypnuto: fotka, jak je |
 
-Zapíše `s@texture`, `f@texture_size` a `i@texture_tint`, takže totéž jde
-udělat i ve wrangle. Relativní cesta se čte od složky sítě.
+| **Projection** | jak se fotka klade: **Auto** vlastní texturu podle UV, mají-li ho plochy, jinak ze tří stran; **UV** podle UV i fotky knihovny; **Three Sides** ze tří stran |
+| **Normal Strength** | jak silně ohýbá světlo normálová mapa sady (s UV): 0 vůbec, 1 jak ji mapa má |
+
+Zapíše `s@texture`, `f@texture_size`, `i@texture_tint`,
+`i@texture_projection` (0 auto, 1 UV, 2 ze tří stran) a
+`f@texture_normal`, takže totéž jde udělat i ve wrangle. Relativní cesta
+se čte od složky sítě.
+
+### Podle UV a normálové mapy
+
+![Příklad uv_props v Cycles: dřevěná bedna se šesti stranami, každou jednou fotkou, cihlový sloup s fotkou jednou dokola a cihlová koule od pólu k pólu; spáry cihel mají reliéf z normálové mapy](img/uv-props.jpg)
+
+**UV** jsou texturové souřadnice: vektorový atribut `uv` na rozích ploch
+(u, v, 0), jak ho má Houdini, nebo na bodech. Přinesou ho importy
+(USD `primvars:st`, Alembic `uv`, OBJ `vt`) a vyrobí ho uzel
+**UV Project** ([geometry.md](geometry.md)):
+
+| Projection | uv |
+|---|---|
+| **Planar** | podél osy Axis, jak ji vidí z její kladné strany: shora x doprava a −z nahoru; Scale metrů jedna fotka |
+| **Box** | každá plocha podél osy, ke které se nejvíc dívá, jak ji vidí zvenku: šest stran krabice, každá svou fotkou, žádná zrcadlově |
+| **Cylindrical** | u jednou dokola osy (zepředu zleva doprava), v podél ní, Scale metrů jedna fotka |
+| **Spherical** | u jednou dokola, v od dolního pólu (0) k hornímu (1) |
+
+U válce a koule zůstává každá plocha celá: plocha přes šev má u na jedné
+straně přes 1 a roh na pólu má u zbytku své plochy. Center je, odkud se
+promítá, Group, které plochy.
+
+**Kladení podle UV.** Kde materiál klade podle UV (Projection UV, nebo
+Auto s vlastní texturou), pokryje jedna fotka jednu jednotku uv. Texture
+Size se nepoužije, velikost dává UV (Scale uzlu UV Project). Fotky
+knihovny jsou dělané na kladení ze tří stran v metrech, proto je Auto
+klade ze tří stran i tam, kde UV je. Plochy bez UV se kladou ze tří stran,
+ať Projection říká cokoli. Fotka jde s plochou, kam ji UV posune.
+
+**Normálová mapa** říká, kam se povrch v každém pixelu dívá: x, y, z
+v červené, zelené a modré od 0 do 1. Najde se vedle fotky podle jména:
+`_nor_gl_` a `_nor_dx_` (Poly Haven), `_NormalGL` a `_NormalDX`
+(ambientCG), `normal.jpg` ve složce s `texture.txt`. U DirectX míří zelená
+dolů po obrázku a renderery ji otočí (`_dx_`, `_NormalDX`, v `texture.txt`
+řádek `normal dx`). Kde jsou obě, vezme se OpenGL. Normálová mapa platí
+s kladením podle UV a ohýbá normálu v prostoru tečen: tečna je směr, kterým
+roste u, druhá osa směr, kterým roste v. Bez normálové mapy dělá reliéf
+v Cycles výška jako dřív. Ze tří stran se normálová mapa nepoužije, reliéf
+dá výška (Cycles).
+
+- **Cycles:** síť dostane atribut `ATTR_STD_UV`, fotky se čtou přes
+  souřadnice UV a normálová mapa přes uzel Normal Map v prostoru tečen,
+  které Cycles spočítá metodou MikkTSpace.
+- **Path tracer:** tečny spočítá stejně jako MikkTSpace. Rohy na stejném
+  místě, se stejnou normálou a uv sečte, každý vážený úhlem, který tam
+  trojúhelník má. Zrcadlené uv drží zvlášť a ohne normálu stejně jako
+  Normal Map v Cycles, sílu taky. Kde ohnutá normála míří od oka, natočí ji
+  k ploše jen tak daleko, aby se odraz oka dostal nad povrch. Difúzní
+  světlo pod šikmým úhlem k neohnuté normále tlumí jako Cycles (stínění
+  mikroplošek GGX podle Conty Estevez a kol. 2019). Bez toho by na kouli
+  s normálovou mapou byly ostré švy.
+
+Knihovna má normálové mapy u cihlové zdi (`brick_wall`) a dřeva (`wood`).
+Spočítal je ze sklonů výšky `tools/textures/prepare.py --normals`.
+
+Ověření (`tests/test_uv.cpp`): fotka ze čtyř barev položená podle UV dá
+v obou rendererech každou čtvrtinu na svém místě. Rovina se sluncem 30°
+nad obzorem a normálovou mapou natočenou o 30° ke slunci je 2,90× jasnější
+v path traceru a 2,95× v Cycles (Lambert 1,73× a k tomu odlesk, normála
+leží v půli mezi sluncem a okem). Natočená od slunce je tmavá. Mapa
+DirectX se stejnými pixely ohne opačně. Koule s mapou natočenou na u i v
+pod sluncem ze strany se v každé čtvrtině a uprostřed liší od Cycles
+nejvýš o 5 %.
 
 ### Na uzlu Output
 
@@ -195,20 +265,25 @@ okolních domů odrážejí oblohu.*
   `kMaterialNames`). Nový řetězcový atribut má na začátku tabulky `""`,
   takže primitivy, kterým nikdo nic nezapsal, nemají materiál. To platí pro
   wrangle, `setPrimitiveString` i spojení geometrií (Merge).
-- `src/pg/nodes/Surface.cpp`: uzel Material.
+- `src/pg/nodes/Surface.cpp`: uzly Material a UV Project.
+- `src/pg/io/Obj.cpp`: `vt` do `uv` rohů a zpátky.
 - `src/pg/sim/Rigid.cpp`: `posedPieces` zapíše `rest` a `drawnPieces` dá
   plochám lomu `broken_concrete` a trubkám prutů `steel`.
-- `src/pg/render/Scene.cpp`: `meshOf` čte `material`, `texture*` a `rest`
-  a oknům dá číslo podle polohy jejich první plochy v `rest`. Číslo je
+- `src/pg/render/Scene.cpp`: `meshOf` čte `material`, `texture*`, `rest`
+  a `uv`, z UV spočítá tečny (`cornerTangents`) a oknům dá číslo podle
+  polohy jejich první plochy v `rest`. Číslo je
   stejné snímek za snímkem, i když kusy mizí. Geometrii bez `Cd` dá barvy
   materiálů (`presetSurface`).
 - `src/pg/render/Textures.cpp`: hledání sad (knihovna, `texture.txt`,
-  jména souborů z Poly Haven a ambientCG), průměrná barva a triplanární
-  vyhledání pro path tracer.
+  jména souborů z Poly Haven a ambientCG, normálové mapy), průměrná barva,
+  triplanární vyhledání pro path tracer a ohnutá normála (`bentNormal`).
+- `src/pg/render/PathTracer.cpp`: `facingNormal` a `bumpShadowing`, jak je
+  má Cycles.
 - `src/pg/render/Cycles.cpp`: `patternOf` (procedurální vzory ve třech
   měřítkách), `laidOn` a `sampled` (fotky ze tří stran nebo podél plochy,
-  `alongFace`), `weathered` (skvrny a šmouhy přes fotky). Sítě nesou
-  atributy `pg_rest`, `pg_rest_normal` a `pg_random`.
+  `alongFace`), `sampledByUv` a `normalMapped` (podle UV, uzel Normal Map),
+  `weathered` (skvrny a šmouhy přes fotky). Sítě nesou atributy `pg_rest`,
+  `pg_rest_normal`, `pg_random` a UV.
 - `tools/textures/prepare.py`: výroba knihovny z fotek pbrt-v4-scenes
   a BabylonJS/Assets. Výšku integruje z normálové mapy a podle toho, který
   směr zelené osy dá skutečný povrch (u druhého by sklony žádnému povrchu
