@@ -84,6 +84,10 @@ Vec3 blackbody(float kelvin) {
             std::pow(std::clamp(c.z, 0.0f, 1.0f), 2.2f)};
 }
 
+/// Gas that goes less far than this while the shutter is open, in cells, is
+/// read where it is: a 64th of a cell.
+constexpr float kStill = 1.0f / 64.0f;
+
 /// The light of a flame `x` of the way from where it starts to glow to its
 /// hottest, relative to the hottest: a black body from 1000 K to 3000 K, its
 /// power going with T^4 -- the viewport's glowAt(), in a table.
@@ -127,10 +131,105 @@ struct Gas::Grid {
     Box box;
     size_t active = 0;
     int lo[3] = {0, 0, 0}, hi[3] = {-1, -1, -1};  // the tiles filled, from and to
+    /// How fast the gas goes: of each tile, where its 4 x 4 x 4 blocks of
+    /// 2 x 2 x 2 cells start in `velocity` (x fastest within the tile), -1
+    /// for none -- the gas's tiles, and the ring round them it spreads to.
+    std::vector<int32_t> velocityTile;
+    std::vector<Vec3> velocity;
+    /// Of each tile: velocityTile of it and of the seven after it -- +x, +y
+    /// and +z as bits 1, 2 and 4 say, -1 past the domain. The eight blocks
+    /// round a point are in these, from the tile of the lowest.
+    std::vector<std::array<int32_t, 8>> velocityNear;
+    float fastest = 0.0f;  // the most of it, world units a second
+    /// Of each tile: the most the gas goes round it, world units a second --
+    /// over its blocks and those of the tiles next to it.
+    std::vector<float> speedNear;
+    /// Of the tiles next to the gas -- reachMost[nearSlot[tile]], -1 for the
+    /// rest -- the most a point in it reads where the gas may have come r =
+    /// 2 ... 7 cells to it: of its cells and r layers round them, those of
+    /// the tiles next to it bounded by the most of their layers.
+    std::vector<int32_t> nearSlot;
+    std::vector<std::array<Vec4, 6>> reachMost;
+    /// `most` as far round as the fastest gas goes in half a frame, in
+    /// whole tiles: for tiles where the gas round them may come further
+    /// than 6 cells. Empty where none goes so far.
+    std::vector<Vec4> moving;
 
     size_t tileOf(int a, int b, int c) const {
         return static_cast<size_t>(a) +
                static_cast<size_t>(tiles[0]) * (static_cast<size_t>(b) + static_cast<size_t>(tiles[1]) * static_cast<size_t>(c));
+    }
+    /// The velocity of block (i, j, k) of the domain; 0 where none is kept.
+    Vec3 blockVelocity(int i, int j, int k) const {
+        constexpr int kBlocks = sim::Tiles::kSide / sim::Frame::kBlock;
+        if (i < 0 || j < 0 || k < 0) return Vec3(0.0f);
+        const int a = i / kBlocks, b = j / kBlocks, c = k / kBlocks;
+        if (a >= tiles[0] || b >= tiles[1] || c >= tiles[2]) return Vec3(0.0f);
+        const int32_t first = velocityTile[tileOf(a, b, c)];
+        if (first < 0) return Vec3(0.0f);
+        return velocity[static_cast<size_t>(first) + static_cast<size_t>(i % kBlocks + kBlocks * (j % kBlocks + kBlocks * (k % kBlocks)))];
+    }
+    Vec3 velocityAt(const Vec3& p) const {
+        if (velocity.empty()) return Vec3(0.0f);
+        constexpr unsigned kBlocks = sim::Tiles::kSide / sim::Frame::kBlock;
+        // Between the blocks' middles: the lowest of the eight round it, and
+        // how far on from it.
+        const float scale = inverse / static_cast<float>(sim::Frame::kBlock);
+        const float x = (p.x - origin.x) * scale - 0.5f, y = (p.y - origin.y) * scale - 0.5f, z = (p.z - origin.z) * scale - 0.5f;
+        if (!(x >= 0.0f && y >= 0.0f && z >= 0.0f && x < static_cast<float>(kBlocks * static_cast<unsigned>(tiles[0])) &&
+              y < static_cast<float>(kBlocks * static_cast<unsigned>(tiles[1])) &&
+              z < static_cast<float>(kBlocks * static_cast<unsigned>(tiles[2])))) {
+            return edgeVelocityAt(x, y, z);
+        }
+        const unsigned i = static_cast<unsigned>(x), j = static_cast<unsigned>(y), k = static_cast<unsigned>(z);
+        const float u = x - static_cast<float>(i), v = y - static_cast<float>(j), w = z - static_cast<float>(k);
+        // From the tile of the lowest, and -- for a block on its far side --
+        // the one after it (velocityNear).
+        const std::array<int32_t, 8>& near =
+            velocityNear[tileOf(static_cast<int>(i / kBlocks), static_cast<int>(j / kBlocks), static_cast<int>(k / kBlocks))];
+        const unsigned li = i % kBlocks, lj = j % kBlocks, lk = k % kBlocks;
+        const unsigned lx[2] = {li, (li + 1) % kBlocks}, ly[2] = {lj, (lj + 1) % kBlocks}, lz[2] = {lk, (lk + 1) % kBlocks};
+        const unsigned sx[2] = {0u, li + 1 == kBlocks ? 1u : 0u}, sy[2] = {0u, lj + 1 == kBlocks ? 2u : 0u},
+                       sz[2] = {0u, lk + 1 == kBlocks ? 4u : 0u};
+        Vec3 c[8];
+        for (unsigned n = 0; n < 8; ++n) {
+            const unsigned a = n & 1u, b = (n >> 1) & 1u, e = (n >> 2) & 1u;
+            const int32_t first = near[sx[a] | sy[b] | sz[e]];
+            c[n] = first < 0 ? Vec3(0.0f) : velocity[static_cast<size_t>(first) + lx[a] + kBlocks * (ly[b] + kBlocks * lz[e])];
+        }
+        return lerp3(c, u, v, w);
+    }
+    /// velocityAt() where the eight blocks may be past the domain's tiles:
+    /// block by block, at (x, y, z) among them.
+    Vec3 edgeVelocityAt(float x, float y, float z) const {
+        if (!(std::isfinite(x) && std::isfinite(y) && std::isfinite(z))) return Vec3(0.0f);
+        const float fx = std::floor(x), fy = std::floor(y), fz = std::floor(z);
+        const float far = static_cast<float>(1 << 24);
+        if (std::fabs(fx) > far || std::fabs(fy) > far || std::fabs(fz) > far) return Vec3(0.0f);
+        const int i = static_cast<int>(fx), j = static_cast<int>(fy), k = static_cast<int>(fz);
+        Vec3 c[8];
+        for (int n = 0; n < 8; ++n) c[n] = blockVelocity(i + (n & 1), j + ((n >> 1) & 1), k + ((n >> 2) & 1));
+        return lerp3(c, x - fx, y - fy, z - fz);
+    }
+    /// Trilinear between eight corners, x fastest.
+    static Vec3 lerp3(const Vec3 (&c)[8], float u, float v, float w) {
+        const Vec3 x0 = c[0] + (c[1] - c[0]) * u, x1 = c[2] + (c[3] - c[2]) * u, x2 = c[4] + (c[5] - c[4]) * u,
+                   x3 = c[6] + (c[7] - c[6]) * u;
+        const Vec3 y0 = x0 + (x1 - x0) * v, y1 = x2 + (x3 - x2) * v;
+        return y0 + (y1 - y0) * w;
+    }
+    /// The most a point of `tile` reads when the gas there may have come
+    /// `d` cells to it -- the bound of the steps through it then.
+    Vec4 mostWithin(size_t tile, float d) const {
+        if (d > 6.0f) return moving.empty() ? most[tile] : moving[tile];
+        const int r = static_cast<int>(std::ceil(d + 0.5f));
+        if (r <= 1) return most[tile];
+        const int32_t s = nearSlot[tile];
+        return s < 0 ? Vec4(0.0f) : reachMost[static_cast<size_t>(s)][static_cast<size_t>(r - 2)];
+    }
+    Vec3 advected(const Vec3& p, float time) const {
+        if (time == 0.0f || velocity.empty()) return p;
+        return p - velocityAt(p - velocityAt(p) * time) * time;
     }
 };
 
@@ -274,7 +373,253 @@ Vec3 Gas::emission(const Vec3& f, const GasLook& look) {
     return glow(x) * (look.flame * (1.0f - std::exp(-4.0f * f.z)));
 }
 
-std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
+namespace {
+
+#ifdef PG_HAVE_NANOVDB
+/// The frame's velocity onto the grid's tiles (Grid::velocity): the gas's
+/// tiles, and `ring` tiles round them -- each block there the mean of those
+/// next to it that have one, spread out a block at a time.
+void buildVelocity(Gas::Grid& g, const sim::Frame& frame, int ring) {
+    constexpr int kBlocks = sim::Tiles::kSide / sim::Frame::kBlock;
+    constexpr size_t kInTile = static_cast<size_t>(kBlocks) * kBlocks * kBlocks;
+    const size_t tileCount = static_cast<size_t>(g.tiles[0]) * static_cast<size_t>(g.tiles[1]) * static_cast<size_t>(g.tiles[2]);
+    g.velocityTile.assign(tileCount, -1);
+    std::vector<uint32_t> own = frame.gasTiles;
+    if (own.empty()) {
+        own.resize(tileCount);
+        for (size_t t = 0; t < tileCount; ++t) own[t] = static_cast<uint32_t>(t);
+        ring = 0;
+    }
+    g.velocity.assign(kInTile * own.size(), Vec3(0.0f));
+    std::vector<uint8_t> known(g.velocity.size(), 1);
+    for (size_t s = 0; s < own.size(); ++s) {
+        if (own[s] < tileCount) g.velocityTile[own[s]] = static_cast<int32_t>(kInTile * s);
+    }
+    std::vector<uint16_t> scratch;
+    const std::vector<uint16_t>& dense = frame.denseVelocity(scratch);
+    const int bx = frame.blocks(0), by = frame.blocks(1), bz = frame.blocks(2);
+    for (size_t s = 0; s < own.size(); ++s) {
+        const size_t t = own[s];
+        if (t >= tileCount) continue;
+        const int a = static_cast<int>(t % static_cast<size_t>(g.tiles[0])) * kBlocks;
+        const int b = static_cast<int>((t / static_cast<size_t>(g.tiles[0])) % static_cast<size_t>(g.tiles[1])) * kBlocks;
+        const int c = static_cast<int>(t / (static_cast<size_t>(g.tiles[0]) * static_cast<size_t>(g.tiles[1]))) * kBlocks;
+        // A tile past the domain's last block: none there.
+        for (int z = 0; z < kBlocks && c + z < bz; ++z) {
+            for (int y = 0; y < kBlocks && b + y < by; ++y) {
+                for (int x = 0; x < kBlocks && a + x < bx; ++x) {
+                    const size_t from = static_cast<size_t>(a + x) +
+                                        static_cast<size_t>(bx) * (static_cast<size_t>(b + y) + static_cast<size_t>(by) * static_cast<size_t>(c + z));
+                    Vec3 v(sim::fromHalf(dense[3 * from]), sim::fromHalf(dense[3 * from + 1]), sim::fromHalf(dense[3 * from + 2]));
+                    if (!(std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z))) v = Vec3(0.0f);
+                    g.velocity[kInTile * s + static_cast<size_t>(x + kBlocks * (y + kBlocks * z))] = v;
+                    g.fastest = std::max(g.fastest, length(v));
+                }
+            }
+        }
+    }
+    if (ring <= 0 || !(g.fastest > 0.0f)) return;
+    // The ring: the tiles within `ring` of the gas's, none of their blocks
+    // known yet.
+    std::vector<uint32_t> added;
+    for (const uint32_t t : own) {
+        const int a = static_cast<int>(t % static_cast<uint32_t>(g.tiles[0]));
+        const int b = static_cast<int>((t / static_cast<uint32_t>(g.tiles[0])) % static_cast<uint32_t>(g.tiles[1]));
+        const int c = static_cast<int>(t / static_cast<uint32_t>(g.tiles[0] * g.tiles[1]));
+        for (int dz = -ring; dz <= ring; ++dz) {
+            for (int dy = -ring; dy <= ring; ++dy) {
+                for (int dx = -ring; dx <= ring; ++dx) {
+                    const int x = a + dx, y = b + dy, z = c + dz;
+                    if (x < 0 || y < 0 || z < 0 || x >= g.tiles[0] || y >= g.tiles[1] || z >= g.tiles[2]) continue;
+                    const size_t n = g.tileOf(x, y, z);
+                    if (g.velocityTile[n] >= 0) continue;
+                    g.velocityTile[n] = static_cast<int32_t>(g.velocity.size());
+                    g.velocity.resize(g.velocity.size() + kInTile, Vec3(0.0f));
+                    known.resize(known.size() + kInTile, 0);
+                    added.push_back(static_cast<uint32_t>(n));
+                }
+            }
+        }
+    }
+    // Spread out: each pass, the unknown blocks next to known ones take the
+    // mean of those.
+    std::vector<uint8_t> next = known;
+    for (int pass = 0; pass < kBlocks * ring; ++pass) {
+        bool any = false;
+        for (const uint32_t t : added) {
+            const int a = static_cast<int>(t % static_cast<uint32_t>(g.tiles[0])) * kBlocks;
+            const int b = static_cast<int>((t / static_cast<uint32_t>(g.tiles[0])) % static_cast<uint32_t>(g.tiles[1])) * kBlocks;
+            const int c = static_cast<int>(t / static_cast<uint32_t>(g.tiles[0] * g.tiles[1])) * kBlocks;
+            const size_t first = static_cast<size_t>(g.velocityTile[t]);
+            for (int z = 0; z < kBlocks; ++z) {
+                for (int y = 0; y < kBlocks; ++y) {
+                    for (int x = 0; x < kBlocks; ++x) {
+                        const size_t at = first + static_cast<size_t>(x + kBlocks * (y + kBlocks * z));
+                        if (known[at]) continue;
+                        Vec3 sum(0.0f);
+                        int count = 0;
+                        const int i = a + x, j = b + y, k = c + z;
+                        const int n[6][3] = {{i - 1, j, k}, {i + 1, j, k}, {i, j - 1, k}, {i, j + 1, k}, {i, j, k - 1}, {i, j, k + 1}};
+                        for (const auto& q : n) {
+                            if (q[0] < 0 || q[1] < 0 || q[2] < 0) continue;
+                            const int ta = q[0] / kBlocks, tb = q[1] / kBlocks, tc = q[2] / kBlocks;
+                            if (ta >= g.tiles[0] || tb >= g.tiles[1] || tc >= g.tiles[2]) continue;
+                            const int32_t f = g.velocityTile[g.tileOf(ta, tb, tc)];
+                            if (f < 0) continue;
+                            const size_t o = static_cast<size_t>(f) + static_cast<size_t>(q[0] % kBlocks + kBlocks * (q[1] % kBlocks + kBlocks * (q[2] % kBlocks)));
+                            if (!known[o]) continue;
+                            sum = sum + g.velocity[o];
+                            ++count;
+                        }
+                        if (count == 0) continue;
+                        g.velocity[at] = sum * (1.0f / static_cast<float>(count));
+                        next[at] = 1;
+                        any = true;
+                    }
+                }
+            }
+        }
+        known = next;
+        if (!any) break;
+    }
+}
+
+/// Grid::velocityNear, of velocityTile as it is.
+void nearVelocity(Gas::Grid& g) {
+    g.velocityNear.assign(g.velocityTile.size(), {-1, -1, -1, -1, -1, -1, -1, -1});
+    for (int c = 0; c < g.tiles[2]; ++c) {
+        for (int b = 0; b < g.tiles[1]; ++b) {
+            for (int a = 0; a < g.tiles[0]; ++a) {
+                std::array<int32_t, 8>& near = g.velocityNear[g.tileOf(a, b, c)];
+                for (int n = 0; n < 8; ++n) {
+                    const int x = a + (n & 1), y = b + ((n >> 1) & 1), z = c + ((n >> 2) & 1);
+                    if (x < g.tiles[0] && y < g.tiles[1] && z < g.tiles[2]) near[static_cast<size_t>(n)] = g.velocityTile[g.tileOf(x, y, z)];
+                }
+            }
+        }
+    }
+}
+
+/// Grid::speedNear, nearSlot and reachMost: of the tiles `near` the gas,
+/// from the most of the layers of each tile of it (`layers`, of the frame's
+/// tiles; `slotOf` which, -1 for none).
+void reachBounds(Gas::Grid& g, const std::vector<uint32_t>& near, const std::vector<std::array<Vec4, 24>>& layers,
+                 const std::vector<int32_t>& slotOf) {
+    constexpr size_t kInTile = static_cast<size_t>(sim::Tiles::kSide / sim::Frame::kBlock) *
+                               (sim::Tiles::kSide / sim::Frame::kBlock) * (sim::Tiles::kSide / sim::Frame::kBlock);
+    const size_t tileCount = g.velocityTile.size();
+    // The fastest of each tile's blocks, then of it and those next to it.
+    std::vector<float> speed(tileCount, 0.0f);
+    parallelFor(tileCount, 256, [&](size_t begin, size_t end) {
+        for (size_t t = begin; t < end; ++t) {
+            if (g.velocityTile[t] < 0) continue;
+            float most = 0.0f;
+            for (size_t b = 0; b < kInTile; ++b) most = std::max(most, length(g.velocity[static_cast<size_t>(g.velocityTile[t]) + b]));
+            speed[t] = most;
+        }
+    });
+    g.speedNear = speed;
+    for (int axis = 0; axis < 3; ++axis) {
+        const std::vector<float> from = g.speedNear;
+        for (int c = 0; c < g.tiles[2]; ++c) {
+            for (int b = 0; b < g.tiles[1]; ++b) {
+                for (int a = 0; a < g.tiles[0]; ++a) {
+                    const int at[3] = {a, b, c};
+                    float most = 0.0f;
+                    for (int d = -1; d <= 1; ++d) {
+                        int n[3] = {at[0], at[1], at[2]};
+                        n[axis] += d;
+                        if (n[axis] < 0 || n[axis] >= g.tiles[axis]) continue;
+                        most = std::max(most, from[g.tileOf(n[0], n[1], n[2])]);
+                    }
+                    g.speedNear[g.tileOf(a, b, c)] = most;
+                }
+            }
+        }
+    }
+    // Of each tile next to the gas, for r = 2 ... 7: its own `most`, and of
+    // each tile next to it with gas, the most of its r layers that face it
+    // -- the least of those along each way it lies off, for a tile at an
+    // edge or a corner: the cells read there are in all of them.
+    g.nearSlot.assign(tileCount, -1);
+    g.reachMost.assign(near.size(), {});
+    for (size_t s = 0; s < near.size(); ++s) g.nearSlot[near[s]] = static_cast<int32_t>(s);
+    parallelFor(near.size(), 16, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            const size_t t = near[s];
+            const int at[3] = {static_cast<int>(t % static_cast<size_t>(g.tiles[0])),
+                               static_cast<int>((t / static_cast<size_t>(g.tiles[0])) % static_cast<size_t>(g.tiles[1])),
+                               static_cast<int>(t / (static_cast<size_t>(g.tiles[0]) * static_cast<size_t>(g.tiles[1])))};
+            for (int r = 2; r <= 7; ++r) {
+                Vec4 m = g.most[t];
+                for (int dz = -1; dz <= 1; ++dz) {
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            const int d[3] = {dx, dy, dz};
+                            const int n[3] = {at[0] + dx, at[1] + dy, at[2] + dz};
+                            if ((dx == 0 && dy == 0 && dz == 0) || n[0] < 0 || n[1] < 0 || n[2] < 0 || n[0] >= g.tiles[0] ||
+                                n[1] >= g.tiles[1] || n[2] >= g.tiles[2]) {
+                                continue;
+                            }
+                            const int32_t slot = slotOf[g.tileOf(n[0], n[1], n[2])];
+                            if (slot < 0) continue;
+                            const std::array<Vec4, 24>& layer = layers[static_cast<size_t>(slot)];
+                            Vec4 bound(std::numeric_limits<float>::infinity());
+                            for (int a = 0; a < 3; ++a) {
+                                if (d[a] == 0) continue;
+                                // Its r layers on the side toward this one.
+                                Vec4 facing(0.0f);
+                                for (int l = 0; l < r; ++l) {
+                                    const int which = d[a] > 0 ? l : sim::Tiles::kSide - 1 - l;
+                                    facing = glm::max(facing, layer[static_cast<size_t>(8 * a + which)]);
+                                }
+                                bound = glm::min(bound, facing);
+                            }
+                            m = glm::max(m, bound);
+                        }
+                    }
+                }
+                g.reachMost[s][static_cast<size_t>(r - 2)] = m;
+            }
+        }
+    });
+}
+
+/// `most` of each tile and of those within `reach` tiles round it: a
+/// separable maximum over the grid of tiles.
+std::vector<Vec4> dilated(const Gas::Grid& g, int reach) {
+    std::vector<Vec4> out = g.most, line;
+    for (int axis = 0; axis < 3; ++axis) {
+        std::vector<Vec4> from = out;
+        const int n = g.tiles[axis];
+        const int other[2] = {(axis + 1) % 3, (axis + 2) % 3};
+        for (int p = 0; p < g.tiles[other[1]]; ++p) {
+            for (int q = 0; q < g.tiles[other[0]]; ++q) {
+                for (int i = 0; i < n; ++i) {
+                    Vec4 m(0.0f);
+                    for (int d = std::max(0, i - reach); d <= std::min(n - 1, i + reach); ++d) {
+                        int c[3];
+                        c[axis] = d;
+                        c[other[0]] = q;
+                        c[other[1]] = p;
+                        m = glm::max(m, from[g.tileOf(c[0], c[1], c[2])]);
+                    }
+                    int c[3];
+                    c[axis] = i;
+                    c[other[0]] = q;
+                    c[other[1]] = p;
+                    out[g.tileOf(c[0], c[1], c[2])] = m;
+                }
+            }
+        }
+    }
+    return out;
+}
+#endif
+
+}  // namespace
+
+std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame, float frameTime) {
 #ifdef PG_HAVE_NANOVDB
     const sim::Domain& d = frame.domain;
     const int nx = d.cells[0], ny = d.cells[1], nz = d.cells[2];
@@ -321,6 +666,12 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
     Build build(nanovdb::Vec4f(0.0f), "gas");
     auto& root = build.tree().root();
     std::vector<uint8_t> filled(tileCount, 0);
+    // Moving gas: the most of each layer of cells of each tile, along x, y
+    // and z (8 each) -- what the bounds of reading it further round are
+    // made of (reachMost); which of `tiles` each one is.
+    const bool flowing = !frame.velocity.empty() && frame.velocityFits();
+    std::vector<std::array<Vec4, 24>> layers(flowing ? tiles.size() : 0);
+    std::vector<int32_t> slotOf(flowing ? tileCount : 0, -1);
     std::atomic<size_t> active{0};
     std::mutex mutex;
     parallelFor(tiles.size(), 4, [&](size_t begin, size_t end) {
@@ -333,6 +684,8 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
             auto* leaf = new Build::Node0(nanovdb::Coord(ci, cj, ck), root.mBackground, false);
             size_t cells = 0;
             bool seen = false;  // smoke, flame or steam: heat alone shows nothing
+            std::array<Vec4, 24> layer;
+            layer.fill(Vec4(0.0f));
             for (int z = 0; z < sim::Tiles::kSide && ck + z < nz; ++z) {
                 for (int y = 0; y < sim::Tiles::kSide && cj + y < ny; ++y) {
                     for (int x = 0; x < sim::Tiles::kSide && ci + x < nx; ++x) {
@@ -356,6 +709,12 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
                         seen = seen || smoke > 0.0f || flame > 0.0f || steam > 0.0f;
                         leaf->setValue(nanovdb::Coord(i, j, k), nanovdb::Vec4f(smoke, heat, flame, steam));
                         ++cells;
+                        if (flowing) {
+                            const Vec4 v(smoke, heat, flame, steam);
+                            layer[static_cast<size_t>(x)] = glm::max(layer[static_cast<size_t>(x)], v);
+                            layer[static_cast<size_t>(8 + y)] = glm::max(layer[static_cast<size_t>(8 + y)], v);
+                            layer[static_cast<size_t>(16 + z)] = glm::max(layer[static_cast<size_t>(16 + z)], v);
+                        }
                     }
                 }
             }
@@ -365,6 +724,10 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
             }
             filled[t] = 1;
             active += cells;
+            if (flowing) {
+                layers[s] = layer;
+                slotOf[t] = static_cast<int32_t>(s);
+            }
             std::lock_guard<std::mutex> lock(mutex);
             root.addNode(leaf);
         }
@@ -432,14 +795,40 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
         }
     });
     g.steamy = steamy && std::any_of(g.most.begin(), g.most.end(), [](const Vec4& m) { return m.w > 0.0f; });
+
+    // How fast it goes, and how far round it may then be read: half a frame
+    // at the most it goes, in tiles, a ring of them -- up to four.
+    if (flowing) {
+        const float tile = g.voxel * static_cast<float>(sim::Tiles::kSide);
+        float speed = 0.0f;
+        for (size_t i = 0; i + 2 < frame.velocity.size(); i += 3) {
+            const Vec3 v(sim::fromHalf(frame.velocity[i]), sim::fromHalf(frame.velocity[i + 1]), sim::fromHalf(frame.velocity[i + 2]));
+            if (std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z)) speed = std::max(speed, length(v));
+        }
+        const float reach = 0.5f * std::max(frameTime, 0.0f) * speed;
+        const int ring = std::clamp(static_cast<int>(std::ceil(reach / tile)), 1, 4);
+        buildVelocity(g, frame, ring);
+        if (g.fastest > 0.0f) {
+            nearVelocity(g);
+            reachBounds(g, near, layers, slotOf);
+            // Further than 6 cells: whole tiles, as many as cover it and the
+            // cell the eight round a point reach past it.
+            if (reach * g.inverse > 6.0f) {
+                g.moving = dilated(g, std::max(1, static_cast<int>(std::ceil((reach * g.inverse + 0.5f) / sim::Tiles::kSide))));
+            }
+        } else {
+            g.velocity.clear();
+        }
+    }
     return gas;
 #else
     (void)frame;
+    (void)frameTime;
     return nullptr;
 #endif
 }
 
-Gas::Dense Gas::dense(const GasLook& look, size_t most) const {
+Gas::Dense Gas::dense(const GasLook& look, size_t most, float reach) const {
     Dense out;
 #ifdef PG_HAVE_NANOVDB
     const Grid& g = *grid_;
@@ -496,12 +885,45 @@ Gas::Dense Gas::dense(const GasLook& look, size_t most) const {
         if (lit) glows = true;
     });
     if (glows) out.emission = std::move(emission);
+    // How fast it goes, where it may be read as it moves: over the box grown
+    // by how far it goes, within the domain; cells twice as large.
+    if (!g.velocity.empty() && reach > 0.0f) {
+        const float edge = 2.0f * static_cast<float>(k) * g.voxel;
+        for (int a = 0; a < 3; ++a) {
+            const float lo = std::max(out.box.lo[a] - reach, g.box.lo[a]), hi = std::min(out.box.hi[a] + reach, g.box.hi[a]);
+            out.velocitySize[a] = std::max(1, static_cast<int>(std::ceil((hi - lo) / edge)));
+            out.velocityBox.lo[a] = lo;
+            out.velocityBox.hi[a] = lo + static_cast<float>(out.velocitySize[a]) * edge;
+        }
+        const size_t nv = static_cast<size_t>(out.velocitySize[0]) * static_cast<size_t>(out.velocitySize[1]) *
+                          static_cast<size_t>(out.velocitySize[2]);
+        out.velocity.assign(nv, Vec3(0.0f));
+        const size_t vrow = static_cast<size_t>(out.velocitySize[0]);
+        parallelFor(static_cast<size_t>(out.velocitySize[1]) * static_cast<size_t>(out.velocitySize[2]), 16,
+                    [&](size_t begin, size_t end) {
+                        for (size_t r = begin; r < end; ++r) {
+                            const int y = static_cast<int>(r % static_cast<size_t>(out.velocitySize[1]));
+                            const int z = static_cast<int>(r / static_cast<size_t>(out.velocitySize[1]));
+                            for (int x = 0; x < out.velocitySize[0]; ++x) {
+                                const Vec3 p = out.velocityBox.lo + (Vec3(static_cast<float>(x), static_cast<float>(y),
+                                                                          static_cast<float>(z)) + 0.5f) * edge;
+                                out.velocity[r * vrow + static_cast<size_t>(x)] = g.velocityAt(p);
+                            }
+                        }
+                    });
+    }
 #else
     (void)look;
     (void)most;
+    (void)reach;
 #endif
     return out;
 }
+
+Vec3 Gas::velocityAt(const Vec3& p) const { return grid_->velocityAt(p); }
+bool Gas::moves() const { return !grid_->velocity.empty(); }
+float Gas::fastest() const { return grid_->fastest; }
+Vec3 Gas::advected(const Vec3& p, float time) const { return grid_->advected(p, time); }
 
 Vec3 Gas::at(const Vec3& p) const {
     const Vec4 f = fieldsAt(p);
@@ -528,7 +950,7 @@ Vec4 Gas::fieldsAt(const Vec3& p) const {
 bool Gas::steamy() const { return grid_->steamy; }
 
 bool Gas::track(const Vec3& origin, const Vec3& dir, float tMin, float tMax, const GasLook& look, Rng& rng, float& t,
-                Vec3& emitted, Vec3& kept) const {
+                Vec3& emitted, Vec3& kept, float time) const {
     emitted = Vec3(0.0f, 0.0f, 0.0f);
     kept = look.albedo;
 #ifdef PG_HAVE_NANOVDB
@@ -536,9 +958,15 @@ bool Gas::track(const Vec3& origin, const Vec3& dir, float tMin, float tMax, con
     float t0 = 0.0f, t1 = 0.0f;
     if (!clip(g.box, origin, dir, tMin, tMax, t0, t1)) return false;
     Accessor acc = g.grid->getAccessor();
+    // While the shutter is open: the gas where it was, read in each tile
+    // where it may have come from by then -- the bound of the steps as far
+    // round as that.
+    const float away = time != 0.0f && !g.velocity.empty() ? std::fabs(time) * g.inverse : 0.0f;
     bool scattered = false;
     walk(g, origin, dir, t0, t1, [&](size_t tile, float from, float to) {
-        const Vec4& m = g.most[tile];
+        const float d = away > 0.0f ? g.speedNear[tile] * away : 0.0f;
+        const bool moving = d > kStill;
+        const Vec4 m = moving ? g.mostWithin(tile, d) : g.most[tile];
         // Through fire, a step a cell at least: each adds the light it gives off.
         const bool fire = look.flame > 0.0f && m.z > 0.0f && m.y > look.flameStart;
         const float bound = std::max(look.density * m.x + look.steamDensity * m.w, fire ? g.inverse : 0.0f);
@@ -547,7 +975,8 @@ bool Gas::track(const Vec3& origin, const Vec3& dir, float tMin, float tMax, con
         for (;;) {
             s -= std::log(1.0f - rng.next()) / bound;
             if (s >= to) return true;
-            const Vec4 f = sample(g, acc, origin + dir * s);
+            const Vec3 at = origin + dir * s;
+            const Vec4 f = sample(g, acc, moving ? g.advected(at, time) : at);
             if (fire) emitted = emitted + emission(Vec3(f.x, f.y, f.z), look) * (1.0f / bound);
             // Scattered here as likely as the smoke and the steam are dense,
             // to the most they could be.
@@ -561,13 +990,13 @@ bool Gas::track(const Vec3& origin, const Vec3& dir, float tMin, float tMax, con
     });
     return scattered;
 #else
-    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)look, (void)rng, (void)t;
+    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)look, (void)rng, (void)t, (void)time;
     return false;
 #endif
 }
 
 float Gas::transmittance(const Vec3& origin, const Vec3& dir, float tMin, float tMax, const GasLook& look,
-                         Rng& rng) const {
+                         Rng& rng, float time) const {
 #ifdef PG_HAVE_NANOVDB
     const Grid& g = *grid_;
     float t0 = 0.0f, t1 = 0.0f;
@@ -575,15 +1004,20 @@ float Gas::transmittance(const Vec3& origin, const Vec3& dir, float tMin, float 
         return 1.0f;
     }
     Accessor acc = g.grid->getAccessor();
+    const float away = time != 0.0f && !g.velocity.empty() ? std::fabs(time) * g.inverse : 0.0f;
     float through = 1.0f;
     walk(g, origin, dir, t0, t1, [&](size_t tile, float from, float to) {
-        const float bound = look.density * g.most[tile].x + look.steamDensity * g.most[tile].w;
+        const float d = away > 0.0f ? g.speedNear[tile] * away : 0.0f;
+        const bool moving = d > kStill;
+        const Vec4 m = moving ? g.mostWithin(tile, d) : g.most[tile];
+        const float bound = look.density * m.x + look.steamDensity * m.w;
         if (!(bound > 0.0f)) return true;
         float s = from;
         for (;;) {
             s -= std::log(1.0f - rng.next()) / bound;
             if (s >= to) return true;
-            through *= std::max(0.0f, 1.0f - extinction(sample(g, acc, origin + dir * s), look) / bound);
+            const Vec3 at = origin + dir * s;
+            through *= std::max(0.0f, 1.0f - extinction(sample(g, acc, moving ? g.advected(at, time) : at), look) / bound);
             if (through < 0.1f) {
                 // Russian roulette: a dim shadow goes on as likely as it is
                 // dim, the ones that do carry the share of those that end.
@@ -597,7 +1031,7 @@ float Gas::transmittance(const Vec3& origin, const Vec3& dir, float tMin, float 
     });
     return through;
 #else
-    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)look, (void)rng;
+    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)look, (void)rng, (void)time;
     return 1.0f;
 #endif
 }

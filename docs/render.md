@@ -245,7 +245,7 @@ viz [cache.md](cache.md)).
   hloubka a pohyb málo — 1280 × 720 má asi 15 MB. ZIP (deflate) zatím ne.
 - Sekvence do EXR jen z příkazové řádky; editor zapíše do EXR jeden snímek
   (Render Image).
-- Kouř nemá vektory pohybu ani hloubku (rychlost plynu snímek nedrží).
+- Kouř nemá vektory pohybu ani hloubku: průchody počítají jen povrchy.
 - Kryptomatte ne: masky jsou po druzích povrchu, ne po objektech.
 
 - Motion JPEG je velký (každý snímek celý): zhruba desetkrát víc než H.264.

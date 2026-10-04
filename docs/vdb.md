@@ -66,6 +66,11 @@ Přehrává soubory jako plyn záběru:
   `heat`) a plamen (`flame`, `flames`, `fire`) se hledají podle jmen;
   platí první, které soubor má. Pára se čte jen z mřížky, kterou uzel
   pojmenuje. Měřítka (**Density Scale**…) převedou škálu jiného programu.
+- **Rychlost:** vektorová mřížka `vel` (nebo `v`, `velocity`; jména dává
+  **Velocity**), v jednotkách za sekundu, krát **Velocity Scale**. Snímek
+  ji drží na blocích 2 × 2 × 2 buněk a renderery podle ní plyn rozmažou
+  pohybem ([cycles.md](cycles.md#rozmazání-pohybem)). Soubor bez ní dá
+  plyn bez rozmazání.
 - **Doména:** při kompilaci sítě se přečtou hlavičky souborů všech snímků
   záběru (jen hlavičky, rychle u souborů libovolné velikosti; mřížka, které
   OpenVDB nezapsalo krabici do metadat, se přečte celá) a doména se udělá
@@ -83,7 +88,7 @@ Přehrává soubory jako plyn záběru:
 
 Vlastní export a zpátky je přesný: táborák zapsaný do VDB (Gas Volume,
 `--export`) a přehraný přes VDB Gas má v každé buňce stejný half jako
-simulace (test), a render přes stejnou kameru (OpenGL) se od simulace liší
+simulace a v každém bloku stejnou rychlost (test), a render přes stejnou kameru (OpenGL) se od simulace liší
 nejvýš o 15 z 255 v jasu pixelu, v průměru o 0,3. Rozdíl dělá jen menší
 doména (jiné stínování podlahy za ní).
 
@@ -140,7 +145,7 @@ Testy — `tests/test_vdb_read.cpp` (22):
 - zpětné čtení vlastního zápisu; poškozené soubory odmítnuté bez pádu;
 - uzly VDB Import (objemy, povrch level setu, sekvence) a VDB Gas
   (doména, snímky, přehrání ve WorldSolveru, změna souboru), export
-  a přehrání táboráku bit po bitu.
+  a přehrání táboráku bit po bitu, i s rychlostí.
 
 ## 6. V kódu
 
@@ -158,9 +163,10 @@ Testy — `tests/test_vdb_read.cpp` (22):
 
 ## 7. Omezení
 
-- **Zápis** zůstává bez komprese, jen float mřížky ([cache.md](cache.md)).
-- **Rychlost** (`vel`) VDB Gas nečte: snímky plynu rychlost nedrží, takže
-  ani přehraný plyn nemá rozmazání pohybem.
+- **Zápis** zůstává bez komprese: float mřížky a vektorová `vel`
+  ([cache.md](cache.md)).
+- **Rychlost** se čte jen z vektorové mřížky (`vec3s`, `vec3d`). Tři
+  float mřížky se složkami zvlášť VDB Gas jako rychlost nevezme.
 - **Doména** stojí na podlaze kolem osy Y; plyn daleko od ní dělá velkou
   doménu (řídkou, ale s hustými převody při exportu). **Move** ho přiblíží.
 - **Hustý objem:** VDB Import drží každý voxel krabice aktivních voxelů,

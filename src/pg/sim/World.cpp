@@ -512,15 +512,20 @@ Frame WorldSolver::capture() const {
     Frame f;
     if (upres_) {
         f = sim::capture(*upres_);
-        // The steam: the solver's, the upres carries none of its own.
+        // The steam and the velocity: the solver's, the upres carries none
+        // of its own -- the velocity on the upres's tiles, the steam's
+        // taken in.
         addCoarseSteam(f, *gas_, world_.upres.scale);
+        addVelocity(f, *gas_);
     } else if (gas_) {
         f = sim::capture(*gas_);
+        addVelocity(f, *gas_);
     } else if (playback_) {
         f.domain = played_.domain;
         f.fields = played_.fields;
         f.gasTiles = played_.gasTiles;
         f.steam = played_.steam;
+        f.velocity = played_.velocity;
     }
     if (water_) f.water = sim::capture(*water_, world_.keepParticles);
     if (rain_) f.rain = sim::capture(*rain_);

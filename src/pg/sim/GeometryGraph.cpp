@@ -113,7 +113,8 @@ public:
 };
 
 /// The gas as volumes -- density (smoke), temperature and flame, and steam
-/// where there is any -- on the solver's grid.
+/// where there is any -- on the solver's grid; and how fast it goes, vel.x,
+/// vel.y and vel.z on blocks of 2 x 2 x 2 cells (sim::gasVolumes).
 class GasVolumeNode : public FrameNode {
 public:
     explicit GasVolumeNode(std::string name) : FrameNode("gas_volume", std::move(name)) { setInputCount(0); }
@@ -121,25 +122,7 @@ public:
     GeometryPtr cookNode(const CookContext&, std::span<const GeometryPtr>) override {
         auto geo = std::make_shared<Geometry>();
         if (!frame_ || frame_->fields.empty()) return geo;
-        const Domain& d = frame_->domain;
-        const size_t n = d.cellCount();
-        std::vector<uint16_t> scratch;
-        const std::vector<uint16_t>& fields = frame_->denseFields(scratch);
-        if (fields.size() < 3 * n) return geo;
-        const char* names[3] = {"density", "temperature", "flame"};
-        for (int channel = 0; channel < 3; ++channel) {
-            std::vector<float> values(n);
-            for (size_t c = 0; c < n; ++c) values[c] = fromHalf(fields[3 * c + static_cast<size_t>(channel)]);
-            geo->addVolume(Volume::make(names[channel], d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2],
-                                        std::move(values)));
-        }
-        // The steam, where the water made any.
-        const std::vector<uint16_t>& steam = frame_->denseSteam(scratch);
-        if (steam.size() == n) {
-            std::vector<float> values(n);
-            for (size_t c = 0; c < n; ++c) values[c] = fromHalf(steam[c]);
-            geo->addVolume(Volume::make("steam", d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2], std::move(values)));
-        }
+        for (Volume& v : gasVolumes(*frame_)) geo->addVolume(std::move(v));
         return geo;
     }
 };

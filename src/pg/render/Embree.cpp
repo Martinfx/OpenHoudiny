@@ -3,6 +3,7 @@
 #include "pg/core/Parallel.h"
 #include "pg/render/Scene.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <string_view>
@@ -50,14 +51,28 @@ RTCScene newScene() {
 }
 
 bool identity(const Placed& p) {
-    return p.at == Vec3(0.0f, 0.0f, 0.0f) && p.scale == 1.0f && p.axes == Mat3(1.0f);
+    return p.at == Vec3(0.0f, 0.0f, 0.0f) && p.scale == 1.0f && p.axes == Mat3(1.0f) && p.velocity == Vec3(0.0f);
+}
+
+/// A placement's transform: the columns, the mesh's axes as placed times
+/// its size; then where it stands.
+void placementOf(const Placed& p, float m[12]) {
+    for (int c = 0; c < 3; ++c) {
+        const Vec3 axis = p.axes[c] * p.scale;
+        m[3 * c] = axis.x;
+        m[3 * c + 1] = axis.y;
+        m[3 * c + 2] = axis.z;
+    }
+    m[9] = p.at.x;
+    m[10] = p.at.y;
+    m[11] = p.at.z;
 }
 
 /// The placements `which` -- numbers among `placed`, each with an Embree
 /// mesh -- in one scene: each an instance of its mesh's scene, turned,
 /// sized and moved; a mesh placed as it is, its triangles themselves.
 EmbreeScene::Top topOf(const std::vector<std::shared_ptr<const Mesh>>& meshes, const std::vector<Placed>& placed,
-                       const std::vector<uint32_t>& which) {
+                       const std::vector<uint32_t>& which, float sweep) {
     EmbreeScene::Top top;
     RTCScene scene = newScene();
     top.scene = scene;
@@ -79,18 +94,19 @@ EmbreeScene::Top topOf(const std::vector<std::shared_ptr<const Mesh>>& meshes, c
             const Placed& p = placed[which[k]];
             RTCGeometry g = rtcNewGeometry(device(), RTC_GEOMETRY_TYPE_INSTANCE);
             rtcSetGeometryInstancedScene(g, sceneOf(meshes[p.mesh]->embree->scene()));
-            // The columns: the mesh's axes as placed, times its size; then where it stands.
             float m[12];
-            for (int c = 0; c < 3; ++c) {
-                const Vec3 axis = p.axes[c] * p.scale;
-                m[3 * c] = axis.x;
-                m[3 * c + 1] = axis.y;
-                m[3 * c + 2] = axis.z;
+            if (sweep > 0.0f && p.velocity != Vec3(0.0f)) {
+                // Flying: where it is `sweep` before now and after, Embree's
+                // time 0 and 1, between them along a line.
+                rtcSetGeometryTimeStepCount(g, 2);
+                placementOf(p.movedBy(-sweep), m);
+                rtcSetGeometryTransform(g, 0, RTC_FORMAT_FLOAT3X4_COLUMN_MAJOR, m);
+                placementOf(p.movedBy(sweep), m);
+                rtcSetGeometryTransform(g, 1, RTC_FORMAT_FLOAT3X4_COLUMN_MAJOR, m);
+            } else {
+                placementOf(p, m);
+                rtcSetGeometryTransform(g, 0, RTC_FORMAT_FLOAT3X4_COLUMN_MAJOR, m);
             }
-            m[9] = p.at.x;
-            m[10] = p.at.y;
-            m[11] = p.at.z;
-            rtcSetGeometryTransform(g, 0, RTC_FORMAT_FLOAT3X4_COLUMN_MAJOR, m);
             rtcCommitGeometry(g);
             geometries[k] = g;
         }
@@ -103,7 +119,8 @@ EmbreeScene::Top topOf(const std::vector<std::shared_ptr<const Mesh>>& meshes, c
     return top;
 }
 
-void setRay(RTCRay& r, const Vec3& origin, const Vec3& dir, float tMin, float tMax) {
+/// `time` the share of the way from Embree's time 0 to 1: a half, now.
+void setRay(RTCRay& r, const Vec3& origin, const Vec3& dir, float tMin, float tMax, float time) {
     r.org_x = origin.x;
     r.org_y = origin.y;
     r.org_z = origin.z;
@@ -111,7 +128,7 @@ void setRay(RTCRay& r, const Vec3& origin, const Vec3& dir, float tMin, float tM
     r.dir_x = dir.x;
     r.dir_y = dir.y;
     r.dir_z = dir.z;
-    r.time = 0.0f;
+    r.time = time;
     r.tfar = tMax;
     r.mask = 0xFFFFFFFFu;
     r.id = 0;
@@ -120,10 +137,10 @@ void setRay(RTCRay& r, const Vec3& origin, const Vec3& dir, float tMin, float tM
 
 /// The nearest triangle of `top` a ray meets.
 bool nearestIn(const EmbreeScene::Top& top, const Vec3& origin, const Vec3& dir, float tMin, float tMax,
-               EmbreeHit& hit) {
+               EmbreeHit& hit, float time) {
     if (!top.scene) return false;
     RTCRayHit rh;
-    setRay(rh.ray, origin, dir, tMin, tMax);
+    setRay(rh.ray, origin, dir, tMin, tMax, time);
     rh.hit.geomID = RTC_INVALID_GEOMETRY_ID;
     rh.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
     rtcIntersect1(sceneOf(top.scene), &rh);
@@ -179,24 +196,34 @@ std::string rayEngineName(RayEngine engine) {
 
 // --- a mesh -------------------------------------------------------------------------
 
-std::shared_ptr<const EmbreeMesh> EmbreeMesh::build(std::span<const Vec3> corners) {
+std::shared_ptr<const EmbreeMesh> EmbreeMesh::build(std::span<const Vec3> corners, std::span<const Vec3> velocities,
+                                                    float sweep) {
 #ifdef PG_HAVE_EMBREE
     const size_t n = corners.size() / 3;
     if (!device() || n == 0) return nullptr;
     RTCScene scene = newScene();
     RTCGeometry g = rtcNewGeometry(device(), RTC_GEOMETRY_TYPE_TRIANGLE);
-    auto* vertices = static_cast<float*>(
-        rtcSetNewGeometryBuffer(g, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3 * sizeof(float), 3 * n));
+    // Moving: the corners `sweep` before now and after, Embree's time 0
+    // and 1, between them along a line.
+    const bool moving = sweep > 0.0f && velocities.size() == corners.size();
+    if (moving) rtcSetGeometryTimeStepCount(g, 2);
+    const float steps[2] = {moving ? -sweep : 0.0f, sweep};
+    for (unsigned k = 0; k < (moving ? 2u : 1u); ++k) {
+        auto* vertices = static_cast<float*>(
+            rtcSetNewGeometryBuffer(g, RTC_BUFFER_TYPE_VERTEX, k, RTC_FORMAT_FLOAT3, 3 * sizeof(float), 3 * n));
+        const float t = steps[k];
+        parallelFor(3 * n, 65536, [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                const Vec3 c = moving ? corners[i] + velocities[i] * t : corners[i];
+                vertices[3 * i] = c.x;
+                vertices[3 * i + 1] = c.y;
+                vertices[3 * i + 2] = c.z;
+            }
+        });
+    }
     auto* triangles = static_cast<uint32_t*>(
         rtcSetNewGeometryBuffer(g, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3 * sizeof(uint32_t), n));
-    parallelFor(3 * n, 65536, [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            vertices[3 * i] = corners[i].x;
-            vertices[3 * i + 1] = corners[i].y;
-            vertices[3 * i + 2] = corners[i].z;
-            triangles[i] = static_cast<uint32_t>(i);
-        }
-    });
+    for (size_t i = 0; i < 3 * n; ++i) triangles[i] = static_cast<uint32_t>(i);
     rtcCommitGeometry(g);
     rtcAttachGeometry(scene, g);
     rtcCommitScene(scene);
@@ -206,6 +233,8 @@ std::shared_ptr<const EmbreeMesh> EmbreeMesh::build(std::span<const Vec3> corner
     return mesh;
 #else
     (void)corners;
+    (void)velocities;
+    (void)sweep;
     return nullptr;
 #endif
 }
@@ -220,7 +249,7 @@ EmbreeMesh::~EmbreeMesh() {
 // --- the placed -----------------------------------------------------------------------
 
 std::shared_ptr<const EmbreeScene> EmbreeScene::build(const std::vector<std::shared_ptr<const Mesh>>& meshes,
-                                                      const std::vector<Placed>& placed) {
+                                                      const std::vector<Placed>& placed, float sweep) {
 #ifdef PG_HAVE_EMBREE
     if (!device()) return nullptr;
     std::vector<uint32_t> all, opaque, clear;
@@ -232,21 +261,27 @@ std::shared_ptr<const EmbreeScene> EmbreeScene::build(const std::vector<std::sha
         (meshes[m]->clear ? clear : opaque).push_back(i);
     }
     std::shared_ptr<EmbreeScene> s(new EmbreeScene());
-    s->all_ = topOf(meshes, placed, all);
+    s->sweep_ = sweep;
+    s->all_ = topOf(meshes, placed, all, sweep);
     if (opaque.size() == all.size()) {
         // Nothing clear, nothing without a shadow: the shadows see what the eye sees.
         rtcRetainScene(sceneOf(s->all_.scene));
         s->opaque_ = s->all_;
     } else {
-        s->opaque_ = topOf(meshes, placed, opaque);
+        s->opaque_ = topOf(meshes, placed, opaque, sweep);
     }
-    if (!clear.empty()) s->clear_ = topOf(meshes, placed, clear);
+    if (!clear.empty()) s->clear_ = topOf(meshes, placed, clear, sweep);
     return s;
 #else
     (void)meshes;
     (void)placed;
+    (void)sweep;
     return nullptr;
 #endif
+}
+
+float EmbreeScene::timeOf(float time) const {
+    return sweep_ > 0.0f ? std::clamp(0.5f + 0.5f * time / sweep_, 0.0f, 1.0f) : 0.5f;
 }
 
 EmbreeScene::~EmbreeScene() {
@@ -257,33 +292,35 @@ EmbreeScene::~EmbreeScene() {
 #endif
 }
 
-bool EmbreeScene::nearest(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit) const {
+bool EmbreeScene::nearest(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit,
+                          float time) const {
 #ifdef PG_HAVE_EMBREE
-    return nearestIn(all_, origin, dir, tMin, tMax, hit);
+    return nearestIn(all_, origin, dir, tMin, tMax, hit, timeOf(time));
 #else
-    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)hit;
+    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)hit, (void)time;
     return false;
 #endif
 }
 
-bool EmbreeScene::blocked(const Vec3& origin, const Vec3& dir, float tMax) const {
+bool EmbreeScene::blocked(const Vec3& origin, const Vec3& dir, float tMax, float time) const {
 #ifdef PG_HAVE_EMBREE
     if (!opaque_.scene) return false;
     RTCRay r;
-    setRay(r, origin, dir, 0.0f, tMax);
+    setRay(r, origin, dir, 0.0f, tMax, timeOf(time));
     rtcOccluded1(sceneOf(opaque_.scene), &r);
     return r.tfar < 0.0f;  // -infinity: something is in the way
 #else
-    (void)origin, (void)dir, (void)tMax;
+    (void)origin, (void)dir, (void)tMax, (void)time;
     return false;
 #endif
 }
 
-bool EmbreeScene::nearestClear(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit) const {
+bool EmbreeScene::nearestClear(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit,
+                               float time) const {
 #ifdef PG_HAVE_EMBREE
-    return nearestIn(clear_, origin, dir, tMin, tMax, hit);
+    return nearestIn(clear_, origin, dir, tMin, tMax, hit, timeOf(time));
 #else
-    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)hit;
+    (void)origin, (void)dir, (void)tMin, (void)tMax, (void)hit, (void)time;
     return false;
 #endif
 }

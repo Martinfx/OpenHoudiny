@@ -840,7 +840,7 @@ TEST(vdb_gas_is_the_volume_looks_gas_frame_by_frame) {
 TEST(vdb_gas_plays_back_the_gas_it_was_exported_from_to_the_bit) {
     // A fire simulated, its gas out to OpenVDB a frame a file -- as Gas
     // Volume and --export write it -- and read back as VDB Gas: every cell
-    // the same half it was.
+    // the same half it was, and so how fast it goes, block by block.
     sim::Scene scene = sim::Scene::fire();
     scene.solver.resolution = 32;
     sim::PyroSolver solver(scene);
@@ -849,6 +849,8 @@ TEST(vdb_gas_plays_back_the_gas_it_was_exported_from_to_the_bit) {
     for (int f = 1; f <= 6; ++f) {
         solver.step();
         made.push_back(sim::capture(solver));
+        sim::addVelocity(made.back(), solver);
+        CHECK(!made.back().velocity.empty());
         std::string error;
         CHECK(io::writeVdb(sim::gasVolumes(made.back()), dir / ("fire." + std::to_string(f) + ".vdb"), error));
     }
@@ -861,12 +863,37 @@ TEST(vdb_gas_plays_back_the_gas_it_was_exported_from_to_the_bit) {
     CHECK(sim::vdbGasDomain(g, 6, d, factor, notes, error));
     CHECK_EQ(factor, 1);
     CHECK_EQ(d.voxel, made[0].domain.voxel);
-    int misses = 0, cells = 0, lit = 0;
+    int misses = 0, cells = 0, lit = 0, blocks = 0, slower = 0;
     for (int f = 1; f <= 6; ++f) {
         sim::Frame played;
         CHECK(sim::vdbGasFrame(g, d, f, played, error));
         const sim::Frame& was = made[static_cast<size_t>(f - 1)];
         const sim::Domain& w = was.domain;
+        // Each block played whose middle is one of the simulation's.
+        std::vector<uint16_t> a, b;
+        const std::vector<uint16_t>& got = played.denseVelocity(a);
+        const std::vector<uint16_t>& want = was.denseVelocity(b);
+        CHECK(!got.empty() && !want.empty());
+        const float edge = 2.0f * d.voxel;
+        for (int k = 0; k < played.blocks(2) && !got.empty() && !want.empty(); ++k) {
+            for (int j = 0; j < played.blocks(1); ++j) {
+                for (int i = 0; i < played.blocks(0); ++i) {
+                    const Vec3 middle = d.origin() + (Vec3(static_cast<float>(i), static_cast<float>(j), static_cast<float>(k)) + 0.5f) * edge;
+                    const Vec3 q = (middle - w.origin()) / edge - 0.5f;
+                    const Vec3 r = glm::round(q);
+                    if (length(q - r) > 1e-3f || r.x < 0.0f || r.y < 0.0f || r.z < 0.0f || r.x >= static_cast<float>(was.blocks(0)) ||
+                        r.y >= static_cast<float>(was.blocks(1)) || r.z >= static_cast<float>(was.blocks(2))) {
+                        continue;
+                    }
+                    const size_t from = static_cast<size_t>(r.x) + static_cast<size_t>(was.blocks(0)) *
+                                            (static_cast<size_t>(r.y) + static_cast<size_t>(was.blocks(1)) * static_cast<size_t>(r.z));
+                    const size_t to = static_cast<size_t>(i) + static_cast<size_t>(played.blocks(0)) *
+                                          (static_cast<size_t>(j) + static_cast<size_t>(played.blocks(1)) * static_cast<size_t>(k));
+                    for (int c = 0; c < 3; ++c) slower += got[3 * to + c] == want[3 * from + c] ? 0 : 1;
+                    ++blocks;
+                }
+            }
+        }
         for (int k = 0; k < w.cells[2]; ++k) {
             for (int j = 0; j < w.cells[1]; ++j) {
                 for (int i = 0; i < w.cells[0]; ++i) {
@@ -887,5 +914,7 @@ TEST(vdb_gas_plays_back_the_gas_it_was_exported_from_to_the_bit) {
     }
     CHECK(lit > 1000);
     CHECK_EQ(misses, 0);
+    CHECK(blocks > 1000);
+    CHECK_EQ(slower, 0);
     (void)cells;
 }

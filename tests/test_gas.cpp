@@ -205,6 +205,67 @@ TEST(gas_tracking_lets_through_what_the_smoke_does) {
     CHECK_EQ(gas->transmittance(Vec3(-1.0f, 3.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f), 0.0f, 10.0f, look, rng), 1.0f);
 }
 
+TEST(gas_tracking_lets_through_what_the_moving_smoke_does) {
+    // The blob swirling and rising, faster further out: while the shutter
+    // is open, the smoke where it was -- each tile's steps bounded as far
+    // round as the gas there may have come, a few cells (a frame of 1/24 s)
+    // or past the tiles next to it (half a second) -- and still let
+    // through as the smoke it reads does, summed finely.
+    if (!gasAvailable()) return;
+    const int n = 32;
+    sim::Frame frame = frameOf(n, 0.05f, [&](int i, int j, int k) { return blob(i, j, k, n); }, true);
+    sim::setVelocity(frame, [](const Vec3& p) { return Vec3(4.0f * (p.y - 0.72f), 1.5f, -4.0f * p.x); });
+    CHECK(!frame.velocity.empty());
+    GasLook look;
+    look.density = 3.0f;
+    const Vec3 rays[][2] = {{{-1.0f, 0.72f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+                            {{0.05f, 0.0f, -1.0f}, {0.0f, 0.3f, 1.0f}},
+                            {{-0.9f, 1.3f, -0.7f}, {0.6f, -0.45f, 0.5f}},
+                            {{0.2f, 2.0f, 0.1f}, {-0.1f, -1.0f, 0.05f}}};
+    struct Case {
+        float frameTime, time;
+    };
+    int r = 0, between = 0;
+    for (const Case c : {Case{1.0f / 24.0f, 1.0f / 48.0f}, Case{1.0f / 24.0f, -1.0f / 80.0f}, Case{0.5f, 0.2f}}) {
+        const auto gas = Gas::build(frame, c.frameTime);
+        CHECK(gas && gas->moves());
+        if (!gas) continue;
+        for (const auto& ray : rays) {
+            const Vec3 o = ray[0], d = normalize(ray[1]);
+            double tau = 0.0;
+            const int steps = 4000;
+            const double h = 4.0 / steps;
+            for (int i = 0; i < steps; ++i) {
+                const Vec3 p = o + d * static_cast<float>((i + 0.5) * h);
+                tau += Gas::extinction(gas->at(gas->advected(p, c.time)), look) * h;
+            }
+            const double want = std::exp(-tau);
+            const int trials = 10000;
+            int missed = 0;
+            double ratio = 0.0, ratio2 = 0.0;
+            for (int s = 0; s < trials; ++s) {
+                Rng rng(static_cast<uint32_t>(r), static_cast<uint32_t>(s), 5);
+                float t = 0.0f;
+                Vec3 glow, kept;
+                missed += gas->track(o, d, 0.0f, 4.0f, look, rng, t, glow, kept, c.time) ? 0 : 1;
+                const double tr = gas->transmittance(o, d, 0.0f, 4.0f, look, rng, c.time);
+                ratio += tr;
+                ratio2 += tr * tr;
+            }
+            const double delta = static_cast<double>(missed) / trials, mean = ratio / trials;
+            const double sdDelta = std::sqrt(want * (1.0 - want) / trials);
+            const double sdRatio = std::sqrt(std::max(ratio2 / trials - mean * mean, 0.0) / trials);
+            std::printf("  %.3f s of a frame of %.3f s, ray %d: through %.4f; delta tracking %.4f, ratio tracking %.4f\n",
+                        c.time, c.frameTime, r % 4, want, delta, mean);
+            between += want > 0.05 && want < 0.95 ? 1 : 0;
+            CHECK(std::fabs(delta - want) < 4.0 * sdDelta + 0.003);
+            CHECK(std::fabs(mean - want) < 4.0 * sdRatio + 0.003);
+            ++r;
+        }
+    }
+    CHECK(between >= 8);
+}
+
 TEST(gas_flames_give_off_light_along_the_way) {
     if (!gasAvailable()) return;
     // Fire all through the box, and smoke or none: along a ray in the
@@ -506,4 +567,103 @@ TEST(render_cycles_renders_the_gas_as_the_path_tracer_does) {
     CHECK(fireR > 1.5 * floorR && fireR > 1.5 * fireB);
     CHECK(std::fabs(fireR / fireOurs - 1.0) < 0.3);
     CHECK(std::fabs(smokeA / smokeOurs - 1.0) < 0.3);
+}
+
+TEST(render_blurs_the_gas_along_its_velocity_while_the_shutter_is_open) {
+    if (!gasAvailable()) return;
+    // A ball of fire 0.4 m across flying at 12 m/s along x, a 24th of a
+    // second a frame: the shutter open half a frame, it goes 0.25 m -- a
+    // streak, as long more, its light the same. Both renderers.
+    const int n = 32;
+    sim::Frame f = frameOf(
+        n, 0.05f,
+        [](int i, int j, int k) {
+            const float x = static_cast<float>(i) - 15.5f, y = static_cast<float>(j) - 15.5f, z = static_cast<float>(k) - 15.5f;
+            return x * x + y * y + z * z < 16.0f ? Vec3(0.0f, 3.5f, 1.0f) : Vec3();
+        },
+        true);
+    sim::setVelocity(f, [](const Vec3&) { return Vec3(12.0f, 0.0f, 0.0f); });
+    CHECK(!f.velocity.empty() && f.velocityFits());
+    const auto frame = std::make_shared<sim::Frame>(f);
+    sim::Look look;
+    look.lightIntensity = 0.0f;
+    look.skyIntensity = 0.0f;
+    look.floor = false;
+    const int w = 96, h = 48;
+    sim::Camera cam = sim::Camera::lookingAt(Vec3(0.0f, 0.8f, 3.0f), Vec3(0.0f, 0.8f, 0.0f));
+    cam.width = w;
+    cam.height = h;
+    SceneInput in;
+    in.look = look;
+    in.camera = cam;
+    in.frame = frame;
+    in.frameTime = 1.0f / 24.0f;
+    SceneBuilder builder;
+    const auto scene = builder.build(in);
+    CHECK(scene->gas && scene->gas->moves() && scene->moves());
+    CHECK(std::fabs(scene->gas->fastest() - 12.0f) < 0.05f);
+    // Across the picture: how the light spreads -- the variance of where it
+    // is along x, which a streak of length L adds L^2 / 12 to -- how bright
+    // the brightest column, how much light in all.
+    struct Streak {
+        double spread = 0.0, peak = 0.0, light = 0.0;
+    };
+    auto streak = [&](const Image& img) {
+        std::vector<double> column(static_cast<size_t>(img.width), 0.0);
+        for (int y = 0; y < img.height; ++y)
+            for (int x = 0; x < img.width; ++x) column[static_cast<size_t>(x)] += img.pixels[3 * (static_cast<size_t>(y) * img.width + x)];
+        // The studio's backdrop behind, the same in every column: off.
+        const double backdrop = *std::min_element(column.begin(), column.end());
+        for (double& c : column) c = std::max(c - backdrop, 0.0);
+        Streak s;
+        double mean = 0.0;
+        for (size_t x = 0; x < column.size(); ++x) {
+            s.peak = std::max(s.peak, column[x]);
+            s.light += column[x];
+            mean += column[x] * static_cast<double>(x);
+        }
+        mean /= s.light;
+        for (size_t x = 0; x < column.size(); ++x) s.spread += column[x] * (static_cast<double>(x) - mean) * (static_cast<double>(x) - mean);
+        s.spread /= s.light;
+        return s;
+    };
+    Settings s;
+    s.width = w;
+    s.height = h;
+    s.samples = 64;
+    s.denoise = false;
+    s.sky = Settings::Sky::Look;
+    s.detail = 0.0f;
+    auto traced = [&](float shutter) {
+        s.shutter = shutter;
+        PathTracer t;
+        t.setSettings(s);
+        t.setScene(scene);
+        while (!t.done()) t.pass();
+        return streak(t.beauty());
+    };
+    const Streak sharp = traced(0.0f), blurred = traced(0.5f);
+    // The streak, 0.25 m at 3 m away: the picture is 2 x 3 x tan(fov / 2) m high.
+    const double across = 2.0 * 3.0 * std::tan(0.5 * cam.fovY() * 3.14159265 / 180.0) * w / h;
+    const double length = 0.25 / across * w, added = length * length / 12.0;
+    std::printf("  the path tracer: sharp spread %.2f px^2, peak %.2f, light %.1f; blurred spread %.2f (%.2f more "
+                "expected), peak %.2f, light %.1f\n",
+                sharp.spread, sharp.peak, sharp.light, blurred.spread, added, blurred.peak, blurred.light);
+    CHECK(std::fabs((blurred.spread - sharp.spread) / added - 1.0) < 0.2);
+    CHECK(blurred.peak < 0.9 * sharp.peak);
+    CHECK(std::fabs(blurred.light / sharp.light - 1.0) < 0.05);
+    if (!cyclesAvailable()) return;
+    auto cycles = [&](float shutter) {
+        s.shutter = shutter;
+        CyclesRender r;
+        r.start(scene, s);
+        r.wait();
+        return streak(r.beauty());
+    };
+    const Streak cSharp = cycles(0.0f), cBlurred = cycles(0.5f);
+    std::printf("  Cycles: sharp spread %.2f px^2, peak %.2f, light %.1f; blurred spread %.2f, peak %.2f, light %.1f\n",
+                cSharp.spread, cSharp.peak, cSharp.light, cBlurred.spread, cBlurred.peak, cBlurred.light);
+    CHECK(std::fabs((cBlurred.spread - cSharp.spread) / added - 1.0) < 0.2);
+    CHECK(cBlurred.peak < 0.9 * cSharp.peak);
+    CHECK(std::fabs(cBlurred.light / cSharp.light - 1.0) < 0.05);
 }

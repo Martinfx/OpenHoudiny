@@ -1403,7 +1403,8 @@ std::vector<NodeType> buildTypes() {
                "The droplets of the splashes too, with droplet 1 and ids from 2^30."}});
     geometry("gas_volume", "Gas Volume", "gas_volume",
              "The gas of a Pyro Solver at the frame, as volumes: density (smoke), temperature and flame -- and "
-             "steam, where the water made any.",
+             "steam, where the water made any -- and how fast it goes, vel.x, vel.y and vel.z on blocks of 2 x 2 x "
+             "2 cells (one vector grid, vel, in an OpenVDB file).",
              {{"gas", "Gas", PinType::Gas}}, {});
     geometry("rbd_pieces", "RBD Pieces", "rbd_pieces",
              "The pieces of an RBD Solver at the frame, where they have fallen: moved and turned, with the "
@@ -1594,12 +1595,18 @@ std::vector<NodeType> buildTypes() {
                "Blender's heat."),
           text("flame", "Flame", "Grids", "flame flames fire", "The grid the fire is read from: where it glows."),
           text("steam", "Steam", "Grids", "", "A grid read as steam, white; empty: none."),
+          text("velocity", "Velocity", "Grids", "vel v velocity",
+               "The vector grid of how fast the gas goes -- what the renderers blur it along while the shutter is "
+               "open (Output > Motion Blur): Houdini's and EmberGen's vel, Blender's velocity. Empty: none."),
           {"density_scale", "Density Scale", "Scale", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, kBig, "",
            "The smoke, times this: thicker or thinner than the files have it."},
           {"temperature_scale", "Temperature Scale", "Scale", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, kBig,
            "", "The heat, times this: the scale of another program's temperature made this one's."},
           {"flame_scale", "Flame Scale", "Scale", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, kBig, "",
            "The fire, times this."},
+          {"velocity_scale", "Velocity Scale", "Scale", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, kBig, "",
+           "The velocity, times this: another program's units made metres a second -- or a longer or a shorter "
+           "blur."},
           {"resolution", "Resolution", "Domain", K::Int, {512.0f, 0.0f, 0.0f}, 64.0f, 1024.0f, 16.0f, 1024.0f,
            "cells",
            "The domain's cells along its longest side, at the most: files it would be finer for are averaged "
@@ -4677,6 +4684,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         g.temperature = text(n->id, "temperature");
         g.flame = text(n->id, "flame");
         g.steam = text(n->id, "steam");
+        g.velocity = text(n->id, "velocity");
+        g.velocityScale = std::max(f(*n, "velocity_scale"), 0.0f);
         g.densityScale = std::max(f(*n, "density_scale"), 0.0f);
         g.temperatureScale = std::max(f(*n, "temperature_scale"), 0.0f);
         g.flameScale = std::max(f(*n, "flame_scale"), 0.0f);

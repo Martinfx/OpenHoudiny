@@ -199,7 +199,7 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            a.rigid.debrisOrient == b.rigid.debrisOrient && a.grains.positions == b.grains.positions &&
            a.grains.velocities == b.grains.velocities && a.grains.radii == b.grains.radii &&
            a.grains.ids == b.grains.ids && a.grains.colors == b.grains.colors && a.rigid.shatters == b.rigid.shatters &&
-           a.steam == b.steam;
+           a.steam == b.steam && a.velocity == b.velocity;
 }
 
 /// What version 15 adds at the end of a frame without grains: five counts, 0.
@@ -208,6 +208,8 @@ constexpr size_t kNoGrains = 5 * 8;
 constexpr size_t kNoShatters = 8;
 /// ... and version 17 after that, without steam: a count, 0.
 constexpr size_t kNoSteam = 8;
+/// ... and version 18 after that, the gas standing still: a count, 0.
+constexpr size_t kNoVelocity = 8;
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
 sim::Frame madeUpFrame() {
@@ -495,7 +497,7 @@ TEST(frames_round_trip_through_their_files) {
     empty.domain.cells[0] = empty.domain.cells[1] = empty.domain.cells[2] = 64;
     empty.fields.assign(3 * empty.domain.cellCount(), 0);
     const std::string small = sim::formatFrame(empty);
-    CHECK(small.size() < 456);
+    CHECK(small.size() < 464);
     CHECK(sim::parseFrame(small, back, error));
     CHECK(sameFrame(empty, back));
 
@@ -551,7 +553,7 @@ TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 13 * 8);  // the five counts, version 5's, 6's, 7's two, 8's two, 9's and 10's, all 0
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 13 * 8);  // the five counts, version 5's, 6's, 7's two, 8's two, 9's and 10's, all 0
     bytes[8] = 3;
     sim::Frame back;
     std::string error;
@@ -575,7 +577,7 @@ TEST(frames_of_version_4_still_read_without_the_waters_flow) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 8 * 8);  // its count, 0, and version 6's, 7's two, 8's two, 9's and 10's
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 8 * 8);  // its count, 0, and version 6's, 7's two, 8's two, 9's and 10's
     bytes[8] = 4;
     sim::Frame back;
     std::string error;
@@ -600,7 +602,7 @@ TEST(frames_of_version_5_still_read_without_what_became_of_the_bars) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 7 * 8);  // its count, 0, and version 7's and 8's two, 9's and 10's
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 7 * 8);  // its count, 0, and version 7's and 8's two, 9's and 10's
     bytes[8] = 5;
     sim::Frame back;
     std::string error;
@@ -620,7 +622,7 @@ TEST(frames_of_version_6_still_read_without_which_grit_is_glass) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 6 * 8);  // their counts, 0, and version 8's two, 9's and 10's
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 6 * 8);  // their counts, 0, and version 8's two, 9's and 10's
     bytes[8] = 6;
     sim::Frame back;
     std::string error;
@@ -642,7 +644,7 @@ TEST(frames_of_version_7_still_read_without_what_became_of_the_joints) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 4 * 8);  // their counts, 0, and version 9's and 10's
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 4 * 8);  // their counts, 0, and version 9's and 10's
     bytes[8] = 7;
     sim::Frame back;
     std::string error;
@@ -661,7 +663,7 @@ TEST(frames_of_version_8_still_read_without_how_the_grit_is_turned) {
     sim::Frame f = madeUpFrame();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 2 * 8);  // its count, 0, and version 10's
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 2 * 8);  // its count, 0, and version 10's
     bytes[8] = 8;
     sim::Frame back;
     std::string error;
@@ -679,7 +681,7 @@ TEST(frames_of_version_9_still_read_without_sparse_gas) {
     // cell of the grid, as a dense solver's frame still has it.
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 8);  // version 10's count, 0
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 8);  // version 10's count, 0
     bytes[8] = 9;
     sim::Frame back;
     std::string error;
@@ -747,7 +749,7 @@ TEST(frames_of_version_12_still_read_without_sparse_water) {
     // cell of its grids, as a dense solver's frame still has them.
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 3 * 8);  // version 13's two counts and 14's, 0
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 3 * 8);  // version 13's two counts and 14's, 0
     bytes[8] = 12;
     sim::Frame back;
     std::string error;
@@ -761,7 +763,7 @@ TEST(frames_of_version_13_still_read_without_deep_water) {
     // end -- every tile of it with its cells.
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 8);  // version 14's count, 0
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains - 8);  // version 14's count, 0
     bytes[8] = 13;
     sim::Frame back;
     std::string error;
@@ -773,7 +775,7 @@ TEST(frames_of_version_13_still_read_without_deep_water) {
 TEST(frames_of_version_14_still_read_without_grains) {
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains);
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters - kNoGrains);
     bytes[8] = 14;
     sim::Frame back;
     std::string error;
@@ -785,7 +787,7 @@ TEST(frames_of_version_14_still_read_without_grains) {
 TEST(frames_of_version_15_still_read_without_what_broke) {
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam - kNoShatters);
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam - kNoShatters);
     bytes[8] = 15;
     sim::Frame back;
     std::string error;
@@ -797,13 +799,92 @@ TEST(frames_of_version_15_still_read_without_what_broke) {
 TEST(frames_of_version_16_still_read_without_steam) {
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoSteam);
+    bytes.resize(bytes.size() - kNoVelocity - kNoSteam);
     bytes[8] = 16;
     sim::Frame back;
     std::string error;
     CHECK(sim::parseFrame(bytes, back, error));
     CHECK(sameFrame(f, back));
     CHECK(back.steam.empty());
+}
+
+TEST(frames_of_version_17_still_read_without_how_fast_the_gas_goes) {
+    const sim::Frame f = madeUpFrame();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - kNoVelocity);
+    bytes[8] = 17;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.velocity.empty());
+}
+
+TEST(frames_keep_how_fast_the_gas_goes) {
+    // Three halves a block of 2 x 2 x 2 cells, laid out as the gas is --
+    // every block of the grid, or the 4 x 4 x 4 blocks of each of its tiles;
+    // a velocity that does not fit the gas is refused.
+    sim::Frame f = madeUpFrame();
+    f.velocity.assign(3 * static_cast<size_t>(f.blocks(0) * f.blocks(1) * f.blocks(2)), 0);
+    CHECK_EQ(f.velocity.size(), size_t(3 * 8 * 4 * 4));
+    for (size_t k = 0; k < f.velocity.size(); k += 5) f.velocity[k] = sim::toHalf(0.25f * static_cast<float>(k % 7) - 0.5f);
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(sim::formatFrame(f), back, error));
+    CHECK(sameFrame(f, back));
+    std::vector<uint16_t> scratch;
+    CHECK(&back.denseVelocity(scratch) == &back.velocity);
+    sim::Frame wrong = f;
+    wrong.velocity.pop_back();
+    CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
+
+    // Sparse: two tiles of 16 x 8 x 24 cells hold gas, 64 blocks each.
+    sim::Frame sparse;
+    sparse.domain.cells[0] = 16;
+    sparse.domain.cells[1] = 8;
+    sparse.domain.cells[2] = 24;
+    sparse.domain.voxel = 0.1f;
+    sparse.gasTiles = {1, 5};
+    sparse.fields.assign(3 * 512 * 2, 0);
+    sparse.fields[3 * 7 + 1] = sim::toHalf(2.0f);
+    // Going 3 m/s along x in the far half of the domain (z > 0), still in the
+    // near one: each block keeps the velocity at its middle.
+    sim::setVelocity(sparse, [](const Vec3& p) { return Vec3(p.z > 0.0f ? 3.0f : 0.0f, 0.0f, 0.0f); });
+    CHECK_EQ(sparse.velocity.size(), size_t(3 * 64 * 2));
+    CHECK(sparse.velocityFits());
+    CHECK(sim::parseFrame(sim::formatFrame(sparse), back, error));
+    CHECK(back.velocity == sparse.velocity);
+    const std::vector<uint16_t>& dense = back.denseVelocity(scratch);
+    CHECK_EQ(dense.size(), size_t(3 * 8 * 4 * 12));
+    // Tile 5 is cells x 8..15, z 16..23: blocks x 4..7, z 8..11; tile 1 the
+    // same x, z 0..7.
+    const auto vx = [&](int bi, int bj, int bk) { return sim::fromHalf(dense[3 * static_cast<size_t>(bi + 8 * (bj + 4 * bk))]); };
+    CHECK_EQ(vx(5, 1, 9), 3.0f);
+    CHECK_EQ(vx(5, 1, 1), 0.0f);  // tile 1, in the near half
+    CHECK_EQ(vx(1, 1, 9), 0.0f);  // a tile without gas
+    // All of it still: no velocity at all.
+    sim::setVelocity(sparse, [](const Vec3&) { return Vec3(0.0f); });
+    CHECK(sparse.velocity.empty());
+
+    // A domain not of whole tiles, its last tile holding gas: the blocks of
+    // that tile past the domain's last are left out, kept as 0.
+    sim::Frame edge;
+    edge.domain.cells[0] = 12;
+    edge.domain.cells[1] = 8;
+    edge.domain.cells[2] = 10;
+    edge.domain.voxel = 0.1f;
+    edge.gasTiles = {3};  // x 8..11, z 8..9
+    edge.fields.assign(3 * 512, 0);
+    edge.fields[0] = sim::toHalf(1.0f);
+    sim::setVelocity(edge, [](const Vec3& p) { return Vec3(0.0f, 1.0f + p.x, 0.0f); });
+    CHECK_EQ(edge.velocity.size(), size_t(3 * 64));
+    const std::vector<uint16_t>& edgeDense = edge.denseVelocity(scratch);
+    CHECK_EQ(edgeDense.size(), size_t(3 * 6 * 4 * 5));
+    // Block (5, 1, 4): its middle at x = -0.6 + 1.1.
+    CHECK(std::fabs(sim::fromHalf(edgeDense[3 * size_t(5 + 6 * (1 + 4 * 4)) + 1]) - 1.5f) < 1e-3f);
+    size_t kept = 0;
+    for (size_t k = 1; k < edgeDense.size(); k += 3) kept += edgeDense[k] != 0 ? 1 : 0;
+    CHECK_EQ(kept, size_t(2 * 4 * 1));  // x 4..5, y 0..3, z 4
 }
 
 TEST(frames_keep_their_steam) {
@@ -969,7 +1050,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 18;
+    newer[8] = 19;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

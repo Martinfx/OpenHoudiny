@@ -76,10 +76,11 @@ struct Mask {
 
 using Coord = std::array<int, 3>;  // compared x, then y, then z: as OpenVDB's Coord
 
-/// A leaf: 8^3 voxels, those not 0 active.
+/// A leaf: 8^3 voxels, those not 0 active -- a float each, or three (a
+/// vector's x, y and z).
 struct Leaf {
     Mask active{512};
-    std::array<float, 512> values{};
+    std::array<float, 512 * 3> values{};
 };
 
 /// The slot of `c` in a node of 2^log2 slots a side whose slots are
@@ -125,31 +126,38 @@ void metadata(Out& out, std::string_view name, std::string_view type, const std:
     out.string(value);  // the size, then the value's bytes
 }
 
-/// One grid, from where its descriptor starts.
-void writeGrid(Out& out, const Volume& v, const std::string& name) {
+/// One grid, from where its descriptor starts: a float grid of `parts[0]`,
+/// or -- three parts, laid out alike -- a vector grid of their x, y and z.
+void writeGrid(Out& out, std::span<const Volume* const> parts, const std::string& name) {
+    const Volume& v = *parts[0];
+    const size_t width = parts.size();
     // The voxels that are not 0, in the leaves they fall in.
     std::map<Coord, Leaf> leaves;
     int lo[3] = {1 << 30, 1 << 30, 1 << 30}, hi[3] = {-(1 << 30), -(1 << 30), -(1 << 30)};
     size_t active = 0;
-    bool fog = true;
-    if (v.values) {
-        const std::vector<float>& values = *v.values;
-        for (int k = 0; k < v.res[2]; ++k) {
-            for (int j = 0; j < v.res[1]; ++j) {
-                for (int i = 0; i < v.res[0]; ++i) {
-                    const size_t at = static_cast<size_t>(i) +
-                                      static_cast<size_t>(v.res[0]) * (static_cast<size_t>(j) + static_cast<size_t>(v.res[1]) * static_cast<size_t>(k));
-                    const float x = at < values.size() ? values[at] : 0.0f;
-                    if (x == 0.0f || !std::isfinite(x)) continue;
-                    fog = fog && x > 0.0f;
-                    Leaf& leaf = leaves[below({i, j, k}, 3)];
-                    const size_t n = (static_cast<size_t>(i & 7) << 6) | (static_cast<size_t>(j & 7) << 3) | static_cast<size_t>(k & 7);
-                    leaf.active.set(n);
-                    leaf.values[n] = x;
-                    ++active;
-                    lo[0] = std::min(lo[0], i), lo[1] = std::min(lo[1], j), lo[2] = std::min(lo[2], k);
-                    hi[0] = std::max(hi[0], i), hi[1] = std::max(hi[1], j), hi[2] = std::max(hi[2], k);
+    bool fog = width == 1;
+    for (int k = 0; k < v.res[2]; ++k) {
+        for (int j = 0; j < v.res[1]; ++j) {
+            for (int i = 0; i < v.res[0]; ++i) {
+                const size_t at = static_cast<size_t>(i) +
+                                  static_cast<size_t>(v.res[0]) * (static_cast<size_t>(j) + static_cast<size_t>(v.res[1]) * static_cast<size_t>(k));
+                float x[3] = {0.0f, 0.0f, 0.0f};
+                bool any = false;
+                for (size_t c = 0; c < width; ++c) {
+                    const Volume& part = *parts[c];
+                    x[c] = part.values && at < part.values->size() ? (*part.values)[at] : 0.0f;
+                    if (!std::isfinite(x[c])) x[c] = 0.0f;
+                    any = any || x[c] != 0.0f;
                 }
+                if (!any) continue;
+                fog = fog && x[0] > 0.0f;
+                Leaf& leaf = leaves[below({i, j, k}, 3)];
+                const size_t n = (static_cast<size_t>(i & 7) << 6) | (static_cast<size_t>(j & 7) << 3) | static_cast<size_t>(k & 7);
+                leaf.active.set(n);
+                for (size_t c = 0; c < width; ++c) leaf.values[width * n + c] = x[c];
+                ++active;
+                lo[0] = std::min(lo[0], i), lo[1] = std::min(lo[1], j), lo[2] = std::min(lo[2], k);
+                hi[0] = std::max(hi[0], i), hi[1] = std::max(hi[1], j), hi[2] = std::max(hi[2], k);
             }
         }
     }
@@ -162,7 +170,7 @@ void writeGrid(Out& out, const Volume& v, const std::string& name) {
 
     // The descriptor: name, type, no parent; where the grid is, filled in below.
     out.string(name);
-    out.string("Tree_float_5_4_3");
+    out.string(width == 3 ? "Tree_vec3s_5_4_3" : "Tree_float_5_4_3");
     out.string("");
     const size_t positions = out.pos();
     out.i64(0);
@@ -181,14 +189,16 @@ void writeGrid(Out& out, const Volume& v, const std::string& name) {
     Out count;
     count.i64(static_cast<int64_t>(active));
     Out bytes;
-    bytes.i64(static_cast<int64_t>(leaves.size() * (sizeof(Leaf) + 64) + mids.size() * 20480 + tops.size() * 135168));
-    out.u32(6);
+    bytes.i64(static_cast<int64_t>(leaves.size() * (512 * 4 * width + 128) + mids.size() * 20480 + tops.size() * 135168));
+    out.u32(width == 3 ? 7 : 6);
     metadata(out, "class", "string", fog ? "fog volume" : "unknown");
     metadata(out, "file_bbox_max", "vec3i", bbox(hi));
     metadata(out, "file_bbox_min", "vec3i", bbox(lo));
     metadata(out, "file_mem_bytes", "int64", bytes.bytes);
     metadata(out, "file_voxel_count", "int64", count.bytes);
     metadata(out, "name", "string", name);
+    // A velocity's: the same in any space (OpenVDB's VEC_INVARIANT).
+    if (width == 3) metadata(out, "vector_type", "string", "invariant");
 
     // The transform: voxel (i, j, k) at origin + (i + 1/2, j + 1/2, k + 1/2) x voxel.
     const double s = v.voxel > 0.0f ? static_cast<double>(v.voxel) : 1.0;
@@ -208,7 +218,7 @@ void writeGrid(Out& out, const Volume& v, const std::string& name) {
     // The topology: one buffer; the root -- background 0, no tiles -- and
     // its nodes, each with its masks and (none but the background) values.
     out.i32(1);
-    out.f32(0.0f);
+    for (size_t c = 0; c < width; ++c) out.f32(0.0f);
     out.u32(0);
     out.u32(static_cast<uint32_t>(tops.size()));
     for (const auto& [top, children] : tops) {
@@ -236,7 +246,8 @@ void writeGrid(Out& out, const Volume& v, const std::string& name) {
                 leaf.active.save(out);
                 out.u8(kNoMaskOrInactiveVals);
                 for (size_t n = 0; n < 512; ++n) {
-                    if (leaf.active.on(n)) out.f32(leaf.values[n]);
+                    if (!leaf.active.on(n)) continue;
+                    for (size_t c = 0; c < width; ++c) out.f32(leaf.values[width * n + c]);
                 }
             }
         }
@@ -260,13 +271,34 @@ std::string formatVdb(const std::vector<Volume>& volumes) {
     // File metadata.
     out.u32(1);
     metadata(out, "creator", "string", "prototype");
-    out.i32(static_cast<int32_t>(volumes.size()));
+    // A vector's parts -- "vel.x", "vel.y", "vel.z" in turn, laid out alike
+    // -- are one grid of it, "vel".
+    std::vector<std::vector<const Volume*>> grids;
+    for (size_t i = 0; i < volumes.size(); ++i) {
+        const Volume& v = volumes[i];
+        const std::string& n = v.name;
+        auto alike = [&](const Volume& o, char axis) {
+            return o.name.size() == n.size() && o.name.compare(0, n.size() - 1, n, 0, n.size() - 1) == 0 &&
+                   o.name.back() == axis && o.res[0] == v.res[0] && o.res[1] == v.res[1] && o.res[2] == v.res[2] &&
+                   o.origin == v.origin && o.voxel == v.voxel;
+        };
+        if (n.size() > 2 && n.compare(n.size() - 2, 2, ".x") == 0 && i + 2 < volumes.size() && alike(volumes[i + 1], 'y') &&
+            alike(volumes[i + 2], 'z')) {
+            grids.push_back({&v, &volumes[i + 1], &volumes[i + 2]});
+            i += 2;
+        } else {
+            grids.push_back({&v});
+        }
+    }
+    out.i32(static_cast<int32_t>(grids.size()));
     std::set<std::string> names;
-    for (const Volume& v : volumes) {
-        std::string name = v.name.empty() ? "volume" : v.name;
-        for (int n = 2; names.count(name); ++n) name = (v.name.empty() ? "volume" : v.name) + "_" + std::to_string(n);
+    for (const std::vector<const Volume*>& parts : grids) {
+        std::string base = parts[0]->name.empty() ? "volume" : parts[0]->name;
+        if (parts.size() == 3) base = base.substr(0, base.size() - 2);
+        std::string name = base;
+        for (int n = 2; names.count(name); ++n) name = base + "_" + std::to_string(n);
         names.insert(name);
-        writeGrid(out, v, name);
+        writeGrid(out, parts, name);
     }
     return std::move(out.bytes);
 }

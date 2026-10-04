@@ -76,7 +76,7 @@ through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 | slunce | Sky `look`: vzdálené světlo (Sun) s úhlem Sun Size a stejnou silou jako náš; Sky `physical`: slunce oblohy Nishita |
 | obloha | Sky `physical`: obloha Nishita; Sky `look`: s **Sky Behind** obloha Looku jako obrázek všude kolem; bez Sky Behind vždy pozadí studia pro kameru |
 | kamera | záběr z kamery nebo pohled viewportu, objektiv, clona a ostrost z Output |
-| pohyb (rychlost `v` bodů, kamera v pohybu) | rozmazání po dráze, dokud je otevřená závěrka ([níže](#rozmazání-pohybem)) |
+| pohyb (rychlost `v` bodů, rychlost plynu, animované objekty, kamera v pohybu) | rozmazání po dráze, dokud je otevřená závěrka ([níže](#rozmazání-pohybem)) |
 | plate kamery záběru | průhledný film, i přes sklo; holdouty a catchery (objekty i podlaha) jako holdouty a shadow catchery Cyclesu; slunce a obloha jako skutečná světla; průchod Shadow Catcher jako násobitel plate ([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)) |
 
 Scéna je v Cycles otočená, protože Cycles má osu Z nahoru a my Y.
@@ -106,11 +106,26 @@ snímcích za sekundu je to 1/48 s. Hodnota 0 dává ostrý okamžik.
 | kusy RBD, pruty výztuže, látka, povrch vody, zobrazená geometrie | rychlost `v` bodů (m/s) | síť má tři kroky: rohy trojúhelníků na začátku, uprostřed a na konci závěrky, posunuté o `v` × čas |
 | drť (volné body s `pscale`) | rychlost `v` bodu | úlomek je objekt se třemi polohami, letí jako bod |
 | instance (Copy to Points) | rychlost `v` bodu instance | jako drť |
+| objekty scény (koule, kvádry, sítě, animované klíči) | rychlost a otáčení objektu, z jeho polohy a natočení o snímek dřív ([animation.md](animation.md#pohyb-překážek)) | objekt má tři polohy: na začátku, uprostřed a na konci závěrky, posunutý o rychlost × čas a otočený kolem své osy otáčení |
+| kouř, oheň, prach a pára (Pyro Solver, VDB Gas) | rychlost plynu ve snímku, m/s | Cycles čte mřížky tam, odkud sem plyn v ten okamžik doletí: bod posune proti rychlosti o rychlost × čas, dvakrát po sobě, jako v Blenderu |
 | kamera záběru | kamera o snímek dřív a o snímek později | na začátku závěrky je o čtvrt cesty ke kameře předchozího snímku, na konci o čtvrt cesty k té dalšímu (při 0,5), otáčí se kratší cestou; mění-li se ohnisko, mění se i úhel záběru |
 
 Normály zůstávají ve všech krocích jako uprostřed. Cycles by si je
 spočítal z ploch a hladká voda by byla během závěrky hranatá. Kusy se
 během tak krátké doby otočí jen nepatrně, proto stačí posun po přímce.
+Objekt scény se během závěrky doopravdy otáčí, ne jen posouvá: konce
+lopatky v příkladu `fire_trail` opíšou za půl snímku oblouk 3°.
+
+**Plyn.** Každý snímek simulace nese rychlost plynu: jednu na blok
+2 × 2 × 2 buněk, v polovičních floatech, jen tam, kde plyn je
+([cache.md](cache.md)). VDB Gas ji čte z vektorové mřížky `vel`
+([vdb.md](vdb.md)). Cycles dostane rychlost jako třetí mřížku vedle
+útlumu a záře a kvádr plynu je o dráhu nejrychlejšího plynu větší, aby
+rozmazaný okraj nebyl useknutý. Rozmazání stojí v plynu dvě čtení
+rychlosti navíc v každém kroku: táborák (400 × 600, 64 vzorků, snímek
+60) trvá se závěrkou 0,5 99,6 s proti 62,6 s bez ní, v path traceru
+14,1 s proti 8,1 s. Plyn, který je ve všech blocích v klidu, rychlost
+nemá a renderuje se jako dřív.
 
 Rozmazání se zapne jen tehdy, když se něco hýbe. Scéna bez pohybu se
 renderuje stejně rychle jako dřív a obraz je bit po bitu stejný jako
@@ -126,10 +141,10 @@ Z příkazové řádky:
     --set output.render_motion_blur=0        # ostrý okamžik
 ```
 
-Nerozmazává se zatím plyn (kouř, prach, oheň: snímky nemají rychlost
-plynu), objekty scény (koule, kvádry, …) a kapky deště. Kapky to
-nepotřebují, protože jsou už vykreslené jako čárky tak dlouhé, kolik
-kapka proletí za Streak snímku. Path tracer renderuje okamžik snímku.
+Nerozmazávají se jen kapky deště. Ty to nepotřebují, protože jsou už
+vykreslené jako čárky tak dlouhé, kolik kapka proletí za Streak snímku.
+Path tracer rozmazává totéž a stejně daleko
+([pathtracer.md](pathtracer.md#rozmazání-pohybem)).
 
 ## 3. Obloha, barvy a povrchy
 
@@ -239,8 +254,9 @@ se kterým testy Cycles s path tracerem porovnávají.
   tracer mu jen sníží drsnost. Oba ho ztmaví o polovinu.
 - **Déšť pod fyzikální oblohou je slabší**, protože kapky lámou skutečnou
   oblohu. Se Sky `look` mají čárky stejný kontrast jako v path traceru.
-- **Rozmazání pohybem** má jen Cycles ([§2](#rozmazání-pohybem)). Path
-  tracer renderuje okamžik snímku.
+- **Rozmazání pohybem** je v obou stejně dlouhé ([§2](#rozmazání-pohybem)),
+  path tracer ale sítě mezi začátkem a koncem závěrky posouvá po přímce
+  přes dva kroky, Cycles přes tři.
 
 ## 6. Build
 
@@ -261,6 +277,13 @@ v něm hledá stejný Embree jako v path traceru, pokud je v systému.
 Odšumuje stejná Open Image Denoise jako náš path tracer. Na čtyřech
 jádrech trvá první build Cycles asi 2 minuty (celý program od nuly
 i s Open Image Denoise asi 11 minut), další buildy ho jen přilinkují.
+
+Build do zdrojů Cycles přidá pět řádků (`src/scene/object.cpp`). Síť
+s mřížkou rychlosti (náš plyn) dostane příznak
+`SD_OBJECT_HAS_VOLUME_MOTION`, který Cycles jinak dává jen objektům
+Volume z OpenVDB, a bez něj by se plyn nerozmazal. CMake řádky vloží sám
+po stažení. Kdyby v jiné verzi Cycles místo pro ně nenašel, napíše
+varování a plyn v Cycles zůstane ostrý.
 
 Kdy se Cycles nepostaví a renderuje path tracer:
 
@@ -285,6 +308,10 @@ renderery:
 | louka zblízka (obrázek nahoře) | 1280 × 720 | 128 | 301 s | 473 s |
 | táborák (plyn 64 × 96 × 64) | 400 × 600 | 64 | 6,8 s | 48,7 s |
 | kouř | 400 × 600 | 64 | 4,5 s | 18,3 s |
+
+Táborák a kouř jsou bez rozmazání plynu (Motion Blur 0). Se závěrkou 0,5
+je táborák v Cycles asi o 60 % a v path traceru o 70 % pomalejší
+([§2](#rozmazání-pohybem)).
 
 Cycles je na stejný počet vzorků pomalejší. Na plochách asi dvakrát: je
 obecnější a počítá víc, třeba odlesk s vícenásobným rozptylem mezi
@@ -314,9 +341,15 @@ dostane snímek, na kterém se zastaví.
   `ATTR_STD_MOTION_VERTEX_POSITION` (rohy na začátku a na konci závěrky)
   a `ATTR_STD_MOTION_VERTEX_NORMAL`. Úlomek drti je objekt s `set_motion`
   (tři polohy), kamera má `set_motion` se třemi maticemi a
-  `MOTION_POSITION_CENTER`. Integrátor má `set_motion_blur`, jen když se
-  něco hýbe. Síť, která se hýbe, se po změně Motion Blur postaví znovu,
-  ostatní zůstanou.
+  `MOTION_POSITION_CENTER`. Objekt scény má `set_motion` se třemi
+  maticemi: posun o rychlost × čas a otočení `Collider::turnAt` kolem
+  středu. Plyn má atribut voxelů `velocity` se standardem
+  `ATTR_STD_VOLUME_VELOCITY`: rychlost × doba otevřené závěrky, takže
+  `velocity_scale` objektu je 1 (nastaví ho záplata z [§6](#6-build)).
+  Kernel (`volume_shader_motion_blur`) pak posune bod, kde čte mřížky,
+  o (čas − půl) × rychlost, a s rychlostí v novém místě ještě jednou.
+  Integrátor má `set_motion_blur`, jen když se něco hýbe. Síť, která se
+  hýbe, se po změně Motion Blur postaví znovu, ostatní zůstanou.
 - Plate (`Cycles.cpp`, `Plate.h`): nad plate je film průhledný
   (`Background::transparent`, `transparent_glass`). Objekty a podlaha mají
   `set_use_holdout` nebo `set_is_shadow_catcher` a slunce i obloha mají
@@ -375,15 +408,23 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   stín na catcheru ho ztmaví a sklem prosvítá
   ([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)).
 - `render_cycles_blurs_what_moves_while_the_shutter_is_open`: čtverec
-  letící 24 m/s, úlomek drti a kamera, která jede kolem stojícího
-  čtverce, jsou rozmazané. Stopa je o víc než 8 pixelů širší, nejvyšší
-  jas je o víc než pětinu nižší a světla je stejně (do 15 %). S nulovou
-  závěrkou je obraz bit po bitu stejný jako bez pohybu.
+  letící 24 m/s, úlomek drti, koule (objekt scény) letící 24 m/s
+  a kamera, která jede kolem stojícího čtverce, jsou rozmazané. Stopa je
+  o víc než 8 pixelů širší, nejvyšší jas je o víc než pětinu nižší
+  a světla je stejně (do 15 %). S nulovou závěrkou je obraz bit po bitu
+  stejný jako bez pohybu. Tentýž test pro path tracer
+  (`render_path_tracer_blurs_what_moves_while_the_shutter_is_open`) dává
+  stejně široké stopy.
+- `render_blurs_the_gas_along_its_velocity_while_the_shutter_is_open`
+  (`tests/test_gas.cpp`): koule ohně letící 12 m/s se za půl snímku
+  protáhne o 25 cm. Rozptyl světla po sloupcích obrazu naroste o tolik,
+  kolik dává rovnoměrná stopa té délky (L²/12): v Cycles o 3,33 px²,
+  v path traceru o 3,47 px², podle výpočtu o 3,34 px². Světla je stejně
+  (do 5 %).
 
 ## 9. Co zatím chybí
 
 - GPU (CUDA, OptiX, HIP, Metal): Cycles je postavený jen pro procesor.
-- Rozmazání plynu a objektů scény ([§2](#rozmazání-pohybem)).
 - OSL shadery, UV a normálové mapy (textury se kladou ze tří stran,
   reliéf je z výšky, [materials.md](materials.md)).
 - Mraky jako objem (stíny mraků na zemi, mraky, do kterých se dá vletět)

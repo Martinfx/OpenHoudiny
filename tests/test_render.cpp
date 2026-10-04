@@ -529,6 +529,60 @@ TEST(render_scene_carries_how_fast_what_moves_goes) {
     CHECK(length(a.toward(b, 1.0f).forward() - b.forward()) < 1e-5f);
 }
 
+TEST(render_objects_meet_rays_where_they_are_while_the_shutter_is_open) {
+    // A paddle 1 m long, turning a whole turn a second about y and drifting
+    // 2 m/s along x. A moment on, its tip has gone as velocityAt says.
+    sim::Collider c;
+    c.shape = sim::Shape::Box;
+    c.center = Vec3(0.0f, 1.0f, 0.0f);
+    c.size = Vec3(1.0f, 0.05f, 0.1f);
+    c.velocity = Vec3(2.0f, 0.0f, 0.0f);
+    c.spin = Vec3(0.0f, 2.0f * 3.14159265f, 0.0f);
+    const Vec3 tip(0.45f, 1.0f, 0.0f);
+    const float dt = 1e-3f;
+    const Vec3 moved = c.turnAt(dt) * (tip - c.center) + c.center + c.velocity * dt;
+    CHECK(length((moved - tip) / dt - c.velocityAt(tip)) < 0.02f);
+    // A quarter of a turn: x to -z, as a right hand round y turns it.
+    CHECK(length(c.turnAt(0.25f) * Vec3(1.0f, 0.0f, 0.0f) - Vec3(0.0f, 0.0f, -1.0f)) < 1e-5f);
+    CHECK(c.turnAt(0.0f) == Mat3(1.0f));
+
+    sim::Solid solid;
+    solid.body = c;
+    for (const RayEngine engine : engines()) {
+        SceneInput in = inputOf(nullptr, noFloor(), sim::Camera());
+        in.frameTime = 1.0f / 24.0f;
+        in.solids = {solid};
+        SceneBuilder builder(engine);
+        const auto scene = builder.build(in);
+        CHECK(scene->moves());
+        // As a half-frame shutter closes, 1/48 s on, it has turned 7.5
+        // degrees and gone 4 cm: a ray down at its tip misses it then, and
+        // one down at where the tip has got to meets it -- on its top,
+        // facing up -- then and not before.
+        const float end = 0.5f * in.frameTime;
+        const Vec3 above(0.0f, 2.0f, 0.0f), down(0.0f, -1.0f, 0.0f);
+        const Vec3 there = c.turnAt(end) * Vec3(0.42f, 0.0f, 0.0f) + c.center + c.velocity * end;
+        Hit hit;
+        CHECK(scene->intersect(tip + above, down, 1e30f, 0.5f, hit, 0.0f));
+        CHECK_NEAR(hit.t, 1.975f, 1e-3f);
+        CHECK(!scene->intersect(tip + above, down, 1e30f, 0.5f, hit, end));
+        CHECK(!scene->intersect(there + above, down, 1e30f, 0.5f, hit, 0.0f));
+        Hit later;
+        CHECK(scene->intersect(there + above, down, 1e30f, 0.5f, later, end));
+        CHECK_NEAR(later.t, 1.975f, 1e-3f);
+        CHECK(length(later.normal - Vec3(0.0f, 1.0f, 0.0f)) < 1e-4f);
+        // Its shadow falls where it is then.
+        CHECK(scene->transmittance(there + above, down, 1e30f, end).x == 0.0f);
+        CHECK(scene->transmittance(there + above, down, 1e30f, 0.0f).x > 0.0f);
+    }
+    // Standing still: nothing moves.
+    SceneInput still = inputOf(nullptr, noFloor(), sim::Camera());
+    sim::Solid standing;
+    standing.body.shape = sim::Shape::Box;
+    still.solids = {standing};
+    CHECK(!SceneBuilder().build(still)->moves());
+}
+
 TEST(render_saves_png_and_exr_with_passes) {
     Settings s;
     s.width = 32;
@@ -1056,13 +1110,17 @@ TEST(render_cycles_clouds_cover_the_sky_and_drift_on_the_wind) {
     CHECK(moved > 0.02 * clear.z);
 }
 
-TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
-    if (!cyclesAvailable()) return;
+namespace {
+
+/// What moves blurred while the shutter is open, in Cycles or in the path
+/// tracer (`cycles`).
+void blursWhatMoves(bool cycles) {
     // A white square 30 cm across, 3 m in front of the camera, flying
     // sideways at 24 m/s: the shutter open half a frame of 1/24 s, it goes
     // 25 cm while it is open -- seen smeared along its way, wider than it
     // is, fainter; the light it sends the same. A chip of grit flying so
-    // the same; the square standing while the camera goes by the same.
+    // the same; an object of the scene; the square standing while the
+    // camera goes by.
     const int w = 96, h = 64;
     const sim::Camera cam = [&] {
         sim::Camera c = sim::Camera::lookingAt(Vec3(0.0f, 1.0f, 3.0f), Vec3(0.0f, 1.0f, 0.0f));
@@ -1107,12 +1165,17 @@ TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
         Settings s;
         s.width = w;
         s.height = h;
-        s.samples = 32;
+        s.samples = cycles ? 32 : 64;
         s.denoise = false;
         s.sky = Settings::Sky::Look;
         s.detail = 0.0f;
         s.shutter = shutter;
-        return cyclesRender(builder.build(in), s);
+        if (cycles) return cyclesRender(builder.build(in), s);
+        PathTracer t;
+        t.setSettings(s);
+        t.setScene(builder.build(in));
+        while (!t.done()) t.pass();
+        return t.beauty();
     };
     auto input = [&](GeometryPtr geo, GeometryPtr bodies) {
         SceneInput in = inputOf(std::move(geo), look, cam);
@@ -1150,11 +1213,22 @@ TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
         return s;
     };
 
-    // Standing -- or moving, the shutter shut: the same picture, to the bit.
+    // Standing -- or moving, the shutter shut: the same picture -- in
+    // Cycles to the bit; in the path tracer as near as Embree puts a moving
+    // mesh where it is now (between where it is a half frame before and
+    // after), each path's way the same as long as no decision on it falls
+    // the other way.
     const Image still = render(input(square(Vec3(0.0f)), nullptr), 0.5f);
-    CHECK(render(input(square(fast), nullptr), 0.0f).pixels == still.pixels);
     const double over = 0.1 * seen(still, 0.0).peak;
     const Seen sharp = seen(still, over);
+    const Image shut = render(input(square(fast), nullptr), 0.0f);
+    if (cycles) {
+        CHECK(shut.pixels == still.pixels);
+    } else {
+        const Seen s = seen(shut, over);
+        CHECK(s.wide == sharp.wide);
+        CHECK(std::fabs(s.peak / sharp.peak - 1.0) < 0.02 && std::fabs(s.light / sharp.light - 1.0) < 0.02);
+    }
     SceneInput passing = input(square(Vec3(0.0f)), nullptr);
     passing.cameraMotion = true;
     passing.cameraBefore = passing.cameraAfter = cam;
@@ -1162,11 +1236,26 @@ TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
     passing.cameraAfter.position.x += 1.0f;
     const Seen moving = seen(render(input(square(fast), nullptr), 0.5f), over);
     const Seen camera = seen(render(passing, 0.5f), over);
-    std::printf("  the square %d columns wide, at most %.3f, %.2f in all; flying %d, %.3f, %.2f; the camera passing "
-                "%d, %.3f, %.2f\n",
-                sharp.wide, sharp.peak, sharp.light, moving.wide, moving.peak, moving.light, camera.wide, camera.peak,
-                camera.light);
+    // A ball of the scene's objects, as big, flying as fast.
+    SceneInput ball = input(nullptr, nullptr);
+    sim::Solid solid;
+    solid.body.shape = sim::Shape::Sphere;
+    solid.body.center = Vec3(0.0f, 1.0f, 0.0f);
+    solid.body.size = Vec3(0.3f);
+    solid.color = Vec3(0.9f);
+    ball.solids = {solid};
+    const Image ballStill = render(ball, 0.5f);
+    ball.solids[0].body.velocity = fast;
+    const Seen ballSharp = seen(ballStill, over), flying = seen(render(ball, 0.5f), over);
+    std::printf("  %s: the square %d columns wide, at most %.3f, %.2f in all; flying %d, %.3f, %.2f; the camera passing "
+                "%d, %.3f, %.2f; a ball %d, flying %d, %.3f, %.2f\n",
+                cycles ? "Cycles" : "the path tracer", sharp.wide, sharp.peak, sharp.light, moving.wide, moving.peak,
+                moving.light, camera.wide, camera.peak, camera.light, ballSharp.wide, flying.wide, flying.peak, flying.light);
     CHECK(sharp.wide >= 8 && sharp.wide <= 13);
+    CHECK(ballSharp.wide >= 8 && ballSharp.wide <= 13);
+    CHECK(flying.wide >= ballSharp.wide + 8);
+    CHECK(flying.peak < 0.8 * ballSharp.peak);
+    CHECK(std::fabs(flying.light / ballSharp.light - 1.0) < 0.15);
     for (const Seen& b : {moving, camera}) {
         CHECK(b.wide >= sharp.wide + 8);
         CHECK(b.peak < 0.8 * sharp.peak);
@@ -1183,6 +1272,15 @@ TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
     CHECK(chipFlying.peak < 0.8 * chipSharp.peak);
     CHECK(std::fabs(chipFlying.light / chipSharp.light - 1.0) < 0.15);
 }
+
+}  // namespace
+
+TEST(render_cycles_blurs_what_moves_while_the_shutter_is_open) {
+    if (!cyclesAvailable()) return;
+    blursWhatMoves(true);
+}
+
+TEST(render_path_tracer_blurs_what_moves_while_the_shutter_is_open) { blursWhatMoves(false); }
 
 TEST(render_unshown_gives_back_the_light_a_picture_shows) {
     // Every grey, to the level; the colours of a photograph -- all but the

@@ -28,7 +28,10 @@ struct VdbGas {
     /// The grids each field is read from: names separated by spaces, the
     /// first one the file has. Empty: none.
     std::string density = "density", temperature = "temperature heat", flame = "flame flames fire", steam;
-    float densityScale = 1.0f, temperatureScale = 1.0f, flameScale = 1.0f;
+    /// The vector grid how fast the gas goes is read from (Frame::velocity):
+    /// what the renderers blur it along. Empty: none.
+    std::string velocity = "vel v velocity";
+    float densityScale = 1.0f, temperatureScale = 1.0f, flameScale = 1.0f, velocityScale = 1.0f;
     int resolution = 512;  ///< the domain's cells along its longest side at the most
     /// What says the files are as they were when the domain was found --
     /// their sizes and times: other files, another world.

@@ -5,7 +5,9 @@
 //
 //   gas    smoke, temperature and flame per cell, as half floats (IEEE 754
 //          binary16) -- six bytes a cell, a quarter of what the solver holds;
-//          from a sparse solver, only the tiles that hold any;
+//          from a sparse solver, only the tiles that hold any; and how fast
+//          it goes, a velocity for each block of 2 x 2 x 2 cells -- what
+//          the renderers blur it along while the shutter is open;
 //   water  the distance to the water's surface and how white it is, on a
 //          grid twice as fine as the liquid solver's, a byte each; from a
 //          sparse solver, only the tiles near the water;
@@ -18,6 +20,7 @@
 #include "pg/sim/Scene.h"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace pg::sim {
@@ -145,6 +148,13 @@ struct Frame {
     /// every cell of `domain`, or the cells of gasTiles -- a half each.
     /// Empty: none.
     std::vector<uint16_t> steam;
+    /// How fast the gas goes, world units a second: the mean over each
+    /// block of 2 x 2 x 2 cells, three halves (x, y, z) a block. Every block
+    /// of `domain` in turn, x fastest -- or, sparse, the 4 x 4 x 4 blocks of
+    /// each tile of gasTiles in turn, x fastest within the tile. What the
+    /// renderers blur the gas along while the shutter is open. Empty: none
+    /// (a frame cached before it was kept, a file without it).
+    std::vector<uint16_t> velocity;
     WaterFrame water;     ///< empty without water
     RainFrame rain;       ///< empty without rain
     RigidFrame rigid;     ///< empty without rigid bodies
@@ -167,8 +177,9 @@ struct Frame {
     } profile;
 
     size_t bytes() const {
-        return sizeof(Frame) + (fields.size() + steam.size()) * sizeof(uint16_t) + gasTiles.size() * sizeof(uint32_t) +
-               water.bytes() + rain.bytes() + rigid.bytes() + cloth.bytes() + grains.bytes();
+        return sizeof(Frame) + (fields.size() + steam.size() + velocity.size()) * sizeof(uint16_t) +
+               gasTiles.size() * sizeof(uint32_t) + water.bytes() + rain.bytes() + rigid.bytes() + cloth.bytes() +
+               grains.bytes();
     }
     bool empty() const {
         return fields.empty() && water.empty() && rain.empty() && rigid.empty() && cloth.empty() && grains.empty();
@@ -191,6 +202,16 @@ struct Frame {
     /// coarse; empty without any.
     const std::vector<uint16_t>& denseSteam(std::vector<uint16_t>& scratch) const;
     void coarseSteam(int factor, std::vector<uint16_t>& out) const;
+    /// Whether `velocity` is laid out as the gas is: a block of 2 x 2 x 2
+    /// cells for each of them -- none counts.
+    bool velocityFits() const;
+    /// The velocity of every block of the domain, x fastest -- `velocity`
+    /// itself, or `scratch` made from the tiles (0 where none is kept);
+    /// empty without it.
+    const std::vector<uint16_t>& denseVelocity(std::vector<uint16_t>& scratch) const;
+    /// The blocks of 2 x 2 x 2 cells along each axis of the domain.
+    static constexpr int kBlock = 2;
+    int blocks(int axis) const { return domain.cells[axis] / kBlock; }
 };
 
 struct Look;
@@ -207,6 +228,13 @@ Frame capture(const PyroSolver& sim);
 /// the tiles that hold any.
 Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke, const SparseGrid& heat,
                const SparseGrid& flame, const SparseGrid* steam = nullptr);
+/// How fast the gas goes, onto the blocks of `frame`'s gas (Frame::
+/// velocity): `at` the middle of each block, a world point -- world units a
+/// second.
+void setVelocity(Frame& frame, const std::function<Vec3(const Vec3&)>& at);
+/// ... `solver`'s gas -- the frame its own, or its upres's on the same box,
+/// finer: the solver's velocity at each block's middle.
+void addVelocity(Frame& frame, const PyroSolver& solver);
 /// The steam of the solver `coarse` onto `fine` -- the frame of its upres,
 /// `scale` times as fine over the same box -- read between the solver's
 /// cells' middles, the tiles it is in taken on: the upres carries none of
@@ -214,8 +242,9 @@ Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke
 void addCoarseSteam(Frame& fine, const PyroSolver& coarse, int scale);
 
 /// The gas of `frame` as volumes on its grid, every cell: density,
-/// temperature and flame -- and steam, where there is any. None without
-/// gas. What goes to OpenVDB files beside an exported shot.
+/// temperature and flame -- and steam, where there is any -- and its
+/// velocity, a voxel a block of 2 x 2 x 2 cells (vel.x, vel.y, vel.z). None
+/// without gas. What goes to OpenVDB files beside an exported shot.
 std::vector<Volume> gasVolumes(const Frame& frame);
 /// The solver's water, as a frame holds it -- and its particles, when
 /// `particles` is set.

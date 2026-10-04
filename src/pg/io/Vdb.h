@@ -8,7 +8,8 @@
 //
 //   header      magic, versions, a UUID (from what the file holds: the same
 //               volumes give the same bytes), file metadata ("creator")
-//   each grid   its name, "Tree_float_5_4_3", where it starts and ends;
+//   each grid   its name, "Tree_float_5_4_3" (or "Tree_vec3s_5_4_3" for a
+//               vector), where it starts and ends;
 //               active-mask compression (no zip); metadata ("class",
 //               "name", the bounding box and the voxel count); a uniform
 //               scale and a translation that puts voxel (i, j, k) at the
@@ -42,7 +43,9 @@
 namespace pg::io {
 
 /// The file's bytes: a float grid for each volume, named as it is (a name
-/// that comes twice gets a suffix, "density_2").
+/// that comes twice gets a suffix, "density_2") -- but for a vector's
+/// parts, "vel.x", "vel.y" and "vel.z" in turn and laid out alike: one
+/// vector grid of them, "vel" (vec3s), as Houdini writes a velocity.
 std::string formatVdb(const std::vector<Volume>& volumes);
 /// Writes them to `path`. False, with why, if the file cannot be written or
 /// there is no volume.

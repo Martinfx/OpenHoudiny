@@ -318,6 +318,96 @@ const std::vector<uint16_t>& Frame::denseSteam(std::vector<uint16_t>& scratch) c
     return scratch;
 }
 
+namespace {
+
+/// Blocks of 2 x 2 x 2 cells along a tile's side, and in a tile.
+constexpr int kTileBlocks = Tiles::kSide / Frame::kBlock;
+constexpr size_t kBlocksInTile = static_cast<size_t>(kTileBlocks) * kTileBlocks * kTileBlocks;
+
+/// f(slot, bi, bj, bk) for each block of the frame's gas -- `slot` its place
+/// in Frame::velocity, (bi, bj, bk) where it is among the domain's blocks --
+/// in parallel. Not the blocks of a tile past the domain's last: their
+/// slots stay as they are.
+template <class F>
+void forBlocks(const Frame& f, const F& visit) {
+    const int bx = f.blocks(0), by = f.blocks(1), bz = f.blocks(2);
+    if (f.gasTiles.empty()) {
+        pg::parallelFor(static_cast<size_t>(by) * static_cast<size_t>(bz), 16, [&](size_t begin, size_t end) {
+            for (size_t row = begin; row < end; ++row) {
+                const int bj = static_cast<int>(row % static_cast<size_t>(by)), bk = static_cast<int>(row / static_cast<size_t>(by));
+                for (int bi = 0; bi < bx; ++bi) visit(row * static_cast<size_t>(bx) + static_cast<size_t>(bi), bi, bj, bk);
+            }
+        });
+        return;
+    }
+    size_t t[3];
+    tileCounts(f.domain, t);
+    pg::parallelFor(f.gasTiles.size(), 8, [&](size_t begin, size_t end) {
+        for (size_t s = begin; s < end; ++s) {
+            const size_t tile = f.gasTiles[s];
+            const int c[3] = {static_cast<int>(tile % t[0]) * kTileBlocks, static_cast<int>((tile / t[0]) % t[1]) * kTileBlocks,
+                              static_cast<int>(tile / (t[0] * t[1])) * kTileBlocks};
+            for (int z = 0; z < kTileBlocks && c[2] + z < bz; ++z) {
+                for (int y = 0; y < kTileBlocks && c[1] + y < by; ++y) {
+                    for (int x = 0; x < kTileBlocks && c[0] + x < bx; ++x) {
+                        const size_t local = static_cast<size_t>(x + kTileBlocks * (y + kTileBlocks * z));
+                        visit(s * kBlocksInTile + local, c[0] + x, c[1] + y, c[2] + z);
+                    }
+                }
+            }
+        }
+    });
+}
+
+size_t blockCount(const Frame& f) {
+    if (!f.gasTiles.empty()) return kBlocksInTile * f.gasTiles.size();
+    return static_cast<size_t>(f.blocks(0)) * static_cast<size_t>(f.blocks(1)) * static_cast<size_t>(f.blocks(2));
+}
+
+}  // namespace
+
+bool Frame::velocityFits() const { return velocity.empty() || velocity.size() == 3 * blockCount(*this); }
+
+const std::vector<uint16_t>& Frame::denseVelocity(std::vector<uint16_t>& scratch) const {
+    if (velocity.empty() || !velocityFits() || fields.empty()) {
+        scratch.clear();
+        return scratch;
+    }
+    if (gasTiles.empty()) return velocity;
+    const size_t bx = static_cast<size_t>(blocks(0)), by = static_cast<size_t>(blocks(1));
+    scratch.assign(3 * bx * by * static_cast<size_t>(blocks(2)), 0);
+    forBlocks(*this, [&](size_t slot, int bi, int bj, int bk) {
+        const size_t to = static_cast<size_t>(bi) + bx * (static_cast<size_t>(bj) + by * static_cast<size_t>(bk));
+        for (size_t a = 0; a < 3; ++a) scratch[3 * to + a] = velocity[3 * slot + a];
+    });
+    return scratch;
+}
+
+void setVelocity(Frame& frame, const std::function<Vec3(const Vec3&)>& at) {
+    frame.velocity.clear();
+    if (frame.fields.empty()) return;
+    const Vec3 origin = frame.domain.origin();
+    const float edge = frame.domain.voxel * static_cast<float>(Frame::kBlock);
+    frame.velocity.assign(3 * blockCount(frame), 0);
+    uint16_t* out = frame.velocity.data();
+    forBlocks(frame, [&](size_t slot, int bi, int bj, int bk) {
+        const Vec3 middle = origin + Vec3(static_cast<float>(bi) + 0.5f, static_cast<float>(bj) + 0.5f,
+                                          static_cast<float>(bk) + 0.5f) * edge;
+        const Vec3 v = at(middle);
+        out[3 * slot] = toHalf(std::isfinite(v.x) ? v.x : 0.0f);
+        out[3 * slot + 1] = toHalf(std::isfinite(v.y) ? v.y : 0.0f);
+        out[3 * slot + 2] = toHalf(std::isfinite(v.z) ? v.z : 0.0f);
+    });
+    // Still gas keeps none.
+    if (std::all_of(frame.velocity.begin(), frame.velocity.end(), [](uint16_t h) { return (h & 0x7fff) == 0; })) {
+        frame.velocity.clear();
+    }
+}
+
+void addVelocity(Frame& frame, const PyroSolver& solver) {
+    setVelocity(frame, [&](const Vec3& p) { return solver.flowAt(p); });
+}
+
 void addCoarseSteam(Frame& fine, const PyroSolver& coarse, int scale) {
     if (!coarse.steamy() || scale < 1) return;
     const SparseGrid& steam = coarse.steam();
@@ -756,6 +846,21 @@ std::vector<Volume> gasVolumes(const Frame& frame) {
         std::vector<float> values(cells);
         for (size_t c = 0; c < cells; ++c) values[c] = fromHalf(steam[c]);
         volumes.push_back(Volume::make("steam", d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2], std::move(values)));
+    }
+    // How fast it goes: a voxel a block of 2 x 2 x 2 cells -- written as one
+    // vector grid, "vel" (io::formatVdb).
+    std::vector<uint16_t> velocityScratch;
+    const std::vector<uint16_t>& velocity = frame.denseVelocity(velocityScratch);
+    const int bx = frame.blocks(0), by = frame.blocks(1), bz = frame.blocks(2);
+    const size_t blocks = static_cast<size_t>(bx) * static_cast<size_t>(by) * static_cast<size_t>(bz);
+    if (velocity.size() == 3 * blocks && blocks > 0) {
+        const char* names[3] = {"vel.x", "vel.y", "vel.z"};
+        for (size_t a = 0; a < 3; ++a) {
+            std::vector<float> values(blocks);
+            for (size_t b = 0; b < blocks; ++b) values[b] = fromHalf(velocity[3 * b + a]);
+            volumes.push_back(Volume::make(names[a], d.origin(), d.voxel * static_cast<float>(Frame::kBlock), bx, by, bz,
+                                           std::move(values)));
+        }
     }
     return volumes;
 }

@@ -529,6 +529,10 @@ TEST(usd_export_writes_the_gas_beside_the_stage_a_file_a_frame) {
     CHECK(text.find("rel field:density = </World/gas/density>") != std::string::npos);
     CHECK(text.find("def OpenVDBAsset \"temperature\"") != std::string::npos);
     CHECK(text.find("3: @./shot_gas/shot_gas.0003.vdb@,") != std::string::npos);
+    // How fast it goes: a vector field, vel.
+    CHECK(text.find("rel field:vel = </World/gas/vel>") != std::string::npos);
+    CHECK(text.find("token fieldDataType = \"float3\"") != std::string::npos);
+    CHECK(text.find("token vectorDataRoleHint = \"Vector\"") != std::string::npos);
 }
 
 TEST(usd_export_lens_in_tenths_of_a_unit_and_the_sun_where_the_look_has_it) {

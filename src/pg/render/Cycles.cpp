@@ -2046,13 +2046,22 @@ struct CyclesRender::Impl {
     /// (Gas::dense), the smoke scattering in its colour -- forwards, as our
     /// two lobes do on the whole -- Cycles stepping through it a cell at a
     /// time.
-    void gas(ccl::Scene* scene, const Scene& s) {
-        if (!s.gas) return;
-        const Gas::Dense d = s.gas->dense(s.gasLook, kMostGasCells);
+    /// The smoke and the fire; while the shutter is open -- `reach` seconds
+    /// either side of now -- read where they were as they move. Whether
+    /// they do.
+    bool gas(ccl::Scene* scene, const Scene& s, float reach) {
+        if (!s.gas) return false;
+        // How far the gas goes either way: the box Cycles shades in grows as
+        // much, the velocity read over it.
+        const float moved = reach > 0.0f && s.gas->moves() ? s.gas->fastest() * reach : 0.0f;
+        const Gas::Dense d = s.gas->dense(s.gasLook, kMostGasCells, moved);
         const size_t n = static_cast<size_t>(d.size[0]) * static_cast<size_t>(d.size[1]) * static_cast<size_t>(d.size[2]);
-        if (n == 0 || d.extinction.size() != n) return;
+        if (n == 0 || d.extinction.size() != n) return false;
         const Vec3 lo = d.box.lo, hi = d.box.hi, size = hi - lo;
-        if (!(size.x > 0.0f && size.y > 0.0f && size.z > 0.0f)) return;
+        if (!(size.x > 0.0f && size.y > 0.0f && size.z > 0.0f)) return false;
+        const size_t nv = static_cast<size_t>(d.velocitySize[0]) * static_cast<size_t>(d.velocitySize[1]) *
+                          static_cast<size_t>(d.velocitySize[2]);
+        const bool moving = moved > 0.0f && nv > 0 && d.velocity.size() == nv;
         const bool glows = d.emission.size() == n;
         const bool steamy = d.albedo.size() == n;  // white where the steam is
 
@@ -2089,7 +2098,11 @@ struct CyclesRender::Impl {
         // world itself, not turned onto its side as the rest: Cycles moves
         // the corners of a mesh one object places to where it places them.
         const float cell = size.x / static_cast<float>(d.size[0]);
-        const Vec3 blo = lo - Vec3(cell, cell, cell), bhi = hi + Vec3(cell, cell, cell);
+        Vec3 blo = lo - Vec3(cell, cell, cell), bhi = hi + Vec3(cell, cell, cell);
+        if (moving) {
+            blo = glm::min(blo, d.velocityBox.lo - Vec3(cell));
+            bhi = glm::max(bhi, d.velocityBox.hi + Vec3(cell));
+        }
         const Vec3 c[8] = {{blo.x, blo.y, blo.z}, {bhi.x, blo.y, blo.z}, {bhi.x, bhi.y, blo.z}, {blo.x, bhi.y, blo.z},
                            {blo.x, blo.y, bhi.z}, {bhi.x, blo.y, bhi.z}, {bhi.x, bhi.y, bhi.z}, {blo.x, bhi.y, bhi.z}};
         const int faces[6][4] = {{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {3, 7, 6, 2}, {0, 4, 7, 3}, {1, 2, 6, 5}};
@@ -2138,7 +2151,34 @@ struct CyclesRender::Impl {
             kept->data_voxel() =
                 scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(rgba), 4, d.size, where, ++imageId), params);
         }
+        if (moving) {
+            // How far it goes while the shutter is open -- its velocity, in
+            // Cycles' world, times the time open: Cycles reads the gas back
+            // along it as each ray's time has it (Kim and Ko's Eulerian
+            // motion blur), on this mesh as on its own volumes (the line
+            // CMakeLists.txt adds to its object manager).
+            const Vec3 vlo = d.velocityBox.lo, vsize = d.velocityBox.hi - d.velocityBox.lo;
+            const ccl::Transform at = ccl::make_transform(1.0f / vsize.x, 0.0f, 0.0f, -vlo.x / vsize.x,  //
+                                                          0.0f, 0.0f, 1.0f / vsize.y, -vlo.y / vsize.y,  //
+                                                          0.0f, -1.0f / vsize.z, 0.0f, -vlo.z / vsize.z);
+            std::vector<float> rgba(4 * nv);
+            const float open = 2.0f * reach;
+            for (size_t i = 0; i < nv; ++i) {
+                const ccl::float3 v = toCycles(d.velocity[i] * open);
+                rgba[4 * i] = v.x;
+                rgba[4 * i + 1] = v.y;
+                rgba[4 * i + 2] = v.z;
+                rgba[4 * i + 3] = 0.0f;
+            }
+            // By name: Cycles adds its standard volume attributes to its own
+            // volumes only -- the kernel finds it by what it stands for.
+            ccl::Attribute* velocity = mesh->attributes.add(ccl::ustring("velocity"), ccl::TypeVector, ccl::ATTR_ELEMENT_VOXEL);
+            velocity->std = ccl::ATTR_STD_VOLUME_VELOCITY;
+            velocity->data_voxel() = scene->image_manager->add_image(
+                std::make_unique<VoxelImage>(std::move(rgba), 4, d.velocitySize, at, ++imageId), params);
+        }
         place(scene, mesh, ccl::transform_identity(), Vec3(1.0f, 1.0f, 1.0f));
+        return moving;
     }
 
     void sync(const Scene& s, const Settings& settings) {
@@ -2213,7 +2253,25 @@ struct CyclesRender::Impl {
             tessellate(solid.body.instance(), points, normals);
             if (points.empty()) continue;
             ccl::Mesh* mesh = ownMesh(scene, points, normals, Vec3(1.0f, 1.0f, 1.0f), shaderOf(scene, s.solidMaterial, s.look));
-            matte(place(scene, mesh, turned, solid.color), solid.matte);
+            ccl::Object* object = place(scene, mesh, turned, solid.color);
+            matte(object, solid.matte);
+            // What moves -- a wrecking ball swinging, a door slamming --
+            // where it is as the shutter opens and as it closes too: turned
+            // by its spin about its centre, carried by its velocity.
+            const sim::Collider& body = solid.body;
+            if (reach > 0.0f && body.moves()) {
+                auto at = [&](float t) {
+                    const Mat3 r = body.turnAt(t);
+                    return placement(r, 1.0f, body.center - r * body.center + body.velocity * t);
+                };
+                ccl::array<ccl::Transform> motion;
+                motion.resize(3);
+                motion[0] = at(-reach);
+                motion[1] = turned;
+                motion[2] = at(reach);
+                object->set_motion(motion);
+                moves = true;
+            }
         }
         // The floor: as far as it goes, a square round it, faded to a disc;
         // over a plate, the ground it was filmed on, as Floor over the Plate says.
@@ -2232,7 +2290,7 @@ struct CyclesRender::Impl {
         scene->background->set_transparent_glass(over);
         scene->background->set_transparent_roughness_threshold(0.1f);
         scene->film->set_use_approximate_shadow_catcher(false);
-        gas(scene, s);
+        if (gas(scene, s, reach)) moves = true;
         world(scene, s);
         sun(scene, s, settings);
         if (camera(scene, s, settings, reach > 0.0f)) moves = true;

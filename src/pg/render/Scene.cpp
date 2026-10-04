@@ -60,22 +60,35 @@ struct TriangleHit {
     float u = 0.0f, v = 0.0f;
 };
 
-/// The nearest triangle of `m` a ray (in the mesh's space) meets before `best`; `best` shortened to it.
-bool nearestTriangle(const Mesh& m, const Vec3& origin, const Vec3& dir, float& best, TriangleHit& out) {
+/// Triangle `t` of `m` -- a corner and the edges from it -- where it is
+/// `time` seconds from now, its corners moving along their velocity.
+struct Corners {
+    Vec3 v0, e1, e2;
+};
+Corners cornersAt(const Mesh& m, uint32_t t, float time) {
+    if (time == 0.0f || m.velocity.empty()) return {m.v0[t], m.e1[t], m.e2[t]};
+    const Vec3 &a = m.velocity[3 * t], &b = m.velocity[3 * t + 1], &c = m.velocity[3 * t + 2];
+    return {m.v0[t] + a * time, m.e1[t] + (b - a) * time, m.e2[t] + (c - a) * time};
+}
+
+/// The nearest triangle of `m` a ray (in the mesh's space) meets before
+/// `best`, `time` seconds from now; `best` shortened to it.
+bool nearestTriangle(const Mesh& m, const Vec3& origin, const Vec3& dir, float& best, TriangleHit& out, float time) {
     bool found = false;
     traverse(m.bvh, origin, dir, 0.0f, best, [&](uint32_t first, uint32_t count) {
         for (uint32_t t = first; t < first + count; ++t) {
-            const Vec3 p = cross(dir, m.e2[t]);
-            const float det = dot(m.e1[t], p);
+            const Corners c = cornersAt(m, t, time);
+            const Vec3 p = cross(dir, c.e2);
+            const float det = dot(c.e1, p);
             if (det == 0.0f) continue;
             const float inv = 1.0f / det;
-            const Vec3 s = origin - m.v0[t];
+            const Vec3 s = origin - c.v0;
             const float u = dot(s, p) * inv;
             if (u < 0.0f || u > 1.0f) continue;
-            const Vec3 q = cross(s, m.e1[t]);
+            const Vec3 q = cross(s, c.e1);
             const float v = dot(dir, q) * inv;
             if (v < 0.0f || u + v > 1.0f) continue;
-            const float d = dot(m.e2[t], q) * inv;
+            const float d = dot(c.e2, q) * inv;
             if (d > 0.0f && d < best) {
                 best = d;
                 out = {t, u, v};
@@ -93,14 +106,44 @@ void axesOf(const Vec4& q, Placed& p) {
 }
 
 /// The box round a placed mesh: its box's corners, placed.
-Box placedBox(const Placed& p, const Mesh& m) {
+/// Where a placed mesh is -- `sweep` seconds before now and after too, if
+/// it flies.
+Box placedBox(const Placed& p, const Mesh& m, float sweep) {
     Box b;
     if (m.box.empty()) return b;
-    for (int c = 0; c < 8; ++c) {
-        b.grow(p.toWorld(Vec3(c & 1 ? m.box.hi.x : m.box.lo.x, c & 2 ? m.box.hi.y : m.box.lo.y,
-                              c & 4 ? m.box.hi.z : m.box.lo.z)));
+    const bool flies = sweep > 0.0f && p.velocity != Vec3(0.0f);
+    for (const float t : {0.0f, -sweep, sweep}) {
+        if (t != 0.0f && !flies) continue;
+        const Placed q = p.movedBy(t);
+        for (int c = 0; c < 8; ++c) {
+            b.grow(q.toWorld(Vec3(c & 1 ? m.box.hi.x : m.box.lo.x, c & 2 ? m.box.hi.y : m.box.lo.y,
+                                  c & 4 ? m.box.hi.z : m.box.lo.z)));
+        }
     }
     return b;
+}
+
+/// Where a solid is while it moves `sweep` seconds either way: turning, as
+/// far round its centre as it reaches; carried, along its way.
+Box solidBox(const sim::Solid& solid, const sim::ShapeInstance& shape, float sweep) {
+    Box b;
+    shape.bounds(b.lo, b.hi);
+    const sim::Collider& body = solid.body;
+    if (!(sweep > 0.0f) || !body.moves()) return b;
+    if (body.spin != Vec3(0.0f)) {
+        float reach = 0.0f;
+        for (int c = 0; c < 8; ++c) {
+            const Vec3 corner(c & 1 ? b.hi.x : b.lo.x, c & 2 ? b.hi.y : b.lo.y, c & 4 ? b.hi.z : b.lo.z);
+            reach = std::max(reach, length(corner - body.center));
+        }
+        b.lo = body.center - Vec3(reach);
+        b.hi = body.center + Vec3(reach);
+    }
+    const Vec3 go = body.velocity * sweep;
+    Box swept;
+    swept.grow(b.lo - glm::abs(go));
+    swept.grow(b.hi + glm::abs(go));
+    return swept;
 }
 
 }  // namespace
@@ -134,11 +177,15 @@ PresetSurface presetSurface(MaterialPreset preset) {
     return {};
 }
 
-std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine engine) {
+std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine engine, float sweep) {
     auto mesh = std::make_shared<Mesh>();
     const sim::ShadedTriangles tris = sim::shadedTriangles(geo);
     const size_t n = tris.count();
     if (n == 0) return mesh;
+    // Moving: its corners met where they are within `sweep` of now.
+    const bool moving = sweep > 0.0f && tris.velocities.size() == tris.positions.size() &&
+                        std::any_of(tris.velocities.begin(), tris.velocities.end(), [](const Vec3& v) { return v != Vec3(0.0f); });
+    if (moving) mesh->sweep = sweep;
 
     // What each triangle is made of: materials told apart by their numbers,
     // in steps of a 256th.
@@ -256,8 +303,12 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     std::vector<Box> boxes(embree ? 0 : n);
     for (size_t t = 0; t < n; ++t) {
         for (size_t c = 0; c < 3; ++c) {
-            if (!embree) boxes[t].grow(tris.positions[3 * t + c]);
-            mesh->box.grow(tris.positions[3 * t + c]);
+            const Vec3& p = tris.positions[3 * t + c];
+            const Vec3 go = moving ? tris.velocities[3 * t + c] * sweep : Vec3(0.0f);
+            for (const Vec3& q : {p, p - go, p + go}) {
+                if (!embree) boxes[t].grow(q);
+                mesh->box.grow(q);
+            }
         }
     }
     if (!embree) {
@@ -296,7 +347,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     });
     if (embree) {
         mesh->bvh = Bvh();
-        mesh->embree = EmbreeMesh::build(tris.positions);
+        mesh->embree = moving ? EmbreeMesh::build(tris.positions, tris.velocities, sweep) : EmbreeMesh::build(tris.positions);
     } else {
         std::iota(mesh->bvh.items.begin(), mesh->bvh.items.end(), 0u);
     }
@@ -357,7 +408,24 @@ std::shared_ptr<const Mesh> meshOfTriangles(const std::vector<Vec3>& corners, co
     return mesh;
 }
 
-bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit) const {
+bool Scene::meetSolid(size_t s, const Vec3& origin, const Vec3& dir, float time, float& t, Vec3& normal) const {
+    const sim::Collider& body = solids[s].body;
+    if (time == 0.0f || !body.moves()) return shapes[s].intersect(origin, dir, 0.0f, t, normal);
+    // The ray where the solid stands now, turned and carried back as it
+    // moves; the normal turned with it again.
+    const Mat3 turn = body.turnAt(time), back = glm::transpose(turn);
+    const Vec3 o = back * (origin - body.center - body.velocity * time) + body.center;
+    if (!shapes[s].intersect(o, back * dir, 0.0f, t, normal)) return false;
+    normal = turn * normal;
+    return true;
+}
+
+sim::Camera Scene::cameraAt(float time) const {
+    if (time == 0.0f || !cameraMoves || !(frameTime > 0.0f)) return camera;
+    return time < 0.0f ? camera.toward(cameraBefore, -time / frameTime) : camera.toward(cameraAfter, time / frameTime);
+}
+
+bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time) const {
     float best = tMax;
     int placedHit = -1, solidHit = -1;
     TriangleHit triangle;
@@ -365,7 +433,7 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
     auto solid = [&](size_t s) {
         float t = 0.0f;
         Vec3 n;
-        if (shapes[s].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < best) {
+        if (meetSolid(s, origin, dir, time, t, n) && t > 0.0f && t < best) {
             best = t;
             solidHit = static_cast<int>(s);
             placedHit = -1;
@@ -375,7 +443,7 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
     if (embree) {
         // The meshes through Embree, the solids nearer than what it met through ours.
         EmbreeHit e;
-        if (embree->nearest(origin, dir, 0.0f, best, e)) {
+        if (embree->nearest(origin, dir, 0.0f, best, e, time)) {
             best = e.t;
             placedHit = static_cast<int>(e.placed);
             triangle = {e.triangle, e.u, e.v};
@@ -389,9 +457,9 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
             for (uint32_t k = first; k < first + count; ++k) {
                 const uint32_t item = top.items[k];
                 if (item < placed.size()) {
-                    const Placed& p = placed[item];
+                    const Placed p = placed[item].movedBy(time);
                     TriangleHit th;
-                    if (nearestTriangle(*meshes[p.mesh], p.toLocal(origin), p.dirToLocal(dir), best, th)) {
+                    if (nearestTriangle(*meshes[p.mesh], p.toLocal(origin), p.dirToLocal(dir), best, th, time)) {
                         placedHit = static_cast<int>(item);
                         solidHit = -1;
                         triangle = th;
@@ -430,7 +498,9 @@ bool Scene::intersect(const Vec3& origin, const Vec3& dir, float tMax, float fad
         const float w = 1.0f - triangle.u - triangle.v;
         hit.t = best;
         hit.position = origin + dir * best;
-        hit.face = normalize(p.turn(cross(m.e1[t], m.e2[t])));
+        // Its face as it is then; its pattern stays where it was (rest).
+        const Corners moved = cornersAt(m, t, time);
+        hit.face = normalize(p.turn(cross(moved.e1, moved.e2)));
         const Vec3 n = m.normals[3 * t] * w + m.normals[3 * t + 1] * triangle.u + m.normals[3 * t + 2] * triangle.v;
         hit.normal = dot(n, n) > 1e-20f ? normalize(p.turn(n)) : hit.face;
         hit.color = (m.colors[3 * t] * w + m.colors[3 * t + 1] * triangle.u + m.colors[3 * t + 2] * triangle.v) * p.tint;
@@ -468,12 +538,12 @@ sim::Matte Scene::matteOf(const Hit& hit) const {
                                                                               : sim::Matte::None;
 }
 
-bool Scene::realBlocks(const Vec3& origin, const Vec3& dir, float tMax) const {
+bool Scene::realBlocks(const Vec3& origin, const Vec3& dir, float tMax, float time) const {
     for (size_t i = 0; i < solids.size() && i < shapes.size(); ++i) {
         if (solids[i].matte == sim::Matte::None) continue;
         float t = 0.0f;
         Vec3 n;
-        if (shapes[i].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < tMax) return true;
+        if (meetSolid(i, origin, dir, time, t, n) && t > 0.0f && t < tMax) return true;
     }
     // The floor, where it is a real thing too.
     if (look.floor && look.floorMatte != sim::Matte::None && dir.y < -1e-9f && origin.y > 0.0f) {
@@ -506,7 +576,7 @@ bool passThrough(const Mesh& m, uint32_t t, const Placed& p, Vec3& through) {
 
 }  // namespace
 
-Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax) const {
+Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax, float time) const {
     Vec3 through(1.0f, 1.0f, 1.0f);
     bool blocked = false;
     if (embree) {
@@ -515,15 +585,15 @@ Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax) const
             for (uint32_t k = first; k < first + count && !blocked; ++k) {
                 float t = 0.0f;
                 Vec3 n;
-                if (shapes[top.items[k]].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < tMax) blocked = true;
+                if (meetSolid(top.items[k], origin, dir, time, t, n) && t > 0.0f && t < tMax) blocked = true;
             }
             return !blocked;
         });
-        if (blocked || embree->blocked(origin, dir, tMax)) return {};
+        if (blocked || embree->blocked(origin, dir, tMax, time)) return {};
         // Through the glass and the water, face after face, from the nearest.
         float from = 0.0f;
         EmbreeHit e;
-        for (int faces = 0; faces < 256 && embree->nearestClear(origin, dir, from, tMax, e); ++faces) {
+        for (int faces = 0; faces < 256 && embree->nearestClear(origin, dir, from, tMax, e, time); ++faces) {
             const Placed& p = placed[e.placed];
             if (!passThrough(*meshes[p.mesh], e.triangle, p, through)) return {};
             from = e.t + std::max(e.t * 1e-6f, 1e-6f);
@@ -536,26 +606,27 @@ Vec3 Scene::transmittance(const Vec3& origin, const Vec3& dir, float tMax) const
             if (item >= placed.size()) {
                 float t = 0.0f;
                 Vec3 n;
-                if (shapes[item - placed.size()].intersect(origin, dir, 0.0f, t, n) && t > 0.0f && t < tMax) blocked = true;
+                if (meetSolid(item - placed.size(), origin, dir, time, t, n) && t > 0.0f && t < tMax) blocked = true;
                 continue;
             }
-            const Placed& p = placed[item];
+            const Placed p = placed[item].movedBy(time);
             const Mesh& m = *meshes[p.mesh];
             if (!m.shadows) continue;
             const Vec3 o = p.toLocal(origin), d = p.dirToLocal(dir);
             traverse(m.bvh, o, d, 0.0f, tMax, [&](uint32_t f, uint32_t c) {
                 for (uint32_t t = f; t < f + c; ++t) {
-                    const Vec3 pv = cross(d, m.e2[t]);
-                    const float det = dot(m.e1[t], pv);
+                    const Corners k = cornersAt(m, t, time);
+                    const Vec3 pv = cross(d, k.e2);
+                    const float det = dot(k.e1, pv);
                     if (det == 0.0f) continue;
                     const float inv = 1.0f / det;
-                    const Vec3 s = o - m.v0[t];
+                    const Vec3 s = o - k.v0;
                     const float u = dot(s, pv) * inv;
                     if (u < 0.0f || u > 1.0f) continue;
-                    const Vec3 q = cross(s, m.e1[t]);
+                    const Vec3 q = cross(s, k.e1);
                     const float v = dot(d, q) * inv;
                     if (v < 0.0f || u + v > 1.0f) continue;
-                    const float h = dot(m.e2[t], q) * inv;
+                    const float h = dot(k.e2, q) * inv;
                     if (h <= 0.0f || h >= tMax) continue;
                     if (!passThrough(m, t, p, through)) {
                         blocked = true;
@@ -629,6 +700,9 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     s.cameraAfter = in.cameraMotion ? in.cameraAfter : in.camera;
     s.frameTime = in.frameTime;
     s.time = in.time;
+    // What moves is met where it is up to half a frame either way: the
+    // longest a shutter is open.
+    s.sweep = 0.5f * std::max(in.frameTime, 0.0f);
     s.plate = in.plate;
     s.sunDirection = normalize(in.look.lightDirection());
     s.sunLight = in.look.lightColor * in.look.lightIntensity;
@@ -673,15 +747,15 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
                 }
             }
         } else {
-            add(meshOf(*in.geometry, false, engine_));
+            add(meshOf(*in.geometry, false, engine_, s.sweep));
         }
     }
     if (in.bodies) {
-        add(meshOf(*in.bodies, false, engine_));
+        add(meshOf(*in.bodies, false, engine_, s.sweep));
         // Their grit: a chip on each of its points.
         placeChips(*in.bodies, s);
     }
-    if (in.water) add(meshOf(*in.water, true, engine_));
+    if (in.water) add(meshOf(*in.water, true, engine_, s.sweep));
     // The rain: each drop the streak it falls in a share of a frame; wet
     // where it falls, as far as the drops reach in x and z.
     if (in.frame && in.frame->rain.dropCount() + in.frame->rain.dropletCount() > 0) {
@@ -706,9 +780,10 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     s.gasLook = GasLook::of(in.look);
     if (in.frame) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (gasFrame_.lock() != in.frame) {
-            gas_ = Gas::build(*in.frame);
+        if (gasFrame_.lock() != in.frame || gasFrameTime_ != in.frameTime) {
+            gas_ = Gas::build(*in.frame, in.frameTime);
             gasFrame_ = in.frame;
+            gasFrameTime_ = in.frameTime;
         }
         s.gas = gas_;
     }
@@ -717,13 +792,18 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     // and ours over the solids.
     std::vector<Box> boxes(s.placed.size() + s.shapes.size());
     parallelFor(s.placed.size(), 4096, [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) boxes[i] = placedBox(s.placed[i], *s.meshes[s.placed[i].mesh]);
+        for (size_t i = begin; i < end; ++i) boxes[i] = placedBox(s.placed[i], *s.meshes[s.placed[i].mesh], s.sweep);
     });
-    for (size_t i = 0; i < s.shapes.size(); ++i) s.shapes[i].bounds(boxes[s.placed.size() + i].lo, boxes[s.placed.size() + i].hi);
+    for (size_t i = 0; i < s.shapes.size(); ++i) boxes[s.placed.size() + i] = solidBox(s.solids[i], s.shapes[i], s.sweep);
     for (const Box& b : boxes) s.bounds.grow(b);
     if (s.gas) s.bounds.grow(s.gas->bounds());
+    // Whether anything moves while a shutter is open.
+    s.moving = s.cameraMoves || (s.gas && s.gas->moves()) ||
+               std::any_of(s.meshes.begin(), s.meshes.end(), [](const auto& m) { return m && m->sweep > 0.0f; }) ||
+               std::any_of(s.placed.begin(), s.placed.end(), [](const Placed& p) { return p.velocity != Vec3(0.0f); }) ||
+               std::any_of(s.solids.begin(), s.solids.end(), [](const sim::Solid& o) { return o.body.moves(); });
     if (engine_ == RayEngine::Embree) {
-        s.embree = EmbreeScene::build(s.meshes, s.placed);
+        s.embree = EmbreeScene::build(s.meshes, s.placed, s.sweep);
         s.top = buildBvh(std::span<const Box>(boxes).subspan(s.placed.size()), 2);
     } else {
         s.top = buildBvh(boxes, 2);

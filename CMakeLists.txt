@@ -631,6 +631,25 @@ if(PG_CYCLES)
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR pg-cycles-builds-on-its-own)  # its CMake runs below, not as part of ours
   FetchContent_MakeAvailable(cycles)
+  # Our gas goes to Cycles as a mesh round its voxels -- Cycles makes its own
+  # volumes' meshes with OpenVDB, which it is built without -- and Cycles
+  # blurs only its own volumes along their velocity. Five lines of its
+  # object manager, added to its sources once, let such a mesh's volume move
+  # as its velocity attribute says too (render/Cycles.cpp, gas()).
+  set(PG_CYCLES_OBJECT ${cycles_SOURCE_DIR}/src/scene/object.cpp)
+  file(READ ${PG_CYCLES_OBJECT} PG_CYCLES_OBJECT_TEXT)
+  if(NOT PG_CYCLES_OBJECT_TEXT MATCHES "pg: a mesh round voxels")
+    set(PG_CYCLES_ANCHOR "      flag |= SD_OBJECT_HAS_VERTEX_MOTION;\n    }\n  }\n  else if (geom->is_volume()) {")
+    string(FIND "${PG_CYCLES_OBJECT_TEXT}" "${PG_CYCLES_ANCHOR}" PG_CYCLES_AT)
+    if(PG_CYCLES_AT EQUAL -1)
+      message(WARNING "Cycles: its object manager is not as expected -- the gas renders without motion blur")
+    else()
+      string(REPLACE "${PG_CYCLES_ANCHOR}"
+             "      flag |= SD_OBJECT_HAS_VERTEX_MOTION;\n    }\n    /* pg: a mesh round voxels, its volume moving as their velocity says. */\n    if (mesh->attributes.find(ATTR_STD_VOLUME_VELOCITY)) {\n      flag |= SD_OBJECT_HAS_VOLUME_MOTION;\n      kobject.velocity_scale = 1.0f;\n    }\n  }\n  else if (geom->is_volume()) {"
+             PG_CYCLES_OBJECT_TEXT "${PG_CYCLES_OBJECT_TEXT}")
+      file(WRITE ${PG_CYCLES_OBJECT} "${PG_CYCLES_OBJECT_TEXT}")
+    endif()
+  endif()
   set(PG_CYCLES_DIR ${CMAKE_BINARY_DIR}/cycles-build)
   set(PG_CYCLES_ARGS
     -DCMAKE_BUILD_TYPE=Release

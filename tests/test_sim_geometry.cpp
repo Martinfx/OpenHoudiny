@@ -546,10 +546,21 @@ TEST(sim_geometry_simulations_come_back_as_points_and_volumes) {
         CHECK_EQ(static_cast<uint32_t>(ids[0]), frames[4]->rain.dropIds[0]);
     }
     // The gas: three volumes on the solver's grid -- and the steam, as the
-    // rain falls through the fire.
+    // rain falls through the fire -- and how fast it goes, on blocks of
+    // 2 x 2 x 2 cells.
     geo = g.cook(gas, 4);
     CHECK(!frames[4]->steam.empty());
-    CHECK(geo && geo->volumeCount() == 4);
+    CHECK(!frames[4]->velocity.empty());
+    CHECK(geo && geo->volumeCount() == 7);
+    if (const Volume* vel = geo ? geo->findVolume("vel.y") : nullptr) {
+        CHECK_EQ(vel->res[0], frames[4]->domain.cells[0] / 2);
+        CHECK(std::fabs(vel->voxel - 2.0f * frames[4]->domain.voxel) < 1e-6f);
+        float rising = 0.0f;
+        for (const float v : *vel->values) rising = std::max(rising, v);
+        CHECK(rising > 0.0f);  // the hot gas goes up
+    } else {
+        CHECK(false);
+    }
     const Volume* density = geo->findVolume("density");
     const Volume* flame = geo->findVolume("flame");
     const Volume* steam = geo->findVolume("steam");

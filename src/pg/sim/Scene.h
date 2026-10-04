@@ -118,6 +118,17 @@ struct Collider {
     bool moves() const { return velocity != Vec3() || spin != Vec3(); }
     /// The velocity of its point p.
     Vec3 velocityAt(const Vec3& p) const { return velocity + cross(spin, p - center); }
+    /// How it is turned `t` seconds from now, going on as it goes: about the
+    /// axis of its spin, as far as it turns in that time. Its point p is
+    /// then at turnAt(t) * (p - center) + center + velocity * t.
+    Mat3 turnAt(float t) const {
+        const float speed = length(spin), angle = speed * t;
+        if (!(speed > 0.0f) || angle == 0.0f) return Mat3(1.0f);
+        const Vec3 k = spin / speed;
+        // Rodrigues: I + sin K + (1 - cos) K^2, K the cross product with k.
+        const Mat3 cross(0.0f, k.z, -k.y, -k.z, 0.0f, k.x, k.y, -k.x, 0.0f);
+        return Mat3(1.0f) + cross * std::sin(angle) + (cross * cross) * (1.0f - std::cos(angle));
+    }
     bool operator==(const Collider&) const = default;
 };
 

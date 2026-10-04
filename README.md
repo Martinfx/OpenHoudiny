@@ -45,7 +45,8 @@ okna.
   z obrázku (HDRI), převod barev AgX, detail povrchů, odšumění Open Image
   Denoise; drť jako hranaté úlomky kamene a skla, kapky deště jako čárky
   vody a mokrá zem, kam prší; rozmazání pohybem, dokud je otevřená
-  závěrka (kusy, drť, látka, voda, kamera)
+  závěrka (kusy, drť, látka, voda, objekty, kouř a oheň, kamera), stejně
+  i v path traceru
 - **[docs/materials.md](docs/materials.md)** — materiály a textury: plochy
   říkají, z čeho jsou (`s@material`: beton, lom betonu, omítka, cihla,
   okno, ocel, dřevo, kůra, dlažba, tašky, trávník…), generátory si je
@@ -224,7 +225,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 605 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 53 plyn (řídká mřížka, upres, hašení), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 35 shader graf a materiály, 44 render, barvy ACES, EXR, obrázky a video, 55 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 21 stromy a vegetace
+./build/pgtests            # 611 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 35 shader graf a materiály, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 22 čtení VDB, 21 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py

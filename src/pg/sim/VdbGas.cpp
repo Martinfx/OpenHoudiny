@@ -51,6 +51,17 @@ std::string firstOf(const std::string& names, const std::vector<io::VdbGridInfo>
     return {};
 }
 
+/// The first of the space-separated `names` that is a vector grid in
+/// `grids`; empty when none is.
+std::string firstVectorOf(const std::string& names, const std::vector<io::VdbGridInfo>& grids) {
+    for (const std::string& n : wordsOf(names)) {
+        for (const io::VdbGridInfo& g : grids) {
+            if (g.name == n && g.readable && g.type.rfind("vec", 0) == 0) return n;
+        }
+    }
+    return {};
+}
+
 /// The grids the fields are read from, of a file: density, temperature,
 /// flame, steam -- each empty when the file has none of its names.
 std::array<std::string, 4> gridsOf(const VdbGas& g, const std::vector<io::VdbGridInfo>& grids) {
@@ -225,6 +236,8 @@ bool vdbGasFrame(const VdbGas& g, const Domain& domain, int frame, Frame& out, s
         }
     }
     if (o.grids.empty()) return empty();
+    const std::string velocity = firstVectorOf(g.velocity, grids);
+    if (!velocity.empty()) o.grids.push_back(velocity);
     if (voxel > 0.0f) o.downsample = std::max(1, static_cast<int>(std::floor(domain.voxel / voxel + 1e-3f)));
     o.maxVoxels = std::max<size_t>(domain.cellCount() * 2, size_t(1) << 20);
     io::VdbVolumes read;
@@ -317,6 +330,20 @@ bool vdbGasFrame(const VdbGas& g, const Domain& domain, int frame, Frame& out, s
         }
     }
     if (std::all_of(out.steam.begin(), out.steam.end(), [](uint16_t h) { return h == 0; })) out.steam.clear();
+    // How fast it goes: the vector grid at each block's middle, where the
+    // gas is -- its three parts, as the reader gives them.
+    const Volume* parts[3] = {nullptr, nullptr, nullptr};
+    for (const Volume& v : read.volumes) {
+        for (int a = 0; a < 3 && !velocity.empty(); ++a) {
+            if (v.name == velocity + "." + "xyz"[a] && v.values && v.values->size() >= v.count()) parts[a] = &v;
+        }
+    }
+    if (parts[0] && parts[1] && parts[2]) {
+        const float scale = std::isfinite(g.velocityScale) ? g.velocityScale : 1.0f;
+        setVelocity(out, [&](const Vec3& p) {
+            return Vec3(parts[0]->sample(p - g.move), parts[1]->sample(p - g.move), parts[2]->sample(p - g.move)) * scale;
+        });
+    }
     return true;
 }
 

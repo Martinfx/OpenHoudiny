@@ -50,8 +50,11 @@ std::string rayEngineName(RayEngine engine);
 /// A mesh's triangles as Embree holds them.
 class EmbreeMesh {
 public:
-    /// From three corners a triangle; null without Embree.
-    static std::shared_ptr<const EmbreeMesh> build(std::span<const Vec3> corners);
+    /// From three corners a triangle; null without Embree. Moving -- a
+    /// velocity for each corner -- where they are `sweep` seconds before
+    /// now and after too, Embree's times 0 and 1, met between along a line.
+    static std::shared_ptr<const EmbreeMesh> build(std::span<const Vec3> corners, std::span<const Vec3> velocities = {},
+                                                   float sweep = 0.0f);
     ~EmbreeMesh();
     EmbreeMesh(const EmbreeMesh&) = delete;
     EmbreeMesh& operator=(const EmbreeMesh&) = delete;
@@ -78,20 +81,24 @@ struct EmbreeHit {
 class EmbreeScene {
 public:
     /// Over `placed`, each its mesh's Embree mesh (Mesh::embree) where it
-    /// stands; a placement whose mesh has none is left out. Null without Embree.
+    /// stands -- one that flies (Placed::velocity), where it is `sweep`
+    /// seconds before now and after too; a placement whose mesh has none
+    /// is left out. Null without Embree.
     static std::shared_ptr<const EmbreeScene> build(const std::vector<std::shared_ptr<const Mesh>>& meshes,
-                                                    const std::vector<Placed>& placed);
+                                                    const std::vector<Placed>& placed, float sweep = 0.0f);
     ~EmbreeScene();
     EmbreeScene(const EmbreeScene&) = delete;
     EmbreeScene& operator=(const EmbreeScene&) = delete;
 
-    /// The nearest triangle a ray meets between `tMin` and `tMax`.
-    bool nearest(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit) const;
+    /// The nearest triangle a ray meets between `tMin` and `tMax` -- what
+    /// moves where it is `time` seconds from now.
+    bool nearest(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit, float time = 0.0f) const;
     /// Whether an opaque mesh is in a ray's way before `tMax`.
-    bool blocked(const Vec3& origin, const Vec3& dir, float tMax) const;
+    bool blocked(const Vec3& origin, const Vec3& dir, float tMax, float time = 0.0f) const;
     /// The nearest triangle of a clear mesh -- one with glass or water,
     /// which may have opaque triangles too -- between `tMin` and `tMax`.
-    bool nearestClear(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit) const;
+    bool nearestClear(const Vec3& origin, const Vec3& dir, float tMin, float tMax, EmbreeHit& hit,
+                      float time = 0.0f) const;
     bool anyClear() const { return clear_.scene != nullptr; }
 
     /// A scene of Embree's over some of the placed: its geometries' numbers
@@ -103,7 +110,10 @@ public:
 
 private:
     EmbreeScene() = default;
+    /// Seconds from now to Embree's time, 0 to 1 over -sweep to sweep.
+    float timeOf(float time) const;
     Top all_, opaque_, clear_;  // opaque_ shares all_'s scene when nothing is clear
+    float sweep_ = 0.0f;
 };
 
 }  // namespace pg::render

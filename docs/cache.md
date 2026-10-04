@@ -77,17 +77,19 @@ cache/fire/
   Solveru: polohy, rychlosti, poloměry, čísla a barvy ([grains.md](grains.md)),
   od verze 16 kusy, které se za běhu rozlomily: pro každý zlom těleso,
   místo nárazu v klidové poloze, semínko, počet úlomků a čas (28 bajtů;
-  [lámání za běhu](destruction.md#lámání-za-běhu)), a od verze 17 pára
+  [lámání za běhu](destruction.md#lámání-za-běhu)), od verze 17 pára
   plynu: vlastní pole v poloviční přesnosti ve stejných dlaždicích jako
-  kouř, jen když nějaká je ([quench.md](quench.md#pára)). Klidová geometrie
+  kouř, jen když nějaká je ([quench.md](quench.md#pára)), a od verze 18
+  rychlost plynu: tři poloviční floaty na blok 2 × 2 × 2 buněk ve stejných
+  dlaždicích, pro rozmazání pohybem ([cycles.md](cycles.md#rozmazání-pohybem)). Klidová geometrie
   kusů, pruty i síť vazeb jsou v síti uzlů a snímek načtený z disku je
   dostane od ní; úlomky se z ní a ze zlomů udělají znovu, bit po bitu
   stejné (`rigidBroken`), a pro sekvenci jen jednou — každý další snímek
   pokračuje od zlomů toho předchozího. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
-  část domény, takže 150 snímků mřížky 64 × 96 × 64 má na disku 63 MB,
-  v paměti 338 MB.
+  část domény, takže 150 snímků mřížky 64 × 96 × 64 má na disku 84 MB,
+  v paměti 138 MB. Rychlost plynu z toho bere 15 MB (bez ní 69 a 123 MB).
 - `network` je hash textu sítě **bez poloh uzlů na plátně**: posunutý uzel je
   pořád stejná síť, změněný parametr už ne. Cache jiné sítě (nebo jiné verze
   téže) se načte, ale editor i `prototype sim` upozorní.
@@ -365,7 +367,12 @@ bitu (táborák, snímek 12: `density` 6906 voxelů se součtem 1091.8103,
 i ve snímku cache).
 
 Gas Volume dává mřížky `density`, `temperature` a `flame`: tak je
-pojmenovávají pyro shadery Houdini a Blenderu.
+pojmenovávají pyro shadery Houdini a Blenderu. Rychlost plynu jde do
+vektorové mřížky `vel` (`Tree_vec3s_5_4_3`, `vector_type` invariant)
+s dvakrát větším voxelem, jeden na blok 2 × 2 × 2 buněk: z ní Houdini,
+Blender a renderery rozmazávají plyn pohybem. OpenVDB 10 ji čte jako
+`Vec3SGrid` a každý voxel kouře v ní má rychlost (táborák, snímek 24:
+4480 voxelů, nejrychleji 2,1 m/s).
 
 Zpátky je čte uzel **VDB Gas**: přehraje soubory jako plyn záběru, v každé
 buňce stejný half jako simulace. Soubory jiných programů čte i **VDB
@@ -414,7 +421,7 @@ campfire_vdb: 150 frames read from cache/fire; reading 1.2 ms/frame
 exported 150 frames of geometry, the last out/fire.0150.vdb
 ```
 
-Cache má 63 MB, 150 souborů VDB 114 MB (bez komprese, viz omezení).
+Cache má 84 MB, 150 souborů VDB 152 MB (bez komprese, viz omezení).
 
 ## 6. V kódu
 
@@ -474,11 +481,10 @@ s průběhem tam a zpět; checkpoint na disku přepsaný celý; profil kroku
 
 ## 8. Omezení
 
-- VDB se zapisuje jen jako float mřížky. Čte se víc: komprimované, half,
-  level sety, vektory ([vdb.md](vdb.md)). Rychlost plynu (`vel`)
-  snímek nedrží, takže ve VDB není a renderer z ní motion blur neudělá.
-  Hladina vody jako level set také ne — voda jde ven jako částice nebo jako
-  povrch (Liquid Surface, v USD `/World/water`).
+- VDB se zapisuje jen jako float mřížky a vektorová `vel`. Čte se víc:
+  komprimované, half, level sety, další druhy vektorů ([vdb.md](vdb.md)).
+  Hladina vody jako level set se nezapisuje — voda jde ven jako částice
+  nebo jako povrch (Liquid Surface, v USD `/World/water`).
 - Uvnitř VDB není komprese (zip, blosc): soubory jsou větší, než by zapsal
   Houdini.
 - Snímek cache drží, co editor ukazuje (poloviční přesnost), ne stav

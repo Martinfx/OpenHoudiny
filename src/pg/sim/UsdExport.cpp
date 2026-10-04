@@ -244,6 +244,7 @@ struct UsdExport::Impl {
     // The gas: a file a frame, and the box it fills; whether any had steam.
     std::vector<std::pair<int, std::string>> gasFiles, gasExtent;
     bool gasSteam = false;
+    bool gasVelocity = false;  // any had a velocity: the field vel
 
     std::vector<std::pair<int, Camera>> cameras;
     std::vector<std::pair<int, Look>> looks;
@@ -705,7 +706,10 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
     const Domain& d = frame.domain;
     std::vector<Volume> volumes = gasVolumes(frame);
     if (!volumes.empty()) {
-        if (volumes.back().name == "steam") m.gasSteam = true;
+        for (const Volume& v : volumes) {
+            if (v.name == "steam") m.gasSteam = true;
+            if (v.name == "vel.x") m.gasVelocity = true;
+        }
         std::error_code ec;
         fs::create_directories(m.gasFolder, ec);
         const std::string name = m.stem + "_gas." + four(f) + ".vdb";
@@ -954,12 +958,18 @@ usda::Stage UsdExport::stage() const {
     if (!m.gasFiles.empty()) {
         Prim& gas = world.child("Volume", "gas");
         usda::animate(gas, "float3[]", "extent", m.gasExtent);
-        for (const char* field : {"density", "temperature", "flame", "steam"}) {
+        for (const char* field : {"density", "temperature", "flame", "steam", "vel"}) {
             if (std::string(field) == "steam" && !m.gasSteam) continue;
+            if (std::string(field) == "vel" && !m.gasVelocity) continue;
             gas.relate(std::string("field:") + field, std::string("</World/gas/") + field + ">");
             Prim& asset = gas.child("OpenVDBAsset", field);
             usda::animate(asset, "asset", "filePath", m.gasFiles);
             asset.set("token", "fieldName", usda::quoted(field));
+            if (std::string(field) == "vel") {
+                // A vector -- what a renderer blurs the gas along.
+                asset.set("token", "fieldDataType", usda::quoted("float3"));
+                asset.set("token", "vectorDataRoleHint", usda::quoted("Vector"));
+            }
         }
     }
 

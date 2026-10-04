@@ -24,8 +24,9 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned; 10: a sparse gas's tiles; 11: the cloth; 12: the cloth
 // torn; 13: a sparse liquid's tiles; 14: its tiles deep in the water;
-// 15: the grains; 16: the pieces that broke as it ran; 17: the steam.
-constexpr uint32_t kVersion = 17;
+// 15: the grains; 16: the pieces that broke as it ran; 17: the steam;
+// 18: how fast the gas goes.
+constexpr uint32_t kVersion = 18;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -354,6 +355,9 @@ std::string formatFrame(const Frame& f) {
     // Version 17: the gas's steam, a half a cell as the gas lays it out --
     // none, when there is none.
     out.halves(f.steam);
+    // Version 18: how fast the gas goes, three halves for each block of
+    // 2 x 2 x 2 cells -- none, when it was not kept.
+    out.halves(f.velocity);
     return std::move(out.bytes);
 }
 
@@ -514,6 +518,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
         }
     }
     if (version >= 17) in.halvesAtMost(f.steam, f.fields.size() / 3);
+    if (version >= 18) in.halvesAtMost(f.velocity, f.fields.size() / 8 + 3);
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -525,7 +530,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     for (size_t t = 0; t < f.gasTiles.size() && gasFits; ++t) {
         gasFits = f.gasTiles[t] < tileCount && (t == 0 || f.gasTiles[t - 1] < f.gasTiles[t]);
     }
-    if (!gasFits || (!f.steam.empty() && 3 * f.steam.size() != f.fields.size())) {
+    if (!gasFits || (!f.steam.empty() && 3 * f.steam.size() != f.fields.size()) || !f.velocityFits()) {
         error = "the frame's gas does not fit its grid";
         return false;
     }

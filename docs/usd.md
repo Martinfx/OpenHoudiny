@@ -66,7 +66,7 @@ Kde scénu otevřít:
   /water                   Mesh: povrch vody                  │ souborů po
   /rain/drops              Points: kapky                      │ snímcích
   /rain/droplets           Points: kapičky odstřiků           ┘
-  /gas                     Volume: pole density, temperature, flame (a steam)
+  /gas                     Volume: pole density, temperature, flame (a steam, vel)
       /density …             OpenVDBAsset → <jméno>_gas/<jméno>_gas.0001.vdb …
   /camera                  Camera
   /sun                     DistantLight
@@ -93,7 +93,7 @@ pond_gas/pond_gas.0001.vdb …   prach, je-li
 | zrna | Zrna Grain Solveru jako PointInstancer `/World/grains` se stejnými dvanácti kamínky jako drť: velikost (`scales`) je poloměr zrna, dále `positions`, `orientations`, `velocities`, `ids`, `protoIndices` a barva po zrnech (`primvars:displayColor`), v každé vrstvě snímku ([grains.md](grains.md)). Drť, která se stala zrny (vstup Grit), je jen tady. |
 | voda | Povrch vody jako uzavřená síť čtyřúhelníků, stejný jako z uzlu Liquid Surface ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)): hladké normály, `velocities` z rychlosti vody (cache od formátu 5), `primvars:foam` (0 až 1) pro bílou pěnu, vlnky od deště na hladině. Uzavřená i u dna a stěn, aby jí renderer lámal světlo. Materiál `water`: barva z Water Looku, průhlednost 0,35, drsnost 0,02, index lomu 1,33. Když Water Look povrch skrývá (Surface vypnuté), voda se nezapíše. |
 | déšť | Kapky a kapičky odstřiků jako dvoje Points s číslem (`ids`) a rychlostí (`velocities`); kapka je široká 2 mm, kapička 1 mm. Renderer s motion blurem z nich podle rychlosti udělá čáry, jako je kreslí náhled. Materiál `rain`: barva a průhlednost z Looku deště. |
-| prach | Každý snímek zapíše jeden VDB soubor do složky `<jméno>_gas/` vedle scény: mřížky `density`, `temperature`, `flame` a `steam`, je-li v plynu pára ([quench.md](quench.md)). Cesty jsou relativní, takže složka jde přesunout spolu se scénou. |
+| prach | Každý snímek zapíše jeden VDB soubor do složky `<jméno>_gas/` vedle scény: mřížky `density`, `temperature`, `flame` a `steam`, je-li v plynu pára ([quench.md](quench.md)), a vektorovou `vel`, rychlost plynu na blocích 2 × 2 × 2 buněk. Pole `vel` má `fieldDataType` float3 a `vectorDataRoleHint` Vector, jak vektorové pole označuje schéma OpenVDBAsset. Cesty jsou relativní, takže složka jde přesunout spolu se scénou. |
 | kamera | Poloha a otočení jako v uzlu Camera (`translate`, `rotateXYZ`: stupně kolem x, pak y, pak z), ohnisko, clona a `exposure` v EV. |
 | světla | Slunce svítí ze směru, který má Look, a obloha má barvu a sílu z Looku. Intenzita je relativní jako v Looku, ne ve fyzikálních jednotkách. |
 | podlaha | Čtverec kolem scény v barvě země z Outputu, je-li podlaha zapnutá. |

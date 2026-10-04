@@ -51,9 +51,9 @@ struct Settings {
     float clamp = 20.0f;             ///< the most a bounce adds to a pixel: no fireflies
     float sunAngle = 0.53f;          ///< degrees across the sun: larger, softer shadows
     /// How much of a frame the camera's shutter is open, about the frame:
-    /// what moves -- the points' velocity v, a moving camera -- Cycles blurs
-    /// over that time, as a film camera does (0.5: half a frame, a 180°
-    /// shutter). 0: all sharp. The path tracer renders the frame's moment.
+    /// what moves -- the points' velocity v, the gas, the scene's objects, a
+    /// moving camera -- both renderers blur over that time, as a film camera
+    /// does (0.5: half a frame, a 180° shutter). 0: all sharp.
     float shutter = 0.5f;
     uint32_t seed = 0;
     /// The sky Cycles lights the scene with: the look's sun and sky, as the

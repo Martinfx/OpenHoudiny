@@ -96,11 +96,47 @@ Použitelný je po 16–32 vzorcích, čistý po 128.
 | Focus | 0 m | vzdálenost ostrosti; 0 zaostří na to, co je uprostřed obrazu |
 | Clamp | 20 | nejvíc, kolik jeden odraz přidá pixelu; bere světlé tečky (fireflies) |
 | Sun Size | 0,53° | úhlový průměr slunce: větší slunce dává měkčí stíny |
-| Motion Blur | 0,5 snímku | jak dlouho je otevřená závěrka: v Cycles se to, co se hýbe, rozmaže po své dráze ([cycles.md](cycles.md#rozmazání-pohybem)); path tracer renderuje okamžik snímku |
+| Motion Blur | 0,5 snímku | jak dlouho je otevřená závěrka: co se hýbe, se rozmaže po své dráze, v path traceru stejně jako v Cycles ([níže](#rozmazání-pohybem)); 0 je ostrý okamžik |
 
 Světlo, obloha, podlaha, expozice a barva vody jsou ze stejného **Looku**
 jako ve viewportu, takže jas obou sedí. Test ověřuje, že podlaha na slunci
 má v path traceru stejnou hodnotu jako ve viewportu (0,8035 proti 0,8005).
+
+### Rozmazání pohybem
+
+Path tracer rozmazává totéž co Cycles
+([cycles.md](cycles.md#rozmazání-pohybem)): sítě podle rychlosti `v`
+bodů (kusy, látka, voda, zobrazená geometrie), drť a instance, objekty
+scény animované klíči (posun i otáčení), plyn a kameru záběru. Každý
+vzorek pixelu si vylosuje okamžik, kdy je závěrka otevřená, a celá jeho
+cesta, i odrazy a stíny, vidí scénu v tom okamžiku.
+
+- **Sítě**: Embree dostane rohy na začátku a na konci závěrky a mezi
+  nimi je posouvá po přímce. Vlastní hierarchie má kvádry zvětšené
+  o dráhu rohů a rohy posune sama.
+- **Drť a instance**: umístění na začátku a na konci závěrky.
+- **Objekty scény**: paprsek se přenese tam, kde objekt v tom okamžiku
+  je: posune se proti jeho rychlosti a otočí zpátky kolem osy otáčení.
+  Objekt se pak počítá přesně, jako by stál.
+- **Plyn**: kouř, teplota a plamen se čtou tam, odkud sem plyn v ten
+  okamžik doletí. Bod se posune proti rychlosti o rychlost × čas
+  a s rychlostí v novém místě ještě jednou, jako v Cycles. Rychlost sahá
+  i do dlaždic kolem plynu (podle toho, jak daleko plyn doletí, jedna až
+  čtyři vrstvy), protože i tam se rozmazaný plyn dostane. Kroky delta
+  trackingu v dlaždici omezuje nejvíc plynu, kolik v ní bod může
+  přečíst: z dlaždice a tolika vrstev buněk kolem, kolik plyn v jejím
+  okolí za čas vzorku uletí. Ty se berou z maxim vrstev sousedních
+  dlaždic, nad 6 buněk z celých dlaždic. Tracking tak zůstane nestranný
+  a pomalý kouř kroky skoro nezahustí. Táborák (400 × 600, 64 vzorků)
+  trvá se závěrkou 0,5 14,1 s proti 8,1 s, kouř (200 × 300) 1,6 s proti
+  1,2 s.
+- **Kamera**: 33 kamer mezi začátkem a koncem závěrky, vzorek si vezme
+  tu mezi dvěma nejbližšími.
+
+Scéna bez pohybu se renderuje jako dřív: vzorek čas nelosuje a obraz je
+bit po bitu stejný. S nulovou závěrkou je obraz scény, která se hýbe,
+stejný jako bez pohybu až na zaokrouhlení: Embree počítá rohy v okamžiku
+snímku z obou kroků.
 
 ## 4. Materiály
 
@@ -271,7 +307,8 @@ vidět po lomeném paprsku. Podrobnosti jsou v
   dělá stejné kroky a násobí podílem světla, který každý propustí
   (**ratio tracking**). Když zbude méně než desetina, rozhodne
   ruská ruleta. Obojí je nestranné: s více vzorky ubývá šum, ne
-  přesnost (test porovná 20 000 paprsků s přesně spočtenou propustností).
+  přesnost (test porovná 20 000 paprsků s přesně spočtenou propustností,
+  další totéž v kouři, který se hýbe, i s rychlostí přes půl sekundy).
   Rozptyl se řídí stejnou Henyeyho–Greensteinovou funkcí jako ve
   viewportu: hlavně dopředu, trochu zpátky. Odšumovač by se v kouři
   neměl čeho chytit, protože každý vzorek se v kouři buď rozptýlí, nebo
@@ -361,7 +398,7 @@ nezabralo víc než polovinu času.
 - Světlo plamenů dopadá na okolí jen odrazy, které plamen náhodou
   trefí. Plameny se nevzorkují přímo jako slunce, takže země u ohně má
   víc šumu.
-- Rozmazání pohybem (motion blur) a průchody pohybu a masek do EXR.
+- Průchody pohybu a masek do EXR.
 - Textury a UV, normálové mapy, subsurface scattering.
 - Světla kromě slunce a oblohy (bodová, plošná), HDRI obloha.
 - Svazky paprsků (ray streams, wavefront): dnes se sleduje jedna cesta po

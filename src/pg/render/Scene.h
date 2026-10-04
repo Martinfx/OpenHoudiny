@@ -120,9 +120,13 @@ struct Mesh {
     /// behind the glass from the next; else none.
     std::vector<float> random;
     /// Three a triangle where the points had a velocity v -- how fast each
-    /// corner goes, m/s: what Cycles blurs it along while the shutter is
-    /// open (Settings::shutter) -- else none.
+    /// corner goes, m/s: what the renderers blur it along while the shutter
+    /// is open (Settings::shutter) -- else none.
     std::vector<Vec3> velocity;
+    /// Seconds either side of now its triangles may be met moving along
+    /// their velocity -- half a frame, the longest a shutter is open: its
+    /// hierarchy's boxes take them in. 0: met as they are now.
+    float sweep = 0.0f;
     std::vector<uint16_t> material;     ///< one a triangle, into `materials`
     std::vector<Material> materials;
     Bvh bvh;                                   ///< our own: its leaves' items are the triangles' numbers
@@ -135,8 +139,10 @@ struct Mesh {
 
 /// The mesh of the closed polygons of `geo` -- what stands on its points
 /// (instances) left out -- its materials from its attributes; `water`: all
-/// of it water. Its hierarchy `engine`'s.
-std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water = false, RayEngine engine = defaultRayEngine());
+/// of it water. Its hierarchy `engine`'s, taking in where its corners go
+/// `sweep` seconds either side of now (Mesh::sweep).
+std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water = false, RayEngine engine = defaultRayEngine(),
+                                   float sweep = 0.0f);
 
 /// A mesh of triangles as they are -- three corners each, a normal at each
 /// corner -- all of `material`, of `color`. Its hierarchy `engine`'s.
@@ -153,6 +159,13 @@ struct Placed {
     float scale = 1.0f;
     Vec3 tint{1.0f, 1.0f, 1.0f};
     Vec3 velocity;  ///< m/s, where it flies -- a chip of grit: what Cycles blurs it along
+
+    /// Where it stands `t` seconds from now, flying on.
+    Placed movedBy(float t) const {
+        Placed q = *this;
+        q.at = at + velocity * t;
+        return q;
+    }
 
     Vec3 toWorld(const Vec3& p) const { return at + (axes * p) * scale; }
     Vec3 turn(const Vec3& v) const { return axes * v; }
@@ -210,6 +223,11 @@ struct Scene {
     bool cameraMoves = false;
     float frameTime = 1.0f / 30.0f;  ///< seconds from a frame to the next (SceneInput::frameTime)
     float time = 0.0f;          ///< seconds into the shot (SceneInput::time)
+    /// Seconds either side of the frame's moment what moves may be met
+    /// where it then is -- half a frame, the longest a shutter is open: the
+    /// hierarchies take in where it goes so far.
+    float sweep = 0.0f;
+    bool moving = false;  ///< anything moves: the gas, a mesh, a chip, an object, the camera
     /// What the camera filmed, the CG goes over (SceneInput::plate); null
     /// for none.
     std::shared_ptr<const Plate> plate;
@@ -219,14 +237,21 @@ struct Scene {
     float wetness = 0.0f;
     Vec2 wetLo, wetHi;
 
+    /// Whether anything moves while a shutter is open.
+    bool moves() const { return moving; }
+    /// The camera `time` seconds from the frame's moment: on its way to
+    /// where it is a frame before (time below 0) or after.
+    sim::Camera cameraAt(float time) const;
+
     /// The first surface a ray from `origin` along the unit `dir` meets
     /// before `tMax`. `fade`, in [0, 1): whether the floor, fading out far
-    /// away, is there where the ray meets it.
-    bool intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit) const;
+    /// away, is there where the ray meets it. What moves, where it is
+    /// `time` seconds from the frame's moment (within `sweep`).
+    bool intersect(const Vec3& origin, const Vec3& dir, float tMax, float fade, Hit& hit, float time = 0.0f) const;
     /// How much of the light from along `dir` gets to `origin` from `tMax`
     /// away: 0 behind something opaque; through glass and water, tinted --
     /// as if they did not bend it.
-    Vec3 transmittance(const Vec3& origin, const Vec3& dir, float tMax) const;
+    Vec3 transmittance(const Vec3& origin, const Vec3& dir, float tMax, float time = 0.0f) const;
 
     /// The light of the sky from along the unit `dir`: the look's sky --
     /// with Sky Behind, hazy towards the horizon and glowing round the sun,
@@ -248,7 +273,10 @@ struct Scene {
     /// Whether a holdout or a catcher -- one of the real things the plate
     /// shows -- is in the way along the unit `dir` from `origin` before
     /// `tMax`: what hides the light from a catcher in the real scene.
-    bool realBlocks(const Vec3& origin, const Vec3& dir, float tMax) const;
+    bool realBlocks(const Vec3& origin, const Vec3& dir, float tMax, float time = 0.0f) const;
+    /// Where solid `s` meets a ray first, `time` seconds from the frame's
+    /// moment -- turned and carried as it moves -- and its normal there.
+    bool meetSolid(size_t s, const Vec3& origin, const Vec3& dir, float time, float& t, Vec3& normal) const;
 };
 
 /// What a frame shows.
@@ -299,6 +327,7 @@ private:
     /// The gas of the last frame: kept while the frame lives, so that a
     /// render of it from elsewhere does not make it again.
     std::weak_ptr<const sim::Frame> gasFrame_;
+    float gasFrameTime_ = 0.0f;
     std::shared_ptr<const Gas> gas_;
     std::mutex mutex_;
 };
