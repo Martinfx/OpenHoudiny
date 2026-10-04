@@ -1,5 +1,8 @@
 #include "pg/io/Vdb.h"
 
+#include "pg/io/Blosc.h"
+#include "pg/io/Deflate.h"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -53,7 +56,8 @@ public:
 
 constexpr int64_t kMagic = 0x56444220;         // "VDB "
 constexpr uint32_t kFileVersion = 224;         // what OpenVDB 6 to 12 write
-constexpr uint32_t kCompressActiveMask = 0x2;  // COMPRESS_ACTIVE_MASK, no zip, no blosc
+constexpr uint32_t kCompressZip = 0x1, kCompressActiveMask = 0x2, kCompressBlosc = 0x4;  // COMPRESS_*
+constexpr size_t kBloscMinimum = 48;  // BLOSC_MINIMUM_BYTES: fewer, kept as they are
 constexpr uint8_t kNoMaskOrInactiveVals = 0;   // every inactive value is the background: only active ones follow
 
 /// A bit per slot of a node, as OpenVDB's NodeMask keeps them: 64-bit
@@ -126,9 +130,30 @@ void metadata(Out& out, std::string_view name, std::string_view type, const std:
     out.string(value);  // the size, then the value's bytes
 }
 
+/// Values as OpenVDB's writeData writes them, `typesize` bytes each: as
+/// they are; or compressed -- their size first, below 0 (and as they are)
+/// where compressing them gains nothing.
+void writeData(Out& out, std::string_view values, size_t typesize, VdbCompression compression) {
+    if (compression == VdbCompression::None) {
+        out.raw(values);
+        return;
+    }
+    const std::span<const uint8_t> bytes(reinterpret_cast<const uint8_t*>(values.data()), values.size());
+    std::vector<uint8_t> packed;
+    if (compression == VdbCompression::Zip) packed = zlibDeflate(bytes);
+    else if (values.size() >= kBloscMinimum) packed = bloscCompress(bytes, typesize);
+    if (!packed.empty() && packed.size() < values.size()) {
+        out.i64(static_cast<int64_t>(packed.size()));
+        out.raw(std::string_view(reinterpret_cast<const char*>(packed.data()), packed.size()));
+    } else {
+        out.i64(-static_cast<int64_t>(values.size()));
+        out.raw(values);
+    }
+}
+
 /// One grid, from where its descriptor starts: a float grid of `parts[0]`,
 /// or -- three parts, laid out alike -- a vector grid of their x, y and z.
-void writeGrid(Out& out, std::span<const Volume* const> parts, const std::string& name) {
+void writeGrid(Out& out, std::span<const Volume* const> parts, const std::string& name, VdbCompression compression) {
     const Volume& v = *parts[0];
     const size_t width = parts.size();
     // The voxels that are not 0, in the leaves they fall in.
@@ -177,7 +202,9 @@ void writeGrid(Out& out, std::span<const Volume* const> parts, const std::string
     out.i64(0);
     out.i64(0);
     const size_t gridPos = out.pos();
-    out.u32(kCompressActiveMask);
+    out.u32(kCompressActiveMask | (compression == VdbCompression::Zip     ? kCompressZip
+                                   : compression == VdbCompression::Blosc ? kCompressBlosc
+                                                                          : 0u));
 
     // Metadata, by name.
     Out vec;
@@ -228,12 +255,14 @@ void writeGrid(Out& out, std::span<const Volume* const> parts, const std::string
         child.save(out);
         value.save(out);
         out.u8(kNoMaskOrInactiveVals);
+        writeData(out, {}, 4 * width, compression);  // no tile is on: no values
         for (const Coord& mid : children) {
             Mask c(4096), val(4096);
             for (const Coord& leaf : mids.at(mid)) c.set(slot(leaf, mid, 4, 3));
             c.save(out);
             val.save(out);
             out.u8(kNoMaskOrInactiveVals);
+            writeData(out, {}, 4 * width, compression);
             for (const Coord& leaf : mids.at(mid)) leaves.at(leaf).active.save(out);  // a leaf's topology: its mask
         }
     }
@@ -245,10 +274,12 @@ void writeGrid(Out& out, std::span<const Volume* const> parts, const std::string
                 const Leaf& leaf = leaves.at(origin);
                 leaf.active.save(out);
                 out.u8(kNoMaskOrInactiveVals);
+                Out values;
                 for (size_t n = 0; n < 512; ++n) {
                     if (!leaf.active.on(n)) continue;
-                    for (size_t c = 0; c < width; ++c) out.f32(leaf.values[width * n + c]);
+                    for (size_t c = 0; c < width; ++c) values.f32(leaf.values[width * n + c]);
                 }
+                writeData(out, values.bytes, 4 * width, compression);
             }
         }
     }
@@ -260,7 +291,7 @@ void writeGrid(Out& out, std::span<const Volume* const> parts, const std::string
 
 }  // namespace
 
-std::string formatVdb(const std::vector<Volume>& volumes) {
+std::string formatVdb(const std::vector<Volume>& volumes, VdbCompression compression) {
     Out out;
     out.i64(kMagic);
     out.u32(kFileVersion);
@@ -298,17 +329,17 @@ std::string formatVdb(const std::vector<Volume>& volumes) {
         std::string name = base;
         for (int n = 2; names.count(name); ++n) name = base + "_" + std::to_string(n);
         names.insert(name);
-        writeGrid(out, parts, name);
+        writeGrid(out, parts, name, compression);
     }
     return std::move(out.bytes);
 }
 
-bool writeVdb(const std::vector<Volume>& volumes, const std::string& path, std::string& error) {
+bool writeVdb(const std::vector<Volume>& volumes, const std::string& path, std::string& error, VdbCompression compression) {
     if (volumes.empty()) {
         error = "no volume to write";
         return false;
     }
-    const std::string bytes = formatVdb(volumes);
+    const std::string bytes = formatVdb(volumes, compression);
     std::ofstream file(path, std::ios::binary);
     if (!file || !file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()))) {
         error = path + ": cannot write it";

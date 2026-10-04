@@ -5,6 +5,9 @@
 //
 #include "pg/core/Half.h"
 #include "pg/io/Blosc.h"
+#include "pg/io/Blosc.h"
+#include "pg/io/Deflate.h"
+#include "pg/io/Inflate.h"
 #include "pg/io/Vdb.h"
 #include "pg/nodes/Nodes.h"
 #include "pg/sim/GeometryGraph.h"
@@ -917,4 +920,84 @@ TEST(vdb_gas_plays_back_the_gas_it_was_exported_from_to_the_bit) {
     CHECK(blocks > 1000);
     CHECK_EQ(slower, 0);
     (void)cells;
+}
+
+TEST(vdb_compressors_make_what_zlib_and_blosc_read) {
+    // Smooth floats as smoke is, bytes of no pattern, text, nothing: zlib
+    // and Blosc frames of them read back to the byte -- as zlib and c-blosc
+    // 1.21 read them too (checked outside, docs/vdb.md) -- smaller where
+    // there is a pattern, and a Blosc frame copied as it is where there is
+    // none.
+    std::vector<std::vector<uint8_t>> inputs;
+    for (const int n : {0, 1, 47, 48, 1000, 70000}) {
+        std::vector<float> f(static_cast<size_t>(n));
+        for (int i = 0; i < n; ++i) f[static_cast<size_t>(i)] = std::sin(static_cast<float>(i) * 0.01f) * 0.5f + 0.5f;
+        inputs.emplace_back(reinterpret_cast<const uint8_t*>(f.data()), reinterpret_cast<const uint8_t*>(f.data()) + 4 * f.size());
+    }
+    std::vector<uint8_t> noise(50000);
+    uint64_t state = 7;
+    for (uint8_t& b : noise) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        b = static_cast<uint8_t>(state >> 56);
+    }
+    inputs.push_back(noise);
+    std::string text;
+    for (int i = 0; i < 20000; ++i) text += "a puff of smoke " + std::to_string(i % 37) + " ";
+    inputs.emplace_back(text.begin(), text.end());
+    const size_t noiseAt = inputs.size() - 2, textAt = inputs.size() - 1;
+    for (size_t k = 0; k < inputs.size(); ++k) {
+        const std::vector<uint8_t>& in = inputs[k];
+        std::string error;
+        const std::vector<uint8_t> z = io::zlibDeflate(in);
+        std::vector<uint8_t> back;
+        CHECK(io::zlibInflate(z, back, in.size(), error) && back == in);
+        const size_t typesize = k == noiseAt || k == textAt ? 1 : 4;
+        const std::vector<uint8_t> b = io::bloscCompress(in, typesize);
+        back.clear();
+        CHECK(io::bloscDecompress(b, back, in.size(), error) && back == in);
+        if (in.size() >= 4000 && k != noiseAt) CHECK(z.size() < in.size() && b.size() < in.size());
+        if (k == noiseAt) CHECK(b.size() == in.size() + 16 && (b[2] & 0x02) != 0);  // copied as it is
+    }
+}
+
+TEST(vdb_files_are_written_compressed_and_read_back_alike) {
+    // A puff of smoke and its velocity: as it is, zipped, in Blosc -- the
+    // same volumes read back, the compressed files three fifths or less.
+    const int R = 32;
+    std::vector<float> d(static_cast<size_t>(R * R * R), 0.0f), vx(d.size(), 0.0f), vy(d.size(), 0.0f), vz(d.size(), 0.0f);
+    for (int k = 0; k < R; ++k) {
+        for (int j = 0; j < R; ++j) {
+            for (int i = 0; i < R; ++i) {
+                const float x = static_cast<float>(i - 16) / 10.0f, y = static_cast<float>(j - 14) / 9.0f, z = static_cast<float>(k - 16) / 10.0f;
+                const float r = x * x + y * y + z * z;
+                const size_t at = static_cast<size_t>(i + R * (j + R * k));
+                if (r >= 1.0f) continue;
+                d[at] = (1.0f - r) * (0.7f + 0.3f * std::sin(static_cast<float>(i) * 0.7f));
+                vx[at] = 0.3f * y;
+                vy[at] = 1.0f;
+                vz[at] = -0.3f * x;
+            }
+        }
+    }
+    const Vec3 origin(-0.8f, 0.0f, -0.8f);
+    const std::vector<Volume> volumes = {Volume::make("density", origin, 0.05f, R, R, R, d),
+                                         Volume::make("vel.x", origin, 0.05f, R, R, R, vx),
+                                         Volume::make("vel.y", origin, 0.05f, R, R, R, vy),
+                                         Volume::make("vel.z", origin, 0.05f, R, R, R, vz)};
+    size_t sizes[3] = {0, 0, 0};
+    std::vector<std::vector<float>> first;
+    for (const io::VdbCompression c : {io::VdbCompression::None, io::VdbCompression::Zip, io::VdbCompression::Blosc}) {
+        const std::string bytes = io::formatVdb(volumes, c);
+        sizes[static_cast<int>(c)] = bytes.size();
+        io::VdbVolumes out;
+        std::string error;
+        CHECK(io::parseVdb(std::span(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()), out, error));
+        CHECK_EQ(out.volumes.size(), size_t(4));
+        std::vector<std::vector<float>> values;
+        for (const Volume& v : out.volumes) values.push_back(*v.values);
+        if (first.empty()) first = values;
+        else CHECK(values == first);
+    }
+    std::printf("  the puff: %zu bytes as it is, %zu zipped, %zu in Blosc\n", sizes[0], sizes[1], sizes[2]);
+    CHECK(sizes[1] * 5 < sizes[0] * 3 && sizes[2] * 5 < sizes[0] * 3);
 }

@@ -471,7 +471,7 @@ Seřazeno podle poměru hodnota / náklad:
    hrdlem (kritérium M5 výše).
 5. **Výměna dat** — ✅ Alembic (zápis i čtení, [alembic.md](docs/alembic.md))
    a čtení OpenVDB ([vdb.md](docs/vdb.md)), rychlost plynu (`vel`) ve
-   snímcích, VDB a USD. Zbývá: MaterialX, zápis VDB s kompresí.
+   snímcích, VDB a USD, zápis VDB s kompresí Blosc nebo zip. Zbývá: MaterialX.
 6. **Build podle VFX Reference Platform** — Rocky Linux a knihovny ve
    verzích, se kterými počítají pipeline studií.
 7. **Úpravy geometrie ve viewportu** — ✅ body, hrany a plochy vybrané

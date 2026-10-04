@@ -137,12 +137,30 @@ voxelu proti pravidlům, podle kterých vznikly:
   dekódoval bez pádu (pod ASan). Šest takových rámců je v
   `tests/data/blosc` (`make_blosc.py`).
 
-Testy — `tests/test_vdb_read.cpp` (22):
+**Zápis s kompresí.** Export zapisuje hodnoty mřížek v rámcích Blosc
+(LZ4, prohozené bajty: shuffle) jako Houdini, nebo zazipované (zlib),
+nebo bez komprese (`io::VdbCompression`, výchozí Blosc). Kompresory jsou
+vlastní: deflate (LZ77 přes hashové řetězce v okně 32 KiB, dynamické
+Huffmanovy kódy, uložený blok tam, kde by kód nebyl menší), blok LZ4
+a rámec Blosc 1. Bloky dělí do proudů po bajtech typu tam, kde je c-blosc 1
+dělil vždy, takže rámec přečte každá verze. Hodnoty pod 48 bajtů nebo ty,
+které by komprese nezmenšila, zůstávají bez komprese, jako to dělá
+OpenVDB.
+- **zlib 1.3 a c-blosc 1.21** (Python) rozbalí rámce z našich kompresorů
+  bajt po bajtu: hladké floaty, text i prázdná data, 0 až 4,4 MB. Deflate
+  vychází stejně velký jako zlib na úrovni 6 (1 078 712 proti 1 078 709
+  bajtům), Blosc o 10 % větší než LZ4 z c-blosc.
+- **Blender 4 (OpenVDB 12)** načte obláček (hustota a vektorová `vel`)
+  bez komprese, zazipovaný i v Blosc. Všechny tři vyrenderuje v Cycles na
+  pixel stejně. Obláček 48³: 189 kB bez komprese, 72 kB zip, 85 kB Blosc.
+
+Testy — `tests/test_vdb_read.cpp` (24):
 - rámce Blosc z c-blosc a rozdělené bloky;
 - všechny soubory výše, hodnota po hodnotě;
 - `vdbGrids` jen z hlaviček, průměrování velkých mřížek, výběr podle jmen,
   osa Z nahoru;
-- zpětné čtení vlastního zápisu; poškozené soubory odmítnuté bez pádu;
+- zpětné čtení vlastního zápisu, i se zipem a Blosc, a vlastní rámce
+  zlib a Blosc čtené zpět; poškozené soubory odmítnuté bez pádu;
 - uzly VDB Import (objemy, povrch level setu, sekvence) a VDB Gas
   (doména, snímky, přehrání ve WorldSolveru, změna souboru), export
   a přehrání táboráku bit po bitu, i s rychlostí.
@@ -152,8 +170,10 @@ Testy — `tests/test_vdb_read.cpp` (22):
 | Soubor | Co dělá |
 |---|---|
 | `src/pg/io/VdbRead.cpp` | Čtečka: hlavička, deskriptory, metadata, transformace, strom, hodnoty; hustý objem ve světě (`readVdb`, `parseVdb`), hlavičky (`vdbGrids`) |
-| `src/pg/io/Blosc.h` | Dekomprese rámců Blosc 1 (BloscLZ, LZ4, zlib, shuffle) |
-| `src/pg/io/Lz4.h` | Bloky LZ4 (sdílené s USD) |
+| `src/pg/io/Vdb.cpp` | Zápis: hlavička, deskriptory, strom, hodnoty bez komprese, zip nebo Blosc |
+| `src/pg/io/Blosc.h` | Rámce Blosc 1: dekomprese (BloscLZ, LZ4, zlib, shuffle) i komprese (LZ4, shuffle) |
+| `src/pg/io/Lz4.h` | Bloky LZ4 (sdílené s USD): čtení i zápis |
+| `src/pg/io/Deflate.h` | Proudy deflate a zlib: komprese (`Inflate.h` čte) |
 | `src/pg/nodes/Vdb.cpp` | Uzel VDB Import (`vdbimport`) |
 | `src/pg/sim/VdbGas.h` | Doména ze souborů záběru a plyn snímku z jeho souboru |
 | `src/pg/sim/World.cpp` | Přehrávání místo simulace plynu |
@@ -163,8 +183,9 @@ Testy — `tests/test_vdb_read.cpp` (22):
 
 ## 7. Omezení
 
-- **Zápis** zůstává bez komprese: float mřížky a vektorová `vel`
-  ([cache.md](cache.md)).
+- **Zápis** float mřížek a vektorové `vel`, bez half floatů a bez
+  mřížek jiných typů ([cache.md](cache.md)). Kompresi volí kód
+  (`VdbCompression`), v exportu zatím nejde přepnout parametrem.
 - **Rychlost** se čte jen z vektorové mřížky (`vec3s`, `vec3d`). Tři
   float mřížky se složkami zvlášť VDB Gas jako rychlost nevezme.
 - **Doména** stojí na podlaze kolem osy Y; plyn daleko od ní dělá velkou

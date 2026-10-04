@@ -1,6 +1,6 @@
 #pragma once
 //
-// Blosc (version 1) frames decompressed: what OpenVDB compresses a grid's
+// Blosc (version 1) frames decompressed and made: what OpenVDB compresses a grid's
 // values with when it is built with Blosc -- as Houdini's and Blender's
 // are. A frame is a 16-byte header -- versions, flags, the size of what it
 // holds and of each block -- where each block starts, and the blocks: each
@@ -24,5 +24,12 @@ namespace pg::io {
 /// most `limit` bytes. False, with why, for a frame that is not one, is cut
 /// short, or uses what is not read.
 bool bloscDecompress(std::span<const uint8_t> in, std::vector<uint8_t>& out, size_t limit, std::string& error);
+
+/// `in` -- numbers of `typesize` bytes -- as a Blosc frame, as OpenVDB
+/// writes one: its bytes shuffled, blocks of 64 KiB in LZ4, each split in
+/// a stream per byte of the type where c-blosc 1 always split them (so any
+/// version reads it), a stream that LZ4 makes no smaller stored as it is;
+/// the whole copied as it is if that is no smaller.
+std::vector<uint8_t> bloscCompress(std::span<const uint8_t> in, size_t typesize);
 
 }  // namespace pg::io

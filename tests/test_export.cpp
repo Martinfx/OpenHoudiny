@@ -121,7 +121,7 @@ struct VdbFile {
             grid.blockPos = i64();
             grid.endPos = i64();
             if (static_cast<int64_t>(at) != grid.gridPos) ok = false;
-            if (u32() != 2) ok = false;  // active-mask compression
+            if (u32() != 6) ok = false;  // active-mask compression, the values in Blosc
             readMeta(grid.meta);
             if (grid.endPos < grid.blockPos || grid.blockPos < grid.gridPos || grid.endPos > static_cast<int64_t>(data.size())) {
                 ok = false;

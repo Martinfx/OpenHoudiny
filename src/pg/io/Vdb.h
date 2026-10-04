@@ -10,7 +10,9 @@
 //               volumes give the same bytes), file metadata ("creator")
 //   each grid   its name, "Tree_float_5_4_3" (or "Tree_vec3s_5_4_3" for a
 //               vector), where it starts and ends;
-//               active-mask compression (no zip); metadata ("class",
+//               active-mask compression, the values in Blosc (LZ4, the
+//               bytes shuffled) as Houdini writes them, or zipped, or as
+//               they are (VdbCompression); metadata ("class",
 //               "name", the bounding box and the voxel count); a uniform
 //               scale and a translation that puts voxel (i, j, k) at the
 //               volume's voxel centre; the tree -- root, 32^3 and 16^3
@@ -42,14 +44,21 @@
 
 namespace pg::io {
 
+/// How a grid's values are kept: as they are, zipped (zlib, what every
+/// OpenVDB reads), or in Blosc frames (LZ4 -- what Houdini writes; read by
+/// an OpenVDB built with Blosc, as Houdini's, Blender's and the renderers'
+/// are). Values too few to gain by it are kept as they are, as OpenVDB does.
+enum class VdbCompression { None, Zip, Blosc };
+
 /// The file's bytes: a float grid for each volume, named as it is (a name
 /// that comes twice gets a suffix, "density_2") -- but for a vector's
 /// parts, "vel.x", "vel.y" and "vel.z" in turn and laid out alike: one
 /// vector grid of them, "vel" (vec3s), as Houdini writes a velocity.
-std::string formatVdb(const std::vector<Volume>& volumes);
+std::string formatVdb(const std::vector<Volume>& volumes, VdbCompression compression = VdbCompression::Blosc);
 /// Writes them to `path`. False, with why, if the file cannot be written or
 /// there is no volume.
-bool writeVdb(const std::vector<Volume>& volumes, const std::string& path, std::string& error);
+bool writeVdb(const std::vector<Volume>& volumes, const std::string& path, std::string& error,
+              VdbCompression compression = VdbCompression::Blosc);
 
 /// A grid of an OpenVDB file, as its header says (vdbGrids).
 struct VdbGridInfo {

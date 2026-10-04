@@ -3,6 +3,7 @@
 #include "pg/io/Inflate.h"
 #include "pg/io/Lz4.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace pg::io {
@@ -150,6 +151,67 @@ bool bloscDecompress(std::span<const uint8_t> in, std::vector<uint8_t>& out, siz
         if (shuffle) unshuffle(typesize, size, shuffled.data(), block);
     }
     return true;
+}
+
+std::vector<uint8_t> bloscCompress(std::span<const uint8_t> in, size_t typesize) {
+    typesize = std::clamp<size_t>(typesize, 1, 255);
+    const size_t nbytes = in.size();
+    size_t blocksize = std::min<size_t>(nbytes, 65536);
+    if (blocksize > typesize) blocksize -= blocksize % typesize;
+    if (blocksize == 0) blocksize = 1;
+    const size_t blocks = nbytes == 0 ? 0 : nbytes / blocksize + (nbytes % blocksize ? 1 : 0);
+    const size_t leftover = nbytes % blocksize;
+    const bool shuffle = typesize > 1;
+    std::vector<uint8_t> out(kHeader + 4 * blocks, 0);
+    auto put32 = [&](size_t at, uint32_t v) {
+        for (int i = 0; i < 4; ++i) out[at + static_cast<size_t>(i)] = static_cast<uint8_t>(v >> (8 * i));
+    };
+    out[0] = 2;  // the format's version
+    out[1] = 1;  // LZ4's
+    out[2] = static_cast<uint8_t>((shuffle ? kShuffle : 0) | (kLz4 << 5));
+    out[3] = static_cast<uint8_t>(typesize);
+    put32(4, static_cast<uint32_t>(nbytes));
+    put32(8, static_cast<uint32_t>(blocksize));
+    std::vector<uint8_t> shuffled(blocksize), packed;
+    for (size_t b = 0; b < blocks; ++b) {
+        put32(kHeader + 4 * b, static_cast<uint32_t>(out.size()));
+        const bool last = leftover != 0 && b + 1 == blocks;
+        const size_t size = last ? leftover : blocksize;
+        const uint8_t* block = in.data() + b * blocksize;
+        const uint8_t* from = block;
+        if (shuffle) {
+            // The first bytes of the numbers, then the second...: what does
+            // not make a whole number at the end as it is.
+            const size_t n = size / typesize;
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < typesize; ++j) shuffled[j * n + i] = block[i * typesize + j];
+            }
+            std::memcpy(shuffled.data() + n * typesize, block + n * typesize, size - n * typesize);
+            from = shuffled.data();
+        }
+        // Split as c-blosc 1 always did, so that any version reads it.
+        const size_t splits = (typesize <= kMaxSplits && blocksize / typesize >= kMinBufferSize && !last) ? typesize : 1;
+        const size_t part = size / splits;
+        for (size_t s = 0; s < splits; ++s) {
+            packed.clear();
+            lz4Compress(from + s * part, part, packed);
+            const bool stored = packed.empty() || packed.size() >= part;
+            const size_t csize = stored ? part : packed.size();
+            const size_t at = out.size();
+            out.resize(at + 4);
+            put32(at, static_cast<uint32_t>(csize));
+            if (stored) out.insert(out.end(), from + s * part, from + (s + 1) * part);
+            else out.insert(out.end(), packed.begin(), packed.end());
+        }
+    }
+    if (out.size() >= nbytes + kHeader) {
+        // No smaller: copied as it is.
+        out.resize(kHeader);
+        out[2] = static_cast<uint8_t>(kMemcpyed | (kLz4 << 5));
+        out.insert(out.end(), in.begin(), in.end());
+    }
+    put32(12, static_cast<uint32_t>(out.size()));
+    return out;
 }
 
 }  // namespace pg::io

@@ -128,6 +128,7 @@ add_library(pgcore
   src/pg/nodes/Ecosystem.cpp
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
+  src/pg/io/Deflate.cpp
   src/pg/io/VdbRead.cpp
   src/pg/io/Jpeg.cpp
   src/pg/io/Video.cpp
