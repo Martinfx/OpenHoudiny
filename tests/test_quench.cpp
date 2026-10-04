@@ -1,11 +1,13 @@
 //
 // Water and fire (PyroSolver::setWater, World): water in the gas cools it,
-// soaks the fuel and makes steam; a source it falls on soaks and stays
-// out; without water, or with Quench 0, nothing changes, to the bit; a
+// soaks the fuel and makes steam -- a field of its own, which rises and
+// thins out; a source it falls on soaks and stays out; without water, or with Quench 0, nothing changes, to the bit; a
 // downpour puts out a campfire, a bucket of water douses it. Rain fills the
 // water it falls into as fast as Fill says, and fast drops land in shallow
 // water rather than through it.
 //
+#include "pg/core/Parallel.h"
+#include "pg/sim/Frame.h"
 #include "pg/sim/Liquid.h"
 #include "pg/sim/Network.h"
 #include "pg/sim/Pyro.h"
@@ -73,12 +75,140 @@ TEST(water_in_the_gas_cools_it_soaks_the_fuel_and_makes_steam) {
     CHECK(wet.temperature().sum() < 0.6 * dry.temperature().sum());
     CHECK(wet.flame().sum() < 0.1 * dry.flame().sum());
     CHECK(wet.fuel().sum() < 0.1 * dry.fuel().sum());
-    // The heat it took rose as steam.
-    CHECK(wet.density().sum() > 1.1 * dry.density().sum());
+    // The heat it took is steam: a field of its own, not smoke.
+    CHECK(wet.steamy());
+    CHECK(!dry.steamy());
+    CHECK(wet.steam().sum() > 0.3 * (dry.temperature().sum() - wet.temperature().sum()));
+    CHECK(wet.density().sum() < 1.05 * dry.density().sum());
+    // ... which a frame of it holds; one of the dry fire none.
+    const Frame wetFrame = capture(wet), dryFrame = capture(dry);
+    CHECK(!wetFrame.steam.empty() && wetFrame.steamFits());
+    CHECK(dryFrame.steam.empty());
     // The source under it is soaked: it gives a share of what it did.
     CHECK_EQ(wet.soaked().size(), size_t(1));
     CHECK(wet.soaked()[0] > 1.0f);
     CHECK(dry.soaked().empty());
+}
+
+TEST(steam_rises_and_thins_out) {
+    // A douse of the fire, then none: the steam it made goes up -- lighter
+    // than the air -- and fades as Steam Fade says; with Steam 0 the water
+    // makes none.
+    PyroSolver fire(smallFire());
+    for (int f = 0; f < 20; ++f) fire.step();
+    const PyroSolver::Water water = waterIn(Vec3(-0.2f, 0.0f, -0.2f), Vec3(0.2f, 0.4f, 0.2f), 0.02f);
+    for (int f = 0; f < 2; ++f) {
+        fire.setWater(water);
+        fire.step();
+    }
+    auto heightOf = [&](const SparseGrid& g) {
+        double sum = 0.0, weighted = 0.0;
+        for (int k = 0; k < fire.nz(); ++k) {
+            for (int j = 0; j < fire.ny(); ++j) {
+                for (int i = 0; i < fire.nx(); ++i) {
+                    const double v = g.at(i, j, k);
+                    sum += v;
+                    weighted += v * fire.worldAt(0.0f, static_cast<float>(j) + 0.5f, 0.0f).y;
+                }
+            }
+        }
+        return sum > 0.0 ? weighted / sum : 0.0;
+    };
+    const double made = fire.steam().sum(), low = heightOf(fire.steam());
+    CHECK(made > 0.0);
+    for (int f = 0; f < 30; ++f) {
+        fire.setWater(PyroSolver::Water());
+        fire.step();
+    }
+    // A second on: well up, and thinned -- by some half (e^-0.7), less what
+    // carrying it on a grid this coarse makes of it.
+    CHECK(heightOf(fire.steam()) > low + 0.5);
+    CHECK(fire.steam().sum() < 0.7 * made);
+    CHECK(fire.steam().sum() > 0.05 * made);
+    // Steam 0: the water cools as before, and makes no steam.
+    Scene none = smallFire();
+    none.solver.steam = 0.0f;
+    PyroSolver plain(none);
+    for (int f = 0; f < 20; ++f) plain.step();
+    for (int f = 0; f < 2; ++f) {
+        plain.setWater(water);
+        plain.step();
+    }
+    CHECK(!plain.steamy());
+    CHECK_EQ(plain.steam().sum(), 0.0);
+}
+
+TEST(the_fire_boils_away_the_water_in_it) {
+    // A handful of water dropped into the flames of a burning fire -- too
+    // little to put it out: much of it boils away on the way down; with
+    // Evaporate 0 none does. The drops of a downpour through it, the same.
+    // The same on one thread and on four.
+    auto world = [](float evaporate) {
+        World w;
+        w.hasGas = true;
+        w.gas = smallFire();
+        w.gas.solver.evaporate = evaporate;
+        w.hasWater = true;
+        w.water.solver.size = Vec3(1.0f, 1.2f, 1.0f);
+        w.water.solver.resolution = 32;
+        WaterSource blob;
+        blob.center = Vec3(0.0f, 0.55f, 0.0f);
+        blob.size = Vec3(0.08f, 0.08f, 0.08f);
+        blob.start = 0.8f;  // when the fire is burning
+        w.water.sources.push_back(blob);
+        w.keepParticles = true;
+        return w;
+    };
+    auto run = [](const World& w, int frames) {
+        WorldSolver s(w);
+        for (int f = 0; f < frames; ++f) s.step();
+        return s.capture();
+    };
+    const Frame boiled = run(world(1.0f), 45), kept = run(world(0.0f), 45);
+    CHECK(kept.water.particles > 50);
+    CHECK(boiled.water.particles < kept.water.particles * 7 / 10);
+    // The same particles boil away on one thread as on many.
+    const unsigned saved = TaskPool::instance().threadCount();
+    TaskPool::instance().setThreadCount(1);
+    const Frame one = run(world(1.0f), 45);
+    TaskPool::instance().setThreadCount(saved);
+    CHECK_EQ(one.water.particles, boiled.water.particles);
+    CHECK(one.water.positions == boiled.water.positions);
+    // Rain -- drops that fall through the flames in a twentieth of a second:
+    // few boil away, more as Evaporate is higher.
+    auto rainy = [](float evaporate) {
+        World w;
+        w.hasGas = true;
+        w.gas = smallFire();
+        w.gas.solver.evaporate = evaporate;
+        w.gas.solver.quench = 0.0f;  // the fire burns on: only the boiling counts
+        w.hasRain = true;
+        w.rain.rain.center = Vec3(0.0f, 1.6f, 0.0f);
+        w.rain.rain.size = Vec3(0.3f, 0.1f, 0.3f);
+        w.rain.rain.rate = 3000.0f;
+        return w;
+    };
+    // ... those that got through the flames: low over the fire.
+    auto under = [](const Frame& f) {
+        size_t n = 0;
+        for (size_t d = 0; d < f.rain.dropCount(); ++d) {
+            const float* q = f.rain.drops.data() + 6 * d;
+            n += q[1] < 0.35f && std::fabs(q[0]) < 0.15f && std::fabs(q[2]) < 0.15f ? 1 : 0;
+        }
+        return n;
+    };
+    size_t dry = 0, wet = 0;
+    WorldSolver boiling(rainy(8.0f)), raining(rainy(0.0f));
+    for (int f = 0; f < 60; ++f) {
+        boiling.step();
+        raining.step();
+        if (f >= 20) {
+            dry += under(boiling.capture());
+            wet += under(raining.capture());
+        }
+    }
+    CHECK(wet > 50);
+    CHECK(dry < wet * 8 / 10);
 }
 
 TEST(a_soaked_fire_stays_out_when_the_water_has_gone) {
@@ -231,6 +361,13 @@ TEST(network_quench_steam_and_fill_reach_the_solvers) {
         if (n.type == "pyro_solver") {
             net.setParam(n.id, "quench", {2.0f, 0.0f, 0.0f});
             net.setParam(n.id, "steam", {0.5f, 0.0f, 0.0f});
+            net.setParam(n.id, "steam_lift", {2.5f, 0.0f, 0.0f});
+            net.setParam(n.id, "steam_fade", {0.25f, 0.0f, 0.0f});
+            net.setParam(n.id, "evaporate", {3.0f, 0.0f, 0.0f});
+        }
+        if (n.type == "volume_look") {
+            net.setParam(n.id, "steam_color", {0.8f, 0.85f, 0.9f});
+            net.setParam(n.id, "steam_density", {12.0f, 0.0f, 0.0f});
         }
         if (n.type == "rain") net.setParam(n.id, "fill", {12.0f, 0.0f, 0.0f});
     }
@@ -238,15 +375,30 @@ TEST(network_quench_steam_and_fill_reach_the_solvers) {
     CHECK(c.ok);
     CHECK_EQ(c.world.gas.solver.quench, 2.0f);
     CHECK_EQ(c.world.gas.solver.steam, 0.5f);
+    CHECK_EQ(c.world.gas.solver.steamLift, 2.5f);
+    CHECK_EQ(c.world.gas.solver.steamFade, 0.25f);
+    CHECK_EQ(c.world.gas.solver.evaporate, 3.0f);
+    CHECK_EQ(c.lookAt(1).steamColor.y, 0.85f);
+    CHECK_EQ(c.lookAt(1).steamDensity, 12.0f);
     CHECK_EQ(c.world.rain.rain.fill, 12.0f);
     // Saved and read again, they stay.
     Network again;
     CHECK(Network::load(net.save(), again, error));
     const Compiled d = again.compile(PG_SIM_EXAMPLES_DIR);
     CHECK_EQ(d.world.gas.solver.quench, 2.0f);
+    CHECK_EQ(d.world.gas.solver.steamFade, 0.25f);
+    CHECK_EQ(d.world.gas.solver.evaporate, 3.0f);
+    CHECK_EQ(d.lookAt(1).steamDensity, 12.0f);
     CHECK_EQ(d.world.rain.rain.fill, 12.0f);
-    // Their defaults: water puts fire out, rain does not fill.
+    // Their defaults: water puts fire out and the fire boils it, rain does
+    // not fill; the steam white.
     const World plain = exampleWorld("rain_pond");
     CHECK_EQ(plain.rain.rain.fill, 0.0f);
-    CHECK_EQ(exampleWorld("campfire").gas.solver.quench, 1.0f);
+    const World campfire = exampleWorld("campfire");
+    CHECK_EQ(campfire.gas.solver.quench, 1.0f);
+    CHECK_EQ(campfire.gas.solver.steam, 1.0f);
+    CHECK_EQ(campfire.gas.solver.steamLift, 1.5f);
+    CHECK_EQ(campfire.gas.solver.steamFade, 0.7f);
+    CHECK_EQ(campfire.gas.solver.evaporate, 1.0f);
+    CHECK(Look().steamColor.x > 0.9f && Look().steamDensity == 8.0f);
 }

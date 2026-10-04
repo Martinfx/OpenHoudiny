@@ -422,7 +422,7 @@ private:
     // What the lighting was worked out for.
     struct LightingKey {
         Vec3 light;
-        float density = -1.0f, flame = 0.0f, flameStart = 0.0f, flameRange = 0.0f;
+        float density = -1.0f, steamDensity = 0.0f, flame = 0.0f, flameStart = 0.0f, flameRange = 0.0f;
         bool operator==(const LightingKey&) const = default;
     };
     bool lightingDirty_ = true;

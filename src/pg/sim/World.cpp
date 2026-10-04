@@ -78,8 +78,9 @@ WorldSolver::WorldSolver(const World& world) : world_(world.sanitized()) {
         grainsPush_ = grains_ && world_.rigid.intoGrains;
         coupled_ = fluidsPush_ || clothPushes_ || grainsPush_;
     }
-    // The water and the rain put the fire out.
+    // The water and the rain put the fire out -- and it boils them away.
     quenches_ = gas_ && (water_ || rain_) && world_.gas.solver.quench > 0.0f;
+    evaporates_ = gas_ && (water_ || rain_) && world_.gas.solver.evaporate > 0.0f;
 }
 
 namespace {
@@ -125,6 +126,16 @@ void WorldSolver::step() {
         t0 = Clock::now();
         gas_->step();
         profile_.gas = msSince(t0);
+    }
+    if (evaporates_) {
+        // The fire boils away the water in it -- the particles, the drops --
+        // as it is hotter round them than kBoil, before they move on.
+        const PyroSolver* gas = gas_.get();
+        const float boil = world_.gas.solver.evaporate;
+        const auto rate = [gas, boil](const Vec3& p) { return boil * std::max(gas->heatAt(p) - kBoil, 0.0f); };
+        const uint32_t seed = static_cast<uint32_t>(frame_) * 0x9E3779B9u + 0x7F4A7C15u;
+        if (water_) water_->evaporate(rate, world_.timeStep, seed);
+        if (rain_) rain_->evaporate(rate, world_.timeStep, seed ^ 0x85EBCA6Bu);
     }
     if (water_) {
         t0 = Clock::now();
@@ -215,6 +226,20 @@ void WorldSolver::prepare() {
         }
         rigid_->step();
         profile_.rigid = msSince(t0);
+        // The grit that came out of the pieces is the grains' now: they take
+        // it into this step. (Stepped again from a checkpoint, the grains
+        // read afterwards are what they had.)
+        if (grains_ && world_.rigid.gritIntoGrains && !rigid_->thrown().empty()) {
+            const std::vector<RigidBit>& bits = rigid_->thrown();
+            std::vector<Vec3> at(bits.size()), velocity(bits.size());
+            std::vector<float> radius(bits.size());
+            for (size_t i = 0; i < bits.size(); ++i) {
+                at[i] = bits[i].at;
+                velocity[i] = bits[i].velocity;
+                radius[i] = 0.5f * bits[i].size;
+            }
+            grains_->add(at, velocity, radius, &world_.rigid.gritColor);
+        }
     }
     const RigidScene& rigid = world_.rigid;
     const bool piecesIntoGas = rigid_ && (rigid.intoGas || rigid.dustIntoGas);
@@ -356,11 +381,11 @@ RigidFluids WorldSolver::fluids() const {
 // the rain poured into it that is not a particle yet, version 5),
 // the rain, the cloth, torn or not (version 3), the gas's upres, the grains
 // -- as its saveState() writes it; the gas with how soaked its sources are
-// (version 5). The pieces' is not: they are stepped again, with
-// those flows.
+// (version 5) and its steam (version 6). The pieces' is not: they are
+// stepped again, with those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
-constexpr uint32_t kStateVersion = 5;
+constexpr uint32_t kStateVersion = 6;
 }  // namespace
 
 std::string WorldSolver::saveState() const {
@@ -470,8 +495,13 @@ World preview(const World& world, float fraction) {
 
 Frame WorldSolver::capture() const {
     Frame f;
-    if (upres_) f = sim::capture(*upres_);
-    else if (gas_) f = sim::capture(*gas_);
+    if (upres_) {
+        f = sim::capture(*upres_);
+        // The steam: the solver's, the upres carries none of its own.
+        addCoarseSteam(f, *gas_, world_.upres.scale);
+    } else if (gas_) {
+        f = sim::capture(*gas_);
+    }
     if (water_) f.water = sim::capture(*water_, world_.keepParticles);
     if (rain_) f.rain = sim::capture(*rain_);
     if (rigid_) f.rigid = rigid_->capture();

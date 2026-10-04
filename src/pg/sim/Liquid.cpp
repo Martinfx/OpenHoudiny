@@ -961,6 +961,35 @@ void LiquidSolver::emit() {
     if (added) sortParticles();
 }
 
+size_t LiquidSolver::evaporate(const std::function<float(const Vec3&)>& rate, float dt, uint32_t seed) {
+    const size_t n = position_.size();
+    if (n == 0 || !rate || !(dt > 0.0f)) return 0;
+    std::vector<uint8_t> gone(n, 0);
+    pg::parallelFor(n, 4096, [&](size_t begin, size_t end) {
+        for (size_t p = begin; p < end; ++p) {
+            const float r = rate(position_[p]);
+            if (!(r > 0.0f)) continue;
+            gone[p] = detail::boiledAway(id_[p], seed, r * dt) ? 1 : 0;
+        }
+    });
+    size_t kept = 0;
+    for (size_t p = 0; p < n; ++p) {
+        if (gone[p]) continue;
+        position_[kept] = position_[p];
+        velocity_[kept] = velocity_[p];
+        foam_[kept] = foam_[p];
+        id_[kept] = id_[p];
+        ++kept;
+    }
+    if (kept == n) return 0;
+    position_.resize(kept);
+    velocity_.resize(kept);
+    foam_.resize(kept);
+    id_.resize(kept);
+    sortParticles();  // for the questions asked between steps
+    return n - kept;
+}
+
 void LiquidSolver::pour(const std::vector<Vec3>& at, const std::vector<Vec3>& velocity, float volume) {
     if (!(volume > 0.0f) || at.empty()) return;
     const float h = domain_.voxel;

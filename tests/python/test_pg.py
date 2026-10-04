@@ -292,6 +292,20 @@ class Simulations(unittest.TestCase):
             net.simulate().load_state(state)
         self.assertLess(straight.current.gas().size, net.simulate().step().gas().size)
 
+    def test_the_water_makes_steam_of_the_fire_it_puts_out(self):
+        # A bucket of water on a campfire: the heat it takes is steam, a
+        # field of its own on the gas's grid; before the water, none.
+        net = pg.Network.example("fire_douse")
+        sim = net.simulate(preview=0.5)
+        frames = {f.number: f for f in sim.run(55) if f.number in (40, 55)}
+        dry, wet = frames[40], frames[55]
+        self.assertEqual(wet.gas("steam").shape, wet.gas().shape)
+        self.assertEqual(wet.gas("steam").dtype, np.float16)
+        self.assertGreater(float(wet.gas("steam").astype(np.float32).sum()), 0.0)
+        self.assertEqual(float(dry.gas("steam").astype(np.float32).sum()), 0.0)
+        with self.assertRaises(pg.Error):
+            wet.gas("vapour")
+
     def test_frames_to_a_cache_and_back(self):
         net = self.pond()
         folder = tempfile.mkdtemp()

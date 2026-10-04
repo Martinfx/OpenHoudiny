@@ -155,6 +155,7 @@ private:
     bool clothPushes_ = false;  // the cloth they fall on
     bool grainsPush_ = false;   // the grains that fall on them
     bool quenches_ = false;     // the water and the rain get into the gas
+    bool evaporates_ = false;   // ... and the fire boils them away
     std::vector<RigidFlow> flows_;
 };
 

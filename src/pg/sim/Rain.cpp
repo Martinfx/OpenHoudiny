@@ -422,6 +422,16 @@ void RainSolver::move(float dt, const LiquidSolver* water) {
     droplets_.resize(k);
 }
 
+size_t RainSolver::evaporate(const std::function<float(const Vec3&)>& rate, float dt, uint32_t seed) {
+    if (drops_.empty() || !rate || !(dt > 0.0f)) return 0;
+    const size_t before = drops_.size();
+    std::erase_if(drops_, [&](const RainParticle& d) {
+        const float r = rate(d.position);
+        return r > 0.0f && detail::boiledAway(d.id, seed, r * dt);
+    });
+    return before - drops_.size();
+}
+
 float RainSolver::dropVolume() const {
     const RainSettings& r = scene_.rain;
     // Fill mm a second over a square metre, shared by the drops falling on it.

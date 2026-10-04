@@ -228,7 +228,7 @@ přeskočí.
 - **Ukázkový záběr:** `examples/usd` hlásí všech 28 validátorů USD 0 nálezů.
 
 Testy:
-- **`tests/test_usd_read.cpp` (16):**
+- **`tests/test_usd_read.cpp` (17):**
   - text s hodnotami všech druhů a chyba s řádkem;
   - crate proti textu téže scény z `tests/data/usd`, jak je zapsalo USD;
   - crate verze 0.4.0 a `.usdz`;
@@ -238,6 +238,7 @@ Testy:
     z knihovny);
   - transformace, import geometrie, uzly USD Camera a USD Import;
   - zpětné čtení vlastního exportu;
+  - prototypy PointInstanceru zůstanou, kde jsou: nejsou geometrií scény;
   - 500 poškozených souborů odmítnutých bez pádu (i pod ASan).
 - **`tests/python/test_usd.py`:**
   - ukázkový záběr;
@@ -263,8 +264,11 @@ Testy:
 ## 8. Omezení
 
 - **Materiály a textury** se nečtou. Barva je jen `displayColor`.
-- **PointInstancer** (rozmístěné kopie, typicky vegetace), **NURBS** a
-  **Volume** (VDB) se nečtou. `prototype usd` je vypíše jako přeskočené.
+- **PointInstancer** (rozmístěné kopie, typicky vegetace, drť a zrna
+  z vlastního exportu), **NURBS** a **Volume** (VDB) se nečtou. `prototype
+  usd` je vypíše jako přeskočené. Prototypy pod PointInstancerem se
+  nečtou ani jako samostatná geometrie: nestojí tam, kde jsou v souboru,
+  ale tam, kam je instancer rozmístí.
 - **Subdivize:** mesh se čte jako řídicí síť, bez vyhlazení.
 - **Spliny** (animace křivkou, `x.spline`, USD 25 a novější) se nečtou:
   atribut, který má jen spline, nemá hodnotu. Časové vzorky a zbytek

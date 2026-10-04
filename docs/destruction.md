@@ -921,11 +921,20 @@ natočení ([`moveGrit`, `throwFromFace` v `Rigid.cpp`](../src/pg/sim/Rigid.cpp)
 
 Drť nesou snímky, cache (natočení od verze 9), **RBD Pieces** se zapnutým
 `grit` (body s `pscale`, `v`, `id` a `orient`), Python (`grit`,
-`grit_velocities`, `grit_ids`, `grit_orient`) a USD (`primvars:orient`).
+`grit_velocities`, `grit_ids`, `grit_orient`) a USD (PointInstancer
+s kamínky stejných tvarů, jaké kreslí renderery, natočenými jako drť).
 `orient` je jednotkový kvaternion x, y, z, w jako v Houdini: **Copy to
 Points** natočí kamínek zkopírovaný na body drti přesně tak, jak se drť
 točí (`orient` má přednost před normálou). Drti je nejvýš 40 000 kousků a
 simulaci zpomalí málo (v příkladu demolition asi o 1 %).
+
+**Drť jako zrna.** Výstup Rigid zapojený do vstupu **Grit** Grain Solveru
+předá zrnům každý kousek kamene, jakmile je venku z kusu, ze kterého
+vyletěl. Od toho kroku je zrnem: naráží do ostatních zrn i do kusů, kusy
+tlačí a kde ho padne víc na jedno místo, leží na sobě — na troskách i kolem
+nich. Střepy skla zůstanou drtí
+RBD Solveru. Příklad **shatter_grit** je `shatter_blocks` takto
+s Grain Solverem ([grains.md](grains.md#drť-z-betonu-jako-zrna)).
 
 ### Devátý příklad: sloup ze schodů
 
@@ -1334,13 +1343,14 @@ pokračuje rovně.
 **Do jiného rendereru.** `prototype sim demolition - --export
 demolition.usda` zapíše celý záběr jako scénu USD: každé těleso jednou
 jako tvar a pak jen jeho poloha a otočení v každém snímku, rozmetaná tělesa
-zneviditelněná, drť jako body s natočením (`primvars:orient`), prach jako
+zneviditelněná, drť jako PointInstancer s kamínky natočenými jako drť, prach jako
 soubory VDB vedle, kamera, slunce a obloha. Blender, Houdini nebo Karma ho vyrenderují s vlastním
 světlem, rozmazáním pohybem a materiály; plochy řezu jsou `GeomSubset`
 `inside`, aby dostaly jiný materiál ([usd.md](usd.md)). Skleněné plochy
 jsou `GeomSubset` `glass` s materiálem `/World/Looks/glass` (čirý,
 hladký, IOR 1,5), trhliny skla samostatná síť `cracks`, neviditelná do
-snímku, kdy tabule praskla, a drť nese `primvars:glass`. Pruty jsou
+snímku, kdy tabule praskla, a skleněná drť jsou prototypy střepů
+s materiálem skla. Pruty jsou
 `/World/rebar`: lineární `BasisCurves` s tloušťkou (`widths` po vrcholech)
 a rychlostmi, v souboru každého snímku. V Pythonu vrátí
 `frame.rigid.rebar()` pruty snímku jako geometrii (`width`, `v`) a
@@ -1712,7 +1722,7 @@ v `tests/test_usd.cpp` a `test_glass_breaks_as_glass` v `tests/python/test_pg.py
   a prachu je desetina toho, co z kamene; kreslení se skleněnou drtí;
 - příklad v síti: rám není sklo; USD: materiál skla, podmnožiny `glass`
   s vazbou na něj, bez `inside`, síť `cracks` neviditelná do snímku, kdy
-  tabule praskla, `primvars:glass` u drti.
+  tabule praskla, skleněná drť jako prototypy střepů s vazbou na sklo.
 
 `tests/test_bricks.cpp` (7 testů) a `test_brick_wall_is_laid_in_its_bond_and_stands_on_its_mortar`
 v `tests/python/test_pg.py`:
@@ -1808,8 +1818,8 @@ v `tests/test_export.cpp`, natočení drti v `tests/test_usd.cpp` a
   ke středu;
 - Copy to Points natočí kopii podle `orient` (i nenormovaného) místo
   podle normály; RBD Pieces dá drti `orient` ze snímku; USD zapíše
-  `primvars:orient` hodnotami snímku; snímek verze 8 se přečte bez
-  natočení;
+  natočení kamínků (`orientations` PointInstanceru) hodnotami snímku;
+  snímek verze 8 se přečte bez natočení;
 - Python: drť leží na desce a na zemi, ne v desce, `grit_orient` má
   jednotkové kvaterniony a RBD Pieces je nese jako `orient`.
 
@@ -1979,13 +1989,14 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   Náraz jde sítí dál i přes spoje, které praskly (`spread`); oslabená
   čára tedy určí, kde se zlomí, ne kam až náraz dosáhne.
 - **Drť je bod, ne těleso.** Kousek naráží jako bod (paprsek), kusy
-  nestrká a do jiné drti nenaráží, takže se nehromadí do kopečků. Dokud
-  je uvnitř kusů, ze kterých vylétl, nenaráží do ničeho, co se hýbe.
-  Lom je pro drť kruh o ploše spoje, takže u protáhlé plochy může drť
-  vylétnout i těsně vedle ní. Okno kreslí drť jako obrázky úlomků, které
-  se v letu otáčejí po svém: natočení ze simulace jde do RBD Pieces, Copy
-  to Points a USD, ne do okna. USD nese drť jako body
-  (`Points` s `primvars:orient`), ne jako `PointInstancer` s kamínky.
+  nestrká a do jiné drti nenaráží, takže se nehromadí do kopečků — to
+  umí, až když je zrnem Grain Solveru (vstup Grit), a pak je to koule
+  poloviční velikosti kousku. Dokud je uvnitř kusů, ze kterých vylétl,
+  nenaráží do ničeho, co se hýbe. Lom je pro drť kruh o ploše spoje,
+  takže u protáhlé plochy může drť vylétnout i těsně vedle ní. Okno
+  kreslí drť jako obrázky úlomků, které se v letu otáčejí po svém:
+  natočení ze simulace jde do RBD Pieces, Copy to Points a USD, ne do
+  okna.
 - **Guide vede tělesa, ne body.** Z Guide se bere jen tuhá póza každého
   kusu. Kus, který se v Guide deformuje (ohýbá, natahuje), sleduje, jak
   nejlépe umí, tvar ale nezmění. Guide musí mít tytéž body ve stejném

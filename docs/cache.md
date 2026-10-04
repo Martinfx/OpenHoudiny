@@ -73,9 +73,11 @@ cache/fire/
   od verze 14 dlaždice hluboko ve vodě jen svými čísly
   ([pyro.md](pyro.md#jak-se-voda-kreslí)), od verze 15 zrna Grain
   Solveru: polohy, rychlosti, poloměry, čísla a barvy ([grains.md](grains.md)),
-  a od verze 16 kusy, které se za běhu rozlomily: pro každý zlom těleso,
+  od verze 16 kusy, které se za běhu rozlomily: pro každý zlom těleso,
   místo nárazu v klidové poloze, semínko, počet úlomků a čas (28 bajtů;
-  [lámání za běhu](destruction.md#lámání-za-běhu)). Klidová geometrie
+  [lámání za běhu](destruction.md#lámání-za-běhu)), a od verze 17 pára
+  plynu: vlastní pole v poloviční přesnosti ve stejných dlaždicích jako
+  kouř, jen když nějaká je ([quench.md](quench.md#pára)). Klidová geometrie
   kusů, pruty i síť vazeb jsou v síti uzlů a snímek načtený z disku je
   dostane od ní; úlomky se z ní a ze zlomů udělají znovu, bit po bitu
   stejné (`rigidBroken`), a pro sekvenci jen jednou — každý další snímek
@@ -138,7 +140,8 @@ přehrát i scrubovat. Viz [Velké cache ve viewportu](#velké-cache-ve-viewport
 **Checkpoint** (`checkpoint.pgstate`) je celý stav simulace
 (`WorldSolver::saveState`), ne snímek v poloviční přesnosti:
 
-- plyn: pole ve floatech, aktivní dlaždice, buňky a stěny překážek;
+- plyn: pole ve floatech (i pára a promočení zdrojů), aktivní dlaždice,
+  buňky a stěny překážek;
 - voda: částice, jejich čísla, mřížky rychlosti, vzdálenosti a tlaku
   (tlak je první odhad dalšího řešení), počitadla;
 - déšť: kapky, kapičky, vlnky na hladině.

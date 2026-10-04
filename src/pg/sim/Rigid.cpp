@@ -93,6 +93,7 @@ RigidScene RigidScene::sanitized() const {
     s.fractureMinSize = std::clamp(finite(s.fractureMinSize, d.fractureMinSize), 0.0f, 1e6f);
     s.fractureRough = std::clamp(finite(s.fractureRough, d.fractureRough), 0.0f, 1.0f);
     if (r.insideGroup.empty()) r.insideGroup = "inside";
+    for (int a = 0; a < 3; ++a) r.gritColor[a] = std::clamp(finite(r.gritColor[a], 0.5f), 0.0f, 1.0f);
     s.timeStep = std::clamp(finite(s.timeStep, d.timeStep), 1e-4f, 1.0f);
     detail::sanitize(r.colliders);
     return r;
@@ -1817,9 +1818,6 @@ void appendTubes(Geometry& geo, const Geometry& bars, const Vec3& steel) {
     setPrimitiveString(geo, "material", "steel", tubes);
 }
 
-/// The tint of a chip of glass.
-constexpr Vec3 kGlassChip(0.86f, 0.94f, 0.92f);
-
 }  // namespace
 
 std::shared_ptr<Geometry> drawnPieces(const RigidFrame& f, const Vec3& color, const Vec3& inside,
@@ -2290,6 +2288,7 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
     };
     std::vector<Grit> grit;
     uint32_t gritThrown = 0;  ///< how many bits so far: the next one's number
+    std::vector<RigidBit> handed;  ///< the grit that left the pieces this step, for the grains
     struct Knock {
         Vec3 at, normal, velocity;
         float speed = 0.0f;
@@ -4026,6 +4025,11 @@ const std::vector<RigidShatter>& RigidSolver::shatters() const {
     return impl_ ? impl_->shatters : none;
 }
 
+const std::vector<RigidBit>& RigidSolver::thrown() const {
+    static const std::vector<RigidBit> none;
+    return impl_ ? impl_->handed : none;
+}
+
 void RigidSolver::setColliders(const std::vector<Collider>& colliders) {
     Impl& m = *impl_;
     JPH::BodyInterface& bi = m.physics.GetBodyInterfaceNoLock();
@@ -4282,6 +4286,22 @@ void RigidSolver::step() {
     m.flow = RigidFlow();  // spent
     m.grit.erase(std::remove_if(m.grit.begin(), m.grit.end(), [](const Impl::Grit& q) { return q.p.y < -100.0f; }),
                  m.grit.end());
+    // Out of the pieces it came from, the grit is the grains' (gritIntoGrains):
+    // it leaves the solver -- chips of glass aside -- in its order.
+    m.handed.clear();
+    if (scene_.gritIntoGrains) {
+        size_t kept = 0;
+        for (size_t i = 0; i < m.grit.size(); ++i) {
+            const Impl::Grit& q = m.grit[i];
+            if (q.free && !q.glass) {
+                m.handed.push_back({q.p, q.v, q.size});
+                continue;
+            }
+            if (kept != i) m.grit[kept] = q;
+            ++kept;
+        }
+        m.grit.resize(kept);
+    }
     if (m.grit.size() > kMaxGrit) m.grit.erase(m.grit.begin(), m.grit.end() - static_cast<long>(kMaxGrit));
     times.grit = msSince(t0);
     for (const Impl::Cluster& c : m.clusters) {
@@ -4539,6 +4559,10 @@ RigidSolver::~RigidSolver() = default;
 size_t RigidSolver::pieceCount() const { return 0; }
 const std::vector<RigidShatter>& RigidSolver::shatters() const {
     static const std::vector<RigidShatter> none;
+    return none;
+}
+const std::vector<RigidBit>& RigidSolver::thrown() const {
+    static const std::vector<RigidBit> none;
     return none;
 }
 void RigidSolver::setColliders(const std::vector<Collider>&) {}

@@ -24,9 +24,14 @@
 // of a Rain on their way down -- puts the fire out, after the gas is
 // carried and before it burns: each cell it is in cools by a share of its
 // heat, its fuel soaks and its flame goes out, as fast as there is water in
-// it; the heat it takes rises as steam, smoke a little warm. A source of
-// fire the water falls on soaks too, and gives less and less: a campfire in
-// the rain dies down, and stays out.
+// it; the heat it takes makes steam. A source of fire the water falls on
+// soaks too, and gives less and less: a campfire in the rain dies down, and
+// stays out.
+//
+// Steam is a field of its own, as smoke is: carried by the flow, white, it
+// rises -- lighter than the air, and warm (steamLift) -- and thins out into
+// clear air as it goes (steamFade). Without water there is none, and the
+// solver does not carry it.
 //
 // Heat and flame are separate, as in Houdini: heat lifts the gas and fades
 // slowly, the flame -- fuel burning -- shows for a fraction of a second. A
@@ -67,6 +72,10 @@ namespace pg::sim {
 class StateReader;
 class StateWriter;
 
+/// The temperature above which the gas boils away the water in it
+/// (SolverSettings::evaporate): warm smoke leaves it be, the flames take it.
+inline constexpr float kBoil = 0.5f;
+
 class PyroSolver {
 public:
     explicit PyroSolver(const Scene& scene = Scene::fire());
@@ -84,6 +93,10 @@ public:
     const Domain& domain() const { return domain_; }
 
     const SparseGrid& density() const { return density_; }  ///< smoke, soot
+    /// Steam the water made of the heat it took: white, rising, thinning.
+    const SparseGrid& steam() const { return steam_; }
+    /// Whether there is any steam: water has quenched the gas.
+    bool steamy() const { return steamy_; }
     const SparseGrid& temperature() const { return temperature_; }
     const SparseGrid& fuel() const { return fuel_; }
     /// Fuel burnt within the last flameLife seconds: where the fire is.
@@ -103,6 +116,9 @@ public:
     void velocityAt(float x, float y, float z, float out[3]) const;
     /// ... at a world point; still air outside the domain.
     Vec3 flowAt(const Vec3& p) const;
+    /// The temperature at a world point, between the cells' middles; 0
+    /// outside the domain.
+    float heatAt(const Vec3& p) const;
 
     /// Water in the gas for the next step: where it is (World gives it).
     struct Water {
@@ -188,7 +204,8 @@ private:
     int nx_ = 0, ny_ = 0, nz_ = 0;
     std::shared_ptr<const Tiles> cells_, faces_[3];  // the tiles worked on
     SparseGrid vel_[3], velNext_[3];
-    SparseGrid density_, temperature_, fuel_, flame_, solid_;
+    SparseGrid density_, temperature_, fuel_, flame_, solid_, steam_;
+    bool steamy_ = false;              // there is steam: it is carried, it rises and thins
     bool anySolid_ = false;
     std::vector<size_t> solidCells_;   // where the solid cells are in the fields
     std::vector<size_t> blocked_[3];   // faces next to or inside a solid, per axis

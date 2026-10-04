@@ -24,8 +24,8 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned; 10: a sparse gas's tiles; 11: the cloth; 12: the cloth
 // torn; 13: a sparse liquid's tiles; 14: its tiles deep in the water;
-// 15: the grains; 16: the pieces that broke as it ran.
-constexpr uint32_t kVersion = 16;
+// 15: the grains; 16: the pieces that broke as it ran; 17: the steam.
+constexpr uint32_t kVersion = 17;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -351,6 +351,9 @@ std::string formatFrame(const Frame& f) {
         out.u32(s.count);
         out.f32(s.time);
     }
+    // Version 17: the gas's steam, a half a cell as the gas lays it out --
+    // none, when there is none.
+    out.halves(f.steam);
     return std::move(out.bytes);
 }
 
@@ -510,6 +513,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
             s.time = in.f32();
         }
     }
+    if (version >= 17) in.halvesAtMost(f.steam, f.fields.size() / 3);
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -521,7 +525,7 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
     for (size_t t = 0; t < f.gasTiles.size() && gasFits; ++t) {
         gasFits = f.gasTiles[t] < tileCount && (t == 0 || f.gasTiles[t - 1] < f.gasTiles[t]);
     }
-    if (!gasFits) {
+    if (!gasFits || (!f.steam.empty() && 3 * f.steam.size() != f.fields.size())) {
         error = "the frame's gas does not fit its grid";
         return false;
     }

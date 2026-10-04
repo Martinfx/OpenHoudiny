@@ -785,9 +785,17 @@ std::string purpose(const Stage& stage, const Stage::Prim& prim) {
 
 std::vector<const Stage::Prim*> geometryPrims(const Stage& stage, const ImportOptions& options) {
     std::vector<const Stage::Prim*> out;
+    // What is under a PointInstancer is its prototypes: drawn where it puts
+    // them, not where they are (as UsdImaging has it).
+    auto prototype = [](const Stage::Prim& p) {
+        for (const Stage::Prim* a = p.parent; a; a = a->parent) {
+            if (a->type == "PointInstancer") return true;
+        }
+        return false;
+    };
     for (const auto& owned : stage.prims()) {
         const Stage::Prim& p = *owned;
-        if (!p.defined || !isGeometry(p.type)) continue;
+        if (!p.defined || !isGeometry(p.type) || prototype(p)) continue;
         bool inside = options.roots.empty();
         for (const std::string& r : options.roots) inside = inside || under(p.path, r);
         if (!inside) continue;

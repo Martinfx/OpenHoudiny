@@ -89,6 +89,7 @@ add_library(pgcore
   src/pg/core/Selection.cpp
   src/pg/core/Soft.cpp
   src/pg/core/Tree.cpp
+  src/pg/core/Chips.cpp
   src/pg/core/Instances.cpp
   src/pg/core/Grass.cpp
   src/pg/lang/Parse.cpp
@@ -1044,6 +1045,7 @@ add_executable(pgtests
   tests/test_grains.cpp
   tests/test_quench.cpp
   tests/test_shatter.cpp
+  tests/test_grit_grains.cpp
   tests/test_edit.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp

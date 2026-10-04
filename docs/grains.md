@@ -7,7 +7,8 @@ v Houdini: metodou PBD (*Position Based Dynamics*) s mnoha malými podkroky
 za snímek a několika průchody přes kontakty v každém. Nasypaná zrna tvoří
 hromadu tak strmou, jak dovolí tření. Mokrý písek stojí jako stěna. Zrna
 padají na podlahu, na objekty a na kusy RBD Solveru a ty kusy zpětně
-tlačí.
+tlačí. Drť, kterou RBD Solveru vyhazují lomy, může být rovnou zrny: padá
+na trosky, sesouvá se z nich a leží kolem nich, kde jí padlo víc, na sobě.
 
 ![Písek se sype na bednu: hromádka na víku, sesouvání po stěně a kužel na zemi (Cycles)](img/grains-sand.jpg)
 
@@ -58,11 +59,37 @@ asi 16 ms na snímek.
 
 ![Štěrk ze skluzu: sjede, rozteče se a posune krabice](img/grains-gravel.jpg)
 
+### Drť z betonu jako zrna
+
+Příklad **shatter_grit** ([examples/sim/shatter_grit.pgsim](../examples/sim/shatter_grit.pgsim))
+je **shatter_blocks** z [destruction.md](destruction.md) — tři betonové
+kvádry v řadě a demoliční koule, která jimi projede a každý rozbije tam,
+kam udeří — s jedním uzlem navíc:
+
+- **Grain Solver** `grit` (Friction 0,9) má ve vstupu **Grit** výstup
+  Rigid RBD Solveru. Zrna nemají žádné body v Geometry: všechna jsou drť.
+- RBD Solver hází víc drti (`debris 6`).
+
+Každý kousek drti, který vyletí z kusu, ze kterého vznikl, je od toho
+kroku zrnem: narazí do ostatních, dopadne na úlomky a sjede z nich
+a leží kolem trosek v barvě lomu. Rána ho rozhází daleko, takže většina
+zrn leží na zemi jednotlivě; kde ho padlo víc na jedno místo, leží na
+sobě. Po 75 snímcích je ve scéně asi 3 100 zrn, 2 770 jich leží v klidu
+a 150 z nich na úlomcích nebo na jiných zrnech.
+
+```
+./build/prototype sim shatter_grit drt.png --frames 75 --renderer cycles
+```
+
+![Drť z betonu jako zrna: trosky tří kvádrů a kolem nich zrna v barvě lomu, některá na úlomcích (Cycles, snímek 75)](img/grains-grit.jpg)
+
+![Editor: shatter_grit na snímku 75, vybraný Grain Solver grit; v záhlaví viewportu a ve stavovém řádku „3.1 k grains“](img/editor-grit.jpg)
+
 ## 2. Co je čím
 
 | uzel | co dělá |
 |---|---|
-| **Grain Solver** (Simulation) | Zrna z bodů geometrie v **Geometry**. Velikost je `pscale` (poloměr, jinak parametr Radius), barva `Cd`, počáteční rychlost `v`. **Colliders**: objekty a RBD Solver (jeho kusy zrna tlačí). **Forces**: vítr. Výstup **Look** patří do Looks uzlu Output, výstup **Grains** do Grain Points. |
+| **Grain Solver** (Simulation) | Zrna z bodů geometrie v **Geometry**. Velikost je `pscale` (poloměr, jinak parametr Radius), barva `Cd`, počáteční rychlost `v`. **Colliders**: objekty a RBD Solver (jeho kusy zrna tlačí). **Forces**: vítr. **Grit**: výstup Rigid RBD Solveru — jeho drť jsou zrna (stačí i bez bodů v Geometry). Výstup **Look** patří do Looks uzlu Output, výstup **Grains** do Grain Points. |
 | **Grain Points** (Geometry) | Zrna snímku jako body: `P`, rychlost `v`, `pscale` (poloměr), `id` (stejné po celou dobu), `Cd` a `orient` (každé zrno natočené po svém). Na body lze kopírovat kameny (Copy to Points), exportovat je do PLY nebo dál zpracovat. |
 
 ![Editor: písek se sype na bednu; v přehledu řádky Grains (průměr zrna, tření), Count (31 848 zrn) a Step, ve stavovém řádku „31.8 k grains“; uzel sand ukazuje v náhledu proud a hromadu](img/editor-grains.jpg)
@@ -91,7 +118,7 @@ Kreslí je viewport, path tracer i Cycles.
 
 Úhel hromady podle tření (2 200 až 2 900 zrn nasypaných na jedno místo,
 po 200 snímcích, test `grains_pile_as_steep_as_their_friction_holds`):
-Friction 0,15 dá asi 16°, Friction 0,8 asi 36°. Suchý písek má v přírodě
+Friction 0,15 dá asi 15°, Friction 0,8 asi 38°. Suchý písek má v přírodě
 30 až 35°.
 
 ## 4. Jak to funguje
@@ -122,9 +149,12 @@ Za snímek proběhne Substeps podkroků. V každém:
    proti pohybu povrchu. U kusu RBD se zaznamená, o kolik ho zrno
    posunulo.
 5. **Rychlost** z rozdílu poloh. Zrno vytlačené z hlubokého průniku
-   neodletí: jeho rychlost nesmí přesáhnout tu, se kterou přiletělo,
-   o víc než 0,5 m/s. Zrno v kontaktu, které se skoro nehýbe (Rest Speed),
-   zůstane na místě.
+   neodletí: jeho rychlost nesmí přesáhnout o víc než 0,5 m/s tu, se
+   kterou přiletělo, nebo rychlost nejrychlejšího povrchu, kterého se
+   dotklo (kus, který ho nese nebo do něj vrazil). Omezená je rychlost
+   sama, ne jen její změna, takže se nenasčítá ani přes několik podkroků
+   po sobě. Zrno v kontaktu, které se skoro nehýbe (Rest Speed), zůstane
+   na místě.
 
 **Kusy RBD** jsou v kroku zrn tělesa své hmotnosti. Co jim zrna předala
 (posun, rychlost, rotace), dostane RBD Solver na začátku dalšího kroku,
@@ -135,6 +165,23 @@ podlaha RBD Solveru. Zrno vedle kusu na zemi ho ale tlačí.
 pokud mu nepřekáží žádné jiné zrno, staré ani právě vzniklé (vzdálenost
 pod 0,9 součtu poloměrů). Od druhého snímku se poloha bodu náhodně posune
 o desetinu poloměru, aby proud nebyl ze sloupců.
+
+**Drť jako zrna** (vstup Grit). RBD Solver drť vyhazuje z lomů a nárazů
+jako dřív, ale kousek kamene, který je venku z kusu, ze kterého vznikl
+(`RigidScene::gritIntoGrains`), si nenechá: po kroku RBD ho World předá
+zrnům (`RigidSolver::thrown`, `GrainSolver::add`) s polohou, rychlostí
+a poloměrem půl velikosti kousku. Zrno dostane další číslo zrn a barvu
+lomu kusů (Inside Color RBD Solveru × 0,9, jak drť kreslí RBD Solver).
+Střepy skla zůstávají drtí RBD Solveru: jsou to ploché střípky, ne zrna.
+Propojení zároveň udělá z kusů RBD Solveru kolidery zrn (jako by byl RBD
+Solver i v Colliders), takže zrna padají na kusy a tlačí je.
+
+Drť se rodí uprostřed hromady trosek a často v jiném zrnu nebo v kusu.
+Nová zrna proto před prvním podkrokem projdou kontakty bez rychlosti
+(*pre-stabilizace*, Macklin a kol. 2014, §4.4): rozestoupí se, ale
+neodletí. A zrno, které kus tlačí do podlahy, se zpod něj vymáčkne
+do strany (od středu kusu, když tlačí přímo dolů) nejvýš rychlostí
+0,5 m/s, jakou se zrna rozestupují — nikdy ne pod podlahu.
 
 ## 5. Snímky, cache, checkpoint a export
 
@@ -147,9 +194,11 @@ o desetinu poloměru, aby proud nebyl ze sloupců.
   i uprostřed sypání.
 - **Grain Points** vrátí zrna jako body. Export do PLY a OBJ funguje jako
   u ostatních bodů ([cache.md](cache.md)).
-- **USD**: `/World/grains` jako Points v každé vrstvě snímku: `points`,
-  `widths`, `velocities`, `ids`, `primvars:displayColor` a
-  `primvars:orient` ([usd.md](usd.md)).
+- **USD**: `/World/grains` jako PointInstancer v každé vrstvě snímku:
+  dvanáct prototypů úlomků kamene (tytéž tvary, jaké kreslí renderery),
+  `positions`, `orientations`, `scales`, `velocities`, `ids`,
+  `protoIndices` a `primvars:displayColor` ([usd.md](usd.md)). Zrna, která
+  byla drtí, jsou tam jen jednou: RBD Solver je už nenese.
 - **Python**: `frame.grains()` vrátí body s `v`, `pscale`, `id`, `Cd`
   a `orient` ([python.md](python.md)).
 - **Profil kroku**: čas zrn je v přehledu editoru (řádek Grains) i v řádku
@@ -160,11 +209,13 @@ o desetinu poloměru, aby proud nebyl ze sloupců.
 | soubor | co dělá |
 |---|---|
 | `src/pg/sim/Grains.h` | `GrainSettings`, `GrainScene`, `GrainFrame`, `GrainSolver` (krok, emise, sousedé, kontakty, kolize, reakce, stav), `grainPoints` |
-| `src/pg/sim/World.h` | `World::grains`, krok zrn po látce, reakce na kusy RBD (`RigidScene::intoGrains`) |
-| `src/pg/sim/Network.cpp` | uzly `grain_solver` a `grain_points`, kompilace (`compileGrains`) |
+| `src/pg/sim/World.h` | `World::grains`, krok zrn po látce, reakce na kusy RBD (`RigidScene::intoGrains`), drť RBD do zrn (`RigidScene::gritIntoGrains`) |
+| `src/pg/sim/Rigid.h` | `RigidBit`, `RigidSolver::thrown`: drť, kterou krok předal zrnům |
+| `src/pg/sim/Network.cpp` | uzly `grain_solver` (vstup Grit) a `grain_points`, kompilace (`compileGrains`) |
 | `src/pg/sim/Frame.cpp` | `drawnBodies`: zrna jako volné body s `pscale`, kreslená jako úlomky |
 | `src/pg/sim/Cache.cpp` | snímek verze 15 |
-| `src/pg/sim/UsdExport.cpp` | `/World/grains` |
+| `src/pg/sim/UsdExport.cpp` | `/World/grains` (PointInstancer) |
+| `src/pg/core/Chips.h` | tvary úlomků kamene a střepů skla, jejich odstín a natočení: pro renderery i USD |
 
 ## 7. Ověřování
 
@@ -173,7 +224,7 @@ o desetinu poloměru, aby proud nebyl ze sloupců.
 - blok 768 zrn spadne na podlahu, nic není pod ní, po 120 snímcích stojí
   (pod 5 cm/s), zrna se do sebe zaboří v průměru méně než o 4 % součtu
   poloměrů a nikde víc než o 30 %; velikosti jsou v mezích Size Variance;
-- nasypaná hromada je strmější s větším třením (0,15 dá 16°, 0,8 dá 36°)
+- nasypaná hromada je strmější s větším třením (0,15 dá 15°, 0,8 dá 38°)
   a usadí se;
 - sloupec 400 zrn vysoký 33 cm se suchý sesype (zbude 9 cm), mokrý
   (Cohesion 1) stojí (27 cm);
@@ -186,12 +237,25 @@ o desetinu poloměru, aby proud nebyl ze sloupců.
 - 1 a 4 vlákna a obnova ze stavu dají totéž bit po bitu; useknutý stav se
   odmítne.
 
+`tests/test_grit_grains.cpp`, 3 testy:
+
+- betonový kvádr spadne ze 4 m a rozbije se: drť jsou zrna (víc než 40),
+  RBD Solver jí drží nejvýš desetinu toho, v barvě lomu, žádné zrno pod
+  podlahou, čtyři pětiny v klidu, některá leží na kusech nebo na sobě;
+  v žádném snímku není žádné zrno rychlejší než 9,4 m/s (kvádr dopadne
+  rychlostí 8,9 m/s; když se rychlost zrn vytlačovaných z trosek sčítala
+  přes podkroky, létala až 15 m/s); bez propojení drť zůstane RBD Solveru
+  a zrna žádná nejsou;
+- 1 a 4 vlákna a obnova ze stavu uprostřed dají táž zrna i tytéž kusy;
+- síť: Rigid RBD Solveru do Grit zapne předávání drti i kolize s kusy,
+  barva lomu × 0,9, a bez bodů v Geometry žádné varování.
+
 K tomu: síť (uzel, kolidery, RBD Solver mezi nimi, Grain Points, chybějící
 body, uložení a načtení, `tests/test_sim_network.cpp`), cache verze 15
 a čtení verze 14 (`tests/test_export.cpp`), checkpoint štěrku s krabicemi
 a sypaného písku (`tests/test_state.cpp`), USD (`tests/test_usd.cpp`)
-a Python `frame.grains()` (`tests/python/test_pg.py`). Oba příklady
-projdou testem formátu a testem „všechny příklady běží“.
+a Python `frame.grains()` (`tests/python/test_pg.py`). Všechny tři
+příklady projdou testem formátu a testem „všechny příklady běží“.
 
 ## 8. Omezení
 
@@ -209,6 +273,9 @@ projdou testem formátu a testem „všechny příklady běží“.
   jako u kvádru jejich rozměrů (stejně jako u látky).
 - Kolize s objekty počítají vzdálenostní pole tvaru. Tenká stěna (tenčí
   než zrno) může rychlé zrno propustit.
+- Drť jako zrna je koule poloměru půl kousku; tvar úlomku má jen při
+  kreslení. Zrno se už dál nerozbije a neodnese ho plyn jinak než ostatní
+  zrna. Střepy skla zrny nejsou.
 - Zrno je spíš hrst písku než skutečné zrnko: skutečný písek by znamenal
   miliardy zrn. Na 4 jádrech trvá snímek 38 000 zrn asi 0,12 s a snímek
   192 000 padajících zrn asi 1 s.

@@ -27,6 +27,10 @@ struct Look {
     float smokeDensity = 20.0f;   ///< light it stops per unit of smoke per world unit
     float occlusion = 3.0f;       ///< how much thick smoke around darkens the sky light
 
+    // Steam (PyroSolver::steam)
+    Vec3 steamColor{0.92f, 0.93f, 0.95f};  ///< share of the light it scatters: white
+    float steamDensity = 8.0f;    ///< light it stops per unit of steam per world unit
+
     // Fire
     float flameIntensity = 30.0f; ///< light the flames give off per world unit, at their hottest
     float flameStart = 0.3f;      ///< temperature where flames start to glow

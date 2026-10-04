@@ -1,5 +1,6 @@
 #include "pg/sim/UsdExport.h"
 
+#include "pg/core/Chips.h"
 #include "pg/core/Instances.h"
 #include "pg/io/Vdb.h"
 #include "pg/sim/Cloth.h"
@@ -47,17 +48,6 @@ std::string rateOf(float fps) {
     return usda::number(std::fabs(fps - std::round(fps)) < 1e-3f ? std::round(fps) : fps);
 }
 
-/// Quaternions x, y, z, w one after the other as quatf[]: [(w, x, y, z), ...].
-std::string quaternions(const std::vector<float>& q) {
-    std::string out = "[";
-    out.reserve(q.size() * 12 + 2);
-    for (size_t i = 0; i + 3 < q.size(); i += 4) {
-        if (i > 0) out += ", ";
-        out += usda::quat(Vec4(q[i], q[i + 1], q[i + 2], q[i + 3]));
-    }
-    return out + "]";
-}
-
 /// The particles' numbers as int64[]: whole, not as the int32 they would wrap to.
 std::string idList(const std::vector<uint32_t>& ids) {
     std::string out = "[";
@@ -70,6 +60,81 @@ std::string idList(const std::vector<uint32_t>& ids) {
     }
     return out + "]";
 }
+
+/// The shapes grit and grains are drawn as (Chips.h) -- the dozen chips of
+/// stone, then the half dozen slivers of glass -- as the prototypes of
+/// their instancers: flat-faced, a unit from their middles to their
+/// farthest corners.
+const std::vector<std::shared_ptr<const Geometry>>& chipPrototypes() {
+    static const std::vector<std::shared_ptr<const Geometry>> made = [] {
+        std::vector<std::shared_ptr<const Geometry>> out;
+        for (const bool glass : {false, true}) {
+            for (size_t k = 0; k < (glass ? kSliverShapes : kChipShapes); ++k) {
+                const std::vector<ChipFace> faces = chipFaces(k, glass);
+                auto g = std::make_shared<Geometry>();
+                size_t corners = 0;
+                for (const ChipFace& f : faces) corners += f.size();
+                g->addPoints(corners);
+                auto P = g->positionsForWrite();
+                uint32_t next = 0;
+                for (const ChipFace& f : faces) {
+                    std::vector<uint32_t> face;
+                    for (const Vec3& p : f) {
+                        P[next] = p;
+                        face.push_back(next++);
+                    }
+                    g->addPrimitive(face, true);
+                }
+                out.push_back(std::move(g));
+            }
+        }
+        return out;
+    }();
+    return made;
+}
+
+/// Bits drawn as chips at frame f -- the grit of the pieces, the grains --
+/// as a PointInstancer's: for each, which shape it is (protoIndices: of
+/// chipPrototypes), where, how it is turned, how big -- its farthest
+/// corner `size` from its middle --, how fast, its number, and its colour,
+/// a shade of its own (chipTint), as the renderers draw it. `orient`,
+/// `velocity` and `glass` may be empty: none turned, none moving, no glass.
+struct Chips {
+    std::vector<Vec3> at, velocity, color;
+    std::vector<float> size;
+    std::vector<Vec4> orient;
+    std::vector<uint32_t> ids;
+    std::vector<uint8_t> glass;
+
+    std::vector<usda::Field> fields(usda::Bounds& box) const {
+        const size_t n = at.size();
+        std::vector<int32_t> which(n);
+        std::vector<Vec3> scales(n), tints(n);
+        std::string turns = "[";
+        float widest = 0.0f;
+        for (size_t i = 0; i < n; ++i) {
+            const bool shard = i < glass.size() && glass[i] != 0;
+            const size_t shape = chipShapeOf(ids[i], shard);
+            which[i] = static_cast<int32_t>(shard ? kChipShapes + shape : shape);
+            scales[i] = Vec3(size[i]);
+            tints[i] = chipTint(color[i], ids[i], shard);
+            if (i > 0) turns += ", ";
+            turns += usda::quat(i < orient.size() ? orient[i] : chipTurn(ids[i]));
+            box.grow(at[i]);
+            widest = std::max(widest, size[i]);
+        }
+        std::vector<usda::Field> out = {{"float3[]", "extent", "", box.extent(widest)},
+                                        {"int64[]", "ids", "", idList(ids)},
+                                        {"quath[]", "orientations", "", turns + "]"},
+                                        {"point3f[]", "positions", "", usda::tuples(at)},
+                                        {"color3f[]", "primvars:displayColor", usda::interpolation("vertex"),
+                                         usda::tuples(tints)},
+                                        {"int[]", "protoIndices", "", usda::integers(which)},
+                                        {"float3[]", "scales", "", usda::tuples(scales)}};
+        if (velocity.size() == n) out.push_back({"vector3f[]", "velocities", "", usda::tuples(velocity)});
+        return out;
+    }
+};
 
 std::vector<std::string> namesOf(const std::string& path) {
     std::vector<std::string> names;
@@ -176,8 +241,9 @@ struct UsdExport::Impl {
     std::vector<int> born;
     Vec3 gritColor, rebarColor;
 
-    // The gas: a file a frame, and the box it fills.
+    // The gas: a file a frame, and the box it fills; whether any had steam.
     std::vector<std::pair<int, std::string>> gasFiles, gasExtent;
+    bool gasSteam = false;
 
     std::vector<std::pair<int, Camera>> cameras;
     std::vector<std::pair<int, Look>> looks;
@@ -260,71 +326,60 @@ struct UsdExport::Impl {
         return true;
     }
 
-    /// The grit at frame f: a point a bit, as wide as it is, with its
-    /// velocity, its number and how it is turned -- the primvar orient --
-    /// where the frame has them, and the primvar glass -- 1 for a chip of
-    /// glass -- where any bit is one.
+    /// The grit at frame f: a chip of stone or a sliver of glass a bit --
+    /// as the renderers draw it, of chipPrototypes -- as big as it is,
+    /// turned as it tumbles, with its velocity and its number where the
+    /// frame has them; in the colour of the cracks, a shade of its own.
     void sampleGrit(usda::Stage& layer, int f, const RigidFrame& r) {
         const size_t n = r.debris.size() / 4;
-        std::vector<Vec3> at, v;
-        std::vector<float> size;
-        usda::Bounds box;
-        float widest = 0.0f;
-        const bool moving = r.debrisVelocity.size() == 3 * n, numbered = r.debrisIds.size() == n;
+        Chips chips;
+        const bool numbered = r.debrisIds.size() == n, glassy = r.debrisGlass.size() == n;
         for (size_t i = 0; i < n; ++i) {
-            at.emplace_back(r.debris[4 * i], r.debris[4 * i + 1], r.debris[4 * i + 2]);
-            size.push_back(r.debris[4 * i + 3]);
-            box.grow(at.back());
-            widest = std::max(widest, r.debris[4 * i + 3]);
-            if (moving) v.emplace_back(r.debrisVelocity[3 * i], r.debrisVelocity[3 * i + 1], r.debrisVelocity[3 * i + 2]);
+            chips.at.emplace_back(r.debris[4 * i], r.debris[4 * i + 1], r.debris[4 * i + 2]);
+            chips.size.push_back(0.5f * r.debris[4 * i + 3]);
+            chips.ids.push_back(numbered ? r.debrisIds[i] : static_cast<uint32_t>(i));
+            const bool shard = glassy && r.debrisGlass[i] != 0;
+            chips.glass.push_back(shard ? 1 : 0);
+            chips.color.push_back(shard ? kGlassChip : gritColor);
         }
-        std::vector<usda::Field> fields = {{"float3[]", "extent", "", box.extent(0.5f * widest)}};
-        if (numbered) fields.push_back({"int64[]", "ids", "", idList(r.debrisIds)});
-        fields.push_back({"point3f[]", "points", "", usda::tuples(at)});
-        if (moving) fields.push_back({"vector3f[]", "velocities", "", usda::tuples(v)});
-        fields.push_back({"float[]", "widths", usda::interpolation("vertex"), usda::numbers(size)});
-        if (r.debrisGlass.size() == n && n > 0) {
-            std::vector<uint32_t> glass(r.debrisGlass.begin(), r.debrisGlass.end());
-            fields.push_back({"int[]", "primvars:glass", usda::interpolation("vertex"), idList(glass)});
+        if (r.debrisVelocity.size() == 3 * n) {
+            for (size_t i = 0; i < n; ++i) {
+                chips.velocity.emplace_back(r.debrisVelocity[3 * i], r.debrisVelocity[3 * i + 1], r.debrisVelocity[3 * i + 2]);
+            }
         }
-        // How each bit is turned: a stone copied onto it turns so.
-        if (r.debrisOrient.size() == 4 * n && n > 0) {
-            fields.push_back({"quatf[]", "primvars:orient", usda::interpolation("vertex"), quaternions(r.debrisOrient)});
+        if (r.debrisOrient.size() == 4 * n) {
+            for (size_t i = 0; i < n; ++i) {
+                const float* q = r.debrisOrient.data() + 4 * i;
+                chips.orient.emplace_back(q[0], q[1], q[2], q[3]);
+            }
         }
-        sample(layer, "/World/grit", "Points", f, std::move(fields));
+        usda::Bounds box;
+        prototypes.emplace("/World/grit", chipPrototypes());
+        sample(layer, "/World/grit", "PointInstancer", f, chips.fields(box));
         scene.grow(box);
     }
 
-    /// The grains at frame f: a point a grain, as wide as it is, with its
-    /// velocity, its number, its colour -- the frame's, else the look's --
-    /// and how it is turned (grainPoints): stones copied onto them turn so.
+    /// The grains at frame f: a chip of stone a grain, as the renderers
+    /// draw them (grainPoints) -- as big as it is, turned its own way, with
+    /// its velocity, its number and its colour, the frame's, else the
+    /// look's, a shade of its own.
     void sampleGrains(usda::Stage& layer, int f, const GrainFrame& g, const Vec3& color) {
         const std::shared_ptr<Geometry> points = grainPoints(g, color);
-        const size_t n = points->pointCount();
         const auto P = points->positions();
         const auto v = points->points().find("v")->read<Vec3>();
         const auto pscale = points->points().find("pscale")->read<float>();
         const auto cd = points->points().find("Cd")->read<Vec3>();
         const auto orient = points->points().find("orient")->read<Vec4>();
-        std::vector<Vec3> at(P.begin(), P.end()), velocity(v.begin(), v.end()), colors(cd.begin(), cd.end());
-        std::vector<float> width, turn;
+        Chips chips;
+        chips.at.assign(P.begin(), P.end());
+        chips.velocity.assign(v.begin(), v.end());
+        chips.size.assign(pscale.begin(), pscale.end());
+        chips.color.assign(cd.begin(), cd.end());
+        chips.orient.assign(orient.begin(), orient.end());
+        chips.ids = g.ids;
         usda::Bounds box;
-        float widest = 0.0f;
-        for (size_t i = 0; i < n; ++i) {
-            width.push_back(2.0f * pscale[i]);
-            widest = std::max(widest, width.back());
-            box.grow(at[i]);
-            turn.insert(turn.end(), {orient[i].x, orient[i].y, orient[i].z, orient[i].w});
-        }
-        std::vector<usda::Field> fields = {{"float3[]", "extent", "", box.extent(0.5f * widest)},
-                                           {"int64[]", "ids", "", idList(g.ids)},
-                                           {"point3f[]", "points", "", usda::tuples(at)},
-                                           {"vector3f[]", "velocities", "", usda::tuples(velocity)},
-                                           {"float[]", "widths", usda::interpolation("vertex"), usda::numbers(width)},
-                                           {"color3f[]", "primvars:displayColor", usda::interpolation("vertex"),
-                                            usda::tuples(colors)},
-                                           {"quatf[]", "primvars:orient", usda::interpolation("vertex"), quaternions(turn)}};
-        sample(layer, "/World/grains", "Points", f, std::move(fields));
+        prototypes.emplace("/World/grains", chipPrototypes());
+        sample(layer, "/World/grains", "PointInstancer", f, chips.fields(box));
         scene.grow(box);
     }
 
@@ -660,6 +715,16 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
             volumes.push_back(Volume::make(names[channel], d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2],
                                            std::move(values)));
         }
+        // The steam, where there is any: a field of its own.
+        std::vector<uint16_t> steamScratch;
+        const std::vector<uint16_t>& steam = frame.denseSteam(steamScratch);
+        if (steam.size() == cells) {
+            std::vector<float> values(cells);
+            for (size_t c = 0; c < cells; ++c) values[c] = fromHalf(steam[c]);
+            volumes.push_back(Volume::make("steam", d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2],
+                                           std::move(values)));
+            m.gasSteam = true;
+        }
         std::error_code ec;
         fs::create_directories(m.gasFolder, ec);
         const std::string name = m.stem + "_gas." + four(f) + ".vdb";
@@ -850,12 +915,25 @@ usda::Stage UsdExport::stage() const {
     }
 
     // The grit, the water and the rain: from the frames' layers.
+    // The slivers of glass among the prototypes are glass, where there is
+    // any.
+    const bool glassLook = m.drawn && m.drawn->primitives().find("glass");
+    auto chipsLook = [&](Prim& instancer) {
+        instancer.metadata.push_back(kBinding);
+        instancer.relate("material:binding", kSurface);
+        if (!glassLook) return;
+        for (Prim& scope : instancer.children) {
+            if (scope.name != "Prototypes") continue;
+            size_t k = 0;
+            for (Prim& shape : scope.children) {
+                if (k++ < kChipShapes) continue;
+                shape.metadata.push_back(kBinding);
+                shape.relate("material:binding", kGlass);
+            }
+        }
+    };
     if (m.clipSets.count("/World/grit")) {
-        Prim& grit = m.clippedPrim(world, "/World/grit", "Points", m.clipSets.at("/World/grit").present);
-        grit.metadata.push_back(kBinding);
-        grit.set("color3f[]", "primvars:displayColor", usda::tuples(std::span<const Vec3>(&m.gritColor, 1))).metadata =
-            usda::interpolation("constant");
-        grit.relate("material:binding", kSurface);
+        chipsLook(m.clippedPrim(world, "/World/grit", "PointInstancer", m.clipSets.at("/World/grit").present));
     }
     if (m.clipSets.count("/World/rebar")) {
         Prim& bars = m.clippedPrim(world, "/World/rebar", "BasisCurves", m.clipSets.at("/World/rebar").present);
@@ -870,9 +948,7 @@ usda::Stage UsdExport::stage() const {
         cloth.relate("material:binding", kSurface);
     }
     if (m.clipSets.count("/World/grains")) {
-        Prim& grains = m.clippedPrim(world, "/World/grains", "Points", m.clipSets.at("/World/grains").present);
-        grains.metadata.push_back(kBinding);
-        grains.relate("material:binding", kSurface);
+        chipsLook(m.clippedPrim(world, "/World/grains", "PointInstancer", m.clipSets.at("/World/grains").present));
     }
     if (m.clipSets.count("/World/water")) {
         Prim& water = m.clippedPrim(world, "/World/water", "Mesh", m.clipSets.at("/World/water").present);
@@ -897,7 +973,8 @@ usda::Stage UsdExport::stage() const {
     if (!m.gasFiles.empty()) {
         Prim& gas = world.child("Volume", "gas");
         usda::animate(gas, "float3[]", "extent", m.gasExtent);
-        for (const char* field : {"density", "temperature", "flame"}) {
+        for (const char* field : {"density", "temperature", "flame", "steam"}) {
+            if (std::string(field) == "steam" && !m.gasSteam) continue;
             gas.relate(std::string("field:") + field, std::string("</World/gas/") + field + ">");
             Prim& asset = gas.child("OpenVDBAsset", field);
             usda::animate(asset, "asset", "filePath", m.gasFiles);

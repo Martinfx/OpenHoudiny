@@ -141,6 +141,10 @@ struct Frame {
     /// `fields` then holds their 512 cells each in turn, x fastest within the
     /// tile. Empty: `fields` holds every cell of the domain.
     std::vector<uint32_t> gasTiles;
+    /// The steam of each cell (PyroSolver::steam), laid out as `fields` --
+    /// every cell of `domain`, or the cells of gasTiles -- a half each.
+    /// Empty: none.
+    std::vector<uint16_t> steam;
     WaterFrame water;     ///< empty without water
     RainFrame rain;       ///< empty without rain
     RigidFrame rigid;     ///< empty without rigid bodies
@@ -163,14 +167,17 @@ struct Frame {
     } profile;
 
     size_t bytes() const {
-        return sizeof(Frame) + fields.size() * sizeof(uint16_t) + gasTiles.size() * sizeof(uint32_t) + water.bytes() +
-               rain.bytes() + rigid.bytes() + cloth.bytes() + grains.bytes();
+        return sizeof(Frame) + (fields.size() + steam.size()) * sizeof(uint16_t) + gasTiles.size() * sizeof(uint32_t) +
+               water.bytes() + rain.bytes() + rigid.bytes() + cloth.bytes() + grains.bytes();
     }
     bool empty() const {
         return fields.empty() && water.empty() && rain.empty() && rigid.empty() && cloth.empty() && grains.empty();
     }
-    /// The field `channel` (0 smoke, 1 temperature, 2 flame) of cell (i, j, k).
+    /// The field `channel` (0 smoke, 1 temperature, 2 flame, 3 steam) of
+    /// cell (i, j, k).
     float at(int channel, int i, int j, int k) const;
+    /// Whether `steam` is laid out as `fields` is.
+    bool steamFits() const { return steam.empty() || 3 * steam.size() == fields.size(); }
     /// The gas of every cell of the domain, as `fields` holds it when not
     /// sparse: `fields` itself, or `scratch`, made from the tiles.
     const std::vector<uint16_t>& denseFields(std::vector<uint16_t>& scratch) const;
@@ -179,6 +186,11 @@ struct Frame {
     /// it when not sparse: the mean of the cells under each. For a picture
     /// that cannot hold them all.
     void coarseFields(int factor, std::vector<uint16_t>& out) const;
+    /// The steam of every cell of the domain -- `steam` itself, or
+    /// `scratch` made from the tiles -- or of the grid `factor` times as
+    /// coarse; empty without any.
+    const std::vector<uint16_t>& denseSteam(std::vector<uint16_t>& scratch) const;
+    void coarseSteam(int factor, std::vector<uint16_t>& out) const;
 };
 
 struct Look;
@@ -194,7 +206,12 @@ Frame capture(const PyroSolver& sim);
 /// its upres's -- as a frame's gas: every cell when every tile is kept, else
 /// the tiles that hold any.
 Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke, const SparseGrid& heat,
-               const SparseGrid& flame);
+               const SparseGrid& flame, const SparseGrid* steam = nullptr);
+/// The steam of the solver `coarse` onto `fine` -- the frame of its upres,
+/// `scale` times as fine over the same box -- read between the solver's
+/// cells' middles, the tiles it is in taken on: the upres carries none of
+/// its own.
+void addCoarseSteam(Frame& fine, const PyroSolver& coarse, int scale);
 /// The solver's water, as a frame holds it -- and its particles, when
 /// `particles` is set.
 WaterFrame capture(const LiquidSolver& sim, bool particles = false);

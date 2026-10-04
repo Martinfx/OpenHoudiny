@@ -21,6 +21,7 @@
 //          nothing at its tail. Water (Material::Kind::Rain) of the rain's
 //          colour, there as much of the time as Look::rainOpacity says.
 //
+#include "pg/core/Chips.h"
 #include "pg/render/Scene.h"
 #include "pg/sim/Frame.h"
 
@@ -28,9 +29,6 @@
 #include <memory>
 
 namespace pg::render {
-
-inline constexpr size_t kChipShapes = 12;   ///< of stone
-inline constexpr size_t kSliverShapes = 6;  ///< of glass
 
 /// The chip of stone -- or the sliver of glass -- `shape`, a unit from its
 /// middle to its farthest corner, its faces flat: made once and kept, its

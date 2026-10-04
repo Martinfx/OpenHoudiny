@@ -806,7 +806,7 @@ class Frame:
         return self._f.has_gas
 
     def gas(self, field="density"):
-        """density, temperature or flame: [i, j, k], half floats."""
+        """density, temperature, flame or steam: [i, j, k], half floats."""
         return _array(self._f.gas(field))
 
     def gas_domain(self):

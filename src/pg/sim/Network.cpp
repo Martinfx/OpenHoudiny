@@ -297,7 +297,16 @@ std::vector<ParamDef> pyroSolverParams(bool withFrameRate) {
            "How hard the water of a Liquid Solver and the drops of a Rain put the fire out where they get into "
            "the gas: they cool it, soak its fuel and the sources they fall on. 0: they do not."},
           {"steam", "Steam", "Water", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
-           "Smoke -- steam -- for each unit of heat the water takes."}};
+           "Steam for each unit of heat the water takes: a field of its own, drawn white (the Volume Look's "
+           "Steam), that rises and thins out. 0: none."},
+          {"steam_lift", "Steam Lift", "Water", K::Float, {1.5f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 100.0f, "",
+           "How hard steam rises -- lighter than the air, and warm -- as a unit of heat lifts the gas."},
+          {"steam_fade", "Steam Fade", "Water", K::Float, {0.7f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 100.0f, "1/s",
+           "How fast steam thins out into clear air: 0.7 half of it gone in a second."},
+          {"evaporate", "Evaporate", "Water", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 1000.0f, "",
+           "How fast the fire boils away the water in it -- the particles of a Liquid Solver, the drops of a "
+           "Rain: in the flames a drop is gone in a fraction of a second, in warm smoke it lasts. Water that "
+           "puts the fire out cools the gas before it boils. 0: the water stays, however hot."}};
     if (!withFrameRate) {
         p.erase(std::remove_if(p.begin(), p.end(), [](const ParamDef& d) { return std::string(d.name) == "fps"; }), p.end());
     }
@@ -316,6 +325,10 @@ std::vector<ParamDef> legacyVolumeLookParams() {
            "How much light it stops: thin haze to thick soot."},
           {"occlusion", "Occlusion", "Smoke", K::Float, {3.0f, 0.0f, 0.0f}, 0.0f, 20.0f, 0.0f, kBig, "",
            "How much thick smoke around darkens the light of the sky."},
+          {"steam_color", "Color", "Steam", K::Color, {0.92f, 0.93f, 0.95f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "The colour of the steam the water makes in the fire (the Pyro Solver's Steam): white."},
+          {"steam_density", "Density", "Steam", K::Float, {8.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, kBig, "",
+           "How much light it stops: a wisp to a white cloud."},
           {"flame_intensity", "Intensity", "Fire", K::Float, {30.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, kBig, "",
            "How brightly the fire glows."},
           {"flame_start", "Glow From", "Fire", K::Float, {0.3f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, kBig, "",
@@ -1312,7 +1325,8 @@ std::vector<NodeType> buildTypes() {
              {{"droplets", "Droplets", "Rain", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "The droplets of the splashes too, with droplet 1 and ids from 2^30."}});
     geometry("gas_volume", "Gas Volume", "gas_volume",
-             "The gas of a Pyro Solver at the frame, as volumes: density (smoke), temperature and flame.",
+             "The gas of a Pyro Solver at the frame, as volumes: density (smoke), temperature and flame -- and "
+             "steam, where the water made any.",
              {{"gas", "Gas", PinType::Gas}}, {});
     geometry("rbd_pieces", "RBD Pieces", "rbd_pieces",
              "The pieces of an RBD Solver at the frame, where they have fallen: moved and turned, with the "
@@ -1709,11 +1723,15 @@ std::vector<NodeType> buildTypes() {
          "together and stand. With Emit Frames above 1 the points are taken again each frame, where no grain "
          "is in the way: a stream from a spout, a chute. They fall on the floor, the objects and the pieces of "
          "an RBD Solver linked into Colliders -- and push the pieces --, and the wind of the Forces and a Pyro "
-         "Solver's gas blow them, as hard as Air Drag says. Link it into the Output's Looks: it is simulated "
-         "and drawn; Grain Points brings the grains back as points.",
+         "Solver's gas blow them, as hard as Air Drag says. An RBD Solver's Rigid linked into Grit: the grit "
+         "its breaks and knocks throw is grains here as soon as it is out of the pieces it came from -- it "
+         "knocks into the others, lands on the pieces and piles up -- in the colour of the pieces' cracks. "
+         "Link it into the Output's Looks: it is simulated and drawn; Grain Points brings the grains back as "
+         "points.",
          {{"geometry", "Geometry", PinType::Geometry},
           {"colliders", "Colliders", PinType::Collider, true},
-          {"forces", "Forces", PinType::Force, true}},
+          {"forces", "Forces", PinType::Force, true},
+          {"grit", "Grit", PinType::Rigid}},
          {{"look", "Look", PinType::Look}, {"grains", "Grains", PinType::Grains}},
          {{"radius", "Radius", "Grains", K::Float, {0.01f, 0.0f, 0.0f}, 0.002f, 0.1f, 1e-4f, 1.0f, "m",
            "How big a grain is -- its radius -- where its point has no pscale: 0.005 fine sand clumped, 0.02 "
@@ -4437,10 +4455,11 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.timeStep = c.world.timeStep;
         gs.node = solver->id;
         const std::vector<Link> in = linksInto(solver->id, "geometry");
-        if (in.empty()) {
+        const std::vector<const Node*> grit = feeding(solver, "grit");
+        if (in.empty() && grit.empty()) {
             problem(L::Warning, solver->id, "No grains: link points into Geometry -- a Scatter in a box, a grid of "
-                                            "points.");
-        } else {
+                                            "points -- or an RBD Solver into Grit.");
+        } else if (!in.empty()) {
             startCooker();
             const int from = in.front().from;
             if (fromSimulation(from)) {
@@ -4468,6 +4487,19 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             }
             gs.colliders.push_back(colliderOf(*n));
             c.active.push_back(n->id);
+        }
+        // An RBD Solver's grit: grains as it leaves the pieces -- which they
+        // fall on -- in the colour of the cracks, a shade darker, as the
+        // solver draws its own; the grains without a colour of their own
+        // take the look's.
+        for (const Node* n : grit) {
+            if (n->type != "rbd_solver") continue;
+            if (RigidScene* r = compileRigid(n)) {
+                r->gritIntoGrains = true;
+                r->intoGrains = true;
+                r->gritColor = v3(*n, "inside_color") * 0.9f;
+                gs.color = v3(*solver, "color");
+            }
         }
         return &gs;
     };
@@ -4497,6 +4529,9 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.smokeDecay = f(*solver, "smoke_decay");
         s.quench = f(*solver, "quench");
         s.steam = f(*solver, "steam");
+        s.steamLift = f(*solver, "steam_lift");
+        s.steamFade = f(*solver, "steam_fade");
+        s.evaporate = f(*solver, "evaporate");
 
         bool dust = false;
         for (const Node* n : feeding(solver, "sources")) {
@@ -4663,6 +4698,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             k.smokeColor = v3(*look, "smoke_color");
             k.smokeDensity = f(*look, "smoke_density");
             k.occlusion = f(*look, "occlusion");
+            k.steamColor = v3(*look, "steam_color");
+            k.steamDensity = f(*look, "steam_density");
             k.flameIntensity = f(*look, "flame_intensity");
             k.flameStart = f(*look, "flame_start");
             k.flameRange = f(*look, "flame_range");

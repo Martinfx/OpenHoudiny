@@ -138,7 +138,7 @@ simulace čte snímky z cache.
 |---|---|
 | krok | `frame = sim.step()`, `for frame in sim.run(120): …`, `sim.frame`, `sim.frames`, `sim.fps`, `sim.current` |
 | geometrie snímku | `sim.geometry()` zobrazeného uzlu, `sim.geometry(node)` jiného: Liquid Surface, RBD Pieces a další vidí právě tento snímek |
-| plyn | `frame.gas("density" \| "temperature" \| "flame")[i, j, k]` (float16), `frame.gas_domain()` |
+| plyn | `frame.gas("density" \| "temperature" \| "flame" \| "steam")[i, j, k]` (float16; pára je nula všude, kde ji voda neudělala, [quench.md](quench.md#pára)), `frame.gas_domain()` |
 | voda | `frame.water.positions`, `.velocities` (float16), `.foam`, `.ids`, `.flow` (rychlost na mřížce, `[i, j, k, osa]`), `.surface()` (síť jako Liquid Surface), `.litres` |
 | déšť | `frame.rain.positions`, `.velocities`, `.ids`, `.droplet_positions`…, `.ripples()` |
 | tělesa | `frame.rigid.centres`, `.velocities` (středů), `.spins`, `.rotations` (x, y, z, w), `.translations`, `.vanished`, `.grit` (x, y, z, velikost), `.grit_velocities`, `.grit_ids`, `.grit_orient` (natočení každého zrnka: x, y, z, w), `.pieces()`; výztuž `.rebar()` (pruty jako lomené čáry s `width` a `v`), `.rebar_state` (1 prut z kusu vyšel, 2 je za ním přetržený), `.rebar_stations` (těleso, odkud, kam, prut); sklo `.grit_glass` (1 skleněná drť), `.unglued` (tělesa, kterým praskl spoj); síť vazeb `.network()` (bod na těleso, čára na spoj, `broken`, `time`), `.joint_state` (0 drží, 1 praskl, 2 nikdy nedržel), `.joint_time` (kdy praskl) |
@@ -257,7 +257,7 @@ _pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdEx
 
 ## 8. Testy
 
-`tests/python/test_pg.py` (16 testů; `ctest -R python` spustí všechny tři soubory):
+`tests/python/test_pg.py` (29 testů; `ctest -R python` spustí všechny tři soubory):
 - **Sítě:**
   - typy uzlů a příklady;
   - parametry všech druhů (vektor, volba podle jména, přepínač, text, kód) a chyby;
@@ -273,8 +273,13 @@ _pg (C++)           pybind11 nad sim::Network, GeometryGraph, WorldSolver, UsdEx
   - objem indexovaný `[i, j, k]`.
 - **Simulace:**
   - rain_pond po snímcích: voda, déšť, povrch, kamera;
+  - checkpoint pokračuje bit po bitu, náhled je hrubší;
+  - kbelík vody na táborák: pára jako vlastní pole plynu (`gas("steam")`),
+    před vodou nulová;
   - cache a čtení z ní;
   - kusy RBD: body v klidu posunuté pózou sedí na `pieces()`;
+  - látka, zrna, beton, RBD Cluster, výztuž, sklo, lámání za běhu a dřevo,
+    cihlová zeď, síť vazeb, drť, Guide;
   - záběr do USD, ověřený knihovnou `pxr`, když je nainstalovaná.
 - **Obraz:** obrázek přes `prototype` (přeskočí se, když tu OpenGL není).
 

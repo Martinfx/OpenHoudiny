@@ -227,6 +227,12 @@ struct RigidScene {
     bool intoRain = false;             ///< ... of the rain
     bool intoCloth = false;            ///< ... of the cloth
     bool intoGrains = false;           ///< ... of the grains
+    /// The grit its breaks and knocks throw goes to the grains: as soon as
+    /// a bit is out of the pieces it came from, it is a grain -- one that
+    /// knocks into the others and piles up -- and no more the solver's
+    /// (thrown()). Chips of glass stay its own.
+    bool gritIntoGrains = false;
+    Vec3 gritColor{0.4f, 0.39f, 0.37f};  ///< ... the colour those grains are
     bool dustIntoGas = false;          ///< broken glue and knocks puff smoke into the gas
     /// The faces a fracture cut -- the group the look paints as the broken
     /// inside: a piece that breaks puts the faces of its cracks in it.
@@ -543,6 +549,16 @@ struct RigidDust {
     float expansion = 0.0f;  ///< 1/s, as a source's (Emitter)
 };
 
+/// The colour a chip of glass is drawn in.
+inline constexpr Vec3 kGlassChip(0.86f, 0.94f, 0.92f);
+
+/// A bit of grit as it leaves the pieces: where, how fast, how big across.
+struct RigidBit {
+    Vec3 at, velocity;
+    float size = 0.0f;
+    bool operator==(const RigidBit&) const = default;
+};
+
 /// The water and the gas, as the pieces and their grit feel them: asked at
 /// world points. Either may be missing.
 struct RigidFluids {
@@ -650,6 +666,9 @@ public:
     std::vector<Collider> colliders() const;
     /// The dust of the last few steps: where glue broke and pieces knocked.
     std::vector<RigidDust> dust() const;
+    /// The grit that came out of the pieces in the last step, for the grains
+    /// (RigidScene::gritIntoGrains): theirs now, gone from the solver's.
+    const std::vector<RigidBit>& thrown() const;
     /// Why nothing is simulated, if nothing is.
     const std::string& error() const { return error_; }
 

@@ -545,17 +545,23 @@ TEST(sim_geometry_simulations_come_back_as_points_and_volumes) {
         for (size_t i = 0; i < ids.size(); ++i) CHECK_EQ(ids[i] >= (1 << 30), droplet[i] == 1);
         CHECK_EQ(static_cast<uint32_t>(ids[0]), frames[4]->rain.dropIds[0]);
     }
-    // The gas: three volumes on the solver's grid.
+    // The gas: three volumes on the solver's grid -- and the steam, as the
+    // rain falls through the fire.
     geo = g.cook(gas, 4);
-    CHECK(geo && geo->volumeCount() == 3);
+    CHECK(!frames[4]->steam.empty());
+    CHECK(geo && geo->volumeCount() == 4);
     const Volume* density = geo->findVolume("density");
     const Volume* flame = geo->findVolume("flame");
-    CHECK(density && flame && geo->findVolume("temperature"));
+    const Volume* steam = geo->findVolume("steam");
+    CHECK(density && flame && steam && geo->findVolume("temperature"));
     CHECK_EQ(density->res[0], frames[4]->domain.cells[0]);
     CHECK_EQ(density->count(), frames[4]->domain.cellCount());
-    float sum = 0.0f;
+    CHECK_EQ(steam->count(), frames[4]->domain.cellCount());
+    float sum = 0.0f, steamSum = 0.0f;
     for (const float v : *density->values) sum += v;
+    for (const float v : *steam->values) steamSum += v;
     CHECK(sum > 0.0f);
+    CHECK(steamSum > 0.0f);
 
     // From a solver that does not reach the Output: said, and not kept.
     const int other = net.add("liquid_solver");

@@ -47,6 +47,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace pg::sim {
@@ -93,6 +94,10 @@ struct GrainScene {
     std::shared_ptr<const Geometry> geometry;
     std::vector<Collider> colliders;   ///< the objects, and the pieces of an RBD Solver
     std::vector<Force> forces;         ///< their wind blows the grains
+    /// The colour of the grains whose points have none, when others have
+    /// one of their own -- the grit of an RBD Solver (add) among them: the
+    /// look's.
+    Vec3 color{0.76f, 0.64f, 0.45f};
     int node = 0;
 
     /// Every number in a range the solver can work with.
@@ -134,6 +139,13 @@ public:
     void setScene(const GrainScene& scene);
     /// The gas's flow at a world point, for the next step; null: still air.
     void setAir(std::function<Vec3(const Vec3&)> air);
+    /// Grains that come from elsewhere -- the grit an RBD Solver's breaks
+    /// throw (RigidSolver::thrown) -- for the next step: at `at`, going at
+    /// `velocity`, `radius` big, `color` theirs (null: none). Each gets a
+    /// number of its own after those there are; as many as Max Grains
+    /// leaves room for.
+    void add(std::span<const Vec3> at, std::span<const Vec3> velocity, std::span<const float> radius,
+             const Vec3* color);
     void step();
 
     const GrainScene& scene() const { return scene_; }
@@ -163,6 +175,8 @@ public:
 
 private:
     void emit();
+    /// `count` more grains of the look's colour (GrainScene::color).
+    void paint(size_t count);
     /// The grains in the order of the cells they are in.
     void reorder();
     /// The grid of where the grains are: cells as wide as the biggest grain
@@ -181,6 +195,7 @@ private:
     std::vector<uint32_t> id_;
     std::vector<uint8_t> color_;                 // three a grain; empty: none
     std::vector<uint8_t> touching_;              // each grain: it touched something this substep
+    std::vector<float> carried_;                 // ... and how fast the fastest surface it touched goes, m/s
     // The grid: each grain's cell key, the grains in key order, where each
     // bucket of the table starts in it.
     std::vector<uint32_t> key_, order_, bucket_;
@@ -194,6 +209,7 @@ private:
     std::vector<Vec3> drift_, kick_, twist_;     // each collider that gives: as the cloth's
     std::vector<Reaction> reactions_;
     uint32_t nextId_ = 0;
+    bool fresh_ = false;                         // grains came in (add) since the last step
     size_t contacts_ = 0;
     int frame_ = 0;
     float time_ = 0.0f;

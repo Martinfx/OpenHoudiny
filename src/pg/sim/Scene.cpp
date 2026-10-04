@@ -114,6 +114,9 @@ Scene Scene::sanitized() const {
     v.smokeDecay = fix(v.smokeDecay, 0.0f, kHuge, ds.smokeDecay);
     v.quench = fix(v.quench, 0.0f, 100.0f, ds.quench);
     v.steam = fix(v.steam, 0.0f, 100.0f, ds.steam);
+    v.steamLift = fix(v.steamLift, 0.0f, 100.0f, ds.steamLift);
+    v.steamFade = fix(v.steamFade, 0.0f, 100.0f, ds.steamFade);
+    v.evaporate = fix(v.evaporate, 0.0f, 1000.0f, ds.evaporate);
 
     const Emitter de;
     for (Emitter& e : s.emitters) {

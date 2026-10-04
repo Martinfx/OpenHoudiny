@@ -6,7 +6,8 @@
 // as the viewport's; the look's colour comes out of thick smoke; a render
 // with gas shades, casts a shadow, glows, and is the same however it is run;
 // and the grids Cycles reads (Gas::dense) are the gas, which Cycles renders
-// as the path tracer does.
+// as the path tracer does; steam stops light as dense as the look says, and
+// scatters it white.
 //
 #include "pg/core/Parallel.h"
 #include "pg/render/Cycles.h"
@@ -176,8 +177,8 @@ TEST(gas_tracking_lets_through_what_the_smoke_does) {
         for (int s = 0; s < trials; ++s) {
             Rng rng(static_cast<uint32_t>(r), static_cast<uint32_t>(s), 3);
             float t = 0.0f;
-            Vec3 glow;
-            missed += gas->track(o, d, 0.0f, 4.0f, look, rng, t, glow) ? 0 : 1;
+            Vec3 glow, kept;
+            missed += gas->track(o, d, 0.0f, 4.0f, look, rng, t, glow, kept) ? 0 : 1;
             const double tr = gas->transmittance(o, d, 0.0f, 4.0f, look, rng);
             ratio += tr;
             ratio2 += tr * tr;
@@ -199,8 +200,8 @@ TEST(gas_tracking_lets_through_what_the_smoke_does) {
     // A ray past the gas meets nothing, and is let through whole.
     Rng rng(9, 9, 9);
     float t = 0.0f;
-    Vec3 glow;
-    CHECK(!gas->track(Vec3(-1.0f, 3.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f), 0.0f, 10.0f, look, rng, t, glow));
+    Vec3 glow, kept;
+    CHECK(!gas->track(Vec3(-1.0f, 3.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f), 0.0f, 10.0f, look, rng, t, glow, kept));
     CHECK_EQ(gas->transmittance(Vec3(-1.0f, 3.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f), 0.0f, 10.0f, look, rng), 1.0f);
 }
 
@@ -225,8 +226,8 @@ TEST(gas_flames_give_off_light_along_the_way) {
         for (int s = 0; s < trials; ++s) {
             Rng rng(1, static_cast<uint32_t>(s), 0);
             float t = 0.0f;
-            Vec3 glow;
-            gas->track(o, d, 0.0f, length, look, rng, t, glow);
+            Vec3 glow, kept;
+            gas->track(o, d, 0.0f, length, look, rng, t, glow, kept);
             sum += glow.x;
         }
         const double mean = sum / trials;
@@ -410,6 +411,66 @@ TEST(gas_dense_grids_are_the_gas_at_the_cells_middles) {
     // Smoke without fire: nothing given off, no grid of it.
     const auto smoke = Gas::build(frameOf(16, 0.1f, [](int i, int, int) { return Vec3(i > 4 ? 0.5f : 0.0f, 0.0f, 0.0f); }, false));
     CHECK(smoke && smoke->dense(look, size_t(1) << 30).emission.empty());
+}
+
+TEST(gas_steam_stops_light_and_scatters_it_white) {
+    // Steam -- of the frame's own field -- stops light as the look's Steam
+    // Density says, and a scattering in it keeps what white keeps; where
+    // there is smoke too, what each would, by how much each stops. The
+    // grids Cycles reads have the colour of it, cell by cell.
+    if (!gasAvailable()) return;
+    const int n = 32;
+    sim::Frame f = frameOf(n, 0.1f, [](int i, int, int) { return Vec3(i < 8 ? 0.4f : 0.0f, 0.0f, 0.0f); }, false);
+    f.steam.assign(static_cast<size_t>(n) * n * n, 0);
+    for (int k = 0; k < n; ++k) {
+        for (int j = 0; j < n; ++j) {
+            for (int i = 4; i < n; ++i) f.steam[static_cast<size_t>(i + n * (j + n * k))] = sim::toHalf(0.5f);
+        }
+    }
+    const auto gas = Gas::build(f);
+    CHECK(gas != nullptr);
+    if (!gas) return;
+    CHECK(gas->steamy());
+    GasLook look;
+    look.steamColor = Vec3(0.95f, 0.95f, 0.95f);
+    look.steamAlbedo = GasLook::albedoOf(look.steamColor);
+    look.color = Vec3(0.2f, 0.2f, 0.2f);
+    look.albedo = GasLook::albedoOf(look.color);
+    const Vec3 lo = f.domain.origin();
+    auto middle = [&](int i, int j, int k) { return lo + Vec3(i + 0.5f, j + 0.5f, k + 0.5f) * 0.1f; };
+    // Steam alone -- away from the open sides, where it fades out: its own
+    // density, white.
+    const Vec4 steam = gas->fieldsAt(middle(20, 8, 16));
+    CHECK_NEAR(steam.w, 0.5f, 1e-3f);
+    CHECK_NEAR(Gas::extinction(steam, look), 0.5f * look.steamDensity, 1e-3f * look.steamDensity);
+    CHECK(length(Gas::albedo(steam, look) - look.steamAlbedo) < 1e-5f);
+    // Both: in between, by what each stops.
+    const Vec4 both = gas->fieldsAt(middle(6, 8, 16));
+    const float smokeStops = look.density * both.x, steamStops = look.steamDensity * both.w;
+    CHECK(smokeStops > 0.0f && steamStops > 0.0f);
+    CHECK_NEAR(Gas::extinction(both, look), smokeStops + steamStops, 1e-3f);
+    const Vec3 kept = Gas::albedo(both, look);
+    CHECK_NEAR(kept.x, (look.albedo.x * smokeStops + look.steamAlbedo.x * steamStops) / (smokeStops + steamStops), 1e-5f);
+    // Light through the steam: as much as it stops, ratio tracking agreeing
+    // with the steam read along the way.
+    const Vec3 o = lo + Vec3(2.05f, 0.85f, -1.0f), d(0.0f, 0.0f, 1.0f);
+    double tau = 0.0;
+    for (int i = 0; i < 4000; ++i) tau += Gas::extinction(gas->fieldsAt(o + d * (1.0f + 3.2f * (i + 0.5f) / 4000.0f)), look) * (3.2 / 4000.0);
+    double through = 0.0;
+    for (int t = 0; t < 4000; ++t) {
+        Rng rng(static_cast<uint32_t>(t), 0, 5);
+        through += gas->transmittance(o, d, 0.0f, 10.0f, look, rng);
+    }
+    through /= 4000.0;
+    CHECK(tau > 1.0);
+    CHECK_NEAR(through, std::exp(-tau), 0.03);
+    // The grids Cycles reads: the colour of each cell.
+    const Gas::Dense dense = gas->dense(look, size_t(1) << 30);
+    const size_t cells = static_cast<size_t>(dense.size[0]) * static_cast<size_t>(dense.size[1]) * static_cast<size_t>(dense.size[2]);
+    CHECK_EQ(dense.albedo.size(), cells);
+    // Without steam, none of that.
+    const auto smoke = Gas::build(frameOf(16, 0.1f, [](int i, int, int) { return Vec3(i > 4 ? 0.5f : 0.0f, 0.0f, 0.0f); }, false));
+    CHECK(smoke && !smoke->steamy() && smoke->dense(look, size_t(1) << 30).albedo.empty());
 }
 
 TEST(render_cycles_renders_the_gas_as_the_path_tracer_does) {

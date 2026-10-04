@@ -194,9 +194,11 @@ a obrázek oblohy jsou jen v renderu.
 
 Plyn ze simulace se do Cycles převede jako dvě mřížky (`Gas::dense`). Jedna
 říká, kolik světla buňka zastaví na metr, druhá, kolik ho vydá plamen.
-Obě se počítají stejně jako v path traceru: z kouře, teploty a plamene
-každé buňky podle Volume Looku, se stejným zeslabením u otevřených stěn
-a nahoře. Cycles čte mřížky mezi středy buněk lineárně, stejně jako
+Obě se počítají stejně jako v path traceru: z kouře, teploty, plamene
+a páry každé buňky podle Volume Looku, se stejným zeslabením u otevřených
+stěn a nahoře. S párou přibude třetí mřížka, barva rozptylu každé buňky
+(`pg_albedo`): průměr barvy kouře a páry vážený tím, kolik světla které
+zastaví ([quench.md](quench.md#pára)). Cycles čte mřížky mezi středy buněk lineárně, stejně jako
 viewport a path tracer.
 
 V Cycles je to kvádr kolem dlaždic, ve kterých plyn je, s materiálem
@@ -204,7 +206,8 @@ V Cycles je to kvádr kolem dlaždic, ve kterých plyn je, s materiálem
 
 - **Density** je útlum z mřížky.
 - **Color** je podíl světla, který si kouř při rozptylu nechá. Spočítá se
-  ze Smoke Color stejně jako v path traceru.
+  ze Smoke Color stejně jako v path traceru; s párou je to mřížka
+  `pg_albedo`.
 - **Anisotropy** je 0,31, průměr našich dvou laloků (0,7 × 0,55 dopředu
   a 0,3 × 0,25 dozadu).
 - **Emission** je záře plamene z mřížky: černé těleso od 1000 K do 3000 K.

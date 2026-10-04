@@ -280,7 +280,7 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
     const Vec3 waterGlow = scene.look.waterColor * (scene.skyLight * 1.5f + scene.sunLight * (0.35f * std::max(scene.sunDirection.y, 0.0f)));
     const Gas* gas = scene.gas.get();
     const GasLook& gasLook = scene.gasLook;
-    const Vec3 gasAlbedo = clamp01(gasLook.albedo);
+    Vec3 gasAlbedo = clamp01(gasLook.albedo);  // where it last scattered: the smoke's, the steam's
     bool specular = camera, inWater = false;
     float lastPdf = camera ? 0.0f : firstPdf;
     int bounces = 0, turns = 0, streaks = 0;
@@ -320,9 +320,10 @@ Sample trace(const Scene& scene, const Settings& s, const Textures& textures, co
         float tGas = 0.0f;
         bool scattered = false;
         if (gas) {
-            Vec3 emitted;
-            scattered = gas->track(origin, dir, 0.0f, met ? hit.t : kInfinity, gasLook, rng, tGas, emitted);
+            Vec3 emitted, kept;
+            scattered = gas->track(origin, dir, 0.0f, met ? hit.t : kInfinity, gasLook, rng, tGas, emitted, kept);
             if (largest(emitted) > 0.0f) add(beta * emitted);
+            if (scattered) gasAlbedo = clamp01(kept);
         }
         if (inWater) {
             // Through water: the more of it, the more of its colour.

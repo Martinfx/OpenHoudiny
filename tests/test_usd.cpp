@@ -6,6 +6,7 @@
 // the stage, the camera's lens in tenths of a unit, the sun where the look
 // has it, and what does not change written once.
 //
+#include "pg/core/Chips.h"
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
 #include "pg/io/Export.h"
@@ -374,12 +375,32 @@ TEST(usd_export_glass_is_glass_and_its_cracks_come_when_it_breaks) {
         CHECK_EQ(valueAt(*seen, 1), std::string("\"invisible\""));
         CHECK_EQ(valueAt(*seen, broke), std::string("\"inherited\""));
     }
-    // The chips of glass say so.
+    // The chips of glass are slivers -- the prototypes after the dozen
+    // chips of stone -- and those are glass.
     const std::string layers = fileText(dir / "shot.usda");
     CHECK(layers.find("def Material \"glass\"") != std::string::npos);
+    const usda::Prim* sliver = find(s, {"World", "grit", "Prototypes", "proto_" + std::to_string(kChipShapes)});
+    CHECK(sliver != nullptr);
+    if (sliver) {
+        CHECK(std::find(sliver->relationships.begin(), sliver->relationships.end(),
+                        std::make_pair(std::string("material:binding"), std::string("</World/Looks/glass>"))) !=
+              sliver->relationships.end());
+    }
     bool marked = false;
     for (const auto& entry : fs::directory_iterator(dir.path / "shot_frames")) {
-        marked = marked || fileText(entry.path().string()).find("int[] primvars:glass") != std::string::npos;
+        const std::string text = fileText(entry.path().string());
+        const std::string key = "int[] protoIndices.timeSamples";
+        const size_t at = text.find(key);
+        if (at == std::string::npos) continue;
+        const size_t open = text.find('[', at + key.size()), close = text.find(']', open);
+        std::string list = text.substr(open + 1, close - open - 1);
+        for (size_t i = 0; i < list.size();) {
+            const size_t comma = list.find(',', i);
+            const int which = std::atoi(list.substr(i, comma - i).c_str());
+            marked = marked || which >= static_cast<int>(kChipShapes);
+            if (comma == std::string::npos) break;
+            i = comma + 1;
+        }
     }
     CHECK(marked);
 }
@@ -453,10 +474,17 @@ TEST(usd_export_the_grit_carries_its_numbers_and_velocities) {
         const float* w = last.rigid.debrisVelocity.data() + 3 * i;
         CHECK(near(v[i], Vec3(w[0], w[1], w[2]), 1e-5f));
     }
-    // ... and how each is turned: a stone copied onto a bit turns so.
-    const usda::Attribute* orient = attribute(*grit, "primvars:orient");
-    CHECK(orient && orient->type == "quatf[]");
-    const size_t turned = layer.find("quatf[] primvars:orient.timeSamples");
+    // A chip each -- of the prototypes the instancer has -- turned as the
+    // bit is.
+    CHECK_EQ(grit->type, std::string("PointInstancer"));
+    CHECK(find(s, {"World", "grit", "Prototypes", "proto_0", "mesh"}) != nullptr);
+    for (const char* name : {"point3f[] positions.timeSamples", "float3[] scales.timeSamples",
+                             "int[] protoIndices.timeSamples", "color3f[] primvars:displayColor.timeSamples"}) {
+        CHECK(layer.find(name) != std::string::npos);
+    }
+    const usda::Attribute* orient = attribute(*grit, "orientations");
+    CHECK(orient && orient->type == "quath[]");
+    const size_t turned = layer.find("quath[] orientations.timeSamples");
     CHECK(turned != std::string::npos);
     if (turned == std::string::npos) return;
     const size_t row = layer.find("12: ", turned);
@@ -738,16 +766,17 @@ TEST(usd_export_the_grains_go_to_a_layer_a_frame) {
     const usda::Prim* grains = find(s, {"World", "grains"});
     CHECK(grains != nullptr);
     if (!grains) return;
-    CHECK_EQ(grains->type, std::string("Points"));
+    CHECK_EQ(grains->type, std::string("PointInstancer"));
+    CHECK(find(s, {"World", "grains", "Prototypes", "proto_0", "mesh"}) != nullptr);
     const std::string text = s.text();
     CHECK(text.find("string primPath = \"/World/grains\"") != std::string::npos);
     const std::string layer = fileText(dir / "gravel_frames/gravel.0003.usda");
-    for (const char* name : {"point3f[] points.timeSamples", "float[] widths.timeSamples", "int64[] ids.timeSamples",
+    for (const char* name : {"point3f[] positions.timeSamples", "float3[] scales.timeSamples", "int64[] ids.timeSamples",
                              "vector3f[] velocities.timeSamples", "color3f[] primvars:displayColor.timeSamples",
-                             "quatf[] primvars:orient.timeSamples"}) {
+                             "quath[] orientations.timeSamples", "int[] protoIndices.timeSamples"}) {
         CHECK(layer.find(name) != std::string::npos);
     }
-    const size_t at = layer.find("point3f[] points.timeSamples");
+    const size_t at = layer.find("point3f[] positions.timeSamples");
     if (at != std::string::npos) {
         const size_t open = layer.find("3: ", at);
         CHECK_EQ(parseTuples(layer.substr(open, layer.find('\n', open) - open)).size(), last.grains.size());

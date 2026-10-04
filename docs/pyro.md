@@ -390,7 +390,7 @@ palivo), nebo jen kde je kouř.
 | Motion | `buoyancy`, `weight` (tíha kouře), `vorticity` (víry, které hrubá mřížka rozmaže) |
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |
 | Dissipation | `cooling`, `smoke_decay` |
-| Water | `quench` (jak silně voda Liquid Solveru a kapky Rain hasí oheň, do kterého se dostanou: 0 vůbec), `steam` (kolik kouře — páry — udělá každá jednotka tepla, kterou voda vezme); viz [quench.md](quench.md) |
+| Water | `quench` (jak silně voda Liquid Solveru a kapky Rain hasí oheň, do kterého se dostanou: 0 vůbec), `steam` (kolik páry — vlastního bílého pole plynu — udělá každá jednotka tepla, kterou voda vezme), `steam_lift` (jak silně pára stoupá), `steam_fade` (jak rychle řídne, 1/s), `evaporate` (jak rychle oheň odpařuje vodu a kapky, které jsou v něm: 0 vůbec); viz [quench.md](quench.md) |
 
 **Pyro Upres** (Simulation): plyn Pyro Solveru znovu, na mřížce dvakrát až
 čtyřikrát jemnější, s víry, které hrubá mřížka neudrží
@@ -406,8 +406,9 @@ plyn místo plynu řešiče. Obejitý (bypass) pustí dál plyn řešiče.
 Žádný parametr upresu nejde animovat: mřížka i víry jsou dané prvním
 snímkem.
 
-**Volume Look** (Render): barva a hustota kouře, `occlusion`; jas ohně,
-teplota, kde začne žhnout (`flame_start`) a kde žhne do běla
+**Volume Look** (Render): barva a hustota kouře, `occlusion`; barva
+a hustota páry (`steam_color`, `steam_density`, [quench.md](quench.md#pára));
+jas ohně, teplota, kde začne žhnout (`flame_start`) a kde žhne do běla
 (`flame_range`), `fire_light` (jak oheň svítí na kouř, podlahu a
 překážky). Jeho změna simulaci nespouští znovu.
 
@@ -499,8 +500,9 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `wake` | animace: koule s klíči polohy projíždí bazénem, voda převezme její pohyb — vlna před ní, brázda za ní ([animation.md](animation.md)) |
 | `fire_trail` | animace: pochodeň letí smyčkou a nechává stopu ohně a kouře, lopatka animovaná kolem y víří kouř nad ní |
 | `campfire_vdb` | export: táborák s uzlem Gas Volume, jehož objemy jdou do OpenVDB snímek po snímku ([cache.md](cache.md)) |
-| `campfire_rain` | voda a oheň: táborák hoří vteřinu, pak přijde liják — kapky, které propadnou plameny, je chladí, ty, které padnou na oheň, ho promočí; za pár sekund plameny zmizí a z mokrých polen stoupá pára ([quench.md](quench.md)) |
-| `fire_douse` | táborák uhašený kbelíkem vody: koule vody spadne na oheň, plameny zmizí během pár snímků, vyvalí se oblak páry a voda odteče po zemi ([quench.md](quench.md)) |
+| `campfire_rain` | voda a oheň: táborák hoří vteřinu, pak přijde liják — kapky, které propadnou plameny, je chladí, ty, které padnou na oheň, ho promočí; za pár sekund plameny zmizí a z mokrých polen stoupá bílá pára ([quench.md](quench.md)) |
+| `fire_douse` | táborák uhašený kbelíkem vody: koule vody spadne na oheň, plameny zmizí během pár snímků, tmavým kouřem se vyvalí bílý oblak páry a voda odteče po zemi ([quench.md](quench.md)) |
+| `fire_hose` | hašení hadicí: proud vody míří dvě sekundy do ohně z polen — malá část se ho v plamenech odpaří, zbytek oheň postupně uhasí; bílá pára stoupá tmavým kouřem a nahoře řídne ([quench.md](quench.md)) |
 | `rain_fill` | liják plní kamennou nádrž: každá kapka, která padne do vody, ji rozvlní a přidá do ní — hladina stoupne za pět sekund o 7 cm a zaleje schod ([quench.md](quench.md)) |
 | `campfire_upres` | upres: táborák spočítaný v rozlišení 64 a nakreslený ve 192 — Pyro Upres ×3 přidá víry, které hrubá mřížka neudrží: plameny se trhají, saze se na okrajích kudrnatí; za polovinu času a paměti simulace ve 192 ([§4](#upres-hrubá-simulace-jemný-obraz)) |
 | `demolition` | destrukce: odstřel věžáku mezi domy — nálože v přízemí, věž se zřítí do svého půdorysu a patra se drtí; prach z nárazů, drcení a přetržených spojů žene vytlačený vzduch do ulic ([destruction.md](destruction.md)) |
@@ -514,6 +516,7 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `concrete_column` | železobeton: odstřel sloupu v půlce výšky — Concrete Fracture a armokoš (Rebar), beton kolem nálože se rozletí a zmizí v prachu, zůstane holý koš a na něm visí kusy betonu ([destruction.md](destruction.md#sedmý-příklad-odstřel-železobetonového-sloupu)) |
 | `guided_fall` | usměrněná simulace: odstřel betonového komínu do ulice — klíčovaný Transform kolem hrany zářezu je Guide RBD Solveru, komín padne přesně mezi dva domy a na silnici se volně rozlomí (`guide_let_go`, `guide_reach`) ([destruction.md](destruction.md#usměrněná-simulace-guide)) |
 | `shatter_blocks` | lámání za běhu: koule projede třemi celými betonovými kvádry a každý se rozlomí tam, kam ho udeřila — úlomky nejmenší kolem rány, hrubé lomy, prach a drť ([destruction.md](destruction.md#lámání-za-běhu)) |
+| `shatter_grit` | drť jako zrna: `shatter_blocks` s Grain Solverem, do jehož vstupu Grit jde RBD Solver — každý kousek drti je zrnem, jakmile vyletí z kusu: narazí do ostatních, dopadne na úlomky, sjede z nich a leží kolem trosek, kde ho padlo víc, na sobě ([grains.md](grains.md#drť-z-betonu-jako-zrna)) |
 | `wood_beam` | dřevo: ocelová koule prorazí dřevěný trám — Wood Fracture ho rozštípe na dlouhé třísky podél vláken a třísky, do kterých koule narazí, se za běhu rozlomí s roztřepenými konci ([destruction.md](destruction.md#dřevo-wood-fracture)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do

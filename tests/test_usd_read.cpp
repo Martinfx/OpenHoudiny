@@ -1081,6 +1081,45 @@ TEST(usd_what_the_program_writes_it_reads_back) {
     for (size_t i = 0; i < 4; ++i) CHECK(near(back->positions()[i], geo.positions()[i]));
 }
 
+TEST(usd_import_leaves_a_point_instancers_prototypes_where_they_are) {
+    // What is under a PointInstancer is its prototypes: not geometry of its
+    // own where it stands; the instancer is said not to be read.
+    TempFolder dir("usd_instancer");
+    const std::string path = dir.write("chips.usda", R"(#usda 1.0
+def Xform "W"
+{
+    def Points "loose"
+    {
+        point3f[] points = [(1, 2, 3)]
+    }
+    def PointInstancer "chips"
+    {
+        point3f[] positions = [(0, 0, 0), (1, 0, 0)]
+        int[] protoIndices = [0, 0]
+        rel prototypes = </W/chips/Prototypes/chip>
+        def Scope "Prototypes"
+        {
+            def Mesh "chip"
+            {
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+            }
+        }
+    }
+}
+)");
+    const auto s = open(path);
+    CHECK(s != nullptr);
+    if (!s) return;
+    std::vector<std::string> skipped;
+    const auto back = usd::importGeometry(*s, 1.0, usd::ImportOptions{}, &skipped);
+    CHECK_EQ(back->pointCount(), 1u);
+    CHECK_EQ(back->primitiveCount(), 0u);
+    CHECK(std::any_of(skipped.begin(), skipped.end(),
+                      [](const std::string& n) { return n.find("/W/chips: a PointInstancer is not read") != std::string::npos; }));
+}
+
 TEST(usd_broken_files_are_refused_not_crashed_on) {
     std::vector<uint8_t> good;
     std::string error;

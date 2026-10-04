@@ -194,8 +194,19 @@ struct SolverSettings {
     /// soaks the fuel, quenches the flame, and soaks the sources it falls
     /// on, which then give less and less. 0: it does nothing.
     float quench = 1.0f;
-    /// Smoke -- steam -- for each unit of heat the water takes.
+    /// Steam -- a field of its own, white -- for each unit of heat the water
+    /// takes.
     float steam = 1.0f;
+    /// How hard steam rises, as a unit of heat lifts the gas: lighter than
+    /// the air, and warm.
+    float steamLift = 1.5f;
+    /// Per second: how fast steam thins out into clear air.
+    float steamFade = 0.7f;
+    /// How fast the fire boils away the water in it -- a Liquid Solver's
+    /// particles, a Rain's drops: each goes as likely, per second, as
+    /// Evaporate times how much hotter than kBoil the gas round it is. 0:
+    /// the water stays, however hot.
+    float evaporate = 1.0f;
 
     Domain domain() const;
     bool operator==(const SolverSettings&) const = default;

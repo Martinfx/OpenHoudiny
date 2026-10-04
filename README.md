@@ -93,11 +93,14 @@ okna.
 - **[docs/grains.md](docs/grains.md)** — písek, štěrk a zemina (obdoba
   Vellum Grains): zrna s třením a kohezí, hromady tak strmé, jak tření
   drží, mokrý písek stojí; sypání proudem, kolize s objekty, obousměrná
-  vazba s kusy RBD, vítr a proud plynu
+  vazba s kusy RBD, vítr a proud plynu; drť z lomů RBD Solveru jako zrna,
+  která se hromadí na troskách i kolem nich
 - **[docs/quench.md](docs/quench.md)** — voda a oheň: voda Liquid Solveru
   a kapky deště hasí oheň, do kterého se dostanou (chladí, promáčí palivo
-  a zdroje, stoupá pára), táborák v lijáku uhasne, kbelík vody ho uhasí
-  během pár snímků; liják plní bazén, do kterého padá
+  a zdroje), z tepla, které vezmou, je bílá pára — vlastní pole plynu,
+  které stoupá a řídne; plameny vodu odpařují; táborák v lijáku uhasne,
+  kbelík vody ho uhasí během pár snímků, hadice postupně; liják plní
+  bazén, do kterého padá
 - **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
   parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
   cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)
@@ -367,7 +370,9 @@ rozdrtí na prach, nárazy sypou drť a vytlačený vzduch žene prach do ulic.
 Drť jsou částice: vylétá z okraje plochy, kde praskl spoj, vzduch ji
 brzdí a točí se, naráží do kusů i překážek, zůstane ležet na schodu nebo
 na kusu a jede s ním; za utrženými kusy se táhne prach (`trail`) a RBD
-Pieces dá drť jako body s `orient` pro Copy to Points. Pád jde režírovat:
+Pieces dá drť jako body s `orient` pro Copy to Points. Zapojená do Grain
+Solveru je drť zrny, která se hromadí, a do USD jde jako PointInstancer
+s kamínky. Pád jde režírovat:
 animace kusů (klíčovaný Transform kolem Pivotu) zapojená do **Guide**
 RBD Solveru vede kusy, kam je chce záběr, a pustí je, když praskne
 lepidlo, když uplyne čas nebo když je něco zastaví dál než `guide_reach`.

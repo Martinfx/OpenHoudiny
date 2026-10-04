@@ -30,6 +30,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace pg::sim {
@@ -120,6 +121,11 @@ public:
     const std::vector<RainParticle>& intoWater() const { return intoWater_; }
     /// m^3 of water each drop is: Fill spread over the drops.
     float dropVolume() const;
+    /// The fire boils the drops in it away: each goes, over the next `dt`,
+    /// as likely as the `rate` where it is -- per second -- says (1 -
+    /// e^(-rate dt)), drawn from its number and `seed`; the rest keep their
+    /// order. How many went.
+    size_t evaporate(const std::function<float(const Vec3&)>& rate, float dt, uint32_t seed);
 
 private:
     void spawn(float dt, const LiquidSolver* water);

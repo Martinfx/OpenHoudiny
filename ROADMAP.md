@@ -79,7 +79,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Render | Cycles z Blenderu jako knihovna (sítě a instance, Principled BSDF, sklo a voda, kouř a oheň, fyzikální obloha jako v Blenderu, převod barev AgX, detail povrchů, hloubka ostrosti, rozmazání pohybem, Open Image Denoise), výchozí v záložce Render, `--renderer cycles`; vlastní path tracer na procesoru přes Intel Embree 4 a NanoVDB jako druhá volba (`--renderer path`); PNG a EXR s průchody; oba nad plate záběru s holdouty a shadow catchery | [docs/cycles.md](docs/cycles.md), [docs/pathtracer.md](docs/pathtracer.md), [docs/plate.md](docs/plate.md) |
 | Procedurálnost | Wrangle jako VEX, výrazy v parametrech (`$F`, `ch()`), digital assets s knihovnou a verzemi, `prototype cook` | [docs/wrangle.md](docs/wrangle.md), [docs/assets.md](docs/assets.md) |
 | Animace | Klíče na libovolném parametru, pohyblivé překážky, jejichž pohyb převezme plyn i voda | [docs/animation.md](docs/animation.md) |
-| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť, povrch vody, déšť, prach, kamera, světla; co se mění, v souboru pro každý snímek) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
+| Cache a export | Snímky na disk a zpátky; PLY, OBJ, OpenVDB; celý záběr do USD (geometrie, tělesa v pohybu, drť a zrna jako kamínky, povrch vody, déšť, prach a pára, kamera, světla; co se mění, v souboru pro každý snímek) | [docs/cache.md](docs/cache.md), [docs/usd.md](docs/usd.md) |
 | Obraz | Kamera záběru, render do PNG, sekvence a videa | [docs/render.md](docs/render.md) |
 
 ### Co měření změnilo
@@ -305,8 +305,11 @@ Testy to ověřují pro plyn, vodu, déšť i odstřel s prachem.
   kusy se táhne prach (`trail`). Natočení každého kousku (`orient`) jde
   do snímků, cache (verze 9), RBD Pieces, Pythonu a USD a Copy to Points
   podle něj natočí kamínky. Příklad **debris_stairs**: podetnutý sloup se
-  skácí ze schodů a drť zůstane na stupních. Zbývá USD `PointInstancer`
-  s tvary kamínků a drť, která do sebe naráží a hromadí se.
+  skácí ze schodů a drť zůstane na stupních. ✅ USD nese drť jako
+  `PointInstancer` s kamínky stejných tvarů, jaké kreslí renderery
+  ([docs/usd.md](docs/usd.md)), a drť zapojená do vstupu Grit Grain
+  Solveru je zrny, která do sebe narážejí a hromadí se (příklad
+  **shatter_grit**, [docs/grains.md](docs/grains.md#drť-z-betonu-jako-zrna)).
 - ✅ **Usměrněná simulace:** Guide RBD Solveru ([docs/destruction.md §3](docs/destruction.md#usměrněná-simulace-guide))
   je animace kusů, tytéž body posunuté a natočené (klíčovaný Transform
   kolem Pivotu, wrangle podle `@Time`). Solver v každém kroku vede každé
@@ -413,14 +416,16 @@ Seřazeno podle poměru hodnota / náklad:
    praskají) a obousměrná vazba s kusy RBD ([cloth.md](docs/cloth.md)).
    Zbývá: kolize hran a trojúhelníků, tvarové vazby. ✅ Granuláty: Grain
    Solver, písek a štěrk s třením a kohezí, sypání, obousměrná vazba s kusy
-   RBD ([grains.md](docs/grains.md)).
+   RBD, drť RBD Solveru jako zrna ([grains.md](docs/grains.md)).
 2. **Vazby mezi řešiči** — ✅ trosky ve vodě a v plynu: voda je nadnáší
    a unáší, proud plynu unáší drť, obousměrně s vodou i plynem, které jdou
    kolem kusů ([destruction.md](docs/destruction.md#jedenáctý-příklad-povodeň-na-dvoře)).
    ✅ Voda a oheň: voda a kapky deště hasí oheň, chladí plyn, promáčí
    palivo i zdroje a dělají páru; déšť plní vodu, do které padá; korekce
-   objemu FLIPu ([quench.md](docs/quench.md)). Zbývá: pole páry, odpařování
-   vody žárem, hašení jemných polí upresu.
+   objemu FLIPu ([quench.md](docs/quench.md)). ✅ Pára je vlastní pole
+   plynu (bílá, stoupá, řídne; ve všech třech rendererech, v cache, VDB
+   i USD) a plameny vodu i kapky odpařují (příklad **fire_hose**). Zbývá:
+   kondenzace páry, hašení jemných polí upresu.
 3. **Render pro finální obraz** — ✅ Cycles z Blenderu jako knihovna
    ([cycles.md](docs/cycles.md)) a vlastní path tracer na procesoru
    ([pathtracer.md](docs/pathtracer.md)): povrchy, sklo a voda, hloubka

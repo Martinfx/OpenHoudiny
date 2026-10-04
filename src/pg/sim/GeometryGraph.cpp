@@ -112,8 +112,8 @@ public:
     }
 };
 
-/// The gas as volumes -- density (smoke), temperature and flame -- on the
-/// solver's grid.
+/// The gas as volumes -- density (smoke), temperature and flame, and steam
+/// where there is any -- on the solver's grid.
 class GasVolumeNode : public FrameNode {
 public:
     explicit GasVolumeNode(std::string name) : FrameNode("gas_volume", std::move(name)) { setInputCount(0); }
@@ -132,6 +132,13 @@ public:
             for (size_t c = 0; c < n; ++c) values[c] = fromHalf(fields[3 * c + static_cast<size_t>(channel)]);
             geo->addVolume(Volume::make(names[channel], d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2],
                                         std::move(values)));
+        }
+        // The steam, where the water made any.
+        const std::vector<uint16_t>& steam = frame_->denseSteam(scratch);
+        if (steam.size() == n) {
+            std::vector<float> values(n);
+            for (size_t c = 0; c < n; ++c) values[c] = fromHalf(steam[c]);
+            geo->addVolume(Volume::make("steam", d.origin(), d.voxel, d.cells[0], d.cells[1], d.cells[2], std::move(values)));
         }
         return geo;
     }

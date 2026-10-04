@@ -31,6 +31,9 @@ GasLook GasLook::of(const sim::Look& look) {
     g.flame = look.flameIntensity;
     g.flameStart = look.flameStart;
     g.flameRange = look.flameRange;
+    g.steamDensity = look.steamDensity;
+    g.steamColor = look.steamColor;
+    g.steamAlbedo = albedoOf(look.steamColor);
     return g;
 }
 
@@ -112,14 +115,15 @@ Vec3 glow(float x) {
 struct Gas::Grid {
 #ifdef PG_HAVE_NANOVDB
     nanovdb::GridHandle<nanovdb::HostBuffer> handle;
-    const nanovdb::Vec3fGrid* grid = nullptr;
+    const nanovdb::Vec4fGrid* grid = nullptr;
 #endif
     Vec3 origin;                     // the corner of the simulation's box
     float voxel = 1.0f, inverse = 1.0f;  // world units a cell, cells a world unit
     int cells[3] = {0, 0, 0}, tiles[3] = {0, 0, 0};
-    /// Of each tile, x fastest: the most smoke, temperature and flame a
-    /// point in it reads -- its cells and the layer round them.
-    std::vector<Vec3> most;
+    /// Of each tile, x fastest: the most smoke, temperature, flame and steam
+    /// a point in it reads -- its cells and the layer round them.
+    std::vector<Vec4> most;
+    bool steamy = false;  // any cell holds steam
     Box box;
     size_t active = 0;
     int lo[3] = {0, 0, 0}, hi[3] = {-1, -1, -1};  // the tiles filled, from and to
@@ -133,7 +137,7 @@ struct Gas::Grid {
 #ifdef PG_HAVE_NANOVDB
 namespace {
 
-using Accessor = nanovdb::Vec3fGrid::AccessorType;
+using Accessor = nanovdb::Vec4fGrid::AccessorType;
 
 /// Where a ray from `o` along `d` is in `box` between `tMin` and `tMax`.
 bool clip(const Box& box, const Vec3& o, const Vec3& d, float tMin, float tMax, float& t0, float& t1) {
@@ -155,14 +159,14 @@ bool clip(const Box& box, const Vec3& o, const Vec3& d, float tMin, float tMax, 
 
 /// The fields at world point p, trilinear between the cells' middles: from
 /// one leaf at once where the eight cells are in it, as most are.
-Vec3 sample(const Gas::Grid& g, Accessor& acc, const Vec3& p) {
+Vec4 sample(const Gas::Grid& g, Accessor& acc, const Vec3& p) {
     const float x = (p.x - g.origin.x) * g.inverse - 0.5f;
     const float y = (p.y - g.origin.y) * g.inverse - 0.5f;
     const float z = (p.z - g.origin.z) * g.inverse - 0.5f;
     const float fx = std::floor(x), fy = std::floor(y), fz = std::floor(z);
     const int i = static_cast<int>(fx), j = static_cast<int>(fy), k = static_cast<int>(fz);
     const float u = x - fx, v = y - fy, w = z - fz;
-    nanovdb::Vec3f c[8];
+    nanovdb::Vec4f c[8];
     const auto* leaf = acc.probeLeaf(nanovdb::Coord(i, j, k));
     if (leaf && (i & 7) != 7 && (j & 7) != 7 && (k & 7) != 7) {
         // A leaf's values: z fastest, then y, then x.
@@ -185,8 +189,8 @@ Vec3 sample(const Gas::Grid& g, Accessor& acc, const Vec3& p) {
         c[6] = acc.getValue(nanovdb::Coord(i, j + 1, k + 1));
         c[7] = acc.getValue(nanovdb::Coord(i + 1, j + 1, k + 1));
     }
-    Vec3 out;
-    for (int a = 0; a < 3; ++a) {
+    Vec4 out;
+    for (int a = 0; a < 4; ++a) {
         const float x0 = c[0][a] + u * (c[1][a] - c[0][a]), x1 = c[2][a] + u * (c[3][a] - c[2][a]);
         const float x2 = c[4][a] + u * (c[5][a] - c[4][a]), x3 = c[6][a] + u * (c[7][a] - c[6][a]);
         const float y0 = x0 + v * (x1 - x0), y1 = x2 + v * (x3 - x2);
@@ -243,7 +247,7 @@ size_t Gas::cells() const { return grid_->active; }
 
 size_t Gas::bytes() const {
 #ifdef PG_HAVE_NANOVDB
-    return grid_->handle.bufferSize() + grid_->most.size() * sizeof(Vec3);
+    return grid_->handle.bufferSize() + grid_->most.size() * sizeof(Vec4);
 #else
     return 0;
 #endif
@@ -251,6 +255,16 @@ size_t Gas::bytes() const {
 
 float Gas::extinction(const Vec3& f, const GasLook& look) {
     return look.density * std::max(f.x, 0.0f) / (1.0f + 4.0f * std::max(f.z, 0.0f));
+}
+
+float Gas::extinction(const Vec4& f, const GasLook& look) {
+    return extinction(Vec3(f.x, f.y, f.z), look) + look.steamDensity * std::max(f.w, 0.0f);
+}
+
+Vec3 Gas::albedo(const Vec4& f, const GasLook& look) {
+    const float smoke = extinction(Vec3(f.x, f.y, f.z), look), steam = look.steamDensity * std::max(f.w, 0.0f);
+    if (!(steam > 0.0f)) return look.albedo;
+    return (look.albedo * smoke + look.steamAlbedo * steam) * (1.0f / (smoke + steam));
 }
 
 Vec3 Gas::emission(const Vec3& f, const GasLook& look) {
@@ -299,10 +313,12 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
         return smoothstep01(std::min(side, top));
     };
 
-    // Each tile with smoke or flame a leaf of the grid: made side by side,
-    // put in the tree -- ordered by where they are -- one by one.
-    using Build = nanovdb::tools::build::Grid<nanovdb::Vec3f>;
-    Build build(nanovdb::Vec3f(0.0f), "gas");
+    // The steam, laid out as the rest; none where it does not fit.
+    const bool steamy = !frame.steam.empty() && frame.steamFits();
+    // Each tile with smoke, flame or steam a leaf of the grid: made side by
+    // side, put in the tree -- ordered by where they are -- one by one.
+    using Build = nanovdb::tools::build::Grid<nanovdb::Vec4f>;
+    Build build(nanovdb::Vec4f(0.0f), "gas");
     auto& root = build.tree().root();
     std::vector<uint8_t> filled(tileCount, 0);
     std::atomic<size_t> active{0};
@@ -316,7 +332,7 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
             const int ck = static_cast<int>(t / (static_cast<size_t>(g.tiles[0]) * static_cast<size_t>(g.tiles[1]))) * sim::Tiles::kSide;
             auto* leaf = new Build::Node0(nanovdb::Coord(ci, cj, ck), root.mBackground, false);
             size_t cells = 0;
-            bool seen = false;  // smoke or flame: heat alone shows nothing
+            bool seen = false;  // smoke, flame or steam: heat alone shows nothing
             for (int z = 0; z < sim::Tiles::kSide && ck + z < nz; ++z) {
                 for (int y = 0; y < sim::Tiles::kSide && cj + y < ny; ++y) {
                     for (int x = 0; x < sim::Tiles::kSide && ci + x < nx; ++x) {
@@ -325,17 +341,20 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
                                                  : 3 * (static_cast<size_t>(i) + static_cast<size_t>(nx) * (static_cast<size_t>(j) + static_cast<size_t>(ny) * static_cast<size_t>(k)));
                         float smoke = sim::fromHalf(frame.fields[at]), heat = sim::fromHalf(frame.fields[at + 1]),
                               flame = sim::fromHalf(frame.fields[at + 2]);
+                        float steam = steamy ? sim::fromHalf(frame.steam[at / 3]) : 0.0f;
                         smoke = std::isfinite(smoke) ? std::max(smoke, 0.0f) : 0.0f;
                         heat = std::isfinite(heat) ? heat : 0.0f;
                         flame = std::isfinite(flame) ? std::max(flame, 0.0f) : 0.0f;
-                        if (smoke > 0.0f || flame > 0.0f) {
+                        steam = std::isfinite(steam) ? std::max(steam, 0.0f) : 0.0f;
+                        if (smoke > 0.0f || flame > 0.0f || steam > 0.0f) {
                             const float f = fade(i, j, k);
                             smoke *= f;
                             flame *= f;
+                            steam *= f;
                         }
-                        if (smoke == 0.0f && heat == 0.0f && flame == 0.0f) continue;
-                        seen = seen || smoke > 0.0f || flame > 0.0f;
-                        leaf->setValue(nanovdb::Coord(i, j, k), nanovdb::Vec3f(smoke, heat, flame));
+                        if (smoke == 0.0f && heat == 0.0f && flame == 0.0f && steam == 0.0f) continue;
+                        seen = seen || smoke > 0.0f || flame > 0.0f || steam > 0.0f;
+                        leaf->setValue(nanovdb::Coord(i, j, k), nanovdb::Vec4f(smoke, heat, flame, steam));
                         ++cells;
                     }
                 }
@@ -362,9 +381,9 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
             g.hi[a] = std::max(g.hi[a], at[a]);
         }
     }
-    g.handle = nanovdb::tools::createNanoGrid<Build, nanovdb::Vec3f>(build, nanovdb::tools::StatsMode::BBox,
+    g.handle = nanovdb::tools::createNanoGrid<Build, nanovdb::Vec4f>(build, nanovdb::tools::StatsMode::BBox,
                                                                        nanovdb::CheckMode::Disable);
-    g.grid = g.handle.grid<nanovdb::Vec3f>();
+    g.grid = g.handle.grid<nanovdb::Vec4f>();
     if (!g.grid) return nullptr;
 
     // The most each tile reads: of its cells and the layer round them -- a
@@ -392,7 +411,7 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
             if (mark[t]) near.push_back(static_cast<uint32_t>(t));
         }
     }
-    g.most.assign(tileCount, Vec3(0.0f, 0.0f, 0.0f));
+    g.most.assign(tileCount, Vec4(0.0f, 0.0f, 0.0f, 0.0f));
     parallelFor(near.size(), 16, [&](size_t begin, size_t end) {
         Accessor acc = g.grid->getAccessor();
         for (size_t s = begin; s < end; ++s) {
@@ -400,18 +419,19 @@ std::shared_ptr<const Gas> Gas::build(const sim::Frame& frame) {
             const int ci = static_cast<int>(t % static_cast<size_t>(g.tiles[0])) * sim::Tiles::kSide;
             const int cj = static_cast<int>((t / static_cast<size_t>(g.tiles[0])) % static_cast<size_t>(g.tiles[1])) * sim::Tiles::kSide;
             const int ck = static_cast<int>(t / (static_cast<size_t>(g.tiles[0]) * static_cast<size_t>(g.tiles[1]))) * sim::Tiles::kSide;
-            Vec3 m(0.0f, 0.0f, 0.0f);
+            Vec4 m(0.0f, 0.0f, 0.0f, 0.0f);
             for (int k = ck - 1; k <= ck + sim::Tiles::kSide; ++k) {
                 for (int j = cj - 1; j <= cj + sim::Tiles::kSide; ++j) {
                     for (int i = ci - 1; i <= ci + sim::Tiles::kSide; ++i) {
-                        const nanovdb::Vec3f v = acc.getValue(nanovdb::Coord(i, j, k));
-                        m = Vec3(std::max(m.x, v[0]), std::max(m.y, v[1]), std::max(m.z, v[2]));
+                        const nanovdb::Vec4f v = acc.getValue(nanovdb::Coord(i, j, k));
+                        m = Vec4(std::max(m.x, v[0]), std::max(m.y, v[1]), std::max(m.z, v[2]), std::max(m.w, v[3]));
                     }
                 }
             }
             g.most[t] = m;
         }
     });
+    g.steamy = steamy && std::any_of(g.most.begin(), g.most.end(), [](const Vec4& m) { return m.w > 0.0f; });
     return gas;
 #else
     (void)frame;
@@ -445,6 +465,7 @@ Gas::Dense Gas::dense(const GasLook& look, size_t most) const {
     const size_t n = static_cast<size_t>(out.size[0]) * static_cast<size_t>(out.size[1]) * static_cast<size_t>(out.size[2]);
     out.extinction.assign(n, 0.0f);
     std::vector<Vec3> emission(n);
+    if (g.steamy) out.albedo.assign(n, look.albedo);
     std::atomic<bool> glows{false};
     const size_t row = static_cast<size_t>(out.size[0]);
     const size_t rows = static_cast<size_t>(out.size[1]) * static_cast<size_t>(out.size[2]);
@@ -455,10 +476,10 @@ Gas::Dense Gas::dense(const GasLook& look, size_t most) const {
             const int y = static_cast<int>(r % static_cast<size_t>(out.size[1])), z = static_cast<int>(r / static_cast<size_t>(out.size[1]));
             for (int x = 0; x < out.size[0]; ++x) {
                 // A cell's middle: its own numbers; a block's: read there.
-                Vec3 f;
+                Vec4 f;
                 if (k == 1) {
-                    const nanovdb::Vec3f v = acc.getValue(nanovdb::Coord(from[0] + x, from[1] + y, from[2] + z));
-                    f = Vec3(v[0], v[1], v[2]);
+                    const nanovdb::Vec4f v = acc.getValue(nanovdb::Coord(from[0] + x, from[1] + y, from[2] + z));
+                    f = Vec4(v[0], v[1], v[2], v[3]);
                 } else {
                     const Vec3 p(out.box.lo.x + (static_cast<float>(x) + 0.5f) * static_cast<float>(k) * g.voxel,
                                  out.box.lo.y + (static_cast<float>(y) + 0.5f) * static_cast<float>(k) * g.voxel,
@@ -467,7 +488,8 @@ Gas::Dense Gas::dense(const GasLook& look, size_t most) const {
                 }
                 const size_t i = r * row + static_cast<size_t>(x);
                 out.extinction[i] = extinction(f, look);
-                emission[i] = Gas::emission(f, look);
+                emission[i] = Gas::emission(Vec3(f.x, f.y, f.z), look);
+                if (g.steamy) out.albedo[i] = albedo(f, look);
                 lit = lit || emission[i].x > 0.0f || emission[i].y > 0.0f || emission[i].z > 0.0f;
             }
         }
@@ -482,25 +504,33 @@ Gas::Dense Gas::dense(const GasLook& look, size_t most) const {
 }
 
 Vec3 Gas::at(const Vec3& p) const {
+    const Vec4 f = fieldsAt(p);
+    return {f.x, f.y, f.z};
+}
+
+Vec4 Gas::fieldsAt(const Vec3& p) const {
 #ifdef PG_HAVE_NANOVDB
     // Beyond a cell outside the box, nothing: the cells' numbers stay small.
     const Box& b = grid_->box;
     const float v = grid_->voxel;
     if (!(p.x > b.lo.x - v && p.y > b.lo.y - v && p.z > b.lo.z - v && p.x < b.hi.x + v && p.y < b.hi.y + v &&
           p.z < b.hi.z + v)) {
-        return {};
+        return Vec4(0.0f);
     }
     Accessor acc = grid_->grid->getAccessor();
     return sample(*grid_, acc, p);
 #else
     (void)p;
-    return {};
+    return Vec4(0.0f);
 #endif
 }
 
+bool Gas::steamy() const { return grid_->steamy; }
+
 bool Gas::track(const Vec3& origin, const Vec3& dir, float tMin, float tMax, const GasLook& look, Rng& rng, float& t,
-                Vec3& emitted) const {
+                Vec3& emitted, Vec3& kept) const {
     emitted = Vec3(0.0f, 0.0f, 0.0f);
+    kept = look.albedo;
 #ifdef PG_HAVE_NANOVDB
     const Grid& g = *grid_;
     float t0 = 0.0f, t1 = 0.0f;
@@ -508,20 +538,22 @@ bool Gas::track(const Vec3& origin, const Vec3& dir, float tMin, float tMax, con
     Accessor acc = g.grid->getAccessor();
     bool scattered = false;
     walk(g, origin, dir, t0, t1, [&](size_t tile, float from, float to) {
-        const Vec3& m = g.most[tile];
+        const Vec4& m = g.most[tile];
         // Through fire, a step a cell at least: each adds the light it gives off.
         const bool fire = look.flame > 0.0f && m.z > 0.0f && m.y > look.flameStart;
-        const float bound = std::max(look.density * m.x, fire ? g.inverse : 0.0f);
+        const float bound = std::max(look.density * m.x + look.steamDensity * m.w, fire ? g.inverse : 0.0f);
         if (!(bound > 0.0f)) return true;
         float s = from;
         for (;;) {
             s -= std::log(1.0f - rng.next()) / bound;
             if (s >= to) return true;
-            const Vec3 f = sample(g, acc, origin + dir * s);
-            if (fire) emitted = emitted + emission(f, look) * (1.0f / bound);
-            // Scattered here as likely as the smoke is dense, to the most it could be.
+            const Vec4 f = sample(g, acc, origin + dir * s);
+            if (fire) emitted = emitted + emission(Vec3(f.x, f.y, f.z), look) * (1.0f / bound);
+            // Scattered here as likely as the smoke and the steam are dense,
+            // to the most they could be.
             if (rng.next() * bound < extinction(f, look)) {
                 t = s;
+                kept = albedo(f, look);
                 scattered = true;
                 return false;
             }
@@ -539,11 +571,13 @@ float Gas::transmittance(const Vec3& origin, const Vec3& dir, float tMin, float 
 #ifdef PG_HAVE_NANOVDB
     const Grid& g = *grid_;
     float t0 = 0.0f, t1 = 0.0f;
-    if (!(look.density > 0.0f) || !clip(g.box, origin, dir, tMin, tMax, t0, t1)) return 1.0f;
+    if (!(look.density > 0.0f || (g.steamy && look.steamDensity > 0.0f)) || !clip(g.box, origin, dir, tMin, tMax, t0, t1)) {
+        return 1.0f;
+    }
     Accessor acc = g.grid->getAccessor();
     float through = 1.0f;
     walk(g, origin, dir, t0, t1, [&](size_t tile, float from, float to) {
-        const float bound = look.density * g.most[tile].x;
+        const float bound = look.density * g.most[tile].x + look.steamDensity * g.most[tile].w;
         if (!(bound > 0.0f)) return true;
         float s = from;
         for (;;) {
@@ -575,11 +609,13 @@ void Gas::seen(const Vec3& origin, const Vec3& dir, float tMax, const GasLook& l
 #ifdef PG_HAVE_NANOVDB
     const Grid& g = *grid_;
     float t0 = 0.0f, t1 = 0.0f;
-    if (!(look.density > 0.0f) || !clip(g.box, origin, dir, 0.0f, tMax, t0, t1)) return;
+    if (!(look.density > 0.0f || (g.steamy && look.steamDensity > 0.0f)) || !clip(g.box, origin, dir, 0.0f, tMax, t0, t1)) {
+        return;
+    }
     Accessor acc = g.grid->getAccessor();
     double far = 0.0;  // the distances, each by the share of the light stopped there
     walk(g, origin, dir, t0, t1, [&](size_t tile, float from, float to) {
-        if (!(g.most[tile].x > 0.0f)) return true;
+        if (!(g.most[tile].x > 0.0f || g.most[tile].w > 0.0f)) return true;
         const int steps = std::max(1, static_cast<int>(std::ceil((to - from) * g.inverse)));
         const float h = (to - from) / static_cast<float>(steps);
         for (int i = 0; i < steps; ++i) {

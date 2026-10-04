@@ -173,8 +173,12 @@ void bindSimulation(py::module_& m) {
         .def_property_readonly("has_gas", [](const PyFrame& p) { return !p.f->fields.empty(); })
         .def("gas_domain", [](const PyFrame& p) { return domainOf(p.f->domain); })
         .def("gas", [](const PyFrame& p, const std::string& name) {
-            const int channel = name == "density" ? 0 : name == "temperature" ? 1 : name == "flame" ? 2 : -1;
-            if (channel < 0) throw Error("no field '" + name + "' of the gas: density, temperature or flame");
+            const int channel = name == "density"       ? 0
+                                : name == "temperature" ? 1
+                                : name == "flame"       ? 2
+                                : name == "steam"       ? 3
+                                                        : -1;
+            if (channel < 0) throw Error("no field '" + name + "' of the gas: density, temperature, flame or steam");
             // A sparse frame's tiles into every cell: a frame of its own, that
             // the array keeps.
             FramePtr f = p.f;
@@ -183,7 +187,19 @@ void bindSimulation(py::module_& m) {
                 dense->domain = f->domain;
                 std::vector<uint16_t> scratch;
                 dense->fields = f->denseFields(scratch);
+                dense->steam = f->denseSteam(scratch);
                 f = dense;
+            }
+            if (channel == 3) {
+                // Steam, a value a cell; without any, none anywhere.
+                if (f->steam.size() < f->domain.cellCount()) {
+                    auto none = std::make_shared<sim::Frame>();
+                    none->domain = f->domain;
+                    none->steam.assign(f->fields.empty() ? 0 : f->domain.cellCount(), 0);
+                    f = none;
+                }
+                const bool some = f->steam.size() >= f->domain.cellCount();
+                return field(f, some ? f->steam.data() : nullptr, f->domain, 1, 0);
             }
             const bool some = f->fields.size() >= 3 * f->domain.cellCount();
             return field(f, some ? f->fields.data() : nullptr, f->domain, 3, channel);

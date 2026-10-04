@@ -2037,11 +2037,17 @@ struct CyclesRender::Impl {
         const Vec3 lo = d.box.lo, hi = d.box.hi, size = hi - lo;
         if (!(size.x > 0.0f && size.y > 0.0f && size.z > 0.0f)) return;
         const bool glows = d.emission.size() == n;
+        const bool steamy = d.albedo.size() == n;  // white where the steam is
 
         if (!gasShader) gasShader = scene->create_node<ccl::Shader>();
         auto graph = std::make_unique<ccl::ShaderGraph>();
         auto* volume = graph->create_node<ccl::PrincipledVolumeNode>();
         volume->set_color(rgb(s.gasLook.albedo));
+        if (steamy) {
+            auto* kept = graph->create_node<ccl::AttributeNode>();
+            kept->set_attribute(ccl::ustring("pg_albedo"));
+            graph->connect(kept->output("Color"), volume->input("Color"));
+        }
         volume->set_absorption_color(ccl::zero_float3());
         volume->set_anisotropy(0.7f * 0.55f - 0.3f * 0.25f);
         auto* stops = graph->create_node<ccl::AttributeNode>();
@@ -2101,6 +2107,18 @@ struct CyclesRender::Impl {
             }
             ccl::Attribute* given = mesh->attributes.add(ccl::ustring("pg_emission"), ccl::TypeColor, ccl::ATTR_ELEMENT_VOXEL);
             given->data_voxel() =
+                scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(rgba), 4, d.size, where, ++imageId), params);
+        }
+        if (steamy) {
+            std::vector<float> rgba(4 * n);
+            for (size_t i = 0; i < n; ++i) {
+                rgba[4 * i] = d.albedo[i].x;
+                rgba[4 * i + 1] = d.albedo[i].y;
+                rgba[4 * i + 2] = d.albedo[i].z;
+                rgba[4 * i + 3] = 1.0f;
+            }
+            ccl::Attribute* kept = mesh->attributes.add(ccl::ustring("pg_albedo"), ccl::TypeColor, ccl::ATTR_ELEMENT_VOXEL);
+            kept->data_voxel() =
                 scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(rgba), 4, d.size, where, ++imageId), params);
         }
         place(scene, mesh, ccl::transform_identity(), Vec3(1.0f, 1.0f, 1.0f));

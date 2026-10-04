@@ -198,13 +198,16 @@ bool sameFrame(const sim::Frame& a, const sim::Frame& b) {
            a.rigid.jointState == b.rigid.jointState && a.rigid.jointTime == b.rigid.jointTime &&
            a.rigid.debrisOrient == b.rigid.debrisOrient && a.grains.positions == b.grains.positions &&
            a.grains.velocities == b.grains.velocities && a.grains.radii == b.grains.radii &&
-           a.grains.ids == b.grains.ids && a.grains.colors == b.grains.colors && a.rigid.shatters == b.rigid.shatters;
+           a.grains.ids == b.grains.ids && a.grains.colors == b.grains.colors && a.rigid.shatters == b.rigid.shatters &&
+           a.steam == b.steam;
 }
 
 /// What version 15 adds at the end of a frame without grains: five counts, 0.
 constexpr size_t kNoGrains = 5 * 8;
 /// ... and version 16 after them, when nothing broke as it ran: a count, 0.
 constexpr size_t kNoShatters = 8;
+/// ... and version 17 after that, without steam: a count, 0.
+constexpr size_t kNoSteam = 8;
 
 /// A frame of every part, made up: runs of zeros of every length in the gas.
 sim::Frame madeUpFrame() {
@@ -492,7 +495,7 @@ TEST(frames_round_trip_through_their_files) {
     empty.domain.cells[0] = empty.domain.cells[1] = empty.domain.cells[2] = 64;
     empty.fields.assign(3 * empty.domain.cellCount(), 0);
     const std::string small = sim::formatFrame(empty);
-    CHECK(small.size() < 448);
+    CHECK(small.size() < 456);
     CHECK(sim::parseFrame(small, back, error));
     CHECK(sameFrame(empty, back));
 
@@ -548,7 +551,7 @@ TEST(frames_of_version_3_still_read_without_the_particles_numbers) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 13 * 8);  // the five counts, version 5's, 6's, 7's two, 8's two, 9's and 10's, all 0
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 13 * 8);  // the five counts, version 5's, 6's, 7's two, 8's two, 9's and 10's, all 0
     bytes[8] = 3;
     sim::Frame back;
     std::string error;
@@ -572,7 +575,7 @@ TEST(frames_of_version_4_still_read_without_the_waters_flow) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 8 * 8);  // its count, 0, and version 6's, 7's two, 8's two, 9's and 10's
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 8 * 8);  // its count, 0, and version 6's, 7's two, 8's two, 9's and 10's
     bytes[8] = 4;
     sim::Frame back;
     std::string error;
@@ -597,7 +600,7 @@ TEST(frames_of_version_5_still_read_without_what_became_of_the_bars) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 7 * 8);  // its count, 0, and version 7's and 8's two, 9's and 10's
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 7 * 8);  // its count, 0, and version 7's and 8's two, 9's and 10's
     bytes[8] = 5;
     sim::Frame back;
     std::string error;
@@ -617,7 +620,7 @@ TEST(frames_of_version_6_still_read_without_which_grit_is_glass) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 6 * 8);  // their counts, 0, and version 8's two, 9's and 10's
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 6 * 8);  // their counts, 0, and version 8's two, 9's and 10's
     bytes[8] = 6;
     sim::Frame back;
     std::string error;
@@ -639,7 +642,7 @@ TEST(frames_of_version_7_still_read_without_what_became_of_the_joints) {
     f.rigid.jointTime.clear();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 4 * 8);  // their counts, 0, and version 9's and 10's
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 4 * 8);  // their counts, 0, and version 9's and 10's
     bytes[8] = 7;
     sim::Frame back;
     std::string error;
@@ -658,7 +661,7 @@ TEST(frames_of_version_8_still_read_without_how_the_grit_is_turned) {
     sim::Frame f = madeUpFrame();
     f.rigid.debrisOrient.clear();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 2 * 8);  // its count, 0, and version 10's
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 2 * 8);  // its count, 0, and version 10's
     bytes[8] = 8;
     sim::Frame back;
     std::string error;
@@ -676,7 +679,7 @@ TEST(frames_of_version_9_still_read_without_sparse_gas) {
     // cell of the grid, as a dense solver's frame still has it.
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 8);  // version 10's count, 0
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 8);  // version 10's count, 0
     bytes[8] = 9;
     sim::Frame back;
     std::string error;
@@ -744,7 +747,7 @@ TEST(frames_of_version_12_still_read_without_sparse_water) {
     // cell of its grids, as a dense solver's frame still has them.
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 3 * 8);  // version 13's two counts and 14's, 0
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 3 * 8);  // version 13's two counts and 14's, 0
     bytes[8] = 12;
     sim::Frame back;
     std::string error;
@@ -758,7 +761,7 @@ TEST(frames_of_version_13_still_read_without_deep_water) {
     // end -- every tile of it with its cells.
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains - 8);  // version 14's count, 0
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains - 8);  // version 14's count, 0
     bytes[8] = 13;
     sim::Frame back;
     std::string error;
@@ -770,7 +773,7 @@ TEST(frames_of_version_13_still_read_without_deep_water) {
 TEST(frames_of_version_14_still_read_without_grains) {
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters - kNoGrains);
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters - kNoGrains);
     bytes[8] = 14;
     sim::Frame back;
     std::string error;
@@ -782,13 +785,43 @@ TEST(frames_of_version_14_still_read_without_grains) {
 TEST(frames_of_version_15_still_read_without_what_broke) {
     const sim::Frame f = madeUpFrame();
     std::string bytes = sim::formatFrame(f);
-    bytes.resize(bytes.size() - kNoShatters);
+    bytes.resize(bytes.size() - kNoSteam - kNoShatters);
     bytes[8] = 15;
     sim::Frame back;
     std::string error;
     CHECK(sim::parseFrame(bytes, back, error));
     CHECK(sameFrame(f, back));
     CHECK(back.rigid.shatters.empty());
+}
+
+TEST(frames_of_version_16_still_read_without_steam) {
+    const sim::Frame f = madeUpFrame();
+    std::string bytes = sim::formatFrame(f);
+    bytes.resize(bytes.size() - kNoSteam);
+    bytes[8] = 16;
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.steam.empty());
+}
+
+TEST(frames_keep_their_steam) {
+    // A half a cell, laid out as the gas is -- every cell, or the cells of
+    // its tiles; steam that does not fit the gas is refused.
+    sim::Frame f = madeUpFrame();
+    f.steam.assign(f.fields.size() / 3, 0);
+    for (size_t i = 0; i < f.steam.size(); i += 7) f.steam[i] = sim::toHalf(0.25f * static_cast<float>(i % 5));
+    const std::string bytes = sim::formatFrame(f);
+    sim::Frame back;
+    std::string error;
+    CHECK(sim::parseFrame(bytes, back, error));
+    CHECK(sameFrame(f, back));
+    CHECK(back.steam == f.steam);
+    CHECK(std::fabs(back.at(3, 0, 0, 0) - sim::fromHalf(f.steam[0])) < 1e-6f);
+    sim::Frame wrong = f;
+    wrong.steam.resize(wrong.steam.size() / 2);
+    CHECK(!sim::parseFrame(sim::formatFrame(wrong), back, error));
 }
 
 TEST(frames_keep_the_pieces_that_broke) {
@@ -936,7 +969,7 @@ TEST(frames_that_are_not_what_they_say_are_refused) {
     for (size_t cut = 0; cut < bytes.size(); cut += 37) CHECK(!sim::parseFrame(bytes.substr(0, cut), f, error));
     // A newer version.
     std::string newer = bytes;
-    newer[8] = 17;
+    newer[8] = 18;
     CHECK(!sim::parseFrame(newer, f, error));
     CHECK(error.find("newer") != std::string::npos);
     // A grid larger than any solver's, and a gas that does not fill its grid.

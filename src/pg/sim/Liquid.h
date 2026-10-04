@@ -172,6 +172,11 @@ public:
     /// in it. What is short of one waits for the next (and is kept in the
     /// state).
     void pour(const std::vector<Vec3>& at, const std::vector<Vec3>& velocity, float volume);
+    /// The fire boils the water away: each particle goes, over the next `dt`,
+    /// as likely as the `rate` where it is -- per second -- says
+    /// (1 - e^(-rate dt)), drawn from its number and `seed`; the rest keep
+    /// their order. How many went.
+    size_t evaporate(const std::function<float(const Vec3&)>& rate, float dt, uint32_t seed);
 
     /// The scene, sanitized.
     const LiquidScene& scene() const { return scene_; }

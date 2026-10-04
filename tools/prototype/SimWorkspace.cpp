@@ -275,6 +275,9 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         std::string s = number(2000.0f * v("radius")) + " mm" + dot + "friction " + number(v("friction"));
         if (v("cohesion") > 0.0f) s += dot + "wet";
         if (v("emit_frames") > 1.0f) s += dot + "poured " + std::to_string(static_cast<int>(v("emit_frames"))) + " frames";
+        for (const sim::Link& l : net.linksInto(n.id, "grit")) {
+            if (const sim::Node* from = net.node(l.from)) s += dot + "grit of " + from->name;
+        }
         return s;
     }
     if (t == "rbd_solver") {

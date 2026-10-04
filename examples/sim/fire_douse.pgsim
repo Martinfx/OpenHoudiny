@@ -2,8 +2,8 @@ pgsim 1
 # A campfire doused with a bucket of water: it burns for a second and a
 # half, then a ball of water falls on it. Where the water gets into the
 # flames it cools them and soaks the fuel, the fire under it is soaked
-# through and dies; a burst of steam rolls up off it, and the water runs
-# away over the ground.
+# through and dies; a burst of white steam rolls up off it through the dark
+# smoke, and the water runs away over the ground.
 node 1 pyro_source 2 fire 0 0
   param fuel 14
   param heat 1
@@ -18,7 +18,7 @@ node 3 pyro_solver 2 solver 250 28
   param smoke_decay 0.15
   param steam 1.5
 node 4 volume_look 2 look 490 28
-  param smoke_color 0.5 0.49 0.47
+  param smoke_color 0.2 0.19 0.18
   param smoke_density 24
   param fire_light 3
 node 5 output 2 output 720 28

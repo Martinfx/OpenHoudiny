@@ -193,6 +193,7 @@ proto tyhle dva parametry nepoužívá.
 |---|---|
 | Smoke Color | barva, kterou hustý kouř vypadá (viz níže) |
 | Smoke Density | kolik světla kouř zastaví na metr; v plameni méně, jako ve viewportu |
+| Steam Color, Steam Density | pára ([quench.md](quench.md#pára)): kolik světla zastaví na metr a jakou barvou ho rozptýlí; v buňce s kouřem i párou je útlum součet a barva průměr vážený útlumem obou |
 | Flame Intensity, Start, Range | kolik světla plamen vydá a jakou barvou podle teploty: černé těleso od 1000 K do 3000 K, stejně jako viewport |
 | Fire Light, Occlusion | nepoužívá: světlo plamenů a stínění oblohy se počítá |
 
@@ -256,8 +257,8 @@ vidět po lomeném paprsku. Podrobnosti jsou v
   hledá paprsky vlastní hierarchie i v sítích. Výsledek je stejný až na
   zaokrouhlení: test `render_embree_meets_what_our_bvh_meets` porovná
   4 000 paprsků v obou (sítě, instance, sklo, objekty, podlaha, stíny).
-- **Plyn** (`src/pg/render/Gas.h`): kouř, teplota a plamen snímku jsou
-  v mřížce **NanoVDB** (součást OpenVDB, Apache 2.0). Dlaždice 8 × 8 × 8
+- **Plyn** (`src/pg/render/Gas.h`): kouř, teplota, plamen a pára snímku
+  jsou v mřížce **NanoVDB** (součást OpenVDB, Apache 2.0). Dlaždice 8 × 8 × 8
   buněk, ve kterých plyn je, jsou listy jejího stromu a hodnoty se mezi
   středy buněk čtou trilineárně jako texturou ve viewportu. Ke každé
   dlaždici patří nejvíc kouře, plamene a teploty, jaké bod v ní přečte,

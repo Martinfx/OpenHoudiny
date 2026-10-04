@@ -28,11 +28,16 @@ void tileCounts(const Domain& d, size_t t[3]) {
 }  // namespace
 
 float Frame::at(int channel, int i, int j, int k) const {
+    // Steam is laid out as the rest, a value a cell.
+    const bool steamy = channel == 3;
+    if (steamy && (steam.empty() || !steamFits())) return 0.0f;
+    const std::vector<uint16_t>& values = steamy ? steam : fields;
+    const size_t width = steamy ? 1 : 3, ch = steamy ? 0 : static_cast<size_t>(channel);
     if (gasTiles.empty()) {
         const size_t cell = static_cast<size_t>(i) +
                             static_cast<size_t>(domain.cells[0]) *
                                 (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) * static_cast<size_t>(k));
-        return fromHalf(fields[3 * cell + static_cast<size_t>(channel)]);
+        return fromHalf(values[width * cell + ch]);
     }
     size_t t[3];
     tileCounts(domain, t);
@@ -41,7 +46,7 @@ float Frame::at(int channel, int i, int j, int k) const {
     const auto found = std::lower_bound(gasTiles.begin(), gasTiles.end(), tile);
     if (found == gasTiles.end() || *found != tile) return 0.0f;
     const size_t slot = static_cast<size_t>(found - gasTiles.begin());
-    return fromHalf(fields[3 * (slot * Tiles::kCells + SparseGrid::local(i, j, k)) + static_cast<size_t>(channel)]);
+    return fromHalf(values[width * (slot * Tiles::kCells + SparseGrid::local(i, j, k)) + ch]);
 }
 
 const std::vector<uint16_t>& Frame::denseFields(std::vector<uint16_t>& scratch) const {
@@ -72,30 +77,40 @@ const std::vector<uint16_t>& Frame::denseFields(std::vector<uint16_t>& scratch) 
 }
 
 Frame capture(const PyroSolver& sim) {
-    Frame f = gasFrame(sim.domain(), sim.tiles(), sim.density(), sim.temperature(), sim.flame());
+    Frame f = gasFrame(sim.domain(), sim.tiles(), sim.density(), sim.temperature(), sim.flame(),
+                       sim.steamy() ? &sim.steam() : nullptr);
     f.number = sim.frame();
     f.time = sim.time();
     return f;
 }
 
 Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smokeGrid, const SparseGrid& heatGrid,
-               const SparseGrid& flameGrid) {
+               const SparseGrid& flameGrid, const SparseGrid* steamGrid) {
     Frame f;
     f.domain = domain;
     const float* smoke = smokeGrid.data();
     const float* heat = heatGrid.data();
     const float* flame = flameGrid.data();
+    const float* steam = steamGrid ? steamGrid->data() : nullptr;
+    // No steam that a half holds: none.
+    auto dry = [&]() {
+        if (std::all_of(f.steam.begin(), f.steam.end(), [](uint16_t h) { return h == 0; })) f.steam.clear();
+    };
     if (tiles.all()) {
         // Every cell, x fastest.
         f.fields.assign(3 * f.domain.cellCount(), 0);
+        if (steam) f.steam.assign(f.domain.cellCount(), 0);
         uint16_t* out = f.fields.data();
+        uint16_t* vapour = f.steam.data();
         const size_t nx = static_cast<size_t>(f.domain.cells[0]), ny = static_cast<size_t>(f.domain.cells[1]);
         forEachCounted(tiles, [&](int i, int j, int k, size_t c) {
             const size_t cell = static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * static_cast<size_t>(k));
             out[3 * cell] = toHalf(smoke[c]);
             out[3 * cell + 1] = toHalf(heat[c]);
             out[3 * cell + 2] = toHalf(flame[c]);
+            if (steam) vapour[cell] = toHalf(std::max(steam[c], 0.0f));
         });
+        dry();
         return f;
     }
     // Sparse: the tiles with any gas -- as halves -- in them, as the solver
@@ -106,7 +121,8 @@ Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke
         for (size_t s = begin; s < end; ++s) {
             const size_t base = s * Tiles::kCells;
             for (size_t c = base; c < base + Tiles::kCells && !any[s]; ++c) {
-                any[s] = toHalf(smoke[c]) != 0 || toHalf(heat[c]) != 0 || toHalf(flame[c]) != 0;
+                any[s] = toHalf(smoke[c]) != 0 || toHalf(heat[c]) != 0 || toHalf(flame[c]) != 0 ||
+                         (steam && toHalf(std::max(steam[c], 0.0f)) != 0);
             }
         }
     });
@@ -122,7 +138,9 @@ Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke
         return f;
     }
     f.fields.resize(3 * Tiles::kCells * slots.size());
+    if (steam) f.steam.assign(Tiles::kCells * slots.size(), 0);
     uint16_t* out = f.fields.data();
+    uint16_t* vapour = f.steam.data();
     pg::parallelFor(slots.size(), 16, [&](size_t begin, size_t end) {
         for (size_t t = begin; t < end; ++t) {
             const size_t from = slots[t] * Tiles::kCells, to = t * Tiles::kCells;
@@ -130,9 +148,11 @@ Frame gasFrame(const Domain& domain, const Tiles& tiles, const SparseGrid& smoke
                 out[3 * (to + c)] = toHalf(smoke[from + c]);
                 out[3 * (to + c) + 1] = toHalf(heat[from + c]);
                 out[3 * (to + c) + 2] = toHalf(flame[from + c]);
+                if (steam) vapour[to + c] = toHalf(std::max(steam[from + c], 0.0f));
             }
         }
     });
+    dry();
     return f;
 }
 
@@ -235,27 +255,33 @@ bool WaterFrame::fits() const {
     return both.empty() && cells.size() == 2 * Tiles::kCells * tiles.size();
 }
 
-void Frame::coarseFields(int factor, std::vector<uint16_t>& out) const {
+namespace {
+
+/// `values` of `width` a cell, laid out as `frame`'s gas, of the grid
+/// `factor` times as coarse: the mean of the cells under each.
+void coarseOf(const Frame& frame, const std::vector<uint16_t>& values, size_t width, int factor,
+              std::vector<uint16_t>& out) {
+    const Domain& domain = frame.domain;
     const int f = factor;
     const int n[3] = {domain.cells[0] / f, domain.cells[1] / f, domain.cells[2] / f};
     const size_t count = static_cast<size_t>(n[0]) * static_cast<size_t>(n[1]) * static_cast<size_t>(n[2]);
-    // The sums of the cells under each coarse one: smoke, temperature, flame.
-    std::vector<float> sum(3 * count, 0.0f);
+    // The sums of the cells under each coarse one.
+    std::vector<float> sum(width * count, 0.0f);
     auto add = [&](size_t from, int i, int j, int k) {
-        const size_t to = 3 * (static_cast<size_t>(i / f) +
-                               static_cast<size_t>(n[0]) * (static_cast<size_t>(j / f) +
-                                                            static_cast<size_t>(n[1]) * static_cast<size_t>(k / f)));
-        for (size_t ch = 0; ch < 3; ++ch) sum[to + ch] += fromHalf(fields[from + ch]);
+        const size_t to = width * (static_cast<size_t>(i / f) +
+                                   static_cast<size_t>(n[0]) * (static_cast<size_t>(j / f) +
+                                                                static_cast<size_t>(n[1]) * static_cast<size_t>(k / f)));
+        for (size_t ch = 0; ch < width; ++ch) sum[to + ch] += fromHalf(values[from + ch]);
     };
-    if (gasTiles.empty()) {
+    if (frame.gasTiles.empty()) {
         // Each coarse layer of z apart: what it sums is its own.
         pg::parallelFor(static_cast<size_t>(n[2]), 1, [&](size_t begin, size_t end) {
             for (int k = static_cast<int>(begin) * f; k < static_cast<int>(end) * f; ++k) {
                 for (int j = 0; j < domain.cells[1]; ++j) {
                     for (int i = 0; i < domain.cells[0]; ++i) {
-                        add(3 * (static_cast<size_t>(i) + static_cast<size_t>(domain.cells[0]) *
-                                                              (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) *
-                                                                                            static_cast<size_t>(k))),
+                        add(width * (static_cast<size_t>(i) + static_cast<size_t>(domain.cells[0]) *
+                                                                  (static_cast<size_t>(j) + static_cast<size_t>(domain.cells[1]) *
+                                                                                                static_cast<size_t>(k))),
                             i, j, k);
                     }
                 }
@@ -264,11 +290,108 @@ void Frame::coarseFields(int factor, std::vector<uint16_t>& out) const {
     } else {
         // A tile covers whole coarse cells, which no other tile does; where
         // no tile is, there is no gas.
-        forTileCells(domain, gasTiles, [&](size_t s, int i, int j, int k, size_t l) { add(3 * (s * Tiles::kCells + l), i, j, k); });
+        forTileCells(domain, frame.gasTiles,
+                     [&](size_t s, int i, int j, int k, size_t l) { add(width * (s * Tiles::kCells + l), i, j, k); });
     }
-    out.resize(3 * count);
+    out.resize(width * count);
     const float under = 1.0f / static_cast<float>(f * f * f);
-    for (size_t c = 0; c < 3 * count; ++c) out[c] = toHalf(sum[c] * under);
+    for (size_t c = 0; c < width * count; ++c) out[c] = toHalf(sum[c] * under);
+}
+
+}  // namespace
+
+void Frame::coarseFields(int factor, std::vector<uint16_t>& out) const { coarseOf(*this, fields, 3, factor, out); }
+
+void Frame::coarseSteam(int factor, std::vector<uint16_t>& out) const {
+    out.clear();
+    if (!steam.empty() && steamFits()) coarseOf(*this, steam, 1, factor, out);
+}
+
+const std::vector<uint16_t>& Frame::denseSteam(std::vector<uint16_t>& scratch) const {
+    if (steam.empty() || !steamFits()) {
+        scratch.clear();
+        return scratch;
+    }
+    if (gasTiles.empty()) return steam;
+    const uint16_t none = 0;
+    spreadTiles(domain, gasTiles, steam, 1, &none, scratch);
+    return scratch;
+}
+
+void addCoarseSteam(Frame& fine, const PyroSolver& coarse, int scale) {
+    if (!coarse.steamy() || scale < 1) return;
+    const SparseGrid& steam = coarse.steam();
+    const Tiles& tiles = coarse.tiles();
+    const Domain& d = fine.domain;
+    // The fine tiles under the solver's tiles that hold any steam.
+    size_t t[3];
+    tileCounts(d, t);
+    std::vector<uint32_t> wanted;
+    const std::vector<uint32_t>& stored = tiles.stored();
+    const int ct[3] = {tiles.tilesX(), tiles.tilesY(), tiles.tilesZ()};
+    for (size_t s = 0; s < stored.size(); ++s) {
+        const float* v = steam.data() + s * Tiles::kCells;
+        if (std::none_of(v, v + Tiles::kCells, [](float x) { return toHalf(std::max(x, 0.0f)) != 0; })) continue;
+        const int a = static_cast<int>(stored[s] % static_cast<uint32_t>(ct[0]));
+        const int b = static_cast<int>((stored[s] / static_cast<uint32_t>(ct[0])) % static_cast<uint32_t>(ct[1]));
+        const int c = static_cast<int>(stored[s] / static_cast<uint32_t>(ct[0] * ct[1]));
+        // A cell more round them: what is read between the cells' middles
+        // spills over.
+        for (int z = std::max(c * scale - 1, 0); z <= std::min((c + 1) * scale, static_cast<int>(t[2]) - 1); ++z) {
+            for (int y = std::max(b * scale - 1, 0); y <= std::min((b + 1) * scale, static_cast<int>(t[1]) - 1); ++y) {
+                for (int x = std::max(a * scale - 1, 0); x <= std::min((a + 1) * scale, static_cast<int>(t[0]) - 1); ++x) {
+                    wanted.push_back(static_cast<uint32_t>(static_cast<size_t>(x) +
+                                                           t[0] * (static_cast<size_t>(y) + t[1] * static_cast<size_t>(z))));
+                }
+            }
+        }
+    }
+    if (wanted.empty()) return;
+    std::sort(wanted.begin(), wanted.end());
+    wanted.erase(std::unique(wanted.begin(), wanted.end()), wanted.end());
+    if (!fine.gasTiles.empty()) {
+        // The frame's tiles and those, the gas of the new ones nothing.
+        std::vector<uint32_t> all;
+        std::set_union(fine.gasTiles.begin(), fine.gasTiles.end(), wanted.begin(), wanted.end(), std::back_inserter(all));
+        if (all.size() != fine.gasTiles.size()) {
+            std::vector<uint16_t> fields(3 * Tiles::kCells * all.size(), 0);
+            size_t from = 0;
+            for (size_t to = 0; to < all.size() && from < fine.gasTiles.size(); ++to) {
+                if (all[to] != fine.gasTiles[from]) continue;
+                std::copy_n(fine.fields.begin() + static_cast<std::ptrdiff_t>(3 * Tiles::kCells * from), 3 * Tiles::kCells,
+                            fields.begin() + static_cast<std::ptrdiff_t>(3 * Tiles::kCells * to));
+                ++from;
+            }
+            fine.gasTiles = std::move(all);
+            fine.fields = std::move(fields);
+        }
+    }
+    // Each fine cell's middle in the solver's cells.
+    const float inv = 1.0f / static_cast<float>(scale);
+    auto read = [&](int i, int j, int k) {
+        return toHalf(std::max(steam.sample((static_cast<float>(i) + 0.5f) * inv, (static_cast<float>(j) + 0.5f) * inv,
+                                            (static_cast<float>(k) + 0.5f) * inv),
+                               0.0f));
+    };
+    if (fine.gasTiles.empty()) {
+        fine.steam.assign(d.cellCount(), 0);
+        const size_t nx = static_cast<size_t>(d.cells[0]), ny = static_cast<size_t>(d.cells[1]);
+        pg::parallelFor(static_cast<size_t>(d.cells[2]), 1, [&](size_t begin, size_t end) {
+            for (size_t k = begin; k < end; ++k) {
+                for (int j = 0; j < d.cells[1]; ++j) {
+                    for (int i = 0; i < d.cells[0]; ++i) {
+                        fine.steam[static_cast<size_t>(i) + nx * (static_cast<size_t>(j) + ny * k)] =
+                            read(i, j, static_cast<int>(k));
+                    }
+                }
+            }
+        });
+    } else {
+        fine.steam.assign(Tiles::kCells * fine.gasTiles.size(), 0);
+        forTileCells(d, fine.gasTiles,
+                     [&](size_t s, int i, int j, int k, size_t l) { fine.steam[s * Tiles::kCells + l] = read(i, j, k); });
+    }
+    if (std::all_of(fine.steam.begin(), fine.steam.end(), [](uint16_t h) { return h == 0; })) fine.steam.clear();
 }
 
 void WaterFrame::coarseCells(int factor, std::vector<uint8_t>& out) const {

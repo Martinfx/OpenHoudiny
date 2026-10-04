@@ -5,15 +5,20 @@
 // Volume Look has them (sim/Look.h), the look the viewport draws with
 // (pg/gl/Volume.h), the light found as it goes instead of guessed.
 //
-//   the grid    the smoke, the temperature and the flame of each cell of the
-//               frame (sim::Frame) in a NanoVDB grid (OpenVDB's, Apache 2.0):
-//               the tiles of 8 x 8 x 8 cells that hold any are its leaves.
+//   the grid    the smoke, the temperature, the flame and the steam of each
+//               cell of the frame (sim::Frame) in a NanoVDB grid (OpenVDB's,
+//               Apache 2.0): the tiles of 8 x 8 x 8 cells that hold any are
+//               its leaves.
 //               Read between the cells' middles, trilinearly, as the
 //               viewport's texture is; faded out over the last cells before
 //               the open sides and the top, as the viewport fades it.
-//   the most    of each tile: the most smoke, temperature and flame a point
-//               in it reads -- its own cells and the layer round them that
-//               the reading takes in. How far apart the steps may be.
+//   the most    of each tile: the most smoke, temperature, flame and steam
+//               a point in it reads -- its own cells and the layer round them
+//               that the reading takes in. How far apart the steps may be.
+//
+// Steam stops and scatters light as smoke does, as dense as the Volume
+// Look's Steam Density says and white: where both are, a scattering keeps
+// of the light what each would, by how much of it each stops.
 //
 // A ray goes through it by delta tracking. It takes steps as long as the
 // densest smoke the tile could hold would make them, and at each the smoke
@@ -53,6 +58,9 @@ struct GasLook {
     float flame = 30.0f;                ///< light the flames give off per world unit, at their hottest
     float flameStart = 0.3f;            ///< temperature where flames start to glow
     float flameRange = 4.0f;            ///< ... and how much hotter they glow white
+    float steamDensity = 8.0f;          ///< light the steam stops, per unit of steam per world unit
+    Vec3 steamColor{0.92f, 0.93f, 0.95f};  ///< the colour thick steam looks
+    Vec3 steamAlbedo = albedoOf(steamColor);
 
     static GasLook of(const sim::Look& look);
     /// The share each scattering keeps of a medium that looks `color` where
@@ -85,20 +93,29 @@ public:
     /// The smoke (0 or more), the temperature and the flame (0 or more) at
     /// a world point: between the cells' middles, trilinearly; 0 outside.
     Vec3 at(const Vec3& p) const;
+    /// ... and the steam (0 or more), as w.
+    Vec4 fieldsAt(const Vec3& p) const;
+    /// Whether any cell holds steam.
+    bool steamy() const;
     /// Light the gas stops per world unit, where the fields are `f` (at()):
     /// the smoke's -- less in the flames, where it glows.
     static float extinction(const Vec3& f, const GasLook& look);
+    /// ... with the steam's, where the fields are `f` (fieldsAt()).
+    static float extinction(const Vec4& f, const GasLook& look);
+    /// The share of the light a scattering keeps where the fields are `f`:
+    /// the smoke's and the steam's, by how much of the light each stops.
+    static Vec3 albedo(const Vec4& f, const GasLook& look);
     /// Light the flames give off per world unit, where the fields are `f`:
     /// a black body from 1000 K to 3000 K as the temperature rises -- the
     /// viewport's.
     static Vec3 emission(const Vec3& f, const GasLook& look);
 
     /// Delta tracking along the unit `dir` from `origin`, between `tMin`
-    /// and `tMax`: whether the light is scattered on the way, `t` where;
-    /// `emitted`, the light the flames give off along the way to there, as
-    /// it gets to the origin.
+    /// and `tMax`: whether the light is scattered on the way, `t` where, and
+    /// the share of it the scattering keeps (albedo()); `emitted`, the light
+    /// the flames give off along the way to there, as it gets to the origin.
     bool track(const Vec3& origin, const Vec3& dir, float tMin, float tMax, const GasLook& look, Rng& rng, float& t,
-               Vec3& emitted) const;
+               Vec3& emitted, Vec3& kept) const;
     /// Ratio tracking: the share of the light that gets through between
     /// `tMin` and `tMax`.
     float transmittance(const Vec3& origin, const Vec3& dir, float tMin, float tMax, const GasLook& look,
@@ -120,6 +137,9 @@ public:
         int size[3] = {0, 0, 0};      ///< cells along each axis
         std::vector<float> extinction;
         std::vector<Vec3> emission;   ///< empty where nothing glows
+        /// The share of the light a scattering keeps (albedo()) -- empty
+        /// without steam: the smoke's everywhere.
+        std::vector<Vec3> albedo;
     };
     Dense dense(const GasLook& look, size_t most) const;
 

@@ -64,9 +64,10 @@ void PyroSolver::reset() {
     nz_ = domain_.cells[2];
     // Sparse, nothing is worked on until there is gas or a source; dense,
     // every tile is.
-    for (SparseGrid* g : {&vel_[0], &vel_[1], &vel_[2], &density_, &temperature_, &fuel_, &flame_, &pressure_}) {
+    for (SparseGrid* g : {&vel_[0], &vel_[1], &vel_[2], &density_, &temperature_, &fuel_, &flame_, &pressure_, &steam_}) {
         *g = SparseGrid();
     }
+    steamy_ = false;
     retile(scene_.solver.sparse ? std::make_shared<const Tiles>(nx_, ny_, nz_, std::vector<uint8_t>(), -1)
                                 : std::make_shared<const Tiles>(nx_, ny_, nz_));
     noise_.assign(scene_.forces.size(), {});
@@ -87,7 +88,7 @@ void PyroSolver::retile(std::shared_ptr<const Tiles> cells) {
     }
     // What the gas carries, and the pressure -- the next solve's first guess
     // -- go on where the tiles do.
-    for (SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &pressure_}) g->retile(cells_);
+    for (SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &pressure_, &steam_}) g->retile(cells_);
     // The rest is made again each step, or by updateSolids().
     for (SparseGrid* g : {&solid_, &back_[0], &back_[1], &back_[2], &forward_[0], &forward_[1], &forward_[2],
                           &predicted_, &hi_, &corrected_, &expansion_, &divergence_}) {
@@ -110,7 +111,7 @@ void PyroSolver::saveState(StateWriter& out) const {
     out.pod(time_);
     out.tiles(*cells_);
     for (int a = 0; a < 3; ++a) out.values(vel_[a]);
-    for (const SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &pressure_, &solid_}) out.values(*g);
+    for (const SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &pressure_, &solid_, &steam_}) out.values(*g);
     out.pod(static_cast<uint8_t>(anySolid_));
     out.list(solidCells_);
     for (int a = 0; a < 3; ++a) {
@@ -139,7 +140,7 @@ bool PyroSolver::loadState(StateReader& in) {
         vel[a] = SparseGrid(Tiles::faces(*cells, a));
         if (!in.values(vel[a])) return false;
     }
-    SparseGrid fields[6];
+    SparseGrid fields[7];
     for (SparseGrid& g : fields) {
         g = SparseGrid(cells);
         if (!in.values(g)) return false;
@@ -167,8 +168,9 @@ bool PyroSolver::loadState(StateReader& in) {
         blocked_[a] = std::move(blocked[a]);
         blockedVel_[a] = std::move(blockedVel[a]);
     }
-    SparseGrid* mine[6] = {&density_, &temperature_, &fuel_, &flame_, &pressure_, &solid_};
-    for (int f = 0; f < 6; ++f) *mine[f] = std::move(fields[f]);
+    SparseGrid* mine[7] = {&density_, &temperature_, &fuel_, &flame_, &pressure_, &solid_, &steam_};
+    for (int f = 0; f < 7; ++f) *mine[f] = std::move(fields[f]);
+    steamy_ = std::any_of(steam_.values().begin(), steam_.values().end(), [](float v) { return v != 0.0f; });
     solidCells_ = std::move(solidCells);
     soaked_ = std::move(soaked);
     anySolid_ = anySolid != 0;
@@ -203,7 +205,7 @@ void PyroSolver::updateTiles(float dt) {
         for (size_t s = begin; s < end; ++s) {
             const size_t base = s * Tiles::kCells;
             bool gas = false;
-            for (const SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_}) {
+            for (const SparseGrid* g : {&density_, &temperature_, &fuel_, &flame_, &steam_}) {
                 const float* v = g->data() + base;
                 for (int c = 0; c < Tiles::kCells && !gas; ++c) gas = v[c] > cutoff;
                 if (gas) break;
@@ -420,6 +422,17 @@ Vec3 PyroSolver::flowAt(const Vec3& p) const {
     return {v[0], v[1], v[2]};
 }
 
+float PyroSolver::heatAt(const Vec3& p) const {
+    const Vec3 o = domain_.origin();
+    const float inv = 1.0f / domain_.voxel;
+    const float x = (p.x - o.x) * inv, y = (p.y - o.y) * inv, z = (p.z - o.z) * inv;
+    if (!(x >= 0.0f && y >= 0.0f && z >= 0.0f && x <= static_cast<float>(nx_) && y <= static_cast<float>(ny_) &&
+          z <= static_cast<float>(nz_))) {
+        return 0.0f;
+    }
+    return temperature_.sample(x, y, z, true);
+}
+
 void PyroSolver::velocityAt(float x, float y, float z, float out[3]) const {
     out[0] = vel_[0].sample(x + 0.5f, y, z);
     out[1] = vel_[1].sample(x, y + 0.5f, z);
@@ -605,8 +618,9 @@ void PyroSolver::advect(float dt) {
     advectScalar(temperature_);
     advectScalar(fuel_);
     advectScalar(flame_);
+    if (steamy_) advectScalar(steam_);
     for (const size_t c : solidCells_) {
-        density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = 0.0f;
+        density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = steam_.data()[c] = 0.0f;
     }
     enforceWalls();
 }
@@ -765,6 +779,7 @@ void PyroSolver::quench(float dt) {
         i = static_cast<int>(rest - static_cast<int64_t>(j) * nx);
     };
     // The gas where the water is: each cell its own, nothing summed across.
+    if (s.steam > 0.0f) steamy_ = true;
     pg::parallelFor(wet_.size(), 4096, [&](size_t begin, size_t end) {
         for (size_t w = begin; w < end; ++w) {
             int i, j, k;
@@ -774,7 +789,7 @@ void PyroSolver::quench(float dt) {
             const float share = 1.0f - std::exp(-s.quench * wet_[w].second * dt);
             const float taken = temperature_.data()[c] * share;
             temperature_.data()[c] -= taken * (1.0f - kSteamWarmth);
-            density_.data()[c] += taken * s.steam;
+            steam_.data()[c] += taken * s.steam;
             fuel_.data()[c] -= fuel_.data()[c] * share;
             flame_.data()[c] -= flame_.data()[c] * share;
         }
@@ -816,21 +831,25 @@ void PyroSolver::quench(float dt) {
 
 void PyroSolver::addForces(float dt) {
     const SolverSettings& s = scene_.solver;
-    // Buoyancy on the vertical faces, from the cells below and above them.
+    // Buoyancy on the vertical faces, from the cells below and above them:
+    // heat and steam lift, smoke weighs down.
     SparseGrid& vy = vel_[1];
+    const bool steam = steamy_ && s.steamLift != 0.0f;
     forEachCounted(*faces_[1], [&](int i, int j, int k, size_t c) {
-        float heat = 0.0f, smoke = 0.0f, n = 0.0f;
+        float heat = 0.0f, smoke = 0.0f, vapour = 0.0f, n = 0.0f;
         if (j > 0) {
             heat += temperature_.at(i, j - 1, k);
             smoke += density_.at(i, j - 1, k);
+            if (steam) vapour += steam_.at(i, j - 1, k);
             n += 1.0f;
         }
         if (j < ny_) {
             heat += temperature_.at(i, j, k);
             smoke += density_.at(i, j, k);
+            if (steam) vapour += steam_.at(i, j, k);
             n += 1.0f;
         }
-        vy.data()[c] += dt * (s.buoyancy * heat - s.weight * smoke) / n;
+        vy.data()[c] += dt * (s.buoyancy * heat - s.weight * smoke + s.steamLift * vapour) / n;
     });
     if (s.vorticity > 0.0f) addVorticity(dt);
     for (size_t f = 0; f < scene_.forces.size(); ++f) addForce(scene_.forces[f], f, dt);
@@ -973,6 +992,7 @@ void PyroSolver::dissipate(float dt) {
     const SolverSettings& s = scene_.solver;
     const float smoke = std::exp(-s.smokeDecay * dt), heat = std::exp(-s.cooling * dt);
     const float flame = s.flameLife > 0.0f ? std::exp(-dt / s.flameLife) : 0.0f;
+    const float steam = std::exp(-s.steamFade * dt);
     forEachCounted(*cells_, [&](int, int, int, size_t c) {
         // Where the burning gas swells -- by expansion x dt of its volume this
         // step -- what it carries spreads over the more room. Advection alone
@@ -985,6 +1005,7 @@ void PyroSolver::dissipate(float dt) {
         temperature_.data()[c] = std::max(0.0f, temperature_.data()[c]) * heat;
         fuel_.data()[c] = std::max(0.0f, fuel_.data()[c]) * thinner;
         flame_.data()[c] = std::max(0.0f, flame_.data()[c]) * flame * thinner;
+        if (steamy_) steam_.data()[c] = std::max(0.0f, steam_.data()[c]) * steam * thinner;
     });
 }
 

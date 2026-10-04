@@ -83,6 +83,7 @@ GrainScene GrainScene::sanitized() const {
     s.iterations = std::clamp(s.iterations, 1, 50);
     for (int a = 0; a < 3; ++a) s.gravity[a] = std::clamp(finite(s.gravity[a], 0.0f), -1000.0f, 1000.0f);
     s.timeStep = std::clamp(finite(s.timeStep, d.timeStep), 1e-4f, 1.0f);
+    for (int a = 0; a < 3; ++a) g.color[a] = std::clamp(finite(g.color[a], 0.5f), 0.0f, 1.0f);
     detail::sanitize(g.colliders);
     detail::sanitize(g.forces);
     return g;
@@ -144,6 +145,39 @@ void GrainSolver::setScene(const GrainScene& scene) {
 
 void GrainSolver::setAir(std::function<Vec3(const Vec3&)> air) { air_ = std::move(air); }
 
+void GrainSolver::paint(size_t count) {
+    const Vec3& c = scene_.color;
+    for (size_t i = 0; i < count; ++i) color_.insert(color_.end(), {byteOf(c.x), byteOf(c.y), byteOf(c.z)});
+}
+
+void GrainSolver::add(std::span<const Vec3> at, std::span<const Vec3> velocity, std::span<const float> radius,
+                      const Vec3* color) {
+    const GrainSettings& s = scene_.solver;
+    const size_t n = std::min({at.size(), velocity.size(), radius.size()});
+    size_t room = static_cast<size_t>(s.maxGrains) > x_.size() ? static_cast<size_t>(s.maxGrains) - x_.size() : 0;
+    if (n == 0 || room == 0) return;
+    // Coloured, the grains there are take the look's colour, if they have
+    // none of their own.
+    if (color && color_.empty()) paint(x_.size());
+    for (size_t i = 0; i < n && room > 0; ++i) {
+        const Vec3 p = at[i], v = velocity[i];
+        if (!std::isfinite(p.x + p.y + p.z + v.x + v.y + v.z) || !std::isfinite(radius[i])) continue;
+        const float r = std::clamp(radius[i], 1e-4f, 1.0f);
+        x_.push_back(p);
+        v_.push_back(v);
+        r_.push_back(r);
+        w_.push_back(1.0f / (s.density * (4.0f / 3.0f) * kPi * r * r * r));
+        id_.push_back(nextId_++);
+        if (color) {
+            color_.insert(color_.end(), {byteOf(color->x), byteOf(color->y), byteOf(color->z)});
+        } else if (!color_.empty()) {
+            paint(1);
+        }
+        --room;
+        fresh_ = true;
+    }
+}
+
 void GrainSolver::emit() {
     const GrainSettings& s = scene_.solver;
     const Geometry* geo = scene_.geometry.get();
@@ -156,7 +190,7 @@ void GrainSolver::emit() {
     const AttributeArray* vel = geo->points().find("v");
     const bool coloured = cd && cd->type() == AttrType::Vec3;
     const bool moving = vel && vel->type() == AttrType::Vec3;
-    if (coloured && color_.empty() && !x_.empty()) color_.assign(3 * x_.size(), byteOf(0.0f));
+    if (coloured && color_.empty() && !x_.empty()) paint(x_.size());
     // Only where no grain is in the way -- of those there already, in the
     // grid of where they are now, and of those made now: points closer
     // than their grains are wide are thinned out.
@@ -235,7 +269,7 @@ void GrainSolver::emit() {
             const Vec3 c = cd->read<Vec3>()[i];
             color_.insert(color_.end(), {byteOf(c.x), byteOf(c.y), byteOf(c.z)});
         } else if (!color_.empty()) {
-            color_.insert(color_.end(), {byteOf(0.0f), byteOf(0.0f), byteOf(0.0f)});
+            paint(1);
         }
         ++nextId_;
         ++added;
@@ -452,6 +486,7 @@ void GrainSolver::collide(float h) {
     pg::parallelFor(n, 1024, [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
             touched_[i] = -1;
+            carried_[i] = 0.0f;
             const float r = r_[i];
             // What holds it from the other side -- the floor, an object that
             // does not give, another piece -- and which way it pushes.
@@ -472,11 +507,24 @@ void GrainSolver::collide(float h) {
                 if (dot(off, off) > reach * reach) continue;
                 const float d = shapes_[c].distance(x_[i]);
                 if (d >= r) continue;
-                const Vec3 normal = shapes_[c].normal(x_[i]);
+                Vec3 normal = shapes_[c].normal(x_[i]);
+                float push = r - d;
+                if (s.floor && normal.y < 0.0f && x_[i].y + normal.y * push < r) {
+                    // Pressed into the floor by what lies on it: squeezed out
+                    // from under it, sideways -- away from its middle when it
+                    // presses straight down -- no faster than kSpringOff.
+                    Vec3 side(normal.x, 0.0f, normal.z);
+                    if (dot(side, side) < 1e-6f) side = Vec3(off.x, 0.0f, off.z);
+                    if (dot(side, side) < 1e-12f) side = Vec3(1.0f, 0.0f, 0.0f);
+                    normal = normalize(side);
+                    push = std::min(push, kSpringOff * h);
+                }
                 const Vec3 was = x_[i];
-                x_[i] += normal * (r - d);
+                x_[i] += normal * push;
                 const Vec3 moving = drift_.empty() ? Vec3() : kick_[c] + cross(twist_[c], x_[i] - shapes_[c].center());
-                rub(i, normal, r - d, scene_.colliders[c].velocityAt(x_[i]) + moving);
+                const Vec3 surface = scene_.colliders[c].velocityAt(x_[i]) + moving;
+                carried_[i] = std::max(carried_[i], length(surface));
+                rub(i, normal, push, surface);
                 touching_[i] = 1;
                 if (scene_.colliders[c].mass > 0.0f && (touched_[i] < 0 || touched_[i] == static_cast<int32_t>(c))) {
                     pushed_[i] = (touched_[i] == static_cast<int32_t>(c) ? pushed_[i] : Vec3()) + (x_[i] - was);
@@ -489,6 +537,8 @@ void GrainSolver::collide(float h) {
                     heldBy = normal;
                 }
             }
+            // Nothing goes through the floor.
+            if (s.floor && x_[i].y < r) x_[i].y = r;
             // Caught between a piece and what holds it from the other side --
             // under a piece on the ground -- what holds it holds the piece,
             // not the grain. Beside the piece, on the ground, it pushes it.
@@ -563,8 +613,20 @@ void GrainSolver::step() {
     prev_.resize(n);
     dx_.resize(n);
     touching_.assign(n, 0);
+    carried_.assign(n, 0.0f);
     touched_.assign(n, -1);
     pushed_.assign(n, Vec3());
+    // Grains just come in -- the grit of an RBD Solver, thrown out in a
+    // bunch -- may lie in each other: they are put apart first, where they
+    // are, the way they go kept (pre-stabilisation, Macklin et al. 2014,
+    // §4.4) -- pushed out of each other, not flung.
+    if (fresh_) {
+        prev_ = x_;
+        sortIntoCells(2.0f * biggest + reach);
+        findNeighbours(reach);
+        for (int it = 0; it < s.iterations; ++it) solveContacts(false);
+        fresh_ = false;
+    }
     for (int k = 0; k < steps; ++k) {
         const float t = static_cast<float>(k + 1) / static_cast<float>(steps);
         pg::parallelFor(n, 4096, [&](size_t begin, size_t end) {
@@ -618,14 +680,15 @@ void GrainSolver::step() {
                     moved = Vec3();
                 }
                 // Put out of where it went in, a grain is not flung: the
-                // contacts stop it and at most send it off as fast as
-                // kSpringOff -- however deep it went in, its speed is
-                // never more than that past what it came in with.
+                // contacts stop it and at most send it off kSpringOff
+                // faster than it came in -- or than the fastest surface it
+                // touches goes, which carries it along. However deep it
+                // went in, and however many substeps it is put out in a
+                // row: its speed does not build up.
                 Vec3 v = moved * (1.0f / h);
-                const Vec3 change = v - v_[i];
-                const float most = length(v_[i]) + kSpringOff;
-                const float by2 = dot(change, change);
-                if (by2 > most * most) v = v_[i] + change * (most / std::sqrt(by2));
+                const float most = std::max(length(v_[i]), carried_[i]) + kSpringOff;
+                const float speed2 = dot(v, v);
+                if (speed2 > most * most) v = v * (most / std::sqrt(speed2));
                 v_[i] = v * fade;
             }
         });
@@ -715,6 +778,7 @@ bool GrainSolver::loadState(StateReader& in) {
     frame_ = frame;
     time_ = time;
     nextId_ = nextId;
+    fresh_ = false;
     x_ = std::move(x);
     v_ = std::move(v);
     r_ = std::move(r);

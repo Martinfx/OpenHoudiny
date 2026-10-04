@@ -7,10 +7,10 @@ Karma, Arnold, RenderMan a další. Prototype do něj zapíše **celý záběr j
 jednu scénu `.usda`**:
 - zobrazenou geometrii,
 - kusy z RBD Solveru jako tělesa, která se pohybují,
-- drť,
+- drť a zrna jako kamínky (PointInstancer),
 - povrch vody jako uzavřenou síť s rychlostí a pěnou,
 - kapky deště a kapičky odstřiků,
-- prach jako VDB soubory vedle,
+- prach a páru jako VDB soubory vedle,
 - kameru, slunce, oblohu a podlahu.
 
 Co je velké a v každém snímku jiné (voda, déšť, drť, měnící se geometrie),
@@ -58,12 +58,15 @@ Kde scénu otevřít:
           /inside            GeomSubset: plochy, které vyřízl lom
           /glass             GeomSubset: plochy skla, s materiálem skla
       /cracks                … trhliny skla: neviditelné do snímku, kdy tabule praskla
-  /grit                    Points: drť                        ┐
-  /cloth/mesh, /curves     Mesh a BasisCurves: látka a lana   │
-  /water                   Mesh: povrch vody                  │ hodnoty ze
-  /rain/drops              Points: kapky                      │ souborů po
-  /rain/droplets           Points: kapičky odstřiků           ┘ snímcích
-  /gas                     Volume: pole density, temperature, flame
+  /grit                    PointInstancer: drť                ┐
+      /Prototypes/proto_0 …  … 12 úlomků kamene, 6 střepů skla, │
+                               jednou ve scéně                │
+  /grains                  PointInstancer: zrna, tytéž tvary  │
+  /cloth/mesh, /curves     Mesh a BasisCurves: látka a lana   │ hodnoty ze
+  /water                   Mesh: povrch vody                  │ souborů po
+  /rain/drops              Points: kapky                      │ snímcích
+  /rain/droplets           Points: kapičky odstřiků           ┘
+  /gas                     Volume: pole density, temperature, flame (a steam)
       /density …             OpenVDBAsset → <jméno>_gas/<jméno>_gas.0001.vdb …
   /camera                  Camera
   /sun                     DistantLight
@@ -85,12 +88,12 @@ pond_gas/pond_gas.0001.vdb …   prach, je-li
 | geometrie | Zobrazený uzel podle svého jména (`street`, `city`). Uzavřené polygony jsou Mesh bez subdivize, otevřené čáry lineární BasisCurves a volné body Points. Body mají šířku podle `pscale`, `v` jako `velocities` a `id` jako `ids`; `v` meshe jsou také `velocities`. Ostatní atributy bodů (čísla, celá čísla, vektory, třeba `foam`) jdou jako primvars (`primvars:foam`). Instance (body, které zastupují prototypy — tráva z Grass, stromy s Output Instances) jsou PointInstancer `instances`: prototypy ve scope `Prototypes` pod ním, `protoIndices`, `positions`, `orientations`, `scales`, `primvars:tint`, `ids` ([vegetation.md](vegetation.md)). Geometrie, která se nemění, je ve scéně jednou; když se změní, je v souborech snímků, ve kterých se změnila — prototypy instancí zůstávají ve scéně, ve snímcích je jen to, jak instance stojí. |
 | barva | `Cd` rohu, bodu, primitiva nebo celé geometrie jako `displayColor`. Zapíše se jednou pro celý objekt, jednou na plochu, nebo jednou na roh, podle toho, jak se barva mění. |
 | tělesa | Tvar tělesa (barvy jako v náhledu) se zapíše **jednou**, posunutý do středu tělesa. Každý snímek pak jen `translate` a `orient`. Rozmetané těleso má od toho snímku `visibility = invisible`. Kus, který se za běhu rozlomil ([lámání za běhu](destruction.md#lámání-za-běhu)), zmizí stejně, a jeho úlomky jsou tělesa navíc: `body_NNNN` za těmi, co byla, s tvarem úlomku, do snímku zlomu neviditelné (`visibility` `invisible`, od zlomu `inherited`), dřív na místě kusu. |
-| drť | Body se šířkou podle velikosti zrnka, v barvě řezu o odstín tmavší, s rychlostí (`velocities`), číslem (`ids`) a natočením (`primvars:orient`, `quatf[]` po bodech). Číslo dostane zrnko při vyhození a drží ho, dokud je ve scéně, takže ho renderer sleduje ze snímku na snímek a rozmaže pohybem. Podle natočení natočí instancer kamínek, který na zrnko postaví. Cache starší než formát 4 čísla ani rychlosti nemá, starší než formát 9 natočení. Než první zrnko vyletí, je drť neviditelná. |
+| drť | PointInstancer s kamínky: prototypy jsou tytéž úlomky, jaké kreslí renderery — dvanáct tvarů kamene (krabička zploštělá a protažená, s ulomenými rohy a hranami) a šest střepů skla, ploché, od středu k nejvzdálenějšímu rohu jednotka. Jsou ve scéně jednou (`Prototypes/proto_0` až `proto_17`), ve vrstvách snímků je jen, kde jaký kousek je: `protoIndices` (tvar podle čísla kousku, střepy od 12), `positions`, `orientations` (`quath[]`, natočení ze simulace), `scales` (poloviční velikost kousku), `velocities`, `ids` a `primvars:displayColor` po kouscích (barva řezu o odstín tmavší a každý kousek svým odstínem, jako v náhledu; sklo barvou skla). Číslo dostane kousek při vyhození a drží ho, dokud je ve scéně, takže ho renderer sleduje ze snímku na snímek a rozmaže pohybem. Instancer má materiál `surface`, střepy materiál `glass`, je-li ve scéně sklo. Cache starší než formát 4 čísla ani rychlosti nemá (tvar pak podle pořadí), starší než formát 9 natočení (pak náhodné podle čísla). Než první kousek vyletí, je drť neviditelná. |
 | látka | Látka Cloth Solveru tam, kde jsou její body, s normálami (`normals`) a rychlostmi (`velocities`) pro rozmazání pohybem. Plochy tvoří Mesh, lana BasisCurves. Barva je z `Cd` geometrie, jinak z parametru Color. Každý snímek má celou síť ve své vrstvě včetně topologie. Roztržená látka má od snímku, kdy se roztrhla, víc bodů (odtržené kopie) a plochy přepojené na ně ([cloth.md](cloth.md)). Atributy, které čte jen řešič (`pin`, `mass`, `tear`), se nezapisují. |
-| zrna | Zrna Grain Solveru jako Points `/World/grains`: šířka (`widths`) dvojnásobek poloměru, rychlost (`velocities`), číslo (`ids`), barva po bodech (`primvars:displayColor`) a natočení (`primvars:orient`), v každé vrstvě snímku ([grains.md](grains.md)). |
+| zrna | Zrna Grain Solveru jako PointInstancer `/World/grains` se stejnými dvanácti kamínky jako drť: velikost (`scales`) je poloměr zrna, dále `positions`, `orientations`, `velocities`, `ids`, `protoIndices` a barva po zrnech (`primvars:displayColor`), v každé vrstvě snímku ([grains.md](grains.md)). Drť, která se stala zrny (vstup Grit), je jen tady. |
 | voda | Povrch vody jako uzavřená síť čtyřúhelníků, stejný jako z uzlu Liquid Surface ([geometry.md](geometry.md#povrch-vody-liquid-surface-a-convert-volume)): hladké normály, `velocities` z rychlosti vody (cache od formátu 5), `primvars:foam` (0 až 1) pro bílou pěnu, vlnky od deště na hladině. Uzavřená i u dna a stěn, aby jí renderer lámal světlo. Materiál `water`: barva z Water Looku, průhlednost 0,35, drsnost 0,02, index lomu 1,33. Když Water Look povrch skrývá (Surface vypnuté), voda se nezapíše. |
 | déšť | Kapky a kapičky odstřiků jako dvoje Points s číslem (`ids`) a rychlostí (`velocities`); kapka je široká 2 mm, kapička 1 mm. Renderer s motion blurem z nich podle rychlosti udělá čáry, jako je kreslí náhled. Materiál `rain`: barva a průhlednost z Looku deště. |
-| prach | Každý snímek zapíše jeden VDB soubor do složky `<jméno>_gas/` vedle scény. Cesty jsou relativní, takže složka jde přesunout spolu se scénou. |
+| prach | Každý snímek zapíše jeden VDB soubor do složky `<jméno>_gas/` vedle scény: mřížky `density`, `temperature`, `flame` a `steam`, je-li v plynu pára ([quench.md](quench.md)). Cesty jsou relativní, takže složka jde přesunout spolu se scénou. |
 | kamera | Poloha a otočení jako v uzlu Camera (`translate`, `rotateXYZ`: stupně kolem x, pak y, pak z), ohnisko, clona a `exposure` v EV. |
 | světla | Slunce svítí ze směru, který má Look, a obloha má barvu a sílu z Looku. Intenzita je relativní jako v Looku, ne ve fyzikálních jednotkách. |
 | podlaha | Čtverec kolem scény v barvě země z Outputu, je-li podlaha zapnutá. |
@@ -167,7 +170,8 @@ Soubory po snímcích jsou vedle scény a cesty jsou relativní: složku
   `materialBind`, takže jim jde v Houdini nebo Blenderu přiřadit vlastní materiál (beton, cihla).
   Plochy skla (primitiva s `glass`) mají vlastní podmnožinu `glass` s materiálem
   `/World/Looks/glass`; trhliny skla jsou síť `cracks` vedle `mesh`, neviditelná,
-  dokud je tabule celá, a skleněná drť má `primvars:glass` 1.
+  dokud je tabule celá, a skleněná drť jsou prototypy střepů (`protoIndices`
+  od 12) s materiálem skla.
 
 ## 5. Ověření
 
@@ -197,18 +201,25 @@ kde se ověřovalo, prototype ji nepotřebuje.
 | `demolition` | 180 | 710 (421 rozmetaných) | 16 MB | 150 souborů, 9,4 MB | 215 MB | 27 s | 0,3 s |
 | `rain_pond` | 24 | — | 8 kB | 24 souborů, 116 MB | — | 1,5 s | 0,02 s |
 
-Testy jsou v `tests/test_usd.cpp` (9):
+Testy jsou v `tests/test_usd.cpp` (12):
 - hodnoty jako je píše USD (čísla, quaternion `(w, x, y, z)`, řetězce, jména primů);
 - scéna zapsaná prim po primu s časovými vzorky, přesně daný text;
 - geometrie do `.usda` podle přípony;
 - tělesa posunutá a otočená přesně jako `posedPieces`;
-- drť s čísly, rychlostmi a natočením ze snímku ve vrstvě snímku, zapsané hned, jak snímek přišel;
+- drť jako PointInstancer s prototypy kamínků: čísla, rychlosti, natočení (`quath[]`), velikosti a tvary ze snímku ve vrstvě snímku, zapsané hned, jak snímek přišel;
 - prach jako soubory VDB vedle scény;
 - ohnisko v desetinách jednotky a slunce tam, kde ho má Look;
 - to, co se nemění, zapsané jednou, geometrie, která se hýbe, ve vrstvách snímků, kde se
   změnila (první snímek až ve chvíli, kdy je jasné, že se hýbe), a jméno geometrie, které
   se nesrazí s jiným primem;
-- voda a déšť ve vrstvě každého snímku, s materiály ve scéně a manifestem.
+- voda a déšť ve vrstvě každého snímku, s materiály ve scéně a manifestem;
+- sklo s materiálem skla a trhliny, které se ukážou, až tabule praskne;
+- látka ve vrstvě každého snímku, roztržená, jak je;
+- zrna štěrku jako PointInstancer s prototypy kamínků ve vrstvě každého snímku.
+
+Že USD Import prototypy PointInstanceru nebere jako geometrii scény (drť
+a zrna se tak při načtení vlastního exportu neobjeví jako hromada kamínků
+v počátku), ověřuje `tests/test_usd_read.cpp` ([usd-import.md](usd-import.md)).
 
 ## 6. V kódu
 

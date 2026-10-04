@@ -96,6 +96,15 @@ inline float lattice(int x, int y, int z, uint32_t seed) {
     return static_cast<float>(hash(x, y, z, seed) & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu);
 }
 
+/// Whether water -- a particle, a drop, numbered `id` -- boils away in a
+/// step it is given `chance` times its life in (rate x dt): as likely as
+/// 1 - e^(-chance), the draw its own and `seed`'s.
+inline bool boiledAway(uint32_t id, uint32_t seed, float chance) {
+    if (!(chance > 0.0f)) return false;
+    const float u = static_cast<float>(hash(static_cast<int>(id), 0x2545F491, 17, seed) & 0xFFFFFFu) / 16777216.0f;
+    return u < 1.0f - std::exp(-chance);
+}
+
 inline float smoothstep(float edge0, float edge1, float x) {
     const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);

@@ -1,6 +1,7 @@
 #include "pg/gl/Volume.h"
 
 #include "pg/core/Instances.h"
+#include "pg/core/Parallel.h"
 #include "pg/io/Exr.h"
 #include "pg/io/Picture.h"
 #include "pg/sim/Display.h"
@@ -261,6 +262,7 @@ uniform vec3 u_lightDir;       // towards the light
 uniform vec3 u_size;           // cells of the light texture
 uniform float u_layer;         // the slice drawn
 uniform float u_extinction;    // per unit of smoke per world unit
+uniform float u_steamExtinction;  // ... of steam
 uniform float u_step;          // world units
 
 void main() {
@@ -281,9 +283,10 @@ void main() {
     float jitter = fract(52.9829189 * fract(dot(vec3(gl_FragCoord.xy, u_layer), vec3(0.06711056, 0.00583715, 0.03752))));
     for (float t = jitter * u_step; t < far; t += u_step) {
         vec3 q = (p + u_lightDir * t - u_boxMin) / u_boxSize;
-        depth += textureLod(u_fields, q, 1.0).r * fadeAt(q);
+        vec4 f = textureLod(u_fields, q, 1.0);
+        depth += (u_extinction * max(f.r, 0.0) + u_steamExtinction * max(f.a, 0.0)) * fadeAt(q);
     }
-    o_light = vec4(exp(-u_extinction * depth * u_step));
+    o_light = vec4(exp(-depth * u_step));
 }
 )";
 
@@ -331,13 +334,15 @@ uniform vec3 u_eye, u_right, u_up, u_forward;
 uniform vec2 u_tanHalfFov;
 uniform mat4 u_viewProj;
 uniform bool u_hasGas;
-uniform sampler3D u_fields;    // r: smoke, g: temperature, b: flame
+uniform sampler3D u_fields;    // r: smoke, g: temperature, b: flame, a: steam
 uniform sampler3D u_sunlight;  // r: share of the sunlight that gets through to here
 uniform vec3 u_lightDir;       // towards the light
 uniform vec3 u_light;          // its colour x intensity
 uniform vec3 u_sky;
 uniform vec3 u_albedo;
+uniform vec3 u_steamAlbedo;
 uniform float u_extinction;    // per unit of smoke per world unit
+uniform float u_steamExtinction;  // ... of steam
 uniform float u_occlusion;
 uniform float u_flame, u_fireLight;
 uniform float u_exposure;
@@ -542,9 +547,10 @@ float sunThrough(vec3 p, vec3 facing, bool onWater) {
     float depth = 0.0;
     for (float t = t0 + 0.5 * dt; t < t1; t += dt) {
         vec3 q = (p + u_lightDir * t - u_boxMin) / u_boxSize;
-        depth += textureLod(u_fields, q, 1.0).r * fadeAt(q);
+        vec4 f = textureLod(u_fields, q, 1.0);
+        depth += (u_extinction * max(f.r, 0.0) + u_steamExtinction * max(f.a, 0.0)) * fadeAt(q);
     }
-    return light * exp(-u_extinction * depth * dt);
+    return light * exp(-depth * dt);
 }
 
 // Sunlight at a point p of a solid facing n.
@@ -956,23 +962,29 @@ void main() {
             // Each sample moved by up to half a cell: a ray running along a
             // layer of cells would see the interpolation between them as
             // stripes; this way it is fine noise that anti-aliasing averages.
-            vec3 here = textureLod(u_fields, uvw + jitter(float(i)) * u_texel, 0.0).rgb;
+            vec4 here = textureLod(u_fields, uvw + jitter(float(i)) * u_texel, 0.0);
             float fade = fadeAt(uvw);
             float smoke = max(here.r, 0.0) * fade, heat = here.g, flame = max(here.b, 0.0) * fade;
-            if (smoke < 1e-4 && flame < 1e-4) continue;
+            float steam = max(here.a, 0.0) * fade;
+            if (smoke < 1e-4 && flame < 1e-4 && steam < 1e-4) continue;
 
             // In the flame the soot glows -- it is what makes the flame
             // yellow -- and hides less of what is behind it than when cooled.
-            float sigma = u_extinction * smoke / (1.0 + 4.0 * flame);
+            // Steam stops the light as white as it is.
+            float sigmaSmoke = u_extinction * smoke / (1.0 + 4.0 * flame);
+            float sigmaSteam = u_steamExtinction * steam;
+            float sigma = sigmaSmoke + sigmaSteam;
+            vec3 albedo = sigma > 1e-6 ? (u_albedo * sigmaSmoke + u_steamAlbedo * sigmaSteam) / sigma : u_albedo;
             vec3 emitted = u_flame * (1.0 - exp(-4.0 * flame)) * glowAt(heat);
             // What the smoke here scatters towards the eye. `around` averages
-            // the fields over a few cells: thick smoke nearby hides the sky,
-            // fire nearby lights it.
-            vec3 around = textureLod(u_fields, uvw, 2.0).rgb;
+            // the fields over a few cells: thick smoke -- and steam, as much
+            // as it is as thick -- nearby hides the sky, fire nearby lights it.
+            vec4 around = textureLod(u_fields, uvw, 2.0);
             float sun = textureLod(u_sunlight, uvw, 0.0).r;
-            vec3 lit = u_light * sun * phase + u_sky * exp(-u_occlusion * around.r) +
+            float hidden = around.r + max(around.a, 0.0) * u_steamExtinction / max(u_extinction, 1e-6);
+            vec3 lit = u_light * sun * phase + u_sky * exp(-u_occlusion * hidden) +
                        u_fireLight * (1.0 - exp(-4.0 * around.b)) * glowAt(around.g);
-            vec3 source = u_albedo * lit * sigma + emitted;
+            vec3 source = albedo * lit * sigma + emitted;
             // The step integrated exactly: what it adds is dimmed by itself too.
             float a = exp(-sigma * u_step);
             radiance += transmittance * glassPass * (sigma > 1e-4 ? source * (1.0 - a) / sigma : source * u_step);
@@ -1211,7 +1223,7 @@ uniform float u_exposure;
 uniform bool u_hasGas;
 uniform sampler3D u_fields, u_sunlight;
 uniform vec3 u_boxMin, u_boxSize, u_texel, u_eye;
-uniform float u_extinction, u_occlusion;
+uniform float u_extinction, u_steamExtinction, u_occlusion;
 vec3 toneMap(vec3 x) { return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 bool inBox(vec3 uvw) { return all(greaterThanEqual(uvw, vec3(0.0))) && all(lessThanEqual(uvw, vec3(1.0))); }
 float fadeAt(vec3 uvw) {  // as the volume fades at the open sides of its box
@@ -1289,16 +1301,20 @@ void main() {
         vec3 here = (v_world - u_boxMin) / u_boxSize;
         if (inBox(here)) {
             sun = textureLod(u_sunlight, here, 0.0).r;
-            sky = exp(-u_occlusion * max(textureLod(u_fields, here, 2.0).r, 0.0));
+            vec4 around = textureLod(u_fields, here, 2.0);
+            sky = exp(-u_occlusion * (max(around.r, 0.0) +
+                                      max(around.a, 0.0) * u_steamExtinction / max(u_extinction, 1e-6)));
         }
         vec3 d = u_eye - v_world;
         const int steps = 32;
-        float smoke = 0.0;
+        float depth = 0.0;
         for (int i = 0; i < steps; ++i) {
             vec3 uvw = (v_world + d * ((float(i) + 0.5) / float(steps)) - u_boxMin) / u_boxSize;
-            if (inBox(uvw)) smoke += max(textureLod(u_fields, uvw, 0.0).r, 0.0) * fadeAt(uvw);
+            if (!inBox(uvw)) continue;
+            vec4 f = textureLod(u_fields, uvw, 0.0);
+            depth += (u_extinction * max(f.r, 0.0) + u_steamExtinction * max(f.a, 0.0)) * fadeAt(uvw);
         }
-        seen = exp(-u_extinction * smoke * length(d) / float(steps));
+        seen = exp(-depth * length(d) / float(steps));
     }
     vec3 lit = color * (u_light * sun * max(dot(n, u_lightView), 0.0) + u_sky * sky * (0.7 + 0.5 * n.y));
     float alpha = seen;
@@ -1936,23 +1952,41 @@ void VolumeRenderer::setFrame(const sim::Frame& frame, unsigned layers) {
         for (int a = 0; a < 3; ++a) grid.cells[a] = frame.domain.cells[a] / factor;
         grid.voxel = frame.domain.voxel * static_cast<float>(factor);
     }
-    std::vector<uint16_t> scratch;
+    std::vector<uint16_t> scratch, steamScratch;
     const std::vector<uint16_t>* texels = &scratch;
-    if (factor > 1) frame.coarseFields(factor, scratch);
-    else texels = &frame.denseFields(scratch);
-    const std::vector<uint16_t>& fields = *texels;
+    const std::vector<uint16_t>* steamTexels = &steamScratch;
+    if (factor > 1) {
+        frame.coarseFields(factor, scratch);
+        frame.coarseSteam(factor, steamScratch);
+    } else {
+        texels = &frame.denseFields(scratch);
+        steamTexels = &frame.denseSteam(steamScratch);
+    }
+    const std::vector<uint16_t>& three = *texels;
     const int nx = grid.cells[0], ny = grid.cells[1], nz = grid.cells[2];
-    if (fields.size() != 3 * grid.cellCount() || nx <= 0) {
+    if (three.size() != 3 * grid.cellCount() || nx <= 0) {
         hasFrame_ = false;
         return;
     }
+    // Smoke, temperature, flame -- and the steam, 0 without any.
+    const std::vector<uint16_t>& vapour = *steamTexels;
+    const bool steamy = vapour.size() == grid.cellCount();
+    std::vector<uint16_t> fields(4 * grid.cellCount(), 0);
+    pg::parallelFor(grid.cellCount(), 65536, [&](size_t begin, size_t end) {
+        for (size_t c = begin; c < end; ++c) {
+            fields[4 * c] = three[3 * c];
+            fields[4 * c + 1] = three[3 * c + 1];
+            fields[4 * c + 2] = three[3 * c + 2];
+            if (steamy) fields[4 * c + 3] = vapour[c];
+        }
+    });
     setDomain(grid);
     if (!fields_) gl_.GenTextures(1, &fields_);
     gl_.ActiveTexture(TEXTURE0);
     gl_.BindTexture(TEXTURE_3D, fields_);
     gl_.PixelStorei(UNPACK_ALIGNMENT, 2);
     if (size_[0] != nx || size_[1] != ny || size_[2] != nz) {
-        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(RGB16F), nx, ny, nz, 0, RGB, HALF_FLOAT, fields.data());
+        gl_.TexImage3D(TEXTURE_3D, 0, static_cast<GLint>(RGBA16F), nx, ny, nz, 0, RGBA, HALF_FLOAT, fields.data());
         gl_.TexParameteri(TEXTURE_3D, TEXTURE_MIN_FILTER, LINEAR_MIPMAP_LINEAR);
         gl_.TexParameteri(TEXTURE_3D, TEXTURE_MAG_FILTER, LINEAR);
         for (GLenum wrap : {TEXTURE_WRAP_S, TEXTURE_WRAP_T, TEXTURE_WRAP_R}) {
@@ -1962,7 +1996,7 @@ void VolumeRenderer::setFrame(const sim::Frame& frame, unsigned layers) {
         size_[1] = ny;
         size_[2] = nz;
     } else {
-        gl_.TexSubImage3D(TEXTURE_3D, 0, 0, 0, 0, nx, ny, nz, RGB, HALF_FLOAT, fields.data());
+        gl_.TexSubImage3D(TEXTURE_3D, 0, 0, 0, 0, nx, ny, nz, RGBA, HALF_FLOAT, fields.data());
     }
     gl_.GenerateMipmap(TEXTURE_3D);
     gl_.BindTexture(TEXTURE_3D, 0);
@@ -2724,6 +2758,7 @@ void VolumeRenderer::drawGeometry(int width, int height) {
                       1.0f / static_cast<float>(domain_.cells[1]), 1.0f / static_cast<float>(domain_.cells[2]));
         gl_.Uniform3f(location(dotProgram_, "u_eye"), eye[0], eye[1], eye[2]);
         gl_.Uniform1f(location(dotProgram_, "u_extinction"), s.smokeDensity);
+        gl_.Uniform1f(location(dotProgram_, "u_steamExtinction"), s.steamDensity);
         gl_.Uniform1f(location(dotProgram_, "u_occlusion"), s.occlusion);
         gl_.ActiveTexture(TEXTURE0);
         gl_.BindTexture(TEXTURE_3D, fields_);
@@ -3015,8 +3050,8 @@ void allocate3D(const Api& gl, GLuint& texture, int have[3], const int n[3], GLe
 
 void VolumeRenderer::updateLighting() {
     if (!hasFrame_ || !shadowProgram_ || !glowProgram_) return;
-    const LightingKey key{look.lightDirection(), look.smokeDensity, look.flameIntensity, look.flameStart,
-                          look.flameRange};
+    const LightingKey key{look.lightDirection(), look.smokeDensity, look.steamDensity, look.flameIntensity,
+                          look.flameStart, look.flameRange};
     if (!lightingDirty_ && key == lighting_) return;
     lightingDirty_ = false;
     lighting_ = key;
@@ -3045,6 +3080,7 @@ void VolumeRenderer::updateLighting() {
     gl_.Uniform3f(location(shadowProgram_, "u_size"), static_cast<float>(light[0]), static_cast<float>(light[1]),
                   static_cast<float>(light[2]));
     gl_.Uniform1f(location(shadowProgram_, "u_extinction"), look.smokeDensity);
+    gl_.Uniform1f(location(shadowProgram_, "u_steamExtinction"), look.steamDensity);
     gl_.Uniform1f(location(shadowProgram_, "u_step"), 2.0f * domain_.voxel);
     gl_.Uniform1i(location(shadowProgram_, "u_fields"), 0);
     GLint layer = location(shadowProgram_, "u_layer");
@@ -3215,7 +3251,9 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform3f(location(program_, "u_sky"), s.skyColor.x * s.skyIntensity, s.skyColor.y * s.skyIntensity,
                   s.skyColor.z * s.skyIntensity);
     gl_.Uniform3f(location(program_, "u_albedo"), s.smokeColor.x, s.smokeColor.y, s.smokeColor.z);
+    gl_.Uniform3f(location(program_, "u_steamAlbedo"), s.steamColor.x, s.steamColor.y, s.steamColor.z);
     gl_.Uniform1f(location(program_, "u_extinction"), s.smokeDensity);
+    gl_.Uniform1f(location(program_, "u_steamExtinction"), s.steamDensity);
     gl_.Uniform1f(location(program_, "u_occlusion"), s.occlusion);
     gl_.Uniform1f(location(program_, "u_flame"), s.flameIntensity);
     gl_.Uniform1f(location(program_, "u_flameStart"), s.flameStart);
