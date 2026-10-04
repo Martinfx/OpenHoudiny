@@ -159,6 +159,12 @@ struct Mesh {
     size_t count() const { return v0.size(); }
 };
 
+/// What each closed polygon of `geo` is made of, as the renderers see it:
+/// `out` the materials told apart, `ofPrim` each primitive's (0 for what is
+/// not drawn) -- all water with `water`; laid on by uv where asked and
+/// `hasUv` (its corners have uv).
+void primitiveMaterials(const Geometry& geo, bool water, bool hasUv, std::vector<Material>& out, std::vector<uint16_t>& ofPrim);
+
 /// The mesh of the closed polygons of `geo` -- what stands on its points
 /// (instances) left out -- its materials from its attributes; `water`: all
 /// of it water. Its hierarchy `engine`'s, taking in where its corners go

@@ -260,17 +260,9 @@ PresetSurface presetSurface(MaterialPreset preset) {
     return {};
 }
 
-std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine engine, float sweep) {
-    auto mesh = std::make_shared<Mesh>();
-    const sim::ShadedTriangles tris = sim::shadedTriangles(geo);
-    const size_t n = tris.count();
-    if (n == 0) return mesh;
-    // Moving: its corners met where they are within `sweep` of now.
-    const bool moving = sweep > 0.0f && tris.velocities.size() == tris.positions.size() &&
-                        std::any_of(tris.velocities.begin(), tris.velocities.end(), [](const Vec3& v) { return v != Vec3(0.0f); });
-    if (moving) mesh->sweep = sweep;
-
-    // What each triangle is made of: materials told apart by their numbers,
+void primitiveMaterials(const Geometry& geo, bool water, bool hasUv, std::vector<Material>& out, std::vector<uint16_t>& ofPrim) {
+    out.clear();
+    // What each primitive is made of: materials told apart by their numbers,
     // in steps of a 256th.
     const MaterialNumber roughness(geo, "roughness", 0.5f), metallic(geo, "metallic", 0.0f),
         translucency(geo, "translucency", 0.0f);
@@ -300,28 +292,34 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     const AttributeArray* projections = geo.primitives().find("texture_projection");
     if (projections && projections->type() != AttrType::Int) projections = nullptr;
     const MaterialNumber normalStrength(geo, "texture_normal", 1.0f);
-    const bool hasUv = tris.uvs.size() == 3 * n;
     auto textureOfPrim = [&](uint32_t prim) -> const std::string& {
         static const std::string none;
         if (!textures || prim >= textures->size()) return none;
         return textures->stringValue(textures->read<int32_t>()[prim]);
     };
-    // Geometry with no colour of its own: each surface its material's.
-    const bool colored = geo.vertices().find("Cd") || geo.points().find("Cd") || geo.primitives().find("Cd") ||
-                         geo.detail().find("Cd");
     std::map<std::tuple<std::array<int, 7>, std::string, int>, uint16_t> known;
-    std::vector<uint16_t> which(n);
+    const AttributeArray* glassAttr = geo.primitives().find("glass");
+    auto glassOf = [&](size_t prim) -> int {
+        if (!glassAttr || prim >= glassAttr->size()) return 0;
+        const float g = glassAttr->type() == AttrType::Int ? static_cast<float>(glassAttr->read<int32_t>()[prim])
+                        : glassAttr->type() == AttrType::Float ? glassAttr->read<float>()[prim]
+                                                               : 0.0f;
+        return g >= 1.5f ? 2 : g >= 0.5f ? 1 : 0;
+    };
+    ofPrim.assign(geo.primitiveCount(), 0);
     auto quantize = [](float x) { return static_cast<int>(std::lround(std::clamp(x, 0.0f, 1.0f) * 255.0f)); };
-    for (size_t t = 0; t < n; ++t) {
+    for (uint32_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        // Only what is drawn: the closed polygons.
+        if (!geo.primitiveClosed(prim) || geo.primitiveVertexCount(prim) < 3) continue;
         Material m;
-        const uint32_t prim = tris.prims[t];
+        const int glass = glassOf(prim);
         const MaterialPreset preset = presetOf(prim);
         const std::string& texture = textureOfPrim(prim);
         if (water) {
             m.kind = Material::Kind::Water;
             m.roughness = 0.0f;
             m.ior = 1.33f;
-        } else if (tris.glass[t] == 1 || (tris.glass[t] == 0 && preset == MaterialPreset::Glass)) {
+        } else if (glass == 1 || (glass == 0 && preset == MaterialPreset::Glass)) {
             m.kind = Material::Kind::Glass;
             m.roughness = 0.0f;
             m.ior = 1.5f;
@@ -331,7 +329,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
             m.roughness = static_cast<float>(quantize(roughness.given ? roughness.at(geo, prim) : base.roughness)) / 255.0f;
             m.metallic = static_cast<float>(quantize(metallic.given ? metallic.at(geo, prim) : base.metallic)) / 255.0f;
             m.translucency = static_cast<float>(quantize(translucency.at(geo, prim))) / 255.0f;
-            if (tris.glass[t] == 2) m.roughness = 0.35f;  // a crack: a rough, white break in the glass
+            if (glass == 2) m.roughness = 0.35f;  // a crack: a rough, white break in the glass
             if (!texture.empty()) {
                 m.texture = texture;
                 m.textureSize = std::max(textureSize.at(geo, prim), 0.0f);
@@ -353,8 +351,8 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
                                          m.texture, static_cast<int>(std::lround(m.textureSize * 1000.0f)) * 3 + m.textureTint + 1);
         auto it = known.find(key);
         if (it == known.end()) {
-            if (mesh->materials.size() >= 65535) {
-                which[t] = 0;
+            if (out.size() >= 65535) {
+                ofPrim[prim] = 0;
                 continue;
             }
             // Cut out where its pictures' alpha has none: its own set's, or
@@ -363,11 +361,31 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
                 const TextureSet set = !m.texture.empty() ? textureSet(m.texture) : presetTextureSet(textureLibrary(), m.preset);
                 m.cutout = !set.alpha.empty();
             }
-            it = known.emplace(key, static_cast<uint16_t>(mesh->materials.size())).first;
-            mesh->materials.push_back(m);
+            it = known.emplace(key, static_cast<uint16_t>(out.size())).first;
+            out.push_back(m);
         }
-        which[t] = it->second;
+        ofPrim[prim] = it->second;
     }
+}
+
+std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine engine, float sweep) {
+    auto mesh = std::make_shared<Mesh>();
+    const sim::ShadedTriangles tris = sim::shadedTriangles(geo);
+    const size_t n = tris.count();
+    if (n == 0) return mesh;
+    // Moving: its corners met where they are within `sweep` of now.
+    const bool moving = sweep > 0.0f && tris.velocities.size() == tris.positions.size() &&
+                        std::any_of(tris.velocities.begin(), tris.velocities.end(), [](const Vec3& v) { return v != Vec3(0.0f); });
+    if (moving) mesh->sweep = sweep;
+
+    // What each triangle is made of: its primitive's material.
+    const bool hasUv = tris.uvs.size() == 3 * n;
+    std::vector<uint16_t> ofPrim, which(n);
+    primitiveMaterials(geo, water, hasUv, mesh->materials, ofPrim);
+    for (size_t t = 0; t < n; ++t) which[t] = ofPrim[tris.prims[t]];
+    // Geometry with no colour of its own: each surface its material's.
+    const bool colored = geo.vertices().find("Cd") || geo.points().find("Cd") || geo.primitives().find("Cd") ||
+                         geo.detail().find("Cd");
     for (const Material& m : mesh->materials) {
         mesh->clear = mesh->clear || m.kind != Material::Kind::Surface;
         mesh->cutout = mesh->cutout || m.cutout;

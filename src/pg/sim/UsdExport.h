@@ -35,6 +35,11 @@
 //                    DomeLight; /World/ground the floor
 //   /World/Looks     materials: one that takes its colour from displayColor,
 //                    the water's, the rain's
+//   /World/Materials the displayed geometry's materials (render/MaterialGraph.h)
+//                    -- MaterialX, and a UsdPreviewSurface for what reads
+//                    none -- its faces and its prototypes' bound to them, a
+//                    GeomSubset a material; their pictures beside the stage
+//                    (shot_textures), all of them as shot.mtlx too
 //
 // What is large and new every frame -- the water, the rain, the grit, the
 // bars, the cloth, the displayed geometry when it changes -- goes to a layer of its own for each
@@ -94,5 +99,15 @@ private:
 
 /// Whether `path` names a USD stage: .usda or .usd, in any case.
 bool isUsdPath(const std::string& path);
+
+/// Geometry out to `path` as its extension says -- as io::writeGeometry
+/// writes it, but a USD stage (.usda) with its materials, its faces bound
+/// to them (render/MaterialGraph.h) in the scope Materials under its prim,
+/// and .mtlx its materials alone, as a MaterialX document. Their pictures go
+/// beside it, to a folder of the name the file has (without the frame of a
+/// sequence: field_textures for field.0007.usda). False, with why.
+bool exportGeometry(const Geometry& geo, const std::string& path, std::string& error);
+/// The extensions exportGeometry() knows, with their dots.
+const char* const* exportExtensions();
 
 }  // namespace pg::sim

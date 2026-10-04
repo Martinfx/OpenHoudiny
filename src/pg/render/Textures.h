@@ -21,6 +21,12 @@
 // (_diff_ and _rough_ and _disp_ and _nor_gl_, _Color and _Roughness and
 // _Displacement and _NormalGL...).
 //
+// A MaterialX document (.mtlx) is a set too -- materials.mtlx#bark one
+// material of it, else its first; a folder with one in it, as Poly Haven
+// and ambientCG give them away: the pictures its surface shows
+// (io/MaterialX.h), tinted by Cd where its colour is tinted by a geometric
+// property, as render/MaterialGraph.h writes them.
+//
 // Where the geometry has texture coordinates (uv on its corners) and the
 // material asks for them (Material::byUv), a set is laid on by them instead,
 // a picture a unit of uv -- and its normal map, if it has one, bends the
@@ -77,9 +83,10 @@ struct TextureSet {
     bool operator==(const TextureSet&) const = default;
 };
 
-/// The set `where` names -- a folder (its texture.txt, or pictures named as
-/// above), or one picture of a set -- read once and remembered; none for
-/// what is not one.
+/// The set `where` names -- a folder (its texture.txt, pictures named as
+/// above, or a MaterialX document), one picture of a set, or a MaterialX
+/// document (#material) -- read once and remembered; none for what is not
+/// one.
 TextureSet textureSet(const std::string& where);
 
 /// The folder of the sets that come with the program: $PG_TEXTURES when it

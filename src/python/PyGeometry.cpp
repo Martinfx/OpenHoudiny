@@ -6,6 +6,7 @@
 #include "pg/io/Export.h"
 #include "pg/io/Obj.h"
 #include "pg/io/Ply.h"
+#include "pg/sim/UsdExport.h"
 
 #include <pybind11/stl.h>
 
@@ -463,7 +464,7 @@ void bindGeometry(py::module_& m) {
             std::error_code ec;
             const std::filesystem::path parent = std::filesystem::path(path).parent_path();
             if (!parent.empty()) std::filesystem::create_directories(parent, ec);
-            if (!io::writeGeometry(g.get(), path, error)) throw Error(error);
+            if (!sim::exportGeometry(g.get(), path, error)) throw Error(error);
         })
         .def_static("load", [](const std::string& path) {
             PyGeometry g;

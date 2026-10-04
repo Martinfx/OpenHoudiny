@@ -11,7 +11,9 @@ jednu scénu `.usda`**:
 - povrch vody jako uzavřenou síť s rychlostí a pěnou,
 - kapky deště a kapičky odstřiků,
 - prach a páru jako VDB soubory vedle,
-- kameru, slunce, oblohu a podlahu.
+- kameru, slunce, oblohu a podlahu,
+- materiály zobrazené geometrie jako MaterialX s fotkami vedle
+  ([materialx.md](materialx.md)).
 
 Co je velké a v každém snímku jiné (voda, déšť, drť, měnící se geometrie),
 jde do **souboru pro každý snímek** vedle scény a scéna si hodnoty bere
@@ -35,7 +37,7 @@ Zapisovač vznikl podle veřejné specifikace, bez knihovny USD (clean room).
   souboru, jen geometrii, jako u `.ply` a `.obj`.
 - **Editor:** položka **File › Export USD Scene…** zapíše všechny snímky, které
   jsou v cache. **File › Export Geometry…** s příponou `.usda` zapíše geometrii
-  jednoho snímku.
+  jednoho snímku s jejími materiály, s `.mtlx` jen materiály ([materialx.md](materialx.md)).
 
 Kde scénu otevřít:
 
@@ -50,7 +52,9 @@ Kde scénu otevřít:
   /Looks/surface           Material: UsdPreviewSurface, barva z displayColor
   /Looks/water, /rain      Material: voda (průhledná, hladká, ior 1,33), déšť
   /Looks/glass             Material: sklo (čiré, hladké, ior 1,5), je-li v kusech
+  /Materials/bark …        Material: MaterialX + UsdPreviewSurface, materiály zobrazené geometrie
   /<uzel>                  zobrazená geometrie: mesh, curves, points
+      /mesh/bark …           GeomSubset: plochy jednoho materiálu
       /instances             PointInstancer: tráva, stromy jako instance
           /Prototypes/proto_0 …  … prototypy, jednou
   /pieces/body_0000 …      tělesa RBD Solveru: Xform (translate, orient)
@@ -81,12 +85,15 @@ pond.usda                      scéna
 pond_frames/pond.0001.usda …   hodnoty jednoho snímku (vrstva, "value clip")
 pond_frames/pond.manifest.usda které atributy vrstvy dávají
 pond_gas/pond_gas.0001.vdb …   prach, je-li
+pond_textures/bark_color.jpg … fotky materiálů, jsou-li
+pond.mtlx                      materiály jako dokument MaterialX, jsou-li
 ```
 
 | Prim | Co obsahuje |
 |---|---|
 | geometrie | Zobrazený uzel podle svého jména (`street`, `city`). Uzavřené polygony jsou Mesh bez subdivize, otevřené čáry lineární BasisCurves a volné body Points. Body mají šířku podle `pscale`, `v` jako `velocities` a `id` jako `ids`; `v` meshe jsou také `velocities`. Ostatní atributy bodů (čísla, celá čísla, vektory, třeba `foam`) jdou jako primvars (`primvars:foam`). Instance (body, které zastupují prototypy — tráva z Grass, stromy s Output Instances) jsou PointInstancer `instances`: prototypy ve scope `Prototypes` pod ním, `protoIndices`, `positions`, `orientations`, `scales`, `primvars:tint`, `ids` ([vegetation.md](vegetation.md)). Geometrie, která se nemění, je ve scéně jednou; když se změní, je v souborech snímků, ve kterých se změnila — prototypy instancí zůstávají ve scéně, ve snímcích je jen to, jak instance stojí. |
 | barva | `Cd` rohu, bodu, primitiva nebo celé geometrie jako `displayColor`. Zapíše se jednou pro celý objekt, jednou na plochu, nebo jednou na roh, podle toho, jak se barva mění. |
+| materiály | Každý materiál zobrazené geometrie a jejích prototypů (z čeho je, drsnost, fotky, kladení) jako `Material` v `/World/Materials`: graf MaterialX `standard_surface` nad fotkami a `UsdPreviewSurface`. Plochy jsou přiřazené `GeomSubset`y, jeden na materiál, a u měnící se geometrie jsou indexy ve vrstvách snímků. UV jsou `primvars:st`, fotky se zkopírují do `<jméno>_textures/` ([materialx.md](materialx.md)). |
 | tělesa | Tvar tělesa (barvy jako v náhledu) se zapíše **jednou**, posunutý do středu tělesa. Každý snímek pak jen `translate` a `orient`. Rozmetané těleso má od toho snímku `visibility = invisible`. Kus, který se za běhu rozlomil ([lámání za běhu](destruction.md#lámání-za-běhu)), zmizí stejně, a jeho úlomky jsou tělesa navíc: `body_NNNN` za těmi, co byla, s tvarem úlomku, do snímku zlomu neviditelné (`visibility` `invisible`, od zlomu `inherited`), dřív na místě kusu. |
 | drť | PointInstancer s kamínky: prototypy jsou tytéž úlomky, jaké kreslí renderery — dvanáct tvarů kamene (krabička zploštělá a protažená, s ulomenými rohy a hranami) a šest střepů skla, ploché, od středu k nejvzdálenějšímu rohu jednotka. Jsou ve scéně jednou (`Prototypes/proto_0` až `proto_17`), ve vrstvách snímků je jen, kde jaký kousek je: `protoIndices` (tvar podle čísla kousku, střepy od 12), `positions`, `orientations` (`quath[]`, natočení ze simulace), `scales` (poloviční velikost kousku), `velocities`, `ids` a `primvars:displayColor` po kouscích (barva řezu o odstín tmavší a každý kousek svým odstínem, jako v náhledu; sklo barvou skla). Číslo dostane kousek při vyhození a drží ho, dokud je ve scéně, takže ho renderer sleduje ze snímku na snímek a rozmaže pohybem. Instancer má materiál `surface`, střepy materiál `glass`, je-li ve scéně sklo. Cache starší než formát 4 čísla ani rychlosti nemá (tvar pak podle pořadí), starší než formát 9 natočení (pak náhodné podle čísla). Než první kousek vyletí, je drť neviditelná. |
 | látka | Látka Cloth Solveru tam, kde jsou její body, s normálami (`normals`) a rychlostmi (`velocities`) pro rozmazání pohybem. Plochy tvoří Mesh, lana BasisCurves. Barva je z `Cd` geometrie, jinak z parametru Color. Každý snímek má celou síť ve své vrstvě včetně topologie. Roztržená látka má od snímku, kdy se roztrhla, víc bodů (odtržené kopie) a plochy přepojené na ně ([cloth.md](cloth.md)). Atributy, které čte jen řešič (`pin`, `mass`, `tear`), se nezapisují. |
@@ -165,7 +172,8 @@ Soubory po snímcích jsou vedle scény a cesty jsou relativní: složku
   - Stojící město se zapíše jednou.
   - Těleso, které se nehne, má jednu polohu.
   - Kamera, která stojí, má jednu polohu.
-- **Materiál:** jeden `UsdPreviewSurface`, který bere barvu z `displayColor`
+- **Materiál:** zobrazená geometrie má materiály MaterialX ([materialx.md](materialx.md)).
+  Ostatní (kusy, drť, látka, podlaha) mají jeden `UsdPreviewSurface`, který bere barvu z `displayColor`
   (`UsdPrimvarReader_float3`). Plochy řezu jsou `GeomSubset` s rodinou
   `materialBind`, takže jim jde v Houdini nebo Blenderu přiřadit vlastní materiál (beton, cihla).
   Plochy skla (primitiva s `glass`) mají vlastní podmnožinu `glass` s materiálem
@@ -194,6 +202,8 @@ kde se ověřovalo, prototype ji nepotřebuje.
     ho posune s prvním z nich, USD dá každému tělesu vlastní kopii.
 - **Kamera:** osy odpovídají rotaci Rz·Ry·Rx uzlu Camera, ohnisko je 22 mm a clona 42,67 × 24 mm.
 - **Prach:** cesty k souborům VDB se vyřeší relativně ke scéně.
+- **Materiály:** jak je knihovna složí a co hlásí validátory, popisuje
+  [materialx.md](materialx.md#5-ověření).
 
 | Záběr | Snímky | Tělesa | `.usda` | Vrstvy snímků | VDB | Export z cache | Otevření |
 |---|---|---|---|---|---|---|---|
@@ -227,7 +237,8 @@ v počátku), ověřuje `tests/test_usd_read.cpp` ([usd-import.md](usd-import.md
 |---|---|
 | `src/pg/io/Usda.h` | Zapisovač USDA: hodnoty jako text, prim (`def` i `over`), stage, časové vzorky, `clips`. Geometrie jako Mesh, BasisCurves a Points (`geometryPrim`, `geometryStage`), instance jako PointInstancer (`instancerPrim`, `addPrototypes`), její atributy snímku (`fields`) a primvars z atributů bodů (`pointPrimvars`). |
 | `src/pg/io/Export.cpp` | `.usda` ve `writeGeometry`: geometrie jako samostatná scéna |
-| `src/pg/sim/UsdExport.h` | Záběr simulace: snímky přicházejí po jednom (`add`) a vrstva každého se hned zapíše; scéna a manifest se zapíší na konci (`finish`) |
+| `src/pg/sim/UsdExport.h` | Záběr simulace: snímky přicházejí po jednom (`add`) a vrstva každého se hned zapíše; scéna a manifest se zapíší na konci (`finish`). `exportGeometry`: geometrie jako scéna s materiály, nebo `.mtlx` |
+| `src/pg/render/MaterialGraph.h` | Materiály jako grafy MaterialX a jejich přiřazení plochám ([materialx.md](materialx.md)) |
 | `src/pg/sim/WaterMesh.h` | Povrch vody snímku jako síť (`waterMesh`), stejný jako z uzlu Liquid Surface |
 | `src/pg/nodes/Volumes.cpp` | Objem na síť polygonů (`volumeToMesh`, surface nets) a uzel Convert Volume |
 | `tools/prototype/Commands.cpp` | `prototype sim --export ….usda` |

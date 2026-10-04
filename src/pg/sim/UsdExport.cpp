@@ -2,7 +2,9 @@
 
 #include "pg/core/Chips.h"
 #include "pg/core/Instances.h"
+#include "pg/io/Export.h"
 #include "pg/io/Vdb.h"
+#include "pg/render/MaterialGraph.h"
 #include "pg/sim/Cloth.h"
 #include "pg/sim/Rigid.h"
 #include "pg/sim/WaterMesh.h"
@@ -32,6 +34,7 @@ const char* const kSurface = "</World/Looks/surface>";
 const char* const kGlass = "</World/Looks/glass>";
 const char* const kWaterLook = "</World/Looks/water>";
 const char* const kRainLook = "</World/Looks/rain>";
+const char* const kMaterials = "/World/Materials";  // the materials of the displayed geometry
 const char* const kBinding = "prepend apiSchemas = [\"MaterialBindingAPI\"]";
 // How wide a drop and a droplet are drawn, metres: a renderer streaks them
 // by their velocities.
@@ -249,6 +252,14 @@ struct UsdExport::Impl {
     std::vector<std::pair<int, Camera>> cameras;
     std::vector<std::pair<int, Look>> looks;
 
+    // The materials of the displayed geometry and of its prototypes: a
+    // Material each in /World/Materials, its faces bound to them; their
+    // pictures in shot_textures. The subsets of the meshes the layers give,
+    // by their paths: the material each is bound to; the meshes they are of.
+    std::unique_ptr<render::MaterialLooks> materials;
+    std::map<std::string, std::string> subsets;
+    std::map<std::string, std::vector<std::string>> meshSubsets;
+
     std::string geometryPath() const { return "/World/" + geometryName; }
     std::string layerFile(int frame) const { return stem + "." + four(frame) + ".usda"; }
     std::string layerAsset(int frame) const { return "./" + stem + "_frames/" + layerFile(frame); }
@@ -280,8 +291,9 @@ struct UsdExport::Impl {
 
     /// Geometry at frame f under the prim `at`: its mesh, curves and points,
     /// and its instances, as geometryPrim makes them -- the instancer's
-    /// prototypes those of the first frame with instances.
-    void sampleShapes(usda::Stage& layer, const std::string& at, int f, const Geometry& whole) {
+    /// prototypes those of the first frame with instances. With `bind`, its
+    /// faces bound to their materials, a GeomSubset each.
+    void sampleShapes(usda::Stage& layer, const std::string& at, int f, const Geometry& whole, bool bind = false) {
         std::shared_ptr<Geometry> rest;
         const Geometry* shapes = &whole;
         if (whole.prototypeCount() > 0) {
@@ -289,7 +301,11 @@ struct UsdExport::Impl {
             shapes = rest.get();
             const usda::InstancesText instances = usda::instancesText(whole);
             if (!instances.empty()) {
-                prototypes.emplace(at + "/instances", whole.prototypes());
+                if (prototypes.emplace(at + "/instances", whole.prototypes()).second && bind) {
+                    for (const auto& shape : whole.prototypes()) {
+                        if (shape) materials->bind(*shape);
+                    }
+                }
                 sample(layer, at + "/instances", "PointInstancer", f, usda::fields(instances));
             }
         }
@@ -301,13 +317,49 @@ struct UsdExport::Impl {
         const usda::CurvesText curves = usda::curvesText(geo);
         const usda::PointsText points = usda::pointsText(geo);
         if (!mesh.empty()) sample(layer, at + "/mesh", "Mesh", f, usda::fields(mesh));
+        if (!mesh.empty() && bind) {
+            // A subset a material: its faces now -- none, of one it had before
+            // but has not now.
+            const usda::FaceMaterials looks = materials->bind(geo);
+            const std::vector<std::vector<int32_t>> faces = usda::facesOf(mesh, looks);
+            std::vector<std::string>& had = meshSubsets[at + "/mesh"];
+            for (const std::string& name : looks.names) {
+                if (std::find(had.begin(), had.end(), name) == had.end()) had.push_back(name);
+            }
+            for (const std::string& name : had) {
+                const auto k = static_cast<size_t>(std::find(looks.names.begin(), looks.names.end(), name) - looks.names.begin());
+                const std::string path = at + "/mesh/" + usda::identifier(name);
+                if (k < looks.names.size()) subsets[path] = looks.targets[k];
+                sample(layer, path, "GeomSubset", f,
+                       {{"int[]", "indices", "", usda::integers(k < faces.size() ? faces[k] : std::vector<int32_t>())}});
+            }
+        }
         if (!curves.empty()) sample(layer, at + "/curves", "BasisCurves", f, usda::fields(curves));
         if (!points.empty()) sample(layer, at + "/points", "Points", f, usda::fields(points));
         primAt(layer.prims, at);  // there, even when it is empty now
     }
 
     /// The displayed geometry at frame f.
-    void sampleGeometry(usda::Stage& layer, int f, const Geometry& geo) { sampleShapes(layer, geometryPath(), f, geo); }
+    void sampleGeometry(usda::Stage& layer, int f, const Geometry& geo) { sampleShapes(layer, geometryPath(), f, geo, true); }
+
+    /// The materials of the displayed geometry as it first showed -- and of
+    /// its prototypes -- taken in: what the stage binds it to.
+    void bindFirst(const Geometry& geo) {
+        if (geo.prototypeCount() > 0) {
+            materials->bind(*withoutInstances(geo));
+            for (const auto& shape : geo.prototypes()) {
+                if (shape) materials->bind(*shape);
+            }
+        } else {
+            materials->bind(geo);
+        }
+    }
+
+    /// What binds the displayed geometry's faces -- and its prototypes' --
+    /// to the materials taken in.
+    usda::MaterialBinder binder() const {
+        return [this](const Geometry& geo) { return materials->bound(geo); };
+    }
 
     /// The cloth at frame f, where its points are -- torn, as it is torn --
     /// with their normals and velocities: its faces a Mesh, its ropes
@@ -503,7 +555,15 @@ struct UsdExport::Impl {
                 q.setUniform("token", "type", usda::quoted("linear"));
                 if (!c.declared.count("widths")) q.set("float[]", "widths", "[0.01]").metadata = usda::interpolation("constant");
             }
-            if (c.type == "PointInstancer" && prototypes.count(path)) usda::addPrototypes(q, path, prototypes.at(path));
+            if (c.type == "PointInstancer" && prototypes.count(path)) {
+                // The displayed geometry's prototypes bound to their materials.
+                const bool displayed = path.rfind(geometryPath() + "/", 0) == 0;
+                usda::addPrototypes(q, path, prototypes.at(path), displayed ? binder() : usda::MaterialBinder());
+            }
+            if (c.type == "GeomSubset" && subsets.count(path)) usda::bindSubset(q, subsets.at(path));
+            if (c.type == "Mesh" && meshSubsets.count(path)) {
+                q.setUniform("token", "subsetFamily:materialBind:familyType", usda::quoted("nonOverlapping"));
+            }
         }
         return p;
     }
@@ -566,14 +626,15 @@ UsdExport::UsdExport(std::string path, std::string geometryName, float fps) : im
     impl_->geometryName = usda::identifier(geometryName.empty() ? "geometry" : geometryName);
     // Not the name of another prim of the stage.
     for (const char* taken :
-         {"Looks", "pieces", "grit", "rebar", "cloth", "grains", "water", "rain", "gas", "camera", "sun", "sky",
-          "ground"}) {
+         {"Looks", "Materials", "pieces", "grit", "rebar", "cloth", "grains", "water", "rain", "gas", "camera", "sun",
+          "sky", "ground"}) {
         if (impl_->geometryName == taken) impl_->geometryName += "_geometry";
     }
     const fs::path p(impl_->path);
     impl_->stem = p.stem().string();
     impl_->gasFolder = p.parent_path() / (impl_->stem + "_gas");
     impl_->framesFolder = p.parent_path() / (impl_->stem + "_frames");
+    impl_->materials = std::make_unique<render::MaterialLooks>(kMaterials, "./" + impl_->stem + "_textures/");
 }
 
 UsdExport::~UsdExport() = default;
@@ -604,6 +665,7 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
             m.firstGeometry = m.lastGeometry = geometry;
             m.firstGeometryFrame = f;
             growDrawn(m.scene, *geometry);
+            m.bindFirst(*geometry);
             hold = true;
         } else if (m.lastGeometry != geometry && m.lastGeometry->hash() != geometry->hash()) {
             Impl::ClipSet& set = m.clipSets[m.geometryPath()];
@@ -792,6 +854,9 @@ usda::Stage UsdExport::stage() const {
             sh.set("token", "outputs:surface", "");
         }
     }
+    // The displayed geometry's materials: as MaterialX, and as a
+    // UsdPreviewSurface for what reads none.
+    if (!m.materials->empty()) m.materials->addTo(world.child("Scope", "Materials"));
 
     // The displayed geometry: once, when it never changes; else from the
     // layers of the frames it changed at.
@@ -800,8 +865,8 @@ usda::Stage UsdExport::stage() const {
         if (m.geometryChanges) {
             g = &m.clippedPrim(world, m.geometryPath(), "Xform", m.geometryPresent);
         } else {
-            g = &world.children.emplace_back(
-                usda::geometryPrim(m.geometryName, {{m.firstGeometryFrame, m.firstGeometry.get()}}, m.geometryPath()));
+            g = &world.children.emplace_back(usda::geometryPrim(
+                m.geometryName, {{m.firstGeometryFrame, m.firstGeometry.get()}}, m.geometryPath(), m.binder()));
             m.visibility(*g, m.geometryPresent);
         }
         g->metadata.push_back(kBinding);
@@ -1043,10 +1108,75 @@ usda::Stage UsdExport::stage() const {
     return s;
 }
 
+namespace {
+
+bool writeText(const std::string& text, const std::string& path, std::string& error) {
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        error = "cannot write " + path;
+        return false;
+    }
+    const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+    if (std::fclose(f) != 0 || !ok) {
+        error = "cannot write " + path + " -- is the disk full?";
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 bool isUsdPath(const std::string& path) {
     std::string ext = fs::path(path).extension().string();
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return ext == ".usda" || ext == ".usd";
+}
+
+const char* const* exportExtensions() {
+    static const char* const kExtensions[] = {".ply", ".obj", ".vdb", ".usda", ".mtlx", nullptr};
+    return kExtensions;
+}
+
+bool exportGeometry(const Geometry& geo, const std::string& path, std::string& error) {
+    const fs::path p(path);
+    std::string ext = p.extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const bool usd = ext == ".usda" || ext == ".usd";
+    if (!usd && ext != ".mtlx") return io::writeGeometry(geo, path, error);
+    // The pictures' folder: of the name without a sequence's frame.
+    std::string shared = p.stem().string();
+    if (const size_t dot = shared.rfind('.'); dot != std::string::npos && dot + 1 < shared.size() &&
+                                              std::all_of(shared.begin() + static_cast<std::ptrdiff_t>(dot) + 1, shared.end(),
+                                                          [](char c) { return c >= '0' && c <= '9'; })) {
+        shared.erase(dot);
+    }
+    const fs::path folder = p.parent_path();
+    const std::string prim = usda::identifier(p.stem().empty() ? "geometry" : p.stem().string());
+    render::MaterialLooks materials(usd ? "/" + prim + "/Materials" : std::string(), "./" + shared + "_textures/");
+    if (usd) {
+        usda::Stage s;
+        s.metadata = {{"defaultPrim", usda::quoted(prim)}, {"metersPerUnit", "1"}, {"upAxis", usda::quoted("Y")}};
+        Prim g = usda::geometryPrim(prim, {{0, &geo}}, "/" + prim, [&](const Geometry& x) { return materials.bind(x); });
+        if (!materials.empty()) materials.addTo(g.child("Scope", "Materials"));
+        s.prims.push_back(std::move(g));
+        if (!materials.copyPictures((folder / (shared + "_textures")).string(), error)) return false;
+        return usda::writeStage(s, path, error);
+    }
+    // .mtlx: the materials of its polygons and of its prototypes'.
+    if (geo.prototypeCount() > 0) {
+        materials.bind(*withoutInstances(geo));
+        for (const auto& shape : geo.prototypes()) {
+            if (shape) materials.bind(*shape);
+        }
+    } else {
+        materials.bind(geo);
+    }
+    if (materials.empty()) {
+        error = "the geometry has no polygons -- nothing made of a material to write to " + path;
+        return false;
+    }
+    if (!materials.copyPictures((folder / (shared + "_textures")).string(), error)) return false;
+    return writeText(materials.document(), path, error);
 }
 
 bool UsdExport::finish(std::string& error) {
@@ -1067,6 +1197,12 @@ bool UsdExport::finish(std::string& error) {
         fs::create_directories(m.framesFolder, ec);
         const std::string manifest = (m.framesFolder / (m.stem + ".manifest.usda")).string();
         if (!usda::writeStage(m.manifest(), manifest, error)) return false;
+    }
+    // The materials' pictures beside the stage, and the materials as a
+    // MaterialX document of their own.
+    if (!m.materials->empty()) {
+        if (!m.materials->copyPictures((folder / (m.stem + "_textures")).string(), error)) return false;
+        if (!writeText(m.materials->document(), (folder / (m.stem + ".mtlx")).string(), error)) return false;
     }
     return usda::writeStage(stage(), m.path, error);
 }

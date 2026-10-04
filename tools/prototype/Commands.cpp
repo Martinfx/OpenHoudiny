@@ -15,7 +15,8 @@
 //                    [--export PATH] [--export-node NODE] [--preview F] [--renderer gl|path|cycles [--samples N]]
 //   prototype sim --list
 //   prototype pyro   OUT.png [--preset EXAMPLE] ...      (sim with an example; fire is the campfire)
-//   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE] [--set NODE.PARAM=VALUE]...
+//   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|OUT.usda|OUT.mtlx|- [--node NODE]
+//                    [--set NODE.PARAM=VALUE]...
 //                    [--frame N] [--frames N [--start N]] [--threads N] [--hash]
 //
 // `check` is the proof that the generated code is valid: it compiles every
@@ -1187,7 +1188,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             if (!std::filesystem::path(lastExport).parent_path().empty()) {
                 std::filesystem::create_directories(std::filesystem::path(lastExport).parent_path(), ec);
             }
-            if (!geo || !pg::io::writeGeometry(*geo, lastExport, error)) {
+            if (!geo || !pg::sim::exportGeometry(*geo, lastExport, error)) {
                 std::fprintf(stderr, "%s: %s\n", cmd, geo ? error.c_str() : "the exported node gave no geometry");
                 return 1;
             }
@@ -1574,7 +1575,7 @@ int cook(const Options& o) {
         std::printf("\n");
         if (out == "-") continue;
         const std::string path = numbered ? pg::io::framePath(out, f) : out;
-        if (!pg::io::writeGeometry(*g, path, error)) {
+        if (!pg::sim::exportGeometry(*g, path, error)) {
             std::fprintf(stderr, "cook: %s\n", error.c_str());
             return 1;
         }
@@ -1701,9 +1702,10 @@ void printUsage(std::FILE* out) {
                  "                   frames, which --resume goes on from; --preview F: the grids F as fine;\n"
                  "                   --from-cache reads them from there instead of simulating; --export writes\n"
                  "                   the displayed geometry of every frame, PATH with $F4 for the frame:\n"
-                 "                   .ply points, .obj polygons, .vdb volumes, .usda; a .usda without $F: the\n"
-                 "                   whole shot as one USD stage -- geometry, pieces, grit, water, rain, gas (VDB\n"
-                 "                   beside it), camera, light; what changes every frame in a layer a frame\n"
+                 "                   .ply points, .obj polygons, .vdb volumes, .usda with its materials\n"
+                 "                   (MaterialX), .mtlx its materials alone; a .usda without $F: the\n"
+                 "                   whole shot as one USD stage -- geometry and its materials, pieces, grit,\n"
+                 "                   water, rain, gas (VDB beside it), camera, light; what changes every frame in a layer a frame\n"
                  "                   beside it (NAME_frames/); an .abc: the whole shot as one Alembic\n"
                  "                   archive -- geometry, pieces, grit, grains, water, rain, cloth, camera.\n"
                  "                   '-' for OUT.png: no pictures. --threads N: on N threads (all there are\n"
@@ -1716,7 +1718,7 @@ void printUsage(std::FILE* out) {
                  "                   'box1.sizex=ch(\"../base/sizex\")*2', 'fire.center={0, $F*0.01, 0}'\n"
                  "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"
                  "  prototype pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
-                 "  prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|- [--node NODE]\n"
+                 "  prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|OUT.usda|OUT.mtlx|- [--node NODE]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--frame N] [--frames N [--start N]] [--threads N] [--hash]\n"
                  "                   cooks the geometry of the displayed node (or --node) -- no simulation --\n"
                  "                   and writes it by OUT's extension, $F4 in OUT for the frame; '-' writes nothing.\n"

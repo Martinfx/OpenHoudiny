@@ -163,7 +163,7 @@ Uzel **Material** má sekci Texture:
 
 | Parametr | Co dělá |
 |---|---|
-| **Texture** | obrázek barvy (`.jpg`, `.png`, `.exr`) ze sady, např. z Poly Haven nebo ambientCG; ostatní mapy se najdou vedle něj podle jmen: `_diff_`/`_rough_`/`_disp_` (Poly Haven), `_Color`/`_Roughness`/`_Displacement` (ambientCG); funguje i složka s `texture.txt` |
+| **Texture** | obrázek barvy (`.jpg`, `.png`, `.exr`) ze sady, např. z Poly Haven nebo ambientCG; ostatní mapy se najdou vedle něj podle jmen: `_diff_`/`_rough_`/`_disp_` (Poly Haven), `_Color`/`_Roughness`/`_Displacement` (ambientCG); funguje i složka s `texture.txt` a dokument MaterialX (`materialy.mtlx`, `materialy.mtlx#bark`, nebo složka s ním, [materialx.md](materialx.md#4-čtení-mtlx)) |
 | **Texture Size** | kolik metrů pokryje jedna dlaždice (0: podle `texture.txt`, jinak 2 m) |
 | **Tint by Color** | zapnuto: barva `Cd` místo barvy fotky (fotka kolem ní světlá a tmavne); vypnuto: fotka, jak je |
 
@@ -296,6 +296,12 @@ sad najednou. Další sady už viewport kreslí jen barvou. Výška a reliéf
 Z příkazové řádky: `--set output.render_textures=0`,
 `--set output.render_texture_folder=/cesta/k/texturam`.
 
+### Do jiných programů
+
+Export do USD zapíše materiály zobrazené geometrie jako MaterialX (a
+UsdPreviewSurface), plochy k nim přiřadí a fotky zkopíruje vedle scény.
+`.mtlx` zapíše jen materiály. Popisuje to [materialx.md](materialx.md).
+
 ## 4. Před a po
 
 ![Demolice bez materiálů a s nimi](img/materials-demolition.jpg)
@@ -323,8 +329,11 @@ okolních domů odrážejí oblohu.*
   polohy jejich první plochy v `rest`. Číslo je
   stejné snímek za snímkem, i když kusy mizí. Geometrii bez `Cd` dá barvy
   materiálů (`presetSurface`).
+- `src/pg/render/MaterialGraph.cpp`: materiály jako grafy MaterialX
+  ([materialx.md](materialx.md)).
 - `src/pg/render/Textures.cpp`: hledání sad (knihovna, `texture.txt`,
-  jména souborů z Poly Haven a ambientCG, normálové mapy), průměrná barva,
+  jména souborů z Poly Haven a ambientCG, normálové mapy, dokumenty
+  MaterialX), průměrná barva,
   triplanární vyhledání pro path tracer a ohnutá normála (`bentNormal`).
 - `src/pg/render/PathTracer.cpp`: `facingNormal` a `bumpShadowing`, jak je
   má Cycles.

@@ -1024,10 +1024,11 @@ std::vector<NodeType> buildTypes() {
               {"texture", "Texture", "Texture", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
                "A texture of your own instead of the material's: a picture of its colour -- the other pictures of "
                "the set beside it are found by their names (Poly Haven's _diff_, _rough_, _disp_, _nor_gl_; "
-               "ambientCG's _Color, _Roughness, _Displacement, _NormalGL), or a folder's texture.txt. Laid on by "
+               "ambientCG's _Color, _Roughness, _Displacement, _NormalGL), a folder's texture.txt, or a MaterialX "
+               "document (.mtlx; name.mtlx#bark the material bark of it). Laid on by "
                "the faces' uv where they have it, else from three sides by where they were before they moved: it "
                "goes with a piece that flies.",
-               {".jpg", ".jpeg", ".png", ".exr"},
+               {".jpg", ".jpeg", ".png", ".exr", ".mtlx"},
                {}},
               {"texture_size", "Texture Size", "Texture", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, 1000.0f, "m",
                "How many metres one picture covers. 0: as its texture.txt says, else 2 m."},

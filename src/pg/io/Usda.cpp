@@ -6,6 +6,7 @@
 #include <charconv>
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <ostream>
 #include <sstream>
 
@@ -149,6 +150,21 @@ std::string tuples(std::span<const Vec3> v) {
     for (size_t i = 0; i < v.size(); ++i) {
         if (i > 0) out += ", ";
         appendTuple(out, v[i]);
+    }
+    return out + "]";
+}
+
+std::string pairs(std::span<const Vec2> v) {
+    std::string out;
+    out.reserve(v.size() * 20 + 2);
+    out += '[';
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (i > 0) out += ", ";
+        out += '(';
+        appendNumber(out, v[i].x);
+        out += ", ";
+        appendNumber(out, v[i].y);
+        out += ')';
     }
     return out + "]";
 }
@@ -324,6 +340,17 @@ std::vector<Field> pointPrimvars(const Geometry& geo, std::span<const uint32_t> 
         Field f;
         f.name = "primvars:" + identifier(name);
         f.metadata = interpolation("vertex");
+        if (name == "uv" && (a->type() == AttrType::Vec2 || a->type() == AttrType::Vec3)) {
+            // Texture coordinates, as USD names them.
+            std::vector<Vec2> v;
+            v.reserve(source.size());
+            for (const uint32_t p : source) v.push_back(a->type() == AttrType::Vec2 ? a->read<Vec2>()[p] : Vec2(a->read<Vec3>()[p]));
+            f.type = "texCoord2f[]";
+            f.name = "primvars:st";
+            f.value = pairs(v);
+            out.push_back(std::move(f));
+            continue;
+        }
         switch (a->type()) {
             case AttrType::Float: {
                 std::vector<float> v;
@@ -367,6 +394,10 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
     MeshText m;
     Vec3 detail = kGrey;
     colorOf(geo.detail(), 0, detail);
+    // The corners' texture coordinates, where they have them.
+    const AttributeArray* uv = geo.vertices().find("uv");
+    if (uv && ((uv->type() != AttrType::Vec2 && uv->type() != AttrType::Vec3) || uv->size() != geo.vertexCount())) uv = nullptr;
+    std::vector<Vec2> st;
     Bounds box;
     for (const uint32_t prim : prims) {
         if (!geo.primitiveClosed(prim)) continue;
@@ -375,7 +406,9 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
         const size_t start = geo.primitiveVertexStart(prim);
         if (inside && inside->contains(prim)) m.inside.push_back(static_cast<int32_t>(counts.size()));
         counts.push_back(static_cast<int32_t>(pts.size()));
+        m.faces.push_back(prim);
         for (size_t k = 0; k < pts.size(); ++k) {
+            if (uv) st.push_back(uv->type() == AttrType::Vec2 ? uv->read<Vec2>()[start + k] : Vec2(uv->read<Vec3>()[start + k]));
             const uint32_t p = pts[k];
             if (local[p] < 0) {
                 local[p] = static_cast<int32_t>(points.size());
@@ -443,6 +476,12 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
     }
     m.velocities = vectors("v");
     m.primvars = pointPrimvars(geo, source);
+    if (uv) {
+        // The corners' uv over the points'.
+        m.st = pairs(st);
+        m.stHow = interpolation("faceVarying");
+        std::erase_if(m.primvars, [](const Field& f) { return f.name == "primvars:st"; });
+    }
     for (const uint32_t p : source) local[p] = -1;
     return m;
 }
@@ -485,6 +524,7 @@ std::vector<Field> fields(const MeshText& m) {
     // The colour's interpolation is the first frame's: a colour of another
     // kind later is taken as the first frame's kind would read it.
     out.push_back({"color3f[]", "primvars:displayColor", m.colorHow, m.colors});
+    if (!m.st.empty()) out.push_back({"texCoord2f[]", "primvars:st", m.stHow, m.st});
     for (const Field& f : m.primvars) out.push_back(f);
     if (!m.velocities.empty()) out.push_back({"vector3f[]", "velocities", "", m.velocities});
     std::sort(out.begin(), out.end(), [](const Field& a, const Field& b) { return a.name < b.name; });
@@ -516,6 +556,129 @@ Prim meshPrim(const std::string& name, const std::vector<std::pair<int, MeshText
     animateFields(mesh, frames);
     mesh.setUniform("token", "subdivisionScheme", quoted("none"));
     return mesh;
+}
+
+namespace {
+
+const char* const kBindingApi = "prepend apiSchemas = [\"MaterialBindingAPI\"]";
+
+/// A value of an input as USD writes it: (0.2, 0.3, 0.4) of a colour, @a
+/// file@ of a file name, "a token" of a string.
+std::string usdValue(const mtlx::Input& in) {
+    const std::string& t = in.type;
+    if (t == "filename") return asset(in.value);
+    if (t == "string" || t == "token") return quoted(in.value);
+    if (t == "boolean") return in.value == "true" || in.value == "1" ? "1" : "0";
+    if (t == "color3" || t == "color4" || t == "vector2" || t == "vector3" || t == "vector4") return "(" + in.value + ")";
+    return in.value;
+}
+
+/// The type of output `output` of a node of `category` and `type`, as USD
+/// declares it: a MaterialX node's out of its own type; a UsdUVTexture's
+/// rgb a float3, its r or a a float...
+std::string outputType(const std::string& category, const std::string& type, const std::string& output) {
+    if (category == "UsdPreviewSurface") return "token";
+    if (category == "UsdUVTexture") return output == "rgb" ? "float3" : output == "rgba" ? "float4" : "float";
+    if (category.rfind("UsdPrimvarReader_", 0) == 0) return category.substr(17);
+    return mtlx::usdType(type);
+}
+
+}  // namespace
+
+std::vector<std::vector<int32_t>> facesOf(const MeshText& mesh, const FaceMaterials& bound) {
+    std::vector<std::vector<int32_t>> out(bound.names.size());
+    for (size_t f = 0; f < mesh.faces.size(); ++f) {
+        const uint32_t prim = mesh.faces[f];
+        const uint32_t k = prim < bound.ofPrim.size() ? bound.ofPrim[prim] : UINT32_MAX;
+        if (k < out.size()) out[k].push_back(static_cast<int32_t>(f));
+    }
+    return out;
+}
+
+void bindSubset(Prim& subset, const std::string& target) {
+    subset.type = "GeomSubset";
+    subset.metadata.push_back(kBindingApi);
+    subset.setUniform("token", "elementType", quoted("face"));
+    subset.setUniform("token", "familyName", quoted("materialBind"));
+    subset.relate("material:binding", target);
+}
+
+void bindMesh(Prim& mesh, const std::vector<BoundFrame>& frames,
+              const std::vector<std::pair<std::string, std::string>>& materials) {
+    if (frames.empty() || materials.empty()) return;
+    // All of one, at every frame: the Mesh bound whole.
+    for (size_t k = 0; k < materials.size(); ++k) {
+        const bool whole = std::all_of(frames.begin(), frames.end(), [&](const BoundFrame& f) {
+            return k < f.byMaterial.size() && f.byMaterial[k].size() == f.faces;
+        });
+        if (!whole) continue;
+        mesh.metadata.push_back(kBindingApi);
+        mesh.relate("material:binding", materials[k].second);
+        return;
+    }
+    mesh.setUniform("token", "subsetFamily:materialBind:familyType", quoted("nonOverlapping"));
+    for (size_t k = 0; k < materials.size(); ++k) {
+        Prim& subset = mesh.child("GeomSubset", identifier(materials[k].first));
+        bindSubset(subset, materials[k].second);
+        std::vector<std::pair<int, std::string>> indices;
+        for (const BoundFrame& f : frames) {
+            indices.emplace_back(f.frame, integers(k < f.byMaterial.size() ? f.byMaterial[k] : std::vector<int32_t>()));
+        }
+        animate(subset, "int[]", "indices", indices);
+    }
+}
+
+Prim materialPrim(const std::string& name, const std::string& path, const std::vector<mtlx::Node>& graph) {
+    Prim material("Material", name);
+    // Of nodes both MaterialX 1.38 and 1.39 define by the same ids.
+    const std::vector<mtlx::Node> nodes = mtlx::portable(graph);
+    // The outputs the connections take, of each node: declared on its Shader.
+    std::map<std::string, std::map<std::string, std::string>> outputs;  // node, output -> type
+    std::map<std::string, const mtlx::Node*> byName;
+    for (const mtlx::Node& n : nodes) byName[n.name] = &n;
+    for (const mtlx::Node& n : nodes) {
+        for (const mtlx::Input& in : n.inputs) {
+            if (in.nodename.empty() || !byName.count(in.nodename)) continue;
+            const mtlx::Node& from = *byName.at(in.nodename);
+            const std::string output = in.output.empty() ? "out" : in.output;
+            outputs[in.nodename][output] = outputType(from.category, from.type, output);
+        }
+    }
+    auto source = [&](const std::string& node, const std::string& output) {
+        return "<" + path + "/" + node + ".outputs:" + output + ">";
+    };
+    for (const mtlx::Node& n : nodes) {
+        if (n.category == "surfacematerial") {
+            const mtlx::Input* s = n.input("surfaceshader");
+            if (s && !s->nodename.empty()) material.set("token", "outputs:mtlx:surface.connect", source(s->nodename, "out"));
+            continue;
+        }
+        if (n.category == "UsdPreviewSurface") material.set("token", "outputs:surface.connect", source(n.name, "surface"));
+    }
+    for (const mtlx::Node& n : nodes) {
+        if (n.category == "surfacematerial") continue;
+        Prim& shader = material.child("Shader", n.name);
+        const bool usd = n.category.rfind("Usd", 0) == 0;
+        shader.setUniform("token", "info:id", quoted(usd ? n.category : mtlx::nodeDef(n)));
+        for (const mtlx::Input& in : n.inputs) {
+            const std::string type = mtlx::usdType(in.type);
+            if (!in.nodename.empty()) {
+                shader.set(type, "inputs:" + in.name + ".connect", source(in.nodename, in.output.empty() ? "out" : in.output));
+                continue;
+            }
+            Attribute& a = shader.set(type, "inputs:" + in.name, usdValue(in));
+            if (!in.colorspace.empty()) a.metadata = "colorSpace = " + quoted(in.colorspace);
+        }
+        if (n.category == "UsdPreviewSurface") {
+            shader.set("token", "outputs:surface", "");
+            continue;
+        }
+        auto it = outputs.find(n.name);
+        if (n.type == "surfaceshader" && (it == outputs.end() || !it->second.count("out"))) shader.set("token", "outputs:out", "");
+        if (it == outputs.end()) continue;
+        for (const auto& [output, type] : it->second) shader.set(type, "outputs:" + output, "");
+    }
+    return material;
 }
 
 
@@ -690,14 +853,14 @@ std::vector<Field> fields(const InstancesText& t) {
 }
 
 void addPrototypes(Prim& instancer, const std::string& path,
-                   const std::vector<std::shared_ptr<const Geometry>>& prototypes) {
+                   const std::vector<std::shared_ptr<const Geometry>>& prototypes, const MaterialBinder& bind) {
     Prim& scope = instancer.child("Scope", "Prototypes");
     std::string targets = "[";
     for (size_t k = 0; k < prototypes.size(); ++k) {
         const std::string name = "proto_" + std::to_string(k);
         const std::string at = path + "/Prototypes/" + name;
         const Geometry empty;
-        scope.children.push_back(geometryPrim(name, {{0, prototypes[k] ? prototypes[k].get() : &empty}}, at));
+        scope.children.push_back(geometryPrim(name, {{0, prototypes[k] ? prototypes[k].get() : &empty}}, at, bind));
         targets += (k > 0 ? ", <" : "<") + at + ">";
     }
     instancer.relate("prototypes", targets + "]");
@@ -705,15 +868,15 @@ void addPrototypes(Prim& instancer, const std::string& path,
 
 Prim instancerPrim(const std::string& name, const std::string& path,
                    const std::vector<std::shared_ptr<const Geometry>>& prototypes,
-                   const std::vector<std::pair<int, InstancesText>>& frames) {
+                   const std::vector<std::pair<int, InstancesText>>& frames, const MaterialBinder& bind) {
     Prim p("PointInstancer", name);
     animateFields(p, frames);
-    addPrototypes(p, path, prototypes);
+    addPrototypes(p, path, prototypes, bind);
     return p;
 }
 
 Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, const Geometry*>>& frames,
-                  const std::string& path) {
+                  const std::string& path, const MaterialBinder& bind) {
     const std::string at = path.empty() ? "/" + name : path;
     Prim g("Xform", name);
     std::vector<std::pair<int, MeshText>> meshes;
@@ -723,6 +886,9 @@ Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, cons
     const Geometry* prototypesOf = nullptr;  // the first frame with instances
     bool anyMesh = false, anyCurves = false, anyPoints = false;
     std::vector<int32_t> scratch;
+    // The faces of each material, a frame each; the materials by name.
+    std::vector<BoundFrame> bound;
+    std::vector<std::pair<std::string, std::string>> materials;
     for (const auto& [f, geo] : frames) {
         // The instances apart; the rest as shapes.
         std::shared_ptr<Geometry> rest;
@@ -736,16 +902,44 @@ Prim geometryPrim(const std::string& name, const std::vector<std::pair<int, cons
         std::vector<uint32_t> all(shapes->primitiveCount());
         for (size_t i = 0; i < all.size(); ++i) all[i] = static_cast<uint32_t>(i);
         meshes.emplace_back(f, meshText(*shapes, all, Vec3(), nullptr, scratch));
+        if (bind && !meshes.back().second.empty()) {
+            // Its faces by the materials of all the frames, by name.
+            const FaceMaterials looks = bind(*shapes);
+            const std::vector<std::vector<int32_t>> faces = facesOf(meshes.back().second, looks);
+            BoundFrame frame;
+            frame.frame = f;
+            frame.faces = meshes.back().second.faces.size();
+            frame.byMaterial.resize(materials.size());
+            for (size_t k = 0; k < looks.names.size(); ++k) {
+                size_t i = 0;
+                while (i < materials.size() && materials[i].first != looks.names[k]) ++i;
+                if (i == materials.size()) {
+                    materials.emplace_back(looks.names[k], k < looks.targets.size() ? looks.targets[k] : std::string());
+                    frame.byMaterial.emplace_back();
+                }
+                frame.byMaterial[i] = faces[k];
+            }
+            bound.push_back(std::move(frame));
+        }
         curves.emplace_back(f, curvesText(*shapes));
         points.emplace_back(f, pointsText(*shapes));
         anyMesh = anyMesh || !meshes.back().second.empty();
         anyCurves = anyCurves || !curves.back().second.empty();
         anyPoints = anyPoints || !points.back().second.empty();
     }
-    if (anyMesh) g.children.push_back(meshPrim("mesh", meshes));
+    if (anyMesh) {
+        g.children.push_back(meshPrim("mesh", meshes));
+        if (!materials.empty()) {
+            // Each frame a list for each of them, empty for those it has none of.
+            for (BoundFrame& frame : bound) frame.byMaterial.resize(materials.size());
+            bindMesh(g.children.back(), bound, materials);
+        }
+    }
     if (anyCurves) g.children.push_back(curvesPrim("curves", curves));
     if (anyPoints) g.children.push_back(pointsPrim("points", points));
-    if (prototypesOf) g.children.push_back(instancerPrim("instances", at + "/instances", prototypesOf->prototypes(), instances));
+    if (prototypesOf) {
+        g.children.push_back(instancerPrim("instances", at + "/instances", prototypesOf->prototypes(), instances, bind));
+    }
     return g;
 }
 

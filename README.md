@@ -120,6 +120,11 @@ okna.
   drť, zrna, voda, déšť, látka, kamera; plyn jako VDB vedle) a čtení
   geometrie a kamery z Blenderu, Mayi nebo Houdini jako uzly sítě;
   ověřené Blenderem
+- **[docs/materialx.md](docs/materialx.md)** — materiály jako MaterialX
+  bez knihovny: v exportu USD (shadery MaterialX a UsdPreviewSurface,
+  plochy přiřazené GeomSubsety, fotky vedle scény), jako `.mtlx`, a čtení
+  `.mtlx` (i z Poly Haven) jako sady textur; ověřené knihovnou MaterialX
+  1.38 a 1.39, `usd-core` a Blenderem
 - **[docs/vdb.md](docs/vdb.md)** — čtení OpenVDB bez knihovny: kouř
   a oheň z Houdini, Blenderu nebo EmberGenu přehraný jako plyn záběru
   (VDB Gas), level set jako překážka nebo tvar zdroje (VDB Import); zip,
@@ -226,7 +231,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 630 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 31 stromy a vegetace
+./build/pgtests            # 638 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 31 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
@@ -450,7 +455,8 @@ zapisovač bez knihovny, soubory ověřené čtením v OpenVDB 10), polygony do
 OBJ. Celý záběr jde do **USD** jako jedna scéna `.usda` (`--export
 shot.usda`, v editoru File › Export USD Scene…): geometrie, kusy jako
 tělesa, která se pohybují (tvar jednou, pak jen poloha a otočení), drť,
-povrch vody, déšť, prach jako VDB vedle, kamera, slunce a obloha. Co je
+povrch vody, déšť, prach jako VDB vedle, kamera, slunce a obloha,
+materiály jako MaterialX s fotkami vedle. Co je
 velké a v každém snímku jiné, jde do souboru pro každý snímek, zapsaného
 hned, jak snímek přijde, a scéna ho skládá (USD value clips) — záběr
 libovolné délky se nemusí vejít do paměti. Ověřeno Pixarovou knihovnou,

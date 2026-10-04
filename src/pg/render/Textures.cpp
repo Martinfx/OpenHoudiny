@@ -1,5 +1,6 @@
 #include "pg/render/Textures.h"
 
+#include "pg/io/MaterialX.h"
 #include "pg/io/Picture.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Scene.h"
@@ -209,6 +210,50 @@ TextureSet readSiblings(const fs::path& file) {
     return set;
 }
 
+std::string lower(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+/// A material of a MaterialX document (MaterialGraph.h writes them; so do
+/// Poly Haven, ambientCG, Houdini...) -- the one named `name`, else its
+/// first: the pictures behind its surface (mtlx::surfaceOf), their files
+/// from the document's folder. Tinted by Cd where its colour is tinted by
+/// a geometric property -- its mean what the document evens the picture
+/// by; as many metres a picture as it lays them on from three sides by,
+/// else 2.
+TextureSet readMaterialX(const fs::path& file, const std::string& name) {
+    std::ifstream in(file, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::vector<io::mtlx::Node> nodes;
+    std::string error;
+    if (!io::mtlx::parse(text.str(), nodes, error)) return {};
+    const io::mtlx::Surface surface = io::mtlx::surfaceOf(nodes, name);
+    if (!surface.found || surface.color.empty()) return {};
+    auto resolved = [&](const std::string& f) {
+        if (f.empty()) return std::string();
+        const fs::path p(f);
+        return (p.is_absolute() ? p : (file.parent_path() / p).lexically_normal()).string();
+    };
+    TextureSet set;
+    set.color = resolved(surface.color);
+    set.normal = resolved(surface.normal);
+    set.normalDirectX = surface.normalDirectX;
+    set.roughness = resolved(surface.roughnessFile);
+    set.height = resolved(surface.height);
+    set.alpha = resolved(surface.opacity);
+    set.alphaChannel = !set.alpha.empty() && surface.opacityFromAlpha;
+    set.size = surface.size > 0.0f ? surface.size : 2.0f;
+    set.depth = 0.01f * set.size;
+    // Tinted, the picture over its mean -- as the document evens it, else as
+    // it is.
+    set.tint = surface.tinted;
+    const Vec3 k = surface.scale;
+    set.mean = set.tint && k.x > 0.0f && k.y > 0.0f && k.z > 0.0f ? Vec3(1.0f) / k : meanOf(set.color);
+    return set;
+}
+
 /// Sets as they were read, by what named them.
 std::mutex setsMutex;
 std::map<std::string, TextureSet> sets;
@@ -224,7 +269,13 @@ TextureSet textureSet(const std::string& where) {
     TextureSet set;
     std::error_code ec;
     const fs::path path(where);
-    if (fs::is_directory(path, ec)) {
+    // A MaterialX document, or one material of it: materials.mtlx#bark.
+    const size_t hash = where.rfind('#');
+    const bool named = hash != std::string::npos && lower(fs::path(where.substr(0, hash)).extension().string()) == ".mtlx";
+    if (named || lower(path.extension().string()) == ".mtlx") {
+        const fs::path document = named ? fs::path(where.substr(0, hash)) : path;
+        if (fs::is_regular_file(document, ec)) set = readMaterialX(document, named ? where.substr(hash + 1) : std::string());
+    } else if (fs::is_directory(path, ec)) {
         set = fs::is_regular_file(path / "texture.txt", ec) ? readFolder(path) : TextureSet();
         if (!set.valid()) {
             // Someone else's pictures in a folder of their own: the colour's.
@@ -234,6 +285,15 @@ TextureSet textureSet(const std::string& where) {
                     break;
                 }
             }
+        }
+        if (!set.valid()) {
+            // ... or a MaterialX document of them: the first, by name.
+            std::vector<fs::path> documents;
+            for (const auto& entry : fs::directory_iterator(path, ec)) {
+                if (entry.is_regular_file(ec) && lower(entry.path().extension().string()) == ".mtlx") documents.push_back(entry.path());
+            }
+            std::sort(documents.begin(), documents.end());
+            if (!documents.empty()) set = readMaterialX(documents.front(), {});
         }
     } else if (fs::is_regular_file(path, ec) && isPicture(path)) {
         // One of ours by its folder, else someone else's.

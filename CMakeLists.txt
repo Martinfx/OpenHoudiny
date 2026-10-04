@@ -129,6 +129,7 @@ add_library(pgcore
   src/pg/io/Obj.cpp
   src/pg/io/Vdb.cpp
   src/pg/io/Deflate.cpp
+  src/pg/io/MaterialX.cpp
   src/pg/io/VdbRead.cpp
   src/pg/io/Jpeg.cpp
   src/pg/io/Video.cpp
@@ -341,6 +342,7 @@ add_library(pgsim
   src/pg/render/Plate.cpp
   src/pg/render/Save.cpp
   src/pg/render/Textures.cpp
+  src/pg/render/MaterialGraph.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimExamples.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp
 )
@@ -1061,6 +1063,7 @@ add_executable(pgtests
   tests/test_materials.cpp
   tests/test_uv.cpp
   tests/test_foliage.cpp
+  tests/test_materialx.cpp
   tests/test_particles.cpp
   tests/test_constraints.cpp
   tests/test_debris.cpp

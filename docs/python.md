@@ -111,7 +111,7 @@ inkrementálně: co se od minulého vaření nezměnilo, vezme z cache.
 | objemy | `geo.volumes`, `geo.volume("density").values[i, j, k]`, `geo.add_volume(name, values, origin, voxel)` |
 | stavba | `pg.Geometry()`, `add_points(P)`, `add_polygons(sizes, points)`, `add_polylines(...)`, `append(other)` |
 | nové hodnoty | `geo.points["Cd"] = colors`, `geo.points.set("mask", values, "int")`, `del geo.points["mask"]` |
-| soubory | `geo.save("x.ply" \| ".obj" \| ".vdb" \| ".usda")`, `pg.Geometry.load("x.obj" \| "x.ply")` |
+| soubory | `geo.save("x.ply" \| ".obj" \| ".vdb" \| ".usda" \| ".mtlx")` (`.usda` s materiály, `.mtlx` jen materiály, [materialx.md](materialx.md)), `pg.Geometry.load("x.obj" \| "x.ply")` |
 | instance | `geo.prototypes` (seznam `pg.Geometry`), `geo.instance_count`, `geo.add_prototype(g)` vrací číslo pro atribut `instance`, `geo.clear_prototypes()`, `geo.unpack()` udělá z instancí kopie ([vegetation.md](vegetation.md)); `.obj` a `.ply` dostanou kopie, `.usda` PointInstancer |
 
 - **Bez kopie:** pole ukazují přímo do paměti jádra. Číst ho znovu dá stejnou adresu

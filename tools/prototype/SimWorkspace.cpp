@@ -2856,7 +2856,7 @@ void SimWorkspace::chooseExport(int id, bool frames) {
     const GeometryPtr geo = geometryOf(id);
     const bool volumes = geo && geo->volumeCount() > 0 && geo->pointCount() == 0;
     std::vector<std::string> kinds;
-    for (const char* const* e = io::geometryExtensions(); *e; ++e) kinds.emplace_back(*e);
+    for (const char* const* e = sim::exportExtensions(); *e; ++e) kinds.emplace_back(*e);
     std::stable_partition(kinds.begin(), kinds.end(), [&](const std::string& e) { return e == (volumes ? ".vdb" : ".ply"); });
     const std::string name = n->name + (frames ? ".$F4" : "") + kinds.front();
     files_.open(frames ? "Export geometry frames ($F4: the frame)" : "Export geometry", kinds, true,
@@ -2880,7 +2880,7 @@ bool SimWorkspace::exportGeometry(int id, const std::string& path) {
     std::error_code ec;
     if (fs::path(path).has_parent_path()) fs::create_directories(fs::path(path).parent_path(), ec);
     std::string error;
-    if (!io::writeGeometry(*geo, path, error)) {
+    if (!sim::exportGeometry(*geo, path, error)) {
         setMessage(error, true);
         return false;
     }
@@ -2904,7 +2904,7 @@ bool SimWorkspace::exportFrames(int id, const std::string& pattern) {
         last = io::framePath(pattern, f);
         std::error_code ec;
         if (fs::path(last).has_parent_path()) fs::create_directories(fs::path(last).parent_path(), ec);
-        if (!io::writeGeometry(*geo, last, error)) {
+        if (!sim::exportGeometry(*geo, last, error)) {
             setMessage(error, true);
             return false;
         }
