@@ -338,10 +338,12 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
                 m.textureTint = static_cast<int8_t>(tints && prim < tints->size() && tints->read<int32_t>()[prim] != 0);
             }
             // By uv where the triangles have it: asked for, or -- Auto -- a
-            // texture of one's own (the material's photographs are made to
-            // be laid on from three sides, so many metres a picture).
+            // texture of one's own, or a material whose pictures are made
+            // for uv (laidByUv: bark, leaves, grass); the other materials'
+            // photographs are made to be laid on from three sides, so many
+            // metres a picture.
             const int32_t how = projections && prim < projections->size() ? projections->read<int32_t>()[prim] : 0;
-            m.byUv = hasUv && (how == 1 || (how == 0 && !texture.empty()));
+            m.byUv = hasUv && (how == 1 || (how == 0 && (!texture.empty() || laidByUv(preset))));
             m.normalStrength = std::round(std::clamp(normalStrength.at(geo, prim), 0.0f, 10.0f) * 100.0f) / 100.0f;
         }
         const auto key = std::make_tuple(std::array<int, 7>{static_cast<int>(m.kind), quantize(m.roughness), quantize(m.metallic),

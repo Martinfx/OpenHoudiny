@@ -32,7 +32,7 @@ and run as
 
 The normal maps alone, from the library as it is:
 
-  tools/textures/prepare.py --normals examples/textures brick_wall wood
+  tools/textures/prepare.py --normals examples/textures brick_wall wood bark
 """
 
 import os
@@ -77,7 +77,7 @@ SETS = {
     "wood": Set("pbrt", "bistro/textures/MASTER_Wood_Brown_BaseColor.png",
                 "bistro/textures/MASTER_Wood_Brown_Normal.png", 1.2, BISTRO, normals=True),
     "bark": Set("pbrt", "bistro/textures/Foliage_Linde_Tree_Large_Trunk_BaseColor.png",
-                "bistro/textures/Foliage_Linde_Tree_Large_Trunk_Normal.png", 1.0, BISTRO),
+                "bistro/textures/Foliage_Linde_Tree_Large_Trunk_Normal.png", 1.0, BISTRO, normals=True),
     "soil": Set("pbrt", "bistro/textures/Pavement_Ground_Wet_BaseColor.png",
                 "bistro/textures/Pavement_Ground_Wet_Normal.png", 2.5, BISTRO),
     # Setts of about 18 x 14 cm: seven across, nine down.

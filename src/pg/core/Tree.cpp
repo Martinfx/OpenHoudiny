@@ -357,6 +357,23 @@ std::span<const std::array<float, 2>> leafOutline(TreeSettings::Leaf shape) {
     return broad;
 }
 
+/// Metres of bark one picture of it covers (examples/textures/bark).
+constexpr float kBarkPicture = 1.0f;
+
+/// The corner of the quarter of the leaf picture a leaf's uv is in -- the
+/// picture of examples/textures/leaf: a broad leaf top left and another
+/// top right, a narrow one bottom left, a spray of needles bottom right,
+/// each its base at the middle of the bottom of its quarter, its tip at
+/// the top. Broad leaves take either, by `index`.
+Vec2 leafCell(TreeSettings::Leaf shape, size_t index) {
+    switch (shape) {
+        case TreeSettings::Leaf::Narrow: return Vec2(0.0f, 0.0f);
+        case TreeSettings::Leaf::Needles: return Vec2(0.5f, 0.0f);
+        case TreeSettings::Leaf::Broad: break;
+    }
+    return Vec2(((index * 0x9E3779B97F4A7C15ull) >> 63) != 0 ? 0.5f : 0.0f, 0.5f);
+}
+
 /// The unit quaternion x, y, z, w that turns x, y and z to the unit
 /// vectors `X`, `Y`, `Z`, square to each other.
 Vec4 quaternionOf(const Vec3& X, const Vec3& Y, const Vec3& Z) {
@@ -389,11 +406,13 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
     std::vector<Vec3> P, Cd;
     std::vector<float> flex;
     std::vector<uint32_t> corners, sizes;
+    std::vector<Vec3> uvs;  // each corner's, as Houdini keeps it: (u, v, 0)
     const float perHeight = 1.0f / std::max(tree.height, 1e-6f);
     std::vector<int32_t> level, stem;
     const uint32_t first = static_cast<uint32_t>(geo.pointCount());
-    auto polygon = [&](std::initializer_list<uint32_t> points, int lv, int st) {
+    auto polygon = [&](std::initializer_list<uint32_t> points, std::initializer_list<Vec3> uv, int lv, int st) {
         corners.insert(corners.end(), points.begin(), points.end());
+        uvs.insert(uvs.end(), uv.begin(), uv.end());
         sizes.push_back(static_cast<uint32_t>(points.size()));
         level.push_back(lv);
         stem.push_back(st);
@@ -410,6 +429,17 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
         int around = std::max(3, st.level == 0 ? s.sides : s.sides - 2 * st.level);
         if (around == 6) around = 7;
         const uint32_t sides = static_cast<uint32_t>(around);
+        // Its uv: round it as many whole pictures of bark (kBarkPicture
+        // metres across) as it is round at its foot, one at least; up it
+        // as far in the same measure -- the pictures square at its foot,
+        // narrower as it thins, as SpeedTree lays them.
+        const float girth = 2.0f * kPi * std::max(st.radius[0], 1e-5f);
+        const float pictures = std::max(1.0f, std::round(girth / kBarkPicture));
+        const float perMetre = pictures / girth;
+        auto barkUv = [&](float k, size_t i) {
+            return Vec3(pictures * k / static_cast<float>(sides),
+                        perMetre * st.length * static_cast<float>(i) / static_cast<float>(m - 1), 0.0f);
+        };
         const Vec3 colour = tree.barkColor * (1.0f + 0.12f * static_cast<float>(st.level));  // the young wood lighter
         const uint32_t base = first + static_cast<uint32_t>(P.size());
         Vec3 normal = perpendicular(normalize(st.points[1] - st.points[0]));
@@ -435,33 +465,46 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
         for (uint32_t i = 0; i + 1 < rings; ++i) {
             for (uint32_t k = 0; k < sides; ++k) {
                 const uint32_t k1 = (k + 1) % sides;
+                const float fk = static_cast<float>(k);
                 polygon({base + i * sides + k, base + i * sides + k1, base + (i + 1) * sides + k1, base + (i + 1) * sides + k},
-                        st.level, id);
+                        {barkUv(fk, i), barkUv(fk + 1.0f, i), barkUv(fk + 1.0f, i + 1), barkUv(fk, i + 1)}, st.level, id);
             }
         }
         for (uint32_t k = 0; k < sides; ++k) {
-            polygon({base + (rings - 1) * sides + k, base + (rings - 1) * sides + (k + 1) % sides, tip}, st.level, id);
+            const float fk = static_cast<float>(k);
+            polygon({base + (rings - 1) * sides + k, base + (rings - 1) * sides + (k + 1) % sides, tip},
+                    {barkUv(fk, rings - 1), barkUv(fk + 1.0f, rings - 1), barkUv(fk + 0.5f, m - 1)}, st.level, id);
         }
         if (st.level == 0) {
-            // The trunk's foot, closed: its face turned down.
-            for (uint32_t k = 0; k < sides; ++k) corners.push_back(base + sides - 1 - k);
+            // The trunk's foot, closed: its face turned down, its uv the
+            // bark seen from below.
+            for (uint32_t k = 0; k < sides; ++k) {
+                const float a = 2.0f * kPi * static_cast<float>(sides - 1 - k) / static_cast<float>(sides);
+                corners.push_back(base + sides - 1 - k);
+                uvs.push_back(Vec3(0.5f - 0.5f * std::cos(a), 0.5f + 0.5f * std::sin(a), 0.0f) * (girth / kPi / kBarkPicture));
+            }
             sizes.push_back(sides);
             level.push_back(0);
             stem.push_back(id);
         }
     }
 
-    // The leaves, their blades folded a little along the midrib.
+    // The leaves, their blades folded a little along the midrib; each its
+    // uv in its quarter of the leaf picture (leafCell).
     const auto blade = leafOutline(s.leaf);
-    for (const TreeLeaf& leaf : tree.leaves) {
+    for (size_t li = 0; li < tree.leaves.size(); ++li) {
+        const TreeLeaf& leaf = tree.leaves[li];
         // Round its outline anticlockwise seen from the way it faces.
         const Vec3 across = normalize(cross(leaf.along, leaf.facing));
         const uint32_t base = first + static_cast<uint32_t>(P.size());
+        const Vec2 cell = leafCell(s.leaf, li);
         for (const auto& [u, v] : blade) {
             P.push_back(leaf.at + leaf.along * (u * leaf.size) + across * (v * leaf.size) +
                         leaf.facing * (0.15f * std::fabs(v) * leaf.size));
             Cd.push_back(leaf.color);
             flex.push_back((leaf.path + u * leaf.size) * perHeight);
+            // Seen from the way it faces: up it along, to the right across.
+            uvs.push_back(Vec3(cell.x + 0.5f * (0.5f + v), cell.y + 0.5f * u, 0.0f));
         }
         for (uint32_t k = 0; k < blade.size(); ++k) corners.push_back(base + k);
         sizes.push_back(static_cast<uint32_t>(blade.size()));
@@ -478,11 +521,14 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
     auto outFlex = geo.points().create("flex", AttrType::Float).write<float>();
     std::copy(flex.begin(), flex.end(), outFlex.begin() + first);
     const size_t prim0 = geo.primitiveCount();
+    const size_t vertex0 = geo.vertexCount();
     size_t at = 0;
     for (const uint32_t n : sizes) {
         geo.addPrimitive(std::span<const uint32_t>(corners.data() + at, n), true);
         at += n;
     }
+    auto outUv = geo.vertices().create("uv", AttrType::Vec3).write<Vec3>();
+    std::copy(uvs.begin(), uvs.end(), outUv.begin() + static_cast<std::ptrdiff_t>(vertex0));
     primitiveInts(geo, "level", prim0, level);
     primitiveInts(geo, "stem", prim0, stem);
     primitiveInts(geo, "tree", prim0, std::vector<int32_t>(sizes.size(), treeIndex));

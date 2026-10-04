@@ -157,10 +157,23 @@ listy jsou polygony otočené lícem tam, kam hledí.
 |---|---|---|
 | `Cd` | bod | barva kůry a listů |
 | `flex` | bod | vzdálenost po dřevě od paty stromu jako podíl výšky: 0 u země, 1 na vrcholu kmene, na konečcích větví víc — o kolik vítr strom ohne (níže) |
+| `uv` | vrchol | souřadnice textury: na kůře u dokola a v nahoru po větvi, list ve své čtvrtině obrázku listů (níže) |
 | `level` | primitivum | −1 list, 0 kmen (a vůdčí větve), 1–3 úrovně větví |
 | `stem` | primitivum | číslo větve ve stromu (list: větvička, na které roste) |
 | `tree` | primitivum | číslo stromu = číslo bodu vstupu |
 | `bark`, `leaves` | skupiny primitiv | kůra a listy, třeba pro Blast nebo Color |
+
+**UV.** Kůra má kolem větve tolik celých obrázků kůry (metr na obrázek,
+jako `examples/textures/bark`), kolik metrů měří obvod u její paty,
+nejméně jeden. Nahoru po větvi se počítá ve stejném měřítku, takže
+u paty je obrázek čtvercový a s tenčící se větví se zužuje, jak to dělá
+SpeedTree. Šev je na jedné straně větve a žádná plocha přes něj nejde.
+Každý list má svou čtvrtinu obrázku listů: široký list vlevo nahoře
+nebo vpravo nahoře (náhodně), úzký vlevo dole, jehličí vpravo dole. Pata
+listu je uprostřed spodní hrany čtvrtiny, špička uprostřed horní. Nic
+není zrcadlově. Materiály `bark` a `leaf` se podle UV kladou samy
+(Projection Auto, [materials.md](materials.md)), kůra i s normálovou
+mapou.
 
 **Skeleton.** Každá větev je otevřená lomená čára bodů své osy, s poloměrem
 v `pscale` a směrem v `N`; primitiva nesou `level`, `stem`, `parent` (číslo

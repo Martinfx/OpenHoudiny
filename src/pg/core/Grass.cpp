@@ -44,8 +44,11 @@ Geometry growGrassClump(const GrassSettings& s, uint64_t seed) {
     auto Cd = geo.points().create("Cd", AttrType::Vec3).write<Vec3>();
     auto flex = geo.points().create("flex", AttrType::Float).write<float>();
     std::vector<uint32_t> corners, sizes;
+    std::vector<Vec3> uvs;  // each corner's: across the blade, up it
     std::vector<int32_t> blade;
     corners.reserve(static_cast<size_t>(blades) * (4 * static_cast<size_t>(segments) - 1));
+    uvs.reserve(corners.capacity());
+    const float perSegment = 1.0f / static_cast<float>(segments);
 
     // The roots a little in the ground: on a slope the clump stands up
     // straight, its uphill side no deeper than its downhill side is high.
@@ -104,16 +107,22 @@ Geometry growGrassClump(const GrassSettings& s, uint64_t seed) {
         for (int k = 0; k + 1 < segments; ++k) {
             const uint32_t a = p0 + 2 * static_cast<uint32_t>(k);
             corners.insert(corners.end(), {a, a + 1, a + 3, a + 2});
+            const float v0 = static_cast<float>(k) * perSegment, v1 = v0 + perSegment;
+            uvs.insert(uvs.end(), {Vec3(0.0f, v0, 0.0f), Vec3(1.0f, v0, 0.0f), Vec3(1.0f, v1, 0.0f), Vec3(0.0f, v1, 0.0f)});
             sizes.push_back(4);
             blade.push_back(b);
         }
         const uint32_t last = p0 + 2 * static_cast<uint32_t>(segments - 1);
         corners.insert(corners.end(), {last, last + 1, last + 2});
+        const float v0 = 1.0f - perSegment;
+        uvs.insert(uvs.end(), {Vec3(0.0f, v0, 0.0f), Vec3(1.0f, v0, 0.0f), Vec3(0.5f, 1.0f, 0.0f)});
         sizes.push_back(3);
         blade.push_back(b);
     }
     const uint8_t closed = 1;
     geo.addPrimitives(corners, sizes, std::span<const uint8_t>(&closed, 1));
+    auto outUv = geo.vertices().create("uv", AttrType::Vec3).write<Vec3>();
+    std::copy(uvs.begin(), uvs.end(), outUv.begin());
     auto outBlade = geo.primitives().create("blade", AttrType::Int).write<int32_t>();
     std::copy(blade.begin(), blade.end(), outBlade.begin());
     // For a renderer that follows light (render/Scene.h): the blades thin,

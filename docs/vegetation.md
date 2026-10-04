@@ -116,7 +116,8 @@ těžké jako všechna jejich stébla.
 | **Instances** | body s prototypy (zapnuto), nebo kopie |
 
 Prototyp trsu má bodové `Cd` a `flex`, tedy jak daleko po stéble bod je
-(0 u kořene, 1 na špičce), a primitivní `blade`. Kořeny sedí kousek pod
+(0 u kořene, 1 na špičce), vrcholové `uv` (u jednou přes šířku stébla, v od
+kořene 0 po špičku 1) a primitivní `blade`. Kořeny sedí kousek pod
 zemí (0,6 Spread, nejvýš pětina výšky). Trs na svahu totiž stojí svisle
 a jeho kořeny do kopce nesmí viset ve vzduchu.
 

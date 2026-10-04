@@ -63,4 +63,12 @@ inline std::string_view materialName(MaterialPreset p) {
     return i < kMaterialPresets ? kMaterialNames[i] : std::string_view();
 }
 
+/// Whether the library's pictures of `p` are made to be laid on by uv --
+/// bark round and up a stem, a leaf on its blade, grass up a blade --
+/// where the faces have it (the Tree and Grass nodes' do), rather than from
+/// three sides.
+inline bool laidByUv(MaterialPreset p) {
+    return p == MaterialPreset::Bark || p == MaterialPreset::Leaf || p == MaterialPreset::Grass;
+}
+
 }  // namespace pg

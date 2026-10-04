@@ -26,6 +26,8 @@ V každé složce je:
 
 - `color.jpg` — barva (sRGB), nejvýš 1024 × 1024,
 - `height.jpg` — výška 0–1; Cycles z ní dělá reliéf,
+- `normal.jpg` (`brick_wall`, `wood`, `bark`) — normálová mapa ze sklonů
+  výšky pro kladení podle UV,
 - `texture.txt` — `size` (kolik metrů jedna dlaždice pokryje), `depth`
   (kolik metrů je mezi nejnižším a nejvyšším místem výšky), `mean`
   (průměrná barva, lineární), `tint` (1: barva `Cd` povrchu nahradí barvu

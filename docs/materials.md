@@ -198,7 +198,10 @@ promítá, Group, které plochy.
 Auto s vlastní texturou), pokryje jedna fotka jednu jednotku uv. Texture
 Size se nepoužije, velikost dává UV (Scale uzlu UV Project). Fotky
 knihovny jsou dělané na kladení ze tří stran v metrech, proto je Auto
-klade ze tří stran i tam, kde UV je. Plochy bez UV se kladou ze tří stran,
+klade ze tří stran i tam, kde UV je. Výjimkou jsou kůra, listy a tráva
+(`bark`, `leaf`, `grass`): jejich obrázky jsou dělané pro UV, které jim
+dávají uzly Tree a Grass ([trees.md](trees.md)), takže je Auto klade podle
+UV, kde ho plochy mají. Plochy bez UV se kladou ze tří stran,
 ať Projection říká cokoli. Fotka jde s plochou, kam ji UV posune.
 
 **Normálová mapa** říká, kam se povrch v každém pixelu dívá: x, y, z

@@ -33,7 +33,8 @@ struct GrassSettings {
 /// A clump of grass at the origin, growing up +y, of `seed`: each blade a
 /// strip of quads and a triangle at its tip -- point Cd, and flex: how far
 /// along the blade, 0 at the root to 1 at the tip, what wind bends it by;
-/// primitive blade.
+/// vertex uv, across the blade from 0 to 1 and up it from 0 at its root to
+/// 1 at its tip -- the grass picture once along each; primitive blade.
 Geometry growGrassClump(const GrassSettings& s, uint64_t seed);
 
 }  // namespace pg
