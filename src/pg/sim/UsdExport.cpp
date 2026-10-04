@@ -171,6 +171,9 @@ struct UsdExport::Impl {
     /// The frame each body's pane of glass broke at -- its cracks there from
     /// then on (wholePanes); INT_MAX while it is whole.
     std::vector<int> cracked;
+    /// The frame each body first is there at: a fragment of a piece that
+    /// broke as the simulation ran, from the frame it broke at.
+    std::vector<int> born;
     Vec3 gritColor, rebarColor;
 
     // The gas: a file a frame, and the box it fills.
@@ -459,6 +462,15 @@ struct UsdExport::Impl {
     }
 
     void startBodies(const RigidFrame& r, const Look& look) {
+        insideGroup = look.insideGroup;
+        gritColor = look.piecesInside * 0.9f;
+        rebarColor = look.rebarColor;
+        moreBodies(r, look, INT_MIN);
+    }
+
+    /// The bodies of `r` not there yet: at frame `f`, the fragments of the
+    /// pieces that broke -- the pieces then are those before with them after.
+    void moreBodies(const RigidFrame& r, const Look& look, int f) {
         layout = r.layout ? r.layout : rigidLayout(*r.pieces, r.attribute);
         // At rest, coloured as the look draws them: no pose moves them, none
         // is gone, no grit.
@@ -467,22 +479,28 @@ struct UsdExport::Impl {
         rest.layout = layout;
         rest.attribute = r.attribute;
         drawn = drawnPieces(rest, look.piecesColor, look.piecesInside, look.insideGroup);
-        insideGroup = look.insideGroup;
-        gritColor = look.piecesInside * 0.9f;
-        rebarColor = look.rebarColor;
         const auto P = drawn->positions();
-        middles.assign(static_cast<size_t>(layout->bodies), Vec3());
-        for (int b = 0; b < layout->bodies; ++b) {
+        const size_t had = middles.size(), now = static_cast<size_t>(layout->bodies);
+        middles.resize(now, Vec3());
+        for (size_t b = had; b < now; ++b) {
             usda::Bounds box;
-            for (const uint32_t prim : layout->prims[static_cast<size_t>(b)]) {
+            for (const uint32_t prim : layout->prims[b]) {
                 for (const uint32_t p : drawn->primitivePoints(prim)) box.grow(P[p]);
             }
-            if (!box.empty()) middles[static_cast<size_t>(b)] = (box.lo + box.hi) * 0.5f;
+            if (!box.empty()) middles[b] = (box.lo + box.hi) * 0.5f;
             scene.grow(box);
         }
-        motion.assign(middles.size(), {});
-        gone.assign(middles.size(), INT_MAX);
-        cracked.assign(middles.size(), INT_MAX);
+        // Where the new ones were before they were there -- nowhere to be
+        // seen: where they rest.
+        std::vector<std::array<float, 7>> before(bodyFrames.size());
+        motion.resize(now);
+        for (size_t b = had; b < now; ++b) {
+            for (auto& q : before) q = {middles[b].x, middles[b].y, middles[b].z, 0.0f, 0.0f, 0.0f, 1.0f};
+            motion[b] = before;
+        }
+        gone.resize(now, INT_MAX);
+        cracked.resize(now, INT_MAX);
+        born.resize(now, f);
     }
 };
 
@@ -556,6 +574,7 @@ bool UsdExport::add(const Frame& frame, const GeometryPtr& geometry, const Camer
     const RigidFrame& r = frame.rigid;
     if (!r.empty() && r.pieces) {
         if (!m.layout) m.startBodies(r, look);
+        else if (r.layout && r.layout->bodies > m.layout->bodies) m.moreBodies(r, look, f);
         m.bodyFrames.push_back(f);
         for (size_t b = 0; b < m.motion.size(); ++b) {
             const RigidPose pose = b < r.poses.size() ? r.poses[b] : RigidPose{};
@@ -763,9 +782,14 @@ usda::Stage UsdExport::stage() const {
             usda::animate(body, "double3", "xformOp:translate", at);
             usda::animate(body, "quatf", "xformOp:orient", turned);
             body.setUniform("token[]", "xformOpOrder", usda::tokens({"xformOp:translate", "xformOp:orient"}));
-            if (m.gone[b] != INT_MAX) {
+            if (m.gone[b] != INT_MAX || m.born[b] > m.first) {
+                // There from the frame it was made at -- a fragment, from
+                // when its piece broke -- to the one it is gone at.
                 usda::Attribute& seen = body.set("token", "visibility", "");
-                seen.samples = {{m.first, usda::quoted("inherited")}, {m.gone[b], usda::quoted("invisible")}};
+                seen.samples.clear();
+                if (m.born[b] > m.first) seen.samples.emplace_back(m.first, usda::quoted("invisible"));
+                seen.samples.emplace_back(std::max(m.born[b], m.first), usda::quoted("inherited"));
+                if (m.gone[b] != INT_MAX) seen.samples.emplace_back(m.gone[b], usda::quoted("invisible"));
             }
             // Its faces; the cracks of glass -- faces whose glass is 2 -- apart,
             // there once its pane has broken.

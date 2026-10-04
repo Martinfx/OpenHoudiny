@@ -927,7 +927,12 @@ class _Rigid:
                          doc="how each body is turned from rest: quaternions x, y, z, w, (B, 4)")
     translations = property(lambda self: _array(self._f.body_translations()),
                             doc="the pose's move: a point p at rest is now at rotate(p) + translation, (B, 3)")
-    vanished = property(lambda self: list(self._f.vanished()), doc="the bodies blown to dust")
+    vanished = property(lambda self: list(self._f.vanished()),
+                        doc="the bodies gone: blown to dust, or broken into fragments")
+    shatters = property(lambda self: self._f.shatters(),
+                        doc="the pieces broken as they were knocked, in order: {body, at (where, at rest), seed, "
+                            "count (fragments asked for), time (seconds)} -- the fragments are the bodies after "
+                            "those there were")
     unglued = property(lambda self: list(self._f.unglued()),
                        doc="the bodies a joint of which has broken: come loose from one they were glued to")
     grit = property(lambda self: _array(self._f.grit()), doc="x, y, z, size of each bit, (N, 4)")

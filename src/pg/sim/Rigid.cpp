@@ -5,7 +5,9 @@
 #include "pg/core/Material.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Spatial.h"
+#include "pg/nodes/Nodes.h"
 #include "pg/nodes/Rebuild.h"
+#include "pg/nodes/Rough.h"
 #include "pg/sim/Mesh.h"
 #include "pg/sim/Shape.h"
 #include "pg/sim/Shared.h"
@@ -85,6 +87,12 @@ RigidScene RigidScene::sanitized() const {
     s.buoyancy = std::clamp(finite(s.buoyancy, d.buoyancy), 0.0f, 100.0f);
     s.waterDrag = std::clamp(finite(s.waterDrag, d.waterDrag), 0.0f, 100.0f);
     s.airDrag = std::clamp(finite(s.airDrag, d.airDrag), 0.0f, 100.0f);
+    s.fracture = std::clamp(finite(s.fracture, d.fracture), 0.0f, 1e12f);
+    s.fracturePieces = std::clamp(s.fracturePieces, 2, 64);
+    s.fractureDepth = std::clamp(s.fractureDepth, 1, 8);
+    s.fractureMinSize = std::clamp(finite(s.fractureMinSize, d.fractureMinSize), 0.0f, 1e6f);
+    s.fractureRough = std::clamp(finite(s.fractureRough, d.fractureRough), 0.0f, 1.0f);
+    if (r.insideGroup.empty()) r.insideGroup = "inside";
     s.timeStep = std::clamp(finite(s.timeStep, d.timeStep), 1e-4f, 1.0f);
     detail::sanitize(r.colliders);
     return r;
@@ -776,6 +784,273 @@ std::shared_ptr<const RigidLayout> rigidLayout(const Geometry& geo, const std::s
         c.normal = normalize(t.normal);
         L.contacts.push_back(c);
     }
+    return out;
+}
+
+// --- Breaking: a piece cut where it was knocked -----------------------------------------
+
+namespace {
+
+constexpr const char* kShatterCut = "__shatter";  // the faces a break cuts, while it is made
+// Wood breaks into cells this many times as long along its fibres as across them.
+constexpr float kGrainStretch = 6.0f;
+// Bits of a break smaller than this share of what broke -- and than
+// kCrumbVolume -- are crumbs, not fragments: left out (the dust and the
+// grit of the break stand for them). Slivers with next to no volume make
+// hulls Jolt weighs as nothing, or less.
+constexpr float kCrumbShare = 1e-4f;
+constexpr float kCrumbVolume = 2e-7f;  // m^3: a cube 6 mm across
+
+uint64_t nextRandom(uint64_t& state) {
+    uint64_t z = (state += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+
+float randomUnit(uint64_t& state) { return static_cast<float>(nextRandom(state) >> 40) / static_cast<float>(1ull << 24); }
+
+/// Body `k` of `pieces` by itself: its primitives, and the points they use
+/// in the order they had, with all their attributes and groups.
+std::shared_ptr<Geometry> bodyAlone(const Geometry& pieces, const RigidLayout& layout, size_t k) {
+    const std::vector<uint32_t>& prims = layout.prims[k];
+    std::vector<uint32_t> index(pieces.pointCount(), ~0u);
+    for (const uint32_t prim : prims) {
+        for (const uint32_t q : pieces.primitivePoints(prim)) index[q] = 0;
+    }
+    Blends points, vertices;
+    for (size_t q = 0; q < index.size(); ++q) {
+        if (index[q] == ~0u) continue;
+        index[q] = static_cast<uint32_t>(points.size());
+        points.one(static_cast<uint32_t>(q));
+    }
+    std::vector<std::vector<uint32_t>> faces;
+    std::vector<uint8_t> closed;
+    for (const uint32_t prim : prims) {
+        const auto c = pieces.primitivePoints(prim);
+        std::vector<uint32_t> face(c.size());
+        for (size_t i = 0; i < c.size(); ++i) face[i] = index[c[i]];
+        faces.push_back(std::move(face));
+        closed.push_back(pieces.primitiveClosed(prim) ? 1 : 0);
+        const uint32_t v0 = static_cast<uint32_t>(pieces.primitiveVertexStart(prim));
+        for (size_t i = 0; i < c.size(); ++i) vertices.one(v0 + static_cast<uint32_t>(i));
+    }
+    return rebuild(pieces, points, faces, closed, vertices, prims);
+}
+
+/// Where the cells of a break are: s.count points inside `mesh`, every
+/// other one round the knock -- within a quarter of the piece's size, and
+/// `stretch` times as far along `grain` -- the rest anywhere in it.
+std::vector<Vec3> shatterSeeds(const Geometry& mesh, const RigidShatter& s, const Vec3& grain, float stretch) {
+    std::vector<Vec3> out;
+    const auto P = mesh.positions();
+    if (P.empty()) return out;
+    Vec3 lo = P[0], hi = P[0];
+    for (const Vec3& p : P) {
+        for (int a = 0; a < 3; ++a) {
+            lo[a] = std::min(lo[a], p[a]);
+            hi[a] = std::max(hi[a], p[a]);
+        }
+    }
+    const float near = 0.25f * length(hi - lo);
+    uint64_t state = static_cast<uint64_t>(s.seed) * 0x9E3779B97F4A7C15ull + 0x632BE59BD9B4E019ull;
+    const size_t count = s.count;
+    for (size_t tries = count * 400; tries > 0 && out.size() < count; --tries) {
+        Vec3 p;
+        if (out.size() % 2 == 0) {
+            Vec3 d(randomUnit(state) * 2.0f - 1.0f, randomUnit(state) * 2.0f - 1.0f, randomUnit(state) * 2.0f - 1.0f);
+            if (dot(d, d) > 1.0f) continue;
+            d = d - grain * (dot(d, grain) * (1.0f - stretch));
+            p = s.at + d * near;
+        } else {
+            p = Vec3(lo.x + (hi.x - lo.x) * randomUnit(state), lo.y + (hi.y - lo.y) * randomUnit(state),
+                     lo.z + (hi.z - lo.z) * randomUnit(state));
+        }
+        if (insideMesh(mesh, p)) out.push_back(p);
+    }
+    return out;
+}
+
+/// The volume a closed mesh holds, its points at `P`: what its faces
+/// sweep out from the origin.
+float closedVolume(const Geometry& g, const std::vector<Vec3>& P) {
+    double sum = 0.0;
+    for (size_t p = 0; p < g.primitiveCount(); ++p) {
+        const auto c = g.primitivePoints(p);
+        for (size_t i = 2; i < c.size(); ++i) sum += dot(P[c[0]], cross(P[c[i - 1]], P[c[i]]));
+    }
+    return static_cast<float>(sum / 6.0);
+}
+
+/// Drops the parts of `g` -- the faces that share points -- that hold less
+/// than `least` cubic metres.
+void dropCrumbs(Geometry& g, float least) {
+    const std::vector<Vec3> P = rigidPositions(g);
+    const size_t n = g.primitiveCount();
+    UnionFind uf(static_cast<uint32_t>(g.pointCount()));
+    for (size_t p = 0; p < n; ++p) {
+        const auto c = g.primitivePoints(p);
+        for (size_t i = 1; i < c.size(); ++i) uf.unite(c[0], c[i]);
+    }
+    std::map<uint32_t, double> held;
+    for (size_t p = 0; p < n; ++p) {
+        const auto c = g.primitivePoints(p);
+        if (c.empty()) continue;
+        double& v = held[uf.find(c[0])];
+        for (size_t i = 2; i < c.size(); ++i) v += dot(P[c[0]], cross(P[c[i - 1]], P[c[i]])) / 6.0;
+    }
+    std::vector<uint8_t> keep(n, 1);
+    bool any = false;
+    for (size_t p = 0; p < n; ++p) {
+        const auto c = g.primitivePoints(p);
+        if (c.empty() || std::abs(held[uf.find(c[0])]) >= static_cast<double>(least)) continue;
+        keep[p] = 0;
+        any = true;
+    }
+    if (any) g.deletePrimitives(keep, true);
+}
+
+}  // namespace
+
+bool shatterPiece(Geometry& pieces, RigidLayout& layout, const RigidShatter& s, const RigidSettings& settings,
+                  const std::string& attribute, const std::string& insideGroup) {
+    if (s.body >= layout.prims.size() || layout.prims[s.body].empty() || s.count < 2) return false;
+    const std::shared_ptr<Geometry> mesh = bodyAlone(pieces, layout, s.body);
+    // The way its fibres run, if it is wood.
+    Vec3 grain;
+    if (const AttributeArray* g = mesh->points().find("grain"); g && g->type() == AttrType::Vec3 && g->size() > 0) {
+        const Vec3 v = g->read<Vec3>()[0];
+        if (dot(v, v) > 1e-12f) grain = normalize(v);
+    }
+    const bool wood = dot(grain, grain) > 0.25f;
+    const float stretch = wood ? kGrainStretch : 1.0f;
+    const std::vector<Vec3> seeds = shatterSeeds(*mesh, s, grain, stretch);
+    if (seeds.size() < 2) return false;
+    std::vector<std::shared_ptr<Geometry>> cells = grainCells(mesh, seeds, grain, stretch, kShatterCut);
+    if (cells.size() < 2) return false;
+    // The faces of the cracks rough: concrete's bumps, wood's splinters.
+    RoughCut rough;
+    const float amount = settings.fractureRough;
+    rough.seed = s.seed ^ 0x5BD1E995u;
+    if (wood) {
+        rough.grain = grain;
+        rough.splinter = 5.0f * amount;
+        rough.splinterSize = std::max(1.2f * amount, 0.002f);
+        rough.amount = 0.3f * amount;
+        rough.scale = std::max(4.0f * amount, 0.005f);
+        rough.detail = std::max(amount, 0.004f);
+    } else {
+        rough.amount = amount;
+        rough.scale = std::max(15.0f * amount, 0.02f);
+        rough.detail = std::max(1.5f * amount, 0.01f);
+    }
+    if (amount > 0.0f) {
+        const RoughAnchors anchors(cells, kShatterCut, "", 2.0f * rough.amount);
+        for (std::shared_ptr<Geometry>& cell : cells) cell = roughenCuts(*cell, kShatterCut, "", rough, anchors);
+    }
+    // Each fragment its own piece: numbered after the last there is.
+    AttributeArray* number = attribute.empty() ? nullptr : pieces.primitives().find(attribute);
+    int32_t next = 0;
+    if (number && number->type() == AttrType::Int) {
+        for (const int32_t v : number->read<int32_t>()) next = std::max(next, v + 1);
+    } else {
+        number = nullptr;
+    }
+    // What the faces of its cracks are made of: broken concrete where it is
+    // concrete; what it is, else.
+    std::string inside = primitiveString(*mesh, "material", 0);
+    if (inside == "concrete") inside = "broken_concrete";
+    const float crumb = std::max(kCrumbShare * std::abs(closedVolume(*mesh, rigidPositions(*mesh))), kCrumbVolume);
+    for (std::shared_ptr<Geometry>& cell : cells) {
+        Geometry& g = *cell;
+        dropCrumbs(g, crumb);
+        if (g.primitiveCount() == 0) continue;
+        if (const Group* cut = g.findGroup(kShatterCut)) {
+            std::vector<uint8_t> cracked(g.primitiveCount(), 0);
+            for (size_t p = 0; p < cracked.size(); ++p) cracked[p] = cut->contains(p) ? 1 : 0;
+            Group& in = g.createGroup(insideGroup, AttrClass::Primitive);
+            for (size_t p = 0; p < cracked.size(); ++p) {
+                if (cracked[p]) in.set(p, true);
+            }
+            if (!inside.empty()) setPrimitiveString(g, "material", inside, cracked);
+            g.eraseGroup(kShatterCut);
+        }
+        if (number) {
+            auto pp = g.primitives().create(attribute, AttrType::Int).write<int32_t>();
+            std::fill(pp.begin(), pp.end(), next);
+            if (const AttributeArray* pt = g.points().find(attribute); pt && pt->type() == AttrType::Int) {
+                auto w = g.points().find(attribute)->write<int32_t>();
+                std::fill(w.begin(), w.end(), next);
+            }
+            ++next;
+        }
+        const size_t p0 = pieces.primitiveCount();
+        const uint32_t q0 = static_cast<uint32_t>(pieces.pointCount());
+        pieces.append(g);
+        // Its bodies: the primitives that share points, each a body of one part.
+        const size_t n = g.primitiveCount();
+        UnionFind uf(static_cast<uint32_t>(g.pointCount()));
+        for (size_t p = 0; p < n; ++p) {
+            const auto c = g.primitivePoints(p);
+            for (size_t i = 1; i < c.size(); ++i) uf.unite(c[0], c[i]);
+        }
+        std::map<uint32_t, int> bodyOfRoot;
+        layout.bodyOf.resize(pieces.primitiveCount(), -1);
+        for (size_t p = 0; p < n; ++p) {
+            const auto c = g.primitivePoints(p);
+            if (c.empty()) continue;
+            const uint32_t root = uf.find(c[0]);
+            auto [it, fresh] = bodyOfRoot.try_emplace(root, layout.bodies);
+            if (fresh) {
+                ++layout.bodies;
+                layout.prims.emplace_back();
+                layout.parts.emplace_back();
+                layout.parts.back().emplace_back();
+            }
+            const size_t b = static_cast<size_t>(it->second);
+            layout.bodyOf[p0 + p] = it->second;
+            layout.prims[b].push_back(static_cast<uint32_t>(p0 + p));
+            for (const uint32_t q : c) layout.parts[b].front().push_back(q0 + q);
+        }
+        for (const auto& [root, b] : bodyOfRoot) {
+            std::vector<uint32_t>& points = layout.parts[static_cast<size_t>(b)].front();
+            std::sort(points.begin(), points.end());
+            points.erase(std::unique(points.begin(), points.end()), points.end());
+        }
+    }
+    return true;
+}
+
+std::shared_ptr<const RigidBroken> rigidBroken(const RigidScene& scene, const std::vector<RigidShatter>& shatters,
+                                               std::shared_ptr<const RigidLayout> base, const RigidBroken* before) {
+    if (!scene.pieces) return nullptr;
+    const RigidScene safe = scene.sanitized();
+    if (!base || base->bodyOf.size() != safe.pieces->primitiveCount()) base = rigidLayout(*safe.pieces, safe.attribute);
+    auto out = std::make_shared<RigidBroken>();
+    out->shatters = shatters;
+    if (shatters.empty()) {
+        out->pieces = safe.pieces;
+        out->layout = base;
+        return out;
+    }
+    // On from the breaks made before, when they are the first of these.
+    size_t done = 0;
+    std::shared_ptr<Geometry> geo;
+    std::shared_ptr<RigidLayout> layout;
+    if (before && before->pieces && before->layout && before->shatters.size() <= shatters.size() &&
+        std::equal(before->shatters.begin(), before->shatters.end(), shatters.begin())) {
+        done = before->shatters.size();
+        geo = std::make_shared<Geometry>(*before->pieces);
+        layout = std::make_shared<RigidLayout>(*before->layout);
+    } else {
+        geo = std::make_shared<Geometry>(*safe.pieces);
+        layout = std::make_shared<RigidLayout>(*base);
+    }
+    for (size_t i = done; i < shatters.size(); ++i) {
+        if (!shatterPiece(*geo, *layout, shatters[i], safe.solver, safe.attribute, safe.insideGroup)) return nullptr;
+    }
+    out->pieces = geo;
+    out->layout = layout;
     return out;
 }
 
@@ -1701,6 +1976,12 @@ constexpr uint64_t kStillTag = 1ull << 62;
 constexpr float kRestMove = 0.02f;
 constexpr float kRestTime = 0.5f;
 constexpr float kRestGap = 0.02f;
+// Fragments a simulation makes at most: room for them in Jolt is set aside
+// when it starts.
+constexpr uint32_t kMaxFragments = 2048;
+// How fast the fragments of a break fly apart at most, m/s: the hardest
+// knocks part them so.
+constexpr float kBurst = 1.0f;
 constexpr float kWakeSpeed = 1.0f;
 constexpr float kWakeForce = 0.05f;
 /// ... and only when what comes at it would set it moving at least so
@@ -1927,8 +2208,20 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         std::vector<Vec4> samples;
         float volume = 0.0f;                    ///< cubic metres, of its hulls
         float mass = 0.0f;                      ///< kilograms
+        float fracture = 1.0f;                  ///< its section this much as strong as Fracture says; 0: it never breaks
+        int generation = 0;                     ///< how many breaks it came of: 0 a piece as it came in
+        bool cannotBreak = false;               ///< a break of it made nothing: not tried again
     };
     std::vector<Piece> pieces;
+    // The pieces as they are now -- the scene's, with the fragments of those
+    // that broke after them -- their layout, and the breaks so far.
+    std::shared_ptr<const Geometry> geo;
+    std::shared_ptr<const RigidLayout> layout;
+    std::vector<RigidShatter> shatters;
+    std::string attribute, insideGroup;
+    bool meshes = false;                        ///< the pieces' triangles are wanted: for the water, the gas...
+    std::vector<uint8_t> barred;                ///< the bodies a bar runs through: they do not break
+    uint32_t fragments = 0;                     ///< made so far
     std::shared_ptr<const RigidGuide> guide;    ///< where the next step is to take them; null: nowhere
     RigidFlow flow;                             ///< what the water and the gas do in the next step
     float guideStrength = 1.0f;                 ///< how hard, this step
@@ -2042,6 +2335,118 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         pairs.EnableCollision(Layers::moving, Layers::moving);
         pairs.EnableCollision(Layers::moving, Layers::still);
         objectVsBroadPhase = std::make_unique<JPH::ObjectVsBroadPhaseLayerFilterTable>(broadPhase, 2, pairs, Layers::count);
+    }
+
+    /// Piece `k` -- body k of `L`, in `geo` -- as the solver steps it: the
+    /// hull of each part where it rests, as `P` has it (the proxy, where
+    /// there is one); as heavy as its volume; what its attributes say;
+    /// `guidePiece` the piece a guide numbers it; its triangles at rest, for
+    /// the water and the gas, when `meshes`.
+    void buildPiece(size_t k, const Geometry& geo, const RigidLayout& L, const std::vector<Vec3>& P, int32_t guidePiece,
+                    bool meshes) {
+        const std::span<const Vec3> at = geo.positions();
+        const int body = static_cast<int>(k);
+        Piece& piece = pieces[k];
+        const float density = std::max(numberOf(geo, L, body, "density", settings.density), 1.0f);
+        Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+        for (const std::vector<uint32_t>& part : L.parts[k]) {
+            JPH::Array<JPH::Vec3> points;
+            Vec3 plo(1e30f, 1e30f, 1e30f), phi(-1e30f, -1e30f, -1e30f);
+            for (const uint32_t i : part) {
+                points.push_back(jolt(P[i]));
+                for (int a = 0; a < 3; ++a) {
+                    plo[a] = std::min(plo[a], P[i][a]);
+                    phi[a] = std::max(phi[a], P[i][a]);
+                }
+            }
+            if (points.size() < 4) continue;
+            const float least = std::min({phi.x - plo.x, phi.y - plo.y, phi.z - plo.z});
+            JPH::ConvexHullShapeSettings hs(points, std::clamp(least * 0.05f, 0.0f, 0.02f));
+            hs.SetDensity(density);
+            const JPH::ShapeSettings::ShapeResult r = hs.Create();
+            // Too flat to be a body: Jolt weighs a hull with next to no
+            // volume as nothing, or less.
+            if (r.HasError() || !(r.Get()->GetVolume() > 1e-10f)) continue;
+            piece.hulls.push_back(r.Get());
+            // Where the water is felt: a lattice through the hull's box, the
+            // points inside it -- its middle, when none is -- each with its
+            // share of the hull's volume.
+            {
+                const JPH::Shape& hull = *r.Get();
+                const JPH::AABox box = hull.GetLocalBounds();
+                const JPH::Vec3 com = hull.GetCenterOfMass();
+                std::vector<Vec3> inside;
+                for (int z = 0; z < kHullSamples; ++z) {
+                    for (int y = 0; y < kHullSamples; ++y) {
+                        for (int x = 0; x < kHullSamples; ++x) {
+                            const JPH::Vec3 t((static_cast<float>(x) + 0.5f) / kHullSamples,
+                                              (static_cast<float>(y) + 0.5f) / kHullSamples,
+                                              (static_cast<float>(z) + 0.5f) / kHullSamples);
+                            const JPH::Vec3 local = box.mMin + (box.mMax - box.mMin) * t;
+                            JPH::AnyHitCollisionCollector<JPH::CollidePointCollector> hit;
+                            hull.CollidePoint(local, JPH::SubShapeIDCreator(), hit);
+                            if (hit.HadHit()) inside.push_back(ours(local + com));
+                        }
+                    }
+                }
+                if (inside.empty()) inside.push_back(ours(com));
+                const float volume = std::max(hull.GetVolume(), 0.0f);
+                const float share = volume / static_cast<float>(inside.size());
+                for (const Vec3& q : inside) piece.samples.push_back(Vec4(q.x, q.y, q.z, share));
+                piece.volume += volume;
+            }
+            for (int a = 0; a < 3; ++a) {
+                lo[a] = std::min(lo[a], plo[a]);
+                hi[a] = std::max(hi[a], phi[a]);
+            }
+        }
+        piece.mass = density * piece.volume;
+        piece.moves = numberOf(geo, L, body, "active", 1.0f) != 0.0f;
+        piece.release = numberOf(geo, L, body, "release", 0.0f);
+        piece.kick = vectorOf(geo, L, body, "kick", Vec3());
+        piece.vanish = numberOf(geo, L, body, "vanish", 0.0f) != 0.0f;
+        piece.crush = std::max(numberOf(geo, L, body, "crush", 0.0f), 0.0f);
+        piece.fracture = std::max(numberOf(geo, L, body, "fracture", 1.0f), 0.0f);
+        piece.glass = numberOf(geo, L, body, "glass", 0.0f) >= 0.5f;
+        piece.size = piece.hulls.empty() ? 0.0f : std::max(length(hi - lo), 0.01f);
+        piece.centre = piece.hulls.empty() ? Vec3() : (lo + hi) * 0.5f;
+        if (piece.hulls.empty()) piece.gone = true;  // nothing to it
+        // What a guide moves it by: its piece, and its points -- how many,
+        // where on average, how they spread about that.
+        piece.guideWeight = std::clamp(numberOf(geo, L, body, "guide", 1.0f), 0.0f, 1.0f);
+        piece.guidePiece = guidePiece;
+        {
+            std::vector<uint32_t> points;
+            for (const std::vector<uint32_t>& part : L.parts[k]) points.insert(points.end(), part.begin(), part.end());
+            std::sort(points.begin(), points.end());
+            points.erase(std::unique(points.begin(), points.end()), points.end());
+            Vec3 sum;
+            for (const uint32_t i : points) sum += at[i];
+            piece.points = static_cast<float>(points.size());
+            piece.middle = points.empty() ? piece.centre : sum * (1.0f / piece.points);
+            for (const uint32_t i : points) {
+                const Vec3 d = at[i] - piece.middle;
+                for (int col = 0; col < 3; ++col) piece.scatter[col] += d * d[col];
+            }
+        }
+        if (meshes && !piece.hulls.empty()) {
+            // Its triangles at rest, for the water and the gas.
+            Geometry one;
+            std::map<uint32_t, uint32_t> local;
+            for (const uint32_t prim : L.prims[k]) {
+                for (const uint32_t q : geo.primitivePoints(prim)) local.try_emplace(q, static_cast<uint32_t>(local.size()));
+            }
+            one.addPoints(local.size());
+            auto op = one.positionsForWrite();
+            for (const auto& [q, i] : local) op[i] = P[q];
+            std::vector<uint32_t> c;
+            for (const uint32_t prim : L.prims[k]) {
+                c.clear();
+                for (const uint32_t q : geo.primitivePoints(prim)) c.push_back(local[q]);
+                one.addPrimitive(c, geo.primitiveClosed(prim));
+            }
+            piece.mesh = std::make_shared<MeshShape>(triangulate(one), 16);
+        }
     }
 
     /// Which piece a sub-shape of body `b` is: its cluster's, or a still piece's.
@@ -2572,6 +2977,170 @@ struct RigidSolver::Impl : public JPH::ContactListener, public JPH::PhysicsStepL
         const float side = !pieces[static_cast<size_t>(e.a)].moves ? 1.0f : !pieces[static_cast<size_t>(e.b)].moves ? -1.0f : 0.0f;
         throwFromFace(at, length(normal) > 1e-6f ? normalize(normal) : Vec3(0.0f, 1.0f, 0.0f),
                       std::sqrt(e.area / 3.14159265f), v, count, 2.5f, glass, side);
+    }
+
+    /// Takes apart the bodies of the pieces whose glue broke (dirty) into
+    /// what still holds together; `hit` the pieces knocked this step.
+    void mend(const std::vector<uint8_t>& hit) {
+        std::vector<int> torn;
+        for (const int k : dirty) {
+            const int c = pieces[static_cast<size_t>(k)].cluster;
+            if (c >= 0) torn.push_back(c);
+        }
+        dirty.clear();
+        std::sort(torn.begin(), torn.end());
+        torn.erase(std::unique(torn.begin(), torn.end()), torn.end());
+        for (const int c : torn) split(c, hit, still);
+        if (rebar) relinkBars();
+    }
+
+    /// The pieces knocked harder than their section holds break where they
+    /// were knocked: `shock` newtons on each this step, at `where`. Each is
+    /// cut into fragments (shatterPiece) -- a body each, moving as the piece
+    /// did and flying apart a little, the harder the knock the more -- and
+    /// is gone, its glue broken, in a puff of dust and a spray of grit.
+    void shatterKnocked(const std::vector<float>& shock, const std::vector<Vec3>& where, std::vector<uint8_t>& hit,
+                        int frame) {
+        const RigidSettings& s = settings;
+        JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        struct Break {
+            size_t k = 0;
+            JPH::RVec3 position;
+            JPH::Quat rotation = JPH::Quat::sIdentity();
+            Vec3 com, velocity, spin, at;
+            float hard = 0.0f;  // how many times as hard as it holds
+            RigidShatter event;
+            size_t from = 0, to = 0;  // its fragments' bodies
+        };
+        std::vector<Break> breaks;
+        uint32_t room = fragments < kMaxFragments ? kMaxFragments - fragments : 0;
+        for (size_t k = 0; k < shock.size() && k < pieces.size(); ++k) {
+            const Piece& p = pieces[k];
+            if (shock[k] <= 0.0f || p.gone || !p.moves || p.glass || p.cannotBreak || p.hulls.empty() || p.fracture <= 0.0f ||
+                p.generation >= s.fractureDepth || p.size < s.fractureMinSize || (k < barred.size() && barred[k])) {
+                continue;
+            }
+            const float strength = s.fracture * p.fracture * std::pow(std::max(p.volume, 1e-9f), 2.0f / 3.0f);
+            if (!(shock[k] > strength)) continue;
+            const JPH::BodyID id = bodyOf(static_cast<int>(k));
+            if (id.IsInvalid()) continue;
+            Break b;
+            b.k = k;
+            b.position = bi.GetPosition(id);
+            b.rotation = bi.GetRotation(id);
+            b.com = ours(bi.GetCenterOfMassPosition(id));
+            b.velocity = ours(bi.GetLinearVelocity(id));
+            b.spin = ours(bi.GetAngularVelocity(id));
+            b.at = where[k];
+            b.hard = shock[k] / strength;
+            const uint32_t count = static_cast<uint32_t>(
+                std::lround(static_cast<float>(s.fracturePieces) * std::clamp(std::sqrt(b.hard), 1.0f, 2.0f)));
+            if (count > room) break;
+            room -= count;
+            b.event.body = static_cast<uint32_t>(k);
+            // Where it was knocked, as it rests: the knock carried back.
+            b.event.at = ours(b.rotation.Conjugated() * (jolt(b.at) - b.position));
+            uint64_t h = (static_cast<uint64_t>(k) + 1) * 0x9E3779B97F4A7C15ull ^
+                         (static_cast<uint64_t>(shatters.size() + breaks.size()) + 1) * 0xC2B2AE3D27D4EB4Full ^
+                         (static_cast<uint64_t>(frame) + 7) * 0x165667B19E3779F9ull;
+            b.event.seed = static_cast<uint32_t>(nextRandom(h) >> 32);
+            b.event.count = count;
+            b.event.time = time;
+            breaks.push_back(b);
+        }
+        if (breaks.empty()) return;
+        // The fragments: the pieces cut, a body each after those there are.
+        auto cut = std::make_shared<Geometry>(*geo);
+        auto laid = std::make_shared<RigidLayout>(*layout);
+        std::vector<Break> made;
+        for (Break& b : breaks) {
+            b.from = static_cast<size_t>(laid->bodies);
+            if (!shatterPiece(*cut, *laid, b.event, s, attribute, insideGroup)) {
+                pieces[b.k].cannotBreak = true;
+                continue;
+            }
+            b.to = static_cast<size_t>(laid->bodies);
+            shatters.push_back(b.event);
+            made.push_back(b);
+        }
+        if (made.empty()) return;
+        geo = cut;
+        layout = laid;
+        const size_t bodies = static_cast<size_t>(layout->bodies);
+        pieces.resize(bodies);
+        still.resize(bodies, JPH::BodyID());
+        edgesOf.resize(bodies);
+        hit.resize(bodies, 0);
+        const std::vector<Vec3> P = rigidPositions(*geo);
+        for (const Break& b : made) {
+            for (size_t nk = b.from; nk < b.to; ++nk) {
+                buildPiece(nk, *geo, *layout, P, -1, meshes);
+                Piece& f = pieces[nk];
+                f.generation = pieces[b.k].generation + 1;
+                f.guided = false;
+                f.looseAt = time;
+                f.moves = true;  // a still piece does not break
+                fragments += 1;
+            }
+            // What broke is gone, its glue with it.
+            Piece& old = pieces[b.k];
+            old.gone = true;
+            old.mesh = nullptr;
+            for (const int ei : edgesOf[b.k]) snap(edges[static_cast<size_t>(ei)], 0.5f);
+            dirty.push_back(static_cast<int>(b.k));
+        }
+        mend(hit);
+        std::vector<std::pair<size_t, float>> broke;
+        for (const Break& b : made) broke.emplace_back(b.k, b.hard);
+        std::sort(broke.begin(), broke.end());
+        goThrough(broke);
+        for (const Break& b : made) {
+            const Piece& old = pieces[b.k];
+            for (size_t nk = b.from; nk < b.to; ++nk) {
+                if (pieces[nk].gone) continue;
+                const int c = makeCluster({static_cast<int>(nk)}, b.position, b.rotation, b.com, b.velocity, b.spin, still);
+                if (c < 0) continue;
+                // Apart from the knock: the harder it was, the faster.
+                const JPH::BodyID id = clusters[static_cast<size_t>(c)].id;
+                const Vec3 away = ours(bi.GetCenterOfMassPosition(id)) - b.at;
+                const float burst = kBurst * std::clamp(0.5f * (b.hard - 1.0f), 0.0f, 1.0f);
+                if (burst > 0.0f && length(away) > 1e-6f) {
+                    bi.SetLinearVelocity(id, bi.GetLinearVelocity(id) + jolt(normalize(away) * burst));
+                }
+            }
+            const Vec3 v = b.velocity;
+            puff(b.at, v * 0.5f, s.dustSize * std::clamp(old.size, 1.0f, 2.5f), 1.5f * s.impactDust,
+                 squeezed(old.size, length(v)));
+            throwGrit(b.at, v, static_cast<int>(std::lround(std::clamp(12.0f * old.size, 4.0f, 24.0f) * s.debris)), 3.0f,
+                      0.2f * old.size);
+        }
+    }
+
+    /// What knocked the pieces that broke (`made`) took no more of a knock
+    /// than each could stand: it goes on, slowed by only that share of what
+    /// the step did to it -- a ball punches through the beam it breaks.
+    /// Jolt stopped it against the whole piece, as if it would hold.
+    void goThrough(const std::vector<std::pair<size_t, float>>& made) {
+        JPH::BodyInterface& bi = physics.GetBodyInterfaceNoLock();
+        std::vector<float> through(clusters.size(), 0.0f);  // how many times as hard as what it broke holds
+        for (const Knock& k : knocks) {
+            for (int side = 0; side < 2; ++side) {
+                const int q = k.piece[side], c = k.cluster[1 - side];
+                if (q < 0 || c < 0) continue;
+                const auto it = std::lower_bound(made.begin(), made.end(), std::make_pair(static_cast<size_t>(q), 0.0f),
+                                                 [](const auto& a, const auto& b) { return a.first < b.first; });
+                if (it == made.end() || it->first != static_cast<size_t>(q)) continue;
+                through[static_cast<size_t>(c)] = std::max(through[static_cast<size_t>(c)], it->second);
+            }
+        }
+        for (size_t ci = 0; ci < through.size(); ++ci) {
+            Cluster& c = clusters[ci];
+            if (through[ci] <= 1.0f || !c.alive || c.frozen || !c.anchors.empty()) continue;
+            const float kept = 1.0f / through[ci];
+            const Vec3 now = ours(bi.GetLinearVelocity(c.id)), turn = ours(bi.GetAngularVelocity(c.id));
+            bi.SetLinearVelocity(c.id, jolt(c.before + (now - c.before) * kept));
+            bi.SetAngularVelocity(c.id, jolt(c.beforeSpin + (turn - c.beforeSpin) * kept));
+        }
     }
 
     /// Piece `k` crushed to dust: gone, in a burst of it, and grit.
@@ -3293,13 +3862,19 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     const RigidSettings& s = scene_.solver;
     m.settings = s;
     const Geometry* geo = scene_.pieces.get();
+    pieces_ = scene_.pieces;
     layout_ = geo ? rigidLayout(*geo, scene_.attribute) : std::make_shared<RigidLayout>();
+    m.geo = pieces_;
+    m.layout = layout_;
+    m.attribute = scene_.attribute;
+    m.insideGroup = scene_.insideGroup.empty() ? std::string("inside") : scene_.insideGroup;
     glue_ = geo ? rigidGlue(*geo, *layout_, scene_.attribute, scene_.constraints.get()) : std::make_shared<RigidGlue>();
     const RigidLayout& L = *layout_;
     const size_t count = static_cast<size_t>(L.bodies);
     // Room for a body a piece -- as the glue breaks -- a still body a
     // still piece, the objects and the floor.
-    const size_t all = 2 * count + scene_.colliders.size() + 16;
+    // ... and as many again for the fragments of the pieces that break.
+    const size_t all = 2 * count + scene_.colliders.size() + 16 + (s.fracture > 0.0f ? 2 * kMaxFragments : 0);
     m.physics.Init(static_cast<JPH::uint>(all), 0, static_cast<JPH::uint>(std::max<size_t>(4096, all * 32)),
                    static_cast<JPH::uint>(std::max<size_t>(4096, all * 32)), m.broadPhase, *m.objectVsBroadPhase, m.pairs);
     m.physics.SetGravity(jolt(s.gravity));
@@ -3333,112 +3908,16 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
     // The pieces: the hull of each part, where it rests -- as their proxy
     // has it, when they carry one; what their attributes say.
     const std::vector<Vec3> P = rigidPositions(*geo);
-    const std::span<const Vec3> at = geo->positions();
     int pieceCount = 0;
     const std::vector<int32_t> pieceOf = pieceOfPrimitives(*geo, scene_.attribute, pieceCount);
     const bool meshes = scene_.intoGas || scene_.intoWater || scene_.intoRain || scene_.intoCloth || scene_.intoGrains;
+    m.meshes = meshes;
     m.pieces.resize(count);
     m.still.assign(count, JPH::BodyID());
     for (size_t k = 0; k < count; ++k) {
         const int body = static_cast<int>(k);
         Impl::Piece& piece = m.pieces[k];
-        const float density = std::max(numberOf(*geo, L, body, "density", s.density), 1.0f);
-        Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
-        for (const std::vector<uint32_t>& part : L.parts[k]) {
-            JPH::Array<JPH::Vec3> points;
-            Vec3 plo(1e30f, 1e30f, 1e30f), phi(-1e30f, -1e30f, -1e30f);
-            for (const uint32_t i : part) {
-                points.push_back(jolt(P[i]));
-                for (int a = 0; a < 3; ++a) {
-                    plo[a] = std::min(plo[a], P[i][a]);
-                    phi[a] = std::max(phi[a], P[i][a]);
-                }
-            }
-            if (points.size() < 4) continue;
-            const float least = std::min({phi.x - plo.x, phi.y - plo.y, phi.z - plo.z});
-            JPH::ConvexHullShapeSettings hs(points, std::clamp(least * 0.05f, 0.0f, 0.02f));
-            hs.SetDensity(density);
-            const JPH::ShapeSettings::ShapeResult r = hs.Create();
-            if (r.HasError()) continue;  // too flat to be a body
-            piece.hulls.push_back(r.Get());
-            // Where the water is felt: a lattice through the hull's box, the
-            // points inside it -- its middle, when none is -- each with its
-            // share of the hull's volume.
-            {
-                const JPH::Shape& hull = *r.Get();
-                const JPH::AABox box = hull.GetLocalBounds();
-                const JPH::Vec3 com = hull.GetCenterOfMass();
-                std::vector<Vec3> inside;
-                for (int z = 0; z < kHullSamples; ++z) {
-                    for (int y = 0; y < kHullSamples; ++y) {
-                        for (int x = 0; x < kHullSamples; ++x) {
-                            const JPH::Vec3 t((static_cast<float>(x) + 0.5f) / kHullSamples,
-                                              (static_cast<float>(y) + 0.5f) / kHullSamples,
-                                              (static_cast<float>(z) + 0.5f) / kHullSamples);
-                            const JPH::Vec3 local = box.mMin + (box.mMax - box.mMin) * t;
-                            JPH::AnyHitCollisionCollector<JPH::CollidePointCollector> hit;
-                            hull.CollidePoint(local, JPH::SubShapeIDCreator(), hit);
-                            if (hit.HadHit()) inside.push_back(ours(local + com));
-                        }
-                    }
-                }
-                if (inside.empty()) inside.push_back(ours(com));
-                const float volume = std::max(hull.GetVolume(), 0.0f);
-                const float share = volume / static_cast<float>(inside.size());
-                for (const Vec3& q : inside) piece.samples.push_back(Vec4(q.x, q.y, q.z, share));
-                piece.volume += volume;
-            }
-            for (int a = 0; a < 3; ++a) {
-                lo[a] = std::min(lo[a], plo[a]);
-                hi[a] = std::max(hi[a], phi[a]);
-            }
-        }
-        piece.mass = density * piece.volume;
-        piece.moves = numberOf(*geo, L, body, "active", 1.0f) != 0.0f;
-        piece.release = numberOf(*geo, L, body, "release", 0.0f);
-        piece.kick = vectorOf(*geo, L, body, "kick", Vec3());
-        piece.vanish = numberOf(*geo, L, body, "vanish", 0.0f) != 0.0f;
-        piece.crush = std::max(numberOf(*geo, L, body, "crush", 0.0f), 0.0f);
-        piece.glass = numberOf(*geo, L, body, "glass", 0.0f) >= 0.5f;
-        piece.size = piece.hulls.empty() ? 0.0f : std::max(length(hi - lo), 0.01f);
-        piece.centre = piece.hulls.empty() ? Vec3() : (lo + hi) * 0.5f;
-        if (piece.hulls.empty()) piece.gone = true;  // nothing to it
-        // What a guide moves it by: its piece, and its points -- how many,
-        // where on average, how they spread about that.
-        piece.guideWeight = std::clamp(numberOf(*geo, L, body, "guide", 1.0f), 0.0f, 1.0f);
-        piece.guidePiece = L.prims[k].empty() ? 0 : pieceOf[L.prims[k].front()];
-        {
-            std::vector<uint32_t> points;
-            for (const std::vector<uint32_t>& part : L.parts[k]) points.insert(points.end(), part.begin(), part.end());
-            std::sort(points.begin(), points.end());
-            points.erase(std::unique(points.begin(), points.end()), points.end());
-            Vec3 sum;
-            for (const uint32_t i : points) sum += at[i];
-            piece.points = static_cast<float>(points.size());
-            piece.middle = points.empty() ? piece.centre : sum * (1.0f / piece.points);
-            for (const uint32_t i : points) {
-                const Vec3 d = at[i] - piece.middle;
-                for (int col = 0; col < 3; ++col) piece.scatter[col] += d * d[col];
-            }
-        }
-        if (meshes && !piece.hulls.empty()) {
-            // Its triangles at rest, for the water and the gas.
-            Geometry one;
-            std::map<uint32_t, uint32_t> local;
-            for (const uint32_t prim : L.prims[k]) {
-                for (const uint32_t q : geo->primitivePoints(prim)) local.try_emplace(q, static_cast<uint32_t>(local.size()));
-            }
-            one.addPoints(local.size());
-            auto op = one.positionsForWrite();
-            for (const auto& [q, i] : local) op[i] = P[q];
-            std::vector<uint32_t> c;
-            for (const uint32_t prim : L.prims[k]) {
-                c.clear();
-                for (const uint32_t q : geo->primitivePoints(prim)) c.push_back(local[q]);
-                one.addPrimitive(c, geo->primitiveClosed(prim));
-            }
-            piece.mesh = std::make_shared<MeshShape>(triangulate(one), 16);
-        }
+        m.buildPiece(k, *geo, L, P, L.prims[k].empty() ? 0 : pieceOf[L.prims[k].front()], meshes);
         // A piece that does not move: a still body of its own.
         if (!piece.moves && !piece.gone) {
             Impl::Cluster tmp;
@@ -3525,6 +4004,11 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
         m.barState.assign(m.rebar->stations.size(), 0);
         m.slid.assign(m.rebar->stations.size(), 0.0f);
         m.longer.assign(m.rebar->stations.size(), 0.0f);
+        // A body a bar runs through does not break: the bar holds it.
+        m.barred.assign(count, 0);
+        for (const RigidRebar::Station& st : m.rebar->stations) {
+            if (st.body >= 0 && static_cast<size_t>(st.body) < count) m.barred[static_cast<size_t>(st.body)] = 1;
+        }
         m.relinkBars();
     }
     // The guide: what it leads -- the pieces that move, as much as they say.
@@ -3536,6 +4020,11 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
 RigidSolver::~RigidSolver() = default;
 
 size_t RigidSolver::pieceCount() const { return impl_ ? impl_->pieces.size() : 0; }
+
+const std::vector<RigidShatter>& RigidSolver::shatters() const {
+    static const std::vector<RigidShatter> none;
+    return impl_ ? impl_->shatters : none;
+}
 
 void RigidSolver::setColliders(const std::vector<Collider>& colliders) {
     Impl& m = *impl_;
@@ -3575,18 +4064,7 @@ void RigidSolver::step() {
                   m.puffs.end());
     std::vector<uint8_t> hit(m.pieces.size(), 0);
     // Takes apart the clusters whose glue broke.
-    auto mend = [&]() {
-        std::vector<int> torn;
-        for (const int k : m.dirty) {
-            const int c = m.pieces[static_cast<size_t>(k)].cluster;
-            if (c >= 0) torn.push_back(c);
-        }
-        m.dirty.clear();
-        std::sort(torn.begin(), torn.end());
-        torn.erase(std::unique(torn.begin(), torn.end()), torn.end());
-        for (const int c : torn) m.split(c, hit, m.still);
-        if (m.rebar) m.relinkBars();
-    };
+    auto mend = [&]() { m.mend(hit); };
 
     // The charges that go off now: their pieces' joints break; a piece blown
     // to dust is gone in a burst of it, the others are kicked.
@@ -3713,19 +4191,33 @@ void RigidSolver::step() {
         took[c] = cl.mass * length(change) / static_cast<float>(knocksOn[c]);
     }
     std::vector<float> felt(m.pieces.size(), 0.0f);
+    // The hardest knock on each piece, and where: what may break it.
+    const bool breaking = s.fracture > 0.0f;
+    std::vector<float> shock(breaking ? m.pieces.size() : 0, 0.0f);
+    std::vector<Vec3> shockAt(shock.size());
     for (const Impl::Knock& k : m.knocks) {
         float impulse = k.impulse;
         for (const int c : k.cluster) {
             if (c >= 0) impulse = std::max(impulse, took[static_cast<size_t>(c)]);
         }
         const float force = impulse / subStep;
-        for (const int q : k.piece) {
+        for (int side = 0; side < 2; ++side) {
+            const int q = k.piece[side];
             if (q < 0) continue;
             hit[static_cast<size_t>(q)] = 1;
             m.spread(q, force, felt);
+            if (breaking && force > shock[static_cast<size_t>(q)]) {
+                shock[static_cast<size_t>(q)] = force;
+                shockAt[static_cast<size_t>(q)] = k.at;
+            }
         }
     }
     mend();
+    if (breaking) {
+        m.shatterKnocked(shock, shockAt, hit, static_cast<int>(std::lround(m.time / dt)));
+        pieces_ = m.geo;
+        layout_ = m.layout;
+    }
     // What something came at wakes -- with what lies on it -- and what has
     // come to rest freezes.
     std::sort(m.nudged.begin(), m.nudged.end());
@@ -3928,15 +4420,19 @@ RigidFlow RigidSolver::feel(const RigidFluids& fluids) const {
 
 RigidFrame RigidSolver::capture() const {
     RigidFrame f;
-    f.pieces = scene_.pieces;
+    f.pieces = pieces_;
     f.layout = layout_;
     f.attribute = scene_.attribute;
     if (!impl_) return f;
     const Impl& m = *impl_;
+    f.shatters = m.shatters;
     const JPH::BodyInterface& bi = m.physics.GetBodyInterfaceNoLock();
     f.poses.reserve(m.pieces.size());
     for (size_t k = 0; k < m.pieces.size(); ++k) {
-        if (m.pieces[k].gone && !m.pieces[k].hulls.empty()) f.vanished.push_back(static_cast<uint32_t>(k));
+        // Gone; or a fragment with nothing to it, never there.
+        if (m.pieces[k].gone && (!m.pieces[k].hulls.empty() || m.pieces[k].generation > 0)) {
+            f.vanished.push_back(static_cast<uint32_t>(k));
+        }
         RigidPose pose;
         const JPH::BodyID id = m.bodyOf(static_cast<int>(k));
         if (!id.IsInvalid()) {
@@ -4033,6 +4529,7 @@ bool rigidAvailable() { return false; }
 struct RigidSolver::Impl {};
 
 RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
+    pieces_ = scene_.pieces;
     layout_ = scene_.pieces ? rigidLayout(*scene_.pieces, scene_.attribute) : std::make_shared<RigidLayout>();
     glue_ = scene_.pieces ? rigidGlue(*scene_.pieces, *layout_, scene_.attribute, scene_.constraints.get())
                           : std::make_shared<RigidGlue>();
@@ -4040,6 +4537,10 @@ RigidSolver::RigidSolver(const RigidScene& scene) : scene_(scene) {
 }
 RigidSolver::~RigidSolver() = default;
 size_t RigidSolver::pieceCount() const { return 0; }
+const std::vector<RigidShatter>& RigidSolver::shatters() const {
+    static const std::vector<RigidShatter> none;
+    return none;
+}
 void RigidSolver::setColliders(const std::vector<Collider>&) {}
 void RigidSolver::setGuide(std::shared_ptr<const RigidGuide>, float) {}
 RigidFlow RigidSolver::feel(const RigidFluids&) const { return {}; }

@@ -84,6 +84,7 @@ struct PySimulation {
     std::shared_ptr<const sim::RigidLayout> adopted;  // the pieces' bodies, for frames read back
     std::shared_ptr<const sim::RigidRebar> adoptedBars;  // ... and the bars in them
     std::shared_ptr<const sim::RigidGlue> adoptedGlue;   // ... and the joints of their glue
+    std::shared_ptr<const sim::RigidBroken> adoptedBroken;  // ... and the fragments of those that broke
     int frame = 0, cached = 0;
     py::list problems;
 
@@ -128,7 +129,7 @@ struct PySimulation {
             }
             if (!ok) throw Error(error);
             read->number = next;  // the file's name says which it is
-            sim::adoptPieces(*read, world.rigid, &adopted, &adoptedBars, &adoptedGlue);
+            sim::adoptPieces(*read, world.rigid, &adopted, &adoptedBars, &adoptedGlue, &adoptedBroken);
             sim::adoptCloth(*read, world.cloth);
             current = std::move(read);
         } else {
@@ -290,6 +291,19 @@ void bindSimulation(py::module_& m) {
         })
         .def("vanished", [](const PyFrame& p) { return p.f->rigid.vanished; })
         .def("unglued", [](const PyFrame& p) { return p.f->rigid.unglued; })
+        .def("shatters", [](const PyFrame& p) {
+            py::list out;
+            for (const sim::RigidShatter& s : p.f->rigid.shatters) {
+                py::dict d;
+                d["body"] = s.body;
+                d["at"] = tupleOf(s.at);
+                d["seed"] = s.seed;
+                d["count"] = s.count;
+                d["time"] = s.time;
+                out.append(d);
+            }
+            return out;
+        })
         .def("grit", [](const PyFrame& p) {
             const auto& v = p.f->rigid.debris;
             return rows(p.f, v.data(), v.size() / 4, 4);

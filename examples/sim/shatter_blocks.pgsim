@@ -1,0 +1,77 @@
+pgsim 1
+# Pieces that break where they are knocked: three blocks of concrete, whole
+# -- not cut into pieces beforehand -- stand in a row, and a wrecking ball
+# goes through them. Each breaks where the ball strikes it, harder than
+# its section holds (Fracture): into fragments, the smallest round the
+# blow, the faces of the cracks rough; a big fragment that lands hard
+# breaks again. A puff of dust and a spray of grit at every break.
+node 1 box 1 block_a 0 0
+  param size 0.5 0.9 0.5
+  param center -1 0.45 0
+node 2 box 1 block_b 0 70
+  param size 0.5 0.9 0.5
+  param center 0 0.45 0
+node 3 box 1 block_c 0 140
+  param size 0.5 0.9 0.5
+  param center 1 0.45 0
+node 4 merge 1 blocks 230 70
+node 5 primitive_wrangle 1 concrete 460 70
+  param snippet "// Concrete: its cracks broken concrete.\ns@material = \"concrete\";"
+node 6 object 1 ball 460 200
+  param size 0.6 0.6 0.6
+  param color 0.16 0.16 0.17
+  key center 1 linear -3.5 0.55 0.15
+  key center 46 linear 3.5 0.55 0.15
+node 7 rbd_solver 1 rbd 690 70
+  param density 2400
+  param friction 0.7
+  param glue 0
+  param fracture 450
+  param fracture_pieces 12
+  param fracture_min_size 0.15
+  param fracture_rough 0.012
+  param substeps 4
+  param dust 1.2
+  param impact_dust 1.5
+  param debris 1.2
+  param air 1.3
+  param color 0.6 0.59 0.56
+  param inside_color 0.45 0.43 0.4
+node 8 turbulence 1 swirl 690 230
+  param strength 1
+  param scale 0.6
+node 9 pyro_solver 2 dust 920 150
+  param size 6 3 4
+  param buoyancy 0.15
+  param weight 0.25
+  param vorticity 3
+  param smoke_decay 0.3
+node 10 volume_look 2 dust_look 1150 150
+  param smoke_color 0.66 0.63 0.58
+  param smoke_density 8
+  param occlusion 1
+node 11 output 2 output 1380 70
+  param frames 75
+  param light_azimuth 140
+  param light_elevation 32
+  param light_color 1 0.92 0.8
+  param light_intensity 2.6
+  param sky_intensity 0.45
+  param ground_color 0.15 0.145 0.14
+  param grid off
+node 12 camera 1 camera 1380 230
+  param center 0.4 1.35 4.6
+  param rotation -9 4 0
+  param focal 32
+link 1.geometry -> 4.geometry
+link 2.geometry -> 4.geometry
+link 3.geometry -> 4.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 7.pieces
+link 6.collider -> 7.colliders
+link 7.dust -> 9.sources
+link 8.force -> 9.forces
+link 9.gas -> 10.gas
+link 7.look -> 11.look
+link 10.look -> 11.look
+link 12.camera -> 11.camera

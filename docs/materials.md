@@ -96,6 +96,8 @@ vypadá, jak má. Plochy bez materiálu zůstávají šedé jako ve viewportu.
 |---|---|
 | **Brick Wall** | `brick`, `mortar`, `plaster` |
 | **Concrete Fracture** | `concrete`, na plochách lomu `broken_concrete` |
+| **Wood Fracture** | `wood` na plochách, které nemají jiný materiál |
+| **RBD Solver** (lámání za běhu) | na lomech úlomků `broken_concrete`, kde byl kus `concrete`; jinak materiál kusu |
 | **Glass Fracture** | `glass` |
 | **Rebar** | `steel` (i trubky prutů, které kreslí RBD Solver) |
 | **Tree** | `bark`, `leaf` |

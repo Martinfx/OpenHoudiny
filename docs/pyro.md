@@ -513,6 +513,8 @@ hlídá, že příklady jsou přesně v tom tvaru, v jakém je program uloží.
 | `debris_stairs` | drť jako částice: nálož podetne betonový sloup na podestě, sloup se skácí ze schodů a rozlomí; drť skáče po schodech a zůstává ležet na stupních, za odhozenými kusy se táhne prach (`trail`) ([destruction.md](destruction.md#drť-jako-částice)) |
 | `concrete_column` | železobeton: odstřel sloupu v půlce výšky — Concrete Fracture a armokoš (Rebar), beton kolem nálože se rozletí a zmizí v prachu, zůstane holý koš a na něm visí kusy betonu ([destruction.md](destruction.md#sedmý-příklad-odstřel-železobetonového-sloupu)) |
 | `guided_fall` | usměrněná simulace: odstřel betonového komínu do ulice — klíčovaný Transform kolem hrany zářezu je Guide RBD Solveru, komín padne přesně mezi dva domy a na silnici se volně rozlomí (`guide_let_go`, `guide_reach`) ([destruction.md](destruction.md#usměrněná-simulace-guide)) |
+| `shatter_blocks` | lámání za běhu: koule projede třemi celými betonovými kvádry a každý se rozlomí tam, kam ho udeřila — úlomky nejmenší kolem rány, hrubé lomy, prach a drť ([destruction.md](destruction.md#lámání-za-běhu)) |
+| `wood_beam` | dřevo: ocelová koule prorazí dřevěný trám — Wood Fracture ho rozštípe na dlouhé třísky podél vláken a třísky, do kterých koule narazí, se za běhu rozlomí s roztřepenými konci ([destruction.md](destruction.md#dřevo-wood-fracture)) |
 
 Soubory jsou v [`examples/sim`](../examples/sim) a CMake je zkompiluje do
 programu. `prototype sim campfire` proto funguje bez souborů vedle.

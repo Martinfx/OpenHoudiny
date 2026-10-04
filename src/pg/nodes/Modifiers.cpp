@@ -283,6 +283,7 @@ void registerBuiltinNodes() {
         registerTopologyNodes();
         registerFractureNodes();
         registerConcreteNodes();
+        registerWoodNodes();
         registerClusterNodes();
         registerRebarNodes();
         registerGlassNodes();

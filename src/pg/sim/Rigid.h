@@ -52,6 +52,17 @@
 //              after another, and the concrete falls off it; where the
 //              steel does, it stretches, and tears a tenth longer (stretch)
 //              over what of it yields
+//   breaking   a piece knocked harder than its own section holds
+//              (Fracture, pascals a square metre of it) breaks where it was
+//              knocked: cut into fragments, most of them round the knock --
+//              long along the fibres of wood (its point attribute grain), the
+//              faces of the cracks rough (wood: splintered) -- each a body of
+//              its own, flying apart as the piece moved, with dust and grit;
+//              what knocked it goes on, slowed only by as much of a knock
+//              as the piece could stand. A fragment can break again, down
+//              to a size. The frames keep
+//              where and how each piece broke (RigidShatter): the fragments
+//              are made again from that when a frame is read back
 //   guide      the pieces as they are to move: the same points, moved --
 //              animated as the shot wants it. Each step a body is steered
 //              to where the guide has it at the end of the step -- the
@@ -82,6 +93,9 @@
 //   clusterglue f ... this much as strong (the weaker of two) -- a chunk
 //                 comes off whole and breaks up where it lands hard
 //   guide     f   how much the guide leads it, 0 to 1; 0: not at all
+//   fracture  f   its section is this much as strong as the solver's
+//                 Fracture says; 0: it never breaks
+//   grain     v   the way its fibres run (Wood Fracture's): it breaks along them
 //
 // As in Houdini, a merge fills an attribute a geometry lacks with 0: set
 // active and glue on all the pieces, not on some.
@@ -168,6 +182,21 @@ struct RigidSettings {
     /// dust cloud's wind, a blast: 1 all of it, 0 none -- still air holds
     /// the grit back all the same.
     float airDrag = 1.0f;
+    /// Pascals: how hard a knock a square metre of a piece's own section --
+    /// its volume to the power of two thirds -- holds before the piece
+    /// itself breaks where it is knocked. 0: the pieces never break, only
+    /// the glue between them.
+    float fracture = 0.0f;
+    /// Fragments a piece breaks into -- up to twice as many in a knock
+    /// four times as hard as it holds.
+    int fracturePieces = 8;
+    /// How many times over a piece can break: 1 only the pieces as they came
+    /// in, 2 their fragments too.
+    int fractureDepth = 2;
+    float fractureMinSize = 0.1f;     ///< metres across: a piece smaller does not break
+    /// Metres the faces of a new crack go in and out, each way: 0 flat cuts.
+    /// Wood splinters five times as far along its fibres.
+    float fractureRough = 0.01f;
     float timeStep = 1.0f / 30.0f;    ///< seconds a frame (the World's)
 
     bool operator==(const RigidSettings&) const = default;
@@ -199,6 +228,9 @@ struct RigidScene {
     bool intoCloth = false;            ///< ... of the cloth
     bool intoGrains = false;           ///< ... of the grains
     bool dustIntoGas = false;          ///< broken glue and knocks puff smoke into the gas
+    /// The faces a fracture cut -- the group the look paints as the broken
+    /// inside: a piece that breaks puts the faces of its cracks in it.
+    std::string insideGroup = "inside";
     int node = 0;
 
     /// The settings kept to what the solver can do: no negative density,
@@ -318,6 +350,47 @@ struct RigidPose {
     }
 };
 
+/// A piece that broke as the simulation ran: body `body` of the pieces as
+/// they were then, cut where it was knocked. Where its fragments are comes
+/// of these numbers alone (shatterPiece): a frame keeps them, not the
+/// fragments' geometry.
+struct RigidShatter {
+    uint32_t body = 0;    ///< the body that broke
+    Vec3 at;              ///< where it was knocked, as it rests
+    uint32_t seed = 0;    ///< where its cells are
+    uint32_t count = 0;   ///< how many fragments it was to break into
+    float time = 0.0f;    ///< seconds
+
+    bool operator==(const RigidShatter&) const = default;
+};
+
+/// Body `s.body` of `pieces` -- laid out as `layout` has them -- broken as
+/// `s` says: cut into the Voronoi cells of s.count points, half of them
+/// round s.at, the rest anywhere in it; measured, where the piece has a
+/// point attribute grain, with its fibres six times shorter (grainCells);
+/// the faces of the cracks rough as `settings` says, in `insideGroup`. The
+/// fragments are appended to `pieces` -- their points and primitives after
+/// all there are, each a new value of `attribute` -- and to `layout`, a
+/// body each, numbered on from the last; no contacts. False, nothing
+/// changed, when fewer than two fragments come of it. The same every time
+/// for the same pieces and the same `s`.
+bool shatterPiece(Geometry& pieces, RigidLayout& layout, const RigidShatter& s, const RigidSettings& settings,
+                  const std::string& attribute, const std::string& insideGroup);
+
+/// The pieces of `scene` after the breaks `shatters`, one after another;
+/// `base`, when given, their layout as they came in (rigidLayout of
+/// scene.pieces). Null where a break does not fit the pieces.
+struct RigidBroken {
+    std::shared_ptr<const Geometry> pieces;
+    std::shared_ptr<const RigidLayout> layout;
+    std::vector<RigidShatter> shatters;  ///< those it is of
+};
+/// `before`, when given and its breaks are the first of `shatters`, is gone on
+/// from: only the breaks after those are made.
+std::shared_ptr<const RigidBroken> rigidBroken(const RigidScene& scene, const std::vector<RigidShatter>& shatters,
+                                               std::shared_ptr<const RigidLayout> base = nullptr,
+                                               const RigidBroken* before = nullptr);
+
 /// The rigid bodies of a frame.
 struct RigidFrame {
     std::shared_ptr<const Geometry> pieces;        ///< at rest: the scene's
@@ -351,6 +424,9 @@ struct RigidFrame {
     std::vector<uint8_t> jointState;
     std::vector<float> jointTime;
     static constexpr uint8_t kJointHolds = 0, kJointBroken = 1, kJointNone = 2;
+    /// The pieces that broke as it ran, in the order they did; their
+    /// fragments are the bodies after those the pieces came in as.
+    std::vector<RigidShatter> shatters;
     std::shared_ptr<const RigidRebar> rebar;       ///< the bars in the pieces, at rest; null: none
     /// What became of each station of a bar: kRebarLoose the bar slid out
     /// of its body, kRebarTorn the bar tore after it. Empty: all as built.
@@ -362,7 +438,7 @@ struct RigidFrame {
         return poses.size() * sizeof(RigidPose) +
                (debris.size() + debrisVelocity.size() + debrisOrient.size() + jointTime.size()) * sizeof(float) +
                (debrisIds.size() + unglued.size()) * sizeof(uint32_t) + rebarState.size() + debrisGlass.size() +
-               jointState.size();
+               jointState.size() + shatters.size() * sizeof(RigidShatter);
     }
 };
 
@@ -558,9 +634,15 @@ public:
     const Times& times() const;
 
     const RigidScene& scene() const { return scene_; }
-    /// How many bodies it simulates.
+    /// How many bodies it simulates: those of the pieces as they came in,
+    /// and the fragments of those that broke.
     size_t pieceCount() const;
+    /// The pieces as they are now: the scene's, with the fragments of those
+    /// that broke after them.
+    const std::shared_ptr<const Geometry>& pieces() const { return pieces_; }
     const std::shared_ptr<const RigidLayout>& layout() const { return layout_; }
+    /// The pieces that broke so far.
+    const std::vector<RigidShatter>& shatters() const;
     /// Its joints, at rest: those of the network linked in, else where the pieces touch.
     const std::shared_ptr<const RigidGlue>& glue() const { return glue_; }
     RigidFrame capture() const;
@@ -574,6 +656,7 @@ public:
 private:
     struct Impl;
     RigidScene scene_;
+    std::shared_ptr<const Geometry> pieces_;
     std::shared_ptr<const RigidLayout> layout_;
     std::shared_ptr<const RigidGlue> glue_;
     std::unique_ptr<Impl> impl_;

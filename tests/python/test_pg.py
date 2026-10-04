@@ -501,6 +501,33 @@ class Simulations(unittest.TestCase):
         self.assertEqual(len(landed.grit_glass), len(landed.grit))
         self.assertTrue((landed.grit_glass == 1).all())
 
+    def test_a_block_breaks_where_it_lands_and_wood_along_its_fibres(self):
+        # A block dropped hard breaks as it lands: one break, at its bottom,
+        # into fragments -- bodies after the one there was -- the block gone.
+        net = pg.Network()
+        block = net.add("box", size=(0.8, 0.5, 0.5), center=(0, 3.25, 0))
+        rbd = net.add("rbd_solver", glue=0, substeps=4, fracture=200, fracture_pieces=10)
+        out = net.add("output", frames=40)
+        net.connect(block, rbd, input="pieces")
+        net.connect(rbd, out)
+        self.assertEqual([p for p in net.problems() if p[0] == "error"], [])
+        sim = net.simulate()
+        last = list(sim.run(40))[-1].rigid
+        self.assertGreaterEqual(len(last.shatters), 1)
+        first = last.shatters[0]
+        self.assertEqual(first["body"], 0)
+        self.assertLess(abs(first["at"][1] - 3.0), 0.1)
+        self.assertGreater(last.body_count, 4)
+        self.assertIn(0, last.vanished)
+        # Wood: long splints, the way the fibres run on the points.
+        net = pg.Network()
+        beam = net.add("box", size=(3, 0.2, 0.25), center=(0, 0.5, 0))
+        wood = net.add("wood_fracture", count=10)
+        beam.connect(wood)
+        splints = wood.geometry()
+        self.assertGreaterEqual(len(set(splints.prims["piece"].tolist())), 8)
+        self.assertTrue(np.allclose(np.abs(splints.points["grain"][:, 0]), 1.0))
+
     def test_brick_wall_is_laid_in_its_bond_and_stands_on_its_mortar(self):
         # A wall of bricks in Flemish bond, plastered at the back, a brick in
         # two cut in two: each brick a piece with its mortar, the halves of

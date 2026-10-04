@@ -239,7 +239,12 @@ Testy to ověřují pro plyn, vodu, déšť i odstřel s prachem.
   `spread` a `rings` (jak daleko náraz láme — Houdini *Propagate Rate* a
   *Iterations*), shluky přilepené k základu stojí, kde byly postavené, a
   příklad **concrete_wall**: demoliční koule prorazí betonovou zeď na
-  soklu. Zbývá dřevo na třísky podél vláken.
+  soklu. ✅ Dřevo — uzel **Wood Fracture**
+  ([docs/destruction.md §2](docs/destruction.md#dřevo-wood-fracture)):
+  Voronoi v prostoru stlačeném podél vláken dá dlouhé třísky a latě,
+  lomy napříč vlákny roztřepené na třísky, podél nich rýhované; směr
+  vláken jde s kusy (`grain`), takže se podél nich lámou i za běhu.
+  Příklad **wood_beam**: ocelová koule prorazí dřevěný trám.
 - ✅ **Cihly:** uzel **Brick Wall** ([docs/destruction.md §2](docs/destruction.md#cihly-brick-wall))
   vyzdí zeď z cihel ve vazbě (běhounová, anglická, vlámská, stack), každou
   cihlu s maltou a omítkou jako jeden kus, s rovným ostěním u otvorů;
@@ -278,10 +283,20 @@ Testy to ověřují pro plyn, vodu, déšť i odstřel s prachem.
   Cluster** ([docs/destruction.md §2](docs/destruction.md#kry-a-sekundární-lámání-rbd-cluster))
   seskupí jemné kusy do ker s pevnějším lepidlem uvnitř (`cluster`,
   `clusterglue`, k-means++ a Lloyd přes těžiště kusů): věc se rozpadne na
-  kry a kra se rozbije, až když tvrdě dopadne. Jako v Houdini jsou kusy
-  nařezané předem; lámání podle místa nárazu za běhu zbývá. Příklad
+  kry a kra se rozbije, až když tvrdě dopadne. Příklad
   **concrete_drop**: trám se zlomí přes kvádr a poloviny se rozpadnou na
   kry, až dopadnou.
+- ✅ **Lámání za běhu:** ([docs/destruction.md §3](docs/destruction.md#lámání-za-běhu))
+  kus, do kterého něco narazí silněji, než unese jeho průřez (`fracture`
+  RBD Solveru, `f@fracture` kusu), se rozlomí tam, kam rána přišla: na
+  úlomky, nejmenší kolem rány, s hrubými lomy (dřevo podél vláken,
+  s třískami), které letí dál, jak kus letěl, a s prachem a drtí. Co do
+  něj narazilo, jde dál, zpomalené jen o to, co kus unesl. Úlomky se
+  lámou dál do zadané hloubky a velikosti. Zlom je událost (těleso,
+  místo, semínko, počet, čas): snímky a cache (formát 16) nesou jen ty
+  a úlomky se z nich udělají znovu bit po bitu; USD má úlomky jako
+  tělesa viditelná od zlomu. Příklady **shatter_blocks** (koule projede
+  třemi celými betonovými kvádry) a **wood_beam**.
 - ✅ **Úlomky jako částice:** drť ([docs/destruction.md §3](docs/destruction.md#drť-jako-částice))
   vylétá z okraje plochy, kde praskl spoj, v její rovině. Vzduch ji brzdí
   (malou víc) a točí se, naráží do kusů, překážek i podlahy, odráží se a

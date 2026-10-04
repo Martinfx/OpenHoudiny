@@ -30,12 +30,13 @@ void SimRunner::prepareFor(const sim::World& world) {
         std::shared_ptr<const sim::RigidLayout> layout;
         std::shared_ptr<const sim::RigidRebar> rebar;
         std::shared_ptr<const sim::RigidGlue> glue;
+        std::shared_ptr<const sim::RigidBroken> broken;
     };
     auto memo = std::make_shared<Memo>();
     memo->rigid = world.rigid;
     memo->cloth = world.cloth;
     store_.setPrepare([memo](sim::Frame& f) {
-        sim::adoptPieces(f, memo->rigid, &memo->layout, &memo->rebar, &memo->glue);
+        sim::adoptPieces(f, memo->rigid, &memo->layout, &memo->rebar, &memo->glue, &memo->broken);
         sim::adoptCloth(f, memo->cloth);
     });
 }

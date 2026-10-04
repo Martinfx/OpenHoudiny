@@ -1,0 +1,68 @@
+pgsim 1
+# Wood: a beam across two blocks, and a steel ball dropped on it. The Wood
+# Fracture splits the beam along its fibres into long splints, glued
+# together. The ball breaks the glue where it lands, and the splints it
+# strikes break as they are knocked -- along the fibres, into splinters,
+# their ends torn -- and it goes on through them: the beam folds in the
+# middle, its ends kick up off the blocks and it falls apart in a heap of
+# splints.
+node 1 box 1 beam 0 0
+  param size 3.2 0.22 0.24
+  param center 0 1.11 0
+node 2 wood_fracture 1 wood 230 0
+  param count 10
+  param splinter 0.06
+node 3 primitive_wrangle 1 moving 460 0
+  param snippet "// What the ball sets differently, set on the splints too: a Merge fills\n// an attribute a geometry lacks with 0.\ni@active = 1;\nf@density = 600;\nf@fracture = 1;\nf@glue = 1;\nv@Cd = set(0.55, 0.4, 0.25);"
+node 4 sphere 1 ball 0 140
+  param radius 0.22
+  param center 0.2 3.6 0
+node 5 primitive_wrangle 1 steel 230 140
+  param snippet "// A steel ball, falling: it does not break, and the glue never holds it.\ni@piece = 1000;\ni@active = 1;\nf@density = 7800;\nf@fracture = 0;\nf@glue = 0;\nv@v = set(0, -7, 0);\nv@Cd = set(0.25, 0.25, 0.27);\ns@material = \"steel\";"
+node 6 merge 1 pieces 690 60
+node 7 object 1 left_block 460 260
+  param shape box
+  param center -1.35 0.5 0
+  param size 0.5 1 0.6
+  param color 0.42 0.41 0.4
+node 8 object 1 right_block 460 330
+  param shape box
+  param center 1.35 0.5 0
+  param size 0.5 1 0.6
+  param color 0.42 0.41 0.4
+node 9 rbd_solver 1 rbd 920 60
+  param density 600
+  param glue 250
+  param fracture 300
+  param fracture_pieces 6
+  param fracture_depth 1
+  param fracture_min_size 0.3
+  param substeps 4
+  param dust 0.4
+  param impact_dust 0.5
+  param debris 0.6
+  param color 0.55 0.4 0.25
+  param inside_color 0.72 0.58 0.4
+node 10 output 2 output 1150 60
+  param frames 75
+  param light_azimuth 140
+  param light_elevation 32
+  param light_color 1 0.92 0.8
+  param light_intensity 2.6
+  param sky_intensity 0.45
+  param ground_color 0.15 0.145 0.14
+  param grid off
+node 11 camera 1 camera 1150 220
+  param center 0.3 1.7 4.4
+  param rotation -9 3 0
+  param focal 32
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 3.geometry -> 6.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 9.pieces
+link 7.collider -> 9.colliders
+link 8.collider -> 9.colliders
+link 9.look -> 10.look
+link 11.camera -> 10.camera

@@ -75,9 +75,11 @@ okna.
   a pokračováním z checkpointu, náhled na hrubších mřížkách (jak jemných,
   řekne uzel Output), wedge (varianty parametru), profil kroku a velké
   cache ve viewportu (odložené na disk, čtené dopředu, zástupné mřížky)
-- **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi
-  Fracture, tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
-  které nárazy lámou, nálože, drcení na prach, drť jako částice, které
+- **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi,
+  Concrete, Wood a Glass Fracture (beton, dřevo na třísky podél vláken,
+  sklo), tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
+  které nárazy lámou, kusy, které se za běhu rozlomí tam, kam přišla
+  rána, nálože, drcení na prach, drť jako částice, které
   narážejí do kusů a zůstávají na nich ležet, prach za letícími kusy,
   vzduch vytlačený zřícením, který žene prach do ulic, pád řízený
   animací (Guide), trosky ve vodě a v plynu (dřevo plave a proud ho
@@ -341,6 +343,8 @@ a vypíše její hash — stejný na 1 i 4 vláknech.
 **Concrete Fracture** ho rozláme jako beton — nestejné kusy, nejmenší
 kolem místa nárazu, odprýsklé rohy, hrubé lomy, které do sebe dál
 přesně zapadají, a pod nimi rovný řez (`proxy`) pro simulaci —
+**Wood Fracture** ho rozštípe jako dřevo na dlouhé třísky a latě podél
+vláken, s lomy napříč vlákny roztřepenými na třísky,
 **RBD Cluster** seskupí kusy do ker s pevnějším lepidlem uvnitř, které se
 rozpadnou až při tvrdém dopadu (sekundární lámání), **Rebar** položí do
 zdi síť a do trámu armokoš ocelových prutů, na kterých kusy visí i po
@@ -355,7 +359,9 @@ solveru, a
 **RBD Solver** nad [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
 z nich udělá tuhá tělesa: konvexní obaly s hmotou; kusy slepené tam, kde
 se dotýkají plochou, jsou jedno těleso, dokud je náraz silnější než
-lepidlo (`glue` v kPa) nerozlomí. Nálože (`release`, `kick`, `vanish`)
+lepidlo (`glue` v kPa) nerozlomí; kus, do kterého něco narazí silněji,
+než unese jeho průřez (`fracture`), se za běhu rozlomí tam, kam rána
+přišla, a co do něj narazilo, jde dál. Nálože (`release`, `kick`, `vanish`)
 lepidlo v daný čas přetrhnou, kusy s `crush` se pod padajícími patry
 rozdrtí na prach, nárazy sypou drť a vytlačený vzduch žene prach do ulic.
 Drť jsou částice: vylétá z okraje plochy, kde praskl spoj, vzduch ji
@@ -391,7 +397,10 @@ přesně do ulice mezi dva domy a na silnici se rozlomí; příklad
 **house_collapse**: rodinný dům postavený jako skutečný (zdi z tvárnic
 v cyklu For-Each, stropy, střecha s taškami, okna se skly, okapy, plot) se
 zřítí do zahrady a oblak prachu se plazí ulicí se stromy a sousedními
-domy, fotorealisticky v Cycles ([destruction.md](docs/destruction.md#dvanáctý-příklad-zřícení-rodinného-domu)).
+domy, fotorealisticky v Cycles ([destruction.md](docs/destruction.md#dvanáctý-příklad-zřícení-rodinného-domu));
+příklad **wood_beam**: ocelová koule prorazí dřevěný trám, který se
+rozštípe na dlouhé třísky; příklad **shatter_blocks**: koule projede
+třemi celými betonovými kvádry a každý se rozlomí tam, kam ho udeřila.
 
 **Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
 Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo

@@ -105,6 +105,8 @@ add_library(pgcore
   src/pg/nodes/Topology.cpp
   src/pg/nodes/Fracture.cpp
   src/pg/nodes/Concrete.cpp
+  src/pg/nodes/Rough.cpp
+  src/pg/nodes/Wood.cpp
   src/pg/nodes/Cluster.cpp
   src/pg/nodes/Rebar.cpp
   src/pg/nodes/Glass.cpp
@@ -1041,6 +1043,7 @@ add_executable(pgtests
   tests/test_cloth.cpp
   tests/test_grains.cpp
   tests/test_quench.cpp
+  tests/test_shatter.cpp
   tests/test_edit.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp

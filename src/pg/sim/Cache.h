@@ -67,10 +67,14 @@ bool parseFrame(std::string_view data, Frame& frame, std::string& error);
 /// bars make; and the joints of their glue (RigidFrame::glue), when it says
 /// what became of as many as the world's pieces and network make. `memo`,
 /// `rebarMemo` and `glueMemo`, if given, keep the bodies, the bars and the
-/// joints worked out from one frame to the next.
+/// joints worked out from one frame to the next. Where pieces broke as it
+/// ran (RigidFrame::shatters), their fragments are made again from the
+/// world's pieces (rigidBroken) -- `brokenMemo`, if given, keeps them from
+/// one frame to the next, and goes on from them when a frame broke more.
 void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo = nullptr,
                  std::shared_ptr<const RigidRebar>* rebarMemo = nullptr,
-                 std::shared_ptr<const RigidGlue>* glueMemo = nullptr);
+                 std::shared_ptr<const RigidGlue>* glueMemo = nullptr,
+                 std::shared_ptr<const RigidBroken>* brokenMemo = nullptr);
 
 /// Gives a frame read back its cloth's geometry -- the scene's, when the
 /// frame has as many points; else its cloth stays without and is not drawn.

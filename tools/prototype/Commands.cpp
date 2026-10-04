@@ -969,6 +969,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     std::shared_ptr<const sim::RigidLayout> adoptedLayout;  // the pieces' bodies, for frames read back
     std::shared_ptr<const sim::RigidRebar> adoptedRebar;    // ... and the bars in them
     std::shared_ptr<const sim::RigidGlue> adoptedGlue;      // ... and the joints of their glue
+    std::shared_ptr<const sim::RigidBroken> adoptedBroken;  // ... and the fragments of those that broke
     if (o.fromCache.empty()) solver = std::make_unique<sim::WorldSolver>(c.world);
     const sim::World world = c.world.sanitized();
     // What the cache says of itself as it is written -- how far it has got,
@@ -1128,7 +1129,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 return 1;
             }
             read->number = f;  // the file's name says which it is
-            sim::adoptPieces(*read, world.rigid, &adoptedLayout, &adoptedRebar, &adoptedGlue);
+            sim::adoptPieces(*read, world.rigid, &adoptedLayout, &adoptedRebar, &adoptedGlue, &adoptedBroken);
             sim::adoptCloth(*read, world.cloth);
             current = std::move(read);
         }

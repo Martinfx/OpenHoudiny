@@ -277,6 +277,17 @@ std::string summaryOf(const sim::Network& net, const sim::Node& n, const sim::Co
         if (v("emit_frames") > 1.0f) s += dot + "poured " + std::to_string(static_cast<int>(v("emit_frames"))) + " frames";
         return s;
     }
+    if (t == "rbd_solver") {
+        std::string s = v("glue") > 0.0f ? "glue " + number(v("glue")) + " kPa" : std::string("no glue");
+        if (v("fracture") > 0.0f) s += dot + "breaks over " + number(v("fracture")) + " kPa";
+        return s;
+    }
+    if (t == "voronoi_fracture" || t == "concrete_fracture" || t == "wood_fracture") {
+        std::string s = net.linksInto(n.id, "points").empty() ? std::to_string(static_cast<int>(v("count"))) + " pieces"
+                                                               : std::string("a piece a point");
+        if (t == "wood_fracture" && v("splinter") > 0.0f) s += dot + "splinters " + number(100.0f * v("splinter")) + " cm";
+        return s;
+    }
     if (t == "output") return std::to_string(static_cast<int>(v("frames"))) + " frames" + dot + number(v("fps")) + " fps";
     if (t == "camera") {
         return number(v("focal")) + " mm" + dot + std::to_string(static_cast<int>(v("width"))) + times +

@@ -71,10 +71,15 @@ cache/fire/
   řídká voda: hladina jen v dlaždicích blízko vody, rychlost vody jen
   v dlaždicích řešiče, kde nějaká je, a čísla dlaždic opět na konci snímku,
   od verze 14 dlaždice hluboko ve vodě jen svými čísly
-  ([pyro.md](pyro.md#jak-se-voda-kreslí)) a od verze 15 zrna Grain
-  Solveru: polohy, rychlosti, poloměry, čísla a barvy ([grains.md](grains.md));
-  klidová geometrie kusů, pruty i síť vazeb jsou
-  v síti uzlů a snímek načtený z disku je dostane od ní. Binárně, little-endian,
+  ([pyro.md](pyro.md#jak-se-voda-kreslí)), od verze 15 zrna Grain
+  Solveru: polohy, rychlosti, poloměry, čísla a barvy ([grains.md](grains.md)),
+  a od verze 16 kusy, které se za běhu rozlomily: pro každý zlom těleso,
+  místo nárazu v klidové poloze, semínko, počet úlomků a čas (28 bajtů;
+  [lámání za běhu](destruction.md#lámání-za-běhu)). Klidová geometrie
+  kusů, pruty i síť vazeb jsou v síti uzlů a snímek načtený z disku je
+  dostane od ní; úlomky se z ní a ze zlomů udělají znovu, bit po bitu
+  stejné (`rigidBroken`), a pro sekvenci jen jednou — každý další snímek
+  pokračuje od zlomů toho předchozího. Binárně, little-endian,
   s hlavičkou `PGFRAME` a číslem verze; starší snímky se čtou dál.
 - **Nuly se nezapisují**: běh nul je jedno číslo. Kouř táboráku zabírá jen
   část domény, takže 150 snímků mřížky 64 × 96 × 64 má na disku 63 MB,

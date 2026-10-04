@@ -1,10 +1,13 @@
-# Destrukce: Voronoi, Concrete a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo a síť vazeb, výztuž, sklo, drť a prach, usměrněná simulace
+# Destrukce: Voronoi, Concrete, Wood a Glass Fracture, cihlové zdi, tuhá tělesa, lepidlo a síť vazeb, lámání za běhu, výztuž, sklo, drť a prach, usměrněná simulace
 
 Jak se v Prototype něco rozbije: uzavřené těleso se rozřeže na kusy
 (**Voronoi Fracture**, nebo **Concrete Fracture**, která ho rozláme jako
-beton: nestejné kusy, hrubé lomy, odprýsklé rohy), kusy dostanou hmotu a
-slepí se k sobě (**RBD
+beton: nestejné kusy, hrubé lomy, odprýsklé rohy, nebo **Wood Fracture**,
+která ho rozštípe jako dřevo na dlouhé třísky podél vláken), kusy dostanou
+hmotu a slepí se k sobě (**RBD
 Solver** nad knihovnou [Jolt Physics](https://github.com/jrouwe/JoltPhysics)).
+Kus se může rozlomit i za běhu: když do něj něco narazí silněji, než unese
+jeho průřez, praskne tam, kam přišla rána, a co do něj narazilo, letí dál.
 Ocelová výztuž (**Rebar**) je drží i tam, kde lepidlo prasklo: pruty se
 ohýbají, vytahují se z malých kusů a trhají se. Sklo (**Glass Fracture**)
 praská tak, jak sklo praská: paprsky z místa úderu a kruhy kolem něj; do
@@ -540,6 +543,93 @@ stropní desce a nese trám; deska i trám jsou kusy, které se nehýbou.
 Pro srovnání je v příkladu **concrete_wall** železobetonová zeď: síť
 prutů místo koše a koule místo nálože.
 
+### Dřevo: Wood Fracture
+
+Dřevo se neláme jako beton. Vlákna drží podél sebe mnohem pevněji než
+napříč, takže trám praskne na dlouhé třísky a latě a konce zlomů jsou
+roztřepené. Uzel **Wood Fracture** (Geometry,
+[`src/pg/nodes/Wood.cpp`](../src/pg/nodes/Wood.cpp)) to dělá ve třech
+krocích:
+
+1. **Vlákna.** Směr vláken je `grain`. Když je nulový, vezme se nejdelší
+   strana kvádru kolem tělesa (`fitBox`): trám, prkno a sloup mají
+   vlákna po délce.
+2. **Buňky podél vláken.** `count` bodů uvnitř tělesa (nebo body ze
+   vstupu **Points**), hustších kolem `impact` podle `focus` a `reach`.
+   Voronoiovy buňky se počítají v prostoru stlačeném podél vláken
+   `stretch`krát (výchozí 6, `grainCells`). Buňka je tak tolikrát delší
+   podél vláken než napříč: trám se rozpadne na dlouhé třísky, ne na
+   kostky. Stlačení je lineární, takže buňky zůstanou konvexní a dají
+   dobré konvexní obaly.
+3. **Roztřepené lomy** (`roughenCuts`,
+   [`src/pg/nodes/Rough.cpp`](../src/pg/nodes/Rough.cpp), společné
+   s Concrete Fracture). Řezné plochy se rozdělí na trojúhelníky,
+   podél vláken osmkrát delší než napříč. Plocha napříč vlákny se roztrhá
+   na třísky: každý bod se posune podél vláken o `splinter` · tanh(2,5 · n),
+   kde n je šum, který se mění jen napříč vlákny, se zrnem
+   `splintersize`. Jsou to svazky vláken utržené v různé délce. Plocha
+   podél vláken dostane jen rýhy hluboké `rough`, `roughscale` od sebe
+   napříč a osmkrát dál podél vláken. Mezi oběma se přechází plynule
+   podle toho, jak moc plocha míří podél vláken. Posun závisí jen na
+   místě, takže obě strany trhliny do sebe dál zapadají. K vnějšímu
+   povrchu slábne, aby nic z tělesa nevyčnívalo.
+
+Jako u Concrete Fracture zůstane rovný řez v bodovém atributu `proxy`:
+solver simuluje kusy jako konvexní obaly rovných buněk a kreslí je
+roztřepené. Kusy nesou `piece` a body směr vláken `grain`; podle něj se
+kus štípe i tehdy, když ho rozlomí RBD Solver za běhu
+([§3](#lámání-za-běhu)). Řezné plochy jsou ve skupině `inside`, a plochy,
+které nemají jiný materiál, mají `material` „wood“ (Cycles na ně dá
+dřevo).
+
+| Parametr | Význam |
+|---|---|
+| `count`, `seed` | Kolik kusů, když nepřijdou body; jiné číslo, jiné kusy |
+| `grain` | Kudy vedou vlákna; nula: nejdelší strana tělesa |
+| `stretch` | Kolikrát delší jsou kusy podél vláken než napříč: 1 jako Voronoi Fracture |
+| `impact`, `focus`, `reach` | Kam přišla rána, kolik víc kusů kolem ní (0 žádné) a jak daleko (m napříč vlákny, podél nich `stretch`krát dál) |
+| `splinter`, `splintersize` | Jak daleko trčí třísky z plochy napříč vlákny (m, 0 rovně) a jak široká je jedna tříska |
+| `rough`, `roughscale`, `detail` | Hloubka a rozteč rýh podél vláken a nejdelší trojúhelník lomů |
+| `attribute`, `insidegroup` | Atribut s číslem kusu (`piece`) a skupina řezných ploch (`inside`) |
+
+Trám 3 × 0,2 × 0,25 m rozštípaný na 14 kusů má 79 tisíc trojúhelníků
+a uvaří se za 0,07 s. Kusy jsou kolem metru dlouhé a 10 až 20 cm
+široké.
+
+### Třináctý příklad: koule trámem
+
+![Ocelová koule prorazí dřevěný trám: rozštípe se na dlouhé třísky, konce vyletí z kvádrů a třísky se sesypou na hromadu](img/wood-beam.jpg)
+
+```
+./build/prototype sim wood_beam tram.mp4          # 75 snímků (2,5 s)
+./build/prototype sim wood_beam tram.png --frames 16 --renderer cycles
+```
+
+Příklad **wood_beam** ([examples/sim/wood_beam.pgsim](../examples/sim/wood_beam.pgsim))
+je dřevěný trám 3,2 × 0,22 × 0,24 m položený přes dva kvádry a na něj
+padá ocelová koule o poloměru 22 cm (338 kg):
+
+- **Trám** rozštípe Wood Fracture na 10 dlouhých třísek s třískami na
+  koncích (`splinter 0.06`). RBD Solver je slepí lepidlem 250 kPa
+  a wrangle `moving` jim dá hustotu dřeva (600 kg/m³) a `fracture 1`.
+- **Koule** dopadne rychlostí 9,5 m/s. Přetrhne všech 24 spojů a tři
+  třísky, do kterých narazí, se rozlomí podél vláken (`fracture 300`,
+  `fracture_pieces 6`, při tak tvrdé ráně dvojnásobek). Je to 36 úlomků
+  s roztřepenými konci. Koule jimi projde rychlostí 8,9 m/s.
+- **Trám** se přelomí, konce vyletí z kvádrů jako páky a třísky se
+  sesypou na hromadu pod koulí. Úlomky se dál nelámou (`fracture_depth 1`).
+
+```
+[beam] ─▶ [Wood Fracture] ─▶ [moving] ─┐
+[ball] ─▶ [steel] ─────────────────────┴▶ [pieces] ─Pieces─▶ [RBD Solver] ─Look─▶ [Output] ◀─ [camera]
+[left_block], [right_block] ─Collider─▶ Colliders ──────────┘
+```
+
+V editoru je trám na snímku 14 roztříštěný kolem koule; parametry Wood
+Fracture ukazují vlákna (`grain` 0: po délce trámu) a `stretch`:
+
+![Editor: wood_beam na snímku 14, vybraný uzel Wood Fracture](img/editor-wood.jpg)
+
 ---
 
 ## 3. RBD Solver
@@ -575,6 +665,11 @@ Parametry:
 | Glue | `glue` | Pevnost lepidla v kPa (kilonewtonech na metr čtvereční plochy spoje); 0 znamená bez lepidla |
 | | `spread` | Kolik nárazu jde přes spoj dál na kusy za ním: 0,5 polovina (výchozí) — tvrdý náraz láme lepidlo daleko kolem; 0 nic, uvolní se jen kusy, do kterých narazilo. V Houdini *Propagate Rate* |
 | | `rings` | Kolik prstenců kusů kolem zasažených může náraz uvolnit, ať je jakkoli silný: 1 sousedy, 2 i sousedy sousedů; 0 (výchozí) tak daleko, kam ho `spread` donese. V Houdini *Propagate Iterations* |
+| Breaking | `fracture` | kPa: jak silný náraz unese metr čtvereční průřezu kusu, než se rozlomí sám kus — tam, kam přišla rána, na úlomky, nejmenší kolem ní; dřevo (kusy Wood Fracture s `grain`) na dlouhé třísky podél vláken ([níže](#lámání-za-běhu)). 0 (výchozí): kusy se nelámou, praská jen lepidlo. Betonový kvádr 0,8 m dlouhý spadlý ze 3 m se rozlomí při 200 |
+| | `fracture_pieces` | Na kolik úlomků se kus rozlomí; při ráně čtyřikrát silnější, než kus unese, až na dvojnásobek |
+| | `fracture_depth` | Kolikrát se může lámat: 1 jen kusy, jak přišly, 2 (výchozí) i jejich úlomky |
+| | `fracture_min_size` | m: kus menší (úhlopříčka kvádru kolem něj) se nerozlomí |
+| | `fracture_rough` | m: jak daleko jdou lomy nových trhlin dovnitř a ven; 0 rovné řezy. Dřevo má místo hrbolků třísky pětkrát delší |
 | Rebar | `rebar_strength` | MPa, kdy ocel prutů teče: 500 dnešní pruty. Prut 12 mm unese v tahu asi 57 kN, ohnutý zůstane ohnutý |
 | | `bond` | MPa, jak pevně beton svírá prut po jeho povrchu: kus, kterým prut prochází 20 cm, ho drží asi 38 kN. Kusy na jedné straně trhliny prut kotví dohromady; kde drží míň než ocel — u konce prutu nebo přetrženého — prut se z nich vytahuje a beton z něj opadá, jinde teče ocel. 0: pruty nedrží nic |
 | | `stretch` | O kolik se prut protáhne, než se přetrhne, jako díl toho, co z něj teče: 0,1 desetina — holého prutu mezi dvěma kusy a dvacetinásobku průměru |
@@ -609,9 +704,89 @@ prvního primitiva) řeknou, čím se kus liší:
 | `cluster` | i | Kra, do které kus patří (RBD Cluster); 0: žádná |
 | `clusterglue` | f | Spoje mezi kusy téže kry jsou tolikrát pevnější (platí menší ze dvou) |
 | `guide` | f | Jak moc ho Guide vede, 0 až 1 (bez atributu 1); 0: vůbec |
+| `fracture` | f | Kus unese tolikrát silnější ránu, než se rozlomí (`fracture` solveru; bez atributu 1); 0: nikdy se nerozlomí |
+| `grain` | v | Na bodech: kudy vedou vlákna dřeva (Wood Fracture). Kus s ním se láme na třísky podél nich |
 
 Jako v Houdini doplní Merge atribut, který jedné geometrii chybí, nulou:
-`active` a `glue` je proto potřeba nastavit všem kusům, ne jen některým.
+`active`, `glue`, `fracture`, `density` a `Cd` je proto potřeba nastavit
+všem kusům, ne jen některým.
+
+### Lámání za běhu
+
+Kusy z Voronoi, Concrete nebo Wood Fracture jsou nařezané předem: věc se
+rozpadne jen tam, kde už řezy jsou. S `fracture` nad nulou se kus rozlomí
+i za běhu, a to tam, kam přišla rána. Celý betonový kvádr se rozštípne
+v místě, kde do něj narazí koule, dřevěná tříska podél vláken. Houdini na
+to má RBD Material Fracture s omezeními nebo Bullet s lámáním za běhu.
+
+**Kdy.** Po každém kroku Joltu má každý kus nejtvrdší náraz, který ho
+v kroku potkal, a místo, kam přišel. Síla nárazu je impulz za podkrok:
+větší z toho, co hlásí kontakt Joltu, a toho, jak se nárazem změnila
+hybnost tělesa (rozdělené mezi místa, kde do něj něco narazilo). Je to
+tatáž síla, která láme lepidlo. Kus ji unese do `fracture` (kPa) ·
+`f@fracture` · V^(2/3), kde V^(2/3) je plocha jeho průřezu. Lámou se jen
+kusy, které se hýbou, nejsou sklo, neprochází jimi výztuž, nejsou menší
+než `fracture_min_size` a nerozlomily se už `fracture_depth`krát.
+
+**Jak.** Kus se rozřeže na `fracture_pieces` úlomků. Při ráně *h*krát
+silnější, než unese, jich je `fracture_pieces` · √*h*, nejvýš dvakrát
+tolik. Polovina bodů buněk leží kolem místa rány (do čtvrtiny velikosti
+kusu), zbytek kdekoli v kusu, takže kolem rány jsou úlomky nejmenší. Kus
+dřeva (s `grain` na bodech) se řeže jako ve Wood Fracture: v prostoru
+stlačeném šestkrát podél vláken, body kolem rány protažené podél nich.
+Lomy jsou hrubé jako u Concrete Fracture (`fracture_rough`, plochy
+z betonu jsou `broken_concrete`), u dřeva roztřepené na třísky. Řezné
+plochy jdou do skupiny `inside_group`, takže je solver kreslí barvou
+lomu. Kousky menší než desetitisícina kusu (a vždy ty pod 0,2 cm³) se
+zahodí; za ně je drť. Z kusu je pak `vanished` a úlomky jsou nová tělesa za těmi, co
+byla. Každý úlomek letí, jak letěl kus v místě, kde je (rychlost
+i otáčení). Při ráně víc než jednou silnější, než kus unese, se navíc
+rozletí od místa rány, nejvýš 1 m/s (od trojnásobku). Spoje kusu
+praskly; z místa rány se zvedne prach a vyletí drť.
+
+**Co do něj narazilo, jde dál.** Jolt v kroku zastaví to, co do kusu
+narazilo, o celý kus, jako by vydržel. Kus ale unesl jen *1/h* té rány.
+Těleso, které do rozlomeného kusu narazilo, proto dostane zpátky svou
+rychlost před krokem, zmenšenou jen o podíl *1/h* toho, co mu krok vzal.
+Koule tak trámem projde (v testu kvádr z oceli projde trámem rychlostí
+4,5 m/s, bez toho 2,1 m/s) a do hromady úlomků pod ním vjede rychle.
+
+**Determinismus a cache.** Zlom je událost: těleso, místo rány v jeho
+klidové poloze, semínko, počet úlomků a čas (`RigidShatter`). Semínko je
+hash čísla tělesa, počtu zlomů a snímku. Úlomky jsou čistá funkce kusů
+ve vstupu a seznamu zlomů (`shatterPiece`, `rigidBroken`), stejná na
+libovolném počtu vláken. Snímek proto nese jen seznam zlomů (v cache od
+formátu 16, [cache.md](cache.md)). Kdo snímek čte (přehrávání z cache,
+RBD Pieces, USD), udělá z něj úlomky znovu, bit po bitu stejné, a pro
+sekvenci jen jednou: každý další snímek pokračuje od zlomů toho
+předchozího. V USD jsou úlomky tělesa navíc, neviditelná do snímku zlomu
+([usd.md](usd.md)). Místo v Joltu se pro úlomky vyhradí na začátku,
+nejvýš 2 048 úlomků na simulaci. Python vrací zlomy jako
+`frame.rigid.shatters`.
+
+### Čtrnáctý příklad: koule kvádry
+
+![Koule projede třemi celými betonovými kvádry: každý se rozlomí tam, kam ho udeřila](img/shatter-blocks.jpg)
+
+```
+./build/prototype sim shatter_blocks kvadry.mp4   # 75 snímků (2,5 s)
+```
+
+Příklad **shatter_blocks** ([examples/sim/shatter_blocks.pgsim](../examples/sim/shatter_blocks.pgsim)):
+tři betonové kvádry 0,5 × 0,9 × 0,5 m stojí v řadě, celé, nerozřezané.
+Klíčovaná koule o průměru 60 cm jimi projede rychlostí 4,7 m/s
+(`fracture 450`, `fracture_pieces 12`). První kvádr se rozlomí v 0,47 s
+na 17 úlomků, nejmenších tam, kam koule udeřila, a koule, která jede
+dál, láme jeho velké úlomky znovu (`fracture_min_size 0.15`). Úlomky
+narazí do druhého kvádru, ten do třetího, a v 0,73 s se rozlomí oba. Za
+2,5 s je to deset zlomů a 140 úlomků s hrubými lomy, s prachem v Pyro
+Solveru a drtí.
+
+```
+[block_a], [block_b], [block_c] ─▶ [blocks] ─▶ [concrete] ─Pieces─▶ [RBD Solver] ─Look──────────────────▶ [Output] ◀─ [camera]
+[ball] ─Collider─▶ Colliders ────────────────────────────────────┘  │ Dust ─▶ [Pyro Solver] ─▶ [dust_look] ─┘
+                                                     [swirl] ─Forces─┘
+```
 
 ### Síť vazeb: RBD Constraints
 
@@ -1415,7 +1590,10 @@ pro celou sekvenci — a použije se, jen když má tolik stanic, kolik snímek
 říká. Verze 7 přidala, která drť je skleněná, a tělesa, kterým praskl
 spoj; snímky verze 6 se čtou bez nich (žádné sklo, nic nepraskle). Verze 8
 přidala stav spojů ([§3](#síť-vazeb-rbd-constraints)) a verze 9 natočení
-drti; snímky verze 8 se čtou s drtí bez natočení.
+drti; snímky verze 8 se čtou s drtí bez natočení. Verze 16 přidala zlomy
+kusů za běhu ([§3](#lámání-za-běhu)): úlomky se při čtení udělají znovu
+z kusů světa (`adoptPieces` → `rigidBroken`), pro sekvenci jen jednou,
+každý snímek od zlomů toho předchozího. Snímky verze 15 se čtou bez zlomů.
 
 ---
 
@@ -1691,6 +1869,36 @@ v `tests/python/test_pg.py`:
   světa bez té vazby se nenačte; se všemi třemi parametry na 0 padají kusy
   bitově stejně jako bez vody.
 
+`tests/test_shatter.cpp` (8 testů), `frames_of_version_15_still_read_without_what_broke`
+a `frames_keep_the_pieces_that_broke` v `tests/test_export.cpp`
+a `test_a_block_breaks_where_it_lands_and_wood_along_its_fibres`
+v `tests/python/test_pg.py`, lámání za běhu a dřevo:
+
+- kvádr spadlý ze 3 m se rozlomí tam, kam dopadl (místo zlomu v jeho
+  klidové poloze na 10 cm u spodní stěny); úlomky mají dohromady jeho
+  objem na 2 %, leží na podlaze, nikde pod ní, a lomy jsou ve skupině
+  `inside`;
+- kvádr spadlý z 5 cm se nerozlomí a s `fracture 0` se nerozlomí nikdy:
+  snímky jsou pak bit po bitu tytéž, ať jsou ostatní parametry lámání
+  jakékoli;
+- `fracture_depth 1` dá jeden zlom, 2 i zlomy úlomků; s `fracture_min_size`
+  větší než kvádr žádný;
+- ocelový kvádr spadlý na trám na dvou podpěrách trámem projde: když se
+  trám rozlomí, padá za ním rychleji než 3 m/s a skončí pod ním; když
+  se nerozlomí, leží na něm;
+- úlomky udělané znovu ze seznamu zlomů (`rigidBroken`) jsou bit po bitu
+  tytéž jako ze simulace (hash geometrie, rozdělení do těles);
+- simulace na 1 a 4 vláknech dá tytéž pózy a zlomy; snímek zapsaný na
+  disk a přečtený zpátky má tytéž zlomy a úlomky z nich jsou bit po bitu
+  tytéž;
+- Wood Fracture: trám 3 m na 12 kusů má víc než polovinu kusů aspoň
+  dvaapůlkrát delších podél vláken než napříč, `grain` na bodech, `wood`
+  na plochách; třísky trčí 1 až 6 cm z rovného řezu;
+- tříska dřeva, kterou rozlomí solver, se rozštípe podél vláken: aspoň
+  polovina úlomků je půldruhakrát delší podél vláken než napříč;
+- formát 15 se čte bez zlomů, zlomy projdou souborem tam a zpět a useknutý
+  soubor se odmítne; Python vrací zlomy jako `rigid.shatters`.
+
 Sanitizery (ASan/UBSan) a libc++ běží na celé sadě jako u ostatních
 kroků ([pyro.md §9](pyro.md#9-ověřování)).
 
@@ -1730,9 +1938,18 @@ kroků ([pyro.md §9](pyro.md#9-ověřování)).
   přesnější, ale u lehkých těles se v krocích řešiče rozkmitá; Houdini ji
   proto dává jako *feedback* s mírou. Tenký film vody, který zůstane na
   horní ploše kusu, nesteče (známá slabina FLIP) a kreslí se jako pěna.
-- **Drcení na prach.** Rozdrcený kus zmizí najednou; drobení na menší
-  kusy za běhu (Houdini RBD Material Fracture s omezeními) tu není —
-  kusy jsou hotové předem.
+- **Drcení na prach.** Rozdrcený kus (`crush`) zmizí najednou v prachu;
+  na menší kusy se za běhu láme jen s `fracture` ([§3](#lámání-za-běhu)).
+- **Lámání za běhu je mezi kroky.** Jolt bere kus v kroku jako celý a
+  rozlomí se až po něm. Co do něj narazilo, dostane rychlost zpátky
+  podle pravidla (podíl 1/*h*), ne z řešení, kudy trhlina běží kusem.
+  Úlomky jsou Voronoiovy buňky celého kusu: kus se rozpadne celý,
+  trhlina se nešíří a nezastaví se v půlce, jako se to děje u trhliny
+  v betonu. Sklo, kusy s výztuží a kusy, které se nehýbou, se za běhu
+  nelámou. Nejvýš 2 048 úlomků na simulaci.
+- **Dřevo se neohýbá.** Třísky jsou tuhé. Zelené dřevo, které se ohne
+  a zůstane viset na vláknech, tu není. Vlákna jsou rovná, bez let
+  a suků, a třísky trčí jen z ploch napříč vlákny.
 - **Detail prachu** je daný mřížkou plynu: v příkladu je buňka půl
   metru, takže oblak má tvar a stíny, ale ne jemné „květákové“ chuchvalce
   produkčních simulací. S `--resolution 576` (buňka 16 cm, 103,5 milionu

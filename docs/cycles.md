@@ -153,7 +153,7 @@ tracer:
 Plochy, které říkají, z čeho jsou (`s@material`), kreslí Cycles jako ten
 materiál: fotografií z knihovny programu, nebo vzorem (lom betonu
 s kamínky, okna s místnostmi, rezavá ocel), vždy kolem jejich barvy `Cd`.
-Generátory si materiál nastaví samy (Brick Wall, Concrete Fracture, Tree,
+Generátory si materiál nastaví samy (Brick Wall, Concrete Fracture, Wood Fracture, Tree,
 Grass…) a ostatním plochám ho dá uzel **Material**. Podrobnosti jsou
 v [materials.md](materials.md).
 

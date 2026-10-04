@@ -1103,6 +1103,40 @@ std::vector<NodeType> buildTypes() {
                "How long the triangles of a rough face are at most: smaller is finer, and heavier to draw."},
               text("attribute", "Piece Attribute", "Fracture", "piece", "What each piece's number is called."),
               text("insidegroup", "Inside Group", "Fracture", "inside", "The faces made where it was cut.")});
+    geometry("wood_fracture", "Wood Fracture", "woodfracture",
+             "A closed mesh -- a board, a beam, a post -- broken as wood breaks: along its fibres, into long "
+             "splints and slats, Stretch times as long along them as across. The faces of the cracks across the "
+             "fibres are torn into splinters, those along them grooved -- the same on both sides of each, so the "
+             "pieces still fit. The plain cut stays in the point attribute proxy, the way the fibres run in "
+             "grain: a piece the RBD Solver breaks as it is knocked splits along them too. The pieces carry "
+             "piece, the cut faces are in the group Inside Group, the faces are wood.",
+             {{"geometry", "Geometry", PinType::Geometry}, {"points", "Points", PinType::Geometry}},
+             {{"count", "Count", "Fracture", K::Int, {14.0f, 0.0f, 0.0f}, 1.0f, 100.0f, 0.0f, 10000.0f, "",
+               "How many pieces when no points come in: at random inside the mesh."},
+              {"seed", "Seed", "Fracture", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 100.0f, 0.0f, 1e6f, "",
+               "Another number: the pieces elsewhere."},
+              {"grain", "Grain", "Fracture", K::Vector, {0.0f, 0.0f, 0.0f}, -1.0f, 1.0f, -kBig, kBig, "",
+               "The way the fibres run; zero: the longest side of the box round the mesh."},
+              {"stretch", "Stretch", "Fracture", K::Float, {6.0f, 0.0f, 0.0f}, 1.0f, 20.0f, 1.0f, 50.0f, "",
+               "How many times as long along the fibres as across them the pieces are: 1 as wide as long."},
+              {"impact", "Impact", "Fracture", K::Vector, {0.0f, 1.0f, 0.0f}, -10.0f, 10.0f, -kBig, kBig, "m",
+               "Where it is struck: with Focus, the pieces are smallest there."},
+              {"focus", "Focus", "Fracture", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
+               "How many more pieces round Impact: 0 none more."},
+              {"reach", "Reach", "Fracture", K::Float, {0.5f, 0.0f, 0.0f}, 0.05f, 5.0f, 0.001f, kBig, "m",
+               "How far from Impact -- across the fibres; along them Stretch times as far -- the pieces are smaller."},
+              {"splinter", "Splinter", "Cracks", K::Float, {0.05f, 0.0f, 0.0f}, 0.0f, 0.3f, 0.0f, kBig, "m",
+               "How far the splinters of a face across the fibres reach out of it, each way: 0 flat."},
+              {"splintersize", "Splinter Size", "Cracks", K::Float, {0.012f, 0.0f, 0.0f}, 0.002f, 0.1f, 0.001f, kBig, "m",
+               "How wide a splinter -- a bundle of fibres torn off at one length -- is."},
+              {"rough", "Rough", "Cracks", K::Float, {0.003f, 0.0f, 0.0f}, 0.0f, 0.03f, 0.0f, kBig, "m",
+               "How deep the grooves of a face along the fibres are, each way."},
+              {"roughscale", "Rough Scale", "Cracks", K::Float, {0.04f, 0.0f, 0.0f}, 0.005f, 0.5f, 0.001f, kBig, "m",
+               "How far apart the grooves are across the fibres; along them eight times as far."},
+              {"detail", "Detail", "Cracks", K::Float, {0.008f, 0.0f, 0.0f}, 0.002f, 0.1f, 0.001f, kBig, "m",
+               "How long the triangles of a torn face are at most: smaller is finer, and heavier to draw."},
+              text("attribute", "Piece Attribute", "Fracture", "piece", "What each piece's number is called."),
+              text("insidegroup", "Inside Group", "Fracture", "inside", "The faces made where it was cut.")});
     geometry("rbd_cluster", "RBD Cluster", "rbdcluster",
              "The pieces of a fracture grouped into Count chunks of about one size -- each piece in the chunk "
              "whose middle is nearest -- the glue between the pieces of one chunk Strength times as strong as "
@@ -1479,9 +1513,12 @@ std::vector<NodeType> buildTypes() {
          "Rigid bodies: the pieces of something broken -- a Voronoi Fracture's -- fall, knock into each other, "
          "into the floor and into the objects linked into Colliders (a keyed one is a wrecking ball), glued to "
          "the pieces they touch -- one body with them -- until a knock harder than Glue breaks them apart, "
-         "puffing dust and throwing grit. Attributes of the pieces set them apart: density, v, w, active (0: "
+         "puffing dust and throwing grit. With Fracture, a piece knocked harder than its own section holds "
+         "breaks too, where it was knocked -- wood along its fibres -- and what knocked it goes on. Attributes "
+         "of the pieces set them apart: density, v, w, active (0: "
          "it stays), glue, release -- the seconds when a charge breaks its joints -- with kick and vanish "
-         "(blown to dust), crush (crushed to dust by a hard knock), and cluster with clusterglue -- RBD Cluster's "
+         "(blown to dust), crush (crushed to dust by a hard knock), fracture (how much harder it is to break), "
+         "and cluster with clusterglue -- RBD Cluster's "
          "chunks, glued stronger inside. Steel bars linked into Rebar -- a Rebar node's -- hold the pieces they "
          "run through once the glue breaks: they bend, pull out of small pieces and tear. A network linked into "
          "Constraints -- RBD Constraints', edited -- is the glue instead: its lines are the joints, as strong as "
@@ -1527,6 +1564,21 @@ std::vector<NodeType> buildTypes() {
            "the pieces next to them, 2 the ones next to those... A keyed object is unstoppable -- it would "
            "break a whole wall at once -- with 1 or 2 it punches a hole. 0: as far as Spread carries it. "
            "Houdini's Propagate Iterations."},
+          {"fracture", "Fracture", "Breaking", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 5000.0f, 0.0f, kBig, "kPa",
+           "How hard a knock a square metre of a piece's own section holds before the piece itself breaks -- "
+           "where it is knocked, into fragments, most of them small round the knock; wood (Wood Fracture's "
+           "pieces, their attribute grain) into long splinters along its fibres. A piece's attribute fracture "
+           "makes it as much stronger; 0 there: it never breaks. 0 here: the pieces never break, only their "
+           "glue. A block of concrete 0.8 m long dropped 3 m onto the floor breaks at 200."},
+          {"fracture_pieces", "Fracture Pieces", "Breaking", K::Int, {8.0f, 0.0f, 0.0f}, 2.0f, 30.0f, 2.0f, 64.0f, "",
+           "Fragments a piece breaks into -- up to twice as many in a knock four times as hard as it holds."},
+          {"fracture_depth", "Fracture Depth", "Breaking", K::Int, {2.0f, 0.0f, 0.0f}, 1.0f, 4.0f, 1.0f, 8.0f, "",
+           "How many times over a piece can break: 1 only the pieces as they came in, 2 their fragments too."},
+          {"fracture_min_size", "Min Size", "Breaking", K::Float, {0.1f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, kBig, "m",
+           "A piece smaller across than this does not break."},
+          {"fracture_rough", "Rough", "Breaking", K::Float, {0.01f, 0.0f, 0.0f}, 0.0f, 0.05f, 0.0f, 1.0f, "m",
+           "How far the faces of a new crack go in and out, each way: 0 flat cuts. Wood splinters five times as "
+           "far along its fibres."},
           {"rebar_strength", "Steel Strength", "Rebar", K::Float, {500.0f, 0.0f, 0.0f}, 200.0f, 800.0f, 1.0f, 1e5f,
            "MPa",
            "How hard the steel of the bars holds before it yields: 500 for today's bars. A 12 mm bar holds some "
@@ -4149,8 +4201,14 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.buoyancy = f(*solver, "buoyancy");
         s.waterDrag = f(*solver, "water_drag");
         s.airDrag = f(*solver, "air_drag");
+        s.fracture = f(*solver, "fracture") * 1000.0f;  // kPa
+        s.fracturePieces = whole(*solver, "fracture_pieces");
+        s.fractureDepth = whole(*solver, "fracture_depth");
+        s.fractureMinSize = f(*solver, "fracture_min_size");
+        s.fractureRough = f(*solver, "fracture_rough");
         s.timeStep = c.world.timeStep;
         r.attribute = text(solver->id, "attribute");
+        r.insideGroup = text(solver->id, "inside_group");
         r.node = solver->id;
         if (!rigidAvailable()) {
             problem(L::Error, solver->id, "This build has no rigid bodies: it was built without Jolt (PG_WITH_JOLT=OFF).");

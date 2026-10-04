@@ -24,8 +24,8 @@ constexpr char kMagic[8] = {'P', 'G', 'F', 'R', 'A', 'M', 'E', '\0'};
 // unglued; 8: what became of each joint of the glue; 9: how each bit of
 // grit is turned; 10: a sparse gas's tiles; 11: the cloth; 12: the cloth
 // torn; 13: a sparse liquid's tiles; 14: its tiles deep in the water;
-// 15: the grains.
-constexpr uint32_t kVersion = 15;
+// 15: the grains; 16: the pieces that broke as it ran.
+constexpr uint32_t kVersion = 16;
 
 /// Little-endian bytes, whatever the machine is.
 class Out {
@@ -341,6 +341,16 @@ std::string formatFrame(const Frame& f) {
     out.halves(g.radii);
     out.words(g.ids);
     out.bytesOf(g.colors);
+    // Version 16: the pieces that broke as it ran -- what their fragments
+    // are made again from (rigidBroken).
+    out.u64(b.shatters.size());
+    for (const RigidShatter& s : b.shatters) {
+        out.u32(s.body);
+        out.vec3(s.at);
+        out.u32(s.seed);
+        out.u32(s.count);
+        out.f32(s.time);
+    }
     return std::move(out.bytes);
 }
 
@@ -490,6 +500,16 @@ bool parseFrame(std::string_view data, Frame& f, std::string& error) {
             return false;
         }
     }
+    if (version >= 16) {
+        f.rigid.shatters.resize(in.count(28));
+        for (RigidShatter& s : f.rigid.shatters) {
+            s.body = in.u32();
+            s.at = in.vec3();
+            s.seed = in.u32();
+            s.count = in.u32();
+            s.time = in.f32();
+        }
+    }
     if (!in.ok() || !ripples) {
         error = "the frame is cut short, or not what it says it is";
         return false;
@@ -537,23 +557,41 @@ void adoptCloth(Frame& frame, const ClothScene& scene) {
 }
 
 void adoptPieces(Frame& frame, const RigidScene& scene, std::shared_ptr<const RigidLayout>* memo,
-                 std::shared_ptr<const RigidRebar>* rebarMemo, std::shared_ptr<const RigidGlue>* glueMemo) {
+                 std::shared_ptr<const RigidRebar>* rebarMemo, std::shared_ptr<const RigidGlue>* glueMemo,
+                 std::shared_ptr<const RigidBroken>* brokenMemo) {
     RigidFrame& b = frame.rigid;
     if (b.poses.empty() || !scene.pieces) return;
     const std::string& attribute = b.attribute.empty() ? scene.attribute : b.attribute;
     std::shared_ptr<const RigidLayout> layout = memo ? *memo : nullptr;
     if (!layout || layout->bodyOf.size() != scene.pieces->primitiveCount()) layout = rigidLayout(*scene.pieces, attribute);
     if (memo) *memo = layout;
-    if (static_cast<size_t>(layout->bodies) != b.poses.size()) return;  // another geometry: not these pieces
-    b.pieces = scene.pieces;
-    b.layout = layout;
+    // The pieces as they came in -- and, after the breaks the frame keeps,
+    // the fragments made again from them, on from those of the frame before.
+    std::shared_ptr<const Geometry> pieces = scene.pieces;
+    std::shared_ptr<const RigidLayout> laid = layout;
+    if (!b.shatters.empty()) {
+        std::shared_ptr<const RigidBroken> broken = brokenMemo ? *brokenMemo : nullptr;
+        if (!broken || broken->shatters != b.shatters) {
+            RigidScene adopted = scene;
+            adopted.attribute = attribute;
+            broken = rigidBroken(adopted, b.shatters, layout, broken.get());
+        }
+        if (brokenMemo) *brokenMemo = broken;
+        if (!broken) return;  // breaks of other pieces
+        pieces = broken->pieces;
+        laid = broken->layout;
+    }
+    if (static_cast<size_t>(laid->bodies) != b.poses.size()) return;  // another geometry: not these pieces
+    const size_t restBodies = static_cast<size_t>(layout->bodies);
+    b.pieces = pieces;
+    b.layout = laid;
     if (b.attribute.empty()) b.attribute = scene.attribute;
     // The joints of the glue, where the frame says what became of as many
     // as the world's pieces -- and its network -- make.
     b.glue = nullptr;
     if (!b.jointState.empty()) {
         std::shared_ptr<const RigidGlue> glue = glueMemo ? *glueMemo : nullptr;
-        if (!glue || glue->centres.size() != b.poses.size()) {
+        if (!glue || glue->centres.size() != restBodies) {
             glue = rigidGlue(*scene.pieces, *layout, b.attribute, scene.constraints.get());
         }
         if (glueMemo) *glueMemo = glue;
