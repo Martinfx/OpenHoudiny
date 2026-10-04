@@ -515,7 +515,10 @@ Seřazeno podle poměru hodnota / náklad:
    ✅ Průsvitnost listů a stébel proti slunci i ve viewportu.
    ✅ Úrovně detailu ve viewportu: vzdálené stromy a tráva s méně,
    ale většími listy a stébly (louka z 50 m: 44 % trojúhelníků).
-   Zbývá: prořezávání obálkou, billboardy pro vzdálený les, ohyb
+   ✅ Viewport klade fotky a obrázky listů jako renderery (UV, tři strany,
+   normálové mapy, alfa výřez), vzdálené rostliny jako billboardy
+   a úrovně detailu se prolínají.
+   Zbývá: prořezávání obálkou, ohyb
    stébel ve shaderu, vítr jako simulace ohybu, kořeny, ekosystém druhů.
 
 ---

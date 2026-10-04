@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace pg::sim {
@@ -113,19 +114,27 @@ struct DisplayInstances {
 DisplayInstances instancesOf(const Geometry& geo);
 
 /// The levels of detail a plant is drawn at far away (core/Lod.h:
-/// plantDetail): the share of its leaves and blades kept at each.
-inline constexpr std::array<float, 3> kDetailKeep = {1.0f, 0.35f, 0.12f};
+/// plantDetail): the share of its leaves and blades kept at each -- the
+/// last a billboard, a picture of the plant from the side it is seen from
+/// (its shadow cast by the level before's plant).
+inline constexpr size_t kDetailLevels = 4;
+inline constexpr std::array<float, kDetailLevels> kDetailKeep = {1.0f, 0.35f, 0.12f, 0.12f};
 /// How big a copy must look -- its prototype's radius times its size, over
 /// how far its middle is from the eye -- to be drawn at each level: below
 /// the last, not at all.
-inline constexpr std::array<float, 3> kDetailSize = {0.04f, 0.012f, 0.0015f};
+inline constexpr std::array<float, kDetailLevels> kDetailSize = {0.04f, 0.012f, 0.005f, 0.0015f};
+/// How far either side of each of those sizes a copy is both levels at
+/// once, a share of the size: fading from one to the other.
+inline constexpr float kDetailFade = 0.2f;
 
 /// The placements of a prototype's copies (DisplayInstances::kFloats each),
 /// shared out among the levels of detail by how big each looks from `eye`:
 /// its prototype's box round `center`, `radius` from it -- the smallest
-/// left out.
-std::array<std::vector<float>, 3> placementsByDetail(std::span<const float> placements, const Vec3& center, float radius,
-                                                     const Vec3& eye);
+/// left out. One near where two levels meet is at both, its last float --
+/// its fade -- saying which pixels of it each draws: below 1, that share
+/// of them; above 1, the rest (the viewport dithers them).
+std::array<std::vector<float>, kDetailLevels> placementsByDetail(std::span<const float> placements, const Vec3& center,
+                                                                 float radius, const Vec3& eye);
 
 /// The normal of each corner of `triangles` (three point indices each), in
 /// order: the faces round its point that bend less than `crease` degrees
@@ -138,6 +147,16 @@ std::vector<Vec3> cornerNormals(std::span<const Vec3> positions, const std::vect
 /// vertex, the triangles indices of the vertices -- a smooth surface has
 /// about as many vertices as points, a sixth of its corners. Corner for
 /// corner the triangles of displayOf, in the same order, to the bit.
+/// A set of pictures the viewport lays on a surface (render/Textures.h):
+/// its colour (with the alpha that cuts it out, if it has one) and its
+/// normal map; whether Cd tints it, round its mean.
+struct DisplayPicture {
+    std::string color, alpha, normal;
+    bool alphaChannel = false, normalDirectX = false, tint = true;
+    Vec3 mean{0.5f, 0.5f, 0.5f};
+    bool operator==(const DisplayPicture&) const = default;
+};
+
 struct DisplayMesh {
     std::vector<float> places;      ///< six floats a vertex: position, normal
     std::vector<float> colors;      ///< three floats a vertex
@@ -145,6 +164,12 @@ struct DisplayMesh {
     /// One float a vertex: how much light its face lets through (primitive
     /// translucency -- leaves, blades of grass); empty when it has none.
     std::vector<float> translucency;
+    /// Five floats a vertex where some faces have pictures laid on: where on
+    /// them -- by uv (u, v, 0, 0), or from three sides by its rest, else its
+    /// place (x, y, z, metres a picture; below 0 along the face) -- and
+    /// which of `pictures` (-1 none). Empty when none have.
+    std::vector<float> textures;
+    std::vector<DisplayPicture> pictures;
     std::vector<uint32_t> indices;  ///< three vertices a triangle
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};  ///< the box round the vertices
 

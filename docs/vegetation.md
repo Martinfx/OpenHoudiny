@@ -257,8 +257,10 @@ Na tomto stroji (release, všechna vlákna):
 | Unpack trávy na 17,7 milionu bodů | 2,6 s |
 
 Render snímku 1600 × 900 přes softwarový OpenGL (llvmpipe, bez grafické
-karty) trvá i s vařením sítě 5,4 s (bez úrovní detailu 8,1 s). Na grafické
-kartě je to zlomek.
+karty) trvá i s vařením sítě 7,6 s. S obrázky listů a trávy (alfa výřez
+a mipmapy na procesoru) a s focením billboardů je to víc než 5,4 s bez
+obrázků, ale stále méně než 8,1 s bez úrovní detailu. Na grafické kartě je
+to zlomek.
 
 **Úrovně detailu (LOD).** Viewport kreslí každou kopii rostliny podle
 toho, jak velká se jeví: poloměr krabice prototypu krát `pscale` děleno
@@ -268,8 +270,14 @@ vzdáleností od oka.
 |---|---|
 | nad 0,04 | celá |
 | 0,012–0,04 | třetina listů a stébel (0,35) |
-| 0,0015–0,012 | osmina (0,12), bez větviček |
+| 0,005–0,012 | osmina (0,12), bez větviček |
+| 0,0015–0,005 | billboard |
 | pod 0,0015 | vůbec |
+
+Kolem každé hranice (±20 %) je kopie v obou úrovních najednou. Každá
+nakreslí jen část pixelů podle ditheringu v obraze, dohromady všechny.
+Rostlina tak z jedné úrovně do druhé přechází plynule, nepřeskočí.
+V dálce stejně tak mizí.
 
 Řidší rostlinu dělá `plantDetail` (`src/pg/core/Lod.h`), jak to dělá
 SpeedTree. Rovnoměrně vybere listy a stébla (plochy s `translucency` nad
@@ -277,30 +285,28 @@ SpeedTree. Rovnoměrně vybere listy a stébla (plochy s `translucency` nad
 zvětší 1/√podíl kolem jeho paty a každé stéblo rozšíří 1/podíl, takže
 listí pokryje stejnou plochu jako předtím (strom: 2133 listů 11,98 m²,
 746 listů 12,02 m²). Pod polovinou zmizí větvičky (`level` 2 a víc).
+
+**Billboardy.** Poslední úroveň je karta otočená k oku kolem svislé osy.
+Ukazuje obrázek rostliny z té strany, ze které ji oko vidí: osm pohledů
+kolem dokola, 128 × 128 texelů každý. Viewport si je vyfotí sám, když
+prototyp poprvé dostane. Obrázek není barva, ale G-buffer viewportu:
+normála, barva, průsvitnost. Billboard se tedy osvětlí jako geometrie,
+normály se otočí s kopií a barva se tónuje jejím `tint`. Stín vrhá osmina
+rostliny, ne karta.
+
 Kopie se mezi úrovně rozdělí znovu, když se oko posune o 10 cm. Louka
 z 50 m od okraje: 22,1 milionu trojúhelníků v plné podobě, nakreslí se
-9,7 milionu (44 %): 84 kopií celých, 29 538 třetinových a 93 104
-osminových. Cycles a path tracer kreslí vše v plné podobě, instance je
-nestojí paměť.
+11,1 milionu (50 %); 86 kopií celých, 63 790 třetinových, 111 933
+osminových a 6 762 billboardů (prolínající se počítány dvakrát).
 
-**Průsvitnost ve viewportu.** Listy a stébla propouštějí světlo
-(primitivní `translucency`: list 0,4, stéblo 0,35) i ve viewportu, nejen
-v Cycles a v path traceru. Ze strany slunce svítí o tolik méně, proti
-slunci prosvítají ve své barvě, pokud je slunce nad nimi vidět (stín
-viewportu). Je to stejný model jako Translucent BSDF rendererů. Viewport
-nese průsvitnost v G-bufferu v patnáctinách. U listu zespodu pod sluncem
-s průsvitností 0,5 přibude ve viewportu 0,66 světla, které má list shora
-bez průsvitnosti, v path traceru 0,52 (rozdíl dělá Fresnel).
+![Louka ve viewportu: nahoře úrovně detailu, jak jsou; dole pro srovnání všechny rostliny jako billboardy](img/viewport-billboards.jpg)
+
+Cycles a path tracer kreslí vše v plné podobě, instance je nestojí paměť.
 
 ## 10. Co zatím chybí
 
-- Billboardy (impostory) pro les v dálce: obrázek stromu z několika
-  stran na kartě. Viewport zatím nekreslí textury. Plynulý přechod mezi
-  úrovněmi detailu (dithering) místo přeskočení.
 - Ohyb stébel ve větru podél délky (ve shaderu podle `flex`), ne jen
   otočení trsu.
-- Textury listů a stébel ve viewportu (renderery je mají,
-  [trees.md](trees.md)).
 - Šlapání a interakce (tráva ohnutá tělesem nebo postavou).
 - Ekosystém: druhy, které si konkurují o místo a světlo, a jejich rozšíření
   podle vlhkosti a stínu.

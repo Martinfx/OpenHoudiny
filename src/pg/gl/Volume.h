@@ -379,7 +379,25 @@ private:
     // The displayed node's polygons, indexed: the vertices' places (position
     // and normal, attributes 0 and 1), colours (2), velocities (3), and the
     // triangles.
-    GLuint shownVao_ = 0, shownPlaces_ = 0, shownColors_ = 0, shownVelocities_ = 0, shownIndices_ = 0, shownThrough_ = 0;
+    GLuint shownVao_ = 0, shownPlaces_ = 0, shownColors_ = 0, shownVelocities_ = 0, shownIndices_ = 0, shownThrough_ = 0,
+           shownTextures_ = 0;
+    // The pictures laid on the geometry (sim::DisplayPicture): a layer each
+    // of two arrays -- colour and alpha, normal map -- no more than
+    // kPictureLayers, kPictureSize square; their pixels kept to grow them.
+    static constexpr int kPictureLayers = 16, kPictureSize = 512;
+    std::vector<sim::DisplayPicture> layers_;
+    std::vector<std::vector<uint8_t>> layerColors_, layerNormals_;
+    GLuint picturesTex_ = 0, normalMapsTex_ = 0;
+    int picturesMade_ = 0;  // layers in the arrays as they are on the GPU
+    /// The layer of `picture`, read and added if it is new; -1 past the last.
+    int layerOf(const sim::DisplayPicture& picture);
+    /// The bound vertex array's attributes 8 and 9 -- where on its pictures
+    /// each vertex is, and which layer -- from `mesh` into `buffer`; none
+    /// when it has no pictures.
+    void textureArray(GLuint buffer, const sim::DisplayMesh& mesh);
+    /// The arrays as large as the layers, and `program`'s samplers and
+    /// looks of them (units 14 and 15).
+    void bindPictures(GLuint program);
     GLsizei shownElements_ = 0;
     // What stands on the displayed geometry's points (Instances.h): each
     // prototype's polygons once -- made when it is new -- and where each of
@@ -389,9 +407,10 @@ private:
         GeometryPtr prototype;  // held: its pointer names it
         sim::DisplayMesher mesher;
         sim::DisplayMesh mesh;
-        GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0, through = 0;
+        GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0, through = 0, textures = 0;
         GLsizei elements = 0, instances = 0;
         size_t capacity = 0;  // floats the placements' buffer holds
+        GLuint atlas = 0, impostorVao = 0;  // the last level's: its billboard's pictures, its cards
         size_t which = 0;     // its prototype's place in instances_
         int level = 0;        // its level of detail (sim::kDetailKeep)
         int levels = 1;       // how many its prototype has: a plant's 3
@@ -413,8 +432,18 @@ private:
     /// when it is empty.
     void throughArray(GLuint buffer, const std::vector<float>& translucency);
     bool hasInstances() const;
-    /// Draws the instances, with the program that places them in use.
-    void drawInstances();
+    /// Draws the instances, with the program that places them in use --
+    /// for the camera (not `shadow`) the billboards' levels left to
+    /// drawImpostors.
+    void drawInstances(bool shadow);
+    /// The plants far away as billboards (kImpostorViews pictures round
+    /// each, kImpostorTexels square), into the meshes' buffer.
+    static constexpr int kImpostorViews = 8, kImpostorTexels = 128;
+    GLuint impostorProgram_ = 0, impostorQuad_ = 0;
+    /// The pictures of `gpu`'s billboard: the plant in full (`full`'s
+    /// mesh) from eight sides, as the meshes' buffer has it.
+    void captureImpostor(InstancedGpu& gpu, const InstancedGpu& full, size_t which);
+    void drawImpostors(const Vec3& eye);
     /// The attributes of one instance that stands where it is: what every
     /// draw but the instanced ones reads.
     void placeUninstanced();

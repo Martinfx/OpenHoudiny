@@ -91,7 +91,8 @@ cihlová zeď (`brick_wall`). Malta je světlejší než cihly, takže by se jas
 ani na plochách), dostane každá plocha barvu svého materiálu: trávník
 zelenou, asfalt tmavě šedou, písek béžovou, tašky břidlicově šedou. U fotek
 je to zhruba jejich vlastní barva. Stačí tedy nastavit `material` a povrch
-vypadá, jak má. Plochy bez materiálu zůstávají šedé jako ve viewportu.
+vypadá, jak má, v rendererech i ve viewportu. Plochy bez materiálu zůstávají
+šedé.
 
 ### Kdo materiál nastaví sám
 
@@ -267,6 +268,22 @@ leží v půli mezi sluncem a okem). Natočená od slunce je tmavá. Mapa
 DirectX se stejnými pixely ohne opačně. Koule s mapou natočenou na u i v
 pod sluncem ze strany se v každé čtvrtině a uprostřed liší od Cycles
 nejvýš o 5 %.
+
+### Ve viewportu
+
+Viewport klade fotky stejně jako renderery: podle UV, nebo ze tří stran
+(podle `rest`, jinak podle místa bodu; i sady kladené podél šikmé plochy
+klade ze tří stran). Barvu tónuje `Cd` kolem průměru sady, nebo ji nechá,
+jak je. Normálová mapa ohýbá normálu v prostoru tečen, které viewport
+spočítá z derivací místa a UV v obrazu (Schüler). Alfa listů vyřízne
+plochu i její stín. Aby tenké jehlice v menších kopiích obrázku (mipmapách)
+nezmizely, alfa se v nich zesiluje podle úrovně kopie (Golus).
+
+Obrázky jsou ve dvou polích textur, 512 × 512 pixelů na vrstvu, nejvýš 16
+sad najednou. Další sady už viewport kreslí jen barvou. Výška a reliéf
+(bump) ve viewportu nejsou.
+
+![Viewport: lípa, smrk a tráva z příkladu foliage s obrázky listů a kůry; bedna, sloup a koule z uv_props s fotkami dřeva a cihel podle UV](img/viewport-textures.jpg)
 
 ### Na uzlu Output
 

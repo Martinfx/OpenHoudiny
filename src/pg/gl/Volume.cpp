@@ -7,6 +7,7 @@
 #include "pg/io/Picture.h"
 #include "pg/sim/Display.h"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
@@ -1095,17 +1096,28 @@ layout(location = 4) in vec4 i_place;
 layout(location = 5) in vec4 i_turn;
 layout(location = 6) in vec4 i_tint;
 layout(location = 7) in float a_through;  // how much light its face lets through: a leaf's, a blade's
+// Where on its pictures (sim::DisplayMesh::textures): by uv (u, v, 0, 0),
+// or from three sides by its place and metres a picture; and which (-1 none).
+layout(location = 8) in vec4 a_tex;
+layout(location = 9) in float a_picture;
 uniform mat4 u_viewProj, u_nextViewProj;
 uniform float u_frameTime;                // seconds to the next frame
-out vec3 v_world, v_normal, v_color;
+out vec3 v_world, v_normal, v_color, v_tint, v_ownNormal;
 out float v_through;
+out vec4 v_tex;
+flat out float v_picture, v_fade;
 out vec4 v_now, v_next;                   // on the screen now, and where it moves by the next frame
 vec3 turned(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }
 void main() {
     v_world = i_place.xyz + turned(i_turn, a_position * i_place.w);
     v_normal = turned(i_turn, a_normal);
+    v_ownNormal = a_normal;
     v_color = a_color * i_tint.rgb;
+    v_tint = i_tint.rgb;
+    v_fade = i_tint.w;
     v_through = a_through;
+    v_tex = a_tex;
+    v_picture = a_picture;
     gl_Position = u_viewProj * vec4(v_world, 1.0);
     v_now = gl_Position;
     v_next = u_nextViewProj * vec4(v_world + turned(i_turn, a_velocity) * u_frameTime, 1.0);
@@ -1113,21 +1125,78 @@ void main() {
 )";
 
 const char* kGeoFragment = R"(#version 330 core
-in vec3 v_world, v_normal, v_color;
+in vec3 v_world, v_normal, v_color, v_tint, v_ownNormal;
 in float v_through;
+in vec4 v_tex;
+flat in float v_picture, v_fade;
 in vec4 v_now, v_next;
 layout(location = 0) out vec4 o_g;
 layout(location = 1) out vec4 o_aux;  // the passes: motion in pixels, and what it is
 uniform vec3 u_eye;
 uniform vec2 u_viewport;
 uniform float u_class;                // 2 the displayed geometry, 3 the pieces
+// The pictures laid on (render/Textures.h), a layer each: their colour and
+// alpha, their normal maps; each one's mean colour and what it has -- 1
+// Cd tints it, 2 a normal map, 4 an alpha.
+uniform sampler2DArray u_pictures, u_normalMaps;
+uniform vec4 u_pictureLook[16];
 vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
+vec4 picture(vec2 uv, float layer) { return texture(u_pictures, vec3(uv.x, 1.0 - uv.y, layer)); }
+// From three sides, as the renderers lay it (TexturePicture::onSurface):
+// as much from each as the surface faces it, each moved off the others.
+vec4 threeSides(vec3 p, vec3 face, float metres, float layer) {
+    float k = 1.0 / metres;
+    vec3 w = face * face;
+    w *= w;
+    w /= max(w.x + w.y + w.z, 1e-6);
+    return picture(vec2(p.z * k + 0.31, p.y * k + 0.17), layer) * w.x +
+           picture(vec2(p.x * k + 0.53, p.z * k + 0.71), layer) * w.y + picture(vec2(p.x * k, p.y * k), layer) * w.z;
+}
+// How much of a cut-out picture is there, its alpha read from the smaller
+// copies of it kept as thick as the picture's own: thin needles that
+// average away in them otherwise vanish far off (Golus's sharpened alpha).
+float cover(float alpha, vec2 uv) {
+    vec2 dx = dFdx(uv * 512.0), dy = dFdy(uv * 512.0);
+    float level = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
+    return alpha * (1.0 + 0.4 * level);
+}
+// A noise of the screen's pixels, 0 to 1: where a copy fading in or out is.
+float dither() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
 void main() {
+    // A copy between two levels of detail: as much of it as its fade --
+    // above 1, the rest of the pixels.
+    if (v_fade < 1.0 && dither() >= v_fade) discard;
+    if (v_fade > 1.0 && dither() < v_fade - 1.0) discard;
     vec3 view = v_world - u_eye;
     vec3 n = dot(v_normal, v_normal) > 1e-20 ? normalize(v_normal) : -normalize(view);
     if (dot(n, view) > 0.0) n = -n;  // both sides
+    vec3 albedo = v_color;
+    if (v_picture >= 0.0) {
+        int layer = int(v_picture + 0.5);
+        vec4 look = u_pictureLook[layer];
+        int has = int(look.w + 0.5);
+        bool byUv = v_tex.w == 0.0;
+        vec4 pic = byUv ? picture(v_tex.xy, float(layer))
+                        : threeSides(v_tex.xyz, normalize(v_ownNormal), abs(v_tex.w), float(layer));
+        // Cut out where its alpha has none.
+        if (byUv && (has & 4) != 0 && cover(pic.a, v_tex.xy) < 0.5) discard;
+        albedo = min((has & 1) != 0 ? v_color * pic.rgb / max(look.rgb, vec3(1e-4)) : pic.rgb * v_tint, vec3(0.95));
+        if (byUv && (has & 2) != 0) {
+            // Bent by its normal map, in the frame the uv makes on the
+            // surface here (Schüler's, from the screen's derivatives).
+            vec3 dp1 = dFdx(v_world), dp2 = dFdy(v_world);
+            vec2 uv = vec2(v_tex.x, v_tex.y), duv1 = dFdx(uv), duv2 = dFdy(uv);
+            vec3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+            vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+            vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+            float scale = inversesqrt(max(max(dot(t, t), dot(b, b)), 1e-30));
+            vec3 m = texture(u_normalMaps, vec3(uv.x, 1.0 - uv.y, float(layer))).xyz * 2.0 - 1.0;
+            vec3 bent = t * scale * m.x + b * scale * m.y + n * m.z;
+            if (dot(bent, bent) > 1e-12 && dot(bent, view) < 0.0) n = normalize(bent);
+        }
+    }
     n /= abs(n.x) + abs(n.y) + abs(n.z);
-    vec3 c = floor(clamp(v_color, 0.0, 1.0) * 255.0 + 0.5);
+    vec3 c = floor(clamp(albedo, 0.0, 1.0) * 255.0 + 0.5);
     // How much light it lets through, in 15ths, four times over on the
     // normal's x (within -1 to 1): the colour fills the rest.
     vec2 o = n.z >= 0.0 ? n.xy : octWrap(n.xy);
@@ -1143,14 +1212,121 @@ const char* kGeoShadowVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 4) in vec4 i_place;  // an instance, as the geometry's program places it
 layout(location = 5) in vec4 i_turn;
+layout(location = 8) in vec4 a_tex;    // where on its pictures, as the geometry's program has it
+layout(location = 9) in float a_picture;
 uniform mat4 u_lightViewProj;
+out vec2 v_uv;
+flat out float v_cut;                  // its picture's layer where it is cut out by uv, else -1
+uniform vec4 u_pictureLook[16];
 vec3 turned(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }
-void main() { gl_Position = u_lightViewProj * vec4(i_place.xyz + turned(i_turn, a_position * i_place.w), 1.0); }
+void main() {
+    gl_Position = u_lightViewProj * vec4(i_place.xyz + turned(i_turn, a_position * i_place.w), 1.0);
+    v_uv = a_tex.xy;
+    int layer = int(a_picture + 0.5);
+    v_cut = a_picture >= 0.0 && a_tex.w == 0.0 && (int(u_pictureLook[layer].w + 0.5) & 4) != 0 ? float(layer) : -1.0;
+}
 )";
 
 const char* kGeoShadowFragment = R"(#version 330 core
+in vec2 v_uv;
+flat in float v_cut;
+uniform sampler2DArray u_pictures;
 out vec4 o_depth;
-void main() { o_depth = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0); }
+void main() {
+    // No shadow where a leaf is cut out.
+    if (v_cut >= 0.0) {
+        vec2 dx = dFdx(v_uv * 512.0), dy = dFdy(v_uv * 512.0);
+        float level = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
+        if (texture(u_pictures, vec3(v_uv.x, 1.0 - v_uv.y, v_cut)).a * (1.0 + 0.4 * level) < 0.5) discard;
+    }
+    o_depth = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+}
+)";
+
+// A plant far away as a billboard: a card turned to the eye about +y,
+// showing its picture from the side it is seen from -- of eight around it,
+// each a G-buffer of the plant's own (VolumeRenderer::captureImpostor) --
+// into the meshes' buffer as the geometry goes: its normals turned with the
+// copy, its colours tinted.
+const char* kImpostorVertex = R"(#version 330 core
+layout(location = 0) in vec2 a_corner;  // -1 to 1 across and up the card
+layout(location = 4) in vec4 i_place;
+layout(location = 5) in vec4 i_turn;
+layout(location = 6) in vec4 i_tint;
+uniform mat4 u_viewProj;
+uniform vec3 u_eye, u_center;           // the eye; the middle of the plant's box, its own
+uniform float u_radius;                 // how far its corners are from it
+uniform int u_views;
+out vec3 v_world;
+out vec2 v_uv;
+flat out int v_view;
+flat out vec4 v_turn;
+flat out vec3 v_tint;
+flat out float v_fade;
+vec3 turned(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }
+void main() {
+    vec3 middle = i_place.xyz + turned(i_turn, u_center * i_place.w);
+    vec3 toEye = u_eye - middle;
+    // Which picture: the one taken from nearest the way the eye is, in the
+    // plant's own turn.
+    vec3 own = turned(vec4(-i_turn.xyz, i_turn.w), toEye);
+    float step = 6.2831853 / float(u_views);
+    int k = int(floor(atan(own.x, own.z) / step + 0.5));
+    v_view = ((k % u_views) + u_views) % u_views;
+    vec3 level = vec3(toEye.x, 0.0, toEye.z);
+    vec3 right = dot(level, level) > 1e-12 ? normalize(cross(vec3(0.0, 1.0, 0.0), level)) : vec3(1.0, 0.0, 0.0);
+    v_world = middle + (right * a_corner.x + vec3(0.0, a_corner.y, 0.0)) * (u_radius * abs(i_place.w));
+    v_uv = a_corner * 0.5 + 0.5;
+    v_turn = i_turn;
+    v_tint = i_tint.rgb;
+    v_fade = i_tint.w;
+    gl_Position = u_viewProj * vec4(v_world, 1.0);
+}
+)";
+
+const char* kImpostorFragment = R"(#version 330 core
+in vec3 v_world;
+in vec2 v_uv;
+flat in int v_view;
+flat in vec4 v_turn;
+flat in vec3 v_tint;
+flat in float v_fade;
+layout(location = 0) out vec4 o_g;
+layout(location = 1) out vec4 o_aux;
+uniform sampler2D u_atlas;              // the pictures side by side, each u_texels square
+uniform int u_texels;
+uniform vec3 u_eye;
+uniform float u_class;
+vec3 turned(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }
+vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
+vec3 octDecode(vec2 f) {
+    vec3 n = vec3(f, 1.0 - abs(f.x) - abs(f.y));
+    float t = clamp(-n.z, 0.0, 1.0);
+    n.x += n.x >= 0.0 ? -t : t;
+    n.y += n.y >= 0.0 ? -t : t;
+    return normalize(n);
+}
+float dither() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
+void main() {
+    if (v_fade < 1.0 && dither() >= v_fade) discard;
+    if (v_fade > 1.0 && dither() < v_fade - 1.0) discard;
+    ivec2 at = ivec2(clamp(v_uv, 0.0, 0.999) * float(u_texels)) + ivec2(v_view * u_texels, 0);
+    vec4 g = texelFetch(u_atlas, at, 0);
+    if (g.w <= 0.0) discard;  // nothing of the plant there
+    // Its normal and how much light it lets through, turned with the copy.
+    float level = floor((g.x + 2.0) / 4.0);
+    vec3 n = turned(v_turn, octDecode(vec2(g.x - 4.0 * level, g.y)));
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 o = n.z >= 0.0 ? n.xy : octWrap(n.xy);
+    o.x += 4.0 * level;
+    // Its colour, tinted as the copy is.
+    float code = -g.z - 1.0;
+    float b = floor(code / 65536.0), gr = floor((code - b * 65536.0) / 256.0);
+    vec3 color = vec3(code - b * 65536.0 - gr * 256.0, gr, b) / 255.0 * v_tint;
+    vec3 c = floor(clamp(color, 0.0, 1.0) * 255.0 + 0.5);
+    o_g = vec4(o, -1.0 - (c.r + c.g * 256.0 + c.b * 65536.0), length(v_world - u_eye));
+    o_aux = vec4(0.0, 0.0, u_class, 1.0);
+}
 )";
 
 // The faces of the glass turned to the eye, into a buffer as the meshes go
@@ -1833,9 +2009,11 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 
 VolumeRenderer::~VolumeRenderer() {
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
-                     dotProgram_, geoShadowProgram_, glassProgram_, overlayProgram_, overlayDotProgram_, overlayWideProgram_}) {
+                     dotProgram_, geoShadowProgram_, glassProgram_, overlayProgram_, overlayDotProgram_, overlayWideProgram_,
+                     impostorProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
+    if (impostorQuad_) gl_.DeleteBuffers(1, &impostorQuad_);
     for (int l = 0; l < kOverlayLayers; ++l) {
         for (int k = 0; k < 4; ++k) {
             if (overlayVao_[l][k]) gl_.DeleteVertexArrays(1, &overlayVao_[l][k]);
@@ -1857,7 +2035,7 @@ VolumeRenderer::~VolumeRenderer() {
         if (a) gl_.DeleteVertexArrays(1, &a);
     }
     for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_, geoVelocityBuffer_, shownPlaces_, shownColors_, shownVelocities_,
-                     shownIndices_, shownThrough_}) {
+                     shownIndices_, shownThrough_, shownTextures_, picturesTex_, normalMapsTex_}) {
         if (b) gl_.DeleteBuffers(1, &b);
     }
     for (GLuint t : {auxTex_[0], auxTex_[1], gAux_, plateTex_}) {
@@ -1902,6 +2080,9 @@ bool VolumeRenderer::init(std::string& log) {
     const GLuint geo = rain ? buildProgram(gl_, kGeoVertex, kGeoFragment, log) : 0;
     const GLuint dots = geo ? buildProgram(gl_, kDotVertex, kDotFragment, log) : 0;
     const GLuint geoShadow = dots ? buildProgram(gl_, kGeoShadowVertex, kGeoShadowFragment, log) : 0;
+    // Billboards are a nicety: without them, the plants' meshes far away.
+    std::string impostorLog;
+    const GLuint impostor = geoShadow ? buildProgram(gl_, kImpostorVertex, kImpostorFragment, impostorLog) : 0;
     const GLuint glass = geoShadow ? buildProgram(gl_, kGlassVertex, kGlassFragment, log) : 0;
     const GLuint overlay = glass ? buildProgram(gl_, kOverlayVertex, kOverlayFragment, log) : 0;
     const GLuint overlayDots = overlay ? buildProgram(gl_, kOverlayDotVertex, kOverlayDotFragment, log) : 0;
@@ -1928,6 +2109,8 @@ bool VolumeRenderer::init(std::string& log) {
     geoProgram_ = geo;
     dotProgram_ = dots;
     geoShadowProgram_ = geoShadow;
+    if (impostorProgram_) gl_.DeleteProgram(impostorProgram_);
+    impostorProgram_ = impostor;
     glassProgram_ = glass;
     lightingDirty_ = true;
     geoShadowDirty_ = true;
@@ -2316,6 +2499,7 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
         gl_.Uniform1f(location(geoProgram_, "u_frameTime"), passes.on ? passes.frameTime : 0.0f);
         gl_.Uniform2f(location(geoProgram_, "u_viewport"), static_cast<float>(width), static_cast<float>(height));
         gl_.Uniform3f(location(geoProgram_, "u_eye"), eye.x, eye.y, eye.z);
+        bindPictures(geoProgram_);
         seeFrom(eye);
         // The displayed geometry, then the pieces: what each is, for the masks.
         gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Geometry));
@@ -2323,12 +2507,13 @@ void VolumeRenderer::renderMeshes(int width, int height, const Vec3& eye) {
             gl_.BindVertexArray(shownVao_);
             gl_.DrawElements(TRIANGLES, shownElements_, UNSIGNED_INT, nullptr);
         }
-        drawInstances();
+        drawInstances(false);
         gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Pieces));
         if (geoVertices_ > 0) {
             gl_.BindVertexArray(geoVao_);
             gl_.DrawArrays(TRIANGLES, 0, geoVertices_);
         }
+        drawImpostors(eye);
     }
     gl_.BindVertexArray(0);
     gl_.UseProgram(0);
@@ -2417,13 +2602,14 @@ void VolumeRenderer::uploadShownMesh(bool all) {
     const sim::DisplayMesh& m = shownMesh_;
     if (!shownVao_) {
         gl_.GenVertexArrays(1, &shownVao_);
-        GLuint buffers[5] = {};
-        gl_.GenBuffers(5, buffers);
+        GLuint buffers[6] = {};
+        gl_.GenBuffers(6, buffers);
         shownPlaces_ = buffers[0];
         shownColors_ = buffers[1];
         shownVelocities_ = buffers[2];
         shownIndices_ = buffers[3];
         shownThrough_ = buffers[4];
+        shownTextures_ = buffers[5];
         all = true;
     }
     auto bytes = [](const auto& v) { return static_cast<GLsizeiptr>(v.size() * sizeof(v[0])); };
@@ -2441,6 +2627,7 @@ void VolumeRenderer::uploadShownMesh(bool all) {
         gl_.EnableVertexAttribArray(2);
         gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
         throughArray(shownThrough_, m.translucency);
+        textureArray(shownTextures_, m);
         // The triangles: bound with the vertex array, and kept by it.
         gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, shownIndices_);
         gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
@@ -2482,9 +2669,11 @@ bool VolumeRenderer::hasInstances() const {
 
 void VolumeRenderer::releaseInstanced(InstancedGpu& gpu) {
     if (gpu.vao) gl_.DeleteVertexArrays(1, &gpu.vao);
-    for (GLuint b : {gpu.places, gpu.colors, gpu.indices, gpu.placements, gpu.through}) {
+    for (GLuint b : {gpu.places, gpu.colors, gpu.indices, gpu.placements, gpu.through, gpu.textures}) {
         if (b) gl_.DeleteBuffers(1, &b);
     }
+    if (gpu.impostorVao) gl_.DeleteVertexArrays(1, &gpu.impostorVao);
+    if (gpu.atlas) gl_.DeleteTextures(1, &gpu.atlas);
     gpu = InstancedGpu();
 }
 
@@ -2527,13 +2716,14 @@ void VolumeRenderer::uploadInstances() {
                 gpu.mesher.make(made, gpu.mesh);
                 const sim::DisplayMesh& m = gpu.mesh;
                 gl_.GenVertexArrays(1, &gpu.vao);
-                GLuint buffers[5] = {};
-                gl_.GenBuffers(5, buffers);
+                GLuint buffers[6] = {};
+                gl_.GenBuffers(6, buffers);
                 gpu.places = buffers[0];
                 gpu.colors = buffers[1];
                 gpu.indices = buffers[2];
                 gpu.placements = buffers[3];
                 gpu.through = buffers[4];
+                gpu.textures = buffers[5];
                 const GLsizei six = 6 * static_cast<GLsizei>(sizeof(float)), three = 3 * static_cast<GLsizei>(sizeof(float));
                 gl_.BindVertexArray(gpu.vao);
                 gl_.BindBuffer(ARRAY_BUFFER, gpu.places);
@@ -2548,6 +2738,7 @@ void VolumeRenderer::uploadInstances() {
                 gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
                 gl_.DisableVertexAttribArray(3);  // not moving: the velocity everything without its own reads
                 throughArray(gpu.through, m.translucency);
+                textureArray(gpu.textures, m);
                 gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, gpu.indices);
                 gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
                 // Where each instance goes: three vectors of it, one set an instance.
@@ -2560,6 +2751,13 @@ void VolumeRenderer::uploadInstances() {
                 }
                 gl_.BindVertexArray(0);
                 gpu.elements = static_cast<GLsizei>(m.indices.size());
+                // The last level a billboard, its pictures of the plant in full.
+                if (level == levels - 1 && levels > 1 && impostorProgram_) {
+                    const auto full = std::find_if(kept.begin(), kept.end(), [&](const InstancedGpu& g) {
+                        return g.prototype == prototype && g.level == 0;
+                    });
+                    if (full != kept.end()) captureImpostor(gpu, *full, k);
+                }
             }
             gpu.which = k;
             gpu.levels = levels;
@@ -2574,7 +2772,7 @@ void VolumeRenderer::uploadInstances() {
 
 void VolumeRenderer::placeByDetail() {
     auto bytes = [](const auto& v) { return static_cast<GLsizeiptr>(v.size() * sizeof(v[0])); };
-    std::array<std::vector<float>, 3> parts;
+    std::array<std::vector<float>, sim::kDetailLevels> parts;
     size_t parted = static_cast<size_t>(-1);
     for (InstancedGpu& gpu : instanced_) {
         const std::vector<float>& all = instances_.placements[gpu.which];
@@ -2611,14 +2809,128 @@ void VolumeRenderer::seeFrom(const Vec3& eye) {
     if (std::any_of(instanced_.begin(), instanced_.end(), [](const InstancedGpu& g) { return g.levels > 1; })) placeByDetail();
 }
 
-void VolumeRenderer::drawInstances() {
+void VolumeRenderer::drawInstances(bool shadow) {
     gl_.VertexAttrib3f(3, 0.0f, 0.0f, 0.0f);
     for (const InstancedGpu& gpu : instanced_) {
         if (gpu.instances == 0 || gpu.elements == 0) continue;
+        if (!shadow && gpu.atlas && impostorProgram_) continue;  // a billboard: drawImpostors
         gl_.BindVertexArray(gpu.vao);
         gl_.DrawElementsInstanced(TRIANGLES, gpu.elements, UNSIGNED_INT, nullptr, gpu.instances);
     }
     gl_.BindVertexArray(0);
+}
+
+void VolumeRenderer::captureImpostor(InstancedGpu& gpu, const InstancedGpu& full, size_t which) {
+    const int texels = kImpostorTexels, views = kImpostorViews;
+    const Vec3 center = instances_.centers[which];
+    const float radius = std::max(instances_.radii[which], 1e-4f);
+    gl_.GenTextures(1, &gpu.atlas);
+    gl_.BindTexture(TEXTURE_2D, gpu.atlas);
+    gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), texels * views, texels, 0, RGBA, FLOAT, nullptr);
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, NEAREST);
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, NEAREST);
+    gl_.BindTexture(TEXTURE_2D, 0);
+    GLuint fbo = 0, depth = 0;
+    gl_.GenRenderbuffers(1, &depth);
+    gl_.BindRenderbuffer(RENDERBUFFER, depth);
+    gl_.RenderbufferStorage(RENDERBUFFER, DEPTH_COMPONENT24, texels * views, texels);
+    gl_.BindRenderbuffer(RENDERBUFFER, 0);
+    gl_.GenFramebuffers(1, &fbo);
+    gl_.BindFramebuffer(FRAMEBUFFER, fbo);
+    gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, gpu.atlas, 0);
+    gl_.FramebufferRenderbuffer(FRAMEBUFFER, DEPTH_ATTACHMENT, RENDERBUFFER, depth);
+    const GLenum one = COLOR_ATTACHMENT0;
+    gl_.DrawBuffers(1, &one);
+    const bool complete = gl_.CheckFramebufferStatus(FRAMEBUFFER) == FRAMEBUFFER_COMPLETE;
+    if (complete) {
+        gl_.Viewport(0, 0, texels * views, texels);
+        gl_.ClearColor(0.0f, 0.0f, 0.0f, -1.0f);  // w < 0: nothing there
+        gl_.Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
+        gl_.Enable(DEPTH_TEST);
+        gl_.DepthFunc(LESS);
+        gl_.DepthMask(1);
+        gl_.Disable(BLEND);
+        gl_.Disable(CULL_FACE);
+        gl_.UseProgram(geoProgram_);
+        placeUninstanced();
+        bindPictures(geoProgram_);
+        gl_.Uniform1f(location(geoProgram_, "u_frameTime"), 0.0f);
+        gl_.Uniform2f(location(geoProgram_, "u_viewport"), static_cast<float>(texels), static_cast<float>(texels));
+        gl_.Uniform1f(location(geoProgram_, "u_class"), static_cast<float>(Surface::Geometry));
+        gl_.BindVertexArray(full.vao);
+        // The plant as it is, not placed as its copies are.
+        for (GLuint a = 4; a < 7; ++a) gl_.DisableVertexAttribArray(a);
+        for (int k = 0; k < views; ++k) {
+            // From the side at k eighths round, square on, the box filling it.
+            const float angle = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(views);
+            const Vec3 side(std::sin(angle), 0.0f, std::cos(angle));
+            const Vec3 eye = center + side * (3.0f * radius);
+            const Mat4 view = glm::lookAt(eye, center, Vec3(0.0f, 1.0f, 0.0f));
+            const Mat4 proj = glm::ortho(-radius, radius, -radius, radius, 0.5f * radius, 5.0f * radius);
+            const Mat4 viewProj = proj * view;
+            gl_.Viewport(k * texels, 0, texels, texels);
+            gl_.UniformMatrix4fv(location(geoProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProj));
+            gl_.UniformMatrix4fv(location(geoProgram_, "u_nextViewProj"), 1, 0, glm::value_ptr(viewProj));
+            gl_.Uniform3f(location(geoProgram_, "u_eye"), eye.x, eye.y, eye.z);
+            gl_.DrawElements(TRIANGLES, full.elements, UNSIGNED_INT, nullptr);
+        }
+        for (GLuint a = 4; a < 7; ++a) gl_.EnableVertexAttribArray(a);
+        gl_.BindVertexArray(0);
+        // Its card: a square, and where its copies are.
+        if (!impostorQuad_) {
+            const float corners[12] = {-1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
+            gl_.GenBuffers(1, &impostorQuad_);
+            gl_.BindBuffer(ARRAY_BUFFER, impostorQuad_);
+            gl_.BufferData(ARRAY_BUFFER, sizeof corners, corners, STATIC_DRAW);
+        }
+        gl_.GenVertexArrays(1, &gpu.impostorVao);
+        gl_.BindVertexArray(gpu.impostorVao);
+        gl_.BindBuffer(ARRAY_BUFFER, impostorQuad_);
+        gl_.EnableVertexAttribArray(0);
+        gl_.VertexAttribPointer(0, 2, FLOAT, 0, 2 * static_cast<GLsizei>(sizeof(float)), nullptr);
+        gl_.BindBuffer(ARRAY_BUFFER, gpu.placements);
+        const GLsizei stride = static_cast<GLsizei>(sim::DisplayInstances::kFloats * sizeof(float));
+        for (GLuint a = 0; a < 3; ++a) {
+            gl_.EnableVertexAttribArray(4 + a);
+            gl_.VertexAttribPointer(4 + a, 4, FLOAT, 0, stride, reinterpret_cast<const void*>(size_t{a} * 4 * sizeof(float)));
+            gl_.VertexAttribDivisor(4 + a, 1);
+        }
+        gl_.BindVertexArray(0);
+        gl_.BindBuffer(ARRAY_BUFFER, 0);
+    } else {
+        gl_.DeleteTextures(1, &gpu.atlas);
+        gpu.atlas = 0;
+    }
+    gl_.BindFramebuffer(FRAMEBUFFER, 0);
+    gl_.DeleteFramebuffers(1, &fbo);
+    gl_.DeleteRenderbuffers(1, &depth);
+}
+
+void VolumeRenderer::drawImpostors(const Vec3& eye) {
+    if (!impostorProgram_) return;
+    bool any = false;
+    for (const InstancedGpu& gpu : instanced_) any = any || (gpu.atlas && gpu.instances > 0);
+    if (!any) return;
+    gl_.UseProgram(impostorProgram_);
+    gl_.UniformMatrix4fv(location(impostorProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
+    gl_.Uniform3f(location(impostorProgram_, "u_eye"), eye.x, eye.y, eye.z);
+    gl_.Uniform1i(location(impostorProgram_, "u_views"), kImpostorViews);
+    gl_.Uniform1i(location(impostorProgram_, "u_texels"), kImpostorTexels);
+    gl_.Uniform1f(location(impostorProgram_, "u_class"), static_cast<float>(Surface::Geometry));
+    gl_.Uniform1i(location(impostorProgram_, "u_atlas"), 13);
+    gl_.ActiveTexture(TEXTURE0 + 13);
+    for (const InstancedGpu& gpu : instanced_) {
+        if (!gpu.atlas || gpu.instances == 0) continue;
+        const Vec3& c = instances_.centers[gpu.which];
+        gl_.Uniform3f(location(impostorProgram_, "u_center"), c.x, c.y, c.z);
+        gl_.Uniform1f(location(impostorProgram_, "u_radius"), instances_.radii[gpu.which]);
+        gl_.BindTexture(TEXTURE_2D, gpu.atlas);
+        gl_.BindVertexArray(gpu.impostorVao);
+        gl_.DrawArraysInstanced(TRIANGLES, 0, 6, gpu.instances);
+    }
+    gl_.BindVertexArray(0);
+    gl_.BindTexture(TEXTURE_2D, 0);
+    gl_.ActiveTexture(TEXTURE0);
 }
 
 void VolumeRenderer::placeUninstanced() {
@@ -2626,6 +2938,148 @@ void VolumeRenderer::placeUninstanced() {
     gl_.VertexAttrib4f(5, 0.0f, 0.0f, 0.0f, 1.0f);  // not turned
     gl_.VertexAttrib4f(6, 1.0f, 1.0f, 1.0f, 1.0f);  // its own colour
     gl_.VertexAttrib1f(7, 0.0f);                    // letting no light through, unless it says
+    gl_.VertexAttrib4f(8, 0.0f, 0.0f, 0.0f, 0.0f);  // no pictures, unless it has
+    gl_.VertexAttrib1f(9, -1.0f);
+}
+
+void VolumeRenderer::textureArray(GLuint buffer, const sim::DisplayMesh& mesh) {
+    if (mesh.textures.empty()) {
+        gl_.DisableVertexAttribArray(8);
+        gl_.DisableVertexAttribArray(9);
+        return;
+    }
+    // Its pictures' layers in place of its own numbers for them.
+    std::vector<int> layer(mesh.pictures.size());
+    for (size_t i = 0; i < layer.size(); ++i) layer[i] = layerOf(mesh.pictures[i]);
+    std::vector<float> data = mesh.textures;
+    for (size_t v = 4; v < data.size(); v += 5) {
+        const int own = static_cast<int>(data[v]);
+        data[v] = own >= 0 && static_cast<size_t>(own) < layer.size() ? static_cast<float>(layer[static_cast<size_t>(own)]) : -1.0f;
+    }
+    gl_.BindBuffer(ARRAY_BUFFER, buffer);
+    gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data(), STATIC_DRAW);
+    const GLsizei five = 5 * static_cast<GLsizei>(sizeof(float));
+    gl_.EnableVertexAttribArray(8);
+    gl_.VertexAttribPointer(8, 4, FLOAT, 0, five, nullptr);
+    gl_.EnableVertexAttribArray(9);
+    gl_.VertexAttribPointer(9, 1, FLOAT, 0, five, reinterpret_cast<const void*>(4 * sizeof(float)));
+}
+
+namespace {
+
+/// A picture file's pixels, kPictureSize square -- each the average of the
+/// file's under it, read between them -- as bytes: as shown (sRGB) or as
+/// they are. Empty when it cannot be read.
+std::vector<float> squarePicture(const std::string& file, int size) {
+    io::Picture picture;
+    std::string error;
+    if (file.empty() || !io::readPicture(file, picture, error) || picture.empty()) return {};
+    std::vector<float> out(static_cast<size_t>(size) * size * 4);
+    // A few samples a pixel: enough for a picture no more than 4 times as large.
+    const int taps = std::clamp((std::max(picture.width, picture.height) + size - 1) / size, 1, 4);
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            float sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            for (int j = 0; j < taps; ++j) {
+                for (int i = 0; i < taps; ++i) {
+                    const int px = std::min(static_cast<int>((x + (i + 0.5f) / taps) * picture.width / size), picture.width - 1);
+                    const int py = std::min(static_cast<int>((y + (j + 0.5f) / taps) * picture.height / size), picture.height - 1);
+                    const float* p = picture.pixel(px, py);
+                    for (int c = 0; c < 4; ++c) sum[c] += c < 3 && picture.linear ? io::linearToSrgb(p[c]) : p[c];
+                }
+            }
+            float* o = &out[(static_cast<size_t>(y) * size + x) * 4];
+            for (int c = 0; c < 4; ++c) o[c] = sum[c] / static_cast<float>(taps * taps);
+        }
+    }
+    return out;
+}
+
+uint8_t byteOf(float v) { return static_cast<uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); }
+
+}  // namespace
+
+int VolumeRenderer::layerOf(const sim::DisplayPicture& picture) {
+    const auto known = std::find(layers_.begin(), layers_.end(), picture);
+    if (known != layers_.end()) return static_cast<int>(known - layers_.begin());
+    if (static_cast<int>(layers_.size()) >= kPictureLayers) return -1;
+    const int size = kPictureSize;
+    const size_t pixels = static_cast<size_t>(size) * size;
+    // Its colour, the alpha its own or its grey's; its normal map, the
+    // green as OpenGL has it -- or flat.
+    const std::vector<float> color = squarePicture(picture.color, size);
+    if (color.empty()) return -1;
+    std::vector<float> alpha;
+    if (!picture.alpha.empty() && !(picture.alphaChannel && picture.alpha == picture.color)) {
+        alpha = squarePicture(picture.alpha, size);
+    }
+    const std::vector<float> normal = squarePicture(picture.normal, size);
+    std::vector<uint8_t> rgba(pixels * 4), nrm(pixels * 4);
+    for (size_t i = 0; i < pixels; ++i) {
+        for (int c = 0; c < 3; ++c) rgba[i * 4 + c] = byteOf(color[i * 4 + c]);
+        float a = 1.0f;
+        if (!picture.alpha.empty()) {
+            a = alpha.empty() ? color[i * 4 + 3] : (alpha[i * 4] + alpha[i * 4 + 1] + alpha[i * 4 + 2]) / 3.0f;
+        }
+        rgba[i * 4 + 3] = byteOf(a);
+        if (normal.empty()) {
+            nrm[i * 4] = nrm[i * 4 + 1] = 128;
+            nrm[i * 4 + 2] = 255;
+        } else {
+            nrm[i * 4] = byteOf(normal[i * 4]);
+            nrm[i * 4 + 1] = byteOf(picture.normalDirectX ? 1.0f - normal[i * 4 + 1] : normal[i * 4 + 1]);
+            nrm[i * 4 + 2] = byteOf(normal[i * 4 + 2]);
+        }
+        nrm[i * 4 + 3] = 255;
+    }
+    layers_.push_back(picture);
+    layerColors_.push_back(std::move(rgba));
+    layerNormals_.push_back(std::move(nrm));
+    return static_cast<int>(layers_.size()) - 1;
+}
+
+void VolumeRenderer::bindPictures(GLuint program) {
+    const int count = static_cast<int>(layers_.size());
+    if (count > picturesMade_) {
+        // Grown: made again, every layer, with its smaller copies.
+        const int size = kPictureSize;
+        if (!picturesTex_) gl_.GenTextures(1, &picturesTex_);
+        if (!normalMapsTex_) gl_.GenTextures(1, &normalMapsTex_);
+        gl_.PixelStorei(UNPACK_ALIGNMENT, 1);
+        for (int which = 0; which < 2; ++which) {
+            gl_.BindTexture(TEXTURE_2D_ARRAY, which == 0 ? picturesTex_ : normalMapsTex_);
+            gl_.TexImage3D(TEXTURE_2D_ARRAY, 0, static_cast<GLint>(which == 0 ? SRGB8_ALPHA8 : RGBA8), size, size, count, 0,
+                           RGBA, UNSIGNED_BYTE, nullptr);
+            for (int l = 0; l < count; ++l) {
+                const auto& bytes = which == 0 ? layerColors_[static_cast<size_t>(l)] : layerNormals_[static_cast<size_t>(l)];
+                gl_.TexSubImage3D(TEXTURE_2D_ARRAY, 0, 0, 0, l, size, size, 1, RGBA, UNSIGNED_BYTE, bytes.data());
+            }
+            gl_.GenerateMipmap(TEXTURE_2D_ARRAY);
+            gl_.TexParameteri(TEXTURE_2D_ARRAY, TEXTURE_MIN_FILTER, LINEAR_MIPMAP_LINEAR);
+            gl_.TexParameteri(TEXTURE_2D_ARRAY, TEXTURE_MAG_FILTER, LINEAR);
+            gl_.TexParameteri(TEXTURE_2D_ARRAY, TEXTURE_WRAP_S, REPEAT);
+            gl_.TexParameteri(TEXTURE_2D_ARRAY, TEXTURE_WRAP_T, REPEAT);
+        }
+        gl_.BindTexture(TEXTURE_2D_ARRAY, 0);
+        picturesMade_ = count;
+    }
+    gl_.ActiveTexture(TEXTURE0 + 15);
+    gl_.BindTexture(TEXTURE_2D_ARRAY, count > 0 ? picturesTex_ : 0);
+    gl_.ActiveTexture(TEXTURE0 + 14);
+    gl_.BindTexture(TEXTURE_2D_ARRAY, count > 0 ? normalMapsTex_ : 0);
+    gl_.ActiveTexture(TEXTURE0);
+    gl_.Uniform1i(location(program, "u_pictures"), 15);
+    gl_.Uniform1i(location(program, "u_normalMaps"), 14);
+    std::array<float, 4 * kPictureLayers> looks{};
+    for (int l = 0; l < count; ++l) {
+        const sim::DisplayPicture& p = layers_[static_cast<size_t>(l)];
+        const int has = (p.tint ? 1 : 0) | (p.normal.empty() ? 0 : 2) | (p.alpha.empty() ? 0 : 4);
+        looks[static_cast<size_t>(l) * 4] = p.mean.x;
+        looks[static_cast<size_t>(l) * 4 + 1] = p.mean.y;
+        looks[static_cast<size_t>(l) * 4 + 2] = p.mean.z;
+        looks[static_cast<size_t>(l) * 4 + 3] = static_cast<float>(has);
+    }
+    gl_.Uniform4fv(location(program, "u_pictureLook"), kPictureLayers, looks.data());
 }
 
 void VolumeRenderer::throughArray(GLuint buffer, const std::vector<float>& translucency) {
@@ -2791,12 +3245,13 @@ void VolumeRenderer::updateGeoShadow(const Vec3& light) {
     gl_.Disable(CULL_FACE);
     gl_.UseProgram(geoShadowProgram_);
     gl_.UniformMatrix4fv(location(geoShadowProgram_, "u_lightViewProj"), 1, 0, glm::value_ptr(lightViewProj_));
+    bindPictures(geoShadowProgram_);
     placeUninstanced();
     if (shownElements_ > 0) {
         gl_.BindVertexArray(shownVao_);
         gl_.DrawElements(TRIANGLES, shownElements_, UNSIGNED_INT, nullptr);
     }
-    drawInstances();
+    drawInstances(true);
     if (geoVertices_ > 0) {
         gl_.BindVertexArray(geoVao_);
         gl_.DrawArrays(TRIANGLES, 0, geoVertices_);

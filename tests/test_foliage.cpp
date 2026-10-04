@@ -433,17 +433,32 @@ TEST(foliage_far_plants_are_thinned_and_drawn_by_how_big_they_look) {
     for (const Vec3& p : thin.positions()) thinTallest = std::max(thinTallest, p.y);
     CHECK(thinTallest <= tallest + 1e-5f);
 
-    // Copies by how big they look: a metre across, 10, 30, 200, 2000 and 5 m
-    // away -- in full, a third, an eighth, none, in full.
+    // Copies by how big they look: a metre across, 10, 30, 200, 2000, 5 and
+    // 100 m away -- in full, a third, a billboard, none, in full, and half
+    // the pixels an eighth, the other half a billboard.
     std::vector<float> placements;
-    for (const float z : {10.0f, 30.0f, 200.0f, 2000.0f, 5.0f}) {
+    for (const float z : {10.0f, 30.0f, 200.0f, 2000.0f, 5.0f, 100.0f}) {
         placements.insert(placements.end(), {0.0f, 0.0f, -z, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     }
     const auto parts = sim::placementsByDetail(placements, Vec3(0.0f, 0.5f, 0.0f), 0.5f, Vec3(0.0f));
     constexpr size_t n = sim::DisplayInstances::kFloats;
     CHECK(parts[0].size() == 2 * n && parts[0][2] == -10.0f && parts[0][n + 2] == -5.0f);
-    CHECK(parts[1].size() == n && parts[1][2] == -30.0f);
-    CHECK(parts[2].size() == n && parts[2][2] == -200.0f);
+    CHECK(parts[0][n - 1] == 1.0f && parts[0][2 * n - 1] == 1.0f);
+    CHECK(parts[1].size() == n && parts[1][2] == -30.0f && parts[1][n - 1] == 1.0f);
+    CHECK(parts[2].size() == n && parts[2][2] == -100.0f && std::fabs(parts[2][n - 1] - 0.5f) < 1e-4f);
+    CHECK(parts[3].size() == 2 * n && parts[3][2] == -200.0f && parts[3][n - 1] == 1.0f && parts[3][n + 2] == -100.0f &&
+          std::fabs(parts[3][2 * n - 1] - 1.5f) < 1e-4f);
+    // Fading: as a copy goes off, its share of the nearer level falls as
+    // that of the farther rises -- together all of its pixels.
+    for (float z = 8.0f; z < 270.0f; z *= 1.07f) {  // short of where they fade out altogether
+        const std::vector<float> one = {0.0f, 0.0f, -z, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+        const auto at = sim::placementsByDetail(one, Vec3(0.0f, 0.5f, 0.0f), 0.5f, Vec3(0.0f));
+        float share = 0.0f;
+        for (const auto& level : at) {
+            for (size_t i = n - 1; i < level.size(); i += n) share += level[i] <= 1.0f ? level[i] : 2.0f - level[i];
+        }
+        CHECK(std::fabs(share - 1.0f) < 1e-4f);
+    }
 
     // The meadow from 50 m off its edge, as the viewport draws it: so many
     // fewer triangles.
@@ -460,7 +475,8 @@ TEST(foliage_far_plants_are_thinned_and_drawn_by_how_big_they_look) {
     for (size_t k = 0; k < inst.prototypes.size(); ++k) {
         const GeometryPtr& proto = inst.prototypes[k];
         const size_t count = inst.placements[k].size() / n;
-        std::array<size_t, 3> triangles{};
+        // The billboard two triangles a copy.
+        std::array<size_t, sim::kDetailLevels> triangles{0, 0, 0, 2};
         for (size_t level = 0; level < 3; ++level) {
             sim::DisplayMesher mesher;
             sim::DisplayMesh mesh;
@@ -469,16 +485,67 @@ TEST(foliage_far_plants_are_thinned_and_drawn_by_how_big_they_look) {
         }
         const auto byDetail = sim::placementsByDetail(inst.placements[k], inst.centers[k], inst.radii[k], eye);
         full += static_cast<double>(count * triangles[0]);
-        size_t placed = 0;
-        for (size_t level = 0; level < 3; ++level) {
+        for (size_t level = 0; level < sim::kDetailLevels; ++level) {
             drawn += static_cast<double>(byDetail[level].size() / n * triangles[level]);
             copies[level] += byDetail[level].size() / n;
-            placed += byDetail[level].size() / n;
         }
-        copies[3] += count - placed;
     }
     std::printf("  the meadow from 50 m: %.1f million triangles in full, %.1f million drawn (%.0f %%); copies in full %zu, "
-                "a third %zu, an eighth %zu, none %zu\n",
+                "a third %zu, an eighth %zu, billboards %zu (fading ones twice)\n",
                 full * 1e-6, drawn * 1e-6, 100.0 * drawn / full, copies[0], copies[1], copies[2], copies[3]);
     CHECK(drawn < 0.6 * full);
+}
+
+TEST(foliage_the_viewport_lays_pictures_on_as_the_renderers_do) {
+    // A tree: its bark and its leaves, by uv -- the leaves cut out.
+    TreeSettings ts;
+    ts.levels = 1;
+    auto tree = std::make_shared<Geometry>();
+    meshTree(growTree(ts, Vec3(), 1.0f, 3), ts, 0, *tree);
+    sim::DisplayMesher mesher;
+    sim::DisplayMesh mesh;
+    mesher.make(tree, mesh);
+    CHECK_EQ(mesh.pictures.size(), 2u);
+    CHECK_EQ(mesh.textures.size(), 5 * mesh.vertexCount());
+    bool barkPicture = false, leafPicture = false;
+    for (const sim::DisplayPicture& p : mesh.pictures) {
+        if (p.color.find("bark") != std::string::npos) barkPicture = p.alpha.empty() && !p.normal.empty();
+        if (p.color.find("leaf") != std::string::npos) leafPicture = !p.alpha.empty() && p.alphaChannel;
+    }
+    CHECK(barkPicture && leafPicture);
+    for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+        CHECK(mesh.textures[5 * v + 4] >= 0.0f);  // every face pictured
+        CHECK(mesh.textures[5 * v + 3] == 0.0f);  // by uv
+    }
+    // As the renderers have it, a vertex's uv its corner's: the leaves' in
+    // the top half of the leaf picture.
+    for (size_t v = 0; v < mesh.vertexCount(); ++v) {
+        if (mesh.translucency[v] > 0.0f) CHECK(mesh.textures[5 * v + 1] >= 0.5f - 1e-6f);
+    }
+
+    // A box of concrete, no uv, no Cd: from three sides, the library's
+    // picture three metres across -- and the colour the renderers give
+    // concrete, not the viewport's grey.
+    auto box = std::make_shared<Geometry>();
+    box->addPoints(3);
+    auto P = box->positionsForWrite();
+    P[1] = Vec3(1.0f, 0.0f, 0.0f);
+    P[2] = Vec3(0.0f, 1.0f, 0.0f);
+    const uint32_t tri[3] = {0, 1, 2};
+    box->addPrimitive(tri, true);
+    setPrimitiveString(*box, "material", "concrete");
+    sim::DisplayMesher boxMesher;
+    sim::DisplayMesh boxMesh;
+    boxMesher.make(box, boxMesh);
+    CHECK_EQ(boxMesh.pictures.size(), 1u);
+    CHECK(boxMesh.textures.size() == 15 && boxMesh.textures[3] == 3.0f && boxMesh.textures[4] == 0.0f);
+    CHECK(boxMesh.textures[5] == 1.0f && boxMesh.textures[6] == 0.0f);  // the second corner's place
+    const Vec3 concrete = render::presetSurface(MaterialPreset::Concrete).color;
+    CHECK(boxMesh.colors[0] == concrete.x && boxMesh.colors[1] == concrete.y && boxMesh.colors[2] == concrete.z);
+    // A leaf without uv: no picture -- it is drawn for uv alone.
+    setPrimitiveString(*box, "material", "leaf");
+    sim::DisplayMesher leafMesher;
+    sim::DisplayMesh leafMesh;
+    leafMesher.make(box, leafMesh);
+    CHECK(leafMesh.pictures.empty() && leafMesh.textures.empty());
 }

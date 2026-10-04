@@ -60,6 +60,7 @@ inline constexpr GLenum RGBA32F = 0x8814, TEXTURE2 = 0x84C2, TEXTURE3 = 0x84C3, 
 inline constexpr GLenum RG8 = 0x822B, TEXTURE8 = 0x84C8, TEXTURE9 = 0x84C9, TEXTURE10 = 0x84CA;
 inline constexpr GLenum RGBA16F = 0x881A, COLOR_ATTACHMENT1 = 0x8CE1, COLOR_ATTACHMENT2 = 0x8CE2;
 inline constexpr GLenum READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9;
+inline constexpr GLenum TEXTURE_2D_ARRAY = 0x8C1A, SRGB8_ALPHA8 = 0x8C43;
 
 // name, return type, parameters -- one list drives the struct and the loader.
 #define PG_GL_FUNCTIONS(X)                                                                         \
@@ -119,6 +120,7 @@ inline constexpr GLenum READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9;
     X(VertexAttribDivisor, void, (GLuint, GLuint))                                                 \
     X(DrawElements, void, (GLenum, GLsizei, GLenum, const void*))                                  \
     X(DrawElementsInstanced, void, (GLenum, GLsizei, GLenum, const void*, GLsizei))                \
+    X(DrawArraysInstanced, void, (GLenum, GLint, GLsizei, GLsizei))                                \
     X(DrawArrays, void, (GLenum, GLint, GLsizei))                                                  \
     X(GenTextures, void, (GLsizei, GLuint*))                                                       \
     X(BindTexture, void, (GLenum, GLuint))                                                         \

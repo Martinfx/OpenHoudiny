@@ -2,9 +2,13 @@
 
 #include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
+#include "pg/render/Scene.h"
+#include "pg/render/Textures.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <map>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -143,6 +147,79 @@ struct Colors {
         Vec3 c;
         if (colorAt(vertex, corner, c) || colorAt(point, p, c) || colorAt(primitive, prim, c)) return c;
         return detail;
+    }
+};
+
+/// What each primitive is made of, as the renderers have it (render/
+/// Scene.cpp meshOf): its material's colour where the geometry has no Cd,
+/// and the pictures laid on it -- its own texture, else its material's in
+/// the library -- by uv or from three sides.
+struct Looks {
+    std::vector<int32_t> picture;  // into `pictures`, -1 none: each primitive's
+    std::vector<float> how;        // 0 by uv, else metres a picture from three sides (below 0 along the face)
+    std::vector<Vec3> color;       // its material's colour, where the geometry has no Cd; else empty
+    std::vector<DisplayPicture> pictures;
+
+    Looks(const Geometry& geo, bool hasUv) {
+        const size_t prims = geo.primitiveCount();
+        const AttributeArray* named = geo.primitives().find("material");
+        if (named && named->type() != AttrType::String) named = nullptr;
+        const AttributeArray* own = geo.primitives().find("texture");
+        if (own && own->type() != AttrType::String) own = nullptr;
+        if (!named && !own) return;
+        auto intOf = [&](const char* name) {
+            const AttributeArray* a = geo.primitives().find(name);
+            return a && a->type() == AttrType::Int ? a->read<int32_t>() : std::span<const int32_t>();
+        };
+        auto floatOf = [&](const char* name) {
+            const AttributeArray* a = geo.primitives().find(name);
+            return a && a->type() == AttrType::Float ? a->read<float>() : std::span<const float>();
+        };
+        const auto projection = intOf("texture_projection"), tints = intOf("texture_tint");
+        const auto sizes = floatOf("texture_size");
+        const bool colored = geo.vertices().find("Cd") || geo.points().find("Cd") || geo.primitives().find("Cd") ||
+                             geo.detail().find("Cd");
+        const std::string library = render::textureLibrary();
+        picture.assign(prims, -1);
+        how.assign(prims, 0.0f);
+        if (!colored && named) color.assign(prims, Vec3(-1.0f));
+        // Each kind once: its preset, texture, projection, size and tint.
+        std::map<std::tuple<MaterialPreset, int32_t, int32_t, float, int32_t>, std::pair<int32_t, float>> known;
+        for (size_t i = 0; i < prims; ++i) {
+            MaterialPreset preset = MaterialPreset::None;
+            if (named && i < named->size()) preset = materialPreset(named->stringValue(named->read<int32_t>()[i]));
+            if (!color.empty() && preset != MaterialPreset::None) color[i] = render::presetSurface(preset).color;
+            const int32_t texture = own && i < own->size() ? own->read<int32_t>()[i] : -1;
+            const int32_t proj = i < projection.size() ? projection[i] : 0;
+            const float size = i < sizes.size() ? sizes[i] : 0.0f;
+            const int32_t tint = i < tints.size() ? tints[i] : -1;
+            const auto key = std::make_tuple(preset, texture, proj, size, tint);
+            auto it = known.find(key);
+            if (it == known.end()) {
+                const std::string& file = texture >= 0 ? own->stringValue(texture) : std::string();
+                render::TextureSet set = !file.empty() ? render::textureSet(file) : render::presetTextureSet(library, preset);
+                const bool byUv = hasUv && (proj == 1 || (proj == 0 && (!file.empty() || laidByUv(preset))));
+                std::pair<int32_t, float> made{-1, 0.0f};
+                if (set.valid() && !(set.onlyByUv && !byUv)) {
+                    DisplayPicture pic;
+                    pic.color = set.color;
+                    pic.alpha = byUv ? set.alpha : std::string();
+                    pic.alphaChannel = set.alphaChannel;
+                    pic.normal = byUv ? set.normal : std::string();
+                    pic.normalDirectX = set.normalDirectX;
+                    pic.tint = tint >= 0 ? tint != 0 : set.tint;
+                    pic.mean = set.mean;
+                    auto at = std::find(pictures.begin(), pictures.end(), pic);
+                    if (at == pictures.end()) at = pictures.insert(pictures.end(), pic);
+                    const float metres = size > 0.0f ? size : set.size;
+                    made = {static_cast<int32_t>(at - pictures.begin()), byUv ? 0.0f : set.alongFace ? -metres : metres};
+                }
+                it = known.emplace(key, made).first;
+            }
+            picture[i] = it->second.first;
+            how[i] = it->second.second;
+        }
+        if (pictures.empty()) picture.clear();
     }
 };
 
@@ -459,6 +536,11 @@ bool DisplayMesher::sameMaking(const Geometry& geo) const {
            identity(geo.primitives().find("Cd")) == identity(was.primitives().find("Cd")) &&
            identity(geo.detail().find("Cd")) == identity(was.detail().find("Cd")) &&
            identity(geo.primitives().find("glass")) == identity(was.primitives().find("glass")) &&
+           identity(geo.primitives().find("material")) == identity(was.primitives().find("material")) &&
+           identity(geo.primitives().find("texture")) == identity(was.primitives().find("texture")) &&
+           identity(geo.primitives().find("translucency")) == identity(was.primitives().find("translucency")) &&
+           identity(geo.vertices().find("uv")) == identity(was.vertices().find("uv")) &&
+           identity(geo.points().find("uv")) == identity(was.points().find("uv")) &&
            (usableNormals(geo) != nullptr) == pointNormals_ && (pointVectors(geo, "v") != nullptr) == moving_ &&
            geo.volumes().empty() == was.volumes().empty() &&
            identity(geo.points().find("instance")) == identity(was.points().find("instance")) &&
@@ -482,6 +564,21 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     const AttributeArray* through = geo.primitives().find("translucency");
     if (through && through->type() != AttrType::Float) through = nullptr;
     const auto throughOf = through ? through->read<float>() : std::span<const float>();
+    // Texture coordinates -- the corners', else the points' -- and where
+    // the points were before they moved.
+    auto uvOf = [](const AttributeArray* a) {
+        return a && (a->type() == AttrType::Vec2 || a->type() == AttrType::Vec3) ? a : nullptr;
+    };
+    const AttributeArray* vertexUv = uvOf(geo.vertices().find("uv"));
+    const AttributeArray* pointUv = vertexUv ? nullptr : uvOf(geo.points().find("uv"));
+    auto uvAt = [&](const AttributeArray& a, size_t i) {
+        return a.type() == AttrType::Vec2 ? a.read<Vec2>()[i] : Vec2(a.read<Vec3>()[i]);
+    };
+    const AttributeArray* restAttr = geo.points().find("rest");
+    const auto rest = restAttr && restAttr->type() == AttrType::Vec3 ? restAttr->read<Vec3>() : std::span<const Vec3>();
+    Looks looks(geo, vertexUv || pointUv);
+    mesh.pictures = looks.pictures;
+    const bool pictured = !looks.picture.empty();
     pointNormals_ = N != nullptr;
     moving_ = v != nullptr;
     rest_ = !geo.volumes().empty();
@@ -550,18 +647,34 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     mesh.colors.reserve(points * 3);
     if (moving_) mesh.velocities.reserve(points * 3);
     if (through) mesh.translucency.reserve(points);
+    if (pictured) mesh.textures.reserve(points * 5);
     mesh.indices.resize(count);
     for (size_t k = 0; k < count; ++k) {
         const uint32_t t = drawn_[k / 3];
         const uint32_t p = tris_[t][k % 3];
         const Vec3 n = pointNormals_ ? pointN[p] : normal[k];
-        const Vec3 c = colors.at(owner[t], corners[t][k % 3], p);
+        const uint32_t corner = corners[t][k % 3];
+        Vec3 c = colors.at(owner[t], corner, p);
+        if (!looks.color.empty() && looks.color[owner[t]].x >= 0.0f) c = looks.color[owner[t]];
         const float lets = through ? std::clamp(throughOf[owner[t]], 0.0f, 1.0f) : 0.0f;
+        std::array<float, 5> tex{0.0f, 0.0f, 0.0f, 0.0f, -1.0f};
+        if (pictured && looks.picture[owner[t]] >= 0) {
+            const float how = looks.how[owner[t]];
+            if (how == 0.0f) {
+                const Vec2 uv = vertexUv ? uvAt(*vertexUv, corner) : uvAt(*pointUv, p);
+                tex = {uv.x, uv.y, 0.0f, 0.0f, 0.0f};
+            } else {
+                const Vec3 at = rest.empty() ? P[p] : rest[p];
+                tex = {at.x, at.y, at.z, how, 0.0f};
+            }
+            tex[4] = static_cast<float>(looks.picture[owner[t]]);
+        }
         int32_t found = -1, last = -1;
         for (int32_t w = firstVertex[p]; w >= 0; w = nextVertex[static_cast<size_t>(w)]) {
             const size_t at = static_cast<size_t>(w);
             if (sameBits(&mesh.places[at * 6 + 3], n) && sameBits(&mesh.colors[at * 3], c) &&
-                (!through || mesh.translucency[at] == lets)) {
+                (!through || mesh.translucency[at] == lets) &&
+                (!pictured || std::memcmp(&mesh.textures[at * 5], tex.data(), sizeof tex) == 0)) {
                 found = w;
                 break;
             }
@@ -578,6 +691,7 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
             mesh.places.insert(mesh.places.end(), {at.x, at.y, at.z, n.x, n.y, n.z});
             mesh.colors.insert(mesh.colors.end(), {c.x, c.y, c.z});
             if (through) mesh.translucency.push_back(lets);
+            if (pictured) mesh.textures.insert(mesh.textures.end(), tex.begin(), tex.end());
             if (moving_) mesh.velocities.insert(mesh.velocities.end(), {pointV[p].x, pointV[p].y, pointV[p].z});
             growMesh(mesh, at);
         }
@@ -692,19 +806,31 @@ DisplayInstances instancesOf(const Geometry& geo) {
     return out;
 }
 
-std::array<std::vector<float>, 3> placementsByDetail(std::span<const float> placements, const Vec3& center, float radius,
-                                                     const Vec3& eye) {
-    std::array<std::vector<float>, 3> out;
+std::array<std::vector<float>, kDetailLevels> placementsByDetail(std::span<const float> placements, const Vec3& center,
+                                                                 float radius, const Vec3& eye) {
+    std::array<std::vector<float>, kDetailLevels> out;
     constexpr size_t n = DisplayInstances::kFloats;
+    auto add = [&](size_t level, const float* o, float fade) {
+        out[level].insert(out[level].end(), o, o + n);
+        out[level].back() = fade;
+    };
     for (size_t i = 0; i + n <= placements.size(); i += n) {
         const float* o = &placements[i];
         const float scale = o[3];
         const Vec3 middle = Vec3(o[0], o[1], o[2]) + quatRotate(Vec4(o[4], o[5], o[6], o[7]), center * scale);
         // How big it looks: its radius over how far it is.
         const float looks = radius * std::fabs(scale) / std::max(length(middle - eye), 1e-6f);
-        for (size_t level = 0; level < 3; ++level) {
-            if (looks >= kDetailSize[level]) {
-                out[level].insert(out[level].end(), o, o + n);
+        for (size_t level = 0; level < kDetailLevels; ++level) {
+            const float size = kDetailSize[level];
+            if (looks >= size * (1.0f + kDetailFade)) {
+                add(level, o, 1.0f);
+                break;
+            }
+            if (looks > size * (1.0f - kDetailFade)) {
+                // Between this level and the next: some pixels each.
+                const float f = (looks - size * (1.0f - kDetailFade)) / (2.0f * kDetailFade * size);
+                add(level, o, f);
+                if (level + 1 < kDetailLevels) add(level + 1, o, 1.0f + f);
                 break;
             }
         }
