@@ -686,6 +686,28 @@ DisplayInstances instancesOf(const Geometry& geo) {
         }
         out.prototypes.push_back(prototype);
         out.placements.push_back(std::move(f));
+        out.centers.push_back((lo + hi) * 0.5f);
+        out.radii.push_back(0.5f * length(hi - lo));
+    }
+    return out;
+}
+
+std::array<std::vector<float>, 3> placementsByDetail(std::span<const float> placements, const Vec3& center, float radius,
+                                                     const Vec3& eye) {
+    std::array<std::vector<float>, 3> out;
+    constexpr size_t n = DisplayInstances::kFloats;
+    for (size_t i = 0; i + n <= placements.size(); i += n) {
+        const float* o = &placements[i];
+        const float scale = o[3];
+        const Vec3 middle = Vec3(o[0], o[1], o[2]) + quatRotate(Vec4(o[4], o[5], o[6], o[7]), center * scale);
+        // How big it looks: its radius over how far it is.
+        const float looks = radius * std::fabs(scale) / std::max(length(middle - eye), 1e-6f);
+        for (size_t level = 0; level < 3; ++level) {
+            if (looks >= kDetailSize[level]) {
+                out[level].insert(out[level].end(), o, o + n);
+                break;
+            }
+        }
     }
     return out;
 }

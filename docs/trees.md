@@ -320,7 +320,8 @@ trubky s plochami otočenými ven a tvar koruny podle Shape.
 
 - **Prořezávání obálkou** (Prune u Webera a Penna) a vyhýbání se větví
   navzájem nebo překážkám.
-- **Kořeny** nad zemí a **LOD**: zjednodušené stromy a billboardy pro
-  vzdálený les.
+- **Kořeny** nad zemí a **billboardy** pro vzdálený les. Úrovně detailu
+  už viewport má: stromy v dálce mají méně, ale větších listů
+  ([vegetation.md](vegetation.md#9-výkon)).
 - **Vítr jako simulace** ohybu větví. Teď je to kinematický posun
   wranglem.

@@ -392,10 +392,21 @@ private:
         GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0, through = 0;
         GLsizei elements = 0, instances = 0;
         size_t capacity = 0;  // floats the placements' buffer holds
+        size_t which = 0;     // its prototype's place in instances_
+        int level = 0;        // its level of detail (sim::kDetailKeep)
+        int levels = 1;       // how many its prototype has: a plant's 3
     };
     std::vector<InstancedGpu> instanced_;
     sim::DisplayInstances instances_;
     void uploadInstances();
+    /// Each prototype's copies to its levels of detail, by how big each
+    /// looks from detailEye_ (sim::placementsByDetail) -- all in full
+    /// before it is known.
+    void placeByDetail();
+    /// The eye the copies are drawn for: shared out again where it has moved.
+    void seeFrom(const Vec3& eye);
+    Vec3 detailEye_{0.0f};
+    bool detailEyeSet_ = false;
     void releaseInstanced(InstancedGpu& gpu);
     /// The bound vertex array's attribute 7 -- how much light each vertex's
     /// face lets through -- from `translucency` into `buffer`; none there

@@ -257,8 +257,31 @@ Na tomto stroji (release, všechna vlákna):
 | Unpack trávy na 17,7 milionu bodů | 2,6 s |
 
 Render snímku 1600 × 900 přes softwarový OpenGL (llvmpipe, bez grafické
-karty) trvá 6–15 s, protože tráva má přes 13 milionů trojúhelníků. Na
-grafické kartě je to zlomek.
+karty) trvá i s vařením sítě 5,4 s (bez úrovní detailu 8,1 s). Na grafické
+kartě je to zlomek.
+
+**Úrovně detailu (LOD).** Viewport kreslí každou kopii rostliny podle
+toho, jak velká se jeví: poloměr krabice prototypu krát `pscale` děleno
+vzdáleností od oka.
+
+| Jeví se | Kreslí se |
+|---|---|
+| nad 0,04 | celá |
+| 0,012–0,04 | třetina listů a stébel (0,35) |
+| 0,0015–0,012 | osmina (0,12), bez větviček |
+| pod 0,0015 | vůbec |
+
+Řidší rostlinu dělá `plantDetail` (`src/pg/core/Lod.h`), jak to dělá
+SpeedTree. Rovnoměrně vybere listy a stébla (plochy s `translucency` nad
+0; stéblo jsou všechny plochy jednoho `blade`). Každý ponechaný list
+zvětší 1/√podíl kolem jeho paty a každé stéblo rozšíří 1/podíl, takže
+listí pokryje stejnou plochu jako předtím (strom: 2133 listů 11,98 m²,
+746 listů 12,02 m²). Pod polovinou zmizí větvičky (`level` 2 a víc).
+Kopie se mezi úrovně rozdělí znovu, když se oko posune o 10 cm. Louka
+z 50 m od okraje: 22,1 milionu trojúhelníků v plné podobě, nakreslí se
+9,7 milionu (44 %): 84 kopií celých, 29 538 třetinových a 93 104
+osminových. Cycles a path tracer kreslí vše v plné podobě, instance je
+nestojí paměť.
 
 **Průsvitnost ve viewportu.** Listy a stébla propouštějí světlo
 (primitivní `translucency`: list 0,4, stéblo 0,35) i ve viewportu, nejen
@@ -271,7 +294,9 @@ bez průsvitnosti, v path traceru 0,52 (rozdíl dělá Fresnel).
 
 ## 10. Co zatím chybí
 
-- LOD: tráva v dálce jako řidší trsy nebo billboardy a ořez podle kamery.
+- Billboardy (impostory) pro les v dálce: obrázek stromu z několika
+  stran na kartě. Viewport zatím nekreslí textury. Plynulý přechod mezi
+  úrovněmi detailu (dithering) místo přeskočení.
 - Ohyb stébel ve větru podél délky (ve shaderu podle `flex`), ne jen
   otočení trsu.
 - Textury listů a stébel ve viewportu (renderery je mají,

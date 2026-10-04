@@ -92,6 +92,7 @@ add_library(pgcore
   src/pg/core/Tree.cpp
   src/pg/core/Chips.cpp
   src/pg/core/Instances.cpp
+  src/pg/core/Lod.cpp
   src/pg/core/Grass.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp

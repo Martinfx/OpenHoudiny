@@ -5,11 +5,15 @@
 // mirrored, and the library's bark, leaves and grass laid on by it; leaves
 // cut out by their picture's alpha -- seen through and letting the sun
 // through there, in both renderers and both ray engines; the viewport's
-// mesh carrying how much light each face lets through.
+// mesh carrying how much light each face lets through; plants thinned for
+// far away -- fewer leaves and blades, as much foliage -- and the copies
+// drawn at the level of detail they look big enough for.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
 #include "pg/core/Grass.h"
+#include "pg/core/Instances.h"
+#include "pg/core/Lod.h"
 #include "pg/core/Material.h"
 #include "pg/core/Tree.h"
 #include "pg/io/Picture.h"
@@ -20,6 +24,8 @@
 #include "pg/render/Scene.h"
 #include "pg/render/Textures.h"
 #include "pg/sim/Display.h"
+#include "pg/sim/GeometryGraph.h"
+#include "pg/sim/Network.h"
 
 #include "test_framework.h"
 
@@ -364,4 +370,115 @@ TEST(foliage_the_viewport_knows_what_lets_light_through) {
     sim::DisplayMesh none;
     bareMesher.make(bare, none);
     CHECK(none.vertexCount() == 3 && none.translucency.empty());
+}
+
+namespace {
+
+/// The area of the faces of `geo` that let light through, and how many.
+std::pair<double, size_t> foliageOf(const Geometry& geo) {
+    const auto lets = geo.primitives().find("translucency")->read<float>();
+    const auto P = geo.positions();
+    double area = 0.0;
+    size_t n = 0;
+    for (size_t i = 0; i < geo.primitiveCount(); ++i) {
+        if (!(lets[i] > 0.0f)) continue;
+        ++n;
+        const auto pts = geo.primitivePoints(i);
+        for (size_t k = 1; k + 1 < pts.size(); ++k) {
+            area += 0.5 * length(cross(P[pts[k]] - P[pts[0]], P[pts[k + 1]] - P[pts[0]]));
+        }
+    }
+    return {area, n};
+}
+
+}  // namespace
+
+TEST(foliage_far_plants_are_thinned_and_drawn_by_how_big_they_look) {
+    // A tree: a third of its leaves, each grown so they cover as much; its
+    // twigs gone, its trunk and boughs kept; no point left loose. As it is
+    // at 1.
+    TreeSettings ts;
+    ts.levels = 3;
+    ts.branches = {10, 5, 4};
+    Geometry tree;
+    meshTree(growTree(ts, Vec3(), 1.0f, 5), ts, 0, tree);
+    CHECK(plantDetail(tree, 1.0f).hash() == tree.hash());
+    const auto [area, leaves] = foliageOf(tree);
+    const Geometry far = plantDetail(tree, 0.35f);
+    const auto [farArea, farLeaves] = foliageOf(far);
+    std::printf("  tree: %zu leaves, %.3f m2; a third: %zu leaves, %.3f m2; %zu faces of %zu\n", leaves, area, farLeaves,
+                farArea, far.primitiveCount(), tree.primitiveCount());
+    CHECK(std::fabs(static_cast<double>(farLeaves) - 0.35 * static_cast<double>(leaves)) <= 1.0);
+    CHECK(std::fabs(farArea / area - 1.0) < 0.05);
+    const auto level = far.primitives().find("level")->read<int32_t>();
+    std::set<int32_t> levels(level.begin(), level.end());
+    CHECK(levels == std::set<int32_t>({-1, 0, 1}));
+    std::vector<uint8_t> used(far.pointCount(), 0);
+    for (size_t i = 0; i < far.primitiveCount(); ++i) {
+        for (const uint32_t p : far.primitivePoints(i)) used[p] = 1;
+    }
+    CHECK(std::all_of(used.begin(), used.end(), [](uint8_t u) { return u != 0; }));
+    CHECK(far.vertices().find("uv") && far.primitives().find("material"));
+
+    // Grass: an eighth of its blades, each eight times as wide -- as long.
+    const Geometry clump = growGrassClump(GrassSettings(), 4);
+    const Geometry thin = plantDetail(clump, 0.125f);
+    const auto [bladeArea, bladeFaces] = foliageOf(clump);
+    const auto [thinArea, thinFaces] = foliageOf(thin);
+    std::printf("  grass: %zu faces, %.4f m2; an eighth: %zu faces, %.4f m2\n", bladeFaces, bladeArea, thinFaces, thinArea);
+    CHECK(thinFaces * 8 == bladeFaces);
+    CHECK(std::fabs(thinArea / bladeArea - 1.0) < 0.15);
+    float tallest = 0.0f, thinTallest = 0.0f;
+    for (const Vec3& p : clump.positions()) tallest = std::max(tallest, p.y);
+    for (const Vec3& p : thin.positions()) thinTallest = std::max(thinTallest, p.y);
+    CHECK(thinTallest <= tallest + 1e-5f);
+
+    // Copies by how big they look: a metre across, 10, 30, 200, 2000 and 5 m
+    // away -- in full, a third, an eighth, none, in full.
+    std::vector<float> placements;
+    for (const float z : {10.0f, 30.0f, 200.0f, 2000.0f, 5.0f}) {
+        placements.insert(placements.end(), {0.0f, 0.0f, -z, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
+    }
+    const auto parts = sim::placementsByDetail(placements, Vec3(0.0f, 0.5f, 0.0f), 0.5f, Vec3(0.0f));
+    constexpr size_t n = sim::DisplayInstances::kFloats;
+    CHECK(parts[0].size() == 2 * n && parts[0][2] == -10.0f && parts[0][n + 2] == -5.0f);
+    CHECK(parts[1].size() == n && parts[1][2] == -30.0f);
+    CHECK(parts[2].size() == n && parts[2][2] == -200.0f);
+
+    // The meadow from 50 m off its edge, as the viewport draws it: so many
+    // fewer triangles.
+    sim::Network meadow;
+    CHECK(sim::Network::example("meadow", meadow));
+    sim::GeometryGraph g;
+    g.sync(meadow);
+    const GeometryPtr all = g.cook(meadow.displayed(), 1);
+    CHECK(all != nullptr);
+    const sim::DisplayInstances inst = sim::instancesOf(*all);
+    const Vec3 eye(0.0f, 25.0f, 45.0f);
+    double full = 0.0, drawn = 0.0;
+    size_t copies[4] = {0, 0, 0, 0};
+    for (size_t k = 0; k < inst.prototypes.size(); ++k) {
+        const GeometryPtr& proto = inst.prototypes[k];
+        const size_t count = inst.placements[k].size() / n;
+        std::array<size_t, 3> triangles{};
+        for (size_t level = 0; level < 3; ++level) {
+            sim::DisplayMesher mesher;
+            sim::DisplayMesh mesh;
+            mesher.make(level == 0 ? proto : std::make_shared<Geometry>(plantDetail(*proto, sim::kDetailKeep[level])), mesh);
+            triangles[level] = mesh.triangleCount();
+        }
+        const auto byDetail = sim::placementsByDetail(inst.placements[k], inst.centers[k], inst.radii[k], eye);
+        full += static_cast<double>(count * triangles[0]);
+        size_t placed = 0;
+        for (size_t level = 0; level < 3; ++level) {
+            drawn += static_cast<double>(byDetail[level].size() / n * triangles[level]);
+            copies[level] += byDetail[level].size() / n;
+            placed += byDetail[level].size() / n;
+        }
+        copies[3] += count - placed;
+    }
+    std::printf("  the meadow from 50 m: %.1f million triangles in full, %.1f million drawn (%.0f %%); copies in full %zu, "
+                "a third %zu, an eighth %zu, none %zu\n",
+                full * 1e-6, drawn * 1e-6, 100.0 * drawn / full, copies[0], copies[1], copies[2], copies[3]);
+    CHECK(drawn < 0.6 * full);
 }
