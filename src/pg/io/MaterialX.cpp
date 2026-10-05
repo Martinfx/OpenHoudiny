@@ -140,6 +140,11 @@ std::string numbers(const Vec3& v) { return number(v.x) + ", " + number(v.y) + "
 std::string nodeDef(const Node& n) {
     // Its version of 1.38: normalmap's scale a float.
     if (n.category == "normalmap") return "ND_normalmap";
+    // Of the type it pushes the surface out by, a float along the normal.
+    if (n.category == "displacement") {
+        const Input* by = n.input("displacement");
+        return std::string("ND_displacement_") + (by && by->type == "vector3" ? "vector3" : "float");
+    }
     const Input* in = n.input("in");
     // Of the type it turns from and the type it turns to.
     if (n.category == "convert") return "ND_convert_" + (in ? in->type : std::string("float")) + "_" + n.type;
@@ -517,13 +522,27 @@ Surface surfaceOf(const std::vector<Node>& nodes, const std::string& name) {
     if (three(shader->input(opaque), opacityColor)) v.opacity = (opacityColor.x + opacityColor.y + opacityColor.z) / 3.0f;
     v.transmission = number(shader->input(openPbr ? "transmission_weight" : "transmission"), 0.0f);
     v.ior = number(shader->input(preview ? "ior" : openPbr ? "specular_ior" : gltf ? "ior" : "specular_IOR"), 1.5f);
-    // How high: the displacement's picture.
+    // How high: the displacement's picture, as deep as its scale says --
+    // a UsdPreviewSurface's, as its picture's scale says.
+    auto pictureDepth = [&](const Input* in) {
+        const Node* picture = in ? node(in->nodename) : nullptr;
+        if (!picture || picture->category != "UsdUVTexture") return -1.0f;
+        const float k = number(picture->input("scale"), -1.0f);
+        return k > 0.0f ? k : -1.0f;
+    };
+    auto heightOf = [&](const Node* displacement) {
+        if (!displacement) return;
+        const Input* by = displacement->input("displacement");
+        out.height = trail(by).file;
+        if (out.height.empty()) return;
+        const float k = displacement->category == "UsdPreviewSurface" ? pictureDepth(by)
+                                                                      : number(displacement->input("scale"), -1.0f);
+        if (k > 0.0f) out.depth = k;
+    };
     if (material) {
-        if (const Input* d = material->input("displacementshader")) {
-            if (const Node* displacement = node(d->nodename)) out.height = trail(displacement->input("displacement")).file;
-        }
+        if (const Input* d = material->input("displacementshader")) heightOf(node(d->nodename));
     }
-    if (out.height.empty() && preview) out.height = trail(shader->input("displacement")).file;
+    if (out.height.empty() && preview) heightOf(shader);
     return out;
 }
 

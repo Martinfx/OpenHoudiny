@@ -126,7 +126,8 @@ z `outputs:surface`. Shadery:
   jmen definic (`ND_image_color3`).
 
 Síť se čte přes výstupy NodeGraphů a přes vstupy rozhraní NodeGraphů
-i samotného materiálu. Z výstupu `displacement` se čte i výška. Cesty
+i samotného materiálu. Z výstupu `displacement` se čte i výška s hloubkou
+(`scale`), převedená z jednotek scény na metry. Cesty
 k obrázkům se řeší jako v USD, od vrstvy, která je zapsala. Uvnitř
 `.usdz` je obrázek `balík.usdz[textures/a.png]` a čte se přímo
 z balíčku.

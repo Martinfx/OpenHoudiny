@@ -17,9 +17,12 @@
 //   alpha           opacity, nothing where it has none: a leaf's edge
 //   translucent     thin_walled, its subsurface letting light through, as
 //                   much as translucency says
+//   height          the material's displacement: the height picture about
+//                   its middle, as deep as the set says (TextureSet::depth)
 //
 // -- and, for what reads no MaterialX, a UsdPreviewSurface of the same: its
-// pictures by st, its colour, roughness, metalness, opacity and normal map.
+// pictures by st, its colour, roughness, metalness, opacity, normal map and
+// height.
 //
 #include "pg/core/Geometry.h"
 #include "pg/io/MaterialX.h"

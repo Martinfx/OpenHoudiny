@@ -344,6 +344,18 @@ TEST(the_renderers_materials_become_standard_surface_graphs) {
         CHECK_EQ(valueOf(normal, "scale"), std::string("1"));
         CHECK_EQ(valueOf(behind(nodes, normal, "in"), "file"), set.normal);
         CHECK(behind(nodes, normal, "in")->input("file")->colorspace.empty());  // values, not light
+        // Its height: the material's displacement -- the picture about its
+        // middle, as deep as the set says from its lowest to its highest.
+        CHECK(!set.height.empty());
+        const mtlx::Node* displacement = behind(nodes, &nodes.back(), "displacementshader");
+        CHECK(displacement && displacement->category == "displacement" && displacement->type == "displacementshader");
+        if (displacement) CHECK_EQ(mtlx::nodeDef(*displacement), std::string("ND_displacement_float"));
+        CHECK_EQ(valueOf(displacement, "scale"), mtlx::number(set.depth));
+        const mtlx::Node* middle = behind(nodes, displacement, "displacement");
+        CHECK(middle && middle->category == "subtract" && valueOf(middle, "in2") == "0.5");
+        const mtlx::Node* height = behind(nodes, middle, "in1");
+        CHECK(height && height->category == "image" && height->type == "float");
+        CHECK_EQ(valueOf(height, "file"), set.height);
         // ... and as a UsdPreviewSurface: its picture by st, as it is.
         const mtlx::Node* look = nodeOf(g.preview, "UsdPreviewSurface");
         CHECK(look);
@@ -352,6 +364,12 @@ TEST(the_renderers_materials_become_standard_surface_graphs) {
         CHECK_EQ(valueOf(texture, "file"), set.color);
         CHECK_EQ(valueOf(behind(g.preview, texture, "st"), "varname"), std::string("st"));
         CHECK(behind(g.preview, look, "normal"));
+        // ... its height by st, about its middle, as deep.
+        const mtlx::Node* high = behind(g.preview, look, "displacement");
+        CHECK(high && high->category == "UsdUVTexture" && look->input("displacement")->output == "r");
+        CHECK_EQ(valueOf(high, "file"), set.height);
+        CHECK_EQ(valueOf(high, "scale"), mtlx::numbers(Vec3(set.depth)) + ", 1");
+        CHECK_EQ(valueOf(high, "bias"), mtlx::numbers(Vec3(-0.5f * set.depth)) + ", 0");
     }
     // A leaf: cut out by its picture's alpha, a thin sheet that lets light
     // through; the preview's opacity the alpha of its picture.
@@ -394,8 +412,15 @@ TEST(the_renderers_materials_become_standard_surface_graphs) {
             const mtlx::Node* at = behind(nodes, scaled, "in1");
             CHECK(at && at->category == (rest ? "geompropvalue" : "position"));
             CHECK(!nodeOf(nodes, "normalmap"));  // a normal map only by uv
-            // The preview: its colour without the picture.
+            // Its height from three sides as its colour, by the same position.
+            const mtlx::Node* middle = behind(nodes, behind(nodes, &nodes.back(), "displacementshader"), "displacement");
+            const mtlx::Node* height = behind(nodes, middle, "in1");
+            CHECK(height && height->category == "triplanarprojection" && height->type == "float");
+            CHECK_EQ(valueOf(height, "filey"), set.height);
+            CHECK(behind(nodes, height, "position") == scaled);
+            // The preview: its colour without the picture, nor its height.
             CHECK(!nodeOf(g.preview, "UsdUVTexture"));
+            CHECK(!nodeOf(g.preview, "UsdPreviewSurface")->input("displacement"));
         }
     }
     // Glass: clear, bending light as glass does, tinted a little.
@@ -410,6 +435,7 @@ TEST(the_renderers_materials_become_standard_surface_graphs) {
         CHECK_EQ(valueOf(surface, "transmission"), std::string("1"));
         CHECK_EQ(valueOf(surface, "specular_IOR"), std::string("1.5"));
         CHECK(!nodeOf(g.mtlx.nodes, "image"));
+        CHECK(!g.mtlx.nodes.back().input("displacementshader"));
     }
     // A surface of no material: plain, of the viewport's grey.
     {
@@ -482,6 +508,12 @@ TEST(a_written_material_reads_back_as_its_texture_set) {
         }
         CHECK_EQ(back.alpha.empty(), original.alpha.empty());
         CHECK_EQ(back.alphaChannel, original.alphaChannel);
+        // Its height: a copy, as deep as it was.
+        CHECK_EQ(back.height.empty(), original.height.empty());
+        if (!back.height.empty() && !original.height.empty()) {
+            CHECK_EQ(fileText(back.height), fileText(original.height));
+            CHECK_NEAR(back.depth, original.depth, 1e-7);
+        }
     }
 }
 
@@ -521,6 +553,14 @@ TEST(a_usd_stage_binds_the_faces_to_their_materials) {
         CHECK_EQ(token(s, material + "/" + names[k] + "_preview", "info:id"), std::string("UsdPreviewSurface"));
     }
     CHECK_EQ(token(s, "/thing/mesh", "subsetFamily:materialBind:familyType"), std::string("nonOverlapping"));
+    // The bark's height: MaterialX's displacement and the preview's; the
+    // glass has none.
+    CHECK_EQ(connection(s, "/thing/Materials/bark", "outputs:mtlx:displacement"),
+             std::string("/thing/Materials/bark/bark_displacement.outputs:out"));
+    CHECK_EQ(token(s, "/thing/Materials/bark/bark_displacement", "info:id"), std::string("ND_displacement_float"));
+    CHECK_EQ(connection(s, "/thing/Materials/bark", "outputs:displacement"),
+             std::string("/thing/Materials/bark/bark_preview.outputs:displacement"));
+    CHECK(connection(s, "/thing/Materials/glass", "outputs:mtlx:displacement").empty());
     // The bark's picture: copied beside the stage, its colour space said.
     const std::string file = token(s, "/thing/Materials/bark/bark_picture", "inputs:file");
     CHECK_EQ(file, std::string("./thing_textures/bark_color.jpg"));

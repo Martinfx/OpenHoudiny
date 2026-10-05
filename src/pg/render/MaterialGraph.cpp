@@ -88,6 +88,10 @@ MaterialGraph materialGraph(const Material& m, const std::string& name, const Gr
     const TextureSet set = textureOf(m, settings);
     std::vector<mtlx::Input> surface;
     std::vector<mtlx::Input> look;  // the UsdPreviewSurface's
+    std::string displacement;       // its displacementshader, where it has a height
+    // Where the pictures laid from three sides are taken: the position over
+    // the metres a picture covers.
+    std::string scaled;
     // The colour of its surfaces: theirs, else its material's.
     const std::string color = source.colored ? n.add("geompropvalue", "cd", "color3",
                                                      {value("geomprop", "string", "displayColor"),
@@ -121,9 +125,9 @@ MaterialGraph materialGraph(const Material& m, const std::string& name, const Gr
                                                                {value("geomprop", "string", "rest")})
                                                        : n.add("position", "position", "vector3",
                                                                {value("space", "string", "object")});
-                    const std::string scaled = n.add("multiply", "scaled", "vector3",
-                                                     {from("in1", "vector3", at),
-                                                      value("in2", "float", mtlx::number(1.0f / std::max(set.size, 1e-3f)))});
+                    scaled = n.add("multiply", "scaled", "vector3",
+                                   {from("in1", "vector3", at),
+                                    value("in2", "float", mtlx::number(1.0f / std::max(set.size, 1e-3f)))});
                     shown = n.add("triplanarprojection", "picture", "color3",
                                   {value("filex", "filename", f, "srgb_texture"), value("filey", "filename", f, "srgb_texture"),
                                    value("filez", "filename", f, "srgb_texture"), from("position", "vector3", scaled)});
@@ -198,6 +202,30 @@ MaterialGraph materialGraph(const Material& m, const std::string& name, const Gr
                     previewAlphaOutput = set.alphaChannel ? "a" : "r";
                 }
             }
+            // How high: its height picture, laid on as its colour is, about
+            // its middle -- half of it out, half in -- as deep as the set
+            // says from its lowest to its highest: the material's
+            // displacement, what the renderers bump by.
+            if (set.valid() && !set.height.empty() && set.depth > 0.0f) {
+                const std::string f = file(set.height);
+                const std::string high =
+                    m.byUv ? n.add("image", "height_picture", "float", {value("file", "filename", f)})
+                           : n.add("triplanarprojection", "height_picture", "float",
+                                   {value("filex", "filename", f), value("filey", "filename", f),
+                                    value("filez", "filename", f), from("position", "vector3", scaled)});
+                const std::string middle =
+                    n.add("subtract", "height", "float", {from("in1", "float", high), value("in2", "float", "0.5")});
+                displacement = n.add("displacement", "displacement", "displacementshader",
+                                     {from("displacement", "float", middle), value("scale", "float", mtlx::number(set.depth))});
+                if (m.byUv) {
+                    const float d = set.depth;
+                    const std::string height =
+                        previewPicture("preview_height", set.height, "raw",
+                                       {value("scale", "vector4", mtlx::numbers(Vec3(d)) + ", 1"),
+                                        value("bias", "vector4", mtlx::numbers(Vec3(-0.5f * d)) + ", 0")});
+                    look.push_back(from("displacement", "float", height, "r"));
+                }
+            }
             if (!previewColor.empty()) {
                 look.push_back(from("diffuseColor", "color3", previewColor, "rgb"));
             } else if (!color.empty()) {
@@ -252,7 +280,9 @@ MaterialGraph materialGraph(const Material& m, const std::string& name, const Gr
         }
     }
     const std::string shader = n.add("standard_surface", "surface", "surfaceshader", std::move(surface));
-    n.list.push_back({"surfacematerial", name, "material", {from("surfaceshader", "surfaceshader", shader)}});
+    std::vector<mtlx::Input> outputs = {from("surfaceshader", "surfaceshader", shader)};
+    if (!displacement.empty()) outputs.push_back(from("displacementshader", "displacementshader", displacement));
+    n.list.push_back({"surfacematerial", name, "material", std::move(outputs)});
     previewNode("UsdPreviewSurface", "preview", std::move(look));
     g.mtlx.nodes = std::move(n.list);
     g.preview = std::move(preview);

@@ -233,7 +233,7 @@ TextureSet setOfSurface(const io::mtlx::Surface& surface, const std::function<st
     set.alpha = resolved(surface.opacity);
     set.alphaChannel = !set.alpha.empty() && surface.opacityFromAlpha;
     set.size = surface.size > 0.0f ? surface.size : 2.0f;
-    set.depth = 0.01f * set.size;
+    set.depth = surface.depth > 0.0f ? surface.depth : 0.01f * set.size;
     // Tinted, the picture over its mean -- as the material evens it, else
     // as it is.
     set.tint = surface.tinted;
@@ -260,13 +260,18 @@ TextureSet readMaterialX(const fs::path& file, const std::string& name) {
 }
 
 /// A Material of a USD stage -- its MaterialX or UsdPreviewSurface network
-/// (usd/Shade.h) --, its files as USD resolves them.
+/// (usd/Shade.h) --, its files as USD resolves them, its lengths in metres.
 TextureSet readUsdMaterial(const std::string& file, const std::string& path) {
     std::string error;
     const auto stage = usd::Stage::openCached(file, error);
     const usd::Stage::Prim* prim = stage ? stage->find(path) : nullptr;
     if (!prim || prim->type != "Material") return {};
-    return setOfSurface(usd::materialSurface(*stage, *prim, 0.0), [](const std::string& f) { return f; });
+    io::mtlx::Surface surface = usd::materialSurface(*stage, *prim, 0.0);
+    // Its lengths in the stage's units: in metres, as the renderers take them.
+    const float metres = static_cast<float>(stage->metersPerUnit());
+    if (surface.size > 0.0f) surface.size *= metres;
+    if (surface.depth > 0.0f) surface.depth *= metres;
+    return setOfSurface(surface, [](const std::string& f) { return f; });
 }
 
 bool isUsd(const fs::path& file) {

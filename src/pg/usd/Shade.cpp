@@ -302,6 +302,7 @@ void shaderKind(const std::string& id, std::string& category, std::string& type)
         if (const std::string t = typeOf(tokens[k]); !t.empty()) type = t;
     }
     if (category == "extract") type = "float";
+    if (category == "displacement") type = "displacementshader";
     if (type.empty() && category == "normalmap") type = "vector3";
 }
 

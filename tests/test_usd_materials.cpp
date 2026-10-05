@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,17 @@ struct TempFolder {
 void writeFile(const std::string& path, const std::string& text) {
     fs::create_directories(fs::path(path).parent_path());
     std::ofstream(path, std::ios::binary) << text;
+}
+
+/// A copy of the stage `from` in centimetres: its metersPerUnit 0.01.
+void inCentimetres(const std::string& from, const std::string& to) {
+    std::ifstream in(from, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::string s = text.str();
+    const size_t at = s.find("metersPerUnit = 1\n");
+    if (at != std::string::npos) s.replace(at, 18, "metersPerUnit = 0.01\n");
+    writeFile(to, s);
 }
 
 /// A picture of one colour, as a screen shows it, 4 x 4.
@@ -201,6 +213,7 @@ TEST(usd_materials_of_preview_surfaces_become_the_programs) {
     writePng(dir / "maps/wood_diffuse.png", Vec3(0.6f, 0.4f, 0.2f));
     writePng(dir / "maps/wood_normal.png", Vec3(0.5f, 0.5f, 1.0f));
     writePng(dir / "maps/wood_rough.png", Vec3(0.7f));
+    writePng(dir / "maps/wood_height.png", Vec3(0.5f));
     const std::string file = dir / "set.usda";
     writeFile(file, std::string(kHeader) + "def Xform \"World\"\n{\n" + quad("Box", 0, "/World/Looks/Painted") +
                         quad("Floor", 2, "/World/Looks/Wood") + quad("Pane", 4, "/World/Looks/Glass") +
@@ -222,13 +235,24 @@ TEST(usd_materials_of_preview_surfaces_become_the_programs) {
         def Material "Wood"
         {
             token outputs:surface.connect = </World/Looks/Wood/Surface.outputs:surface>
+            token outputs:displacement.connect = </World/Looks/Wood/Surface.outputs:displacement>
             def Shader "Surface"
             {
                 uniform token info:id = "UsdPreviewSurface"
                 color3f inputs:diffuseColor.connect = </World/Looks/Wood/Diffuse.outputs:rgb>
                 normal3f inputs:normal.connect = </World/Looks/Wood/Normal.outputs:rgb>
                 float inputs:roughness.connect = </World/Looks/Wood/Rough.outputs:r>
+                float inputs:displacement.connect = </World/Looks/Wood/Height.outputs:r>
                 token outputs:surface
+                token outputs:displacement
+            }
+            def Shader "Height"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @maps/wood_height.png@
+                float4 inputs:scale = (0.02, 0.02, 0.02, 1)
+                float4 inputs:bias = (-0.01, -0.01, -0.01, 0)
+                float outputs:r
             }
             def Shader "Reader"
             {
@@ -308,6 +332,9 @@ TEST(usd_materials_of_preview_surfaces_become_the_programs) {
     CHECK_EQ(normal(set.color), normal(dir / "maps/wood_diffuse.png"));
     CHECK_EQ(normal(set.normal), normal(dir / "maps/wood_normal.png"));
     CHECK_EQ(normal(set.roughness), normal(dir / "maps/wood_rough.png"));
+    // Its height, as deep as its picture is scaled.
+    CHECK_EQ(normal(set.height), normal(dir / "maps/wood_height.png"));
+    CHECK_NEAR(set.depth, 0.02f, 1e-7);
     CHECK(!set.tint);
     // What the renderers make of it.
     std::vector<render::Material> materials;
@@ -361,6 +388,7 @@ TEST(usd_materials_of_materialx_go_through_node_graphs_and_interfaces) {
             {
                 uniform token info:id = "ND_displacement_float"
                 float inputs:displacement.connect = </World/Looks/Brick/Height.outputs:out>
+                float inputs:scale = 0.03
                 token outputs:out
             }
             def Shader "Height"
@@ -441,6 +469,10 @@ TEST(usd_materials_of_materialx_go_through_node_graphs_and_interfaces) {
     CHECK_EQ(normal(set.color), normal(dir / "maps/brick_color.png"));
     CHECK_EQ(normal(set.normal), normal(dir / "maps/brick_normal.png"));
     CHECK_EQ(normal(set.height), normal(dir / "maps/brick_height.png"));
+    CHECK_NEAR(set.depth, 0.03f, 1e-7);
+    // In a stage of centimetres, as deep in metres.
+    inCentimetres(file, dir / "set_cm.usda");
+    CHECK_NEAR(render::textureSet(dir / "set_cm.usda#/World/Looks/Brick").depth, 0.0003f, 1e-9);
     CHECK_NEAR(floatOf(*geo, "roughness", 0), 0.7f, 1e-6);
     // OpenPBR: its colour times its weight, its metalness, its roughness
     // as it is when it says none.
@@ -631,11 +663,19 @@ TEST(usd_materials_the_program_writes_come_back_as_they_were) {
         CHECK(near(sa.mean, sb.mean, 0.02f));
         CHECK(a.byUv == b.byUv);
         CHECK_EQ(!sa.normal.empty(), !sb.normal.empty());
+        CHECK_EQ(!sa.height.empty(), !sb.height.empty());
+        if (!sa.height.empty() && !sb.height.empty()) CHECK_NEAR(sa.depth, sb.depth, 1e-7);
         ++compared;
     }
     // Bark, concrete and the picture of one's own; the glass as glass.
     CHECK_EQ(compared, 3);
     CHECK(is[isOf[3]].kind == render::Material::Kind::Glass);
+    // The same stage in centimetres: concrete's pictures, laid from three
+    // sides, as large in metres as its points are.
+    inCentimetres(dir / "thing.usda", dir / "thing_cm.usda");
+    const auto cm = import(dir / "thing_cm.usda");
+    CHECK(floatOf(*back, "texture_size", 1) > 0.0f);
+    CHECK_NEAR(floatOf(*cm, "texture_size", 1), 0.01f * floatOf(*back, "texture_size", 1), 1e-6);
 }
 
 TEST(usd_materials_in_a_package_read_their_pictures_from_it) {

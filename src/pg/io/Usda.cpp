@@ -651,9 +651,16 @@ Prim materialPrim(const std::string& name, const std::string& path, const std::v
         if (n.category == "surfacematerial") {
             const mtlx::Input* s = n.input("surfaceshader");
             if (s && !s->nodename.empty()) material.set("token", "outputs:mtlx:surface.connect", source(s->nodename, "out"));
+            const mtlx::Input* d = n.input("displacementshader");
+            if (d && !d->nodename.empty()) {
+                material.set("token", "outputs:mtlx:displacement.connect", source(d->nodename, "out"));
+            }
             continue;
         }
-        if (n.category == "UsdPreviewSurface") material.set("token", "outputs:surface.connect", source(n.name, "surface"));
+        if (n.category == "UsdPreviewSurface") {
+            material.set("token", "outputs:surface.connect", source(n.name, "surface"));
+            if (n.input("displacement")) material.set("token", "outputs:displacement.connect", source(n.name, "displacement"));
+        }
     }
     for (const mtlx::Node& n : nodes) {
         if (n.category == "surfacematerial") continue;
@@ -671,6 +678,7 @@ Prim materialPrim(const std::string& name, const std::string& path, const std::v
         }
         if (n.category == "UsdPreviewSurface") {
             shader.set("token", "outputs:surface", "");
+            if (n.input("displacement")) shader.set("token", "outputs:displacement", "");
             continue;
         }
         auto it = outputs.find(n.name);

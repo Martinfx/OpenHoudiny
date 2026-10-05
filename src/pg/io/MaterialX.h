@@ -87,14 +87,18 @@ bool parse(const std::string& text, std::vector<Node>& nodes, std::string& error
 /// standard_surface (or UsdPreviewSurface, open_pbr_surface, gltf_pbr): the
 /// files of its base colour,
 /// its normal map, its opacity, its roughness and its height (its
-/// displacement) -- through what passes a picture on: image, tiledimage,
-/// triplanarprojection, normalmap, multiply, extract... -- and its
-/// roughness and metalness where they are values. The first
-/// surfacematerial, or the one named `name`.
+/// displacement, as deep as its scale says) -- through what passes a
+/// picture on: image, tiledimage, triplanarprojection, normalmap, multiply,
+/// extract... -- and its roughness and metalness where they are values. The
+/// first surfacematerial, or the one named `name`.
 struct Surface {
     std::string color, normal, opacity, roughnessFile, height;
     float roughness = -1.0f, metalness = -1.0f;  ///< -1: not given
     float size = -1.0f;            ///< metres a picture, laid from three sides as many as its position is scaled by; -1 not said
+    /// Metres from the lowest of its height to the highest: the scale of
+    /// its displacement (a UsdPreviewSurface's: its height picture's); -1
+    /// not said.
+    float depth = -1.0f;
     bool opacityFromAlpha = false; ///< the opacity the alpha of its picture (extract 3, a texture's a)
     bool tinted = false;           ///< the colour times a geometric property's (displayColor): tinted by Cd
     /// What the colour's picture is multiplied by first, a colour of three

@@ -126,9 +126,9 @@ okna.
   ověřené Blenderem
 - **[docs/materialx.md](docs/materialx.md)** — materiály jako MaterialX
   bez knihovny: v exportu USD (shadery MaterialX a UsdPreviewSurface,
-  plochy přiřazené GeomSubsety, fotky vedle scény), jako `.mtlx`, a čtení
-  `.mtlx` (i z Poly Haven) jako sady textur; ověřené knihovnou MaterialX
-  1.38 a 1.39, `usd-core` a Blenderem
+  výška jako posunutí, plochy přiřazené GeomSubsety, fotky vedle scény),
+  jako `.mtlx`, a čtení `.mtlx` (i z Poly Haven) jako sady textur;
+  ověřené knihovnou MaterialX 1.38 a 1.39, `usd-core` a Blenderem
 - **[docs/vdb.md](docs/vdb.md)** — čtení OpenVDB bez knihovny: kouř
   a oheň z Houdini, Blenderu nebo EmberGenu přehraný jako plyn záběru
   (VDB Gas), level set jako překážka nebo tvar zdroje (VDB Import); zip,

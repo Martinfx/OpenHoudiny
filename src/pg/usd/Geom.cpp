@@ -779,9 +779,11 @@ std::string stageFile(const Stage& stage) {
     return file;
 }
 
-/// The primitives' materials as the program's attributes (ImportOptions::materials).
+/// The primitives' materials as the program's attributes (ImportOptions::materials);
+/// `metres` what a unit of the stage is in the geometry's: its metres where
+/// it is converted, else 1.
 void applyMaterials(const Stage& stage, double time, Geometry& geo, std::vector<int32_t> lookOf,
-                    const std::vector<std::string>& table) {
+                    const std::vector<std::string>& table, float metres) {
     if (table.empty()) return;
     const size_t prims = geo.primitiveCount();
     lookOf.resize(prims, -1);
@@ -847,7 +849,8 @@ void applyMaterials(const Stage& stage, double time, Geometry& geo, std::vector<
         numbers("texture_projection", AttrType::Int,
                 [](const Look& l) { return l.texture.empty() ? 0.0f : l.surface.size > 0.0f ? 2.0f : 1.0f; }, noTexture);
         numbers("texture_size", AttrType::Float,
-                [](const Look& l) { return l.texture.empty() || l.surface.size <= 0.0f ? 0.0f : l.surface.size; }, noTexture);
+                [&](const Look& l) { return l.texture.empty() || l.surface.size <= 0.0f ? 0.0f : l.surface.size * metres; },
+                noTexture);
     }
     if (valued) {
         numbers("roughness", AttrType::Float, [](const Look& l) { return std::clamp(l.surface.values.roughness, 0.0f, 1.0f); },
@@ -1109,7 +1112,8 @@ std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const 
     std::vector<int32_t> materials = std::move(builder.materials);
     const std::vector<std::string> materialTable = std::move(builder.materialTable);
     auto geo = builder.finish();
-    applyMaterials(stage, time, *geo, std::move(materials), materialTable);
+    applyMaterials(stage, time, *geo, std::move(materials), materialTable,
+                   options.metresYUp ? static_cast<float>(stage.metersPerUnit()) : 1.0f);
     return geo;
 }
 

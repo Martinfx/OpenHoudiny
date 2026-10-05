@@ -64,10 +64,19 @@ kladou renderery:
 | tónování podle `Cd` | fotka × 1/průměr sady × barva (dva `multiply`); netónovaná sada fotka, jak je |
 | normálová mapa (podle UV) | `normalmap` se `scale` = Normal Strength; mapa DirectX má zelenou otočenou (`multiply` (1, −1, 1), `add` (0, 1, 0)) |
 | alfa výřez | `opacity` ← `convert` ← `extract` 3 ← `image` color4; šedá maska `image` float |
+| výška | `displacementshader` materiálu: `displacement` se `scale` = hloubka sady v metrech ← `subtract` 0,5 ← `image` float (podle UV) nebo `triplanarprojection` float (ze tří stran, stejně jako barva) |
 | průsvitnost listů a stébel | `thin_walled` a `subsurface` = translucency, `subsurface_color` = barva |
 | drsnost, kov | `specular_roughness`, `metalness`; `base` 1 (barva je albedo) |
 | sklo | `transmission` 1, `specular_IOR` 1,5, `transmission_color` 0,65 + 0,35 × barva (jako renderery) |
 | voda | `transmission` 1, `specular_IOR` 1,33 |
+
+**Výška** je posunutí plochy podél normály. Střed obrázku (0,5) zůstane
+na ploše, světlejší místa jdou ven, tmavší dovnitř, celkem o hloubku sady
+(`depth` v `texture.txt`, u cihel 13 mm). Renderer, který geometrii
+posouvá (třeba Karma v Houdini), tak spáry mezi cihlami opravdu
+prohloubí. Blender z výšky při importu USD udělá uzel Displacement.
+Ostatní renderery výšku přeskočí nebo z ní udělají reliéf, jako naše
+Cycles.
 
 Uzly se jmenují podle materiálu (`bark_picture`, `bark_surface`…) a graf
 končí uzlem `surfacematerial` se jménem materiálu. Dokument má verzi
@@ -78,7 +87,9 @@ převede.
 nečtou (třeba import USD v Blenderu): `diffuseColor` z `UsdUVTexture` podle
 `st` nebo z `displayColor`, `roughness`, `metallic`, normálová mapa
 (`sourceColorSpace` raw, `scale` a `bias`), alfa jako `opacity`
-s `opacityThreshold` 0,5, sklo a voda s `ior` a průhledností.
+s `opacityThreshold` 0,5, výška jako `displacement` (`UsdUVTexture`
+se `scale` = hloubka a `bias` = −polovina hloubky), sklo a voda s `ior`
+a průhledností.
 UsdPreviewSurface neumí násobit primvarem, takže fotka tónovaná podle `Cd`
 v něm je fotka, jak je.
 
@@ -86,8 +97,10 @@ v něm je fotka, jak je.
 
 ```
 /World/Materials/bark          Material                         (záběr; jedna geometrie: /<jméno>/Materials)
-    outputs:mtlx:surface  →  bark_surface      ND_standard_surface_surfaceshader
-    outputs:surface       →  bark_preview      UsdPreviewSurface
+    outputs:mtlx:surface       →  bark_surface        ND_standard_surface_surfaceshader
+    outputs:mtlx:displacement  →  bark_displacement   ND_displacement_float (má-li sada výšku)
+    outputs:surface            →  bark_preview        UsdPreviewSurface
+    outputs:displacement       →  bark_preview        jeho displacement z UsdUVTexture
     bark_picture, bark_evened, bark_tinted, bark_cd, bark_normal…   shadery MaterialX
     bark_preview_picture, bark_preview_st…                           UsdUVTexture, UsdPrimvarReader
 /World/<uzel>/mesh             Mesh s primvars:st
@@ -143,7 +156,9 @@ a skla ([usd-import.md](usd-import.md#materiály)).
   přes `interfacename`. Z `base_color` je barva, z `normal` normálová
   mapa, z `opacity` alfa (alfa kanál, pokud cesta vede přes `extract` 3
   nebo výstup `a`), ze `specular_roughness` drsnost a z `displacement`
-  materiálu výška.
+  materiálu výška. Hloubka je jeho `scale` (u UsdPreviewSurface `scale`
+  obrázku výšky); bez ní 1 % velikosti obrázku. Ze scény USD jsou
+  hloubka i velikost v jednotkách scény a převedou se na metry.
 - Cesty k souborům se čtou od složky dokumentu.
 - Barva násobená `geompropvalue` znamená tónování podle `Cd` a průměr sady
   je to, čím dokument fotku vydělí (jak to zapisuje export). Bez toho je
@@ -152,7 +167,8 @@ a skla ([usd-import.md](usd-import.md#materiály)).
   2 m. Otočená zelená normálové mapy znamená DirectX.
 
 Vlastní export se tak přečte zpátky jako stejná sada: tytéž soubory
-(zkopírované), stejný průměr, tónování, alfa i velikost.
+(zkopírované), stejný průměr, tónování, alfa, velikost i výška
+s hloubkou.
 
 ## 5. Ověření
 
@@ -164,10 +180,17 @@ Blender 4.5.3 LTS.
   `validate()` platný v MaterialX 1.38.10 i 1.39.5. Každý uzel má definici
   a GLSL generátor z obou verzí vyrobí shader pro všechny čtyři materiály.
   Renderer knihovny je vykreslí (obrázek nahoře).
-- **Id shaderů v USD:** všech 19 id (`ND_…`) je v knihovně 1.38.10
-  i 1.39.5. Síť poskládaná zpátky z USD shaderů, jen podle jejich id
-  a spojení (tak, jak to dělá Hydra), je v obou verzích platný dokument
-  a GLSL generátor z ní vyrobí shadery.
+- **Id shaderů v USD:** všech 23 id (`ND_…`) z exportů `foliage`,
+  `demolition` a `uv_props` je v knihovně 1.38.10 i 1.39.5. Síť
+  poskládaná zpátky z USD shaderů, jen podle jejich id a spojení (tak,
+  jak to dělá Hydra), je v obou verzích platný dokument a GLSL generátor
+  z ní vyrobí shadery povrchu i posunutí.
+- **Výška:** dokumenty `.mtlx` těch příkladů (výška podle UV i ze tří
+  stran) jsou platné v obou verzích. Ke každému `displacement` vznikne
+  GLSL shader. USD najde posunutí materiálu MaterialX
+  (`ComputeDisplacementSource("mtlx")` → `ND_displacement_float`)
+  i univerzální (`UsdPreviewSurface`). Blender 4.5.3 z něj při importu
+  udělá uzel Displacement s Midlevel 0,5 a Scale = hloubka sady.
 - **USD** (`usd-core` 26.08):
   - knihovna najde u každého materiálu povrch MaterialX
     (`ComputeSurfaceSource("mtlx")` → `ND_standard_surface_surfaceshader`)
@@ -199,13 +222,15 @@ Testy jsou v `tests/test_materialx.cpp` (8):
   `tiledimage`, posun) dovede k fotkám, i jako sada textur ze souboru,
   z `#jména` a ze složky;
 - id definic uzlů a rozepsaná normálová mapa bez `normalmap`;
-- naše materiály jako grafy: kůra s tónováním, normálovou mapou
+- naše materiály jako grafy: kůra s tónováním, normálovou mapou, výškou
   a náhradním UsdPreviewSurface, list s alfou a průsvitností, beton ze tří
-  stran (podle polohy i `rest`), sklo, bez materiálu, normálová mapa
-  DirectX;
-- zapsaný materiál se přečte jako stejná sada textur;
+  stran (podle polohy i `rest`, výška stejně), sklo, bez materiálu,
+  normálová mapa DirectX;
+- zapsaný materiál se přečte jako stejná sada textur, i s výškou
+  a hloubkou;
 - scéna USD s plochami přiřazenými subsety, fotkami vedle, `primvars:st`,
-  zpětným importem (skupiny a `uv`) a celou sítí z jednoho materiálu;
+  posunutím MaterialX i UsdPreviewSurface, zpětným importem (skupiny
+  a `uv`) a celou sítí z jednoho materiálu;
 - záběr, jehož geometrie mění materiály snímek po snímku;
 - `.mtlx` samotný, složka fotek sekvence a geometrie bez ploch.
 
@@ -222,8 +247,9 @@ Testy jsou v `tests/test_materialx.cpp` (8):
 
 ## 7. Omezení
 
-- **Výška se nezapisuje.** Reliéf z výšky (bump v Cycles) v grafu není,
-  jen normálová mapa.
+- **Výšku naše renderery neposouvají**, dělají z ní jen reliéf (bump
+  v Cycles, a to jen tam, kde není normálová mapa). V exportu je
+  posunutím, takže jinde může plocha vypadat hlubší než u nás.
 - **Procedurální vzory a skvrny Cycles** (beton bez fotky, šmouhy na
   fasádách) v MaterialX nejsou. Graf má fotky a barvy.
 - **Kladení ze tří stran** se liší v detailu: naše renderery míchají
