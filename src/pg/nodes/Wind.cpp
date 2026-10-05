@@ -7,6 +7,11 @@
 //             for plants (instances): each standing for its plant bent
 //             ahead into the nearest of a few shapes -- Directions ways
 //             round it, Steps far -- tilted the rest of the way.
+//             With Dynamics, the plants are springs (SwayingPlants):
+//             stepped from Start to the frame, the states kept from one
+//             cook to the next -- anew when the plants or the parameters
+//             change; parameters of the wind driven by expressions are
+//             read at each step.
 //   treads    (Plant Trample) points where something trod: pscale times
 //             Radius how wide, time when -- the plants round each bowed
 //             away from it, Flatten at its middle, none at its edge,
@@ -20,6 +25,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace pg {
@@ -30,6 +37,38 @@ constexpr float kPi = 3.14159265358979f;
 bool hasFlex(const Geometry& geo) {
     const AttributeArray* flex = geo.points().find("flex");
     return flex && flex->type() == AttrType::Float;
+}
+
+/// A number of what plants `geo` holds: where its points are, how far
+/// along the wood, which plant each stands for and how big, its
+/// prototypes -- the same for the same plants.
+uint64_t plantsHash(const Geometry& geo) {
+    uint64_t h = 0x9E3779B97F4A7C15ull ^ geo.pointCount() ^ (static_cast<uint64_t>(geo.primitiveCount()) << 32);
+    auto add = [&](const void* data, size_t bytes) {
+        const auto* b = static_cast<const unsigned char*>(data);
+        size_t i = 0;
+        for (; i + 8 <= bytes; i += 8) {
+            uint64_t w;
+            std::memcpy(&w, b + i, 8);
+            h = (h ^ w) * 0xD6E8FEB86659FD93ull;
+            h ^= h >> 32;
+        }
+        for (; i < bytes; ++i) h = (h ^ b[i]) * 0x100000001B3ull;
+    };
+    add(geo.positions().data(), geo.positions().size_bytes());
+    for (const char* name : {"flex", "pscale"}) {
+        const AttributeArray* a = geo.points().find(name);
+        if (a && a->type() == AttrType::Float) add(a->read<float>().data(), a->read<float>().size_bytes());
+    }
+    for (const char* name : {"instance", "id"}) {
+        const AttributeArray* a = geo.points().find(name);
+        if (a && a->type() == AttrType::Int) add(a->read<int32_t>().data(), a->read<int32_t>().size_bytes());
+    }
+    for (const auto& proto : geo.prototypes()) {
+        const Geometry* g = proto.get();
+        add(&g, sizeof(g));
+    }
+    return h;
 }
 
 class PlantWindNode : public Node {
@@ -48,29 +87,29 @@ public:
         params_.setInt("seed", 1);
         params_.setInt("directions", 8);
         params_.setInt("steps", 4);
+        const SwaySettings sway;
+        params_.setBool("dynamics", false);
+        params_.setFloat("frequency", sway.frequency);
+        params_.setFloat("damping", sway.damping);
+        params_.setFloat("branches", sway.branches);
+        params_.setFloat("start", sway.start);
     }
 
     bool isTimeDependentSelf() const override { return true; }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> inputs) override {
         if (inputs.empty() || !inputs[0]) return std::make_shared<Geometry>();
-        WindSettings s;
-        const float heading = params_.evalFloat("direction", ctx, 0.0f) * kPi / 180.0f;
-        s.direction = Vec3(std::cos(heading), 0.0f, -std::sin(heading));
-        s.strength = std::max(params_.evalFloat("strength", ctx, 14.0f), 0.0f) * kPi / 180.0f;
-        s.gust = std::clamp(params_.evalFloat("gust", ctx, s.gust), 0.0f, 1.0f);
-        s.gustSpeed = params_.evalFloat("gustspeed", ctx, s.gustSpeed);
-        s.gustSize = std::max(params_.evalFloat("gustsize", ctx, s.gustSize), 0.01f);
-        s.turbulence = std::clamp(params_.evalFloat("turbulence", ctx, s.turbulence), 0.0f, 2.0f);
-        s.flutter = std::max(params_.evalFloat("flutter", ctx, 20.0f), 0.0f) * kPi / 180.0f;
-        s.flutterSpeed = std::max(params_.evalFloat("flutterspeed", ctx, s.flutterSpeed), 0.0f);
-        s.seed = static_cast<uint64_t>(params_.evalInt("seed", ctx, 1));
+        const WindSettings s = settingsAt(ctx);
         const int directions = std::clamp(params_.evalInt("directions", ctx, 8), 1, 32);
         const int steps = std::clamp(params_.evalInt("steps", ctx, 4), 1, 16);
         const float time = static_cast<float>(ctx.time);
 
         const Geometry& in = *inputs[0];
         auto out = std::make_shared<Geometry>(in);
+        if (params_.evalBool("dynamics", ctx, false)) {
+            if (!sway(ctx, inputs[0], s, directions, steps, *out)) return nullptr;
+            return out;
+        }
         // The plants that are geometry: bent where they are.
         if (hasFlex(in)) blowPlants(*out, s, time);
         // The plants that points stand for: bent ahead into a few shapes.
@@ -91,7 +130,77 @@ public:
     }
 
 private:
+    /// The wind's parameters at `ctx`.
+    WindSettings settingsAt(const CookContext& ctx) const {
+        WindSettings s;
+        const float heading = params_.evalFloat("direction", ctx, 0.0f) * kPi / 180.0f;
+        s.direction = Vec3(std::cos(heading), 0.0f, -std::sin(heading));
+        s.strength = std::max(params_.evalFloat("strength", ctx, 14.0f), 0.0f) * kPi / 180.0f;
+        s.gust = std::clamp(params_.evalFloat("gust", ctx, s.gust), 0.0f, 1.0f);
+        s.gustSpeed = params_.evalFloat("gustspeed", ctx, s.gustSpeed);
+        s.gustSize = std::max(params_.evalFloat("gustsize", ctx, s.gustSize), 0.01f);
+        s.turbulence = std::clamp(params_.evalFloat("turbulence", ctx, s.turbulence), 0.0f, 2.0f);
+        s.flutter = std::max(params_.evalFloat("flutter", ctx, 20.0f), 0.0f) * kPi / 180.0f;
+        s.flutterSpeed = std::max(params_.evalFloat("flutterspeed", ctx, s.flutterSpeed), 0.0f);
+        s.seed = static_cast<uint64_t>(params_.evalInt("seed", ctx, 1));
+        return s;
+    }
+
+    /// The plants as springs, at `ctx`'s time: `out` (a copy of `input`)
+    /// bent. False when interrupted.
+    bool sway(const CookContext& ctx, const GeometryPtr& input, const WindSettings& now, int directions, int steps,
+              Geometry& out) {
+        SwaySettings d;
+        d.frequency = std::max(params_.evalFloat("frequency", ctx, d.frequency), 0.01f);
+        d.damping = std::clamp(params_.evalFloat("damping", ctx, d.damping), 0.0f, 0.95f);
+        d.branches = std::max(params_.evalFloat("branches", ctx, d.branches), 0.0f);
+        d.start = params_.evalFloat("start", ctx, d.start);
+        // The wind at each step: as now, unless an expression moves it.
+        const bool animated = params_.anyExpression();
+        const WindAt windAt = [&](float t) {
+            if (!animated) return now;
+            CookContext at = ctx;
+            at.time = t;
+            at.frame = static_cast<int>(std::lround(static_cast<double>(t) * ctx.fps)) + 1;
+            return settingsAt(at);
+        };
+        const float time = static_cast<float>(ctx.time);
+        std::lock_guard<std::mutex> lock(mutex_);
+        // Other plants, other parameters: from the start again.
+        if (input != input_ || version() != version_) {
+            const uint64_t hash = plantsHash(*input);
+            if (version() != version_ || hash != hash_) {
+                plants_.clear();
+                instances_.clear();
+                built_ = false;
+            }
+            input_ = input;
+            version_ = version();
+            hash_ = hash;
+        }
+        const Geometry& in = *input;
+        if (!built_) {
+            if (hasFlex(in)) plants_.build(in);
+            if (in.prototypeCount() > 0) instances_.buildInstances(in);
+            built_ = true;
+        }
+        if (plants_.stemCount() > 0 && !plants_.blow(out, windAt, d, time, ctx.interrupt)) return false;
+        if (instances_.stemCount() > 0) {
+            std::vector<Vec3> bends;
+            if (!instances_.bends(windAt, d, time, bends, ctx.interrupt)) return false;
+            // The most a plant bows, as the bow's: past it, tilted.
+            const float most = now.strength * (1.0f + now.gust) * (1.0f + now.turbulence);
+            bowInstances(out, bends, directions, steps, most, shapes_);
+        }
+        return true;
+    }
+
     BentShapes shapes_;
+    std::mutex mutex_;
+    GeometryPtr input_;
+    uint64_t version_ = 0, hash_ = 0;
+    bool built_ = false;
+    SwayingPlants plants_, instances_;
 };
 
 /// A plant's foot by a foot of what treads: how far it is flattened, and

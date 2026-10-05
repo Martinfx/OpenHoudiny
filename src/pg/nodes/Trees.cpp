@@ -4,7 +4,7 @@
 //   output  mesh: the trunk and the branches as tubes of bark, the leaves as
 //           polygons -- point Cd and flex (how far along the wood from the
 //           tree's foot, a share of its height: what wind bends it by);
-//           primitive level (-1 a leaf), stem, tree; the primitive groups
+//           primitive level (-1 a leaf), stem, parent, tree; the primitive groups
 //           bark and leaves. skeleton: each stem an open polyline, point
 //           pscale its radius, flex, primitive level, stem, parent, tree;
 //           each leaf a loose point, N the way it faces, pscale its size,

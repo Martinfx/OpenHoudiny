@@ -607,6 +607,14 @@ void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& 
     std::copy(uvs.begin(), uvs.end(), outUv.begin() + static_cast<std::ptrdiff_t>(vertex0));
     primitiveInts(geo, "level", prim0, level);
     primitiveInts(geo, "stem", prim0, stem);
+    // What each grows from: a stem's parent stem (-1 the trunk), a leaf's
+    // stem -- what a swaying tree is carried by (core/Wind.h).
+    std::vector<int32_t> parent(level.size(), -1);
+    for (size_t i = 0; i < level.size(); ++i) {
+        const size_t of = static_cast<size_t>(std::max(stem[i], 0));
+        parent[i] = level[i] < 0 ? stem[i] : of < tree.stems.size() ? tree.stems[of].parent : -1;
+    }
+    primitiveInts(geo, "parent", prim0, parent);
     primitiveInts(geo, "tree", prim0, std::vector<int32_t>(sizes.size(), treeIndex));
     // For a renderer that follows light (render/Scene.h): the leaves thin,
     // letting a share of the light through; the bark not.

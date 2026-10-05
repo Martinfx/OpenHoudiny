@@ -529,8 +529,14 @@ Seřazeno podle poměru hodnota / náklad:
    tvarů.
    ✅ Prořezávání obálkou a kořeny (Tree), šlapání (Plant Trample),
    ekosystém tří druhů za roky (Ecosystem, příklad **ecosystem**).
-   Zbývá: vítr jako dynamická simulace (pružné větve se setrvačností),
-   ekosystém ve 3D (světlo podle výšky), vyhýbání se větví překážkám.
+   ✅ Vítr jako pružiny (Plant Wind, Dynamics): každý stonek tlumený
+   oscilátor řešený přesně po krocích 1/120 s, větve nesené a švihané
+   stonkem, ze kterého rostou, stavy uložené mezi snímky (stejný výsledek
+   v jakémkoli pořadí snímků i počtu vláken); les 0,29 s na snímek.
+   Cestou opraveny stromy ze dvou uzlů Tree po Merge, které se ohýbaly
+   kolem cizí paty.
+   Zbývá: ekosystém ve 3D (světlo podle výšky), vyhýbání se větví
+   překážkám.
 
 ---
 

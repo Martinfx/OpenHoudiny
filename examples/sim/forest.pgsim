@@ -4,11 +4,13 @@ pgsim 1
 # likely conifers; a Tree on each point -- broadleaves forking into leaders
 # on the rest, spruces on the conifers -- each its own: its number grows it,
 # Size Variation sizes it. The wind is Plant Wind after the hill and the
-# trees are merged: it bows each tree from its foot by flex, how far along
-# the wood a point is -- the trunk stands, the crown sways, the twigs more,
-# the leaves flap, in gusts that run across the hill; the hill, of no flex,
-# stays. Only the points move, so the viewport sends only their places to
-# the GPU; v goes with them, for motion blur.
+# trees are merged, with Dynamics: each trunk and branch a damped spring
+# bending from its base toward where the wind would bow it -- flex, how far
+# along the wood a point is, says how far -- lagging behind the gusts that
+# run across the hill, swinging past and back, the branches flung by the
+# trunks; the leaves flap; the hill, of no flex, stays. Only the points
+# move, so the viewport sends only their places to the GPU; v goes with
+# them, for motion blur.
 node 1 grid 1 land 0 0
   param sizex 160
   param sizez 160
@@ -72,6 +74,7 @@ node 11 merge 1 forest 0 880
 node 12 plant_wind 1 wind 0 990
   param strength 9
   param gustsize 40
+  param dynamics on
   display
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.geometry

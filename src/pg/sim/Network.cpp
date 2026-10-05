@@ -829,7 +829,9 @@ std::vector<NodeType> buildTypes() {
              "wavering of its own, leaves flapping, the tips of blades tossing; and v, how fast each point "
              "goes, for motion blur. Points standing for plants (instances) stand for their plant bent ahead "
              "into the nearest of a few shapes -- Directions ways round, Steps far -- tilted the rest of the "
-             "way: only the points change, and the same in the viewport and both renderers.",
+             "way: only the points change, and the same in the viewport and both renderers. With Dynamics "
+             "each stem is a spring: it lags behind a gust, swings past and back, and is flung by what it "
+             "grows from.",
              in,
              {{"direction", "Direction", "Wind", K::Float, {0.0f, 0.0f, 0.0f}, -180.0f, 180.0f, -360.0f, 360.0f,
                "\xc2\xb0", "The way it blows, degrees from +x toward -z: 0 along +x, 90 along -z."},
@@ -851,7 +853,23 @@ std::vector<NodeType> buildTypes() {
               {"directions", "Directions", "Instances", K::Int, {8.0f, 0.0f, 0.0f}, 1.0f, 16.0f, 1.0f, 32.0f, "",
                "Ways round each plant its bent shapes go: more, nearer the wind's way; each a plant held."},
               {"steps", "Steps", "Instances", K::Int, {4.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",
-               "How far, in steps up to the most the plants bow: more, smoother; each a plant held."}});
+               "How far, in steps up to the most the plants bow: more, smoother; each a plant held."},
+              {"dynamics", "Dynamics", "Dynamics", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "The plants as springs: each stem -- a trunk, a branch, a blade, else a whole plant -- bends "
+               "toward where the wind would bow it, with the inertia of what it carries: it lags behind a "
+               "gust, swings past and back at its own pace and is flung by the stem it grows from. Stepped "
+               "from Start to the frame; a plant standing on a point sways whole."},
+              {"frequency", "Frequency", "Dynamics", K::Float, {0.5f, 0.0f, 0.0f}, 0.05f, 2.0f, 0.01f, kBig, "Hz",
+               "How fast a stem 10 m long sways back and forth; a shorter one quicker, as (10 m / its "
+               "length)^0.6: a 6 m trunk 0.68 Hz, a branch of 2 m 1.3 Hz, a twig of 30 cm 4 Hz."},
+              {"damping", "Damping", "Dynamics", K::Float, {0.12f, 0.0f, 0.0f}, 0.0f, 0.95f, 0.0f, 0.95f, "",
+               "How soon a swing dies away, a share of what stops it at once: low, they sway on after a "
+               "gust; high, they settle."},
+              {"branches", "Branches", "Dynamics", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
+               "How far each branch bends of its own in a steady wind: 1 as far as without Dynamics, 0 only "
+               "carried and flung by what it grows from."},
+              {"start", "Start", "Dynamics", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 10.0f, -kBig, kBig, "s",
+               "When the swaying begins: before it the plants stand still, bent as the wind is then."}});
     geometry("plant_trample", "Plant Trample", "planttrample",
              "Grass and shrubs flattened where something treads -- feet, wheels, a body that fell -- and "
              "straightening again: each plant round a tread bowed away from it, Flatten at its middle, none "

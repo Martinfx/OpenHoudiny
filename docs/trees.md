@@ -178,6 +178,7 @@ listy jsou polygony otočené lícem tam, kam hledí.
 | `uv` | vrchol | souřadnice textury: na kůře u dokola a v nahoru po větvi, list ve své čtvrtině obrázku listů (níže) |
 | `level` | primitivum | −1 list, 0 kmen (a vůdčí větve), 1–3 úrovně větví |
 | `stem` | primitivum | číslo větve ve stromu (list: větvička, na které roste) |
+| `parent` | primitivum | z které větve větev roste (kmen −1, list: větvička, na které roste) — podle něj Plant Wind s Dynamics ví, co kterou větev nese |
 | `tree` | primitivum | číslo stromu = číslo bodu vstupu |
 | `bark`, `leaves` | skupiny primitiv | kůra a listy, třeba pro Blast nebo Color |
 
@@ -254,8 +255,11 @@ po snímku:
   ohybu krát `flex²`. Kmen u země stojí, koruna se ohne, konečky větví
   nejvíc. Bod se otáčí, neposouvá, takže se nic nenatáhne (test: nejvýš
   1e-6 m na stromu 7 m). Rostlina je jedno stéblo (`blade`), jinak jeden
-  strom (`tree`), jinak celá geometrie. Pata je bod s nejmenším `flex`.
-  Plochy bez `flex` (kopec, ke kterému Merge doplnil nulu) zůstanou.
+  strom (`tree`), jinak celá geometrie. Rostlinu tvoří primitiva stejného
+  čísla, která jdou za sebou, jak je dají Tree, Grass i Merge. Dva uzly
+  Tree spojené Mergem číslují své stromy oba od 0, a přesto se každý strom
+  ohne kolem své paty. Pata je bod s nejmenším `flex`. Plochy bez `flex`
+  (kopec, ke kterému Merge doplnil nulu) zůstanou.
 - **Poryvy.** Vlny podél větru, **Gust Size** metrů od sebe, běží
   krajinou rychlostí **Gust Speed**. Rostlina o tolik metrů dál má
   o sekundu později stejný ohyb. **Gusts** je podíl větru, který přichází
@@ -291,9 +295,71 @@ Stejně to vidí viewport, Cycles, path tracer i export do USD. Každý tvar
 je ovšem rostlina navíc v paměti. Pro velké stromy proto stačí méně tvarů
 (příklad meadow: stromy 4 směry × 2 kroky, tráva 8 × 4).
 
-Příklad forest má Plant Wind za Merge kopce se stromy. Příklad meadow má
-jeden na trávě (Strength 22°, poryvy po 12 m) a druhý na stromech
-a keřích (4°).
+### Dynamika: větve jako pružiny
+
+Se zapnutým **Dynamics** je každý stonek tlumená pružina: kmen, každá
+větev, každé stéblo (jiná geometrie s `flex` jako celá rostlina). Ohýbá se
+od své báze tam, kam by ho vítr ohnul bez Dynamics, ale se setrvačností.
+Za poryvem se opozdí, přežene ho, zhoupne se zpátky proti větru
+a dokmitá vlastní frekvencí. Větev nese stonek, ze kterého roste: otáčí
+se s ním, a když se rozhoupe nebo zabrzdí, švihne s ní. Báze větve se pod
+ní pohne a pootočí, větev zůstane pozadu.
+
+| Parametr | Co dělá |
+|---|---|
+| **Dynamics** | zapne pružiny |
+| **Frequency** | kolikrát za sekundu se kývá stonek 10 m dlouhý (výchozí 0,5 Hz); kratší rychleji, jako (10 m / délka)^0,6, nejvýš 12 Hz: kmen 6 m 0,68 Hz, větev 2 m 1,3 Hz, větvička 30 cm 4 Hz |
+| **Damping** | jak rychle kývání utichá, podíl kritického tlumení (výchozí 0,12; stromy mívají 0,05–0,2) |
+| **Branches** | jak daleko se větev ve stálém větru ohne sama: 1 o tolik, o kolik ji ohyb od paty pootočí mezi bází a koncem, 0 vůbec (jen ji nese a švihá s ní kmen) |
+| **Start** | od kdy se kývá; předtím rostliny stojí ohnuté, jak vítr fouká ve Start |
+
+Stonek se ohýbá jako vetknutý nosník: bod ve vzdálenosti s jeho délky
+o s² ohybu. Strukturu bere z atributů: větve podle primitiv `stem`
+a `parent` (Tree je dává síti i kostře), list ke stonku, na kterém roste,
+volné body listů kostry k nejbližšímu stonku. Stéblo (`blade`) je jeden
+stonek, jiná rostlina s `flex` také jeden, stojící svisle.
+
+Krok trvá 1/120 s a každý stonek se v něm řeší přesně: tlumený
+oscilátor, který táhne k místu, kam ho drží vítr, a kterého báze se
+pohybuje se stonkem pod ním. Ani rychlé větvičky proto nebouchnou.
+Stavy si uzel pamatuje. Na další snímek kráčí od posledního, na dřívější
+od nejbližšího uloženého (každou sekundu simulace, při dlouhé řidčeji).
+Snímek je proto stejný, ať se snímky vaří popořadě, napřeskáčku nebo
+pozpátku, na jednom i více vláknech. Změna parametru nebo vstupu začne
+znovu od Start. Parametry větru s výrazem (vítr sílí) se čtou v každém
+kroku. Parametry Dynamics se čtou na snímku, který se vaří.
+
+Ve stálém větru stojí strom od začátku v klidu a vrchol kmene je tam,
+kam ho ohne ohyb od paty. Konce větví se ohnou méně, protože se každá
+větev ohýbá kolem své báze, ne kolem paty stromu.
+
+![Vrchol kmene a konec větve u vrcholu ve výchozích poryvech: šedě ohyb od paty, zeleně Dynamics. Pružina se za poryvem opozdí, přežene ho, zhoupne se proti větru a dokmitá](img/wind-dynamics.jpg)
+
+**Na instancích** se kývá celá rostlina jako jeden stonek, dlouhý jako
+výška prototypu krát `pscale`. Ohyb pak jde do předohnutých tvarů stejně
+jako bez Dynamics. Trs trávy vysoký 0,4 m kmitá 3,4 Hz. Poryvy po 12 m
+při 6 m/s přijdou jednou za dvě sekundy (0,5 Hz), sedmkrát pomaleji, takže
+je trs sleduje skoro jako bez Dynamics. Pružiny jsou znát hlavně na
+stromech.
+
+Testy (`tests/test_plants.cpp`):
+
+- Stéblo 2 m (1,313 Hz) v poryvech o 0,3, 1 a 3násobku své frekvence se
+  rozkmitá 1,138, 4,166 a 0,124krát tolik co ohyb od paty. Tlumený
+  oscilátor dává 1,138, 4,167 a 0,125.
+- Strom (225 stonků, 0,68–6,4 Hz) ve stálém větru se za 3,5 s nepohne
+  o víc než 5e-7 m a vrchol kmene je 1,486 m po větru (ohyb od paty
+  1,487 m).
+- S Branches 0 rozhoupe kmen v poryvech větve až o 0,49 rad, ve stálém
+  větru vůbec.
+- Les se kývá bod po bodu stejně, když se snímky 1–36 vaří popořadě,
+  rovnou 36, nebo 36, 20 a 36, na jednom i na čtyřech vláknech.
+- Trsy jako instance ve stálém větru mají stejné tvary i naklopení jako
+  bez Dynamics.
+
+Příklad forest má Plant Wind se zapnutým Dynamics za Merge kopce se
+stromy. Příklad meadow má jeden Plant Wind na trávě (Strength 22°,
+poryvy po 12 m) a druhý na stromech a keřích (4°), oba bez Dynamics.
 
 ## 6. Vlastní listy
 
@@ -334,12 +400,16 @@ Na čtyřech jádrech:
 |---|---|---|---|
 | jeden strom s výchozím nastavením | 103 tisíc | 32 tisíc | 12 ms |
 | sedm druhů (tree_shapes) | 1,34 milionu | 366 tisíc | 117 ms |
-| les 34 stromů na kopci (forest), první snímek | 3,5 milionu | 827 tisíc | 0,9 s |
-| les, každý další snímek (vítr) | | | 0,4–0,6 s |
+| les 34 stromů na kopci (forest), první snímek | 3,5 milionu | 827 tisíc | 1,1 s |
+| les, každý další snímek (Plant Wind s Dynamics, 29 432 stonků) | | | 0,29 s |
+| totéž bez Dynamics (ohyb od paty) | | | 0,47 s |
+| les, skok ze snímku 24 rovnou na 240 (Dynamics) | | | 1,4 s |
 
 Jeden strom roste v jednom vlákně, stromy lesa paralelně. Ve větru se
-přepočítává jen wrangle nad 3,5 milionu bodů (interpretovaný); stromy
-znovu nerostou a Merge s kopcem se nevaří znovu.
+přepočítává jen Plant Wind nad 3,5 milionu bodů, paralelně; stromy znovu
+nerostou a Merge s kopcem se nevaří znovu. S Dynamics se navíc kráčí od
+posledního snímku po krocích 1/120 s (pět kroků na snímek, asi 1 ms na
+krok všech stonků lesa).
 
 Každá část stromu (kmen, vidlice, rozmístění větví na rodiči, růst každé
 větve, listy každé větvičky) má svá náhodná čísla, odvozená jen ze Seed
@@ -359,6 +429,7 @@ trubky s plochami otočenými ven a tvar koruny podle Shape.
   je, oddíl 2).
 - **Kořeny** v zemi do hloubky a kořeny, které se přizpůsobí terénu
   (teď vycházejí z paty stejně na rovině i na svahu).
-- **Vítr jako dynamická simulace**: pružné větve se setrvačností, které
-  se po poryvu dokmitají. Plant Wind je kinematický, ohyb plyne přímo
-  z času.
+- **Vítr s Dynamics** zná u každého stonku jen první vlastní kmit,
+  s frekvencí podle délky. Větev nevrací sílu stonku, ze kterého roste,
+  listy se nenatáčejí po větru a stonek se nekroutí. Mění-li se vstup
+  v čase, simulace začne v každém snímku znovu od Start.

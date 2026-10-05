@@ -176,7 +176,9 @@ Zbytek ohybu dorovná naklopením `orient`. Stébla se tak ohýbají podél
 délky, ne jen jako celý trs, a stejně ve viewportu, v obou rendererech
 i v USD. Mění se jen `instance` a `orient` bodů. Polohy a ostatní atributy
 zůstávají sdílené se vstupem a předohnuté tvary jsou stejné objekty
-snímek co snímek, takže je viewport má na GPU jednou.
+snímek co snímek, takže je viewport má na GPU jednou. S **Dynamics**
+je každá rostlina na bodě pružina, která se za poryvem opozdí a dokmitá
+([trees.md](trees.md#dynamika-větve-jako-pružiny)).
 
 ### Šlapání: Plant Trample
 

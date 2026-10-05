@@ -118,7 +118,8 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
 /// tree's foot, a share of its height: 0 at the ground, 1 about the crown's
 /// top, what wind bends a tree by --; vertex uv -- round and up the bark,
 /// a picture a metre of it, and each leaf in its quarter of the leaf picture
-/// --; primitive level (-1 a leaf), stem, tree.
+/// --; primitive level (-1 a leaf), stem, parent (the stem a stem grows
+/// from, -1 the trunk; a leaf's, the stem it grows on), tree.
 void meshTree(const Tree& tree, const TreeSettings& s, int treeIndex, Geometry& geo);
 
 /// Its stems as open polylines -- point pscale their radius, flex;

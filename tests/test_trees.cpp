@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <tuple>
@@ -522,6 +523,63 @@ TEST(tree_examples_cook_and_the_forest_sways_from_its_feet) {
     }
     CHECK(feet < 1e-6f);
     CHECK(crowns > 0.02f);
+    // Broadleaves and spruces merged, both numbered from tree 0: each tree's
+    // trunk turned about its own foot -- each point as far from it as before
+    // -- swaying as springs about the middle of its foot, bowed without
+    // Dynamics about its first point of the least flex.
+    auto drift = [&](const GeometryPtr& x, const GeometryPtr& y, bool middle, int& trees) {
+        const auto treeOf = x->primitives().find("tree")->read<int32_t>();
+        const auto stemOf = x->primitives().find("stem")->read<int32_t>();
+        const auto level = x->primitives().find("level")->read<int32_t>();  // -1 a leaf: it flaps
+        const auto Px = x->positions(), Py = y->positions();
+        float most = 0.0f;
+        trees = 0;
+        std::vector<uint32_t> trunk;
+        auto measure = [&]() {
+            if (trunk.empty()) return;
+            std::sort(trunk.begin(), trunk.end());
+            trunk.erase(std::unique(trunk.begin(), trunk.end()), trunk.end());
+            uint32_t least = trunk[0];
+            for (const uint32_t p : trunk) {
+                if (flex[p] < flex[least]) least = p;
+            }
+            Vec3 fx = Px[least], fy = Py[least];
+            if (middle) {
+                Vec3 sx(0.0f), sy(0.0f);
+                float n = 0.0f;
+                for (const uint32_t p : trunk) {
+                    if (flex[p] == flex[least]) sx += Px[p], sy += Py[p], n += 1.0f;
+                }
+                fx = sx / n, fy = sy / n;
+            }
+            for (const uint32_t p : trunk) most = std::max(most, std::fabs(length(Py[p] - fy) - length(Px[p] - fx)));
+            trunk.clear();
+            ++trees;
+        };
+        int32_t last = -1;
+        for (size_t prim = 0; prim < x->primitiveCount(); ++prim) {
+            if (stemOf[prim] != 0 || level[prim] < 0) continue;
+            float top = 0.0f;
+            for (const uint32_t q : x->primitivePoints(prim)) top = std::max(top, flex[q]);
+            if (!(top > 0.0f)) continue;  // the hill
+            if (treeOf[prim] != last) measure(), last = treeOf[prim];
+            for (const uint32_t q : x->primitivePoints(prim)) trunk.push_back(q);
+        }
+        measure();
+        return most;
+    };
+    int trees = 0, bowedTrees = 0;
+    const float swaying = drift(a, b, true, trees);
+    CHECK(forest.setParam(wind, "dynamics", "0"));
+    GeometryGraph k;
+    k.sync(forest);
+    const float bowing = drift(k.cook(wind, 1), k.cook(wind, 30), false, bowedTrees);
+    std::printf("  %d trees, their trunks %.2g m (swaying) and %.2g m (bowed) nearer or further from their feet at most\n",
+                trees, swaying, bowing);
+    CHECK_EQ(trees, 4);
+    CHECK_EQ(bowedTrees, 4);
+    CHECK(swaying < 1e-4f);
+    CHECK(bowing < 1e-4f);
     // Only the points move: the viewport sends only their places again.
     DisplayMesher mesher;
     DisplayMesh mesh;

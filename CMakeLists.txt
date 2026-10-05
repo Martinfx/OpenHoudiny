@@ -1063,6 +1063,7 @@ add_executable(pgtests
   tests/test_materials.cpp
   tests/test_uv.cpp
   tests/test_foliage.cpp
+  tests/test_plants.cpp
   tests/test_materialx.cpp
   tests/test_particles.cpp
   tests/test_constraints.cpp
