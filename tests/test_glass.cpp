@@ -3,9 +3,10 @@
 // breaks where it is struck -- closed shards that make the pane, slivers at
 // the blow and wide shards further out, cracks square to the pane however
 // it lies, the same every time and on any number of threads; drawn
-// (src/pg/sim/Display.h) apart from the rest, its chips dots below 0; and
-// the RBD Solver (src/pg/sim/Rigid.h) keeps a pane whole -- no cracks --
-// until it breaks, when it throws chips of glass and little dust.
+// (src/pg/sim/Display.h) apart from the rest, its chips dots below 0,
+// smooth by normals of its own and else flat; and the RBD Solver
+// (src/pg/sim/Rigid.h) keeps a pane whole -- no cracks -- until it breaks,
+// when it throws chips of glass and little dust.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -283,15 +284,18 @@ TEST(glass_is_drawn_apart_from_the_rest_and_its_chips_below_zero) {
     CHECK_EQ(d.glassCount(), glassTriangles);
     std::set<float> kinds;
     for (size_t t = 0; t < d.glassCount(); ++t) {
-        const float* c = d.glass.data() + 30 * t;
-        // Flat: each corner the face's own normal, as its corners go round.
-        const Vec3 a(c[0], c[1], c[2]), b(c[10], c[11], c[12]), e(c[20], c[21], c[22]);
+        const float* c = d.glass.data() + 39 * t;
+        // Flat, of no normals of its own: each corner the face's own
+        // normal, as its corners go round -- and the face's, which way a ray
+        // comes into it.
+        const Vec3 a(c[0], c[1], c[2]), b(c[13], c[14], c[15]), e(c[26], c[27], c[28]);
         const Vec3 n = normalize(cross(b - a, e - a));
         for (int k = 0; k < 3; ++k) {
-            const float* v = c + 10 * k;
+            const float* v = c + 13 * k;
             CHECK(length(Vec3(v[3], v[4], v[5]) - n) < 1e-3f);
             CHECK(Vec3(v[6], v[7], v[8]) == Vec3(0.82f, 0.9f, 0.88f));
             CHECK_EQ(v[9], c[9]);
+            CHECK(length(Vec3(v[10], v[11], v[12]) - n) < 1e-3f);
         }
         kinds.insert(c[9]);
     }
@@ -301,6 +305,83 @@ TEST(glass_is_drawn_apart_from_the_rest_and_its_chips_below_zero) {
     CHECK_NEAR(d.dots[7 + 6], 0.02f, 1e-6f);   // the other
     // Its box takes the glass in.
     CHECK(d.lo.y <= 0.8f + 1e-4f && d.hi.y >= 1.2f - 1e-4f);
+}
+
+TEST(glass_with_normals_of_its_own_is_smooth_and_faces_as_its_corners_go_round) {
+    // Two faces of glass folded along a ridge, the points' N between them
+    // -- as a round piece of glass has them.
+    Geometry geo;
+    geo.addPoints(6);
+    {
+        auto P = geo.positionsForWrite();
+        const Vec3 at[6] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 0.3f, 1.0f},
+                            {0.5f, 0.3f, 0.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}};
+        for (size_t i = 0; i < 6; ++i) P[i] = at[i];
+    }
+    const uint32_t left[4] = {0, 1, 2, 3}, right[4] = {3, 2, 4, 5};
+    geo.addPrimitive(left, true);
+    geo.addPrimitive(right, true);
+    auto glass = geo.primitives().create("glass", AttrType::Int).write<int32_t>();
+    glass[0] = glass[1] = 1;
+    const Vec3 up(0.0f, 1.0f, 0.0f), outLeft = normalize(Vec3(-0.3f, 0.5f, 0.0f)), outRight = normalize(Vec3(0.3f, 0.5f, 0.0f));
+    const std::vector<Vec3> N = {outLeft, outLeft, up, up, outRight, outRight};
+    {
+        auto w = geo.points().create("N", AttrType::Vec3).write<Vec3>();
+        for (size_t i = 0; i < 6; ++i) w[i] = N[i] * 2.0f;  // not a unit long
+    }
+
+    // Each face as its corners go round, out of the solid; a corner shaded
+    // by the N it is given -- that of its point -- or, given none, flat.
+    auto faceOf = [](const Vec3& a, const Vec3& b, const Vec3& c) { return normalize(cross(b - a, c - a)); };
+    auto pointAt = [&](const Vec3& p) {
+        size_t point = 0;
+        for (size_t i = 0; i < 6; ++i) {
+            if (length(geo.positions()[i] - p) < 1e-6f) point = i;
+        }
+        return point;
+    };
+    auto shadedAs = [&](const Geometry& g, const std::vector<Vec3>& given) {
+        bool ok = true;
+        const DisplayGeometry d = displayOf(g);
+        ok = ok && d.glassCount() == 4;
+        for (size_t t = 0; t < d.glassCount(); ++t) {
+            const float* c = d.glass.data() + 39 * t;
+            const Vec3 face = faceOf(Vec3(c[0], c[1], c[2]), Vec3(c[13], c[14], c[15]), Vec3(c[26], c[27], c[28]));
+            for (int k = 0; k < 3; ++k) {
+                const float* v = c + 13 * k;
+                const Vec3 shade = given.empty() ? face : given[pointAt(Vec3(v[0], v[1], v[2]))];
+                ok = ok && length(normalize(Vec3(v[3], v[4], v[5])) - shade) < 1e-4f;
+                ok = ok && length(Vec3(v[10], v[11], v[12]) - face) < 1e-4f;
+            }
+        }
+        // ... and as the renderers have it.
+        const ShadedTriangles s = shadedTriangles(g);
+        ok = ok && s.count() == 4;
+        for (size_t t = 0; t < s.count(); ++t) {
+            ok = ok && s.glass[t] == 1;
+            const Vec3 face = faceOf(s.positions[3 * t], s.positions[3 * t + 1], s.positions[3 * t + 2]);
+            for (size_t k = 0; k < 3; ++k) {
+                const Vec3 shade = given.empty() ? face : given[pointAt(s.positions[3 * t + k])];
+                ok = ok && length(s.normals[3 * t + k] - shade) < 1e-4f;
+            }
+        }
+        return ok;
+    };
+    // Smooth by its points' N.
+    CHECK(shadedAs(geo, N));
+    // ... by its corners' -- before the points'.
+    Geometry corners = geo;
+    {
+        auto w = corners.vertices().create("N", AttrType::Vec3).write<Vec3>();
+        for (size_t c = 0; c < w.size(); ++c) w[c] = N[corners.vertexPoint(c)];
+        auto other = corners.points().find("N")->write<Vec3>();
+        for (size_t i = 0; i < other.size(); ++i) other[i] = Vec3(1.0f, 0.0f, 0.0f);
+    }
+    CHECK(shadedAs(corners, N));
+    // Of none: flat, each face its own.
+    Geometry flat = geo;
+    flat.points().erase("N");
+    CHECK(shadedAs(flat, {}));
 }
 
 TEST(glass_is_whole_until_it_breaks) {

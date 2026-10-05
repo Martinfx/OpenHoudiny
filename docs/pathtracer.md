@@ -149,7 +149,7 @@ z prvního bodu, jinak z detailu.
 | `roughness` | 0,5 | 0 zrcadlo, 1 matný povrch (odlesk GGX) |
 | `metallic` | 0 | 1 kov: barva tónuje odraz |
 | `translucency` | 0 | kolik rozptýleného světla projde na druhou stranu: list, stéblo, papír |
-| `glass` | – | 1 tabule skla (lom a Fresnel, index 1,5), 2 prasklina (matná bílá) |
+| `glass` | – | 1 tabule skla (lom a Fresnel, index 1,5), 2 prasklina (matná bílá); hladké podle vlastních normál `N`, bez nich ploché. Kudy paprsek do skla vchází, určuje pořadí rohů plochy |
 | `material`, `texture…` | – | z čeho povrch je a jeho fotky: ze tří stran, nebo podle `uv` rohů s normálovou mapou a alfa výřezem ([materials.md](materials.md#podle-uv-a-normálové-mapy)) |
 
 Povrch vody je voda s indexem lomu 1,33. S hloubkou nabírá barvu Water

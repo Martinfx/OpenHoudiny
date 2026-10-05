@@ -66,7 +66,7 @@ through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 | koule, kvádry, válce, kužely, toroidy | rozdělené na trojúhelníky tak jemně, aby to nebylo vidět; holdout a shadow catcher jako v Blenderu |
 | `roughness`, `metallic`, `Cd` | Principled BSDF s odleskem jako v Blenderu (Specular IOR Level 0,5) |
 | `translucency` (stébla, listí) | k Principled BSDF přimíchaný Translucent BSDF |
-| sklo (`glass` 1) | Glass BSDF s indexem 1,5 a nádechem barvy |
+| sklo (`glass` 1) | Glass BSDF s indexem 1,5 a nádechem barvy; hladké podle normál `N` rohů nebo bodů, kde je síť má (láhev, čočka, sklo z USD), jinak ploché plocha po ploše |
 | povrch vody | Glass BSDF s indexem 1,33, uvnitř pohlcuje světlo podle Clarity a nabírá barvu Water Looku |
 | drť kusů (volné body s `pscale`) | hranaté úlomky kamene a střepy skla jako objekty jedné z 18 sítí, natočené podle `orient`, každý v odstínu své barvy ([pathtracer.md §4](pathtracer.md#drť-déšť-a-mokrý-povrch)) |
 | kapky deště | vřetena tak dlouhá, kolik kapka proletí za Streak snímku: Glass BSDF s indexem 1,33 smíchaný s Transparent BSDF podle Opacity, zezadu jen průhledná; objekt nevrhá stín |

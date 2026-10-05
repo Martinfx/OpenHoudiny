@@ -71,8 +71,9 @@ i export totiž čtou rohy přednostně a na ostatních primech by tam našly
 nuly. Volné body (Points) si hodnotu nechají na bodech. Normály se
 sejdou na rozích také: renderery i viewport berou normálu rohu před
 normálou bodu, takže ostré hrany z Blenderu (`faceVarying`) zůstanou ostré.
-Jen rychlosti zůstanou tam, kde je prim měl, protože renderery je berou
-z bodů.
+Podle normál se stínuje i sklo: hladká skleněná koule nebo láhev zůstane
+hladká, sklo bez normál se kreslí plochu po ploše. Jen rychlosti zůstanou
+tam, kde je prim měl, protože renderery je berou z bodů.
 
 Parametry:
 - **File:** `.usd`, `.usda`, `.usdc` nebo `.usdz`. Relativní cesta se čte ze
@@ -188,7 +189,8 @@ jako PointInstancer (dva tvary kamene s vlastním materiálem):
   a normálovou mapou;
 - cihlová koule: UsdPreviewSurface s UsdUVTexture a normálovou mapou;
 - korálek z červeného kovu: jen hodnoty;
-- skleněný kvádr: `opacity` 0,05;
+- skleněná koule: `opacity` 0,05, s normálami bodů, takže hladká
+  (sklo bez normál se kreslí plochu po ploše);
 - podlaha ze dvou GeomSubsetů: modrý plast z OpenPBR a dlažba
   pojmenovaná jako preset (`paving`), proto s fotkami presetu.
 
@@ -200,7 +202,7 @@ Vypadají, jak je program zapsal. Dlažba je preset, a tak je dostane.
 ./build/prototype sim usd_looks looks.png --renderer cycles
 ```
 
-![Příklad usd_looks v Cycles: dřevěná bedna s normálovou mapou na modré plastové podlaze, cihlová koule, lesklý korálek z červeného kovu a skleněný kvádr na dlažbě, vpředu oblázky z PointInstanceru. Každý materiál přišel z USD v jiné podobě: MaterialX, UsdPreviewSurface, OpenPBR](img/usd-looks.jpg)
+![Příklad usd_looks v Cycles: dřevěná bedna s normálovou mapou na modré plastové podlaze, cihlová koule, lesklý korálek z červeného kovu a hladká skleněná koule na dlažbě, vpředu oblázky z PointInstanceru. Každý materiál přišel z USD v jiné podobě: MaterialX, UsdPreviewSurface, OpenPBR](img/usd-looks.jpg)
 
 ### USD Camera
 

@@ -5,12 +5,14 @@
 //   polygons   triangles (a fan across each closed polygon), lit, in the
 //              colour Cd of each corner -- the vertex's, else the point's,
 //              the primitive's, the detail's, or a light grey -- bent by the
-//              points' N where there is one, else by the faces round each
-//              corner that bend less than 60 degrees from its own: round
-//              things come out round, a box keeps its edges;
+//              corner's N, else its point's, where there is one, else by the
+//              faces round each corner that bend less than 60 degrees from
+//              its own: round things come out round, a box keeps its edges;
 //   glass      the polygons of primitives whose attribute glass is 1 or more:
 //              triangles apart from the rest, the colour their tint -- 2 for
-//              the faces of a crack, what light runs along;
+//              the faces of a crack, what light runs along -- smooth by the
+//              corners' or the points' N where there is one (a bottle, a
+//              lens), else flat;
 //   polylines  the open primitives, as line segments in their colour;
 //   points     those no primitive uses, as dots: pscale wide where they have
 //              one, else a few pixels -- a glass chip (a point attribute
@@ -43,9 +45,11 @@ struct DisplayGeometry {
     /// units a second -- what motion blur needs. Empty when the points have
     /// no v.
     std::vector<float> velocities;
-    /// Ten floats a corner, three corners a triangle: position, normal --
-    /// out of the solid, as its corners turn -- tint, and 1 for a face of
-    /// the pane, 2 for a face of a crack.
+    /// Thirteen floats a corner, three corners a triangle: position,
+    /// normal -- the corner's or its point's N where there is one, else the
+    /// face's --, tint, 1 for a face of the pane, 2 for a face of a crack,
+    /// and the face's normal: out of the solid, as its corners turn --
+    /// which way a ray comes into a piece of it.
     std::vector<float> glass;
     /// Seven floats a dot: position, colour, radius -- world units; 0 for a
     /// dot a few pixels wide; below 0 a chip of glass as wide.
@@ -58,7 +62,7 @@ struct DisplayGeometry {
     size_t dotsLeftOut = 0;
 
     size_t triangleCount() const { return triangles.size() / 27; }
-    size_t glassCount() const { return glass.size() / 30; }
+    size_t glassCount() const { return glass.size() / 39; }
     size_t dotCount() const { return dots.size() / 7; }
     size_t segmentCount() const { return lines.size() / 14; }
     bool empty() const { return triangles.empty() && glass.empty() && dots.empty() && lines.empty(); }
@@ -72,8 +76,9 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots = 400000, bool fac
 
 /// The closed polygons of `geo` as the viewport shades them, for a renderer
 /// of its own: fans of triangles, three corners each -- place, normal (the
-/// points' N where every point has a usable one, else the faces' round the
-/// corner within the viewport's crease; glass flat) and colour (Cd as
+/// corner's N, else its point's, where there is a usable one, else the
+/// faces' round the corner within the viewport's crease; glass without N of
+/// its own flat) and colour (Cd as
 /// displayOf finds it) -- the primitive each came from, and its glass: 0
 /// none, 1 a pane, 2 a crack. Where the points have rest (where they were
 /// before they moved), that of each corner too; where they have a velocity

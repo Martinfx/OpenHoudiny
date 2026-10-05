@@ -347,12 +347,15 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
                 if (!v.empty()) out.velocities[3 * t + c] = v[p];
                 if (vertexUv) out.uvs[3 * t + c] = uvAt(*vertexUv, corners[t][c]);
                 else if (pointUv) out.uvs[3 * t + c] = uvAt(*pointUv, p);
-                // The corner's own normal, else its point's, else as the faces bend.
+                // The corner's own normal, else its point's, else as the
+                // faces bend -- glass flat there, as the viewport has it: a
+                // pane's faces, a crack's.
                 const size_t corner = corners[t][c];
+                const bool given = givenNormal(ownN, corner) || givenNormal(pointN, p);
                 Vec3 nrm = givenNormal(ownN, corner) ? normalize(ownN[corner])
                            : givenNormal(pointN, p)  ? normalize(pointN[p])
                                                      : made[3 * t + c];
-                if (out.glass[t] != 0 && length(flat) > 0.5f) nrm = flat;  // glass is flat, as the viewport has it
+                if (out.glass[t] != 0 && !given && length(flat) > 0.5f) nrm = flat;
                 out.normals[3 * t + c] = nrm;
                 out.colors[3 * t + c] = colors.at(out.prims[t], corners[t][c], p);
             }
@@ -434,14 +437,19 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots, bool faces) {
                 const Vec3 col = cornerColor(owner[t], corners[t][static_cast<size_t>(c)], p);
                 grow(d, P[p]);
                 if (kind >= 0.5f) {
-                    // Glass is flat: each face its own normal, as its corners
-                    // go round -- which way it faces tells where a ray comes
-                    // into a piece of it.
+                    // Glass: its face's normal, as its corners go round --
+                    // which way it faces tells where a ray comes into a piece
+                    // of it. Shaded by the corner's N or its point's where
+                    // there is one -- a bottle, a lens -- else flat.
                     const Vec3& a = P[tris[t][0]];
-                    const Vec3 f = normalize(cross(P[tris[t][1]] - a, P[tris[t][2]] - a));
-                    if (length(f) > 0.5f) n = f;
+                    Vec3 f = normalize(cross(P[tris[t][1]] - a, P[tris[t][2]] - a));
+                    if (length(f) > 0.5f) {
+                        if (!givenNormal(ownN, corner) && !givenNormal(pointN, p)) n = f;
+                    } else {
+                        f = n;
+                    }
                     d.glass.insert(d.glass.end(), {P[p].x, P[p].y, P[p].z, n.x, n.y, n.z, col.x, col.y, col.z,
-                                                   kind >= 1.5f ? 2.0f : 1.0f});
+                                                   kind >= 1.5f ? 2.0f : 1.0f, f.x, f.y, f.z});
                     continue;
                 }
                 d.triangles.insert(d.triangles.end(), {P[p].x, P[p].y, P[p].z, n.x, n.y, n.z, col.x, col.y, col.z});

@@ -31,17 +31,13 @@ def mesh(path, points, counts, indices, st=None, st_interpolation="faceVarying")
     return m
 
 
-def box(path, centre, size, turn=0.0):
+def box(path, centre, size):
     h = [s / 2 for s in size]
-    c = (0.0, 0.0, 0.0) if turn else centre
-    corners = [(c[0] + sx * h[0], c[1] + sy * h[1], c[2] + sz * h[2]) for sz in (-1, 1) for sy in (-1, 1) for sx in (-1, 1)]
+    corners = [(centre[0] + sx * h[0], centre[1] + sy * h[1], centre[2] + sz * h[2])
+               for sz in (-1, 1) for sy in (-1, 1) for sx in (-1, 1)]
     faces = [(0, 2, 3, 1), (4, 5, 7, 6), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5)]
     st = [(0, 0), (1, 0), (1, 1), (0, 1)] * 6
-    m = mesh(path, corners, [4] * 6, [i for f in faces for i in f], st)
-    if turn:
-        m.AddTranslateOp().Set(Gf.Vec3d(*centre))
-        m.AddRotateYOp().Set(turn)
-    return m
+    return mesh(path, corners, [4] * 6, [i for f in faces for i in f], st)
 
 
 def sphere(path, centre, radius, rows=16, columns=32):
@@ -133,13 +129,13 @@ s.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.3)
 red.CreateSurfaceOutput().ConnectToSource(s.ConnectableAPI(), "surface")
 bind(sphere("/World/bead", (0.55, 0.28, 0.45), 0.28).GetPrim(), red)
 
-# A block of glass.
+# A ball of glass, smooth by its normals.
 glass = material("Glass")
 s = shader(glass, "Surface", "UsdPreviewSurface")
 s.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(0.05)
 s.CreateInput("ior", Sdf.ValueTypeNames.Float).Set(1.5)
 glass.CreateSurfaceOutput().ConnectToSource(s.ConnectableAPI(), "surface")
-bind(box("/World/block", (1.35, 0.3, -0.2), (0.6, 0.6, 0.6), 35).GetPrim(), glass)
+bind(sphere("/World/crystal", (1.35, 0.31, -0.2), 0.3, rows=24, columns=48).GetPrim(), glass)
 
 # The floor: two halves, two subsets -- blue OpenPBR plastic, and paving by
 # the name of the program's preset. A centimetre up: the renderers' ground

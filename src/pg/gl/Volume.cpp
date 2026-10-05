@@ -1332,20 +1332,24 @@ void main() {
 // The faces of the glass turned to the eye, into a buffer as the meshes go
 // into theirs: the normal, the tint -- as a number, below 0 on the face of
 // a crack -- and how far along the ray. Drawn twice: the nearest face, and
-// then, peeled off it, the nearest behind that. A face turned away is where
-// a ray leaves a piece of glass, not where it comes into one.
+// then, peeled off it, the nearest behind that. A face turned away -- as
+// its corners go round, whatever its normals -- is where a ray leaves a
+// piece of glass, not where it comes into one.
 const char* kGlassVertex = R"(#version 330 core
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec3 a_color;
 layout(location = 3) in float a_kind;  // 1 a face of the pane, 2 of a crack
+layout(location = 4) in vec3 a_face;   // the face's normal, as its corners go round
 uniform mat4 u_viewProj;
 out vec3 v_world, v_normal, v_color;
+flat out vec3 v_face;
 flat out float v_kind;
 void main() {
     v_world = a_position;
     v_normal = a_normal;
     v_color = a_color;
+    v_face = a_face;
     v_kind = a_kind;
     gl_Position = u_viewProj * vec4(a_position, 1.0);
 }
@@ -1353,6 +1357,7 @@ void main() {
 
 const char* kGlassFragment = R"(#version 330 core
 in vec3 v_world, v_normal, v_color;
+flat in vec3 v_face;
 flat in float v_kind;
 out vec4 o_g;
 uniform vec3 u_eye;
@@ -1361,13 +1366,18 @@ uniform sampler2D u_first;   // the first
 vec2 octWrap(vec2 v) { return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0); }
 void main() {
     vec3 view = v_world - u_eye;
-    if (dot(v_normal, view) >= 0.0) discard;
+    if (dot(v_face, view) >= 0.0) discard;
     float far = length(view);
     if (u_peel) {
         float first = texelFetch(u_first, ivec2(gl_FragCoord.xy), 0).w;
         if (first < 0.0 || far <= first * (1.0 + 1e-5) + 1e-5) discard;
     }
+    // Its normal -- smooth where the geometry gives one -- turned to the eye
+    // where, at the edge of a round piece, it would look away.
     vec3 n = normalize(v_normal);
+    vec3 back = -view / far;
+    float facing = dot(n, back);
+    if (facing < 0.02) n = normalize(n + back * (0.02 - facing));
     n /= abs(n.x) + abs(n.y) + abs(n.z);
     vec3 c = floor(clamp(v_color, 0.0, 1.0) * 255.0 + 0.5);
     float code = 1.0 + c.r + c.g * 256.0 + c.b * 65536.0;
@@ -3170,7 +3180,7 @@ void VolumeRenderer::uploadGeometry() {
     gl_.BindVertexArray(0);
     upload(dotVao_, dotBuffer_, d.dots, {{0, 3}, {1, 3}, {2, 1}});
     upload(curveVao_, curveBuffer_, d.lines, {{0, 3}, {1, 4}});
-    upload(glassVao_, glassBuffer_, d.glass, {{0, 3}, {1, 3}, {2, 3}, {3, 1}});
+    upload(glassVao_, glassBuffer_, d.glass, {{0, 3}, {1, 3}, {2, 3}, {3, 1}, {4, 3}});
     glassVertices_ = static_cast<GLsizei>(d.glassCount() * 3);
     geoVertices_ = static_cast<GLsizei>(d.triangles.size() / 9);
     geoShadowDirty_ = true;

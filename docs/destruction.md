@@ -1320,7 +1320,10 @@ barvu země, vypínač mřížky a oblohu za scénou (`sky_behind`).
 nejdou do vyrovnávací paměti neprůhledných ploch, ale do dvou vlastních
 vrstev: nejbližší plocha skla přivrácená k oku a za ní — odloupnutá od
 první (*depth peeling*) — další. Odvrácené plochy jsou tam, kde paprsek
-ze skla vychází, takže každý střep dá jednu vrstvu. Hlavní průchod pak
+ze skla vychází, takže každý střep dá jednu vrstvu. Přivrácenost určuje
+pořadí rohů plochy; normála, podle které se sklo stínuje, je normála `N`
+rohu nebo bodu, má-li ji geometrie (hladká koule, láhev), jinak normála
+plochy. Hlavní průchod pak
 na paprsku až k neprůhledné ploše složí vrstvu po vrstvě: tenká tabule
 odráží z obou svých stěn (Fresnel se Schlickovou aproximací, *F*₀ = 0,04,
 odraz dvou stěn 2*F*/(1 + *F*)) oblohu tak, jak je vidět za scénou, zemi
@@ -1714,7 +1717,8 @@ v `tests/test_usd.cpp` a `test_glass_breaks_as_glass` v `tests/python/test_pg.py
   pavučina;
 - kreslení: sklo zvlášť od ostatních trojúhelníků, plochá normála podle
   pořadí rohů, barva skla, druh 1 a 2; skleněná tříska jako tečka se
-  záporným poloměrem;
+  záporným poloměrem; sklo s normálami `N` bodů nebo rohů se stínuje
+  podle nich (viewport i renderery), přivrácenost dál podle rohů;
 - tabule posunutá a otočená celá je celá (žádná trhlina); střep o
   milimetr vedle, zmizelý kus nebo prasklý spoj ukáže všechny; bez póz
   (klid) zůstanou všechny plochy; samotný střep nemá tabuli;
