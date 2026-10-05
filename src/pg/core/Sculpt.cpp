@@ -8,7 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <unordered_map>
+#include <memory>
 
 namespace pg {
 
@@ -87,121 +87,9 @@ struct SculptSmoothing {
 
 namespace {
 
-/// The points in the cells of a grid, moved from cell to cell as they
-/// move: who is near a place, while the places change.
-class MovingGrid {
-public:
-    MovingGrid(std::span<const Vec3> P, float cell) : inv_(1.0 / static_cast<double>(cell)) {
-        cellOf_.resize(P.size());
-        slot_.resize(P.size());
-        for (size_t i = 0; i < P.size(); ++i) insert(static_cast<uint32_t>(i), key(P[i]));
-    }
-
-    void moved(uint32_t i, const Vec3& p) {
-        const uint64_t k = key(p);
-        if (k == cellOf_[i]) return;
-        remove(i);
-        insert(i, k);
-    }
-
-    /// The points nearer `c` than `r`, each once, in no set order.
-    void near(std::span<const Vec3> P, const Vec3& c, float r, std::vector<uint32_t>& out) const {
-        out.clear();
-        const float r2 = r * r;
-        int64_t lo[3], hi[3];
-        double cells = 1.0;
-        bool shared = false;
-        for (int k = 0; k < 3; ++k) {
-            // A little further than the radius: no point the test below
-            // lets in is missed by how the cell's number rounds.
-            const float reach = r + 1e-5f * (std::fabs(c[k]) + r);
-            lo[k] = index(c[k] - reach);
-            hi[k] = index(c[k] + reach);
-            cells *= static_cast<double>(hi[k] - lo[k] + 1);
-            shared = shared || hi[k] - lo[k] + 1 >= (int64_t(1) << 21);
-        }
-        if (cells > 4.0 * static_cast<double>(P.size()) + 64.0) {
-            // More cells than points: every point, once.
-            for (size_t i = 0; i < P.size(); ++i) {
-                const Vec3 d = P[i] - c;
-                if (dot(d, d) < r2) out.push_back(static_cast<uint32_t>(i));
-            }
-            return;
-        }
-        for (int64_t x = lo[0]; x <= hi[0]; ++x) {
-            for (int64_t y = lo[1]; y <= hi[1]; ++y) {
-                for (int64_t z = lo[2]; z <= hi[2]; ++z) {
-                    const auto it = cells_.find(pack(x, y, z));
-                    if (it == cells_.end()) continue;
-                    for (const uint32_t i : it->second) {
-                        const Vec3 d = P[i] - c;
-                        if (dot(d, d) < r2) out.push_back(i);
-                    }
-                }
-            }
-        }
-        if (shared) {
-            // Cells 2^21 apart share a key, and were both asked: each point once.
-            std::sort(out.begin(), out.end());
-            out.erase(std::unique(out.begin(), out.end()), out.end());
-        }
-    }
-
-private:
-    int64_t index(float v) const {
-        const double x = std::floor(static_cast<double>(v) * inv_);
-        return std::isfinite(x) ? static_cast<int64_t>(std::clamp(x, -1e15, 1e15)) : 0;
-    }
-    static uint64_t pack(int64_t x, int64_t y, int64_t z) {
-        constexpr uint64_t m = (1ull << 21) - 1;
-        return (static_cast<uint64_t>(x) & m) | ((static_cast<uint64_t>(y) & m) << 21) | ((static_cast<uint64_t>(z) & m) << 42);
-    }
-    uint64_t key(const Vec3& p) const { return pack(index(p.x), index(p.y), index(p.z)); }
-    void insert(uint32_t i, uint64_t k) {
-        std::vector<uint32_t>& v = cells_[k];
-        slot_[i] = static_cast<uint32_t>(v.size());
-        v.push_back(i);
-        cellOf_[i] = k;
-    }
-    void remove(uint32_t i) {
-        std::vector<uint32_t>& v = cells_[cellOf_[i]];
-        const uint32_t last = v.back();
-        v[slot_[i]] = last;
-        slot_[last] = slot_[i];
-        v.pop_back();
-    }
-
-    double inv_;
-    std::unordered_map<uint64_t, std::vector<uint32_t>> cells_;
-    std::vector<uint64_t> cellOf_;
-    std::vector<uint32_t> slot_;
-};
-
 /// Up to this many dabs, every point is asked where each dab is -- quicker
 /// than making a grid first, as when a stroke adds a dab or two.
 constexpr size_t kScanDabs = 32;
-
-/// The points nearer `c` than `r`, every point asked; in number order.
-void scan(std::span<const Vec3> P, const Vec3& c, float r, std::vector<uint32_t>& out) {
-    out.clear();
-    const float r2 = r * r;
-    const auto chunks = chunkRanges(P.size(), size_t(1) << 15);
-    if (chunks.size() <= 1) {
-        for (size_t i = 0; i < P.size(); ++i) {
-            const Vec3 d = P[i] - c;
-            if (dot(d, d) < r2) out.push_back(static_cast<uint32_t>(i));
-        }
-        return;
-    }
-    std::vector<std::vector<uint32_t>> found(chunks.size());
-    TaskPool::instance().run(chunks.size(), [&](size_t k) {
-        for (size_t i = chunks[k].first; i < chunks[k].second; ++i) {
-            const Vec3 d = P[i] - c;
-            if (dot(d, d) < r2) found[k].push_back(static_cast<uint32_t>(i));
-        }
-    });
-    for (const auto& f : found) out.insert(out.end(), f.begin(), f.end());
-}
 
 bool finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 
@@ -222,20 +110,73 @@ bool smooths(std::span<const SculptDab> dabs) {
     return std::any_of(dabs.begin(), dabs.end(), [](const SculptDab& d) { return d.tool == SculptDab::Tool::Smooth; });
 }
 
-/// The dabs on the points of `geo`, one after another; true if a point moved.
-bool apply(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const SculptSmoothing* smoothing) {
-    const size_t n = geo.pointCount();
-    if (n == 0 || dabs.empty()) return false;
-    auto P = geo.positionsForWrite();
-    // Many dabs: a grid, its cells as big as the dabs mostly are.
-    std::unique_ptr<MovingGrid> grid;
-    if (dabs.size() > kScanDabs) {
-        std::vector<float> radii;
-        radii.reserve(dabs.size());
-        for (const SculptDab& d : dabs) radii.push_back(d.radius);
-        std::nth_element(radii.begin(), radii.begin() + static_cast<std::ptrdiff_t>(radii.size() / 2), radii.end());
-        grid = std::make_unique<MovingGrid>(P, std::max(radii[radii.size() / 2], 1e-6f));
+/// The radius most of the dabs have: the size of a grid's cells.
+float typicalRadius(std::span<const SculptDab> dabs) {
+    std::vector<float> radii;
+    radii.reserve(dabs.size());
+    for (const SculptDab& d : dabs) radii.push_back(d.radius);
+    std::nth_element(radii.begin(), radii.begin() + static_cast<std::ptrdiff_t>(radii.size() / 2), radii.end());
+    return std::max(radii[radii.size() / 2], 1e-6f);
+}
+
+/// The points of a geometry, as they are: what the dabs move without
+/// dyntopo.
+class FixedSurface {
+public:
+    FixedSurface(Geometry& geo, std::span<const SculptDab> dabs, const SculptSmoothing* smoothing)
+        : P_(geo.positionsForWrite()), smoothing_(smoothing) {
+        // Many dabs: a grid, its cells as big as the dabs mostly are.
+        if (dabs.size() > kScanDabs) grid_ = std::make_unique<MovingGrid>(P_, typicalRadius(dabs));
     }
+    std::span<Vec3> positions() { return P_; }
+    void refine(const SculptDab&) {}
+    void find(const SculptDab& d, std::vector<uint32_t>& near) const {
+        if (grid_) grid_->near(P_, d.at, d.radius, near);
+        else scanNear(P_, d.at, d.radius, near);
+    }
+    bool target(std::span<const Vec3> P, uint32_t i, Vec3& to) const { return smoothing_ && smoothing_->target(P, i, to); }
+    void moved(uint32_t i) {
+        if (grid_) grid_->moved(i, P_[i]);
+    }
+
+private:
+    std::span<Vec3> P_;
+    const SculptSmoothing* smoothing_;
+    std::unique_ptr<MovingGrid> grid_;
+};
+
+/// A mesh made finer and coarser under each dab as it comes (Dyntopo.h).
+class DynamicSurface {
+public:
+    DynamicSurface(SculptMesh& mesh, std::span<const SculptDab> dabs, const Dyntopo& dyntopo)
+        : mesh_(mesh), dyntopo_(dyntopo) {
+        if (dabs.size() > kScanDabs) mesh_.index(typicalRadius(dabs));
+    }
+    ~DynamicSurface() { mesh_.unindex(); }
+    DynamicSurface(const DynamicSurface&) = delete;
+    DynamicSurface& operator=(const DynamicSurface&) = delete;
+
+    std::span<Vec3> positions() { return mesh_.positions(); }
+    /// Grab takes what it holds as it is, as in Blender.
+    void refine(const SculptDab& d) {
+        if (d.tool != SculptDab::Tool::Grab) mesh_.refine(d.at, d.radius, dyntopo_);
+    }
+    void find(const SculptDab& d, std::vector<uint32_t>& near) const { mesh_.near(d.at, d.radius, near); }
+    bool target(std::span<const Vec3> P, uint32_t i, Vec3& to) const { return mesh_.target(P, i, to); }
+    void moved(uint32_t i) { mesh_.moved(i); }
+
+private:
+    SculptMesh& mesh_;
+    Dyntopo dyntopo_;
+};
+
+/// The dabs on the points of a surface, one after another; true if a
+/// point moved. Each group of joined dabs first makes the mesh as fine as
+/// it says (with dyntopo), then moves its points.
+template <class Surface>
+bool apply(Surface& surface, std::span<const SculptDab> dabs, Falloff shape) {
+    if (dabs.empty() || surface.positions().empty()) return false;
+    std::span<Vec3> P;
     std::vector<uint32_t> near;
     std::vector<Vec3> next;
     std::vector<std::pair<uint32_t, Vec3>> moves;  // a group's: each point and how far a dab moves it
@@ -256,7 +197,7 @@ bool apply(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const 
                     case SculptDab::Tool::Flatten: p += d.normal * (-dot(P[i] - d.at, d.normal) * d.strength * w); break;
                     case SculptDab::Tool::Smooth: {
                         Vec3 to;
-                        if (smoothing && smoothing->target(P, i, to)) p += (to - P[i]) * (d.strength * w);
+                        if (surface.target(P, i, to)) p += (to - P[i]) * (d.strength * w);
                         break;
                     }
                 }
@@ -266,25 +207,26 @@ bool apply(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const 
         if (near.size() >= 8192) parallelFor(near.size(), 2048, step);
         else step(0, near.size());
     };
-    const auto find = [&](const SculptDab& d) {
-        if (grid) grid->near(P, d.at, d.radius, near);
-        else scan(P, d.at, d.radius, near);
-    };
+    const auto valid = [](const SculptDab& d) { return d.radius > 0.0f && finite(d.at); };
     for (size_t g = 0; g < dabs.size();) {
         size_t end = g + 1;
         while (end < dabs.size() && dabs[end].joined) ++end;
+        for (size_t k = g; k < end; ++k) {
+            if (valid(dabs[k])) surface.refine(dabs[k]);
+        }
+        P = surface.positions();
         if (end == g + 1) {
             const SculptDab& d = dabs[g];
             g = end;
-            if (!(d.radius > 0.0f) || !finite(d.at)) continue;
-            find(d);
+            if (!valid(d)) continue;
+            surface.find(d, near);
             if (near.empty()) continue;
             takes(d);
             for (size_t k = 0; k < near.size(); ++k) {
                 const uint32_t i = near[k];
                 if (next[k] == P[i]) continue;
                 P[i] = next[k];
-                if (grid) grid->moved(i, P[i]);
+                surface.moved(i);
                 moved = true;
             }
             continue;
@@ -295,8 +237,8 @@ bool apply(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const 
         moves.clear();
         for (size_t k = g; k < end; ++k) {
             const SculptDab& d = dabs[k];
-            if (!(d.radius > 0.0f) || !finite(d.at)) continue;
-            find(d);
+            if (!valid(d)) continue;
+            surface.find(d, near);
             if (near.empty()) continue;
             takes(d);
             for (size_t j = 0; j < near.size(); ++j) moves.push_back({near[j], next[j] - P[near[j]]});
@@ -310,7 +252,7 @@ bool apply(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const 
             const Vec3 p = P[i] + by;
             if (p == P[i] || !finite(p)) continue;
             P[i] = p;
-            if (grid) grid->moved(i, P[i]);
+            surface.moved(i);
             moved = true;
         }
     }
@@ -439,28 +381,45 @@ std::string sculptText(const SculptDab& d) {
 
 // --- the dabs on a geometry --------------------------------------------------------------
 
-void sculpt(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape) {
-    if (geo.pointCount() == 0 || dabs.empty()) return;
+void sculpt(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const Dyntopo& dyntopo) {
+    if (geo.pointCount() == 0) return;
+    if (dyntopo.on()) {
+        SculptMesh mesh(geo);
+        {
+            DynamicSurface surface(mesh, dabs, dyntopo);
+            apply(surface, dabs, shape);
+        }
+        geo = *mesh.geometry();
+        renormal(geo);
+        return;
+    }
+    if (dabs.empty()) return;
     // Who is smoothed towards whom, of the geometry as it came.
     std::unique_ptr<SculptSmoothing> smoothing;
     if (smooths(dabs)) smoothing = std::make_unique<SculptSmoothing>(geo);
-    if (apply(geo, dabs, shape, smoothing.get())) renormal(geo);
+    FixedSurface surface(geo, dabs, smoothing.get());
+    if (apply(surface, dabs, shape)) renormal(geo);
 }
 
 // --- going on from where it got to ------------------------------------------------------
 
-GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab> dabs, Falloff shape) {
+GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab> dabs, Falloff shape,
+                           const Dyntopo& dyntopo) {
     reused_ = 0;
-    if (!source || source->pointCount() == 0 || dabs.empty()) return editableCopy(source);
-    if (source != source_ || shape != shape_) {
+    if (!source || source->pointCount() == 0 || (dabs.empty() && !dyntopo.on())) return editableCopy(source);
+    if (source != source_ || shape != shape_ || dyntopo != dyntopo_) {
         if (source != source_) smoothing_.reset();
         source_ = source;
         shape_ = shape;
+        dyntopo_ = dyntopo;
         dabs_.clear();
         before_.reset();
         after_.reset();
+        beforeMesh_.reset();
+        afterMesh_.reset();
         movedBefore_ = movedAfter_ = false;
     }
+    if (dyntopo.on()) return cookDynamic(dabs, shape);
     // How many of the dabs, from the first on, it had.
     size_t same = 0;
     while (same < dabs.size() && same < dabs_.size() && sameDab(dabs[same], dabs_[same])) ++same;
@@ -476,7 +435,7 @@ GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab>
         geo = editableCopy(after_);  // more after them
         from = same;
         moved = movedAfter_;
-    } else if (before_ && !dabs_.empty() && same >= oldLast) {
+    } else if (before_ && !dabs_.empty() && same >= oldLast && (oldLast == dabs.size() || !dabs[oldLast].joined)) {
         geo = editableCopy(before_);  // the last group other, more to it, or gone
         from = oldLast;
         moved = movedBefore_;
@@ -487,16 +446,25 @@ GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab>
     if (!smoothing_ && smooths(dabs.subspan(from))) smoothing_ = std::make_shared<const SculptSmoothing>(*source);
 
     // All the new dabs but the last group; the geometry then kept, for the
-    // next cook to go on from if only the last group changes.
+    // next cook to go on from if only the last group changes. Where it went
+    // on from past the start of the last group -- a group taken back --
+    // there is none to keep.
     const size_t m = dabs.size();
-    const size_t last = std::max(lastGroup(dabs), from);
+    const size_t group = lastGroup(dabs);
+    const size_t last = std::max(group, from);
     GeometryPtr before;
     bool movedBefore = false;
     if (from < m) {
-        moved = apply(*geo, dabs.subspan(from, last - from), shape, smoothing_.get()) || moved;
-        before = std::make_shared<const Geometry>(*geo);
-        movedBefore = moved;
-        moved = apply(*geo, dabs.subspan(last), shape, smoothing_.get()) || moved;
+        {
+            FixedSurface surface(*geo, dabs.subspan(from, last - from), smoothing_.get());
+            moved = apply(surface, dabs.subspan(from, last - from), shape) || moved;
+        }
+        if (group >= from) {
+            before = std::make_shared<const Geometry>(*geo);
+            movedBefore = moved;
+        }
+        FixedSurface surface(*geo, dabs.subspan(last), smoothing_.get());
+        moved = apply(surface, dabs.subspan(last), shape) || moved;
     }
     // The normals of the positions as they are, as `sculpt` finds them.
     if (moved) renormal(*geo);
@@ -504,6 +472,54 @@ GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab>
     movedBefore_ = movedBefore;
     after_ = geo;
     movedAfter_ = moved;
+    dabs_.assign(dabs.begin(), dabs.end());
+    return after_;
+}
+
+GeometryPtr Sculptor::cookDynamic(std::span<const SculptDab> dabs, Falloff shape) {
+    size_t same = 0;
+    while (same < dabs.size() && same < dabs_.size() && sameDab(dabs[same], dabs_[same])) ++same;
+    std::shared_ptr<SculptMesh> mesh;
+    size_t from = 0;
+    bool fromBefore = false;
+    const size_t oldLast = lastGroup(dabs_);
+    if (after_ && afterMesh_ && same == dabs_.size() && (same == dabs.size() || !dabs[same].joined)) {
+        if (same == dabs.size()) {
+            reused_ = same;
+            return after_;
+        }
+        mesh = std::move(afterMesh_);  // more after them: goes on in place
+        from = same;
+    } else if (beforeMesh_ && !dabs_.empty() && same >= oldLast && (oldLast == dabs.size() || !dabs[oldLast].joined)) {
+        mesh = std::make_shared<SculptMesh>(*beforeMesh_);  // the last group other, more to it, or gone
+        from = oldLast;
+        fromBefore = true;
+    } else {
+        mesh = std::make_shared<SculptMesh>(*source_);
+    }
+    reused_ = from;
+
+    // All the new dabs but the last group; the mesh then kept, where the
+    // last group is a Grab -- as it was, where that is the one that changed
+    // -- then the last group. A mesh is no geometry sharing its buffers:
+    // copied for every dab of a stroke, it would cost more than the dab.
+    const size_t group = lastGroup(dabs);
+    const size_t last = std::max(group, from);
+    std::shared_ptr<const SculptMesh> before;
+    {
+        DynamicSurface surface(*mesh, dabs.subspan(from), dyntopo_);
+        apply(surface, dabs.subspan(from, last - from), shape);
+        if (from < dabs.size() && group >= from) {
+            if (fromBefore && last == from) before = beforeMesh_;
+            else if (dabs[last].tool == SculptDab::Tool::Grab) before = std::make_shared<const SculptMesh>(*mesh);
+        }
+        apply(surface, dabs.subspan(last), shape);
+    }
+    std::shared_ptr<Geometry> geo = mesh->geometry();
+    renormal(*geo);
+    beforeMesh_ = std::move(before);
+    afterMesh_ = std::move(mesh);
+    after_ = geo;
     dabs_.assign(dabs.begin(), dabs.end());
     return after_;
 }

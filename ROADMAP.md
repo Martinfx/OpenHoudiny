@@ -502,7 +502,12 @@ Seřazeno podle poměru hodnota / náklad:
    ✅ Symetrie (M): Edit pohne i zrcadlovými obrazy (body na rovině na
    ní zůstanou), Sculpt a Attribute Paint píší ke kapce její obraz,
    nanesený zároveň s ní a zeslabený, kde se překrývají.
-   Zbývá: režim vrcholů, dyntopo.
+   ✅ Dyntopo ve Sculptu (Ctrl+D): síť se pod každou kapkou zjemní
+   (nejdelší hrany rozpůlené, s plynulým přechodem k hrubší síti) a krátké
+   hrany se stáhnou do bodu, aniž by se porušila plocha, okraj či rohy;
+   atributy a skupiny jdou s body, detail podle poloměru štětce nebo
+   v metrech, přírůstkově do bitu shodné s výpočtem od začátku.
+   Zbývá: režim vrcholů.
 8. **Vegetace** — ✅ uzel Tree: strom roste jako rostlina podle modelu
    Webera a Penna — kmen (i rozdělený do vůdčích větví), až tři úrovně
    větví kolem rodiče o zlatý úhel, prohnuté vahou, stočené ke světlu

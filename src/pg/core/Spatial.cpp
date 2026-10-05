@@ -1,6 +1,7 @@
 #include "pg/core/Spatial.h"
 
 #include "pg/core/Geometry.h"
+#include "pg/core/Parallel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,27 +22,6 @@ bool closer(const std::pair<float, int32_t>& a, const std::pair<float, int32_t>&
     return a.first < b.first || (a.first == b.first && a.second < b.second);
 }
 
-/// The point of triangle abc nearest p (Ericson, Real-Time Collision
-/// Detection, 5.1.5): by the region of the triangle's plane p is over.
-Vec3 nearestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
-    const Vec3 ab = b - a, ac = c - a, ap = p - a;
-    const float d1 = dot(ab, ap), d2 = dot(ac, ap);
-    if (d1 <= 0.0f && d2 <= 0.0f) return a;
-    const Vec3 bp = p - b;
-    const float d3 = dot(ab, bp), d4 = dot(ac, bp);
-    if (d3 >= 0.0f && d4 <= d3) return b;
-    const float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) return a + ab * (d1 / (d1 - d3));
-    const Vec3 cp = p - c;
-    const float d5 = dot(ab, cp), d6 = dot(ac, cp);
-    if (d6 >= 0.0f && d5 <= d6) return c;
-    const float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) return a + ac * (d2 / (d2 - d6));
-    const float va = d3 * d6 - d5 * d4;
-    if (va <= 0.0f && d4 - d3 >= 0.0f && d5 - d6 >= 0.0f) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
-    const float denom = 1.0f / (va + vb + vc);
-    return a + ab * (vb * denom) + ac * (vc * denom);
-}
 
 /// How far `p` is from the box, squared; 0 inside.
 float boxDistance2(const Vec3& p, const Vec3& lo, const Vec3& hi) {
@@ -86,6 +66,27 @@ bool segmentMeetsTriangle(const Vec3& a, const Vec3& b, const std::array<Vec3, 3
 }
 
 }  // namespace
+
+// By the region of the triangle's plane p is over.
+Vec3 nearestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+    const Vec3 ab = b - a, ac = c - a, ap = p - a;
+    const float d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) return a;
+    const Vec3 bp = p - b;
+    const float d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) return b;
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) return a + ab * (d1 / (d1 - d3));
+    const Vec3 cp = p - c;
+    const float d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) return c;
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) return a + ac * (d2 / (d2 - d6));
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && d4 - d3 >= 0.0f && d5 - d6 >= 0.0f) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const float denom = 1.0f / (va + vb + vc);
+    return a + ab * (vb * denom) + ac * (vc * denom);
+}
 
 void PointTree::build(std::span<const Vec3> points) {
     points_.assign(points.begin(), points.end());
@@ -392,6 +393,220 @@ std::span<const int32_t> Adjacency::primitives(size_t point) const {
 std::span<const int32_t> Adjacency::vertices(size_t point) const {
     if (point + 1 >= vStart_.size()) return {};
     return std::span<const int32_t>(vList_.data() + vStart_[point], vStart_[point + 1] - vStart_[point]);
+}
+
+// --- places that change ---------------------------------------------------------------
+
+namespace {
+
+constexpr uint64_t kNoCell = ~uint64_t(0);
+
+bool finitePlace(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+
+/// The cell `v` is in, of cells 1 / `inv` big.
+int64_t cellIndex(double v, double inv) {
+    const double x = std::floor(v * inv);
+    return std::isfinite(x) ? static_cast<int64_t>(std::clamp(x, -1e15, 1e15)) : 0;
+}
+
+/// A cell's key: 21 bits a side, so cells 2^21 apart share one.
+uint64_t cellKey(int64_t x, int64_t y, int64_t z) {
+    constexpr uint64_t m = (1ull << 21) - 1;
+    return (static_cast<uint64_t>(x) & m) | ((static_cast<uint64_t>(y) & m) << 21) | ((static_cast<uint64_t>(z) & m) << 42);
+}
+
+}  // namespace
+
+MovingGrid::MovingGrid(std::span<const Vec3> P, float cell) : inv_(1.0 / static_cast<double>(cell)) {
+    cellOf_.assign(P.size(), kNoCell);
+    slot_.resize(P.size());
+    for (size_t i = 0; i < P.size(); ++i) {
+        if (finitePlace(P[i])) insert(static_cast<uint32_t>(i), key(P[i]));
+    }
+}
+
+void MovingGrid::moved(uint32_t i, const Vec3& p) {
+    const uint64_t k = finitePlace(p) ? key(p) : kNoCell;
+    if (k == cellOf_[i]) return;
+    if (cellOf_[i] != kNoCell) remove(i);
+    if (k != kNoCell) insert(i, k);
+}
+
+void MovingGrid::add(uint32_t i, const Vec3& p) {
+    if (i >= cellOf_.size()) {
+        cellOf_.resize(i + 1, kNoCell);
+        slot_.resize(i + 1);
+    }
+    moved(i, p);
+}
+
+void MovingGrid::erase(uint32_t i) {
+    if (i < cellOf_.size() && cellOf_[i] != kNoCell) remove(i);
+}
+
+void MovingGrid::near(std::span<const Vec3> P, const Vec3& c, float r, std::vector<uint32_t>& out) const {
+    out.clear();
+    const float r2 = r * r;
+    int64_t lo[3], hi[3];
+    double cells = 1.0;
+    bool shared = false;
+    for (int k = 0; k < 3; ++k) {
+        // A little further than the radius: no point the test below
+        // lets in is missed by how the cell's number rounds.
+        const float reach = r + 1e-5f * (std::fabs(c[k]) + r);
+        lo[k] = index(c[k] - reach);
+        hi[k] = index(c[k] + reach);
+        cells *= static_cast<double>(hi[k] - lo[k] + 1);
+        shared = shared || hi[k] - lo[k] + 1 >= (int64_t(1) << 21);
+    }
+    if (cells > 4.0 * static_cast<double>(P.size()) + 64.0) {
+        // More cells than points: every point, once.
+        for (size_t i = 0; i < P.size(); ++i) {
+            const Vec3 d = P[i] - c;
+            if (dot(d, d) < r2) out.push_back(static_cast<uint32_t>(i));
+        }
+        return;
+    }
+    for (int64_t x = lo[0]; x <= hi[0]; ++x) {
+        for (int64_t y = lo[1]; y <= hi[1]; ++y) {
+            for (int64_t z = lo[2]; z <= hi[2]; ++z) {
+                const auto it = cells_.find(cellKey(x, y, z));
+                if (it == cells_.end()) continue;
+                for (const uint32_t i : it->second) {
+                    const Vec3 d = P[i] - c;
+                    if (dot(d, d) < r2) out.push_back(i);
+                }
+            }
+        }
+    }
+    if (shared) {
+        // Cells 2^21 apart share a key, and were both asked: each point once.
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+    }
+}
+
+int64_t MovingGrid::index(float v) const { return cellIndex(static_cast<double>(v), inv_); }
+
+uint64_t MovingGrid::key(const Vec3& p) const { return cellKey(index(p.x), index(p.y), index(p.z)); }
+
+void MovingGrid::insert(uint32_t i, uint64_t k) {
+    std::vector<uint32_t>& v = cells_[k];
+    slot_[i] = static_cast<uint32_t>(v.size());
+    v.push_back(i);
+    cellOf_[i] = k;
+}
+
+void MovingGrid::remove(uint32_t i) {
+    std::vector<uint32_t>& v = cells_[cellOf_[i]];
+    const uint32_t last = v.back();
+    v[slot_[i]] = last;
+    slot_[last] = slot_[i];
+    v.pop_back();
+    cellOf_[i] = kNoCell;
+}
+
+void scanNear(std::span<const Vec3> P, const Vec3& c, float r, std::vector<uint32_t>& out) {
+    out.clear();
+    const float r2 = r * r;
+    const auto chunks = chunkRanges(P.size(), size_t(1) << 15);
+    if (chunks.size() <= 1) {
+        for (size_t i = 0; i < P.size(); ++i) {
+            const Vec3 d = P[i] - c;
+            if (dot(d, d) < r2) out.push_back(static_cast<uint32_t>(i));
+        }
+        return;
+    }
+    std::vector<std::vector<uint32_t>> found(chunks.size());
+    TaskPool::instance().run(chunks.size(), [&](size_t k) {
+        for (size_t i = chunks[k].first; i < chunks[k].second; ++i) {
+            const Vec3 d = P[i] - c;
+            if (dot(d, d) < r2) found[k].push_back(static_cast<uint32_t>(i));
+        }
+    });
+    for (const auto& f : found) out.insert(out.end(), f.begin(), f.end());
+}
+
+BoxGrid::BoxGrid(float cell)
+    : cell_(std::max(static_cast<double>(cell), 1e-9)), levels_(kLevels), counts_(kLevels, 0) {}
+
+void BoxGrid::put(uint32_t i, const Vec3& lo, const Vec3& hi) {
+    if (i >= where_.size()) where_.resize(i + 1);
+    // The finest grid whose cells are no smaller than the box.
+    const double size = std::max({static_cast<double>(hi.x) - lo.x, static_cast<double>(hi.y) - lo.y,
+                                  static_cast<double>(hi.z) - lo.z, 0.0});
+    int level = 0;
+    double s = cell_;
+    while (level + 1 < kLevels && !(s >= size)) {
+        s *= 2.0;
+        ++level;
+    }
+    const double inv = 1.0 / s;
+    const uint64_t key = cellKey(cellIndex(0.5 * (static_cast<double>(lo.x) + hi.x), inv),
+                                 cellIndex(0.5 * (static_cast<double>(lo.y) + hi.y), inv),
+                                 cellIndex(0.5 * (static_cast<double>(lo.z) + hi.z), inv));
+    if (where_[i].level == level && where_[i].key == key) return;
+    if (where_[i].level >= 0) remove(i);
+    std::vector<uint32_t>& v = levels_[static_cast<size_t>(level)][key];
+    where_[i] = {static_cast<int8_t>(level), static_cast<uint32_t>(v.size()), key};
+    v.push_back(i);
+    ++counts_[static_cast<size_t>(level)];
+}
+
+void BoxGrid::erase(uint32_t i) {
+    if (i < where_.size() && where_[i].level >= 0) remove(i);
+}
+
+void BoxGrid::remove(uint32_t i) {
+    const Where w = where_[i];
+    auto& level = levels_[static_cast<size_t>(w.level)];
+    const auto it = level.find(w.key);
+    std::vector<uint32_t>& v = it->second;
+    const uint32_t last = v.back();
+    v[w.slot] = last;
+    where_[last].slot = w.slot;
+    v.pop_back();
+    if (v.empty()) level.erase(it);
+    --counts_[static_cast<size_t>(w.level)];
+    where_[i].level = -1;
+}
+
+void BoxGrid::near(const Vec3& lo, const Vec3& hi, std::vector<uint32_t>& out) const {
+    out.clear();
+    bool shared = false;
+    double s = cell_;
+    for (int l = 0; l < kLevels; ++l, s *= 2.0) {
+        if (counts_[static_cast<size_t>(l)] == 0) continue;
+        // A box no bigger than a cell has its middle within half a cell of
+        // anything it meets (and a hair more, for the rounding).
+        const double inv = 1.0 / s, reach = 0.5 * s * (1.0 + 1e-9) + 1e-12;
+        int64_t a[3], b[3];
+        double cells = 1.0;
+        for (int k = 0; k < 3; ++k) {
+            a[k] = cellIndex(static_cast<double>(lo[k]) - reach, inv);
+            b[k] = cellIndex(static_cast<double>(hi[k]) + reach, inv);
+            cells *= static_cast<double>(b[k] - a[k] + 1);
+            shared = shared || b[k] - a[k] + 1 >= (int64_t(1) << 21);
+        }
+        const auto& level = levels_[static_cast<size_t>(l)];
+        if (cells > 2.0 * static_cast<double>(level.size()) + 8.0) {
+            // More cells to ask than there are: every box of this grid.
+            for (const auto& [key, v] : level) out.insert(out.end(), v.begin(), v.end());
+            continue;
+        }
+        for (int64_t x = a[0]; x <= b[0]; ++x) {
+            for (int64_t y = a[1]; y <= b[1]; ++y) {
+                for (int64_t z = a[2]; z <= b[2]; ++z) {
+                    const auto it = level.find(cellKey(x, y, z));
+                    if (it != level.end()) out.insert(out.end(), it->second.begin(), it->second.end());
+                }
+            }
+        }
+    }
+    if (shared) {
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+    }
 }
 
 }  // namespace pg

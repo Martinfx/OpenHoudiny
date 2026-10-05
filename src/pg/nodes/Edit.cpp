@@ -141,7 +141,8 @@ public:
 /// sculpting brush (pg/core/Sculpt.h): its dabs, in the order they were
 /// made, each where the surface is after the ones before. Tool, Radius and
 /// Strength are what the brush makes its next dabs with; Falloff shapes
-/// them all.
+/// them all, and so does Dyntopo (pg/core/Dyntopo.h): the mesh made finer
+/// under each dab, coarser where it is finer than it needs.
 class SculptNode : public Node {
 public:
     explicit SculptNode(std::string name) : Node("sculpt", std::move(name)) {
@@ -150,15 +151,29 @@ public:
         params_.setFloat("radius", 0.2f);
         params_.setFloat("strength", 0.5f);
         params_.setInt("falloff", 0);
+        params_.setBool("dyntopo", false);
+        params_.setInt("refine", 2);      // subdivide, collapse, both
+        params_.setInt("detailmode", 0);  // brush, constant
+        params_.setFloat("detail", 0.25f);
+        params_.setFloat("detailsize", 0.05f);
         params_.setString("strokes", "");
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
         const std::vector<SculptDab> dabs = parseSculpt(params_.getString("strokes"));
         const Falloff shape = static_cast<Falloff>(std::clamp(params_.evalInt("falloff", ctx, 0), 0, 4));
+        Dyntopo dyntopo;
+        if (params_.evalBool("dyntopo", ctx, false)) {
+            const int refine = std::clamp(params_.evalInt("refine", ctx, 2), 0, 2);
+            dyntopo.subdivide = refine != 1;
+            dyntopo.collapse = refine != 0;
+            dyntopo.constant = params_.evalInt("detailmode", ctx, 0) == 1;
+            dyntopo.detail = dyntopo.constant ? std::max(params_.evalFloat("detailsize", ctx, 0.05f), 1e-4f)
+                                              : std::clamp(params_.evalFloat("detail", ctx, 0.25f), 0.02f, 4.0f);
+        }
         // While a stroke goes on, only the dabs it added since.
         std::lock_guard<std::mutex> lk(mu_);
-        return sculptor_.cook(in.empty() ? nullptr : in[0], dabs, shape);
+        return sculptor_.cook(in.empty() ? nullptr : in[0], dabs, shape, dyntopo);
     }
 
 private:

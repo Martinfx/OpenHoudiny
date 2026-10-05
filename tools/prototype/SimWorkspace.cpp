@@ -2074,6 +2074,7 @@ void SimWorkspace::helpMenu() {
                   {"Ctrl+A  Ctrl+I  Esc", "pick all, the others, none"},
                   {"P  [  ], Shift+wheel", "paint an attribute (Ctrl: erase), brush size"},
                   {"U", "sculpt: push (Ctrl: pull), Shift: smooth, grab, flatten"},
+                  {"Ctrl+D, sculpting", "dyntopo: the mesh made finer under the brush"},
                   {"Tab  N", "a node on what is picked (PolyExtrude\xe2\x80\xa6), numbers"},
                   {"", "Timeline"},
                   {"Space", "play, pause"},

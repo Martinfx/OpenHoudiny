@@ -516,6 +516,10 @@ private:
     bool sculpting() const { return paint_ && sculptNode() != 0; }
     /// The tool a sculpting dab is made with now: the node's, Shift smooths.
     SculptDab::Tool sculptTool() const;
+    /// Dyntopo (Ctrl+D while sculpting): the Sculpt node's mesh made finer
+    /// under the brush; the longest edge under a dab of this radius, 0 off.
+    float dyntopoDetail(float radius) const;
+    void setDyntopo(bool on);
     void scaleBrush(float factor);
     /// What the bottom of the viewport says in these modes; empty for none.
     std::string elementStatus() const;

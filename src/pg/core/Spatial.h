@@ -12,11 +12,16 @@
 // whether a segment passes through one -- what a growing branch keeps
 // clear of.
 //
+// And over places that change (MovingGrid, BoxGrid): the points and the
+// triangles under a sculpting brush's dab, as one dab after another moves
+// them, makes them and takes them out.
+//
 #include "pg/core/Types.h"
 
 #include <array>
 #include <cstdint>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 namespace pg {
@@ -81,6 +86,74 @@ private:
     std::vector<std::array<Vec3, 3>> triangles_;
     std::vector<uint32_t> order_;
     std::vector<Node> nodes_;
+};
+
+/// The point of triangle abc nearest `p` (Ericson, Real-Time Collision
+/// Detection, 5.1.5).
+Vec3 nearestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c);
+
+/// The points in the cells of a grid, moved from cell to cell as they move:
+/// who is near a place, while the places change. Points may be added and
+/// taken out; one not finite is in no cell.
+class MovingGrid {
+public:
+    MovingGrid(std::span<const Vec3> P, float cell);
+
+    /// Point `i` is at `p` now.
+    void moved(uint32_t i, const Vec3& p);
+    /// A new point, numbered after all there are.
+    void add(uint32_t i, const Vec3& p);
+    /// Point `i` taken out.
+    void erase(uint32_t i);
+    /// The points of `P` nearer `c` than `r`, each once, in no set order.
+    void near(std::span<const Vec3> P, const Vec3& c, float r, std::vector<uint32_t>& out) const;
+
+private:
+    int64_t index(float v) const;
+    uint64_t key(const Vec3& p) const;
+    void insert(uint32_t i, uint64_t k);
+    void remove(uint32_t i);
+
+    double inv_;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> cells_;
+    std::vector<uint64_t> cellOf_;
+    std::vector<uint32_t> slot_;
+};
+
+/// The points of `P` nearer `c` than `r`, every point asked -- on more
+/// threads when there are many: quicker than making a grid for a question
+/// or two. In number order.
+void scanNear(std::span<const Vec3> P, const Vec3& c, float r, std::vector<uint32_t>& out);
+
+/// Boxes of any size -- round the triangles of a mesh as it changes -- in
+/// grids of cells doubling in size: each box in the one cell its middle is
+/// in, of the finest grid whose cells are no smaller than it. So a big
+/// triangle is in one cell as a small one is; who might meet a place is
+/// found by asking each grid the cells within half a cell of it.
+class BoxGrid {
+public:
+    explicit BoxGrid(float cell);
+
+    /// Box `i` is lo..hi (now).
+    void put(uint32_t i, const Vec3& lo, const Vec3& hi);
+    void erase(uint32_t i);
+    /// The boxes that may meet lo..hi -- all that do, and some that do not
+    /// -- each once, in no set order.
+    void near(const Vec3& lo, const Vec3& hi, std::vector<uint32_t>& out) const;
+
+private:
+    static constexpr int kLevels = 48;
+    struct Where {
+        int8_t level = -1;  ///< -1: in no grid
+        uint32_t slot = 0;
+        uint64_t key = 0;
+    };
+    void remove(uint32_t i);
+
+    double cell_;
+    std::vector<Where> where_;
+    std::vector<std::unordered_map<uint64_t, std::vector<uint32_t>>> levels_;
+    std::vector<size_t> counts_;
 };
 
 /// Who touches whom in a geometry: the points an edge joins to each point,

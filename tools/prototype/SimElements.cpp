@@ -22,6 +22,7 @@
 //   Ctrl+A, Ctrl+I     all of them, the others;   Escape: none
 //   P                  the brush: the Attribute Paint node's attribute, its Value
 //                      -- Ctrl: its Erase Value; [ ] or Shift+wheel: its size
+//   U                  the sculpting brush -- a Sculpt node; Ctrl+D: dyntopo
 //
 // The marks -- the wire, the points, what is picked and what is under the
 // mouse, the paint -- are the renderer's overlay: hidden behind what is in
@@ -1056,6 +1057,23 @@ SculptDab::Tool SimWorkspace::sculptTool() const {
     return static_cast<SculptDab::Tool>(std::clamp(tool, 0, 3));
 }
 
+float SimWorkspace::dyntopoDetail(float radius) const {
+    const int node = sculptNode();
+    const float frame = static_cast<float>(current_);
+    if (!node || net_.valueAt(node, "dyntopo", frame)[0] == 0.0f) return 0.0f;
+    if (net_.valueAt(node, "detailmode", frame)[0] >= 0.5f) return net_.valueAt(node, "detailsize", frame)[0];
+    return net_.valueAt(node, "detail", frame)[0] * radius;
+}
+
+void SimWorkspace::setDyntopo(bool on) {
+    const int node = sculptNode();
+    if (!node) return;
+    net_.setParam(node, "dyntopo", {on ? 1.0f : 0.0f, 0.0f, 0.0f});
+    setMessage(on ? std::string("Dyntopo: the mesh made finer under the brush as it goes, coarser where it is finer "
+                                "than it needs -- triangles; Detail in the node -- Ctrl+D: off")
+                  : std::string("Dyntopo off: the brush moves the points there are"));
+}
+
 void SimWorkspace::setPaint(bool on) {
     // On what is shown when it takes a brush; else a new Attribute Paint.
     setBrush(on, sculptNode() ? "sculpt" : "attribute_paint");
@@ -1286,6 +1304,10 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
         col = tool == SculptDab::Tool::Push && erase ? IM_COL32(120, 190, 255, 235) : colors[k];
         label = tool == SculptDab::Tool::Push && erase ? "Pull" : names[k];
         label += " " + metres(radius);
+        // With dyntopo, how long the edges under it are made -- Grab takes the mesh as it is.
+        if (const float edge = dyntopoDetail(radius); edge > 0.0f && tool != SculptDab::Tool::Grab) {
+            label += ", edges " + metres(edge);
+        }
     } else {
         char text[96];
         std::snprintf(text, sizeof text, "%s %g", net_.text(node, "name").c_str(),
@@ -1491,8 +1513,11 @@ std::string SimWorkspace::elementStatus() const {
         const char* keys = tool == SculptDab::Tool::Push     ? "Shift smooths, Ctrl pulls in  \xc2\xb7  "
                            : tool == SculptDab::Tool::Smooth ? ""
                                                              : "Shift smooths  \xc2\xb7  ";
-        return "Sculpting " + net_.node(node)->name + ": " + names[static_cast<int>(tool)] + ", radius " +
-               metres(net_.valueAt(node, "radius", frame)[0]) + "  \xc2\xb7  " + keys + "[ ] size  \xc2\xb7  U: done";
+        const float radius = net_.valueAt(node, "radius", frame)[0];
+        const float edge = dyntopoDetail(radius);
+        return "Sculpting " + net_.node(node)->name + ": " + names[static_cast<int>(tool)] + ", radius " + metres(radius) +
+               (edge > 0.0f ? ", dyntopo edges " + metres(edge) : std::string()) + "  \xc2\xb7  " + keys +
+               "[ ] size  \xc2\xb7  Ctrl+D dyntopo  \xc2\xb7  U: done";
     }
     if (paint_) {
         const int node = paintNode();

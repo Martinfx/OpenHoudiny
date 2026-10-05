@@ -985,6 +985,11 @@ void SimWorkspace::viewMenu() {
         for (int k = 0; k < 4; ++k) {
             if (ImGui::MenuItem(tools[k], nullptr, now == k)) net_.setParam(node, "tool", {static_cast<float>(k), 0.0f, 0.0f});
         }
+        ImGui::Separator();
+        const bool dyntopo = dyntopoDetail(1.0f) > 0.0f;
+        if (ImGui::MenuItem("Dyntopo", "Ctrl+D", dyntopo)) setDyntopo(!dyntopo);
+        ImGui::SetItemTooltip("The mesh made finer under the brush as it goes, coarser where it is finer than it "
+                              "needs: triangles, as fine as the node's Detail says.");
         ImGui::EndMenu();
     }
     if (editingElements() && !paint_ && ImGui::BeginMenu("Pick With")) {
@@ -1059,7 +1064,11 @@ void SimWorkspace::viewKeys(bool overView) {
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
     const bool zero = ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false);
     if (io.KeyCtrl) {
-        if (ImGui::IsKeyPressed(ImGuiKey_D, false) && !chosen.empty()) duplicate(chosen);
+        // Ctrl+D: while sculpting, dyntopo on and off, as in Blender; else a copy.
+        if (ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+            if (sculpting()) setDyntopo(dyntopoDetail(1.0f) == 0.0f);
+            else if (!chosen.empty()) duplicate(chosen);
+        }
         if (io.KeyAlt && zero) cameraFromView();
         if (editingElements() && !io.KeyAlt) {
             if (ImGui::IsKeyPressed(ImGuiKey_G, false)) groupElements();

@@ -97,6 +97,7 @@ add_library(pgcore
   src/pg/core/Dissolve.cpp
   src/pg/core/Ecosystem.cpp
   src/pg/core/Mirror.cpp
+  src/pg/core/Dyntopo.cpp
   src/pg/core/Grass.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp
@@ -1095,6 +1096,7 @@ add_executable(pgtests
   tests/test_vdb_read.cpp
   tests/test_aces.cpp
   tests/test_edit.cpp
+  tests/test_dyntopo.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp
   tests/test_render.cpp

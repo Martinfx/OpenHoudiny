@@ -10,12 +10,17 @@
 // the viewport's brush writes them (pg/nodes, tools/prototype). A Sculptor
 // in the node puts on only the dabs a stroke has added since it cooked.
 //
+// With dyntopo the mesh is made finer under each dab before it moves the
+// points, and coarser where it is finer than it needs (Dyntopo.h): the
+// polygons become triangles, and the dabs make the points they move.
+//
 // With symmetry the brush writes each dab and its mirror image (Mirror.h),
 // the image joined to it: the two put on together, each point moved by
 // both as the points were before them -- so a symmetric surface stays
 // symmetric, to the bit where the two do not overlap. Where they overlap,
 // near the plane, each is weakened down to half, as Blender feathers it.
 //
+#include "pg/core/Dyntopo.h"
 #include "pg/core/Geometry.h"
 #include "pg/core/Mirror.h"
 #include "pg/core/Soft.h"
@@ -68,8 +73,11 @@ std::string sculptText(const SculptDab& dab);
 /// it, less towards its edge as `shape` says. Smoothing keeps an open
 /// border on its line and its corners where they are; the ends of a line
 /// stay. Where the geometry has point normals N, they are found again from
-/// the faces.
-void sculpt(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape = Falloff::Smooth);
+/// the faces. With `dyntopo` on, the closed polygons become triangles --
+/// even before a dab -- and each dab makes the mesh as fine as it says
+/// first, Grab but none.
+void sculpt(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape = Falloff::Smooth,
+            const Dyntopo& dyntopo = {});
 
 /// Who each point is smoothed towards, of a geometry as it came (Sculpt.cpp).
 struct SculptSmoothing;
@@ -79,24 +87,32 @@ struct SculptSmoothing;
 /// geometry it had and the dabs it had with more after them, it puts on
 /// only the new ones; given them all but the last -- a grab that moves on,
 /// a dab taken back -- it goes on from before that one; anything else,
-/// from the start. What it gives is what `sculpt` makes of all the dabs,
-/// to the bit. Not for more than one thread at once.
+/// from the start. With dyntopo it keeps the mesh before the last dab only
+/// where that is a Grab. What it gives is what `sculpt` makes of all the
+/// dabs, to the bit. Not for more than one thread at once.
 class Sculptor {
 public:
     /// `source` sculpted by `dabs`.
-    GeometryPtr cook(const GeometryPtr& source, std::span<const SculptDab> dabs, Falloff shape);
+    GeometryPtr cook(const GeometryPtr& source, std::span<const SculptDab> dabs, Falloff shape,
+                     const Dyntopo& dyntopo = {});
     /// How many dabs the last cook had put on already, and did not again.
     size_t reused() const { return reused_; }
 
 private:
+    /// With dyntopo: the meshes are kept, not the geometries made of them.
+    GeometryPtr cookDynamic(std::span<const SculptDab> dabs, Falloff shape);
+
     GeometryPtr source_;
     Falloff shape_ = Falloff::Smooth;
+    Dyntopo dyntopo_;
     std::vector<SculptDab> dabs_;  ///< the last cook's
     GeometryPtr before_;           ///< ... the geometry after all of them but the last (with what is joined to it); null: not kept
     GeometryPtr after_;            ///< ... after all of them: what it gave
     bool movedBefore_ = false;     ///< some dab had moved some point by then
     bool movedAfter_ = false;
     std::shared_ptr<const SculptSmoothing> smoothing_;  ///< of source_, once a Smooth dab came
+    std::shared_ptr<const SculptMesh> beforeMesh_;      ///< with dyntopo: the mesh after all the dabs but the last
+    std::shared_ptr<SculptMesh> afterMesh_;             ///< ... after all of them
     size_t reused_ = 0;
 };
 

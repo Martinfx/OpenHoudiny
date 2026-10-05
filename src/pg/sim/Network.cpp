@@ -1213,6 +1213,22 @@ std::vector<NodeType> buildTypes() {
               {"falloff", "Falloff", "Sculpt", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 4.0f, "",
                "How a dab does less towards its edge: Smooth, Linear, Sharp, Sphere, Constant. Of all the dabs.",
                {"smooth", "linear", "sharp", "sphere", "constant"}, {"Smooth", "Linear", "Sharp", "Sphere", "Constant"}},
+              {"dyntopo", "Dyntopo", "Dyntopo", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Dynamic topology, as in Blender: the mesh made finer under each dab as the brush goes -- the "
+               "polygons become triangles, an edge longer than Detail split in half, one much shorter made one "
+               "point -- so a stroke has the points it needs. Grab takes the mesh as it is. Of all the dabs."},
+              {"refine", "Refine", "Dyntopo", K::Choice, {2.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "",
+               "Subdivide: long edges split; Collapse: short edges (under 0.4 of Detail) made one point; both, "
+               "to keep the triangles even under the brush.",
+               {"subdivide", "collapse", "both"}, {"Subdivide", "Collapse", "Subdivide Collapse"}},
+              {"detailmode", "Detailing", "Dyntopo", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Brush: the edges as long as a share of each dab's radius -- a small brush makes fine triangles; "
+               "Constant: as long as Detail Size, whatever the brush.",
+               {"brush", "constant"}, {"Brush", "Constant"}},
+              {"detail", "Detail", "Dyntopo", K::Float, {0.25f, 0.0f, 0.0f}, 0.05f, 1.0f, 0.02f, 4.0f, "",
+               "Brush detailing: the longest an edge under a dab may be, as a share of its radius."},
+              {"detailsize", "Detail Size", "Dyntopo", K::Float, {0.05f, 0.0f, 0.0f}, 0.005f, 0.5f, 1e-4f, kBig, "m",
+               "Constant detailing: the longest an edge under a dab may be."},
               {"strokes", "Strokes", "Sculpt", K::Data, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
                "The dabs, in order."}});
     {

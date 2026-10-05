@@ -27,7 +27,7 @@ okna.
   Dissolve), symetrie úprav i štětců (M), štětec maluje atribut —
   piny a trhání látky (Attribute Paint) — a tvaruje geometrii jako hlínu:
   vytlačit, zatlačit, uhladit, chytit, zarovnat (Sculpt, přírůstkově
-  i na milionu bodů)
+  i na milionu bodů; s dyntopem se síť pod štětcem sama zjemňuje)
 - **[docs/trees.md](docs/trees.md)** — stromy, jak rostou rostliny (uzel
   Tree po vzoru Webera a Penna): kmen i s vidlicí do vůdčích větví, tři
   úrovně větví kolem rodiče o zlatý úhel, sedm tvarů koruny (smrk, dub,
@@ -235,7 +235,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 658 testů: 94 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
+./build/pgtests            # 665 testů: 101 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py

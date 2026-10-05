@@ -126,6 +126,7 @@ ní, vezme obdélník, laso nebo štětec).
 | **[** , **]**, **Shift**+kolečko | menší / větší štětec (malovací či sculpt; výběrový, když není zapnutý měkký výběr) |
 | **Ctrl** při malování | maluje hodnotou Erase Value (maže) |
 | **Ctrl**, **Shift** při sculptu | Ctrl: Push zatlačuje dovnitř; Shift: uhlazuje, s kterýmkoli nástrojem |
+| **Ctrl+D** při sculptu | dyntopo zapnout / vypnout: síť se pod štětcem zjemňuje (§6c) |
 | **Esc** při tažení | vrátí, co tažení udělalo (úchyt, štětec výběru, Grab) |
 
 Stejné položky jsou v pravém kliku do viewportu a v nabídce Help.
@@ -402,6 +403,66 @@ viewport nekreslí drát, aby byl tvar vidět. **U** znovu (nebo Q, W, E, R,
 1–4) sculpt ukončí; uzel, který U vložilo a do kterého se nic
 nevytvarovalo, zase zmizí.
 
+### Dyntopo: síť se pod štětcem zjemňuje (Ctrl+D)
+
+S **Dyntopo** si štětec dělá body sám, jako dynamická topologie
+v Blenderu. Zapíná se v sekci *Dyntopo* v parametrech Sculptu, **Ctrl+D**
+během sculptu nebo pravým klikem › *Sculpt Tool* › *Dyntopo*. Polygony se
+hned rozřežou na trojúhelníky (vějíře, jak je kreslí viewport), i když
+ještě žádná kapka není. Před každou kapkou se trojúhelníky v jejím dosahu
+upraví dvěma způsoby:
+
+- **Slučování** stáhne hranu kratší než 0,4 detailu do bodu uprostřed,
+  nejkratší první.
+- **Dělení** rozpůlí hranu delší než *detail*, nejdelší první, a pak
+  znovu, dokud pod kapkou žádná delší hrana nezbude. S dlouhou hranou se
+  rozpůlí i výrazně delší hrany vedle ní. Čím dál od kapky, tím delší
+  smějí být (×1,6 na krok), takže trojúhelníky od štětce plynule rostou
+  a nevznikají dlouhé tenké.
+
+Pak kapka posune body jako bez dyntopa. Grab síť nemění (jako
+v Blenderu) a bere ji, jaká je.
+
+![Hrubá koule (8 × 16 polygonů) s dvěma sty kapkami s dyntopem: široký hřbet nahoře velkým štětcem (větší trojúhelníky), jemná spirála vlevo dole malým (drobné), vtlačená rýha vpravo; dál od tahů zůstaly velké trojúhelníky koule](img/edit-sculpt-dyntopo.jpg)
+
+| Parametr | Co dělá |
+|---|---|
+| Dyntopo | zapne dynamickou topologii (**Ctrl+D**) |
+| Refine | Subdivide jen dělí; Collapse jen slučuje; Subdivide Collapse (výchozí) dělá obojí, takže trojúhelníky pod štětcem zůstanou vyrovnané |
+| Detailing | Brush: detail je podíl poloměru kapky, malý štětec dělá jemné trojúhelníky a velký hrubé; Constant: délka v metrech, ať je štětec jakýkoli |
+| Detail | při Brush: nejdelší hrana pod kapkou jako podíl jejího poloměru (výchozí 0,25) |
+| Detail Size | při Constant: nejdelší hrana pod kapkou v metrech (výchozí 5 cm) |
+
+Délku hran, které štětec udělá, ukazuje kroužek (`Push 0.2 m, edges
+0.05 m`) i stavový řádek.
+
+Hrana se stáhne, jen když síť zůstane plochou bez děr a přehybů:
+
+- konce hrany nemají jiné společné sousedy než dva protější rohy (*link
+  condition*), takže se nespojí dvě vrstvy;
+- žádný trojúhelník se neotočí rubem nahoru;
+- nezmizí poslední trojúhelník kousku ani uzavřený čtyřstěn.
+
+Okraj zůstane, kde byl. Z bodu na okraji a vnitřního bodu zůstane bod na
+okraji na svém místě. Dva body okraje se spojí jen podél okraje a roh
+okraje (kde okraj uhne o víc než 30°) zůstane na místě. Body otevřených
+čar se posouvají, ale nemizí.
+
+**Atributy** jdou s body. Nový bod uprostřed hrany má průměr čísel obou
+konců (`Cd`, `N`, `uv` rohů…); celá čísla a řetězce dostane od konce
+s nižším číslem. Bod, do kterého se hrana stáhla, má průměr obou. Do
+skupiny bodů patří nový bod, když do ní patřily oba konce. Trojúhelník má
+atributy a skupiny polygonu, ze kterého vznikl, a normály `N` se na konci
+spočítají z trojúhelníků. Body, které geometrie měla, zůstanou na začátku
+(bez stažených), nové jdou za nimi; každý polygon nahradí na jeho místě
+trojúhelníky, které z něj vznikly.
+
+Síť i tvar jsou pokaždé stejné do bitu: hrany se berou podle délky
+a stejně dlouhé podle čísel bodů. Se symetrií (§4b) se síť pod kapkou
+a pod jejím obrazem zjemňuje každá zvlášť, takže tvar je symetrický, ale
+trojúhelníky ne přesně. Kapky jsou dál místa: změna před Sculptem nebo
+parametru dyntopa spočítá všechny kapky znovu, na nové síti.
+
 ## 7. Vzory prvků
 
 Parametry Group, Edit, Blast, PolyExtrude a wranglů berou prvky jako **vzor**, jako skupinová
@@ -485,6 +546,21 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   posunu bodů na GPU pošle jen polohy a normály vrcholů — na 90 000 bodech
   6 ms, na milionu 62 ms (s normálami `N` 7 ms); viz
   [geometry.md](geometry.md#3-display-flag-a-viewport).
+- **Dyntopo** — `src/pg/core/Dyntopo.h`: `SculptMesh` drží trojúhelníky
+  a ke každému bodu seřazený seznam trojúhelníků kolem; seznamy leží
+  v jednom společném poli, takže se síť kopíruje po blocích. Atributy bodů
+  a rohů jsou čísla, nebo odkaz na prvek geometrie, ze kterého pocházejí
+  (celá čísla, řetězce). Hrany čekají ve frontě podle délky. Trojúhelníky
+  v dosahu kapky najde mřížka krabic po úrovních: každý trojúhelník je
+  v jediné buňce nejjemnější úrovně, do které se vejde, takže velký
+  trojúhelník nezabere tisíce buněk. Body najde pohyblivá mřížka; při pár
+  kapkách se rovnou zeptá všech (na více vláknech). Odebrané body
+  a trojúhelníky si nechají čísla až do převodu na geometrii. Sculptor si
+  drží síť po kapkách a pokračuje v ní; síť před poslední kapkou si
+  zkopíruje jen pod Grabem, protože kopie sítě není sdílená jako
+  geometrie (vrácená kapka, která není Grab, se tak počítá od začátku).
+  Koule o 360 000 trojúhelníků: kapka během tahu 7 ms (nejvýš 13 ms),
+  400 kapek od začátku 0,12 s; při 60 000 trojúhelníků 1,4 ms na kapku.
 - **Symetrie** — `src/pg/core/Mirror.h`: `mirrorPoints` najde obraz
   každého bodu stromem bodů (nejbližší k odraženému místu v toleranci),
   `withMirror` přidá k výběru obrazy. Edit rozdělí body podle strany
@@ -528,10 +604,13 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   otočení, měřítko).
   Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by
   Box (dva rohy).
-- Sculpt body posouvá, nepřidává je: jemný detail chce jemnou síť
-  (Subdivide před Sculptem); síť, která se sama zjemňuje pod štětcem
-  (dyntopo, jako v Blenderu), není. Změna čehokoli před Sculptem nebo
-  jeho Falloff spočítá všechny kapky znovu od začátku.
+- Bez dyntopa Sculpt body jen posouvá a nepřidává je. Jemný detail pak
+  chce jemnou síť (Subdivide před Sculptem), nebo Dyntopo (§6c).
+- Dyntopo dělá jen trojúhelníky, hrany neotáčí (*edge flip*) a body
+  nevyrovnává. U stažených hran se atributy rohů (`uv`) jen přibližují,
+  takže švy UV se mohou rozmazat. Jedna kapka rozpůlí nejvýš 250 000 hran.
+- Změna čehokoli před Sculptem, jeho Falloff nebo parametrů dyntopa
+  spočítá všechny kapky znovu od začátku.
 - Drát a všechny body se kreslí do 400 000 hran či bodů; ve větší geometrii
   jen výběr. První výběr v síti milionů trojúhelníků postaví strom obálek
   (řádově sekunda).
