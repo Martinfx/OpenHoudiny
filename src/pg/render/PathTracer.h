@@ -29,6 +29,7 @@
 // each pixel sees (denoise()), keeping edges, a blade from the blade behind it.
 //
 #include "pg/core/ColorSpace.h"
+#include "pg/render/Ocio.h"
 #include "pg/render/Scene.h"
 #include "pg/render/Textures.h"
 
@@ -83,9 +84,13 @@ struct Settings {
     /// more contrast and colour, or as it is; ACES (Narkowicz's fit of its
     /// curve), as the viewport; ACES 1.0 and ACES 2.0, as OpenColorIO's ACES
     /// configs show them on an sRGB screen (Aces.h); Standard, the light as
-    /// it is in sRGB, white and brighter clipped.
-    enum class View : uint8_t { AgXPunchy, AgX, Aces, Aces1, Aces2, Standard };
+    /// it is in sRGB, white and brighter clipped; Ocio, a view of an
+    /// OpenColorIO config (`ocio`).
+    enum class View : uint8_t { AgXPunchy, AgX, Aces, Aces1, Aces2, Standard, Ocio };
     View view = View::AgXPunchy;
+    /// With View Ocio: the view of the config (Ocio.h). None -- the config
+    /// could not be read --: AgX Punchy shows the light.
+    std::shared_ptr<const OcioView> ocio;
     /// The colour space an EXR's light goes out in, its chromaticities
     /// saying so: linear Rec. 709 as the renderers have it, or ACES's
     /// ACEScg or ACES2065-1 (core/ColorSpace.h).
@@ -191,17 +196,18 @@ private:
 /// Linear light as a screen shows it: times `exposure`, then AgX -- as
 /// Blender's view transform (Sobotka's, the polynomial fit of its curve),
 /// with its look Punchy or not -- or ACES (Narkowicz's fit) and gamma 2.2,
-/// as the viewport's, or ACES 1.0 or 2.0 (Aces.h), or sRGB as it is; RGBA,
+/// as the viewport's, or ACES 1.0 or 2.0 (Aces.h), or sRGB as it is, or
+/// through an OpenColorIO config's view (`ocio`, with View Ocio); RGBA,
 /// alpha 255.
 std::vector<uint8_t> toDisplay(const Image& image, float exposure,
-                               Settings::View view = Settings::View::AgXPunchy);
+                               Settings::View view = Settings::View::AgXPunchy, const OcioView* ocio = nullptr);
 /// One colour so: 0 to 1, as a screen shows it.
-Vec3 shown(const Vec3& linear, Settings::View view);
+Vec3 shown(const Vec3& linear, Settings::View view, const OcioView* ocio = nullptr);
 /// The light `shown` shows as `display` -- a picture's colour, 0 to 1 --
 /// at exposure 1: its inverse. A colour no light shows as it (one too
 /// saturated for AgX), the light of the nearest that one does; white, the
 /// least light that shows as white.
-Vec3 unshown(const Vec3& display, Settings::View view);
+Vec3 unshown(const Vec3& display, Settings::View view, const OcioView* ocio = nullptr);
 
 /// `beauty` with its noise taken out: an edge-avoiding a-trous wavelet
 /// filter (Dammertz et al.) over the light each surface gets -- its colour

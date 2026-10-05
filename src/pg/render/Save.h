@@ -27,6 +27,7 @@ struct Rendered {
     Image alpha, catcher, plate;
     float exposure = 1.0f;
     Settings::View view = Settings::View::AgXPunchy;  ///< how a PNG shows its light
+    std::shared_ptr<const OcioView> ocio;              ///< with View Ocio: the config's view
     LinearSpace space = LinearSpace::Rec709;           ///< what an EXR's light and colours are in
 };
 

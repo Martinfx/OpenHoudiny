@@ -3,8 +3,11 @@
 #include "pg/core/ColorSpace.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
+#include <string>
+#include <utility>
 
 // The output transforms follow OpenColorIO 2.6 (BSD-3-Clause, Copyright
 // Contributors to the OpenColorIO Project) -- its ACES 1.0 ops and its ACES
@@ -32,6 +35,15 @@ using F3 = std::array<float, 3>;
 
 /// The colour appearance model's own primaries (ACES 2.0's CAM16 variant).
 constexpr Primaries kCam16{{{0.8336, 0.1735}, {2.3854, -1.4659}, {0.087, -0.125}, {0.333, 0.333}}};
+/// Display P3's primaries, D65; with ACES's white, D60; Rec. 709's with it;
+/// Rec. 2020's.
+constexpr Primaries kP3D65{{{0.680, 0.320}, {0.265, 0.690}, {0.150, 0.060}, {0.3127, 0.3290}}};
+constexpr Primaries kP3D60{{{0.680, 0.320}, {0.265, 0.690}, {0.150, 0.060}, {0.32168, 0.33767}}};
+constexpr Primaries kRec709D60{{{0.64, 0.33}, {0.30, 0.60}, {0.15, 0.06}, {0.32168, 0.33767}}};
+constexpr Primaries kRec2020{{{0.708, 0.292}, {0.170, 0.797}, {0.131, 0.046}, {0.3127, 0.3290}}};
+/// CIE XYZ's whites of D65 and of DCI's projectors.
+constexpr std::array<double, 3> kD65Xyz = {0.3127 / 0.3290, 1.0, (1.0 - 0.3127 - 0.3290) / 0.3290};
+constexpr std::array<double, 3> kDciXyz = {0.314 / 0.351, 1.0, (1.0 - 0.314 - 0.351) / 0.351};
 
 D33 inverse(const D33& m) { return color::inverse(m); }
 std::array<double, 3> times(const D33& m, const std::array<double, 3>& v) { return color::times(m, v); }
@@ -252,9 +264,11 @@ F3 darkToDim(const F3& c, bool back) {
     return times(std::pow(y, gamma - 1.0f), c);
 }
 
-F3 forward(const F3& linear709) {
-    F3 c = times(k709ToAp0, linear709);
-    c = redMod(glow(c, false), false);
+/// The RRT and the 48-nit curve, as OpenColorIO's built-in output
+/// transforms begin: ACES2065-1 light to AP1 light of a cinema's screen, 0
+/// its black and 1 its white.
+F3 rendered(const F3& ap0) {
+    F3 c = redMod(glow(ap0, false), false);
     for (float& v : c) v = std::max(v, 0.0f);
     c = times(kAp0ToAp1, c);
     for (float& v : c) v = std::max(v, 0.0f);
@@ -263,20 +277,152 @@ F3 forward(const F3& linear709) {
         const float nits = std::pow(10.0f, toneLog(std::log10(std::max(v, std::numeric_limits<float>::min()))));
         v = (nits - kCinemaBlack) / (kCinemaWhite - kCinemaBlack);
     }
-    c = times(kDesat100, darkToDim(c, false));
-    return times(kXyzTo709, times(kAp1ToXyz, c));
+    return c;
 }
 
-F3 back(const F3& screen709) {
-    static const F33 from709 = inverse(kXyzTo709), fromXyz = inverse(kAp1ToXyz), undesat = inverse(kDesat100),
-                     unsat = inverse(kRrtSat), fromAp1 = inverse(kAp0ToAp1), toLinear = inverse(k709ToAp0);
-    F3 c = darkToDim(times(undesat, times(fromXyz, times(from709, screen709))), true);
+/// ... and back, the red modifier's inverse only near: none below 0 where
+/// the way there held none.
+F3 renderedBack(F3 c) {
+    static const F33 unsat = inverse(kRrtSat), fromAp1 = inverse(kAp0ToAp1);
     for (float& v : c) {
         const float nits = v * (kCinemaWhite - kCinemaBlack) + kCinemaBlack;
         v = nits <= kCinemaBlack ? 0.0f : std::pow(10.0f, toneLogBack(std::log10(nits)));
     }
-    c = times(fromAp1, times(unsat, c));
-    return times(toLinear, glow(redMod(c, true), true));
+    c = times(unsat, c);
+    for (float& v : c) v = std::max(v, 0.0f);
+    c = times(fromAp1, c);
+    for (float& v : c) v = std::max(v, 0.0f);
+    return glow(redMod(c, true), true);
+}
+
+/// A cinema's screen to video's: a dim room's gamma, less saturation.
+F3 video(const F3& c) { return times(kDesat100, darkToDim(c, false)); }
+
+F3 videoBack(const F3& c) {
+    static const F33 undesat = inverse(kDesat100);
+    return darkToDim(times(undesat, c), true);
+}
+
+/// ACES2065-1 light to the screen's CIE XYZ (D65): OpenColorIO's built-in
+/// "ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-VIDEO_1.0".
+F3 outputXyz(const F3& ap0) { return times(kAp1ToXyz, video(rendered(ap0))); }
+
+F3 forward(const F3& linear709) { return times(kXyzTo709, outputXyz(times(k709ToAp0, linear709))); }
+
+/// The screen's CIE XYZ back to ACES2065-1, as OpenColorIO's inverse.
+F3 outputXyzBack(const F3& xyz) {
+    static const F33 fromXyz = inverse(kAp1ToXyz);
+    return renderedBack(videoBack(times(fromXyz, xyz)));
+}
+
+F3 back(const F3& screen709) {
+    static const F33 from709 = inverse(kXyzTo709), toLinear = inverse(k709ToAp0);
+    return times(toLinear, outputXyzBack(times(from709, screen709)));
+}
+
+/// A white simulated rolled down to `white` near the top, so that it stays
+/// in the screen's gamut: each channel above 1/2 bent by a quadratic to
+/// `white` at 1, on in a line beyond (OpenColorIO's roll_white ops).
+float rollWhite(float v, float white, bool back) {
+    constexpr double kWidth = 0.5, kX0 = -1.0, kX1 = kX0 + kWidth;
+    const double y0 = -white, y1 = kX1, m1 = kX1 - kX0;
+    const double a = y0 - y1 + m1, b = 2.0 * (y1 - y0) - m1, c = y0;
+    if (!back) {
+        const double t = (-static_cast<double>(v) - kX0) / (kX1 - kX0);
+        if (t < 0.0) return static_cast<float>(-(t * b + c));
+        if (t > 1.0) return v;
+        return static_cast<float>(-((t * a + b) * t + c));
+    }
+    // Back: the line above `white`; the quadratic's root between 1/2 and it.
+    const double y = v;
+    if (y <= -y1) return v;
+    if (y >= white) return static_cast<float>(-(((-y - c) / b) * (kX1 - kX0) + kX0));
+    const double t = (-b + std::sqrt(std::max(0.0, b * b - 4.0 * a * (c + y)))) / (2.0 * a);
+    return static_cast<float>(-(t * (kX1 - kX0) + kX0));
+}
+
+/// A gamut ACES 1.1's outputs hold the light to: AP1 into it (Bradford),
+/// then 0 to 1 there; and back.
+struct Limit {
+    F33 into, outOf;
+    explicit Limit(const Primaries& p) : into(toFloat(conversion(kAP1, p, true))), outOf(inverse(into)) {}
+};
+
+const Limit& limit(bool p3) {
+    static const Limit rec709(kRec709), displayP3(kP3D65);
+    return p3 ? displayP3 : rec709;
+}
+
+/// The white simulated: no channel above `cap`, all of them times `scale`.
+F3 capped(F3 c, float cap, float scale) {
+    for (float& v : c) v = std::min(v, cap) * scale;
+    return c;
+}
+
+F3 uncapped(F3 c, float cap, float scale) {
+    for (float& v : c) v = std::min(v * (1.0f / scale), cap);
+    return c;
+}
+
+F3 rolled(F3 c, float white, bool back) {
+    for (float& v : c) v = rollWhite(v, white, back);
+    return c;
+}
+
+/// ACES 1.x's SDR outputs as OpenColorIO builds them in, up to the gamut
+/// they end in.
+F3 outputRgb(const F3& ap0, AcesOutputXyz which) {
+    using W = AcesOutputXyz;
+    const F3 c = rendered(ap0);
+    const auto clamped = [](F3 v) {
+        for (float& x : v) x = std::clamp(x, 0.0f, 1.0f);
+        return v;
+    };
+    switch (which) {
+        case W::SdrCinema10: return c;
+        case W::SdrCinemaRec709lim11: return clamped(times(limit(false).into, c));
+        case W::SdrVideoRec709lim11: return clamped(times(limit(false).into, video(c)));
+        case W::SdrVideoP3lim11: return clamped(times(limit(true).into, video(c)));
+        case W::SdrCinemaD60simD6511: return capped(c, 1.0f, 0.964f);
+        case W::SdrVideoD60simD6510: return video(capped(c, 1.0f, 0.955f));
+        case W::SdrCinemaD60simDci10: return capped(rolled(c, 0.918f, false), 0.918f, 0.96f);
+        case W::SdrCinemaD65simDci11: return capped(rolled(c, 0.908f, false), 0.908f, 0.9575f);
+        default: return video(c);
+    }
+}
+
+F3 outputRgbBack(const F3& rgb, AcesOutputXyz which) {
+    using W = AcesOutputXyz;
+    const auto clamped = [](F3 v) {
+        for (float& x : v) x = std::clamp(x, 0.0f, 1.0f);
+        return v;
+    };
+    switch (which) {
+        case W::SdrCinema10: return renderedBack(rgb);
+        case W::SdrCinemaRec709lim11: return renderedBack(times(limit(false).outOf, clamped(rgb)));
+        case W::SdrVideoRec709lim11: return renderedBack(videoBack(times(limit(false).outOf, clamped(rgb))));
+        case W::SdrVideoP3lim11: return renderedBack(videoBack(times(limit(true).outOf, clamped(rgb))));
+        case W::SdrCinemaD60simD6511: return renderedBack(uncapped(rgb, 1.0f, 0.964f));
+        case W::SdrVideoD60simD6510: return renderedBack(uncapped(videoBack(rgb), 1.0f, 0.955f));
+        case W::SdrCinemaD60simDci10: return renderedBack(rolled(uncapped(rgb, 0.918f, 0.96f), 0.918f, true));
+        case W::SdrCinemaD65simDci11: return renderedBack(rolled(uncapped(rgb, 0.908f, 0.9575f), 0.908f, true));
+        default: return renderedBack(videoBack(rgb));
+    }
+}
+
+/// ... and from that gamut to the screen's CIE XYZ (D65), in double.
+D33 outputToXyz(AcesOutputXyz which) {
+    using W = AcesOutputXyz;
+    switch (which) {
+        case W::SdrCinemaRec709lim11:
+        case W::SdrVideoRec709lim11: return rgbToXyz(kRec709);
+        case W::SdrVideoP3lim11: return rgbToXyz(kP3D65);
+        case W::SdrCinemaD60simD6511:
+        case W::SdrVideoD60simD6510: return rgbToXyz(kAP1);
+        case W::SdrCinemaD60simDci10: return color::times(color::bradford(kDciXyz, kD65Xyz), rgbToXyz(kAP1));
+        case W::SdrCinemaD65simDci11: return color::times(color::bradford(kDciXyz, kD65Xyz), toXyzD65(kAP1));
+        default: return toXyzD65(kAP1);
+    }
 }
 
 /// back(), then Newton's method on the light against forward(): the red
@@ -284,10 +430,10 @@ F3 back(const F3& screen709) {
 /// one it was given -- and a saturated red or magenta would come back up to
 /// two steps of 255 off (as from OpenColorIO's). Light the clamps hold --
 /// a channel that would need to be negative -- is left as back() has it.
-F3 backExactly(const F3& screen709) {
-    F3 light = back(screen709);
+F3 backExactly(const F3& screen709, F3 (*there)(const F3&), F3 (*nearly)(const F3&)) {
+    F3 light = nearly(screen709);
     auto miss = [&](const F3& l) {
-        const F3 s = forward(l);
+        const F3 s = there(l);
         return F3{s[0] - screen709[0], s[1] - screen709[1], s[2] - screen709[2]};
     };
     auto size = [](const F3& v) { return std::max(std::abs(v[0]), std::max(std::abs(v[1]), std::abs(v[2]))); };
@@ -990,8 +1136,8 @@ void upperHullGamma(const Table1& hues, Table3& cusps, float peak, float limitJM
     cusps[kUpperWrap + 1][2] = cusps[kFirst + 1][2];
 }
 
-/// SDR 100 nits, Rec. 709 the limiting gamut -- what the view shows on an
-/// sRGB screen.
+/// SDR 100 nits, `limit` the limiting gamut -- Rec. 709, what the view
+/// shows on an sRGB screen; or P3-D65.
 struct Transform {
     JMhParams in, out;
     ToneScale tone;
@@ -999,10 +1145,10 @@ struct Transform {
     Chroma chroma;
     Gamut gamut;
 
-    Transform() {
+    explicit Transform(const Primaries& limit) {
         constexpr float peak = 100.0f;
         in = jmhParams(kAP0);
-        out = jmhParams(kRec709);
+        out = jmhParams(limit);
         tone = toneScale(peak);
         const JMhParams reach = jmhParams(kAP1);
         shared.limitJMax = yToJ(peak, in);
@@ -1067,7 +1213,7 @@ struct Transform {
 };
 
 const Transform& transform() {
-    static const Transform t;
+    static const Transform t(kRec709);
     return t;
 }
 
@@ -1077,15 +1223,80 @@ const F33 kAp1ToAp0 = toFloat(conversion(kAP1, kAP0, false));
 /// The upper bound of AP1 light the transform takes in at 100 nits.
 constexpr float kUpperBound = 8.0f * 128.0f;
 
-F3 forward(const F3& linear709) {
-    F3 c = times(kAp0ToAp1, times(k709ToAp0, linear709));
+/// AP0 light held to what the transform takes in: AP1, none below 0 nor
+/// above its upper bound.
+F3 held(const F3& ap0) {
+    F3 c = times(kAp0ToAp1, ap0);
     for (float& v : c) v = std::clamp(v, 0.0f, kUpperBound);
-    return transform().forward(times(kAp1ToAp0, c));
+    return times(kAp1ToAp0, c);
 }
+
+F3 forward(const F3& linear709) { return transform().forward(held(times(k709ToAp0, linear709))); }
 
 F3 back(const F3& display709) {
     static const F33 toLinear = inverse(k709ToAp0);
     return times(toLinear, transform().back(display709));
+}
+
+
+/// An output at 100 nits as OpenColorIO builds it in: held to what the
+/// transform takes, through it, 0 to 1 in the limiting gamut -- a white
+/// simulated scaled to stay in the encoding's --; then to XYZ of the
+/// limiting white.
+struct Output {
+    Transform transform;
+    D33 toXyz;
+    float scale = 1.0f;
+
+    Output(const Primaries& limiting, const Primaries* encoding) : transform(limiting), toXyz(rgbToXyz(limiting)) {
+        if (encoding) {
+            const std::array<double, 3> white = times(conversion(limiting, *encoding, false), {1.0, 1.0, 1.0});
+            scale = static_cast<float>(1.0 / std::max(white[0], std::max(white[1], white[2])));
+        }
+    }
+    F3 forward(const F3& ap0) const {
+        F3 c = transform.forward(held(ap0));
+        for (float& v : c) v = std::clamp(v, 0.0f, 1.0f) * scale;
+        return c;
+    }
+    F3 back(F3 c) const {
+        for (float& v : c) v = std::clamp(v * (1.0f / scale), 0.0f, 1.0f);
+        return held(transform.back(c));
+    }
+};
+
+const Output& output(AcesOutputXyz which) {
+    using W = AcesOutputXyz;
+    switch (which) {
+        case W::Sdr100P3D65_20: {
+            static const Output o(kP3D65, nullptr);
+            return o;
+        }
+        case W::Sdr100Rec709D60InRec709D65_20: {
+            static const Output o(kRec709D60, &kRec709);
+            return o;
+        }
+        case W::Sdr100Rec709D60InP3D65_20: {
+            static const Output o(kRec709D60, &kP3D65);
+            return o;
+        }
+        case W::Sdr100Rec709D60InRec2020D65_20: {
+            static const Output o(kRec709D60, &kRec2020);
+            return o;
+        }
+        case W::Sdr100P3D60InP3D65_20: {
+            static const Output o(kP3D60, &kP3D65);
+            return o;
+        }
+        case W::Sdr100P3D60InXyzE_20: {
+            static const Output o(kP3D60, nullptr);
+            return o;
+        }
+        default: {
+            static const Output o(kRec709, nullptr);
+            return o;
+        }
+    }
 }
 
 }  // namespace aces2
@@ -1104,6 +1315,63 @@ float srgbDecoded(float encoded) {
     return static_cast<float>(std::pow((e + kSrgbOffset) / (1.0 + kSrgbOffset), kSrgbGamma));
 }
 
+bool acesOutputXyzNamed(std::string_view name, AcesOutputXyz& out) {
+    using W = AcesOutputXyz;
+    static constexpr std::string_view kPrefix = "aces-output - aces2065-1_to_cie-xyz-d65 - ";
+    static constexpr std::pair<std::string_view, W> kNames[] = {
+        {"sdr-cinema_1.0", W::SdrCinema10},
+        {"sdr-video_1.0", W::SdrVideo10},
+        {"sdr-cinema-rec709lim_1.1", W::SdrCinemaRec709lim11},
+        {"sdr-video-rec709lim_1.1", W::SdrVideoRec709lim11},
+        {"sdr-video-p3lim_1.1", W::SdrVideoP3lim11},
+        {"sdr-cinema-d60sim-d65_1.1", W::SdrCinemaD60simD6511},
+        {"sdr-video-d60sim-d65_1.0", W::SdrVideoD60simD6510},
+        {"sdr-cinema-d60sim-dci_1.0", W::SdrCinemaD60simDci10},
+        {"sdr-cinema-d65sim-dci_1.1", W::SdrCinemaD65simDci11},
+        {"sdr-100nit-rec709_2.0", W::Sdr100Rec709_20},
+        {"sdr-100nit-p3-d65_2.0", W::Sdr100P3D65_20},
+        {"sdr-100nit-rec709-d60-in-rec709-d65_2.0", W::Sdr100Rec709D60InRec709D65_20},
+        {"sdr-100nit-rec709-d60-in-p3-d65_2.0", W::Sdr100Rec709D60InP3D65_20},
+        {"sdr-100nit-rec709-d60-in-rec2020-d65_2.0", W::Sdr100Rec709D60InRec2020D65_20},
+        {"sdr-100nit-p3-d60-in-p3-d65_2.0", W::Sdr100P3D60InP3D65_20},
+        {"sdr-100nit-p3-d60-in-xyz-e_2.0", W::Sdr100P3D60InXyzE_20},
+    };
+    std::string lower(name);
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+    const std::string_view rest = std::string_view(lower).substr(kPrefix.size());
+    for (const auto& [n, w] : kNames) {
+        if (rest == n) {
+            out = w;
+            return true;
+        }
+    }
+    return false;
+}
+
+Vec3 acesOutputRgb(const Vec3& ap0, AcesOutputXyz which) {
+    if (which < AcesOutputXyz::Sdr100Rec709_20) return vec(aces1::outputRgb(f3(ap0), which));
+    return vec(aces2::output(which).forward(f3(ap0)));
+}
+
+Vec3 acesOutputRgbBack(const Vec3& rgb, AcesOutputXyz which) {
+    if (which < AcesOutputXyz::Sdr100Rec709_20) return vec(aces1::outputRgbBack(f3(rgb), which));
+    return vec(aces2::output(which).back(f3(rgb)));
+}
+
+color::D33 acesOutputRgbToXyz(AcesOutputXyz which) {
+    if (which < AcesOutputXyz::Sdr100Rec709_20) return aces1::outputToXyz(which);
+    return aces2::output(which).toXyz;
+}
+
+Vec3 acesOutputXyz(const Vec3& ap0, AcesOutputXyz which) {
+    return vec(times(toFloat(acesOutputRgbToXyz(which)), f3(acesOutputRgb(ap0, which))));
+}
+
+Vec3 acesOutputXyzBack(const Vec3& xyz, AcesOutputXyz which) {
+    return acesOutputRgbBack(vec(times(toFloat(inverse(acesOutputRgbToXyz(which))), f3(xyz))), which);
+}
+
 Vec3 acesShown(const Vec3& linear, AcesOutput output) {
     const F3 c = output == AcesOutput::V1 ? aces1::forward(f3(linear)) : aces2::forward(f3(linear));
     // What has no colour the model can take -- light of no lightness at all
@@ -1115,7 +1383,7 @@ Vec3 acesShown(const Vec3& linear, AcesOutput output) {
 Vec3 acesUnshown(const Vec3& display, AcesOutput output) {
     const F3 screen = {srgbDecoded(std::clamp(display.x, 0.0f, 1.0f)), srgbDecoded(std::clamp(display.y, 0.0f, 1.0f)),
                        srgbDecoded(std::clamp(display.z, 0.0f, 1.0f))};
-    const F3 c = output == AcesOutput::V1 ? aces1::backExactly(screen) : aces2::back(screen);
+    const F3 c = output == AcesOutput::V1 ? aces1::backExactly(screen, aces1::forward, aces1::back) : aces2::back(screen);
     return glm::max(vec(c), Vec3(0.0f));
 }
 

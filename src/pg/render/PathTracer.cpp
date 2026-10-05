@@ -662,7 +662,7 @@ void PathTracer::restart() {
     caught_.assign(over ? n : 0, 0.0f);
     with_.assign(over ? 3 * n : 0, 0.0f);
     without_.assign(over ? 3 * n : 0, 0.0f);
-    plateLight_ = over ? render::plateLight(*scene_->plate, settings_.view, scene_->look.exposure) : Image();
+    plateLight_ = over ? render::plateLight(*scene_->plate, settings_.view, scene_->look.exposure, settings_.ocio.get()) : Image();
     // How far the lens focuses: as asked, else what the middle of the picture sees.
     focus_ = settings_.focus > 0.0f ? settings_.focus : 10.0f;
     if (scene_ && settings_.focus <= 0.0f) {
@@ -1030,7 +1030,7 @@ Image PathTracer::denoised() const {
 
 std::vector<uint8_t> PathTracer::display(bool withDenoise) const {
     const Image image = withDenoise ? denoised() : beauty();
-    return toDisplay(image, scene_ ? scene_->look.exposure : 1.0f, settings_.view);
+    return toDisplay(image, scene_ ? scene_->look.exposure : 1.0f, settings_.view, settings_.ocio.get());
 }
 
 namespace {
@@ -1055,7 +1055,16 @@ const Mat3 kAgxOutset(1.19687900512017f, -0.0528968517574562f, -0.05297163551444
 
 }  // namespace
 
-Vec3 shown(const Vec3& linear, Settings::View view) {
+Vec3 shown(const Vec3& linear, Settings::View view, const OcioView* ocio) {
+    if (view == Settings::View::Ocio) {
+        if (ocio) {
+            // As the config's view shows it, 0 to 1; what it cannot say, black.
+            const Vec3 s = ocio->shown(linear);
+            auto held = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; };
+            return {held(s.x), held(s.y), held(s.z)};
+        }
+        view = Settings::View::AgXPunchy;
+    }
     switch (view) {
         case Settings::View::Aces1: return acesShown(linear, AcesOutput::V1);
         case Settings::View::Aces2: return acesShown(linear, AcesOutput::V2);
@@ -1095,8 +1104,16 @@ Vec3 shown(const Vec3& linear, Settings::View view) {
     return {std::clamp(out.x, 0.0f, 1.0f), std::clamp(out.y, 0.0f, 1.0f), std::clamp(out.z, 0.0f, 1.0f)};
 }
 
-Vec3 unshown(const Vec3& display, Settings::View view) {
+Vec3 unshown(const Vec3& display, Settings::View view, const OcioView* ocio) {
     const Vec3 d = glm::clamp(display, 0.0f, 1.0f);
+    if (view == Settings::View::Ocio) {
+        if (ocio) {
+            const Vec3 l = ocio->unshown(d);
+            auto held = [](float v) { return std::isfinite(v) ? std::max(v, 0.0f) : 0.0f; };
+            return {held(l.x), held(l.y), held(l.z)};
+        }
+        view = Settings::View::AgXPunchy;
+    }
     switch (view) {
         case Settings::View::Aces1: return acesUnshown(d, AcesOutput::V1);
         case Settings::View::Aces2: return acesUnshown(d, AcesOutput::V2);
@@ -1139,7 +1156,7 @@ Vec3 unshown(const Vec3& display, Settings::View view) {
     return glm::max(insetBack * in, Vec3(0.0f));
 }
 
-std::vector<uint8_t> toDisplay(const Image& image, float exposure, Settings::View view) {
+std::vector<uint8_t> toDisplay(const Image& image, float exposure, Settings::View view, const OcioView* ocio) {
     const size_t n = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
     std::vector<uint8_t> out(4 * n, 255);
     if (image.pixels.size() < n * static_cast<size_t>(image.channels)) return out;
@@ -1149,7 +1166,7 @@ std::vector<uint8_t> toDisplay(const Image& image, float exposure, Settings::Vie
             for (int c = 0; c < 3; ++c) {
                 v[c] = image.pixels[p * static_cast<size_t>(image.channels) + static_cast<size_t>(std::min(c, image.channels - 1))];
             }
-            const Vec3 s = shown(Vec3(v[0], v[1], v[2]) * exposure, view);
+            const Vec3 s = shown(Vec3(v[0], v[1], v[2]) * exposure, view, ocio);
             out[4 * p] = static_cast<uint8_t>(std::lround(std::clamp(s.x, 0.0f, 1.0f) * 255.0f));
             out[4 * p + 1] = static_cast<uint8_t>(std::lround(std::clamp(s.y, 0.0f, 1.0f) * 255.0f));
             out[4 * p + 2] = static_cast<uint8_t>(std::lround(std::clamp(s.z, 0.0f, 1.0f) * 255.0f));

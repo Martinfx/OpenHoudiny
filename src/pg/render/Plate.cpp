@@ -20,7 +20,7 @@ std::shared_ptr<const Plate> loadPlate(const std::string& file, const sim::Camer
     return plate;
 }
 
-Image plateLight(const Plate& plate, Settings::View view, float exposure) {
+Image plateLight(const Plate& plate, Settings::View view, float exposure, const OcioView* ocio) {
     const io::Picture& p = plate.picture;
     Image out;
     if (p.empty()) return out;
@@ -38,7 +38,7 @@ Image plateLight(const Plate& plate, Settings::View view, float exposure) {
                 // Light as it is; what a half float cannot hold, not at all.
                 for (int c = 0; c < 3; ++c) light[c] = std::isfinite(q[c]) ? std::clamp(q[c], 0.0f, 65504.0f) : 0.0f;
             } else {
-                light = unshown(Vec3(q[0], q[1], q[2]), view) * k;
+                light = unshown(Vec3(q[0], q[1], q[2]), view, ocio) * k;
             }
             out.pixels[3 * i] = light.x;
             out.pixels[3 * i + 1] = light.y;

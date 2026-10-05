@@ -141,8 +141,9 @@ std::shared_ptr<const render::Scene> RenderView::build(Request& request) {
     return builder_.build(in);
 }
 
-void RenderView::publish(const render::Image& image, float exposure, render::Settings::View view) {
-    std::vector<uint8_t> picture = render::toDisplay(image, exposure, view);
+void RenderView::publish(const render::Image& image, float exposure, render::Settings::View view,
+                         const std::shared_ptr<const render::OcioView>& ocio) {
+    std::vector<uint8_t> picture = render::toDisplay(image, exposure, view, ocio.get());
     std::lock_guard<std::mutex> lock(mutex_);
     if (restart_) return;
     picture_ = std::move(picture);
@@ -265,21 +266,23 @@ void RenderView::run() {
             if (cycles_ && cycles_->takePicture(image, &alpha, &catcher)) {
                 float exposure = 1.0f;
                 render::Settings::View view;
+                std::shared_ptr<const render::OcioView> ocio;
                 std::shared_ptr<const render::Scene> scene;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
                     scene = cyclesScene_;
                     if (scene) exposure = scene->look.exposure;
                     view = cyclesSettings_.view;
+                    ocio = cyclesSettings_.ocio;
                 }
                 // Over a plate: the CG over it -- as the catchers relight it
                 // once the end has come.
                 if (scene && scene->plate) {
                     image = render::overPlate(image, alpha, catcher,
-                                              render::plateSeen(*scene->plate, plateLight(scene->plate, view, exposure),
+                                              render::plateSeen(*scene->plate, plateLight(scene->plate, view, ocio, exposure),
                                                                 scene->camera, image.width, image.height));
                 }
-                publish(image, exposure, view);
+                publish(image, exposure, view, ocio);
             }
             continue;
         }
@@ -320,16 +323,17 @@ void RenderView::run() {
                                       render::plateSeen(*scene->plate, tracer_.plateLight(), scene->camera, image.width,
                                                         image.height));
         }
-        publish(image, tracer_.scene() ? tracer_.scene()->look.exposure : 1.0f, s.view);
+        publish(image, tracer_.scene() ? tracer_.scene()->look.exposure : 1.0f, s.view, s.ocio);
     }
 }
 
 const render::Image& RenderView::plateLight(const std::shared_ptr<const render::Plate>& plate, render::Settings::View view,
-                                            float exposure) {
-    if (plate != plateOf_ || view != plateView_ || exposure != plateExposure_) {
-        plateLight_ = render::plateLight(*plate, view, exposure);
+                                            const std::shared_ptr<const render::OcioView>& ocio, float exposure) {
+    if (plate != plateOf_ || view != plateView_ || ocio != plateOcio_ || exposure != plateExposure_) {
+        plateLight_ = render::plateLight(*plate, view, exposure, ocio.get());
         plateOf_ = plate;
         plateView_ = view;
+        plateOcio_ = ocio;
         plateExposure_ = exposure;
     }
     return plateLight_;

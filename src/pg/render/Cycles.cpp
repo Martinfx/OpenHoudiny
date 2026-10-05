@@ -2574,11 +2574,12 @@ Rendered CyclesRender::rendered() const {
         }
     }
     r.view = impl_->settings.view;
+    r.ocio = impl_->settings.ocio;
     r.space = impl_->settings.exrSpace;
     if (const auto& scene = impl_->scene) {
         r.exposure = scene->look.exposure;
         if (scene->plate) {
-            const Image light = plateLight(*scene->plate, r.view, r.exposure);
+            const Image light = plateLight(*scene->plate, r.view, r.exposure, r.ocio.get());
             r.plate = plateSeen(*scene->plate, light, scene->camera, r.beauty.width, r.beauty.height);
         }
     }

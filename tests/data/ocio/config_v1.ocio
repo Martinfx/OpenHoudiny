@@ -1,0 +1,59 @@
+ocio_profile_version: 1
+
+# A config of OpenColorIO 1: colour spaces to and from the reference, views
+# of a colour space each.
+search_path: luts
+strictparsing: false
+luma: [0.2126, 0.7152, 0.0722]
+
+roles:
+  scene_linear: linear
+  color_picking: srgb
+  data: raw
+
+displays:
+  sRGB:
+    - !<View> {name: Film, colorspace: srgb, looks: +grade}
+    - !<View> {name: Log, colorspace: log}
+    - !<View> {name: Raw, colorspace: raw}
+
+active_displays: []
+active_views: []
+
+looks:
+  - !<Look>
+    name: grade
+    process_space: log
+    transform: !<CDLTransform> {slope: [1.02, 1, 0.97], offset: [0.01, 0, 0], power: [1, 1, 1], sat: 1.05}
+
+colorspaces:
+  - !<ColorSpace>
+    name: linear
+    family: ln
+    bitdepth: 32f
+    isdata: false
+    allocation: lg2
+    allocationvars: [-15, 6]
+
+  - !<ColorSpace>
+    name: log
+    family: lg
+    bitdepth: 32f
+    isdata: false
+    from_reference: !<AllocationTransform> {allocation: lg2, vars: [-10, 6]}
+
+  - !<ColorSpace>
+    name: srgb
+    family: srgb
+    bitdepth: 8ui
+    isdata: false
+    from_reference: !<GroupTransform>
+      children:
+        - !<FileTransform> {src: shaper.spi1d, interpolation: linear}
+        - !<ExponentTransform> {value: [1.1, 1.1, 1.1, 1]}
+
+  - !<ColorSpace>
+    name: raw
+    family: raw
+    bitdepth: 32f
+    isdata: true

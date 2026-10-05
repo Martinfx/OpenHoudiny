@@ -77,10 +77,12 @@ private:
     void run();
     /// The scene of `request`, built off the lock.
     std::shared_ptr<const render::Scene> build(Request& request);
-    void publish(const render::Image& image, float exposure, render::Settings::View view);
+    void publish(const render::Image& image, float exposure, render::Settings::View view,
+                 const std::shared_ptr<const render::OcioView>& ocio);
     /// The plate in Cycles' light (render::plateLight), made once for each
     /// plate, view and exposure: Cycles' pictures come many a second.
     const render::Image& plateLight(const std::shared_ptr<const render::Plate>& plate, render::Settings::View view,
+                                    const std::shared_ptr<const render::OcioView>& ocio,
                                     float exposure);
 
     std::thread thread_;
@@ -112,6 +114,7 @@ private:
     render::Image plateLight_;
     std::shared_ptr<const render::Plate> plateOf_;
     render::Settings::View plateView_ = render::Settings::View::AgXPunchy;
+    std::shared_ptr<const render::OcioView> plateOcio_;
     float plateExposure_ = 0.0f;
 };
 

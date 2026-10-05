@@ -40,7 +40,7 @@ std::shared_ptr<const Plate> loadPlate(const std::string& file, const sim::Camer
 /// The plate in the renderer's light, a picture the size of the plate's: a
 /// shown one back through `view` at `exposure` (shown(light x exposure)
 /// gives the picture back), one in linear light as it is.
-Image plateLight(const Plate& plate, Settings::View view, float exposure);
+Image plateLight(const Plate& plate, Settings::View view, float exposure, const OcioView* ocio = nullptr);
 
 /// What `light` (plateLight) shows in each pixel of a picture `width` x
 /// `height` seen by `camera`: along each pixel's middle ray, what the camera

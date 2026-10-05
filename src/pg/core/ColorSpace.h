@@ -63,6 +63,9 @@ D33 rgbToXyz(const Primaries& p);
 D33 conversion(const Primaries& from, const Primaries& to, bool adapt);
 /// RGB of `from` to CIE XYZ of a display's white, D65 (Bradford).
 D33 toXyzD65(const Primaries& from);
+/// Bradford's chromatic adaptation of CIE XYZ from the white `from` (its
+/// XYZ) to `to`: the cone responses scaled from one white to the other.
+D33 bradford(const std::array<double, 3>& from, const std::array<double, 3>& to);
 
 }  // namespace color
 

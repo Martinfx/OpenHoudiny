@@ -45,16 +45,14 @@ D33 rgbToXyz(const Primaries& p) {
     return out;
 }
 
-namespace {
-
-/// Bradford's chromatic adaptation from the white XYZ `from` to `to`: the
-/// cone responses scaled from one white to the other.
 D33 bradford(const std::array<double, 3>& from, const std::array<double, 3>& to) {
     constexpr D33 cone = {0.8951, 0.2664, -0.1614, -0.7502, 1.7135, 0.0367, 0.0389, -0.0685, 1.0296};
     const std::array<double, 3> a = times(cone, from), b = times(cone, to);
     const D33 gain = {b[0] / a[0], 0.0, 0.0, 0.0, b[1] / a[1], 0.0, 0.0, 0.0, b[2] / a[2]};
     return times(inverse(cone), times(gain, cone));
 }
+
+namespace {
 
 constexpr std::array<double, 3> kOnes = {1.0, 1.0, 1.0};
 

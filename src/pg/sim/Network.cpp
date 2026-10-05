@@ -436,14 +436,34 @@ std::vector<ParamDef> renderParams() {
              "m/s", "How fast the wind takes the clouds over the sky, frame after frame."},
             {"render_cloud_direction", "Cloud Direction", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 360.0f, -360.0f,
              720.0f, "\xc2\xb0", "Which way the wind takes the clouds, degrees round from +x."},
-            {"render_view", "View", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 5.0f, 0.0f, 5.0f, "",
+            {"render_view", "View", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 6.0f, 0.0f, 6.0f, "",
              "How the light becomes the picture. AgX: as Blender shows it, bright colours going towards white as "
              "on film -- Punchy with Blender's look of more contrast and colour. ACES Fit: the viewport's quick "
              "curve. ACES 1.0 and ACES 2.0: as OpenColorIO's ACES configs show the light on an sRGB screen "
              "(SDR Video; SDR 100 nits) -- 2.0 keeps hues as bright colours go white. Standard: sRGB as it is, "
-             "white and brighter clipped.",
-             {"agx_punchy", "agx", "aces", "aces1", "aces2", "standard"},
-             {"AgX Punchy", "AgX", "ACES Fit", "ACES 1.0", "ACES 2.0", "Standard"}},
+             "white and brighter clipped. OpenColorIO: a view of a config -- a studio's, the ACES configs, "
+             "Blender's -- as OCIO Config, Display and View say.",
+             {"agx_punchy", "agx", "aces", "aces1", "aces2", "standard", "ocio"},
+             {"AgX Punchy", "AgX", "ACES Fit", "ACES 1.0", "ACES 2.0", "Standard", "OpenColorIO"}},
+            {"render_ocio_config", "OCIO Config", "Render", K::File, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+             "With View OpenColorIO: the config whose view shows the light -- a studio's config.ocio, one of "
+             "the ACES configs (OpenColorIO-Config-ACES), Blender's (datafiles/colormanagement/config.ocio). Its "
+             "tables are read where its search_path says, from its folder. A relative path is read from the "
+             "network's folder.",
+             {".ocio"},
+             {}},
+            {"render_ocio_display", "OCIO Display", "Render", K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+             "The config's display the picture is for -- \"sRGB - Display\", say. Empty: its first, the default."},
+            {"render_ocio_view", "OCIO View", "Render", K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+             "The display's view -- \"ACES 1.0 - SDR Video\", \"AgX\". Empty: the display's first, the default."},
+            {"render_ocio_looks", "OCIO Looks", "Render", K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f, "",
+             "The config's looks before the view, each in its process space: \"A, B\"; \"-B\" a look backwards. "
+             "Empty: the view's own alone."},
+            {"render_ocio_space", "OCIO Light Space", "Render", K::Text, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f,
+             "",
+             "Which of the config's colour spaces the render's light is in. Empty: as the renderers make it, "
+             "linear Rec. 709 -- the config's own space for it (\"Linear Rec.709 (sRGB)\", lin_rec709...), else "
+             "through ACES2065-1 (its aces_interchange role), else its scene_linear role."},
             {"render_exr_space", "EXR Color Space", "Render", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f,
              "",
              "The colour space an EXR's light is written in -- a render's or the viewport's: linear Rec. 709 "
@@ -4444,7 +4464,24 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     r.cloudSize = std::clamp(f(*output, "render_cloud_size"), 0.01f, 100.0f);
     r.cloudWind = std::max(f(*output, "render_cloud_wind"), 0.0f);
     r.cloudDirection = f(*output, "render_cloud_direction");
-    r.view = static_cast<render::Settings::View>(std::clamp(whole(*output, "render_view"), 0, 5));
+    r.view = static_cast<render::Settings::View>(std::clamp(whole(*output, "render_view"), 0, 6));
+    r.ocio = nullptr;
+    if (r.view == render::Settings::View::Ocio) {
+        // A view of an OpenColorIO config: read once for each file as it is.
+        std::string config = text(output->id, "render_ocio_config");
+        if (!config.empty() && !folder.empty() && std::filesystem::path(config).is_relative()) {
+            config = (std::filesystem::path(folder) / config).lexically_normal().string();
+        }
+        if (config.empty()) {
+            problem(L::Warning, output->id, "View is OpenColorIO, but there is no OCIO Config: AgX Punchy shows the light");
+        } else {
+            std::string error;
+            r.ocio = render::OcioView::make(config, text(output->id, "render_ocio_display"),
+                                            text(output->id, "render_ocio_view"), text(output->id, "render_ocio_looks"),
+                                            text(output->id, "render_ocio_space"), error);
+            if (!r.ocio) problem(L::Warning, output->id, "OpenColorIO: " + error + " -- AgX Punchy shows the light");
+        }
+    }
     r.exrSpace = static_cast<LinearSpace>(std::clamp(whole(*output, "render_exr_space"), 0, 2));
     r.detail = std::clamp(f(*output, "render_detail"), 0.0f, 1.0f);
     r.textures = f(*output, "render_textures") != 0.0f;

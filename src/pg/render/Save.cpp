@@ -19,6 +19,7 @@ Rendered renderedOf(const PathTracer& tracer, bool denoise) {
     r.depth = tracer.depth();
     r.exposure = tracer.scene()->look.exposure;
     r.view = tracer.settings().view;
+    r.ocio = tracer.settings().ocio;
     r.space = tracer.settings().exrSpace;
     if (const auto& plate = tracer.scene()->plate) {
         r.alpha = tracer.alpha();
@@ -34,7 +35,7 @@ Image composited(const Rendered& rendered) {
 }
 
 std::vector<uint8_t> displayRgb(const Rendered& rendered) {
-    const std::vector<uint8_t> rgba = toDisplay(composited(rendered), rendered.exposure, rendered.view);
+    const std::vector<uint8_t> rgba = toDisplay(composited(rendered), rendered.exposure, rendered.view, rendered.ocio.get());
     std::vector<uint8_t> rgb(rgba.size() / 4 * 3);
     for (size_t p = 0; p < rgba.size() / 4; ++p) {
         rgb[3 * p] = rgba[4 * p];

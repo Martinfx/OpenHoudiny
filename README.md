@@ -134,7 +134,8 @@ okna.
   (VDB Gas), level set jako překážka nebo tvar zdroje (VDB Import); zip,
   Blosc, half, dlaždice, ověřené na souborech z OpenVDB 10 a 13
 - **[docs/color.md](docs/color.md)** — barvy: pohledy AgX, ACES 1.0
-  a ACES 2.0 jako v konfiguracích OpenColorIO, EXR v ACEScg
+  a ACES 2.0 jako v konfiguracích OpenColorIO, pohledy z konfigurací
+  OpenColorIO (`config.ocio`) studia, ACES či Blenderu, EXR v ACEScg
   a ACES2065-1; ověřené proti OpenColorIO 2.6
 - **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
   video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
@@ -235,7 +236,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 669 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
+./build/pgtests            # 679 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 56 render, barvy ACES a konfigurace OpenColorIO, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
@@ -496,7 +497,10 @@ voxelu, co zapsalo OpenVDB 10 i 13 ([docs/vdb.md](docs/vdb.md)).
 **ACES**: pohled (View) uzlu Output převádí světlo na obraz jako AgX
 z Blenderu, nebo jako ACES 1.0 či ACES 2.0 tak, jak je ukazují konfigurace
 OpenColorIO pro ACES; od OpenColorIO 2.6 se liší nejvýš o setinu stupně
-z 255. EXR jde ven v lineárním Rec. 709, ACEScg nebo ACES2065-1
+z 255. Pohled dá i konfigurace OpenColorIO (`config.ocio`) studia, ACES
+nebo Blenderu: prototype ji přečte sám, bez knihovny, s jejími
+displeji, pohledy, looky a tabulkami LUT, a obraz sedí s OpenColorIO
+do 10⁻⁵. EXR jde ven v lineárním Rec. 709, ACEScg nebo ACES2065-1
 s atributem chromaticities a EXR v ACES se při čtení převede
 ([docs/color.md](docs/color.md)).
 
