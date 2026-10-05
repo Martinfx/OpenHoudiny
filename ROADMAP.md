@@ -189,7 +189,8 @@ nepoužije nikdo, ať simuluje jakkoli dobře.
   snímku, USD Import kulisu a modely jako geometrii v metrech s Y nahoru,
   i s materiály: sítě MaterialX a UsdPreviewSurface navázané jako v USD,
   do `s@material` a `s@texture` (obrázky, drsnost, kovovost, barva,
-  sklo); `prototype usd`, `pg.UsdStage`. Ověřeno proti knihovně USD; ukázka
+  sklo), PointInstancery jako instance; `prototype usd`, `pg.UsdStage`.
+  Ověřeno proti knihovně USD; ukázka
   [examples/sim/matchmove.pgsim](examples/sim/matchmove.pgsim).
 - ✅ **Alembic** (bez knihovny; [docs/alembic.md](docs/alembic.md)): celý
   záběr jako jeden archiv `.abc` — zobrazená geometrie, kusy jako tělesa

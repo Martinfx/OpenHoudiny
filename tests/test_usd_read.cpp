@@ -3,6 +3,7 @@
 // nodes that bring them into a network. The files in tests/data/usd were
 // written by USD itself (make_fixtures.py).
 #include "pg/core/CookEngine.h"
+#include "pg/core/Instances.h"
 #include "pg/io/Export.h"
 #include "pg/io/Usda.h"
 #include "pg/nodes/Nodes.h"
@@ -1212,22 +1213,41 @@ TEST(usd_what_the_program_writes_it_reads_back) {
     for (size_t i = 0; i < 4; ++i) CHECK(near(back->positions()[i], geo.positions()[i]));
 }
 
-TEST(usd_import_leaves_a_point_instancers_prototypes_where_they_are) {
-    // What is under a PointInstancer is its prototypes: not geometry of its
-    // own where it stands; the instancer is said not to be read.
+TEST(usd_import_reads_a_point_instancers_instances) {
+    // What is under a PointInstancer is its prototypes, not geometry where
+    // it stands: they are the geometry's prototypes, the instances points
+    // that stand for them, placed as the instancer places them.
     TempFolder dir("usd_instancer");
     const std::string path = dir.write("chips.usda", R"(#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
 def Xform "W"
 {
     def Points "loose"
     {
         point3f[] points = [(1, 2, 3)]
     }
-    def PointInstancer "chips"
+
+    def PointInstancer "chips" (
+        append inactiveIds = [13]
+    )
     {
-        point3f[] positions = [(0, 0, 0), (1, 0, 0)]
-        int[] protoIndices = [0, 0]
-        rel prototypes = </W/chips/Prototypes/chip>
+        double3 xformOp:translate = (10, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        point3f[] positions = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)]
+        quath[] orientations = [(1, 0, 0, 0), (0.70710677, 0, 0.70710677, 0), (1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)]
+        float3[] scales = [(1, 1, 1), (2, 2, 2), (1, 1, 1), (1, 1, 1), (1, 2, 1)]
+        int[] protoIndices = [0, 1, 0, 0, 1]
+        int64[] ids = [10, 11, 12, 13, 14]
+        int64[] invisibleIds = [12]
+        color3f[] primvars:tint = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (0, 1, 1)] (
+            interpolation = "vertex"
+        )
+        rel prototypes = [</W/chips/Prototypes/chip>, </W/chips/Prototypes/rock>]
+
         def Scope "Prototypes"
         {
             def Mesh "chip"
@@ -1236,6 +1256,19 @@ def Xform "W"
                 int[] faceVertexCounts = [3]
                 int[] faceVertexIndices = [0, 1, 2]
             }
+
+            def Xform "rock"
+            {
+                double3 xformOp:translate = (0, 1, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+
+                def Mesh "m"
+                {
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                }
+            }
         }
     }
 }
@@ -1243,12 +1276,114 @@ def Xform "W"
     const auto s = open(path);
     CHECK(s != nullptr);
     if (!s) return;
-    std::vector<std::string> skipped;
-    const auto back = usd::importGeometry(*s, 1.0, usd::ImportOptions{}, &skipped);
-    CHECK_EQ(back->pointCount(), 1u);
+    std::vector<std::string> notes;
+    const auto back = usd::importGeometry(*s, 1.0, usd::ImportOptions{}, &notes);
+    // The loose point, and an instance each of ids 10, 11 and 14: 12 is
+    // invisible, 13 inactive. 14 stretches the rock: a copy of its own.
     CHECK_EQ(back->primitiveCount(), 0u);
-    CHECK(std::any_of(skipped.begin(), skipped.end(),
-                      [](const std::string& n) { return n.find("/W/chips: a PointInstancer is not read") != std::string::npos; }));
+    CHECK_EQ(back->pointCount(), 4u);
+    CHECK_EQ(back->prototypeCount(), 3u);
+    CHECK_EQ(instanceCount(*back), 3u);
+    if (back->pointCount() != 4 || back->prototypeCount() != 3) return;
+    const auto stands = back->points().find("instance")->read<int32_t>();
+    CHECK(stands[0] == -1 && stands[1] == 0 && stands[2] == 1 && stands[3] == 2);
+    const auto P = back->positions();
+    CHECK(near(P[1], Vec3(10, 0, 0)) && near(P[2], Vec3(11, 0, 0)) && near(P[3], Vec3(14, 0, 0)));
+    const auto size = back->points().find("pscale")->read<float>();
+    CHECK_NEAR(size[2], 2.0f, 1e-6);
+    CHECK_NEAR(size[3], 1.0f, 1e-6);
+    const Vec4 turn = back->points().find("orient")->read<Vec4>()[2];
+    CHECK(std::abs(std::abs(turn.y) - 0.70710677f) < 1e-3f && std::abs(std::abs(turn.w) - 0.70710677f) < 1e-3f);
+    const auto ids = back->points().find("id")->read<int32_t>();
+    CHECK(ids[1] == 10 && ids[2] == 11 && ids[3] == 14);
+    const auto tint = back->points().find("tint")->read<Vec3>();
+    CHECK(near(tint[1], Vec3(1, 0, 0)) && near(tint[2], Vec3(0, 1, 0)) && near(tint[3], Vec3(0, 1, 1)));
+    CHECK(std::any_of(notes.begin(), notes.end(),
+                      [](const std::string& n) { return n.find("stretch, shear or mirror") != std::string::npos; }));
+    // Made into copies: the rock's root's own transform kept, then the
+    // instance's scale, turn and place, then the instancer's.
+    const auto copies = unpackInstances(*back);
+    auto has = [&](const Vec3& want) {
+        for (const Vec3& p : copies->positions()) {
+            if (glm::length(p - want) < 2e-3f) return true;
+        }
+        return false;
+    };
+    CHECK(has(Vec3(10, 0, 0)) && has(Vec3(11, 0, 0)) && has(Vec3(10, 1, 0)));  // the chip
+    CHECK(has(Vec3(11, 2, 0)) && has(Vec3(11, 2, -2)) && has(Vec3(11, 4, 0)));  // the rock, turned
+    CHECK(has(Vec3(14, 2, 0)) && has(Vec3(15, 2, 0)) && has(Vec3(14, 4, 0)));  // the rock, stretched
+    CHECK_EQ(copies->primitiveCount(), 3u);
+    // Read again only when something of them changes in time.
+    CHECK(!usd::geometryVaries(*s, usd::ImportOptions{}));
+    const std::string moving = dir.write("moving.usda", R"(#usda 1.0
+def PointInstancer "chips"
+{
+    point3f[] positions.timeSamples = {
+        1: [(0, 0, 0)],
+        2: [(1, 0, 0)],
+    }
+    int[] protoIndices = [0]
+    rel prototypes = </chips/Prototypes/chip>
+    def Scope "Prototypes"
+    {
+        def Mesh "chip"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+    }
+}
+)");
+    const auto m = open(moving);
+    CHECK(m && usd::geometryVaries(*m, usd::ImportOptions{}));
+}
+
+TEST(usd_import_reads_back_the_instances_the_program_writes) {
+    // A clump on three points -- turned, sized, tinted --, written as a
+    // PointInstancer and read back: the same instances.
+    Geometry geo;
+    auto clump = std::make_shared<Geometry>();
+    clump->addPoints(3);
+    auto C = clump->positionsForWrite();
+    C[0] = Vec3(0, 0, 0), C[1] = Vec3(0.2f, 0, 0), C[2] = Vec3(0, 0.5f, 0);
+    const uint32_t tri[3] = {0, 1, 2};
+    clump->addPrimitive(tri, true);
+    geo.addPrototype(clump);
+    geo.addPoints(3);
+    auto P = geo.positionsForWrite();
+    P[0] = Vec3(1, 0, 0), P[1] = Vec3(0, 0, 2), P[2] = Vec3(-1, 0.5f, 0);
+    auto stands = geo.points().create("instance", AttrType::Int).write<int32_t>();
+    std::fill(stands.begin(), stands.end(), 0);
+    auto turn = geo.points().create("orient", AttrType::Vec4).write<Vec4>();
+    turn[0] = Vec4(0, 0, 0, 1);
+    turn[1] = Vec4(0, 0.38268343f, 0, 0.9238795f);  // 45 degrees about y
+    turn[2] = Vec4(0.5f, 0.5f, 0.5f, 0.5f);
+    auto size = geo.points().create("pscale", AttrType::Float).write<float>();
+    size[0] = 1.0f, size[1] = 0.5f, size[2] = 2.0f;
+    auto tint = geo.points().create("tint", AttrType::Vec3).write<Vec3>();
+    tint[0] = Vec3(1, 1, 1), tint[1] = Vec3(0.8f, 1, 0.6f), tint[2] = Vec3(0.5f, 0.5f, 0.5f);
+    TempFolder dir("usd_instances_back");
+    const std::string path = (dir.path / "clumps.usda").string();
+    std::string error;
+    CHECK(io::usda::writeStage(io::usda::geometryStage(geo, "clumps"), path, error));
+    const auto s = open(path);
+    CHECK(s != nullptr);
+    if (!s) return;
+    const auto back = usd::importGeometry(*s, 0.0, usd::ImportOptions{});
+    CHECK_EQ(back->prototypeCount(), 1u);
+    CHECK_EQ(instanceCount(*back), 3u);
+    if (instanceCount(*back) != 3 || back->prototypeCount() != 1) return;
+    CHECK_EQ(back->prototypes()[0]->pointCount(), 3u);
+    const auto was = placementsOf(geo), is = placementsOf(*back);
+    const auto tints = back->points().find("tint")->read<Vec3>();
+    for (size_t i = 0; i < 3; ++i) {
+        CHECK(near(was[i].at, is[i].at));
+        CHECK_NEAR(was[i].scale, is[i].scale, 1e-5);
+        // The same turn, whichever sign the quaternion has.
+        for (const Vec3& corner : clump->positions()) CHECK(near(was[i].point(corner), is[i].point(corner)));
+        CHECK(near(tints[i], tint[i]));
+    }
 }
 
 TEST(usd_broken_files_are_refused_not_crashed_on) {

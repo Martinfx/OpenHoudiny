@@ -57,6 +57,7 @@ Geometrie scény v daném snímku, ve světových souřadnicích:
 | **GeomSubset** ploch | skupina primitiv pojmenovaná po subsetu (`roof`, `glass`) |
 | **Points** | volné body: `pscale` z `widths` (polovina, zvětšená transformací), `id` z `ids` |
 | **BasisCurves** | otevřené lomené čáry (řídicí body; `periodic` uzavřené), `pscale` z `widths` |
+| **PointInstancer** | instance (viz Instance níže): prototypy geometrie a bod na instanci s `instance`, `orient`, `pscale`, `id`, `v` a primvary instancí |
 | **Cube, Sphere, Cylinder, Cone, Capsule, Plane** | polygony podle rozměrů a osy |
 | cesta primu | textový atribut primitiv `path` (`/Set/beam`) |
 | materiál (`material:binding`, i na GeomSubsetu) | `material`, `texture`, `roughness`, `metallic`, `glass`, `Cd` (viz Materiály níže) |
@@ -87,6 +88,43 @@ Neviditelné primy (`visibility = invisible` na nich nebo nad nimi) se
 nečtou. Když se geometrie v souboru hýbe (časové vzorky, value clips,
 animovaná transformace nebo viditelnost), uzel se vaří v každém snímku
 znovu. Jinak jen jednou.
+
+### Instance (PointInstancer)
+
+Rozmístěné kopie z jiných programů (vegetace, kamení, drť) přijdou jako
+instance programu, stejně jako tráva a stromy z vlastních uzlů. Každý
+prototyp se přečte jednou. Každá instance je bod, který prototyp položí
+(atributy `instance`, `orient`, `pscale`). Renderery je kreslí jako
+instance a uzel Unpack z nich udělá kopie.
+
+- **Umístění** počítá stejně jako USD (`ComputeInstanceTransformsAtTime`):
+  nejdřív měřítko (`scales`), pak otočení (`orientationsf`, jinak
+  `orientations`), poloha (`positions`) a nakonec transformace
+  instanceru. Vlastní transformace kořene prototypu se započítá, co je
+  nad ním (třeba scope `Prototypes`), ne.
+- **Mezi vzorky:** když mají `velocities` vzorek tam, kde mají `positions`
+  poslední vzorek před daným časem, poloha se od něj posune o rychlost
+  a `accelerations` a otočení se natočí o `angularVelocities`. Jinak se
+  hodnoty mezi vzorky interpolují.
+- **Skryté:** instance z `invisibleIds` a `inactiveIds` se vynechají.
+- **Atributy:** `ids` jsou `id`, `velocities` jsou `v`, primvary instancí
+  (`primvars:tint` vlastního exportu, `displayColor`…) jsou atributy bodů.
+- **Vnoření:** instancer uvnitř prototypu jiného instanceru dá vnořené
+  instance.
+- **Protažení:** instance, kterou transformace natáhne, zkosí nebo zrcadlí
+  (nestejné `scales`, nestejné měřítko nad instancerem), se otočením
+  a jedním měřítkem vyjádřit nedá. Dostane proto vlastní prototyp:
+  kopii protaženou tak, jak ji instance klade. Umístění zůstane přesné,
+  jen to zabere víc paměti.
+- **Přesnost otočení:** kvaternion se bere jednotkový. USD otáčí
+  kvaternionem z `orientations` (half) tak, jak je zapsaný, a jeho
+  matice se od otočení liší až o 6·10⁻⁴. U bodu metr od středu
+  prototypu to dělá nejvýš milimetr.
+
+```bash
+./build/prototype usd examples/usd/looks.usda
+# instances: 40 of 2 prototypes, from 1 PointInstancers
+```
 
 ### Materiály
 
@@ -140,7 +178,8 @@ z balíčku.
 
 Příklad `usd_looks` ukazuje všechny druhy najednou. Soubor
 `examples/usd/looks.usda` vytvořil skript `make_looks.py` knihovnou USD.
-Každá rekvizita v něm má svůj materiál:
+Každá rekvizita v něm má svůj materiál a vpředu jsou rozházené oblázky
+jako PointInstancer (dva tvary kamene s vlastním materiálem):
 - dřevěná bedna: `standard_surface` z MaterialX s obrázkem barvy
   a normálovou mapou;
 - cihlová koule: UsdPreviewSurface s UsdUVTexture a normálovou mapou;
@@ -157,7 +196,7 @@ zapsal.
 ./build/prototype sim usd_looks looks.png --renderer cycles
 ```
 
-![Příklad usd_looks v Cycles: dřevěná bedna s normálovou mapou na modré plastové podlaze, cihlová koule, lesklý korálek z červeného kovu a skleněný kvádr na dlažbě. Každý materiál přišel z USD v jiné podobě: MaterialX, UsdPreviewSurface, OpenPBR](img/usd-looks.jpg)
+![Příklad usd_looks v Cycles: dřevěná bedna s normálovou mapou na modré plastové podlaze, cihlová koule, lesklý korálek z červeného kovu a skleněný kvádr na dlažbě, vpředu oblázky z PointInstanceru. Každý materiál přišel z USD v jiné podobě: MaterialX, UsdPreviewSurface, OpenPBR](img/usd-looks.jpg)
 
 ### USD Camera
 
@@ -309,6 +348,16 @@ přeskočí.
     a na bodech se sejdou na rozích, každý roh s hodnotou svého primu.
 - **Kamera:** poloha, směr pohledu i horizontální zorný úhel USD Camera sedí
   s kamerou z knihovny.
+- **PointInstancer:**
+  - 6 náhodných scén v centimetrech se Z nahoru;
+  - instance otočené, zvětšené a posunuté, i mezi vzorky (rychlosti,
+    zrychlení, úhlové rychlosti);
+  - skryté přes `invisibleIds` i `inactiveIds`, některé protažené;
+  - prototyp s vlastní transformací a prototyp s instancerem uvnitř.
+
+  Každý bod každé instance sedí s `ComputeInstanceTransformsAtTime` na
+  10⁻⁶ m, když je otočení ve floatech (`orientationsf`). S otočením
+  v halfech je rozdíl do 3 mm, z důvodu popsaného výše.
 - **Materiály:**
   - vazby: 30 náhodných scén v `.usdc`. Vazby jsou na skupinách, ve
     skupinách, na meshích i subsetech, některé silnější než potomci,
@@ -333,7 +382,7 @@ přeskočí.
   nemá plugin MaterialX, takže definice jeho uzlů nezná.
 
 Testy:
-- **`tests/test_usd_read.cpp` (18):**
+- **`tests/test_usd_read.cpp` (19):**
   - text s hodnotami všech druhů a chyba s řádkem;
   - crate proti textu téže scény z `tests/data/usd`, jak je zapsalo USD;
   - crate verze 0.4.0 a `.usdz`;
@@ -345,7 +394,9 @@ Testy:
   - primvar na bodech jednoho primu a na rozích jiného se sejde na rozích,
     volné body si barvu nechají;
   - zpětné čtení vlastního exportu;
-  - prototypy PointInstanceru zůstanou, kde jsou: nejsou geometrií scény;
+  - PointInstancer: prototypy, umístění, skryté a neaktivní instance,
+    protažená instance, tint a změna v čase; zpětné čtení vlastních
+    instancí;
   - 500 poškozených souborů odmítnutých bez pádu (i pod ASan).
 - **`tests/test_usd_materials.cpp` (6):**
   - UsdPreviewSurface s obrázky, hodnotami a sklem;
@@ -359,7 +410,8 @@ Testy:
   - ukázkový záběr;
   - s knihovnou `usd-core` náhodné transformace, skládání, geometrie a value
     clips proti ní, z toho 80 náhodných záběrů s clips;
-  - vazby materiálů proti `UsdShade`.
+  - vazby materiálů proti `UsdShade`;
+  - PointInstancery proti `ComputeInstanceTransformsAtTime`.
 
 ## 7. V kódu
 
@@ -395,11 +447,9 @@ Testy:
   UsdPreviewSurface nezapíše, v síti MaterialX ano. Materiál, který se
   jmenuje jako preset (`wood`, `glass`…), dostane vlastnosti presetu.
   Když nemá vlastní obrázek, dostane i fotky presetu z knihovny.
-- **PointInstancer** (rozmístěné kopie, typicky vegetace, drť a zrna
-  z vlastního exportu), **NURBS** a **Volume** (VDB) se nečtou. `prototype
-  usd` je vypíše jako přeskočené. Prototypy pod PointInstancerem se
-  nečtou ani jako samostatná geometrie: nestojí tam, kde jsou v souboru,
-  ale tam, kam je instancer rozmístí.
+- **NURBS** a **Volume** (VDB) se nečtou. `prototype usd` je vypíše jako
+  přeskočené. Prototypy pod PointInstancerem nejsou samostatná geometrie:
+  nestojí tam, kde jsou v souboru, ale tam, kam je instancer rozmístí.
 - **Subdivize:** mesh se čte jako řídicí síť, bez vyhlazení.
 - **Spliny** (animace křivkou, `x.spline`, USD 25 a novější) se nečtou:
   atribut, který má jen spline, nemá hodnotu. Časové vzorky a zbytek

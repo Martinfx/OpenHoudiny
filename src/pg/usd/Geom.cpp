@@ -1,5 +1,6 @@
 #include "pg/usd/Geom.h"
 
+#include "pg/core/Instances.h"
 #include "pg/core/Material.h"
 #include "pg/usd/Shade.h"
 
@@ -9,6 +10,7 @@
 #include <glm/matrix.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -113,6 +115,10 @@ struct Builder {
     }
     std::map<std::string, std::vector<uint32_t>> groups;
     std::vector<std::string>* notes = nullptr;
+    /// The geometry's prototype each prototype prim read is; and the copies
+    /// of one stretched by a transform, by it.
+    std::map<std::string, int32_t> prototypeOf;
+    std::map<std::pair<int32_t, std::array<double, 9>>, int32_t> stretched;
 
     size_t elements(AttrClass c) const {
         switch (c) {
@@ -167,18 +173,6 @@ struct Builder {
         const auto sizes = geo.primitiveSizes();
         std::vector<uint8_t> used(geo.pointCount(), 0);
         for (const uint32_t p : corners) used[p] = 1;
-        auto find = [&](AttrClass cls, const std::string& name) -> Attr* {
-            const auto it = attrs.find({cls, name});
-            return it == attrs.end() ? nullptr : &it->second;
-        };
-        auto givenOf = [](const Attr* a, size_t n) {
-            std::vector<uint8_t> m(n, 0);
-            if (!a) return m;
-            for (const auto& [from, to] : a->given) {
-                for (size_t i = from; i < std::min(to, n); ++i) m[i] = 1;
-            }
-            return m;
-        };
         for (const auto& [name, count] : classes) {
             if (count < 2 || name == "N" || name == "v") continue;
             Attr* point = find(AttrClass::Point, name);
@@ -217,8 +211,40 @@ struct Builder {
         }
     }
 
+    Attr* find(AttrClass cls, const std::string& name) {
+        const auto it = attrs.find({cls, name});
+        return it == attrs.end() ? nullptr : &it->second;
+    }
+    /// 1 for each of the first `n` elements of `a` a prim gave a value.
+    static std::vector<uint8_t> givenOf(const Attr* a, size_t n) {
+        std::vector<uint8_t> m(n, 0);
+        if (!a) return m;
+        for (const auto& [from, to] : a->given) {
+            for (size_t i = from; i < std::min(to, n); ++i) m[i] = 1;
+        }
+        return m;
+    }
+
+    /// The points that stand for no prototype: instance -1, not the first
+    /// prototype's 0; the instances given no tint drawn as they are.
+    void instancesAsThemselves() {
+        Attr* k = find(AttrClass::Point, "instance");
+        if (!k || k->width != 0) return;
+        const std::vector<uint8_t> stands = givenOf(k, k->count);
+        for (size_t p = 0; p < stands.size(); ++p) {
+            if (!stands[p]) k->ints[p] = -1;
+        }
+        Attr* tint = find(AttrClass::Point, "tint");
+        if (!tint || tint->width != 3) return;
+        const std::vector<uint8_t> tinted = givenOf(tint, tint->count);
+        for (size_t p = 0; p < stands.size() && p < tinted.size(); ++p) {
+            if (stands[p] && !tinted[p]) std::fill_n(&tint->floats[3 * p], 3, 1.0f);
+        }
+    }
+
     std::shared_ptr<Geometry> finish() {
         for (auto& [key, a] : attrs) pad(a, geo.elementCount(key.first));
+        instancesAsThemselves();
         unify();
         auto out = std::make_shared<Geometry>(std::move(geo));
         for (auto& [key, a] : attrs) {
@@ -266,7 +292,199 @@ struct Piece {
     size_t sourcePoints = 0, sourceFaces = 0, sourceCorners = 0;
     std::vector<uint32_t> faceOf;    ///< per primitive added: the file's face
     std::vector<uint32_t> cornerOf;  ///< per corner added: the file's corner
+    std::vector<uint32_t> pointOf;   ///< per point added: the file's point; empty: all, in their order
 };
+
+std::shared_ptr<Geometry> prototypeGeometry(const Stage& stage, const Stage::Prim& root, double time,
+                                            const ImportOptions& options, std::vector<std::string>* notes, int depth);
+
+/// The transform of `prim` within the prototype `root` it is in: its own
+/// and those above it up to the root's, the root's own included -- what
+/// is above the root left out, as a PointInstancer places a prototype.
+Matrix withinPrototype(const Stage& stage, const Stage::Prim& prim, const Stage::Prim& root, double time) {
+    Matrix m;
+    for (const Stage::Prim* p = &prim; p; p = p->parent) {
+        bool resets = false;
+        m = m * localTransform(stage, *p, time, &resets);
+        if (resets || p == &root) break;
+    }
+    return m;
+}
+
+/// The instances of a PointInstancer at `time`, as UsdGeomPointInstancer
+/// computes them (ComputeInstanceTransformsAtTime at `time` from `time`):
+/// each one's transform in the instancer's space -- its scale, then its
+/// orientation, then its position -- and its prototype; those of
+/// invisibleIds and inactiveIds left out. Where velocities have a sample
+/// where positions have their last at or before `time` (else their first),
+/// positions, orientations and scales are that sample's, the positions
+/// moved on by the velocities (and accelerations), the orientations turned
+/// on by the angularVelocities sampled there too; else each is as it is at
+/// `time`. Orientations are taken unit length: USD turns by a half's
+/// quaternion as it is, up to 6e-4 off a turn.
+struct Instances {
+    std::vector<Matrix> xforms;
+    std::vector<int32_t> prototypes;  ///< of the instancer's, in its order
+    std::vector<uint32_t> sources;    ///< which instance of the file each is
+    std::vector<int32_t> ids;         ///< each one's id, where the file has ids
+    size_t count = 0;                 ///< the file's instances
+};
+Instances instancesAt(const Stage& stage, const Stage::Prim& prim, double time, std::string& why) {
+    Instances out;
+    double at = time, seconds = 0.0;
+    bool moving = false;
+    const std::vector<double> times = stage.sampleTimes(prim, "positions");
+    auto sampledAt = [&](const char* name, double t) {
+        const std::vector<double> ts = stage.sampleTimes(prim, name);
+        return std::find(ts.begin(), ts.end(), t) != ts.end();
+    };
+    if (!times.empty()) {
+        double lower = times.front();
+        for (const double t : times) {
+            if (t <= time) lower = t;
+        }
+        if (sampledAt("velocities", lower)) {
+            at = lower;
+            moving = true;
+            const double rate = stage.timeCodesPerSecond();
+            seconds = rate > 0.0 ? (time - lower) / rate : 0.0;
+        }
+    }
+    const Value indices = stage.value(prim, "protoIndices", at);
+    const Value positions = stage.value(prim, "positions", at);
+    const size_t n = indices.isNumbers() ? indices.numbers.size() : 0;
+    out.count = n;
+    if (n == 0) return out;
+    if (!positions.isNumbers() || positions.width != 3 || positions.numbers.size() != 3 * n) {
+        why = std::to_string(n) + " protoIndices but " + std::to_string(positions.size()) + " positions: no instances";
+        out.count = 0;
+        return out;
+    }
+    // The other arrays, where they are one an instance.
+    auto each = [&](const char* name, int width, double t) {
+        Value v = stage.value(prim, name, t);
+        if (!v.isNumbers() || v.width != width || v.numbers.size() != static_cast<size_t>(width) * n) return Value();
+        return v;
+    };
+    // orientationsf -- floats -- before the halfs of orientations.
+    Value orientations = each("orientationsf", 4, at);
+    if (!orientations.isNumbers()) orientations = each("orientations", 4, at);
+    const Value scales = each("scales", 3, at);
+    const Value ids = each("ids", 1, at);
+    Value velocities, accelerations, spins;
+    if (moving) {
+        velocities = each("velocities", 3, at);
+        if (sampledAt("accelerations", at)) accelerations = each("accelerations", 3, at);
+        if (sampledAt("angularVelocities", at)) spins = each("angularVelocities", 3, at);
+    }
+    // Hidden by their ids at the time, or left out for good.
+    std::vector<double> hidden = stage.value(prim, "invisibleIds", time).numbers;
+    // inactiveIds: a list edit each opinion makes, the weakest first.
+    std::vector<ListItem> inactive;
+    for (auto it = prim.opinions.rbegin(); it != prim.opinions.rend(); ++it) {
+        const Value* v = it->spec->meta("inactiveIds");
+        if (v && v->list) {
+            v->list->apply(inactive);
+        } else if (v && v->isNumbers()) {
+            inactive.clear();
+            for (const double x : v->numbers) {
+                ListItem item;
+                item.text = std::to_string(static_cast<long long>(x));
+                inactive.push_back(std::move(item));
+            }
+        }
+    }
+    for (const ListItem& item : inactive) {
+        char* end = nullptr;
+        const double id = std::strtod(item.text.c_str(), &end);
+        if (end != item.text.c_str()) hidden.push_back(id);
+    }
+    std::sort(hidden.begin(), hidden.end());
+    for (size_t i = 0; i < n; ++i) {
+        const double id = ids.isNumbers() ? ids.numbers[i] : static_cast<double>(i);
+        if (std::binary_search(hidden.begin(), hidden.end(), id)) continue;
+        double p[3] = {positions.numbers[3 * i], positions.numbers[3 * i + 1], positions.numbers[3 * i + 2]};
+        if (velocities.isNumbers()) {
+            for (int k = 0; k < 3; ++k) {
+                const double a = accelerations.isNumbers() ? accelerations.numbers[3 * i + k] : 0.0;
+                p[k] += velocities.numbers[3 * i + k] * seconds + 0.5 * a * seconds * seconds;
+            }
+        }
+        Matrix m;
+        if (scales.isNumbers()) m = Matrix::scale(scales.numbers[3 * i], scales.numbers[3 * i + 1], scales.numbers[3 * i + 2]);
+        if (orientations.isNumbers()) {
+            const double* q = &orientations.numbers[4 * i];
+            const double len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+            if (len > 0.0) m = m * Matrix::orient(q[0] / len, q[1] / len, q[2] / len, q[3] / len);
+        }
+        if (spins.isNumbers()) {
+            // Turned on about the axis of its angular velocity, degrees a
+            // second, after its orientation.
+            const double* w = &spins.numbers[3 * i];
+            const double speed = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+            if (speed > 0.0) {
+                const double half = 0.5 * speed * seconds * kPi / 180.0, k = std::sin(half) / speed;
+                m = m * Matrix::orient(w[0] * k, w[1] * k, w[2] * k, std::cos(half));
+            }
+        }
+        out.xforms.push_back(m * Matrix::translate(p[0], p[1], p[2]));
+        out.prototypes.push_back(static_cast<int32_t>(indices.numbers[i]));
+        out.sources.push_back(static_cast<uint32_t>(i));
+        if (ids.isNumbers()) out.ids.push_back(static_cast<int32_t>(id));
+    }
+    return out;
+}
+
+/// A transform as an instance's: a turn (orient, x y z w) and a size
+/// (pscale) -- false for one that stretches, shears or mirrors.
+bool turnAndSize(const Matrix& m, Vec4& orient, float& size) {
+    // GLM's columns are the rows: as a matrix of columns, it is the transpose.
+    const glm::dmat3 a(m.m);
+    const double det = glm::determinant(a);
+    if (!(det > 0.0) || !std::isfinite(det)) return false;
+    const double s = std::cbrt(det);
+    const glm::dmat3 r = a / s;
+    const glm::dmat3 check = glm::transpose(r) * r;
+    for (int c = 0; c < 3; ++c) {
+        for (int k = 0; k < 3; ++k) {
+            if (std::abs(check[c][k] - (c == k ? 1.0 : 0.0)) > 1e-5) return false;
+        }
+    }
+    const glm::dquat q = glm::normalize(glm::quat_cast(r));
+    orient = Vec4(static_cast<float>(q.x), static_cast<float>(q.y), static_cast<float>(q.z), static_cast<float>(q.w));
+    size = static_cast<float>(s);
+    return true;
+}
+
+/// `proto` made as the linear part of `m` makes it -- its instances made
+/// copies first --: an instance's prototype it stretches, of its own.
+std::shared_ptr<Geometry> stretchedCopy(const Geometry& proto, const Matrix& m) {
+    auto g = unpackInstances(proto);
+    Matrix linear = m;
+    linear.at(3, 0) = linear.at(3, 1) = linear.at(3, 2) = 0.0;
+    const Matrix normals = linear.inverse();
+    auto move = [&](std::span<Vec3> v, bool normal) {
+        for (Vec3& x : v) {
+            const double in[3] = {x.x, x.y, x.z};
+            double o[3];
+            if (normal) {
+                // The inverse transpose: as a row, times the inverse's columns.
+                for (int c = 0; c < 3; ++c) o[c] = normals.at(c, 0) * in[0] + normals.at(c, 1) * in[1] + normals.at(c, 2) * in[2];
+                const double len = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+                if (len > 0.0) o[0] /= len, o[1] /= len, o[2] /= len;
+            } else {
+                linear.transformDirection(in, o);
+            }
+            x = Vec3(static_cast<float>(o[0]), static_cast<float>(o[1]), static_cast<float>(o[2]));
+        }
+    };
+    move(g->positionsForWrite(), false);
+    for (AttributeSet* set : {&g->points(), &g->vertices()}) {
+        if (AttributeArray* n = set->find("N"); n && n->type() == AttrType::Vec3) move(n->write<Vec3>(), true);
+        if (AttributeArray* v = set->find("v"); v && v->type() == AttrType::Vec3) move(v->write<Vec3>(), false);
+    }
+    return g;
+}
 
 struct Reader {
     const Stage& stage;
@@ -275,13 +493,16 @@ struct Reader {
     Matrix conversion;
     Builder& out;
     std::vector<std::string>* notes;
+    /// The prototype root what is read is under: transforms within it.
+    const Stage::Prim* base = nullptr;
+    int depth = 0;  ///< instancers within prototypes of instancers
 
     void note(const Stage::Prim& prim, const std::string& why) {
         if (notes) notes->push_back(prim.path + ": " + why);
     }
 
     Matrix worldOf(const Stage::Prim& prim) const {
-        const Matrix w = worldTransform(stage, prim, time);
+        const Matrix w = base ? withinPrototype(stage, prim, *base, time) : worldTransform(stage, prim, time);
         return options.metresYUp ? w * conversion : w;
     }
 
@@ -392,7 +613,7 @@ struct Reader {
                 return;
             }
             source.resize(n);
-            for (size_t i = 0; i < n; ++i) source[i] = static_cast<uint32_t>(i);
+            for (size_t i = 0; i < n; ++i) source[i] = piece.pointOf.empty() ? static_cast<uint32_t>(i) : piece.pointOf[i];
         }
         const bool integral = v.type == "int" || v.type == "uint" || v.type == "int64" || v.type == "uint64" ||
                               v.type == "uchar" || v.type == "bool";
@@ -589,6 +810,114 @@ struct Reader {
             if (Builder::Attr* a = out.attr(AttrClass::Point, "id", 0, piece.points)) {
                 Builder::give(*a, piece.points, piece.points + piece.sourcePoints);
                 for (size_t i = 0; i < piece.sourcePoints; ++i) a->ints[piece.points + i] = static_cast<int32_t>(ids.numbers[i]);
+            }
+        }
+        primvars(prim, piece, false);
+    }
+
+    /// A PointInstancer: its prototypes the geometry's -- each prim read
+    /// once, as prototypeGeometry() reads it --, its instances points that
+    /// stand for them (core/Instances.h), each placing its prototype as the
+    /// instancer places it (instancesAt): P, orient, pscale; id from ids, v
+    /// from velocities, its primvars an instance each. An instance whose
+    /// transform stretches, shears or mirrors -- what orient and pscale
+    /// cannot say -- stands for a copy of its prototype made so.
+    void instancer(const Stage::Prim& prim) {
+        std::string why;
+        const Instances found = instancesAt(stage, prim, time, why);
+        if (!why.empty()) note(prim, why);
+        if (found.xforms.empty()) return;
+        if (depth >= 8) {
+            note(prim, "instancers in the prototypes of instancers 8 deep: left out");
+            return;
+        }
+        const std::vector<std::string> targets = stage.targets(prim, "prototypes");
+        std::vector<int32_t> slot(targets.size(), -1);  // the geometry's prototype of each
+        for (size_t k = 0; k < targets.size(); ++k) {
+            const Stage::Prim* root = stage.find(stripVariants(targets[k]));
+            if (!root) {
+                note(prim, "no prototype " + targets[k]);
+                continue;
+            }
+            if (const auto it = out.prototypeOf.find(root->path); it != out.prototypeOf.end()) {
+                slot[k] = it->second;
+                continue;
+            }
+            slot[k] = static_cast<int32_t>(
+                out.geo.addPrototype(prototypeGeometry(stage, *root, time, options, notes, depth + 1)));
+            out.prototypeOf[root->path] = slot[k];
+        }
+        // From the prototype's space -- converted as the stage is -- to the
+        // world: back to the stage's units, the instance's transform, the
+        // instancer's.
+        const Matrix w = worldOf(prim);
+        const Matrix back = options.metresYUp ? conversion.inverse() : Matrix();
+        Piece piece = begin();
+        piece.sourcePoints = found.count;
+        std::vector<int32_t> stands, ids;
+        std::vector<Vec4> turns;
+        std::vector<float> sizes;
+        std::vector<double> at;
+        size_t stretchedOnes = 0, unknown = 0;
+        for (size_t j = 0; j < found.xforms.size(); ++j) {
+            const int32_t k = found.prototypes[j];
+            if (k < 0 || static_cast<size_t>(k) >= slot.size() || slot[k] < 0) {
+                ++unknown;
+                continue;
+            }
+            const Matrix m = back * found.xforms[j] * w;
+            Vec4 turn(0.0f, 0.0f, 0.0f, 1.0f);
+            float size = 1.0f;
+            int32_t proto = slot[k];
+            if (!turnAndSize(m, turn, size)) {
+                // A copy of its own, made as the transform makes it.
+                std::array<double, 9> key{};
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 3; ++c) key[static_cast<size_t>(3 * r + c)] = std::round(m.at(r, c) * 1e6) / 1e6;
+                }
+                auto [it, fresh] = out.stretched.try_emplace({proto, key}, -1);
+                if (fresh) {
+                    const auto& prototypes = out.geo.prototypes();
+                    it->second = static_cast<int32_t>(out.geo.addPrototype(stretchedCopy(*prototypes[static_cast<size_t>(proto)], m)));
+                }
+                proto = it->second;
+                turn = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                size = 1.0f;
+                ++stretchedOnes;
+            }
+            stands.push_back(proto);
+            turns.push_back(turn);
+            sizes.push_back(size);
+            at.insert(at.end(), {m.at(3, 0), m.at(3, 1), m.at(3, 2)});
+            piece.pointOf.push_back(found.sources[j]);
+            if (!found.ids.empty()) ids.push_back(found.ids[j]);
+        }
+        if (unknown) note(prim, std::to_string(unknown) + " instances of no prototype: left out");
+        if (stretchedOnes) {
+            note(prim, std::to_string(stretchedOnes) + " instances stretch, shear or mirror their prototype: copies of it made so");
+        }
+        if (stands.empty()) return;
+        addPoints(at, Matrix());
+        const size_t n = stands.size();
+        if (Builder::Attr* a = out.attr(AttrClass::Point, "instance", 0, piece.points)) {
+            Builder::give(*a, piece.points, piece.points + n);
+            std::copy(stands.begin(), stands.end(), a->ints.begin() + static_cast<std::ptrdiff_t>(piece.points));
+        }
+        if (Builder::Attr* a = out.attr(AttrClass::Point, "orient", 4, piece.points)) {
+            Builder::give(*a, piece.points, piece.points + n);
+            for (size_t i = 0; i < n; ++i) {
+                float* q = &a->floats[4 * (piece.points + i)];
+                q[0] = turns[i].x, q[1] = turns[i].y, q[2] = turns[i].z, q[3] = turns[i].w;
+            }
+        }
+        if (Builder::Attr* a = out.attr(AttrClass::Point, "pscale", 1, piece.points)) {
+            Builder::give(*a, piece.points, piece.points + n);
+            std::copy(sizes.begin(), sizes.end(), a->floats.begin() + static_cast<std::ptrdiff_t>(piece.points));
+        }
+        if (ids.size() == n) {
+            if (Builder::Attr* a = out.attr(AttrClass::Point, "id", 0, piece.points)) {
+                Builder::give(*a, piece.points, piece.points + n);
+                std::copy(ids.begin(), ids.end(), a->ints.begin() + static_cast<std::ptrdiff_t>(piece.points));
             }
         }
         primvars(prim, piece, false);
@@ -920,6 +1249,62 @@ bool isGeometry(const std::string& type) {
     return false;
 }
 
+/// Whether `prim`'s purpose is one `options` reads.
+bool purposeRead(const Stage& stage, const Stage::Prim& prim, const ImportOptions& options) {
+    const std::string use = purpose(stage, prim);
+    return !((use == "render" && !options.render) || (use == "proxy" && !options.proxy) ||
+             (use == "guide" && !options.guide));
+}
+
+/// What `reader` reads of `prims` -- meshes, points, curves and shapes in
+/// their order, then the PointInstancers.
+void readPrims(Reader& reader, const std::vector<const Stage::Prim*>& prims) {
+    for (const Stage::Prim* p : prims) {
+        if (p->type == "PointInstancer") continue;
+        if (p->type == "Mesh") reader.mesh(*p);
+        else if (p->type == "Points") reader.pointsPrim(*p);
+        else if (p->type == "BasisCurves") reader.curves(*p);
+        else reader.implicit(*p);
+    }
+    for (const Stage::Prim* p : prims) {
+        if (p->type == "PointInstancer") reader.instancer(*p);
+    }
+}
+
+std::shared_ptr<Geometry> prototypeGeometry(const Stage& stage, const Stage::Prim& root, double time,
+                                            const ImportOptions& options, std::vector<std::string>* notes, int depth) {
+    // What is under the root, but what is under an instancer of its own;
+    // visible as far up as the root, the ancestors of which are not the
+    // prototype's (as UsdImaging has them).
+    std::vector<const Stage::Prim*> prims;
+    std::vector<const Stage::Prim*> todo = {&root};
+    while (!todo.empty()) {
+        const Stage::Prim* p = todo.back();
+        todo.pop_back();
+        if (!p->active) continue;
+        if (p->defined && (isGeometry(p->type) || p->type == "PointInstancer") && purposeRead(stage, *p, options)) {
+            bool shown = true;
+            for (const Stage::Prim* a = p; a && shown; a = a->parent) {
+                shown = stage.value(*a, "visibility", time).text() != "invisible";
+                if (a == &root) break;
+            }
+            if (shown) prims.push_back(p);
+        }
+        if (p->type == "PointInstancer") continue;
+        for (auto it = p->children.rbegin(); it != p->children.rend(); ++it) todo.push_back(*it);
+    }
+    Builder builder;
+    builder.notes = notes;
+    Reader reader{stage, options, time, toMetresYUp(stage), builder, notes, &root, depth};
+    readPrims(reader, prims);
+    std::vector<int32_t> materials = std::move(builder.materials);
+    const std::vector<std::string> materialTable = std::move(builder.materialTable);
+    auto geo = builder.finish();
+    applyMaterials(stage, time, *geo, std::move(materials), materialTable,
+                   options.metresYUp ? static_cast<float>(stage.metersPerUnit()) : 1.0f);
+    return geo;
+}
+
 }  // namespace
 
 // --- Matrices ----------------------------------------------------------------------------------
@@ -1075,12 +1460,23 @@ std::vector<const Stage::Prim*> geometryPrims(const Stage& stage, const ImportOp
         bool inside = options.roots.empty();
         for (const std::string& r : options.roots) inside = inside || under(p.path, r);
         if (!inside) continue;
-        const std::string use = purpose(stage, p);
-        if ((use == "render" && !options.render) || (use == "proxy" && !options.proxy) ||
-            (use == "guide" && !options.guide)) {
-            continue;
-        }
-        out.push_back(&p);
+        if (purposeRead(stage, p, options)) out.push_back(&p);
+    }
+    return out;
+}
+
+std::vector<const Stage::Prim*> instancerPrims(const Stage& stage, const ImportOptions& options) {
+    std::vector<const Stage::Prim*> out;
+    for (const auto& owned : stage.prims()) {
+        const Stage::Prim& p = *owned;
+        if (!p.defined || p.type != "PointInstancer") continue;
+        // One in the prototypes of another is read with them.
+        bool within = false;
+        for (const Stage::Prim* a = p.parent; a && !within; a = a->parent) within = a->type == "PointInstancer";
+        if (within) continue;
+        bool inside = options.roots.empty();
+        for (const std::string& r : options.roots) inside = inside || under(p.path, r);
+        if (inside && purposeRead(stage, p, options)) out.push_back(&p);
     }
     return out;
 }
@@ -1089,20 +1485,21 @@ std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const 
                                          std::vector<std::string>* skipped) {
     Builder builder;
     builder.notes = skipped;
-    Reader reader{stage, options, time, toMetresYUp(stage), builder, skipped};
+    Reader reader{stage, options, time, toMetresYUp(stage), builder, skipped, nullptr, 0};
+    std::vector<const Stage::Prim*> prims;
     for (const Stage::Prim* p : geometryPrims(stage, options)) {
-        if (!visible(stage, *p, time)) continue;
-        if (p->type == "Mesh") reader.mesh(*p);
-        else if (p->type == "Points") reader.pointsPrim(*p);
-        else if (p->type == "BasisCurves") reader.curves(*p);
-        else reader.implicit(*p);
+        if (visible(stage, *p, time)) prims.push_back(p);
     }
+    for (const Stage::Prim* p : instancerPrims(stage, options)) {
+        if (visible(stage, *p, time)) prims.push_back(p);
+    }
+    readPrims(reader, prims);
     if (skipped) {
         for (const auto& owned : stage.prims()) {
             const Stage::Prim& p = *owned;
             if (!p.defined) continue;
-            if (p.type == "PointInstancer" || p.type == "NurbsPatch" || p.type == "NurbsCurves" || p.type == "Volume" ||
-                p.type == "HermiteCurves" || p.type == "TetMesh") {
+            if (p.type == "NurbsPatch" || p.type == "NurbsCurves" || p.type == "Volume" || p.type == "HermiteCurves" ||
+                p.type == "TetMesh") {
                 bool inside = options.roots.empty();
                 for (const std::string& r : options.roots) inside = inside || under(p.path, r);
                 if (inside) skipped->push_back(p.path + ": a " + p.type + " is not read");
@@ -1118,6 +1515,26 @@ std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const 
 }
 
 bool geometryVaries(const Stage& stage, const ImportOptions& options) {
+    for (const Stage::Prim* p : instancerPrims(stage, options)) {
+        // It and what is under it, its prototypes wherever they are.
+        std::vector<const Stage::Prim*> todo = {p};
+        for (const std::string& t : stage.targets(*p, "prototypes")) {
+            if (const Stage::Prim* root = stage.find(stripVariants(t))) todo.push_back(root);
+        }
+        for (const Stage::Prim* a = p; a && a->parent; a = a->parent) {
+            if (stage.varies(*a, "visibility") || transformVaries(stage, *a)) return true;
+        }
+        size_t seen = 0;
+        while (!todo.empty() && ++seen < 100000) {
+            const Stage::Prim* q = todo.back();
+            todo.pop_back();
+            if (!q->clips.empty()) return true;
+            for (const std::string& name : stage.propertyNames(*q)) {
+                if (stage.varies(*q, name)) return true;
+            }
+            for (const Stage::Prim* c : q->children) todo.push_back(c);
+        }
+    }
     for (const Stage::Prim* p : geometryPrims(stage, options)) {
         if (!p->clips.empty() || transformVaries(stage, *p)) return true;
         for (const std::string& name : stage.propertyNames(*p)) {

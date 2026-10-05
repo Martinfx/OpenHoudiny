@@ -1,11 +1,13 @@
 # How looks.usda was made: props bound to materials as other programs write
 # them -- MaterialX, UsdPreviewSurface, OpenPBR -- on the pictures of
-# examples/textures, for USD Import to read (docs/usd-import.md, Materials).
+# examples/textures, and pebbles a PointInstancer scatters, for USD Import
+# to read (docs/usd-import.md).
 #
 #   pip install usd-core
 #   python examples/usd/make_looks.py
 import math
 import os
+import random
 
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
 
@@ -160,4 +162,38 @@ left = api.CreateMaterialBindSubset("left", [0], "face")
 right = api.CreateMaterialBindSubset("right", [1], "face")
 bind(left.GetPrim(), plastic)
 bind(right.GetPrim(), paving)
+
+# Pebbles along the front, a PointInstancer of two shapes of stone: each
+# turned about the vertical, some bigger than others.
+stone = material("Stone")
+s = shader(stone, "Surface", "UsdPreviewSurface")
+s.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.42, 0.4, 0.37))
+s.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.7)
+stone.CreateSurfaceOutput().ConnectToSource(s.ConnectableAPI(), "surface")
+pebbles = UsdGeom.PointInstancer.Define(stage, "/World/pebbles")
+UsdGeom.Scope.Define(stage, "/World/pebbles/Prototypes")
+shapes = []
+for name, squash in (("round", (1.0, 0.6, 0.9)), ("flat", (1.3, 0.35, 0.8))):
+    m = sphere(f"/World/pebbles/Prototypes/{name}", (0, 0, 0), 0.05, rows=6, columns=10)
+    m.AddScaleOp().Set(Gf.Vec3f(*squash))
+    bind(m.GetPrim(), stone)
+    shapes.append(m.GetPath())
+pebbles.CreatePrototypesRel().SetTargets(shapes)
+rng = random.Random(4)
+n = 40
+positions, turns, sizes, kinds = [], [], [], []
+for i in range(n):
+    x, z = rng.uniform(-2.0, 2.0), rng.uniform(0.85, 1.3)
+    k = rng.uniform(0.7, 1.4)
+    kinds.append(i % 2)
+    # Resting on the floor: as high as the shape is squashed, times its size.
+    rest = 0.05 * (0.6 if i % 2 == 0 else 0.35) * k
+    positions.append(Gf.Vec3f(round(x, 4), round(0.01 + rest, 4), round(z, 4)))
+    a = math.radians(rng.uniform(0, 360))
+    turns.append(Gf.Quath(math.cos(a / 2), 0, math.sin(a / 2), 0))
+    sizes.append(Gf.Vec3f(round(k, 3), round(k, 3), round(k, 3)))
+pebbles.CreateProtoIndicesAttr(kinds)
+pebbles.CreatePositionsAttr(positions)
+pebbles.CreateOrientationsAttr(turns)
+pebbles.CreateScalesAttr(sizes)
 stage.GetRootLayer().Save()

@@ -92,14 +92,23 @@ struct ImportOptions {
 /// The geometry of the stage at `time`, in the world: meshes (with N, uv,
 /// Cd, Alpha, v and their other primvars; their materials), curves as polylines, points
 /// (pscale from widths, id, v), the implicit shapes -- Cube, Sphere,
-/// Cylinder, Cone, Capsule, Plane -- as polygons. `skipped`: what it read no
+/// Cylinder, Cone, Capsule, Plane -- as polygons; the instances of
+/// PointInstancers as instances (core/Instances.h): their prototypes the
+/// geometry's, read in the instancer's space -- each prototype root's own
+/// transform kept, what is above it left out --, and a point each instance,
+/// placing its prototype where, turned and as big as the instancer does
+/// (P, orient, pscale; id, v and its primvars). `skipped`: what it read no
 /// geometry from, and why.
 std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const ImportOptions& options,
                                          std::vector<std::string>* skipped = nullptr);
 /// True when what importGeometry() reads may change with time.
 bool geometryVaries(const Stage& stage, const ImportOptions& options);
-/// The prims importGeometry() reads geometry from.
+/// The prims importGeometry() reads geometry from (the PointInstancers
+/// apart).
 std::vector<const Stage::Prim*> geometryPrims(const Stage& stage, const ImportOptions& options);
+/// The PointInstancers importGeometry() reads instances of: those in no
+/// other's prototypes -- those it reads with them.
+std::vector<const Stage::Prim*> instancerPrims(const Stage& stage, const ImportOptions& options);
 
 /// A camera at a time, as the stage has it: in the world (converted, when
 /// asked, to metres and Y up), looking along its own -z, y up the picture.

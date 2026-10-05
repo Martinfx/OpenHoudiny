@@ -255,6 +255,135 @@ class AgainstUsd(unittest.TestCase):
         P = (np.c_[P, np.ones(len(P))] @ world)[:, :3] @ (np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]]) * 0.01)
         self.assertTrue(np.allclose(np.asarray(geo.P), P, atol=1e-5))
 
+    def test_point_instancers_place_as_usd_does(self):
+        # Random PointInstancers in a stage of centimetres, Z up: instances
+        # turned, sized and moved -- between samples too, by velocities,
+        # accelerations and angular velocities --, hidden by invisibleIds
+        # and inactiveIds, some stretched; a prototype with a transform of
+        # its own, one with an instancer in it. Each instance's points are
+        # where ComputeInstanceTransformsAtTime puts its prototype's.
+        rng = np.random.default_rng(11)
+        to_metres = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]]) * 0.01
+
+        def tri(path):
+            m = UsdGeom.Mesh.Define(stage, path)
+            m.CreatePointsAttr(rng.uniform(-3, 3, (3, 3)).astype(np.float32))
+            m.CreateFaceVertexCountsAttr([3])
+            m.CreateFaceVertexIndicesAttr([0, 1, 2])
+            return m
+
+        def quats(n, floats):
+            q = rng.normal(size=(n, 4))
+            q /= np.linalg.norm(q, axis=1)[:, None]
+            kind = Gf.Quatf if floats else Gf.Quath
+            return [kind(float(a[3]), float(a[0]), float(a[1]), float(a[2])) for a in q]
+
+        def fill(pi, n, times, moving, stretch, floats):
+            pi.CreateProtoIndicesAttr(rng.integers(0, 2 if pi.GetPrototypesRel().GetTargets()[1:] else 1, n).tolist())
+            pi.CreateIdsAttr([100 + i for i in range(n)])
+            for t in times:
+                pi.CreatePositionsAttr().Set(rng.uniform(-40, 40, (n, 3)).astype(np.float32), t)
+                if floats:
+                    pi.CreateOrientationsfAttr().Set(quats(n, True), t)
+                else:
+                    pi.CreateOrientationsAttr().Set(quats(n, False), t)
+                sizes = rng.uniform(0.5, 2, n)
+                scales = np.c_[sizes, sizes, sizes]
+                if stretch:
+                    scales[: n // 3] *= rng.uniform(0.5, 1.5, (n // 3, 3))
+                pi.CreateScalesAttr().Set(scales.astype(np.float32), t)
+                if moving:
+                    pi.CreateVelocitiesAttr().Set(rng.uniform(-48, 48, (n, 3)).astype(np.float32), t)
+                    pi.CreateAccelerationsAttr().Set(rng.uniform(-96, 96, (n, 3)).astype(np.float32), t)
+                    pi.CreateAngularVelocitiesAttr().Set(rng.uniform(-360, 360, (n, 3)).astype(np.float32), t)
+            pi.CreateInvisibleIdsAttr([101, 105])
+            pi.DeactivateId(107)
+
+        def world_points(prim_path, time):
+            # The points of the meshes under a prototype root, in its
+            # instancer's space -- the root's own transform kept --, and
+            # those its own instancers place.
+            root = stage.GetPrimAtPath(prim_path)
+            cache = UsdGeom.XformCache(time)
+            above = np.array(cache.GetLocalToWorldTransform(root.GetParent()))
+            out = []
+            for prim in Usd.PrimRange(root):
+                if prim.IsA(UsdGeom.PointInstancer) and prim != root:
+                    out += instanced(UsdGeom.PointInstancer(prim), time, np.array(cache.GetLocalToWorldTransform(prim))
+                                     @ np.linalg.inv(above))
+                    continue
+                if not prim.IsA(UsdGeom.Mesh) or any(a.IsA(UsdGeom.PointInstancer) for a in _ancestors(prim, root)):
+                    continue
+                m = np.array(cache.GetLocalToWorldTransform(prim)) @ np.linalg.inv(above)
+                P = np.array(UsdGeom.Mesh(prim).GetPointsAttr().Get(time), dtype=float)
+                out += list((np.c_[P, np.ones(len(P))] @ m)[:, :3])
+            return out
+
+        def instanced(pi, time, placed):
+            xforms = pi.ComputeInstanceTransformsAtTime(Usd.TimeCode(time), Usd.TimeCode(time),
+                                                        UsdGeom.PointInstancer.ExcludeProtoXform,
+                                                        UsdGeom.PointInstancer.IgnoreMask)
+            protos = pi.GetPrototypesRel().GetTargets()
+            indices = pi.GetProtoIndicesAttr().Get(time)
+            mask = pi.ComputeMaskAtTime(time)
+            out = []
+            for i, xf in enumerate(xforms):
+                if mask and not mask[i]:
+                    continue
+                pts = world_points(protos[indices[i]], time)
+                m = np.array(xf) @ placed
+                out += list((np.c_[np.array(pts), np.ones(len(pts))] @ m)[:, :3])
+            return out
+
+        for seed in range(6):
+            # Orientations as floats (orientationsf), or as halfs: those USD
+            # turns by as they are, up to 6e-4 off a turn -- a millimetre or
+            # two over the metres an instancer in a prototype reaches.
+            floats = seed < 4
+            tolerance = 2e-4 if floats else 4e-3
+            stage = Usd.Stage.CreateNew(self.path(f"instancer{seed}.usdc"))
+            UsdGeom.SetStageUpAxis(stage, "Z")
+            UsdGeom.SetStageMetersPerUnit(stage, 0.01)
+            stage.SetTimeCodesPerSecond(24)
+            w = UsdGeom.Xform.Define(stage, "/W")
+            w.AddTranslateOp().Set(Gf.Vec3d(*rng.uniform(-100, 100, 3)))
+            w.AddRotateXYZOp().Set(Gf.Vec3f(*rng.uniform(-180, 180, 3)))
+            if seed % 3 == 2:
+                w.AddScaleOp().Set(Gf.Vec3f(1, 1.5, 0.8))  # every instance stretched
+            pi = UsdGeom.PointInstancer.Define(stage, "/W/I")
+            pi.AddTranslateOp().Set(Gf.Vec3d(*rng.uniform(-20, 20, 3)))
+            a = tri("/W/I/Prototypes/a")
+            a.AddTranslateOp().Set(Gf.Vec3d(0, 0, 5))
+            a.AddRotateZOp().Set(30)
+            b = UsdGeom.Xform.Define(stage, "/W/I/Prototypes/b")
+            b.AddScaleOp().Set(Gf.Vec3f(2, 2, 2))
+            tri("/W/I/Prototypes/b/m")
+            if seed % 2:
+                nest = UsdGeom.PointInstancer.Define(stage, "/W/I/Prototypes/b/nest")
+                nest.AddTranslateOp().Set(Gf.Vec3d(0, 3, 0))
+                c = tri("/W/I/Prototypes/b/nest/P/c")
+                nest.CreatePrototypesRel().SetTargets([c.GetPath()])
+                fill(nest, 4, (1,), False, False, floats)
+            pi.CreatePrototypesRel().SetTargets([a.GetPath(), b.GetPath()])
+            fill(pi, 12, (1, 2), seed % 2 == 0, seed % 3 == 1, floats)
+            stage.GetRootLayer().Save()
+            ours = pg.UsdStage(self.path(f"instancer{seed}.usdc"))
+            for time in (1.0, 1.25, 2.0, 2.5):
+                want = np.array(instanced(pi, time, np.array(UsdGeom.XformCache(time).GetLocalToWorldTransform(
+                    pi.GetPrim())))) @ to_metres
+                geo = ours.geometry(time=time)
+                got = np.asarray(geo.unpack().P, dtype=float)
+                self.assertEqual(len(got), len(want), (seed, time))
+                # The same points, in whatever order: each nearest the other's.
+                order_w = np.lexsort(np.round(want, 3).T[::-1])
+                order_g = np.lexsort(np.round(got, 3).T[::-1])
+                d = np.abs(want[order_w] - got[order_g]).max()
+                if d > tolerance:
+                    # Round-off may order two points apart: match by nearest.
+                    d = max(max(np.min(np.linalg.norm(got - p, axis=1)) for p in want),
+                            max(np.min(np.linalg.norm(want - p, axis=1)) for p in got))
+                self.assertLess(d, tolerance, (seed, time))
+
     def test_materials_bound_as_usd_binds_them(self):
         # Xforms, meshes and subsets bound at random -- some stronger than
         # what is below them, some for the full render only -- to preview
@@ -377,6 +506,18 @@ class AgainstUsd(unittest.TestCase):
                     for u, v in zip(a.GetTimeSamples(), p.sample_times(n)):
                         self.assertAlmostEqual(u, v, places=9, msg=where)
                     self.assertEqual(a.ValueMightBeTimeVarying(), p.varies(n), where)
+
+
+def _ancestors(prim, root):
+    """The prims between `prim` and `root`, neither of them."""
+    out = []
+    if prim == root:
+        return out
+    p = prim.GetParent()
+    while p and p != root:
+        out.append(p)
+        p = p.GetParent()
+    return out
 
 
 def _clip_shot(rng, folder):

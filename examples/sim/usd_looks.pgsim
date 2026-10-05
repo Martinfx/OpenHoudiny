@@ -4,8 +4,9 @@ pgsim 1
 # material of its own -- a crate of wood and a ball of bricks with their
 # pictures and normal maps (MaterialX's standard_surface, UsdPreviewSurface
 # with UsdUVTexture), a bead of red metal, a block of glass, a floor of two
-# GeomSubsets: blue OpenPBR plastic and paving by the name of a preset. USD
-# Import reads them as the program's own materials; the Output's Surface
+# GeomSubsets: blue OpenPBR plastic and paving by the name of a preset --
+# and pebbles along the front, a PointInstancer's. USD Import reads them as
+# the program's own materials and instances; the Output's Surface
 # Detail 0 renders them as they were made, without the blotches and bumps
 # Cycles gives surfaces with no picture.
 #   prototype sim usd_looks looks.png --renderer cycles

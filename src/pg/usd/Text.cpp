@@ -4,6 +4,7 @@
 #include "pg/usd/Layer.h"
 
 #include <charconv>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -636,6 +637,13 @@ private:
                     break;
                 case Parsed::Kind::Asset: item.text = i.text; break;
                 case Parsed::Kind::Path: item.path = i.text; break;
+                case Parsed::Kind::Number: {
+                    // As the crate has a number of a list edit: its text.
+                    char text[32];
+                    std::snprintf(text, sizeof text, "%.17g", i.number);
+                    item.text = text;
+                    break;
+                }
                 default: item.text = i.text;
             }
             out.push_back(std::move(item));
@@ -788,6 +796,12 @@ private:
                 ListOp op;
                 edit(op, how, itemsOf(value()));
                 p.metadata.emplace_back("clipSets", Value::makeList(std::move(op)));
+            } else if (!how.empty()) {
+                // A list edit of another list -- inactiveIds --: as the
+                // crate has it, items of text.
+                ListOp op;
+                edit(op, how, itemsOf(value()));
+                p.metadata.emplace_back(std::string(k), Value::makeList(std::move(op)));
             } else {
                 Parsed v = value();
                 if (k == "active" || k == "instanceable" || k == "hidden") {
