@@ -1,11 +1,48 @@
 #include "pg/core/Ecosystem.h"
 
+#include "pg/core/Parallel.h"
+
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
 
 namespace pg {
 namespace {
+
+constexpr float kPi = 3.14159265358979f;
+
+/// A way the sky's light comes from, and its share of it.
+struct SkyRay {
+    Vec3 dir;
+    float weight = 0.0f;
+};
+
+/// An overcast sky, as bright as 1 + 2 cos of how far from the zenith,
+/// lights level ground from a band of it as the integral of (u + 2 u^2) du,
+/// u the cosine: the zenith up to 25 degrees, a ring of eight ways to 55
+/// (at 40), a ring to 90 (at 70), turned half a way from the first.
+const std::vector<SkyRay>& skyRays() {
+    static const std::vector<SkyRay> rays = [] {
+        auto lit = [](float from, float to) {
+            auto F = [](float u) { return 0.5f * u * u + 2.0f / 3.0f * u * u * u; };
+            return F(std::cos(from * kPi / 180.0f)) - F(std::cos(to * kPi / 180.0f));
+        };
+        const float all = lit(0.0f, 90.0f);
+        std::vector<SkyRay> out;
+        out.push_back({Vec3(0.0f, 1.0f, 0.0f), lit(0.0f, 25.0f) / all});
+        for (int ring = 0; ring < 2; ++ring) {
+            const float zenith = (ring == 0 ? 40.0f : 70.0f) * kPi / 180.0f;
+            const float weight = (ring == 0 ? lit(25.0f, 55.0f) : lit(55.0f, 90.0f)) / all / 8.0f;
+            for (int k = 0; k < 8; ++k) {
+                const float around = 2.0f * kPi * (static_cast<float>(k) + 0.5f * static_cast<float>(ring)) / 8.0f;
+                out.push_back({Vec3(std::sin(zenith) * std::cos(around), std::cos(zenith), std::sin(zenith) * std::sin(around)),
+                               weight});
+            }
+        }
+        return out;
+    }();
+    return rays;
+}
 
 uint64_t mix(uint64_t a, uint64_t b) {
     uint64_t z = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xD6E8FEB86659FD93ull;
@@ -47,6 +84,112 @@ float level2(const Vec3& a, const Vec3& b) {
 }
 
 }  // namespace
+
+float plantHeight(const EcoPlant& p, const Species& sp) { return std::max(sp.height, 0.05f) * (0.15f + 0.85f * p.size); }
+
+float crownRadius(const EcoPlant& p, const Species& sp) { return sp.crown * (0.15f + 0.85f * p.size); }
+
+CanopyLight::CanopyLight(std::span<const Vec3> places, std::span<const EcoPlant> plants, const std::vector<Species>& species) {
+    if (plants.empty() || species.empty()) return;
+    // Cells half as wide as the narrowest crown, grown: 0.5 to 2 m.
+    float narrow = 1e30f;
+    for (const Species& sp : species) narrow = std::min(narrow, sp.crown);
+    cell_ = std::clamp(0.5f * narrow, 0.5f, 2.0f);
+    // The box round the crowns; above each its top.
+    Vec3 lo(1e30f), hi(-1e30f);
+    tops_.resize(plants.size());
+    for (size_t i = 0; i < plants.size(); ++i) {
+        const EcoPlant& p = plants[i];
+        const Species& sp = species[static_cast<size_t>(p.species)];
+        const Vec3& at = places[p.place];
+        const float r = std::max(crownRadius(p, sp), 1e-3f), h = plantHeight(p, sp);
+        lo = glm::min(lo, Vec3(at.x - r, at.y, at.z - r));
+        hi = glm::max(hi, Vec3(at.x + r, at.y + h, at.z + r));
+        tops_[i] = Vec3(at.x, at.y + h, at.z);
+    }
+    // No more than 8 million cells: coarser for a wide land.
+    for (;;) {
+        for (int a = 0; a < 3; ++a) n_[a] = static_cast<int>(std::ceil((hi[a] - lo[a]) / cell_)) + 1;
+        if (static_cast<double>(n_[0]) * n_[1] * n_[2] <= 8e6) break;
+        cell_ *= 1.25f;
+    }
+    lo_ = lo;
+    for (Vec3& top : tops_) top.y += 0.75f * cell_;  // out of its own leaves
+    density_.assign(static_cast<size_t>(n_[0]) * static_cast<size_t>(n_[1]) * static_cast<size_t>(n_[2]), 0.0f);
+    const float volume = cell_ * cell_ * cell_;
+    std::vector<size_t> inside;
+    for (const EcoPlant& p : plants) {
+        const Species& sp = species[static_cast<size_t>(p.species)];
+        const Vec3& at = places[p.place];
+        const float r = std::max(crownRadius(p, sp), 1e-3f), h = plantHeight(p, sp);
+        const float half = std::max(0.5f * h * std::clamp(sp.depth, 0.0f, 1.0f), 1e-3f);
+        const Vec3 middle(at.x, at.y + h - half, at.z);
+        // Its leaves evenly in the cells whose middles are in it -- the one
+        // holding its middle when it is smaller than a cell.
+        inside.clear();
+        auto range = [&](int a, float c, float extent, int& from, int& to) {
+            from = std::max(static_cast<int>(std::floor((c - extent - lo[a]) / cell_)), 0);
+            to = std::min(static_cast<int>(std::floor((c + extent - lo[a]) / cell_)), n_[a] - 1);
+        };
+        int x0, x1, y0, y1, z0, z1;
+        range(0, middle.x, r, x0, x1);
+        range(1, middle.y, half, y0, y1);
+        range(2, middle.z, r, z0, z1);
+        for (int j = y0; j <= y1; ++j) {
+            const float dy = (lo.y + (static_cast<float>(j) + 0.5f) * cell_ - middle.y) / half;
+            for (int k = z0; k <= z1; ++k) {
+                const float dz = (lo.z + (static_cast<float>(k) + 0.5f) * cell_ - middle.z) / r;
+                for (int i = x0; i <= x1; ++i) {
+                    const float dx = (lo.x + (static_cast<float>(i) + 0.5f) * cell_ - middle.x) / r;
+                    if (dx * dx + dy * dy + dz * dz <= 1.0f) {
+                        inside.push_back(static_cast<size_t>(i) +
+                                         static_cast<size_t>(n_[0]) * (static_cast<size_t>(k) + static_cast<size_t>(n_[2]) * static_cast<size_t>(j)));
+                    }
+                }
+            }
+        }
+        if (inside.empty()) {
+            const int i = std::clamp(static_cast<int>((middle.x - lo.x) / cell_), 0, n_[0] - 1);
+            const int j = std::clamp(static_cast<int>((middle.y - lo.y) / cell_), 0, n_[1] - 1);
+            const int k = std::clamp(static_cast<int>((middle.z - lo.z) / cell_), 0, n_[2] - 1);
+            inside.push_back(static_cast<size_t>(i) +
+                             static_cast<size_t>(n_[0]) * (static_cast<size_t>(k) + static_cast<size_t>(n_[2]) * static_cast<size_t>(j)));
+        }
+        const float area = std::max(sp.density, 0.0f) * kPi * r * r;
+        const float each = area / (static_cast<float>(inside.size()) * volume);
+        for (const size_t c : inside) density_[c] += each;
+    }
+}
+
+float CanopyLight::leaves(const Vec3& p) const {
+    const float fx = (p.x - lo_.x) / cell_, fy = (p.y - lo_.y) / cell_, fz = (p.z - lo_.z) / cell_;
+    if (!(fx >= 0.0f && fy >= 0.0f && fz >= 0.0f)) return 0.0f;
+    const int i = static_cast<int>(fx), j = static_cast<int>(fy), k = static_cast<int>(fz);
+    if (i >= n_[0] || j >= n_[1] || k >= n_[2]) return 0.0f;
+    return density_[static_cast<size_t>(i) +
+                    static_cast<size_t>(n_[0]) * (static_cast<size_t>(k) + static_cast<size_t>(n_[2]) * static_cast<size_t>(j))];
+}
+
+float CanopyLight::at(const Vec3& p) const {
+    if (density_.empty()) return 1.0f;
+    const Vec3 hi = lo_ + Vec3(static_cast<float>(n_[0]), static_cast<float>(n_[1]), static_cast<float>(n_[2])) * cell_;
+    const float step = 0.5f * cell_;
+    float light = 0.0f;
+    for (const SkyRay& ray : skyRays()) {
+        // As far as it is in the box of the crowns, up and out.
+        float exit = (hi.y - p.y) / ray.dir.y;
+        for (const int a : {0, 2}) {
+            if (ray.dir[a] > 1e-6f) exit = std::min(exit, (hi[a] - p[a]) / ray.dir[a]);
+            if (ray.dir[a] < -1e-6f) exit = std::min(exit, (lo_[a] - p[a]) / ray.dir[a]);
+        }
+        float depth = 0.0f;
+        for (float t = 0.5f * step; t < exit; t += step) depth += leaves(p + ray.dir * t);
+        light += ray.weight * std::exp(-0.5f * depth * step);
+    }
+    return std::clamp(light, 0.0f, 1.0f);
+}
+
+float CanopyLight::atTop(size_t i) const { return i < tops_.size() ? at(tops_[i]) : 1.0f; }
 
 std::vector<EcoPlant> growEcosystem(std::span<const Vec3> places, std::span<const float> wet, const EcosystemSettings& s) {
     std::vector<EcoPlant> plants;
@@ -99,31 +242,52 @@ std::vector<EcoPlant> growEcosystem(std::span<const Vec3> places, std::span<cons
             p.place = place;
             p.species = species;
             p.age = s.species[static_cast<size_t>(species)].growth * unitOf(mix(s.seed ^ 0x52ull, j));
+            p.size = std::min(1.0f, p.age / std::max(s.species[static_cast<size_t>(species)].growth, 1.0f));
             plants.push_back(p);
         }
     }
 
-    auto crownOf = [&](const EcoPlant& p) {
-        const Species& sp = s.species[static_cast<size_t>(p.species)];
-        return sp.crown * (0.15f + 0.85f * p.size);
+    auto crownOf = [&](const EcoPlant& p) { return crownRadius(p, s.species[static_cast<size_t>(p.species)]); };
+    // By height: the light a kind needs to grow at its pace -- the less, the
+    // better it bears shade.
+    auto need = [&](int species) {
+        return 0.05f + 0.6f * (1.0f - std::clamp(s.species[static_cast<size_t>(species)].shade, 0.0f, 1.0f));
     };
     const int years = std::clamp(s.years, 0, 2000);
     for (int year = 0; year < years; ++year) {
         const uint64_t yearSeed = mix(s.seed, 1000 + static_cast<uint64_t>(year));
-        // Older, larger.
+        if (s.byHeight) {
+            // The light each has this year: at its top, through the crowns
+            // above and round it.
+            const CanopyLight canopy(places, plants, s.species);
+            parallelFor(plants.size(), 32, [&](size_t b, size_t e) {
+                for (size_t i = b; i < e; ++i) plants[i].light = canopy.atTop(i);
+            });
+        }
+        // Older, larger: by height as fast as its light lets it.
         for (EcoPlant& p : plants) {
             p.age += 1.0f;
             const Species& sp = s.species[static_cast<size_t>(p.species)];
-            p.size = std::min(1.0f, p.age / std::max(sp.growth, 1.0f));
+            if (s.byHeight) {
+                p.size = std::min(1.0f, p.size + std::clamp(p.light / need(p.species), 0.0f, 1.0f) / std::max(sp.growth, 1.0f));
+            } else {
+                p.size = std::min(1.0f, p.age / std::max(sp.growth, 1.0f));
+            }
         }
         // Who shades whom: where two crowns meet, the smaller suffers as much
-        // as they overlap and it does not bear shade; and each where the
-        // ground does not suit it.
+        // as they overlap and it does not bear shade; by height, each as
+        // short of the light it needs it is -- shade bearers the less. And
+        // each where the ground does not suit it.
         Cells cells;
         cells.size = std::max(widest, 0.5f);
         for (uint32_t i = 0; i < plants.size(); ++i) cells.add(places[plants[i].place], i);
         std::vector<float> stress(plants.size(), 0.0f);
-        for (uint32_t i = 0; i < plants.size(); ++i) {
+        for (uint32_t i = 0; i < plants.size() && s.byHeight; ++i) {
+            const EcoPlant& p = plants[i];
+            const float shade = std::clamp(s.species[static_cast<size_t>(p.species)].shade, 0.0f, 1.0f);
+            stress[i] = 0.7f * std::max(0.0f, 1.0f - p.light / need(p.species)) * (1.0f - 0.5f * shade);
+        }
+        for (uint32_t i = 0; i < plants.size() && !s.byHeight; ++i) {
             const EcoPlant& a = plants[i];
             const Vec3& pa = places[a.place];
             const float ra = crownOf(a);
@@ -158,6 +322,9 @@ std::vector<EcoPlant> growEcosystem(std::span<const Vec3> places, std::span<cons
         plants.swap(alive);
         cells.of.clear();
         for (uint32_t i = 0; i < plants.size(); ++i) cells.add(places[plants[i].place], i);
+        // By height, the light on the ground with the fallen gone.
+        const CanopyLight ground = s.byHeight ? CanopyLight(places, plants, s.species)
+                                              : CanopyLight(places, std::span<const EcoPlant>(), s.species);
         // The grown ones seed round them: where a place is free and no crown
         // is over it.
         const size_t parents = plants.size();
@@ -181,15 +348,21 @@ std::vector<EcoPlant> growEcosystem(std::span<const Vec3> places, std::span<cons
                     if (!taken[q] && d2 < bestD) bestD = d2, best = q;
                 });
                 if (best == UINT32_MAX) continue;
-                // Not where it does badly, and as often not under a crown.
+                // Not where it does badly, and as often not under a crown --
+                // by height, as likely as the light on the ground suits it.
                 if (unitOf(mix(seedBits, 3)) > fit(parent.species, best)) continue;
-                bool shaded = false;
-                cells.near(places[best], 2.0f * widest, [&](uint32_t j) {
-                    if (j < plants.size() && std::sqrt(level2(places[plants[j].place], places[best])) < crownOf(plants[j])) {
-                        shaded = true;
-                    }
-                });
-                if (shaded && unitOf(mix(seedBits, 4)) > std::clamp(sp.shade, 0.0f, 1.0f)) continue;
+                if (s.byHeight) {
+                    const float light = ground.at(places[best] + Vec3(0.0f, 0.5f, 0.0f));
+                    if (unitOf(mix(seedBits, 4)) > std::clamp(light / need(parent.species), 0.0f, 1.0f)) continue;
+                } else {
+                    bool shaded = false;
+                    cells.near(places[best], 2.0f * widest, [&](uint32_t j) {
+                        if (j < plants.size() && std::sqrt(level2(places[plants[j].place], places[best])) < crownOf(plants[j])) {
+                            shaded = true;
+                        }
+                    });
+                    if (shaded && unitOf(mix(seedBits, 4)) > std::clamp(sp.shade, 0.0f, 1.0f)) continue;
+                }
                 taken[best] = 1;
                 EcoPlant young;
                 young.place = best;

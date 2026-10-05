@@ -690,7 +690,7 @@ TEST(foliage_the_wind_bows_plants_from_their_feet) {
 
 TEST(foliage_an_ecosystem_sorts_its_kinds_by_the_ground_and_the_shade) {
     // The example: what is left after 120 years -- each kind most where the
-    // ground suits it.
+    // ground suits it, the hazels under the trees in the shade.
     sim::Network net;
     CHECK(sim::Network::example("ecosystem", net));
     int places = -1, wood = -1;
@@ -708,24 +708,29 @@ TEST(foliage_an_ecosystem_sorts_its_kinds_by_the_ground_and_the_shade) {
     const auto species = plants->points().find("species")->read<int32_t>();
     const auto id = plants->points().find("id")->read<int32_t>();
     const auto age = plants->points().find("age")->read<float>();
-    double moisture[3] = {0, 0, 0}, ages[3] = {0, 0, 0};
-    size_t count[3] = {0, 0, 0};
+    const auto light = plants->points().find("light")->read<float>();
+    double moisture[4] = {0, 0, 0, 0}, ages[4] = {0, 0, 0, 0}, lit[4] = {0, 0, 0, 0};
+    size_t count[4] = {0, 0, 0, 0};
     for (size_t i = 0; i < plants->pointCount(); ++i) {
         const int k = species[i];
-        CHECK(k >= 0 && k < 3);
+        CHECK(k >= 0 && k < 4);
         CHECK(plants->findGroup("species" + std::to_string(k + 1))->contains(i));
         moisture[k] += wet[static_cast<size_t>(id[i])];
         ages[k] += age[i];
+        lit[k] += light[i];
         ++count[k];
     }
-    std::printf("  %zu places, %zu plants after 120 years: birches %zu (ground %.2f wet, %.0f years), oaks %zu (%.2f, %.0f), "
-                "spruces %zu (%.2f, %.0f)\n",
-                ground->pointCount(), plants->pointCount(), count[0], moisture[0] / std::max<size_t>(count[0], 1),
-                ages[0] / std::max<size_t>(count[0], 1), count[1], moisture[1] / std::max<size_t>(count[1], 1),
-                ages[1] / std::max<size_t>(count[1], 1), count[2], moisture[2] / std::max<size_t>(count[2], 1),
-                ages[2] / std::max<size_t>(count[2], 1));
-    for (int k = 0; k < 3; ++k) CHECK(count[k] > 0);
+    const char* names[4] = {"birches", "oaks", "spruces", "hazels"};
+    std::printf("  %zu places, %zu plants after 120 years:", ground->pointCount(), plants->pointCount());
+    for (int k = 0; k < 4; ++k) {
+        const double n = static_cast<double>(std::max<size_t>(count[k], 1));
+        std::printf("%s %s %zu (ground %.2f wet, %.0f years, light %.2f)", k == 0 ? "" : ",", names[k], count[k],
+                    moisture[k] / n, ages[k] / n, lit[k] / n);
+    }
+    std::printf("\n");
+    for (int k = 0; k < 4; ++k) CHECK(count[k] > 0);
     CHECK(moisture[2] / count[2] > moisture[1] / count[1] + 0.1);  // spruces wetter than oaks
+    CHECK(lit[3] / count[3] < 0.5 * lit[2] / count[2]);           // hazels in the shade of the trees
 }
 
 TEST(foliage_trees_are_pruned_to_their_envelope_and_stand_on_roots) {

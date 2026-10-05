@@ -1,14 +1,16 @@
 pgsim 1
-# A wood that grew by itself: an Ecosystem of three kinds over 120 years on
+# A wood that grew by itself: an Ecosystem of four kinds over 120 years on
 # a hilly ground with a stream winding through it. A wrangle raises the
 # ground and paints it wet along the stream and in the hollows; Scatter
-# offers places where a tree could stand; Ecosystem lets birches (pioneers:
-# fast, short-lived, bearing no shade), oaks (slow giants of the dry) and
-# spruces (shade bearers of the wet) start, grow, shade each other, wither
-# where the ground does not suit them, die of age and seed round themselves.
-# What is left: spruces along the stream, oaks on the dry rises, birches in
-# the gaps the old ones left -- each kind grown by a Tree on its group,
-# young ones smaller (pscale).
+# offers places where a plant could stand; Ecosystem lets birches
+# (pioneers: fast, short-lived, bearing no shade), oaks (slow giants of the
+# dry), spruces (shade bearers of the wet) and hazels (shrubs bearing shade)
+# start, grow, shade each other by height -- the light of the sky dimmed
+# through the crowns above each -- wither where the ground does not suit
+# them, die of age and seed round themselves. What is left: spruces along
+# the stream, oaks on the dry rises, birches in the gaps the old ones left,
+# hazels under them all -- each kind grown by a Tree on its group, young
+# ones smaller (pscale).
 node 1 grid 1 ground 0 0
   param sizex 120
   param sizez 120
@@ -23,6 +25,8 @@ node 3 scatter 1 places 0 220
   param mindistance 1.2
 node 4 ecosystem 1 wood 0 330
   param years 120
+  param light height
+  param s4_on on
 node 5 blast 1 birch_spots -230 440
   param group "species1"
   param invert on
@@ -80,6 +84,30 @@ node 10 tree 1 spruces 230 550
   param variants 4
 node 11 merge 1 landscape 0 660
   display
+node 12 blast 1 hazel_spots 460 440
+  param group "species4"
+  param invert on
+node 13 tree 1 hazels 460 550
+  param height 2.6
+  param radius 0.04
+  param sizevariation 0.3
+  param tip 0.3
+  param crown 0.02
+  param forks 5
+  param forkheight 0.03
+  param forkangle 34
+  param levels 2
+  param branches1 12
+  param angle1 50
+  param length1 0.65
+  param branches2 6
+  param leaves 14
+  param leafsize 0.11
+  param leafcolor 0.08 0.17 0.04
+  param sides 5
+  param segment 0.12
+  param output instances
+  param variants 4
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.geometry
 link 3.geometry -> 4.places
@@ -93,3 +121,6 @@ link 2.geometry -> 11.geometry
 link 8.geometry -> 11.geometry
 link 9.geometry -> 11.geometry
 link 10.geometry -> 11.geometry
+link 4.geometry -> 12.geometry
+link 12.geometry -> 13.points
+link 13.geometry -> 11.geometry

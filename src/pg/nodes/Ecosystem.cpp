@@ -4,10 +4,11 @@
 //            as dense as plants could be -- each as wet as its attribute
 //            Moisture Attribute says (0 dry, 1 wet; none: 0.5).
 //   output   the plants alive after Years: a point each, on its place --
-//            species (0, 1, 2), a group of each (species1, species2,
-//            species3), age, pscale (how grown: 0.15 a seedling, 1 grown),
-//            orient (turned about +y as it happens), id (its place) --
-//            for Tree or Copy to Points to grow a kind on each group.
+//            species (0 to 3), a group of each (species1 to species4),
+//            age, pscale (how grown: 0.15 a seedling, 1 grown), orient
+//            (turned about +y as it happens), id (its place); Light By
+//            Height, light too (the share of the sky's at its top) -- for
+//            Tree or Copy to Points to grow a kind on each group.
 //
 #include "pg/nodes/Nodes.h"
 
@@ -31,17 +32,11 @@ public:
         params_.setInt("seed", 1);
         params_.setFloat("start", 0.02f);
         params_.setString("moistureattribute", "moisture");
-        // Three kinds: a pioneer that grows fast and dies young and bears
-        // no shade (a birch), a slow giant of the dry (an oak), a shade
-        // bearer of the wet (a spruce, a beech).
-        const Species pioneer{1.0f, 2.5f, 10.0f, 60.0f, 0.1f, 0.45f, 0.45f, 12.0f, 1.2f};
-        const Species giant{0.6f, 5.0f, 40.0f, 300.0f, 0.35f, 0.3f, 0.3f, 6.0f, 0.4f};
-        const Species bearer{0.6f, 3.0f, 30.0f, 200.0f, 0.85f, 0.75f, 0.3f, 7.0f, 0.6f};
-        const Species kinds[3] = {pioneer, giant, bearer};
-        for (int k = 0; k < 3; ++k) {
+        params_.setInt("light", 0);  // 0 crowns in plan, 1 by height
+        for (int k = 0; k < kKinds; ++k) {
             const std::string p = "s" + std::to_string(k + 1) + "_";
-            const Species& d = kinds[k];
-            params_.setBool(p + "on", true);
+            const Species& d = kinds()[k];
+            params_.setBool(p + "on", k < 3);
             params_.setFloat(p + "share", d.share);
             params_.setFloat(p + "crown", d.crown);
             params_.setFloat(p + "growth", d.growth);
@@ -51,7 +46,24 @@ public:
             params_.setFloat(p + "tolerance", d.tolerance);
             params_.setFloat(p + "seeding", d.seeding);
             params_.setFloat(p + "seeds", d.seeds);
+            params_.setFloat(p + "height", d.height);
+            params_.setFloat(p + "depth", d.depth);
+            params_.setFloat(p + "density", d.density);
         }
+    }
+
+    /// The kinds it grows: a pioneer that grows fast and dies young and
+    /// bears no shade (a birch), a slow giant of the dry (an oak), a shade
+    /// bearer of the wet (a spruce, a beech) -- and, off unless asked for,
+    /// a shrub of the understorey (a hazel).
+    static constexpr int kKinds = 4;
+    static const Species* kinds() {
+        static const Species all[kKinds] = {
+            {1.0f, 2.5f, 10.0f, 60.0f, 0.1f, 0.45f, 0.45f, 12.0f, 1.2f, 9.5f, 0.6f, 2.5f},
+            {0.6f, 5.0f, 40.0f, 300.0f, 0.35f, 0.3f, 0.3f, 6.0f, 0.4f, 11.0f, 0.65f, 4.0f},
+            {0.6f, 3.0f, 30.0f, 200.0f, 0.85f, 0.75f, 0.3f, 7.0f, 0.6f, 14.5f, 0.9f, 6.0f},
+            {0.8f, 1.5f, 6.0f, 40.0f, 0.8f, 0.5f, 0.45f, 3.0f, 1.0f, 3.0f, 0.9f, 3.0f}};
+        return all;
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> inputs) override {
@@ -62,10 +74,11 @@ public:
         s.years = std::clamp(params_.evalInt("years", ctx, 80), 0, 2000);
         s.seed = static_cast<uint64_t>(params_.evalInt("seed", ctx, 1));
         s.start = std::max(params_.evalFloat("start", ctx, 0.02f), 0.0f);
-        std::vector<int> kindOf;  // the species' slot (1, 2, 3) of each kind grown
-        for (int k = 0; k < 3; ++k) {
+        s.byHeight = params_.evalInt("light", ctx, 0) == 1;
+        std::vector<int> kindOf;  // the species' slot (0 to 3) of each kind grown
+        for (int k = 0; k < kKinds; ++k) {
             const std::string p = "s" + std::to_string(k + 1) + "_";
-            if (!params_.evalBool(p + "on", ctx, true)) continue;
+            if (!params_.evalBool(p + "on", ctx, k < 3)) continue;
             Species sp;
             sp.share = std::max(params_.evalFloat(p + "share", ctx, 1.0f), 0.0f);
             sp.crown = std::max(params_.evalFloat(p + "crown", ctx, 3.0f), 0.05f);
@@ -76,6 +89,9 @@ public:
             sp.tolerance = std::max(params_.evalFloat(p + "tolerance", ctx, 0.35f), 0.01f);
             sp.seeding = std::max(params_.evalFloat(p + "seeding", ctx, 8.0f), 0.1f);
             sp.seeds = std::max(params_.evalFloat(p + "seeds", ctx, 0.6f), 0.0f);
+            sp.height = std::max(params_.evalFloat(p + "height", ctx, kinds()[k].height), 0.05f);
+            sp.depth = std::clamp(params_.evalFloat(p + "depth", ctx, kinds()[k].depth), 0.05f, 1.0f);
+            sp.density = std::max(params_.evalFloat(p + "density", ctx, kinds()[k].density), 0.0f);
             s.species.push_back(sp);
             kindOf.push_back(k);
         }
@@ -93,8 +109,10 @@ public:
         auto pscale = out->points().create("pscale", AttrType::Float).write<float>();
         auto orient = out->points().create("orient", AttrType::Vec4).write<Vec4>();
         auto id = out->points().create("id", AttrType::Int).write<int32_t>();
-        Group* groups[3] = {&out->createGroup("species1", AttrClass::Point), &out->createGroup("species2", AttrClass::Point),
-                            &out->createGroup("species3", AttrClass::Point)};
+        std::span<float> light;
+        if (s.byHeight) light = out->points().create("light", AttrType::Float).write<float>();
+        Group* groups[kKinds];
+        for (int k = 0; k < kKinds; ++k) groups[k] = &out->createGroup("species" + std::to_string(k + 1), AttrClass::Point);
         for (size_t i = 0; i < plants.size(); ++i) {
             const EcoPlant& p = plants[i];
             P[i] = in.positions()[p.place];
@@ -107,6 +125,7 @@ public:
                               static_cast<float>(1u << 24);
             orient[i] = Vec4(0.0f, std::sin(0.5f * yaw), 0.0f, std::cos(0.5f * yaw));
             id[i] = static_cast<int32_t>(p.place);
+            if (!light.empty()) light[i] = p.light;
             groups[kind]->set(i, true);
         }
         return out;

@@ -777,32 +777,43 @@ std::vector<NodeType> buildTypes() {
             text("moistureattribute", "Moisture Attribute", "Ecosystem", "moisture",
                  "A point attribute of the places, 0 dry to 1 wet -- painted, or a wrangle's: in a valley, by "
                  "a stream. Empty, or none: 0.5 everywhere.")};
-        const char* names[3] = {"Species 1", "Species 2", "Species 3"};
-        const float defaults[3][9] = {{1.0f, 2.5f, 10.0f, 60.0f, 0.1f, 0.45f, 0.45f, 12.0f, 1.2f},
-                                      {0.6f, 5.0f, 40.0f, 300.0f, 0.35f, 0.3f, 0.3f, 6.0f, 0.4f},
-                                      {0.6f, 3.0f, 30.0f, 200.0f, 0.85f, 0.75f, 0.3f, 7.0f, 0.6f}};
-        static const char* const keys[3][10] = {
+        p.push_back({"light", "Light", "Ecosystem", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "How the plants shade each other. In Plan: where two crowns meet seen from above, the smaller "
+                     "suffers. By Height: each crown an ellipsoid of leaves as tall as its plant has grown, the "
+                     "light of an overcast sky dimmed through the crowns above it -- a tall crown shades the short "
+                     "ones under it; each grows as fast as its light lets it, the shade bearers in less light, "
+                     "and withers in too little; seedlings come up where the light on the ground suits them.",
+                     {"plan", "height"}, {"In Plan", "By Height"}});
+        const char* names[4] = {"Species 1", "Species 2", "Species 3", "Species 4"};
+        const float defaults[4][12] = {{1.0f, 2.5f, 10.0f, 60.0f, 0.1f, 0.45f, 0.45f, 12.0f, 1.2f, 9.5f, 0.6f, 2.5f},
+                                       {0.6f, 5.0f, 40.0f, 300.0f, 0.35f, 0.3f, 0.3f, 6.0f, 0.4f, 11.0f, 0.65f, 4.0f},
+                                       {0.6f, 3.0f, 30.0f, 200.0f, 0.85f, 0.75f, 0.3f, 7.0f, 0.6f, 14.5f, 0.9f, 6.0f},
+                                       {0.8f, 1.5f, 6.0f, 40.0f, 0.8f, 0.5f, 0.45f, 3.0f, 1.0f, 3.0f, 0.9f, 3.0f}};
+        static const char* const keys[4][13] = {
             {"s1_on", "s1_share", "s1_crown", "s1_growth", "s1_life", "s1_shade", "s1_moisture", "s1_tolerance",
-             "s1_seeding", "s1_seeds"},
+             "s1_seeding", "s1_seeds", "s1_height", "s1_depth", "s1_density"},
             {"s2_on", "s2_share", "s2_crown", "s2_growth", "s2_life", "s2_shade", "s2_moisture", "s2_tolerance",
-             "s2_seeding", "s2_seeds"},
+             "s2_seeding", "s2_seeds", "s2_height", "s2_depth", "s2_density"},
             {"s3_on", "s3_share", "s3_crown", "s3_growth", "s3_life", "s3_shade", "s3_moisture", "s3_tolerance",
-             "s3_seeding", "s3_seeds"}};
-        for (int k = 0; k < 3; ++k) {
+             "s3_seeding", "s3_seeds", "s3_height", "s3_depth", "s3_density"},
+            {"s4_on", "s4_share", "s4_crown", "s4_growth", "s4_life", "s4_shade", "s4_moisture", "s4_tolerance",
+             "s4_seeding", "s4_seeds", "s4_height", "s4_depth", "s4_density"}};
+        for (int k = 0; k < 4; ++k) {
             const char* const* key = keys[k];
             const float* d = defaults[k];
-            p.push_back({key[0], "On", names[k], K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+            p.push_back({key[0], "On", names[k], K::Toggle, {k < 3 ? 1.0f : 0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                          "Whether this kind grows at all."});
             p.push_back({key[1], "Share", names[k], K::Float, {d[0], 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, kBig, "",
                          "How many of it start, against the others."});
             p.push_back({key[2], "Crown", names[k], K::Float, {d[1], 0.0f, 0.0f}, 0.2f, 10.0f, 0.05f, kBig, "m",
                          "How wide its crown spreads, grown: the radius it shades."});
             p.push_back({key[3], "Growth", names[k], K::Float, {d[2], 0.0f, 0.0f}, 1.0f, 100.0f, 1.0f, kBig, "yr",
-                         "Years it takes to grow to it."});
+                         "Years it takes to grow to it -- by height, in the light it needs."});
             p.push_back({key[4], "Life", names[k], K::Float, {d[3], 0.0f, 0.0f}, 5.0f, 500.0f, 1.0f, kBig, "yr",
                          "Years it lives, give or take a fifth."});
             p.push_back({key[5], "Shade Tolerance", names[k], K::Float, {d[4], 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-                         "How well it bears another's shade: 0 it withers under a crown, 1 it grows on."});
+                         "How well it bears another's shade: 0 it withers under a crown, 1 it grows on. By height: "
+                         "the light it needs to grow at its pace, 0.65 of the sky's at 0, 0.05 at 1."});
             p.push_back({key[6], "Moisture", names[k], K::Float, {d[5], 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                          "How wet it likes the ground, 0 dry to 1 wet."});
             p.push_back({key[7], "Moisture Range", names[k], K::Float, {d[6], 0.0f, 0.0f}, 0.05f, 1.0f, 0.01f, kBig, "",
@@ -811,15 +822,23 @@ std::vector<NodeType> buildTypes() {
                          "How far its seeds fall round it."});
             p.push_back({key[9], "Seedlings", names[k], K::Float, {d[8], 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, kBig, "1/yr",
                          "Seedlings a grown plant brings up a year, where there is room."});
+            p.push_back({key[10], "Height", names[k], K::Float, {d[9], 0.0f, 0.0f}, 0.5f, 40.0f, 0.05f, kBig, "m",
+                         "By height: how tall it stands, grown -- as tall as the Tree grown on its group."});
+            p.push_back({key[11], "Crown Depth", names[k], K::Float, {d[10], 0.0f, 0.0f}, 0.1f, 1.0f, 0.05f, 1.0f, "",
+                         "By height: how deep its crown is, a share of its height -- a spruce's nearly to the ground."});
+            p.push_back({key[12], "Leaf Density", names[k], K::Float, {d[11], 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, kBig, "",
+                         "By height: the leaf area over the ground its crown covers -- how deep a shade it casts: "
+                         "a birch's light, a spruce's deep."});
         }
         geometry("ecosystem", "Ecosystem", "ecosystem",
-                 "A plant community grown over years (after Deussen et al.): plants of three kinds start where the "
-                 "ground lets them, grow their crowns year by year, shade each other where the crowns meet -- the "
-                 "smaller suffering, the more the less it bears shade -- wither where the ground is too wet or too "
-                 "dry for them, die of age, and the grown ones seed round themselves. Places in: points where a "
-                 "plant could stand, a Scatter over a terrain, each as wet as its moisture says. Out: the plants "
-                 "alive, a point each -- species, a group of each kind (species1, 2, 3), age, pscale (how grown), "
-                 "orient -- for Tree or Copy to Points to grow each kind on.",
+                 "A plant community grown over years (after Deussen et al.): plants of up to four kinds start "
+                 "where the ground lets them, grow their crowns year by year, shade each other -- where the crowns "
+                 "meet, the smaller suffering, the more the less it bears shade; or by height, the light of the "
+                 "sky dimmed through the crowns above -- wither where the ground is too wet or too dry for them, "
+                 "die of age, and the grown ones seed round themselves. Places in: points where a plant could "
+                 "stand, a Scatter over a terrain, each as wet as its moisture says. Out: the plants alive, a "
+                 "point each -- species, a group of each kind (species1 to species4), age, pscale (how grown), "
+                 "orient, by height light -- for Tree or Copy to Points to grow each kind on.",
                  {{"places", "Places", PinType::Geometry}}, std::move(p));
     }
     geometry("plant_wind", "Plant Wind", "plantwind",

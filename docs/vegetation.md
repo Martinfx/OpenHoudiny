@@ -225,7 +225,7 @@ kopie s přidanou kamerou a výstupem se sluncem a oblohou (Sky Behind).
 ## 7b. Ekosystém
 
 Uzel **Ecosystem** nechá rostlinné společenstvo vyrůst za roky, podle
-modelu Deussena a kol. (1998). Tři druhy, každý se svými parametry:
+modelu Deussena a kol. (1998). Až čtyři druhy, každý se svými parametry:
 
 | Parametr | Co dělá |
 |---|---|
@@ -235,31 +235,70 @@ modelu Deussena a kol. (1998). Tři druhy, každý se svými parametry:
 | **Shade Tolerance** | jak snáší stín jiných: 0 pod korunou uschne, 1 roste dál |
 | **Moisture**, **Moisture Range** | jak vlhkou půdu má rád a jak daleko od ní ještě prospívá |
 | **Seed Distance**, **Seedlings** | jak daleko padají semena a kolik semenáčků vzejde za rok |
+| **Height**, **Crown Depth**, **Leaf Density** | jen By Height: jak vysoká je vzrostlá rostlina, jak hluboko sahá koruna (podíl výšky) a kolik m² listí má nad každým m² půdy pod korunou |
 
-Rok po roku: rostliny rostou. Kde se koruny potkají, menší strádá podle
-toho, jak moc se překrývají a jak málo snáší stín (i stínomilné o čtvrtinu
-méně, ale strádají). Rostliny chřadnou tam, kde jim půda nesedí, umírají
-stářím a vzrostlé kolem sebe vysévají. Semenáček vzejde na nejbližším
-volném místě, ne tam, kde se mu nedaří, a pod cizí korunou jen podle své
-snášenlivosti stínu. Místa jsou body vstupu (Scatter po terénu tak hustě,
-jak by rostliny mohly stát) a vlhkost bere z jejich atributu
-**Moisture Attribute**. Výstup je bod na každé živé rostlině se
-`species`, skupinou druhu (`species1` až `species3`), `age`, `pscale`
-(0,15 semenáček, 1 vzrostlý), `orient` a `id` (číslo místa). Na skupiny
-se pak pěstují stromy uzlem Tree. Stejné nastavení a seed dají stejné
-společenstvo.
+Rok po roku rostliny stárnou a rostou, chřadnou tam, kde jim půda nesedí,
+umírají stářím a vzrostlé kolem sebe vysévají. Semenáček vzejde na
+nejbližším volném místě, ne tam, kde se mu nedaří. Jak se rostliny
+stíní, říká **Light**:
+
+- **In Plan** (výchozí, jako u Deussena). Kde se koruny potkají
+  v půdorysu, menší strádá podle toho, jak moc se překrývají a jak málo
+  snáší stín (i stínomilné o čtvrtinu méně, ale strádají). Rostlina roste
+  podle věku. Pod cizí korunou semenáček vzejde jen podle své snášenlivosti
+  stínu.
+- **By Height** (jako modely lesních mezer JABOWA a SORTIE). Koruna každé
+  rostliny je elipsoid listí, vysoký a široký podle toho, jak rostlina
+  vyrostla. Sahá od (1 − Crown Depth) její výšky k vrcholu a má Leaf
+  Density krát plochu půdy pod sebou listí. Světlo zatažené oblohy (jas
+  1 + 2 cos úhlu od zenitu) přichází ze zenitu a ze dvou prstenců po osmi
+  směrech, 40° a 70° od zenitu, s vahami 0,22, 0,53 a 0,25 podle toho, kolik
+  daná část oblohy osvětlí rovnou zem. Listí ho ztlumí jako e^(−0,5 L), kde
+  L je plocha listí, kterou paprsek potká na m² svého průřezu. Listí leží
+  v buňkách mřížky (polovina nejužší koruny, 0,5 až 2 m) a paprsky jimi
+  kráčejí. Rostlina roste tak rychle, kolik má světla nad korunou, plnou
+  rychlostí od světla, které potřebuje: 0,65 oblohy bez snášenlivosti
+  stínu, 0,05 s plnou. S menším světlem chřadne, stínomilná pomaleji.
+  Semenáček vzejde s pravděpodobností podle světla 0,5 m nad zemí. Vysoká
+  koruna tedy stíní nízké pod sebou, ať je větší, nebo menší. Stínomilné
+  semenáčky čekají pod korunami a vyrostou, kde strom padne. Keře žijí pod
+  stromy jako podrost.
+
+Místa jsou body vstupu (Scatter po terénu tak hustě, jak by rostliny
+mohly stát) a vlhkost bere z jejich atributu **Moisture Attribute**.
+Výstup je bod na každé živé rostlině se `species` (0 až 3), skupinou druhu
+(`species1` až `species4`), `age`, `pscale` (0,15 semenáček, 1 vzrostlý),
+`orient` a `id` (číslo místa). By Height dává navíc `light`, podíl oblohy
+nad korunou v posledním roce. Na skupiny se pak pěstují stromy uzlem
+Tree. Jeho Height má odpovídat Height druhu, protože obojí `pscale`
+zmenší stejně. Stejné nastavení a seed dají stejné společenstvo na
+libovolném počtu vláken.
 
 Výchozí druhy: **průkopník** (bříza: roste rychle, žije krátce, stín
-nesnáší, sucho), **velikán** (dub: pomalý, dlouhověký, sucho) a **stínomilný**
-(smrk, buk: snese stín, vlhko).
+nesnáší, sucho, světlá koruna), **velikán** (dub: pomalý, dlouhověký,
+sucho), **stínomilný** (smrk, buk: snese stín, vlhko, hustá koruna až
+k zemi) a vypnutý **keř** (líska: 3 m, snese stín, žije 40 let).
 
-Příklad **ecosystem**: kopcovitá půda s potokem, 2588 míst. Po 120
-letech zbyde 948 rostlin: 495 bříz (půda v průměru 0,25 vlhká, věk
-9 let), 67 dubů (0,24; 85 let) a 386 smrků (0,83; 24 let). Smrky lemují
-potok, duby stojí na suchých hřbetech a břízy zarůstají mezery po padlých
-stromech.
+Příklad **ecosystem**: kopcovitá půda s potokem, 2588 míst, čtyři druhy,
+By Height. Po 120 letech roste 2304 rostlin: 421 bříz (půda v průměru
+0,30 vlhká, 17 let, světlo 0,81), 116 dubů (0,18; 76 let; 0,79), 420
+smrků (0,82; 55 let; 0,82) a 1347 lísek (0,26; 14 let; 0,31). Smrky lemují
+potok, duby stojí na suchých hřbetech, břízy zarůstají mezery po padlých
+stromech a lísky rostou pod nimi ve stínu. In Plan dá na stejném místě
+2376 rostlin, ale jen 157 bříz, 34 dubů a 181 smrků mezi 2004 lískami.
+Menší koruna v půdorysu vždy prohraje, i keř, který stín snáší, takže
+stromy keřům mezi sebou nestačí. Vaří se 2,0 s, In Plan 0,7 s.
 
-![Příklad ecosystem: smrky podél potoka, duby a břízy na suchu, mladé stromy v mezerách](img/ecosystem.jpg)
+![Příklad ecosystem po 120 letech: vlevo In Plan, řídký les s mezerami, vpravo By Height, zapojený les, pod jehož korunami rostou lísky](img/ecosystem.jpg)
+
+![Světlo nad korunou podle výšky rostliny v příkladu ecosystem: stromy nad 8 m mají skoro celou oblohu, lísky a semenáčky pod nimi desetinu až třetinu](img/ecosystem-light.jpg)
+
+Testy (`tests/test_plants.cpp`): osamělý dub (11 m) pustí pod korunu
+k semenáčku 0,27 oblohy, k okraji koruny 0,83, do volna 1. Na zemi
+s potokem (2601 míst, 100 let) stojí lísky z 86 % pod vyšší korunou se
+světlem 0,24, stromy mají 0,74 až 0,80. V hlubokém stínu (pod 0,1) čeká
+18 % smrků, v průměru 4,7 roku starých, ale jen 7 % bříz, 1,9 roku
+starých. Výsledek je stejný na jednom i čtyřech vláknech.
 
 ## 8. Export
 
@@ -347,6 +386,5 @@ Cycles a path tracer kreslí vše v plné podobě, instance je nestojí paměť.
 ## 10. Co zatím chybí
 
 - Interakce s tělesy simulace přímo (teď stopy jako body s časem).
-- Ekosystém ve 3D: světlo podle výšky korun (teď soutěží jen kruhy korun
-  v půdorysu), keře a byliny jako další patra, sukcese po požáru nebo
-  vichřici.
+- Ekosystém: byliny jako další patro, slunce z určitého směru (By Height
+  počítá se zataženou oblohou), sukcese po požáru nebo vichřici.

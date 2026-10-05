@@ -6,6 +6,7 @@
 // number of threads; plants standing on points swaying whole.
 //
 #include "pg/core/CookEngine.h"
+#include "pg/core/Ecosystem.h"
 #include "pg/core/Graph.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Tree.h"
@@ -273,4 +274,110 @@ TEST(plants_standing_on_points_sway_whole_held_where_a_steady_wind_bows_them) {
     for (size_t p = 0; p < c->pointCount(); ++p) apart = std::max(apart, length(oc[p] - oe[p]));
     std::printf("  in gusts their tilts as much as %.3f apart\n", apart);
     CHECK(apart > 0.01f);
+}
+
+TEST(plants_by_height_a_tall_crown_shades_the_short_ones_under_it) {
+    // A grown oak and a spruce seedling at its foot, a seedling out in the
+    // open: the oak's top in the sky's light, the seedling under it in its
+    // shade -- a lone crown, the low sky still round it -- the one in the
+    // open lit, the light rising toward the crown's edge.
+    Species oak;
+    oak.crown = 5.0f;
+    oak.height = 11.0f;
+    oak.depth = 0.65f;
+    oak.density = 4.0f;
+    Species spruce = oak;
+    spruce.crown = 3.0f;
+    spruce.height = 14.5f;
+    const std::vector<Species> kinds = {oak, spruce};
+    const std::vector<Vec3> places = {Vec3(0.0f), Vec3(1.0f, 0.0f, 0.5f), Vec3(40.0f, 0.0f, 0.0f)};
+    std::vector<EcoPlant> plants(3);
+    plants[0].place = 0, plants[0].species = 0, plants[0].size = 1.0f;
+    plants[1].place = 1, plants[1].species = 1, plants[1].size = 0.0f;
+    plants[2].place = 2, plants[2].species = 1, plants[2].size = 0.0f;
+    const CanopyLight light(places, plants, kinds);
+    const float top = light.atTop(0), under = light.atTop(1), open = light.atTop(2);
+    const float edge = light.at(Vec3(5.5f, 0.5f, 0.0f)), far = light.at(Vec3(80.0f, 0.5f, 0.0f));
+    std::printf("  light at the oak's top %.3f, under it %.3f, at its edge %.3f, in the open %.3f (far %.3f); cells %.2f m\n",
+                top, under, edge, open, far, light.cell());
+    CHECK(top > 0.999f);
+    CHECK(far > 0.999f);
+    CHECK(under < 0.35f);
+    CHECK(edge > under + 0.3f && edge < 0.95f);
+    CHECK(open > 0.97f);
+}
+
+TEST(plants_by_height_shade_bearers_wait_under_the_canopy_and_shrubs_make_an_understorey) {
+    // A land of 2601 places, wet along a stream; birches, oaks, spruces and
+    // hazels by height for 100 years: the hazels under the trees, in their
+    // shade; spruce saplings waiting in it, birch ones not -- they need the
+    // light of a gap. The same on one thread and on four.
+    std::vector<Vec3> places;
+    std::vector<float> wet;
+    for (int i = 0; i < 51; ++i) {
+        for (int j = 0; j < 51; ++j) {
+            const uint64_t h = (static_cast<uint64_t>(i) * 131u + static_cast<uint64_t>(j)) * 0x9E3779B97F4A7C15ull;
+            const float x = -60.0f + 2.35f * static_cast<float>(i) + 1.5f * (static_cast<float>(h >> 40) / 16777216.0f - 0.5f);
+            const float z = -60.0f + 2.35f * static_cast<float>(j) + 1.5f * (static_cast<float>((h >> 16) & 0xFFFFFF) / 16777216.0f - 0.5f);
+            places.push_back(Vec3(x, 0.0f, z));
+            const float d = std::fabs(z - 18.0f * std::sin(x * 0.035f));
+            wet.push_back(std::clamp(std::exp(-d * d / 300.0f) + 0.15f, 0.0f, 1.0f));
+        }
+    }
+    EcosystemSettings s;
+    s.years = 100;
+    s.byHeight = true;
+    s.species = {{1.0f, 2.5f, 10.0f, 60.0f, 0.1f, 0.45f, 0.45f, 12.0f, 1.2f, 9.5f, 0.6f, 2.5f},
+                 {0.6f, 5.0f, 40.0f, 300.0f, 0.35f, 0.3f, 0.3f, 6.0f, 0.4f, 11.0f, 0.65f, 4.0f},
+                 {0.6f, 3.0f, 30.0f, 200.0f, 0.85f, 0.75f, 0.3f, 7.0f, 0.6f, 14.5f, 0.9f, 6.0f},
+                 {0.8f, 1.5f, 6.0f, 40.0f, 0.8f, 0.5f, 0.45f, 3.0f, 1.0f, 3.0f, 0.9f, 3.0f}};
+    const unsigned saved = TaskPool::instance().threadCount();
+    TaskPool::instance().setThreadCount(1);
+    const auto one = growEcosystem(places, wet, s);
+    TaskPool::instance().setThreadCount(4);
+    const auto four = growEcosystem(places, wet, s);
+    TaskPool::instance().setThreadCount(saved);
+    CHECK_EQ(one.size(), four.size());
+    size_t same = 0;
+    for (size_t i = 0; i < one.size() && i < four.size(); ++i) {
+        same += one[i].place == four[i].place && one[i].species == four[i].species && one[i].size == four[i].size &&
+                        one[i].light == four[i].light
+                    ? 1
+                    : 0;
+    }
+    CHECK_EQ(same, one.size());
+    // Under a crown at least a metre taller.
+    auto underTaller = [&](const EcoPlant& p) {
+        const float hp = plantHeight(p, s.species[static_cast<size_t>(p.species)]);
+        for (const EcoPlant& q : one) {
+            const Species& sq = s.species[static_cast<size_t>(q.species)];
+            const Vec3 d = places[q.place] - places[p.place];
+            const float r = crownRadius(q, sq);
+            if (&q != &p && plantHeight(q, sq) > hp + 1.0f && d.x * d.x + d.z * d.z < r * r) return true;
+        }
+        return false;
+    };
+    size_t count[4] = {0, 0, 0, 0}, under[4] = {0, 0, 0, 0}, waiting[4] = {0, 0, 0, 0};
+    double light[4] = {0, 0, 0, 0}, waited[4] = {0, 0, 0, 0};
+    for (const EcoPlant& p : one) {
+        const size_t k = static_cast<size_t>(p.species);
+        ++count[k];
+        light[k] += p.light;
+        under[k] += underTaller(p) ? 1 : 0;
+        if (p.size < 0.3f && p.light < 0.1f) ++waiting[k], waited[k] += p.age;
+    }
+    const char* names[4] = {"birches", "oaks", "spruces", "hazels"};
+    for (size_t k = 0; k < 4; ++k) {
+        const double n = static_cast<double>(std::max<size_t>(count[k], 1));
+        std::printf("  %-7s %4zu: light %.2f, %3.0f %% under a taller crown; %zu small ones in deep shade, %.1f years old\n",
+                    names[k], count[k], light[k] / n, 100.0 * static_cast<double>(under[k]) / n, waiting[k],
+                    waited[k] / static_cast<double>(std::max<size_t>(waiting[k], 1)));
+    }
+    for (size_t k = 0; k < 4; ++k) CHECK(count[k] > 0);
+    CHECK(under[3] * 2 > count[3]);    // most hazels under the trees
+    CHECK(light[3] / count[3] < 0.5);  // in their shade
+    CHECK(light[2] / count[2] > 0.6);  // the canopy in the light
+    // Spruce saplings bear the shade: more of them in it, and for longer.
+    CHECK(waiting[2] * count[0] > 2 * waiting[0] * count[2]);
+    CHECK(waited[2] / waiting[2] > 2.0 * waited[0] / std::max<size_t>(waiting[0], 1));
 }

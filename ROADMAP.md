@@ -535,8 +535,12 @@ Seřazeno podle poměru hodnota / náklad:
    v jakémkoli pořadí snímků i počtu vláken); les 0,29 s na snímek.
    Cestou opraveny stromy ze dvou uzlů Tree po Merge, které se ohýbaly
    kolem cizí paty.
-   Zbývá: ekosystém ve 3D (světlo podle výšky), vyhýbání se větví
-   překážkám.
+   ✅ Ekosystém ve 3D (Light By Height): koruny jako elipsoidy listí,
+   světlo zatažené oblohy tlumené korunami nad rostlinou (Beer–Lambert),
+   růst a chřadnutí podle světla, semenáčky podle světla u země;
+   čtvrtý druh keř jako podrost (příklad **ecosystem**: lísky pod stromy
+   se světlem 0,31, smrkové semenáčky čekající ve stínu).
+   Zbývá: vyhýbání se větví překážkám.
 
 ---
 
