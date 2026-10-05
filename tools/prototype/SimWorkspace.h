@@ -112,7 +112,7 @@ public:
 
     /// What a click in the viewport picks: objects -- nodes -- or the
     /// points, edges or primitives of the displayed geometry.
-    enum class Elements { Objects, Points, Edges, Primitives };
+    enum class Elements { Objects, Points, Edges, Primitives, Vertices };
     /// How a drag picks them: what a box holds, what a lasso drawn round
     /// goes round, what a brush goes over.
     enum class PickStyle { Box, Lasso, Brush };
@@ -469,11 +469,13 @@ private:
     void selectAllElements(bool invert);
     size_t elementCount() const;
     /// What is picked as the nodes read it: a pattern, and the class
-    /// (0 points, 1 primitives) -- edges as their points.
+    /// (0 points, 1 primitives, 2 vertices) -- edges as their points.
     std::string elementPattern() const;
     int elementClass() const;
+    /// The class of what is picked -- edges as their points.
+    AttrClass elementAttrClass() const;
     /// The points what is picked moves: its points, the corners of its
-    /// primitives, the ends of its edges.
+    /// primitives, the ends of its edges, the points of its vertices.
     std::vector<uint8_t> elementPoints(const Geometry& geo) const;
     /// Their middle in the displayed geometry; false for none.
     bool elementCenter(Vec3& center) const;
@@ -485,6 +487,9 @@ private:
     /// The surface's normal at each point of `geo` (not of unit length): a
     /// point's dot lies on it. Found again only for other points or faces.
     const std::vector<Vec3>& pointNormals(const GeometryPtr& geo);
+    /// Each primitive's normal (not of unit length; none for a line): the
+    /// dots of its corners lie on it.
+    const std::vector<Vec3>& primitiveNormals(const GeometryPtr& geo);
     /// A node of `type` put after the displayed one -- fed by it, feeding
     /// what it fed -- and displayed. Its id; 0 when nothing is displayed.
     int insertAfterDisplayed(const std::string& type);
@@ -706,6 +711,8 @@ private:
     std::string overlayKey_[gl::VolumeRenderer::kOverlayLayers];  ///< what the overlay's layers were made of
     GeometryPtr normalsGeometry_;           ///< the geometry of the normals the points are drawn over
     std::vector<Vec3> normals_;             ///< ... at each point, from the faces round it
+    GeometryPtr primNormalsGeometry_;       ///< the geometry of the normals the vertices are drawn over
+    std::vector<Vec3> primNormals_;         ///< ... of each primitive
     // A drag of the handle on elements: the Edit node, its values when it
     // began, the handle's middle then; made by this drag, it goes on Escape.
     int editNode_ = 0;

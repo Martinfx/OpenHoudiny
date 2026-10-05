@@ -72,7 +72,7 @@ enum class Icon {
     Geometry, Points, Table,                         // geometry
     Film,                                            // a video
     Asset,                                           // a digital asset
-    Vertices, Edges, Faces, Brush, Numbers,          // editing geometry: what is picked, the brush, numbers
+    Vertices, Edges, Faces, Corners, Brush, Numbers, // editing geometry: what is picked, the brush, numbers
     PickBox, Lasso, PickBrush, XRay,                 // ... how a drag picks; what is hidden picked too
     Soft,                                            // ... soft selection
     Sculpt,                                          // ... the sculpting brush

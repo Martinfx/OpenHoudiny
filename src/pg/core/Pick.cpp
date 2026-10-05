@@ -255,6 +255,11 @@ void ElementPicker::build(GeometryPtr geo) {
         make(0, static_cast<uint32_t>(tris_.size()));
     }
     edges_ = edgesOf(g);
+    vertexPrim_.assign(g.vertexCount(), 0);
+    for (size_t p = 0; p < primitiveCount_; ++p) {
+        const size_t first = g.primitiveVertexStart(p);
+        for (size_t k = 0; k < g.primitiveVertexCount(p); ++k) vertexPrim_[first + k] = static_cast<uint32_t>(p);
+    }
     builtArea_ = area_ = area();
 }
 
@@ -459,6 +464,24 @@ Vec3 ElementPicker::middle(size_t prim) const {
     return n ? sum * (1.0f / static_cast<float>(n)) : Vec3();
 }
 
+Vec3 ElementPicker::vertexMark(size_t v) const {
+    if (!geo_ || v >= vertexPrim_.size()) return Vec3();
+    const Geometry& g = *geo_;
+    const auto P = g.positions();
+    const uint32_t q = g.vertexPoints()[v];
+    if (q >= P.size()) return Vec3();
+    const size_t prim = vertexPrim_[v];
+    if (!g.primitiveClosed(prim) || g.primitiveVertexCount(prim) < 3) return P[q];
+    return P[q] + (middle(prim) - P[q]) * kVertexInset;
+}
+
+bool ElementPicker::vertexSeen(size_t v, const Vec3& eye, const Vec3& mark) const {
+    const size_t prim = vertexPrim_[v];
+    const Geometry& g = *geo_;
+    if (g.primitiveClosed(prim) && g.primitiveVertexCount(prim) >= 3) return faceSeen(prim, eye, mark);
+    return visible(eye, mark);
+}
+
 // --- under the mouse ----------------------------------------------------------------------
 
 int32_t ElementPicker::point(const PickView& view, float sx, float sy, float reach, bool hidden) const {
@@ -542,6 +565,23 @@ int32_t ElementPicker::primitive(const PickView& view, float sx, float sy, float
     return curve >= 0 ? curve : face;
 }
 
+int32_t ElementPicker::vertex(const PickView& view, float sx, float sy, float reach, bool hidden) const {
+    if (!geo_) return -1;
+    std::vector<std::pair<float, uint32_t>> near;
+    for (size_t v = 0; v < vertexPrim_.size(); ++v) {
+        float x = 0.0f, y = 0.0f;
+        if (!view.project(vertexMark(v), x, y)) continue;
+        const float d2 = (x - sx) * (x - sx) + (y - sy) * (y - sy);
+        if (d2 <= reach * reach) near.emplace_back(d2, static_cast<uint32_t>(v));
+    }
+    // The nearest on the screen that is not hidden.
+    std::sort(near.begin(), near.end());
+    for (const auto& [d2, v] : near) {
+        if (hidden || vertexSeen(v, view.eye, vertexMark(v))) return static_cast<int32_t>(v);
+    }
+    return -1;
+}
+
 // --- in a part of the screen ------------------------------------------------------------
 
 std::vector<uint8_t> ElementPicker::pointsIn(const PickView& view, const ScreenRegion& region, bool hidden) const {
@@ -555,6 +595,22 @@ std::vector<uint8_t> ElementPicker::pointsIn(const PickView& view, const ScreenR
             float x = 0.0f, y = 0.0f;
             if (!view.project(P[i], x, y) || x < x0 || x > x1 || y < y0 || y > y1 || !region.contains(x, y)) continue;
             out[i] = hidden || visible(view.eye, P[i]) ? 1 : 0;
+        }
+    });
+    return out;
+}
+
+std::vector<uint8_t> ElementPicker::verticesIn(const PickView& view, const ScreenRegion& region, bool hidden) const {
+    if (!geo_) return {};
+    float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+    region.bounds(x0, y0, x1, y1);
+    std::vector<uint8_t> out(vertexPrim_.size(), 0);
+    parallelFor(out.size(), 512, [&](size_t begin, size_t end) {
+        for (size_t v = begin; v < end; ++v) {
+            const Vec3 mark = vertexMark(v);
+            float x = 0.0f, y = 0.0f;
+            if (!view.project(mark, x, y) || x < x0 || x > x1 || y < y0 || y > y1 || !region.contains(x, y)) continue;
+            out[v] = hidden || vertexSeen(v, view.eye, mark) ? 1 : 0;
         }
     });
     return out;

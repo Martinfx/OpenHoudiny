@@ -49,17 +49,22 @@ je před ním, jde dál měnit.
 | **2** | čtyřúhelník s tečkami v rozích | body zobrazené geometrie |
 | **3** | čtyřúhelník se zvýrazněnou stranou | hrany |
 | **4** | vyplněný čtyřúhelník | primitivy: polygony a křivky |
+| **5** | čtyřúhelník s tečkami kousek uvnitř rohů | vrcholy: rohy primitiv (§2b) |
 | **P** | štětec | nic — maluje |
 | **U** | kopeček pod štětcem | nic — tvaruje (sculpt) |
 
-V režimech 2–4 viewport ukáže drátěný model geometrie, v režimu bodů
-i všechny body. Prvek pod myší svítí **tyrkysově**, vybrané jsou
-**žluté**. Vpravo dole je napsáno, co je pod myší (`point 446`,
-`edge 6-7`, `primitive 17`) a kolik je vybráno.
+V režimech 2–5 viewport ukáže drátěný model geometrie, v režimu bodů
+i všechny body, v režimu vrcholů všechny rohy. Prvek pod myší svítí
+**tyrkysově**, vybrané jsou **žluté**. Vpravo dole je napsáno, co je pod
+myší (`point 446`, `edge 6-7`, `primitive 17`, `vertex 18 (4v2, point
+10)`) a kolik je vybráno.
 
 Přepnutí režimu výběr **převede**: z bodů na primitivy (ty, jejichž
 všechny body byly vybrané), z primitiv na body (jejich rohy), z primitiv
-na hrany (jejich strany), z bodů na hrany (hrany mezi vybranými body).
+na hrany (jejich strany), z bodů na hrany (hrany mezi vybranými body),
+z bodů na vrcholy (rohy na nich), z primitiv na vrcholy (jejich rohy),
+z vrcholů na body (jejich body) a na primitivy (ty, jejichž všechny rohy
+byly vybrané).
 
 Vybírá se jen to, co je **vidět**: bod, hranu či plochu, kterou zakrývá
 vlastní povrch geometrie, klik ani obdélník nevezme a značky za povrchem
@@ -98,6 +103,32 @@ výběr — jsou vidět slabě, jako rentgen. Vpravo dole je pak napsáno
 ní, vezme obdélník, laso nebo štětec).
 
 ![H zapnuté: laso přes kouli vybralo pás bodů vpředu i vzadu (zadní slabě)](img/edit-hidden.jpg)
+
+## 2b. Vrcholy (5)
+
+**Vrchol** je roh primitivu, jako v Houdini: bod, kde se potkají čtyři
+čtyřúhelníky, má čtyři vrcholy, v každém čtyřúhelníku jeden. Vrcholy nesou
+vlastní atributy (`uv` rohu, ostrá hrana normál) a pořadí rohů polygonu.
+Viewport kreslí každý vrchol jako zelenou tečku o pětinu cesty od bodu ke
+středu jeho polygonu, takže rohy kolem jednoho bodu jdou vybrat zvlášť;
+roh čáry leží na bodě. Pod myší se ukáže i čára od bodu k rohu.
+
+![Režim vrcholů: mřížka 3 × 3 čtyřúhelníků, u každého bodu tečky rohů okolních polygonů s čísly (N); vybraný roh vlevo a čtyři rohy kolem jednoho bodu vpravo (žlutě), pod myší vertex 18, roh 2 primitivu 4](img/edit-vertices.jpg)
+
+S vybranými vrcholy:
+
+- **Ctrl+G** udělá skupinu vrcholů (Group s třídou *Vertices*).
+- **W**, **E**, **R** posunou, otočí a zvětší jejich body (Edit s třídou
+  *Vertices*); měkký výběr i symetrie fungují jako u bodů.
+- **Delete** vyjme rohy z jejich polygonů (Blast s třídou *Vertices*):
+  čtyřúhelník bez jednoho rohu je trojúhelník. Polygon, kterému zbudou
+  méně než tři rohy (čáře méně než dva), zmizí celý. Bod, který používaly
+  jen vyjmuté rohy, zmizí s nimi.
+- **N** ukáže čísla vrcholů.
+
+Ve vzoru jsou vrcholy očíslované za sebou přes primitivy, jak je
+geometrie drží (`0-3 9`), nebo podle Houdini primitivem a rohem: `5v2` je
+roh 2 primitivu 5 (§7).
 
 ## 3. Myš a klávesy
 
@@ -292,7 +323,7 @@ Paint a barva zůstane, kde byla. Celočíselný atribut zůstane celočíselný
 Během malování je geometrie obarvená podle malovaného atributu: modrá
 0, přes tyrkysovou a žlutou do červené 1 (větší hodnoty než 1 se
 zmenšují podle největší). Kroužek štětce leží na povrchu pod myší.
-**P** znovu (nebo Q, W, E, R, 1–4) malování ukončí; uzel, který P
+**P** znovu (nebo Q, W, E, R, 1–5) malování ukončí; uzel, který P
 vložilo a do kterého se nic nenamalovalo, zase zmizí.
 
 Pro látku ([cloth.md](cloth.md)): bod s `pin` nad 0,5 je přišpendlený,
@@ -400,7 +431,7 @@ neroztřepí a rohy se nezakulatí.
 
 Kde geometrie má normály `N`, Sculpt je dopočítá z ploch. Během sculptu
 viewport nekreslí drát, aby byl tvar vidět. **U** znovu (nebo Q, W, E, R,
-1–4) sculpt ukončí; uzel, který U vložilo a do kterého se nic
+1–5) sculpt ukončí; uzel, který U vložilo a do kterého se nic
 nevytvarovalo, zase zmizí.
 
 ### Dyntopo: síť se pod štětcem zjemňuje (Ctrl+D)
@@ -472,8 +503,9 @@ pole uzlů v Houdini. Viewport je tak píše a dají se psát i ručně:
 |---|---|
 | `0-9 12 20-30` | čísla a rozsahy (rozsah i obráceně: `9-0`) |
 | `*` | vše |
-| `pin_group` | skupinu podle jména; skupina druhé třídy se převede (body primitiv, primitivy se všemi body ve skupině) |
-| `p3-4` | hranu mezi body 3 a 4; pro body oba body, pro primitivy ta, jejichž je stranou |
+| `pin_group` | skupinu podle jména; skupina jiné třídy se převede (body primitiv, primitivy se všemi body ve skupině, vrcholy na bodech či primitivech skupiny, body vrcholů, primitivy se všemi vrcholy ve skupině) |
+| `p3-4` | hranu mezi body 3 a 4; pro body oba body, pro primitivy ta, jejichž je stranou, pro vrcholy jejich rohy na obou koncích hrany |
+| `5v2`, `5v0-2` | roh 2 primitivu 5, první tři rohy primitivu 5; pro body jejich body, pro primitivy primitiv 5 |
 | `p0-1-2-3` | cestu tří hran |
 | `^…` | ubere: `* ^0-9` je vše kromě prvních deseti |
 
@@ -485,8 +517,15 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
 ## 8. Jak to funguje
 
 - **Vzory** — `src/pg/core/Selection.h`: `selectElements` (vzor → maska
-  bodů nebo primitiv), `patternOf`, `edgesOf`, `selectEdges`,
-  `edgePatternOf`.
+  bodů, primitiv nebo vrcholů), `patternOf`, `edgesOf`, `selectEdges`,
+  `edgePatternOf`; převody `verticesOfPoints`, `verticesOfPrimitives`,
+  `pointsOfVertices`, `primitivesOfVertices`.
+- **Vrcholy** — značka vrcholu je `ElementPicker::vertexMark` (bod
+  posunutý o `kVertexInset` = 0,2 ke středu polygonu). Značka leží na
+  ploše, takže je vidět, když paprsek k ní potká nejdřív svůj polygon,
+  nebo nic. Blast vrcholů je `Geometry::deleteVertices`: každý primitiv
+  pokračuje přes rohy, které mu zbyly, atributy rohů a primitiv
+  i skupiny se přenesou.
 - **Co je pod myší** — `src/pg/core/Pick.h`, `ElementPicker`: polygony
   rozložené na trojúhelníky (vějíř), strom obálek (BVH, dělení mediánem,
   listy po čtyřech). Paprsek najde nejbližší plochu; stejně daleké plochy
@@ -599,7 +638,9 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   pojmenovávají. Malování to nepostihne — kapky jsou místa.
 - Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
   objekty ani kusy před ní.
-- Zatím chybí režim vrcholů (rohů). Rovina symetrie jde vždy počátkem
+- Vrcholy nejdou malovat štětcem ani rozpouštět (Dissolve bere hrany
+  a plochy). Tab na vrcholech dá uzlu, který vrcholy nezná (PolyExtrude,
+  wrangle), jejich body či primitivy. Rovina symetrie jde vždy počátkem
   a zrcadlí se jen úprava, ne výběr. Měkký výběr má jen úchyty (posun,
   otočení, měřítko).
   Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by

@@ -228,31 +228,34 @@ public:
 
 /// Deletes the points a group or a pattern names -- "0-9 12", groups, "*"
 /// (Selection.h) -- and the primitives they were part of; or, of class
-/// primitive, the primitives it names, and the points only they used. With
-/// `invert` it keeps only them. When it names nothing there is -- no such
+/// primitive, the primitives it names, and the points only they used; or,
+/// of class vertex, the corners it names, each primitive going on through
+/// the rest of its corners. With `invert` it keeps only them. When it names nothing there is -- no such
 /// group -- nothing goes; an empty group kept leaves nothing.
 class BlastNode : public Node {
 public:
     explicit BlastNode(std::string name) : Node("blast", std::move(name)) {
         setInputCount(1);
         params_.setString("group", "selected");
-        params_.setInt("class", 0);  // 0 points, 1 primitives
+        params_.setInt("class", 0);  // 0 points, 1 primitives, 2 vertices
         params_.setBool("invert", false);
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
         auto geo = editableCopy(in.empty() ? nullptr : in[0]);
-        const bool prims = params_.evalInt("class", ctx, 0) == 1;
+        const int cls = std::clamp(params_.evalInt("class", ctx, 0), 0, 2);
+        const AttrClass of = cls == 1 ? AttrClass::Primitive : cls == 2 ? AttrClass::Vertex : AttrClass::Point;
         bool named = false;
-        const std::vector<uint8_t> chosen = selectElements(*geo, prims ? AttrClass::Primitive : AttrClass::Point,
-                                                           params_.getString("group", "selected"), &named);
+        const std::vector<uint8_t> chosen = selectElements(*geo, of, params_.getString("group", "selected"), &named);
         if (!named) return geo;
 
         const bool invert = params_.evalBool("invert", ctx, false);
         std::vector<uint8_t> keep(chosen.size());
         for (size_t i = 0; i < keep.size(); ++i) keep[i] = static_cast<uint8_t>(invert ? chosen[i] : !chosen[i]);
-        if (prims) {
+        if (of == AttrClass::Primitive) {
             geo->deletePrimitives(keep, true);
+        } else if (of == AttrClass::Vertex) {
+            geo->deleteVertices(keep, true);  // the corners: a polygon goes on through the rest
         } else {
             geo->deletePoints(keep);
         }

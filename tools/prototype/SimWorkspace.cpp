@@ -2062,7 +2062,7 @@ void SimWorkspace::helpMenu() {
                   {"Double click", "frame what is clicked, or the domain"},
                   {"0  Ctrl+Alt+0", "look through the camera, camera from view"},
                   {"", "Editing the displayed geometry"},
-                  {"1  2  3  4", "objects; points, edges, primitives"},
+                  {"1  2  3  4  5", "objects; points, edges, primitives, vertices"},
                   {"Click, left drag", "pick one, a box (Shift adds, Ctrl takes away)"},
                   {"S  H", "box, lasso or brush; what is hidden too"},
                   {"Alt, Space + left drag", "orbit, while picking or painting"},

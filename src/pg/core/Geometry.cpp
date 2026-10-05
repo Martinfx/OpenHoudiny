@@ -535,6 +535,75 @@ void Geometry::deletePrimitives(std::span<const uint8_t> keep, bool unusedPoints
     }
 }
 
+void Geometry::deleteVertices(std::span<const uint8_t> keep, bool unusedPoints) {
+    const Topology& t = topology();
+    const size_t nprims = t.primStart.size(), nverts = t.vertexPoint.size();
+    if (keep.size() != nverts) return;
+
+    std::vector<uint32_t> keptPrims, keptVertices;
+    keptPrims.reserve(nprims);
+    keptVertices.reserve(nverts);
+    // 1: used by a kept corner; 2: only by ones taken out.
+    std::vector<uint8_t> use(unusedPoints ? pointCount() : 0, 0);
+    Topology next;
+    uint32_t cursor = 0;
+    for (size_t p = 0; p < nprims; ++p) {
+        const uint32_t start = t.primStart[p], count = t.primCount[p];
+        uint32_t left = 0;
+        for (uint32_t v = start; v < start + count; ++v) left += keep[v] ? 1 : 0;
+        const uint32_t least = std::min<uint32_t>(t.primClosed[p] ? 3 : 2, count);
+        const bool stays = left > 0 && left >= least;
+        if (stays) {
+            keptPrims.push_back(static_cast<uint32_t>(p));
+            next.primStart.push_back(cursor);
+            next.primCount.push_back(left);
+            next.primClosed.push_back(t.primClosed[p]);
+            cursor += left;
+        }
+        for (uint32_t v = start; v < start + count; ++v) {
+            const uint32_t q = t.vertexPoint[v];
+            if (stays && keep[v]) {
+                keptVertices.push_back(v);
+                next.vertexPoint.push_back(q);
+                if (unusedPoints) use[q] = 1;
+            } else if (unusedPoints && use[q] == 0) {
+                use[q] = 2;
+            }
+        }
+    }
+    if (keptVertices.size() == nverts) return;
+
+    vertices_.gather(keptVertices);
+    primitives_.gather(keptPrims);
+    topo_ = std::make_shared<Topology>(std::move(next));
+    for (auto& [name, g] : groups_) {
+        const std::vector<uint32_t>* idx = nullptr;
+        switch (g.classOf()) {
+            case AttrClass::Vertex:    idx = &keptVertices; break;
+            case AttrClass::Primitive: idx = &keptPrims; break;
+            default:                   continue;
+        }
+        Group kept(g.classOf(), idx->size());
+        auto m = g.mask();
+        for (size_t i = 0; i < idx->size(); ++i) {
+            const uint32_t from = (*idx)[i];
+            if (from < m.size() && m[from]) kept.set(i, true);
+        }
+        g = std::move(kept);
+    }
+    if (unusedPoints) {
+        std::vector<uint8_t> keepPoints(use.size(), 1);
+        bool any = false;
+        for (size_t i = 0; i < use.size(); ++i) {
+            if (use[i] == 2) {
+                keepPoints[i] = 0;
+                any = true;
+            }
+        }
+        if (any) deletePoints(keepPoints);
+    }
+}
+
 uint64_t Geometry::hash() const {
     uint64_t h = kFnvOffset;
     hashAttributeSet(h, detail_);

@@ -12,7 +12,15 @@
 // Edges are named by the points they join, as in Houdini: "p3-4" is the
 // edge from point 3 to point 4, "p0-1-2-3" the three edges of a path.
 // For points, an edge names its two points; for primitives, those it is a
-// side of. Only the edges the geometry has count.
+// side of; for vertices, the corners at its ends of those primitives. Only
+// the edges the geometry has count.
+//
+// Vertices -- the corners of the primitives -- are numbered one after
+// another through the primitives, as the geometry keeps them; or named
+// as in Houdini: "5v2" is corner 2 of primitive 5, "5v0-2" its first
+// three. A group of points names the vertices on them, a group of
+// primitives their vertices; a group of vertices names their points, and
+// the primitives all of whose vertices it holds.
 //
 // The viewport writes a selection so (patternOf, edgePatternOf), and the
 // Group, Edit, Blast and Attribute Paint nodes read it.
@@ -32,8 +40,8 @@ namespace pg {
 /// An edge: the two points it joins, the lower number first.
 using Edge = std::pair<uint32_t, uint32_t>;
 
-/// For each element of class `cls` (Point or Primitive) of `geo`, 1 where
-/// `pattern` names it. `named`, when given: whether any item of it is
+/// For each element of class `cls` (Point, Primitive or Vertex) of `geo`,
+/// 1 where `pattern` names it. `named`, when given: whether any item of it is
 /// something there is -- numbers, "*", a group of that name, empty or not.
 std::vector<uint8_t> selectElements(const Geometry& geo, AttrClass cls, std::string_view pattern,
                                     bool* named = nullptr);
@@ -47,6 +55,15 @@ std::vector<uint8_t> pointsOfPrimitives(const Geometry& geo, std::span<const uin
 
 /// For each primitive of `geo`, 1 where every point of it `points` holds.
 std::vector<uint8_t> primitivesOfPoints(const Geometry& geo, std::span<const uint8_t> points);
+
+/// For each vertex of `geo`, 1 where its point is one `points` holds.
+std::vector<uint8_t> verticesOfPoints(const Geometry& geo, std::span<const uint8_t> points);
+/// For each vertex of `geo`, 1 where it is of a primitive `prims` holds.
+std::vector<uint8_t> verticesOfPrimitives(const Geometry& geo, std::span<const uint8_t> prims);
+/// For each point of `geo`, 1 where a vertex `vertices` holds is on it.
+std::vector<uint8_t> pointsOfVertices(const Geometry& geo, std::span<const uint8_t> vertices);
+/// For each primitive of `geo`, 1 where `vertices` holds every vertex of it.
+std::vector<uint8_t> primitivesOfVertices(const Geometry& geo, std::span<const uint8_t> vertices);
 
 /// Every edge of `geo` once, sorted: the sides of its polygons -- the last
 /// corner back to the first of a closed one -- and the segments of its

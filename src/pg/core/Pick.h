@@ -105,6 +105,13 @@ public:
     const std::vector<Edge>& edges() const { return edges_; }
     /// The middle of primitive `prim`: where its points are on average.
     Vec3 middle(size_t prim) const;
+    /// Where vertex (corner) `v` is shown and picked: its point, moved
+    /// kVertexInset of the way to the middle of its polygon -- so the
+    /// corners of the polygons round a point are told apart. A corner of a
+    /// line is at its point.
+    Vec3 vertexMark(size_t v) const;
+    /// The primitive vertex `v` is a corner of.
+    uint32_t vertexPrimitive(size_t v) const { return v < vertexPrim_.size() ? vertexPrim_[v] : 0u; }
 
     /// The nearest face along a ray: its primitive, how far it is and its
     /// normal (of unit length, towards the ray's origin); -1 when the ray
@@ -124,6 +131,10 @@ public:
     /// or a polyline within `reach` pixels in front of that face, or with
     /// `hidden` behind it too; -1 for none.
     int32_t primitive(const PickView& view, float sx, float sy, float reach, bool hidden = false) const;
+    /// The vertex whose mark lands nearest it within `reach`, not hidden
+    /// (unless `hidden`): a mark on a face is seen where the face is; -1
+    /// for none.
+    int32_t vertex(const PickView& view, float sx, float sy, float reach, bool hidden = false) const;
 
     /// What a part of the screen takes in, 1 each -- not what is hidden,
     /// unless `hidden`. Of a box or a lasso: the points that land in it, the
@@ -134,6 +145,8 @@ public:
     std::vector<uint8_t> pointsIn(const PickView& view, const ScreenRegion& region, bool hidden = false) const;
     std::vector<uint8_t> edgesIn(const PickView& view, const ScreenRegion& region, bool hidden = false) const;
     std::vector<uint8_t> primitivesIn(const PickView& view, const ScreenRegion& region, bool hidden = false) const;
+    /// The vertices whose marks it takes in.
+    std::vector<uint8_t> verticesIn(const PickView& view, const ScreenRegion& region, bool hidden = false) const;
     /// What the box from (x0, y0) to (x1, y1) holds.
     std::vector<uint8_t> pointsIn(const PickView& view, float x0, float y0, float x1, float y1, bool hidden = false) const {
         return pointsIn(view, ScreenRegion::box(x0, y0, x1, y1), hidden);
@@ -144,6 +157,9 @@ public:
     std::vector<uint8_t> primitivesIn(const PickView& view, float x0, float y0, float x1, float y1,
                                       bool hidden = false) const {
         return primitivesIn(view, ScreenRegion::box(x0, y0, x1, y1), hidden);
+    }
+    std::vector<uint8_t> verticesIn(const PickView& view, float x0, float y0, float x1, float y1, bool hidden = false) const {
+        return verticesIn(view, ScreenRegion::box(x0, y0, x1, y1), hidden);
     }
 
 private:
@@ -171,8 +187,16 @@ private:
     size_t pointCount_ = 0, primitiveCount_ = 0;
     std::vector<Triangle> tris_;
     std::vector<Node> nodes_;
+    /// Whether vertex `v`'s mark, at `mark`, is seen from `eye`.
+    bool vertexSeen(size_t v, const Vec3& eye, const Vec3& mark) const;
+
     std::vector<Edge> edges_;
+    std::vector<uint32_t> vertexPrim_;  ///< each vertex's primitive
     double builtArea_ = 0.0, area_ = 0.0;  ///< area() when made, and now
 };
+
+/// How far a vertex's mark is from its point towards the middle of its
+/// polygon: a fifth of the way.
+inline constexpr float kVertexInset = 0.2f;
 
 }  // namespace pg

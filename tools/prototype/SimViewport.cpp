@@ -807,7 +807,9 @@ void SimWorkspace::viewTools(ImVec2 at, float bottom) {
         {Elements::Points, Icon::Vertices, "Points (2): pick the displayed geometry's points -- a click, a box; Shift "
                                            "adds, Ctrl takes away; Alt+drag turns the view"},
         {Elements::Edges, Icon::Edges, "Edges (3): pick its edges"},
-        {Elements::Primitives, Icon::Faces, "Primitives (4): pick its polygons and curves"}};
+        {Elements::Primitives, Icon::Faces, "Primitives (4): pick its polygons and curves"},
+        {Elements::Vertices, Icon::Corners, "Vertices (5): pick the corners of its primitives -- each a dot a little "
+                                            "inside its polygon"}};
     for (const Kind& k : kinds) {
         place();
         if (theme::iconButton(k.tip, k.icon, k.tip, elements_ == k.mode && !paint_, true, side)) {
@@ -974,6 +976,10 @@ void SimWorkspace::viewMenu() {
         setPaint(false);
         setElements(Elements::Primitives);
     }
+    if (iconItem(Icon::Corners, elements_ == Elements::Vertices && !paint_ ? theme::kAccent : theme::kTextDim, "Vertices", "5")) {
+        setPaint(false);
+        setElements(Elements::Vertices);
+    }
     if (iconItem(Icon::Brush, paint_ && !sculpting() ? theme::kAccent : theme::kTextDim, "Paint", "P")) {
         setPaint(!(paint_ && !sculpting()));
     }
@@ -1084,9 +1090,10 @@ void SimWorkspace::viewKeys(bool overView) {
         return;
     }
     if (io.KeyAlt || io.KeyShift) return;
-    // What a click picks: objects, points, edges, primitives; the brush.
-    const Elements modes[4] = {Elements::Objects, Elements::Points, Elements::Edges, Elements::Primitives};
-    for (int k = 0; k < 4; ++k) {
+    // What a click picks: objects, points, edges, primitives, vertices; the brush.
+    const Elements modes[5] = {Elements::Objects, Elements::Points, Elements::Edges, Elements::Primitives,
+                               Elements::Vertices};
+    for (int k = 0; k < 5; ++k) {
         if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_1 + k), false)) {
             setPaint(false);
             setElements(modes[k]);

@@ -1097,6 +1097,7 @@ add_executable(pgtests
   tests/test_aces.cpp
   tests/test_edit.cpp
   tests/test_dyntopo.cpp
+  tests/test_vertices.cpp
   tests/test_trees.cpp
   tests/test_vegetation.cpp
   tests/test_render.cpp

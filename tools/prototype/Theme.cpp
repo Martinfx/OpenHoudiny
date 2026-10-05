@@ -618,12 +618,17 @@ void drawIcon(ImDrawList* d, Icon icon, ImVec2 c, float size, ImU32 col) {
         }
         case Icon::Vertices:  // a quad's outline, its corners picked
         case Icon::Edges:     // ... one of its sides
-        case Icon::Faces: {   // ... itself
+        case Icon::Faces:     // ... itself
+        case Icon::Corners: {  // ... dots a little inside its corners: the vertices
             const ImVec2 q[4] = {P(-0.75f, -0.5f), P(0.55f, -0.8f), P(0.8f, 0.55f), P(-0.55f, 0.75f)};
             if (icon == Icon::Faces) d->AddConvexPolyFilled(q, 4, shade(col, -0.35f));
             d->AddPolyline(q, 4, icon == Icon::Faces ? col : shade(col, -0.45f), ImDrawFlags_Closed, t);
             if (icon == Icon::Vertices) {
                 for (const ImVec2& c : q) d->AddCircleFilled(c, 0.2f * s, col);
+            }
+            if (icon == Icon::Corners) {
+                const ImVec2 m((q[0].x + q[1].x + q[2].x + q[3].x) * 0.25f, (q[0].y + q[1].y + q[2].y + q[3].y) * 0.25f);
+                for (const ImVec2& c : q) d->AddCircleFilled(ImVec2(c.x + (m.x - c.x) * 0.3f, c.y + (m.y - c.y) * 0.3f), 0.17f * s, col);
             }
             if (icon == Icon::Edges) d->AddLine(q[1], q[2], col, 2.6f * t);
             break;

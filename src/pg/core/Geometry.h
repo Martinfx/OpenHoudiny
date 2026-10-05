@@ -196,6 +196,13 @@ public:
     /// primitives used go too; loose points that were loose before stay.
     void deletePrimitives(std::span<const uint8_t> keep, bool unusedPoints);
 
+    /// Keeps only the vertices -- the corners of the primitives -- selected
+    /// by `keep` (size == vertexCount): each primitive goes on through the
+    /// corners it keeps, in their order. One left with fewer than it needs
+    /// -- a closed polygon three, a line two -- goes whole. With
+    /// `unusedPoints`, the points that only the corners taken out used go too.
+    void deleteVertices(std::span<const uint8_t> keep, bool unusedPoints);
+
     /// Order-stable content hash over every attribute, the topology and the
     /// groups. Two geometries with the same hash are byte-identical in content.
     uint64_t hash() const;

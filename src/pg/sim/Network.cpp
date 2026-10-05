@@ -1118,43 +1118,45 @@ std::vector<NodeType> buildTypes() {
              {text("name", "Group", "Group", "selected", "The group's name."),
               vec("min", "Min", "Group", Vec3(-0.5f, 0.0f, -0.5f), -5.0f, 5.0f, "m", "The box's lowest corner."),
               vec("max", "Max", "Group", Vec3(0.5f, 1.0f, 0.5f), -5.0f, 5.0f, "m", "The box's highest corner.")});
-    // Which of the points or the primitives: the class of a Group, an Edit,
-    // a Blast.
+    // Which of the points, the primitives or the vertices: the class of a
+    // Group, an Edit, a Blast.
     auto elements = [](const char* section, const char* help) {
-        return ParamDef{"class", "Class", section, K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "", help,
-                        {"point", "primitive"}, {"Points", "Primitives"}};
+        return ParamDef{"class", "Class", section, K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f, "", help,
+                        {"point", "primitive", "vertex"}, {"Points", "Primitives", "Vertices"}};
     };
     geometry("blast", "Blast", "blast",
              "Deletes the points of a group, and the primitives they were part of -- or of class Primitives the "
-             "primitives, and the points only they used. Inverted, it keeps only them. Delete in the viewport "
-             "makes one of what is picked there.",
+             "primitives, and the points only they used; of class Vertices the corners, a polygon going on "
+             "through the rest. Inverted, it keeps only them. Delete in the viewport makes one of what is "
+             "picked there.",
              in,
              {text("group", "Group", "Blast", "selected",
                    "Which: a group's name, numbers and ranges -- 0-9 12 -- edges by their points -- p3-4, "
-                   "p0-1-2 -- * for all; ^ before one takes it away."),
-              elements("Blast", "What Group names: points, or primitives."),
+                   "p0-1-2 -- corners of a primitive -- 5v2 -- * for all; ^ before one takes it away."),
+              elements("Blast", "What Group names: points; primitives; or vertices, the corners of the primitives -- "
+                                "one left with fewer than three (a line, two) goes whole."),
               {"invert", "Keep", "Blast", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                "Keep the group and delete the rest."}});
     geometry("group", "Group", "groupcreate",
-             "A group of the points or primitives picked -- in the viewport, or by numbers and ranges: what "
-             "Blast deletes, a wrangle runs over, the cloth pins by. Ctrl+G in the viewport makes one of what "
-             "is picked there.",
+             "A group of the points, primitives or vertices picked -- in the viewport, or by numbers and ranges: "
+             "what Blast deletes, a wrangle runs over, the cloth pins by. Ctrl+G in the viewport makes one of "
+             "what is picked there.",
              in,
              {text("name", "Name", "Group", "group1", "What it is called."),
-              elements("Group", "Points, or primitives."),
+              elements("Group", "Points, primitives, or vertices -- the corners of the primitives."),
               text("pattern", "Elements", "Group", "",
-                   "Which: numbers and ranges -- 0-9 12 20-30 -- edges by their points -- p3-4 -- other groups "
-                   "by name, * for all; ^ before one takes it away.")});
+                   "Which: numbers and ranges -- 0-9 12 20-30 -- edges by their points -- p3-4 -- corners of a "
+                   "primitive -- 5v2, 5v0-2 -- other groups by name, * for all; ^ before one takes it away.")});
     geometry("edit", "Edit", "edit",
-             "Moves, turns and sizes the points picked in the viewport -- or those of the primitives picked -- "
-             "about the pivot, as the handle does: what dragging what is picked in the viewport makes -- W, "
+             "Moves, turns and sizes the points picked in the viewport -- or those of the primitives or the "
+             "vertices picked -- about the pivot, as the handle does: what dragging what is picked in the viewport makes -- W, "
              "E, R. Soft Radius takes the points round them along, less the further they are -- O in the "
              "viewport shows how much each takes.",
              in,
              {text("group", "Elements", "Edit", "",
-                   "Which: numbers and ranges -- 0-9 12 -- edges -- p3-4 -- groups by name, * for all; ^ before "
-                   "one takes it away."),
-              elements("Edit", "Points, or the points of primitives."),
+                   "Which: numbers and ranges -- 0-9 12 -- edges -- p3-4 -- corners -- 5v2 -- groups by name, * "
+                   "for all; ^ before one takes it away."),
+              elements("Edit", "Points, or the points of primitives, or of vertices."),
               vec("t", "Translate", "Edit", Vec3(), -5.0f, 5.0f, "m", "How far they move."),
               vec("r", "Rotate", "Edit", Vec3(), -180.0f, 180.0f, "\xc2\xb0", "Degrees about x, then y, then z, about the pivot."),
               vec("s", "Scale", "Edit", Vec3(1.0f, 1.0f, 1.0f), 0.0f, 5.0f, "", "How much larger along x, y, z, about the pivot."),

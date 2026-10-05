@@ -19,17 +19,19 @@
 namespace pg {
 namespace {
 
-AttrClass classOf(int choice) { return choice == 1 ? AttrClass::Primitive : AttrClass::Point; }
+AttrClass classOf(int choice) {
+    return choice == 1 ? AttrClass::Primitive : choice == 2 ? AttrClass::Vertex : AttrClass::Point;
+}
 
 /// A group of the elements a pattern names -- "0-9 12", other groups, "*":
-/// Group Create in Houdini. What is in a group of that name already is not
-/// kept.
+/// Group Create in Houdini -- of points, primitives or vertices. What is in
+/// a group of that name already is not kept.
 class GroupCreateNode : public Node {
 public:
     explicit GroupCreateNode(std::string name) : Node("groupcreate", std::move(name)) {
         setInputCount(1);
         params_.setString("name", "group1");
-        params_.setInt("class", 0);  // 0 points, 1 primitives
+        params_.setInt("class", 0);  // 0 points, 1 primitives, 2 vertices
         params_.setString("pattern", "");
     }
 
@@ -46,8 +48,8 @@ public:
     }
 };
 
-/// The points a pattern names -- or the points of the primitives it names --
-/// scaled, then turned about the pivot, then moved: what the viewport's
+/// The points a pattern names -- or the points of the primitives or the
+/// vertices it names -- scaled, then turned about the pivot, then moved: what the viewport's
 /// handle does to a selection. With a soft radius the points round them
 /// follow too, less the further they are: all the way at the selection,
 /// not at all the radius away (Soft.h) -- the distance straight, or along
@@ -76,6 +78,7 @@ public:
         const AttrClass cls = classOf(params_.evalInt("class", ctx, 0));
         std::vector<uint8_t> chosen = selectElements(*geo, cls, params_.getString("group"));
         if (cls == AttrClass::Primitive) chosen = pointsOfPrimitives(*geo, chosen);
+        if (cls == AttrClass::Vertex) chosen = pointsOfVertices(*geo, chosen);
         const size_t n = geo->pointCount();
         if (std::none_of(chosen.begin(), chosen.end(), [](uint8_t c) { return c != 0; })) return geo;
         const Mirror mirror = static_cast<Mirror>(std::clamp(params_.evalInt("symmetry", ctx, 0), 0, 3));

@@ -7,7 +7,8 @@
 // dabs. What cannot be seen is not picked: the geometry's own surface hides
 // what is behind it (pg/core/Pick.h) -- unless asked for (H).
 //
-//   1 2 3 4            objects; points, edges, primitives
+//   1 2 3 4 5          objects; points, edges, primitives, vertices -- the corners
+//                      of the primitives, each a dot a little inside its polygon
 //   click, drag        pick one, or what a box holds: Shift adds, Ctrl takes away
 //   S                  a drag draws a box, a lasso, or is a brush that picks what
 //                      it goes over -- [ ] or Shift+wheel: its size
@@ -49,6 +50,7 @@ const Vec4 kPicked(1.0f, 0.8f, 0.2f, 1.0f);
 const Vec4 kPickedFace(1.0f, 0.74f, 0.12f, 0.4f);
 const Vec4 kHover(0.3f, 0.95f, 1.0f, 1.0f);
 const Vec4 kHoverFace(0.3f, 0.95f, 1.0f, 0.25f);
+const Vec4 kCorner(0.25f, 0.85f, 0.4f, 0.95f);
 
 /// Past so many, the wire and the points are not drawn -- what is picked is.
 constexpr size_t kMostMarks = 400000;
@@ -63,6 +65,7 @@ const char* kindOf(SimWorkspace::Elements e, bool many) {
         case SimWorkspace::Elements::Points: return many ? "points" : "point";
         case SimWorkspace::Elements::Edges: return many ? "edges" : "edge";
         case SimWorkspace::Elements::Primitives: return many ? "primitives" : "primitive";
+        case SimWorkspace::Elements::Vertices: return many ? "vertices" : "vertex";
         default: return many ? "objects" : "object";
     }
 }
@@ -141,7 +144,9 @@ void SimWorkspace::checkElements() {
     // the node after it, an Edit undone, show the same points.
     const GeometryPtr& geo = renderer_.geometry();
     const bool any = !picked_.mask.empty() || !picked_.edges.empty();
-    const bool gone = geo && (geo->pointCount() != picked_.points || geo->primitiveCount() != picked_.primitives);
+    const bool gone = geo && (geo->pointCount() != picked_.points || geo->primitiveCount() != picked_.primitives ||
+                              (elements_ == Elements::Vertices && !picked_.mask.empty() &&
+                               picked_.mask.size() != geo->vertexCount()));
     if (any && gone) {
         picked_.mask.clear();
         picked_.edges.clear();
@@ -171,7 +176,15 @@ std::string SimWorkspace::elementPattern() const {
     return patternCache_;
 }
 
-int SimWorkspace::elementClass() const { return elements_ == Elements::Primitives ? 1 : 0; }
+AttrClass SimWorkspace::elementAttrClass() const {
+    return elements_ == Elements::Primitives ? AttrClass::Primitive
+           : elements_ == Elements::Vertices ? AttrClass::Vertex
+                                             : AttrClass::Point;
+}
+
+int SimWorkspace::elementClass() const {
+    return elements_ == Elements::Primitives ? 1 : elements_ == Elements::Vertices ? 2 : 0;
+}
 
 std::vector<uint8_t> SimWorkspace::elementPoints(const Geometry& geo) const {
     switch (elements_) {
@@ -181,6 +194,7 @@ std::vector<uint8_t> SimWorkspace::elementPoints(const Geometry& geo) const {
             return out;
         }
         case Elements::Primitives: return pointsOfPrimitives(geo, picked_.mask);
+        case Elements::Vertices: return pointsOfVertices(geo, picked_.mask);
         case Elements::Edges: {
             std::vector<uint8_t> out(geo.pointCount(), 0);
             for (const Edge& e : picked_.edges) {
@@ -218,13 +232,15 @@ void SimWorkspace::setElements(Elements mode) {
     if (mode == elements_) return;
     if (gizmo_.dragging()) return;
     const GeometryPtr& geo = renderer_.geometry();
-    // What was picked, as the points it is -- and as the primitives, for edges.
-    std::vector<uint8_t> points, prims;
+    // What was picked, as the points it is -- and as the primitives, for
+    // edges and vertices; the vertices, for primitives.
+    std::vector<uint8_t> points, prims, corners;
     const bool had = geo && elementCount() > 0 && picked_.points == geo->pointCount() &&
                      picked_.primitives == geo->primitiveCount();
     if (had) {
         points = elementPoints(*geo);
         if (elements_ == Elements::Primitives) prims = picked_.mask;
+        if (elements_ == Elements::Vertices) corners = picked_.mask;
     }
     elements_ = mode;
     picked_.mask.clear();
@@ -254,6 +270,8 @@ void SimWorkspace::setElements(Elements mode) {
             picked_.mask = selectElements(*geo, AttrClass::Point, pattern);
         } else if (mode == Elements::Primitives && cls == 1) {
             picked_.mask = selectElements(*geo, AttrClass::Primitive, pattern);
+        } else if (mode == Elements::Vertices && cls == 2) {
+            picked_.mask = selectElements(*geo, AttrClass::Vertex, pattern);
         } else if (mode == Elements::Edges && cls == 0) {
             const std::vector<Edge> all = edgesOf(*geo);
             picked_.edges = selectEdges(all, pattern);
@@ -263,7 +281,12 @@ void SimWorkspace::setElements(Elements mode) {
     }
     switch (mode) {
         case Elements::Points: picked_.mask = points; break;
-        case Elements::Primitives: picked_.mask = primitivesOfPoints(*geo, points); break;
+        case Elements::Primitives:
+            picked_.mask = !corners.empty() ? primitivesOfVertices(*geo, corners) : primitivesOfPoints(*geo, points);
+            break;
+        case Elements::Vertices:
+            picked_.mask = !prims.empty() ? verticesOfPrimitives(*geo, prims) : verticesOfPoints(*geo, points);
+            break;
         case Elements::Edges:
             if (!prims.empty()) {
                 // The sides of the primitives.
@@ -301,6 +324,7 @@ int32_t SimWorkspace::elementAt(const ViewCamera& cam, ImVec2 mouse) {
         case Elements::Points: return p->point(v, mouse.x, mouse.y, reach(), pickHidden_);
         case Elements::Edges: return p->edge(v, mouse.x, mouse.y, reach(), pickHidden_);
         case Elements::Primitives: return p->primitive(v, mouse.x, mouse.y, reach(), pickHidden_);
+        case Elements::Vertices: return p->vertex(v, mouse.x, mouse.y, reach(), pickHidden_);
         default: return -1;
     }
 }
@@ -325,7 +349,7 @@ void SimWorkspace::clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, 
             else if (!remove && !in) picked_.edges.insert(at, edge);
         }
     } else {
-        const size_t n = elements_ == Elements::Points ? geo->pointCount() : geo->primitiveCount();
+        const size_t n = geo->elementCount(elementAttrClass());
         picked_.mask.resize(n, 0);
         if (e >= 0 && static_cast<size_t>(e) < n) picked_.mask[static_cast<size_t>(e)] = remove ? 0 : 1;
     }
@@ -351,8 +375,9 @@ void SimWorkspace::regionElements(const ViewCamera& cam, const ScreenRegion& reg
         }
         picked_.edges = std::move(out);
     } else {
-        const std::vector<uint8_t> in = elements_ == Elements::Points ? p->pointsIn(v, region, pickHidden_)
-                                                                      : p->primitivesIn(v, region, pickHidden_);
+        const std::vector<uint8_t> in = elements_ == Elements::Points     ? p->pointsIn(v, region, pickHidden_)
+                                        : elements_ == Elements::Vertices ? p->verticesIn(v, region, pickHidden_)
+                                                                          : p->primitivesIn(v, region, pickHidden_);
         picked_.mask.resize(in.size(), 0);
         for (size_t i = 0; i < in.size(); ++i) {
             const bool was = picked_.mask[i] != 0;
@@ -595,7 +620,7 @@ void SimWorkspace::selectAllElements(bool invert) {
         }
         picked_.edges = std::move(out);
     } else {
-        const size_t n = elements_ == Elements::Points ? geo->pointCount() : geo->primitiveCount();
+        const size_t n = geo->elementCount(elementAttrClass());
         picked_.mask.resize(n, 0);
         for (uint8_t& m : picked_.mask) m = invert ? (m ? 0 : 1) : 1;
     }
@@ -626,6 +651,27 @@ const std::vector<Vec3>& SimWorkspace::pointNormals(const GeometryPtr& geo) {
         }
     }
     return normals_;
+}
+
+const std::vector<Vec3>& SimWorkspace::primitiveNormals(const GeometryPtr& geo) {
+    const Geometry& g = *geo;
+    const bool same = primNormalsGeometry_ && primNormalsGeometry_->positions().data() == g.positions().data() &&
+                      primNormalsGeometry_->vertexPoints().data() == g.vertexPoints().data() &&
+                      primNormalsGeometry_->pointCount() == g.pointCount() &&
+                      primNormalsGeometry_->primitiveCount() == g.primitiveCount();
+    if (same) return primNormals_;
+    primNormalsGeometry_ = geo;
+    const auto P = g.positions();
+    primNormals_.assign(g.primitiveCount(), Vec3());
+    for (size_t p = 0; p < g.primitiveCount(); ++p) {
+        const auto pts = g.primitivePoints(p);
+        if (pts.size() < 3 || !g.primitiveClosed(p)) continue;
+        for (size_t k = 1; k + 1 < pts.size(); ++k) {
+            if (pts[0] >= P.size() || pts[k] >= P.size() || pts[k + 1] >= P.size()) continue;
+            primNormals_[p] += cross(P[pts[k]] - P[pts[0]], P[pts[k + 1]] - P[pts[0]]);
+        }
+    }
+    return primNormals_;
 }
 
 void SimWorkspace::updateOverlay() {
@@ -697,6 +743,14 @@ void SimWorkspace::updateOverlay() {
                 // The points, each over the surface's normal there.
                 const std::vector<Vec3>& normals = pointNormals(geo);
                 for (size_t i = 0; i < P.size(); ++i) o.dot(P[i], kPoint, theme::px(5.0f), normals[i]);
+            } else if (elements_ == Elements::Vertices && g.vertexCount() <= kMostMarks) {
+                // The corners, each a little inside its polygon, over its face.
+                if (const ElementPicker* p = picker()) {
+                    const std::vector<Vec3>& normals = primitiveNormals(geo);
+                    for (size_t v = 0; v < g.vertexCount(); ++v) {
+                        o.dot(p->vertexMark(v), kCorner, theme::px(6.0f), normals[p->vertexPrimitive(v)]);
+                    }
+                }
             }
         }
         renderer_.setOverlay(o, 0);
@@ -749,6 +803,13 @@ void SimWorkspace::updateOverlay() {
                 for (const Edge& e : picked_.edges) {
                     if (e.first < P.size() && e.second < P.size()) o.wideLine(P[e.first], P[e.second], kPicked, theme::px(3.0f));
                 }
+            } else if (elements_ == Elements::Vertices) {
+                if (const ElementPicker* p = picker(); p && picked_.mask.size() == g.vertexCount()) {
+                    const std::vector<Vec3>& normals = primitiveNormals(geo);
+                    for (size_t v = 0; v < picked_.mask.size(); ++v) {
+                        if (picked_.mask[v]) o.dot(p->vertexMark(v), kPicked, theme::px(8.0f), normals[p->vertexPrimitive(v)]);
+                    }
+                }
             } else if (elements_ == Elements::Primitives) {
                 for (size_t p = 0; p < picked_.mask.size() && p < g.primitiveCount(); ++p) {
                     if (!picked_.mask[p]) continue;
@@ -783,6 +844,12 @@ void SimWorkspace::updateOverlay() {
             } else if (elements_ == Elements::Edges && picker_ && h < picker_->edges().size()) {
                 const Edge& e = picker_->edges()[h];
                 o.wideLine(P[e.first], P[e.second], kHover, theme::px(3.0f));
+            } else if (elements_ == Elements::Vertices && picker_ && h < g.vertexCount()) {
+                // The corner, and the point it is the corner at.
+                const Vec3 mark = picker_->vertexMark(h);
+                const Vec3 normal = primitiveNormals(geo)[picker_->vertexPrimitive(h)];
+                o.wideLine(P[g.vertexPoint(h)], mark, kHover, theme::px(2.0f));
+                o.dot(mark, kHover, theme::px(10.0f), normal);
             } else if (elements_ == Elements::Primitives && h < g.primitiveCount()) {
                 const auto pts = g.primitivePoints(h);
                 const bool face = pts.size() >= 3 && g.primitiveClosed(h);
@@ -888,8 +955,9 @@ void SimWorkspace::deleteElements() {
     const size_t n = elementCount();
     if (elements_ == Elements::Objects || n == 0) return;
     const std::string pattern = elementPattern();
-    // Edges go with the primitives they are sides of.
-    const int cls = elements_ == Elements::Points ? 0 : 1;
+    // Edges go with the primitives they are sides of; vertices are taken
+    // out of their primitives.
+    const int cls = elements_ == Elements::Points ? 0 : elements_ == Elements::Vertices ? 2 : 1;
     const int id = insertAfterDisplayed("blast");
     if (!id) return;
     net_.setText(id, "group", pattern);
@@ -898,7 +966,10 @@ void SimWorkspace::deleteElements() {
     picked_.edges.clear();
     ++picked_.revision;
     setMessage("Deleted " + std::to_string(n) + " " + kindOf(elements_, n != 1) +
-               (elements_ == Elements::Edges ? " and the primitives on them" : "") + ": a Blast node");
+               (elements_ == Elements::Edges      ? " and the primitives on them"
+                : elements_ == Elements::Vertices ? ", the polygons going on through the rest of their corners"
+                                                  : "") +
+               ": a Blast node");
 }
 
 void SimWorkspace::dissolveElements() {
@@ -1336,6 +1407,11 @@ std::string SimWorkspace::patternFor(AttrClass cls) const {
     if (!geo || elementCount() == 0) return {};
     // Edges name their points, or the primitives they are sides of, alike.
     if (elements_ == Elements::Edges) return edgePatternOf(picked_.edges);
+    if (elements_ == Elements::Vertices) {
+        if (cls == AttrClass::Vertex) return patternOf(picked_.mask);
+        return cls == AttrClass::Primitive ? patternOf(primitivesOfVertices(*geo, picked_.mask))
+                                           : patternOf(pointsOfVertices(*geo, picked_.mask));
+    }
     const bool prims = elements_ == Elements::Primitives;
     if ((cls == AttrClass::Primitive) == prims) return patternOf(picked_.mask);
     return cls == AttrClass::Primitive ? patternOf(primitivesOfPoints(*geo, picked_.mask))
@@ -1352,6 +1428,12 @@ void SimWorkspace::applyToPicked(const std::string& type) {
     // The class the node works on: its own -- a Point or Primitive
     // Wrangle, PolyExtrude's faces -- or, where it has a choice, ours.
     AttrClass cls = elements_ == Elements::Primitives ? AttrClass::Primitive : AttrClass::Point;
+    if (elements_ == Elements::Vertices) {
+        // Vertices where the node takes them -- a Group, an Edit, a Blast --
+        // else their points.
+        const sim::ParamDef* c = t->param("class");
+        if (c && c->choices.size() > 2) cls = AttrClass::Vertex;
+    }
     bool fixed = false;
     if (type == "polyextrude" || type == "primitive_wrangle") {
         cls = AttrClass::Primitive;
@@ -1365,7 +1447,7 @@ void SimWorkspace::applyToPicked(const std::string& type) {
     if (!id) return;
     if (!pattern.empty() && t->param("group")) net_.setText(id, "group", pattern);
     if (!fixed && t->param("class") && n) {
-        net_.setParam(id, "class", {cls == AttrClass::Primitive ? 1.0f : 0.0f, 0.0f, 0.0f});
+        net_.setParam(id, "class", {cls == AttrClass::Primitive ? 1.0f : cls == AttrClass::Vertex ? 2.0f : 0.0f, 0.0f, 0.0f});
     }
     const sim::Node* made = net_.node(id);
     setMessage(std::string(t->label) + " " + (made ? made->name : std::string()) +
@@ -1445,10 +1527,11 @@ bool SimWorkspace::extrudeGizmo(ImDrawList* d, const ViewCamera& cam, bool overV
 void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
     const GeometryPtr& geo = renderer_.geometry();
     if (!numbers_ || !editingElements() || !geo) return;
-    const bool prims = elements_ == Elements::Primitives;
+    // Primitives numbered at their middles, vertices at their marks, else points.
+    const int kind = elements_ == Elements::Primitives ? 1 : elements_ == Elements::Vertices ? 2 : 0;
     // Those seen, found again when the view or the geometry changed.
     char key[200];
-    std::snprintf(key, sizeof key, "%p %d %g %g %g %g %g %g %g %g", static_cast<const void*>(geo.get()), prims ? 1 : 0,
+    std::snprintf(key, sizeof key, "%p %d %g %g %g %g %g %g %g %g", static_cast<const void*>(geo.get()), kind,
                   static_cast<double>(cam.eye.x), static_cast<double>(cam.eye.y), static_cast<double>(cam.eye.z),
                   static_cast<double>(cam.forward.x), static_cast<double>(cam.forward.y), static_cast<double>(cam.forward.z),
                   static_cast<double>(cam.size.x), static_cast<double>(cam.size.y));
@@ -1457,10 +1540,10 @@ void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
         numbersKey_ = key;
         numberAt_.clear();
         const ElementPicker* p = picker();
-        const size_t count = prims ? geo->primitiveCount() : geo->pointCount();
+        const size_t count = kind == 1 ? geo->primitiveCount() : kind == 2 ? geo->vertexCount() : geo->pointCount();
         const auto P = geo->positions();
         for (size_t i = 0; i < count && numberAt_.size() <= kMost; ++i) {
-            const Vec3 at = prims ? (p ? p->middle(i) : Vec3()) : P[i];
+            const Vec3 at = kind == 0 ? P[i] : !p ? Vec3() : kind == 1 ? p->middle(i) : p->vertexMark(i);
             ImVec2 s;
             if (!cam.toScreen(at, s) || s.x < cam.lo.x || s.y < cam.lo.y || s.x > cam.lo.x + cam.size.x ||
                 s.y > cam.lo.y + cam.size.y) {
@@ -1485,20 +1568,21 @@ void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
         d->AddText(ImVec2(cam.lo.x + theme::px(60.0f), cam.lo.y + cam.size.y - theme::px(60.0f)), theme::kTextDim, text);
         return;
     }
-    const ImU32 col = prims ? IM_COL32(255, 214, 120, 235) : IM_COL32(170, 220, 255, 235);
+    const ImU32 col = kind == 1 ? IM_COL32(255, 214, 120, 235) : kind == 2 ? IM_COL32(150, 240, 160, 235)
+                                                                           : IM_COL32(170, 220, 255, 235);
     char text[16];
     for (const auto& [at, i] : numberAt_) {
         ImVec2 s;
         if (!cam.toScreen(at, s)) continue;
         std::snprintf(text, sizeof text, "%u", i);
         const ImVec2 ts = ImGui::CalcTextSize(text);
-        const ImVec2 o(s.x + (prims ? -ts.x * 0.5f : theme::px(4.0f)), s.y - (prims ? ts.y * 0.5f : ts.y + theme::px(2.0f)));
+        // A primitive's on its middle; a point's or a vertex's beside it.
+        const bool centred = kind == 1;
+        const ImVec2 o(s.x + (centred ? -ts.x * 0.5f : theme::px(4.0f)), s.y - (centred ? ts.y * 0.5f : ts.y + theme::px(2.0f)));
         d->AddText(ImVec2(o.x + 1.0f, o.y + 1.0f), IM_COL32(0, 0, 0, 200), text);
         d->AddText(o, col, text);
     }
 }
-
-// --- what the viewport says -------------------------------------------------------------------
 
 std::string SimWorkspace::elementStatus() const {
     if (!editingElements()) return {};
@@ -1536,6 +1620,12 @@ std::string SimWorkspace::elementStatus() const {
         if (elements_ == Elements::Edges && picker_ && h < picker_->edges().size()) {
             const Edge& e = picker_->edges()[h];
             text = "edge " + std::to_string(e.first) + "-" + std::to_string(e.second);
+        } else if (elements_ == Elements::Vertices && picker_ && renderer_.geometry() && h < renderer_.geometry()->vertexCount()) {
+            // As Houdini names it too: the primitive and which of its corners.
+            const Geometry& g = *renderer_.geometry();
+            const uint32_t prim = picker_->vertexPrimitive(h);
+            text = "vertex " + std::to_string(h) + " (" + std::to_string(prim) + "v" +
+                   std::to_string(h - g.primitiveVertexStart(prim)) + ", point " + std::to_string(g.vertexPoint(h)) + ")";
         } else {
             text = std::string(kindOf(elements_, false)) + " " + std::to_string(h);
         }

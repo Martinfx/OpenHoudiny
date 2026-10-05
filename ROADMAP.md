@@ -507,7 +507,10 @@ Seřazeno podle poměru hodnota / náklad:
    hrany se stáhnou do bodu, aniž by se porušila plocha, okraj či rohy;
    atributy a skupiny jdou s body, detail podle poloměru štětce nebo
    v metrech, přírůstkově do bitu shodné s výpočtem od začátku.
-   Zbývá: režim vrcholů.
+   ✅ Režim vrcholů (5): rohy primitiv jako tečky kousek uvnitř
+   polygonů, výběr klikem, obdélníkem, lasem i štětcem, převody mezi
+   režimy; vzory `5v2` jako v Houdini; Group, Edit a Blast s třídou
+   Vertices (Blast vyjme rohy z polygonů).
 8. **Vegetace** — ✅ uzel Tree: strom roste jako rostlina podle modelu
    Webera a Penna — kmen (i rozdělený do vůdčích větví), až tři úrovně
    větví kolem rodiče o zlatý úhel, prohnuté vahou, stočené ke světlu
