@@ -11,6 +11,10 @@ OpenVDB. Dva uzly:
   viewport, path tracer i Cycles, jde do cache a do exportu do USD
   a Alembicu.
 
+Stejná čtečka čte i objemy ze scén USD (prim `Volume` s poli
+`OpenVDBAsset`): uzel USD Import je dá na místo podle transformace ve
+scéně ([usd-import.md](usd-import.md)).
+
 ![Ohnivá koule ze souboru VDB (příklad vdb_fireball): hustota, teplota a plamen, které zapsal export prototypu a OpenVDB 10 přepsalo do half floatů s kompresí Blosc. VDB Gas je čte, nic se nesimuluje; oheň svítí na bedny (Cycles)](img/vdb-fireball.jpg)
 
 ## 1. Rychlý start

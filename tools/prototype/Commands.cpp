@@ -1640,8 +1640,11 @@ int usdInfo(const Options& o) {
     }
     std::vector<std::string> notes;
     const auto geo = usd::importGeometry(*stage, time, usd::ImportOptions{}, &notes);
-    std::printf("time code %g: %zu points, %zu primitives from %zu prims%s\n", time, geo->pointCount(),
-                geo->primitiveCount(), usd::geometryPrims(*stage, usd::ImportOptions{}).size(),
+    std::string volumes;
+    for (const pg::Volume& v : geo->volumes()) volumes += (volumes.empty() ? "" : ", ") + v.name;
+    std::printf("time code %g: %zu points, %zu primitives%s%s from %zu prims%s\n", time, geo->pointCount(),
+                geo->primitiveCount(), volumes.empty() ? "" : ", volumes ", volumes.c_str(),
+                usd::geometryPrims(*stage, usd::ImportOptions{}).size(),
                 usd::geometryVaries(*stage, usd::ImportOptions{}) ? ", changing in time" : "");
     for (size_t i = 0; i < notes.size() && i < 10; ++i) std::printf("  %s\n", notes[i].c_str());
     if (geo->prototypeCount() > 0) {

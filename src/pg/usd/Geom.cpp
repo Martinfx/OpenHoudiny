@@ -2,6 +2,7 @@
 
 #include "pg/core/Instances.h"
 #include "pg/core/Material.h"
+#include "pg/io/Vdb.h"
 #include "pg/usd/Shade.h"
 
 #include <glm/ext/quaternion_double.hpp>
@@ -433,6 +434,18 @@ Instances instancesAt(const Stage& stage, const Stage::Prim& prim, double time, 
         if (ids.isNumbers()) out.ids.push_back(static_cast<int32_t>(id));
     }
     return out;
+}
+
+/// A file `prim`'s asset attribute `name` names at `time`, as USD resolves
+/// it: from the layer of the strongest opinion that gives it; "" for none.
+std::string assetAt(const Stage& stage, const Stage::Prim& prim, const std::string& name, double time) {
+    const Value v = stage.value(prim, name, time);
+    if (!v.isStrings() || v.text().empty()) return {};
+    for (const Stage::Opinion& o : prim.opinions) {
+        const Property* p = o.spec->property(name);
+        if (p && (p->hasDefault || p->hasSamples)) return resolveAsset(v.text(), o.layer->identifier);
+    }
+    return resolveAsset(v.text(), stage.rootLayer().identifier);
 }
 
 /// A transform as an instance's: a turn (orient, x y z w) and a size
@@ -923,6 +936,72 @@ struct Reader {
         primvars(prim, piece, false);
     }
 
+    /// A Volume: each of its fields (field:density, an OpenVDBAsset) the
+    /// grid of its file -- filePath at the time, fieldName -- as
+    /// io::readVdb() reads it, placed by the field's transform (the
+    /// volume's with it, where the field is under it), named as the field
+    /// is: density; vel.x, vel.y, vel.z for a vector.
+    void volume(const Stage::Prim& prim) {
+        for (const std::string& name : stage.propertyNames(prim)) {
+            if (name.rfind("field:", 0) != 0) continue;
+            const Property* rel = stage.property(prim, name);
+            if (!rel || !rel->relationship) continue;
+            const std::vector<std::string> targets = stage.targets(prim, name);
+            if (targets.empty()) continue;
+            const std::string as = name.substr(6);
+            const Stage::Prim* field = stage.find(stripVariants(targets.front()));
+            if (!field) {
+                note(prim, name + ": no field " + targets.front());
+                continue;
+            }
+            if (field->type != "OpenVDBAsset") {
+                note(prim, name + ": a " + field->type + " is not read");
+                continue;
+            }
+            const std::string file = assetAt(stage, *field, "filePath", time);
+            if (file.empty()) {
+                note(prim, name + ": no file");
+                continue;
+            }
+            std::string grid = stage.value(*field, "fieldName", time).text();
+            if (grid.empty()) grid = field->name;
+            bool under = false;
+            for (const Stage::Prim* a = field->parent; a && !under; a = a->parent) under = a == &prim;
+            const Matrix w = under ? worldOf(*field) : localTransform(stage, *field, time) * worldOf(prim);
+            io::VdbReadOptions o;
+            o.grids = {grid};
+            for (int r = 0; r < 4; ++r) {
+                for (int c = 0; c < 4; ++c) o.place[r][c] = w.at(r, c);
+            }
+            io::VdbVolumes read;
+            std::string error;
+            bool ok = false;
+            if (!file.empty() && file.back() == ']' && file.find(".usdz[") != std::string::npos) {
+                // In a package: its bytes.
+                std::vector<uint8_t> bytes;
+                ok = readFileBytes(file, bytes, error) && io::parseVdb(bytes, read, error, o);
+            } else {
+                ok = io::readVdb(file, read, error, o);
+            }
+            if (!ok) {
+                note(prim, name + ": " + error);
+                continue;
+            }
+            for (const std::string& n : read.notes) note(prim, name + ": " + n);
+            if (read.volumes.empty()) {
+                note(prim, name + ": no grid \"" + grid + "\" in " + file);
+                continue;
+            }
+            // The first grid of the name: one volume, three for a vector.
+            const size_t parts = std::min<size_t>(read.volumes.size(), read.components.front() == 3 ? 3 : 1);
+            for (size_t k = 0; k < parts; ++k) {
+                Volume v = std::move(read.volumes[k]);
+                v.name = parts == 3 ? as + (k == 0 ? ".x" : k == 1 ? ".y" : ".z") : as;
+                out.geo.addVolume(std::move(v));
+            }
+        }
+    }
+
     void curves(const Stage::Prim& prim) {
         const Value P = stage.value(prim, "points", time);
         const Value counts = stage.value(prim, "curveVertexCounts", time);
@@ -1240,7 +1319,8 @@ void applyMaterials(const Stage& stage, double time, Geometry& geo, std::vector<
     }
 }
 
-const char* const kGeometryTypes[] = {"Mesh", "Points", "BasisCurves", "Cube", "Sphere", "Cylinder", "Cone", "Capsule", "Plane"};
+const char* const kGeometryTypes[] = {"Mesh", "Points", "BasisCurves", "Cube",  "Sphere",
+                                     "Cylinder", "Cone", "Capsule", "Plane", "Volume"};
 
 bool isGeometry(const std::string& type) {
     for (const char* t : kGeometryTypes) {
@@ -1264,6 +1344,7 @@ void readPrims(Reader& reader, const std::vector<const Stage::Prim*>& prims) {
         if (p->type == "Mesh") reader.mesh(*p);
         else if (p->type == "Points") reader.pointsPrim(*p);
         else if (p->type == "BasisCurves") reader.curves(*p);
+        else if (p->type == "Volume") reader.volume(*p);
         else reader.implicit(*p);
     }
     for (const Stage::Prim* p : prims) {
@@ -1498,8 +1579,7 @@ std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const 
         for (const auto& owned : stage.prims()) {
             const Stage::Prim& p = *owned;
             if (!p.defined) continue;
-            if (p.type == "NurbsPatch" || p.type == "NurbsCurves" || p.type == "Volume" || p.type == "HermiteCurves" ||
-                p.type == "TetMesh") {
+            if (p.type == "NurbsPatch" || p.type == "NurbsCurves" || p.type == "HermiteCurves" || p.type == "TetMesh") {
                 bool inside = options.roots.empty();
                 for (const std::string& r : options.roots) inside = inside || under(p.path, r);
                 if (inside) skipped->push_back(p.path + ": a " + p.type + " is not read");
@@ -1545,6 +1625,20 @@ bool geometryVaries(const Stage& stage, const ImportOptions& options) {
         }
         for (const Stage::Prim* c : p->children) {
             if (c->type == "GeomSubset" && stage.varies(*c, "indices")) return true;
+        }
+        if (p->type == "Volume") {
+            // Its fields: a file a frame, wherever they are.
+            for (const std::string& name : stage.propertyNames(*p)) {
+                if (name.rfind("field:", 0) != 0) continue;
+                for (const std::string& t : stage.targets(*p, name)) {
+                    const Stage::Prim* f = stage.find(stripVariants(t));
+                    if (!f) continue;
+                    for (const std::string& n : stage.propertyNames(*f)) {
+                        if (stage.varies(*f, n)) return true;
+                    }
+                    if (transformVaries(stage, *f)) return true;
+                }
+            }
         }
     }
     return false;

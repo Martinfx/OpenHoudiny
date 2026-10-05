@@ -89,6 +89,11 @@ struct VdbReadOptions {
     /// The file's world has z up, as Blender's: turned about x so that y is
     /// -- (x, y, z) to (x, z, -y) -- vectors with it.
     bool zUp = false;
+    /// Then moved as this moves a point -- a row, times the 3 x 3, plus the
+    /// last row: a USD Volume's transform, its stage's units made metres
+    /// --, laid out anew where it turns the grid off the axes; vectors
+    /// turned and sized with it, a level set's distances sized.
+    double place[4][4] = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
 };
 
 /// What readVdb() read.

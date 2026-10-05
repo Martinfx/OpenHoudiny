@@ -58,6 +58,7 @@ Geometrie scény v daném snímku, ve světových souřadnicích:
 | **Points** | volné body: `pscale` z `widths` (polovina, zvětšená transformací), `id` z `ids` |
 | **BasisCurves** | otevřené lomené čáry (řídicí body; `periodic` uzavřené), `pscale` z `widths` |
 | **PointInstancer** | instance (viz Instance níže): prototypy geometrie a bod na instanci s `instance`, `orient`, `pscale`, `id`, `v` a primvary instancí |
+| **Volume** (pole `OpenVDBAsset`) | objemy: mřížka souboru VDB (`filePath` v daném čase, `fieldName`) pojmenovaná po poli (`density`; vektor jako `vel.x`, `vel.y`, `vel.z`). Je na místě podle transformace pole a objemu, v metrech s Y nahoru; vektory jsou otočené a přeškálované, vzdálenosti level setu přeškálované. Objem otočený mimo osy se převzorkuje na krychlové voxely |
 | **Cube, Sphere, Cylinder, Cone, Capsule, Plane** | polygony podle rozměrů a osy |
 | cesta primu | textový atribut primitiv `path` (`/Set/beam`) |
 | materiál (`material:binding`, i na GeomSubsetu) | `material`, `texture`, `roughness`, `metallic`, `glass`, `Cd` (viz Materiály níže) |
@@ -348,6 +349,13 @@ přeskočí.
     a na bodech se sejdou na rozích, každý roh s hodnotou svého primu.
 - **Kamera:** poloha, směr pohledu i horizontální zorný úhel USD Camera sedí
   s kamerou z knihovny.
+- **Volume:**
+  - export z Blenderu 4.5: VDB ohnivé koule jako objekt posunutý
+    a otočený o 28,6°, scéna se Z nahoru. Těžiště hustoty sedí
+    s transformací Blenderu na 2·10⁻⁵ m a množství kouře se zachová
+    (0,40099 proti 0,40097);
+  - vlastní export plynu (`--export shot.usda`) se přečte po snímcích
+    jako tytéž mřížky, jaké jsou v souborech VDB.
 - **PointInstancer:**
   - 6 náhodných scén v centimetrech se Z nahoru;
   - instance otočené, zvětšené a posunuté, i mezi vzorky (rychlosti,
@@ -382,7 +390,7 @@ přeskočí.
   nemá plugin MaterialX, takže definice jeho uzlů nezná.
 
 Testy:
-- **`tests/test_usd_read.cpp` (19):**
+- **`tests/test_usd_read.cpp` (20):**
   - text s hodnotami všech druhů a chyba s řádkem;
   - crate proti textu téže scény z `tests/data/usd`, jak je zapsalo USD;
   - crate verze 0.4.0 a `.usdz`;
@@ -397,6 +405,8 @@ Testy:
   - PointInstancer: prototypy, umístění, skryté a neaktivní instance,
     protažená instance, tint a změna v čase; zpětné čtení vlastních
     instancí;
+  - Volume: pole z VDB ve scéně v centimetrech se Z nahoru, vektor
+    a objem otočený mimo osy;
   - 500 poškozených souborů odmítnutých bez pádu (i pod ASan).
 - **`tests/test_usd_materials.cpp` (6):**
   - UsdPreviewSurface s obrázky, hodnotami a sklem;
@@ -447,9 +457,11 @@ Testy:
   UsdPreviewSurface nezapíše, v síti MaterialX ano. Materiál, který se
   jmenuje jako preset (`wood`, `glass`…), dostane vlastnosti presetu.
   Když nemá vlastní obrázek, dostane i fotky presetu z knihovny.
-- **NURBS** a **Volume** (VDB) se nečtou. `prototype usd` je vypíše jako
-  přeskočené. Prototypy pod PointInstancerem nejsou samostatná geometrie:
-  nestojí tam, kde jsou v souboru, ale tam, kam je instancer rozmístí.
+- **NURBS** se nečtou. `prototype usd` je vypíše jako přeskočené.
+  Prototypy pod PointInstancerem nejsou samostatná geometrie: nestojí tam,
+  kde jsou v souboru, ale tam, kam je instancer rozmístí.
+- **Volume:** čtou se jen pole `OpenVDBAsset`, ne `Field3DAsset`.
+  `fieldIndex` se nebere: platí první mřížka daného jména.
 - **Subdivize:** mesh se čte jako řídicí síť, bez vyhlazení.
 - **Spliny** (animace křivkou, `x.spline`, USD 25 a novější) se nečtou:
   atribut, který má jen spline, nemá hodnotu. Časové vzorky a zbytek

@@ -6,6 +6,7 @@
 #include "pg/core/Instances.h"
 #include "pg/io/Export.h"
 #include "pg/io/Usda.h"
+#include "pg/io/Vdb.h"
 #include "pg/nodes/Nodes.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
@@ -18,6 +19,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <random>
 #include <sstream>
 #include <string>
@@ -1384,6 +1386,105 @@ TEST(usd_import_reads_back_the_instances_the_program_writes) {
         for (const Vec3& corner : clump->positions()) CHECK(near(was[i].point(corner), is[i].point(corner)));
         CHECK(near(tints[i], tint[i]));
     }
+}
+
+TEST(usd_import_reads_a_volumes_fields_from_their_vdb_files) {
+    // A puff of smoke and a wind through it in a VDB file, in centimetres,
+    // z up: a Volume moved along x, and the same puff in one turned about z.
+    TempFolder dir("usd_volume");
+    const int n = 16;
+    std::vector<float> d(static_cast<size_t>(n * n * n)), wx(d.size(), 1.0f), wy(d.size(), 2.0f), wz(d.size(), 3.0f);
+    for (int k = 0; k < n; ++k) {
+        for (int j = 0; j < n; ++j) {
+            for (int i = 0; i < n; ++i) {
+                const float r2 = static_cast<float>((i - 7.5) * (i - 7.5) + (j - 7.5) * (j - 7.5) + (k - 7.5) * (k - 7.5));
+                d[static_cast<size_t>(i + n * (j + n * k))] = std::exp(-r2 / 9.0f);
+            }
+        }
+    }
+    const std::vector<Volume> grids = {Volume::make("density", Vec3(0, 0, 0), 2.0f, n, n, n, d),
+                                       Volume::make("vel.x", Vec3(0, 0, 0), 2.0f, n, n, n, wx),
+                                       Volume::make("vel.y", Vec3(0, 0, 0), 2.0f, n, n, n, wy),
+                                       Volume::make("vel.z", Vec3(0, 0, 0), 2.0f, n, n, n, wz)};
+    std::string error;
+    CHECK(io::writeVdb(grids, (dir.path / "puff.vdb").string(), error));
+    const std::string path = dir.write("puff.usda", R"(#usda 1.0
+(
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Volume "puff"
+{
+    double3 xformOp:translate = (100, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel field:density = </puff/density>
+    rel field:wind = </puff/vel>
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @puff.vdb@
+        token fieldName = "density"
+    }
+
+    def OpenVDBAsset "vel"
+    {
+        asset filePath = @./puff.vdb@
+        token fieldName = "vel"
+        token fieldDataType = "float3"
+    }
+}
+
+def Volume "turned"
+{
+    float xformOp:rotateZ = 30
+    uniform token[] xformOpOrder = ["xformOp:rotateZ"]
+    rel field:density = </turned/density>
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @puff.vdb@
+        token fieldName = "density"
+    }
+}
+)");
+    const auto s = open(path);
+    CHECK(s != nullptr);
+    if (!s) return;
+    std::vector<std::string> notes;
+    const auto geo = usd::importGeometry(*s, 1.0, usd::ImportOptions{}, &notes);
+    CHECK(!usd::geometryVaries(*s, usd::ImportOptions{}));
+    std::map<std::string, const Volume*> byName;
+    for (const Volume& v : geo->volumes()) byName[v.name] = &v;
+    CHECK_EQ(geo->volumes().size(), 5u);  // density, wind.x, wind.y, wind.z; the turned density
+    if (!byName.count("density") || !byName.count("wind.y")) return;
+    // Moved a metre along x, in metres, y up: its middle -- (16, 16, 16) cm
+    // in the file -- at (1.16, 0.16, -0.16), voxels of 2 cm.
+    const Volume& puff = geo->volumes()[0];
+    CHECK_EQ(puff.name, std::string("density"));
+    CHECK_NEAR(puff.voxel, 0.02f, 1e-7);
+    // Between the eight voxels round the middle, each exp(-0.75 / 9).
+    const float top = std::exp(-0.75f / 9.0f);
+    CHECK_NEAR(puff.sample(Vec3(1.16f, 0.16f, -0.16f)), top, 1e-5);
+    CHECK_NEAR(puff.sample(Vec3(1.16f, 0.16f, 0.16f)), 0.0f, 1e-6);
+    // The wind turned with the world and made metres a second: (1, 2, 3)
+    // cm/s to (0.01, 0.03, -0.02).
+    CHECK_NEAR(byName["wind.x"]->sample(Vec3(1.16f, 0.16f, -0.16f)), 0.01f, 1e-6);
+    CHECK_NEAR(byName["wind.y"]->sample(Vec3(1.16f, 0.16f, -0.16f)), 0.03f, 1e-6);
+    CHECK_NEAR(byName["wind.z"]->sample(Vec3(1.16f, 0.16f, -0.16f)), -0.02f, 1e-6);
+    // Turned off the axes: laid out anew, as much smoke, its middle turned.
+    const Volume& turned = geo->volumes()[4];
+    double mass = 0.0, was = 0.0;
+    for (const float x : *turned.values) mass += x;
+    for (const float x : d) was += x;
+    mass *= static_cast<double>(turned.voxel) * turned.voxel * turned.voxel;
+    was *= 0.02 * 0.02 * 0.02;
+    CHECK(std::abs(mass - was) < 0.03 * was);
+    const float c = std::cos(0.5235988f), sn = std::sin(0.5235988f);
+    const Vec3 middle(0.16f * c - 0.16f * sn, 0.16f, -(0.16f * sn + 0.16f * c));
+    // Laid out anew and sampled again -- trilinear twice --, a little lower.
+    CHECK_NEAR(turned.sample(middle), top, 0.05);
+    CHECK(std::any_of(notes.begin(), notes.end(), [](const std::string& w) { return w.find("resampled") != std::string::npos; }));
 }
 
 TEST(usd_broken_files_are_refused_not_crashed_on) {

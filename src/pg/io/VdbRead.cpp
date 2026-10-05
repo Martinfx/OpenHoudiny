@@ -333,7 +333,27 @@ struct Map {
             row[2] = -y;
         }
     }
+    /// Then moved by `p`: a row times its 3 x 3, plus its last row.
+    void then(const double (&p)[4][4]) {
+        double rows[4][3];
+        for (int r = 0; r < 4; ++r) {
+            const double* in = r < 3 ? m[r] : t;
+            for (int c = 0; c < 3; ++c) rows[r][c] = in[0] * p[0][c] + in[1] * p[1][c] + in[2] * p[2][c] + (r == 3 ? p[3][c] : 0.0);
+        }
+        for (int r = 0; r < 3; ++r) std::copy(rows[r], rows[r] + 3, m[r]);
+        std::copy(rows[3], rows[3] + 3, t);
+    }
 };
+
+/// Whether `o` moves the grids at all.
+bool placed(const VdbReadOptions& o) {
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            if (o.place[r][c] != (r == c ? 1.0 : 0.0)) return true;
+        }
+    }
+    return false;
+}
 
 /// A grid's transform: the name of its map, then the map.
 bool parseMap(Cursor& in, Map& map, std::string& why) {
@@ -925,6 +945,7 @@ void toVolumes(const Grid& g, const VdbReadOptions& o, VdbVolumes& out) {
     }
     Map map = g.map;
     if (o.zUp) map.zUp();
+    if (placed(o)) map.then(o.place);
     const size_t comps = static_cast<size_t>(tree.kind.comps);
     std::array<int64_t, 3> extent;
     for (size_t c = 0; c < 3; ++c) extent[c] = static_cast<int64_t>(hi[c]) - lo[c] + 1;
@@ -1069,6 +1090,23 @@ void toVolumes(const Grid& g, const VdbReadOptions& o, VdbVolumes& out) {
         // A vector turned with the world: (x, y, z) -> (x, z, -y).
         std::swap(values[1], values[2]);
         for (float& z : values[2]) z = -z;
+    }
+    if (placed(o)) {
+        const double (&p)[4][4] = o.place;
+        if (comps == 3) {
+            // A vector turned and sized with the world, as a row.
+            for (size_t i = 0; i < values[0].size(); ++i) {
+                const double x = values[0][i], y = values[1][i], z = values[2][i];
+                for (size_t c = 0; c < 3; ++c) values[c][i] = static_cast<float>(x * p[0][c] + y * p[1][c] + z * p[2][c]);
+            }
+        } else if (g.meta.gridClass == "level set") {
+            // Distances as long as the world makes them.
+            const double det = p[0][0] * (p[1][1] * p[2][2] - p[1][2] * p[2][1]) -
+                               p[0][1] * (p[1][0] * p[2][2] - p[1][2] * p[2][0]) +
+                               p[0][2] * (p[1][0] * p[2][1] - p[1][1] * p[2][0]);
+            const float k = static_cast<float>(std::cbrt(std::fabs(det)));
+            for (float& d : values[0]) d *= k;
+        }
     }
     for (size_t k = 0; k < comps; ++k) {
         Volume c = v;

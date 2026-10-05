@@ -236,7 +236,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 687 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 56 render, barvy ACES a konfigurace OpenColorIO, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 37 USD (zápis i čtení, materiály, instance), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
+./build/pgtests            # 688 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 56 render, barvy ACES a konfigurace OpenColorIO, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 38 USD (zápis i čtení, materiály, instance, objemy), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
 ctest --test-dir build -R python                   # 57 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
@@ -476,7 +476,7 @@ a payloady, varianty (výběr záběru přebije výchozí volbu assetu), třídy
 value clips. Uzel **USD Camera** dá Outputu kameru z matchmove, snímek po
 snímku, s objektivem napasovaným na film. **USD Import** přinese kulisu,
 modely nebo cache jako geometrii (normály, uv, barvy, primvars, subsety
-jako skupiny, PointInstancery jako instance) v metrech s Y nahoru, i když
+jako skupiny, PointInstancery jako instance, objemy z VDB) v metrech s Y nahoru, i když
 soubor přišel z Mayi v centimetrech se Z nahoru. Materiály přečte taky: sítě MaterialX
 i UsdPreviewSurface navázané jako v USD, s obrázky, drsností, kovovostí,
 barvou a sklem, i z exportu Blenderu. Transformace, skládání, geometrie i value

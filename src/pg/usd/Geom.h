@@ -97,8 +97,10 @@ struct ImportOptions {
 /// geometry's, read in the instancer's space -- each prototype root's own
 /// transform kept, what is above it left out --, and a point each instance,
 /// placing its prototype where, turned and as big as the instancer does
-/// (P, orient, pscale; id, v and its primvars). `skipped`: what it read no
-/// geometry from, and why.
+/// (P, orient, pscale; id, v and its primvars); the fields of Volumes --
+/// OpenVDBAssets, a grid of a VDB file each -- as volumes named as the
+/// fields are (io/Vdb.h reads them, placed by their transforms).
+/// `skipped`: what it read no geometry from, and why.
 std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const ImportOptions& options,
                                          std::vector<std::string>* skipped = nullptr);
 /// True when what importGeometry() reads may change with time.

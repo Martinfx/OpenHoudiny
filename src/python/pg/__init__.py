@@ -1286,7 +1286,8 @@ class UsdStage:
         """Its geometry at `time`, in the world -- what USD Import makes of it:
         meshes, curves, points, the implicit shapes as polygons, the
         instances of PointInstancers as instances (prototypes, and points
-        with instance, orient, pscale), under `prims` (all when empty),
+        with instance, orient, pscale), the fields of Volumes as volumes
+        (density, vel.x...), under `prims` (all when empty),
         their materials as the program's (material, texture, roughness,
         metallic...). What it could not read is in self.notes."""
         g, notes = self._s.geometry(self._time(time), list(prims), render, proxy, guide, metres, subsets,

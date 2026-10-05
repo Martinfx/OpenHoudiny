@@ -18,6 +18,9 @@
 #include "pg/sim/UsdExport.h"
 #include "pg/sim/WaterMesh.h"
 #include "pg/sim/World.h"
+#include "pg/io/Vdb.h"
+#include "pg/usd/Geom.h"
+#include "pg/usd/Stage.h"
 
 #include "test_framework.h"
 
@@ -533,6 +536,29 @@ TEST(usd_export_writes_the_gas_beside_the_stage_a_file_a_frame) {
     CHECK(text.find("rel field:vel = </World/gas/vel>") != std::string::npos);
     CHECK(text.find("token fieldDataType = \"float3\"") != std::string::npos);
     CHECK(text.find("token vectorDataRoleHint = \"Vector\"") != std::string::npos);
+    // Read back by USD Import: the gas of the frame, as its file has it.
+    const auto stage = usd::Stage::open(dir / "shot.usda", error);
+    CHECK(stage != nullptr);
+    if (!stage) return;
+    CHECK(usd::geometryVaries(*stage, usd::ImportOptions{}));
+    const auto back = usd::importGeometry(*stage, 3.0, usd::ImportOptions{});
+    io::VdbVolumes file;
+    CHECK(io::readVdb((dir.path / "shot_gas" / "shot_gas.0003.vdb").string(), file, error));
+    for (const char* name : {"density", "temperature", "flame", "vel.x", "vel.y", "vel.z"}) {
+        const Volume* is = nullptr;
+        for (const Volume& v : back->volumes()) {
+            if (v.name == name) is = &v;
+        }
+        const Volume* was = nullptr;
+        for (const Volume& v : file.volumes) {
+            if (v.name == name) was = &v;
+        }
+        CHECK(is != nullptr && was != nullptr);
+        if (!is || !was) continue;
+        CHECK(near(is->origin, was->origin, 1e-6f) && std::fabs(is->voxel - was->voxel) < 1e-6f);
+        CHECK(is->res[0] == was->res[0] && is->res[1] == was->res[1] && is->res[2] == was->res[2]);
+        CHECK(*is->values == *was->values);
+    }
 }
 
 TEST(usd_export_lens_in_tenths_of_a_unit_and_the_sun_where_the_look_has_it) {
