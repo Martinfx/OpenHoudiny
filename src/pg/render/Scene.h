@@ -97,6 +97,11 @@ struct Material {
     /// cut out where the picture has none -- a leaf's edge. Rays and shadows
     /// pass there (Coverage).
     bool cutout = false;
+    /// How much it takes of what Cycles adds to the scene's plain surfaces
+    /// -- stains, blotches, small bumps, weathering (Settings::detail) --
+    /// (f@surface_detail): all, as the program's own surfaces; none, a
+    /// material made elsewhere, as its maker made it.
+    float detail = 1.0f;
 
     /// A plain surface, as rough as `roughness`.
     static Material surface(float roughness) {

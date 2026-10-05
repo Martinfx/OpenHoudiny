@@ -1254,7 +1254,8 @@ struct CyclesRender::Impl {
     /// of a real surface (Settings::detail); glass; water, bending light and
     /// taking on the Water Look's colour.
     ccl::Shader* shaderOf(ccl::Scene* scene, const Material& m, const sim::Look& look) {
-        const float detail = m.kind == Material::Kind::Surface ? std::clamp(settings.detail, 0.0f, 1.0f) : 0.0f;
+        const float detail =
+            m.kind == Material::Kind::Surface ? std::clamp(settings.detail, 0.0f, 1.0f) * std::clamp(m.detail, 0.0f, 1.0f) : 0.0f;
         const TextureSet texture = textureOf(m, settings);
         std::vector<float> key = {m.roughness, m.metallic, m.translucency, m.ior, detail, static_cast<float>(m.preset)};
         if (m.kind == Material::Kind::Water) {

@@ -1165,6 +1165,11 @@ struct Look {
     io::mtlx::Surface surface;
     bool glass = false;
     bool colored = false;  ///< its colour a value: the primitives' Cd
+    /// How much it takes of what Cycles adds to the program's own surfaces
+    /// -- stains, bumps, weathering (f@surface_detail): what the program
+    /// wrote of it, else all for a preset, none for a material made
+    /// elsewhere -- as its maker made it.
+    float detail = 1.0f;
 };
 
 std::string lookName(const std::string& prim) {
@@ -1197,7 +1202,7 @@ void applyMaterials(const Stage& stage, double time, Geometry& geo, std::vector<
     lookOf.resize(prims, -1);
     const std::string file = stageFile(stage);
     std::vector<Look> looks(table.size());
-    bool textured = false, valued = false, glassy = false, colored = false;
+    bool textured = false, valued = false, glassy = false, colored = false, detailed = false;
     for (size_t k = 0; k < table.size(); ++k) {
         Look& l = looks[k];
         const Stage::Prim* m = stage.find(table[k]);
@@ -1213,10 +1218,14 @@ void applyMaterials(const Stage& stage, double time, Geometry& geo, std::vector<
         l.glass = s.values.transmission >= 0.5f ||
                   (s.shader == "UsdPreviewSurface" && s.opacity.empty() && s.values.opacity < 0.5f);
         l.colored = s.color.empty() && !s.tinted && s.values.color.x >= 0.0f && !l.glass;
+        const Value written = stage.value(*m, "pg:surface_detail", time);
+        l.detail = written.isNumbers() ? std::clamp(static_cast<float>(written.number()), 0.0f, 1.0f)
+                                       : l.preset == MaterialPreset::None ? 0.0f : 1.0f;
         textured = textured || !l.texture.empty();
         valued = true;
         glassy = glassy || l.glass;
         colored = colored || l.colored;
+        detailed = detailed || l.detail != 1.0f;
     }
     auto lookAt = [&](size_t p) -> const Look* { return lookOf[p] >= 0 ? &looks[static_cast<size_t>(lookOf[p])] : nullptr; };
     // Names and pictures: "" first, as the program's string attributes have it.
@@ -1268,6 +1277,9 @@ void applyMaterials(const Stage& stage, double time, Geometry& geo, std::vector<
     }
     if (glassy) {
         numbers("glass", AttrType::Int, [](const Look& l) { return l.glass ? 1.0f : 0.0f; }, [](size_t) { return 0.0f; });
+    }
+    if (detailed) {
+        numbers("surface_detail", AttrType::Float, [](const Look& l) { return l.detail; }, [](size_t) { return 1.0f; });
     }
     if (!colored) return;
     // The colours that are values: on the primitives, or on their corners

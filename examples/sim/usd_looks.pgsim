@@ -6,16 +6,15 @@ pgsim 1
 # with UsdUVTexture), a bead of red metal, a block of glass, a floor of two
 # GeomSubsets: blue OpenPBR plastic and paving by the name of a preset --
 # and pebbles along the front, a PointInstancer's. USD Import reads them as
-# the program's own materials and instances; the Output's Surface
-# Detail 0 renders them as they were made, without the blotches and bumps
-# Cycles gives surfaces with no picture.
+# the program's own materials and instances, those that are no preset with
+# f@surface_detail 0: Cycles renders them as they were made, without the
+# blotches and bumps it gives the program's own surfaces.
 #   prototype sim usd_looks looks.png --renderer cycles
 node 1 usd_import 1 looks 0 0
   param file "../usd/looks.usda"
   display
 node 2 output 2 output 300 0
   param frames 1
-  param render_detail 0
 node 3 camera 1 camera 300 120
   param center 0.76 2.08 3.57
   param rotation -24 12 0

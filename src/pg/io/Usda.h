@@ -49,6 +49,7 @@ struct Attribute {
     std::vector<std::pair<double, std::string>> samples;   ///< time code and value, in order
     std::string metadata;                                  ///< inside the parentheses: interpolation = "vertex"
     bool uniform = false;                                  ///< the same at every time
+    bool custom = false;                                   ///< of no schema of its prim: a program's own
 };
 
 struct Prim {

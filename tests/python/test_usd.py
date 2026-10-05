@@ -450,6 +450,9 @@ class AgainstUsd(unittest.TestCase):
             self.assertAlmostEqual(float(geo.prims["roughness"][i]), sh.GetInput("roughness").Get(), places=5)
             self.assertAlmostEqual(float(geo.prims["metallic"][i]), sh.GetInput("metallic").Get(), places=5)
             self.assertTrue(np.allclose(np.asarray(geo.prims["Cd"][i]), np.array(sh.GetInput("diffuseColor").Get()), atol=1e-6))
+        # Made elsewhere, as their maker made them: none of the stains and
+        # bumps Cycles adds to the program's own surfaces.
+        self.assertEqual([float(d) for d in geo.prims["surface_detail"]], [0.0 if m else 1.0 for m in expected])
 
     def test_value_clips_as_usd_reads_them(self):
         clips = []

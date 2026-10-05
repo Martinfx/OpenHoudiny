@@ -37,7 +37,7 @@ void indent(std::ostream& out, int depth) {
 }
 
 void writeAttribute(std::ostream& out, const Attribute& a, int depth) {
-    const std::string head = (a.uniform ? "uniform " : "") + a.type + " " + a.name;
+    const std::string head = std::string(a.custom ? "custom " : "") + (a.uniform ? "uniform " : "") + a.type + " " + a.name;
     // The declaration: its default and its metadata -- or the metadata
     // alone, or nothing at all when it has neither but has samples.
     const bool declared = !a.value.empty() || !a.metadata.empty() || a.samples.empty();

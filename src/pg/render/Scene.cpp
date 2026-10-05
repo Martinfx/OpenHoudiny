@@ -236,7 +236,7 @@ void primitiveMaterials(const Geometry& geo, bool water, bool hasUv, std::vector
     // What each primitive is made of: materials told apart by their numbers,
     // in steps of a 256th.
     const MaterialNumber roughness(geo, "roughness", 0.5f), metallic(geo, "metallic", 0.0f),
-        translucency(geo, "translucency", 0.0f);
+        translucency(geo, "translucency", 0.0f), detail(geo, "surface_detail", 1.0f);
     // What each primitive is made of (s@material): the preset of each name
     // of its table.
     const AttributeArray* named = geo.primitives().find("material");
@@ -268,7 +268,7 @@ void primitiveMaterials(const Geometry& geo, bool water, bool hasUv, std::vector
         if (!textures || prim >= textures->size()) return none;
         return textures->stringValue(textures->read<int32_t>()[prim]);
     };
-    std::map<std::tuple<std::array<int, 7>, std::string, int>, uint16_t> known;
+    std::map<std::tuple<std::array<int, 8>, std::string, int>, uint16_t> known;
     const AttributeArray* glassAttr = geo.primitives().find("glass");
     auto glassOf = [&](size_t prim) -> int {
         if (!glassAttr || prim >= glassAttr->size()) return 0;
@@ -300,6 +300,7 @@ void primitiveMaterials(const Geometry& geo, bool water, bool hasUv, std::vector
             m.roughness = static_cast<float>(quantize(roughness.given ? roughness.at(geo, prim) : base.roughness)) / 255.0f;
             m.metallic = static_cast<float>(quantize(metallic.given ? metallic.at(geo, prim) : base.metallic)) / 255.0f;
             m.translucency = static_cast<float>(quantize(translucency.at(geo, prim))) / 255.0f;
+            m.detail = static_cast<float>(quantize(detail.at(geo, prim))) / 255.0f;
             if (glass == 2) m.roughness = 0.35f;  // a crack: a rough, white break in the glass
             if (!texture.empty()) {
                 m.texture = texture;
@@ -315,10 +316,11 @@ void primitiveMaterials(const Geometry& geo, bool water, bool hasUv, std::vector
             m.byUv = hasUv && (how == 1 || (how == 0 && (!texture.empty() || laidByUv(preset))));
             m.normalStrength = std::round(std::clamp(normalStrength.at(geo, prim), 0.0f, 10.0f) * 100.0f) / 100.0f;
         }
-        const auto key = std::make_tuple(std::array<int, 7>{static_cast<int>(m.kind), quantize(m.roughness), quantize(m.metallic),
+        const auto key = std::make_tuple(std::array<int, 8>{static_cast<int>(m.kind), quantize(m.roughness), quantize(m.metallic),
                                                             quantize(m.translucency), static_cast<int>(m.preset),
                                                             static_cast<int>(m.byUv),
-                                                            static_cast<int>(std::lround(m.normalStrength * 100.0f))},
+                                                            static_cast<int>(std::lround(m.normalStrength * 100.0f)),
+                                                            quantize(m.detail)},
                                          m.texture, static_cast<int>(std::lround(m.textureSize * 1000.0f)) * 3 + m.textureTint + 1);
         auto it = known.find(key);
         if (it == known.end()) {

@@ -152,6 +152,7 @@ Každá plocha dostane atributy, které čtou renderery, viewport i export:
 | `i@texture_projection`, `f@texture_size` | 1 podle uv, 2 ze tří stran (triplanar), a kolik metrů má jeden obrázek |
 | `f@roughness`, `f@metallic` | hodnoty materiálu; co neudává, má výchozí hodnotu svého shaderu (UsdPreviewSurface drsnost 0,5, standard_surface 0,2, OpenPBR 0,3) |
 | `i@glass` | 1 pro materiál, kterým prochází světlo: `transmission` aspoň 0,5, nebo UsdPreviewSurface s `opacity` pod 0,5 bez obrázku |
+| `f@surface_detail` | 0 pro materiál, který není preset: Cycles na něj nepřidá skvrny, hrbolky ani stopy počasí, které dává plochám programu (**Surface Detail** uzlu Output). Presety a plochy bez materiálu mají 1. Materiál, který zapsal tento program, má hodnotu ve svém atributu `pg:surface_detail` |
 | `Cd` | barva materiálu, když je to hodnota (krát váha `base`); přebije `displayColor` jen u ploch toho materiálu |
 
 Plochy bez materiálu mají `f@roughness` a `f@metallic` svého presetu,
@@ -191,9 +192,9 @@ jako PointInstancer (dva tvary kamene s vlastním materiálem):
 - podlaha ze dvou GeomSubsetů: modrý plast z OpenPBR a dlažba
   pojmenovaná jako preset (`paving`), proto s fotkami presetu.
 
-Output má **Surface Detail** 0, takže Cycles nepřidá skvrny a hrbolky,
-které jinak dává plochám bez obrázku. Materiály vypadají, jak je program
-zapsal.
+Materiály, které nejsou presety, mají `f@surface_detail` 0, takže na ně
+Cycles nepřidá skvrny a hrbolky, které jinak dává plochám bez obrázku.
+Vypadají, jak je program zapsal. Dlažba je preset, a tak je dostane.
 
 ```bash
 ./build/prototype sim usd_looks looks.png --renderer cycles

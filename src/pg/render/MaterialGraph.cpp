@@ -369,7 +369,13 @@ void MaterialLooks::addTo(io::usda::Prim& scope) const {
     for (const Look& l : looks_) {
         std::vector<mtlx::Node> nodes = l.graph.mtlx.nodes;
         nodes.insert(nodes.end(), l.graph.preview.begin(), l.graph.preview.end());
-        scope.children.push_back(io::usda::materialPrim(l.name, scope_ + "/" + l.name, nodes));
+        io::usda::Prim& material = scope.children.emplace_back(io::usda::materialPrim(l.name, scope_ + "/" + l.name, nodes));
+        // How much of what Cycles adds to the program's own surfaces it
+        // takes (Material::detail): for USD Import, which gives a material
+        // made elsewhere none.
+        if (l.material.kind == Material::Kind::Surface) {
+            material.set("float", "pg:surface_detail", io::usda::number(l.material.detail)).custom = true;
+        }
     }
 }
 

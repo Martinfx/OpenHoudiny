@@ -296,7 +296,7 @@ sad najednou. Další sady už viewport kreslí jen barvou. Výška a reliéf
 |---|---|
 | **Textures** | fotografie zapnuté nebo vypnuté (vypnuté: jen vzory a barvy) |
 | **Texture Folder** | jiná knihovna: složka se složkami pojmenovanými jako materiály (prázdné: ta, která je součástí programu; také proměnná `PG_TEXTURES`) |
-| **Surface Detail** | jak silné jsou vzory a skvrny přes fotky; 0 je vypne |
+| **Surface Detail** | jak silné jsou vzory a skvrny přes fotky; 0 je vypne. Plocha s `f@surface_detail` jich dostane jen tolik krát (0 žádné, jako materiály z USD Import, které nejsou presety) |
 
 Z příkazové řádky: `--set output.render_textures=0`,
 `--set output.render_texture_folder=/cesta/k/texturam`.

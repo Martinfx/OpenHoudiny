@@ -322,6 +322,12 @@ TEST(usd_materials_of_preview_surfaces_become_the_programs) {
     // Light goes through the glass.
     CHECK_EQ(intOf(*geo, "glass", 2), 1);
     CHECK_EQ(intOf(*geo, "glass", 0), 0);
+    // Made elsewhere, as their maker made them: none of the stains and
+    // bumps Cycles adds to the program's own surfaces; all of them where no
+    // material is.
+    CHECK_NEAR(floatOf(*geo, "surface_detail", 0), 0.0f, 1e-6);
+    CHECK_NEAR(floatOf(*geo, "surface_detail", 1), 0.0f, 1e-6);
+    CHECK_NEAR(floatOf(*geo, "surface_detail", 3), 1.0f, 1e-6);
     // A colour that is a value is the face's; displayColor stays where no
     // material says otherwise.
     CHECK(near(colourOf(*geo, 0), Vec3(0.8f, 0.1f, 0.1f)));
@@ -344,9 +350,12 @@ TEST(usd_materials_of_preview_surfaces_become_the_programs) {
     CHECK(painted.kind == render::Material::Kind::Surface);
     CHECK_NEAR(painted.roughness, 77.0f / 255.0f, 1e-6);
     CHECK_NEAR(painted.metallic, 1.0f, 1e-6);
+    CHECK_NEAR(painted.detail, 0.0f, 1e-6);
     const render::Material& wood = materials[ofPrim[1]];
     CHECK_EQ(wood.texture, file + "#/World/Looks/Wood");
     CHECK(wood.byUv && wood.textureTint == 0);
+    CHECK_NEAR(wood.detail, 0.0f, 1e-6);
+    CHECK_NEAR(materials[ofPrim[3]].detail, 1.0f, 1e-6);
     CHECK(materials[ofPrim[2]].kind == render::Material::Kind::Glass);
     // Off: the materials are not read.
     const auto plain = import(file, false);
@@ -626,6 +635,9 @@ TEST(usd_materials_the_program_writes_come_back_as_they_were) {
     std::vector<uint8_t> own(made.size(), 0);
     own[2] = 1;
     setPrimitiveString(*geo, "texture", dir / "own/tiles_color.png", own);
+    // The face of none with half the stains and bumps Cycles adds.
+    auto detail = geo->primitives().create("surface_detail", AttrType::Float).write<float>();
+    for (size_t k = 0; k < made.size(); ++k) detail[k] = k == 4 ? 0.5f : 1.0f;
     std::string error;
     CHECK(sim::exportGeometry(*geo, dir / "thing.usda", error));
     const auto back = import(dir / "thing.usda");
@@ -653,6 +665,9 @@ TEST(usd_materials_the_program_writes_come_back_as_they_were) {
         CHECK(a.preset == b.preset);
         CHECK_NEAR(a.roughness, b.roughness, 1e-6);
         CHECK_NEAR(a.metallic, b.metallic, 1e-6);
+        // As much of Cycles' stains and bumps: the program's own, not
+        // taken for a material made elsewhere.
+        CHECK_NEAR(a.detail, b.detail, 1e-6);
         const render::TextureSet sa = !a.texture.empty() ? render::textureSet(a.texture)
                                                          : render::presetTextureSet(render::textureLibrary(), a.preset);
         const render::TextureSet sb = render::textureSet(b.texture);
