@@ -49,7 +49,7 @@ Geometrie scény v daném snímku, ve světových souřadnicích:
 | Z USD | Do geometrie |
 |---|---|
 | **Mesh** | polygony; `leftHanded` a zrcadlení transformací otočí pořadí rohů, díry (`holeIndices`) vypadnou |
-| normály (`normals`, `primvars:normals`) | `N`: podle `interpolation` bodu, rohu nebo plochy; transformované a znormované |
+| normály (`normals`, `primvars:normals`) | `N`: podle `interpolation` bodu, rohu nebo plochy; transformované a znormované. `N` rohů (`faceVarying`) dává ostré hrany ve viewportu i v rendererech |
 | `primvars:st` | `uv` (vektor, z = 0), i s indexy (`primvars:st:indices`) |
 | `primvars:displayColor`, `displayOpacity` | `Cd`, `Alpha` |
 | ostatní primvars (čísla, vektory) | atribut stejného jména; `constant` a `uniform` na primitivech, `vertex` na bodech, `faceVarying` na rozích |
@@ -68,8 +68,10 @@ u jednoho meshe na bodech a u druhého na rozích. Pak se sejde na rozích,
 stejně jako po Merge v Houdini: každý roh dostane hodnotu, kterou mu dal
 jeho prim, ať ji měl na rohu, na bodu, nebo na ploše. Renderery, viewport
 i export totiž čtou rohy přednostně a na ostatních primech by tam našly
-nuly. Volné body (Points) si hodnotu nechají na bodech. Normály
-a rychlosti zůstanou tam, kde je prim měl, protože renderery je berou jen
+nuly. Volné body (Points) si hodnotu nechají na bodech. Normály se
+sejdou na rozích také: renderery i viewport berou normálu rohu před
+normálou bodu, takže ostré hrany z Blenderu (`faceVarying`) zůstanou ostré.
+Jen rychlosti zůstanou tam, kde je prim měl, protože renderery je berou
 z bodů.
 
 Parametry:
@@ -390,7 +392,7 @@ přeskočí.
   nemá plugin MaterialX, takže definice jeho uzlů nezná.
 
 Testy:
-- **`tests/test_usd_read.cpp` (20):**
+- **`tests/test_usd_read.cpp` (21):**
   - text s hodnotami všech druhů a chyba s řádkem;
   - crate proti textu téže scény z `tests/data/usd`, jak je zapsalo USD;
   - crate verze 0.4.0 a `.usdz`;
@@ -401,6 +403,7 @@ Testy:
   - transformace, import geometrie, uzly USD Camera a USD Import;
   - primvar na bodech jednoho primu a na rozích jiného se sejde na rozích,
     volné body si barvu nechají;
+  - normály rohů ven do USD jako `faceVarying` a zpátky na rozích;
   - zpětné čtení vlastního exportu;
   - PointInstancer: prototypy, umístění, skryté a neaktivní instance,
     protažená instance, tint a změna v čase; zpětné čtení vlastních

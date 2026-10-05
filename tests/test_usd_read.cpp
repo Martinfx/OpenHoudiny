@@ -1041,10 +1041,10 @@ def Mesh "c"
     const auto loose = geo->points().find("Cd")->read<Vec3>();
     CHECK(near(loose[8], Vec3(0.25f, 0.25f, 0.25f)));
     // A name of one width on the faces and another on the points stays so;
-    // normals where each prim gave them -- the renderers read the points'.
+    // the normals meet on the corners too.
     CHECK(geo->primitives().find("heat") && geo->points().find("heat"));
-    CHECK(geo->points().find("N") && geo->vertices().find("N"));
-    CHECK(near(geo->points().find("N")->read<Vec3>()[4], Vec3(0, 0, 1)));
+    CHECK(!geo->points().find("N") && geo->vertices().find("N"));
+    CHECK(near(geo->vertices().find("N")->read<Vec3>()[5], Vec3(0, 0, 1)));
     // A material's colour goes onto the corners too; the loose points keep
     // theirs.
     const std::string bound = dir.write("bound.usda", R"(#usda 1.0
@@ -1485,6 +1485,38 @@ def Volume "turned"
     // Laid out anew and sampled again -- trilinear twice --, a little lower.
     CHECK_NEAR(turned.sample(middle), top, 0.05);
     CHECK(std::any_of(notes.begin(), notes.end(), [](const std::string& w) { return w.find("resampled") != std::string::npos; }));
+}
+
+TEST(usd_corners_normals_go_out_and_back_as_face_varying) {
+    // A fold whose corners have normals of their own: written as faceVarying
+    // normals, read back onto the corners.
+    Geometry geo;
+    geo.addPoints(6);
+    auto P = geo.positionsForWrite();
+    P[0] = Vec3(0, 0, 0), P[1] = Vec3(1, 0, 0), P[2] = Vec3(1, 0, 1), P[3] = Vec3(0, 0, 1);
+    P[4] = Vec3(2, 0.5f, 0), P[5] = Vec3(2, 0.5f, 1);
+    const uint32_t a[4] = {0, 3, 2, 1}, b[4] = {1, 2, 5, 4};
+    geo.addPrimitive(a, true);
+    geo.addPrimitive(b, true);
+    auto N = geo.vertices().create("N", AttrType::Vec3).write<Vec3>();
+    for (size_t k = 0; k < 8; ++k) N[k] = normalize(k < 4 ? Vec3(0, 1, 0) : Vec3(-0.5f, 1, 0));
+    TempFolder dir("usd_corner_normals");
+    const std::string path = (dir.path / "fold.usda").string();
+    std::string error;
+    CHECK(io::usda::writeStage(io::usda::geometryStage(geo, "fold"), path, error));
+    std::ifstream in(path);
+    std::stringstream text;
+    text << in.rdbuf();
+    CHECK(text.str().find("normal3f[] normals = [") != std::string::npos);
+    CHECK(text.str().find("interpolation = \"faceVarying\"") != std::string::npos);
+    const auto s = open(path);
+    CHECK(s != nullptr);
+    if (!s) return;
+    const auto back = usd::importGeometry(*s, 0.0, usd::ImportOptions{});
+    const AttributeArray* own = back->vertices().find("N");
+    CHECK(own && own->size() == 8 && !back->points().find("N"));
+    if (!own || own->size() != 8) return;
+    for (size_t k = 0; k < 8; ++k) CHECK(near(own->read<Vec3>()[k], N[k]));
 }
 
 TEST(usd_broken_files_are_refused_not_crashed_on) {

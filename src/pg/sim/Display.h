@@ -200,13 +200,14 @@ private:
     bool sameMaking(const Geometry& geo) const;
 
     GeometryPtr made_;  ///< the geometry last made -- held, so no buffer of it is taken for a new one
-    bool pointNormals_ = false, moving_ = false, rest_ = false;
-    bool creased_ = false;  ///< some corners without a point normal of their own: creased
+    bool pointNormals_ = false, cornerNormals_ = false, moving_ = false, rest_ = false;
+    bool creased_ = false;  ///< some corners without a normal of their own -- corner's or point's: creased
     std::vector<std::array<uint32_t, 3>> tris_;  ///< the fan of every closed polygon, glass too: its faces bend the normals
     std::vector<uint32_t> drawn_;                ///< the triangles drawn -- not glass -- in order
     std::vector<uint32_t> start_, around_;       ///< the triangles round each point: around_[start_[p], start_[p + 1])
     std::vector<uint32_t> vertexPoint_;          ///< each vertex's point
     std::vector<uint32_t> vertexCorner_;         ///< ... and its first corner: 3 x its triangle in drawn_ + which
+    std::vector<std::array<uint32_t, 3>> corners_;  ///< the geometry's vertex of each corner of tris_
 };
 
 }  // namespace pg::sim

@@ -147,6 +147,7 @@ std::vector<Field> pointPrimvars(const Geometry& geo, std::span<const uint32_t> 
 
 struct MeshText {
     std::string points, counts, indices, colors, colorHow, normals, velocities, extent;
+    std::string normalsHow;       ///< faceVarying for the corners' normals; "" for the points'
     std::string st, stHow;        ///< the corners' uv, faceVarying; "" for none (the points' are a primvar)
     std::vector<Field> primvars;  ///< pointPrimvars
     std::vector<int32_t> inside;  ///< the faces in the group asked for, numbered as the Mesh has them

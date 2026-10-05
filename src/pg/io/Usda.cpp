@@ -398,6 +398,14 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
     const AttributeArray* uv = geo.vertices().find("uv");
     if (uv && ((uv->type() != AttrType::Vec2 && uv->type() != AttrType::Vec3) || uv->size() != geo.vertexCount())) uv = nullptr;
     std::vector<Vec2> st;
+    // The corners' normals, where they have them: each its own, else its
+    // point's.
+    const AttributeArray* cornerN = geo.vertices().find("N");
+    if (cornerN && (cornerN->type() != AttrType::Vec3 || cornerN->size() != geo.vertexCount())) cornerN = nullptr;
+    const AttributeArray* pointN = geo.points().find("N");
+    if (pointN && (pointN->type() != AttrType::Vec3 || pointN->size() != geo.pointCount())) pointN = nullptr;
+    std::vector<Vec3> cornerNormals;
+    bool everyCorner = cornerN != nullptr;
     Bounds box;
     for (const uint32_t prim : prims) {
         if (!geo.primitiveClosed(prim)) continue;
@@ -410,6 +418,12 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
         for (size_t k = 0; k < pts.size(); ++k) {
             if (uv) st.push_back(uv->type() == AttrType::Vec2 ? uv->read<Vec2>()[start + k] : Vec2(uv->read<Vec3>()[start + k]));
             const uint32_t p = pts[k];
+            if (everyCorner) {
+                Vec3 n = cornerN->read<Vec3>()[start + k];
+                if (dot(n, n) <= 1e-24f && pointN) n = pointN->read<Vec3>()[p];
+                everyCorner = dot(n, n) > 1e-24f;
+                cornerNormals.push_back(n);
+            }
             if (local[p] < 0) {
                 local[p] = static_cast<int32_t>(points.size());
                 points.push_back(P[p] - middle);
@@ -461,11 +475,17 @@ MeshText meshText(const Geometry& geo, std::span<const uint32_t> prims, const Ve
         for (const uint32_t p : source) v.push_back(a->read<Vec3>()[p]);
         return tuples(v);
     };
-    // Normals only where every point has one: a zero one -- merged in from
-    // points that had them -- would shade it black; without, the renderer
-    // makes its own, as the viewport does.
-    m.normals = vectors("N");
-    if (const AttributeArray* N = geo.points().find("N"); N && !m.normals.empty()) {
+    // Normals only where every corner or point has one: a zero one --
+    // merged in from points that had them -- would shade it black; without,
+    // the renderer makes its own, as the viewport does. The corners' first:
+    // a hard edge as they have it.
+    if (everyCorner && !cornerNormals.empty()) {
+        m.normals = tuples(cornerNormals);
+        m.normalsHow = interpolation("faceVarying");
+    } else {
+        m.normals = vectors("N");
+    }
+    if (const AttributeArray* N = geo.points().find("N"); N && !m.normals.empty() && m.normalsHow.empty()) {
         for (const uint32_t p : source) {
             const Vec3& n = N->read<Vec3>()[p];
             if (dot(n, n) <= 1e-24f) {
@@ -519,7 +539,9 @@ std::vector<Field> fields(const MeshText& m) {
     out.push_back({"float3[]", "extent", "", m.extent});
     out.push_back({"int[]", "faceVertexCounts", "", m.counts});
     out.push_back({"int[]", "faceVertexIndices", "", m.indices});
-    if (!m.normals.empty()) out.push_back({"normal3f[]", "normals", interpolation("vertex"), m.normals});
+    if (!m.normals.empty()) {
+        out.push_back({"normal3f[]", "normals", m.normalsHow.empty() ? interpolation("vertex") : m.normalsHow, m.normals});
+    }
     out.push_back({"point3f[]", "points", "", m.points});
     // The colour's interpolation is the first frame's: a colour of another
     // kind later is taken as the first frame's kind would read it.

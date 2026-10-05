@@ -173,8 +173,10 @@ Jak se geometrie kreslí:
 - **polygony** — trojúhelníky (vějíř přes každý uzavřený polygon), osvětlené
   sluncem a oblohou jako objekty scény, se stínem kouře a objektů; barva
   z `Cd` rohu, jinak bodu, primitiva, celé geometrie, jinak světle šedá;
-  normály z `N` bodů, jinak z plošek kolem rohu, které se od něj ohýbají
-  méně než o 60° (koule vypadá kulatě, krychle má hrany);
+  normály z `N` rohu (ostrá hrana tak, jak ji zapsal Blender nebo Houdini),
+  jinak z `N` bodu, jinak z plošek kolem rohu, které se od něj ohýbají
+  méně než o 60° (koule vypadá kulatě, krychle má hrany). Stejně je berou
+  Cycles i path tracer;
 - **otevřené čáry** — úsečky v barvě `Cd`;
 - **body, které nepoužívá žádný polygon** — kulaté tečky stínované jako
   kuličky; s `pscale` mají poloměr `pscale`, jinak pár pixelů;
@@ -373,8 +375,10 @@ tolik vrcholů jako bodů, šestinu rohů; krychle 24 (tři na roh, kvůli
 hranám). Když má nová geometrie stejnou topologii, barvy a sklo a posunuly
 se jen body — tah sculptu, úchyt, animovaná vlna —, spočítají se znovu
 jen polohy a normály vrcholů (paralelně) a na GPU jde jen tohle
-(`glBufferSubData`). Kdyby ostrý přehyb rozdělil rohy, které byly jeden
-vrchol, síť se udělá znovu celá. Obraz je týž, pixel po pixelu, jako
+(`glBufferSubData`). Kdyby ostrý přehyb nebo nové normály rohů rozdělily
+rohy, které byly jeden vrchol, síť se udělá znovu celá. Rohy s vlastní
+normálou (`N` rohů) jsou vrchol každý zvlášť, kde se normály liší: ostrá
+hrana. Obraz je týž, pixel po pixelu, jako
 z trojúhelníků displayOf (porovnáno na devatenácti renderech: sculpt, město,
 sklo, zeď s kusy, plachta, déšť, vlna po snímcích).
 

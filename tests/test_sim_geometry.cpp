@@ -876,6 +876,50 @@ TEST(display_mesh_is_the_triangles_of_displayOf_with_corners_shared) {
     CHECK(mesh.indices.empty() && mesh.places.empty() && !mesher.hasRest());
 }
 
+TEST(display_takes_the_corners_own_normals) {
+    // Two quads folded 10 degrees along their edge -- less than the crease,
+    // smooth across it without normals -- each corner with a normal of its
+    // own, its face's: the edge sharp in the viewport and the renderers, a
+    // vertex for each side at its points.
+    const float s = std::sin(0.17453292f), c = std::cos(0.17453292f);
+    Geometry geo;
+    geo.addPoints(6);
+    auto P = geo.positionsForWrite();
+    P[0] = Vec3(0, 0, 0), P[1] = Vec3(1, 0, 0), P[2] = Vec3(1, 0, 1), P[3] = Vec3(0, 0, 1);
+    P[4] = Vec3(1 + c, s, 0), P[5] = Vec3(1 + c, s, 1);
+    const uint32_t a[4] = {0, 3, 2, 1}, b[4] = {1, 2, 5, 4};
+    geo.addPrimitive(a, true);
+    geo.addPrimitive(b, true);
+    const auto smooth = std::make_shared<const Geometry>(geo);
+    auto N = geo.vertices().create("N", AttrType::Vec3).write<Vec3>();
+    for (size_t k = 0; k < 4; ++k) N[k] = Vec3(0, 1, 0);
+    for (size_t k = 4; k < 8; ++k) N[k] = Vec3(-s, c, 0);
+    const auto sharp = std::make_shared<const Geometry>(geo);
+    DisplayMesher mesher;
+    DisplayMesh mesh;
+    CHECK(mesher.make(smooth, mesh) == DisplayMesher::Made::Anew);
+    CHECK_EQ(mesh.vertexCount(), size_t(6));
+    CHECK(mesher.make(sharp, mesh) == DisplayMesher::Made::Anew);
+    CHECK(drawsAsDisplayOf(mesh, *sharp));
+    CHECK_EQ(mesh.vertexCount(), size_t(8));
+    for (size_t w = 0; w < mesh.vertexCount(); ++w) {
+        const Vec3 n(mesh.places[w * 6 + 3], mesh.places[w * 6 + 4], mesh.places[w * 6 + 5]);
+        CHECK(near(n, Vec3(0, 1, 0)) || near(n, Vec3(-s, c, 0)));
+    }
+    // Moved, the corners' normals the same: made again quickly.
+    auto moved = std::make_shared<Geometry>(*sharp);
+    for (Vec3& p : moved->positionsForWrite()) p.y += 0.5f;
+    CHECK(mesher.make(moved, mesh) == DisplayMesher::Made::Moved);
+    CHECK(drawsAsDisplayOf(mesh, *moved));
+    // The renderers' triangles: each corner its face's.
+    const ShadedTriangles tris = shadedTriangles(*sharp);
+    CHECK_EQ(tris.count(), size_t(4));
+    for (size_t t = 0; t < tris.count(); ++t) {
+        const Vec3 want = tris.prims[t] == 0 ? Vec3(0, 1, 0) : Vec3(-s, c, 0);
+        for (size_t k = 0; k < 3; ++k) CHECK(near(tris.normals[3 * t + k], want));
+    }
+}
+
 TEST(display_mesh_is_made_again_quickly_when_only_the_points_move) {
     Network net;
     const int grid = net.add("grid");

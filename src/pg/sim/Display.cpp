@@ -34,17 +34,30 @@ const AttributeArray* usableNormals(const Geometry& geo) {
     return nullptr;
 }
 
-/// A point normal there is: not one Merge filled with zeros -- the ground
-/// merged with the trees.
-bool givenNormal(std::span<const Vec3> N, uint32_t p) { return p < N.size() && dot(N[p], N[p]) > 1e-24f; }
+/// The corners' N, where some corner has one of some length -- a hard edge
+/// as Blender, Houdini and USD's faceVarying normals have it --, else none.
+const AttributeArray* usableCornerNormals(const Geometry& geo) {
+    const AttributeArray* N = geo.vertices().find("N");
+    if (!N || N->type() != AttrType::Vec3 || N->size() != geo.vertexCount()) return nullptr;
+    for (const Vec3& n : N->read<Vec3>()) {
+        if (dot(n, n) > 1e-24f) return N;
+    }
+    return nullptr;
+}
 
-/// Whether some corner of `geo` has no normal of its own in `N`: those
-/// creased as without N.
-bool someNormalMissing(const Geometry& geo, const AttributeArray* N) {
-    if (!N) return true;
-    const auto n = N->read<Vec3>();
-    for (const uint32_t p : geo.vertexPoints()) {
-        if (!givenNormal(n, p)) return true;
+/// A normal there is: not one Merge filled with zeros -- the ground merged
+/// with the trees.
+bool givenNormal(std::span<const Vec3> N, size_t i) { return i < N.size() && dot(N[i], N[i]) > 1e-24f; }
+
+/// Whether some corner of `geo` has no normal of its own -- in `corners`,
+/// else its point's in `N`: those creased as without N.
+bool someNormalMissing(const Geometry& geo, const AttributeArray* N, const AttributeArray* corners) {
+    if (!N && !corners) return true;
+    const auto n = N ? N->read<Vec3>() : std::span<const Vec3>();
+    const auto c = corners ? corners->read<Vec3>() : std::span<const Vec3>();
+    const auto points = geo.vertexPoints();
+    for (size_t k = 0; k < points.size(); ++k) {
+        if (!givenNormal(c, k) && !givenNormal(n, points[k])) return true;
     }
     return false;
 }
@@ -292,9 +305,11 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
     }
     if (tris.empty()) return out;
     const AttributeArray* N = usableNormals(geo);
+    const AttributeArray* cornerN = usableCornerNormals(geo);
     std::vector<Vec3> made;
-    if (someNormalMissing(geo, N)) made = cornerNormals(P, tris, kCrease);
+    if (someNormalMissing(geo, N, cornerN)) made = cornerNormals(P, tris, kCrease);
     const std::span<const Vec3> pointN = N ? N->read<Vec3>() : std::span<const Vec3>();
+    const std::span<const Vec3> ownN = cornerN ? cornerN->read<Vec3>() : std::span<const Vec3>();
     const AttributeArray* restAttr = geo.points().find("rest");
     const std::span<const Vec3> rest =
         restAttr && restAttr->type() == AttrType::Vec3 ? restAttr->read<Vec3>() : std::span<const Vec3>();
@@ -332,7 +347,11 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
                 if (!v.empty()) out.velocities[3 * t + c] = v[p];
                 if (vertexUv) out.uvs[3 * t + c] = uvAt(*vertexUv, corners[t][c]);
                 else if (pointUv) out.uvs[3 * t + c] = uvAt(*pointUv, p);
-                Vec3 nrm = givenNormal(pointN, p) ? normalize(pointN[p]) : made[3 * t + c];
+                // The corner's own normal, else its point's, else as the faces bend.
+                const size_t corner = corners[t][c];
+                Vec3 nrm = givenNormal(ownN, corner) ? normalize(ownN[corner])
+                           : givenNormal(pointN, p)  ? normalize(pointN[p])
+                                                     : made[3 * t + c];
                 if (out.glass[t] != 0 && length(flat) > 0.5f) nrm = flat;  // glass is flat, as the viewport has it
                 out.normals[3 * t + c] = nrm;
                 out.colors[3 * t + c] = colors.at(out.prims[t], corners[t][c], p);
@@ -390,8 +409,10 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots, bool faces) {
         for (size_t t = 0; t < tris.size() && !wanted; ++t) wanted = glassOf(owner[t]) >= 0.5f;
         std::vector<Vec3> normals;
         const AttributeArray* N = usableNormals(geo);
-        if (someNormalMissing(geo, N) && wanted) normals = cornerNormals(P, tris, kCrease);
+        const AttributeArray* cornerN = usableCornerNormals(geo);
+        if (someNormalMissing(geo, N, cornerN) && wanted) normals = cornerNormals(P, tris, kCrease);
         const std::span<const Vec3> pointN = N ? N->read<Vec3>() : std::span<const Vec3>();
+        const std::span<const Vec3> ownN = cornerN ? cornerN->read<Vec3>() : std::span<const Vec3>();
         const AttributeArray* v = geo.points().find("v");
         const bool moving = v && v->type() == AttrType::Vec3 && v->size() == points;
         const std::span<const Vec3> pointV = moving ? v->read<Vec3>() : std::span<const Vec3>();
@@ -406,7 +427,10 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots, bool faces) {
             }
             for (int c = 0; c < 3; ++c) {
                 const uint32_t p = tris[t][static_cast<size_t>(c)];
-                Vec3 n = givenNormal(pointN, p) ? pointN[p] : normals[t * 3 + static_cast<size_t>(c)];
+                const size_t corner = corners[t][static_cast<size_t>(c)];
+                Vec3 n = givenNormal(ownN, corner) ? ownN[corner]
+                         : givenNormal(pointN, p)  ? pointN[p]
+                                                   : normals[t * 3 + static_cast<size_t>(c)];
                 const Vec3 col = cornerColor(owner[t], corners[t][static_cast<size_t>(c)], p);
                 grow(d, P[p]);
                 if (kind >= 0.5f) {
@@ -555,7 +579,8 @@ bool DisplayMesher::sameMaking(const Geometry& geo) const {
            identity(geo.primitives().find("translucency")) == identity(was.primitives().find("translucency")) &&
            identity(geo.vertices().find("uv")) == identity(was.vertices().find("uv")) &&
            identity(geo.points().find("uv")) == identity(was.points().find("uv")) &&
-           (usableNormals(geo) != nullptr) == pointNormals_ && someNormalMissing(geo, usableNormals(geo)) == creased_ &&
+           (usableNormals(geo) != nullptr) == pointNormals_ && (usableCornerNormals(geo) != nullptr) == cornerNormals_ &&
+           someNormalMissing(geo, usableNormals(geo), usableCornerNormals(geo)) == creased_ &&
            (pointVectors(geo, "v") != nullptr) == moving_ &&
            geo.volumes().empty() == was.volumes().empty() &&
            identity(geo.points().find("instance")) == identity(was.points().find("instance")) &&
@@ -570,11 +595,13 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     around_.clear();
     vertexPoint_.clear();
     vertexCorner_.clear();
+    corners_.clear();
     const size_t points = geo.pointCount();
     const auto P = geo.positions();
     const Colors colors(geo);
     const Glass glass(geo);
     const AttributeArray* N = usableNormals(geo);
+    const AttributeArray* cornerN = usableCornerNormals(geo);
     const AttributeArray* v = pointVectors(geo, "v");
     const AttributeArray* through = geo.primitives().find("translucency");
     if (through && through->type() != AttrType::Float) through = nullptr;
@@ -595,13 +622,14 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     mesh.pictures = looks.pictures;
     const bool pictured = !looks.picture.empty();
     pointNormals_ = N != nullptr;
-    creased_ = someNormalMissing(geo, N);
+    cornerNormals_ = cornerN != nullptr;
+    creased_ = someNormalMissing(geo, N, cornerN);
     moving_ = v != nullptr;
     rest_ = !geo.volumes().empty();
 
     // The fans across the closed polygons, as displayOf makes them; lines
     // and loose points are the rest.
-    std::vector<std::array<uint32_t, 3>> corners;  // the vertex of each corner, for its colour
+    std::vector<std::array<uint32_t, 3>>& corners = corners_;  // the vertex of each corner: its colour, its own N
     std::vector<uint32_t> owner;
     std::vector<uint8_t> used = instancePoints(geo);  // a point that stands for a prototype is no loose point
     tris_.reserve(geo.vertexCount());
@@ -631,9 +659,11 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     }
     if (drawn_.empty()) return;
 
-    // Each corner's normal: the points' N, else the faces round it that
-    // bend less than the crease -- those found for all at once, in parallel.
+    // Each corner's normal: its own N, else its point's, else the faces
+    // round it that bend less than the crease -- those found for all at
+    // once, in parallel.
     const auto pointN = N ? N->read<Vec3>() : std::span<const Vec3>();
+    const auto ownN = cornerN ? cornerN->read<Vec3>() : std::span<const Vec3>();
     const size_t count = drawn_.size() * 3;
     std::vector<Vec3> normal;
     if (creased_) {
@@ -668,8 +698,8 @@ void DisplayMesher::build(const Geometry& geo, DisplayMesh& mesh) {
     for (size_t k = 0; k < count; ++k) {
         const uint32_t t = drawn_[k / 3];
         const uint32_t p = tris_[t][k % 3];
-        const Vec3 n = givenNormal(pointN, p) ? pointN[p] : normal[k];
         const uint32_t corner = corners[t][k % 3];
+        const Vec3 n = givenNormal(ownN, corner) ? ownN[corner] : givenNormal(pointN, p) ? pointN[p] : normal[k];
         Vec3 c = colors.at(owner[t], corner, p);
         if (!looks.color.empty() && looks.color[owner[t]].x >= 0.0f) c = looks.color[owner[t]];
         const float lets = through ? std::clamp(throughOf[owner[t]], 0.0f, 1.0f) : 0.0f;
@@ -724,6 +754,8 @@ bool DisplayMesher::move(const Geometry& geo, DisplayMesh& mesh) {
     const auto P = geo.positions();
     const AttributeArray* N = usableNormals(geo);
     const auto pointN = N ? N->read<Vec3>() : std::span<const Vec3>();
+    const AttributeArray* cornerN = usableCornerNormals(geo);
+    const auto ownN = cornerN ? cornerN->read<Vec3>() : std::span<const Vec3>();
     std::vector<Vec3> faceNormal;
     std::vector<float> faceSize;
     if (creased_) faceNormals(P, tris_, faceNormal, faceSize);
@@ -731,6 +763,8 @@ bool DisplayMesher::move(const Geometry& geo, DisplayMesh& mesh) {
     auto cornerNormal = [&](size_t k) {
         const uint32_t t = drawn_[k / 3];
         const uint32_t p = tris_[t][k % 3];
+        const uint32_t corner = corners_[t][k % 3];
+        if (givenNormal(ownN, corner)) return ownN[corner];
         return givenNormal(pointN, p) ? pointN[p] : creases.corner(creases.own(t), p);
     };
     // Each vertex: its point's place, its first corner's normal.
@@ -748,8 +782,9 @@ bool DisplayMesher::move(const Geometry& geo, DisplayMesh& mesh) {
         }
     });
     // Every other corner of a vertex the same normal -- else a fold has
-    // parted them, and it is made anew. (The points' N are one a point.)
-    if (creased_) {
+    // parted them, or the corners' own N, and it is made anew. (The points'
+    // N are one a point.)
+    if (creased_ || cornerNormals_) {
         const auto chunks = chunkRanges(mesh.indices.size(), 8192);
         std::vector<uint8_t> parted(chunks.size(), 0);
         TaskPool::instance().run(chunks.size(), [&](size_t c) {

@@ -162,8 +162,8 @@ struct Builder {
     /// the corners' first, and there the prims that gave theirs elsewhere
     /// would have zeros. Each corner takes the value its prim gave it, else
     /// its point's, else its face's; points no primitive uses keep theirs.
-    /// Normals and velocities stay where each prim gave them: the renderers
-    /// take them from the points alone.
+    /// Velocities stay where each prim gave them: the renderers take them
+    /// from the points alone.
     void unify() {
         std::map<std::string, int> classes;
         for (const auto& [key, a] : attrs) {
@@ -175,7 +175,7 @@ struct Builder {
         std::vector<uint8_t> used(geo.pointCount(), 0);
         for (const uint32_t p : corners) used[p] = 1;
         for (const auto& [name, count] : classes) {
-            if (count < 2 || name == "N" || name == "v") continue;
+            if (count < 2 || name == "v") continue;
             Attr* point = find(AttrClass::Point, name);
             Attr* vertex = find(AttrClass::Vertex, name);
             Attr* face = find(AttrClass::Primitive, name);
