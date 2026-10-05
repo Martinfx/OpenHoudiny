@@ -104,6 +104,42 @@ z **Leaf Color**, podle **Variation** je světlejší, tmavší a do žluta.
 Všechny tvary jsou z pohledu paty listu hvězdicové, takže je vějíř
 trojúhelníků z paty pokryje přesně, i ten zubatý.
 
+### Překážky
+
+Druhý vstup **Obstacles** jsou překážky: jakékoli uzavřené polygony (zeď,
+střecha, skála, sousední dům). Každý stonek drží povrchem odstup
+**Clearance** od nich. Kde by přišel blíž nebo jimi prošel, stočí se
+podél překážky a trochu od ní. Pokud do ní míří čelně, pokračuje podél ní
+směrem, kam se sám naklání, jinak nahoru ke světlu, jinak stranou. Kmen se
+pak zase narovnává vzhůru, takže kmen pod střechou vyklouzne zpod okraje
+a roste dál nad ní. **Avoid** říká, o kolik se stonek smí stočit, jako
+podíl pravého úhlu. Když by se musel stočit víc, nebo ani tudy cesta
+nevede, skončí. Pak se vypěstuje znovu, tak dlouhý, kam dorostl, aby se
+dál zužoval ke špičce. Avoid 0 stonky jen zastavuje jako prořezávání
+podle překážky. List, který by se překážky dotkl, nevyroste. Náhodná čísla
+se berou stejně, takže strom, na jehož dosah žádná překážka není, je
+přesně stejný jako bez nich.
+
+Překážky hledá strom trojúhelníků (`TriangleTree` v
+`src/pg/core/Spatial.h`): nejbližší bod povrchu a průchod úsečky,
+z libovolného počtu vláken. U výstupu Instances dostane strom, na jehož
+dosah překážka je (do 1,6 výšky od středu kmene), vlastní prototyp
+vypěstovaný na svém místě. Ostatní body zastupují Variants jako dřív.
+
+Příklad **tree_obstacles**: strom metr a půl od zdi a strom pod pergolou
+(střecha na čtyřech sloupcích ve 4,35 m).
+
+![Příklad tree_obstacles: vlevo stromy bez překážek prorůstají zdí a střechou pergoly, vpravo se zdi vyhnou a kmen pod pergolou vyklouzne ven a roste nad ní](img/tree-obstacles.jpg)
+
+Testy (`tests/test_plants.cpp`): nejbližší body se shodují s hledáním
+rukou na 0,0014 m. Strom (dvě úrovně větví) u zdi bez ní prorůstá zdí
+61 úsečkami a 348 bodů má za ní. S ní zdí neprojde ani jedna úsečka ani
+list, žádný bod není blíž než Clearance a 32 m větví leží podél zdi, při
+stejné délce dřeva 203 m. S Avoid 0 také nic neprojde, ale dřeva zbude
+155 m a podél zdi jen 11 m. Strom mimo dosah překážky je bod po bodu
+stejný jako bez ní. Ze šesti bodů Instances dostanou vlastní strom dva
+u zdi a žádná z 58 573 hran jejich kůry zdí neprochází.
+
 ## 2. Parametry
 
 | Sekce | Parametr | Výchozí | Co dělá |
@@ -135,6 +171,8 @@ trojúhelníků z paty pokryje přesně, i ten zubatý.
 | | Power Low / High | 0,5 / 0,5 | jak se obálka zužuje pod nejširším místem a nad ním: 1 kužel, pod 1 plnější, nad 1 štíhlejší |
 | Roots | Roots | 0 | kořeny z paty kmene: nad zemí, pak dolů do ní (náběhy starého stromu); ve větru se nehýbou |
 | | Root Length | 0,15 | délka kořenů jako podíl délky kmene |
+| Obstacles | Clearance | 0,15 m | odstup povrchu stonků od překážek (druhý vstup) |
+| | Avoid | 1 | o kolik se stonek smí stočit podél překážky, podíl pravého úhlu; 0 jen skončí |
 | Leaves | Leaves | 10 | listů na větvičku |
 | | Leaf Size | 0,12 m | délka listu |
 | | Leaf Shape | Broad | Broad, Narrow, Needles |
@@ -425,8 +463,8 @@ trubky s plochami otočenými ven a tvar koruny podle Shape.
 
 ## 9. Co zatím chybí
 
-- **Vyhýbání se větví** navzájem nebo překážkám (prořezávání obálkou už
-  je, oddíl 2).
+- **Vyhýbání se větví navzájem** a sousedních stromů (překážkám se větve
+  vyhýbají, oddíl 1; prořezávání obálkou, oddíl 2).
 - **Kořeny** v zemi do hloubky a kořeny, které se přizpůsobí terénu
   (teď vycházejí z paty stejně na rovině i na svahu).
 - **Vítr s Dynamics** zná u každého stonku jen první vlastní kmit,

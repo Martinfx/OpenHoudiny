@@ -8,8 +8,13 @@
 // depend on how the tree happened to split: equal distances come out in the
 // same order on every machine.
 //
+// And over triangles (TriangleTree): the nearest point of them to a place,
+// whether a segment passes through one -- what a growing branch keeps
+// clear of.
+//
 #include "pg/core/Types.h"
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -43,6 +48,38 @@ private:
 
     std::vector<Vec3> points_;
     std::vector<int32_t> order_;
+    std::vector<Node> nodes_;
+};
+
+/// Triangles to keep clear of: the nearest point of them to a place, and
+/// whether a segment passes through one. A tree of boxes round them --
+/// split at the middle of the longest side their middles span, at most four
+/// a leaf -- built once over a geometry's closed polygons (fans of
+/// triangles), then asked from any number of threads.
+class TriangleTree {
+public:
+    TriangleTree() = default;
+    explicit TriangleTree(const class Geometry& geo) { build(geo); }
+
+    void build(const class Geometry& geo);
+    bool empty() const { return triangles_.empty(); }
+    size_t size() const { return triangles_.size(); }
+    /// The nearest point of the triangles to `p`, no further than `radius`:
+    /// false, `at` as it was, when none is as near.
+    bool nearest(const Vec3& p, float radius, Vec3& at) const;
+    /// Whether the segment from `a` to `b` passes through a triangle.
+    bool crosses(const Vec3& a, const Vec3& b) const;
+
+private:
+    struct Node {
+        Vec3 lo, hi;
+        uint32_t first = 0, count = 0;  ///< a leaf: its triangles, order_[first, first + count)
+        uint32_t left = 0, right = 0;
+    };
+    uint32_t make(uint32_t first, uint32_t count);
+
+    std::vector<std::array<Vec3, 3>> triangles_;
+    std::vector<uint32_t> order_;
     std::vector<Node> nodes_;
 };
 

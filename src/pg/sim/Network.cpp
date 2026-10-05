@@ -668,6 +668,13 @@ std::vector<NodeType> buildTypes() {
                      "tree's buttresses. They stay still in the wind."});
         p.push_back({"rootlength", "Root Length", "Roots", K::Float, {0.15f, 0.0f, 0.0f}, 0.0f, 0.5f, 0.0f, kBig, "",
                      "How long they are, a share of the trunk's length."});
+        p.push_back({"clearance", "Clearance", "Obstacles", K::Float, {0.15f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, kBig, "m",
+                     "How near the surface of a stem comes to the obstacles (the second input): a wall, a roof, "
+                     "a rock. A stem that would come nearer, or go through one, turns along it."});
+        p.push_back({"avoid", "Avoid", "Obstacles", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                     "How far a stem may turn to get past an obstacle, a share of a right angle: 1 it turns along "
+                     "it, away from it -- up toward the light where it meets it head on; 0 it ends where it would "
+                     "meet it, as if pruned there. A stem that cannot turn far enough ends there."});
         p.push_back({"leaves", "Leaves", "Leaves", K::Int, {10.0f, 0.0f, 0.0f}, 0.0f, 60.0f, 0.0f, 500.0f, "",
                      "How many leaves grow on each twig -- each branch nothing grows from."});
         p.push_back({"leafsize", "Leaf Size", "Leaves", K::Float, {0.12f, 0.0f, 0.0f}, 0.01f, 0.5f, 1e-4f, kBig, "m",
@@ -708,9 +715,10 @@ std::vector<NodeType> buildTypes() {
                  "first branches are from its foot up (after Weber and Penn). With points in, a tree on each -- a "
                  "forest, each tree its own: its id, else its number, grows it; pscale sizes it. Point Cd and "
                  "flex -- how far along the wood from the tree's foot, a share of its height: 0 at the ground, "
-                 "about 1 at the crown's top, what a wrangle bends it in the wind by; primitive level (-1 a "
-                 "leaf), stem, tree.",
-                 {{"points", "Points", PinType::Geometry}}, std::move(p),
+                 "about 1 at the crown's top, what Plant Wind bends it by; primitive level (-1 a leaf), stem, "
+                 "parent, tree. With obstacles in -- closed polygons: a wall, a roof, a rock -- the stems keep "
+                 "Clearance from them, turning along them, else ending there.",
+                 {{"points", "Points", PinType::Geometry}, {"obstacles", "Obstacles", PinType::Geometry}}, std::move(p),
                  {"center", nullptr, nullptr, nullptr, "radius", "height"});
     }
     geometry("grass", "Grass", "grass",

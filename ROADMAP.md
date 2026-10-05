@@ -540,7 +540,11 @@ Seřazeno podle poměru hodnota / náklad:
    růst a chřadnutí podle světla, semenáčky podle světla u země;
    čtvrtý druh keř jako podrost (příklad **ecosystem**: lísky pod stromy
    se světlem 0,31, smrkové semenáčky čekající ve stínu).
-   Zbývá: vyhýbání se větví překážkám.
+   ✅ Větve se vyhýbají překážkám (Tree, vstup Obstacles): odstup
+   Clearance, stočení podél povrchu, jinak konec stonku; strom pod
+   střechou vyklouzne ven a roste nad ní (příklad **tree_obstacles**).
+   Zbývá: větve sousedních stromů vyhýbající se navzájem, byliny jako
+   další patro ekosystému.
 
 ---
 

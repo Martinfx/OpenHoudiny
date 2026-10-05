@@ -18,12 +18,18 @@
 //   points  each tree stands on one, pscale times as big (and Size
 //           Variation more or less); its id, else its number, makes it its
 //           own. Without them one tree stands at Center.
+//   obstacles  closed polygons the trees grow clear of -- a wall, a roof,
+//           a rock (pg/core/Tree.h): their stems Clearance from them,
+//           turning along them as far as Avoid lets them, else ending
+//           there. As instances, a tree within reach of one is grown on its
+//           own, its own prototype; the others stand for the Variants.
 //
 #include "pg/nodes/Nodes.h"
 
 #include "pg/core/Geometry.h"
 #include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
+#include "pg/core/Spatial.h"
 #include "pg/core/Tree.h"
 
 #include <algorithm>
@@ -57,7 +63,7 @@ void groupMesh(Geometry& geo) {
 class TreeNode : public Node {
 public:
     explicit TreeNode(std::string name) : Node("tree", std::move(name)) {
-        setInputCount(1);
+        setInputCount(2);
         const TreeSettings d;
         params_.setInt("shape", static_cast<int>(d.shape));
         params_.setFloat("height", d.height);
@@ -83,6 +89,8 @@ public:
         params_.setFloat("prunepowerhigh", d.prunePowerHigh);
         params_.setInt("roots", d.roots);
         params_.setFloat("rootlength", d.rootLength);
+        params_.setFloat("clearance", d.clearance);
+        params_.setFloat("avoid", d.avoid);
         params_.setFloat("thickness", d.thickness);
         for (size_t l = 0; l < 3; ++l) {
             const std::string n = std::to_string(l + 1);
@@ -126,6 +134,8 @@ public:
         s.prunePowerHigh = std::max(params_.evalFloat("prunepowerhigh", ctx, d.prunePowerHigh), 0.0f);
         s.roots = std::clamp(params_.evalInt("roots", ctx, d.roots), 0, 16);
         s.rootLength = std::max(params_.evalFloat("rootlength", ctx, d.rootLength), 0.0f);
+        s.clearance = std::max(params_.evalFloat("clearance", ctx, d.clearance), 0.0f);
+        s.avoid = std::clamp(params_.evalFloat("avoid", ctx, d.avoid), 0.0f, 1.0f);
         s.thickness = std::clamp(params_.evalFloat("thickness", ctx, d.thickness), 0.05f, 0.95f);
         for (size_t l = 0; l < 3; ++l) {
             const std::string n = std::to_string(l + 1);
@@ -169,14 +179,19 @@ public:
             }
         }
 
-        if (output == 2) return instances(ctx, s, seed, places, !points);
+        // What they grow clear of.
+        TriangleTree obstacles;
+        if (in.size() > 1 && in[1]) obstacles.build(*in[1]);
+        const TriangleTree* keep = obstacles.empty() ? nullptr : &obstacles;
+
+        if (output == 2) return instances(ctx, s, seed, places, !points, keep);
 
         // Each grown on its own, then one after the other.
         std::vector<Geometry> parts(places.size());
         parallelFor(places.size(), 1, [&](size_t b, size_t e) {
             for (size_t i = b; i < e && !ctx.interrupted(); ++i) {
                 if (places[i].scale <= 0.0f) continue;
-                const Tree tree = growTree(s, places[i].at, places[i].scale, places[i].seed);
+                const Tree tree = growTree(s, places[i].at, places[i].scale, places[i].seed, keep);
                 if (skeleton) {
                     skeletonTree(tree, static_cast<int>(i), parts[i]);
                 } else {
@@ -215,9 +230,10 @@ private:
     /// Variants trees -- the ones the first points would grow -- and a
     /// point for each place that stands for one of them, turned about +y
     /// as it happens, a shade of its own; `alone`: the one tree as it
-    /// grows at Center.
+    /// grows at Center. A place within reach of `obstacles` stands for a
+    /// tree of its own, grown there clear of them.
     GeometryPtr instances(const CookContext& ctx, const TreeSettings& s, uint64_t seed, const std::vector<Place>& places,
-                          bool alone) {
+                          bool alone, const TriangleTree* obstacles) {
         const size_t variants = static_cast<size_t>(std::clamp(params_.evalInt("variants", ctx, 8), 1, 64));
         std::vector<std::shared_ptr<Geometry>> kinds(variants);
         parallelFor(variants, 1, [&](size_t b, size_t e) {
@@ -253,6 +269,40 @@ private:
             tint[i] = Vec3(shade * (1.0f + 0.2f * warm), shade * (1.0f + 0.08f * warm), shade * (1.0f - 0.3f * warm));
         }
         for (auto& kind : kinds) geo->addPrototype(std::move(kind));
+        if (obstacles) {
+            // The trees an obstacle is within reach of: each grown where it
+            // stands, its own prototype -- standing upright, its own size.
+            std::vector<size_t> near;
+            for (size_t i = 0; i < places.size(); ++i) {
+                const float h = std::max(s.height, 0.01f) * std::max(places[i].scale, 0.0f);
+                Vec3 at;
+                if (h > 0.0f && obstacles->nearest(places[i].at + Vec3(0.0f, 0.5f * h, 0.0f), 1.6f * h + s.clearance, at)) {
+                    near.push_back(i);
+                }
+            }
+            std::vector<std::shared_ptr<Geometry>> own(near.size());
+            parallelFor(near.size(), 1, [&](size_t b, size_t e) {
+                for (size_t j = b; j < e && !ctx.interrupted(); ++j) {
+                    const Place& place = places[near[j]];
+                    Tree tree = growTree(s, place.at, place.scale, place.seed, obstacles);
+                    // Into the prototype's own frame: its foot at the origin.
+                    for (TreeStem& st : tree.stems) {
+                        for (Vec3& p : st.points) p -= place.at;
+                    }
+                    for (TreeLeaf& leaf : tree.leaves) leaf.at -= place.at;
+                    own[j] = std::make_shared<Geometry>();
+                    meshTree(tree, s, static_cast<int>(variants + j), *own[j]);
+                    groupMesh(*own[j]);
+                }
+            });
+            if (ctx.interrupted()) return nullptr;
+            for (size_t j = 0; j < near.size(); ++j) {
+                const size_t i = near[j];
+                instance[i] = static_cast<int32_t>(geo->addPrototype(std::move(own[j])));
+                orient[i] = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                pscale[i] = 1.0f;
+            }
+        }
         return geo;
     }
 };

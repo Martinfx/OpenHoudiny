@@ -3,12 +3,18 @@
 // driven by gusts as a damped spring is, by how near its own pace they come;
 // a tree still in a steady wind, its branches flung by the trunk when it is
 // not; the same whatever frames are asked for, in whatever order, on any
-// number of threads; plants standing on points swaying whole.
+// number of threads; plants standing on points swaying whole. In a
+// community by height (CanopyLight): a tall crown shading the short ones
+// under it, shrubs as an understorey, shade bearers waiting. Among
+// obstacles (TriangleTree): the nearest points and crossings as found by
+// hand, a tree by a wall grown round it, trees as instances by one grown
+// on their own.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Ecosystem.h"
 #include "pg/core/Graph.h"
 #include "pg/core/Parallel.h"
+#include "pg/core/Spatial.h"
 #include "pg/core/Tree.h"
 #include "pg/core/Wind.h"
 #include "pg/nodes/Nodes.h"
@@ -380,4 +386,197 @@ TEST(plants_by_height_shade_bearers_wait_under_the_canopy_and_shrubs_make_an_und
     // Spruce saplings bear the shade: more of them in it, and for longer.
     CHECK(waiting[2] * count[0] > 2 * waiting[0] * count[2]);
     CHECK(waited[2] / waiting[2] > 2.0 * waited[0] / std::max<size_t>(waiting[0], 1));
+}
+
+namespace {
+
+/// A box `size` across standing at `center`: six closed quads, turned out.
+Geometry boxAt(const Vec3& center, const Vec3& size) {
+    registerBuiltinNodes();
+    auto node = NodeRegistry::instance().create("box", "wall");
+    node->setVec3("size", size);
+    node->setVec3("center", center);
+    CookEngine engine;
+    return *engine.cook(*node, CookContext());
+}
+
+/// The nearest point of `geo`'s triangles to p, by looking at each.
+float nearestByHand(const Geometry& geo, const Vec3& p) {
+    float best = 1e30f;
+    const auto P = geo.positions();
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        const auto pts = geo.primitivePoints(prim);
+        for (size_t k = 1; k + 1 < pts.size(); ++k) {
+            // Fine samples of the triangle: as near as any.
+            const Vec3 a = P[pts[0]], b = P[pts[k]], c = P[pts[k + 1]];
+            for (int i = 0; i <= 60; ++i) {
+                for (int j = 0; i + j <= 60; ++j) {
+                    const Vec3 q = a + (b - a) * (static_cast<float>(i) / 60.0f) + (c - a) * (static_cast<float>(j) / 60.0f);
+                    best = std::min(best, length(q - p));
+                }
+            }
+        }
+    }
+    return best;
+}
+
+}  // namespace
+
+TEST(plants_triangles_nearest_and_crossing_as_found_by_hand) {
+    Geometry geo = boxAt(Vec3(0.3f, 1.0f, -0.2f), Vec3(1.0f, 2.0f, 0.6f));
+    geo.append(boxAt(Vec3(-1.5f, 0.5f, 0.8f), Vec3(0.4f, 1.0f, 1.2f)));
+    const TriangleTree tree(geo);
+    CHECK_EQ(tree.size(), size_t(24));
+    uint64_t state = 7;
+    auto unit = [&]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<float>(state >> 40) / 16777216.0f;
+    };
+    float worst = 0.0f;
+    size_t crossings = 0, agree = 0;
+    for (int n = 0; n < 200; ++n) {
+        const Vec3 p(4.0f * unit() - 2.5f, 3.0f * unit() - 0.5f, 3.0f * unit() - 1.5f);
+        Vec3 at;
+        CHECK(tree.nearest(p, 10.0f, at));
+        worst = std::max(worst, std::fabs(length(at - p) - nearestByHand(geo, p)));
+        // Within a radius only: none when it is short of the nearest.
+        Vec3 none;
+        CHECK(!tree.nearest(p, 0.98f * length(at - p) - 1e-4f, none) || length(at - p) < 1e-4f);
+        // A segment crosses a closed box when its ends are on either side
+        // of its surface.
+        const Vec3 q(4.0f * unit() - 2.5f, 3.0f * unit() - 0.5f, 3.0f * unit() - 1.5f);
+        auto inside = [](const Vec3& x, const Vec3& c, const Vec3& h) {
+            return std::fabs(x.x - c.x) < h.x && std::fabs(x.y - c.y) < h.y && std::fabs(x.z - c.z) < h.z;
+        };
+        const bool a1 = inside(p, Vec3(0.3f, 1.0f, -0.2f), Vec3(0.5f, 1.0f, 0.3f)), b1 = inside(q, Vec3(0.3f, 1.0f, -0.2f), Vec3(0.5f, 1.0f, 0.3f));
+        const bool a2 = inside(p, Vec3(-1.5f, 0.5f, 0.8f), Vec3(0.2f, 0.5f, 0.6f)), b2 = inside(q, Vec3(-1.5f, 0.5f, 0.8f), Vec3(0.2f, 0.5f, 0.6f));
+        const bool crosses = tree.crosses(p, q);
+        crossings += crosses ? 1 : 0;
+        if (a1 != b1 || a2 != b2) agree += crosses ? 1 : 0;  // one end in, one out: it must cross
+        else agree += 1;                                        // else it may pass through both sides
+    }
+    std::printf("  nearest points within %.2g m of those found by hand; %zu of 200 segments cross\n", worst, crossings);
+    CHECK(worst < 0.03f);  // the hand's samples are 1/60 of a face apart
+    CHECK_EQ(agree, size_t(200));
+    CHECK(crossings > 20);
+}
+
+TEST(plants_a_tree_by_a_wall_grows_round_it) {
+    // A wall half a metre from a tree's foot: no stem goes through it or
+    // comes nearer than Clearance; the branches meeting it turn along it,
+    // up and aside; with Avoid 0 they end there instead.
+    const Geometry wall = boxAt(Vec3(0.9f, 4.0f, 0.0f), Vec3(0.3f, 8.0f, 10.0f));
+    const TriangleTree obstacles(wall);
+    TreeSettings ts;
+    ts.levels = 2;
+    const Tree free = growTree(ts, Vec3(), 1.0f, 3);
+    const Tree kept = growTree(ts, Vec3(), 1.0f, 3, &obstacles);
+    TreeSettings stopping = ts;
+    stopping.avoid = 0.0f;
+    const Tree stopped = growTree(stopping, Vec3(), 1.0f, 3, &obstacles);
+    struct Count {
+        size_t through = 0, near = 0, beyond = 0, points = 0;
+        float wood = 0.0f, along = 0.0f;
+        size_t leaves = 0, leavesThrough = 0;
+    };
+    auto count = [&](const Tree& t) {
+        Count c;
+        for (const TreeStem& st : t.stems) {
+            for (size_t i = 0; i < st.points.size(); ++i) {
+                const Vec3& p = st.points[i];
+                ++c.points;
+                if (i > 0) {
+                    c.through += obstacles.crosses(st.points[i - 1], p) ? 1 : 0;
+                    c.wood += length(p - st.points[i - 1]);
+                }
+                Vec3 at;
+                if (obstacles.nearest(p, ts.clearance + st.radius[i] - 0.02f, at)) ++c.near;
+                c.beyond += p.x > 0.75f ? 1 : 0;
+                // Branches sliding along it: wood within 2.5 Clearance of it.
+                auto by = [&](size_t k) { return obstacles.nearest(st.points[k], 2.5f * ts.clearance + st.radius[k], at); };
+                if (i > 0 && st.level > 0 && by(i) && by(i - 1)) c.along += length(p - st.points[i - 1]);
+            }
+        }
+        c.leaves = t.leaves.size();
+        for (const TreeLeaf& leaf : t.leaves) c.leavesThrough += obstacles.crosses(leaf.at, leaf.at + leaf.along * leaf.size) ? 1 : 0;
+        return c;
+    };
+    const Count a = count(free), b = count(kept), c = count(stopped);
+    std::printf("  free:     %zu points, %.0f m of wood, %zu segments through the wall, %zu points beyond it, %zu leaves (%zu through)\n",
+                a.points, a.wood, a.through, a.beyond, a.leaves, a.leavesThrough);
+    std::printf("  avoiding: %zu points, %.0f m of wood, %zu through, %zu nearer than Clearance, %.1f m of branches along it, "
+                "%zu leaves (%zu through)\n",
+                b.points, b.wood, b.through, b.near, b.along, b.leaves, b.leavesThrough);
+    std::printf("  stopping: %zu points, %.0f m of wood, %zu through, %zu nearer than Clearance, %.1f m along it, %zu leaves\n",
+                c.points, c.wood, c.through, c.near, c.along, c.leaves);
+    CHECK(a.through > 10 && a.beyond > 100);  // without it, the crown would reach through
+    CHECK_EQ(b.through, size_t(0));
+    CHECK_EQ(b.beyond, size_t(0));
+    CHECK_EQ(b.near, size_t(0));
+    CHECK_EQ(b.leavesThrough, size_t(0));
+    CHECK_EQ(c.through, size_t(0));
+    CHECK_EQ(c.near, size_t(0));
+    CHECK(b.along > 2.0f * c.along);  // turned along it rather than stopped
+    CHECK(b.wood > c.wood);
+    // The same tree where no obstacle is within its reach.
+    const Geometry far = boxAt(Vec3(40.0f, 4.0f, 0.0f), Vec3(0.3f, 8.0f, 10.0f));
+    const TriangleTree distant(far);
+    const Tree alone = growTree(ts, Vec3(), 1.0f, 3, &distant);
+    CHECK_EQ(alone.stems.size(), free.stems.size());
+    bool same = alone.leaves.size() == free.leaves.size();
+    for (size_t i = 0; i < alone.stems.size() && same; ++i) same = alone.stems[i].points == free.stems[i].points;
+    CHECK(same);
+}
+
+TEST(plants_trees_as_instances_by_an_obstacle_are_grown_on_their_own) {
+    // Six places in two rows, a wall by the first two: those two stand for
+    // trees of their own, grown there clear of it; the rest for the
+    // variants. Unpacked, no stem goes through the wall.
+    registerBuiltinNodes();
+    Graph g;
+    Node* grid = g.create("grid", "spots");
+    grid->setInt("rows", 2);
+    grid->setInt("cols", 3);
+    grid->setFloat("sizex", 24.0f);
+    grid->setFloat("sizez", 1.0f);
+    Node* wall = g.create("box", "wall");
+    wall->setVec3("size", Vec3(0.3f, 8.0f, 4.0f));
+    wall->setVec3("center", Vec3(-11.1f, 4.0f, 0.0f));
+    Node* trees = g.create("tree", "trees");
+    trees->setInt("output", 2);
+    trees->setInt("variants", 3);
+    trees->setInt("levels", 2);
+    trees->setFloat("sizevariation", 0.0f);
+    CHECK(trees->setInput(0, grid));
+    CHECK(trees->setInput(1, wall));
+    CookEngine engine;
+    const GeometryPtr out = engine.cook(*trees, CookContext());
+    CHECK(out && out->pointCount() == 6);
+    const auto instance = out->points().find("instance")->read<int32_t>();
+    const auto P = out->positions();
+    size_t own = 0;
+    for (size_t i = 0; i < 6; ++i) own += instance[i] >= 3 ? 1 : 0;
+    const TriangleTree obstacles(*engine.cook(*wall, CookContext()));
+    size_t through = 0, segments = 0;
+    for (size_t i = 0; i < 6; ++i) {
+        const bool near = P[i].x < -10.0f;
+        CHECK_EQ(instance[i] >= 3, near);
+        if (!near) continue;
+        // Its own tree, upright and its own size: its points where they stand.
+        const Geometry& proto = *out->prototypes()[static_cast<size_t>(instance[i])];
+        const auto level = proto.primitives().find("level")->read<int32_t>();
+        for (size_t prim = 0; prim < proto.primitiveCount(); ++prim) {
+            if (level[prim] < 0) continue;
+            const auto pts = proto.primitivePoints(prim);
+            for (size_t k = 0; k + 1 < pts.size(); ++k) {
+                ++segments;
+                through += obstacles.crosses(P[i] + proto.positions()[pts[k]], P[i] + proto.positions()[pts[k + 1]]) ? 1 : 0;
+            }
+        }
+    }
+    std::printf("  %zu prototypes, %zu places with a tree of their own; %zu of their %zu bark edges through the wall\n",
+                out->prototypeCount(), own, through, segments);
+    CHECK_EQ(own, size_t(2));
+    CHECK_EQ(out->prototypeCount(), size_t(5));
+    CHECK_EQ(through, size_t(0));
 }

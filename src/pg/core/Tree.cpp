@@ -1,5 +1,7 @@
 #include "pg/core/Tree.h"
 
+#include "pg/core/Spatial.h"
+
 #include <glm/gtx/rotate_vector.hpp>
 
 #include <algorithm>
@@ -89,8 +91,48 @@ struct Turning {
     Vec3 bow;
 };
 
+/// What a stem keeps clear of (TreeSettings::clearance, avoid).
+struct Keep {
+    const TriangleTree* tree = nullptr;
+    float clearance = 0.15f, avoid = 1.0f;
+
+    /// Whether a piece from `p` the way `d`, `ds` long, keeps `room` from
+    /// the obstacles and goes through none.
+    bool clear(const Vec3& p, const Vec3& d, float ds, float room) const {
+        Vec3 at;
+        return !tree->nearest(p + d * ds, room, at) && !tree->crosses(p, p + d * ds);
+    }
+    /// The way on from `p` where `d` is not clear: along the obstacle, a
+    /// little away from it. Where it goes at it head on, along it the way
+    /// it leans -- else up, toward the light, else aside. False where Avoid
+    /// does not let it turn so far, or that way is not clear either (half
+    /// the room: sliding along it).
+    bool turn(const Vec3& p, Vec3& d, float ds, float room) const {
+        if (!(avoid > 0.0f)) return false;
+        Vec3 at;
+        if (!tree->nearest(p, room + 2.0f * ds, at)) return false;
+        Vec3 away = p - at;
+        const float gap = length(away);
+        away = gap > 1e-6f ? away / gap : -d;
+        Vec3 along = d - away * dot(d, away);
+        const bool headOn = length(along) < 0.2f;
+        if (headOn && length(along) < 0.05f) {
+            along = kUp - away * dot(kUp, away);
+            if (length(along) < 0.2f) along = perpendicular(away);
+        }
+        const Vec3 way = normalize(normalize(along) + away * (headOn ? 0.0f : 0.25f));
+        if (std::acos(std::clamp(dot(way, d), -1.0f, 1.0f)) > std::min(avoid, 1.0f) * 0.5f * kPi + 0.05f) return false;
+        if (!clear(p, way, ds, 0.5f * room)) return false;
+        d = way;
+        return true;
+    }
+};
+
+/// A stem from `base` the way `dir`, `length` long in `pieces`, thinning
+/// from r0 to r1 -- turning as `turn` says, clear of what `keep` holds: where
+/// it cannot go on, it ends (its length what it reached).
 TreeStem growStem(int level, const Vec3& base, const Vec3& dir, float length, float r0, float r1, int pieces,
-                  const Turning& turn, Random& random) {
+                  const Turning& turn, Random& random, const Keep& keep = {}) {
     TreeStem st;
     st.level = level;
     st.length = length;
@@ -102,16 +144,45 @@ TreeStem growStem(int level, const Vec3& base, const Vec3& dir, float length, fl
     const float dt = 1.0f / static_cast<float>(pieces), ds = length * dt;
     // A random walk: as far off, whatever the number of pieces.
     const float wander = turn.wander * std::sqrt(dt);
+    bool turned = false;  // by an obstacle: a trunk then turns up again
     for (int i = 1; i <= pieces; ++i) {
         const float t = static_cast<float>(i) * dt;
         Vec3 push = random.direction() * wander + kUp * (turn.lift * dt) + turn.bow * dt - kUp * (2.0f * turn.sag * t * dt);
+        if (turned && level == 0) push += kUp * (3.0f * dt);
         push = push - d * dot(push, d);  // along the way it goes is no turn
         d = normalize(d + push);
+        if (keep.tree) {
+            // Its surface Clearance from them: turned along one, else it ends
+            // -- a trunk grows its first piece whatever.
+            const float room = keep.clearance + r0 + (r1 - r0) * t;
+            if (!keep.clear(p, d, ds, room)) {
+                if (keep.turn(p, d, ds, room)) {
+                    turned = true;
+                } else if (i > 1 || level > 0) {
+                    st.length = ds * static_cast<float>(i - 1);
+                    break;
+                }
+            }
+        }
         p += d * ds;
         st.points.push_back(p);
         st.radius.push_back(r0 + (r1 - r0) * t);
     }
     return st;
+}
+
+/// A stem grown clear of the obstacles: where it ended short, grown again
+/// as long as it got -- the same numbers wandering it -- so that it thins
+/// to its tip; a stem of a single point as it is.
+template <class MakeRandom>
+TreeStem growClear(int level, const Vec3& base, const Vec3& dir, float length, float r0, float r1, int pieces,
+                   const Turning& turn, const MakeRandom& makeRandom, const Keep& keep) {
+    Random random = makeRandom();
+    TreeStem st = growStem(level, base, dir, length, r0, r1, pieces, turn, random, keep);
+    if (!keep.tree || st.points.size() >= static_cast<size_t>(pieces) + 1 || st.points.size() < 2) return st;
+    Random again = makeRandom();
+    TreeStem shorter = growStem(level, base, dir, st.length, r0, r1, pieces, turn, again, keep);
+    return shorter.points.size() >= 2 ? shorter : st;
 }
 
 /// Whether `p` is inside the pruning envelope of a tree standing at `base`,
@@ -136,7 +207,7 @@ Vec3 shade(const Vec3& c, float variation, Random& random) {
 
 }  // namespace
 
-Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t seed) {
+Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t seed, const TriangleTree* obstacles) {
     Tree tree;
     scale = std::max(scale, 1e-3f);
     Random random(seed, 0);
@@ -145,6 +216,14 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
     // The trunk: up, leaning a little one way and bowing back.
     const float height = std::max(s.height, 0.01f) * scale;
     tree.height = height;
+    // The obstacles, if any are within its reach.
+    Keep keep;
+    keep.clearance = std::max(s.clearance, 0.0f);
+    keep.avoid = std::clamp(s.avoid, 0.0f, 1.0f);
+    if (obstacles && !obstacles->empty()) {
+        Vec3 at;
+        if (obstacles->nearest(base + kUp * (0.5f * height), 1.6f * height + keep.clearance, at)) keep.tree = obstacles;
+    }
     const float radius = std::max(s.radius, 1e-4f) * scale;
     const float tipRadius = radius * std::clamp(s.tip, 0.0f, 1.0f);
     const float segment = std::max(s.segment, 0.01f) * scale;
@@ -154,15 +233,17 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
     Turning trunkTurn;
     trunkTurn.wander = 0.25f * wobble;
     trunkTurn.bow = bowWay * (-0.5f * lean);
-    Random trunkRandom(seed, 1);
     const int trunkPieces = std::clamp(static_cast<int>(std::ceil(height / segment)), 6, 400);
-    TreeStem trunk = growStem(0, base, normalize(kUp + bowWay * (0.35f * lean)), height, radius, tipRadius, trunkPieces,
-                              trunkTurn, trunkRandom);
+    TreeStem trunk = growClear(0, base, normalize(kUp + bowWay * (0.35f * lean)), height, radius, tipRadius, trunkPieces,
+                               trunkTurn, [&] { return Random(seed, 1); }, keep);
     // Its foot flares out.
     for (size_t i = 0; i < trunk.points.size(); ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(trunkPieces);
         trunk.radius[i] *= 1.0f + std::max(s.flare, 0.0f) * std::exp(-18.0f * t);
     }
+    // Its pieces as long as it grew: shorter where an obstacle stopped it.
+    const int trunkLast = static_cast<int>(trunk.points.size()) - 1;
+    const float piece = trunk.length / static_cast<float>(std::max(trunkLast, 1));
 
     // Where it forks, it goes on as leaders -- stems of the trunk's level --
     // each as thick as their areas add up to the trunk's, diverging.
@@ -170,22 +251,23 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
     // may grow on it, a share of its length.
     std::vector<float> from{0.0f}, until{0.97f};
     const int forks = std::clamp(s.forks, 1, 5);
-    if (forks >= 2) {
+    if (forks >= 2 && trunkLast >= 4) {
         const int f = std::clamp(static_cast<int>(std::lround(std::clamp(s.forkHeight, 0.0f, 1.0f) *
                                                               static_cast<float>(trunkPieces))),
-                                 1, trunkPieces - 2);
+                                 1, trunkLast - 2);
         const Vec3 at = trunk.points[static_cast<size_t>(f)];
         const Vec3 dir = normalize(at - trunk.points[static_cast<size_t>(f - 1)]);
         const float r = trunk.radius[static_cast<size_t>(f)];
+        const float grown = trunk.length;
         // The trunk ends a piece past the fork, its tip inside the leaders.
         trunk.points.resize(static_cast<size_t>(f) + 2);
         trunk.radius.resize(static_cast<size_t>(f) + 2);
-        trunk.length = height * static_cast<float>(f + 1) / static_cast<float>(trunkPieces);
+        trunk.length = piece * static_cast<float>(f + 1);
         until[0] = static_cast<float>(f) / static_cast<float>(f + 1);
         tree.stems.push_back(std::move(trunk));
         Random fork(seed, 5);
         const float offset = 2.0f * kPi * fork.unit();
-        const float rest = height * (1.0f - static_cast<float>(f) / static_cast<float>(trunkPieces));
+        const float rest = grown - piece * static_cast<float>(f);
         const Vec3 side0 = perpendicular(dir);
         for (int j = 0; j < forks; ++j) {
             const Vec3 side = glm::rotate(side0, offset + 2.0f * kPi * static_cast<float>(j) / static_cast<float>(forks) +
@@ -197,14 +279,15 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
             turn.lift = off * std::clamp(3.0f * s.up, 0.0f, 1.0f);
             const float length = rest * (0.85f + 0.25f * fork.unit());
             const int pieces = std::clamp(static_cast<int>(std::ceil(length / segment)), 4, 400);
-            Random grow(seed, 6, static_cast<uint64_t>(j));
-            TreeStem leader = growStem(0, at, normalize(dir * std::cos(off) + side * std::sin(off)), length,
-                                       r * 1.1f / std::sqrt(static_cast<float>(forks)), tipRadius, pieces, turn, grow);
+            TreeStem leader = growClear(0, at, normalize(dir * std::cos(off) + side * std::sin(off)), length,
+                                        r * 1.1f / std::sqrt(static_cast<float>(forks)), tipRadius, pieces, turn,
+                                        [&] { return Random(seed, 6, static_cast<uint64_t>(j)); }, keep);
+            if (leader.points.size() < 2) continue;
             leader.parent = 0;
             leader.along = until[0];
-            leader.path = height * static_cast<float>(f) / static_cast<float>(trunkPieces);
+            leader.path = piece * static_cast<float>(f);
             tree.stems.push_back(std::move(leader));
-            from.push_back(height * static_cast<float>(f) / static_cast<float>(trunkPieces));
+            from.push_back(piece * static_cast<float>(f));
             until.push_back(0.97f);
         }
     } else {
@@ -288,8 +371,9 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
                 const float r0 = pr * std::clamp(s.thickness, 0.05f, 0.95f);
                 const int pieces = std::clamp(static_cast<int>(std::ceil(reach / pieceLength)), 3, 60);
                 const uint64_t own = (static_cast<uint64_t>(pi) << 16) | static_cast<uint64_t>(k);
-                Random grow(seed, 3, own);
-                TreeStem branch = growStem(level, at, way, reach, r0, r0 * 0.15f, pieces, turn, grow);
+                const auto numbers = [&] { return Random(seed, 3, own); };
+                TreeStem branch = growClear(level, at, way, reach, r0, r0 * 0.15f, pieces, turn, numbers, keep);
+                if (branch.length < minLength || branch.points.size() < 2) continue;  // stopped by an obstacle
                 if (s.prune > 0.0f) {
                     // Out of the envelope: cut back toward where it leaves it,
                     // as far as Prune says -- grown again as long, its
@@ -303,10 +387,10 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
                     }
                     if (inside < branch.points.size()) {
                         const float kept = reach * static_cast<float>(inside) / static_cast<float>(pieces);
-                        const float cut = reach + std::clamp(s.prune, 0.0f, 1.0f) * (kept - reach);
+                        const float cut = std::min(reach + std::clamp(s.prune, 0.0f, 1.0f) * (kept - reach), branch.length);
                         if (cut < minLength) continue;
-                        Random again(seed, 3, own);
-                        branch = growStem(level, at, way, cut, r0, r0 * 0.15f, pieces, turn, again);
+                        branch = growClear(level, at, way, cut, r0, r0 * 0.15f, pieces, turn, numbers, keep);
+                        if (branch.points.size() < 2) continue;
                     }
                 }
                 branch.parent = static_cast<int>(pi);
@@ -337,9 +421,10 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
             const float length = std::max(s.rootLength, 0.0f) * height * (0.75f + 0.5f * roots.unit());
             if (length < minLength) continue;
             const int pieces = std::clamp(static_cast<int>(std::ceil(length / (0.5f * segment))), 4, 60);
-            Random grow(seed, 8, static_cast<uint64_t>(k));
-            TreeStem root = growStem(1, at, side * std::cos(dip) - kUp * std::sin(dip), length, 0.55f * radius,
-                                     0.08f * radius, pieces, turn, grow);
+            TreeStem root = growClear(1, at, side * std::cos(dip) - kUp * std::sin(dip), length, 0.55f * radius,
+                                      0.08f * radius, pieces, turn, [&] { return Random(seed, 8, static_cast<uint64_t>(k)); },
+                                      keep);
+            if (root.points.size() < 2) continue;
             root.parent = 0;
             root.root = true;
             tree.stems.push_back(std::move(root));
@@ -386,6 +471,12 @@ Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t see
                 leaf.color = shade(s.leafColor, s.variation, leafRandom);
                 leaf.stem = static_cast<int>(si);
                 leaf.path = st.path + t * st.length;
+                // None touching an obstacle -- its numbers drawn all the same.
+                if (keep.tree) {
+                    Vec3 near;
+                    const Vec3 tip = leaf.at + leaf.along * leaf.size;
+                    if (keep.tree->crosses(leaf.at, tip) || keep.tree->nearest(tip, 0.5f * keep.clearance, near)) continue;
+                }
                 tree.leaves.push_back(leaf);
             }
         }

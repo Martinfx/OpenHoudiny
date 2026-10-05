@@ -21,6 +21,70 @@ bool closer(const std::pair<float, int32_t>& a, const std::pair<float, int32_t>&
     return a.first < b.first || (a.first == b.first && a.second < b.second);
 }
 
+/// The point of triangle abc nearest p (Ericson, Real-Time Collision
+/// Detection, 5.1.5): by the region of the triangle's plane p is over.
+Vec3 nearestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+    const Vec3 ab = b - a, ac = c - a, ap = p - a;
+    const float d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) return a;
+    const Vec3 bp = p - b;
+    const float d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) return b;
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) return a + ab * (d1 / (d1 - d3));
+    const Vec3 cp = p - c;
+    const float d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) return c;
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) return a + ac * (d2 / (d2 - d6));
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && d4 - d3 >= 0.0f && d5 - d6 >= 0.0f) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const float denom = 1.0f / (va + vb + vc);
+    return a + ab * (vb * denom) + ac * (vc * denom);
+}
+
+/// How far `p` is from the box, squared; 0 inside.
+float boxDistance2(const Vec3& p, const Vec3& lo, const Vec3& hi) {
+    const Vec3 d = glm::max(glm::max(lo - p, p - hi), Vec3(0.0f));
+    return dot(d, d);
+}
+
+/// Whether the segment from `a` to `b` meets the box (by its slabs).
+bool segmentMeetsBox(const Vec3& a, const Vec3& b, const Vec3& lo, const Vec3& hi) {
+    const Vec3 d = b - a;
+    float t0 = 0.0f, t1 = 1.0f;
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(d[i]) < 1e-12f) {
+            if (a[i] < lo[i] || a[i] > hi[i]) return false;
+            continue;
+        }
+        float u = (lo[i] - a[i]) / d[i], v = (hi[i] - a[i]) / d[i];
+        if (u > v) std::swap(u, v);
+        t0 = std::max(t0, u);
+        t1 = std::min(t1, v);
+        if (t0 > t1) return false;
+    }
+    return true;
+}
+
+/// Whether the segment from `a` to `b` passes through the triangle (Moller
+/// and Trumbore): where it meets its plane inside it, between the ends.
+bool segmentMeetsTriangle(const Vec3& a, const Vec3& b, const std::array<Vec3, 3>& tri) {
+    const Vec3 d = b - a, e1 = tri[1] - tri[0], e2 = tri[2] - tri[0];
+    const Vec3 h = cross(d, e2);
+    const float det = dot(e1, h);
+    if (std::fabs(det) < 1e-12f) return false;  // along its plane
+    const float inv = 1.0f / det;
+    const Vec3 s = a - tri[0];
+    const float u = dot(s, h) * inv;
+    if (u < 0.0f || u > 1.0f) return false;
+    const Vec3 q = cross(s, e1);
+    const float v = dot(d, q) * inv;
+    if (v < 0.0f || u + v > 1.0f) return false;
+    const float t = dot(e2, q) * inv;
+    return t >= 0.0f && t <= 1.0f;
+}
+
 }  // namespace
 
 void PointTree::build(std::span<const Vec3> points) {
@@ -117,6 +181,115 @@ int32_t PointTree::nearest(const Vec3& p, float radius) const {
 }
 
 // --- adjacency -------------------------------------------------------------------------------
+
+void TriangleTree::build(const Geometry& geo) {
+    triangles_.clear();
+    order_.clear();
+    nodes_.clear();
+    const auto P = geo.positions();
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        if (!geo.primitiveClosed(prim)) continue;
+        const auto pts = geo.primitivePoints(prim);
+        for (size_t k = 1; k + 1 < pts.size(); ++k) {
+            if (pts[0] < P.size() && pts[k] < P.size() && pts[k + 1] < P.size()) {
+                triangles_.push_back({P[pts[0]], P[pts[k]], P[pts[k + 1]]});
+            }
+        }
+    }
+    if (triangles_.empty()) return;
+    order_.resize(triangles_.size());
+    for (size_t i = 0; i < order_.size(); ++i) order_[i] = static_cast<uint32_t>(i);
+    nodes_.reserve(triangles_.size() / 2 + 1);
+    make(0, static_cast<uint32_t>(triangles_.size()));
+}
+
+uint32_t TriangleTree::make(uint32_t first, uint32_t count) {
+    const auto index = static_cast<uint32_t>(nodes_.size());
+    nodes_.push_back({});
+    Vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
+    Vec3 mlo = lo, mhi = hi;  // round their middles
+    auto middle = [&](uint32_t t) { return (triangles_[t][0] + triangles_[t][1] + triangles_[t][2]) / 3.0f; };
+    for (uint32_t i = first; i < first + count; ++i) {
+        for (const Vec3& v : triangles_[order_[i]]) lo = glm::min(lo, v), hi = glm::max(hi, v);
+        const Vec3 m = middle(order_[i]);
+        mlo = glm::min(mlo, m), mhi = glm::max(mhi, m);
+    }
+    nodes_[index].lo = lo;
+    nodes_[index].hi = hi;
+    if (count <= 4) {
+        nodes_[index].first = first;
+        nodes_[index].count = count;
+        return index;
+    }
+    // Halved along the longest side their middles span; equal ones by number.
+    const Vec3 span = mhi - mlo;
+    const int axis = span.x >= span.y && span.x >= span.z ? 0 : span.y >= span.z ? 1 : 2;
+    std::sort(order_.begin() + first, order_.begin() + first + count, [&](uint32_t a, uint32_t b) {
+        const float ma = middle(a)[axis], mb = middle(b)[axis];
+        return ma < mb || (ma == mb && a < b);
+    });
+    const uint32_t half = count / 2;
+    const uint32_t left = make(first, half);
+    const uint32_t right = make(first + half, count - half);
+    nodes_[index].left = left;
+    nodes_[index].right = right;
+    return index;
+}
+
+bool TriangleTree::nearest(const Vec3& p, float radius, Vec3& at) const {
+    if (nodes_.empty() || !(radius >= 0.0f)) return false;
+    float best = radius * radius;
+    bool found = false;
+    uint32_t stack[96];
+    int top = 0;
+    stack[top++] = 0;
+    while (top > 0) {
+        const Node& n = nodes_[stack[--top]];
+        if (boxDistance2(p, n.lo, n.hi) > best) continue;
+        if (n.count > 0) {
+            for (uint32_t i = n.first; i < n.first + n.count; ++i) {
+                const auto& t = triangles_[order_[i]];
+                const Vec3 q = nearestOnTriangle(p, t[0], t[1], t[2]);
+                const float d2 = dist2(p, q);
+                if (d2 < best || (!found && d2 <= best)) best = d2, at = q, found = true;
+            }
+            continue;
+        }
+        // The nearer child first: off the stack first.
+        const float dl = boxDistance2(p, nodes_[n.left].lo, nodes_[n.left].hi);
+        const float dr = boxDistance2(p, nodes_[n.right].lo, nodes_[n.right].hi);
+        if (top + 2 > 96) continue;
+        if (dl <= dr) {
+            stack[top++] = n.right;
+            stack[top++] = n.left;
+        } else {
+            stack[top++] = n.left;
+            stack[top++] = n.right;
+        }
+    }
+    return found;
+}
+
+bool TriangleTree::crosses(const Vec3& a, const Vec3& b) const {
+    if (nodes_.empty()) return false;
+    uint32_t stack[96];
+    int top = 0;
+    stack[top++] = 0;
+    while (top > 0) {
+        const Node& n = nodes_[stack[--top]];
+        if (!segmentMeetsBox(a, b, n.lo, n.hi)) continue;
+        if (n.count > 0) {
+            for (uint32_t i = n.first; i < n.first + n.count; ++i) {
+                if (segmentMeetsTriangle(a, b, triangles_[order_[i]])) return true;
+            }
+            continue;
+        }
+        if (top + 2 > 96) continue;
+        stack[top++] = n.left;
+        stack[top++] = n.right;
+    }
+    return false;
+}
 
 void Adjacency::build(const Geometry& geo) {
     // Two passes over the primitives -- how many entries each point gets,

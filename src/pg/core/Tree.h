@@ -12,6 +12,12 @@
 // threads. It has no more than 200 000 stems and a million leaves: past
 // them it grows no more.
 //
+// Grown among obstacles (growTree's), each stem keeps Clearance from them:
+// where it would come nearer, or go through one, it turns along it, away
+// from it -- toward the light where it comes at it head on -- as far as
+// Avoid lets it; where it cannot, it ends there, grown again as long so
+// that it still thins to its tip. A leaf that would touch one is not grown.
+//
 #include "pg/core/Geometry.h"
 
 #include <array>
@@ -76,6 +82,11 @@ struct TreeSettings {
     float prunePowerLow = 0.5f, prunePowerHigh = 0.5f;
     int roots = 0;            ///< roots out from the trunk's foot, above the ground then down into it
     float rootLength = 0.15f;  ///< how long, a share of the trunk's
+    /// Among obstacles: how near a stem's surface comes to them, m, and
+    /// how far it may turn to get past one, 0 to 1 (a right angle): 0 it
+    /// stops where it would meet it.
+    float clearance = 0.15f;
+    float avoid = 1.0f;
 };
 
 /// A trunk or a branch: a curve from its base to its tip.
@@ -108,8 +119,11 @@ struct Tree {
     float height = 1.0f;          ///< m, its trunk's length
 };
 
-/// The tree the settings grow from `base` up, `scale` times as big, of `seed`.
-Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t seed);
+/// The tree the settings grow from `base` up, `scale` times as big, of
+/// `seed` -- clear of `obstacles` when given (the tree nowhere near them:
+/// as without).
+Tree growTree(const TreeSettings& s, const Vec3& base, float scale, uint64_t seed,
+              const class TriangleTree* obstacles = nullptr);
 
 /// Its stems as tubes -- closed over their tips, the trunk over its foot
 /// too; a branch's base inside its parent -- and its leaves as polygons,

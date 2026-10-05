@@ -1,0 +1,62 @@
+pgsim 1
+# Trees among obstacles. A wall stands a metre and a half from a tree: its
+# branches that would grow through the wall turn along it, up and aside,
+# Clearance from it, and none of its leaves touch it. A pergola -- a roof
+# on four posts -- stands over another: its trunk, meeting the roof head on,
+# slides along under it, out past its edge and up again; its branches under
+# the roof spread along it. The obstacles are the Trees' second input: any
+# closed polygons.
+node 1 grid 1 ground 0 0
+  param sizex 26
+  param sizez 18
+  param rows 2
+  param cols 2
+node 2 point_wrangle 1 earth 0 110
+  param snippet "@Cd = set(0.2, 0.17, 0.11);"
+node 3 box 1 wall 230 0
+  param size 0.4 7 12
+  param center 2.6 3.5 0
+node 4 point_wrangle 1 plaster 230 110
+  param snippet "@Cd = set(0.62, 0.6, 0.55);"
+node 5 tree 1 by_the_wall 230 220
+  param height 7
+  param center 1 0 -1
+node 6 box 1 roof -230 0
+  param size 6 0.3 2
+  param center -5 4.5 0
+node 7 box 1 post1 -460 0
+  param size 0.2 4.35 0.2
+  param center -7.9 2.175 -0.9
+node 8 box 1 post2 -460 110
+  param size 0.2 4.35 0.2
+  param center -2.1 2.175 -0.9
+node 9 box 1 post3 -460 220
+  param size 0.2 4.35 0.2
+  param center -7.9 2.175 0.9
+node 10 box 1 post4 -460 330
+  param size 0.2 4.35 0.2
+  param center -2.1 2.175 0.9
+node 11 merge 1 pergola -230 440
+node 12 point_wrangle 1 timber -230 550
+  param snippet "@Cd = set(0.33, 0.22, 0.13);"
+node 13 tree 1 under_the_roof -230 660
+  param height 8
+  param seed 2
+  param center -5 0 0
+node 14 merge 1 scene 0 770
+  display
+link 1.geometry -> 2.geometry
+link 3.geometry -> 4.geometry
+link 4.geometry -> 5.obstacles
+link 6.geometry -> 11.geometry
+link 7.geometry -> 11.geometry
+link 8.geometry -> 11.geometry
+link 9.geometry -> 11.geometry
+link 10.geometry -> 11.geometry
+link 11.geometry -> 12.geometry
+link 12.geometry -> 13.obstacles
+link 2.geometry -> 14.geometry
+link 4.geometry -> 14.geometry
+link 5.geometry -> 14.geometry
+link 12.geometry -> 14.geometry
+link 13.geometry -> 14.geometry
