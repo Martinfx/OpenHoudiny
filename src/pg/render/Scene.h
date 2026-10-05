@@ -143,6 +143,11 @@ struct Mesh {
     /// tangent, -1 where the uv is mirrored. The space a normal map bends the
     /// normal in.
     std::vector<Vec4> tangents;
+    /// Three a triangle: the geometry's point of each corner -- which
+    /// corners are of one place, for a renderer that joins them (Cycles,
+    /// cutting a surface finer to move it by its height); none for
+    /// triangles of no geometry (meshOfTriangles).
+    std::vector<uint32_t> points;
     /// Seconds either side of now its triangles may be met moving along
     /// their velocity -- half a frame, the longest a shutter is open: its
     /// hierarchy's boxes take them in. 0: met as they are now.

@@ -424,6 +424,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
     if (!tris.rest.empty()) mesh->rest.resize(3 * n);
     if (!tris.velocities.empty()) mesh->velocity.resize(3 * n);
     if (windows) mesh->random.resize(n);
+    mesh->points.resize(3 * n);
     mesh->material.resize(n);
     // The uv and its tangents, where a material lays its pictures on by it.
     std::vector<Vec4> tangents;
@@ -441,6 +442,7 @@ std::shared_ptr<const Mesh> meshOf(const Geometry& geo, bool water, RayEngine en
             mesh->e2[i] = tris.positions[3 * t + 2] - a;
             for (size_t c = 0; c < 3; ++c) {
                 mesh->normals[3 * i + c] = tris.normals[3 * t + c];
+                mesh->points[3 * i + c] = tris.points[3 * t + c];
                 if (!mesh->rest.empty()) mesh->rest[3 * i + c] = tris.rest[3 * t + c];
                 if (!mesh->velocity.empty()) mesh->velocity[3 * i + c] = tris.velocities[3 * t + c];
                 if (!mesh->uv.empty()) {

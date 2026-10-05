@@ -474,6 +474,16 @@ std::vector<ParamDef> renderParams() {
             {"render_detail", "Surface Detail", "Render", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
              "What Cycles adds to surfaces the scene has flat: colour and roughness that vary, small bumps that "
              "catch the light -- as stone, plaster and the ground are. 0: as flat as the viewport draws them."},
+            {"render_displacement", "Displacement", "Render", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "Cycles moves a surface whose material has a height picture -- the library's bricks, bark and roof "
+             "tiles, a Material node's texture, a displacement read from USD -- by it, not only shading it as if "
+             "it were: its outline goes up and down, the bricks stand out of their mortar and shade it. Takes "
+             "longer and more memory: each such surface cut into triangles as small as Dicing Rate. Off: bumps "
+             "alone, as the path tracer and the viewport have them."},
+            {"render_dicing", "Dicing Rate", "Render", K::Float, {1.0f, 0.0f, 0.0f}, 0.5f, 8.0f, 0.1f, 64.0f, "px",
+             "With Displacement: how small, in pixels as the camera sees them, the triangles of a displaced "
+             "surface are cut -- 1 as Blender has it; 2 or 4 quicker, with less memory. What is finer is a bump on "
+             "a smooth surface."},
             {"render_textures", "Textures", "Render", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
              "The photographs of the materials -- concrete, plaster, a brick wall, wood, bark, soil -- and the "
              "textures the Material nodes give. Off: their patterns and colours alone."},
@@ -4490,6 +4500,8 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     }
     r.exrSpace = static_cast<LinearSpace>(std::clamp(whole(*output, "render_exr_space"), 0, 2));
     r.detail = std::clamp(f(*output, "render_detail"), 0.0f, 1.0f);
+    r.displacement = f(*output, "render_displacement") != 0.0f;
+    r.dicing = std::clamp(f(*output, "render_dicing"), 0.1f, 64.0f);
     r.textures = f(*output, "render_textures") != 0.0f;
     r.textureFolder = text(output->id, "render_texture_folder");
     if (!r.textureFolder.empty() && !folder.empty() && std::filesystem::path(r.textureFolder).is_relative()) {

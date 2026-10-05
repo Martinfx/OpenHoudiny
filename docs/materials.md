@@ -154,8 +154,11 @@ asi 15°) se kladou ze tří stran jako ostatní. Totéž umí i vaše sada:
 stačí do jejího `texture.txt` napsat `projection face`.
 
 **Výška** dělá v Cycles reliéf (Bump): spáry mezi cihlami, rýhy v kůře,
-póry v betonu. **Drsnost** se bere z mapy, pokud ji sada má, jinak z
-materiálu a v prohlubních je o něco vyšší.
+póry v betonu. S **Displacement** na uzlu Output Cycles povrch podle výšky
+opravdu posune: obrys cihlové koule je zubatý a cihly stíní maltu
+([cycles.md](cycles.md#posunutí-podle-výšky)). **Drsnost** se bere
+z mapy, pokud ji sada má, jinak z materiálu a v prohlubních je o něco
+vyšší.
 
 ### Vlastní textura na objekt
 

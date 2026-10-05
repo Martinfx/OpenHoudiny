@@ -333,6 +333,7 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
     if (!rest.empty()) out.rest.resize(3 * n);
     if (!v.empty()) out.velocities.resize(3 * n);
     if (vertexUv || pointUv) out.uvs.resize(3 * n);
+    out.points.resize(3 * n);
     out.glass.resize(n);
     parallelFor(n, 4096, [&](size_t begin, size_t end) {
         for (size_t t = begin; t < end; ++t) {
@@ -343,6 +344,7 @@ ShadedTriangles shadedTriangles(const Geometry& geo) {
             for (size_t c = 0; c < 3; ++c) {
                 const uint32_t p = tris[t][c];
                 out.positions[3 * t + c] = P[p];
+                out.points[3 * t + c] = p;
                 if (!rest.empty()) out.rest[3 * t + c] = rest[p];
                 if (!v.empty()) out.velocities[3 * t + c] = v[p];
                 if (vertexUv) out.uvs[3 * t + c] = uvAt(*vertexUv, corners[t][c]);

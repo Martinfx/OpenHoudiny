@@ -164,6 +164,8 @@ tracer:
 | **View** `agx_punchy` (výchozí), `agx`, `aces`, `aces1`, `aces2`, `standard` | jak se světlo převede na obraz: AgX jako v Blenderu, jasné barvy přecházejí do bílé jako na filmu. `agx_punchy` přidá look Punchy z Blenderu (víc kontrastu a barev, střední tóny tmavší), `aces` je křivka viewportu, `aces1` a `aces2` jsou ACES 1.0 a 2.0 jako v OpenColorIO, `standard` sRGB bez křivky ([color.md](color.md)). Platí pro Cycles i path tracer. |
 | **EXR Color Space** `rec709` (výchozí), `acescg`, `aces2065_1` | v jakém prostoru je světlo v EXR; atribut chromaticities to říká ([color.md §3](color.md#3-exr-v-prostorech-aces)) |
 | **Surface Detail** 0–1 (1) | povrchy, které jsou ve scéně hladké, dostanou barvu a drsnost proměnlivou ve skvrnách metr až dva velkých a velkých jako dlaň, a drobné nerovnosti. Zem k tomu skvrny několika metrů. 0: hladké jako ve viewportu. Plocha s atributem `f@surface_detail` jich dostane jen tolik krát (0 žádné): tak USD Import nechá materiály z jiných programů, jak je jejich autor udělal ([usd-import.md](usd-import.md#materiály)). |
+| **Displacement** (vypnuto) | povrch, jehož materiál má obrázek výšky (cihly, kůra a tašky z knihovny, textura uzlu Material, posunutí z USD), Cycles opravdu posune, ne jen vystínuje: obrys jde nahoru a dolů, cihly vystoupí z malty a stíní ji. Střed obrázku zůstane na ploše, světlé jde ven a tmavé dovnitř, celkem o hloubku sady. Takový povrch Cycles rozdělí na trojúhelníky velké jako **Dicing Rate**, takže render trvá déle a zabere víc paměti. Vypnuté: jen reliéf, jako v path traceru a ve viewportu |
+| **Dicing Rate** 0,1–64 (1 px) | jak malé trojúhelníky (v pixelech, jak je vidí kamera) z posouvaného povrchu Cycles nadělá: 1 jako v Blenderu, 2 nebo 4 rychleji a s menší pamětí. Co je jemnější, zůstane na hladkém povrchu reliéfem. Mimo záběr je dělení čtyřikrát hrubší |
 | **Textures**, **Texture Folder** | fotografie materiálů (beton a jeho lom, omítka, cihlová zeď, malta, kov, asfalt, dřevo, střechy a tašky, dlažba, kůra, půda, trávník, písek) a textury z uzlů Material; vypnuté: jen vzory a barvy. Viz [materials.md](materials.md) |
 
 Plochy, které říkají, z čeho jsou (`s@material`), kreslí Cycles jako ten
@@ -203,6 +205,30 @@ nejen ten, který na ně náhodou narazí.
 Path tracer svítí vždy oblohou Looku a detail povrchů nepřidává.
 Převod barev (View) má stejný. Viewport kreslí oblohu Looku, mraky
 a obrázek oblohy jsou jen v renderu.
+
+### Posunutí podle výšky
+
+![Příklad displacement v Cycles pod nízkým sluncem: nahoře jen reliéf, dole s Displacement. Cihly na kouli vystoupí z malty a obrys koule je zubatý, obrys kmene jde nahoru a dolů s kůrou a kameny dlažby stíní spáry](img/cycles-displacement.jpg)
+
+S **Displacement** posune Cycles povrchy, jejichž sada má obrázek výšky,
+opravdu o tuto výšku. Bez něj z ní dělá jen reliéf (Bump), který mění
+stínování, ale ne tvar: obrys zůstane hladký a nic nevrhá stín. Hloubka
+je hloubka sady (`depth` v `texture.txt`), u cihel 13 mm a u kůry 22 mm.
+U materiálu z USD je to `scale` jeho výstupu `displacement`
+([usd-import.md](usd-import.md#materiály)).
+
+```bash
+./build/prototype sim displacement posunuti.png --renderer cycles
+./build/prototype sim displacement relief.png --renderer cycles --set output.render_displacement=0
+```
+
+Příklad `displacement` má **Dicing Rate** 2: trojúhelníky dva pixely
+velké. Render 960 × 540 trvá na čtyřech jádrech s posunutím 2 min 15 s,
+bez něj 1 min 31 s.
+
+Plocha se nerozestoupí ani na ostré hraně, protože rohy jednoho bodu
+jsou pro Cycles jeden vrchol. Strana kvádru se proto na hraně trochu
+zkosí směrem k sousední straně.
 
 ## 4. Kouř, oheň a prach
 
@@ -257,6 +283,8 @@ se kterým testy Cycles s path tracerem porovnávají.
 - **Rozmazání pohybem** je v obou stejně dlouhé ([§2](#rozmazání-pohybem)),
   path tracer ale sítě mezi začátkem a koncem závěrky posouvá po přímce
   přes dva kroky, Cycles přes tři.
+- **Výška** posouvá povrch jen v Cycles a jen s **Displacement**
+  ([§3](#posunutí-podle-výšky)). Path tracer z ní dělá vždy reliéf.
 
 ## 6. Build
 
@@ -284,6 +312,13 @@ s mřížkou rychlosti (náš plyn) dostane příznak
 Volume z OpenVDB, a bez něj by se plyn nerozmazal. CMake řádky vloží sám
 po stažení. Kdyby v jiné verzi Cycles místo pro ně nenašel, napíše
 varování a plyn v Cycles zůstane ostrý.
+
+Druhá záplata je jeden řádek v `src/subd/interpolation.cpp`. Když Cycles
+dělí n-úhelník (i trojúhelník) na menší trojúhelníky, dává jeho středu
+součet hodnot rohů místo jejich průměru. U hodnot vrcholů průměr počítá.
+UV, barva a `pg_rest` posouvaných povrchů (**Displacement**) by tak
+uprostřed každé plochy ujely. Když CMake místo pro tento řádek nenajde,
+napíše varování a řádek nevloží.
 
 Kdy se Cycles nepostaví a renderuje path tracer:
 
@@ -336,6 +371,21 @@ dostane snímek, na kterém se zastaví.
   a hloubku pro EXR. Fyzikální obloha je uzel Sky Texture (Nishita) se
   světlem pozadí (`LIGHT_BACKGROUND`), detail povrchů jsou uzly Noise
   Texture a Bump v shaderu každého materiálu.
+- Posunutí podle výšky (`Cycles.cpp`, `dice`): shader materiálu, jehož
+  sada má obrázek výšky, dostane uzel Displacement (Midlevel 0,5, Scale
+  hloubka sady). Síť s takovým materiálem je pro Cycles dělená plocha
+  (`SUBDIVISION_LINEAR`): každý trojúhelník plocha a rohy jednoho bodu
+  jeden vrchol, takže se posune jednou a žádná plocha se od sousední
+  neodtrhne, ani na ostré hraně. Hladké plochy (normály rohů se od
+  normály plochy liší) mají shader s `DISPLACE_BOTH`: stínují se podle
+  normál, které měly, a reliéfu z výšky. Ploché plochy (strana kvádru)
+  mají jeho dvojče s `DISPLACE_TRUE` a stínují se podle trojúhelníků,
+  kam je Cycles posunul. Vrchol se posune podél normály hladkých ploch,
+  které ho mají, jinak podél průměru všech. Normály jsou na vrcholech,
+  barva, uv a `pg_rest` na rozích (`subd_attributes`); Cycles je přenese
+  na trojúhelníky, které nadělá podle kamery pro dělení (`dicing_camera`,
+  tatáž jako kamera záběru). Taková síť se staví pro každou scénu znovu,
+  protože kamera se mohla pohnout.
 - Rozmazání pohybem (`Cycles.cpp`): síť s rychlostmi (`Mesh::velocity`)
   dostane `set_motion_steps(3)` a atributy
   `ATTR_STD_MOTION_VERTEX_POSITION` (rohy na začátku a na konci závěrky)
@@ -438,3 +488,6 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   a obloha z obrázku ve viewportu.
 - Plyn přímo jako NanoVDB v Cycles (bez husté mřížky): Cycles ho umí jen
   s OpenVDB.
+- Dělení ploch Catmull-Clark: Cycles je postavený bez OpenSubdiv,
+  a posouvané povrchy (**Displacement**) proto dělí jen lineárně. Hrubá
+  síť tak zůstane hranatá, jen se posune.

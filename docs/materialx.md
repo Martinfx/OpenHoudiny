@@ -75,8 +75,9 @@ na ploše, světlejší místa jdou ven, tmavší dovnitř, celkem o hloubku sad
 (`depth` v `texture.txt`, u cihel 13 mm). Renderer, který geometrii
 posouvá (třeba Karma v Houdini), tak spáry mezi cihlami opravdu
 prohloubí. Blender z výšky při importu USD udělá uzel Displacement.
-Ostatní renderery výšku přeskočí nebo z ní udělají reliéf, jako naše
-Cycles.
+Ostatní renderery výšku přeskočí nebo z ní udělají reliéf. Naše Cycles
+z ní dělá reliéf, s **Displacement** na uzlu Output povrch posune stejně
+([cycles.md](cycles.md#posunutí-podle-výšky)).
 
 Uzly se jmenují podle materiálu (`bark_picture`, `bark_surface`…) a graf
 končí uzlem `surfacematerial` se jménem materiálu. Dokument má verzi

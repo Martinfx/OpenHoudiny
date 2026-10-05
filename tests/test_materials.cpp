@@ -8,7 +8,8 @@
 // meshes take the materials' roughness, their textures and the windows'
 // numbers, and geometry with no colour its materials' own; texture sets are
 // found from a folder or from one picture of them, the library's for each
-// material; both renderers lay them on -- rows along a sloping face level.
+// material; both renderers lay them on -- rows along a sloping face level --
+// and Cycles, with Displacement, moves a surface by its height.
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
@@ -26,11 +27,13 @@
 
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <set>
+#include <vector>
 
 using namespace pg;
 namespace fs = std::filesystem;
@@ -725,5 +728,105 @@ TEST(materials_cycles_lays_rows_along_a_roof) {
     CHECK(alongColumns > 0.1);
     CHECK(alongRows < 0.25 * alongColumns);
     CHECK(threeRows > 3.0 * alongRows);
+    fs::remove_all(dir);
+}
+
+TEST(materials_cycles_moves_a_surface_by_its_height_with_displacement) {
+    if (!render::cyclesAvailable()) return;
+    // A ball half a metre round, of a set whose height is everywhere its
+    // highest, 0.4 m deep -- white over a middle of grey: with Displacement
+    // Cycles moves its surface out by half of that, 0.2 m, and the ball
+    // covers about (0.7 / 0.5)^2 as much of the picture; without, a bump
+    // alone, as much as it is.
+    const fs::path dir = fs::temp_directory_path() / "pg_test_displacement";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "puffy");
+    writeTestPicture((dir / "puffy" / "color.png").string(), 8, 8, [](int, int) { return Vec3(0.8f); });
+    writeTestPicture((dir / "puffy" / "height.png").string(), 8, 8, [](int, int) { return Vec3(1.0f); });
+    {
+        std::ofstream t(dir / "puffy" / "texture.txt");
+        t << "size 1\ndepth 0.4\ntint 0\n";
+    }
+    auto ball = std::const_pointer_cast<Geometry>(cooked("sphere", nullptr, [](Node& n) {
+        n.setFloat("radius", 0.5f);
+        n.setInt("rows", 24);
+        n.setInt("columns", 48);
+    }));
+    setPrimitiveString(*ball, "texture", (dir / "puffy").string());
+    sim::Camera cam = sim::Camera::lookingAt(Vec3(0.0f, 0.0f, 3.0f), Vec3(0.0f));
+    cam.width = 64;
+    cam.height = 64;
+    sim::Look look;
+    look.lightIntensity = 0.0f;
+    look.skyIntensity = 1.0f;
+    look.skyColor = Vec3(1.0f);
+    look.floor = false;
+    render::SceneInput in;
+    in.geometry = ball;
+    in.look = look;
+    in.camera = cam;
+    render::SceneBuilder builder;
+    const auto scene = builder.build(in);
+    // How many pixels the ball covers: those brighter than the backdrop.
+    auto covered = [&](bool displacement) {
+        render::Settings s;
+        s.width = 64;
+        s.height = 64;
+        s.samples = 8;
+        s.denoise = false;
+        s.sky = render::Settings::Sky::Look;
+        s.displacement = displacement;
+        const render::Image img = cycles(scene, s);
+        const float* corner = img.pixels.data();
+        const float backdrop = (corner[0] + corner[1] + corner[2]) / 3.0f;
+        int n = 0;
+        for (size_t p = 0; p < static_cast<size_t>(img.width) * img.height; ++p) {
+            const float* q = &img.pixels[3 * p];
+            if ((q[0] + q[1] + q[2]) / 3.0f > backdrop + 0.1f) ++n;
+        }
+        return n;
+    };
+    const int flat = covered(false), moved = covered(true);
+    std::printf("  the ball covers %d pixels bumped, %d moved by its height\n", flat, moved);
+    CHECK(flat > 200);
+    CHECK(moved > 1.6 * flat && moved < 2.4 * flat);
+
+    // A box of the same, seen from above a corner: its sides moved out by
+    // 0.2 m each, but no side parts from the next -- across each row of the
+    // picture, the box from its left end to its right, no backdrop between.
+    auto cube = std::const_pointer_cast<Geometry>(box());
+    setPrimitiveString(*cube, "texture", (dir / "puffy").string());
+    in.geometry = cube;
+    in.camera = sim::Camera::lookingAt(Vec3(2.2f, 1.8f, 2.6f), Vec3(0.0f));
+    in.camera.width = in.camera.height = 64;
+    const auto boxScene = builder.build(in);
+    render::Settings s;
+    s.width = s.height = 64;
+    s.samples = 8;
+    s.denoise = false;
+    s.sky = render::Settings::Sky::Look;
+    s.displacement = true;
+    const render::Image img = cycles(boxScene, s);
+    const float backdrop = (img.pixels[0] + img.pixels[1] + img.pixels[2]) / 3.0f;
+    int inside = 0, holes = 0;
+    for (int y = 0; y < img.height; ++y) {
+        std::vector<bool> on(static_cast<size_t>(img.width));
+        int left = img.width, right = -1;
+        for (int x = 0; x < img.width; ++x) {
+            const float* q = &img.pixels[3 * (static_cast<size_t>(y) * img.width + x)];
+            on[static_cast<size_t>(x)] = (q[0] + q[1] + q[2]) / 3.0f > backdrop + 0.1f;
+            if (on[static_cast<size_t>(x)]) {
+                left = std::min(left, x);
+                right = x;
+            }
+        }
+        for (int x = left; x <= right; ++x) {
+            ++inside;
+            if (!on[static_cast<size_t>(x)]) ++holes;
+        }
+    }
+    std::printf("  the box moved by its height: %d pixels, %d of them backdrop\n", inside, holes);
+    CHECK(inside > 500);
+    CHECK(holes <= 2);
     fs::remove_all(dir);
 }

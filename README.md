@@ -45,11 +45,11 @@ okna.
   po snímku) i příkazová řádka `--renderer cycles`; scéna převedená do
   Cycles i s kouřem a ohněm, Principled BSDF, sklo a voda, fyzikální
   obloha a slunce jako v Blenderu s nastavitelnými mraky nebo obloha
-  z obrázku (HDRI), převod barev AgX, detail povrchů, odšumění Open Image
-  Denoise; drť jako hranaté úlomky kamene a skla, kapky deště jako čárky
-  vody a mokrá zem, kam prší; rozmazání pohybem, dokud je otevřená
-  závěrka (kusy, drť, látka, voda, objekty, kouř a oheň, kamera), stejně
-  i v path traceru
+  z obrázku (HDRI), převod barev AgX, detail povrchů, posunutí povrchů
+  podle výšky textury (Displacement), odšumění Open Image Denoise; drť
+  jako hranaté úlomky kamene a skla, kapky deště jako čárky vody a mokrá
+  zem, kam prší; rozmazání pohybem, dokud je otevřená závěrka (kusy, drť,
+  látka, voda, objekty, kouř a oheň, kamera), stejně i v path traceru
 - **[docs/materials.md](docs/materials.md)** — materiály a textury: plochy
   říkají, z čeho jsou (`s@material`: beton, lom betonu, omítka, cihla,
   okno, ocel, dřevo, kůra, dlažba, tašky, trávník…), generátory si je
@@ -274,6 +274,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
 ./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)
 ./build/prototype sim usd_looks l.png --renderer cycles   # rekvizity s materiály z USD: MaterialX, UsdPreviewSurface, OpenPBR
+./build/prototype sim displacement d.png --renderer cycles   # cihly, kůra a dlažba opravdu posunuté podle výšky (Displacement)
 PYTHONPATH=build/python python3 examples/usd/make_plate.py   # plate záběru: pak hoří v natočeném dvoře
 ./build/prototype usd examples/usd/shot.usda       # co USD soubor obsahuje: vrstvy, strom, kamery, geometrie
 ./build/prototype help                             # příkazy: list, gen, check, render, sim, cook, usd

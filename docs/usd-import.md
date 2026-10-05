@@ -170,7 +170,9 @@ z `outputs:surface`. Shadery:
 
 Síť se čte přes výstupy NodeGraphů a přes vstupy rozhraní NodeGraphů
 i samotného materiálu. Z výstupu `displacement` se čte i výška s hloubkou
-(`scale`), převedená z jednotek scény na metry. Cesty
+(`scale`), převedená z jednotek scény na metry. Cycles z ní dělá reliéf,
+s **Displacement** na uzlu Output povrch opravdu posune
+([cycles.md](cycles.md#posunutí-podle-výšky)). Cesty
 k obrázkům se řeší jako v USD, od vrstvy, která je zapsala. Uvnitř
 `.usdz` je obrázek `balík.usdz[textures/a.png]` a čte se přímo
 z balíčku.

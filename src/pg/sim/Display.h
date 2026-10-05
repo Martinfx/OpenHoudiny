@@ -78,11 +78,10 @@ DisplayGeometry displayOf(const Geometry& geo, size_t maxDots = 400000, bool fac
 /// of its own: fans of triangles, three corners each -- place, normal (the
 /// corner's N, else its point's, where there is a usable one, else the
 /// faces' round the corner within the viewport's crease; glass without N of
-/// its own flat) and colour (Cd as
-/// displayOf finds it) -- the primitive each came from, and its glass: 0
-/// none, 1 a pane, 2 a crack. Where the points have rest (where they were
-/// before they moved), that of each corner too; where they have a velocity
-/// v, how fast each corner goes.
+/// its own flat), colour (Cd as displayOf finds it) and point -- the
+/// primitive each came from, and its glass: 0 none, 1 a pane, 2 a crack.
+/// Where the points have rest (where they were before they moved), that of
+/// each corner too; where they have a velocity v, how fast each corner goes.
 struct ShadedTriangles {
     std::vector<Vec3> positions, normals, colors;  ///< three a triangle
     std::vector<Vec3> rest;                        ///< three a triangle, or none
@@ -91,6 +90,7 @@ struct ShadedTriangles {
     /// picture is laid on by -- else none.
     std::vector<Vec2> uvs;
     std::vector<uint32_t> prims;                   ///< one a triangle
+    std::vector<uint32_t> points;                  ///< three a triangle: the point of each corner
     std::vector<uint8_t> glass;                    ///< one a triangle
     size_t count() const { return prims.size(); }
 };

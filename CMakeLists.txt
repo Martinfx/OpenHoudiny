@@ -664,6 +664,25 @@ if(PG_CYCLES)
       file(WRITE ${PG_CYCLES_OBJECT} "${PG_CYCLES_OBJECT_TEXT}")
     endif()
   endif()
+  # Where Cycles cuts a face finer (linear subdivision), it gives the middle
+  # of an n-gon -- a triangle too -- the sum of its corners' attributes, not
+  # their mean, as it does its vertices': the uv, colours and rest of what it
+  # moves by its height (render/Cycles.cpp, dice()) came out wrong. One
+  # line, added to its sources once.
+  set(PG_CYCLES_SUBD ${cycles_SOURCE_DIR}/src/subd/interpolation.cpp)
+  file(READ ${PG_CYCLES_SUBD} PG_CYCLES_SUBD_TEXT)
+  if(NOT PG_CYCLES_SUBD_TEXT MATCHES "pg: the mean of its corners")
+    set(PG_CYCLES_ANCHOR "        value_center += T::read(subd_data[face.start_corner + j]);\n      }\n")
+    string(FIND "${PG_CYCLES_SUBD_TEXT}" "${PG_CYCLES_ANCHOR}" PG_CYCLES_AT)
+    if(PG_CYCLES_AT EQUAL -1)
+      message(WARNING "Cycles: its subdivision is not as expected -- what it moves by its height may take wrong uv")
+    else()
+      string(REPLACE "${PG_CYCLES_ANCHOR}"
+             "${PG_CYCLES_ANCHOR}      value_center /= (float)face.num_corners; /* pg: the mean of its corners */\n"
+             PG_CYCLES_SUBD_TEXT "${PG_CYCLES_SUBD_TEXT}")
+      file(WRITE ${PG_CYCLES_SUBD} "${PG_CYCLES_SUBD_TEXT}")
+    endif()
+  endif()
   set(PG_CYCLES_DIR ${CMAKE_BINARY_DIR}/cycles-build)
   set(PG_CYCLES_ARGS
     -DCMAKE_BUILD_TYPE=Release

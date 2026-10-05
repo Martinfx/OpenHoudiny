@@ -1,0 +1,62 @@
+pgsim 1
+# Displacement: what Cycles moves by its height -- a ball of bricks and a
+# log of bark, their pictures laid on by uv, on paving, under a low sun.
+# With Displacement (Output) the bricks stand out of their mortar and the
+# outline of the log goes up and down with its bark; the paving's stones
+# rise; each casts its shadow. Off, bumps alone, as the path tracer and the
+# viewport have them.
+#   prototype sim displacement moved.png --renderer cycles
+#   prototype sim displacement bumped.png --renderer cycles --set output.render_displacement=0
+node 1 sphere 1 ball 0 0
+  param radius 0.42
+  param center -0.42 0.43 0.05
+  param rows 32
+  param columns 64
+node 2 uv_project 1 ball_uv 230 0
+  param projection spherical
+  param center -0.42 0.43 0.05
+node 3 material 1 ball_bricks 460 0
+  param material brick_wall
+  param texture_projection uv
+node 4 tube 1 log 0 130
+  param radius 0.2
+  param height 0.95
+  param center 0.48 0.485 -0.25
+  param columns 64
+node 5 uv_project 1 log_uv 230 130
+  param projection cylindrical
+  param center 0.48 0 -0.25
+  param scale 1.1
+node 6 material 1 log_bark 460 130
+  param material bark
+  param texture_projection uv
+node 7 grid 1 ground 0 260
+  param sizex 12
+  param sizez 10
+  param rows 2
+  param cols 2
+  param center 0 0.01 -3.5
+node 8 material 1 ground_paving 460 260
+  param material paving
+node 9 merge 1 props 690 130
+  display
+node 10 output 2 output 920 0
+  param frames 1
+  param light_azimuth 145
+  param light_elevation 12
+  param render_displacement on
+  param render_dicing 2
+node 11 camera 1 camera 920 130
+  param center 0.05 1 2.8
+  param rotation -13 0 0
+  param width 960
+  param height 540
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.geometry
+link 4.geometry -> 5.geometry
+link 5.geometry -> 6.geometry
+link 7.geometry -> 8.geometry
+link 3.geometry -> 9.geometry
+link 6.geometry -> 9.geometry
+link 8.geometry -> 9.geometry
+link 11.camera -> 10.camera

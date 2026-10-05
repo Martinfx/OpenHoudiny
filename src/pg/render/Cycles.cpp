@@ -69,6 +69,13 @@ ccl::float3 toCycles(const Vec3& v) { return ccl::make_float3(v.x, -v.z, v.y); }
 Vec3 fromCycles(const float* v) { return Vec3(v[0], v[2], -v[1]); }
 ccl::float3 rgb(const Vec3& c) { return ccl::make_float3(c.x, c.y, c.z); }
 
+/// Whether Cycles moves a surface of `m`, its texture set `texture`, by its
+/// height (Settings::displacement): a set with a height picture.
+bool displacedBy(const Material& m, const TextureSet& texture, const Settings& settings) {
+    return settings.displacement && m.kind == Material::Kind::Surface && texture.valid() && !texture.height.empty() &&
+           texture.depth > 0.0f;
+}
+
 /// Ours, a mesh's space placed in the world -- its axes the columns of
 /// `axes` times `scale`, its origin at `at` -- as Cycles' world sees it.
 ccl::Transform placement(const Mat3& axes, float scale, const Vec3& at) {
@@ -1181,6 +1188,7 @@ struct CyclesRender::Impl {
         std::weak_ptr<const Mesh> mesh;
         ccl::Mesh* cycles = nullptr;
         float reach = 0.0f;  // how far its corners go either side of now (meshOf)
+        bool diced = false;  // cut as the camera sees it, moved by its height (dice): made again for each scene
     };
     std::map<const Mesh*, KeptMesh> meshes;
     std::map<std::tuple<int, std::vector<float>, std::string>, ccl::Shader*> shaders;
@@ -1252,11 +1260,16 @@ struct CyclesRender::Impl {
     /// instance's tint) -- a translucent one mixed in by the translucency,
     /// with the pattern of what it is made of (patternOf) or else the detail
     /// of a real surface (Settings::detail); glass; water, bending light and
-    /// taking on the Water Look's colour.
-    ccl::Shader* shaderOf(ccl::Scene* scene, const Material& m, const sim::Look& look) {
+    /// taking on the Water Look's colour. Moved by its height where its set
+    /// has one (Settings::displacement): on a smooth face, shaded by the
+    /// normals it had and the bump of its height; on a `flat` one -- a box's
+    /// side --, by the triangles where they have moved to (dice).
+    ccl::Shader* shaderOf(ccl::Scene* scene, const Material& m, const sim::Look& look, bool flat = false) {
         const float detail =
             m.kind == Material::Kind::Surface ? std::clamp(settings.detail, 0.0f, 1.0f) * std::clamp(m.detail, 0.0f, 1.0f) : 0.0f;
         const TextureSet texture = textureOf(m, settings);
+        const bool moved = displacedBy(m, texture, settings);
+        const ccl::DisplacementMethod method = !moved ? ccl::DISPLACE_BUMP : flat ? ccl::DISPLACE_TRUE : ccl::DISPLACE_BOTH;
         std::vector<float> key = {m.roughness, m.metallic, m.translucency, m.ior, detail, static_cast<float>(m.preset)};
         if (m.kind == Material::Kind::Water) {
             key.insert(key.end(), {waterGlow.x, waterGlow.y, waterGlow.z, look.waterClarity});
@@ -1268,7 +1281,8 @@ struct CyclesRender::Impl {
         if (texture.valid()) {
             key.insert(key.end(), {texture.size, texture.depth, texture.mean.x, texture.mean.y, texture.mean.z,
                                    texture.tint ? 1.0f : 0.0f, m.byUv ? 1.0f : 0.0f, m.normalStrength,
-                                   texture.normalDirectX ? 1.0f : 0.0f, texture.alphaChannel ? 1.0f : 0.0f});
+                                   texture.normalDirectX ? 1.0f : 0.0f, texture.alphaChannel ? 1.0f : 0.0f,
+                                   static_cast<float>(method)});
         }
         const auto k = std::make_tuple(static_cast<int>(m.kind), key,
                                        texture.color + '|' + texture.height + '|' + texture.roughness + '|' +
@@ -1324,10 +1338,22 @@ struct CyclesRender::Impl {
                     ccl::ShaderOutput* height = nullptr;
                     const bool mapped = m.byUv && !texture.normal.empty() && m.normalStrength > 0.0f;
                     if (!texture.height.empty()) height = pictureOf(texture.height, false);
+                    if (moved) {
+                        // Moved by its height -- the picture about its middle,
+                        // as deep as the set says, as the MaterialX export
+                        // writes it --; on a smooth face, the bump Cycles
+                        // makes of that on the normals it had (DISPLACE_BOTH),
+                        // on a flat one the triangles moved (DISPLACE_TRUE).
+                        auto* by = graph->create_node<ccl::DisplacementNode>();
+                        graph->connect(height, by->input("Height"));
+                        by->set_midlevel(0.5f);
+                        by->set_scale(texture.depth);
+                        graph->connect(by->output("Displacement"), graph->output()->input("Displacement"));
+                    }
                     if (mapped) {
                         graph->connect(normalMapped(*graph, texture.normal, texture.normalDirectX, m.normalStrength),
                                        bsdf->input("Normal"));
-                    } else if (height) {
+                    } else if (height && !moved) {
                         graph->connect(bumped(*graph, height, 1.0f, texture.depth), bsdf->input("Normal"));
                     }
                     if (!texture.roughness.empty()) {
@@ -1461,18 +1487,132 @@ struct CyclesRender::Impl {
             }
         }
         graph->connect(surface, graph->output()->input("Surface"));
+        shader->set_displacement_method(method);
         shader->set_graph(std::move(graph));
         shader->tag_update(scene);
         shaders[k] = shader;
         return shader;
     }
 
+    /// `m` as Cycles cuts it finer to move it by its height
+    /// (Settings::displacement): each triangle a face, the corners of one
+    /// point a vertex -- moved once, so that no face parts from the next,
+    /// at a hard edge neither --, cut into triangles `settings.dicing`
+    /// pixels across as the camera sees them where it is placed first
+    /// (`placed`). A face whose corners' normals bend from its own is
+    /// smooth, shaded by them and the bump of its height; the rest are flat
+    /// -- a box's side --, shaded by the triangles Cycles has moved: their
+    /// material's shader `kinds` on (shaderOf). Each vertex moves along its
+    /// normal: the smooth faces' at it, else all of them. Its corners'
+    /// colours, uv and where they were before they moved on its corners,
+    /// its faces' numbers on its faces: Cycles carries them onto the
+    /// triangles it cuts. Where its corners move, where they are `reach`
+    /// seconds either side of now.
+    void dice(ccl::Mesh* mesh, const Mesh& m, int kinds, float reach, const ccl::Transform& placed) {
+        const size_t n = m.count();
+        const uint32_t most = *std::max_element(m.points.begin(), m.points.end());
+        std::vector<int> vertexOf(static_cast<size_t>(most) + 1, -1);
+        std::vector<int> corners(3 * n);
+        std::vector<size_t> first;  // a corner of each vertex
+        for (size_t i = 0; i < 3 * n; ++i) {
+            int& v = vertexOf[m.points[i]];
+            if (v < 0) {
+                v = static_cast<int>(first.size());
+                first.push_back(i);
+            }
+            corners[i] = v;
+        }
+        auto cornerAt = [&](size_t i) {
+            const size_t t = i / 3, c = i % 3;
+            return c == 0 ? m.v0[t] : m.v0[t] + (c == 1 ? m.e1[t] : m.e2[t]);
+        };
+        const size_t vertices = first.size();
+        std::vector<uint8_t> smooth(n, 0);
+        std::vector<Vec3> bySmooth(vertices, Vec3(0.0f)), byAll(vertices, Vec3(0.0f));
+        for (size_t t = 0; t < n; ++t) {
+            const Vec3 across = cross(m.e1[t], m.e2[t]);
+            const float l = length(across);
+            for (size_t c = 0; c < 3 && l > 0.0f; ++c) {
+                const Vec3& nn = m.normals[3 * t + c];
+                if (dot(nn, across) < 0.9999f * l * length(nn)) smooth[t] = 1;
+            }
+            for (size_t c = 0; c < 3; ++c) {
+                const int v = corners[3 * t + c];
+                byAll[v] += m.normals[3 * t + c];
+                if (smooth[t]) bySmooth[v] += m.normals[3 * t + c];
+            }
+        }
+        ccl::array<ccl::float3> verts;
+        verts.resize(vertices);
+        for (size_t v = 0; v < vertices; ++v) {
+            const Vec3 p = cornerAt(first[v]);
+            verts[v] = ccl::make_float3(p.x, p.y, p.z);
+        }
+        mesh->set_subdivision_type(ccl::Mesh::SUBDIVISION_LINEAR);
+        mesh->set_verts(verts);
+        mesh->reserve_subd_faces(static_cast<int>(n), static_cast<int>(3 * n));
+        for (size_t t = 0; t < n; ++t) {
+            const int shader = (t < m.material.size() ? std::min<int>(m.material[t], kinds - 1) : 0) + (smooth[t] ? 0 : kinds);
+            mesh->add_subd_face(&corners[3 * t], 3, shader, smooth[t] != 0);
+        }
+        mesh->set_subd_dicing_rate(std::max(settings.dicing, 0.1f));
+        mesh->set_subd_max_level(12);
+        mesh->set_subd_objecttoworld(placed);
+        ccl::AttributeSet& on = mesh->subd_attributes;
+        ccl::float3* normal = on.add(ccl::ATTR_STD_VERTEX_NORMAL)->data_float3();
+        for (size_t v = 0; v < vertices; ++v) {
+            const Vec3 sum = length(bySmooth[v]) > 0.0f ? bySmooth[v] : byAll[v];
+            const float l = length(sum);
+            normal[v] = rgb(l > 0.0f ? sum / l : Vec3(0.0f, 1.0f, 0.0f));
+        }
+        ccl::float3* color = on.add(ccl::ustring("Col"), ccl::TypeColor, ccl::ATTR_ELEMENT_CORNER)->data_float3();
+        for (size_t i = 0; i < 3 * n; ++i) color[i] = rgb(i < m.colors.size() ? m.colors[i] : Vec3(0.8f, 0.8f, 0.8f));
+        // What its pictures are laid on by (meshOf): where the corners were
+        // before they moved, and the way each face faced there.
+        ccl::float3* rest = on.add(ccl::ustring("pg_rest"), ccl::TypePoint, ccl::ATTR_ELEMENT_CORNER)->data_float3();
+        ccl::float3* faced = on.add(ccl::ustring("pg_rest_normal"), ccl::TypeNormal, ccl::ATTR_ELEMENT_FACE)->data_float3();
+        const bool moved = m.rest.size() == 3 * n;
+        for (size_t t = 0; t < n; ++t) {
+            Vec3 r[3];
+            for (size_t c = 0; c < 3; ++c) {
+                r[c] = moved ? m.rest[3 * t + c] : cornerAt(3 * t + c);
+                rest[3 * t + c] = rgb(r[c]);
+            }
+            const Vec3 across = cross(r[1] - r[0], r[2] - r[0]);
+            const float l = length(across);
+            faced[t] = rgb(l > 0.0f ? across / l : Vec3(0.0f, 1.0f, 0.0f));
+        }
+        if (m.uv.size() == 3 * n) {
+            ccl::float2* uv = on.add(ccl::ATTR_STD_UV, ccl::ustring("uv"))->data_float2();
+            for (size_t i = 0; i < 3 * n; ++i) uv[i] = ccl::make_float2(m.uv[i].x, m.uv[i].y);
+        }
+        if (m.random.size() == n) {
+            float* random = on.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_float();
+            std::copy(m.random.begin(), m.random.end(), random);
+        }
+        // Moving: where its vertices are as the shutter opens and as it
+        // closes; Cycles makes the normals of the triangles it cuts there.
+        if (reach > 0.0f) {
+            mesh->set_motion_steps(3);
+            mesh->set_use_motion_blur(true);
+            ccl::float3* steps = on.add(ccl::ATTR_STD_MOTION_VERTEX_POSITION)->data_float3();
+            for (size_t v = 0; v < vertices; ++v) {
+                const Vec3 p = cornerAt(first[v]), by = m.velocity[first[v]] * reach;
+                steps[v] = rgb(p - by);
+                steps[vertices + v] = rgb(p + by);
+            }
+        }
+    }
+
     /// The Cycles mesh of ours: its triangles one by one, the normals and
     /// the colours of their corners; made once while ours lives. Where its
     /// corners move, where they are `reach` seconds before and after now --
     /// as the shutter opens and as it closes -- for Cycles to blur it
-    /// between; 0: sharp.
-    ccl::Mesh* meshOf(ccl::Scene* scene, const std::shared_ptr<const Mesh>& m, const sim::Look& look, float reach) {
+    /// between; 0: sharp. Where a material of it moves it by its height
+    /// (Settings::displacement), cut finer (dice) as the camera sees it
+    /// where it is placed first, `placed`, and made again for each scene.
+    ccl::Mesh* meshOf(ccl::Scene* scene, const std::shared_ptr<const Mesh>& m, const sim::Look& look, float reach,
+                      const ccl::Transform& placed) {
         // The shaders of its materials, as the settings have them now.
         auto shadersOf = [&] {
             ccl::array<ccl::Node*> used;
@@ -1485,9 +1625,16 @@ struct CyclesRender::Impl {
         if (m->velocity.size() != 3 * m->count() || std::none_of(m->velocity.begin(), m->velocity.end(), goes)) {
             reach = 0.0f;
         }
+        // Cut finer and moved by its height where a material of it is --
+        // its corners' points, what it is joined by, known.
+        const bool diced = m->points.size() == 3 * m->count() &&
+                           std::any_of(m->materials.begin(), m->materials.end(), [&](const Material& mat) {
+                               return displacedBy(mat, textureOf(mat, settings), settings);
+                           });
         if (auto it = meshes.find(m.get()); it != meshes.end()) {
-            // Kept, unless the shutter is open longer or shorter now.
-            if (it->second.mesh.lock() == m && it->second.reach == reach) {
+            // Kept, unless the shutter is open longer or shorter now -- or
+            // it is cut as the camera sees it, which may have moved since.
+            if (it->second.mesh.lock() == m && it->second.reach == reach && !it->second.diced && !diced) {
                 // Kept -- but Surface Detail or Textures may have changed
                 // what its materials are drawn with.
                 ccl::Mesh* kept = it->second.cycles;
@@ -1499,6 +1646,16 @@ struct CyclesRender::Impl {
             meshes.erase(it);
         }
         auto* mesh = scene->create_node<ccl::Mesh>();
+        if (diced) {
+            // The smooth faces' shaders, then the flat faces' (dice).
+            ccl::array<ccl::Node*> used = shadersOf();
+            const int kinds = static_cast<int>(used.size());
+            for (const Material& mat : m->materials) used.push_back_slow(shaderOf(scene, mat, look, true));
+            mesh->set_used_shaders(used);
+            dice(mesh, *m, kinds, reach, placed);
+            meshes[m.get()] = {m, mesh, reach, true};
+            return mesh;
+        }
         const size_t n = m->count();
         ccl::array<ccl::float3> verts;
         verts.resize(3 * n);
@@ -2116,6 +2273,18 @@ struct CyclesRender::Impl {
         cam->compute_auto_viewplane();
         cam->need_flags_update = true;
         cam->need_device_update = true;
+        // ... and as it cuts what it moves by its height (meshOf): as the
+        // camera sees it now, what is out of the picture four times coarser.
+        ccl::Camera* dicing = scene->dicing_camera;
+        dicing->set_matrix(matrix);
+        dicing->set_camera_type(ccl::CAMERA_PERSPECTIVE);
+        dicing->set_fov(fov);
+        dicing->set_full_width(settings.width);
+        dicing->set_full_height(settings.height);
+        dicing->set_nearclip(1e-3f);
+        dicing->set_farclip(1e5f);
+        dicing->set_offscreen_dicing_scale(4.0f);
+        dicing->compute_auto_viewplane();
         return moves;
     }
 
@@ -2297,11 +2466,11 @@ struct CyclesRender::Impl {
         std::vector<ccl::Mesh*> made(s.meshes.size(), nullptr);
         for (const Placed& p : s.placed) {
             if (p.mesh >= s.meshes.size() || !s.meshes[p.mesh] || s.meshes[p.mesh]->count() == 0) continue;
+            const ccl::Transform tfm = placement(p.axes, p.scale, p.at);
             if (!made[p.mesh]) {
-                made[p.mesh] = meshOf(scene, s.meshes[p.mesh], s.look, reach);
+                made[p.mesh] = meshOf(scene, s.meshes[p.mesh], s.look, reach, tfm);
                 moves = moves || made[p.mesh]->get_use_motion_blur();
             }
-            const ccl::Transform tfm = placement(p.axes, p.scale, p.at);
             ccl::Object* object = place(scene, made[p.mesh], tfm, p.tint);
             if (!s.meshes[p.mesh]->shadows) object->set_visibility(ccl::PATH_RAY_ALL_VISIBILITY & ~ccl::PATH_RAY_SHADOW);
             if (reach > 0.0f && p.velocity != Vec3(0.0f)) {

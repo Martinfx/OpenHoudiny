@@ -99,6 +99,16 @@ struct Settings {
     /// and roughness vary, small bumps catch the light -- 1 as stone,
     /// plaster and the ground are; 0 as flat as the viewport draws them.
     float detail = 1.0f;
+    /// Cycles: a surface whose texture set has a height picture -- the
+    /// library's bricks, bark and roof tiles, a Material node's texture, a
+    /// displacement read from USD -- moved by it, not only shaded as if it
+    /// were: its outline goes up and down, the bricks stand out of their
+    /// mortar and shade it. Off: bumps alone, as the path tracer has them.
+    bool displacement = false;
+    /// With `displacement`: how small, in pixels as the camera sees them,
+    /// the triangles of a displaced surface are cut -- what is finer than
+    /// that, on a smooth surface, a bump.
+    float dicing = 1.0f;
     /// The photographs of the materials and the Material nodes' textures
     /// (render/Textures.h); off, their patterns and colours alone.
     bool textures = true;
