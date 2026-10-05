@@ -117,6 +117,7 @@ ní, vezme obdélník, laso nebo štětec).
 | **[** , **]**, kolečko během tahu | menší / větší poloměr měkkého výběru |
 | **Ctrl+G** | skupina z vybraného (Group) |
 | **Delete**, **X** | smaže vybrané (Blast) |
+| **Ctrl+X** | rozpustí vybrané hrany či plochy (Dissolve, §5) |
 | **P** | malovací štětec zapnout / vypnout (§6) |
 | **U** | sculpt zapnout / vypnout (§6c) |
 | **Tab** | uzel na vybrané: PolyExtrude, wrangle, Edit… (§6a) |
@@ -198,7 +199,7 @@ Falloff*; tlačítko s kopečkem v liště pod nástroji.
 | Sphere | `√(1 − x²)` | kupole, strmá u okraje |
 | Constant | `1` | celý pohyb až do poloměru |
 
-## 5. Skupina a mazání
+## 5. Skupina, mazání a Dissolve
 
 **Ctrl+G** vloží uzel **Group** se jménem `group1` (první, které
 geometrie ještě nemá), třídou a vzorem vybraného. Jméno přepište
@@ -214,6 +215,20 @@ skupiny hran nemá.
 | hrany | primitivy, jejichž jsou stranou (jako *Delete Edges* v Blenderu) |
 
 Blast umí i obráceně (Keep): nechat jen vybrané.
+
+**Ctrl+X** vloží uzel **Dissolve**: vybrané hrany zmizí a dva polygony,
+jejichž byly stranou, se spojí v jeden, jako *Dissolve Edges* v Blenderu
+nebo Dissolve v Houdini. Plochy, které vybrané hrany spojují, jsou jeden
+polygon obejitý jedním obvodem; strany, které dvě z nich sdílejí, zmizí
+i nevybrané. V režimu primitiv se spojí vybrané plochy. Kde by z toho
+nebyl jeden obvod (prstenec ploch kolem díry, obvod, který se dotkne sám
+sebe, plochy otočené opačně), polygony zůstanou, jak byly. Hrana na okraji
+(strana jediné plochy) se nerozpustí. Nový polygon má atributy plochy
+s nejnižším číslem a každý roh atributy rohu, kterým byl (třeba `uv`).
+Bod, který po spojení zůstane v přímce na straně a žádný jiný polygon ho
+nemá, zmizí (*Remove Inline Points*, odchylka do *Inline Angle*, 1°), stejně
+jako bod, který měly jen rozpuštěné strany. Spojené polygony jsou ve
+výstupu za ostatními.
 
 ## 6. Štětec: Attribute Paint
 
@@ -444,7 +459,11 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   `S`, `t` vezme `p + t` tam, kam ho vezme tah. Testy ověřují, že to
   platí bod po bodu a že Edit v uzlu počítá totéž.
 - **Uzly** — `src/pg/nodes/Edit.cpp`: `groupcreate`, `edit`,
-  `attribpaint`, `sculpt`; Blast v `Modifiers.cpp`. Attribute Paint
+  `attribpaint`, `sculpt`; Blast v `Modifiers.cpp`; Dissolve
+  v `Topology.cpp` nad `src/pg/core/Dissolve.h`: hrany spojí plochy
+  (union-find), skupina se obejde po vnějších stranách od rohu s nejnižším
+  číslem; bod, ze kterého vedou dvě vnější strany, nebo strany, které
+  zbudou po obchůzce, znamenají víc obvodů a skupina zůstane. Attribute Paint
   nanáší kapku po kapce jen na body v jejím dosahu (strom bodů), takže
   tisíce kapek na jemné síti jsou rychlé.
 - **Editor** — `tools/prototype/SimElements.cpp`; úchyty uzlů
@@ -463,8 +482,8 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   pojmenovávají. Malování to nepostihne — kapky jsou místa.
 - Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
   objekty ani kusy před ní.
-- Zatím chybí režim vrcholů (rohů), *Dissolve* hran a symetrie (ani
-  sculpt ji nemá). Měkký výběr má jen úchyty (posun, otočení, měřítko).
+- Zatím chybí režim vrcholů (rohů) a symetrie (ani sculpt ji nemá).
+  Měkký výběr má jen úchyty (posun, otočení, měřítko).
   Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by
   Box (dva rohy).
 - Sculpt body posouvá, nepřidává je: jemný detail chce jemnou síť

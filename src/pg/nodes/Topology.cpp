@@ -1,5 +1,5 @@
 // Nodes that change the mesh itself -- its pieces, its points, its faces:
-// Connectivity, Fuse, PolyExtrude, Subdivide and Clip; and Attribute
+// Connectivity, Fuse, PolyExtrude, Subdivide, Clip and Dissolve; and Attribute
 // Transfer, which carries attributes from one geometry onto another by where
 // their points are.
 //
@@ -10,6 +10,7 @@
 #include "pg/nodes/Nodes.h"
 #include "pg/nodes/Rebuild.h"
 
+#include "pg/core/Dissolve.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Selection.h"
 #include "pg/core/Spatial.h"
@@ -102,6 +103,38 @@ public:
 
 /// Points nearer each other than Distance made one, at their middle; the
 /// primitives follow, those that fold to nothing go.
+/// Edges taken out, the polygons each was a side of made one -- Dissolve in
+/// Houdini, Dissolve Edges in Blender (pg/core/Dissolve.h). The group names
+/// edges ("p3-4"), or faces: the sides two of them share go, the faces made
+/// one.
+class DissolveNode : public Node {
+public:
+    explicit DissolveNode(std::string name) : Node("dissolve", std::move(name)) {
+        setInputCount(1);
+        params_.setString("group", "");
+        params_.setInt("class", 0);  // 0 edges, 1 primitives
+        params_.setBool("inline", true);
+        params_.setFloat("inlineangle", 1.0f);
+    }
+
+    GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
+        if (in.empty() || !in[0]) return std::make_shared<Geometry>();
+        const Geometry& src = *in[0];
+        const std::string pattern = params_.getString("group");
+        std::vector<Edge> edges;
+        if (params_.evalInt("class", ctx, 0) == 1) {
+            edges = innerEdges(src, selectElements(src, AttrClass::Primitive, pattern));
+        } else {
+            edges = selectEdges(edgesOf(src), pattern);
+        }
+        if (edges.empty()) return in[0];
+        DissolveSettings s;
+        s.inlinePoints = params_.evalBool("inline", ctx, true);
+        s.inlineAngle = std::clamp(params_.evalFloat("inlineangle", ctx, 1.0f), 0.0f, 89.0f);
+        return std::make_shared<Geometry>(dissolveEdges(src, edges, s));
+    }
+};
+
 class FuseNode : public Node {
 public:
     explicit FuseNode(std::string name) : Node("fuse", std::move(name)) {
@@ -1060,6 +1093,7 @@ void registerTopologyNodes() {
     auto& r = NodeRegistry::instance();
     r.add("connectivity", [](const std::string& n) { return std::make_unique<ConnectivityNode>(n); });
     r.add("fuse", [](const std::string& n) { return std::make_unique<FuseNode>(n); });
+    r.add("dissolve", [](const std::string& n) { return std::make_unique<DissolveNode>(n); });
     r.add("polyextrude", [](const std::string& n) { return std::make_unique<PolyExtrudeNode>(n); });
     r.add("subdivide", [](const std::string& n) { return std::make_unique<SubdivideNode>(n); });
     r.add("clip", [](const std::string& n) { return std::make_unique<ClipNode>(n); });

@@ -2069,6 +2069,7 @@ void SimWorkspace::helpMenu() {
                   {"W  E  R, drag a handle", "move, turn, size what is picked (an Edit node)"},
                   {"O  [  ], wheel in a drag", "soft selection, its radius"},
                   {"Ctrl+G  Del", "a group of it, delete it (Group, Blast)"},
+                  {"Ctrl+X", "dissolve the edges or faces picked (Dissolve)"},
                   {"Ctrl+A  Ctrl+I  Esc", "pick all, the others, none"},
                   {"P  [  ], Shift+wheel", "paint an attribute (Ctrl: erase), brush size"},
                   {"U", "sculpt: push (Ctrl: pull), Shift: smooth, grab, flatten"},

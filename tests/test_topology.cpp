@@ -4,6 +4,7 @@
 // For-Each loops (src/pg/sim/ForEach.h), which run nodes piece by piece.
 //
 #include "pg/core/CookEngine.h"
+#include "pg/core/Dissolve.h"
 #include "pg/core/Graph.h"
 #include "pg/core/Parallel.h"
 #include "pg/nodes/Nodes.h"
@@ -709,3 +710,126 @@ TEST(fracture_breaks_the_building) {
     CHECK(pieces->primitives().find("Cd") != nullptr);  // the walls' colours go with them
 }
 
+
+namespace {
+
+/// A grid of `nx` by `nz` quads a metre each, facing up: point x + (nx + 1) z;
+/// each quad's id its number, each corner's uv where it is.
+Geometry quads(int nx, int nz) {
+    Geometry geo;
+    geo.addPoints(static_cast<size_t>((nx + 1) * (nz + 1)));
+    auto P = geo.positionsForWrite();
+    for (int z = 0; z <= nz; ++z) {
+        for (int x = 0; x <= nx; ++x) P[static_cast<size_t>(x + (nx + 1) * z)] = Vec3(static_cast<float>(x), 0.0f, static_cast<float>(z));
+    }
+    for (int z = 0; z < nz; ++z) {
+        for (int x = 0; x < nx; ++x) {
+            const uint32_t a = static_cast<uint32_t>(x + (nx + 1) * z);
+            const uint32_t q[4] = {a, a + static_cast<uint32_t>(nx + 1), a + static_cast<uint32_t>(nx + 2), a + 1};
+            geo.addPrimitive(q, true);
+        }
+    }
+    auto id = geo.primitives().create("id", AttrType::Int).write<int32_t>();
+    for (size_t p = 0; p < geo.primitiveCount(); ++p) id[p] = static_cast<int32_t>(p);
+    auto uv = geo.vertices().create("uv", AttrType::Vec3).write<Vec3>();
+    for (size_t v = 0; v < geo.vertexCount(); ++v) {
+        const Vec3 p = geo.positions()[geo.vertexPoint(v)];
+        uv[v] = Vec3(p.x / static_cast<float>(nx), p.z / static_cast<float>(nz), 0.0f);
+    }
+    return geo;
+}
+
+float areaOf(const Geometry& geo, size_t prim) {
+    const auto P = geo.positions();
+    const auto f = geo.primitivePoints(prim);
+    Vec3 sum(0.0f);
+    for (size_t i = 1; i + 1 < f.size(); ++i) sum += cross(P[f[i]] - P[f[0]], P[f[i + 1]] - P[f[0]]);
+    return 0.5f * length(sum);
+}
+
+}  // namespace
+
+TEST(topology_dissolve_makes_the_faces_an_edge_parts_one) {
+    // Two quads of a 3 x 3 grid made one: the point left inline on the
+    // border goes, the one where other quads meet stays; the polygon keeps
+    // the lower quad's id, each corner its uv.
+    const Geometry grid = quads(3, 3);
+    DissolveCount count;
+    const Geometry out = dissolveEdges(grid, std::vector<Edge>{{1, 5}}, DissolveSettings{}, &count);
+    CHECK_EQ(count.polygons, size_t(1));
+    CHECK_EQ(count.merged, size_t(2));
+    CHECK_EQ(out.primitiveCount(), size_t(8));
+    CHECK_EQ(out.pointCount(), size_t(15));
+    const size_t last = out.primitiveCount() - 1;
+    CHECK_EQ(out.primitiveVertexCount(last), size_t(5));
+    CHECK(std::fabs(areaOf(out, last) - 2.0f) < 1e-5f);
+    CHECK_EQ(out.primitives().find("id")->read<int32_t>()[last], 0);
+    const auto uv = out.vertices().find("uv")->read<Vec3>();
+    for (size_t v = out.primitiveVertexStart(last); v < out.vertexCount(); ++v) {
+        const Vec3 p = out.positions()[out.vertexPoint(v)];
+        CHECK(length(uv[v] - Vec3(p.x / 3.0f, p.z / 3.0f, 0.0f)) < 1e-6f);
+    }
+    // Without taking the inline point out: it stays a corner.
+    DissolveSettings keep;
+    keep.inlinePoints = false;
+    const Geometry kept = dissolveEdges(grid, std::vector<Edge>{{1, 5}}, keep);
+    CHECK_EQ(kept.pointCount(), size_t(16));
+    CHECK_EQ(kept.primitiveVertexCount(kept.primitiveCount() - 1), size_t(6));
+}
+
+TEST(topology_dissolve_a_block_into_one_face_but_not_a_ring_round_a_hole) {
+    // A 2 x 2 block, its four inner edges: one quad -- the middle point,
+    // used by nothing now, and the ones inline on its sides gone.
+    const Geometry block = quads(2, 2);
+    const Geometry one = dissolveEdges(block, edgesOf(block).size() ? std::vector<Edge>{{1, 4}, {3, 4}, {4, 5}, {4, 7}} : std::vector<Edge>{});
+    CHECK_EQ(one.primitiveCount(), size_t(1));
+    CHECK_EQ(one.pointCount(), size_t(4));
+    CHECK_EQ(one.primitiveVertexCount(0), size_t(4));
+    CHECK(std::fabs(areaOf(one, 0) - 4.0f) < 1e-5f);
+
+    // A 3 x 3 grid: the eight round the middle quad joined by the edges
+    // between them -- a ring round a hole, not one polygon: they stay.
+    const Geometry grid = quads(3, 3);
+    const std::vector<Edge> ring = {{1, 5}, {2, 6}, {4, 5}, {6, 7}, {8, 9}, {10, 11}, {9, 13}, {10, 14}};
+    DissolveCount count;
+    const Geometry same = dissolveEdges(grid, ring, DissolveSettings{}, &count);
+    CHECK_EQ(same.primitiveCount(), size_t(9));
+    CHECK(count.kept >= 1);
+    CHECK_EQ(count.polygons, size_t(0));
+
+    // A border edge, a side of one quad only: nothing to dissolve.
+    const Geometry border = dissolveEdges(grid, std::vector<Edge>{{0, 1}}, DissolveSettings{}, &count);
+    CHECK_EQ(border.primitiveCount(), size_t(9));
+    CHECK_EQ(count.kept, size_t(1));
+}
+
+TEST(topology_dissolve_node_takes_edges_or_faces) {
+    // Edges as the viewport writes them; faces picked: the sides they share.
+    auto grid = std::make_shared<Geometry>(quads(3, 3));
+    const GeometryPtr byEdges = run("dissolve", {grid}, [](Node& n) { n.setString("group", "p1-5 p5-9"); });
+    CHECK(byEdges && byEdges->primitiveCount() == 7);
+    const GeometryPtr byFaces = run("dissolve", {grid}, [](Node& n) {
+        n.setString("group", "0 1 3 4");
+        n.setInt("class", 1);
+    });
+    CHECK(byFaces && byFaces->primitiveCount() == 6);
+    // The four faces a square: one quad of 4 m^2.
+    const size_t last = byFaces->primitiveCount() - 1;
+    CHECK(std::fabs(areaOf(*byFaces, last) - 4.0f) < 1e-5f);
+    // Wound unlike: two quads sharing a side the same way -- not one.
+    Geometry odd;
+    odd.addPoints(6);
+    {
+        auto P = odd.positionsForWrite();
+        for (int i = 0; i < 6; ++i) P[static_cast<size_t>(i)] = Vec3(static_cast<float>(i % 3), 0.0f, static_cast<float>(i / 3));
+        const uint32_t a[4] = {0, 3, 4, 1}, b[4] = {1, 4, 5, 2};
+        odd.addPrimitive(a, true);
+        // The second turned the other way round.
+        const uint32_t c[4] = {1, 2, 5, 4};
+        (void)b;
+        odd.addPrimitive(c, true);
+    }
+    DissolveCount count;
+    const Geometry still = dissolveEdges(odd, std::vector<Edge>{{1, 4}}, DissolveSettings{}, &count);
+    CHECK_EQ(still.primitiveCount(), size_t(2));
+}

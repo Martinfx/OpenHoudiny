@@ -73,7 +73,7 @@ Rozbor každého z nich je v [ARCHITECTURE.md §2](ARCHITECTURE.md#2-invarianty)
 | Simulace | Kouř a oheň, voda (FLIP), déšť a vítr; z uzlů, deterministicky na libovolném počtu vláken | [docs/pyro.md](docs/pyro.md) |
 | Destrukce | Voronoi Fracture, tuhá tělesa nad Jolt, slepené kusy jako jedno těleso, nálože, drcení, drť, prach hnaný vytlačeným vzduchem; odstřel věžáku jako video | [docs/destruction.md](docs/destruction.md) |
 | Úpravy ve viewportu | Body, hrany a plochy vybrané myší (klik, obdélník, laso, štětec; jen viditelné, nebo i skryté); úchyt je posune, otočí a zvětší (Edit s měkkým poloměrem), skupina a mazání z vybraného, štětec atributů (piny, trhání látky) — vše jako uzly sítě | [docs/editing.md](docs/editing.md) |
-| Geometrie v editoru | 30 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Connectivity, Attribute Transfer, Voronoi Fracture, Convert Volume, Liquid Surface), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
+| Geometrie v editoru | 31 SOP uzlů (i PolyExtrude, Subdivide, Clip, Fuse, Dissolve, Connectivity, Attribute Transfer, Voronoi Fracture, Convert Volume, Liquid Surface), smyčky For-Each, display flag, tabulka atributů; vaření na vlastním vlákně s přerušením; geometrie jako tvar simulací a simulace zpátky jako geometrie | [docs/geometry.md](docs/geometry.md) |
 | Stromy | Uzel Tree: kmen s vidlicí, tři úrovně větví, sedm tvarů koruny, listy a jehličí, les na bodech, `flex` pro vítr, kostra pro vlastní listy; deterministicky na libovolném počtu vláken | [docs/trees.md](docs/trees.md) |
 | Vegetace | Instance: body, které zastupují prototypy (GPU instancing, USD PointInstancer, Unpack); uzel Grass (trsy trávy), stromy a keře jako varianty; Scatter s hustotou, maskou, sklonem a odstupem; louka u lesa ve větru | [docs/vegetation.md](docs/vegetation.md) |
 | Render | Cycles z Blenderu jako knihovna (sítě a instance, Principled BSDF, sklo a voda, kouř a oheň, fyzikální obloha jako v Blenderu, převod barev AgX, detail povrchů, hloubka ostrosti, rozmazání pohybem i plynu a otáčejících se objektů, Open Image Denoise), výchozí v záložce Render, `--renderer cycles`; vlastní path tracer na procesoru přes Intel Embree 4 a NanoVDB se stejným rozmazáním pohybem jako druhá volba (`--renderer path`); pohledy AgX, ACES 1.0 a ACES 2.0 jako v OpenColorIO; PNG a EXR s průchody v Rec. 709, ACEScg nebo ACES2065-1; oba nad plate záběru s holdouty a shadow catchery | [docs/cycles.md](docs/cycles.md), [docs/pathtracer.md](docs/pathtracer.md), [docs/color.md](docs/color.md), [docs/plate.md](docs/plate.md) |
@@ -497,7 +497,9 @@ Seřazeno podle poměru hodnota / náklad:
    výběr jen přepočítá obálky (refit); viewport kreslí zobrazenou geometrii
    indexovaně a při posunu bodů nahraje jen polohy a normály vrcholů
    (milion bodů 62 ms místo sekund, na GPU 24 MB místo 215 MB).
-   Zbývá: režim vrcholů, Dissolve hran, symetrie, dyntopo.
+   ✅ Dissolve: hrany i plochy vybrané ve viewportu spojí polygony
+   (Ctrl+X), body v přímce na straně zmizí.
+   Zbývá: režim vrcholů, symetrie, dyntopo.
 8. **Vegetace** — ✅ uzel Tree: strom roste jako rostlina podle modelu
    Webera a Penna — kmen (i rozdělený do vůdčích větví), až tři úrovně
    větví kolem rodiče o zlatý úhel, prohnuté vahou, stočené ke světlu

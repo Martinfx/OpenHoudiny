@@ -894,6 +894,10 @@ void SimWorkspace::viewMenu() {
         const bool any = elementCount() > 0;
         if (ImGui::MenuItem("Group from Picked", "Ctrl+G", false, any)) groupElements();
         if (iconItem(Icon::Trash, theme::kTextDim, "Delete Picked", "Del") && any) deleteElements();
+        if (ImGui::MenuItem("Dissolve Picked", "Ctrl+X", false,
+                            any && (elements_ == Elements::Edges || elements_ == Elements::Primitives))) {
+            dissolveElements();
+        }
         if (ImGui::MenuItem("Extrude Picked", nullptr, false, any && elements_ == Elements::Primitives)) {
             applyToPicked("polyextrude");
         }
@@ -1050,6 +1054,7 @@ void SimWorkspace::viewKeys(bool overView) {
         if (io.KeyAlt && zero) cameraFromView();
         if (editingElements() && !io.KeyAlt) {
             if (ImGui::IsKeyPressed(ImGuiKey_G, false)) groupElements();
+            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && !paint_) dissolveElements();
             if (ImGui::IsKeyPressed(ImGuiKey_A, false) && !paint_) selectAllElements(false);
             if (ImGui::IsKeyPressed(ImGuiKey_I, false) && !paint_) selectAllElements(true);
         }

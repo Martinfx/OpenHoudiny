@@ -17,6 +17,7 @@
 //   O                  soft selection: the points round go along, less the further
 //                      they are -- [ ], or the wheel while dragging: its radius
 //   Ctrl+G             a Group of it;   Delete, X: a Blast of it
+//   Ctrl+X             edges or faces dissolved -- a Dissolve node
 //   Ctrl+A, Ctrl+I     all of them, the others;   Escape: none
 //   P                  the brush: the Attribute Paint node's attribute, its Value
 //                      -- Ctrl: its Erase Value; [ ] or Shift+wheel: its size
@@ -849,6 +850,25 @@ void SimWorkspace::deleteElements() {
                (elements_ == Elements::Edges ? " and the primitives on them" : "") + ": a Blast node");
 }
 
+void SimWorkspace::dissolveElements() {
+    const size_t n = elementCount();
+    if ((elements_ != Elements::Edges && elements_ != Elements::Primitives) || n == 0) {
+        setMessage("Pick edges or faces to dissolve (3, 4)", true);
+        return;
+    }
+    const std::string pattern = elementPattern();
+    const float cls = elements_ == Elements::Primitives ? 1.0f : 0.0f;
+    const int id = insertAfterDisplayed("dissolve");
+    if (!id) return;
+    net_.setText(id, "group", pattern);
+    net_.setParam(id, "class", {cls, 0.0f, 0.0f});
+    picked_.mask.clear();
+    picked_.edges.clear();
+    ++picked_.revision;
+    setMessage("Dissolved " + std::to_string(n) + " " + kindOf(elements_, n != 1) +
+               (elements_ == Elements::Edges ? ", the faces on them made one" : ", made one face") + ": a Dissolve node");
+}
+
 // --- the handle on what is picked ---------------------------------------------------------
 
 void SimWorkspace::elementGizmo(ImDrawList* d, const ViewCamera& cam, bool overView) {
@@ -1427,7 +1447,10 @@ std::string SimWorkspace::elementStatus() const {
         text += std::to_string(n) + " " + kindOf(elements_, n != 1) + " picked";
         const Soft soft = softNow();
         if (soft.on) text += "  \xc2\xb7  soft " + metres(soft.radius);
-        if (hoverElement_ < 0) text += "  \xc2\xb7  W E R move, turn, size  \xc2\xb7  Ctrl+G group  \xc2\xb7  Delete";
+        if (hoverElement_ < 0) {
+            text += "  \xc2\xb7  W E R move, turn, size  \xc2\xb7  Ctrl+G group  \xc2\xb7  Delete";
+            if (elements_ == Elements::Edges || elements_ == Elements::Primitives) text += "  \xc2\xb7  Ctrl+X dissolve";
+        }
     } else if (hoverElement_ < 0) {
         const std::string kind = kindOf(elements_, true);
         text = pickStyle_ == PickStyle::Brush ? "Paint over the " + kind + " to pick them"

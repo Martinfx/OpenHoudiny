@@ -483,9 +483,11 @@ private:
     int insertAfterDisplayed(const std::string& type);
     /// Takes node `id` out, what fed it feeding what it fed again.
     void extractNode(int id);
-    /// A Group of what is picked (Ctrl+G), a Blast of it (Delete).
+    /// A Group of what is picked (Ctrl+G), a Blast of it (Delete), the
+    /// edges or faces of it dissolved (Ctrl+X).
     void groupElements();
     void deleteElements();
+    void dissolveElements();
     /// The handle on what is picked, and the Edit node a drag of it sets.
     void elementGizmo(ImDrawList* d, const ViewCamera& cam, bool overView);
     void applyElementDrag(const GizmoDrag& drag);

@@ -1306,6 +1306,23 @@ std::vector<NodeType> buildTypes() {
              in,
              {{"distance", "Distance", "Fuse", K::Float, {0.001f, 0.0f, 0.0f}, 0.0f, 0.1f, 0.0f, kBig, "m",
                "How near two points must be to become one."}});
+    geometry("dissolve", "Dissolve", "dissolve",
+             "Edges taken out of the mesh, the two polygons each was a side of made one -- the polygons a set "
+             "of edges joins become one each, walked round as one loop; where that is not one loop (a ring "
+             "round a hole), they stay. Of class Primitives, the faces picked made one: the sides two of them "
+             "share go. Points left inline on a side, on no other polygon, go too. Ctrl+X in the viewport "
+             "makes one of the edges or faces picked there.",
+             in,
+             {text("group", "Group", "Dissolve", "",
+                   "Which: edges by their points -- p3-4, p0-1-2 -- or faces by numbers and ranges, a group's "
+                   "name, * for all; ^ before one takes it away."),
+              {"class", "Class", "Dissolve", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "What Group names: edges, or faces -- the sides they share dissolved.",
+               {"edges", "primitives"}, {"Edges", "Primitives"}},
+              {"inline", "Remove Inline Points", "Dissolve", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+               "Points left on a straight side of a polygon made one, on no other polygon, go."},
+              {"inlineangle", "Inline Angle", "Dissolve", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 10.0f, 0.0f, 89.0f,
+               "\xc2\xb0", "How far the side may bend through such a point."}});
     geometry("polyextrude", "PolyExtrude", "polyextrude",
              "Each face pushed out along its normal, a wall along each of its edges -- inward for a window, "
              "outward for a ledge; Inset shrinks it first. The faces moved are in the group Front Group, the "
