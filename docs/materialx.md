@@ -123,6 +123,11 @@ v něm je fotka, jak je.
 Kusy z RBD Solveru (`/World/pieces`) mají dál své materiály `surface`
 a `glass` z `/World/Looks` ([usd.md](usd.md)).
 
+**Zpátky:** uzel USD Import přečte materiály ze scény USD, vlastní
+i cizí, MaterialX i UsdPreviewSurface, do `s@material` a `s@texture`
+(`scena.usda#/World/Materials/bark`), včetně drsnosti, kovovosti, barvy
+a skla ([usd-import.md](usd-import.md#materiály)).
+
 ## 4. Čtení `.mtlx`
 
 `textureSet()` přečte dokument MaterialX jako sadu textur
@@ -131,8 +136,8 @@ a `glass` z `/World/Looks` ([usd.md](usd.md)).
 - `materialy.mtlx`: první `surfacematerial` dokumentu;
   `materialy.mtlx#bark` materiál podle jména;
   složka bez `texture.txt` a bez fotek, ve které je `.mtlx`: první z nich.
-- Od `standard_surface` (nebo `UsdPreviewSurface`, `open_pbr_surface`)
-  jde zpátky po každém vstupu každého uzlu až k obrázku: `image`,
+- Od `standard_surface` (nebo `UsdPreviewSurface`, `open_pbr_surface`,
+  `gltf_pbr`) jde zpátky po každém vstupu každého uzlu až k obrázku: `image`,
   `tiledimage`, `triplanarprojection`, `UsdUVTexture`. Projde i grafy
   (`nodegraph` a jejich `output`) a vstupy grafu, na které uzly ukazují
   přes `interfacename`. Z `base_color` je barva, z `normal` normálová
@@ -226,5 +231,6 @@ Testy jsou v `tests/test_materialx.cpp` (8):
   `triplanarprojection` míchá po svém. Tašky kladené podél střechy jdou
   ze tří stran.
 - **Čtení** bere z dokumentu fotky povrchu. Procedurální uzly (šum,
-  gradienty) a hodnoty drsnosti a kovovosti sada textur nenese.
+  gradienty) a hodnoty drsnosti a kovovosti sada textur nenese. Ze scény
+  USD je přenese USD Import jako atributy `roughness` a `metallic`.
 - **Kusy z RBD Solveru** mají v USD dál materiály `/World/Looks`.

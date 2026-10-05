@@ -79,10 +79,18 @@ struct ImportOptions {
     bool subsets = true;
     /// Each primitive's prim, as the string attribute `path`.
     bool pathAttribute = true;
+    /// The materials bound to the meshes and shapes, and to their
+    /// GeomSubsets' faces (Shade.h), as the program's: each primitive's
+    /// material's name as `material`; its pictures -- a MaterialX or
+    /// UsdPreviewSurface network -- as `texture` ("stage.usda#/its/path",
+    /// render/Textures.h reads them), texture_tint, texture_projection and
+    /// texture_size; its roughness and metallic; glass for one light goes
+    /// through; its colour, where it is a value, as Cd.
+    bool materials = true;
 };
 
 /// The geometry of the stage at `time`, in the world: meshes (with N, uv,
-/// Cd, Alpha, v and their other primvars), curves as polylines, points
+/// Cd, Alpha, v and their other primvars; their materials), curves as polylines, points
 /// (pscale from widths, id, v), the implicit shapes -- Cube, Sphere,
 /// Cylinder, Cone, Capsule, Plane -- as polygons. `skipped`: what it read no
 /// geometry from, and why.

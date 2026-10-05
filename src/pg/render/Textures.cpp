@@ -4,6 +4,7 @@
 #include "pg/io/Picture.h"
 #include "pg/render/PathTracer.h"
 #include "pg/render/Scene.h"
+#include "pg/usd/Shade.h"
 
 #include <glm/common.hpp>
 
@@ -13,6 +14,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -215,27 +217,13 @@ std::string lower(std::string s) {
     return s;
 }
 
-/// A material of a MaterialX document (MaterialGraph.h writes them; so do
-/// Poly Haven, ambientCG, Houdini...) -- the one named `name`, else its
-/// first: the pictures behind its surface (mtlx::surfaceOf), their files
-/// from the document's folder. Tinted by Cd where its colour is tinted by
-/// a geometric property -- its mean what the document evens the picture
-/// by; as many metres a picture as it lays them on from three sides by,
-/// else 2.
-TextureSet readMaterialX(const fs::path& file, const std::string& name) {
-    std::ifstream in(file, std::ios::binary);
-    std::stringstream text;
-    text << in.rdbuf();
-    std::vector<io::mtlx::Node> nodes;
-    std::string error;
-    if (!io::mtlx::parse(text.str(), nodes, error)) return {};
-    const io::mtlx::Surface surface = io::mtlx::surfaceOf(nodes, name);
+/// The texture set of a material's surface (mtlx::surfaceOf): the pictures
+/// behind it, each file given its path by `resolved`. Tinted by Cd where its
+/// colour is tinted by a geometric property -- its mean what the material
+/// evens the picture by; as many metres a picture as it lays them on from
+/// three sides by, else 2.
+TextureSet setOfSurface(const io::mtlx::Surface& surface, const std::function<std::string(const std::string&)>& resolved) {
     if (!surface.found || surface.color.empty()) return {};
-    auto resolved = [&](const std::string& f) {
-        if (f.empty()) return std::string();
-        const fs::path p(f);
-        return (p.is_absolute() ? p : (file.parent_path() / p).lexically_normal()).string();
-    };
     TextureSet set;
     set.color = resolved(surface.color);
     set.normal = resolved(surface.normal);
@@ -246,12 +234,44 @@ TextureSet readMaterialX(const fs::path& file, const std::string& name) {
     set.alphaChannel = !set.alpha.empty() && surface.opacityFromAlpha;
     set.size = surface.size > 0.0f ? surface.size : 2.0f;
     set.depth = 0.01f * set.size;
-    // Tinted, the picture over its mean -- as the document evens it, else as
-    // it is.
+    // Tinted, the picture over its mean -- as the material evens it, else
+    // as it is.
     set.tint = surface.tinted;
     const Vec3 k = surface.scale;
     set.mean = set.tint && k.x > 0.0f && k.y > 0.0f && k.z > 0.0f ? Vec3(1.0f) / k : meanOf(set.color);
     return set;
+}
+
+/// A material of a MaterialX document (MaterialGraph.h writes them; so do
+/// Poly Haven, ambientCG, Houdini...) -- the one named `name`, else its
+/// first --, its files from the document's folder.
+TextureSet readMaterialX(const fs::path& file, const std::string& name) {
+    std::ifstream in(file, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::vector<io::mtlx::Node> nodes;
+    std::string error;
+    if (!io::mtlx::parse(text.str(), nodes, error)) return {};
+    return setOfSurface(io::mtlx::surfaceOf(nodes, name), [&](const std::string& f) {
+        if (f.empty()) return std::string();
+        const fs::path p(f);
+        return (p.is_absolute() ? p : (file.parent_path() / p).lexically_normal()).string();
+    });
+}
+
+/// A Material of a USD stage -- its MaterialX or UsdPreviewSurface network
+/// (usd/Shade.h) --, its files as USD resolves them.
+TextureSet readUsdMaterial(const std::string& file, const std::string& path) {
+    std::string error;
+    const auto stage = usd::Stage::openCached(file, error);
+    const usd::Stage::Prim* prim = stage ? stage->find(path) : nullptr;
+    if (!prim || prim->type != "Material") return {};
+    return setOfSurface(usd::materialSurface(*stage, *prim, 0.0), [](const std::string& f) { return f; });
+}
+
+bool isUsd(const fs::path& file) {
+    const std::string ext = lower(file.extension().string());
+    return ext == ".usd" || ext == ".usda" || ext == ".usdc" || ext == ".usdz";
 }
 
 /// Sets as they were read, by what named them.
@@ -269,10 +289,13 @@ TextureSet textureSet(const std::string& where) {
     TextureSet set;
     std::error_code ec;
     const fs::path path(where);
-    // A MaterialX document, or one material of it: materials.mtlx#bark.
-    const size_t hash = where.rfind('#');
+    // A MaterialX document, or one material of it: materials.mtlx#bark; a
+    // Material of a USD stage: shot.usda#/World/Materials/bark.
+    const size_t hash = where.find('#');
     const bool named = hash != std::string::npos && lower(fs::path(where.substr(0, hash)).extension().string()) == ".mtlx";
-    if (named || lower(path.extension().string()) == ".mtlx") {
+    if (hash != std::string::npos && isUsd(fs::path(where.substr(0, hash)))) {
+        set = readUsdMaterial(where.substr(0, hash), where.substr(hash + 1));
+    } else if (named || lower(path.extension().string()) == ".mtlx") {
         const fs::path document = named ? fs::path(where.substr(0, hash)) : path;
         if (fs::is_regular_file(document, ec)) set = readMaterialX(document, named ? where.substr(hash + 1) : std::string());
     } else if (fs::is_directory(path, ec)) {

@@ -84,7 +84,8 @@ std::string usdType(const std::string& type);
 bool parse(const std::string& text, std::vector<Node>& nodes, std::string& error);
 
 /// What a surface material of `nodes` shows, followed back from its
-/// standard_surface (or UsdPreviewSurface): the files of its base colour,
+/// standard_surface (or UsdPreviewSurface, open_pbr_surface, gltf_pbr): the
+/// files of its base colour,
 /// its normal map, its opacity, its roughness and its height (its
 /// displacement) -- through what passes a picture on: image, tiledimage,
 /// triplanarprojection, normalmap, multiply, extract... -- and its
@@ -100,6 +101,16 @@ struct Surface {
     /// values -- one over its mean, as MaterialGraph.h evens it -- or -1.
     Vec3 scale{-1.0f, -1.0f, -1.0f};
     bool normalDirectX = false;    ///< the normal map's green turned over on its way (times -1)
+    /// What it says as values -- the shader's own defaults where it says
+    /// none, as a renderer of it takes them: the base colour, times its
+    /// weight (-1 where something else gives it: a picture, a property);
+    /// how rough, how metal, how opaque (a colour's mean), how much light
+    /// goes through it, its index of refraction.
+    struct Values {
+        Vec3 color{-1.0f, -1.0f, -1.0f};
+        float roughness = 0.5f, metalness = 0.0f, opacity = 1.0f, transmission = 0.0f, ior = 1.5f;
+    } values;
+    std::string shader;            ///< its category: standard_surface, UsdPreviewSurface, open_pbr_surface, gltf_pbr
     bool found = false;
 };
 Surface surfaceOf(const std::vector<Node>& nodes, const std::string& name = {});

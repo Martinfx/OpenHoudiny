@@ -378,7 +378,8 @@ Surface surfaceOf(const std::vector<Node>& nodes, const std::string& name) {
         if (const Input* s = material->input("surfaceshader")) shader = node(s->nodename);
     } else if (name.empty()) {
         for (const Node& n : nodes) {
-            if (n.category == "standard_surface" || n.category == "UsdPreviewSurface" || n.category == "open_pbr_surface") {
+            if (n.category == "standard_surface" || n.category == "UsdPreviewSurface" || n.category == "open_pbr_surface" ||
+                n.category == "gltf_pbr") {
                 shader = &n;
                 break;
             }
@@ -386,8 +387,10 @@ Surface surfaceOf(const std::vector<Node>& nodes, const std::string& name) {
     }
     if (!shader) return out;
     out.found = true;
+    out.shader = shader->category;
     const bool preview = shader->category == "UsdPreviewSurface";
     const bool openPbr = shader->category == "open_pbr_surface";
+    const bool gltf = shader->category == "gltf_pbr";
     // What is behind an input: the first picture on the way back -- every
     // input of every node on it followed, in order -- and what the way does
     // to it.
@@ -473,13 +476,47 @@ Surface surfaceOf(const std::vector<Node>& nodes, const std::string& name) {
     const Trail normal = trail(shader->input(openPbr ? "geometry_normal" : "normal"));
     out.normal = normal.file;
     out.normalDirectX = normal.flipped;
-    const Trail opacity = trail(shader->input(openPbr ? "geometry_opacity" : "opacity"));
+    const char* opaque = openPbr ? "geometry_opacity" : gltf ? "alpha" : "opacity";
+    const Trail opacity = trail(shader->input(opaque));
     out.opacity = opacity.file;
     out.opacityFromAlpha = opacity.alpha;
-    const char* rough = preview ? "roughness" : "specular_roughness";
+    const char* rough = preview || gltf ? "roughness" : "specular_roughness";
     out.roughnessFile = trail(shader->input(rough)).file;
     out.roughness = number(shader->input(rough), -1.0f);
-    out.metalness = number(shader->input(preview ? "metallic" : openPbr ? "base_metalness" : "metalness"), -1.0f);
+    const char* metal = preview || gltf ? "metallic" : openPbr ? "base_metalness" : "metalness";
+    out.metalness = number(shader->input(metal), -1.0f);
+    // The values, each shader's defaults where it gives none (MaterialX's
+    // node definitions; USD's for UsdPreviewSurface).
+    auto three = [](const Input* in, Vec3& v) {
+        if (!in || !in->nodename.empty() || in->value.empty()) return false;
+        float x[3];
+        const char* at = in->value.c_str();
+        int read = 0;
+        for (; read < 3; ++read) {
+            char* end = nullptr;
+            x[read] = std::strtof(at, &end);
+            if (end == at) break;
+            at = end;
+            while (*at == ',' || *at == ' ') ++at;
+        }
+        if (read == 1) x[1] = x[2] = x[0];
+        else if (read != 3) return false;
+        v = Vec3(x[0], x[1], x[2]);
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    };
+    Surface::Values& v = out.values;
+    const Input* base = shader->input(preview ? "diffuseColor" : "base_color");
+    Vec3 baseColor = preview ? Vec3(0.18f) : gltf ? Vec3(1.0f) : Vec3(0.8f);
+    if (!base || three(base, baseColor)) {
+        const float weight = preview || gltf ? 1.0f : number(shader->input(openPbr ? "base_weight" : "base"), 1.0f);
+        v.color = baseColor * weight;
+    }
+    v.roughness = out.roughness >= 0.0f ? out.roughness : preview ? 0.5f : gltf ? 1.0f : openPbr ? 0.3f : 0.2f;
+    v.metalness = out.metalness >= 0.0f ? out.metalness : gltf ? 1.0f : 0.0f;
+    Vec3 opacityColor(1.0f);
+    if (three(shader->input(opaque), opacityColor)) v.opacity = (opacityColor.x + opacityColor.y + opacityColor.z) / 3.0f;
+    v.transmission = number(shader->input(openPbr ? "transmission_weight" : "transmission"), 0.0f);
+    v.ior = number(shader->input(preview ? "ior" : openPbr ? "specular_ior" : gltf ? "ior" : "specular_IOR"), 1.5f);
     // How high: the displacement's picture.
     if (material) {
         if (const Input* d = material->input("displacementshader")) {

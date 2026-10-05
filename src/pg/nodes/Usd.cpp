@@ -28,6 +28,7 @@ public:
         params_.setBool("metres", true);
         params_.setBool("subsets", true);
         params_.setBool("path", true);
+        params_.setBool("materials", true);
     }
 
     bool isTimeDependentSelf() const override {
@@ -94,6 +95,7 @@ private:
         o.metresYUp = params_.getBool("metres", true);
         o.subsets = params_.getBool("subsets", true);
         o.pathAttribute = params_.getBool("path", true);
+        o.materials = params_.getBool("materials", true);
         return o;
     }
 

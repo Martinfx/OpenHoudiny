@@ -1,5 +1,8 @@
 #include "pg/usd/Geom.h"
 
+#include "pg/core/Material.h"
+#include "pg/usd/Shade.h"
+
 #include <glm/ext/quaternion_double.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -92,10 +95,22 @@ struct Builder {
         std::vector<float> floats;
         std::vector<int32_t> ints;
         size_t count = 0;  ///< elements filled
+        std::vector<std::pair<size_t, size_t>> given;  ///< the elements prims gave values: [from, to)
     };
     std::map<std::pair<AttrClass, std::string>, Attr> attrs;
     std::vector<int32_t> paths;  ///< per primitive
     std::vector<std::string> pathTable;
+    std::vector<int32_t> materials;  ///< per primitive: its material in `materialTable`; -1 none
+    std::vector<std::string> materialTable;
+
+    /// The index of material `path` in the table; -1 for none.
+    int32_t material(const std::string& path) {
+        if (path.empty()) return -1;
+        const auto it = std::find(materialTable.begin(), materialTable.end(), path);
+        if (it != materialTable.end()) return static_cast<int32_t>(it - materialTable.begin());
+        materialTable.push_back(path);
+        return static_cast<int32_t>(materialTable.size() - 1);
+    }
     std::map<std::string, std::vector<uint32_t>> groups;
     std::vector<std::string>* notes = nullptr;
 
@@ -111,7 +126,7 @@ struct Builder {
     /// The attribute, its elements up to `start` filled (zeros where earlier
     /// prims had none); null when its name is taken by another width.
     Attr* attr(AttrClass cls, const std::string& name, int width, size_t start) {
-        auto [it, fresh] = attrs.try_emplace({cls, name}, Attr{cls, width, {}, {}, 0});
+        auto [it, fresh] = attrs.try_emplace({cls, name}, Attr{cls, width, {}, {}, 0, {}});
         Attr& a = it->second;
         if (!fresh && a.width != width) {
             if (notes) notes->push_back("'" + name + "' is " + std::to_string(width) + " numbers here but " +
@@ -127,12 +142,87 @@ struct Builder {
         else a.floats.resize(count * static_cast<size_t>(a.width), 0.0f);
         a.count = count;
     }
+    /// A prim gave elements [from, to) of `a` values: filled up to there,
+    /// and remembered as given.
+    static void give(Attr& a, size_t from, size_t to) {
+        pad(a, to);
+        if (to > from) a.given.emplace_back(from, to);
+    }
+
+    /// A name on more than one class -- one prim's uv on its points,
+    /// another's on its corners, a third's on its faces -- goes onto the
+    /// corners, as a merge in Houdini promotes it: what reads the name takes
+    /// the corners' first, and there the prims that gave theirs elsewhere
+    /// would have zeros. Each corner takes the value its prim gave it, else
+    /// its point's, else its face's; points no primitive uses keep theirs.
+    /// Normals and velocities stay where each prim gave them: the renderers
+    /// take them from the points alone.
+    void unify() {
+        std::map<std::string, int> classes;
+        for (const auto& [key, a] : attrs) {
+            if (key.first != AttrClass::Detail) ++classes[key.second];
+        }
+        const auto corners = geo.vertexPoints();
+        const auto starts = geo.primitiveStarts();
+        const auto sizes = geo.primitiveSizes();
+        std::vector<uint8_t> used(geo.pointCount(), 0);
+        for (const uint32_t p : corners) used[p] = 1;
+        auto find = [&](AttrClass cls, const std::string& name) -> Attr* {
+            const auto it = attrs.find({cls, name});
+            return it == attrs.end() ? nullptr : &it->second;
+        };
+        auto givenOf = [](const Attr* a, size_t n) {
+            std::vector<uint8_t> m(n, 0);
+            if (!a) return m;
+            for (const auto& [from, to] : a->given) {
+                for (size_t i = from; i < std::min(to, n); ++i) m[i] = 1;
+            }
+            return m;
+        };
+        for (const auto& [name, count] : classes) {
+            if (count < 2 || name == "N" || name == "v") continue;
+            Attr* point = find(AttrClass::Point, name);
+            Attr* vertex = find(AttrClass::Vertex, name);
+            Attr* face = find(AttrClass::Primitive, name);
+            const int width = (vertex ? vertex : point)->width;
+            if ((point && point->width != width) || (face && face->width != width)) {
+                if (notes) notes->push_back("'" + name + "' is of different widths on points, corners and faces: " +
+                                            "left as it is");
+                continue;
+            }
+            const auto onPoint = givenOf(point, geo.pointCount());
+            const auto onFace = givenOf(face, geo.primitiveCount());
+            if (!vertex) {
+                const Attr fresh{AttrClass::Vertex, width, {}, {}, 0, {}};
+                vertex = &attrs.try_emplace({AttrClass::Vertex, name}, fresh).first->second;
+            }
+            pad(*vertex, geo.vertexCount());
+            const auto onCorner = givenOf(vertex, geo.vertexCount());
+            const size_t w = static_cast<size_t>(width);
+            auto copy = [&](const Attr& from, size_t element, size_t corner) {
+                if (width == 0) vertex->ints[corner] = from.ints[element];
+                else std::copy_n(&from.floats[element * w], w, &vertex->floats[corner * w]);
+            };
+            for (size_t prim = 0; prim < starts.size(); ++prim) {
+                for (size_t c = starts[prim]; c < starts[prim] + sizes[prim]; ++c) {
+                    if (onCorner[c]) continue;
+                    if (point && onPoint[corners[c]]) copy(*point, corners[c], c);
+                    else if (face && onFace[prim]) copy(*face, prim, c);
+                }
+            }
+            if (face) attrs.erase({AttrClass::Primitive, name});
+            bool loose = false;
+            for (size_t p = 0; p < onPoint.size() && !loose; ++p) loose = onPoint[p] && !used[p];
+            if (point && !loose) attrs.erase({AttrClass::Point, name});
+        }
+    }
 
     std::shared_ptr<Geometry> finish() {
+        for (auto& [key, a] : attrs) pad(a, geo.elementCount(key.first));
+        unify();
         auto out = std::make_shared<Geometry>(std::move(geo));
         for (auto& [key, a] : attrs) {
             const size_t n = out->elementCount(key.first);
-            pad(a, n);
             const AttrType type = a.width == 0 ? AttrType::Int
                                   : a.width == 1 ? AttrType::Float
                                   : a.width == 2 ? AttrType::Vec2
@@ -310,7 +400,7 @@ struct Reader {
         Builder::Attr* a = out.attr(cls, name, outWidth, start);
         if (!a) return;
         const Matrix w = kind == 1 ? normalMatrix(worldOf(prim)) : worldOf(prim);
-        Builder::pad(*a, start + n);
+        Builder::give(*a, start, start + n);
         for (size_t i = 0; i < n; ++i) {
             const size_t e = element(source[i]);
             if (e >= size) continue;
@@ -425,6 +515,29 @@ struct Reader {
         primvars(prim, piece, true);
         pathOf(prim, piece);
         if (options.subsets) subsets(prim, piece);
+        bind(prim, piece);
+    }
+
+    /// The material of each primitive the prim added: the prim's, a
+    /// GeomSubset's faces theirs.
+    void bind(const Stage::Prim& prim, const Piece& piece) {
+        if (!options.materials) return;
+        const int32_t whole = out.material(boundMaterial(stage, prim));
+        const std::vector<BoundFaces> bound =
+            prim.type == "Mesh" ? boundSubsets(stage, prim, time) : std::vector<BoundFaces>();
+        if (whole < 0 && bound.empty() && out.materialTable.empty()) return;
+        out.materials.resize(piece.prims, -1);
+        out.materials.resize(out.geo.primitiveCount(), whole);
+        if (bound.empty()) return;
+        // The file's faces to ours.
+        std::vector<int64_t> ours(piece.sourceFaces, -1);
+        for (size_t k = 0; k < piece.faceOf.size(); ++k) ours[piece.faceOf[k]] = static_cast<int64_t>(piece.prims + k);
+        for (const BoundFaces& b : bound) {
+            const int32_t m = out.material(b.material);
+            for (const uint32_t f : b.faces) {
+                if (f < ours.size() && ours[f] >= 0) out.materials[static_cast<size_t>(ours[f])] = m;
+            }
+        }
     }
 
     void subsets(const Stage::Prim& prim, const Piece& piece) {
@@ -453,7 +566,7 @@ struct Reader {
         const size_t n = out.geo.pointCount() - piece.points;
         Builder::Attr* a = out.attr(AttrClass::Point, "pscale", 1, piece.points);
         if (!a) return;
-        Builder::pad(*a, piece.points + n);
+        Builder::give(*a, piece.points, piece.points + n);
         const bool each = widths.numbers.size() == piece.sourcePoints;
         for (size_t i = 0; i < n; ++i) {
             a->floats[piece.points + i] = static_cast<float>(0.5 * s * widths.numbers[each ? i : 0]);
@@ -474,7 +587,7 @@ struct Reader {
         const Value ids = stage.value(prim, "ids", time);
         if (ids.isNumbers() && ids.numbers.size() == piece.sourcePoints) {
             if (Builder::Attr* a = out.attr(AttrClass::Point, "id", 0, piece.points)) {
-                Builder::pad(*a, piece.points + piece.sourcePoints);
+                Builder::give(*a, piece.points, piece.points + piece.sourcePoints);
                 for (size_t i = 0; i < piece.sourcePoints; ++i) a->ints[piece.points + i] = static_cast<int32_t>(ids.numbers[i]);
             }
         }
@@ -632,8 +745,168 @@ struct Reader {
         // uniform (per face) primvars read here.
         primvars(prim, piece, false);
         pathOf(prim, piece);
+        bind(prim, piece);
     }
 };
+
+/// What a material is to the program: its name -- a preset's where it is
+/// one, "bark_2" as "bark" --, its pictures, and its values.
+struct Look {
+    std::string name, texture;
+    MaterialPreset preset = MaterialPreset::None;
+    io::mtlx::Surface surface;
+    bool glass = false;
+    bool colored = false;  ///< its colour a value: the primitives' Cd
+};
+
+std::string lookName(const std::string& prim) {
+    if (materialPreset(prim) != MaterialPreset::None) return prim;
+    const size_t cut = prim.rfind('_');
+    if (cut != std::string::npos && cut + 1 < prim.size() &&
+        std::all_of(prim.begin() + static_cast<std::ptrdiff_t>(cut + 1), prim.end(),
+                    [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; }) &&
+        materialPreset(std::string_view(prim).substr(0, cut)) != MaterialPreset::None) {
+        return prim.substr(0, cut);
+    }
+    return prim;
+}
+
+/// The file the stage was opened from: its root layer's, out of a package.
+std::string stageFile(const Stage& stage) {
+    std::string file = stage.rootLayer().identifier;
+    const size_t package = file.find(".usdz[");
+    if (package != std::string::npos) file.resize(package + 5);
+    return file;
+}
+
+/// The primitives' materials as the program's attributes (ImportOptions::materials).
+void applyMaterials(const Stage& stage, double time, Geometry& geo, std::vector<int32_t> lookOf,
+                    const std::vector<std::string>& table) {
+    if (table.empty()) return;
+    const size_t prims = geo.primitiveCount();
+    lookOf.resize(prims, -1);
+    const std::string file = stageFile(stage);
+    std::vector<Look> looks(table.size());
+    bool textured = false, valued = false, glassy = false, colored = false;
+    for (size_t k = 0; k < table.size(); ++k) {
+        Look& l = looks[k];
+        const Stage::Prim* m = stage.find(table[k]);
+        if (!m) continue;
+        l.name = lookName(m->name);
+        l.preset = materialPreset(l.name);
+        l.surface = materialSurface(stage, *m, time);
+        const io::mtlx::Surface& s = l.surface;
+        if (!s.found) continue;
+        if (!s.color.empty()) l.texture = file + "#" + table[k];
+        // Light goes through it: a transmission, or a preview surface
+        // mostly see-through that no picture cuts out.
+        l.glass = s.values.transmission >= 0.5f ||
+                  (s.shader == "UsdPreviewSurface" && s.opacity.empty() && s.values.opacity < 0.5f);
+        l.colored = s.color.empty() && !s.tinted && s.values.color.x >= 0.0f && !l.glass;
+        textured = textured || !l.texture.empty();
+        valued = true;
+        glassy = glassy || l.glass;
+        colored = colored || l.colored;
+    }
+    auto lookAt = [&](size_t p) -> const Look* { return lookOf[p] >= 0 ? &looks[static_cast<size_t>(lookOf[p])] : nullptr; };
+    // Names and pictures: "" first, as the program's string attributes have it.
+    auto strings = [&](const char* name, auto&& of) {
+        AttributeArray& a = geo.primitives().create(name, AttrType::String);
+        if (a.stringTableSize() == 0) a.addString("");
+        std::vector<int32_t> index(looks.size());
+        for (size_t k = 0; k < looks.size(); ++k) index[k] = a.internString(of(looks[k]));
+        auto w = a.write<int32_t>();
+        for (size_t p = 0; p < prims; ++p) {
+            if (lookOf[p] >= 0) w[p] = index[static_cast<size_t>(lookOf[p])];
+        }
+    };
+    strings("material", [](const Look& l) -> const std::string& { return l.name; });
+    // The numbers: the material's where it gives them; elsewhere what a
+    // primitive had, else what its preset would give it.
+    auto presetOf = [&](size_t p) {
+        const Look* l = lookAt(p);
+        return l ? l->preset : MaterialPreset::None;
+    };
+    auto numbers = [&](const char* name, AttrType type, auto&& of, auto&& otherwise) {
+        const bool had = geo.primitives().find(name) != nullptr;
+        AttributeArray& a = geo.primitives().create(name, type);
+        for (size_t p = 0; p < prims; ++p) {
+            const Look* l = lookAt(p);
+            const bool own = l && l->surface.found;
+            if (!own && had) continue;
+            const float v = own ? of(*l) : otherwise(p);
+            if (type == AttrType::Int) a.write<int32_t>()[p] = static_cast<int32_t>(v);
+            else a.write<float>()[p] = v;
+        }
+    };
+    if (textured) {
+        strings("texture", [](const Look& l) -> const std::string& { return l.texture; });
+        auto noTexture = [](size_t) { return 0.0f; };
+        numbers("texture_tint", AttrType::Int, [](const Look& l) { return l.texture.empty() ? 0.0f : l.surface.tinted ? 1.0f : 0.0f; },
+                noTexture);
+        numbers("texture_projection", AttrType::Int,
+                [](const Look& l) { return l.texture.empty() ? 0.0f : l.surface.size > 0.0f ? 2.0f : 1.0f; }, noTexture);
+        numbers("texture_size", AttrType::Float,
+                [](const Look& l) { return l.texture.empty() || l.surface.size <= 0.0f ? 0.0f : l.surface.size; }, noTexture);
+    }
+    if (valued) {
+        numbers("roughness", AttrType::Float, [](const Look& l) { return std::clamp(l.surface.values.roughness, 0.0f, 1.0f); },
+                [&](size_t p) { return presetSurface(presetOf(p)).roughness; });
+        numbers("metallic", AttrType::Float, [](const Look& l) { return std::clamp(l.surface.values.metalness, 0.0f, 1.0f); },
+                [&](size_t p) { return presetSurface(presetOf(p)).metallic; });
+    }
+    if (glassy) {
+        numbers("glass", AttrType::Int, [](const Look& l) { return l.glass ? 1.0f : 0.0f; }, [](size_t) { return 0.0f; });
+    }
+    if (!colored) return;
+    // The colours that are values: on the primitives, or on their corners
+    // where Cd is; without one, the others' their preset's, as the
+    // renderers would give them.
+    AttributeArray* vertex = geo.vertices().find("Cd");
+    AttributeArray* point = geo.points().find("Cd");
+    AttributeArray* primitive = geo.primitives().find("Cd");
+    AttributeArray* detail = geo.detail().find("Cd");
+    for (AttributeArray* a : {vertex, point, primitive, detail}) {
+        if (a && a->type() != AttrType::Vec3) return;
+    }
+    if (!vertex && point) {
+        // A point's colour to each of its corners: one face may then be a
+        // colour of its own. Points no primitive uses keep theirs.
+        const std::vector<Vec3> of(point->read<Vec3>().begin(), point->read<Vec3>().end());
+        AttributeArray& v = geo.vertices().create("Cd", AttrType::Vec3);
+        auto w = v.write<Vec3>();
+        std::vector<uint8_t> used(geo.pointCount(), 0);
+        for (size_t c = 0; c < geo.vertexCount(); ++c) {
+            w[c] = of[geo.vertexPoint(c)];
+            used[geo.vertexPoint(c)] = 1;
+        }
+        if (std::find(used.begin(), used.end(), 0) == used.end()) geo.points().erase("Cd");
+        vertex = geo.vertices().find("Cd");
+    }
+    if (vertex) {
+        auto w = vertex->write<Vec3>();
+        for (size_t p = 0; p < prims; ++p) {
+            const Look* l = lookAt(p);
+            if (!l || !l->colored) continue;
+            const size_t start = geo.primitiveVertexStart(p), n = geo.primitiveVertexCount(p);
+            for (size_t c = start; c < start + n; ++c) w[c] = l->surface.values.color;
+        }
+        return;
+    }
+    if (!primitive) {
+        const Vec3 all = detail && detail->size() > 0 ? detail->read<Vec3>()[0] : Vec3(-1.0f);
+        AttributeArray& made = geo.primitives().create("Cd", AttrType::Vec3);
+        auto w = made.write<Vec3>();
+        for (size_t p = 0; p < prims; ++p) w[p] = all.x >= 0.0f ? all : presetSurface(presetOf(p)).color;
+        if (detail) geo.detail().erase("Cd");
+        primitive = geo.primitives().find("Cd");
+    }
+    auto w = primitive->write<Vec3>();
+    for (size_t p = 0; p < prims; ++p) {
+        const Look* l = lookAt(p);
+        if (l && l->colored) w[p] = l->surface.values.color;
+    }
+}
 
 const char* const kGeometryTypes[] = {"Mesh", "Points", "BasisCurves", "Cube", "Sphere", "Cylinder", "Cone", "Capsule", "Plane"};
 
@@ -833,7 +1106,11 @@ std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const 
             }
         }
     }
-    return builder.finish();
+    std::vector<int32_t> materials = std::move(builder.materials);
+    const std::vector<std::string> materialTable = std::move(builder.materialTable);
+    auto geo = builder.finish();
+    applyMaterials(stage, time, *geo, std::move(materials), materialTable);
+    return geo;
 }
 
 bool geometryVaries(const Stage& stage, const ImportOptions& options) {

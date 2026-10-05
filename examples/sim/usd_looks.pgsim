@@ -1,0 +1,23 @@
+pgsim 1
+# Materials from USD: props as another program hands them over
+# (examples/usd/looks.usda, made by make_looks.py), each bound to a
+# material of its own -- a crate of wood and a ball of bricks with their
+# pictures and normal maps (MaterialX's standard_surface, UsdPreviewSurface
+# with UsdUVTexture), a bead of red metal, a block of glass, a floor of two
+# GeomSubsets: blue OpenPBR plastic and paving by the name of a preset. USD
+# Import reads them as the program's own materials; the Output's Surface
+# Detail 0 renders them as they were made, without the blotches and bumps
+# Cycles gives surfaces with no picture.
+#   prototype sim usd_looks looks.png --renderer cycles
+node 1 usd_import 1 looks 0 0
+  param file "../usd/looks.usda"
+  display
+node 2 output 2 output 300 0
+  param frames 1
+  param render_detail 0
+node 3 camera 1 camera 300 120
+  param center 0.76 2.08 3.57
+  param rotation -24 12 0
+  param width 960
+  param height 540
+link 3.camera -> 2.camera

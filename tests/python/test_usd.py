@@ -20,7 +20,7 @@ except ImportError:
     np = None
 
 try:
-    from pxr import Gf, Sdf, Usd, UsdGeom
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade
 except ImportError:
     Usd = None
 
@@ -254,6 +254,73 @@ class AgainstUsd(unittest.TestCase):
         P = np.array(m.GetPointsAttr().Get(), dtype=float)
         P = (np.c_[P, np.ones(len(P))] @ world)[:, :3] @ (np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]]) * 0.01)
         self.assertTrue(np.allclose(np.asarray(geo.P), P, atol=1e-5))
+
+    def test_materials_bound_as_usd_binds_them(self):
+        # Xforms, meshes and subsets bound at random -- some stronger than
+        # what is below them, some for the full render only -- to preview
+        # surfaces of random values: each face's material, roughness,
+        # metalness and colour as UsdShade binds it.
+        rng = random.Random(11)
+        stage = Usd.Stage.CreateNew(self.path("bound.usdc"))
+        materials = []
+        for k in range(5):
+            m = UsdShade.Material.Define(stage, f"/Looks/M{k}")
+            sh = UsdShade.Shader.Define(stage, f"/Looks/M{k}/S")
+            sh.CreateIdAttr("UsdPreviewSurface")
+            colour = Gf.Vec3f(rng.random(), rng.random(), rng.random())
+            sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(colour)
+            sh.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(rng.random())
+            sh.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(rng.random())
+            m.CreateSurfaceOutput().ConnectToSource(sh.ConnectableAPI(), "surface")
+            materials.append(m)
+
+        def bind(prim):
+            if rng.random() < 0.4:
+                return
+            api = UsdShade.MaterialBindingAPI.Apply(prim)
+            strength = UsdShade.Tokens.strongerThanDescendants if rng.random() < 0.3 else UsdShade.Tokens.weakerThanDescendants
+            purpose = UsdShade.Tokens.full if rng.random() < 0.2 else UsdShade.Tokens.allPurpose
+            api.Bind(rng.choice(materials), strength, purpose)
+
+        meshes = []
+        for g in range(4):
+            group = UsdGeom.Xform.Define(stage, f"/World/G{g}")
+            bind(group.GetPrim())
+            for k in range(4):
+                inner = UsdGeom.Xform.Define(stage, f"/World/G{g}/H{k}")
+                bind(inner.GetPrim())
+                mesh = UsdGeom.Mesh.Define(stage, f"/World/G{g}/H{k}/m")
+                x = 3.0 * (4 * g + k)
+                mesh.CreatePointsAttr([(x, 0, 0), (x + 1, 0, 0), (x + 1, 1, 0), (x, 1, 0), (x, 2, 0)])
+                mesh.CreateFaceVertexCountsAttr([3, 3, 3])
+                mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 0, 2, 3, 0, 3, 4])
+                bind(mesh.GetPrim())
+                api = UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim())
+                for s in range(rng.randrange(3)):
+                    subset = api.CreateMaterialBindSubset(f"s{s}", [s], "face")
+                    bind(subset.GetPrim())
+                meshes.append(mesh)
+        stage.GetRootLayer().Save()
+        expected = []
+        for mesh in meshes:
+            api = UsdShade.MaterialBindingAPI(mesh.GetPrim())
+            faces = [api.ComputeBoundMaterial(UsdShade.Tokens.full)[0]] * 3
+            for subset in api.GetMaterialBindSubsets():
+                bound = UsdShade.MaterialBindingAPI(subset.GetPrim()).ComputeBoundMaterial(UsdShade.Tokens.full)[0]
+                for f in subset.GetIndicesAttr().Get():
+                    faces[f] = bound
+            expected += faces
+        geo = pg.UsdStage(self.path("bound.usdc")).geometry()
+        names = list(geo.prims["material"])
+        self.assertEqual(names, [m.GetPrim().GetName() if m else "" for m in expected])
+        self.assertGreater(sum(1 for n in names if n), len(names) // 2)
+        for i, m in enumerate(expected):
+            if not m:
+                continue
+            sh = UsdShade.Shader(stage.GetPrimAtPath(m.GetPath().AppendChild("S")))
+            self.assertAlmostEqual(float(geo.prims["roughness"][i]), sh.GetInput("roughness").Get(), places=5)
+            self.assertAlmostEqual(float(geo.prims["metallic"][i]), sh.GetInput("metallic").Get(), places=5)
+            self.assertTrue(np.allclose(np.asarray(geo.prims["Cd"][i]), np.array(sh.GetInput("diffuseColor").Get()), atol=1e-6))
 
     def test_value_clips_as_usd_reads_them(self):
         clips = []

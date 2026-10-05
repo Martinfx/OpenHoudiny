@@ -117,8 +117,8 @@ okna.
 - **[docs/usd-import.md](docs/usd-import.md)** — čtení USD bez knihovny
   (`.usda`, `.usdc`, `.usdz`): scéna složená jako v USD (sublayers,
   reference, payloady, varianty, třídy, value clips), kamera z matchmove
-  jako kamera záběru, kulisa a modely jako geometrie v síti; ověřené proti
-  knihovně USD
+  jako kamera záběru, kulisa a modely jako geometrie v síti i s materiály
+  (MaterialX, UsdPreviewSurface); ověřené proti knihovně USD
 - **[docs/alembic.md](docs/alembic.md)** — Alembic bez knihovny: celý
   záběr jako jeden archiv `.abc` (geometrie, kusy jako tělesa v pohybu,
   drť, zrna, voda, déšť, látka, kamera; plyn jako VDB vedle) a čtení
@@ -236,8 +236,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 679 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 56 render, barvy ACES a konfigurace OpenColorIO, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
-ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
+./build/pgtests            # 686 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 56 render, barvy ACES a konfigurace OpenColorIO, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 36 USD (zápis i čtení, materiály), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
+ctest --test-dir build -R python                   # 56 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
@@ -273,6 +273,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype cook street street.obj --set tower.floors=12   # geometrie bez okna, do OBJ
 ./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
 ./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)
+./build/prototype sim usd_looks l.png --renderer cycles   # rekvizity s materiály z USD: MaterialX, UsdPreviewSurface, OpenPBR
 PYTHONPATH=build/python python3 examples/usd/make_plate.py   # plate záběru: pak hoří v natočeném dvoře
 ./build/prototype usd examples/usd/shot.usda       # co USD soubor obsahuje: vrstvy, strom, kamery, geometrie
 ./build/prototype help                             # příkazy: list, gen, check, render, sim, cook, usd
@@ -476,7 +477,9 @@ value clips. Uzel **USD Camera** dá Outputu kameru z matchmove, snímek po
 snímku, s objektivem napasovaným na film. **USD Import** přinese kulisu,
 modely nebo cache jako geometrii (normály, uv, barvy, primvars, subsety
 jako skupiny) v metrech s Y nahoru, i když soubor přišel z Mayi
-v centimetrech se Z nahoru. Transformace, skládání, geometrie i value
+v centimetrech se Z nahoru. Materiály přečte taky: sítě MaterialX
+i UsdPreviewSurface navázané jako v USD, s obrázky, drsností, kovovostí,
+barvou a sklem, i z exportu Blenderu. Transformace, skládání, geometrie i value
 clips sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)).
 
 **Alembic**: celý záběr jde do jednoho archivu `.abc` (`--export

@@ -964,6 +964,137 @@ def Xform "W"
     CHECK(!usd::geometryVaries(*s, usd::ImportOptions{}));
 }
 
+TEST(usd_import_puts_a_primvar_given_on_several_classes_on_the_corners) {
+    // One mesh's st on its points, another's on its corners, a third with
+    // none; a colour on faces, on points, on loose points: what reads the
+    // corners' first finds each prim's own there.
+    TempFolder dir("usd_classes");
+    const std::string path = dir.write("classes.usda", R"(#usda 1.0
+def Mesh "a"
+{
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+    color3f[] primvars:displayColor = [(1, 0, 0)]
+    float[] primvars:heat = [7]
+    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+        interpolation = "faceVarying"
+    )
+}
+
+def Mesh "b"
+{
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (3, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0.5, 0.5), (0.25, 0.75), (0.125, 0.5)] (
+        interpolation = "faceVarying"
+    )
+    color3f[] primvars:displayColor = [(0, 1, 0), (0, 0, 1), (1, 1, 1)] (
+        interpolation = "vertex"
+    )
+    float3[] primvars:heat = [(1, 2, 3), (4, 5, 6), (7, 8, 9)] (
+        interpolation = "vertex"
+    )
+    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)]
+}
+
+def Points "dust"
+{
+    point3f[] points = [(5, 5, 5), (6, 6, 6)]
+    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5), (0.25, 0.25, 0.25)] (
+        interpolation = "vertex"
+    )
+}
+
+def Mesh "c"
+{
+    point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+}
+)");
+    const auto s = open(path);
+    std::vector<std::string> notes;
+    const auto geo = usd::importGeometry(*s, 0.0, usd::ImportOptions{}, &notes);
+    CHECK_EQ(geo->pointCount(), 12u);
+    CHECK_EQ(geo->vertexCount(), 10u);
+    CHECK(!geo->points().find("uv"));
+    const auto uv = geo->vertices().find("uv")->read<Vec3>();
+    CHECK(near(uv[2], Vec3(1, 1, 0)));
+    CHECK(near(uv[3], Vec3(0, 1, 0)));
+    CHECK(near(uv[5], Vec3(0.25f, 0.75f, 0)));
+    CHECK(near(uv[9], Vec3(0, 0, 0)));
+    CHECK(!geo->primitives().find("Cd"));
+    const auto cd = geo->vertices().find("Cd")->read<Vec3>();
+    CHECK(near(cd[0], Vec3(1, 0, 0)));
+    CHECK(near(cd[3], Vec3(1, 0, 0)));
+    CHECK(near(cd[5], Vec3(0, 0, 1)));
+    CHECK(near(cd[6], Vec3(1, 1, 1)));
+    // The loose points keep theirs on the points.
+    const auto loose = geo->points().find("Cd")->read<Vec3>();
+    CHECK(near(loose[8], Vec3(0.25f, 0.25f, 0.25f)));
+    // A name of one width on the faces and another on the points stays so;
+    // normals where each prim gave them -- the renderers read the points'.
+    CHECK(geo->primitives().find("heat") && geo->points().find("heat"));
+    CHECK(geo->points().find("N") && geo->vertices().find("N"));
+    CHECK(near(geo->points().find("N")->read<Vec3>()[4], Vec3(0, 0, 1)));
+    // A material's colour goes onto the corners too; the loose points keep
+    // theirs.
+    const std::string bound = dir.write("bound.usda", R"(#usda 1.0
+def Mesh "a"
+{
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    color3f[] primvars:displayColor = [(0, 1, 0), (0, 0, 1), (1, 1, 1)] (
+        interpolation = "vertex"
+    )
+}
+
+def Mesh "b" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (3, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    rel material:binding = </Red>
+}
+
+def Points "dust"
+{
+    point3f[] points = [(5, 5, 5)]
+    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+        interpolation = "vertex"
+    )
+}
+
+def Material "Red"
+{
+    token outputs:surface.connect = </Red/Surface.outputs:surface>
+
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (1, 0, 0)
+        token outputs:surface
+    }
+}
+)");
+    const auto red = usd::importGeometry(*open(bound), 0.0, usd::ImportOptions{});
+    const auto corner = red->vertices().find("Cd")->read<Vec3>();
+    CHECK(near(corner[1], Vec3(0, 0, 1)));
+    CHECK(near(corner[4], Vec3(1, 0, 0)));
+    const AttributeArray* dust = red->points().find("Cd");
+    CHECK(dust && near(dust->read<Vec3>()[6], Vec3(0.5f, 0.5f, 0.5f)));
+    CHECK_EQ(notes.size(), 1u);
+    CHECK(!notes.empty() && notes[0].find("heat") != std::string::npos);
+}
+
 TEST(usd_camera_node_follows_the_file_frame_by_frame) {
     TempFolder dir("usd_camera");
     const std::string path = dir.write("cam.usda", R"(#usda 1.0

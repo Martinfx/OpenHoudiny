@@ -153,6 +153,7 @@ add_library(pgcore
   src/pg/usd/Crate.cpp
   src/pg/usd/Stage.cpp
   src/pg/usd/Geom.cpp
+  src/pg/usd/Shade.cpp
   src/pg/io/Ogawa.cpp
   src/pg/abc/Archive.cpp
   src/pg/abc/Geom.cpp
@@ -1098,6 +1099,7 @@ add_executable(pgtests
   tests/test_vdb_read.cpp
   tests/test_aces.cpp
   tests/test_ocio.cpp
+  tests/test_usd_materials.cpp
   tests/test_edit.cpp
   tests/test_dyntopo.cpp
   tests/test_vertices.cpp

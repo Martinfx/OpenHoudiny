@@ -21,6 +21,7 @@ ověřené proti knihovně `usd-core` (§6).
 ```bash
 ./build/prototype usd examples/usd/shot.usda                 # co soubor obsahuje: strom, kamery, geometrie
 ./build/prototype sim matchmove out/mm.png --every 24         # oheň v kulise z USD, přes kameru z USD
+./build/prototype sim usd_looks looks.png --renderer cycles   # rekvizity s materiály z USD (MaterialX, UsdPreviewSurface)
 PYTHONPATH=build/python python3 examples/usd/make_plate.py    # plate záběru; pak je oheň v natočeném dvoře
 ```
 
@@ -58,6 +59,16 @@ Geometrie scény v daném snímku, ve světových souřadnicích:
 | **BasisCurves** | otevřené lomené čáry (řídicí body; `periodic` uzavřené), `pscale` z `widths` |
 | **Cube, Sphere, Cylinder, Cone, Capsule, Plane** | polygony podle rozměrů a osy |
 | cesta primu | textový atribut primitiv `path` (`/Set/beam`) |
+| materiál (`material:binding`, i na GeomSubsetu) | `material`, `texture`, `roughness`, `metallic`, `glass`, `Cd` (viz Materiály níže) |
+
+Primvar téhož jména může mít v každém primu jinou interpolaci, třeba `st`
+u jednoho meshe na bodech a u druhého na rozích. Pak se sejde na rozích,
+stejně jako po Merge v Houdini: každý roh dostane hodnotu, kterou mu dal
+jeho prim, ať ji měl na rohu, na bodu, nebo na ploše. Renderery, viewport
+i export totiž čtou rohy přednostně a na ostatních primech by tam našly
+nuly. Volné body (Points) si hodnotu nechají na bodech. Normály
+a rychlosti zůstanou tam, kde je prim měl, protože renderery je berou jen
+z bodů.
 
 Parametry:
 - **File:** `.usd`, `.usda`, `.usdc` nebo `.usdz`. Relativní cesta se čte ze
@@ -69,11 +80,83 @@ Parametry:
   a `render`, stejně jako renderer.
 - **Metres, Y Up:** převod jednotek a osy nahoru (§4).
 - **Subsets as Groups, Path Attribute:** skupiny ze subsetů a atribut `path`.
+- **Materials:** materiály navázané na geometrii (níže). Vypnuté: jako dřív,
+  jen `displayColor`.
 
 Neviditelné primy (`visibility = invisible` na nich nebo nad nimi) se
 nečtou. Když se geometrie v souboru hýbe (časové vzorky, value clips,
 animovaná transformace nebo viditelnost), uzel se vaří v každém snímku
 znovu. Jinak jen jednou.
+
+### Materiály
+
+USD Import přečte i materiály navázané na meshe, tvary a jejich GeomSubsety.
+Vazby skládá stejně jako USD pro render (`ComputeBoundMaterial`):
+- nejdřív vazby s účelem `full` (`material:binding:full`), a teprve když
+  žádná není na primu ani nad ním, vazby pro všechny účely
+  (`material:binding`);
+- platí vlastní vazba primu, jinak vazba nejbližšího předka;
+- vazba předka se `bindMaterialAs = "strongerThanDescendants"` přebije
+  vazby pod ním (nejvyšší taková);
+- plochy GeomSubsetů s `familyName = "materialBind"` mají materiál
+  subsetu, ostatní plochy materiál meshe.
+
+Každá plocha dostane atributy, které čtou renderery, viewport i export:
+
+| Atribut | Co v něm je |
+|---|---|
+| `s@material` | jméno materiálu (primu Material); `bark_2` z vlastního exportu jako `bark`. Když je to jméno presetu (`concrete`, `glass`…), renderery ho tak vezmou |
+| `s@texture` | obrázky materiálu, má-li barvu z obrázku: `soubor.usda#/cesta/k/materiálu`. Z toho si renderery, viewport i export čtou sadu textur: barvu, normálovou mapu, drsnost, výšku a průhlednost |
+| `i@texture_tint` | 1, když barvu obrázku násobí `displayColor` (geompropvalue, UsdPrimvarReader) |
+| `i@texture_projection`, `f@texture_size` | 1 podle uv, 2 ze tří stran (triplanar), a kolik metrů má jeden obrázek |
+| `f@roughness`, `f@metallic` | hodnoty materiálu; co neudává, má výchozí hodnotu svého shaderu (UsdPreviewSurface drsnost 0,5, standard_surface 0,2, OpenPBR 0,3) |
+| `i@glass` | 1 pro materiál, kterým prochází světlo: `transmission` aspoň 0,5, nebo UsdPreviewSurface s `opacity` pod 0,5 bez obrázku |
+| `Cd` | barva materiálu, když je to hodnota (krát váha `base`); přebije `displayColor` jen u ploch toho materiálu |
+
+Plochy bez materiálu mají `f@roughness` a `f@metallic` svého presetu,
+takže se v renderu nezmění. Barva, kterou materiál bere z obrázku nebo
+z `displayColor`, nechá `Cd` tak, jak je.
+
+**Co se čte.** Povrch z výstupu `outputs:mtlx:surface` (MaterialX), jinak
+z `outputs:surface`. Shadery:
+- UsdPreviewSurface s UsdUVTexture a UsdPrimvarReader;
+- standard_surface, open_pbr_surface a gltf_pbr z MaterialX;
+- uzly MaterialX mezi nimi (image, tiledimage, triplanarprojection,
+  normalmap, multiply, convert, extract, geompropvalue…), poznané podle
+  jmen definic (`ND_image_color3`).
+
+Síť se čte přes výstupy NodeGraphů a přes vstupy rozhraní NodeGraphů
+i samotného materiálu. Z výstupu `displacement` se čte i výška. Cesty
+k obrázkům se řeší jako v USD, od vrstvy, která je zapsala. Uvnitř
+`.usdz` je obrázek `balík.usdz[textures/a.png]` a čte se přímo
+z balíčku.
+
+```bash
+./build/prototype usd scena.usdz
+# material Bricks: 6 primitives, pictures /…/scena.usdz#/root/_materials/Bricks
+# material RedMetal: 512 primitives
+```
+
+Příklad `usd_looks` ukazuje všechny druhy najednou. Soubor
+`examples/usd/looks.usda` vytvořil skript `make_looks.py` knihovnou USD.
+Každá rekvizita v něm má svůj materiál:
+- dřevěná bedna: `standard_surface` z MaterialX s obrázkem barvy
+  a normálovou mapou;
+- cihlová koule: UsdPreviewSurface s UsdUVTexture a normálovou mapou;
+- korálek z červeného kovu: jen hodnoty;
+- skleněný kvádr: `opacity` 0,05;
+- podlaha ze dvou GeomSubsetů: modrý plast z OpenPBR a dlažba
+  pojmenovaná jako preset (`paving`), proto s fotkami presetu.
+
+Output má **Surface Detail** 0, takže Cycles nepřidá skvrny a hrbolky,
+které jinak dává plochám bez obrázku. Materiály vypadají, jak je program
+zapsal.
+
+```bash
+./build/prototype sim usd_looks looks.png --renderer cycles
+```
+
+![Příklad usd_looks v Cycles: dřevěná bedna s normálovou mapou na modré plastové podlaze, cihlová koule, lesklý korálek z červeného kovu a skleněný kvádr na dlažbě. Každý materiál přišel z USD v jiné podobě: MaterialX, UsdPreviewSurface, OpenPBR](img/usd-looks.jpg)
 
 ### USD Camera
 
@@ -220,15 +303,36 @@ přeskočí.
   - body ve světě po převodu jednotek a os sedí s body z knihovny
     přepočítanými její maticí (odchylka pod 1e-4);
   - `leftHanded`, díry, `faceVarying` uv s indexy, `uniform` barvy,
-    subsety, purpose a viditelnost dopadnou tak, jak je čte renderer.
+    subsety, purpose a viditelnost dopadnou tak, jak je čte renderer;
+  - uv na bodech jednoho meshe a na rozích druhého, barva na plochách
+    a na bodech se sejdou na rozích, každý roh s hodnotou svého primu.
 - **Kamera:** poloha, směr pohledu i horizontální zorný úhel USD Camera sedí
   s kamerou z knihovny.
+- **Materiály:**
+  - vazby: 30 náhodných scén v `.usdc`. Vazby jsou na skupinách, ve
+    skupinách, na meshích i subsetech, některé silnější než potomci,
+    některé jen pro účel `full`. Materiál každé plochy sedí
+    s `UsdShade.ComputeBoundMaterial` a `GetMaterialBindSubsets`, stejně
+    jako jeho drsnost, kovovost a barva;
+  - exporty z Blenderu 4.5:
+    - `.usda` s UsdPreviewSurface;
+    - `.usdc` se sítí MaterialX (OpenPBR);
+    - `.usdz` s obrázkem v balíčku.
+
+    Obrázek, barva, drsnost, kovovost a sklo (z `transmission` v síti
+    OpenPBR) se přečtou, jak je Blender zapsal;
+  - vlastní export (`Export Geometry` do `.usda`) se vrátí se stejnými
+    presety, sklem, drsností a obrázky: kopiemi vedle scény, stejné
+    střední barvy, položenými stejně (uv, nebo ze tří stran).
 - **Rychlost:** `.usdc` s 200 meshi (22 MB, milion bodů) se otevře za
   0,07 s a geometrie se z něj přečte za 0,12 s.
-- **Ukázkový záběr:** `examples/usd` hlásí všech 28 validátorů USD 0 nálezů.
+- **Ukázkové soubory:** záběr v `examples/usd` hlásí ve všech 28
+  validátorech USD 0 nálezů. Příklad materiálů `looks.usda` také, až na
+  `MissingShaderIdInRegistry` u uzlů MaterialX (`ND_…`): `usd-core` z pipu
+  nemá plugin MaterialX, takže definice jeho uzlů nezná.
 
 Testy:
-- **`tests/test_usd_read.cpp` (17):**
+- **`tests/test_usd_read.cpp` (18):**
   - text s hodnotami všech druhů a chyba s řádkem;
   - crate proti textu téže scény z `tests/data/usd`, jak je zapsalo USD;
   - crate verze 0.4.0 a `.usdz`;
@@ -237,13 +341,24 @@ Testy:
     nimi, pole ze dvou vrstev, šablony s posunem, smyčka skokem (hodnoty
     z knihovny);
   - transformace, import geometrie, uzly USD Camera a USD Import;
+  - primvar na bodech jednoho primu a na rozích jiného se sejde na rozích,
+    volné body si barvu nechají;
   - zpětné čtení vlastního exportu;
   - prototypy PointInstanceru zůstanou, kde jsou: nejsou geometrií scény;
   - 500 poškozených souborů odmítnutých bez pádu (i pod ASan).
+- **`tests/test_usd_materials.cpp` (6):**
+  - UsdPreviewSurface s obrázky, hodnotami a sklem;
+  - MaterialX přes NodeGraph a rozhraní, OpenPBR, glTF a výška;
+  - pravidla vazeb (předek, silnější předek, účel `full`, subsety, vazba
+    na něco, co není materiál);
+  - vlastní export a zpět;
+  - `.usdz` s obrázkem v balíčku;
+  - uzel USD Import s parametrem Materials.
 - **`tests/python/test_usd.py`:**
   - ukázkový záběr;
   - s knihovnou `usd-core` náhodné transformace, skládání, geometrie a value
-    clips proti ní, z toho 80 náhodných záběrů s clips.
+    clips proti ní, z toho 80 náhodných záběrů s clips;
+  - vazby materiálů proti `UsdShade`.
 
 ## 7. V kódu
 
@@ -254,16 +369,31 @@ Testy:
 | `src/pg/usd/Crate.cpp` | Čtečka `.usdc`: LZ4, celočíselné kódování USD, tabulky tokenů, cest, polí a speců, hodnoty všech typů |
 | `src/pg/usd/Stage.h` | Skládání scény: indexy primů, síla názorů, hodnoty v čase, interpolace, value clips, cache otevřených scén (`openCached`) |
 | `src/pg/usd/Geom.h` | Transformace z xformOps, jednotky a osa, geometrie (`importGeometry`), kamera (`cameraAt`), čas (`timeCodeAt`) |
+| `src/pg/usd/Shade.h` | Vazby materiálů (`boundMaterial`, `boundSubsets`) a síť materiálu jako uzly MaterialX (`materialNodes`, `materialSurface`) |
+| `src/pg/render/Textures.cpp` | `textureSet("x.usda#/cesta")`: obrázky materiálu ze scény |
 | `src/pg/nodes/Usd.cpp` | Uzel USD Import (`usdimport`) |
 | `src/pg/sim/Camera.cpp` | `cameraFromUsd`: kamera USD jako kamera záběru |
 | `src/pg/sim/Network.cpp` | Uzly `usd_import` a `usd_camera`; kamera ze souboru v každém snímku |
 | `src/python/PyUsd.cpp`, `pg.UsdStage` | Čtení z Pythonu |
 | `tools/prototype/Commands.cpp` | `prototype usd` |
 | `examples/usd/make_shot.py` | Jak vznikly soubory ukázkového záběru (knihovnou USD) |
+| `examples/usd/make_looks.py` | Jak vznikl příklad materiálů `looks.usda` (knihovnou USD) |
 
 ## 8. Omezení
 
-- **Materiály a textury** se nečtou. Barva je jen `displayColor`.
+- **Materiály:** čte se to, co umí renderery. Tedy obrázek barvy,
+  normálová mapa, drsnost (hodnota i obrázek), výška, průhlednost,
+  kovovost, barva jako hodnota a sklo. Nečtou se:
+  - procedurální vzory a míchání materiálů;
+  - emise, coat a subsurface;
+  - `UsdTransform2d` (posun a otočení uv);
+  - vazby přes kolekce (`material:binding:collection:*`);
+  - materiál v souboru `.mtlx` připojeném jako vrstva.
+
+  Sklo z UsdPreviewSurface se pozná jen podle `opacity`. Blender sklo do
+  UsdPreviewSurface nezapíše, v síti MaterialX ano. Materiál, který se
+  jmenuje jako preset (`wood`, `glass`…), dostane vlastnosti presetu.
+  Když nemá vlastní obrázek, dostane i fotky presetu z knihovny.
 - **PointInstancer** (rozmístěné kopie, typicky vegetace, drť a zrna
   z vlastního exportu), **NURBS** a **Volume** (VDB) se nečtou. `prototype
   usd` je vypíše jako přeskočené. Prototypy pod PointInstancerem se

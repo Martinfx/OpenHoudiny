@@ -84,8 +84,10 @@ struct TextureSet {
 };
 
 /// The set `where` names -- a folder (its texture.txt, pictures named as
-/// above, or a MaterialX document), one picture of a set, or a MaterialX
-/// document (#material) -- read once and remembered; none for what is not
+/// above, or a MaterialX document), one picture of a set, a MaterialX
+/// document (#material), or a Material of a USD stage
+/// ("shot.usda#/World/Materials/bark": its MaterialX or UsdPreviewSurface
+/// network, usd/Shade.h) -- read once and remembered; none for what is not
 /// one.
 TextureSet textureSet(const std::string& where);
 

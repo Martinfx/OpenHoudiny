@@ -2,6 +2,7 @@
 
 #include "pg/io/Exr.h"
 #include "pg/io/Jpeg.h"
+#include "pg/usd/Layer.h"
 
 #include <algorithm>
 #include <cctype>
@@ -123,12 +124,18 @@ bool decodePicture(std::span<const uint8_t> bytes, Picture& out, std::string& er
 }
 
 bool readPicture(const std::string& path, Picture& out, std::string& error) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        error = "cannot open " + path;
-        return false;
+    std::vector<uint8_t> bytes;
+    if (path.size() > 2 && path.back() == ']' && path.find(".usdz[") != std::string::npos) {
+        // A picture in a USD package, as USD names it: "x.usdz[maps/a.png]".
+        if (!usd::readFileBytes(path, bytes, error)) return false;
+    } else {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            error = "cannot open " + path;
+            return false;
+        }
+        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
-    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (!decodePicture(bytes, out, error)) {
         error = path + ": " + error;
         return false;

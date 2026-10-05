@@ -175,6 +175,11 @@ Zapíše `s@texture`, `f@texture_size`, `i@texture_tint`,
 `f@texture_normal`, takže totéž jde udělat i ve wrangle. Relativní cesta
 se čte od složky sítě.
 
+`s@texture` může být i materiál ze scény USD: `scena.usda#/World/Looks/Wood`.
+Jeho síť MaterialX nebo UsdPreviewSurface dá obrázky sady. Uzel **USD
+Import** tak materiály ze souboru zapisuje sám
+([usd-import.md](usd-import.md#materiály)).
+
 ### Podle UV a normálové mapy
 
 ![Příklad uv_props v Cycles: dřevěná bedna se šesti stranami, každou jednou fotkou, cihlový sloup s fotkou jednou dokola a cihlová koule od pólu k pólu; spáry cihel mají reliéf z normálové mapy](img/uv-props.jpg)

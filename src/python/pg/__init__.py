@@ -1282,12 +1282,14 @@ class UsdStage:
         return c
 
     def geometry(self, time=None, prims=(), render=True, proxy=False, guide=False, metres=True,
-                 subsets=True, path_attribute=True):
+                 subsets=True, path_attribute=True, materials=True):
         """Its geometry at `time`, in the world -- what USD Import makes of it:
         meshes, curves, points, the implicit shapes as polygons, under
-        `prims` (all when empty). What it could not read is in self.notes."""
+        `prims` (all when empty), their materials as the program's
+        (material, texture, roughness, metallic...). What it could not read
+        is in self.notes."""
         g, notes = self._s.geometry(self._time(time), list(prims), render, proxy, guide, metres, subsets,
-                                    path_attribute)
+                                    path_attribute, materials)
         self.notes = notes
         return Geometry(g)
 

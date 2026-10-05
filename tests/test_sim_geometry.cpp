@@ -932,14 +932,21 @@ TEST(display_mesh_is_made_again_quickly_when_only_the_points_move) {
 }
 
 TEST(sim_geometry_examples_of_geometry_alone_cook) {
-    // The examples without an Output -- models: what they display cooks,
-    // without an error, into something.
+    // The examples of geometry alone -- models, without an Output, and
+    // stills, whose Output has no solver to simulate: what they display
+    // cooks, without an error, into something.
     int models = 0;
     for (const std::string& name : Network::exampleNames()) {
         Network net;
         std::string error;
         CHECK(Network::load(Network::exampleText(name), net, error));
-        if (std::any_of(net.nodes().begin(), net.nodes().end(), [](const sim::Node& n) { return n.type == "output"; })) continue;
+        auto any = [&](auto&& is) { return std::any_of(net.nodes().begin(), net.nodes().end(), is); };
+        const bool output = any([](const sim::Node& n) { return n.type == "output"; });
+        const bool solver = any([](const sim::Node& n) {
+            const sim::NodeType* t = sim::findNodeType(n.type);
+            return t && std::string_view(t->category) == "Simulation";
+        });
+        if (output && solver) continue;
         ++models;
         GeometryGraph geo;
         geo.sync(net, PG_SIM_EXAMPLES_DIR);

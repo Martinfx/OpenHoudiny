@@ -950,7 +950,8 @@ std::vector<NodeType> buildTypes() {
                  "Geometry from a USD file -- a set, a scan, props, a cache from Houdini, Maya or Blender -- as its "
                  "stage composes it: sublayers, references, payloads, variants. Meshes with their normals, uv, "
                  "colours and primvars; curves; points; the implicit shapes as polygons; each primitive's prim in "
-                 "`path`, a mesh's subsets as groups. Animated, it is read at each frame.",
+                 "`path`, a mesh's subsets as groups; the materials bound to them as the program's. Animated, it "
+                 "is read at each frame.",
                  {},
                  {usdFile("A USD file: .usd, .usda, .usdc or .usdz. A relative path is read from the network's "
                           "folder; a file that changes is read again."),
@@ -965,7 +966,12 @@ std::vector<NodeType> buildTypes() {
                          "The stage's units and up axis made the program's: metres -- metersPerUnit; centimetres "
                          "when the stage says none -- and Y up. Off: as the file has them."),
                   toggle("subsets", "Subsets as Groups", true, "A mesh's subsets of faces as primitive groups of their names."),
-                  toggle("path", "Path Attribute", true, "Each primitive's prim, as the text attribute path.")});
+                  toggle("path", "Path Attribute", true, "Each primitive's prim, as the text attribute path."),
+                  toggle("materials", "Materials", true,
+                         "The materials bound to the meshes and to their subsets' faces -- MaterialX or "
+                         "UsdPreviewSurface -- as the program's: their names as material, their pictures as "
+                         "texture (the stage's file#the material's path), their roughness, metallic and colour; "
+                         "glass where light goes through.")});
     }
     {
         auto toggle = [](const char* name, const char* label, bool on, const char* help) {

@@ -1644,6 +1644,23 @@ int usdInfo(const Options& o) {
                 geo->primitiveCount(), usd::geometryPrims(*stage, usd::ImportOptions{}).size(),
                 usd::geometryVaries(*stage, usd::ImportOptions{}) ? ", changing in time" : "");
     for (size_t i = 0; i < notes.size() && i < 10; ++i) std::printf("  %s\n", notes[i].c_str());
+    // The materials bound to it, as the program has them.
+    const AttributeArray* named = geo->primitives().find("material");
+    const AttributeArray* textures = geo->primitives().find("texture");
+    if (named && named->type() == AttrType::String) {
+        std::map<std::string, std::pair<size_t, std::string>> seen;
+        const auto of = named->read<int32_t>();
+        for (size_t p = 0; p < of.size(); ++p) {
+            auto& [count, texture] = seen[named->stringValue(of[p])];
+            ++count;
+            if (textures && textures->type() == AttrType::String) texture = textures->stringValue(textures->read<int32_t>()[p]);
+        }
+        for (const auto& [name, what] : seen) {
+            if (name.empty()) continue;
+            std::printf("material %s: %zu primitives%s%s\n", name.c_str(), what.first, what.second.empty() ? "" : ", pictures ",
+                        what.second.c_str());
+        }
+    }
     return 0;
 }
 

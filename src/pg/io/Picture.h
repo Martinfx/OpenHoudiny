@@ -34,7 +34,8 @@ struct Picture {
     const float* pixel(int x, int y) const { return &rgba[(static_cast<size_t>(y) * width + x) * 4]; }
 };
 
-/// A picture file, told by its bytes (not its name). False, with why, for a
+/// A picture file, told by its bytes (not its name) -- also one in a USD
+/// package, as USD names it: "x.usdz[maps/a.png]". False, with why, for a
 /// file that cannot be read or holds what is not read here.
 bool readPicture(const std::string& path, Picture& out, std::string& error);
 bool decodePicture(std::span<const uint8_t> bytes, Picture& out, std::string& error);
