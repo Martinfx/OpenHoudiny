@@ -1169,7 +1169,12 @@ std::vector<NodeType> buildTypes() {
               {"falloff", "Falloff", "Edit", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 4.0f, "",
                "How the share of the move goes from all of it at the selection to none at Soft Radius: Smooth, a "
                "hill; Linear, a cone; Sharp, a spike; Sphere, a dome; Constant, all of it as far as the radius.",
-               {"smooth", "linear", "sharp", "sphere", "constant"}, {"Smooth", "Linear", "Sharp", "Sphere", "Constant"}}},
+               {"smooth", "linear", "sharp", "sphere", "constant"}, {"Smooth", "Linear", "Sharp", "Sphere", "Constant"}},
+              {"symmetry", "Symmetry", "Edit", K::Choice, {0.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 3.0f, "",
+               "Mirrored across the plane through the origin square to x, y or z: the mirror images of the points "
+               "move too -- the side the pivot is on as the Edit says, the other as its mirror image; points on "
+               "the plane stay on it. M in the viewport.",
+               {"off", "x", "y", "z"}, {"Off", "X", "Y", "Z"}}},
              {"t", "r", nullptr, "s", nullptr, nullptr, "p"});
     geometry("attribute_paint", "Attribute Paint", "attribpaint",
              "A number painted onto the points with the viewport's brush -- where the cloth is pinned (pin), "

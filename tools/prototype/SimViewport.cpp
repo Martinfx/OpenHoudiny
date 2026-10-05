@@ -908,6 +908,15 @@ void SimWorkspace::viewMenu() {
         if (ImGui::MenuItem("Pick All", "Ctrl+A", false, !paint_)) selectAllElements(false);
         if (ImGui::MenuItem("Pick the Others", "Ctrl+I", false, !paint_)) selectAllElements(true);
         ImGui::Separator();
+        // Symmetry: off, x, y, z.
+        if (ImGui::BeginMenu("Symmetry")) {
+            static const char* names[4] = {"Off", "X", "Y", "Z"};
+            const int now = static_cast<int>(symmetryNow());
+            for (int k = 0; k < 4; ++k) {
+                if (ImGui::MenuItem(names[k], k == (now + 1) % 4 ? "M" : nullptr, now == k)) setSymmetry(k);
+            }
+            ImGui::EndMenu();
+        }
         // Soft selection: on, how far is measured, the falloff's shape.
         const Soft soft = softNow();
         if (ImGui::MenuItem("Soft Selection", "O", soft.on, !paint_)) setSoft(!soft.on);
@@ -1083,6 +1092,7 @@ void SimWorkspace::viewKeys(bool overView) {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_H, false) && editingElements() && !paint_) setPickHidden(!pickHidden_);
     if (ImGui::IsKeyPressed(ImGuiKey_O, false) && editingElements() && !paint_) setSoft(!softNow().on);
+    if (ImGui::IsKeyPressed(ImGuiKey_M, false) && editingElements()) setSymmetry((static_cast<int>(symmetryNow()) + 1) % 4);
     if (ImGui::IsKeyPressed(ImGuiKey_N, false) && editingElements()) {
         numbers_ = !numbers_;
         numbersKey_.clear();
@@ -1314,6 +1324,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     const std::vector<int> moving = editingElements() ? std::vector<int>() : movable();
     const GizmoMode tool = moving.empty() ? GizmoMode::Select : toolFor(moving);
     if (editingElements()) {
+        if (editingElements()) drawMirrorPlane(d, cam);
         elementGizmo(d, cam, overView);
         paintTool(d, cam, overView);
         pickBrushTool(d, cam, overView, pressed);

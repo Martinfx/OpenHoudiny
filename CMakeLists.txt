@@ -96,6 +96,7 @@ add_library(pgcore
   src/pg/core/Wind.cpp
   src/pg/core/Dissolve.cpp
   src/pg/core/Ecosystem.cpp
+  src/pg/core/Mirror.cpp
   src/pg/core/Grass.cpp
   src/pg/lang/Parse.cpp
   src/pg/lang/Check.cpp

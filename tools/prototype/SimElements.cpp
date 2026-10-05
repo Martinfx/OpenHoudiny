@@ -16,6 +16,7 @@
 //   W E R              move, turn, size what is picked -- an Edit node; Q: no handle
 //   O                  soft selection: the points round go along, less the further
 //                      they are -- [ ], or the wheel while dragging: its radius
+//   M                  symmetry: edits and brushes mirrored across x, y, z, off
 //   Ctrl+G             a Group of it;   Delete, X: a Blast of it
 //   Ctrl+X             edges or faces dissolved -- a Dissolve node
 //   Ctrl+A, Ctrl+I     all of them, the others;   Escape: none
@@ -27,6 +28,7 @@
 // front of them, as the geometry is.
 #include "SimWorkspace.h"
 
+#include "pg/core/Mirror.h"
 #include "pg/core/Soft.h"
 
 #include <algorithm>
@@ -501,16 +503,64 @@ const std::vector<float>& SimWorkspace::softShares() {
     const bool before = base && softBase_ && softBaseNode_ == base && softBase_->pointCount() == geo->pointCount() &&
                         softBase_->primitiveCount() == geo->primitiveCount();
     const GeometryPtr& of = before ? softBase_ : geo;
+    const Mirror mirror = symmetryNow();
     char key[200];
-    std::snprintf(key, sizeof key, "%p %llu %d %g %d %d", static_cast<const void*>(of.get()),
+    std::snprintf(key, sizeof key, "%p %llu %d %g %d %d %d", static_cast<const void*>(of.get()),
                   static_cast<unsigned long long>(picked_.revision), static_cast<int>(elements_), static_cast<double>(s.radius),
-                  s.metric, s.falloff);
+                  s.metric, s.falloff, static_cast<int>(mirror));
     if (key != softKey_) {
         softKey_ = key;
-        softShares_ = softWeights(*of, elementPoints(*geo), s.radius, s.metric == 1 ? SoftDistance::Surface : SoftDistance::Space,
+        // Mirrored: the images of what is picked take their share too, as
+        // the Edit reckons them.
+        const std::vector<uint8_t> chosen = withMirror(*of, elementPoints(*geo), mirror);
+        softShares_ = softWeights(*of, chosen, s.radius, s.metric == 1 ? SoftDistance::Surface : SoftDistance::Space,
                                   static_cast<Falloff>(std::clamp(s.falloff, 0, 4)));
     }
     return softShares_;
+}
+
+Mirror SimWorkspace::symmetryNow() const {
+    if (const int e = pickedEdit()) {
+        return static_cast<Mirror>(std::clamp(static_cast<int>(net_.valueAt(e, "symmetry", static_cast<float>(current_))[0]), 0, 3));
+    }
+    return static_cast<Mirror>(std::clamp(symmetry_, 0, 3));
+}
+
+void SimWorkspace::setSymmetry(int axis) {
+    symmetry_ = std::clamp(axis, 0, 3);
+    if (const int e = pickedEdit()) net_.setParam(e, "symmetry", {static_cast<float>(symmetry_), 0.0f, 0.0f});
+    static const char* names[4] = {"off", "X", "Y", "Z"};
+    setMessage(symmetry_ == 0 ? std::string("Symmetry off")
+                              : std::string("Symmetry ") + names[symmetry_] +
+                                    ": edits and brushes mirrored across the plane through the origin -- M: the next axis");
+}
+
+void SimWorkspace::drawMirrorPlane(ImDrawList* d, const ViewCamera& cam) {
+    const Mirror m = symmetryNow();
+    const int axis = mirrorAxis(m);
+    Vec3 lo, hi;
+    if (axis < 0 || !renderer_.geometryBounds(lo, hi)) return;
+    // Across the box round the geometry, a little past it, through the origin.
+    const Vec3 pad = (hi - lo) * 0.08f + Vec3(0.05f);
+    lo -= pad;
+    hi += pad;
+    const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+    Vec3 corner[4];
+    for (int k = 0; k < 4; ++k) {
+        corner[k][axis] = 0.0f;
+        corner[k][u] = (k == 1 || k == 2) ? hi[u] : lo[u];
+        corner[k][v] = k >= 2 ? hi[v] : lo[v];
+    }
+    ImVec2 at[4];
+    for (int k = 0; k < 4; ++k) {
+        if (!cam.toScreen(corner[k], at[k])) return;
+    }
+    const ImU32 col = IM_COL32(190, 140, 255, 170);
+    d->AddPolyline(at, 4, IM_COL32(0, 0, 0, 90), ImDrawFlags_Closed, theme::px(2.5f));
+    d->AddPolyline(at, 4, col, ImDrawFlags_Closed, theme::px(1.2f));
+    static const char* names[4] = {"", "mirror X", "mirror Y", "mirror Z"};
+    d->AddText(ImVec2(at[2].x + 1.0f, at[2].y + 1.0f), IM_COL32(0, 0, 0, 180), names[static_cast<int>(m)]);
+    d->AddText(at[2], col, names[static_cast<int>(m)]);
 }
 
 void SimWorkspace::drawSoftRing(ImDrawList* d, const ViewCamera& cam, const Vec3& center) {
@@ -945,6 +995,7 @@ void SimWorkspace::applyElementDrag(const GizmoDrag& drag) {
         net_.setParam(editNode_, "soft", {soft.on ? soft.radius : 0.0f, 0.0f, 0.0f});
         net_.setParam(editNode_, "metric", {static_cast<float>(soft.metric), 0.0f, 0.0f});
         net_.setParam(editNode_, "falloff", {static_cast<float>(soft.falloff), 0.0f, 0.0f});
+        net_.setParam(editNode_, "symmetry", {static_cast<float>(symmetry_), 0.0f, 0.0f});
     }
     if (!net_.node(editNode_)) return;
     // What the Edit did when the drag began, then what the drag does about
@@ -1112,6 +1163,8 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
         strokes += text;
         net_.setText(node, "strokes", strokes);
     };
+    // Symmetry: each dab and its mirror image -- weaker where they overlap.
+    const Mirror mirror = static_cast<Mirror>(std::clamp(symmetry_, 0, 3));
     // A dab: of paint -- or of sculpting, with the tool in the hand.
     auto dab = [&](const Vec3& at) {
         const float strength = net_.valueAt(node, "strength", frame)[0];
@@ -1122,15 +1175,35 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
             s.normal = normalize(brushNormal_);
             s.radius = radius;
             s.strength = tool == SculptDab::Tool::Push && io.KeyCtrl ? -strength : strength;
-            append(sculptText(s));
+            if (mirror == Mirror::None) {
+                append(sculptText(s));
+            } else {
+                const auto both = mirroredDabs(s, mirror);
+                append(sculptText(both[0]) + "; " + sculptText(both[1]));
+            }
             return;
         }
         const float value = net_.valueAt(node, io.KeyCtrl ? "erase" : "value", frame)[0];
-        char text[160];
-        std::snprintf(text, sizeof text, "%.4f %.4f %.4f %.4g %.4g %.3g", static_cast<double>(at.x), static_cast<double>(at.y),
-                      static_cast<double>(at.z), static_cast<double>(radius), static_cast<double>(value),
-                      static_cast<double>(strength));
-        append(text);
+        auto paintText = [&](const Vec3& where, float share) {
+            char text[160];
+            std::snprintf(text, sizeof text, "%.4f %.4f %.4f %.4g %.4g %.3g", static_cast<double>(where.x),
+                          static_cast<double>(where.y), static_cast<double>(where.z), static_cast<double>(radius),
+                          static_cast<double>(value), static_cast<double>(strength * share));
+            return std::string(text);
+        };
+        if (mirror == Mirror::None) {
+            append(paintText(at, 1.0f));
+        } else {
+            const Vec3 image = mirrored(at, mirror);
+            const float share = std::clamp(length(image - at) / (2.0f * radius), 0.5f, 1.0f);
+            append(paintText(at, share) + "; " + paintText(image, share));
+        }
+    };
+    // The grab as text: and its mirror image.
+    auto grabText = [&](const SculptDab& g) {
+        if (mirror == Mirror::None) return sculptText(g);
+        const auto both = mirroredDabs(g, mirror);
+        return sculptText(both[0]) + "; " + sculptText(both[1]);
     };
     // A stroke begins with the press, on the surface or off it: it works
     // where the brush is on it. Off it and back, it begins afresh there --
@@ -1153,7 +1226,7 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
                 grab_.at = brushAt_;
                 grab_.radius = radius;
                 grabBefore_ = net_.text(node, "strokes");
-                net_.setText(node, "strokes", grabBefore_ + (grabBefore_.empty() ? "" : "; ") + sculptText(grab_));
+                net_.setText(node, "strokes", grabBefore_ + (grabBefore_.empty() ? "" : "; ") + grabText(grab_));
             } else if (grabbing_) {
                 Vec3 o, dir;
                 cam.ray(io.MousePos, o, dir);
@@ -1162,7 +1235,7 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
                     const Vec3 to = o + dir * (dot(grab_.at - o, cam.forward) / along);
                     if (!(to - grab_.at == grab_.move)) {
                         grab_.move = to - grab_.at;
-                        net_.setText(node, "strokes", grabBefore_ + (grabBefore_.empty() ? "" : "; ") + sculptText(grab_));
+                        net_.setText(node, "strokes", grabBefore_ + (grabBefore_.empty() ? "" : "; ") + grabText(grab_));
                     }
                 }
             }
@@ -1461,6 +1534,10 @@ std::string SimWorkspace::elementStatus() const {
     // First, what is not seen otherwise: the hints after it go first when
     // the viewport is narrow.
     if (pickHidden_) text = "Hidden too" + (text.empty() ? std::string() : "  \xc2\xb7  " + text);
+    if (const Mirror m = symmetryNow(); m != Mirror::None) {
+        static const char* names[4] = {"", "Mirror X", "Mirror Y", "Mirror Z"};
+        text = names[static_cast<int>(m)] + (text.empty() ? std::string() : "  \xc2\xb7  " + text);
+    }
     return text;
 }
 

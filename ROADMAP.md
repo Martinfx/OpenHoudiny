@@ -499,7 +499,10 @@ Seřazeno podle poměru hodnota / náklad:
    (milion bodů 62 ms místo sekund, na GPU 24 MB místo 215 MB).
    ✅ Dissolve: hrany i plochy vybrané ve viewportu spojí polygony
    (Ctrl+X), body v přímce na straně zmizí.
-   Zbývá: režim vrcholů, symetrie, dyntopo.
+   ✅ Symetrie (M): Edit pohne i zrcadlovými obrazy (body na rovině na
+   ní zůstanou), Sculpt a Attribute Paint píší ke kapce její obraz,
+   nanesený zároveň s ní a zeslabený, kde se překrývají.
+   Zbývá: režim vrcholů, dyntopo.
 8. **Vegetace** — ✅ uzel Tree: strom roste jako rostlina podle modelu
    Webera a Penna — kmen (i rozdělený do vůdčích větví), až tři úrovně
    větví kolem rodiče o zlatý úhel, prohnuté vahou, stočené ke světlu

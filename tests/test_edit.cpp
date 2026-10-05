@@ -8,6 +8,7 @@
 //
 #include "pg/core/CookEngine.h"
 #include "pg/core/Graph.h"
+#include "pg/core/Mirror.h"
 #include "pg/core/Pick.h"
 #include "pg/core/Sculpt.h"
 #include "pg/core/Selection.h"
@@ -1225,4 +1226,165 @@ TEST(extrude_and_wrangles_take_a_pattern_of_elements) {
     up = 0;
     for (const Vec3& p : out->positions()) up += p.y > 0.5f;
     CHECK_EQ(up, 3u);
+}
+
+namespace {
+
+/// How far `geo` is from its own mirror image: for each point and its
+/// image (found on `of`, the shape before), the most they differ.
+float asymmetry(const Geometry& geo, const std::vector<int32_t>& image, Mirror m) {
+    float most = 0.0f;
+    const auto P = geo.positions();
+    for (size_t i = 0; i < P.size(); ++i) {
+        if (image[i] < 0) continue;
+        most = std::max(most, length(P[static_cast<size_t>(image[i])] - mirrored(P[i], m)));
+    }
+    return most;
+}
+
+}  // namespace
+
+TEST(edit_mirrored_moves_the_images_of_what_is_picked_and_keeps_the_plane) {
+    // A 1 x 1 grid round the origin: the point picked at x 0.3 lifted and
+    // pushed out, with Symmetry X its image at x -0.3 the mirror way; the
+    // result as symmetric as the grid; a point on the plane stays on it.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 10);
+    const GeometryPtr flat = engine.cook(*grid, CookContext{});
+    const std::vector<int32_t> image = mirrorPoints(*flat, Mirror::X, mirrorTolerance(*flat));
+    size_t paired = 0, own = 0;
+    for (size_t i = 0; i < image.size(); ++i) {
+        paired += image[i] >= 0 ? 1 : 0;
+        own += image[i] == static_cast<int32_t>(i) ? 1 : 0;
+    }
+    CHECK_EQ(paired, flat->pointCount());
+    CHECK_EQ(own, size_t(11));  // the column on x = 0
+    size_t picked = 0, onPlane = 0;
+    for (size_t i = 0; i < flat->pointCount(); ++i) {
+        const Vec3 p = flat->positions()[i];
+        if (std::fabs(p.x - 0.3f) < 1e-4f && std::fabs(p.z - 0.1f) < 1e-4f) picked = i;
+        if (std::fabs(p.x) < 1e-6f && std::fabs(p.z - 0.2f) < 1e-4f) onPlane = i;
+    }
+    Node* edit = g.create("edit", "edit");
+    CHECK(edit->setInput(0, grid));
+    edit->setString("group", std::to_string(picked));
+    edit->setVec3("t", Vec3(0.05f, 0.2f, 0.0f));
+    edit->setVec3("r", Vec3(0.0f, 0.0f, 25.0f));
+    edit->setVec3("p", flat->positions()[picked]);
+    edit->setInt("symmetry", 1);
+    for (const float soft : {0.0f, 0.4f}) {
+        edit->setFloat("soft", soft);
+        const GeometryPtr out = engine.cook(*edit, CookContext{});
+        const Vec3 a = out->positions()[picked] - flat->positions()[picked];
+        const Vec3 b = out->positions()[static_cast<size_t>(image[picked])] - flat->positions()[static_cast<size_t>(image[picked])];
+        std::printf("  soft %.2f: picked moved (%.3f %.3f %.3f), its image (%.3f %.3f %.3f); off symmetry by %.2g m\n",
+                    static_cast<double>(soft), static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z),
+                    static_cast<double>(b.x), static_cast<double>(b.y), static_cast<double>(b.z),
+                    static_cast<double>(asymmetry(*out, image, Mirror::X)));
+        CHECK(length(b - mirrored(a, Mirror::X)) < 1e-6f);
+        CHECK(a.y > 0.15f && a.x > 0.04f);
+        CHECK(asymmetry(*out, image, Mirror::X) < 1e-5f);
+        if (soft > 0.0f) CHECK(std::fabs(out->positions()[onPlane].x) < 1e-6f && out->positions()[onPlane].y > 0.0f);
+    }
+    // Picked on the plane: lifted, not pushed off it.
+    edit->setString("group", std::to_string(onPlane));
+    edit->setVec3("p", flat->positions()[onPlane]);
+    edit->setVec3("r", Vec3(0.0f));
+    edit->setFloat("soft", 0.0f);
+    const GeometryPtr lifted = engine.cook(*edit, CookContext{});
+    CHECK(std::fabs(lifted->positions()[onPlane].x) < 1e-6f);
+    CHECK(std::fabs(lifted->positions()[onPlane].y - 0.2f) < 1e-6f);
+    // Off: only what is picked.
+    edit->setInt("symmetry", 0);
+    edit->setString("group", std::to_string(picked));
+    const GeometryPtr one = engine.cook(*edit, CookContext{});
+    CHECK(one->positions()[static_cast<size_t>(image[picked])] == flat->positions()[static_cast<size_t>(image[picked])]);
+}
+
+TEST(sculpt_mirrored_dabs_keep_a_symmetric_surface_and_go_on_from_where_they_got_to) {
+    // A sheet bumpy as its mirror image is, under dabs of every tool each
+    // with its image joined to it: as symmetric after; a push on the plane
+    // as one dab without symmetry; the Sculptor going on as from the start.
+    Graph g;
+    CookEngine engine;
+    Node* grid = flatGrid(g, 24);
+    auto sheet = std::make_shared<Geometry>(*engine.cook(*grid, CookContext{}));
+    for (Vec3& p : sheet->positionsForWrite()) p.y = 0.04f * std::sin(9.0f * p.x * p.x + 5.0f * p.z) * std::cos(3.0f * p.x);
+    const GeometryPtr source = sheet;
+    const std::vector<int32_t> image = mirrorPoints(*source, Mirror::X, mirrorTolerance(*source));
+    CHECK(asymmetry(*source, image, Mirror::X) < 1e-6f);
+    uint32_t seed = 9;
+    auto next = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    std::vector<SculptDab> dabs;
+    for (int k = 0; k < 40; ++k) {
+        SculptDab d;
+        d.tool = static_cast<SculptDab::Tool>(k % 4);
+        d.at = Vec3(next() - 0.5f, 0.0f, next() - 0.5f);
+        if (k % 7 == 0) d.at.x = 0.0f;  // on the plane
+        d.normal = normalize(Vec3(next() - 0.5f, 1.0f, next() - 0.5f));
+        d.move = Vec3(0.05f * (next() - 0.5f), 0.05f * next(), 0.05f * (next() - 0.5f));
+        d.radius = 0.05f + 0.15f * next();
+        d.strength = d.tool == SculptDab::Tool::Push ? 2.0f * next() - 1.0f : next();
+        const auto both = mirroredDabs(d, Mirror::X);
+        dabs.push_back(both[0]);
+        dabs.push_back(both[1]);
+    }
+    // As text and back: the image joined, the first never.
+    std::string text;
+    for (const SculptDab& d : dabs) text += (text.empty() ? "" : "; ") + sculptText(d);
+    const std::vector<SculptDab> read = parseSculpt(text);
+    CHECK_EQ(read.size(), dabs.size());
+    size_t joined = 0;
+    for (size_t k = 0; k < read.size(); ++k) joined += read[k].joined ? 1 : 0;
+    CHECK_EQ(joined, dabs.size() / 2);
+    CHECK(!read.front().joined);
+    Geometry whole(*source);
+    sculpt(whole, read, Falloff::Smooth);
+    std::printf("  %zu dabs, half of them images: off symmetry by %.2g m\n", read.size(),
+                static_cast<double>(asymmetry(whole, image, Mirror::X)));
+    CHECK(asymmetry(whole, image, Mirror::X) < 1e-5f);
+    // A push on the plane, mirrored: each half as strong -- as one alone.
+    SculptDab push;
+    push.at = Vec3(0.0f, 0.0f, 0.1f);
+    push.normal = Vec3(0.0f, 1.0f, 0.0f);
+    push.radius = 0.2f;
+    push.strength = 1.0f;
+    Geometry one(*source), two(*source);
+    sculpt(one, std::vector<SculptDab>{push}, Falloff::Smooth);
+    const auto pair = mirroredDabs(push, Mirror::X);
+    sculpt(two, std::vector<SculptDab>{pair[0], pair[1]}, Falloff::Smooth);
+    float apart = 0.0f;
+    for (size_t i = 0; i < one.pointCount(); ++i) apart = std::max(apart, length(one.positions()[i] - two.positions()[i]));
+    CHECK(apart < 1e-6f);
+    // Going on: pair after pair, then a grab and its image moving on.
+    Sculptor sculptor;
+    size_t had = 0;
+    for (const size_t m : {2u, 4u, 20u, 80u}) {
+        const std::span<const SculptDab> some(read.data(), m);
+        const GeometryPtr got = sculptor.cook(source, some, Falloff::Smooth);
+        CHECK_EQ(sculptor.reused(), had);
+        Geometry all(*source);
+        sculpt(all, some, Falloff::Smooth);
+        CHECK(sameShape(*got, all));
+        had = m;
+    }
+    std::vector<SculptDab> grab = read;
+    for (int step = 1; step <= 3; ++step) {
+        SculptDab g0 = grab[grab.size() - 2];
+        g0.tool = SculptDab::Tool::Grab;
+        g0.joined = false;
+        g0.move = Vec3(0.01f * static_cast<float>(step), 0.03f * static_cast<float>(step), 0.0f);
+        const auto both = mirroredDabs(g0, Mirror::X);
+        grab[grab.size() - 2] = both[0];
+        grab[grab.size() - 1] = both[1];
+        const GeometryPtr got = sculptor.cook(source, grab, Falloff::Smooth);
+        CHECK_EQ(sculptor.reused(), read.size() - 2);  // all but the last pair
+        Geometry all(*source);
+        sculpt(all, grab, Falloff::Smooth);
+        CHECK(sameShape(*got, all));
+    }
 }

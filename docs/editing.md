@@ -114,6 +114,7 @@ ní, vezme obdélník, laso nebo štětec).
 | **F** | zarámuje vybrané |
 | **W**, **E**, **R** | posun, otočení, měřítko vybraného úchytem; **Q** úchyt skryje |
 | **O** | měkký výběr zapnout / vypnout (§4a) |
+| **M** | symetrie: zrcadlit úpravy a štětce podle x, y, z, vypnout (§4b) |
 | **[** , **]**, kolečko během tahu | menší / větší poloměr měkkého výběru |
 | **Ctrl+G** | skupina z vybraného (Group) |
 | **Delete**, **X** | smaže vybrané (Blast) |
@@ -146,6 +147,7 @@ zobrazeného, a převezme display flag — a nastaví mu:
 | Soft Radius | jak daleko kolem vybraného body jdou s ním: úplně u něj, vůbec ve vzdálenosti Soft Radius (§4a) |
 | Distance | jak se ta vzdálenost měří: přímo prostorem, nebo po povrchu (§4a) |
 | Falloff | jak podíl pohybu slábne: Smooth, Linear, Sharp, Sphere, Constant (§4a) |
+| Symmetry | Off, X, Y, Z: pohne i zrcadlovými obrazy vybraných bodů (§4b) |
 
 Další tahy se **stejným výběrem** nastavují tentýž Edit: otočení
 a měřítko se skládají přesně (otočení kolem středu úchytu, měřítko podél
@@ -198,6 +200,36 @@ Falloff*; tlačítko s kopečkem v liště pod nástroji.
 | Sharp | `(1 − x)²` | špička |
 | Sphere | `√(1 − x²)` | kupole, strmá u okraje |
 | Constant | `1` | celý pohyb až do poloměru |
+
+## 4b. Symetrie (M)
+
+**M** přepíná symetrii: vypnutá → X → Y → Z → vypnutá (i pravý klik ›
+*Symmetry*). Rovina zrcadla jde počátkem kolmo na zvolenou osu, viewport
+ji ukáže fialovým obdélníkem přes geometrii a vpravo dole stojí `Mirror X`.
+
+- **Úchyt (Edit).** Nový Edit dostane parametr **Symmetry**. S ním se
+  pohnou i zrcadlové obrazy vybraných bodů. Strana roviny, na které je
+  pivot, se pohne, jak říká Edit, druhá strana jako jeho zrcadlový obraz.
+  Bod na rovině dostane průměr obojího, takže na ní zůstane: posun napříč
+  rovinou se odečte, posun podél ní zůstane. Měkký výběr bere vybrané
+  body i s jejich obrazy a tónování to ukazuje. Výběr sám se nezrcadlí,
+  vybrané zůstane, co jste vybrali.
+- **Sculpt.** Štětec píše každou kapku i s jejím zrcadlovým obrazem
+  a obraz je k ní **připojený** (v textu `+` před písmenem nástroje:
+  `p … ; +p …`). Připojené kapky se nanesou najednou: každý bod se posune
+  o součet obou, oba počítané z tvaru před nimi. Symetrický povrch tak
+  zůstane symetrický, i když se kapky u roviny překrývají. Kde se kapka
+  a její obraz překrývají, je každá slabší: síla krát vzdálenost středů
+  děleno dvojnásobkem poloměru, nejméně polovina, jako *feathering*
+  v Blenderu. Kapka přímo na rovině je pak jako jedna kapka bez
+  symetrie. Grab táhne obraz zrcadlově.
+- **Attribute Paint.** Štětec maluje i zrcadlový obraz kapky, stejně
+  zeslabený, kde se překrývají.
+
+Zrcadlový obraz bodu je bod geometrie nejblíž místu, kam se odrazí, do
+10⁻⁴ velikosti geometrie. Symetrická síť tak najde všechny páry,
+nesymetrická jen ty, které symetrické jsou. Symetrie brushů platí pro
+nové tahy: vypnutí nezmění, co už je namalované nebo vytvarované.
 
 ## 5. Skupina, mazání a Dissolve
 
@@ -453,6 +485,15 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   posunu bodů na GPU pošle jen polohy a normály vrcholů — na 90 000 bodech
   6 ms, na milionu 62 ms (s normálami `N` 7 ms); viz
   [geometry.md](geometry.md#3-display-flag-a-viewport).
+- **Symetrie** — `src/pg/core/Mirror.h`: `mirrorPoints` najde obraz
+  každého bodu stromem bodů (nejbližší k odraženému místu v toleranci),
+  `withMirror` přidá k výběru obrazy. Edit rozdělí body podle strany
+  roviny vůči pivotu; obraz se počítá jako `R T R x` (`R` odraz, `T`
+  úprava). Sculpt nanáší skupinu připojených kapek najednou: posuny od
+  všech kapek skupiny z tvaru před nimi, seřazené podle čísla bodu
+  a sečtené v pořadí kapek, takže výsledek je pokaždé stejný. Sculptor
+  pokračuje po skupinách: Grab s obrazem mění poslední skupinu (dvě
+  kapky) a počítá jen ji.
 - **Skládání úprav** — `sim::EditTransform` (`src/pg/sim/Shape.h`):
   Edit dělá `x → R S (x − p) + p + t`; tah úchytu kolem středu `c`
   složený za něj je znovu Edit: otočení předřazené `R`, měřítko násobí
@@ -482,8 +523,9 @@ plocha geometrie vyhrává, když je stejně daleko jako podlaha.
   pojmenovávají. Malování to nepostihne — kapky jsou místa.
 - Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
   objekty ani kusy před ní.
-- Zatím chybí režim vrcholů (rohů) a symetrie (ani sculpt ji nemá).
-  Měkký výběr má jen úchyty (posun, otočení, měřítko).
+- Zatím chybí režim vrcholů (rohů). Rovina symetrie jde vždy počátkem
+  a zrcadlí se jen úprava, ne výběr. Měkký výběr má jen úchyty (posun,
+  otočení, měřítko).
   Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by
   Box (dva rohy).
 - Sculpt body posouvá, nepřidává je: jemný detail chce jemnou síť

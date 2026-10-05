@@ -207,7 +207,15 @@ bool finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && 
 
 bool sameDab(const SculptDab& a, const SculptDab& b) {
     return a.tool == b.tool && a.at == b.at && a.normal == b.normal && a.move == b.move && a.radius == b.radius &&
-           a.strength == b.strength;
+           a.strength == b.strength && a.joined == b.joined;
+}
+
+/// Where the last group of `dabs` begins: its dab that is not joined to
+/// the one before.
+size_t lastGroup(std::span<const SculptDab> dabs) {
+    size_t k = dabs.size();
+    while (k > 1 && dabs[k - 1].joined) --k;
+    return k == 0 ? 0 : k - 1;
 }
 
 bool smooths(std::span<const SculptDab> dabs) {
@@ -230,14 +238,12 @@ bool apply(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const 
     }
     std::vector<uint32_t> near;
     std::vector<Vec3> next;
+    std::vector<std::pair<uint32_t, Vec3>> moves;  // a group's: each point and how far a dab moves it
     bool moved = false;
-    for (const SculptDab& d : dabs) {
-        if (!(d.radius > 0.0f) || !finite(d.at)) continue;
-        if (grid) grid->near(P, d.at, d.radius, near);
-        else scan(P, d.at, d.radius, near);
-        if (near.empty()) continue;
-        // Each point's share: as far from the middle as it was before this
-        // dab; each moved as the points were before it, so in any order.
+    // Where dab `d` takes the points `near` holds: each by its share, as far
+    // from the middle as it was before the dab -- each moved as the points
+    // were before it, so in any order.
+    const auto takes = [&](const SculptDab& d) {
         next.resize(near.size());
         const auto step = [&](size_t begin, size_t end) {
             for (size_t k = begin; k < end; ++k) {
@@ -259,10 +265,51 @@ bool apply(Geometry& geo, std::span<const SculptDab> dabs, Falloff shape, const 
         };
         if (near.size() >= 8192) parallelFor(near.size(), 2048, step);
         else step(0, near.size());
-        for (size_t k = 0; k < near.size(); ++k) {
-            const uint32_t i = near[k];
-            if (next[k] == P[i]) continue;
-            P[i] = next[k];
+    };
+    const auto find = [&](const SculptDab& d) {
+        if (grid) grid->near(P, d.at, d.radius, near);
+        else scan(P, d.at, d.radius, near);
+    };
+    for (size_t g = 0; g < dabs.size();) {
+        size_t end = g + 1;
+        while (end < dabs.size() && dabs[end].joined) ++end;
+        if (end == g + 1) {
+            const SculptDab& d = dabs[g];
+            g = end;
+            if (!(d.radius > 0.0f) || !finite(d.at)) continue;
+            find(d);
+            if (near.empty()) continue;
+            takes(d);
+            for (size_t k = 0; k < near.size(); ++k) {
+                const uint32_t i = near[k];
+                if (next[k] == P[i]) continue;
+                P[i] = next[k];
+                if (grid) grid->moved(i, P[i]);
+                moved = true;
+            }
+            continue;
+        }
+        // Dabs joined -- a dab and its mirror image: each point moved by
+        // all of them, as the points were before them; summed in the
+        // order of the dabs.
+        moves.clear();
+        for (size_t k = g; k < end; ++k) {
+            const SculptDab& d = dabs[k];
+            if (!(d.radius > 0.0f) || !finite(d.at)) continue;
+            find(d);
+            if (near.empty()) continue;
+            takes(d);
+            for (size_t j = 0; j < near.size(); ++j) moves.push_back({near[j], next[j] - P[near[j]]});
+        }
+        g = end;
+        std::stable_sort(moves.begin(), moves.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (size_t k = 0; k < moves.size();) {
+            const uint32_t i = moves[k].first;
+            Vec3 by(0.0f);
+            for (; k < moves.size() && moves[k].first == i; ++k) by += moves[k].second;
+            const Vec3 p = P[i] + by;
+            if (p == P[i] || !finite(p)) continue;
+            P[i] = p;
             if (grid) grid->moved(i, P[i]);
             moved = true;
         }
@@ -305,6 +352,8 @@ std::vector<SculptDab> parseSculpt(std::string_view text) {
     while (*c) {
         while (*c == ' ' || *c == ';' || *c == '\n' || *c == '\t') ++c;
         if (!*c) break;
+        const bool joined = *c == '+';
+        if (joined) ++c;
         const char tool = *c++;
         const int want = tool == 'p' || tool == 'f' ? 8 : tool == 's' ? 5 : tool == 'g' ? 7 : 0;
         float v[8] = {};
@@ -342,12 +391,28 @@ std::vector<SculptDab> parseSculpt(std::string_view text) {
                     break;
             }
             d.strength = d.tool == SculptDab::Tool::Push ? std::clamp(d.strength, -4.0f, 4.0f) : std::clamp(d.strength, 0.0f, 1.0f);
+            d.joined = joined && !out.empty();
             if (ok && d.radius > 0.0f) out.push_back(d);
         }
         // On to the next dab.
         while (*c && *c != ';') ++c;
     }
     return out;
+}
+
+std::array<SculptDab, 2> mirroredDabs(const SculptDab& d, Mirror m) {
+    SculptDab a = d, b = d;
+    b.at = mirrored(d.at, m);
+    b.normal = mirrored(d.normal, m);
+    b.move = mirrored(d.move, m);
+    b.joined = true;
+    // Where the two overlap, each weaker: half where they are one.
+    const float f = std::clamp(length(b.at - a.at) / (2.0f * std::max(d.radius, 1e-12f)), 0.5f, 1.0f);
+    for (SculptDab* x : {&a, &b}) {
+        if (x->tool == SculptDab::Tool::Grab) x->move *= f;
+        else x->strength *= f;
+    }
+    return {a, b};
 }
 
 std::string sculptText(const SculptDab& d) {
@@ -369,7 +434,7 @@ std::string sculptText(const SculptDab& d) {
                           f(d.move.x), f(d.move.y), f(d.move.z), f(d.radius));
             break;
     }
-    return text;
+    return d.joined ? std::string("+") + text : std::string(text);
 }
 
 // --- the dabs on a geometry --------------------------------------------------------------
@@ -402,7 +467,8 @@ GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab>
     std::shared_ptr<Geometry> geo;
     size_t from = 0;
     bool moved = false;
-    if (after_ && same == dabs_.size()) {
+    const size_t oldLast = lastGroup(dabs_);
+    if (after_ && same == dabs_.size() && (same == dabs.size() || !dabs[same].joined)) {
         if (same == dabs.size()) {
             reused_ = same;
             return after_;  // the same dabs: what it gave
@@ -410,9 +476,9 @@ GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab>
         geo = editableCopy(after_);  // more after them
         from = same;
         moved = movedAfter_;
-    } else if (before_ && same + 1 == dabs_.size()) {
-        geo = editableCopy(before_);  // the last one other, or gone
-        from = same;
+    } else if (before_ && !dabs_.empty() && same >= oldLast) {
+        geo = editableCopy(before_);  // the last group other, more to it, or gone
+        from = oldLast;
         moved = movedBefore_;
     } else {
         geo = editableCopy(source);
@@ -420,16 +486,17 @@ GeometryPtr Sculptor::cook(const GeometryPtr& source, std::span<const SculptDab>
     reused_ = from;
     if (!smoothing_ && smooths(dabs.subspan(from))) smoothing_ = std::make_shared<const SculptSmoothing>(*source);
 
-    // All the new dabs but the last; the geometry then kept, for the next
-    // cook to go on from if only the last one changes.
+    // All the new dabs but the last group; the geometry then kept, for the
+    // next cook to go on from if only the last group changes.
     const size_t m = dabs.size();
+    const size_t last = std::max(lastGroup(dabs), from);
     GeometryPtr before;
     bool movedBefore = false;
     if (from < m) {
-        moved = apply(*geo, dabs.subspan(from, m - 1 - from), shape, smoothing_.get()) || moved;
+        moved = apply(*geo, dabs.subspan(from, last - from), shape, smoothing_.get()) || moved;
         before = std::make_shared<const Geometry>(*geo);
         movedBefore = moved;
-        moved = apply(*geo, dabs.subspan(m - 1), shape, smoothing_.get()) || moved;
+        moved = apply(*geo, dabs.subspan(last), shape, smoothing_.get()) || moved;
     }
     // The normals of the positions as they are, as `sculpt` finds them.
     if (moved) renormal(*geo);

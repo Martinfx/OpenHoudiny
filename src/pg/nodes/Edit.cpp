@@ -4,6 +4,7 @@
 #include "pg/nodes/Nodes.h"
 
 #include "pg/core/Geometry.h"
+#include "pg/core/Mirror.h"
 #include "pg/core/Parallel.h"
 #include "pg/core/Sculpt.h"
 #include "pg/core/Selection.h"
@@ -51,6 +52,9 @@ public:
 /// follow too, less the further they are: all the way at the selection,
 /// not at all the radius away (Soft.h) -- the distance straight, or along
 /// the surface; the falloff's shape a hill, a cone, a spike, a dome, flat.
+/// With Symmetry the mirror images of the points move too (Mirror.h): the
+/// side of the plane the pivot is on as the Edit says, the other side as
+/// its mirror image, points on the plane halfway between -- they stay on it.
 class EditNode : public Node {
 public:
     explicit EditNode(std::string name) : Node("edit", std::move(name)) {
@@ -64,6 +68,7 @@ public:
         params_.setFloat("soft", 0.0f);
         params_.setInt("metric", 0);   // 0 space, 1 along the surface
         params_.setInt("falloff", 0);  // Falloff: smooth, linear, sharp, sphere, constant
+        params_.setInt("symmetry", 0);  // Mirror: none, x, y, z
     }
 
     GeometryPtr cookNode(const CookContext& ctx, std::span<const GeometryPtr> in) override {
@@ -73,6 +78,8 @@ public:
         if (cls == AttrClass::Primitive) chosen = pointsOfPrimitives(*geo, chosen);
         const size_t n = geo->pointCount();
         if (std::none_of(chosen.begin(), chosen.end(), [](uint8_t c) { return c != 0; })) return geo;
+        const Mirror mirror = static_cast<Mirror>(std::clamp(params_.evalInt("symmetry", ctx, 0), 0, 3));
+        if (mirror != Mirror::None) chosen = withMirror(*geo, chosen, mirror);
         const float soft = std::max(params_.evalFloat("soft", ctx, 0.0f), 0.0f);
         const SoftDistance metric = params_.evalInt("metric", ctx, 0) == 1 ? SoftDistance::Surface : SoftDistance::Space;
         const Falloff shape = static_cast<Falloff>(std::clamp(params_.evalInt("falloff", ctx, 0), 0, 4));
@@ -84,11 +91,35 @@ public:
         const Vec3 pivot = params_.evalVec3("p", ctx, Vec3(0, 0, 0));
         // Round the pivot: sized, turned, then moved.
         const Mat4 m = translation(t) * (translation(pivot) * (rotationXYZ(r) * (scaling(s) * translation(pivot * -1.0f))));
+        // Which side of the plane a point is on: the pivot's, the other, or
+        // the plane itself.
+        const int axis = mirrorAxis(mirror);
+        const float tolerance = axis >= 0 ? mirrorTolerance(*geo) : 0.0f;
+        const float side = axis >= 0 && pivot[axis] < 0.0f ? -1.0f : 1.0f;
+        const auto sideOf = [&](const Vec3& p) {
+            if (axis < 0) return 1;
+            const float c = p[axis] * side;
+            return c > tolerance ? 1 : c < -tolerance ? -1 : 0;
+        };
+        // Where the Edit takes a place, all the way -- or a way.
+        const auto moveTo = [&](const Vec3& p, int on) {
+            const Vec3 direct = transformPoint(m, p);
+            if (on > 0) return direct;
+            const Vec3 image = mirrored(transformPoint(m, mirrored(p, mirror)), mirror);
+            return on < 0 ? image : (direct + image) * 0.5f;
+        };
+        const auto turnTo = [&](const Vec3& v, int on) {
+            const Vec3 direct = transformDirection(m, v);
+            if (on > 0) return direct;
+            const Vec3 image = mirrored(transformDirection(m, mirrored(v, mirror)), mirror);
+            return on < 0 ? image : (direct + image) * 0.5f;
+        };
+        const std::vector<Vec3> before(geo->positions().begin(), geo->positions().end());
         auto P = geo->positionsForWrite();
         parallelFor(n, 16384, [&](size_t begin, size_t end) {
             for (size_t i = begin; i < end; ++i) {
                 if (weight[i] <= 0.0f) continue;
-                P[i] = P[i] + (transformPoint(m, P[i]) - P[i]) * weight[i];
+                P[i] = P[i] + (moveTo(P[i], sideOf(P[i])) - P[i]) * weight[i];
             }
         });
         if (AttributeArray* nAttr = geo->points().find("N"); nAttr && nAttr->type() == AttrType::Vec3) {
@@ -96,7 +127,7 @@ public:
             parallelFor(N.size(), 16384, [&](size_t begin, size_t end) {
                 for (size_t i = begin; i < end; ++i) {
                     if (weight[i] <= 0.0f) continue;
-                    const Vec3 turned = N[i] + (transformDirection(m, N[i]) - N[i]) * weight[i];
+                    const Vec3 turned = N[i] + (turnTo(N[i], sideOf(before[i])) - N[i]) * weight[i];
                     const float l = length(turned);
                     if (l > 1e-12f) N[i] = turned * (1.0f / l);
                 }

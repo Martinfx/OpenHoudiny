@@ -10,9 +10,17 @@
 // the viewport's brush writes them (pg/nodes, tools/prototype). A Sculptor
 // in the node puts on only the dabs a stroke has added since it cooked.
 //
+// With symmetry the brush writes each dab and its mirror image (Mirror.h),
+// the image joined to it: the two put on together, each point moved by
+// both as the points were before them -- so a symmetric surface stays
+// symmetric, to the bit where the two do not overlap. Where they overlap,
+// near the plane, each is weakened down to half, as Blender feathers it.
+//
 #include "pg/core/Geometry.h"
+#include "pg/core/Mirror.h"
 #include "pg/core/Soft.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -36,7 +44,12 @@ struct SculptDab {
     Vec3 move;              ///< Grab: how far it took what it held
     float radius = 0.0f;    ///< m
     float strength = 0.0f;  ///< Push: out a fifth of the radius at its middle for 1; Smooth, Flatten: the share, 0 to 1
+    bool joined = false;    ///< put on together with the dab before it: its mirror image
 };
+
+/// `d` and its mirror image, joined to it: each as strong as `d`, less where
+/// they overlap -- half where they are one (Blender's feathering).
+std::array<SculptDab, 2> mirroredDabs(const SculptDab& d, Mirror m);
 
 /// How far a Push dab of strength 1 moves the point at its middle, in radii.
 inline constexpr float kSculptPush = 0.2f;
@@ -44,7 +57,8 @@ inline constexpr float kSculptPush = 0.2f;
 /// The dabs a Sculpt node keeps, as text: "p x y z nx ny nz radius
 /// strength" (push), "s x y z radius strength" (smooth), "g x y z mx my mz
 /// radius" (grab), "f x y z nx ny nz radius strength" (flatten), separated
-/// by ';'. What does not read so is left out.
+/// by ';' -- a '+' before the letter joins it to the one before. What does
+/// not read so is left out.
 std::vector<SculptDab> parseSculpt(std::string_view text);
 /// One dab as that text.
 std::string sculptText(const SculptDab& dab);
@@ -78,7 +92,7 @@ private:
     GeometryPtr source_;
     Falloff shape_ = Falloff::Smooth;
     std::vector<SculptDab> dabs_;  ///< the last cook's
-    GeometryPtr before_;           ///< ... the geometry after all of them but the last; null: not kept
+    GeometryPtr before_;           ///< ... the geometry after all of them but the last (with what is joined to it); null: not kept
     GeometryPtr after_;            ///< ... after all of them: what it gave
     bool movedBefore_ = false;     ///< some dab had moved some point by then
     bool movedAfter_ = false;

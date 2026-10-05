@@ -457,6 +457,13 @@ private:
     /// The share of a drag each point of the shown geometry takes; empty
     /// with soft selection off or nothing picked.
     const std::vector<float>& softShares();
+    /// Symmetry (M): edits, their soft selection and the brushes mirrored
+    /// across the plane through the origin square to x, y or z (pg::Mirror).
+    /// As it is: the shown Edit's of what is picked, else the viewport's.
+    Mirror symmetryNow() const;
+    void setSymmetry(int axis);
+    /// The plane, across the geometry, while it mirrors.
+    void drawMirrorPlane(ImDrawList* d, const ViewCamera& cam);
     /// The ring of the radius round the handle's middle, and what it is.
     void drawSoftRing(ImDrawList* d, const ViewCamera& cam, const Vec3& center);
     void selectAllElements(bool invert);
@@ -679,6 +686,7 @@ private:
     bool brushRemoves_ = false;             ///< ... taking away: Ctrl at the press
     ImVec2 brushFrom_;                      ///< where it was the frame before
     float pickBrush_ = 0.0f;                ///< its radius, unscaled pixels; 0: the default
+    int symmetry_ = 0;                      ///< M: 0 off, 1 x, 2 y, 3 z -- for the next Edit and the brushes
     bool soft_ = false;                     ///< soft selection, for the next Edit
     float softRadius_ = 0.0f;               ///< m; 0: not set -- a share of the geometry's size
     int softMetric_ = 0, softFalloff_ = 0;
