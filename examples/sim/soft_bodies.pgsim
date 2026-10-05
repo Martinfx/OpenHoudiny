@@ -1,0 +1,115 @@
+pgsim 1
+# Soft bodies and a towel in one Cloth Solver. Three boxes and a ball --
+# closed meshes that keep the shape they have at rest (Shape) -- drop onto
+# steps: the jelly wobbles and sags as it lands, the rubber block bounces
+# off, the ball rolls down, and the clay cube keeps the dent the edge of the
+# step pressed into it (Plasticity). The attributes shape and plasticity
+# say how hard each holds its shape and how much of a dent stays; the towel
+# holds none -- it is cloth. Thrown over a rail thinner than its quads, it
+# hangs on it: the rail falls between its points, but its edges and faces
+# collide too.
+node 1 box 1 jelly 0 0
+  param size 0.32 0.32 0.32
+  param center -0.7 1.5 0
+  param divisions 5
+node 2 point_wrangle 1 jelly_soft 230 0
+  param snippet "// Soft as jelly, springing back.\nv@Cd = {0.38, 0.78, 0.18};\nf@shape = 0.03;\nf@plasticity = 0;"
+node 3 box 1 rubber 0 70
+  param size 0.26 0.26 0.26
+  param center 0.05 2 0.08
+  param divisions 4
+node 4 point_wrangle 1 rubber_firm 230 70
+  param snippet "// Firm rubber.\nv@Cd = {0.78, 0.16, 0.12};\nf@shape = 1;\nf@plasticity = 0;"
+node 5 box 1 clay 0 140
+  param size 0.28 0.28 0.28
+  param center 0 0 0
+  param divisions 4
+node 6 transform 1 clay_turned 230 140
+  param t 0.68 1.15 -0.05
+  param r 25 35 15
+node 7 point_wrangle 1 clay_soft 460 140
+  param snippet "// Clay: bent past Yield, it stays bent.\nv@Cd = {0.76, 0.6, 0.42};\nf@shape = 0.6;\nf@plasticity = 1;"
+node 8 sphere 1 ball 0 210
+  param radius 0.15
+  param center -0.35 2.4 0.05
+node 9 point_wrangle 1 ball_firm 230 210
+  param snippet "v@Cd = {0.2, 0.42, 0.8};\nf@shape = 0.5;\nf@plasticity = 0;"
+node 10 grid 1 towel 0 280
+  param sizex 0.9
+  param sizez 0.6
+  param rows 11
+  param cols 16
+node 11 transform 1 towel_raised 230 280
+  param t 0 1.35 -0.82
+node 12 point_wrangle 1 towel_cloth 460 280
+  param snippet "// Cloth: no shape of its own. Stripes across it.\nf@shape = 0;\nf@plasticity = 0;\nv@Cd = floor((@P.x + 0.45) / 0.15) % 2 ? {0.92, 0.9, 0.84} : {0.85, 0.55, 0.15};"
+node 13 merge 1 all 690 140
+node 14 cloth_solver 1 soft 920 140
+  param density 1.2
+  param stretch 3000
+  param shear 3000
+  param bend 5
+  param shape 1500
+  param plasticity 1
+  param yield 0.01
+  param friction 0.6
+  param damping 1
+  param substeps 30
+  param color 0.6 0.6 0.6
+node 15 object 1 step_high 690 340
+  param shape box
+  param center -0.7 0.3 0
+  param size 0.7 0.6 0.6
+  param color 0.55 0.53 0.5
+node 16 object 1 step_middle 690 410
+  param shape box
+  param center 0 0.2 0
+  param size 0.7 0.4 0.6
+  param color 0.55 0.53 0.5
+node 17 object 1 step_low 690 480
+  param shape box
+  param center 0.7 0.1 0
+  param size 0.7 0.2 0.6
+  param color 0.55 0.53 0.5
+node 18 object 1 rail 690 550
+  param shape cylinder
+  param center 0 1 -0.85
+  param rotation 0 0 90
+  param size 0.02 1.6 0.02
+  param color 0.75 0.75 0.78
+node 19 object 1 post_left 690 620
+  param shape cylinder
+  param center -0.78 0.5 -0.85
+  param size 0.04 1 0.04
+  param color 0.4 0.3 0.2
+node 20 object 1 post_right 690 690
+  param shape cylinder
+  param center 0.78 0.5 -0.85
+  param size 0.04 1 0.04
+  param color 0.4 0.3 0.2
+node 21 output 2 output 1150 140
+node 22 camera 1 camera 1150 280
+  param center 1.55 1.35 2.75
+  param rotation -12 27 0
+  param focal 32
+link 1.geometry -> 2.geometry
+link 3.geometry -> 4.geometry
+link 5.geometry -> 6.geometry
+link 6.geometry -> 7.geometry
+link 8.geometry -> 9.geometry
+link 10.geometry -> 11.geometry
+link 11.geometry -> 12.geometry
+link 2.geometry -> 13.geometry
+link 4.geometry -> 13.geometry
+link 7.geometry -> 13.geometry
+link 9.geometry -> 13.geometry
+link 12.geometry -> 13.geometry
+link 13.geometry -> 14.geometry
+link 15.collider -> 14.colliders
+link 16.collider -> 14.colliders
+link 17.collider -> 14.colliders
+link 18.collider -> 14.colliders
+link 19.collider -> 14.colliders
+link 20.collider -> 14.colliders
+link 14.look -> 21.look
+link 22.camera -> 21.camera

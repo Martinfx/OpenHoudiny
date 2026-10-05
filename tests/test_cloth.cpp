@@ -17,7 +17,11 @@
 
 #include "test_framework.h"
 
+#include <glm/gtc/quaternion.hpp>
+
+#include <array>
 #include <cmath>
+#include <map>
 
 using namespace pg;
 using namespace pg::sim;
@@ -74,6 +78,80 @@ float lowest(const std::vector<Vec3>& x) {
     float y = 1e30f;
     for (const Vec3& p : x) y = std::min(y, p.y);
     return y;
+}
+
+/// `b`'s points and primitives after `a`'s, in one geometry.
+std::shared_ptr<Geometry> both(const Geometry& a, const Geometry& b) {
+    auto g = std::make_shared<Geometry>();
+    g->addPoints(a.pointCount() + b.pointCount());
+    auto P = g->positionsForWrite();
+    for (size_t i = 0; i < a.pointCount(); ++i) P[i] = a.positions()[i];
+    for (size_t i = 0; i < b.pointCount(); ++i) P[a.pointCount() + i] = b.positions()[i];
+    for (const Geometry* from : {&a, &b}) {
+        const auto first = static_cast<uint32_t>(from == &a ? 0 : a.pointCount());
+        for (size_t p = 0; p < from->primitiveCount(); ++p) {
+            std::vector<uint32_t> q;
+            for (const uint32_t i : from->primitivePoints(p)) q.push_back(first + i);
+            g->addPrimitive(q, from->primitiveClosed(p));
+        }
+    }
+    return g;
+}
+
+/// A cube `size` across of n x n quads a side, its points shared along its
+/// edges -- a closed mesh -- turned by `turn` about its middle `center`.
+std::shared_ptr<Geometry> cube(int n, float size, Vec3 center, const Mat3& turn = Mat3(1.0f)) {
+    auto g = std::make_shared<Geometry>();
+    std::map<std::array<int, 3>, uint32_t> index;
+    std::vector<Vec3> points;
+    auto point = [&](std::array<int, 3> at) {
+        auto it = index.find(at);
+        if (it != index.end()) return it->second;
+        const Vec3 local = Vec3(static_cast<float>(at[0]), static_cast<float>(at[1]), static_cast<float>(at[2])) *
+                               (size / static_cast<float>(n)) - Vec3(0.5f * size);
+        points.push_back(center + turn * local);
+        return index[at] = static_cast<uint32_t>(points.size() - 1);
+    };
+    std::vector<std::array<uint32_t, 4>> quads;
+    for (int axis = 0; axis < 3; ++axis) {
+        for (const int side : {0, n}) {
+            const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+            for (int i = 0; i < n; ++i) {
+                for (int j = 0; j < n; ++j) {
+                    std::array<int, 3> c[4];
+                    const int du[4] = {0, 1, 1, 0}, dv[4] = {0, 0, 1, 1};
+                    for (int k = 0; k < 4; ++k) {
+                        c[k][static_cast<size_t>(axis)] = side;
+                        c[k][static_cast<size_t>(u)] = i + du[k];
+                        c[k][static_cast<size_t>(v)] = j + dv[k];
+                    }
+                    // Facing out.
+                    std::array<uint32_t, 4> q = {point(c[0]), point(c[1]), point(c[2]), point(c[3])};
+                    if (side == 0) std::swap(q[1], q[3]);
+                    quads.push_back(q);
+                }
+            }
+        }
+    }
+    g->addPoints(points.size());
+    auto P = g->positionsForWrite();
+    for (size_t i = 0; i < points.size(); ++i) P[i] = points[i];
+    for (const auto& q : quads) g->addPrimitive(q, true);
+    return g;
+}
+
+/// The most any two points' distance differs from theirs at rest, as a
+/// share of it.
+float mostOutOfShape(const std::vector<Vec3>& x, const Geometry& rest) {
+    float most = 0.0f;
+    const auto P = rest.positions();
+    for (size_t i = 0; i < P.size(); ++i) {
+        for (size_t j = i + 1; j < P.size(); ++j) {
+            const float was = length(P[i] - P[j]);
+            if (was > 1e-6f) most = std::max(most, std::fabs(length(x[i] - x[j]) - was) / was);
+        }
+    }
+    return most;
 }
 
 }  // namespace
@@ -196,7 +274,7 @@ TEST(cloth_the_wind_lifts_a_flag) {
         for (const Vec3& p : x) s += p.y;
         return s / static_cast<double>(x.size());
     };
-    const Vec3 tipHang = hanging.positions()[nx], tipFly = flying.positions()[nx];
+    const Vec3 tipFly = flying.positions()[nx];
     CHECK(meanY(flying.positions()) > meanY(hanging.positions()) + 0.1);
     CHECK(tipFly.x > 0.6f);
 }
@@ -511,4 +589,182 @@ TEST(cloth_catches_the_crates_and_the_block_tears_it) {
     CHECK(resumed.cloth()->positions() == w.cloth()->positions());
 }
 
+TEST(cloth_a_rope_falls_across_another_and_lies_on_it_between_its_points) {
+    // A rope held level along x, its points 0.2 m apart; another dropped
+    // across it along z between them, its own points to either side: point
+    // against point they pass; edge against edge it hangs over the first.
+    for (const bool faces : {true, false}) {
+        auto held = rope(Vec3(-0.5f, 1.0f, 0.0f), Vec3(0.5f, 1.0f, 0.0f), 5);
+        auto falling = rope(Vec3(0.0f, 1.3f, -0.5f), Vec3(0.0f, 1.3f, 0.5f), 5);
+        auto g = both(*held, *falling);
+        pin(*g, {0, 1, 2, 3, 4, 5});
+        ClothScene s = sceneOf(g);
+        s.solver.faces = faces;
+        ClothSolver solver(s);
+        for (int f = 0; f < 45; ++f) solver.step();
+        const auto& x = solver.positions();
+        // Its two middle points, either side of the held rope.
+        const float middle = std::min(x[6 + 2].y, x[6 + 3].y);
+        if (faces) {
+            CHECK(middle > 0.95f);
+            CHECK(middle < 1.05f);
+        } else {
+            CHECK(middle < 0.2f);  // through, on the floor
+        }
+    }
+}
 
+TEST(cloth_hangs_on_a_thin_rod_between_its_points) {
+    // A sheet of 0.2 m quads dropped on a rod 2 cm thick that runs between
+    // two rows of its points: point by point it falls past; with its edges
+    // it hangs over it like a towel.
+    for (const bool faces : {true, false}) {
+        auto g = sheet(6, 6, Vec3(1.2f, 0.0f, 1.2f), Vec3(0.1f, 1.3f, 0.0f));
+        ClothScene s = sceneOf(g);
+        s.solver.faces = faces;
+        Collider rod;
+        rod.shape = Shape::Cylinder;
+        rod.center = Vec3(0.0f, 1.0f, 0.0f);
+        rod.rotation = Vec3(90.0f, 0.0f, 0.0f);  // along z
+        rod.size = Vec3(0.02f, 2.0f, 0.02f);
+        s.colliders = {rod};
+        ClothSolver solver(s);
+        for (int f = 0; f < 60; ++f) solver.step();
+        float top = -1e30f;
+        for (const Vec3& p : solver.positions()) top = std::max(top, p.y);
+        if (faces) {
+            CHECK_NEAR(top, 1.0f + 0.01f + s.solver.thickness, 0.03f);
+            for (const Vec3& p : solver.positions()) CHECK(rod.instance().distance(p) > 0.0f);
+        } else {
+            CHECK(top < 0.2f);
+        }
+    }
+}
+
+TEST(cloth_a_point_too_fast_for_a_substep_does_not_go_through_a_face) {
+    // A short rope dropped at 30 m/s onto a level square held by its
+    // corners, far from them: 5 cm a substep, five times its thickness. The
+    // point is put back on the side it came from.
+    for (const bool faces : {true, false}) {
+        auto square = sheet(1, 1, Vec3(2.0f, 0.0f, 2.0f), Vec3(0.0f, 1.0f, 0.0f));
+        auto dart = rope(Vec3(0.3f, 1.2f, 0.2f), Vec3(0.3f, 1.4f, 0.2f), 1);
+        auto g = both(*square, *dart);
+        pin(*g, {0, 1, 2, 3});
+        auto v = g->points().create("v", AttrType::Vec3).write<Vec3>();
+        v[4] = v[5] = Vec3(0.0f, -30.0f, 0.0f);
+        ClothScene s = sceneOf(g);
+        s.solver.faces = faces;
+        s.solver.airDrag = 0.0f;
+        ClothSolver solver(s);
+        for (int f = 0; f < 10; ++f) solver.step();
+        const auto& x = solver.positions();
+        if (faces) {
+            CHECK(x[4].y > 1.0f);
+            CHECK(x[5].y > 1.0f);
+        } else {
+            CHECK(x[4].y < 0.5f);
+        }
+    }
+}
+
+TEST(cloth_a_soft_body_keeps_its_shape_and_without_shape_slumps) {
+    // A cube dropped turned onto a corner: with Shape it lands, tips over
+    // and lies whole -- its points as far apart as they were; without, a
+    // closed mesh is cloth: a bag that slumps.
+    const Mat3 turn = glm::mat3_cast(glm::angleAxis(0.6f, glm::normalize(Vec3(1.0f, 0.0f, 1.0f))));
+    for (const float shape : {2000.0f, 0.0f}) {
+        auto g = cube(4, 0.4f, Vec3(0.0f, 1.0f, 0.0f), turn);
+        ClothScene s = sceneOf(g);
+        s.solver.shape = shape;
+        s.solver.damping = 1.0f;
+        ClothSolver solver(s);
+        for (int f = 0; f < 90; ++f) solver.step();
+        const auto& x = solver.positions();
+        float top = -1e30f;
+        for (const Vec3& p : x) top = std::max(top, p.y);
+        if (shape > 0.0f) {
+            CHECK(mostOutOfShape(x, *g) < 0.06f);
+            CHECK(top > 0.38f);
+            CHECK(lowest(x) > 0.0f);
+        } else {
+            CHECK(mostOutOfShape(x, *g) > 0.3f);
+            CHECK(top < 0.3f);
+        }
+    }
+}
+
+TEST(cloth_a_soft_body_pressed_too_far_keeps_its_dent) {
+    // A soft cube on the floor, squashed by a slab coming down and going up
+    // again: elastic, it springs back; plastic, it stays squashed.
+    for (const float plasticity : {0.0f, 1.0f}) {
+        auto g = cube(4, 0.4f, Vec3(0.0f, 0.2f + 0.01f, 0.0f));
+        ClothScene s = sceneOf(g);
+        s.solver.shape = 2000.0f;
+        s.solver.plasticity = plasticity;
+        s.solver.yield = 0.01f;
+        s.solver.damping = 2.0f;
+        Collider slab;
+        slab.shape = Shape::Box;
+        slab.size = Vec3(1.0f, 0.1f, 1.0f);
+        ClothSolver solver(s);
+        float slabY = 0.5f;
+        for (int f = 0; f < 60; ++f) {
+            // Down to 0.3 m over the floor in ten frames, held, up and away.
+            const float to = f < 10 ? 0.5f - 0.025f * static_cast<float>(f + 1) : f < 20 ? 0.25f : std::min(0.25f + 0.05f * static_cast<float>(f - 19), 2.0f);
+            slab.velocity = Vec3(0.0f, (to - slabY) / s.solver.timeStep, 0.0f);
+            slab.center = Vec3(0.0f, to + 0.05f + s.solver.thickness, 0.0f);
+            slabY = to;
+            ClothScene now = s;
+            now.colliders = {slab};
+            solver.setScene(now);
+            solver.step();
+        }
+        float top = -1e30f;
+        for (const Vec3& p : solver.positions()) top = std::max(top, p.y);
+        if (plasticity > 0.0f) {
+            CHECK(top < 0.33f);
+        } else {
+            CHECK(top > 0.38f);
+        }
+    }
+}
+
+TEST(cloth_faces_and_shapes_are_the_same_on_one_thread_and_on_four_and_from_a_state) {
+    // Two soft cubes, one plastic, falling onto a sheet over a rod: every
+    // kind of contact, the shape that gives way saved with the state.
+    auto cubes = both(*cube(3, 0.3f, Vec3(-0.2f, 1.2f, 0.0f)), *cube(3, 0.3f, Vec3(0.25f, 1.5f, 0.1f),
+                                                                     glm::mat3_cast(glm::angleAxis(0.5f, Vec3(0.0f, 0.0f, 1.0f)))));
+    auto g = both(*cubes, *sheet(10, 10, Vec3(1.4f, 0.0f, 1.4f), Vec3(0.0f, 0.8f, 0.0f)));
+    auto shape = g->points().create("shape", AttrType::Float).write<float>();
+    for (size_t i = 0; i < g->pointCount(); ++i) shape[i] = i < cubes->pointCount() ? 1.0f : 0.0f;
+    ClothScene s = sceneOf(g);
+    s.solver.shape = 1500.0f;
+    s.solver.plasticity = 0.5f;
+    s.solver.yield = 0.01f;
+    Collider rod;
+    rod.shape = Shape::Cylinder;
+    rod.center = Vec3(0.0f, 0.5f, 0.0f);
+    rod.rotation = Vec3(90.0f, 0.0f, 0.0f);
+    rod.size = Vec3(0.03f, 2.0f, 0.03f);
+    s.colliders = {rod};
+    const unsigned saved = TaskPool::instance().threadCount();
+    TaskPool::instance().setThreadCount(1);
+    ClothSolver one(s);
+    for (int f = 0; f < 40; ++f) one.step();
+    TaskPool::instance().setThreadCount(4);
+    ClothSolver four(s);
+    for (int f = 0; f < 20; ++f) four.step();
+    StateWriter out;
+    four.saveState(out);
+    ClothSolver later(s);
+    StateReader in(out.bytes());
+    CHECK(later.loadState(in));
+    for (int f = 0; f < 20; ++f) {
+        four.step();
+        later.step();
+    }
+    TaskPool::instance().setThreadCount(saved);
+    CHECK(one.positions() == four.positions());
+    CHECK(later.positions() == four.positions());
+    CHECK(later.velocities() == four.velocities());
+}

@@ -21,7 +21,7 @@ node 4 cloth_solver 1 cloth 690 0
   param stretch 20000
   param shear 20000
   param bend 2
-  param tear 0.6
+  param tear 0.8
   param thickness 0.02
   param friction 0.6
   param damping 4

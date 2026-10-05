@@ -89,9 +89,10 @@ okna.
   z pohledu od země jako videa, povodeň na dvoře s plovoucími bednami
 - **[docs/cloth.md](docs/cloth.md)** — látky, lana a měkká tělesa (XPBD,
   obdoba Vellum): ubrus přes stůl, vlajka ve větru, míč držící objem,
-  přišpendlené body nesené animací, kolize s objekty, kusy RBD i sebou
-  samou, vítr a proud plynu; trhání a obousměrná vazba s tuhými tělesy
-  (plachta chytá bedny, betonový blok ji prorazí)
+  přišpendlené body nesené animací, kolize bodů, hran i ploch s objekty,
+  kusy RBD i sebou samou, vítr a proud plynu; trhání a obousměrná vazba
+  s tuhými tělesy (plachta chytá bedny, betonový blok ji prorazí); měkká
+  tělesa držící tvar, hlína zůstane promáčklá
 - **[docs/grains.md](docs/grains.md)** — písek, štěrk a zemina (obdoba
   Vellum Grains): zrna s třením a kohezí, hromady tak strmé, jak tření
   drží, mokrý písek stojí; sypání proudem, kolize s objekty, obousměrná
@@ -231,7 +232,7 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Spuštění
 
 ```bash
-./build/pgtests            # 638 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 25 látky a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 31 stromy a vegetace
+./build/pgtests            # 644 testů: 89 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 38 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 46 render, barvy ACES, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 29 USD (zápis i čtení), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 31 stromy a vegetace
 ctest --test-dir build -R python                   # 55 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
 ./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py

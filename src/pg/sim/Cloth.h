@@ -23,12 +23,23 @@
 //             apart, the point is split in two, and the cloth opens there; a
 //             rope parts; a balloon torn open is cloth. The attribute tear of
 //             a point scales how far the edges at it stretch before they do.
+//   shape     with Shape above 0 each piece -- the points that hang
+//             together -- holds the shape it has at rest, wherever it has
+//             gone and however it has turned (shape matching, Mueller et al.
+//             2005): a soft body, a jelly, rubber. Bent further than Yield, a
+//             share of it as Plasticity says stays bent: a dent. The
+//             attributes shape and plasticity of a point scale them -- shape
+//             0 for cloth among soft bodies.
 //
 // A point has the mass of the cloth round it -- Density, kilograms a square
 // metre, or a metre of rope -- or its attribute mass. The points collide
 // with the floor, with the objects and the pieces of an RBD Solver
 // (Colliders), a Thickness away, with friction, and with each other: what
-// folds does not pass through itself. A piece gives as the cloth pushes
+// folds does not pass through itself. With Faces, not only the points: a
+// point keeps off the cloth's triangles, an edge off its edges -- remembering
+// which side it came from, so that one quick enough to go through in a
+// substep is put back -- and the edges and faces keep off the objects, a thin
+// rod caught between two points. A piece gives as the cloth pushes
 // it: in the cloth's step it is a body of its weight that the cloth slows,
 // stops or throws, substep by substep, and where that leaves it the RBD
 // Solver takes on (reactions). The air pushes each triangle along
@@ -76,8 +87,19 @@ struct ClothSettings {
     /// How much longer than it was an edge -- a rope's segment -- stretches
     /// before it tears: 0.3 thirty percent; 0 never.
     float tear = 0.0f;
+    /// How hard each piece holds the shape it has at rest, N/m a point: 0 not
+    /// at all; tens a jelly, thousands rubber. The point attribute shape
+    /// scales it.
+    float shape = 0.0f;
+    /// Bent further than `yield` from the shape it holds, the share of the
+    /// rest it keeps -- a dent: 0 springs back; 1 all of it.
+    float plasticity = 0.0f;
+    float yield = 0.02f;          ///< metres
     int substeps = 20;            ///< steps a frame
     bool selfCollision = true;
+    /// Not only the points collide: points with triangles, edges with
+    /// edges, and edges and faces with the objects.
+    bool faces = true;
     bool floor = true;            ///< a floor at y = 0
     Vec3 gravity{0.0f, -9.81f, 0.0f};
     float timeStep = 1.0f / 30.0f;
@@ -187,6 +209,7 @@ private:
         float compliance = 0.0f;  ///< m/N
         float limit = 0.0f;       ///< the length it tears at; 0 never
         uint32_t corner = kNone;  ///< a rope's segment: the corner it starts at
+        float give = 0.0f;        ///< how much longer than it is it tears: limit = rest (1 + give)
     };
     struct Balloon {
         std::vector<uint32_t> triangles;  ///< three points each, as tris_
@@ -199,8 +222,25 @@ private:
     void aero(std::vector<Vec3>& accel) const;
     void solveLinks(float h);
     void solveBalloons(float h);
-    void selfCollide();
+    void matchShapes(float h);
+    /// The cloth off itself: its `points` off each other; with `faces` the
+    /// points off the triangles and the edges off the edges.
+    void selfCollide(bool points, bool faces);
+    /// The triangles and the ropes' segments as a tree, split where they are
+    /// at rest; what each node shares with the rest.
+    void buildFaceTree();
+    /// The points off the triangles and the edges off the edges, of the
+    /// nodes of the tree that may touch.
+    void collideFaceTree();
+    /// How far from one axis the faces of nodes a and b face, together;
+    /// the axis.
+    float mergedCone(size_t a, size_t b, Vec3& axis) const;
+    /// Whether nodes a and b have a point in common.
+    bool sharePoints(size_t a, size_t b) const;
     void collide(float h);
+    /// The edges and the faces against the objects: what each of them is
+    /// pushed, and turned, by it.
+    void collideFaces(float h, std::vector<Vec3>& took, std::vector<Vec3>& turned);
 
     ClothScene scene_;
     std::function<Vec3(const Vec3&)> air_;
@@ -219,7 +259,28 @@ private:
     std::vector<Vec3> drift_, kick_, twist_;  // each collider that gives: moved, sped up, turned faster by the cloth this step
     std::vector<Reaction> reactions_;
     std::vector<float> w_;                    // 1 / mass; 0 pinned
+    std::vector<float> m_;                    // each point's mass, pinned or not
     std::vector<uint8_t> pinned_;
+    std::vector<uint32_t> edges_;             // two points an edge: the triangles', the ropes' segments
+    // The tree of the faces: the triangles, then the ropes' segments
+    // (elements); each one's edges, three a triangle; the nodes, their
+    // elements a stretch of faceOrder_; where each point's elements are in
+    // it; each node's points that others have too.
+    struct FaceNode {
+        uint32_t first = 0, count = 0;
+        int32_t left = -1, right = -1;
+    };
+    std::vector<uint32_t> ropeEdges_, elementEdges_, faceOrder_;
+    std::vector<Vec3> restMiddle_;                 // each element's middle at rest
+    std::vector<FaceNode> faceNodes_;
+    std::vector<uint32_t> placeStart_, places_, shareStart_, shared_;
+    std::vector<Vec3> nodeLo_, nodeHi_, coneAxis_;  // each node now: its box, the way its faces face
+    std::vector<float> coneAngle_;
+    std::vector<uint32_t> pieceStart_, piecePoints_;  // the points that hang together, each piece's in order
+    std::vector<uint32_t> pieceOf_;           // each point's piece
+    std::vector<Vec3> shapeRest_;             // each point in the shape its piece holds: at rest, as it gave way
+    std::vector<float> shapeOf_;              // each point of the geometry: its attribute shape
+    std::vector<float> plasticOf_;            // ... and plasticity
     std::vector<uint32_t> tris_;              // three points a triangle
     std::vector<uint32_t> triStart_, triOf_;  // each point's triangles
     std::vector<Vec3> airOfTri_;              // the gas's flow at each triangle, this step
@@ -232,6 +293,8 @@ private:
     size_t stretchCount_ = 0, bendCount_ = 0;
     size_t relinks_ = 0;
     float selfRadius_ = 0.01f;
+    float meanEdge_ = 0.01f;
+
     int frame_ = 0;
     float time_ = 0.0f;
 };

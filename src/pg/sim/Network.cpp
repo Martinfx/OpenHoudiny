@@ -1969,12 +1969,25 @@ std::vector<NodeType> buildTypes() {
            "How much longer than it was an edge stretches before it tears -- 0.3 thirty percent; 0 never. "
            "Torn, the cloth opens along its edges, a rope parts, a balloon bursts. A point's attribute tear "
            "scales it: 0.5 tears at half the stretch -- a seam, a perforation."},
+          {"shape", "Shape", "Soft Body", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 2000.0f, 0.0f, 1e9f, "N/m",
+           "How hard each piece -- the points its faces and lines hold together -- keeps the shape it has at rest, "
+           "wherever it goes and however it turns (shape matching): a soft body -- tens a jelly, thousands "
+           "rubber. 0: none, cloth. A point's attribute shape scales it: 0 leaves it cloth."},
+          {"plasticity", "Plasticity", "Soft Body", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "Bent further than Yield from its shape, the share of the rest that stays bent: a dent. 0 springs "
+           "back. A point's attribute plasticity scales it: clay among rubber."},
+          {"yield", "Yield", "Soft Body", K::Float, {0.02f, 0.0f, 0.0f}, 0.0f, 0.2f, 0.0f, 100.0f, "m",
+           "How far a point is pushed from its piece's shape and still springs back."},
           {"thickness", "Thickness", "Collisions", K::Float, {0.01f, 0.0f, 0.0f}, 0.002f, 0.1f, 1e-4f, 1.0f, "m",
            "How far from the floor, the objects and itself the cloth stays."},
           {"friction", "Friction", "Collisions", K::Float, {0.4f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 10.0f, "",
            "How hard it grips what it lies on: 0 slides off, 1 stays."},
           {"self_collision", "Self Collision", "Collisions", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "It does not pass through itself: what folds lies on itself."},
+          {"faces", "Faces and Edges", "Collisions", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+           "Not only the points collide: a point keeps off the faces, an edge off the edges -- one through in a "
+           "substep is put back on the side it came from -- and the edges and faces off the objects: a thin rod "
+           "between two points holds the cloth, ropes lie on each other. Off: faster."},
           {"floor", "Floor", "Collisions", K::Toggle, {1.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
            "A floor at height 0."},
           {"air_drag", "Air Drag", "Air", K::Float, {1.0f, 0.0f, 0.0f}, 0.0f, 3.0f, 0.0f, 100.0f, "",
@@ -4691,9 +4704,13 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         s.bend = f(*solver, "bend");
         s.pressure = f(*solver, "pressure");
         s.tear = f(*solver, "tear");
+        s.shape = f(*solver, "shape");
+        s.plasticity = f(*solver, "plasticity");
+        s.yield = f(*solver, "yield");
         s.thickness = f(*solver, "thickness");
         s.friction = f(*solver, "friction");
         s.selfCollision = f(*solver, "self_collision") != 0.0f;
+        s.faces = f(*solver, "faces") != 0.0f;
         s.floor = f(*solver, "floor") != 0.0f;
         s.airDrag = f(*solver, "air_drag");
         s.damping = f(*solver, "damping");

@@ -396,11 +396,12 @@ RigidFluids WorldSolver::fluids() const {
 // the rain poured into it that is not a particle yet, version 5),
 // the rain, the cloth, torn or not (version 3), the gas's upres, the grains
 // -- as its saveState() writes it; the gas with how soaked its sources are
-// (version 5) and its steam (version 6). The pieces' is not: they are
-// stepped again, with those flows.
+// (version 5) and its steam (version 6); the cloth with the shape it holds
+// as it has given way (version 7). The pieces' is not: they are stepped
+// again, with those flows.
 namespace {
 constexpr char kStateMagic[8] = {'p', 'g', 's', 't', 'a', 't', 'e', '\0'};
-constexpr uint32_t kStateVersion = 6;
+constexpr uint32_t kStateVersion = 7;
 }  // namespace
 
 std::string WorldSolver::saveState() const {

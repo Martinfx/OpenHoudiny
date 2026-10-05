@@ -6,10 +6,12 @@
 #include "pg/sim/State.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <map>
+#include <mutex>
 #include <numeric>
 #include <utility>
 
@@ -43,6 +45,163 @@ double tripleProduct(const Vec3& a, const Vec3& b, const Vec3& c) {
     return static_cast<double>(dot(a, cross(b, c)));
 }
 
+/// The point of triangle abc nearest p, and how much of each corner it is
+/// (Ericson, Real-Time Collision Detection, 5.1.5).
+Vec3 nearestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c, Vec3& weights) {
+    const Vec3 ab = b - a, ac = c - a, ap = p - a;
+    const float d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) {
+        weights = Vec3(1.0f, 0.0f, 0.0f);
+        return a;
+    }
+    const Vec3 bp = p - b;
+    const float d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) {
+        weights = Vec3(0.0f, 1.0f, 0.0f);
+        return b;
+    }
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        const float v = d1 / (d1 - d3);
+        weights = Vec3(1.0f - v, v, 0.0f);
+        return a + ab * v;
+    }
+    const Vec3 cp = p - c;
+    const float d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) {
+        weights = Vec3(0.0f, 0.0f, 1.0f);
+        return c;
+    }
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        const float w = d2 / (d2 - d6);
+        weights = Vec3(1.0f - w, 0.0f, w);
+        return a + ac * w;
+    }
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && d4 - d3 >= 0.0f && d5 - d6 >= 0.0f) {
+        const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        weights = Vec3(0.0f, 1.0f - w, w);
+        return b + (c - b) * w;
+    }
+    const float denom = 1.0f / (va + vb + vc);
+    const float v = vb * denom, w = vc * denom;
+    weights = Vec3(1.0f - v - w, v, w);
+    return a + ab * v + ac * w;
+}
+
+/// How far along segments p1q1 and p2q2 their nearest points are, 0 to 1
+/// (Ericson, 5.1.9); parallel ones at the start of the first.
+void nearestOnSegments(const Vec3& p1, const Vec3& q1, const Vec3& p2, const Vec3& q2, float& s, float& t) {
+    const Vec3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    const float a = dot(d1, d1), e = dot(d2, d2), f = dot(d2, r);
+    constexpr float kTiny = 1e-14f;
+    if (a <= kTiny && e <= kTiny) {
+        s = t = 0.0f;
+        return;
+    }
+    if (a <= kTiny) {
+        s = 0.0f;
+        t = std::clamp(f / e, 0.0f, 1.0f);
+        return;
+    }
+    const float c = dot(d1, r);
+    if (e <= kTiny) {
+        t = 0.0f;
+        s = std::clamp(-c / a, 0.0f, 1.0f);
+        return;
+    }
+    const float b = dot(d1, d2), denom = a * e - b * b;
+    s = denom > 1e-7f * a * e ? std::clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+    t = (b * s + f) / e;
+    if (t < 0.0f) {
+        t = 0.0f;
+        s = std::clamp(-c / a, 0.0f, 1.0f);
+    } else if (t > 1.0f) {
+        t = 1.0f;
+        s = std::clamp((b - c) / a, 0.0f, 1.0f);
+    }
+}
+
+/// The rotation that best turns points about their middle at rest onto
+/// where they are about theirs, `s` the sum of each one's mass times its
+/// place at rest times its place now (s[a][b]: at rest along a, now along
+/// b): Horn's quaternion (1987) -- the eigenvector of the largest eigenvalue
+/// of his 4 x 4 matrix, found by Jacobi's rotations. Whole, flat or along a
+/// line, as unique as the points make it; none for points all in one place.
+Mat3 bestTurn(const double s[3][3]) {
+    const double xx = s[0][0], xy = s[0][1], xz = s[0][2];
+    const double yx = s[1][0], yy = s[1][1], yz = s[1][2];
+    const double zx = s[2][0], zy = s[2][1], zz = s[2][2];
+    double a[4][4] = {{xx + yy + zz, yz - zy, zx - xz, xy - yx},
+                      {yz - zy, xx - yy - zz, xy + yx, zx + xz},
+                      {zx - xz, xy + yx, -xx + yy - zz, yz + zy},
+                      {xy - yx, zx + xz, yz + zy, -xx - yy + zz}};
+    double v[4][4] = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
+    for (int sweep = 0; sweep < 32; ++sweep) {
+        double off = 0.0, diagonal = 0.0;
+        for (int i = 0; i < 4; ++i) {
+            diagonal += a[i][i] * a[i][i];
+            for (int j = i + 1; j < 4; ++j) off += a[i][j] * a[i][j];
+        }
+        if (off <= 1e-26 * diagonal || off == 0.0) break;
+        for (int p = 0; p < 3; ++p) {
+            for (int q = p + 1; q < 4; ++q) {
+                if (a[p][q] == 0.0) continue;
+                const double theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+                const double t = (theta >= 0.0 ? 1.0 : -1.0) / (std::fabs(theta) + std::sqrt(theta * theta + 1.0));
+                const double c = 1.0 / std::sqrt(t * t + 1.0), sn = t * c;
+                for (int k = 0; k < 4; ++k) {
+                    const double kp = a[k][p], kq = a[k][q];
+                    a[k][p] = c * kp - sn * kq;
+                    a[k][q] = sn * kp + c * kq;
+                }
+                for (int k = 0; k < 4; ++k) {
+                    const double pk = a[p][k], qk = a[q][k];
+                    a[p][k] = c * pk - sn * qk;
+                    a[q][k] = sn * pk + c * qk;
+                }
+                for (int k = 0; k < 4; ++k) {
+                    const double kp = v[k][p], kq = v[k][q];
+                    v[k][p] = c * kp - sn * kq;
+                    v[k][q] = sn * kp + c * kq;
+                }
+            }
+        }
+    }
+    int best = 0;
+    for (int k = 1; k < 4; ++k) {
+        if (a[k][k] > a[best][best]) best = k;
+    }
+    double w = v[0][best], x = v[1][best], y = v[2][best], z = v[3][best];
+    const double norm = std::sqrt(w * w + x * x + y * y + z * z);
+    if (!(norm > 0.0)) return Mat3(1.0f);
+    w /= norm, x /= norm, y /= norm, z /= norm;
+    // The quaternion's matrix, column by column.
+    return Mat3(Vec3(static_cast<float>(1.0 - 2.0 * (y * y + z * z)), static_cast<float>(2.0 * (x * y + w * z)),
+                     static_cast<float>(2.0 * (x * z - w * y))),
+                Vec3(static_cast<float>(2.0 * (x * y - w * z)), static_cast<float>(1.0 - 2.0 * (x * x + z * z)),
+                     static_cast<float>(2.0 * (y * z + w * x))),
+                Vec3(static_cast<float>(2.0 * (x * z + w * y)), static_cast<float>(2.0 * (y * z - w * x)),
+                     static_cast<float>(1.0 - 2.0 * (x * x + y * y))));
+}
+
+bool overlaps(const Vec3& lo0, const Vec3& hi0, const Vec3& lo1, const Vec3& hi1) {
+    return lo0.x <= hi1.x && lo1.x <= hi0.x && lo0.y <= hi1.y && lo1.y <= hi0.y && lo0.z <= hi1.z && lo1.z <= hi0.z;
+}
+
+/// Points kept apart: up to four, each with its share of the way between
+/// the two sides -- a point and the weights of a triangle's corners with
+/// the sign turned, or an edge's ends and the other edge's -- pushed apart
+/// along `normal` until they are `gap` apart.
+struct Contact {
+    uint64_t order = 0;  // which pair: the same order on any number of threads
+    std::array<uint32_t, 4> points{};
+    std::array<float, 4> shares{};
+    Vec3 normal;
+    float gap = 0.0f;
+};
+
 }  // namespace
 
 ClothScene ClothScene::sanitized() const {
@@ -60,6 +219,9 @@ ClothScene ClothScene::sanitized() const {
     s.damping = std::clamp(finite(s.damping, d.damping), 0.0f, 1000.0f);
     s.airDrag = std::clamp(finite(s.airDrag, d.airDrag), 0.0f, 100.0f);
     s.tear = std::clamp(finite(s.tear, d.tear), 0.0f, 100.0f);
+    s.shape = std::clamp(finite(s.shape, d.shape), 0.0f, 1e9f);
+    s.plasticity = std::clamp(finite(s.plasticity, d.plasticity), 0.0f, 1.0f);
+    s.yield = std::clamp(finite(s.yield, d.yield), 0.0f, 100.0f);
     s.substeps = std::clamp(s.substeps, 1, 200);
     for (int a = 0; a < 3; ++a) s.gravity[a] = std::clamp(finite(s.gravity[a], 0.0f), -1000.0f, 1000.0f);
     s.timeStep = std::clamp(finite(s.timeStep, d.timeStep), 1e-4f, 1.0f);
@@ -240,11 +402,20 @@ void ClothSolver::build() {
     target_ = x_;
     pinned_.assign(n, 0);
     tearOf_.assign(n, 1.0f);
+    shapeOf_.assign(n, 1.0f);
+    plasticOf_.assign(n, 1.0f);
+    shapeRest_ = rest_;
     const AttributeArray* pin = geo->points().find("pin");
     const AttributeArray* tear = geo->points().find("tear");
+    const AttributeArray* shape = geo->points().find("shape");
+    const AttributeArray* plastic = geo->points().find("plasticity");
     for (size_t i = 0; i < n; ++i) {
         pinned_[i] = pointNumber(pin, i, 0.0f) > 0.5f ? 1 : 0;
         tearOf_[i] = std::max(pointNumber(tear, i, 1.0f), 0.0f);
+        const float held = pointNumber(shape, i, 1.0f);
+        shapeOf_[i] = std::isfinite(held) ? std::clamp(held, 0.0f, 1e6f) : 1.0f;
+        const float gives = pointNumber(plastic, i, 1.0f);
+        plasticOf_[i] = std::isfinite(gives) ? std::clamp(gives, 0.0f, 1.0f) : 1.0f;
     }
     origin_.resize(n);
     std::iota(origin_.begin(), origin_.end(), 0u);
@@ -258,6 +429,7 @@ void ClothSolver::build() {
     for (size_t l = 0; l < stretchCount_; ++l) edges += links_[l].rest;
     const float meanEdge =
         stretchCount_ ? static_cast<float>(edges / static_cast<double>(stretchCount_)) : scene_.solver.thickness;
+    meanEdge_ = std::max(meanEdge, 1e-4f);
     selfRadius_ = std::max(scene_.solver.thickness, 0.3f * meanEdge);
 }
 
@@ -283,9 +455,10 @@ void ClothSolver::connect() {
         const uint64_t key = pairKey(a, b);
         if (linked.count(key)) return;
         linked[key] = static_cast<uint32_t>(links_.size());
-        const float rest = length(rest_[a] - rest_[b]);
+        // As long as in the shape it holds: at rest, as it has given way.
+        const float rest = length(shapeRest_[a] - shapeRest_[b]);
         const float give = s.tear * std::min(tearOf_[origin_[a]], tearOf_[origin_[b]]);
-        links_.push_back({a, b, rest, compliance, tears && s.tear > 0.0f ? rest * (1.0f + give) : 0.0f, corner});
+        links_.push_back({a, b, rest, compliance, tears && s.tear > 0.0f ? rest * (1.0f + give) : 0.0f, corner, give});
     };
     const float stretchCompliance = 1.0f / s.stretch;
     std::vector<std::array<uint32_t, 3>> ropeBends;
@@ -360,13 +533,69 @@ void ClothSolver::connect() {
     std::vector<double> ofOrigin(geo->pointCount(), 0.0);
     for (size_t i = 0; i < n; ++i) ofOrigin[origin_[i]] += mass[i];
     w_.assign(n, 0.0f);
+    m_.assign(n, 0.0f);
     for (size_t i = 0; i < n; ++i) {
         double m = mass[i];
         if (given) {
             const double whole = pointNumber(given, origin_[i], 0.0f);
             m = ofOrigin[origin_[i]] > 0.0 ? whole * mass[i] / ofOrigin[origin_[i]] : whole;
         }
-        w_[i] = pinned_[i] ? 0.0f : static_cast<float>(1.0 / std::max(m, 1e-6));
+        m_[i] = static_cast<float>(std::max(m, 1e-6));
+        w_[i] = pinned_[i] ? 0.0f : 1.0f / m_[i];
+    }
+
+    // The edges that collide: of the triangles, and the ropes' segments --
+    // each once, in order.
+    {
+        std::vector<uint64_t> keys;
+        keys.reserve(tris_.size() + stretchCount_);
+        for (size_t t = 0; t + 2 < tris_.size(); t += 3) {
+            for (int e = 0; e < 3; ++e) keys.push_back(pairKey(tris_[t + static_cast<size_t>(e)], tris_[t + static_cast<size_t>((e + 1) % 3)]));
+        }
+        for (size_t l = 0; l < stretchCount_; ++l) {
+            if (links_[l].corner != kNone) keys.push_back(pairKey(links_[l].a, links_[l].b));
+        }
+        std::sort(keys.begin(), keys.end());
+        keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+        edges_.clear();
+        edges_.reserve(2 * keys.size());
+        for (const uint64_t k : keys) {
+            edges_.push_back(static_cast<uint32_t>(k >> 32));
+            edges_.push_back(static_cast<uint32_t>(k & 0xffffffffu));
+        }
+    }
+
+    // The pieces: the points the edges and the segments hold together, each
+    // piece's in order, the pieces by their first.
+    {
+        std::vector<uint32_t> parent(n);
+        std::iota(parent.begin(), parent.end(), 0u);
+        auto find = [&](uint32_t a) {
+            while (parent[a] != a) a = parent[a] = parent[parent[a]];
+            return a;
+        };
+        for (size_t l = 0; l < stretchCount_; ++l) {
+            const uint32_t a = find(links_[l].a), b = find(links_[l].b);
+            if (a != b) parent[std::max(a, b)] = std::min(a, b);
+        }
+        std::vector<uint32_t> pieceOf(n, kNone), count;
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t root = find(i);
+            if (pieceOf[root] == kNone) {
+                pieceOf[root] = static_cast<uint32_t>(count.size());
+                count.push_back(0);
+            }
+            ++count[pieceOf[root]];
+        }
+        pieceStart_.assign(count.size() + 1, 0);
+        for (size_t p = 0; p < count.size(); ++p) pieceStart_[p + 1] = pieceStart_[p] + count[p];
+        piecePoints_.assign(n, 0);
+        pieceOf_.assign(n, 0);
+        std::vector<uint32_t> at(pieceStart_.begin(), pieceStart_.end() - 1);
+        for (uint32_t i = 0; i < n; ++i) {
+            pieceOf_[i] = pieceOf[find(i)];
+            piecePoints_[at[pieceOf_[i]]++] = i;
+        }
     }
 
     // Each point's triangles, for the air's push.
@@ -454,6 +683,7 @@ void ClothSolver::connect() {
         near_.insert(near_.end(), nb[i].begin(), nb[i].end());
     }
     airOfTri_.resize(tris_.size() / 3);
+    buildFaceTree();
 }
 
 bool ClothSolver::tear() {
@@ -533,6 +763,7 @@ void ClothSolver::split(uint32_t p) {
             start_.push_back(start_[p]);
             target_.push_back(target_[p]);
             rest_.push_back(rest_[p]);
+            shapeRest_.push_back(shapeRest_[p]);
             pinned_.push_back(pinned_[p]);
             origin_.push_back(origin_[p]);
             it = pointOf.emplace(part, q).first;
@@ -551,6 +782,9 @@ void ClothSolver::setScene(const ClothScene& scene) {
     next.solver.bend = scene_.solver.bend;
     next.solver.pressure = scene_.solver.pressure;
     next.solver.tear = scene_.solver.tear;
+    next.solver.shape = scene_.solver.shape;
+    next.solver.plasticity = scene_.solver.plasticity;
+    next.solver.yield = scene_.solver.yield;
     scene_ = std::move(next);
     shapes_.clear();
     for (const Collider& c : scene_.colliders) shapes_.push_back(c.instance());
@@ -657,50 +891,802 @@ void ClothSolver::solveBalloons(float h) {
     }
 }
 
-void ClothSolver::selfCollide() {
-    const size_t n = x_.size();
-    const float r = selfRadius_, reach = 2.0f * r;
-    const float cell = reach;
-    auto keyOf = [&](const Vec3& p, int di, int dj, int dk) {
-        const int64_t i = static_cast<int64_t>(std::floor(p.x / cell)) + di;
-        const int64_t j = static_cast<int64_t>(std::floor(p.y / cell)) + dj;
-        const int64_t k = static_cast<int64_t>(std::floor(p.z / cell)) + dk;
-        return static_cast<uint64_t>((i * 73856093) ^ (j * 19349663) ^ (k * 83492791));
+void ClothSolver::matchShapes(float h) {
+    const ClothSettings& s = scene_.solver;
+    if (s.shape <= 0.0f || pieceStart_.size() < 2) return;
+    const float h2 = h * h;
+    pg::parallelFor(pieceStart_.size() - 1, 1, [&](size_t begin, size_t end) {
+        for (size_t piece = begin; piece < end; ++piece) {
+            const uint32_t first = pieceStart_[piece], last = pieceStart_[piece + 1];
+            if (last - first < 2) continue;
+            // Its middle where it is and in the shape it holds, each point as
+            // heavy as it is.
+            double mass = 0.0, now[3] = {0.0, 0.0, 0.0}, held[3] = {0.0, 0.0, 0.0};
+            for (uint32_t k = first; k < last; ++k) {
+                const uint32_t i = piecePoints_[k];
+                const double m = m_[i];
+                mass += m;
+                for (int a = 0; a < 3; ++a) {
+                    now[a] += m * x_[i][a];
+                    held[a] += m * shapeRest_[i][a];
+                }
+            }
+            if (!(mass > 0.0)) continue;
+            const Vec3 middle(static_cast<float>(now[0] / mass), static_cast<float>(now[1] / mass),
+                              static_cast<float>(now[2] / mass));
+            const Vec3 shapeMiddle(static_cast<float>(held[0] / mass), static_cast<float>(held[1] / mass),
+                                   static_cast<float>(held[2] / mass));
+            // How it is turned: the turn that best takes the shape onto it.
+            double sum[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+            for (uint32_t k = first; k < last; ++k) {
+                const uint32_t i = piecePoints_[k];
+                const Vec3 q = shapeRest_[i] - shapeMiddle, p = x_[i] - middle;
+                const double m = m_[i];
+                for (int a = 0; a < 3; ++a) {
+                    for (int b = 0; b < 3; ++b) sum[a][b] += m * static_cast<double>(q[a]) * static_cast<double>(p[b]);
+                }
+            }
+            const Mat3 turn = bestTurn(sum);
+            const Mat3 back = glm::transpose(turn);
+            for (uint32_t k = first; k < last; ++k) {
+                const uint32_t i = piecePoints_[k];
+                const Vec3 goal = middle + turn * (shapeRest_[i] - shapeMiddle);
+                // Bent further than it yields: a share of how much further
+                // stays -- the shape it holds gives way.
+                const float plastic = s.plasticity * plasticOf_[origin_[i]];
+                if (plastic > 0.0f) {
+                    const Vec3 off = x_[i] - goal;
+                    const float far = length(off);
+                    if (far > s.yield) shapeRest_[i] += back * (off * ((far - s.yield) * plastic / far));
+                }
+                const float stiffness = s.shape * shapeOf_[origin_[i]];
+                if (w_[i] <= 0.0f || stiffness <= 0.0f) continue;
+                x_[i] += (goal - x_[i]) * (w_[i] / (w_[i] + 1.0f / (stiffness * h2)));
+            }
+        }
+    });
+}
+
+void ClothSolver::buildFaceTree() {
+    faceNodes_.clear();
+    faceOrder_.clear();
+    const size_t triangles = tris_.size() / 3;
+    // The elements: the triangles, then the ropes' segments; each one's
+    // edges -- a segment's one -- by their numbers in edges_.
+    auto edgeIndex = [&](uint32_t a, uint32_t b) {
+        const uint64_t key = pairKey(a, b);
+        size_t lo = 0, hi = edges_.size() / 2;
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (pairKey(edges_[2 * mid], edges_[2 * mid + 1]) < key) lo = mid + 1;
+            else hi = mid;
+        }
+        return static_cast<uint32_t>(lo);
     };
-    std::vector<std::pair<uint64_t, uint32_t>> sorted(n);
-    for (size_t i = 0; i < n; ++i) sorted[i] = {keyOf(x_[i], 0, 0, 0), static_cast<uint32_t>(i)};
-    std::sort(sorted.begin(), sorted.end());
-    std::vector<Vec3> push(n);
-    pg::parallelFor(n, 256, [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            if (w_[i] <= 0.0f) continue;
-            Vec3 sum;
-            const uint32_t* nb = near_.data() + nearStart_[i];
-            const uint32_t* nbEnd = near_.data() + nearStart_[i + 1];
-            for (int dk = -1; dk <= 1; ++dk) {
-                for (int dj = -1; dj <= 1; ++dj) {
-                    for (int di = -1; di <= 1; ++di) {
-                        const uint64_t key = keyOf(x_[i], di, dj, dk);
-                        auto it = std::lower_bound(sorted.begin(), sorted.end(), std::make_pair(key, 0u));
-                        for (; it != sorted.end() && it->first == key; ++it) {
-                            const uint32_t j = it->second;
-                            if (j == i || std::binary_search(nb, nbEnd, j)) continue;
-                            // Points nearer than that at rest -- round the
-                            // pole of a sphere -- kept no nearer than they were.
-                            const float apart = std::min(reach, length(rest_[i] - rest_[j]));
-                            const Vec3 d = x_[i] - x_[j];
-                            const float dist = length(d);
-                            if (dist >= apart || dist < 1e-9f) continue;
-                            const float share = w_[i] / (w_[i] + w_[j]);
-                            sum += d * ((apart - dist) * share / dist);
+    ropeEdges_.clear();
+    for (size_t l = 0; l < stretchCount_; ++l) {
+        if (links_[l].corner != kNone) ropeEdges_.push_back(edgeIndex(links_[l].a, links_[l].b));
+    }
+    std::sort(ropeEdges_.begin(), ropeEdges_.end());
+    ropeEdges_.erase(std::unique(ropeEdges_.begin(), ropeEdges_.end()), ropeEdges_.end());
+    const size_t count = triangles + ropeEdges_.size();
+    elementEdges_.assign(3 * count, kNone);
+    for (size_t t = 0; t < triangles; ++t) {
+        for (int e = 0; e < 3; ++e) {
+            elementEdges_[3 * t + static_cast<size_t>(e)] =
+                edgeIndex(tris_[3 * t + static_cast<size_t>(e)], tris_[3 * t + static_cast<size_t>((e + 1) % 3)]);
+        }
+    }
+    for (size_t k = 0; k < ropeEdges_.size(); ++k) elementEdges_[3 * (triangles + k)] = ropeEdges_[k];
+    if (count == 0) return;
+    // Split where they are at rest, the longer way, in halves -- sorted by
+    // place and then by number: the same tree everywhere.
+    std::vector<Vec3> middle(count);
+    for (size_t k = 0; k < count; ++k) {
+        if (k < triangles) {
+            middle[k] = (rest_[tris_[3 * k]] + rest_[tris_[3 * k + 1]] + rest_[tris_[3 * k + 2]]) * (1.0f / 3.0f);
+        } else {
+            const uint32_t e = ropeEdges_[k - triangles];
+            middle[k] = (rest_[edges_[2 * e]] + rest_[edges_[2 * e + 1]]) * 0.5f;
+        }
+    }
+    restMiddle_ = middle;
+    faceOrder_.resize(count);
+    std::iota(faceOrder_.begin(), faceOrder_.end(), 0u);
+    faceNodes_.push_back({0, static_cast<uint32_t>(count), -1, -1});
+    for (size_t at = 0; at < faceNodes_.size(); ++at) {
+        const uint32_t first = faceNodes_[at].first, size = faceNodes_[at].count;
+        if (size <= 4) continue;
+        Vec3 lo(1e30f), hi(-1e30f);
+        for (uint32_t k = first; k < first + size; ++k) {
+            lo = glm::min(lo, middle[faceOrder_[k]]);
+            hi = glm::max(hi, middle[faceOrder_[k]]);
+        }
+        const Vec3 extent = hi - lo;
+        const int axis = extent.x >= extent.y && extent.x >= extent.z ? 0 : (extent.y >= extent.z ? 1 : 2);
+        std::sort(faceOrder_.begin() + first, faceOrder_.begin() + first + size, [&](uint32_t a, uint32_t b) {
+            return middle[a][axis] < middle[b][axis] || (middle[a][axis] == middle[b][axis] && a < b);
+        });
+        const uint32_t half = size / 2;
+        faceNodes_[at].left = static_cast<int32_t>(faceNodes_.size());
+        faceNodes_.push_back({first, half, -1, -1});
+        faceNodes_[at].right = static_cast<int32_t>(faceNodes_.size());
+        faceNodes_.push_back({first + half, size - half, -1, -1});
+    }
+    // Where each point's elements are in the tree, in order -- and the points
+    // of each node that elements outside it have too: what it shares with
+    // the rest of the cloth.
+    const size_t n = x_.size();
+    std::vector<uint32_t> placeOf(count);
+    for (size_t k = 0; k < count; ++k) placeOf[faceOrder_[k]] = static_cast<uint32_t>(k);
+    auto pointsOf = [&](uint32_t element, uint32_t out[3]) {
+        if (element < triangles) {
+            for (int k = 0; k < 3; ++k) out[k] = tris_[3 * element + static_cast<size_t>(k)];
+            return 3;
+        }
+        const uint32_t e = ropeEdges_[element - triangles];
+        out[0] = edges_[2 * e];
+        out[1] = edges_[2 * e + 1];
+        return 2;
+    };
+    placeStart_.assign(n + 1, 0);
+    for (size_t k = 0; k < count; ++k) {
+        uint32_t q[3];
+        const int m = pointsOf(static_cast<uint32_t>(k), q);
+        for (int j = 0; j < m; ++j) ++placeStart_[q[j] + 1];
+    }
+    for (size_t i = 0; i < n; ++i) placeStart_[i + 1] += placeStart_[i];
+    places_.assign(placeStart_[n], 0);
+    {
+        std::vector<uint32_t> fill(placeStart_.begin(), placeStart_.end() - 1);
+        for (size_t k = 0; k < count; ++k) {
+            uint32_t q[3];
+            const int m = pointsOf(static_cast<uint32_t>(k), q);
+            for (int j = 0; j < m; ++j) places_[fill[q[j]]++] = placeOf[k];
+        }
+        for (size_t i = 0; i < n; ++i) std::sort(places_.begin() + placeStart_[i], places_.begin() + placeStart_[i + 1]);
+    }
+    shareStart_.assign(faceNodes_.size() + 1, 0);
+    shared_.clear();
+    std::vector<uint32_t> mine;
+    for (size_t at = 0; at < faceNodes_.size(); ++at) {
+        const uint32_t first = faceNodes_[at].first, last = first + faceNodes_[at].count;
+        mine.clear();
+        for (uint32_t k = first; k < last; ++k) {
+            uint32_t q[3];
+            const int m = pointsOf(faceOrder_[k], q);
+            for (int j = 0; j < m; ++j) mine.push_back(q[j]);
+        }
+        std::sort(mine.begin(), mine.end());
+        mine.erase(std::unique(mine.begin(), mine.end()), mine.end());
+        for (const uint32_t q : mine) {
+            if (places_[placeStart_[q]] < first || places_[placeStart_[q + 1] - 1] >= last) shared_.push_back(q);
+        }
+        shareStart_[at + 1] = static_cast<uint32_t>(shared_.size());
+    }
+}
+
+void ClothSolver::selfCollide(bool points, bool faces) {
+    const size_t n = x_.size();
+    if (points) {
+        const float r = selfRadius_, reach = 2.0f * r;
+        const float cell = reach;
+        auto keyOf = [&](const Vec3& p, int di, int dj, int dk) {
+            const int64_t i = static_cast<int64_t>(std::floor(p.x / cell)) + di;
+            const int64_t j = static_cast<int64_t>(std::floor(p.y / cell)) + dj;
+            const int64_t k = static_cast<int64_t>(std::floor(p.z / cell)) + dk;
+            return static_cast<uint64_t>((i * 73856093) ^ (j * 19349663) ^ (k * 83492791));
+        };
+        std::vector<std::pair<uint64_t, uint32_t>> sorted(n);
+        for (size_t i = 0; i < n; ++i) sorted[i] = {keyOf(x_[i], 0, 0, 0), static_cast<uint32_t>(i)};
+        std::sort(sorted.begin(), sorted.end());
+        std::vector<Vec3> push(n);
+        pg::parallelFor(n, 256, [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                if (w_[i] <= 0.0f) continue;
+                Vec3 sum;
+                const uint32_t* nb = near_.data() + nearStart_[i];
+                const uint32_t* nbEnd = near_.data() + nearStart_[i + 1];
+                for (int dk = -1; dk <= 1; ++dk) {
+                    for (int dj = -1; dj <= 1; ++dj) {
+                        for (int di = -1; di <= 1; ++di) {
+                            const uint64_t key = keyOf(x_[i], di, dj, dk);
+                            auto it = std::lower_bound(sorted.begin(), sorted.end(), std::make_pair(key, 0u));
+                            for (; it != sorted.end() && it->first == key; ++it) {
+                                const uint32_t j = it->second;
+                                if (j == i || std::binary_search(nb, nbEnd, j)) continue;
+                                // Points nearer than that at rest -- round the
+                                // pole of a sphere -- kept no nearer than they were.
+                                const float apart = std::min(reach, length(rest_[i] - rest_[j]));
+                                const Vec3 d = x_[i] - x_[j];
+                                const float dist = length(d);
+                                if (dist >= apart || dist < 1e-9f) continue;
+                                const float share = w_[i] / (w_[i] + w_[j]);
+                                sum += d * ((apart - dist) * share / dist);
+                            }
                         }
                     }
                 }
+                push[i] = sum;
             }
-            push[i] = sum;
+        });
+        for (size_t i = 0; i < n; ++i) x_[i] += push[i];
+    }
+    if (faces && !faceNodes_.empty()) collideFaceTree();
+}
+
+void ClothSolver::collideFaceTree() {
+    const ClothSettings& s = scene_.solver;
+    // As far from itself as Thickness says.
+    const float gap = s.thickness;
+    const size_t triangles = tris_.size() / 3, count = faceOrder_.size(), nodes = faceNodes_.size();
+    // Each element: its box, from where it was at the start of the substep
+    // to where it is, and which way it faces.
+    std::vector<Vec3> lo(count), hi(count), facing(count);
+    pg::parallelFor(count, 1024, [&](size_t begin, size_t end) {
+        for (size_t k = begin; k < end; ++k) {
+            uint32_t q[3];
+            int m = 3;
+            if (k < triangles) {
+                q[0] = tris_[3 * k], q[1] = tris_[3 * k + 1], q[2] = tris_[3 * k + 2];
+                const Vec3 face = cross(x_[q[1]] - x_[q[0]], x_[q[2]] - x_[q[0]]);
+                const float area = length(face);
+                facing[k] = area > 1e-12f ? face * (1.0f / area) : Vec3();
+            } else {
+                const uint32_t e = ropeEdges_[k - triangles];
+                q[0] = edges_[2 * e], q[1] = edges_[2 * e + 1];
+                m = 2;
+                facing[k] = Vec3();
+            }
+            Vec3 l = glm::min(x_[q[0]], prev_[q[0]]), h = glm::max(x_[q[0]], prev_[q[0]]);
+            for (int j = 1; j < m; ++j) {
+                l = glm::min(l, glm::min(x_[q[j]], prev_[q[j]]));
+                h = glm::max(h, glm::max(x_[q[j]], prev_[q[j]]));
+            }
+            lo[k] = l;
+            hi[k] = h;
         }
     });
-    for (size_t i = 0; i < n; ++i) x_[i] += push[i];
+    // Each node: its box, and the cone its faces face within -- how far, in
+    // radians, from its axis; more than half a turn for a segment, or for
+    // faces that face every way.
+    nodeLo_.resize(nodes);
+    nodeHi_.resize(nodes);
+    coneAxis_.resize(nodes);
+    coneAngle_.resize(nodes);
+    constexpr float kAnyWay = 4.0f;
+    for (size_t a = nodes; a-- > 0;) {
+        const FaceNode& node = faceNodes_[a];
+        if (node.left < 0) {
+            Vec3 l(1e30f), h(-1e30f), sum;
+            bool cone = true;
+            for (uint32_t k = node.first; k < node.first + node.count; ++k) {
+                const uint32_t e = faceOrder_[k];
+                l = glm::min(l, lo[e]);
+                h = glm::max(h, hi[e]);
+                if (facing[e] == Vec3()) cone = false;
+                sum += facing[e];
+            }
+            nodeLo_[a] = l;
+            nodeHi_[a] = h;
+            const float len = length(sum);
+            if (!cone || len < 1e-6f) {
+                coneAxis_[a] = Vec3();
+                coneAngle_[a] = kAnyWay;
+                continue;
+            }
+            const Vec3 axis = sum * (1.0f / len);
+            float widest = 0.0f;
+            for (uint32_t k = node.first; k < node.first + node.count; ++k) {
+                widest = std::max(widest, std::acos(std::clamp(dot(axis, facing[faceOrder_[k]]), -1.0f, 1.0f)));
+            }
+            coneAxis_[a] = axis;
+            coneAngle_[a] = widest;
+            continue;
+        }
+        const size_t l = static_cast<size_t>(node.left), r = static_cast<size_t>(node.right);
+        nodeLo_[a] = glm::min(nodeLo_[l], nodeLo_[r]);
+        nodeHi_[a] = glm::max(nodeHi_[l], nodeHi_[r]);
+        coneAngle_[a] = mergedCone(l, r, coneAxis_[a]);
+    }
+
+    // The pairs of nodes that may touch: not a node whose faces all face
+    // much the same way -- it cannot fold onto itself -- nor two such that
+    // share points and face the same way together (Volino and
+    // Magnenat-Thalmann 1994); not two whose boxes are further apart than
+    // the gap. Of the leaves left, each point with the triangles, each edge
+    // with the edges.
+    constexpr float kFlat = 1.0f;  // radians: some 57 degrees
+    std::vector<std::pair<uint32_t, uint32_t>> pointPairs, edgePairs;
+    auto linked = [&](uint32_t p, uint32_t q) {
+        return p == q || std::binary_search(near_.data() + nearStart_[p], near_.data() + nearStart_[p + 1], q);
+    };
+    auto pointsOf = [&](uint32_t element, uint32_t out[3]) {
+        if (element < triangles) {
+            for (int k = 0; k < 3; ++k) out[k] = tris_[3 * element + static_cast<size_t>(k)];
+            return 3;
+        }
+        const uint32_t e = ropeEdges_[element - triangles];
+        out[0] = edges_[2 * e];
+        out[1] = edges_[2 * e + 1];
+        return 2;
+    };
+    const Vec3 pad(gap);
+    // Two elements of one piece nearer than twice an edge at rest: the cloth
+    // round each other, which their links keep as it is.
+    const float apartAtRest = 2.0f * meanEdge_;
+    auto elementsInto = [&](uint32_t a, uint32_t b, std::vector<std::pair<uint32_t, uint32_t>>& outPoints,
+                            std::vector<std::pair<uint32_t, uint32_t>>& outEdges) {
+        // The points of a against the triangle b, and the edges of both.
+        if (!overlaps(lo[a] - pad, hi[a] + pad, lo[b], hi[b])) return;
+        uint32_t pa[3], pb[3];
+        const int ma = pointsOf(a, pa), mb = pointsOf(b, pb);
+        const Vec3 d = restMiddle_[a] - restMiddle_[b];
+        if (pieceOf_[pa[0]] == pieceOf_[pb[0]] && dot(d, d) < apartAtRest * apartAtRest) return;
+        if (b < triangles) {
+            for (int j = 0; j < ma; ++j) {
+                const uint32_t i = pa[j];
+                if (linked(i, pb[0]) || linked(i, pb[1]) || linked(i, pb[2])) continue;
+                if (w_[i] + w_[pb[0]] + w_[pb[1]] + w_[pb[2]] <= 0.0f) continue;
+                outPoints.push_back({i, b});
+            }
+        }
+        if (a < triangles) {
+            for (int j = 0; j < mb; ++j) {
+                const uint32_t i = pb[j];
+                if (linked(i, pa[0]) || linked(i, pa[1]) || linked(i, pa[2])) continue;
+                if (w_[i] + w_[pa[0]] + w_[pa[1]] + w_[pa[2]] <= 0.0f) continue;
+                outPoints.push_back({i, a});
+            }
+        }
+        for (int x = 0; x < 3; ++x) {
+            const uint32_t e = elementEdges_[3 * a + static_cast<size_t>(x)];
+            if (e == kNone) continue;
+            for (int y = 0; y < 3; ++y) {
+                const uint32_t f = elementEdges_[3 * b + static_cast<size_t>(y)];
+                if (f == kNone || e == f) continue;
+                const uint32_t ea = edges_[2 * e], eb = edges_[2 * e + 1], fa = edges_[2 * f], fb = edges_[2 * f + 1];
+                if (linked(ea, fa) || linked(ea, fb) || linked(eb, fa) || linked(eb, fb)) continue;
+                if (w_[ea] + w_[eb] + w_[fa] + w_[fb] <= 0.0f) continue;
+                outEdges.push_back({std::min(e, f), std::max(e, f)});
+            }
+        }
+    };
+    auto elements = [&](uint32_t a, uint32_t b) { elementsInto(a, b, pointPairs, edgePairs); };
+    auto leaves = [&](const FaceNode& A, const FaceNode& B, bool same, auto& emit) {
+        for (uint32_t i = A.first; i < A.first + A.count; ++i) {
+            for (uint32_t j = same ? i + 1 : B.first; j < B.first + B.count; ++j) emit(faceOrder_[i], faceOrder_[j]);
+        }
+    };
+    // One pair of nodes: done with, or the pairs of their halves next.
+    auto visit = [&](uint32_t a, uint32_t b, std::vector<std::pair<uint32_t, uint32_t>>& next, auto& emit) {
+        const FaceNode& A = faceNodes_[a];
+        if (a == b) {
+            if (A.left < 0) {
+                leaves(A, A, true, emit);
+                return;
+            }
+            if (coneAngle_[a] < kFlat) return;
+            const uint32_t l = static_cast<uint32_t>(A.left), r = static_cast<uint32_t>(A.right);
+            next.push_back({l, l});
+            next.push_back({r, r});
+            next.push_back({l, r});
+            return;
+        }
+        const FaceNode& B = faceNodes_[b];
+        if (!overlaps(nodeLo_[a] - pad, nodeHi_[a] + pad, nodeLo_[b], nodeHi_[b])) return;
+        if (coneAngle_[a] < kFlat && coneAngle_[b] < kFlat && sharePoints(a, b)) {
+            Vec3 axis;
+            if (mergedCone(a, b, axis) < kFlat) return;
+        }
+        if (A.left < 0 && B.left < 0) {
+            leaves(A, B, false, emit);
+            return;
+        }
+        // The bigger one in halves.
+        if (B.left < 0 || (A.left >= 0 && A.count >= B.count)) {
+            next.push_back({static_cast<uint32_t>(A.left), b});
+            next.push_back({static_cast<uint32_t>(A.right), b});
+        } else {
+            next.push_back({a, static_cast<uint32_t>(B.left)});
+            next.push_back({a, static_cast<uint32_t>(B.right)});
+        }
+    };
+    // The first levels one by one, till there are pairs enough for every
+    // thread; then each pair's on a thread, what it finds put together.
+    std::vector<std::pair<uint32_t, uint32_t>> pairs = {{0u, 0u}}, next;
+    auto collect = [&](uint32_t a, uint32_t b) { elements(a, b); };
+    for (int level = 0; level < 12 && !pairs.empty() && pairs.size() < 256; ++level) {
+        next.clear();
+        for (const auto& [a, b] : pairs) visit(a, b, next, collect);
+        pairs.swap(next);
+    }
+    std::mutex gathered;
+    pg::parallelFor(pairs.size(), 1, [&](size_t begin, size_t end) {
+        std::vector<std::pair<uint32_t, uint32_t>> myPoints, myEdges, stack;
+        auto emit = [&](uint32_t a, uint32_t b) { elementsInto(a, b, myPoints, myEdges); };
+        for (size_t k = begin; k < end; ++k) {
+            stack.assign(1, pairs[k]);
+            while (!stack.empty()) {
+                const auto [a, b] = stack.back();
+                stack.pop_back();
+                visit(a, b, stack, emit);
+            }
+        }
+        std::lock_guard<std::mutex> lock(gathered);
+        pointPairs.insert(pointPairs.end(), myPoints.begin(), myPoints.end());
+        edgePairs.insert(edgePairs.end(), myEdges.begin(), myEdges.end());
+    });
+    if (pointPairs.empty() && edgePairs.empty()) return;
+    std::sort(pointPairs.begin(), pointPairs.end());
+    pointPairs.erase(std::unique(pointPairs.begin(), pointPairs.end()), pointPairs.end());
+    std::sort(edgePairs.begin(), edgePairs.end());
+    edgePairs.erase(std::unique(edgePairs.begin(), edgePairs.end()), edgePairs.end());
+
+    // A point near a triangle not its own -- nearer than the gap, or gone
+    // through it in this substep: pushed off it on the side it came from.
+    auto pointTriangle = [&](uint32_t i, uint32_t t, Contact& k) {
+        const uint32_t a = tris_[3 * t], b = tris_[3 * t + 1], c = tris_[3 * t + 2];
+        const Vec3 face = cross(x_[b] - x_[a], x_[c] - x_[a]);
+        const float area = length(face);
+        if (area < 1e-12f) return false;
+        const Vec3 up = face * (1.0f / area);
+        Vec3 weights;
+        const Vec3 near = nearestOnTriangle(x_[i], x_[a], x_[b], x_[c], weights);
+        const Vec3 off = x_[i] - near;
+        const float d = length(off);
+        const Vec3 face0 = cross(prev_[b] - prev_[a], prev_[c] - prev_[a]);
+        const float area0 = length(face0);
+        const float side0 = area0 > 1e-12f ? dot(prev_[i] - prev_[a], face0) / area0 : 0.0f;
+        const float side1 = dot(x_[i] - x_[a], up);
+        bool through = false;
+        Vec3 normal;
+        if (side0 * side1 < 0.0f && std::fabs(side0) > 1e-7f) {
+            // Across its plane: through the triangle, where its way crosses it?
+            const Vec3 way = x_[i] - prev_[i];
+            const float along = dot(way, up);
+            if (std::fabs(along) > 1e-12f) {
+                const Vec3 hit = prev_[i] + way * std::clamp(dot(x_[a] - prev_[i], up) / along, 0.0f, 1.0f);
+                Vec3 at;
+                const Vec3 onFace = nearestOnTriangle(hit, x_[a], x_[b], x_[c], at);
+                if (length(hit - onFace) <= 0.05f * gap) {
+                    through = true;
+                    normal = up * (side0 > 0.0f ? 1.0f : -1.0f);
+                    weights = at;
+                }
+            }
+        }
+        if (!through) {
+            if (d >= gap) return false;
+            normal = d > 1e-9f ? off * (1.0f / d) : up * (side1 >= 0.0f ? 1.0f : -1.0f);
+        }
+        // Nearer than the gap at rest -- a fine mesh, a fold made so -- kept
+        // no nearer than they were; in one place at rest, the lips of a tear.
+        Vec3 restWeights;
+        const Vec3 restNear = nearestOnTriangle(rest_[i], rest_[a], rest_[b], rest_[c], restWeights);
+        const float apart = std::min(gap, length(rest_[i] - restNear));
+        if (apart <= 1e-6f || (!through && d >= apart)) return false;
+        k.order = (static_cast<uint64_t>(i) << 31) | t;
+        k.points = {i, a, b, c};
+        k.shares = {1.0f, -weights.x, -weights.y, -weights.z};
+        k.normal = normal;
+        k.gap = apart;
+        return true;
+    };
+    // Two edges with no point in common, likewise: nearer than the gap, or
+    // gone through each other -- each kept on the side it came from.
+    auto edgeEdge = [&](uint32_t e, uint32_t f, Contact& k) {
+        const uint32_t a = edges_[2 * e], b = edges_[2 * e + 1], c = edges_[2 * f], d = edges_[2 * f + 1];
+        float s1 = 0.0f, t1 = 0.0f;
+        nearestOnSegments(x_[a], x_[b], x_[c], x_[d], s1, t1);
+        const Vec3 off = (x_[a] + (x_[b] - x_[a]) * s1) - (x_[c] + (x_[d] - x_[c]) * t1);
+        const float dist = length(off);
+        float s0 = 0.0f, t0 = 0.0f;
+        nearestOnSegments(prev_[a], prev_[b], prev_[c], prev_[d], s0, t0);
+        const Vec3 off0 = (prev_[a] + (prev_[b] - prev_[a]) * s0) - (prev_[c] + (prev_[d] - prev_[c]) * t0);
+        const float dist0 = length(off0);
+        bool through = false;
+        Vec3 normal;
+        if (dist0 > 1e-7f && s0 > 0.0f && s0 < 1.0f && t0 > 0.0f && t0 < 1.0f && s1 > 0.0f && s1 < 1.0f && t1 > 0.0f &&
+            t1 < 1.0f) {
+            const Vec3 was = off0 * (1.0f / dist0);
+            const Vec3 now = (x_[a] + (x_[b] - x_[a]) * s0) - (x_[c] + (x_[d] - x_[c]) * t0);
+            if (dot(now, was) < 0.0f) {
+                through = true;
+                normal = was;
+                s1 = s0;
+                t1 = t0;
+            }
+        }
+        if (!through) {
+            if (dist >= gap) return false;
+            if (dist > 1e-9f) {
+                normal = off * (1.0f / dist);
+            } else if (dist0 > 1e-9f) {
+                normal = off0 * (1.0f / dist0);
+            } else {
+                return false;
+            }
+        }
+        float rs = 0.0f, rt = 0.0f;
+        nearestOnSegments(rest_[a], rest_[b], rest_[c], rest_[d], rs, rt);
+        const float restDist = length((rest_[a] + (rest_[b] - rest_[a]) * rs) - (rest_[c] + (rest_[d] - rest_[c]) * rt));
+        const float apart = std::min(gap, restDist);
+        if (apart <= 1e-6f || (!through && dist >= apart)) return false;
+        k.order = (1ull << 62) | (static_cast<uint64_t>(e) << 31) | f;
+        k.points = {a, b, c, d};
+        k.shares = {1.0f - s1, s1, -(1.0f - t1), -t1};
+        k.normal = normal;
+        k.gap = apart;
+        return true;
+    };
+
+    std::vector<Contact> contacts;
+    std::mutex found;
+    pg::parallelFor(pointPairs.size(), 512, [&](size_t begin, size_t end) {
+        std::vector<Contact> mine;
+        for (size_t k = begin; k < end; ++k) {
+            Contact c;
+            if (pointTriangle(pointPairs[k].first, pointPairs[k].second, c)) mine.push_back(c);
+        }
+        std::lock_guard<std::mutex> lock(found);
+        contacts.insert(contacts.end(), mine.begin(), mine.end());
+    });
+    pg::parallelFor(edgePairs.size(), 512, [&](size_t begin, size_t end) {
+        std::vector<Contact> mine;
+        for (size_t k = begin; k < end; ++k) {
+            Contact c;
+            if (edgeEdge(edgePairs[k].first, edgePairs[k].second, c)) mine.push_back(c);
+        }
+        std::lock_guard<std::mutex> lock(found);
+        contacts.insert(contacts.end(), mine.begin(), mine.end());
+    });
+
+    // Pushed apart one after another, in the same order on any number of
+    // threads; held back as they slide past each other, by friction.
+    std::sort(contacts.begin(), contacts.end(), [](const Contact& p, const Contact& q) { return p.order < q.order; });
+    const float mu = s.friction;
+    for (const Contact& k : contacts) {
+        Vec3 between;
+        float weight = 0.0f;
+        for (int j = 0; j < 4; ++j) {
+            const uint32_t q = k.points[static_cast<size_t>(j)];
+            const float share = k.shares[static_cast<size_t>(j)];
+            between += x_[q] * share;
+            weight += w_[q] * share * share;
+        }
+        if (weight <= 0.0f) continue;
+        const float c = dot(between, k.normal) - k.gap;
+        if (c >= 0.0f) continue;
+        const float lambda = -c / weight;
+        for (int j = 0; j < 4; ++j) {
+            const uint32_t q = k.points[static_cast<size_t>(j)];
+            x_[q] += k.normal * (w_[q] * k.shares[static_cast<size_t>(j)] * lambda);
+        }
+        if (mu <= 0.0f) continue;
+        Vec3 moved;
+        for (int j = 0; j < 4; ++j) {
+            const uint32_t q = k.points[static_cast<size_t>(j)];
+            moved += (x_[q] - prev_[q]) * k.shares[static_cast<size_t>(j)];
+        }
+        const Vec3 along = moved - k.normal * dot(moved, k.normal);
+        const float slide = length(along);
+        if (slide < 1e-12f) continue;
+        const float hold = std::min(slide, mu * -c) / weight;
+        const Vec3 way = along * (1.0f / slide);
+        for (int j = 0; j < 4; ++j) {
+            const uint32_t q = k.points[static_cast<size_t>(j)];
+            x_[q] = x_[q] - way * (w_[q] * k.shares[static_cast<size_t>(j)] * hold);
+        }
+    }
+}
+
+float ClothSolver::mergedCone(size_t a, size_t b, Vec3& axis) const {
+    constexpr float kAnyWay = 4.0f;
+    if (coneAngle_[a] >= kAnyWay || coneAngle_[b] >= kAnyWay) {
+        axis = Vec3();
+        return kAnyWay;
+    }
+    const Vec3 sum = coneAxis_[a] + coneAxis_[b];
+    const float len = length(sum);
+    if (len < 1e-6f) {
+        axis = Vec3();
+        return kAnyWay;
+    }
+    axis = sum * (1.0f / len);
+    const float wa = std::acos(std::clamp(dot(axis, coneAxis_[a]), -1.0f, 1.0f)) + coneAngle_[a];
+    const float wb = std::acos(std::clamp(dot(axis, coneAxis_[b]), -1.0f, 1.0f)) + coneAngle_[b];
+    return std::max(wa, wb);
+}
+
+bool ClothSolver::sharePoints(size_t a, size_t b) const {
+    // A point of a's that b has too: one of its places in b's stretch of the
+    // tree.
+    const uint32_t first = faceNodes_[b].first, last = first + faceNodes_[b].count;
+    for (uint32_t k = shareStart_[a]; k < shareStart_[a + 1]; ++k) {
+        const uint32_t q = shared_[k];
+        const uint32_t* at = std::lower_bound(places_.data() + placeStart_[q], places_.data() + placeStart_[q + 1], first);
+        if (at != places_.data() + placeStart_[q + 1] && *at < last) return true;
+    }
+    return false;
+}
+
+void ClothSolver::collideFaces(float h, std::vector<Vec3>& took, std::vector<Vec3>& turned) {
+    const ClothSettings& s = scene_.solver;
+    const float r = s.thickness, mu = s.friction;
+    const size_t edges = edges_.size() / 2, count = tris_.size() / 3;
+    // A place on an edge or a face that went into an object: its corners,
+    // how much of each it is, where it was and how far in, which way out.
+    struct Touch {
+        uint64_t order = 0;
+        std::array<uint32_t, 3> points{};
+        std::array<float, 3> weights{};
+        uint32_t collider = 0;
+        Vec3 at, normal;
+        float distance = 0.0f;
+    };
+    std::vector<Touch> touches;
+    std::mutex found;
+    for (size_t c = 0; c < shapes_.size(); ++c) {
+        const ShapeInstance& shape = shapes_[c];
+        const Vec3 middle = shape.center();
+        const Vec3 size = scene_.colliders[c].size;
+        const float reach = 0.5f * length(size) + r;
+        // The box round it, as it is turned, Thickness wider.
+        const Rotation& turn = shape.turn();
+        const Vec3 half = glm::abs(turn.x) * shape.half().x + glm::abs(turn.y) * shape.half().y +
+                          glm::abs(turn.z) * shape.half().z + Vec3(r);
+        const Vec3 boxLo = middle - half, boxHi = middle + half;
+        // As finely as its thinnest side: a rod between two points is found.
+        const float thin = std::max(std::min({size.x, size.y, size.z}), 2.0f * r);
+        // The edges: their places nearest the object, found along them and
+        // then between the nearest two -- not their ends, which are points.
+        pg::parallelFor(edges, 512, [&](size_t begin, size_t end) {
+            std::vector<Touch> mine;
+            for (size_t e = begin; e < end; ++e) {
+                const uint32_t a = edges_[2 * e], b = edges_[2 * e + 1];
+                if (w_[a] + w_[b] <= 0.0f) continue;
+                if (!overlaps(glm::min(x_[a], x_[b]), glm::max(x_[a], x_[b]), boxLo, boxHi)) continue;
+                const Vec3 xa = x_[a], along = x_[b] - x_[a];
+                const float len2 = dot(along, along);
+                if (len2 < 1e-12f) continue;
+                const float toMiddle = std::clamp(dot(middle - xa, along) / len2, 0.0f, 1.0f);
+                if (length(xa + along * toMiddle - middle) > reach) continue;
+                const float len = std::sqrt(len2);
+                const int samples = std::clamp(static_cast<int>(std::ceil(len / (0.5f * thin))), 1, 16);
+                const float spacing = 1.0f / static_cast<float>(samples + 1);
+                float best = 1e30f, bestAt = spacing;
+                for (int j = 1; j <= samples; ++j) {
+                    const float u = static_cast<float>(j) * spacing;
+                    const float d = shape.distance(xa + along * u);
+                    if (d < best) {
+                        best = d;
+                        bestAt = u;
+                    }
+                }
+                // No nearer anywhere between them than half the way between
+                // two -- the distance changes no faster than the way along.
+                if (best - 0.5f * spacing * len >= r) continue;
+                float lo = std::max(bestAt - spacing, 0.0f), hi = std::min(bestAt + spacing, 1.0f);
+                for (int it = 0; it < 6; ++it) {
+                    const float u1 = lo + (hi - lo) * 0.382f, u2 = lo + (hi - lo) * 0.618f;
+                    if (shape.distance(xa + along * u1) < shape.distance(xa + along * u2)) {
+                        hi = u2;
+                    } else {
+                        lo = u1;
+                    }
+                }
+                const float u = 0.5f * (lo + hi);
+                if (u < 0.02f || u > 0.98f) continue;
+                const Vec3 at = xa + along * u;
+                const float d = shape.distance(at);
+                if (d >= r) continue;
+                Touch t;
+                t.order = (static_cast<uint64_t>(c) << 40) | e;
+                t.points = {a, b, b};
+                t.weights = {1.0f - u, u, 0.0f};
+                t.collider = static_cast<uint32_t>(c);
+                t.at = at;
+                t.normal = shape.normal(at);
+                t.distance = d;
+                mine.push_back(t);
+            }
+            std::lock_guard<std::mutex> lock(found);
+            touches.insert(touches.end(), mine.begin(), mine.end());
+        });
+        // The faces: where each is nearest the object's middle, inside it --
+        // a ball smaller than a face does not go through it.
+        pg::parallelFor(count, 512, [&](size_t begin, size_t end) {
+            std::vector<Touch> mine;
+            for (size_t f = begin; f < end; ++f) {
+                const uint32_t a = tris_[3 * f], b = tris_[3 * f + 1], q = tris_[3 * f + 2];
+                if (w_[a] + w_[b] + w_[q] <= 0.0f) continue;
+                if (!overlaps(glm::min(glm::min(x_[a], x_[b]), x_[q]), glm::max(glm::max(x_[a], x_[b]), x_[q]), boxLo, boxHi)) {
+                    continue;
+                }
+                Vec3 weights;
+                const Vec3 at = nearestOnTriangle(middle, x_[a], x_[b], x_[q], weights);
+                if (length(at - middle) > reach) continue;
+                if (weights.x < 0.05f || weights.y < 0.05f || weights.z < 0.05f) continue;
+                const float d = shape.distance(at);
+                if (d >= r) continue;
+                Touch t;
+                t.order = (static_cast<uint64_t>(c) << 40) | (1ull << 39) | f;
+                t.points = {a, b, q};
+                t.weights = {weights.x, weights.y, weights.z};
+                t.collider = static_cast<uint32_t>(c);
+                t.at = at;
+                t.normal = shape.normal(at);
+                t.distance = d;
+                mine.push_back(t);
+            }
+            std::lock_guard<std::mutex> lock(found);
+            touches.insert(touches.end(), mine.begin(), mine.end());
+        });
+    }
+    if (touches.empty()) return;
+    // Out, one after another, in the same order on any number of threads;
+    // held back along the object by friction; a piece given what it gave.
+    std::sort(touches.begin(), touches.end(), [](const Touch& p, const Touch& q) { return p.order < q.order; });
+    for (const Touch& t : touches) {
+        const size_t c = t.collider;
+        Vec3 now;
+        float weight = 0.0f;
+        for (int j = 0; j < 3; ++j) {
+            const size_t k = static_cast<size_t>(j);
+            now += x_[t.points[k]] * t.weights[k];
+            weight += w_[t.points[k]] * t.weights[k] * t.weights[k];
+        }
+        if (weight <= 0.0f) continue;
+        const float depth = r - (t.distance + dot(now - t.at, t.normal));
+        if (depth <= 0.0f) continue;
+        const Vec3 moving = drift_.empty() ? Vec3() : kick_[c] + cross(twist_[c], now - shapes_[c].center());
+        const Vec3 surface = scene_.colliders[c].velocityAt(now) + moving;
+        std::array<Vec3, 3> was;
+        for (int j = 0; j < 3; ++j) was[static_cast<size_t>(j)] = x_[t.points[static_cast<size_t>(j)]];
+        const float lambda = depth / weight;
+        for (int j = 0; j < 3; ++j) {
+            const size_t k = static_cast<size_t>(j);
+            x_[t.points[k]] += t.normal * (w_[t.points[k]] * t.weights[k] * lambda);
+        }
+        if (mu > 0.0f) {
+            Vec3 moved = surface * -h;
+            for (int j = 0; j < 3; ++j) {
+                const size_t k = static_cast<size_t>(j);
+                moved += (x_[t.points[k]] - prev_[t.points[k]]) * t.weights[k];
+            }
+            const Vec3 along = moved - t.normal * dot(moved, t.normal);
+            const float slide = length(along);
+            if (slide > 1e-12f) {
+                const float hold = std::min(slide, mu * depth) / weight;
+                const Vec3 way = along * (1.0f / slide);
+                for (int j = 0; j < 3; ++j) {
+                    const size_t k = static_cast<size_t>(j);
+                    x_[t.points[k]] = x_[t.points[k]] - way * (w_[t.points[k]] * t.weights[k] * hold);
+                }
+            }
+        }
+        // Put out of it, its corners do not spring off it.
+        for (int j = 0; j < 3; ++j) {
+            const size_t k = static_cast<size_t>(j);
+            const uint32_t q = t.points[k];
+            if (t.weights[k] < 0.25f || leans_[q]) continue;
+            leans_[q] = 1;
+            leanNormal_[q] = t.normal;
+            leanVelocity_[q] = surface;
+        }
+        // A piece: what the points took of their momentum, it gave.
+        if (scene_.colliders[c].mass > 0.0f && !took.empty()) {
+            Vec3 given;
+            for (int j = 0; j < 3; ++j) {
+                const size_t k = static_cast<size_t>(j);
+                const uint32_t q = t.points[k];
+                if (w_[q] > 0.0f && (j == 0 || t.points[k] != t.points[k - 1])) given += (x_[q] - was[k]) * (1.0f / (w_[q] * h));
+            }
+            took[c] += given;
+            turned[c] += cross(now - shapes_[c].center(), given);
+        }
+    }
 }
 
 void ClothSolver::collide(float h) {
@@ -765,11 +1751,13 @@ void ClothSolver::collide(float h) {
             if (held) touched_[i] = -1;
         }
     });
+    // The edges and the faces too, a thin rod caught between two points.
+    std::vector<Vec3> took(drift_.empty() ? 0 : shapes_.size()), turned(took.size());
+    if (s.faces && !shapes_.empty()) collideFaces(h, took, turned);
     // The pieces that give: what the points they pushed took of their
     // momentum -- in order, point by point, the same on any number of
     // threads -- slows them and turns them; they go on so.
     if (drift_.empty()) return;
-    std::vector<Vec3> took(shapes_.size()), turned(shapes_.size());
     for (size_t i = 0; i < n; ++i) {
         if (touched_[i] < 0) continue;
         const size_t c = static_cast<size_t>(touched_[i]);
@@ -863,7 +1851,11 @@ void ClothSolver::step() {
             leanVelocity_.resize(n);
         }
         if (!balloons_.empty()) solveBalloons(h);
-        if (s.selfCollision && count > 0) selfCollide();
+        if (s.shape > 0.0f) matchShapes(h);
+        if (s.selfCollision) {
+            const bool points = count > 0, faces = s.faces && !edges_.empty();
+            if (points || faces) selfCollide(points, faces);
+        }
         // What moves -- the pieces, animated objects -- where it is at this
         // substep: coming to where the scene has it at the end of the step,
         // as fast as it goes, not jumping there at the first.
@@ -892,6 +1884,14 @@ void ClothSolver::step() {
     }
     time_ = static_cast<float>(frame_ + 1) * s.timeStep;
     ++frame_;
+    // The shape it holds has given way: its links as long as they are in it
+    // -- the dent stays.
+    if (s.shape > 0.0f && s.plasticity > 0.0f) {
+        for (Link& l : links_) {
+            l.rest = length(shapeRest_[l.a] - shapeRest_[l.b]);
+            if (l.limit > 0.0f) l.limit = l.rest * (1.0f + l.give);
+        }
+    }
     // The pieces that gave: where the cloth left them, as against where
     // they would have gone.
     reactions_.clear();
@@ -935,6 +1935,9 @@ void ClothSolver::saveState(StateWriter& out) const {
     out.list(ropeCut_);
     out.list(cut_);
     out.list(reactions_);
+    // The shape it holds, where it has given way.
+    const bool gave = scene_.solver.shape > 0.0f && scene_.solver.plasticity > 0.0f;
+    out.list(gave ? shapeRest_ : std::vector<Vec3>());
 }
 
 bool ClothSolver::loadState(StateReader& in) {
@@ -945,8 +1948,9 @@ bool ClothSolver::loadState(StateReader& in) {
     std::vector<uint8_t> ropeCuts;
     std::vector<uint64_t> cuts;
     std::vector<Reaction> reactions;
+    std::vector<Vec3> shape;
     if (!in.pod(frame) || !in.pod(time) || !in.list(x) || !in.list(v) || !in.list(corners) || !in.list(origins) ||
-        !in.list(ropeCuts) || !in.list(cuts) || !in.list(reactions)) {
+        !in.list(ropeCuts) || !in.list(cuts) || !in.list(reactions) || !in.list(shape)) {
         return false;
     }
     const size_t n0 = x_.size() - tornPoints();
@@ -955,6 +1959,7 @@ bool ClothSolver::loadState(StateReader& in) {
                 ropeCuts.size() == ropeCut_.size() && std::is_sorted(cuts.begin(), cuts.end());
     for (size_t i = 0; i < n && fits; ++i) fits = origins[i] < n0 && (i >= n0 || origins[i] == i);
     for (size_t k = 0; k < corners.size() && fits; ++k) fits = corners[k] < n;
+    fits = fits && (shape.empty() || shape.size() == n);
     if (!fits) return in.fail();
     // The points torn off, as their own are at rest.
     for (size_t i = x_.size(); i < n; ++i) {
@@ -964,6 +1969,7 @@ bool ClothSolver::loadState(StateReader& in) {
     }
     rest_.resize(n);
     pinned_.resize(n);
+    shapeRest_ = shape.empty() ? rest_ : std::move(shape);
     x_ = std::move(x);
     v_ = std::move(v);
     prev_ = x_;
