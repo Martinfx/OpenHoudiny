@@ -1015,6 +1015,9 @@ ${PG_FONT_ARRAYS}}  // namespace pg::editor::theme
     ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp)
   target_include_directories(pgeditortests BEFORE PRIVATE ${imgui_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tools/prototype
                              ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  # FrameJob works on a thread of its own: pthread is no part of libc on
+  # FreeBSD, nor on glibc before 2.34.
+  target_link_libraries(pgeditortests PRIVATE Threads::Threads)
   add_test(NAME editor_ui COMMAND pgeditortests)
   # The editor itself, driven by scripts -- under xvfb, or on the display
   # there is -- as a person would: quitting with changes not saved,
