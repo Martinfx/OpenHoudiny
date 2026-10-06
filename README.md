@@ -239,7 +239,8 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ```bash
 ./build/pgtests            # 690 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 39 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 56 render, barvy ACES a konfigurace OpenColorIO, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 39 USD (zápis i čtení, materiály, instance, objemy), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
 ctest --test-dir build -R python                   # 57 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
-./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy
+./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy, neuložené změny, přepsání souboru, autosave
+ctest --test-dir build -R editor_                  # editor sám, skripty pod xvfb: Quit se změnami, Save As, pád a obnova, Simulate Again
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # měření tvrzení výše
 ./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna

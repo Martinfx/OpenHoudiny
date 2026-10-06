@@ -31,11 +31,19 @@ int processId() {
 #endif
 }
 
-/// Whether the process `pid` -- an editor that kept an autosave -- runs.
+/// Whether the process `pid` -- an editor that kept an autosave -- runs:
+/// one killed but not yet reaped (a zombie) does not.
 bool running(int pid) {
     if (pid <= 0) return false;
 #ifndef _WIN32
-    return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
+    if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) return false;
+    std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+    std::string line;
+    if (stat && std::getline(stat, line)) {
+        const size_t name = line.rfind(')');  // "pid (name) state ..."
+        if (name != std::string::npos && name + 2 < line.size()) return line[name + 2] != 'Z' && line[name + 2] != 'X';
+    }
+    return true;
 #else
     return pid == processId();
 #endif

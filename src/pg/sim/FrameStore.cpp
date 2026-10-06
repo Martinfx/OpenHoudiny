@@ -9,6 +9,8 @@
 #include <climits>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include <system_error>
 
 #ifdef _WIN32
@@ -33,12 +35,20 @@ long processId() {
 #endif
 }
 
-/// Whether the process `pid` runs (one we may not signal does).
+/// Whether the process `pid` runs (one we may not signal does; one killed
+/// but not yet reaped, a zombie, does not).
 bool running(long pid) {
 #ifdef _WIN32
     return pid == processId();  // others' cannot be told: spared
 #else
-    return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
+    if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) return false;
+    std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+    std::string line;
+    if (stat && std::getline(stat, line)) {
+        const size_t name = line.rfind(')');  // "pid (name) state ..."
+        if (name != std::string::npos && name + 2 < line.size()) return line[name + 2] != 'Z' && line[name + 2] != 'X';
+    }
+    return true;
 #endif
 }
 

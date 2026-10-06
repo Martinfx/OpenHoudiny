@@ -1415,7 +1415,7 @@ instrumentované.
 
 Rozhraní editoru má vlastní testy, které nepotřebují okno ani OpenGL:
 [`tests/test_editor_ui.cpp`](../tests/test_editor_ui.cpp), program
-`pgeditortests` (v `ctest` jako `editor_ui`), 8 testů. Dear ImGui v nich
+`pgeditortests` (v `ctest` jako `editor_ui`), 12 testů. Dear ImGui v nich
 běží jen v paměti: snímky se staví, vstup se do nich vkládá, nic se
 nekreslí. Ověřují:
 
@@ -1430,7 +1430,30 @@ nekreslí. Ověřují:
 - záložka v hlavičce panelu se přepne kliknutím;
 - jména uzlů v oddálené síti nepřekryjí žádný uzel ani jiné jméno: síť
   120 uzlů hustší, než jsou jména široká, a dva uzly nad sebou, kde jméno
-  horního musí jít napravo.
+  horního musí jít napravo;
+- neuložené změny: bez změn se akce provede hned. Se změnami přijde otázka:
+  Escape nic neudělá, D změny zahodí a Enter uloží a pak pokračuje. U sítě
+  bez souboru akce počká, až se soubor vybere a zapíše;
+- uložení přes existující soubor se nejdřív zeptá, Enter podruhé ho
+  přepíše a Escape vezme zpět otázku, ne dialog;
+- autosave se zapíše hned po změně a pak nejvýš po 30 s. Záloha editoru,
+  který ještě běží, se nenabízí, záloha spadlého ano (včetně toho, čeho je
+  a jaký má text). Po uložení nebo zahození záloha zmizí.
+
+Celý editor pak zkouší `ctest` skripty pod xvfb
+([`tests/editor/run_editor.py`](../tests/editor/run_editor.py), testy
+`editor_*` v buildu s editorem). Skript se přehraje do okna a co editor
+udělal, se čte ze souborů, které nechal: co uložil, co odložil k obnově,
+a snímek obrazovky, který vznikne, jen když editor ještě běží.
+
+- **Quit se změnami:** Save uloží a skončí, Don't Save soubor nechá a záloha
+  zmizí, Cancel editor nechá běžet.
+- **Příklad bez souboru:** při ukončení se uloží přes Save As. Podruhé se
+  zeptá a Enter soubor přepíše.
+- **Pád:** editor se zabije (`kill -9`), spustí se znovu z jiné složky,
+  Enter síť obnoví a Ctrl+S ji uloží do původního souboru. Složka záloh
+  pak zůstane prázdná.
+- **Simulate Again:** čtyřikrát za sebou, zatímco táborák simuluje.
 
 ## 10. Jak přidat uzel
 

@@ -1012,6 +1012,23 @@ ${PG_FONT_ARRAYS}}  // namespace pg::editor::theme
   target_include_directories(pgeditortests BEFORE PRIVATE ${imgui_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tools/prototype
                              ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   add_test(NAME editor_ui COMMAND pgeditortests)
+  # The editor itself, driven by scripts -- under xvfb, or on the display
+  # there is -- as a person would: quitting with changes not saved,
+  # saving as, a crash recovered, Simulate Again (tests/editor/run_editor.py).
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  find_program(PG_XVFB_RUN xvfb-run)
+  if(Python3_Interpreter_FOUND AND (PG_XVFB_RUN OR DEFINED ENV{DISPLAY}))
+    if(NOT PG_XVFB_RUN)
+      set(PG_XVFB_RUN "")
+    endif()
+    foreach(case quit_asks_and_saves quit_lets_go quit_cancelled example_saved_as_then_replaced crash_recovered
+                 simulate_again)
+      add_test(NAME editor_${case}
+               COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/editor/run_editor.py
+                       --prototype $<TARGET_FILE:prototype> --xvfb "${PG_XVFB_RUN}" --case ${case})
+      set_tests_properties(editor_${case} PROPERTIES TIMEOUT 600)
+    endforeach()
+  endif()
 endif()
 
 # --- Python -------------------------------------------------------------------
