@@ -36,7 +36,8 @@ Zapisovač vznikl podle veřejné specifikace, bez knihovny USD (clean room).
 - **Soubor s `$F4`:** `--export 'geo.$F4.usda'` zapíše každý snímek do vlastního
   souboru, jen geometrii, jako u `.ply` a `.obj`.
 - **Editor:** položka **File › Export USD Scene…** zapíše všechny snímky, které
-  jsou v cache. **File › Export Geometry…** s příponou `.usda` zapíše geometrii
+  jsou v cache — na pozadí, s oknem průběhu; **Stop** nechá platnou scénu ze
+  snímků zapsaných do té doby. **File › Export Geometry…** s příponou `.usda` zapíše geometrii
   jednoho snímku s jejími materiály, s `.mtlx` jen materiály ([materialx.md](materialx.md)).
 
 Kde scénu otevřít:

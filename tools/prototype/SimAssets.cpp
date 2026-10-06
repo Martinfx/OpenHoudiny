@@ -139,7 +139,7 @@ bool SimWorkspace::commitAsset(const std::string& chosen) {
     return true;
 }
 
-void SimWorkspace::feedAssetInputs() {
+std::vector<GeometryPtr> SimWorkspace::assetInputs() {
     std::vector<GeometryPtr> inputs;
     if (!levels_.empty()) {
         Level& up = levels_.back();
@@ -151,8 +151,10 @@ void SimWorkspace::feedAssetInputs() {
                                         : up.geometry->cook(in.front().from, shownFrame(), compiled_.world.timeStep));
         }
     }
-    geometry_->setInputs(std::move(inputs));
+    return inputs;
 }
+
+void SimWorkspace::feedAssetInputs() { geometry_->setInputs(assetInputs()); }
 
 void SimWorkspace::makeAssetDialog() {
     if (makeAssetOpen_) {

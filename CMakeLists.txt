@@ -874,6 +874,7 @@ if(PG_BUILD_GUI)
     tools/prototype/App.cpp
     tools/prototype/Bake.cpp
     tools/prototype/Editor.cpp
+    tools/prototype/FrameJob.cpp
     tools/prototype/FrameRender.cpp
     tools/prototype/Gizmo.cpp
     tools/prototype/NodeCanvas.cpp
@@ -998,6 +999,7 @@ ${PG_FONT_ARRAYS}}  // namespace pg::editor::theme
   add_executable(pgeditortests
     tests/test_main.cpp
     tests/test_editor_ui.cpp
+    tools/prototype/FrameJob.cpp
     tools/prototype/NodeCanvas.cpp
     tools/prototype/Recovery.cpp
     tools/prototype/Theme.cpp
@@ -1014,7 +1016,8 @@ ${PG_FONT_ARRAYS}}  // namespace pg::editor::theme
   add_test(NAME editor_ui COMMAND pgeditortests)
   # The editor itself, driven by scripts -- under xvfb, or on the display
   # there is -- as a person would: quitting with changes not saved,
-  # saving as, a crash recovered, Simulate Again (tests/editor/run_editor.py).
+  # saving as, a crash recovered, Simulate Again, the cache saved and a scene
+  # exported while the window plays on (tests/editor/run_editor.py).
   find_package(Python3 COMPONENTS Interpreter QUIET)
   find_program(PG_XVFB_RUN xvfb-run)
   if(Python3_Interpreter_FOUND AND (PG_XVFB_RUN OR DEFINED ENV{DISPLAY}))
@@ -1022,7 +1025,7 @@ ${PG_FONT_ARRAYS}}  // namespace pg::editor::theme
       set(PG_XVFB_RUN "")
     endif()
     foreach(case quit_asks_and_saves quit_lets_go quit_cancelled example_saved_as_then_replaced crash_recovered
-                 simulate_again)
+                 simulate_again saved_and_exported_in_background)
       add_test(NAME editor_${case}
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/editor/run_editor.py
                        --prototype $<TARGET_FILE:prototype> --xvfb "${PG_XVFB_RUN}" --case ${case})

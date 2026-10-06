@@ -18,6 +18,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <cmath>
@@ -357,6 +358,32 @@ bool readFile(const std::string& path, std::string& out) {
     return true;
 }
 
+/// For a FrameJob: false, with why, once the simulation it began with was
+/// thrown away -- the frames from then on would be another's.
+bool sameRun(const SimRunner& runner, unsigned generation, int frame, std::string& error) {
+    if (runner.generation() == generation) return true;
+    error = "The simulation started again at frame " + std::to_string(frame);
+    return false;
+}
+
+/// What the export of a shot takes of what was compiled, frame by frame --
+/// the camera, if there is one, and the look: a copy of its own, read on a
+/// FrameJob's thread while the network may compile again.
+struct Shot {
+    bool hasCamera = false;
+    std::vector<sim::Camera> cameras;  ///< frame 1 first
+    std::vector<sim::Look> looks;
+
+    Shot(const sim::Compiled& c, int frames) : hasCamera(c.hasCamera) {
+        for (int f = 1; f <= frames; ++f) {
+            if (hasCamera) cameras.push_back(c.cameraAt(f));
+            looks.push_back(c.lookAt(f));
+        }
+    }
+    const sim::Camera* camera(int frame) const { return hasCamera ? &cameras[static_cast<size_t>(frame - 1)] : nullptr; }
+    const sim::Look& look(int frame) const { return looks[static_cast<size_t>(frame - 1)]; }
+};
+
 }  // namespace
 
 SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
@@ -661,6 +688,11 @@ void SimWorkspace::update(float dt) {
     }
     recompile();
     history_.track(networkKey(), settled(), ImGui::GetTime(), [this] { return stateText(); });
+    {
+        std::string done;
+        bool failed = false;
+        if (frameJob_.takeResult(done, failed)) setMessage(done, failed);
+    }
     if (synchronous_) runner_->step();
     // A bake, and frames landing on disk: twice a second.
     if (ImGui::GetTime() - bakePolled_ >= 0.5) {
@@ -1758,12 +1790,13 @@ void SimWorkspace::networkOverview() {
                 ImGui::SetItemTooltip("%s", runner_->spillError().c_str());
             }
             if (runner_->fromDisk()) {
-                fs::path from(cacheFolder_);
+                const std::string folder = runner_->folder();
+                fs::path from(folder);
                 if (!from.has_filename()) from = from.parent_path();  // "cache/"
                 ui::rowStart("");
                 ImGui::TextDisabled("from %s", from.filename().string().c_str());
                 ImGui::SetItemTooltip("Read from %s rather than simulated -- until what is simulated changes",
-                                      cacheFolder_.c_str());
+                                      folder.c_str());
             } else if (runner_->stepMs() > 0.0) {
                 ui::row("Step", "%.0f ms", runner_->stepMs());
             }
@@ -2167,6 +2200,7 @@ void SimWorkspace::helpMenu() {
 void SimWorkspace::popups() {
     // A render to the end shows its last frame.
     job_.draw(jobFinal_ && jobShown_ ? renderTexture_ : 0u, renderTextureW_, renderTextureH_);
+    frameJob_.draw();
     makeAssetDialog();
     wedgeDialog();
     std::string chosen;
@@ -2602,36 +2636,62 @@ std::string SimWorkspace::stem() const {
 
 bool SimWorkspace::saveCache(const std::string& folder) {
     const int cached = runner_->cached();
-    std::string error;
-    uintmax_t bytes = 0;
-    int written = 0;
-    for (int f = 1; f <= cached; ++f) {
-        const auto frame = runner_->frame(f);
-        if (!frame) break;
-        if (!sim::writeFrame(*frame, folder, error)) {
-            setMessage(error, true);
-            return false;
-        }
-        std::error_code ec;
-        bytes += fs::file_size(sim::frameFile(folder, frame->number), ec);
-        ++written;
+    if (cached == 0) {
+        setMessage("No frame to save yet", true);
+        return false;
     }
-    // The frames of a longer cache saved there before are not this one's.
     std::error_code ec;
-    for (int f = written + 1; fs::remove(sim::frameFile(folder, f), ec); ++f) {
+    if (runner_->fromDisk() && fs::equivalent(runner_->folder(), folder, ec)) {
+        setMessage("The frames are read from " + shownPath(folder) + " already");
+        return false;
     }
+    // What the cache says of itself, as things are now: the frames are
+    // written on the job's thread while the window goes on.
     sim::CacheInfo info;
-    info.frames = written;
     info.fps = 1.0f / compiled_.world.timeStep;
-    info.network = sim::networkHash(net_.save());
-    if (written == 0 || !sim::writeCacheInfo(folder, info, error)) {
-        setMessage(written == 0 ? std::string("No frame to save yet") : error, true);
+    info.network = sim::networkHash(stateText());
+    const int simulated = compiled_.frames;
+    const std::string shown = shownPath(folder);
+    const SimRunner* runner = runner_.get();
+    const unsigned generation = runner_->generation();
+    auto bytes = std::make_shared<std::atomic<uintmax_t>>(0);
+    if (!frameJob_.start(
+            "Saving the cache", shown, 1, cached,
+            [runner, generation, folder, bytes](int f, std::string& error) {
+                const auto frame = runner->frame(f);
+                if (!sameRun(*runner, generation, f, error)) return false;
+                if (!frame) {
+                    error = "Frame " + std::to_string(f) + " is not there";
+                    return false;
+                }
+                std::error_code ec;
+                // A cache saved there before says what it holds no more once
+                // its first frame is written over: cache.txt comes back, of the
+                // frames written, at the end -- a cache half replaced is none.
+                if (f == 1) fs::remove(fs::path(folder) / "cache.txt", ec);
+                if (!sim::writeFrame(*frame, folder, error)) return false;
+                *bytes += fs::file_size(sim::frameFile(folder, frame->number), ec);
+                return true;
+            },
+            [folder, info, simulated, shown, bytes](int written, bool stopped, std::string& message) mutable {
+                if (written == 0) {
+                    message = stopped ? "Stopped before the first frame: nothing saved" : "No frame saved";
+                    return stopped;
+                }
+                // The frames of a longer cache saved there before are not this one's.
+                std::error_code ec;
+                for (int f = written + 1; fs::remove(sim::frameFile(folder, f), ec); ++f) {
+                }
+                info.frames = written;
+                if (!sim::writeCacheInfo(folder, info, message)) return false;
+                message = "Saved " + std::to_string(written) + " frames into " + shown + " (" + ui::sizeText(*bytes) + ")";
+                if (stopped) message += " -- stopped there";
+                else if (written < simulated) message += " -- of " + std::to_string(simulated) + ": the rest are not simulated yet";
+                return true;
+            })) {
         return false;
     }
     cacheFolder_ = folder;
-    std::string text = "Saved " + std::to_string(written) + " frames into " + shownPath(folder) + " (" + ui::sizeText(bytes) + ")";
-    if (written < compiled_.frames) text += " -- of " + std::to_string(compiled_.frames) + ": the rest are not simulated yet";
-    setMessage(text);
     return true;
 }
 
@@ -2979,30 +3039,48 @@ bool SimWorkspace::exportGeometry(int id, const std::string& path) {
     return true;
 }
 
+std::shared_ptr<sim::GeometryGraph> SimWorkspace::graphForJob() {
+    auto graph = std::make_shared<sim::GeometryGraph>();
+    const SimRunner* runner = runner_.get();
+    graph->setFrames([runner](int frame) { return runner->frame(frame); });
+    graph->sync(net_, folder());
+    if (editingAsset()) graph->setInputs(assetInputs());
+    return graph;
+}
+
 bool SimWorkspace::exportFrames(int id, const std::string& pattern) {
     const sim::Node* n = net_.node(id);
     if (!n || !geometry_->contains(id)) return false;
-    const int cached = runner_->cached();
-    std::string error, last;
-    int written = 0;
-    for (int f = 1; f <= cached; ++f) {
-        const GeometryPtr geo = geometry_->cook(id, f, compiled_.world.timeStep);
-        const std::string why = geometry_->error(id);
-        if (!geo || !why.empty()) {
-            setMessage(n->name + " at frame " + std::to_string(f) + ": " + (why.empty() ? "no geometry" : why), true);
-            return false;
-        }
-        last = io::framePath(pattern, f);
-        std::error_code ec;
-        if (fs::path(last).has_parent_path()) fs::create_directories(fs::path(last).parent_path(), ec);
-        if (!sim::exportGeometry(*geo, last, error)) {
-            setMessage(error, true);
-            return false;
-        }
-        ++written;
-    }
-    setMessage("Exported " + std::to_string(written) + " frames of " + n->name + ", the last " + shownPath(last));
-    return written > 0;
+    const std::shared_ptr<sim::GeometryGraph> graph = graphForJob();
+    const SimRunner* runner = runner_.get();
+    const unsigned generation = runner_->generation();
+    const float timeStep = compiled_.world.timeStep;
+    const std::string name = n->name;
+    auto last = std::make_shared<std::string>();
+    return frameJob_.start(
+        "Exporting the frames of " + name, shownPath(pattern), 1, runner_->cached(),
+        [graph, runner, generation, id, timeStep, pattern, name, last](int f, std::string& error) {
+            const GeometryPtr geo = graph->cook(id, f, timeStep);
+            if (!sameRun(*runner, generation, f, error)) return false;
+            const std::string why = graph->error(id);
+            if (!geo || !why.empty()) {
+                error = name + " at frame " + std::to_string(f) + ": " + (why.empty() ? "no geometry" : why);
+                return false;
+            }
+            *last = io::framePath(pattern, f);
+            std::error_code ec;
+            if (fs::path(*last).has_parent_path()) fs::create_directories(fs::path(*last).parent_path(), ec);
+            return sim::exportGeometry(*geo, *last, error);
+        },
+        [name, last](int written, bool stopped, std::string& message) {
+            if (written == 0) {
+                message = stopped ? "Stopped before the first frame: nothing exported" : "No frame of " + name + " exported";
+                return stopped;
+            }
+            message = "Exported " + std::to_string(written) + " frames of " + name + ", the last " + shownPath(*last);
+            if (stopped) message += " -- stopped there";
+            return true;
+        });
 }
 
 void SimWorkspace::chooseUsd() {
@@ -3014,28 +3092,36 @@ bool SimWorkspace::exportUsd(const std::string& path) {
     const int shown = net_.displayed();
     const sim::Node* n = shown ? net_.node(shown) : nullptr;
     const bool withGeometry = n && geometry_->contains(shown);
-    sim::UsdExport usd(path, withGeometry ? n->name : std::string("geometry"), 1.0f / compiled_.world.timeStep);
     const int cached = runner_->cached();
-    std::string error;
-    for (int f = 1; f <= cached; ++f) {
-        const std::shared_ptr<const sim::Frame> frame = runner_->frame(f);
-        if (!frame) continue;
-        const GeometryPtr geo = withGeometry ? geometry_->cook(shown, f, compiled_.world.timeStep) : nullptr;
-        if (!usd.add(*frame, geo, compiled_.hasCamera ? &compiled_.cameraAt(f) : nullptr, compiled_.lookAt(f), error)) {
-            setMessage(error, true);
-            return false;
-        }
-    }
-    if (!usd.finish(error)) {
-        setMessage(error, true);
-        return false;
-    }
-    std::string text = "Exported " + std::to_string(usd.frames()) + " frames as USD to " + shownPath(path);
-    if (usd.bodies() > 0) text += ", " + std::to_string(usd.bodies()) + " bodies";
-    if (usd.frameFiles() > 0) text += ", what changes every frame in " + std::to_string(usd.frameFiles()) + " layers beside it";
-    if (usd.gasFiles() > 0) text += ", the gas in " + std::to_string(usd.gasFiles()) + " VDB files";
-    setMessage(text);
-    return true;
+    auto usd = std::make_shared<sim::UsdExport>(path, withGeometry ? n->name : std::string("geometry"),
+                                                1.0f / compiled_.world.timeStep);
+    const std::shared_ptr<sim::GeometryGraph> graph = withGeometry ? graphForJob() : nullptr;
+    auto shot = std::make_shared<const Shot>(compiled_, cached);
+    const SimRunner* runner = runner_.get();
+    const unsigned generation = runner_->generation();
+    const float timeStep = compiled_.world.timeStep;
+    const std::string where = shownPath(path);
+    return frameJob_.start(
+        "Exporting USD", where, 1, cached,
+        [usd, graph, shot, runner, generation, shown, timeStep](int f, std::string& error) {
+            const std::shared_ptr<const sim::Frame> frame = runner->frame(f);
+            const GeometryPtr geo = frame && graph ? graph->cook(shown, f, timeStep) : nullptr;
+            if (!sameRun(*runner, generation, f, error)) return false;
+            return !frame || usd->add(*frame, geo, shot->camera(f), shot->look(f), error);
+        },
+        [usd, where](int, bool stopped, std::string& message) {
+            if (stopped && usd->frames() == 0) {
+                message = "Stopped before the first frame: nothing exported";
+                return true;
+            }
+            if (!usd->finish(message)) return false;
+            message = "Exported " + std::to_string(usd->frames()) + " frames as USD to " + where;
+            if (usd->bodies() > 0) message += ", " + std::to_string(usd->bodies()) + " bodies";
+            if (usd->frameFiles() > 0) message += ", what changes every frame in " + std::to_string(usd->frameFiles()) + " layers beside it";
+            if (usd->gasFiles() > 0) message += ", the gas in " + std::to_string(usd->gasFiles()) + " VDB files";
+            if (stopped) message += " -- stopped there";
+            return true;
+        });
 }
 
 void SimWorkspace::chooseAlembic() {
@@ -3047,27 +3133,35 @@ bool SimWorkspace::exportAlembic(const std::string& path) {
     const int shown = net_.displayed();
     const sim::Node* n = shown ? net_.node(shown) : nullptr;
     const bool withGeometry = n && geometry_->contains(shown);
-    sim::AbcExport abc(path, withGeometry ? n->name : std::string("geometry"), 1.0f / compiled_.world.timeStep);
     const int cached = runner_->cached();
-    std::string error;
-    for (int f = 1; f <= cached; ++f) {
-        const std::shared_ptr<const sim::Frame> frame = runner_->frame(f);
-        if (!frame) continue;
-        const GeometryPtr geo = withGeometry ? geometry_->cook(shown, f, compiled_.world.timeStep) : nullptr;
-        if (!abc.add(*frame, geo, compiled_.hasCamera ? &compiled_.cameraAt(f) : nullptr, compiled_.lookAt(f), error)) {
-            setMessage(error, true);
-            return false;
-        }
-    }
-    if (!abc.finish(error)) {
-        setMessage(error, true);
-        return false;
-    }
-    std::string text = "Exported " + std::to_string(abc.frames()) + " frames as Alembic to " + shownPath(path);
-    if (abc.bodies() > 0) text += ", " + std::to_string(abc.bodies()) + " bodies";
-    if (abc.gasFiles() > 0) text += ", the gas in " + std::to_string(abc.gasFiles()) + " VDB files";
-    setMessage(text);
-    return true;
+    auto abc = std::make_shared<sim::AbcExport>(path, withGeometry ? n->name : std::string("geometry"),
+                                                1.0f / compiled_.world.timeStep);
+    const std::shared_ptr<sim::GeometryGraph> graph = withGeometry ? graphForJob() : nullptr;
+    auto shot = std::make_shared<const Shot>(compiled_, cached);
+    const SimRunner* runner = runner_.get();
+    const unsigned generation = runner_->generation();
+    const float timeStep = compiled_.world.timeStep;
+    const std::string where = shownPath(path);
+    return frameJob_.start(
+        "Exporting Alembic", where, 1, cached,
+        [abc, graph, shot, runner, generation, shown, timeStep](int f, std::string& error) {
+            const std::shared_ptr<const sim::Frame> frame = runner->frame(f);
+            const GeometryPtr geo = frame && graph ? graph->cook(shown, f, timeStep) : nullptr;
+            if (!sameRun(*runner, generation, f, error)) return false;
+            return !frame || abc->add(*frame, geo, shot->camera(f), shot->look(f), error);
+        },
+        [abc, where](int, bool stopped, std::string& message) {
+            if (stopped && abc->frames() == 0) {
+                message = "Stopped before the first frame: nothing exported";
+                return true;
+            }
+            if (!abc->finish(message)) return false;
+            message = "Exported " + std::to_string(abc->frames()) + " frames as Alembic to " + where;
+            if (abc->bodies() > 0) message += ", " + std::to_string(abc->bodies()) + " bodies";
+            if (abc->gasFiles() > 0) message += ", the gas in " + std::to_string(abc->gasFiles()) + " VDB files";
+            if (stopped) message += " -- stopped there";
+            return true;
+        });
 }
 
 }  // namespace pg::editor

@@ -8,6 +8,7 @@
 #   python3 tests/editor/run_editor.py --prototype build-editor/prototype --case all
 import argparse
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -168,8 +169,34 @@ def simulate_again(ed, folder):
     check(os.path.exists(os.path.join(folder, "after.png")), "the editor did not run on after Simulate Again")
 
 
+def saved_and_exported_in_background(ed, folder):
+    # Simulation > Save Cache to Disk (the menu at (234, 13), the item at
+    # (262, 178)), then File > Export USD Scene (the menu at (134, 13), the
+    # item at (179, 325)), stopped with Escape as it writes -- or after, if
+    # it was quicker. Enter takes the folder and the file the dialogs offer.
+    # Each works on a thread of its own, the window playing on; what it
+    # leaves holds together however far it got.
+    save = "click 234 13\nwait 2\nclick 262 178\nwait 6\nkey enter\nwait 20\n"
+    usd = "click 134 13\nwait 2\nclick 179 325\nwait 6\nkey enter\nwait 2\nkey escape\nwait 20\n"
+    code = ed.run(folder, ["--example", "campfire", "--recovery", "rec"], "wait 60\n" + save + usd + "shot after.png\n")
+    check(code == 0, "the editor exited with %d" % code)
+    check(os.path.exists(os.path.join(folder, "after.png")), "the editor did not run on after exporting")
+    cache = os.path.join(folder, "campfire_cache")
+    check(os.path.exists(os.path.join(cache, "cache.txt")), "Save Cache wrote no cache.txt")
+    said = re.search(r"^frames (\d+)$", read(os.path.join(cache, "cache.txt")), re.M)
+    frames = [f for f in os.listdir(cache) if f.endswith(".pgframe")]
+    check(said and int(said.group(1)) > 0 and int(said.group(1)) == len(frames),
+          "cache.txt says %s frames, the folder holds %d" % (said.group(1) if said else "no", len(frames)))
+    usda = os.path.join(folder, "campfire.usda")
+    check(os.path.exists(usda), "Export USD Scene wrote no campfire.usda")
+    end = re.search(r"endTimeCode = (\d+)", read(usda))
+    gas = os.listdir(os.path.join(folder, "campfire_gas")) if os.path.isdir(os.path.join(folder, "campfire_gas")) else []
+    check(end and int(end.group(1)) > 0 and int(end.group(1)) == len(gas),
+          "the scene ends at frame %s, with %d VDB files beside it" % (end.group(1) if end else "none", len(gas)))
+
+
 CASES = {f.__name__: f for f in (quit_asks_and_saves, quit_lets_go, quit_cancelled, example_saved_as_then_replaced,
-                                   crash_recovered, simulate_again)}
+                                   crash_recovered, simulate_again, saved_and_exported_in_background)}
 
 
 def main():

@@ -3,6 +3,7 @@
 // the menus and the node canvas do can be checked where there is no display.
 #include "test_framework.h"
 
+#include "FrameJob.h"
 #include "NodeCanvas.h"
 #include "Recovery.h"
 #include "Theme.h"
@@ -11,12 +12,15 @@
 
 #include "imgui.h"
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace pg::editor::theme {
@@ -698,3 +702,129 @@ TEST(state_keys_change_with_an_edit_and_with_a_node_moved) {
     nodes[1].x += 1.0f;
     CHECK(stateKey(7, nodes) != a);
 }
+
+// --- FrameJob: work frame by frame on a thread of its own -------------------------------------
+
+namespace {
+
+/// What a FrameJob came to, waited for: false if it took longer than `seconds`.
+bool resultOf(FrameJob& job, std::string& message, bool& failed, double seconds = 10.0) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+    while (std::chrono::steady_clock::now() < until) {
+        if (job.takeResult(message, failed)) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+}
+
+}  // namespace
+
+TEST(frame_job_does_every_frame_in_turn_then_tells_what_came_of_it) {
+    FrameJob job;
+    std::vector<int> frames;
+    int finishedWith = -1;
+    bool finishedStopped = true;
+    CHECK(job.start("Saving", "cache", 3, 7,
+                    [&](int f, std::string&) {
+                        frames.push_back(f);
+                        return true;
+                    },
+                    [&](int done, bool stopped, std::string& message) {
+                        finishedWith = done;
+                        finishedStopped = stopped;
+                        message = "saved " + std::to_string(done);
+                        return true;
+                    }));
+    std::string message;
+    bool failed = true;
+    CHECK(resultOf(job, message, failed));
+    CHECK_EQ(frames, (std::vector<int>{3, 4, 5, 6, 7}));
+    CHECK_EQ(finishedWith, 5);
+    CHECK(!finishedStopped);
+    CHECK_EQ(message, std::string("saved 5"));
+    CHECK(!failed);
+    CHECK(!job.running());
+    CHECK(!job.takeResult(message, failed));  // told once
+}
+
+TEST(frame_job_stopped_ends_after_the_frame_it_is_on_and_keeps_what_was_done) {
+    FrameJob job;
+    std::atomic<int> stepped{0};
+    int finishedWith = -1;
+    bool finishedStopped = false;
+    CHECK(job.start("Exporting", "shot.usda", 1, 100000,
+                    [&](int, std::string&) {
+                        ++stepped;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                        return true;
+                    },
+                    [&](int done, bool stopped, std::string& message) {
+                        finishedWith = done;
+                        finishedStopped = stopped;
+                        message = "exported";
+                        return true;
+                    }));
+    CHECK(!job.start("Again", "x", 1, 1, [](int, std::string&) { return true; },
+                     [](int, bool, std::string&) { return true; }));  // one at a time
+    while (stepped < 3) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    job.stop();
+    std::string message;
+    bool failed = true;
+    CHECK(resultOf(job, message, failed));
+    CHECK(finishedStopped);
+    CHECK_EQ(finishedWith, stepped.load());
+    CHECK(finishedWith >= 3 && finishedWith < 100000);
+    CHECK(!failed);
+    // Ended, it starts again.
+    CHECK(job.start("Again", "x", 1, 1, [](int, std::string&) { return true; },
+                    [](int, bool, std::string& m) {
+                        m = "again";
+                        return true;
+                    }));
+    CHECK(resultOf(job, message, failed));
+    CHECK_EQ(message, std::string("again"));
+}
+
+TEST(frame_job_frame_that_fails_ends_it_with_why_and_how_far_it_got) {
+    FrameJob job;
+    int finishedWith = -1;
+    CHECK(job.start("Saving", "cache", 1, 10,
+                    [](int f, std::string& error) {
+                        if (f < 3) return true;
+                        error = "disk full";
+                        return false;
+                    },
+                    [&](int done, bool, std::string& message) {
+                        finishedWith = done;  // what was written is still made whole
+                        message = "saved";
+                        return true;
+                    }));
+    std::string message;
+    bool failed = false;
+    CHECK(resultOf(job, message, failed));
+    CHECK_EQ(finishedWith, 2);
+    CHECK(failed);
+    CHECK_EQ(message, std::string("disk full -- after 2 frames"));
+}
+
+TEST(frame_job_gone_while_it_runs_stops_it_and_waits) {
+    std::atomic<int> stepped{0};
+    std::atomic<bool> stopped{false};
+    {
+        FrameJob job;
+        CHECK(job.start("Exporting", "x", 1, 1000000,
+                        [&](int, std::string&) {
+                            ++stepped;
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                            return true;
+                        },
+                        [&](int, bool s, std::string&) {
+                            stopped = s;
+                            return true;
+                        }));
+        while (stepped < 2) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(stopped);  // finished, as stopped, before the job was gone
+    CHECK(stepped < 1000000);
+}
+

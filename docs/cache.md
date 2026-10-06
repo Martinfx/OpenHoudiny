@@ -30,13 +30,18 @@ rendererů.
 V editoru:
 
 1. **Simulation › Save Cache to Disk…** — složka (vybraná, nebo napsaná
-   nová); uloží všechny spočítané snímky.
+   nová); uloží všechny spočítané snímky. Zapisují se na pozadí: okno
+   průběhu ukáže, kolik snímků je venku a kolik času zbývá, a editor mezitím
+   kreslí a přehrává dál. **Stop** (nebo Escape) skončí po rozepsaném snímku;
+   co je zapsané, zůstane jako platná kratší cache (`cache.txt` uvádí jen
+   ty snímky). Do složky, ze které se snímky právě čtou, se neukládá.
 2. **Simulation › Load Cache from Disk…** — snímky ze složky nahradí
    simulaci. Přehled sítě ukáže „from *složka*“, stavový řádek „from disk“.
 3. **File › Export Geometry Frames…** — geometrie zobrazeného uzlu, soubor
    na snímek (`$F4` v názvu je číslo snímku). Totéž pro kterýkoli
    geometrický uzel: pravé tlačítko na uzlu › **Export Geometry Frames…**.
-   Položka **Export Geometry…** zapíše jen snímek na obrazovce.
+   Také na pozadí, s oknem průběhu a tlačítkem Stop. Položka
+   **Export Geometry…** zapíše jen snímek na obrazovce.
 
 Příklad `campfire_vdb` je táborák s uzlem Gas Volume (`volumes`), který
 vrací plyn jako tři objemy: `density` (kouř), `temperature` a `flame`.

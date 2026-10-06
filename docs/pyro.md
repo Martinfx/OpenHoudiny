@@ -252,7 +252,8 @@ tažení, **Space**, **Home**, **End**, šipky) pak nic nepočítají znovu.
 - **Simulation › Simulate Ahead** vypne počítání dopředu,
   **Simulate Again** zahodí cache a začne znovu. Velikost cache,
   odkládání na disk i Simulate Ahead zůstanou, jak byly.
-- **Simulation › Save Cache to Disk** uloží spočítané snímky do složky,
+- **Simulation › Save Cache to Disk** uloží spočítané snímky do složky
+  (na pozadí, s oknem průběhu a tlačítkem Stop),
   **Load Cache from Disk** je odtamtud vezme místo simulace (na disku mají
   díky vynechaným nulám zlomek velikosti, [cache.md](cache.md)).
 
@@ -295,7 +296,11 @@ Image** uloží snímek, **Render Frames** celý záběr jako očíslované PNG
 a **Render Video** celý záběr do videa — obojí po snímcích na pozadí, s oknem
 průběhu a tlačítkem Stop, a kamerou, pokud ji síť má ([render.md](render.md)). **Export Geometry** a **Export Geometry Frames** zapíšou
 geometrii zobrazeného uzlu do PLY, OBJ nebo OpenVDB — snímek na obrazovce,
-nebo všechny ([cache.md](cache.md)). Dialog souborů ukazuje složky a soubory
+nebo všechny ([cache.md](cache.md)). Všechny snímky — Export Geometry Frames,
+**Export USD Scene**, **Export Alembic** i Save Cache — se zapisují na pozadí
+s oknem průběhu: editor mezitím kreslí a přehrává, síť se ale do konce
+nemění. **Stop** skončí po rozepsaném snímku a to, co je venku, zůstane
+celé: cache, scéna i archiv končí posledním zapsaným snímkem. Dialog souborů ukazuje složky a soubory
 dané přípony a cestu jde napsat; kde se vybírá složka, vezme i tu otevřenou.
 
 **Ctrl+Z / Ctrl+Shift+Z** vrací celé stavy sítě. Tah posuvníkem nebo uzlem

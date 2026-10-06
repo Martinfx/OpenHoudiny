@@ -41,6 +41,7 @@
 // its name -- to show on the asset's node.
 //
 #include "Bake.h"
+#include "FrameJob.h"
 #include "FrameRender.h"
 #include "Gizmo.h"
 #include "NodeCanvas.h"
@@ -168,6 +169,10 @@ private:
     /// The instance's inputs, at the frame on screen, into the Asset Input
     /// nodes of the inside edited.
     void feedAssetInputs();
+    /// What comes into the asset being edited, as its instance gets it at the frame shown.
+    std::vector<GeometryPtr> assetInputs();
+    /// A graph of its own for a FrameJob: the network as it is now, cooked on the job's thread.
+    std::shared_ptr<sim::GeometryGraph> graphForJob();
     /// The dialog of Make Asset: a name for the selected nodes as one asset.
     void makeAssetDialog();
     /// The asset's own settings -- label, help, what it promotes -- where
@@ -802,6 +807,9 @@ private:
 
     // Rendering.
     RenderJob job_;
+    /// Saving the cache, exporting frames, USD, Alembic: on a thread of
+    /// their own (it reads runner_, declared before it, so gone after it).
+    FrameJob frameJob_;
     int jobWidth_ = 0, jobHeight_ = 0;  ///< the size of the job's frames, fixed when it starts
     int jobReturnFrame_ = 1;            ///< the play head, put back when the job ends
     bool jobWasPlaying_ = false;

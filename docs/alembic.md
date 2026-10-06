@@ -19,7 +19,8 @@ Soubory, které zapíše, čte Blender 4.5 (Alembic 1.8.3) a soubory Blenderu
 ```
 
 V editoru:
-- **File › Export Alembic…** zapíše záběr ze snímků v cache.
+- **File › Export Alembic…** zapíše záběr ze snímků v cache — na pozadí,
+  s oknem průběhu; **Stop** nechá platný archiv ze snímků zapsaných do té doby.
 - **Shift+A › Geometry › Alembic Import:** geometrie ze souboru.
 - **Shift+A › Render › Alembic Camera:** kamera ze souboru do vstupu Camera
   uzlu Output.
