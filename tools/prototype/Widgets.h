@@ -43,6 +43,9 @@ bool iconMenuItem(theme::Icon icon, ImU32 color, const char* label, const char* 
 /// A submenu with an icon, the same way.
 bool beginIconMenu(theme::Icon icon, ImU32 color, const char* label, bool enabled = true);
 
+/// A dialog's main button: in the accent colour, white letters.
+bool accentButton(const char* label, ImVec2 size = ImVec2(0.0f, 0.0f));
+
 /// The buttons at the foot of a dialog, at its right, a fixed width each:
 /// the first does what the dialog is for, in the accent colour; the rest
 /// (Cancel) plain. The index of the one clicked, -1 for none.

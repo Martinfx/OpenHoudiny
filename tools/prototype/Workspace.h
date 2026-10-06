@@ -79,6 +79,26 @@ public:
     /// asset, those round it.
     virtual bool unsaved() const { return modified(); }
 
+    // --- autosave (Recovery.h) ------------------------------------------------------------
+
+    /// What is open as its file would hold it; the file; the example it
+    /// began as; ".pgsim" or ".pgsg".
+    virtual std::string documentText() const = 0;
+    virtual std::string documentPath() const = 0;
+    virtual std::string documentExample() const { return {}; }
+    virtual const char* documentExtension() const = 0;
+    /// What an editor that did not close kept -- `text`, of the file `of`
+    /// or the example `example` -- open in place of what is: not saved,
+    /// Ctrl+S saving it where it was.
+    virtual bool recover(const std::string& text, const std::string& of, const std::string& example) = 0;
+    /// Once a frame, `now` in seconds: what is open and not saved copied
+    /// into `folder` -- at once, then at most every kAutosaveSeconds while
+    /// it changes; the copy gone once it is saved, or gone. No folder: none.
+    void autosave(const std::string& folder, double now);
+    /// The copy gone: what is open closes as the user wanted (quitting).
+    void dropAutosave();
+    static constexpr double kAutosaveSeconds = 30.0;
+
 protected:
     /// Saves all that is open, then runs `then`: at once where it has a
     /// file, once one is picked and written where it has none -- never if
@@ -89,6 +109,8 @@ private:
     std::string doing_;
     std::function<void()> afterAsking_;
     bool ask_ = false;
+    std::string autosaveFile_, autosavedText_;
+    double autosavedAt_ = -1e30, checkedAt_ = -1e30;
 };
 
 /// Undo and redo as whole states -- a network saved as text. A state is

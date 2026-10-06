@@ -55,6 +55,10 @@ public:
 
     bool open(const std::string& path) override;
     bool canOpen(const std::string& path) const override;
+    std::string documentText() const override { return graph_.save(); }
+    std::string documentPath() const override { return path_; }
+    const char* documentExtension() const override { return ".pgsg"; }
+    bool recover(const std::string& text, const std::string& of, const std::string& example) override;
 
     void newGraph();
     /// The language the code panel shows: a TargetRegistry name.
@@ -148,6 +152,8 @@ private:
     std::function<void()> afterSave_;  ///< what waits for the graph to be saved as (Workspace::saveThen)
     /// Where Ctrl+S saves: a file picked first where there is none yet.
     void saveAsDialog();
+    /// `g` in place of the graph shown, saved to `path` (none: not yet).
+    void show(shader::ShaderGraph g, const std::string& path);
     RenderJob job_;
 
     std::string message_;

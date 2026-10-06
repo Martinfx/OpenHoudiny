@@ -273,7 +273,23 @@ u obou sítí, simulace i shaderů. Soubor se zapíše celý vedle původního
 a teprve pak ho nahradí, takže pád nebo plný disk uprostřed ukládání
 nechá původní soubor celý (stejně assety). Uložit pod jménem souboru,
 který už existuje, chce potvrzení: Save podruhé (Replace) ho přepíše,
-Escape otázku vezme zpět. **File › Render
+Escape otázku vezme zpět.
+
+**Autosave.** Neuloženou síť (i graf shaderů) editor průběžně ukládá
+stranou: hned po první změně a pak nejvýš každých 30 s. Zálohy jdou do
+`~/.local/state/prototype/recovery` (`$XDG_STATE_HOME/prototype/recovery`),
+jinam s `--recovery SLOŽKA`. Po uložení, zahození změn nebo ukončení
+záloha zmizí. Když editor spadne nebo ho něco zabije, příští spuštění
+ji nabídne (**Recover Unsaved Work**):
+
+- **Recover** (Enter) ji otevře neuloženou a Ctrl+S ji uloží tam, kde
+  byla.
+- **Discard** ji smaže.
+- **Later** ji nechá na příště; nabídka je i ve **File › Recover Unsaved
+  Work**.
+
+Uvnitř assetu se zálohuje scéna, jak byla, když se do assetu vešlo.
+**File › Render
 Image** uloží snímek, **Render Frames** celý záběr jako očíslované PNG
 a **Render Video** celý záběr do videa — obojí po snímcích na pozadí, s oknem
 průběhu a tlačítkem Stop, a kamerou, pokud ji síť má ([render.md](render.md)). **Export Geometry** a **Export Geometry Frames** zapíšou

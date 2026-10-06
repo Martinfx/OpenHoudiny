@@ -28,7 +28,9 @@ std::string lower(std::string s) {
     return s;
 }
 
-/// A dialog's main button: in the accent colour, white letters.
+
+}  // namespace
+
 bool accentButton(const char* label, ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(IM_COL32(204, 110, 38, 255)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(IM_COL32(226, 130, 54, 255)));
@@ -38,8 +40,6 @@ bool accentButton(const char* label, ImVec2 size) {
     ImGui::PopStyleColor(4);
     return clicked;
 }
-
-}  // namespace
 
 std::string sizeText(uintmax_t bytes) {
     char buf[32];

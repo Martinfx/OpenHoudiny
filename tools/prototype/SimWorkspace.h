@@ -98,6 +98,12 @@ public:
     bool open(const std::string& path) override;
     bool canOpen(const std::string& path) const override;
     bool unsaved() const override;
+    /// Inside an asset: the scene round it, as it was when gone into.
+    std::string documentText() const override;
+    std::string documentPath() const override;
+    std::string documentExample() const override;
+    const char* documentExtension() const override { return ".pgsim"; }
+    bool recover(const std::string& text, const std::string& of, const std::string& example) override;
 
     bool openExample(const std::string& name);
     void newNetwork();

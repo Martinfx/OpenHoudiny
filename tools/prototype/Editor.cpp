@@ -14,6 +14,16 @@ Editor::Editor(const gl::Api& gl, std::vector<std::string> libraryFiles, std::st
     workspaces_ = {sim_.get(), shaders_.get()};
 }
 
+Editor::~Editor() {
+    for (Workspace* w : workspaces_) w->dropAutosave();
+}
+
+void Editor::setRecovery(std::string folder) {
+    recovery_ = std::move(folder);
+    kept_ = leftBehind(recovery_);
+    offerRecovery_ = !kept_.empty();
+}
+
 bool Editor::open(const std::string& path) {
     for (size_t i = 0; i < workspaces_.size(); ++i) {
         if (!workspaces_[i]->canOpen(path)) continue;
@@ -42,7 +52,90 @@ void Editor::quitFrom(size_t i) {
         workspaces_[i]->unlessUnsaved("quitting", [this, i] { quitFrom(i + 1); });
         return;
     }
+    // Saved, or let go: nothing to recover.
+    for (Workspace* w : workspaces_) w->dropAutosave();
     quit_ = true;
+}
+
+void Editor::recoveryDialog() {
+    constexpr const char* kRecover = "Recover Unsaved Work";
+    if (offerRecovery_) {
+        ImGui::OpenPopup(kRecover);
+        offerRecovery_ = false;
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Appearing,
+                            ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(kRecover, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    auto ago = [](long long s) {
+        if (s < 60) return std::string("a moment ago");
+        if (s < 3600) return std::to_string(s / 60) + " min ago";
+        if (s < 86400) return std::to_string(s / 3600) + " h ago";
+        return std::to_string(s / 86400) + (s < 2 * 86400 ? " day ago" : " days ago");
+    };
+    // Recovered into the network it is of: one whose work is not saved
+    // is asked to save or let go of it first.
+    auto recover = [&](size_t i) {
+        const Kept& k = kept_[i];
+        const size_t ws = k.extension == ".pgsg" ? 1 : 0;
+        if (workspaces_[ws]->unsaved() || !workspaces_[ws]->recover(k.text, k.of, k.example)) return false;
+        std::error_code ec;
+        std::filesystem::remove(k.path, ec);
+        active_ = ws;
+        return true;
+    };
+    if (kept_.empty()) {
+        ImGui::TextUnformatted("Nothing to recover: every editor closed with its work saved or let go.");
+    } else {
+        ImGui::PushFont(theme::fonts().bold, 0.0f);
+        ImGui::TextUnformatted("An editor that did not close kept work it had not saved:");
+        ImGui::PopFont();
+        ImGui::TextDisabled("Recovered, it opens as it was, not saved -- Ctrl+S keeps it where it was saved.");
+        ImGui::Spacing();
+    }
+    int gone = -1;
+    const size_t shown = std::min<size_t>(kept_.size(), 12);
+    if (ImGui::BeginTable("kept", 4, ImGuiTableFlags_SizingFixedFit)) {
+        for (size_t i = 0; i < shown; ++i) {
+            const Kept& k = kept_[i];
+            const size_t ws = k.extension == ".pgsg" ? 1 : 0;
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(keptName(k).c_str());
+            if (!k.of.empty()) ImGui::SetItemTooltip("%s", k.of.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s, %s", workspaces_[ws]->name(), ago(k.secondsAgo).c_str());
+            ImGui::TableNextColumn();
+            const bool free = !workspaces_[ws]->unsaved();
+            ImGui::BeginDisabled(!free);
+            if (ui::accentButton("Recover", ImVec2(theme::px(92.0f), 0.0f)) && recover(i)) gone = static_cast<int>(i);
+            ImGui::EndDisabled();
+            if (!free) {
+                ImGui::SetItemTooltip("What is open in %s is not saved: save it or let it go first", workspaces_[ws]->name());
+            }
+            ImGui::TableNextColumn();
+            if (ImGui::Button("Discard", ImVec2(theme::px(92.0f), 0.0f))) {
+                std::error_code ec;
+                std::filesystem::remove(k.path, ec);
+                gone = static_cast<int>(i);
+            }
+            ImGui::SetItemTooltip("Let it go: the autosave is deleted");
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (kept_.size() > shown) ImGui::TextDisabled("and %zu more", kept_.size() - shown);
+    // Enter: the newest back.
+    if (gone < 0 && !kept_.empty() && !ImGui::IsAnyItemActive() &&
+        (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) && recover(0)) {
+        gone = 0;
+    }
+    if (gone >= 0) kept_.erase(kept_.begin() + gone);
+    const int button = ui::dialogButtons({kept_.empty() ? "Close" : "Later"});
+    if (button == 0 || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || (gone >= 0 && kept_.empty())) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void Editor::showShaders() { active_ = 1; }
@@ -71,6 +164,11 @@ void Editor::menuBar() {
     if (ImGui::BeginMenu("File")) {
         w.fileMenu();
         ImGui::Separator();
+        if (!recovery_.empty() && ImGui::MenuItem("Recover Unsaved Work\xe2\x80\xa6")) {
+            kept_ = leftBehind(recovery_);
+            offerRecovery_ = true;
+        }
+        ImGui::SetItemTooltip("What an editor that did not close -- a crash, a kill -- kept of the work it had not saved");
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) requestQuit();
         ImGui::EndMenu();
     }
@@ -153,6 +251,9 @@ void Editor::frame(float dt) {
     }
     Workspace& w = current();
     w.update(dt);
+    // What is not saved, kept as it is worked on -- each network's.
+    now_ += dt;
+    for (Workspace* ws : workspaces_) ws->autosave(recovery_, now_);
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Q)) requestQuit();
     const bool popup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     ui::closePopupOnEscape();
@@ -246,6 +347,7 @@ void Editor::frame(float dt) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::px(12.0f), theme::px(12.0f)));
     w.popups();
     w.unsavedDialog();
+    recoveryDialog();
     if (about_) {
         ImGui::OpenPopup("About Prototype");
         about_ = false;

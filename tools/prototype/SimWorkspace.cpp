@@ -390,6 +390,32 @@ bool SimWorkspace::unsaved() const {
            std::any_of(levels_.begin(), levels_.end(), [](const Level& l) { return l.net.save() != l.savedText; });
 }
 
+std::string SimWorkspace::documentText() const { return levels_.empty() ? net_.save() : levels_.front().net.save(); }
+std::string SimWorkspace::documentPath() const { return levels_.empty() ? path_ : levels_.front().path; }
+std::string SimWorkspace::documentExample() const { return levels_.empty() ? example_ : levels_.front().example; }
+
+bool SimWorkspace::recover(const std::string& text, const std::string& of, const std::string& example) {
+    sim::Network net;
+    std::string error;
+    std::vector<std::string> warnings;
+    if (!sim::Network::load(text, net, error, &warnings)) {
+        setMessage("Cannot recover the network: " + error, true);
+        return false;
+    }
+    load(net, of, of.empty() ? example : std::string());
+    // Not saved: unchanged is what its file -- or its example -- holds.
+    std::string file;
+    sim::Network saved;
+    if (!of.empty() && readFile(of, file) && sim::Network::load(file, saved, error)) savedText_ = saved.save();
+    else if (of.empty() && !example.empty() && sim::Network::example(example, saved)) savedText_ = saved.save();
+    else savedText_.clear();
+    const std::string name = !of.empty() ? fs::path(of).filename().string()
+                             : !example.empty() ? "the example " + example
+                                                : std::string("a network not saved");
+    setMessage("Recovered " + name + " as it was autosaved: Ctrl+S keeps it");
+    return true;
+}
+
 void SimWorkspace::saveThen(std::function<void()> then) {
     // Inside an asset: each level a new version, on the way up to the scene.
     while (!levels_.empty()) {

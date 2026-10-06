@@ -2,7 +2,7 @@
 //
 //   prototype [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]
 //            [--library FILE]... [--target NAME] [--mesh NAME] [--cache DIR] [--cache-size MB]
-//            [--size WxH] [--screenshot OUT.png [--frames N]] [--script FILE]
+//            [--size WxH] [--screenshot OUT.png [--frames N]] [--script FILE] [--recovery DIR]
 //
 // It opens on the Simulation network, with the campfire example -- or the
 // file given, in the network it belongs to. --cache plays the frames of a
@@ -12,6 +12,10 @@
 // (default 30), saves the window as a PNG and quits: how the editor is tested
 // on a machine without a display (under xvfb-run). Then each frame of the
 // window is one step of the simulation, so N frames show frame N.
+//
+// --recovery: where what is not saved is kept as it is worked on, to be
+// recovered after a crash (Recovery.h) -- by default the user's state
+// folder; a screenshot keeps nothing.
 //
 // --script plays input from a file into the window, a step a frame, and
 // quits at its end: the mouse, the keys, screenshots along the way. How the
@@ -261,7 +265,8 @@ bool saveWindow(const pg::gl::Api& gl, int w, int h, const std::string& path) {
 namespace pg::editor {
 
 int runEditor(int argc, char** argv) {
-    std::string path, screenshot, target, mesh, example, select, scriptPath, cache;
+    std::string path, screenshot, target, mesh, example, select, scriptPath, cache, recovery;
+    bool recoveryGiven = false;
     std::vector<std::string> libraries;
     bool shaders = false;
     int frames = 30, width = 1600, height = 960, cacheMb = 0;
@@ -301,6 +306,10 @@ int runEditor(int argc, char** argv) {
             cache = v;
         } else if (a == "--cache-size") {
             if (!(v = next()) || (cacheMb = std::atoi(v)) < 16) return usage();
+        } else if (a == "--recovery") {
+            if (!(v = next())) return usage();
+            recovery = v;
+            recoveryGiven = true;
         } else if (a == "--shaders") {
             shaders = true;
         } else if (!a.empty() && a[0] == '-') {
@@ -400,6 +409,8 @@ int runEditor(int argc, char** argv) {
             std::fprintf(stderr, "prototype: %s\n", editor.simulation().message().c_str());
             status = 1;
         }
+        // Autosaves, and those an editor that did not close left: not for a screenshot.
+        editor.setRecovery(recoveryGiven ? recovery : screenshot.empty() ? defaultRecoveryFolder() : std::string());
 
         int frame = 0;
         std::string title;

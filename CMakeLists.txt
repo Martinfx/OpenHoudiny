@@ -877,6 +877,7 @@ if(PG_BUILD_GUI)
     tools/prototype/FrameRender.cpp
     tools/prototype/Gizmo.cpp
     tools/prototype/NodeCanvas.cpp
+    tools/prototype/Recovery.cpp
     tools/prototype/RenderJob.cpp
     tools/prototype/ShaderWorkspace.cpp
     tools/prototype/SimGeometry.cpp
@@ -998,6 +999,7 @@ ${PG_FONT_ARRAYS}}  // namespace pg::editor::theme
     tests/test_main.cpp
     tests/test_editor_ui.cpp
     tools/prototype/NodeCanvas.cpp
+    tools/prototype/Recovery.cpp
     tools/prototype/Theme.cpp
     tools/prototype/Widgets.cpp
     tools/prototype/Workspace.cpp

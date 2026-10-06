@@ -1695,10 +1695,13 @@ void printUsage(std::FILE* out) {
                  "  prototype [NETWORK.pgsim | GRAPH.pgsg] [--example NAME] [--shaders] [--select NODE]\n"
                  "            [--library FILE]... [--target NAME] [--mesh NAME] [--size WxH]\n"
                  "            [--cache DIR] [--cache-size MB] [--screenshot OUT.png [--frames N]] [--script FILE]\n"
+                 "            [--recovery DIR]\n"
                  "                   the node editor -- what runs without a command: an empty scene,\n"
                  "                   an example with --example, shaders with --shaders; --cache plays\n"
                  "                   the frames of a cache on disk, read as they are played; --cache-size\n"
-                 "                   the most memory the frames take, past it they go to disk (1536)\n"
+                 "                   the most memory the frames take, past it they go to disk (1536);\n"
+                 "                   --recovery where work not saved is kept to be recovered after a crash\n"
+                 "                   (~/.local/state/prototype/recovery)\n"
 #else
                  "  prototype [NETWORK.pgsim | GRAPH.pgsg]   the node editor -- not in this build (PG_BUILD_GUI=OFF)\n"
 #endif

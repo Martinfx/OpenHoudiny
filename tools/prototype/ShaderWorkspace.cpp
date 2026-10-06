@@ -189,6 +189,12 @@ bool ShaderWorkspace::open(const std::string& path) {
         setMessage(path + ": " + error, true);
         return false;
     }
+    show(std::move(g), path);
+    setMessage("Opened " + path);
+    return true;
+}
+
+void ShaderWorkspace::show(ShaderGraph g, const std::string& path) {
     graph_ = std::move(g);
     path_ = path;
     savedText_ = graph_.save();
@@ -201,7 +207,22 @@ bool ShaderWorkspace::open(const std::string& path) {
     compiledRevision_ = ~0ull;
     pickMesh_ = true;
     pickFragmentTab_ = true;
-    setMessage("Opened " + path);
+}
+
+bool ShaderWorkspace::recover(const std::string& text, const std::string& of, const std::string&) {
+    ShaderGraph g;
+    std::string error;
+    if (!ShaderGraph::load(text, g, error)) {
+        setMessage("Cannot recover the graph: " + error, true);
+        return false;
+    }
+    show(std::move(g), of);
+    // Not saved: unchanged is what its file holds, if it is there.
+    std::string file;
+    ShaderGraph saved;
+    savedText_ = !of.empty() && readFile(of, file) && ShaderGraph::load(file, saved, error) ? saved.save() : std::string();
+    setMessage("Recovered " + (of.empty() ? std::string("a graph not saved") : fs::path(of).filename().string()) +
+               " as it was autosaved: Ctrl+S keeps it");
     return true;
 }
 

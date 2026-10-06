@@ -4,6 +4,7 @@
 #include "test_framework.h"
 
 #include "NodeCanvas.h"
+#include "Recovery.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Workspace.h"
@@ -426,6 +427,11 @@ struct Document : Workspace {
     bool messageIsError() const override { return false; }
     bool open(const std::string&) override { return false; }
     bool canOpen(const std::string&) const override { return false; }
+    std::string text = "pgsim 1\n";
+    std::string documentText() const override { return text; }
+    std::string documentPath() const override { return "/somewhere/doc.pgsim"; }
+    const char* documentExtension() const override { return ".pgsim"; }
+    bool recover(const std::string&, const std::string&, const std::string&) override { return false; }
 
 protected:
     void saveThen(std::function<void()> then) override {
@@ -550,6 +556,72 @@ TEST(saving_over_a_file_is_asked_about_first) {
     step(ImGuiKey_Escape);
     step();
     CHECK(!picked && !files.isOpen());
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(work_not_saved_is_kept_and_found_after_a_crash) {
+    std::random_device rd;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("pg_recovery_" + std::to_string(rd()));
+    const std::string folder = dir.string();
+    auto files = [&] {
+        std::vector<std::string> out;
+        std::error_code ec;
+        for (const auto& e : std::filesystem::directory_iterator(dir, ec)) out.push_back(e.path().filename().string());
+        return out;
+    };
+    auto read = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    Document doc;
+    // Saved: nothing kept. Changed: kept at once, its file and its text.
+    doc.autosave(folder, 0.0);
+    CHECK(files().empty());
+    doc.changed = true;
+    doc.text = "pgsim 1\nnode 1 null 1 a 0 0\n";
+    doc.autosave(folder, 2.0);
+    const std::vector<std::string> kept = files();
+    CHECK_EQ(kept.size(), 1u);
+    if (kept.size() != 1) return;
+    CHECK(kept[0].rfind("doc-", 0) == 0 && kept[0].size() > 10);
+    CHECK_EQ(read(dir / kept[0]), std::string("# prototype autosave of /somewhere/doc.pgsim\n") + doc.text);
+    // Changed again soon after: kept as it was until half a minute is up.
+    doc.text = "pgsim 1\nnode 1 null 1 b 0 0\n";
+    doc.autosave(folder, 10.0);
+    CHECK(read(dir / kept[0]).find(" a 0 0") != std::string::npos);
+    doc.autosave(folder, 2.0 + Workspace::kAutosaveSeconds + 1.0);
+    CHECK(read(dir / kept[0]).find(" b 0 0") != std::string::npos);
+    // An editor still running -- this one -- leaves nothing behind.
+    CHECK(leftBehind(folder).empty());
+    // One that crashed did: found, what it is of, its text.
+    std::ofstream(dir / "scene-2147483.pgsim") << "# prototype autosave of /home/me/scene.pgsim\n"
+                                                 "# example campfire\npgsim 1\nnode 1 null 1 c 0 0\n";
+    std::ofstream(dir / "graph-2147483.pgsg") << "# prototype autosave of \nshadergraph 1\n";
+    std::ofstream(dir / "other-2147483.pgsim") << "pgsim 1\n";  // not an autosave
+    const std::vector<Kept> left = leftBehind(folder);
+    CHECK_EQ(left.size(), 2u);
+    for (const Kept& k : left) {
+        if (k.extension == ".pgsim") {
+            CHECK_EQ(k.of, std::string("/home/me/scene.pgsim"));
+            CHECK_EQ(k.example, std::string("campfire"));
+            CHECK_EQ(k.text, std::string("pgsim 1\nnode 1 null 1 c 0 0\n"));
+            CHECK_EQ(keptName(k), std::string("scene.pgsim"));
+        } else {
+            CHECK(k.of.empty() && k.example.empty());
+            CHECK_EQ(k.text, std::string("shadergraph 1\n"));
+            CHECK_EQ(keptName(k), std::string("untitled.pgsg"));
+        }
+    }
+    // Saved: its copy goes; let go of on quitting: so does a new one.
+    doc.changed = false;
+    doc.autosave(folder, 100.0);
+    CHECK(!std::filesystem::exists(dir / kept[0]));
+    doc.changed = true;
+    doc.autosave(folder, 200.0);
+    CHECK(std::filesystem::exists(dir / kept[0]));
+    doc.dropAutosave();
+    CHECK(!std::filesystem::exists(dir / kept[0]));
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
