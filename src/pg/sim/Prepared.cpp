@@ -2,6 +2,7 @@
 
 #include "pg/core/Instances.h"
 #include "pg/core/Lod.h"
+#include "pg/core/Parallel.h"
 #include "pg/io/Picture.h"
 
 #include <algorithm>
@@ -256,9 +257,107 @@ std::shared_ptr<const PreparedBodies> prepareBodies(const Frame& frame, const Lo
     return out;
 }
 
-BodiesPreparer::BodiesPreparer() { thread_ = std::thread([this] { loop(); }); }
+bool hasVolumes(const Frame& frame, unsigned layers) {
+    return ((layers & kGasVolume) && !frame.fields.empty()) || ((layers & kWaterVolume) && !frame.water.empty()) ||
+           ((layers & kRainVolume) && !frame.rain.empty());
+}
 
-BodiesPreparer::~BodiesPreparer() {
+std::shared_ptr<const PreparedVolumes> prepareVolumes(const Frame& frame, size_t texels, unsigned layers) {
+    auto out = std::make_shared<PreparedVolumes>();
+    out->texels = texels;
+    out->layers = layers;
+    // The coarsest grid needed to fit: `domain` 2, 4 or 8 times as coarse,
+    // while that divides its cells -- the factor.
+    auto coarse = [&](const Domain& domain, Domain& grid, auto tooBig) {
+        grid = domain;
+        int factor = 1;
+        while (tooBig(grid) && factor < 8 && domain.cells[0] % (2 * factor) == 0 && domain.cells[1] % (2 * factor) == 0 &&
+               domain.cells[2] % (2 * factor) == 0) {
+            factor *= 2;
+            for (int a = 0; a < 3; ++a) grid.cells[a] = domain.cells[a] / factor;
+            grid.voxel = domain.voxel * static_cast<float>(factor);
+        }
+        return factor;
+    };
+
+    // The gas: smoke, temperature, flame -- and the steam, 0 without any.
+    if ((layers & kGasVolume) && !frame.fields.empty()) {
+        Domain grid;
+        const int factor = coarse(frame.domain, grid, [&](const Domain& g) { return g.cellCount() > texels; });
+        std::vector<uint16_t> scratch, steamScratch;
+        const std::vector<uint16_t>* three = &scratch;
+        const std::vector<uint16_t>* vapour = &steamScratch;
+        if (factor > 1) {
+            frame.coarseFields(factor, scratch);
+            frame.coarseSteam(factor, steamScratch);
+        } else {
+            three = &frame.denseFields(scratch);
+            vapour = &frame.denseSteam(steamScratch);
+        }
+        const size_t cells = grid.cellCount();
+        if (three->size() == 3 * cells && grid.cells[0] > 0) {
+            const bool steamy = vapour->size() == cells;
+            out->gasGrid = grid;
+            out->gas.assign(4 * cells, 0);
+            pg::parallelFor(cells, 65536, [&](size_t begin, size_t end) {
+                for (size_t c = begin; c < end; ++c) {
+                    out->gas[4 * c] = (*three)[3 * c];
+                    out->gas[4 * c + 1] = (*three)[3 * c + 1];
+                    out->gas[4 * c + 2] = (*three)[3 * c + 2];
+                    if (steamy) out->gas[4 * c + 3] = (*vapour)[c];
+                }
+            });
+        }
+    }
+
+    // The water: at most `texels` cells, 2048 a side.
+    const WaterFrame& water = frame.water;
+    if ((layers & kWaterVolume) && !water.empty() && water.fits() && water.domain.cells[0] > 0) {
+        const int factor = coarse(water.domain, out->waterGrid, [&](const Domain& g) {
+            return g.cellCount() > texels || std::max({g.cells[0], g.cells[1], g.cells[2]}) > 2048;
+        });
+        if (factor > 1) {
+            water.coarseCells(factor, out->water);
+        } else {
+            std::vector<uint8_t> scratch;
+            const std::vector<uint8_t>& cells = water.denseCells(scratch);
+            if (&cells == &scratch) out->water = std::move(scratch);
+            else out->water = cells;
+        }
+    }
+
+    // The rain: a streak for each drop and droplet; the floor wet where the
+    // drops are.
+    const RainFrame& rain = frame.rain;
+    if ((layers & kRainVolume) && (!rain.drops.empty() || !rain.droplets.empty())) {
+        out->wetMin[0] = out->wetMin[1] = 1e30f;
+        out->wetMax[0] = out->wetMax[1] = -1e30f;
+        for (size_t i = 0; i + 5 < rain.drops.size(); i += 6) {
+            out->wetMin[0] = std::min(out->wetMin[0], rain.drops[i]);
+            out->wetMax[0] = std::max(out->wetMax[0], rain.drops[i]);
+            out->wetMin[1] = std::min(out->wetMin[1], rain.drops[i + 2]);
+            out->wetMax[1] = std::max(out->wetMax[1], rain.drops[i + 2]);
+        }
+        // Six corners a streak: two triangles from its tail to its head.
+        static const float corners[6][2] = {{0, -1}, {1, -1}, {1, 1}, {0, -1}, {1, 1}, {0, 1}};
+        std::vector<float>& v = out->rain;
+        v.reserve((rain.drops.size() + rain.droplets.size()) * 9);
+        for (int kind = 0; kind < 2; ++kind) {
+            const std::vector<float>& from = kind == 0 ? rain.drops : rain.droplets;
+            for (size_t i = 0; i + 5 < from.size(); i += 6) {
+                for (const auto& c : corners) {
+                    v.insert(v.end(), {from[i], from[i + 1], from[i + 2], from[i + 3], from[i + 4], from[i + 5], c[0], c[1],
+                                       static_cast<float>(kind)});
+                }
+            }
+        }
+    }
+    return out;
+}
+
+FrameWorker::FrameWorker(size_t kept) : kept_(kept) { thread_ = std::thread([this] { loop(); }); }
+
+FrameWorker::~FrameWorker() {
     {
         std::lock_guard<std::mutex> lock(mu_);
         stop_ = true;
@@ -267,77 +366,120 @@ BodiesPreparer::~BodiesPreparer() {
     thread_.join();
 }
 
-void BodiesPreparer::want(std::vector<Want> wanted) {
+void FrameWorker::want(std::vector<Want> wanted) {
+    std::deque<Made> gone;
     {
         std::lock_guard<std::mutex> lock(mu_);
         wanted_ = std::move(wanted);
-        wantedKeys_.clear();
-        for (const Want& w : wanted_) wantedKeys_.push_back(bodiesKey(w.look));
+        dropLocked(gone);
     }
     wake_.notify_all();
 }
 
-const BodiesPreparer::Made* BodiesPreparer::madeLocked(const std::shared_ptr<const Frame>& frame, const std::string& key) const {
+void FrameWorker::dropLocked(std::deque<Made>& gone) {
+    // The wanted stay, or they would be made again and again.
+    for (auto it = made_.begin(); made_.size() > kept_ && it != made_.end();) {
+        if (wantedLocked(*it)) {
+            ++it;
+        } else {
+            gone.push_back(std::move(*it));
+            it = made_.erase(it);
+        }
+    }
+}
+
+const FrameWorker::Made* FrameWorker::madeLocked(const std::shared_ptr<const Frame>& frame, const std::string& key) const {
     for (const Made& m : made_) {
         if (m.key == key && m.frame.lock() == frame) return &m;
     }
     return nullptr;
 }
 
-int BodiesPreparer::nextLocked() const {
+int FrameWorker::nextLocked() const {
     for (size_t i = 0; i < wanted_.size(); ++i) {
-        if (wanted_[i].frame && !madeLocked(wanted_[i].frame, wantedKeys_[i])) return static_cast<int>(i);
+        if (wanted_[i].frame && !madeLocked(wanted_[i].frame, wanted_[i].key)) return static_cast<int>(i);
     }
     return -1;
 }
 
-bool BodiesPreparer::wantedLocked(const Made& made) const {
+bool FrameWorker::wantedLocked(const Made& made) const {
     const std::shared_ptr<const Frame> frame = made.frame.lock();
-    for (size_t i = 0; i < wanted_.size(); ++i) {
-        if (frame && wanted_[i].frame == frame && wantedKeys_[i] == made.key) return true;
+    for (const Want& w : wanted_) {
+        if (frame && w.frame == frame && w.key == made.key) return true;
     }
     return false;
 }
 
-std::shared_ptr<const PreparedBodies> BodiesPreparer::find(const std::shared_ptr<const Frame>& frame, const Look& look) const {
+std::shared_ptr<const void> FrameWorker::find(const std::shared_ptr<const Frame>& frame, const std::string& key) const {
     if (!frame) return nullptr;
-    const std::string key = bodiesKey(look);
     std::lock_guard<std::mutex> lock(mu_);
     const Made* made = madeLocked(frame, key);
-    return made ? made->bodies : nullptr;
+    return made ? made->thing : nullptr;
 }
 
-void BodiesPreparer::wait() {
+void FrameWorker::wait() {
     std::unique_lock<std::mutex> lock(mu_);
     done_.wait(lock, [&] { return stop_ || (!working_ && nextLocked() < 0); });
 }
 
-void BodiesPreparer::loop() {
+void FrameWorker::loop() {
     for (;;) {
         Want next;
-        std::string key;
         {
             std::unique_lock<std::mutex> lock(mu_);
             wake_.wait(lock, [&] { return stop_ || nextLocked() >= 0; });
             if (stop_) return;
-            const auto i = static_cast<size_t>(nextLocked());
-            next = wanted_[i];
-            key = wantedKeys_[i];
+            next = wanted_[static_cast<size_t>(nextLocked())];
             working_ = true;
         }
-        std::shared_ptr<const PreparedBodies> bodies = prepareBodies(*next.frame, next.look);
+        std::shared_ptr<const void> thing = next.make();
+        std::deque<Made> gone;
         {
             std::lock_guard<std::mutex> lock(mu_);
-            made_.push_back({next.frame, std::move(key), std::move(bodies)});
-            // Past kKept, the oldest no longer wanted go -- the wanted stay, or
-            // they would be made again and again.
-            for (auto it = made_.begin(); made_.size() > kKept && it != made_.end();) {
-                it = wantedLocked(*it) ? std::next(it) : made_.erase(it);
-            }
+            made_.push_back({next.frame, std::move(next.key), std::move(thing)});
+            dropLocked(gone);
             working_ = false;
         }
         done_.notify_all();
     }
+}
+
+void BodiesPreparer::want(std::vector<Want> wanted) {
+    std::vector<FrameWorker::Want> work;
+    work.reserve(wanted.size());
+    for (Want& w : wanted) {
+        std::string key = bodiesKey(w.look);
+        auto make = [frame = w.frame, look = std::move(w.look)]() -> std::shared_ptr<const void> {
+            return prepareBodies(*frame, look);
+        };
+        work.push_back({std::move(w.frame), std::move(key), std::move(make)});
+    }
+    worker_.want(std::move(work));
+}
+
+std::shared_ptr<const PreparedBodies> BodiesPreparer::find(const std::shared_ptr<const Frame>& frame, const Look& look) const {
+    return std::static_pointer_cast<const PreparedBodies>(worker_.find(frame, bodiesKey(look)));
+}
+
+namespace {
+std::string volumesKey(size_t texels, unsigned layers) { return std::to_string(texels) + " " + std::to_string(layers); }
+}  // namespace
+
+void VolumesPreparer::want(std::vector<Want> wanted) {
+    std::vector<FrameWorker::Want> work;
+    work.reserve(wanted.size());
+    for (const Want& w : wanted) {
+        auto make = [frame = w.frame, texels = w.texels, layers = w.layers]() -> std::shared_ptr<const void> {
+            return prepareVolumes(*frame, texels, layers);
+        };
+        work.push_back({w.frame, volumesKey(w.texels, w.layers), std::move(make)});
+    }
+    worker_.want(std::move(work));
+}
+
+std::shared_ptr<const PreparedVolumes> VolumesPreparer::find(const std::shared_ptr<const Frame>& frame, size_t texels,
+                                                             unsigned layers) const {
+    return std::static_pointer_cast<const PreparedVolumes>(worker_.find(frame, volumesKey(texels, layers)));
 }
 
 }  // namespace pg::sim

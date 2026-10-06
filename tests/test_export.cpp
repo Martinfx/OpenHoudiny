@@ -9,6 +9,7 @@
 #include "pg/io/Vdb.h"
 #include "pg/sim/Cache.h"
 #include "pg/sim/Network.h"
+#include "pg/sim/Prepared.h"
 #include "pg/sim/World.h"
 
 #include "test_framework.h"
@@ -742,6 +743,90 @@ TEST(sparse_gas_frames_keep_their_tiles_alone) {
         bad.gasTiles = wrong;
         CHECK(!sim::parseFrame(sim::formatFrame(bad), back, error));
     }
+}
+
+TEST(frame_volumes_are_made_ready_to_draw_on_a_thread_of_their_own) {
+    // Sparse gas -- 16 x 8 x 24 cells, two tiles of them -- with steam;
+    // water of 8 x 8 x 8 cells; two drops of rain and a droplet.
+    auto f = std::make_shared<sim::Frame>();
+    f->domain.cells[0] = 16;
+    f->domain.cells[1] = 8;
+    f->domain.cells[2] = 24;
+    f->gasTiles = {1, 5};
+    f->fields.assign(3 * 512 * 2, 0);
+    f->fields[3 * 7 + 1] = sim::toHalf(2.0f);
+    f->fields[3 * (512 + 9) + 0] = sim::toHalf(0.5f);
+    f->steam.assign(512 * 2, 0);
+    f->steam[512 + 9] = sim::toHalf(0.25f);
+    for (int a = 0; a < 3; ++a) f->water.domain.cells[a] = 8;
+    f->water.cells.assign(2 * 512, 0);
+    for (size_t c = 0; c < f->water.cells.size(); ++c) f->water.cells[c] = static_cast<uint8_t>(c * 7);
+    f->rain.drops = {1, 2, 3, 0, -5, 0, -2, 4, 6, 0, -5, 0};
+    f->rain.droplets = {0, 1, 0, 1, 1, 0};
+    CHECK(sim::hasVolumes(*f));
+    CHECK(!sim::hasVolumes(*f, 0));
+    CHECK(!sim::hasVolumes(sim::Frame()));
+
+    // Every cell, when they fit: the gas four channels a cell, the steam last.
+    const size_t cells = f->domain.cellCount();
+    const auto all = sim::prepareVolumes(*f, cells);
+    CHECK_EQ(all->gasGrid.cells[2], 24);
+    CHECK_EQ(all->gas.size(), 4 * cells);
+    std::vector<uint16_t> scratch, steamScratch;
+    const std::vector<uint16_t>& dense = f->denseFields(scratch);
+    const std::vector<uint16_t>& steam = f->denseSteam(steamScratch);
+    bool same = true;
+    for (size_t c = 0; c < cells; ++c) {
+        for (int k = 0; k < 3; ++k) same = same && all->gas[4 * c + k] == dense[3 * c + k];
+        same = same && all->gas[4 * c + 3] == steam[c];
+    }
+    CHECK(same);
+    CHECK(all->water == f->water.cells);
+    // Two triangles a streak, nine floats a corner; the floor wet under the
+    // drops alone.
+    CHECK_EQ(all->rain.size(), size_t(3 * 6 * 9));
+    CHECK_EQ(all->rain[8], 0.0f);
+    CHECK_EQ(all->rain[2 * 6 * 9 + 8], 1.0f);  // the droplet's
+    CHECK_EQ(all->wetMin[0], -2.0f);
+    CHECK_EQ(all->wetMax[0], 1.0f);
+    CHECK_EQ(all->wetMin[1], 3.0f);
+    CHECK_EQ(all->wetMax[1], 6.0f);
+
+    // An eighth of the cells: grids twice as coarse, the means of the cells
+    // under each.
+    const auto coarse = sim::prepareVolumes(*f, cells / 8);
+    CHECK_EQ(coarse->gasGrid.cells[0], 8);
+    std::vector<uint16_t> half, halfSteam;
+    std::vector<uint8_t> halfWater;
+    f->coarseFields(2, half);
+    f->coarseSteam(2, halfSteam);
+    f->water.coarseCells(2, halfWater);
+    same = coarse->gas.size() == 4 * half.size() / 3;
+    for (size_t c = 0; same && c < half.size() / 3; ++c) {
+        for (int k = 0; k < 3; ++k) same = same && coarse->gas[4 * c + k] == half[3 * c + k];
+        same = same && coarse->gas[4 * c + 3] == halfSteam[c];
+    }
+    CHECK(same);
+    CHECK_EQ(coarse->waterGrid.cells[0], 4);
+    CHECK(coarse->water == halfWater);
+    // Of the gas alone: no water, no rain.
+    const auto gas = sim::prepareVolumes(*f, cells, sim::kGasVolume);
+    CHECK(gas->gas == all->gas && gas->water.empty() && gas->rain.empty());
+
+    // On the thread: the same as made here.
+    sim::VolumesPreparer preparer;
+    CHECK(!preparer.find(f, cells));
+    preparer.want({{f, cells}});
+    preparer.wait();
+    const auto made = preparer.find(f, cells);
+    CHECK(made && made->gas == all->gas && made->water == all->water && made->rain == all->rain);
+    CHECK(!preparer.find(f, cells, sim::kGasVolume));  // of other layers: another
+    // What is no longer wanted goes at once: it may be large.
+    preparer.want({{f, cells / 8}});
+    CHECK(!preparer.find(f, cells));
+    preparer.wait();
+    const auto madeCoarse = preparer.find(f, cells / 8);
+    CHECK(madeCoarse && madeCoarse->gas == coarse->gas);
 }
 
 TEST(frames_of_version_12_still_read_without_sparse_water) {

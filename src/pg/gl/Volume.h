@@ -161,11 +161,19 @@ public:
     bool init(std::string& log);
 
     /// What of a frame setFrame takes: its gas, its water, its rain.
-    enum Layer : unsigned { kGas = 1, kWater = 2, kRain = 4, kAllLayers = 7 };
+    enum Layer : unsigned {
+        kGas = sim::kGasVolume,
+        kWater = sim::kWaterVolume,
+        kRain = sim::kRainVolume,
+        kAllLayers = sim::kAllVolumes
+    };
     /// The gas and the water to draw -- of `layers`; the rest as if the
     /// frame had none. Until the first frame -- or after clearFrame() --
-    /// the floor and the solids alone.
+    /// the floor and the solids alone. Made ready here, to fit texelBudget.
     void setFrame(const sim::Frame& frame, unsigned layers = kAllLayers);
+    /// The same, made ready ahead (sim::VolumesPreparer) -- of the layers
+    /// it was made of: what is left is sending it to the GPU.
+    void setFrame(const sim::Frame& frame, const sim::PreparedVolumes& prepared);
     void clearFrame();
     /// Gas is drawn: the last frame had some.
     bool hasFrame() const { return hasFrame_; }
@@ -289,11 +297,12 @@ public:
 
 private:
     void ensureTarget(int width, int height);
-    /// The water of a frame to the GPU; none when it has none.
-    void setWater(const sim::WaterFrame& water);
+    /// The water of a frame to the GPU, as `prepared` holds it; none when
+    /// it has none.
+    void setWater(const sim::WaterFrame& water, const sim::PreparedVolumes& prepared);
     /// The rain of a frame: a streak for each drop and droplet, and the
     /// ripples.
-    void setRain(const sim::RainFrame& rain);
+    void setRain(const sim::RainFrame& rain, const sim::PreparedVolumes& prepared);
     /// The streaks, over what the main pass drew, behind what is in front.
     void drawRain(int width, int height, const Vec3& eye);
     /// The shadows of the smoke and the lamps of the fire, worked out again

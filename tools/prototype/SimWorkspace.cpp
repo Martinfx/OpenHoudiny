@@ -399,6 +399,7 @@ SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
     cooker_ = std::make_unique<sim::Cooker>([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     compiler_ = std::make_unique<sim::Compiler>([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     bodies_ = std::make_unique<sim::BodiesPreparer>();
+    volumes_ = std::make_unique<sim::VolumesPreparer>();
     newNetwork();  // an empty scene; File > Examples has finished ones
 }
 
@@ -694,6 +695,19 @@ bool SimWorkspace::bodiesReady(const std::shared_ptr<const sim::Frame>& frame, i
     return false;
 }
 
+bool SimWorkspace::volumesReady(const std::shared_ptr<const sim::Frame>& frame, size_t texels, bool first) {
+    if (!frame || synchronous_ || !levels_.empty()) return true;
+    if (!sim::hasVolumes(*frame) || volumes_->find(frame, texels)) return true;
+    (first ? volumesFirst_ : volumesLater_).push_back({frame, texels});
+    return false;
+}
+
+bool SimWorkspace::frameReady(const std::shared_ptr<const sim::Frame>& frame, int number, size_t texels, bool first) {
+    // Both asked for at once: made side by side, each on its thread.
+    const bool bodies = bodiesReady(frame, number, first);
+    return volumesReady(frame, texels, first) && bodies;
+}
+
 std::shared_ptr<const sim::Frame> SimWorkspace::frameToShow() const {
     const int cached = runner_->cached();
     if (cached == 0) return nullptr;
@@ -727,9 +741,15 @@ void SimWorkspace::update(float dt) {
         pollBake();
     }
 
+    // Big frames: coarser while they change, so that playing and scrubbing
+    // keep up; as they are once the frame shown rests -- the play head
+    // stopped, or playing on at the end of the cache.
+    const double now = ImGui::GetTime();
+    auto texelsOf = [&](bool moving) { return proxies_ && moving && !synchronous_ ? kProxyTexels : kFullTexels; };
+
     // Playback at the network's frame rate, never past what is simulated --
-    // nor onto a frame still being read from disk, or whose bodies are still
-    // being made ready to draw: it waits for it.
+    // nor onto a frame still being read from disk, or whose bodies, gas and
+    // water are still being made ready to draw: it waits for it.
     const int cached = runner_->cached();
     if (playing_ && compiled_.ok) {
         const double frameTime = compiled_.world.timeStep;
@@ -738,7 +758,7 @@ void SimWorkspace::update(float dt) {
             clock_ -= frameTime;
             const std::shared_ptr<const sim::Frame> next =
                 current_ < compiled_.frames && current_ < cached ? readyFrame(current_ + 1) : nullptr;
-            if (next && bodiesReady(next, current_ + 1, false)) {
+            if (next && frameReady(next, current_ + 1, texelsOf(true), false)) {
                 ++current_;
             } else if (current_ >= compiled_.frames && loop_ && cached >= compiled_.frames && !synchronous_) {
                 current_ = 1;
@@ -747,10 +767,13 @@ void SimWorkspace::update(float dt) {
                 break;
             }
         }
-        // The bodies of the frames after it, made ahead.
-        for (int ahead = current_ + 2; ahead <= std::min(current_ + 3, std::min(cached, compiled_.frames)); ++ahead) {
+        // The bodies of the frames after it, made ahead -- and the gas and
+        // water of the one after the next: they may be large.
+        const int last = std::min(cached, compiled_.frames);
+        for (int ahead = current_ + 2; ahead <= std::min(current_ + 3, last); ++ahead) {
             bodiesReady(readyFrame(ahead), ahead, false);
         }
+        if (current_ + 2 <= last) volumesReady(readyFrame(current_ + 2), texelsOf(true), false);
     } else {
         clock_ = 0.0;
     }
@@ -765,28 +788,27 @@ void SimWorkspace::update(float dt) {
     // frame yet, or the play head's is still being read from disk, the last
     // one stays: dragging a slider, scrubbing a big cache, does not flicker.
     std::shared_ptr<const sim::Frame> f = levels_.empty() ? frameToShow() : nullptr;  // inside an asset: its geometry alone
-    // ... nor one whose bodies are still being made ready to draw: the gas
-    // and the pieces shown are of one frame.
-    if (f && f != shown_ && !bodiesReady(f, current_, true)) f = nullptr;
+    // ... nor one whose bodies, gas and water are still being made ready to
+    // draw: what is shown is of one frame.
+    const size_t texels = texelsOf(playing_ || now - shownAt_ < kRestSeconds);
+    if (f && f != shown_ && !frameReady(f, current_, texels, true)) f = nullptr;
     if (!f && shown_ && levels_.empty() && (runner_->cached() > 0 || runner_->busy() || gizmo_.dragging())) f = shown_;
-    // Big frames: coarser while they change, so that playing and scrubbing
-    // keep up; as they are once the frame shown rests -- the play head
-    // stopped, or playing on at the end of the cache.
-    const double now = ImGui::GetTime();
-    auto upload = [&](const sim::Frame& frame, bool coarse) {
-        renderer_.texelBudget = coarse ? kProxyTexels : kFullTexels;
-        renderer_.setFrame(frame);
-        shownProxy_ = coarse && (frame.domain.cellCount() > kProxyTexels || frame.water.domain.cellCount() > kProxyTexels);
+    // The gas, water and rain as made ready on their thread -- or here: a
+    // screenshot's, or those let go meanwhile.
+    auto upload = [&](const std::shared_ptr<const sim::Frame>& frame, size_t fit) {
+        std::shared_ptr<const sim::PreparedVolumes> made = volumes_->find(frame, fit);
+        if (!made) made = sim::prepareVolumes(*frame, fit);
+        renderer_.setFrame(*frame, *made);
+        shownProxy_ = fit < kFullTexels && (frame->domain.cellCount() > fit || frame->water.domain.cellCount() > fit);
     };
     if (f != shown_) {
-        const bool moving = playing_ || now - shownAt_ < kRestSeconds;
         shown_ = f;
         shownAt_ = now;
-        if (f) upload(*f, proxies_ && moving && !synchronous_);
+        if (f) upload(f, texels);
         else renderer_.clearFrame();
         viewDirty_ = true;
-    } else if (shown_ && shownProxy_ && now - shownAt_ >= kRestSeconds) {
-        upload(*shown_, false);
+    } else if (shown_ && shownProxy_ && now - shownAt_ >= kRestSeconds && volumesReady(shown_, kFullTexels, true)) {
+        upload(shown_, kFullTexels);
         viewDirty_ = true;
     }
     if (!shown_) renderer_.setDomain(runner_->domain());
@@ -795,12 +817,18 @@ void SimWorkspace::update(float dt) {
     updateGeometry();
     updateGuides();
     updateThumbnails();
-    // What the bodies' thread makes next: what this frame of the window wanted.
+    // What the bodies' and the volumes' threads make next: what this frame
+    // of the window wanted.
     bodiesFirst_.insert(bodiesFirst_.end(), std::make_move_iterator(bodiesLater_.begin()),
                         std::make_move_iterator(bodiesLater_.end()));
     bodiesLater_.clear();
     bodies_->want(std::move(bodiesFirst_));
     bodiesFirst_.clear();
+    volumesFirst_.insert(volumesFirst_.end(), std::make_move_iterator(volumesLater_.begin()),
+                         std::make_move_iterator(volumesLater_.end()));
+    volumesLater_.clear();
+    volumes_->want(std::move(volumesFirst_));
+    volumesFirst_.clear();
 
     // Rendering frames or a video: a few a frame of the window.
     job_.step();

@@ -2,7 +2,6 @@
 
 #include "pg/core/Instances.h"
 #include "pg/core/Lod.h"
-#include "pg/core/Parallel.h"
 #include "pg/io/Exr.h"
 #include "pg/io/Picture.h"
 #include "pg/sim/Display.h"
@@ -2143,56 +2142,25 @@ void VolumeRenderer::setDomain(const sim::Domain& domain) {
 }
 
 void VolumeRenderer::setFrame(const sim::Frame& frame, unsigned layers) {
-    if (layers & kWater) setWater(frame.water);
+    setFrame(frame, *sim::prepareVolumes(frame, texelBudget, layers));
+}
+
+void VolumeRenderer::setFrame(const sim::Frame& frame, const sim::PreparedVolumes& prepared) {
+    if (prepared.layers & kWater) setWater(frame.water, prepared);
     else hasWater_ = false;
-    if (layers & kRain) {
-        setRain(frame.rain);
+    if (prepared.layers & kRain) {
+        setRain(frame.rain, prepared);
     } else {
         hasRain_ = false;
         hasRipples_ = false;
     }
-    if (!(layers & kGas) || frame.fields.empty()) {
+    if (prepared.gas.empty()) {
         hasFrame_ = false;  // no gas in this frame
         return;
     }
-    // Every cell, as the texture holds them -- of a grid coarse enough to
-    // fit the budget -- from a sparse frame's tiles too.
-    sim::Domain grid = frame.domain;
-    int factor = 1;
-    while (grid.cellCount() > texelBudget && factor < 8 && frame.domain.cells[0] % (2 * factor) == 0 &&
-           frame.domain.cells[1] % (2 * factor) == 0 && frame.domain.cells[2] % (2 * factor) == 0) {
-        factor *= 2;
-        for (int a = 0; a < 3; ++a) grid.cells[a] = frame.domain.cells[a] / factor;
-        grid.voxel = frame.domain.voxel * static_cast<float>(factor);
-    }
-    std::vector<uint16_t> scratch, steamScratch;
-    const std::vector<uint16_t>* texels = &scratch;
-    const std::vector<uint16_t>* steamTexels = &steamScratch;
-    if (factor > 1) {
-        frame.coarseFields(factor, scratch);
-        frame.coarseSteam(factor, steamScratch);
-    } else {
-        texels = &frame.denseFields(scratch);
-        steamTexels = &frame.denseSteam(steamScratch);
-    }
-    const std::vector<uint16_t>& three = *texels;
+    const sim::Domain& grid = prepared.gasGrid;
     const int nx = grid.cells[0], ny = grid.cells[1], nz = grid.cells[2];
-    if (three.size() != 3 * grid.cellCount() || nx <= 0) {
-        hasFrame_ = false;
-        return;
-    }
-    // Smoke, temperature, flame -- and the steam, 0 without any.
-    const std::vector<uint16_t>& vapour = *steamTexels;
-    const bool steamy = vapour.size() == grid.cellCount();
-    std::vector<uint16_t> fields(4 * grid.cellCount(), 0);
-    pg::parallelFor(grid.cellCount(), 65536, [&](size_t begin, size_t end) {
-        for (size_t c = begin; c < end; ++c) {
-            fields[4 * c] = three[3 * c];
-            fields[4 * c + 1] = three[3 * c + 1];
-            fields[4 * c + 2] = three[3 * c + 2];
-            if (steamy) fields[4 * c + 3] = vapour[c];
-        }
-    });
+    const std::vector<uint16_t>& fields = prepared.gas;
     setDomain(grid);
     if (!fields_) gl_.GenTextures(1, &fields_);
     gl_.ActiveTexture(TEXTURE0);
@@ -2218,31 +2186,13 @@ void VolumeRenderer::setFrame(const sim::Frame& frame, unsigned layers) {
     lightingDirty_ = true;
 }
 
-void VolumeRenderer::setWater(const sim::WaterFrame& water) {
-    if (water.empty() || !water.fits() || water.domain.cells[0] <= 0) {
+void VolumeRenderer::setWater(const sim::WaterFrame& water, const sim::PreparedVolumes& prepared) {
+    if (prepared.water.empty()) {
         hasWater_ = false;
         return;
     }
-    // Every cell, as the texture holds them -- of a grid coarse enough to
-    // fit: at most the budget of them, 2048 a side.
-    sim::Domain grid = water.domain;
-    int factor = 1;
-    auto tooBig = [&] {
-        return grid.cellCount() > texelBudget || std::max({grid.cells[0], grid.cells[1], grid.cells[2]}) > 2048;
-    };
-    while (tooBig() && factor < 8 && water.domain.cells[0] % (2 * factor) == 0 && water.domain.cells[1] % (2 * factor) == 0 &&
-           water.domain.cells[2] % (2 * factor) == 0) {
-        factor *= 2;
-        for (int a = 0; a < 3; ++a) grid.cells[a] = water.domain.cells[a] / factor;
-        grid.voxel = water.domain.voxel * static_cast<float>(factor);
-    }
-    std::vector<uint8_t> scratch;
-    const std::vector<uint8_t>* texels = &scratch;
-    if (factor == 1) {
-        texels = &water.denseCells(scratch);
-    } else {
-        water.coarseCells(factor, scratch);
-    }
+    const sim::Domain& grid = prepared.waterGrid;
+    const std::vector<uint8_t>* texels = &prepared.water;
     const int nx = grid.cells[0], ny = grid.cells[1], nz = grid.cells[2];
     if (!water_) gl_.GenTextures(1, &water_);
     gl_.ActiveTexture(TEXTURE0);
@@ -2266,33 +2216,17 @@ void VolumeRenderer::setWater(const sim::WaterFrame& water) {
     hasWater_ = true;
 }
 
-void VolumeRenderer::setRain(const sim::RainFrame& rain) {
-    hasRain_ = !rain.drops.empty() || !rain.droplets.empty();
+void VolumeRenderer::setRain(const sim::RainFrame& rain, const sim::PreparedVolumes& prepared) {
+    hasRain_ = !prepared.rain.empty();
     rainTimeStep_ = rain.timeStep;
     rainVertices_ = 0;
     if (hasRain_) {
         // The floor is wet where the drops are.
-        wetMin_[0] = wetMin_[1] = 1e30f;
-        wetMax_[0] = wetMax_[1] = -1e30f;
-        for (size_t i = 0; i + 5 < rain.drops.size(); i += 6) {
-            wetMin_[0] = std::min(wetMin_[0], rain.drops[i]);
-            wetMax_[0] = std::max(wetMax_[0], rain.drops[i]);
-            wetMin_[1] = std::min(wetMin_[1], rain.drops[i + 2]);
-            wetMax_[1] = std::max(wetMax_[1], rain.drops[i + 2]);
+        for (int a = 0; a < 2; ++a) {
+            wetMin_[a] = prepared.wetMin[a];
+            wetMax_[a] = prepared.wetMax[a];
         }
-        // Six corners a streak: two triangles from its tail to its head.
-        static const float corners[6][2] = {{0, -1}, {1, -1}, {1, 1}, {0, -1}, {1, 1}, {0, 1}};
-        std::vector<float> v;
-        v.reserve((rain.drops.size() + rain.droplets.size()) * 9);
-        for (int kind = 0; kind < 2; ++kind) {
-            const std::vector<float>& from = kind == 0 ? rain.drops : rain.droplets;
-            for (size_t i = 0; i + 5 < from.size(); i += 6) {
-                for (const auto& c : corners) {
-                    v.insert(v.end(), {from[i], from[i + 1], from[i + 2], from[i + 3], from[i + 4], from[i + 5], c[0],
-                                       c[1], static_cast<float>(kind)});
-                }
-            }
-        }
+        const std::vector<float>& v = prepared.rain;
         if (!rainVao_) {
             gl_.GenVertexArrays(1, &rainVao_);
             gl_.GenBuffers(1, &rainBuffer_);

@@ -304,6 +304,19 @@ na disku.
   a kusy na obrazovce jsou vždy z jednoho snímku. Okno přitom nečeká:
   rozpadající se dům (`house_collapse`) dřív stál okno 160 ms na každý
   snímek, teď ho stojí jen poslání kusů do GPU (~18 ms).
+- **Plyn, voda a déšť** se připravují stejně, na dalším vlákně: buňky
+  rozbalené z dlaždic, plyn složený do čtyř kanálů (kouř, teplota,
+  plamen, pára), mřížka zhrubená, aby se vešla, a čárky deště. Na snímek
+  se čeká stejně jako na kusy a dopředu se chystá jeden snímek za
+  příštím. Celý snímek po zastavení se také připraví na pozadí, a do té
+  doby zůstane na obrazovce zástupný. Hotové věci, které už nikdo nechce,
+  se hned zahodí, protože plný snímek velkého plynu může mít gigabajty.
+  Okno pak už jen pošle data do GPU. Táborák s upresem (4 miliony buněk)
+  dřív stál okno na každém snímku medián 11 ms a až 210 ms za viewport,
+  dalších až 174 ms za náhledy uzlů. Teď okno dělá jen práci GPU.
+  Náhledy uzlů kreslí tělesa, plyn a vodu snímku, jakmile jsou hotové.
+  Do té doby ukazují poslední hotový snímek, obvykle o snímek či dva
+  starší, a pak se překreslí.
 - **Časová osa** ukazuje, co kde je: tmavý pás snímky na disku, světlé pásy
   snímky v paměti. Přehled: „Cache 150 frames · 70 in memory, 63 MB“
   a „On Disk 150 frames, 120 MB“; stavový řádek „cache 150 / 150 (63 MB,

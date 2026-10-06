@@ -16,7 +16,8 @@
 //
 // So too the bodies of the simulation's frames -- pieces, cloth, grains --
 // as the look draws them: on a thread of their own (BodiesPreparer), the
-// frame at the play head first, then those it plays next.
+// frame at the play head first, then those it plays next. And their gas,
+// water and rain, as the viewport's textures hold them (VolumesPreparer).
 //
 #include "pg/core/Geometry.h"
 #include "pg/sim/Display.h"
@@ -26,6 +27,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -148,10 +150,90 @@ std::string bodiesKey(const Look& look);
 bool drawsBodies(const Frame& frame, const Look& look);
 std::shared_ptr<const PreparedBodies> prepareBodies(const Frame& frame, const Look& look);
 
-/// The bodies of frames made ready to draw on a thread of its own: those
+/// What of a frame's gas, water and rain is made ready to draw -- as
+/// gl::VolumeRenderer::Layer.
+enum VolumeLayer : unsigned { kGasVolume = 1, kWaterVolume = 2, kRainVolume = 4, kAllVolumes = 7 };
+
+/// The gas, the water and the rain of a frame as the viewport sends them to
+/// the GPU (gl::VolumeRenderer::setFrame): every cell -- from a sparse
+/// frame's tiles too -- of grids as coarse as they must be to fit `texels`.
+struct PreparedVolumes {
+    size_t texels = 0;    ///< the most cells each grid may have
+    unsigned layers = 0;  ///< of what of the frame it was made
+    /// The gas: smoke, temperature, flame and steam -- four half floats a
+    /// cell of `gasGrid`, x fastest; empty without gas.
+    Domain gasGrid;
+    std::vector<uint16_t> gas;
+    /// The water: two bytes a cell of `waterGrid`, as WaterFrame::cells;
+    /// empty without water.
+    Domain waterGrid;
+    std::vector<uint8_t> water;
+    /// The rain: two triangles a streak of each drop and droplet, nine
+    /// floats a corner -- the drop's six (RainFrame::drops), the corner's
+    /// two, 0 for a drop, 1 for a droplet; and the box on the floor under
+    /// the drops, wet: x, then z.
+    std::vector<float> rain;
+    float wetMin[2] = {0.0f, 0.0f}, wetMax[2] = {0.0f, 0.0f};
+};
+/// Whether `frame` has anything of `layers` to make ready.
+bool hasVolumes(const Frame& frame, unsigned layers = kAllVolumes);
+std::shared_ptr<const PreparedVolumes> prepareVolumes(const Frame& frame, size_t texels, unsigned layers = kAllVolumes);
+
+/// Things made of the frames of a simulation on a thread of its own: those
 /// wanted, the most wanted first -- the frame at the play head, those it
-/// plays next, the thumbnails'. What was made is kept, the frames no longer
-/// wanted going first past kKept, as long as their frame is.
+/// plays next, the thumbnails'. What was made is kept while it is wanted;
+/// past `kept` in all, those no longer wanted go, the oldest first. What
+/// was made of a frame that is gone is found no more. BodiesPreparer and
+/// VolumesPreparer are made of it.
+class FrameWorker {
+public:
+    struct Want {
+        std::shared_ptr<const Frame> frame;
+        /// What else the thing is made of: the same key, the same thing.
+        std::string key;
+        std::function<std::shared_ptr<const void>()> make;
+    };
+
+    explicit FrameWorker(size_t kept);
+    ~FrameWorker();
+    FrameWorker(const FrameWorker&) = delete;
+    FrameWorker& operator=(const FrameWorker&) = delete;
+
+    /// What is wanted now, in place of what was: the first not made yet is
+    /// made next.
+    void want(std::vector<Want> wanted);
+    /// What was made of `frame` with `key`; null if nothing (yet).
+    std::shared_ptr<const void> find(const std::shared_ptr<const Frame>& frame, const std::string& key) const;
+    /// Until everything wanted is made.
+    void wait();
+
+private:
+    struct Made {
+        std::weak_ptr<const Frame> frame;  ///< what it was made of: another frame where it was, no match
+        std::string key;
+        std::shared_ptr<const void> thing;
+    };
+    void loop();
+    /// mu_ held: what was made of `frame` with `key`; the first wanted not
+    /// made yet, -1 if none; whether a made one is wanted.
+    const Made* madeLocked(const std::shared_ptr<const Frame>& frame, const std::string& key) const;
+    int nextLocked() const;
+    bool wantedLocked(const Made& made) const;
+    /// mu_ held: those no longer wanted past kept_ into `gone` -- let go of
+    /// once mu_ is not held.
+    void dropLocked(std::deque<Made>& gone);
+
+    const size_t kept_;
+    mutable std::mutex mu_;
+    std::condition_variable wake_, done_;
+    bool stop_ = false, working_ = false;
+    std::vector<Want> wanted_;
+    std::deque<Made> made_;  ///< the newest last
+    std::thread thread_;
+};
+
+/// The bodies of frames made ready to draw on a thread of their own: the
+/// frames no longer wanted going first past kKept.
 class BodiesPreparer {
 public:
     struct Want {
@@ -160,10 +242,7 @@ public:
     };
     static constexpr size_t kKept = 4;
 
-    BodiesPreparer();
-    ~BodiesPreparer();
-    BodiesPreparer(const BodiesPreparer&) = delete;
-    BodiesPreparer& operator=(const BodiesPreparer&) = delete;
+    BodiesPreparer() : worker_(kKept) {}
 
     /// What is wanted now, in place of what was: the first not made yet is
     /// made next.
@@ -171,28 +250,32 @@ public:
     /// `frame` as `look` draws it, if it is made; null if not (yet).
     std::shared_ptr<const PreparedBodies> find(const std::shared_ptr<const Frame>& frame, const Look& look) const;
     /// Until everything wanted is made.
-    void wait();
+    void wait() { worker_.wait(); }
 
 private:
-    struct Made {
-        std::weak_ptr<const Frame> frame;  ///< what it was made of: another frame where it was, no match
-        std::string key;
-        std::shared_ptr<const PreparedBodies> bodies;
-    };
-    void loop();
-    /// mu_ held: what was made of `frame` with `key`; the first wanted not
-    /// made yet, -1 if none; whether a made one is wanted.
-    const Made* madeLocked(const std::shared_ptr<const Frame>& frame, const std::string& key) const;
-    int nextLocked() const;
-    bool wantedLocked(const Made& made) const;
+    FrameWorker worker_;
+};
 
-    mutable std::mutex mu_;
-    std::condition_variable wake_, done_;
-    bool stop_ = false, working_ = false;
-    std::vector<Want> wanted_;
-    std::vector<std::string> wantedKeys_;
-    std::deque<Made> made_;  ///< the newest last
-    std::thread thread_;
+/// The gas, water and rain of frames made ready to draw on a thread of
+/// their own. What is no longer wanted goes at once: a frame's gas at its
+/// finest may take gigabytes.
+class VolumesPreparer {
+public:
+    struct Want {
+        std::shared_ptr<const Frame> frame;
+        size_t texels = 0;
+        unsigned layers = kAllVolumes;
+    };
+
+    VolumesPreparer() : worker_(0) {}
+
+    void want(std::vector<Want> wanted);
+    std::shared_ptr<const PreparedVolumes> find(const std::shared_ptr<const Frame>& frame, size_t texels,
+                                                unsigned layers = kAllVolumes) const;
+    void wait() { worker_.wait(); }
+
+private:
+    FrameWorker worker_;
 };
 
 }  // namespace pg::sim

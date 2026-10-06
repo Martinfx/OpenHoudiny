@@ -69,7 +69,11 @@ struct Picture {
     uint64_t key = 1469598103934665603ull;  ///< what the node is
     uint64_t live = 0;                      ///< what it is at the frame on screen
     GeometryPtr geometry;
-    std::shared_ptr<const sim::PreparedBodies> bodies;  ///< the frame's pieces, cloth, grains: made ready to draw
+    /// The frame's pieces, cloth and grains as `look` draws them, when
+    /// `bodied`; its gas, water and rain of `layers` -- made ready to draw.
+    bool bodied = false;
+    std::shared_ptr<const sim::PreparedBodies> bodies;
+    std::shared_ptr<const sim::PreparedVolumes> volumes;
     /// The whole scene: its geometry as the viewport has it prepared.
     bool scene = false;
     std::shared_ptr<const sim::PreparedGeometry> prepared;
@@ -258,25 +262,43 @@ void SimWorkspace::updateThumbnails() {
     const bool scene = levels_.empty();  // inside an asset: its geometry alone
     const std::shared_ptr<const sim::Frame> frame = scene ? shown_ : nullptr;
     const uint64_t revision = mixKey(1469598103934665603ull, compiledRevision_);
-    const uint64_t live = frame ? mixKey(mixKey(1469598103934665603ull, frame.get()), frame->number) : 0;
+    auto liveOf = [](const std::shared_ptr<const sim::Frame>& f) {
+        return f ? mixKey(mixKey(1469598103934665603ull, f.get()), f->number) : 0;
+    };
+    const uint64_t live = liveOf(frame);
     auto sceneLook = [&] {
         sim::Look k = compiled_.lookAt(current_);
         k.grid = false;
         return k;
     };
-    // The bodies of `frame` as `look` draws them, made ready on the bodies'
-    // thread -- those the viewport shows, as a rule; false while they are
-    // still being made: the picture waits for them.
-    auto bodiesOf = [&](Picture& p, const sim::Look& look) {
-        if (!frame || !sim::drawsBodies(*frame, look)) return true;
-        p.bodies = bodies_->find(frame, look);
-        if (!p.bodies) bodiesLater_.push_back({frame, look});
-        return p.bodies != nullptr;
+    // The bodies, gas, water and rain of `f` that `p` draws, made ready on
+    // their threads -- those the viewport shows, as a rule; false, and
+    // asked for, while any is still being made. A screenshot's are made
+    // here: its frames go on each frame of the window, and would never be
+    // caught up with.
+    auto thingsOf = [&](Picture& p, const std::shared_ptr<const sim::Frame>& f) {
+        bool ready = true;
+        p.bodies = nullptr;
+        p.volumes = nullptr;
+        if (p.bodied && sim::drawsBodies(*f, p.look)) {
+            p.bodies = synchronous_ ? sim::prepareBodies(*f, p.look) : bodies_->find(f, p.look);
+            if (!p.bodies) {
+                bodiesLater_.push_back({f, p.look});
+                ready = false;
+            }
+        }
+        if (sim::hasVolumes(*f, p.layers)) {
+            p.volumes = synchronous_ ? sim::prepareVolumes(*f, kThumbTexels, p.layers)
+                                     : volumes_->find(f, kThumbTexels, p.layers);
+            if (!p.volumes) {
+                volumesLater_.push_back({f, kThumbTexels, p.layers});
+                ready = false;
+            }
+        }
+        return ready;
     };
     // The whole scene, as the Output draws it -- through `camera`, if one.
-    // Made in `full` only for the picture to be drawn: the rest want its
-    // keys. False while its bodies are still being made.
-    auto wholeScene = [&](Picture& p, const sim::Camera* camera, bool full) {
+    auto wholeScene = [&](Picture& p, const sim::Camera* camera) {
         p.look = sceneLook();
         p.frame = frame;
         p.layers = gl::VolumeRenderer::kAllLayers;
@@ -284,7 +306,7 @@ void SimWorkspace::updateThumbnails() {
         p.geometry = renderer_.geometry();
         p.scene = true;
         p.prepared = renderer_.prepared();
-        const bool ready = !full || bodiesOf(p, p.look);
+        p.bodied = true;
         p.key = mixKey(revision, p.geometry.get());
         p.live = live;
         if (camera) {
@@ -295,7 +317,7 @@ void SimWorkspace::updateThumbnails() {
             p.hasOrbit = true;
             p.orbit = gl::VolumeRenderer::viewOf(sceneBox());
         }
-        return ready;
+        return true;
     };
     // What node `n`'s thumbnail shows; false while there is nothing. Not
     // `full`: its keys, and what is cheap.
@@ -386,7 +408,8 @@ void SimWorkspace::updateThumbnails() {
                 k.pieces = kind == ThumbKind::Pieces;
                 k.cloth = kind == ThumbKind::Cloth;
                 k.grains = kind == ThumbKind::Grains;
-                if (full && !bodiesOf(p, k)) return false;
+                p.frame = frame;
+                p.bodied = true;
                 p.look = k;
                 p.key = revision;
                 p.live = live;
@@ -420,12 +443,12 @@ void SimWorkspace::updateThumbnails() {
                 } else {
                     return false;  // a USD Camera's camera is read for the Output's alone
                 }
-                return wholeScene(p, &c, full);
+                return wholeScene(p, &c);
             }
             case ThumbKind::Output: {
                 if (!scene || !compiled_.ok) return false;
                 const sim::Camera camera = compiled_.cameraAt(current_);
-                return wholeScene(p, compiled_.hasCamera ? &camera : nullptr, full);
+                return wholeScene(p, compiled_.hasCamera ? &camera : nullptr);
             }
         }
         return false;
@@ -439,7 +462,7 @@ void SimWorkspace::updateThumbnails() {
         else r.setGeometry(p.geometry);
         r.setPreparedPieces(p.bodies);
         r.setSolids(p.solids);
-        if (p.frame) r.setFrame(*p.frame, p.layers);
+        if (p.frame && p.volumes) r.setFrame(*p.frame, *p.volumes);
         else r.clearFrame();
         if (p.hasOrbit) {
             r.orbit = p.orbit;
@@ -484,11 +507,33 @@ void SimWorkspace::updateThumbnails() {
     });
     const auto start = Clock::now();
     int drawn = 0;
+    std::erase_if(thumbAsked_, [](const auto& asked) { return asked.second.expired(); });
     std::vector<GeometryPtr> preparing;  // the geometry of those due next, the first first
     for (const Due& d : due) {
         if (drawn >= kPerFrame || (drawn > 0 && msSince(start) > kFrameMs)) break;
         Picture p;
         if (!pictureOf(*net_.node(d.node), p, true)) continue;
+        // The frame's bodies, gas, water and rain. While those of the frame
+        // shown are being made, those of the frame asked for before do, once
+        // made: the picture a frame or two behind the play head -- drawn
+        // again after. Playing on, the play head's would never be caught up
+        // with.
+        if (p.frame) {
+            std::weak_ptr<const sim::Frame>& asked = thumbAsked_[d.node];
+            if (thingsOf(p, p.frame)) {
+                asked.reset();
+            } else {
+                const std::shared_ptr<const sim::Frame> before = asked.lock(), shown = p.frame;
+                if (!before || before == shown) {
+                    asked = shown;
+                    continue;
+                }
+                if (!thingsOf(p, before)) continue;
+                p.frame = before;
+                p.live = liveOf(before);
+                asked = shown;
+            }
+        }
         // A node's own geometry, prepared on the preparer's thread -- or as
         // the viewport has it, if it is the same: drawn once it is.
         if (!p.scene && p.geometry) {

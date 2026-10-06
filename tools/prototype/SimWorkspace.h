@@ -252,6 +252,10 @@ private:
     /// made ready to draw -- or none to draw. If not yet, asked for: before
     /// everything else (`first`), or after.
     bool bodiesReady(const std::shared_ptr<const sim::Frame>& frame, int number, bool first);
+    /// The same of its gas, water and rain, made ready to fit `texels`.
+    bool volumesReady(const std::shared_ptr<const sim::Frame>& frame, size_t texels, bool first);
+    /// Both: the frame can be shown whole.
+    bool frameReady(const std::shared_ptr<const sim::Frame>& frame, int number, size_t texels, bool first);
     void updateGuides();
     void drawGnomon(ImDrawList* d, ImVec2 corner) const;
     /// The size of a render: the camera's picture, or the viewport's.
@@ -653,6 +657,9 @@ private:
     /// what this frame of the window wants of it, the most wanted first.
     std::unique_ptr<sim::BodiesPreparer> bodies_;
     std::vector<sim::BodiesPreparer::Want> bodiesFirst_, bodiesLater_;
+    /// So too their gas, water and rain.
+    std::unique_ptr<sim::VolumesPreparer> volumes_;
+    std::vector<sim::VolumesPreparer::Want> volumesFirst_, volumesLater_;
     uint64_t compileAsked_ = ~0ull;  ///< the revision last handed to it; ~0: none, or to be compiled again
     GeometryPtr sheetGeometry_;    ///< the spreadsheet's node's, as last cooked
     int sheetGeometryNode_ = 0;
@@ -669,6 +676,9 @@ private:
     /// The nodes' own geometry prepared to draw, on a thread of its own: a
     /// picture is drawn once its geometry is.
     std::unique_ptr<sim::GeometryPreparerThread> thumbPreparer_;
+    /// Each live thumbnail's frame asked for and not drawn yet: drawn with,
+    /// once its bodies and volumes are made, while the play head's are not.
+    std::map<int, std::weak_ptr<const sim::Frame>> thumbAsked_;
     std::string thumbRendererLog_;        ///< why it could not be made
     std::unique_ptr<Thumbnails> thumbs_;
     /// The geometry nodes' geometry as cooks last made it: a stamp that
