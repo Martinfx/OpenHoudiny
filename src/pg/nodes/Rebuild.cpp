@@ -93,6 +93,7 @@ std::shared_ptr<Geometry> rebuild(const Geometry& src, const Blends& points, con
     out->detail() = src.detail();
     carryGroups(src, *out, points, sourcePrim);
     for (const Volume& v : src.volumes()) out->addVolume(v);
+    for (const GeometryPtr& p : src.prototypes()) out->addPrototype(p);
     return out;
 }
 

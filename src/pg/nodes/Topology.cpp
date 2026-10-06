@@ -386,7 +386,7 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src, const std::string& o
     std::vector<std::array<uint32_t, 2>> edgeEnds;
     std::vector<std::vector<uint32_t>> edgeFaces;
     std::vector<float> edgeSharp;
-    std::vector<std::vector<uint32_t>> faceEdges(nprims);
+    std::vector<uint32_t> cornerEdge(src.vertexCount(), 0);  // the edge from each corner to the next
     for (size_t p = 0; p < nprims; ++p) {
         if (!isFace(p)) continue;
         const auto c = src.primitivePoints(p);
@@ -401,7 +401,7 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src, const std::string& o
             }
             edgeFaces[it->second].push_back(static_cast<uint32_t>(p));
             edgeSharp[it->second] = std::max(edgeSharp[it->second], numberAt(crease, v0 + i));
-            faceEdges[p].push_back(it->second);
+            cornerEdge[v0 + i] = it->second;
         }
     }
     const size_t ne = edgeEnds.size();
@@ -540,6 +540,7 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src, const std::string& o
     std::vector<uint32_t> sourcePrim;
     std::vector<float> creases;
     Blends vertices;
+    std::vector<std::pair<uint32_t, float>> all;
     for (size_t p = 0; p < nprims; ++p) {
         const auto c = src.primitivePoints(p);
         const uint32_t v0 = static_cast<uint32_t>(src.primitiveVertexStart(p));
@@ -556,22 +557,22 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src, const std::string& o
         const size_t k = c.size();
         for (size_t i = 0; i < k; ++i) {
             const size_t prev = (i + k - 1) % k;
-            const uint32_t eNext = static_cast<uint32_t>(np) + faceEdges[p][i];
-            const uint32_t ePrev = static_cast<uint32_t>(np) + faceEdges[p][prev];
+            const uint32_t eNext = static_cast<uint32_t>(np) + cornerEdge[v0 + i];
+            const uint32_t ePrev = static_cast<uint32_t>(np) + cornerEdge[v0 + prev];
             faces.push_back({c[i], eNext, facePoint[p], ePrev});
             closed.push_back(1);
             sourcePrim.push_back(static_cast<uint32_t>(p));
             // The corners' own attributes (uv) bilinear over the face.
             vertices.one(v0 + static_cast<uint32_t>(i));
             vertices.two(v0 + static_cast<uint32_t>(i), v0 + static_cast<uint32_t>((i + 1) % k), 0.5f);
-            std::vector<std::pair<uint32_t, float>> all;
+            all.clear();
             for (size_t j = 0; j < k; ++j) all.push_back({v0 + static_cast<uint32_t>(j), 1.0f / static_cast<float>(k)});
             vertices.add(all);
             vertices.two(v0 + static_cast<uint32_t>(prev), v0 + static_cast<uint32_t>(i), 0.5f);
             // Half of each edge of the face as sharp, a step on; across the face, smooth.
             if (crease) {
-                creases.insert(creases.end(), {sharpAfter(edgeSharp[faceEdges[p][i]]), 0.0f, 0.0f,
-                                               sharpAfter(edgeSharp[faceEdges[p][prev]])});
+                creases.insert(creases.end(), {sharpAfter(edgeSharp[cornerEdge[v0 + i]]), 0.0f, 0.0f,
+                                               sharpAfter(edgeSharp[cornerEdge[v0 + prev]])});
             }
         }
     }
@@ -1213,55 +1214,78 @@ std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations,
 /// (creaseweight) or of more than two faces apart. Vertex N; zeros -- none
 /// given -- on the other corners where there was none.
 void subdivisionNormals(Geometry& geo, const std::string& only) {
-    const size_t nprims = geo.primitiveCount();
+    const size_t np = geo.pointCount(), nv = geo.vertexCount(), nprims = geo.primitiveCount();
     const AttributeArray* mask = only.empty() ? nullptr : geo.primitives().find(only);
     const AttributeArray* crease = geo.vertices().find("creaseweight");
     auto isFace = [&](size_t p) {
         return geo.primitiveClosed(p) && geo.primitiveVertexCount(p) >= 3 && (!mask || numberAt(mask, p) != 0.0f);
     };
-    // The corners of each edge: who meets whom across it, and how sharp it is.
-    struct Side {
-        uint32_t cornerA, cornerB;  // the corners at the edge's lower point, its higher
-    };
-    std::unordered_map<uint64_t, std::vector<Side>> sides;
-    std::unordered_map<uint64_t, float> sharp;
+    constexpr uint32_t kNone = UINT32_MAX;
+    const auto points = geo.vertexPoints();
+    // Each corner's next round its face; the faces' normals.
+    std::vector<uint32_t> next(nv, kNone);
     std::vector<Vec3> faceNormal(nprims, Vec3(0.0f));
     for (size_t p = 0; p < nprims; ++p) {
         if (!isFace(p)) continue;
-        const auto c = geo.primitivePoints(p);
         const uint32_t v0 = static_cast<uint32_t>(geo.primitiveVertexStart(p));
-        faceNormal[p] = polygonNormal(geo, c);  // twice its area long
-        for (size_t i = 0; i < c.size(); ++i) {
-            const size_t j = (i + 1) % c.size();
-            const uint32_t ci = v0 + static_cast<uint32_t>(i), cj = v0 + static_cast<uint32_t>(j);
-            const uint64_t key = edgeKey(c[i], c[j]);
-            sides[key].push_back(c[i] < c[j] ? Side{ci, cj} : Side{cj, ci});
-            float& s = sharp[key];
-            s = std::max(s, numberAt(crease, ci));
-        }
+        const uint32_t k = static_cast<uint32_t>(geo.primitiveVertexCount(p));
+        for (uint32_t i = 0; i < k; ++i) next[v0 + i] = v0 + (i + 1) % k;
+        faceNormal[p] = polygonNormal(geo, geo.primitivePoints(p));  // twice its area long
     }
-    // Corners joined across the smooth edges.
-    std::vector<uint32_t> parent(geo.vertexCount());
+    // The corners at each point.
+    std::vector<uint32_t> first(np + 1, 0), at;
+    for (size_t c = 0; c < nv; ++c) {
+        if (next[c] != kNone) ++first[points[c] + 1];
+    }
+    for (size_t i = 0; i < np; ++i) first[i + 1] += first[i];
+    at.resize(first[np]);
+    std::vector<uint32_t> fill(first.begin(), first.end() - 1);
+    for (size_t c = 0; c < nv; ++c) {
+        if (next[c] != kNone) at[fill[points[c]]++] = static_cast<uint32_t>(c);
+    }
+    // Corners joined across the smooth edges of two faces.
+    std::vector<uint32_t> parent(nv);
     std::iota(parent.begin(), parent.end(), 0u);
     auto find = [&](uint32_t x) {
         while (parent[x] != x) x = parent[x] = parent[parent[x]];
         return x;
     };
     auto join = [&](uint32_t a, uint32_t b) { parent[find(a)] = find(b); };
-    for (const auto& [key, s] : sides) {
-        if (s.size() != 2 || sharp[key] >= 1.0f) continue;
-        join(s[0].cornerA, s[1].cornerA);
-        join(s[0].cornerB, s[1].cornerB);
+    for (uint32_t c = 0; c < nv; ++c) {
+        if (next[c] == kNone) continue;
+        const uint32_t p = points[c], q = points[next[c]];
+        if (p == q) continue;
+        // The edge's other sides: from q to p, or -- a face turned the other
+        // way -- from p to q as this one.
+        float sharp = numberAt(crease, c);
+        uint32_t others = 0, other = kNone;
+        bool same = false;
+        for (uint32_t k = first[q]; k < first[q + 1]; ++k) {
+            const uint32_t d = at[k];
+            if (points[next[d]] != p) continue;
+            ++others, other = d, same = false;
+            sharp = std::max(sharp, numberAt(crease, d));
+        }
+        for (uint32_t k = first[p]; k < first[p + 1]; ++k) {
+            const uint32_t d = at[k];
+            if (d == c || points[next[d]] != q) continue;
+            ++others, other = d, same = true;
+            sharp = std::max(sharp, numberAt(crease, d));
+        }
+        if (others != 1 || sharp >= 1.0f) continue;
+        if (same) {
+            join(c, other);
+            join(next[c], next[other]);
+        } else {
+            join(c, next[other]);
+            join(next[c], other);
+        }
     }
-    std::vector<Vec3> sum(geo.vertexCount(), Vec3(0.0f));
-    std::vector<uint32_t> faceOfCorner(geo.vertexCount(), UINT32_MAX);
+    std::vector<Vec3> sum(nv, Vec3(0.0f));
     for (size_t p = 0; p < nprims; ++p) {
         if (!isFace(p)) continue;
         const size_t v0 = geo.primitiveVertexStart(p);
-        for (size_t i = 0; i < geo.primitiveVertexCount(p); ++i) {
-            sum[find(static_cast<uint32_t>(v0 + i))] += faceNormal[p];
-            faceOfCorner[v0 + i] = static_cast<uint32_t>(p);
-        }
+        for (size_t i = 0; i < geo.primitiveVertexCount(p); ++i) sum[find(static_cast<uint32_t>(v0 + i))] += faceNormal[p];
     }
     AttributeArray* N = geo.vertices().find("N");
     if (!N || N->type() != AttrType::Vec3) {
@@ -1269,9 +1293,9 @@ void subdivisionNormals(Geometry& geo, const std::string& only) {
         N = &geo.vertices().create("N", AttrType::Vec3);
     }
     auto w = N->write<Vec3>();
-    for (size_t c = 0; c < w.size(); ++c) {
-        if (faceOfCorner[c] == UINT32_MAX) continue;
-        const Vec3 n = sum[find(static_cast<uint32_t>(c))];
+    for (uint32_t c = 0; c < nv; ++c) {
+        if (next[c] == kNone) continue;
+        const Vec3 n = sum[find(c)];
         const float l = length(n);
         w[c] = l > 0.0f ? n / l : Vec3(0.0f);  // none: not given
     }

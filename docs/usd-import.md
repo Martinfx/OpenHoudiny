@@ -22,6 +22,7 @@ ověřené proti knihovně `usd-core` (§6).
 ./build/prototype usd examples/usd/shot.usda                 # co soubor obsahuje: strom, kamery, geometrie
 ./build/prototype sim matchmove out/mm.png --every 24         # oheň v kulise z USD, přes kameru z USD
 ./build/prototype sim usd_looks looks.png --renderer cycles   # rekvizity s materiály z USD (MaterialX, UsdPreviewSurface)
+./build/prototype sim usd_subdivision s.png --renderer cycles   # dělené plochy z USD s ostrými hranami a rohy
 PYTHONPATH=build/python python3 examples/usd/make_plate.py    # plate záběru; pak je oheň v natočeném dvoře
 ```
 
@@ -49,6 +50,7 @@ Geometrie scény v daném snímku, ve světových souřadnicích:
 | Z USD | Do geometrie |
 |---|---|
 | **Mesh** | polygony; `leftHanded` a zrcadlení transformací otočí pořadí rohů, díry (`holeIndices`) vypadnou |
+| dělená plocha (`subdivisionScheme` `catmullClark` nebo `loop`) | hladký povrch: plochy rozdělené Catmull-Clarkem jako v OpenSubdivu, ostré hrany a body podle souboru, normály z povrchu (viz Dělené plochy níže) |
 | normály (`normals`, `primvars:normals`) | `N`: podle `interpolation` bodu, rohu nebo plochy; transformované a znormované. `N` rohů (`faceVarying`) dává ostré hrany ve viewportu i v rendererech |
 | `primvars:st` | `uv` (vektor, z = 0), i s indexy (`primvars:st:indices`) |
 | `primvars:displayColor`, `displayOpacity` | `Cd`, `Alpha` |
@@ -87,11 +89,70 @@ Parametry:
 - **Subsets as Groups, Path Attribute:** skupiny ze subsetů a atribut `path`.
 - **Materials:** materiály navázané na geometrii (níže). Vypnuté: jako dřív,
   jen `displayColor`.
+- **Subdivision:** kolikrát se rozdělí dělené plochy (níže), výchozí 2.
+  Na 0 zůstane řídicí síť.
 
 Neviditelné primy (`visibility = invisible` na nich nebo nad nimi) se
 nečtou. Když se geometrie v souboru hýbe (časové vzorky, value clips,
 animovaná transformace nebo viditelnost), uzel se vaří v každém snímku
 znovu. Jinak jen jednou.
+
+### Dělené plochy
+
+Mesh s `subdivisionScheme = "catmullClark"` je v USD hladká plocha:
+řídicí síť je jen kostra a renderer ji vyhladí. Tak vychází z Mayi,
+z Houdini i z Blenderu se subdivision modifikátorem. USD Import ji vyhladí
+sám, stejně jako OpenSubdiv, kterým to dělá Blender, Houdini i Hydra.
+Z deseti tisíc čtyřúhelníků řídicí sítě tak se Subdivision 2 vznikne
+160 tisíc čtyřúhelníků hladkého povrchu.
+
+- **Kolikrát:** parametr **Subdivision**. Každý krok udělá ze stěny
+  o n rozích n čtyřúhelníků, z čtyřúhelníku čtyři. Kdyby to bylo přes
+  4 miliony ploch, dělí se méně krát a uzel to napíše do varování. Na 0
+  zůstane řídicí síť, jen stínovaná hladce. Síť o 250 tisících
+  čtyřúhelníků se dvakrát rozdělí na 4 miliony ploch asi za 7 s.
+- **Ostré hrany:** `creaseIndices`, `creaseLengths` a `creaseSharpnesses`,
+  s jednou ostrostí na řetěz hran, nebo s ostrostí pro každou hranu zvlášť.
+  Ostrost 10 a víc drží hranu napořád. Menší ji drží tolik kroků, kolik
+  je ostrost, a pak se hrana zaoblí: ostrost 2,5 drží dva kroky a ve třetím
+  napůl.
+- **Ostré body:** `cornerIndices` a `cornerSharpnesses`, se stejnou
+  ostrostí.
+- **Okraj:** `interpolateBoundary`. Výchozí `edgeAndCorner` drží roh,
+  který má jen jednu stěnu (roh mřížky zůstane na místě). `edgeOnly` ho
+  zaoblí.
+- **Normály** ze souboru dělená plocha nebere, jak říká USD. Dostane
+  normály rohů z vyhlazeného povrchu: hladké, jen přes hrany ostré aspoň 1
+  se lámou.
+- **Co zbude:** ostrost, která po dělení zbude, zůstane na geometrii.
+  Na rozích je jako `creaseweight` (ostrost hrany od rohu k dalšímu),
+  na bodech jako `cornerweight`. Podle nich dělí dál uzel Subdivide,
+  takže USD Import se Subdivision 1 a za ním Subdivide 1 dají totéž, co
+  Subdivision 2.
+
+Mesh se `subdivisionScheme = "none"` nebo `"bilinear"` zůstane polygony.
+Stejně tak mesh, který schéma nemá vůbec. Podle specifikace USD by to byla
+dělená plocha, jenže skripty a jednoduché exportéry schéma nezapíšou ani
+u hranatých modelů. Blender i Houdini ho zapisují vždy.
+
+Příklad `usd_subdivision` čte `examples/usd/subdivision.usda` (vznikl
+skriptem `make_subdivision.py` knihovnou USD). Jsou v něm tři hrubé sítě:
+
+- krychle s jedním bodem ostrým napořád: kulatá, jen v jednom místě
+  špičatá;
+- mýdlo, kvádr s hranami ostrosti 1,5: jeden krok ostré, druhý napůl,
+  pak se zaoblí;
+- plechovka o dvanácti stranách: okraj víka ostrý napořád, dno ostrosti 1,
+  takže se jen trochu zaoblí.
+
+```bash
+./build/prototype sim usd_subdivision s.png --renderer cycles
+./build/prototype sim usd_subdivision s0.png --renderer cycles --set subdivision.subdivision=0   # řídicí sítě
+```
+
+![Příklad usd_subdivision v Cycles. Nahoře řídicí sítě ze souboru (Subdivision 0): krychle, kvádr a dvanáctiboký hranol. Dole tytéž sítě vyhlazené (Subdivision 3): kulatá kapka s jednou ostrou špičkou, mýdlo s měkkými hranami a plechovka s ostrým okrajem víka](img/usd-subdivision.jpg)
+
+Tělesa příkladu po třech krocích sedí s Blenderem (OpenSubdiv) na 4e-7.
 
 ### Instance (PointInstancer)
 
@@ -397,7 +458,7 @@ přeskočí.
   nemá plugin MaterialX, takže definice jeho uzlů nezná.
 
 Testy:
-- **`tests/test_usd_read.cpp` (21):**
+- **`tests/test_usd_read.cpp` (24):**
   - text s hodnotami všech druhů a chyba s řádkem;
   - crate proti textu téže scény z `tests/data/usd`, jak je zapsalo USD;
   - crate verze 0.4.0 a `.usdz`;
@@ -415,6 +476,11 @@ Testy:
     instancí;
   - Volume: pole z VDB ve scéně v centimetrech se Z nahoru, vektor
     a objem otočený mimo osy;
+  - dělené plochy: sedm sítí, které rozdělil Blender (OpenSubdiv), přes
+    USD s ostrými hranami, ostrými body a okrajem `edgeOnly`. Body sedí
+    na 4e-7. Subdivide za importem pokračuje, jako by se dělilo dál.
+    Ostrost na řetěz i na hranu dá totéž, `none`, `bilinear` a mesh bez
+    schématu zůstanou polygony, prototypy instancí se vyhladí také;
   - 500 poškozených souborů odmítnutých bez pádu (i pod ASan).
 - **`tests/test_usd_materials.cpp` (6):**
   - UsdPreviewSurface s obrázky, hodnotami a sklem;
@@ -430,6 +496,7 @@ Testy:
     clips proti ní, z toho 80 náhodných záběrů s clips;
   - vazby materiálů proti `UsdShade`;
   - PointInstancery proti `ComputeInstanceTransformsAtTime`.
+  - dělená plocha zapsaná knihovnou s ostrou přední stěnou a ostrým rohem.
 
 ## 7. V kódu
 
@@ -443,12 +510,15 @@ Testy:
 | `src/pg/usd/Shade.h` | Vazby materiálů (`boundMaterial`, `boundSubsets`) a síť materiálu jako uzly MaterialX (`materialNodes`, `materialSurface`) |
 | `src/pg/render/Textures.cpp` | `textureSet("x.usda#/cesta")`: obrázky materiálu ze scény |
 | `src/pg/nodes/Usd.cpp` | Uzel USD Import (`usdimport`) |
+| `src/pg/nodes/Topology.cpp` | Catmull-Clark s ostrými hranami jako v OpenSubdivu (`subdivideGeometry`, `subdivisionNormals`), jímž USD Import dělí dělené plochy |
 | `src/pg/sim/Camera.cpp` | `cameraFromUsd`: kamera USD jako kamera záběru |
 | `src/pg/sim/Network.cpp` | Uzly `usd_import` a `usd_camera`; kamera ze souboru v každém snímku |
 | `src/python/PyUsd.cpp`, `pg.UsdStage` | Čtení z Pythonu |
 | `tools/prototype/Commands.cpp` | `prototype usd` |
 | `examples/usd/make_shot.py` | Jak vznikly soubory ukázkového záběru (knihovnou USD) |
 | `examples/usd/make_looks.py` | Jak vznikl příklad materiálů `looks.usda` (knihovnou USD) |
+| `examples/usd/make_subdivision.py` | Jak vznikl příklad dělených ploch `subdivision.usda` (knihovnou USD) |
+| `tests/data/subdivision/make_subdivision.py` | Jak vznikly body, které z testovacích sítí udělal Blender (OpenSubdiv) |
 
 ## 8. Omezení
 
@@ -470,7 +540,18 @@ Testy:
   kde jsou v souboru, ale tam, kam je instancer rozmístí.
 - **Volume:** čtou se jen pole `OpenVDBAsset`, ne `Field3DAsset`.
   `fieldIndex` se nebere: platí první mřížka daného jména.
-- **Subdivize:** mesh se čte jako řídicí síť, bez vyhlazení.
+- **Dělené plochy:**
+  - `loop` se dělí Catmull-Clarkem. Tvar vyjde podobně hladký, ale ze
+    čtyřúhelníků.
+  - `uv` a jiné hodnoty na rozích se mezi rohy řídicí stěny prolnou
+    lineárně. USD je ve výchozím stavu (`faceVaryingLinearInterpolation`
+    `cornersPlus1`) uvnitř vyhlazuje, takže textura na hrubé síti se může
+    nepatrně posunout.
+  - Díry (`holeIndices`) vypadnou už před dělením. Jejich hrany jsou pak
+    okraj, takže se plocha u díry vyhladí trochu jinak než v OpenSubdivu.
+  - `interpolateBoundary = none` se bere jako `edgeOnly`.
+    `triangleSubdivisionRule` se nečte.
+  - Mesh bez `subdivisionScheme` zůstane polygony (Dělené plochy výše).
 - **Spliny** (animace křivkou, `x.spline`, USD 25 a novější) se nečtou:
   atribut, který má jen spline, nemá hodnotu. Časové vzorky a zbytek
   souboru se čtou dál.

@@ -4,6 +4,7 @@
 #include "pg/usd/Geom.h"
 #include "pg/usd/Stage.h"
 
+#include <algorithm>
 #include <mutex>
 #include <sstream>
 
@@ -29,6 +30,7 @@ public:
         params_.setBool("subsets", true);
         params_.setBool("path", true);
         params_.setBool("materials", true);
+        params_.setInt("subdivision", 2);
     }
 
     bool isTimeDependentSelf() const override {
@@ -96,6 +98,7 @@ private:
         o.subsets = params_.getBool("subsets", true);
         o.pathAttribute = params_.getBool("path", true);
         o.materials = params_.getBool("materials", true);
+        o.subdivision = std::clamp(params_.getInt("subdivision", 2), 0, 6);
         return o;
     }
 

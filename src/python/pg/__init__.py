@@ -1282,16 +1282,19 @@ class UsdStage:
         return c
 
     def geometry(self, time=None, prims=(), render=True, proxy=False, guide=False, metres=True,
-                 subsets=True, path_attribute=True, materials=True):
+                 subsets=True, path_attribute=True, materials=True, subdivision=2):
         """Its geometry at `time`, in the world -- what USD Import makes of it:
         meshes, curves, points, the implicit shapes as polygons, the
         instances of PointInstancers as instances (prototypes, and points
         with instance, orient, pscale), the fields of Volumes as volumes
         (density, vel.x...), under `prims` (all when empty),
         their materials as the program's (material, texture, roughness,
-        metallic...). What it could not read is in self.notes."""
+        metallic...); the subdivision surfaces smooth, their faces cut in
+        four `subdivision` times (0: the coarse mesh), creaseweight and
+        cornerweight as sharp as the file has them. What it could not read
+        is in self.notes."""
         g, notes = self._s.geometry(self._time(time), list(prims), render, proxy, guide, metres, subsets,
-                                    path_attribute, materials)
+                                    path_attribute, materials, subdivision)
         self.notes = notes
         return Geometry(g)
 

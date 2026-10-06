@@ -8,6 +8,7 @@
 
 #include <pybind11/stl.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -145,7 +146,7 @@ void bindUsd(py::module_& m) {
         .def(
             "geometry",
             [](const PyStage& s, double time, const std::vector<std::string>& roots, bool render, bool proxy, bool guide,
-               bool metresYUp, bool subsets, bool pathAttribute, bool materials) {
+               bool metresYUp, bool subsets, bool pathAttribute, bool materials, int subdivision) {
                 usd::ImportOptions o;
                 o.roots = roots;
                 o.render = render;
@@ -155,6 +156,7 @@ void bindUsd(py::module_& m) {
                 o.subsets = subsets;
                 o.pathAttribute = pathAttribute;
                 o.materials = materials;
+                o.subdivision = std::clamp(subdivision, 0, 6);
                 std::vector<std::string> notes;
                 std::shared_ptr<Geometry> g;
                 {
@@ -165,7 +167,8 @@ void bindUsd(py::module_& m) {
             },
             py::arg("time"), py::arg("roots") = std::vector<std::string>{}, py::arg("render") = true,
             py::arg("proxy") = false, py::arg("guide") = false, py::arg("metres_y_up") = true,
-            py::arg("subsets") = true, py::arg("path_attribute") = true, py::arg("materials") = true)
+            py::arg("subsets") = true, py::arg("path_attribute") = true, py::arg("materials") = true,
+            py::arg("subdivision") = 2)
         .def("geometry_varies",
              [](const PyStage& s, const std::vector<std::string>& roots, bool render, bool proxy, bool guide) {
                  usd::ImportOptions o;

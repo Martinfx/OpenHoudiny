@@ -87,10 +87,20 @@ struct ImportOptions {
     /// texture_size; its roughness and metallic; glass for one light goes
     /// through; its colour, where it is a value, as Cd.
     bool materials = true;
+    /// The meshes that are subdivision surfaces -- subdivisionScheme
+    /// catmullClark, or loop, taken as it -- as the smooth surfaces they
+    /// stand for: this many steps of Catmull-Clark as OpenSubdiv takes
+    /// them, their creases and corners as sharp as the file says (and
+    /// after, as f@creaseweight on the corners and f@cornerweight on the
+    /// points, for a Subdivide to go on with); fewer where the faces would
+    /// be too many. Their normals the surface's, on the corners. 0: the
+    /// coarse mesh, its normals smooth as the surface's.
+    int subdivision = 2;
 };
 
 /// The geometry of the stage at `time`, in the world: meshes (with N, uv,
-/// Cd, Alpha, v and their other primvars; their materials), curves as polylines, points
+/// Cd, Alpha, v and their other primvars; their materials; subdivision
+/// surfaces smooth, ImportOptions::subdivision), curves as polylines, points
 /// (pscale from widths, id, v), the implicit shapes -- Cube, Sphere,
 /// Cylinder, Cone, Capsule, Plane -- as polygons; the instances of
 /// PointInstancers as instances (core/Instances.h): their prototypes the

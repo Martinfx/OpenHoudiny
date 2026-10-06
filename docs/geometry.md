@@ -86,7 +86,7 @@ nastaveným na ni.
 | **Liquid Surface** | Voda z Liquid Solveru jako povrch, ze kterého ji renderer renderuje: uzavřená síť kolem ní s normálami `N`, rychlostí `v` a pěnou `foam`; s Ripples i vlnky od deště. Viz níže |
 | **Rain Points** | Kapky deště a kapičky odstřiků: `P`, `v`, `droplet` (1 u kapičky), `id` (kapičky od 2³⁰) |
 | **Gas Volume** | Plyn z Pyro Solveru (nebo z VDB Gas) jako objemy: `density` (kouř), `temperature`, `flame`, pára `steam`, je-li, a rychlost `vel.x`, `vel.y`, `vel.z` na blocích 2 × 2 × 2 buněk |
-| **USD Import** | Geometrie scény USD (`.usda`, `.usdc`, `.usdz`) v daném snímku, složené jako v USD, v metrech s Y nahoru ([usd-import.md](usd-import.md)) |
+| **USD Import** | Geometrie scény USD (`.usda`, `.usdc`, `.usdz`) v daném snímku, složené jako v USD, v metrech s Y nahoru; dělené plochy vyhlazené jako v OpenSubdivu ([usd-import.md](usd-import.md)) |
 | **Alembic Import** | Geometrie souboru Alembic (`.abc`) v daném snímku, kam ji dají transformace: polygony, body, křivky, atributy, FaceSety jako skupiny ([alembic.md](alembic.md)) |
 | **VDB Import** | Mřížky souboru OpenVDB jako objemy, číslovaná sekvence soubor na snímek; se Surface polygony jejich povrchu — level set kolem nuly, hustota kolem Iso ([vdb.md](vdb.md)) |
 | **Voronoi Fracture** | Uzavřené těleso rozřezané na kusy — buňky bodů z druhého vstupu, nebo Count náhodných uvnitř — každý uzavřený, s číslem `piece` a řeznými plochami ve skupině `inside`; viz [destruction.md](destruction.md) |

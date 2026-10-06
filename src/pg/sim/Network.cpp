@@ -981,7 +981,12 @@ std::vector<NodeType> buildTypes() {
                          "The materials bound to the meshes and to their subsets' faces -- MaterialX or "
                          "UsdPreviewSurface -- as the program's: their names as material, their pictures as "
                          "texture (the stage's file#the material's path), their roughness, metallic and colour; "
-                         "glass where light goes through.")});
+                         "glass where light goes through."),
+                  {"subdivision", "Subdivision", "Import", K::Int, {2.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 6.0f, "",
+                   "The meshes that are subdivision surfaces (subdivisionScheme catmullClark or loop) as the "
+                   "smooth surfaces they stand for: how many times their faces are cut in four, the creases and "
+                   "corners as sharp as the file says; fewer where it would make over 4 million faces. 0: the "
+                   "coarse mesh, shaded smooth."}});
     }
     {
         auto toggle = [](const char* name, const char* label, bool on, const char* help) {

@@ -1,0 +1,23 @@
+pgsim 1
+# Subdivision surfaces from USD (examples/usd/subdivision.usda, made by
+# make_subdivision.py): coarse meshes of subdivisionScheme catmullClark, as
+# Maya, Houdini or Blender hand them over. USD Import smooths them as
+# OpenSubdiv does, its creases and corners sharp as the file says: a cube
+# round but for one corner, a bar of soap of edges as sharp as 1.5, a tin
+# whose lid's rim is sharp for good and its bottom's as sharp as 1.
+# Subdivision 0 shows the coarse meshes. Render Detail 0: the surfaces as
+# smooth as they are.
+#   prototype sim usd_subdivision subdivision.png --renderer cycles
+node 1 usd_import 1 subdivision 0 0
+  param file "../usd/subdivision.usda"
+  param subdivision 3
+  display
+node 2 output 2 output 300 0
+  param frames 1
+  param render_detail 0
+node 3 camera 1 camera 300 120
+  param center 0 1.35 3
+  param rotation -22 0 0
+  param width 960
+  param height 540
+link 3.camera -> 2.camera

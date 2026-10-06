@@ -118,7 +118,8 @@ okna.
   (`.usda`, `.usdc`, `.usdz`): scéna složená jako v USD (sublayers,
   reference, payloady, varianty, třídy, value clips), kamera z matchmove
   jako kamera záběru, kulisa a modely jako geometrie v síti i s materiály
-  (MaterialX, UsdPreviewSurface); ověřené proti knihovně USD
+  (MaterialX, UsdPreviewSurface), dělené plochy vyhlazené; ověřené proti
+  knihovně USD
 - **[docs/alembic.md](docs/alembic.md)** — Alembic bez knihovny: celý
   záběr jako jeden archiv `.abc` (geometrie, kusy jako tělesa v pohybu,
   drť, zrna, voda, déšť, látka, kamera; plyn jako VDB vedle) a čtení
@@ -274,6 +275,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
 ./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)
 ./build/prototype sim usd_looks l.png --renderer cycles   # rekvizity s materiály z USD: MaterialX, UsdPreviewSurface, OpenPBR
+./build/prototype sim usd_subdivision s.png --renderer cycles   # dělené plochy z USD vyhlazené jako v OpenSubdivu, s ostrými hranami
 ./build/prototype sim displacement d.png --renderer cycles   # cihly, kůra a dlažba opravdu posunuté podle výšky (Displacement)
 PYTHONPATH=build/python python3 examples/usd/make_plate.py   # plate záběru: pak hoří v natočeném dvoře
 ./build/prototype usd examples/usd/shot.usda       # co USD soubor obsahuje: vrstvy, strom, kamery, geometrie
@@ -479,7 +481,9 @@ value clips. Uzel **USD Camera** dá Outputu kameru z matchmove, snímek po
 snímku, s objektivem napasovaným na film. **USD Import** přinese kulisu,
 modely nebo cache jako geometrii (normály, uv, barvy, primvars, subsety
 jako skupiny, PointInstancery jako instance, objemy z VDB) v metrech s Y nahoru, i když
-soubor přišel z Mayi v centimetrech se Z nahoru. Materiály přečte taky: sítě MaterialX
+soubor přišel z Mayi v centimetrech se Z nahoru. Dělené plochy
+(`subdivisionScheme = catmullClark`) vyhladí jako OpenSubdiv, s ostrými
+hranami a body ze souboru. Materiály přečte taky: sítě MaterialX
 i UsdPreviewSurface navázané jako v USD, s obrázky, drsností, kovovostí,
 barvou a sklem, i z exportu Blenderu. Transformace, skládání, geometrie i value
 clips sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)).

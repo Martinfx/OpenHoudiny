@@ -255,6 +255,48 @@ class AgainstUsd(unittest.TestCase):
         P = (np.c_[P, np.ones(len(P))] @ world)[:, :3] @ (np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]]) * 0.01)
         self.assertTrue(np.allclose(np.asarray(geo.P), P, atol=1e-5))
 
+    def test_subdivision_surfaces_smooth_as_their_creases_say(self):
+        stage = Usd.Stage.CreateNew(self.path("subd.usda"))
+        UsdGeom.SetStageUpAxis(stage, "Y")
+        UsdGeom.SetStageMetersPerUnit(stage, 1)
+        faces = [0, 2, 3, 1, 4, 5, 7, 6, 0, 1, 5, 4, 2, 6, 7, 3, 0, 4, 6, 2, 1, 3, 7, 5]
+        for name, at, scheme in (("smooth", 0, UsdGeom.Tokens.catmullClark), ("plain", 5, None)):
+            m = UsdGeom.Mesh.Define(stage, "/" + name)
+            m.CreatePointsAttr([(x + at, y, z) for z in (-1, 1) for y in (-1, 1) for x in (-1, 1)])
+            m.CreateFaceVertexCountsAttr([4] * 6)
+            m.CreateFaceVertexIndicesAttr(faces)
+            if scheme:
+                # Its front sharp all round, a corner at the back sharp.
+                m.CreateSubdivisionSchemeAttr(scheme)
+                m.CreateCreaseIndicesAttr([4, 5, 7, 6, 4])
+                m.CreateCreaseLengthsAttr([5])
+                m.CreateCreaseSharpnessesAttr([UsdGeom.Mesh.SHARPNESS_INFINITE])
+                m.CreateCornerIndicesAttr([0])
+                m.CreateCornerSharpnessesAttr([UsdGeom.Mesh.SHARPNESS_INFINITE])
+        stage.GetRootLayer().Save()
+        ours = pg.UsdStage(self.path("subd.usda"))
+        # Cut in four twice; the polygons as they are.
+        geo = ours.geometry()
+        self.assertEqual(geo.primitive_count, 6 * 16 + 6)
+        P = np.asarray(geo.P)
+        smooth = P[P[:, 0] < 3]
+        self.assertEqual(len(smooth), 98)
+        # The sharp corner where it was; the front flat, the rest rounded in.
+        self.assertEqual(int(np.isclose(np.linalg.norm(smooth - (-1, -1, -1), axis=1), 0, atol=1e-6).sum()), 1)
+        self.assertEqual(int(np.isclose(smooth[:, 2], 1, atol=1e-6).sum()), 25)
+        self.assertLess(float(smooth[:, 0].max()), 0.99)
+        # What sharpness is left goes with it; the corners' normals the surface's.
+        self.assertAlmostEqual(float(np.max(geo.vertices["creaseweight"])), 10.0)
+        self.assertAlmostEqual(float(np.max(geo.points["cornerweight"])), 10.0)
+        N = np.asarray(geo.vertices["N"])
+        self.assertTrue(np.allclose(np.linalg.norm(N[: 6 * 16 * 4], axis=1), 1, atol=1e-5))
+        self.assertTrue(np.allclose(N[6 * 16 * 4:], 0))
+        # Cut fewer times, or not at all: the coarse box, smooth.
+        self.assertEqual(ours.geometry(subdivision=1).primitive_count, 6 * 4 + 6)
+        coarse = ours.geometry(subdivision=0)
+        self.assertEqual(coarse.primitive_count, 12)
+        self.assertTrue(np.allclose(np.linalg.norm(np.asarray(coarse.vertices["N"])[:24], axis=1), 1, atol=1e-5))
+
     def test_point_instancers_place_as_usd_does(self):
         # Random PointInstancers in a stage of centimetres, Z up: instances
         # turned, sized and moved -- between samples too, by velocities,

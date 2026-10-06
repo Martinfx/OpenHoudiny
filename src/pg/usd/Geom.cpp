@@ -3,6 +3,7 @@
 #include "pg/core/Instances.h"
 #include "pg/core/Material.h"
 #include "pg/io/Vdb.h"
+#include "pg/nodes/Nodes.h"
 #include "pg/usd/Shade.h"
 
 #include <glm/ext/quaternion_double.hpp>
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <unordered_map>
 
 namespace pg::usd {
 
@@ -32,6 +34,11 @@ bool xformable(const std::string& type) {
     }
     return true;
 }
+
+/// The primitive attribute that marks the faces of the meshes read as
+/// subdivision surfaces while the stage is read: 1, 2 where the boundary's
+/// corners are smooth too (interpolateBoundary edgeOnly).
+const char* const kSubdivided = "__subdivision_surface";
 
 /// A number of the file as an index below `n`; `n` for one that is not
 /// (negative, too large, NaN).
@@ -662,12 +669,14 @@ struct Reader {
         }
     }
 
-    /// Every primvar of the prim onto what it added.
-    void primvars(const Stage::Prim& prim, const Piece& piece, bool mesh) {
+    /// Every primvar of the prim onto what it added; its normals not
+    /// `normals`.
+    void primvars(const Stage::Prim& prim, const Piece& piece, bool mesh, bool normals = true) {
         const std::vector<std::string> names = stage.propertyNames(prim);
         const bool primvarNormals = std::find(names.begin(), names.end(), "primvars:normals") != names.end();
         for (const std::string& n : names) {
             if (n.size() > 8 && n.compare(n.size() - 8, 8, ":indices") == 0) continue;
+            if (!normals && (n == "normals" || n == "primvars:normals")) continue;
             if (n == "normals" && mesh && !primvarNormals) {
                 primvar(prim, piece, n, "N", "vertex", 1);
             } else if (n == "velocities") {
@@ -746,10 +755,101 @@ struct Reader {
         if (bad) note(prim, std::to_string(bad) + " faces name points that are not there: left out");
         piece.sourceFaces = faces;
         piece.sourceCorners = corner;
-        primvars(prim, piece, true);
+        // A subdivision surface, as its scheme says -- none, or bilinear,
+        // polygons as they are; one that says nothing too, though USD would
+        // have it Catmull-Clark --: the normals the surface's, not the file's.
+        const std::string scheme = stage.value(prim, "subdivisionScheme", time).text();
+        const bool smooth = scheme == "catmullClark" || scheme == "loop";
+        if (smooth) subdivisionSurface(prim, piece, points);
+        primvars(prim, piece, true, !smooth);
         pathOf(prim, piece);
         if (options.subsets) subsets(prim, piece);
         bind(prim, piece);
+    }
+
+    /// The faces a mesh added as a subdivision surface's: marked so
+    /// (kSubdivided), its creases as sharp as the file says on their
+    /// corners (creaseweight: each the edge to the next corner) and its
+    /// corners on their points (cornerweight). The holes are not there:
+    /// their edges are the boundary's.
+    void subdivisionSurface(const Stage::Prim& prim, const Piece& piece, size_t points) {
+        const size_t prims = out.geo.primitiveCount();
+        // interpolateBoundary none -- the faces at the boundary not drawn --
+        // as edgeOnly.
+        const std::string boundary = stage.value(prim, "interpolateBoundary", time).text();
+        const int32_t mark = boundary == "edgeOnly" || boundary == "none" ? 2 : 1;
+        if (Builder::Attr* a = out.attr(AttrClass::Primitive, kSubdivided, 0, piece.prims)) {
+            Builder::give(*a, piece.prims, prims);
+            std::fill(a->ints.begin() + static_cast<std::ptrdiff_t>(piece.prims), a->ints.end(), mark);
+        }
+        auto key = [](size_t a, size_t b) {
+            return (static_cast<uint64_t>(std::min(a, b)) << 32) | static_cast<uint64_t>(std::max(a, b));
+        };
+        // The creases: runs of points, each as sharp all along -- or each
+        // edge of them as sharp as its own.
+        const Value indices = stage.value(prim, "creaseIndices", time);
+        const Value lengths = stage.value(prim, "creaseLengths", time);
+        const Value sharpnesses = stage.value(prim, "creaseSharpnesses", time);
+        std::unordered_map<uint64_t, float> sharp;
+        if (lengths.isNumbers() && !lengths.numbers.empty()) {
+            size_t edges = 0, at = 0;
+            for (const double l : lengths.numbers) {
+                const size_t n = countUpTo(l, indices.numbers.size() - at);
+                at += std::min(n, indices.numbers.size() - at);
+                edges += n > 1 ? n - 1 : 0;
+            }
+            const size_t given = sharpnesses.numbers.size();
+            const bool eachCrease = given == lengths.numbers.size();
+            if (!eachCrease && given != edges) {
+                note(prim, std::to_string(given) + " crease sharpnesses for " + std::to_string(lengths.numbers.size()) +
+                               " creases of " + std::to_string(edges) + " edges: no creases");
+            } else {
+                at = 0;
+                size_t edge = 0;
+                for (size_t c = 0; c < lengths.numbers.size(); ++c) {
+                    const size_t n = std::min(countUpTo(lengths.numbers[c], indices.numbers.size() - at),
+                                              indices.numbers.size() - at);
+                    for (size_t k = 0; k + 1 < n; ++k, ++edge) {
+                        const size_t a = indexBelow(indices.numbers[at + k], points);
+                        const size_t b = indexBelow(indices.numbers[at + k + 1], points);
+                        const double s = sharpnesses.numbers[eachCrease ? c : edge];
+                        if (a >= points || b >= points || !(s > 0.0)) continue;
+                        float& e = sharp[key(a, b)];
+                        e = std::max(e, static_cast<float>(s));
+                    }
+                    at += n;
+                }
+            }
+        }
+        if (!sharp.empty()) {
+            if (Builder::Attr* a = out.attr(AttrClass::Vertex, "creaseweight", 1, piece.vertices)) {
+                Builder::give(*a, piece.vertices, out.geo.vertexCount());
+                for (size_t p = piece.prims; p < prims; ++p) {
+                    const auto c = out.geo.primitivePoints(p);
+                    const size_t v0 = out.geo.primitiveVertexStart(p);
+                    for (size_t k = 0; k < c.size(); ++k) {
+                        const auto it = sharp.find(key(c[k] - piece.points, c[(k + 1) % c.size()] - piece.points));
+                        if (it != sharp.end()) a->floats[v0 + k] = it->second;
+                    }
+                }
+            }
+        }
+        // The corners.
+        const Value corners = stage.value(prim, "cornerIndices", time);
+        const Value cornerSharpnesses = stage.value(prim, "cornerSharpnesses", time);
+        if (corners.isNumbers() && !corners.numbers.empty()) {
+            if (cornerSharpnesses.numbers.size() != corners.numbers.size()) {
+                note(prim, std::to_string(cornerSharpnesses.numbers.size()) + " corner sharpnesses for " +
+                               std::to_string(corners.numbers.size()) + " corners: no corners");
+            } else if (Builder::Attr* a = out.attr(AttrClass::Point, "cornerweight", 1, piece.points)) {
+                Builder::give(*a, piece.points, out.geo.pointCount());
+                for (size_t k = 0; k < corners.numbers.size(); ++k) {
+                    const size_t i = indexBelow(corners.numbers[k], points);
+                    const double s = cornerSharpnesses.numbers[k];
+                    if (i < points && s > 0.0) a->floats[piece.points + i] = static_cast<float>(s);
+                }
+            }
+        }
     }
 
     /// The material of each primitive the prim added: the prim's, a
@@ -1364,6 +1464,48 @@ void readPrims(Reader& reader, const std::vector<const Stage::Prim*>& prims) {
     }
 }
 
+/// The most faces the subdivision surfaces become: past it, they are
+/// subdivided fewer times.
+constexpr double kMostSubdividedFaces = 4.0e6;
+
+/// The faces read as subdivision surfaces (kSubdivided) as the smooth
+/// surfaces they stand for: `levels` steps of Catmull-Clark -- fewer, past
+/// kMostSubdividedFaces --, their corners' normals the surface's. The
+/// sharpness none of them has left out.
+void subdivideSurfaces(std::shared_ptr<Geometry>& geo, int levels, std::vector<std::string>* notes) {
+    const AttributeArray* mark = geo->primitives().find(kSubdivided);
+    if (!mark) return;
+    // A face of n corners is n quads a step on, each four the next.
+    const auto m = mark->read<int32_t>();
+    double cage = 0.0, kept = 0.0;
+    for (size_t p = 0; p < geo->primitiveCount(); ++p) {
+        if (m[p] != 0) cage += static_cast<double>(geo->primitiveVertexCount(p));
+        else kept += 1.0;
+    }
+    if (cage == 0.0) {
+        geo->primitives().erase(kSubdivided);
+        return;
+    }
+    int steps = std::max(levels, 0);
+    while (steps > 0 && kept + cage * std::pow(4.0, steps - 1) > kMostSubdividedFaces) --steps;
+    if (steps < levels && notes) {
+        notes->push_back("the subdivision surfaces subdivided " + std::to_string(steps) + " times, not " +
+                         std::to_string(levels) + ": more would be over " +
+                         std::to_string(static_cast<int>(kMostSubdividedFaces / 1e6)) + " million faces");
+    }
+    if (steps > 0) geo = subdivideGeometry(*geo, steps, kSubdivided);
+    subdivisionNormals(*geo, kSubdivided);
+    geo->primitives().erase(kSubdivided);
+    auto unlessSharp = [](AttributeSet& set, const char* name) {
+        const AttributeArray* a = set.find(name);
+        if (!a || a->type() != AttrType::Float) return;
+        const auto v = a->read<float>();
+        if (std::all_of(v.begin(), v.end(), [](float s) { return s <= 0.0f; })) set.erase(name);
+    };
+    unlessSharp(geo->vertices(), "creaseweight");
+    unlessSharp(geo->points(), "cornerweight");
+}
+
 std::shared_ptr<Geometry> prototypeGeometry(const Stage& stage, const Stage::Prim& root, double time,
                                             const ImportOptions& options, std::vector<std::string>* notes, int depth) {
     // What is under the root, but what is under an instancer of its own;
@@ -1395,6 +1537,7 @@ std::shared_ptr<Geometry> prototypeGeometry(const Stage& stage, const Stage::Pri
     auto geo = builder.finish();
     applyMaterials(stage, time, *geo, std::move(materials), materialTable,
                    options.metresYUp ? static_cast<float>(stage.metersPerUnit()) : 1.0f);
+    subdivideSurfaces(geo, options.subdivision, notes);
     return geo;
 }
 
@@ -1603,6 +1746,7 @@ std::shared_ptr<Geometry> importGeometry(const Stage& stage, double time, const 
     auto geo = builder.finish();
     applyMaterials(stage, time, *geo, std::move(materials), materialTable,
                    options.metresYUp ? static_cast<float>(stage.metersPerUnit()) : 1.0f);
+    subdivideSurfaces(geo, options.subdivision, skipped);
     return geo;
 }
 

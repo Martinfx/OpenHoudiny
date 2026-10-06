@@ -13,12 +13,12 @@
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
 
+#include "subdivision_cases.h"
 #include "test_framework.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <fstream>
 #include <map>
 #include <span>
 #include <utility>
@@ -236,93 +236,41 @@ TEST(topology_subdivide_rounds_a_box_and_keeps_a_grid_flat) {
 
 namespace {
 
-/// A case of tests/data/subdivision/subdivision.txt: a mesh, and the points
-/// Blender's Subdivision Surface -- OpenSubdiv -- makes of it.
-struct Subdivided {
-    std::string name;
-    int levels = 0;
-    GeometryPtr cage;
-    std::vector<Vec3> points;
-};
-
-/// The cases, the sharpness of the edges on their corners (f@creaseweight:
-/// each the edge to the next corner) and points (f@cornerweight); "edge
-/// only" in i@subd 2.
-std::vector<Subdivided> subdividedByOpenSubdiv() {
-    std::ifstream in(PG_TEST_DATA_DIR "/subdivision/subdivision.txt");
-    std::vector<Subdivided> cases;
-    std::string word, boundary;
-    size_t n = 0;
-    while (in >> word && word == "case") {
-        Subdivided c;
-        in >> c.name >> c.levels >> boundary;
-        auto geo = std::make_shared<Geometry>();
-        in >> word >> n;
-        geo->addPoints(n);
-        for (Vec3& p : geo->positionsForWrite()) in >> p.x >> p.y >> p.z;
-        in >> word >> n;
-        for (size_t f = 0; f < n; ++f) {
-            size_t k = 0;
-            in >> k;
-            std::vector<uint32_t> corners(k);
-            for (uint32_t& i : corners) in >> i;
-            geo->addPrimitive(corners, true);
+/// A case's mesh: the sharpness of its edges on their corners
+/// (f@creaseweight, each the edge to the next corner) and of its points
+/// (f@cornerweight); "edge only" in i@subd 2.
+Geometry cageOf(const opensubdiv::Case& c) {
+    Geometry geo;
+    geo.addPoints(c.points.size());
+    std::copy(c.points.begin(), c.points.end(), geo.positionsForWrite().begin());
+    for (const auto& f : c.faces) geo.addPrimitive(f, true);
+    std::map<std::pair<uint32_t, uint32_t>, float> sharp;
+    for (const auto& [a, b, s] : c.edges) sharp[std::minmax(a, b)] = s;
+    auto crease = geo.vertices().create("creaseweight", AttrType::Float).write<float>();
+    for (size_t prim = 0; prim < geo.primitiveCount(); ++prim) {
+        const auto f = geo.primitivePoints(prim);
+        for (size_t i = 0; i < f.size(); ++i) {
+            const auto it = sharp.find(std::minmax(f[i], f[(i + 1) % f.size()]));
+            crease[geo.primitiveVertexStart(prim) + i] = it == sharp.end() ? 0.0f : it->second;
         }
-        in >> word >> n;
-        std::map<std::pair<uint32_t, uint32_t>, float> sharp;
-        for (size_t e = 0; e < n; ++e) {
-            uint32_t a = 0, b = 0;
-            float s = 0.0f;
-            in >> a >> b >> s;
-            sharp[std::minmax(a, b)] = s;
-        }
-        auto crease = geo->vertices().create("creaseweight", AttrType::Float).write<float>();
-        for (size_t prim = 0; prim < geo->primitiveCount(); ++prim) {
-            const auto f = geo->primitivePoints(prim);
-            for (size_t i = 0; i < f.size(); ++i) {
-                const auto it = sharp.find(std::minmax(f[i], f[(i + 1) % f.size()]));
-                crease[geo->primitiveVertexStart(prim) + i] = it == sharp.end() ? 0.0f : it->second;
-            }
-        }
-        in >> word >> n;
-        auto corner = geo->points().create("cornerweight", AttrType::Float).write<float>();
-        for (size_t k = 0; k < n; ++k) {
-            uint32_t i = 0;
-            in >> i;
-            in >> corner[i];
-        }
-        auto subd = geo->primitives().create("subd", AttrType::Int).write<int32_t>();
-        std::fill(subd.begin(), subd.end(), boundary == "edgeOnly" ? 2 : 1);
-        in >> word >> n;
-        c.points.resize(n);
-        for (Vec3& p : c.points) in >> p.x >> p.y >> p.z;
-        c.cage = geo;
-        cases.push_back(std::move(c));
     }
-    return cases;
-}
-
-/// How far the furthest point of `a` is from the nearest of `b`.
-float furthestFrom(std::span<const Vec3> a, std::span<const Vec3> b) {
-    float worst = 0.0f;
-    for (const Vec3& p : a) {
-        float best = 1e30f;
-        for (const Vec3& q : b) best = std::min(best, length(p - q));
-        worst = std::max(worst, best);
-    }
-    return worst;
+    auto corner = geo.points().create("cornerweight", AttrType::Float).write<float>();
+    for (const auto& [i, s] : c.corners) corner[i] = s;
+    auto subd = geo.primitives().create("subd", AttrType::Int).write<int32_t>();
+    std::fill(subd.begin(), subd.end(), c.edgeOnly ? 2 : 1);
+    return geo;
 }
 
 }  // namespace
 
 TEST(topology_subdivide_is_as_opensubdiv_has_it_with_sharp_edges_and_points) {
-    const std::vector<Subdivided> cases = subdividedByOpenSubdiv();
+    const std::vector<opensubdiv::Case> cases = opensubdiv::cases();
     CHECK_EQ(cases.size(), 7u);
-    for (const Subdivided& c : cases) {
-        const GeometryPtr out = subdivideGeometry(*c.cage, c.levels, "subd");
+    for (const opensubdiv::Case& c : cases) {
+        const GeometryPtr out = subdivideGeometry(cageOf(c), c.levels, "subd");
         const auto P = out->positions();
-        CHECK_EQ(P.size(), c.points.size());
-        const float off = std::max(furthestFrom(c.points, P), furthestFrom(P, c.points));
+        CHECK_EQ(P.size(), c.result.size());
+        const float off = std::max(opensubdiv::furthestFrom(c.result, P), opensubdiv::furthestFrom(P, c.result));
         if (off > 2e-5f) std::printf("  %s: %g off\n", c.name.c_str(), off);
         CHECK(off < 2e-5f);
     }

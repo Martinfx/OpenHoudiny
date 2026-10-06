@@ -14,11 +14,14 @@
 #include "pg/usd/Layer.h"
 #include "pg/usd/Stage.h"
 
+#include "subdivision_cases.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <random>
 #include <sstream>
@@ -1544,4 +1547,221 @@ TEST(usd_broken_files_are_refused_not_crashed_on) {
         usd::Layer layer;
         (void)usd::readLayerBytes(bytes, layer, error);
     }
+}
+
+namespace {
+
+/// A reference case of OpenSubdiv's as a USD file -- metres, Y up, as the
+/// program has them --: a subdivision surface, each sharp edge a crease of
+/// its own, with normals of the cage it is not to take.
+std::string usdOf(const opensubdiv::Case& c) {
+    std::ostringstream o;
+    o << std::setprecision(9);
+    o << "#usda 1.0\n(\n    metersPerUnit = 1\n    upAxis = \"Y\"\n)\n\ndef Mesh \"m\"\n{\n";
+    o << "    uniform token subdivisionScheme = \"catmullClark\"\n";
+    if (c.edgeOnly) o << "    uniform token interpolateBoundary = \"edgeOnly\"\n";
+    auto list = [&](const char* type, const char* name, auto&& each, size_t n) {
+        o << "    " << type << " " << name << " = [";
+        for (size_t i = 0; i < n; ++i) {
+            if (i) o << ", ";
+            each(i);
+        }
+        o << "]\n";
+    };
+    list("point3f[]", "points", [&](size_t i) { o << "(" << c.points[i].x << ", " << c.points[i].y << ", " << c.points[i].z << ")"; },
+         c.points.size());
+    list("normal3f[]", "normals", [&](size_t) { o << "(0, 1, 0)"; }, c.points.size());
+    list("int[]", "faceVertexCounts", [&](size_t i) { o << c.faces[i].size(); }, c.faces.size());
+    std::vector<uint32_t> corners;
+    for (const auto& f : c.faces) corners.insert(corners.end(), f.begin(), f.end());
+    list("int[]", "faceVertexIndices", [&](size_t i) { o << corners[i]; }, corners.size());
+    if (!c.edges.empty()) {
+        list("int[]", "creaseIndices", [&](size_t i) { o << (i % 2 ? std::get<1>(c.edges[i / 2]) : std::get<0>(c.edges[i / 2])); },
+             2 * c.edges.size());
+        list("int[]", "creaseLengths", [&](size_t) { o << 2; }, c.edges.size());
+        list("float[]", "creaseSharpnesses", [&](size_t i) { o << std::get<2>(c.edges[i]); }, c.edges.size());
+    }
+    if (!c.corners.empty()) {
+        list("int[]", "cornerIndices", [&](size_t i) { o << c.corners[i].first; }, c.corners.size());
+        list("float[]", "cornerSharpnesses", [&](size_t i) { o << c.corners[i].second; }, c.corners.size());
+    }
+    o << "}\n";
+    return o.str();
+}
+
+/// A box of 2 m from -1 to 1, `at` along x, as a mesh of `how`.
+std::string boxMesh(const std::string& name, float at, const std::string& how) {
+    std::ostringstream o;
+    o << "def Mesh \"" << name << "\"\n{\n" << how;
+    o << "    point3f[] points = [";
+    const int corners[8][3] = {{-1, -1, -1}, {1, -1, -1}, {-1, 1, -1}, {1, 1, -1}, {-1, -1, 1}, {1, -1, 1}, {-1, 1, 1}, {1, 1, 1}};
+    for (int i = 0; i < 8; ++i) o << (i ? ", " : "") << "(" << corners[i][0] + at << ", " << corners[i][1] << ", " << corners[i][2] << ")";
+    o << "]\n    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]\n";
+    o << "    int[] faceVertexIndices = [0, 2, 3, 1, 4, 5, 7, 6, 0, 1, 5, 4, 2, 6, 7, 3, 0, 4, 6, 2, 1, 3, 7, 5]\n";
+    o << "    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (\n";
+    o << "        interpolation = \"vertex\"\n    )\n}\n\n";
+    return o.str();
+}
+
+/// The points of the primitives whose `path` is `prim`.
+std::vector<Vec3> pointsOf(const Geometry& geo, const std::string& prim) {
+    const AttributeArray* path = geo.primitives().find("path");
+    std::vector<uint8_t> seen(geo.pointCount(), 0);
+    std::vector<Vec3> out;
+    for (size_t p = 0; p < geo.primitiveCount(); ++p) {
+        if (path->stringValue(path->read<int32_t>()[p]) != prim) continue;
+        for (const uint32_t i : geo.primitivePoints(p)) {
+            if (!seen[i]) out.push_back(geo.positions()[i]);
+            seen[i] = 1;
+        }
+    }
+    return out;
+}
+
+size_t facesOf(const Geometry& geo, const std::string& prim) {
+    const AttributeArray* path = geo.primitives().find("path");
+    size_t n = 0;
+    for (size_t p = 0; p < geo.primitiveCount(); ++p) n += path->stringValue(path->read<int32_t>()[p]) == prim ? 1 : 0;
+    return n;
+}
+
+}  // namespace
+
+TEST(usd_import_subdivides_subdivision_surfaces_as_opensubdiv_does) {
+    TempFolder dir("usd_subdivision");
+    const std::vector<opensubdiv::Case> cases = opensubdiv::cases();
+    CHECK_EQ(cases.size(), 7u);
+    for (const opensubdiv::Case& c : cases) {
+        const auto s = open(dir.write(c.name + ".usda", usdOf(c)));
+        usd::ImportOptions options;
+        options.subdivision = c.levels;
+        std::vector<std::string> notes;
+        const auto geo = usd::importGeometry(*s, 0.0, options, &notes);
+        CHECK(notes.empty());
+        const auto P = geo->positions();
+        CHECK_EQ(P.size(), c.result.size());
+        const float off = std::max(opensubdiv::furthestFrom(c.result, P), opensubdiv::furthestFrom(P, c.result));
+        if (off > 2e-5f) std::printf("  %s: %g off\n", c.name.c_str(), off);
+        CHECK(off < 2e-5f);
+        CHECK(geo->primitives().find("__subdivision_surface") == nullptr);
+        // The surface's normals on the corners -- not the file's, all up:
+        // out of a closed one, everywhere.
+        const AttributeArray* N = geo->vertices().find("N");
+        CHECK(N != nullptr && geo->points().find("N") == nullptr);
+        if (!N || c.name.rfind("grid", 0) == 0) continue;
+        Vec3 middle(0.0f);
+        for (const Vec3& p : P) middle += p / static_cast<float>(P.size());
+        size_t outward = 0;
+        for (size_t prim = 0; prim < geo->primitiveCount(); ++prim) {
+            const auto f = geo->primitivePoints(prim);
+            for (size_t k = 0; k < f.size(); ++k) {
+                const Vec3 n = N->read<Vec3>()[geo->primitiveVertexStart(prim) + k];
+                outward += dot(n, P[f[k]] - middle) > 0.0f && std::abs(length(n) - 1.0f) < 1e-4f ? 1 : 0;
+            }
+        }
+        CHECK_EQ(outward, geo->vertexCount());
+    }
+    // What sharpness is left goes with it: a Subdivide after takes the
+    // surface on as if the file had been subdivided further.
+    for (const opensubdiv::Case& c : cases) {
+        if (c.name != "cube_creases" && c.name != "cube_corners" && c.name != "prism") continue;
+        usd::ImportOptions once;
+        once.subdivision = 1;
+        const auto geo = usd::importGeometry(*open(dir / (c.name + ".usda")), 0.0, once);
+        const auto rest = subdivideGeometry(*geo, c.levels - 1);
+        const auto P = rest->positions();
+        const float off = std::max(opensubdiv::furthestFrom(c.result, P), opensubdiv::furthestFrom(P, c.result));
+        if (off > 2e-5f) std::printf("  %s, the rest by Subdivide: %g off\n", c.name.c_str(), off);
+        CHECK(off < 2e-5f);
+    }
+}
+
+TEST(usd_import_takes_creases_of_either_form_and_only_subdivision_surfaces_smooth) {
+    TempFolder dir("usd_creases");
+    const std::string chain = "    int[] creaseIndices = [4, 5, 7, 6, 4]\n    int[] creaseLengths = [5]\n";
+    const std::string text = "#usda 1.0\n(\n    metersPerUnit = 1\n    upAxis = \"Y\"\n)\n\n" +
+                             boxMesh("each_crease", 0.0f, "    uniform token subdivisionScheme = \"catmullClark\"\n" + chain +
+                                                              "    float[] creaseSharpnesses = [2.5]\n") +
+                             boxMesh("each_edge", 5.0f, "    uniform token subdivisionScheme = \"catmullClark\"\n" + chain +
+                                                            "    float[] creaseSharpnesses = [2.5, 2.5, 2.5, 2.5]\n") +
+                             boxMesh("unsaid", 10.0f, "") +
+                             boxMesh("none", 15.0f, "    uniform token subdivisionScheme = \"none\"\n") +
+                             boxMesh("bilinear", 20.0f, "    uniform token subdivisionScheme = \"bilinear\"\n") +
+                             boxMesh("loop", 25.0f, "    uniform token subdivisionScheme = \"loop\"\n") +
+                             boxMesh("miscounted", 30.0f, "    uniform token subdivisionScheme = \"catmullClark\"\n" + chain +
+                                                              "    float[] creaseSharpnesses = [2.5, 2.5]\n");
+    const auto s = open(dir.write("creases.usda", text));
+    std::vector<std::string> notes;
+    const auto geo = usd::importGeometry(*s, 0.0, usd::ImportOptions{}, &notes);
+    // A sharpness a crease, or one an edge: the same surface.
+    const std::vector<Vec3> crease = pointsOf(*geo, "/each_crease");
+    std::vector<Vec3> edge = pointsOf(*geo, "/each_edge");
+    for (Vec3& p : edge) p.x -= 5.0f;
+    CHECK_EQ(crease.size(), 98u);
+    CHECK(std::max(opensubdiv::furthestFrom(crease, edge), opensubdiv::furthestFrom(edge, crease)) < 1e-5f);
+    // Its creases round its front (+z): flat there; its back rounded off.
+    float front = 0.0f, back = 0.0f;
+    for (const Vec3& p : crease) front = std::max(front, p.z), back = std::min(back, p.z);
+    CHECK(front > 0.99999f && back > -0.95f);
+    // Polygons as they are -- with nothing said too --, with the file's
+    // normals; loop as Catmull-Clark.
+    CHECK_EQ(facesOf(*geo, "/each_crease"), 96u);
+    CHECK_EQ(facesOf(*geo, "/unsaid"), 6u);
+    CHECK_EQ(facesOf(*geo, "/none"), 6u);
+    CHECK_EQ(facesOf(*geo, "/bilinear"), 6u);
+    CHECK_EQ(facesOf(*geo, "/loop"), 96u);
+    CHECK_EQ(facesOf(*geo, "/miscounted"), 96u);
+    const AttributeArray* pointN = geo->points().find("N");
+    CHECK(pointN != nullptr);
+    if (pointN) {
+        const AttributeArray* path = geo->primitives().find("path");
+        for (size_t p = 0; p < geo->primitiveCount(); ++p) {
+            const std::string prim = path->stringValue(path->read<int32_t>()[p]);
+            const Vec3 given = pointN->read<Vec3>()[geo->primitivePoints(p)[0]];
+            if (prim == "/unsaid" || prim == "/none" || prim == "/bilinear") CHECK(near(given, Vec3(0, 0, 1)));
+            if (prim == "/each_crease" || prim == "/loop") CHECK(near(given, Vec3(0, 0, 0)));
+        }
+    }
+    // The creases as sharp as is left of them, a step from going: on the
+    // corners of the edges along the top's.
+    const AttributeArray* weights = geo->vertices().find("creaseweight");
+    CHECK(weights != nullptr);
+    if (weights) CHECK_NEAR(*std::max_element(weights->read<float>().begin(), weights->read<float>().end()), 0.5f, 1e-6);
+    CHECK(geo->points().find("cornerweight") == nullptr);
+    CHECK(std::any_of(notes.begin(), notes.end(),
+                      [](const std::string& n) { return n.find("/miscounted: 2 crease sharpnesses") != std::string::npos; }));
+    // Not subdivided: the coarse box, smooth but apart across its creases.
+    usd::ImportOptions coarse;
+    coarse.subdivision = 0;
+    const auto cage = usd::importGeometry(*s, 0.0, coarse);
+    CHECK_EQ(facesOf(*cage, "/each_crease"), 6u);
+    const auto N = cage->vertices().find("N")->read<Vec3>();
+    // The front (face 1), the creases round it: straight out at each
+    // corner. The bottom (face 2) at the back's corner: between the three
+    // faces there; at the front's: between itself and the side, the front
+    // apart.
+    for (size_t k = 0; k < 4; ++k) CHECK(near(N[cage->primitiveVertexStart(1) + k], Vec3(0, 0, 1)));
+    CHECK(near(N[cage->primitiveVertexStart(2)], normalize(Vec3(-1, -1, -1))));
+    CHECK(near(N[cage->primitiveVertexStart(2) + 3], normalize(Vec3(-1, -1, 0))));
+}
+
+TEST(usd_import_subdivides_the_prototypes_and_keeps_the_instances) {
+    TempFolder dir("usd_subdivided_instances");
+    const std::string text = "#usda 1.0\n(\n    metersPerUnit = 1\n    upAxis = \"Y\"\n)\n\n" +
+                             boxMesh("ground", 0.0f, "    uniform token subdivisionScheme = \"catmullClark\"\n") + R"(
+def PointInstancer "rocks"
+{
+    point3f[] positions = [(0, 5, 0), (3, 5, 0)]
+    int[] protoIndices = [0, 0]
+    rel prototypes = </rocks/Prototypes/rock>
+
+    def Scope "Prototypes"
+    {
+)" + boxMesh("rock", 0.0f, "    uniform token subdivisionScheme = \"catmullClark\"\n") + "    }\n}\n";
+    const auto s = open(dir.write("instances.usda", text));
+    const auto geo = usd::importGeometry(*s, 0.0, usd::ImportOptions{});
+    CHECK_EQ(geo->primitiveCount(), 96u);
+    CHECK_EQ(geo->prototypeCount(), 1u);
+    CHECK_EQ(instanceCount(*geo), 2u);
+    if (geo->prototypeCount() == 1) CHECK_EQ(geo->prototypes()[0]->primitiveCount(), 96u);
 }

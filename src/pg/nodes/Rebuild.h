@@ -30,10 +30,19 @@ struct Blends {
         weight.push_back(1.0f);
         start.push_back(static_cast<uint32_t>(index.size()));
     }
-    /// (1 - t) a + t b.
+    /// (1 - t) a + t b -- as add() has them: the lower first, one if the same.
     void two(uint32_t a, uint32_t b, float t) {
-        std::vector<std::pair<uint32_t, float>> terms = {{a, 1.0f - t}, {b, t}};
-        add(terms);
+        if (a == b) {
+            index.push_back(a);
+            weight.push_back(1.0f);
+        } else {
+            const bool inOrder = a < b;
+            index.push_back(inOrder ? a : b);
+            weight.push_back(inOrder ? 1.0f - t : t);
+            index.push_back(inOrder ? b : a);
+            weight.push_back(inOrder ? t : 1.0f - t);
+        }
+        start.push_back(static_cast<uint32_t>(index.size()));
     }
     /// Terms naming the same element are summed.
     void add(std::vector<std::pair<uint32_t, float>>& terms) {
@@ -79,7 +88,7 @@ void carryGroups(const Geometry& src, Geometry& dst, const Blends& points, std::
 /// A geometry of `pointCount` points and the primitives `faces` (point
 /// lists, `closed`), its attributes from `src`: points blended, vertices
 /// blended, primitives gathered by `sourcePrim`; groups carried; detail and
-/// volumes kept.
+/// volumes kept, and the prototypes the instance points stand for.
 std::shared_ptr<Geometry> rebuild(const Geometry& src, const Blends& points, const std::vector<std::vector<uint32_t>>& faces,
                                   const std::vector<uint8_t>& closed, const Blends& vertices,
                                   const std::vector<uint32_t>& sourcePrim);

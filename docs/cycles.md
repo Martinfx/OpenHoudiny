@@ -490,4 +490,6 @@ Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   s OpenVDB.
 - Dělení ploch Catmull-Clark: Cycles je postavený bez OpenSubdiv,
   a posouvané povrchy (**Displacement**) proto dělí jen lineárně. Hrubá
-  síť tak zůstane hranatá, jen se posune.
+  síť tak zůstane hranatá, jen se posune. Dělené plochy z USD vyhladí
+  už USD Import ([usd-import.md](usd-import.md#dělené-plochy)), před
+  Cycles se dá dát i uzel Subdivide.
