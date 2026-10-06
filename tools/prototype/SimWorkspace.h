@@ -97,6 +97,7 @@ public:
 
     bool open(const std::string& path) override;
     bool canOpen(const std::string& path) const override;
+    bool unsaved() const override;
 
     bool openExample(const std::string& name);
     void newNetwork();
@@ -117,9 +118,14 @@ public:
     /// goes round, what a brush goes over.
     enum class PickStyle { Box, Lasso, Brush };
 
+protected:
+    void saveThen(std::function<void()> then) override;
+
 private:
     void load(const sim::Network& net, const std::string& path, const std::string& example);
     bool save(const std::string& path);
+    /// Where Ctrl+S saves: a file picked first where there is none yet.
+    void saveAsDialog();
     void recompile();
     void restore(const std::string& state);
     void undo();
@@ -756,6 +762,7 @@ private:
         None, Open, SaveAs, Image, Frames, Video, FinalFrames, FinalVideo, MeshFile, ImportMesh, SaveCache, LoadCache, Bake,
         ExportGeometry, ExportFrames, ExportUsd, ExportAlembic, OpenAsset, SaveAsset, SaveRender
     } fileAction_ = FileAction::None;
+    std::function<void()> afterSave_;  ///< what waits for the network to be saved as (Workspace::saveThen)
     int fileNode_ = 0;        ///< MeshFile: the node whose file is chosen; Export...: whose geometry
     std::string fileParam_;
     std::string cacheFolder_;  ///< the folder the cache was last saved to or loaded from

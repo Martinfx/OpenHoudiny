@@ -404,8 +404,13 @@ int runEditor(int argc, char** argv) {
         int frame = 0;
         std::string title;
         auto last = std::chrono::steady_clock::now();
-        while (!glfwWindowShouldClose(window) && !editor.quitRequested()) {
+        while (!editor.quitRequested()) {
             glfwPollEvents();
+            // The window closed: as Quit -- changes not saved asked about first.
+            if (glfwWindowShouldClose(window)) {
+                glfwSetWindowShouldClose(window, GLFW_FALSE);
+                editor.requestQuit();
+            }
             const auto now = std::chrono::steady_clock::now();
             const float dt = std::min(0.25f, std::chrono::duration<float>(now - last).count());
             last = now;

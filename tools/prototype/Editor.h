@@ -34,6 +34,9 @@ public:
     /// Draws the whole window for one frame.
     void frame(float dt);
 
+    /// Out of the editor -- once each network with changes not saved has
+    /// been asked about (Workspace::unlessUnsaved) and none cancelled.
+    void requestQuit() { quitFrom(0); }
     bool quitRequested() const { return quit_; }
     /// "campfire.pgsim * -- Simulation -- prototype"
     std::string title() const;
@@ -41,6 +44,9 @@ public:
 private:
     void menuBar();
     void statusBar(float height);
+    /// Asks about the networks from the `i`-th on, each shown as it is
+    /// asked; then quits.
+    void quitFrom(size_t i);
     Workspace& current() { return *workspaces_[active_]; }
     const Workspace& current() const { return *workspaces_[active_]; }
 

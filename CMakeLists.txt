@@ -891,7 +891,8 @@ if(PG_BUILD_GUI)
     tools/prototype/Theme.cpp
     tools/prototype/Thumbnails.cpp
     tools/prototype/Wedge.cpp
-    tools/prototype/Widgets.cpp)
+    tools/prototype/Widgets.cpp
+    tools/prototype/Workspace.cpp)
 endif()
 add_executable(prototype ${PG_TOOL_SOURCES})
 target_include_directories(prototype PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/prototype)
@@ -999,6 +1000,7 @@ ${PG_FONT_ARRAYS}}  // namespace pg::editor::theme
     tools/prototype/NodeCanvas.cpp
     tools/prototype/Theme.cpp
     tools/prototype/Widgets.cpp
+    tools/prototype/Workspace.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/EditorFonts.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp

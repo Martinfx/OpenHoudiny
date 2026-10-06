@@ -258,7 +258,22 @@ tažení, **Space**, **Home**, **End**, šipky) pak nic nepočítají znovu.
 ### Soubory, undo
 
 **Ctrl+N/O/S**, **Ctrl+Shift+S**, příklady v **File › Examples**; **New**
-dá prázdnou scénu. Otevřený příklad se ukládá přes Save As. **File › Render
+dá prázdnou scénu. Otevřený příklad se ukládá přes Save As.
+
+Neuložené změny se neztratí bez ptaní. New, Open, Open Asset, příklad,
+**Quit** (Ctrl+Q) i zavření okna se nejdřív zeptají:
+
+- **Save** (Enter) uloží a pak pokračuje. Síť bez souboru se uloží přes
+  Save As a když dialog zrušíte, nestane se nic.
+- **Don't Save** (D) změny zahodí.
+- **Cancel** (Escape) nechá všechno, jak je.
+
+Uvnitř assetu Save uloží jeho novou verzi a pak scénu. Quit se zeptá
+u obou sítí, simulace i shaderů. Soubor se zapíše celý vedle původního
+a teprve pak ho nahradí, takže pád nebo plný disk uprostřed ukládání
+nechá původní soubor celý (stejně assety). Uložit pod jménem souboru,
+který už existuje, chce potvrzení: Save podruhé (Replace) ho přepíše,
+Escape otázku vezme zpět. **File › Render
 Image** uloží snímek, **Render Frames** celý záběr jako očíslované PNG
 a **Render Video** celý záběr do videa — obojí po snímcích na pozadí, s oknem
 průběhu a tlačítkem Stop, a kamerou, pokud ji síť má ([render.md](render.md)). **Export Geometry** a **Export Geometry Frames** zapíšou

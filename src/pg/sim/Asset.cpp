@@ -1,4 +1,5 @@
 #include "pg/sim/Asset.h"
+#include "pg/sim/Cache.h"
 
 #include "pg/sim/GeometryGraph.h"
 
@@ -372,12 +373,8 @@ bool writeAsset(const Network& def, const std::string& path, std::string& error)
     std::error_code ec;
     const fs::path file(path);
     if (file.has_parent_path()) fs::create_directories(file.parent_path(), ec);
-    std::ofstream out(file, std::ios::binary);
-    if (!out || !(out << def.save())) {
-        error = path + ": cannot write it";
-        return false;
-    }
-    return true;
+    // Whole or not at all: every network that uses the asset reads this file.
+    return writeWhole(path, def.save(), error);
 }
 
 // --- the nodes of the core -----------------------------------------------------------------------

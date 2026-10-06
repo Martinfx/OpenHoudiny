@@ -35,6 +35,16 @@ bool Editor::openExample(const std::string& name) {
     return sim_->openExample(name);
 }
 
+void Editor::quitFrom(size_t i) {
+    for (; i < workspaces_.size(); ++i) {
+        if (!workspaces_[i]->unsaved()) continue;
+        active_ = i;
+        workspaces_[i]->unlessUnsaved("quitting", [this, i] { quitFrom(i + 1); });
+        return;
+    }
+    quit_ = true;
+}
+
 void Editor::showShaders() { active_ = 1; }
 void Editor::showSimulation() { active_ = 0; }
 
@@ -61,7 +71,7 @@ void Editor::menuBar() {
     if (ImGui::BeginMenu("File")) {
         w.fileMenu();
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit", "Ctrl+Q")) quit_ = true;
+        if (ImGui::MenuItem("Quit", "Ctrl+Q")) requestQuit();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
@@ -143,7 +153,7 @@ void Editor::frame(float dt) {
     }
     Workspace& w = current();
     w.update(dt);
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Q)) quit_ = true;
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Q)) requestQuit();
     const bool popup = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     ui::closePopupOnEscape();
     if (!popup) w.shortcuts();
@@ -235,6 +245,7 @@ void Editor::frame(float dt) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(theme::px(8.0f), theme::px(6.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::px(12.0f), theme::px(12.0f)));
     w.popups();
+    w.unsavedDialog();
     if (about_) {
         ImGui::OpenPopup("About Prototype");
         about_ = false;

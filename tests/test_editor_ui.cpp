@@ -6,11 +6,15 @@
 #include "NodeCanvas.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "Workspace.h"
 
 #include "imgui.h"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -390,4 +394,162 @@ TEST(node_names_cover_no_node_and_no_name) {
     // The other: not under itself (the second node is there), at its right.
     CHECK(first[0].first);
     CHECK(first[0].second.x >= 40.0f);
+}
+
+namespace {
+
+/// A workspace with a document and nothing else: changed or not, saved to a
+/// file it has or not.
+struct Document : Workspace {
+    bool changed = false, hasFile = true;
+    int saves = 0;
+    std::function<void()> waiting;  ///< with no file: what a Save As would run once written
+    std::string none;
+
+    const char* name() const override { return "Document"; }
+    std::string title() const override { return std::string("doc.pgsim") + (changed ? " *" : ""); }
+    bool modified() const override { return changed; }
+    void update(float) override {}
+    void shortcuts() override {}
+    void viewport(ImVec2) override {}
+    void bottom(ImVec2) override {}
+    float bottomHeight() const override { return 0.0f; }
+    void parameters(ImVec2) override {}
+    void network(ImVec2) override {}
+    void fileMenu() override {}
+    void editMenu() override {}
+    void menus() override {}
+    void helpMenu() override {}
+    void popups() override {}
+    std::string status() const override { return {}; }
+    const std::string& message() const override { return none; }
+    bool messageIsError() const override { return false; }
+    bool open(const std::string&) override { return false; }
+    bool canOpen(const std::string&) const override { return false; }
+
+protected:
+    void saveThen(std::function<void()> then) override {
+        if (!hasFile) {
+            waiting = std::move(then);
+            return;
+        }
+        ++saves;
+        changed = false;
+        then();
+    }
+};
+
+}  // namespace
+
+TEST(unsaved_changes_are_asked_about_before_they_go) {
+    Headless ui;
+    Document doc;
+    int done = 0;
+    auto step = [&](ImGuiKey key = ImGuiKey_None) {
+        if (key != ImGuiKey_None) ui.press(key);
+        ui.feed();
+        ui.frame([&] { doc.unsavedDialog(); });
+    };
+    auto asked = [&] {
+        bool open = false;
+        ui.frame([&] {
+            doc.unsavedDialog();
+            open = popupOpen("Unsaved Changes");
+        });
+        return open;
+    };
+    // Nothing changed: at once, nothing asked.
+    doc.unlessUnsaved("quitting", [&] { ++done; });
+    CHECK_EQ(done, 1);
+    CHECK(!asked());
+
+    // Changed: asked; Escape cancels -- nothing happens, nothing is saved.
+    doc.changed = true;
+    doc.unlessUnsaved("quitting", [&] { ++done; });
+    CHECK_EQ(done, 1);
+    CHECK(asked());
+    step(ImGuiKey_Escape);
+    step();
+    CHECK(!asked());
+    CHECK_EQ(done, 1);
+    CHECK(doc.changed && doc.saves == 0);
+
+    // D: not saved, and it happens.
+    doc.unlessUnsaved("starting a new network", [&] { ++done; });
+    CHECK(asked());
+    step(ImGuiKey_D);
+    step();
+    CHECK_EQ(done, 2);
+    CHECK(doc.changed && doc.saves == 0);
+
+    // Enter: saved first, then it happens.
+    doc.unlessUnsaved("opening another network", [&] { ++done; });
+    CHECK(asked());
+    step(ImGuiKey_Enter);
+    step();
+    CHECK_EQ(doc.saves, 1);
+    CHECK_EQ(done, 3);
+    CHECK(!doc.changed && !asked());
+
+    // No file yet: it waits for one to be picked and written -- or for ever.
+    doc.changed = true;
+    doc.hasFile = false;
+    doc.unlessUnsaved("quitting", [&] { ++done; });
+    CHECK(asked());
+    step(ImGuiKey_Enter);
+    step();
+    CHECK_EQ(done, 3);
+    CHECK(static_cast<bool>(doc.waiting));
+    doc.waiting();
+    CHECK_EQ(done, 4);
+}
+
+TEST(saving_over_a_file_is_asked_about_first) {
+    Headless ui;
+    std::random_device rd;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("pg_replace_" + std::to_string(rd()));
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "scene.pgsim") << "pgsim 1\n";
+    ui::FileBrowser files;
+    std::string chosen;
+    bool picked = false;
+    auto step = [&](ImGuiKey key = ImGuiKey_None) {
+        if (key != ImGuiKey_None) ui.press(key);
+        ui.feed();
+        ui.frame([&] { picked = files.draw(chosen) || picked; });
+    };
+    // Open, the name being typed into -- which takes Enter a frame or two on.
+    auto opened = [&](const std::filesystem::path& start) {
+        picked = false;
+        files.open("Save network", {".pgsim"}, true, start.string());
+        for (int i = 0; i < 4; ++i) step();
+    };
+    // A new name: saved at once.
+    opened(dir / "other");
+    step(ImGuiKey_Enter);
+    CHECK(picked);
+    CHECK_EQ(chosen, (dir / "other.pgsim").string());
+    step();
+    // The name of a file there: asked -- Enter again replaces it.
+    opened(dir / "scene.pgsim");
+    step(ImGuiKey_Enter);
+    step();
+    CHECK(!picked);
+    CHECK(files.isOpen());
+    step(ImGuiKey_Enter);
+    CHECK(picked);
+    CHECK_EQ(chosen, (dir / "scene.pgsim").string());
+    step();
+    // Escape takes the question back, not the dialog.
+    opened(dir / "scene");
+    step(ImGuiKey_Enter);
+    step();
+    step(ImGuiKey_Escape);
+    step();
+    CHECK(!picked && files.isOpen());
+    step(ImGuiKey_Escape);
+    step();
+    CHECK(!picked && !files.isOpen());
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
 }

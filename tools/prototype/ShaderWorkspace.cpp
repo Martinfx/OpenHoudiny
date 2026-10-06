@@ -2,6 +2,7 @@
 
 #include "pg/gl/Png.h"
 #include "pg/io/Video.h"
+#include "pg/sim/Cache.h"
 
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -205,16 +206,32 @@ bool ShaderWorkspace::open(const std::string& path) {
 }
 
 bool ShaderWorkspace::save(const std::string& path) {
-    std::ofstream out(path, std::ios::binary);
+    // Written whole beside it, then put in its place: a crash or a full disk
+    // halfway leaves the file as it was.
     const std::string text = graph_.save();
-    if (!out || !(out << text)) {
-        setMessage(path + ": cannot write it", true);
+    std::string error;
+    if (!sim::writeWhole(path, text, error)) {
+        setMessage(error, true);
         return false;
     }
     savedText_ = text;
     path_ = path;
     setMessage("Saved " + path);
     return true;
+}
+
+void ShaderWorkspace::saveThen(std::function<void()> then) {
+    if (path_.empty()) {
+        saveAsDialog();
+        afterSave_ = std::move(then);
+        return;
+    }
+    if (save(path_) && then) then();
+}
+
+void ShaderWorkspace::saveAsDialog() {
+    files_.open("Save shader graph", {".pgsg"}, true, path_.empty() ? "untitled.pgsg" : path_);
+    fileAction_ = FileAction::SaveAs;
 }
 
 void ShaderWorkspace::restore(const std::string& state) {
@@ -238,7 +255,11 @@ void ShaderWorkspace::exportShaders(const std::string& dir) {
             return;
         }
         for (const auto& f : s.files) {
-            std::ofstream((fs::path(dir) / outputFileName(stem, t->name(), f)).string()) << f.text;
+            std::string error;
+            if (!sim::writeWhole((fs::path(dir) / outputFileName(stem, t->name(), f)).string(), f.text, error)) {
+                setMessage("Export: " + error, true);
+                return;
+            }
             ++written;
         }
     }
@@ -359,18 +380,17 @@ void ShaderWorkspace::shortcuts() {
         restore(history_.redo());
     }
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
-        if (path_.empty()) {
-            files_.open("Save shader graph", {".pgsg"}, true, "untitled.pgsg");
-            fileAction_ = FileAction::SaveAs;
-        } else {
-            save(path_);
-        }
+        if (path_.empty()) saveAsDialog();
+        else save(path_);
     }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) saveAsDialog();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) {
-        files_.open("Open shader graph", {".pgsg"}, false, path_.empty() ? examplesDir_ : path_);
-        fileAction_ = FileAction::Open;
+        unlessUnsaved("opening another graph", [this] {
+            files_.open("Open shader graph", {".pgsg"}, false, path_.empty() ? examplesDir_ : path_);
+            fileAction_ = FileAction::Open;
+        });
     }
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) newGraph();
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) unlessUnsaved("starting a new graph", [this] { newGraph(); });
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) reloadLibrary();
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) startValidation();
 }
@@ -903,14 +923,16 @@ void ShaderWorkspace::examplesMenu(const std::string& dir) {
     if (graphs.empty() && folders.empty()) ImGui::TextDisabled("no examples in %s", dir.c_str());
     for (const auto& g : graphs) {
         if (!ImGui::MenuItem(g.stem().string().c_str())) continue;
-        bool added = false;
-        for (const auto& l : libraries) {
-            if (std::find(libraryFiles_.begin(), libraryFiles_.end(), l.string()) != libraryFiles_.end()) continue;
-            libraryFiles_.push_back(l.string());
-            added = true;
-        }
-        if (added) reloadLibrary();
-        open(g.string());
+        unlessUnsaved("opening the example " + g.stem().string(), [this, g, libraries] {
+            bool added = false;
+            for (const auto& l : libraries) {
+                if (std::find(libraryFiles_.begin(), libraryFiles_.end(), l.string()) != libraryFiles_.end()) continue;
+                libraryFiles_.push_back(l.string());
+                added = true;
+            }
+            if (added) reloadLibrary();
+            open(g.string());
+        });
     }
     for (const auto& f : folders) {
         if (!ImGui::BeginMenu(f.filename().string().c_str())) continue;
@@ -920,10 +942,12 @@ void ShaderWorkspace::examplesMenu(const std::string& dir) {
 }
 
 void ShaderWorkspace::fileMenu() {
-    if (ImGui::MenuItem("New", "Ctrl+N")) newGraph();
+    if (ImGui::MenuItem("New", "Ctrl+N")) unlessUnsaved("starting a new graph", [this] { newGraph(); });
     if (ImGui::MenuItem("Open\xe2\x80\xa6", "Ctrl+O")) {
-        files_.open("Open shader graph", {".pgsg"}, false, path_.empty() ? examplesDir_ : path_);
-        fileAction_ = FileAction::Open;
+        unlessUnsaved("opening another graph", [this] {
+            files_.open("Open shader graph", {".pgsg"}, false, path_.empty() ? examplesDir_ : path_);
+            fileAction_ = FileAction::Open;
+        });
     }
     if (ImGui::BeginMenu("Examples")) {
         examplesMenu(examplesDir_);
@@ -931,17 +955,10 @@ void ShaderWorkspace::fileMenu() {
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Save", "Ctrl+S")) {
-        if (path_.empty()) {
-            files_.open("Save shader graph", {".pgsg"}, true, "untitled.pgsg");
-            fileAction_ = FileAction::SaveAs;
-        } else {
-            save(path_);
-        }
+        if (path_.empty()) saveAsDialog();
+        else save(path_);
     }
-    if (ImGui::MenuItem("Save As\xe2\x80\xa6", "Ctrl+Shift+S")) {
-        files_.open("Save shader graph", {".pgsg"}, true, path_.empty() ? "untitled.pgsg" : path_);
-        fileAction_ = FileAction::SaveAs;
-    }
+    if (ImGui::MenuItem("Save As\xe2\x80\xa6", "Ctrl+Shift+S")) saveAsDialog();
     ImGui::Separator();
     if (ImGui::MenuItem("Export Shaders\xe2\x80\xa6")) {
         files_.open("Export shaders into a folder", {}, true, "shaders");
@@ -1020,10 +1037,21 @@ void ShaderWorkspace::helpMenu() {
 void ShaderWorkspace::popups() {
     job_.draw();
     std::string chosen;
-    if (!files_.draw(chosen)) return;
+    if (!files_.draw(chosen)) {
+        if (!files_.isOpen()) afterSave_ = nullptr;  // no file picked: what waited for it does not happen
+        return;
+    }
     switch (fileAction_) {
         case FileAction::Open: open(chosen); break;
-        case FileAction::SaveAs: save(chosen); break;
+        case FileAction::SaveAs:
+            if (save(chosen) && afterSave_) {
+                const std::function<void()> then = std::move(afterSave_);
+                afterSave_ = nullptr;
+                fileAction_ = FileAction::None;
+                then();
+                return;
+            }
+            break;
         case FileAction::Export: exportShaders(chosen); break;
         case FileAction::Image: savePreviewImage(chosen); break;
         case FileAction::Video: savePreviewVideo(chosen); break;

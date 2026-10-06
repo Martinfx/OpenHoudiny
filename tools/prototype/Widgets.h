@@ -183,7 +183,8 @@ public:
     void openFolder(const std::string& title, bool create, const std::string& start,
                     std::vector<std::pair<std::string, std::string>> places = {});
     /// Draws the dialog while it is open. True, with the path in `chosen`,
-    /// once the user picked one.
+    /// once the user picked one. Saving over a file that is there already
+    /// is asked about first: Save again (Replace) writes over it.
     bool draw(std::string& chosen);
     bool isOpen() const { return open_ || requested_; }
 
@@ -198,6 +199,7 @@ private:
     bool open_ = false, requested_ = false;
     std::filesystem::path dir_;
     std::string name_, pathText_, error_;
+    std::string replace_;  ///< a file there already, asked about: saving to it again replaces it
     std::vector<std::pair<std::string, std::string>> places_;
     struct Entry {
         std::string name;

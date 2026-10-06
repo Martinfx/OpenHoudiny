@@ -762,6 +762,7 @@ void FileBrowser::open(const std::string& title, std::vector<std::string> extens
     folders_ = false;
     places_ = std::move(places);
     error_.clear();
+    replace_.clear();  // asked again each time
     std::error_code ec;
     fs::path p = start.empty() ? fs::current_path(ec) : typed(start);
     if (fs::is_directory(p, ec)) {
@@ -838,14 +839,30 @@ bool FileBrowser::draw(std::string& chosen) {
         dir_ = fs::weakly_canonical(p, ec);
         pathText_ = dir_.string();
         error_.clear();
+        replace_.clear();
         if (folders_) name_.clear();  // the name was of a folder in the one left
         list();
     };
-    auto accept = [&](const fs::path& p) {
+    // The file a name stands for: saving, with its extension.
+    auto fileOf = [&](const fs::path& p) {
         fs::path out = p;
         if (save_ && !extensions_.empty() && !wanted(out)) out += extensions_.front();
-        chosen = out.string();
+        return out;
+    };
+    auto accept = [&](const fs::path& p) {
+        chosen = fileOf(p).string();
         done = true;
+    };
+    // Saving over a file there already: asked first, taken the second time.
+    auto pick = [&](const fs::path& p) {
+        const fs::path out = fileOf(p);
+        std::error_code ec;
+        if (save_ && !folders_ && fs::exists(out, ec) && replace_ != out.string()) {
+            replace_ = out.string();
+            error_.clear();
+            return;
+        }
+        accept(p);
     };
 
     // The path, and up.
@@ -894,7 +911,8 @@ bool FileBrowser::draw(std::string& chosen) {
                     go(dir_ / e.name);
                     break;
                 }
-                accept(folders_ ? dir_ : dir_ / e.name);  // a file in it: its folder
+                if (folders_) accept(dir_);  // a file in it: its folder
+                else pick(dir_ / e.name);
             }
         }
         ImGui::PopID();
@@ -910,8 +928,17 @@ bool FileBrowser::draw(std::string& chosen) {
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - buttons);
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();  // a name can be typed at once
     const bool enter = ImGui::InputText("##name", &name_, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::IsItemEdited()) replace_.clear();
+    // Asked whether to write over the file named.
+    const bool asking = !replace_.empty() && !name_.empty() &&
+                        fileOf(typed(name_).is_absolute() ? typed(name_) : dir_ / name_).string() == replace_;
+    // Asked, Enter again replaces -- the name has let go of the keys.
+    const bool again = asking && !ImGui::IsAnyItemActive() &&
+                       (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
     ImGui::SameLine();
-    const bool pressed = accentButton(folders_ ? "Choose" : save_ ? "Save" : "Open", ImVec2(theme::px(92.0f), 0.0f)) || enter;
+    const bool pressed =
+        accentButton(folders_ ? "Choose" : !save_ ? "Open" : asking ? "Replace" : "Save", ImVec2(theme::px(92.0f), 0.0f)) || enter ||
+        again;
     if (pressed && folders_) {
         // The folder named, or with no name the one open.
         const fs::path p = name_.empty() ? dir_ : typed(name_).is_absolute() ? typed(name_) : dir_ / name_;
@@ -927,14 +954,21 @@ bool FileBrowser::draw(std::string& chosen) {
         } else if (!save_ && !fs::exists(p, ec)) {
             error_ = "no file " + p.string();
         } else {
-            accept(p);
+            pick(p);
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(theme::px(92.0f), 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    if (ImGui::Button("Cancel", ImVec2(theme::px(92.0f), 0.0f))) {
         open_ = false;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        // Escape takes back the question first, then the dialog.
+        if (asking) replace_.clear();
+        else open_ = false;
     }
-    if (!error_.empty()) ImGui::TextColored(theme::vec(theme::kRed), "%s", error_.c_str());
+    if (asking) {
+        ImGui::TextColored(theme::vec(theme::kAccent), "%s is there already: Replace writes over it",
+                           fs::path(replace_).filename().string().c_str());
+    } else if (!error_.empty()) ImGui::TextColored(theme::vec(theme::kRed), "%s", error_.c_str());
     else if (folders_) ImGui::TextDisabled("%zu items -- with no name, Choose takes the folder open", entries_.size());
     else ImGui::TextDisabled("%zu items", entries_.size());
     if (done) open_ = false;

@@ -385,6 +385,29 @@ std::string SimWorkspace::title() const {
 
 bool SimWorkspace::modified() const { return net_.save() != savedText_; }
 
+bool SimWorkspace::unsaved() const {
+    return modified() ||
+           std::any_of(levels_.begin(), levels_.end(), [](const Level& l) { return l.net.save() != l.savedText; });
+}
+
+void SimWorkspace::saveThen(std::function<void()> then) {
+    // Inside an asset: each level a new version, on the way up to the scene.
+    while (!levels_.empty()) {
+        if (!leaveAsset()) return;  // why is in the status line
+    }
+    if (path_.empty()) {
+        saveAsDialog();
+        afterSave_ = std::move(then);
+        return;
+    }
+    if (save(path_) && then) then();
+}
+
+void SimWorkspace::saveAsDialog() {
+    files_.open("Save network", {".pgsim"}, true, path_.empty() ? (example_.empty() ? "untitled" : example_) + ".pgsim" : path_);
+    fileAction_ = FileAction::SaveAs;
+}
+
 bool SimWorkspace::canOpen(const std::string& path) const {
     const fs::path ext = fs::path(path).extension();
     return ext == ".pgsim" || ext == ".pgasset";
@@ -476,10 +499,12 @@ void SimWorkspace::newNetwork() {
 }
 
 bool SimWorkspace::save(const std::string& path) {
-    std::ofstream out(path, std::ios::binary);
+    // Written whole beside it, then put in its place: a crash or a full disk
+    // halfway leaves the file as it was.
     const std::string text = net_.save();
-    if (!out || !(out << text)) {
-        setMessage(path + ": cannot write it", true);
+    std::string error;
+    if (!sim::writeWhole(path, text, error)) {
+        setMessage(error, true);
         return false;
     }
     path_ = path;
@@ -687,21 +712,21 @@ void SimWorkspace::shortcuts() {
         commitAsset(path_);
     } else if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
         if (path_.empty()) {
-            files_.open("Save network", {".pgsim"}, true, (example_.empty() ? "untitled" : example_) + ".pgsim");
-            fileAction_ = FileAction::SaveAs;
+            saveAsDialog();
         } else {
             save(path_);
         }
     }
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) {
-        files_.open("Save network", {".pgsim"}, true, path_.empty() ? "untitled.pgsim" : path_);
-        fileAction_ = FileAction::SaveAs;
-    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) saveAsDialog();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) {
-        files_.open("Open network", {".pgsim", ".pgasset"}, false, path_);
-        fileAction_ = FileAction::Open;
+        unlessUnsaved("opening another network", [this] {
+            files_.open("Open network", {".pgsim", ".pgasset"}, false, path_);
+            fileAction_ = FileAction::Open;
+        });
     }
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) newNetwork();
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) {
+        unlessUnsaved("starting a new network", [this] { newNetwork(); });
+    }
     // Space plays and stops, let go -- unless it was held to turn the view.
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) spaceUsed_ = false;
     if (ImGui::IsKeyDown(ImGuiKey_Space) && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
@@ -1818,19 +1843,25 @@ void SimWorkspace::bottom(ImVec2 size) {
 // --- menus ----------------------------------------------------------------------------------------
 
 void SimWorkspace::fileMenu() {
-    if (ImGui::MenuItem("New", "Ctrl+N")) newNetwork();
+    if (ImGui::MenuItem("New", "Ctrl+N")) unlessUnsaved("starting a new network", [this] { newNetwork(); });
     if (ImGui::MenuItem("Open\xe2\x80\xa6", "Ctrl+O")) {
-        files_.open("Open network", {".pgsim", ".pgasset"}, false, path_);
-        fileAction_ = FileAction::Open;
+        unlessUnsaved("opening another network", [this] {
+            files_.open("Open network", {".pgsim", ".pgasset"}, false, path_);
+            fileAction_ = FileAction::Open;
+        });
     }
     if (ImGui::MenuItem("Open Asset\xe2\x80\xa6")) {
-        files_.open("Open asset", {".pgasset"}, false, sim::AssetLibrary::userFolder() + "/");
-        fileAction_ = FileAction::OpenAsset;
+        unlessUnsaved("opening an asset", [this] {
+            files_.open("Open asset", {".pgasset"}, false, sim::AssetLibrary::userFolder() + "/");
+            fileAction_ = FileAction::OpenAsset;
+        });
     }
     ImGui::SetItemTooltip("An asset's network (.pgasset) to edit: saved, it is its new version, every instance following");
     if (ImGui::BeginMenu("Examples")) {
         for (const std::string& name : sim::Network::exampleNames()) {
-            if (ImGui::MenuItem(name.c_str())) openExample(name);
+            if (ImGui::MenuItem(name.c_str())) {
+                unlessUnsaved("opening the example " + name, [this, name] { openExample(name); });
+            }
         }
         ImGui::EndMenu();
     }
@@ -1847,17 +1878,10 @@ void SimWorkspace::fileMenu() {
         ImGui::Separator();
     }
     if (!editingAsset() && ImGui::MenuItem("Save", "Ctrl+S")) {
-        if (path_.empty()) {
-            files_.open("Save network", {".pgsim"}, true, (example_.empty() ? "untitled" : example_) + ".pgsim");
-            fileAction_ = FileAction::SaveAs;
-        } else {
-            save(path_);
-        }
+        if (path_.empty()) saveAsDialog();
+        else save(path_);
     }
-    if (!editingAsset() && ImGui::MenuItem("Save As\xe2\x80\xa6", "Ctrl+Shift+S")) {
-        files_.open("Save network", {".pgsim"}, true, path_.empty() ? (example_.empty() ? "untitled" : example_) + ".pgsim" : path_);
-        fileAction_ = FileAction::SaveAs;
-    }
+    if (!editingAsset() && ImGui::MenuItem("Save As\xe2\x80\xa6", "Ctrl+Shift+S")) saveAsDialog();
     ImGui::Separator();
     if (ImGui::MenuItem("Render Image\xe2\x80\xa6")) {
         files_.open("Render image", {".png", ".exr"}, true, (fs::path(renderFolder()) / (stem() + ".png")).string());
@@ -2093,10 +2117,21 @@ void SimWorkspace::popups() {
     makeAssetDialog();
     wedgeDialog();
     std::string chosen;
-    if (!files_.draw(chosen)) return;
+    if (!files_.draw(chosen)) {
+        if (!files_.isOpen()) afterSave_ = nullptr;  // no file picked: what waited for it does not happen
+        return;
+    }
     switch (fileAction_) {
         case FileAction::Open: open(chosen); break;
-        case FileAction::SaveAs: save(chosen); break;
+        case FileAction::SaveAs:
+            if (save(chosen) && afterSave_) {
+                const std::function<void()> then = std::move(afterSave_);
+                afterSave_ = nullptr;
+                fileAction_ = FileAction::None;
+                then();
+                return;
+            }
+            break;
         case FileAction::Image: renderImage(chosen); break;
         case FileAction::Frames:
         case FileAction::Video: startRender(chosen); break;

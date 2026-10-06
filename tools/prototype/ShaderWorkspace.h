@@ -61,6 +61,9 @@ public:
     void setCodeTarget(const std::string& name);
     void setMesh(gl::MeshKind kind) { preview_.setMesh(kind); }
 
+protected:
+    void saveThen(std::function<void()> then) override;
+
 private:
     void reloadLibrary();
     void recompile();
@@ -142,6 +145,9 @@ private:
 
     ui::FileBrowser files_;
     enum class FileAction { None, Open, SaveAs, Export, Image, Video, Library } fileAction_ = FileAction::None;
+    std::function<void()> afterSave_;  ///< what waits for the graph to be saved as (Workspace::saveThen)
+    /// Where Ctrl+S saves: a file picked first where there is none yet.
+    void saveAsDialog();
     RenderJob job_;
 
     std::string message_;

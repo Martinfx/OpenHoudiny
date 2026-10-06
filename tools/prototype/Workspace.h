@@ -18,6 +18,7 @@
 
 #include "imgui.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,31 @@ public:
     /// Opens a file of this workspace's kind.
     virtual bool open(const std::string& path) = 0;
     virtual bool canOpen(const std::string& path) const = 0;
+
+    /// What would throw away changes not saved -- New, Open, an example,
+    /// quitting -- goes through here: `then` runs at once when everything
+    /// is saved; else once the user has said what becomes of the changes.
+    /// Save: after they are written (a file picked first where there is
+    /// none); Don't Save: at once; Cancel: never. `doing` ends the
+    /// question: "Save them before <doing>?".
+    void unlessUnsaved(std::string doing, std::function<void()> then);
+    /// That question, while it is asked: the shell draws it after popups().
+    /// Enter saves, D does not, Escape cancels.
+    void unsavedDialog();
+    /// Whatever is open and not saved: the network -- and, inside an
+    /// asset, those round it.
+    virtual bool unsaved() const { return modified(); }
+
+protected:
+    /// Saves all that is open, then runs `then`: at once where it has a
+    /// file, once one is picked and written where it has none -- never if
+    /// it cannot be written, or no file is picked.
+    virtual void saveThen(std::function<void()> then) = 0;
+
+private:
+    std::string doing_;
+    std::function<void()> afterAsking_;
+    bool ask_ = false;
 };
 
 /// Undo and redo as whole states -- a network saved as text. A state is

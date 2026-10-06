@@ -95,7 +95,7 @@ vpravo dole **síť**. Rozhraní mezi panely jdou táhnout.
 | Vzorky v uzlech | každý uzel ukazuje svůj první výstup na tělese náhledu; View → Node Thumbnails, Thumbnail v menu uzlu |
 | Kód | výběr cíle, záložky vertex/fragment, Copy |
 | Chyby | tlačítko Problems v hlavičce kódu; klik na chybu vybere uzel a posune na něj plátno |
-| Soubor | Ctrl+S, Ctrl+O (dialog se složkami a soubory `.pgsg`), File → Export Shaders… (všechny cíle naráz) |
+| Soubor | Ctrl+S, Ctrl+Shift+S, Ctrl+O (dialog se složkami a soubory `.pgsg`), File → Export Shaders… (všechny cíle naráz). New, Open, příklad i Quit se u neuložených změn zeptají: Save, Don't Save, Cancel ([pyro.md](pyro.md#soubory-undo)) |
 | Ověřit | Tools → Validate (F5): totéž co `prototype check`, na pozadí; výsledek v Problems |
 | Knihovny | Library → Add Library File…, Ctrl+R je znovu načte |
 
