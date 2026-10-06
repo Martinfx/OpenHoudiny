@@ -91,6 +91,75 @@ std::shared_ptr<const PictureBytes> PreparedGeometry::bytesOf(const DisplayPictu
     return nullptr;
 }
 
+GeometryPreparerThread::GeometryPreparerThread() { thread_ = std::thread([this] { loop(); }); }
+
+GeometryPreparerThread::~GeometryPreparerThread() {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        stop_ = true;
+    }
+    wake_.notify_all();
+    thread_.join();
+}
+
+void GeometryPreparerThread::want(std::vector<GeometryPtr> wanted) {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        wanted_ = std::move(wanted);
+    }
+    wake_.notify_all();
+}
+
+std::shared_ptr<const PreparedGeometry> GeometryPreparerThread::madeLocked(const GeometryPtr& geometry) const {
+    for (const auto& made : made_) {
+        if (made->geometry == geometry) return made;
+    }
+    return nullptr;
+}
+
+int GeometryPreparerThread::nextLocked() const {
+    for (size_t i = 0; i < wanted_.size(); ++i) {
+        if (wanted_[i] && !madeLocked(wanted_[i])) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+std::shared_ptr<const PreparedGeometry> GeometryPreparerThread::find(const GeometryPtr& geometry) const {
+    if (!geometry) return nullptr;
+    std::lock_guard<std::mutex> lock(mu_);
+    return madeLocked(geometry);
+}
+
+void GeometryPreparerThread::wait() {
+    std::unique_lock<std::mutex> lock(mu_);
+    done_.wait(lock, [&] { return stop_ || (!working_ && nextLocked() < 0); });
+}
+
+void GeometryPreparerThread::loop() {
+    for (;;) {
+        GeometryPtr next;
+        {
+            std::unique_lock<std::mutex> lock(mu_);
+            wake_.wait(lock, [&] { return stop_ || nextLocked() >= 0; });
+            if (stop_) return;
+            next = wanted_[static_cast<size_t>(nextLocked())];
+            working_ = true;
+        }
+        // Each on its own: what one made is not the start of the next.
+        std::shared_ptr<const PreparedGeometry> made = GeometryPreparer().prepare(next);
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            made_.push_back(std::move(made));
+            for (auto it = made_.begin(); made_.size() > kKept && it != made_.end();) {
+                const bool wanted = std::find(wanted_.begin(), wanted_.end(), (*it)->geometry) != wanted_.end();
+                it = wanted ? std::next(it) : made_.erase(it);
+            }
+            working_ = false;
+        }
+        done_.notify_all();
+    }
+}
+
 bool hasFoliage(const Geometry& geo) {
     const AttributeArray* through = geo.primitives().find("translucency");
     if (!through || through->type() != AttrType::Float) return false;

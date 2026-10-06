@@ -251,6 +251,7 @@ void SimWorkspace::updateThumbnails() {
         if (!scene) return;
         thumbRenderer_ = std::move(r);
         sceneThumbRenderer_ = std::move(scene);
+        thumbPreparer_ = std::make_unique<sim::GeometryPreparerThread>();
         thumbs_ = std::make_unique<Thumbnails>(gl_);
     }
 
@@ -483,15 +484,26 @@ void SimWorkspace::updateThumbnails() {
     });
     const auto start = Clock::now();
     int drawn = 0;
+    std::vector<GeometryPtr> preparing;  // the geometry of those due next, the first first
     for (const Due& d : due) {
         if (drawn >= kPerFrame || (drawn > 0 && msSince(start) > kFrameMs)) break;
         Picture p;
         if (!pictureOf(*net_.node(d.node), p, true)) continue;
+        // A node's own geometry, prepared on the preparer's thread -- or as
+        // the viewport has it, if it is the same: drawn once it is.
+        if (!p.scene && p.geometry) {
+            p.prepared = p.geometry == renderer_.geometry() ? renderer_.prepared() : thumbPreparer_->find(p.geometry);
+            if (!p.prepared || p.prepared->geometry != p.geometry) {
+                if (preparing.size() < static_cast<size_t>(kPerFrame)) preparing.push_back(p.geometry);
+                continue;
+            }
+        }
         const auto t0 = Clock::now();
         const gl::VolumeRenderer& r = draw(p);
         thumbs_->take(d.node, r.colorTexture(), p.key, p.live, now, msSince(t0));
         ++drawn;
     }
+    thumbPreparer_->want(std::move(preparing));
 }
 
 }  // namespace pg::editor

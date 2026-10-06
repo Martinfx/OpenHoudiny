@@ -662,6 +662,9 @@ private:
     /// the scene's geometry, as the viewport has it prepared, sent to it
     /// once, not again for each picture of another node between.
     std::unique_ptr<gl::VolumeRenderer> sceneThumbRenderer_;
+    /// The nodes' own geometry prepared to draw, on a thread of its own: a
+    /// picture is drawn once its geometry is.
+    std::unique_ptr<sim::GeometryPreparerThread> thumbPreparer_;
     std::string thumbRendererLog_;        ///< why it could not be made
     std::unique_ptr<Thumbnails> thumbs_;
     /// The geometry nodes' geometry as cooks last made it: a stamp that

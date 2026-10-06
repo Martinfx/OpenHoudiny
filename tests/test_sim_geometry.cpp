@@ -1156,6 +1156,35 @@ TEST(prepared_geometry_makes_each_prototype_once_at_each_level_of_detail) {
     CHECK(b->instances.placements != a->instances.placements);
 }
 
+TEST(prepared_geometry_is_made_on_a_thread_of_its_own_for_the_thumbnails) {
+    Network net;
+    const int grid = net.add("grid");
+    const int box = net.add("box");
+    GeometryGraph g;
+    g.sync(net);
+    const GeometryPtr flat = g.cook(grid, 1), block = g.cook(box, 1);
+    GeometryPreparerThread preparer;
+    CHECK(!preparer.find(flat) && !preparer.find(nullptr));
+    preparer.want({flat, block});
+    preparer.wait();
+    const auto a = preparer.find(flat), b = preparer.find(block);
+    CHECK(a && b && a->geometry == flat && b->geometry == block);
+    // As a preparer here makes them.
+    const auto here = GeometryPreparer().prepare(block);
+    CHECK(b->mesh->indices == here->mesh->indices && b->mesh->places == here->mesh->places);
+    // More wanted than are kept: all of them stay, what is no longer wanted goes.
+    std::vector<GeometryPtr> many;
+    for (size_t i = 0; i < GeometryPreparerThread::kKept + 2; ++i) {
+        auto moved = std::make_shared<Geometry>(*block);
+        for (Vec3& q : moved->positionsForWrite()) q.x += static_cast<float>(i);
+        many.push_back(moved);
+    }
+    preparer.want(many);
+    preparer.wait();
+    for (const GeometryPtr& m : many) CHECK(preparer.find(m) != nullptr);
+    CHECK(!preparer.find(flat) && !preparer.find(block));
+}
+
 TEST(sim_geometry_examples_of_geometry_alone_cook) {
     // The examples of geometry alone -- models, without an Output, and
     // stills, whose Output has no solver to simulate: what they display

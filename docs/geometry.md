@@ -430,7 +430,8 @@ link 6.geometry -> 7.geometry
   pak jen pošle do GPU, takže se les, jehož příprava trvala přes sekundu,
   ukáže bez zaseknutí. Náhledy celé scény (Output, kamery) kreslí vlastní
   renderer ze stejné přípravy jako viewport a mezi náhledy jiných uzlů ji
-  nedělají znovu.
+  nedělají znovu. Vlastní geometrii uzlů pro jejich náhledy připravuje
+  další vlákno: náhled se nakreslí, až je jeho geometrie hotová.
 - Síť se pro simulaci kompiluje také na vlastním vlákně
   (`pg/sim/Compiler.h`) s vlastním grafem, takže tvary pro simulaci
   (Shape objektů a zdrojů, kusy pro RBD, látka) se vaří mimo okno a jen

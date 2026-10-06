@@ -96,6 +96,41 @@ private:
     std::map<const Geometry*, std::pair<GeometryPtr, std::vector<std::shared_ptr<const DisplayMesh>>>> prototypes_;
 };
 
+/// Geometry prepared on a thread of its own, for drawings apart from the
+/// viewport -- the nodes' thumbnails: those wanted, the first first; what
+/// was made kept, the no longer wanted going first past kKept.
+class GeometryPreparerThread {
+public:
+    static constexpr size_t kKept = 4;
+
+    GeometryPreparerThread();
+    ~GeometryPreparerThread();
+    GeometryPreparerThread(const GeometryPreparerThread&) = delete;
+    GeometryPreparerThread& operator=(const GeometryPreparerThread&) = delete;
+
+    /// What is wanted now, in place of what was: the first not made yet is
+    /// made next.
+    void want(std::vector<GeometryPtr> wanted);
+    /// `geometry` prepared, if it is; null if not (yet).
+    std::shared_ptr<const PreparedGeometry> find(const GeometryPtr& geometry) const;
+    /// Until everything wanted is made.
+    void wait();
+
+private:
+    void loop();
+    /// mu_ held: the prepared `geometry`; the first wanted not made yet, -1
+    /// if none.
+    std::shared_ptr<const PreparedGeometry> madeLocked(const GeometryPtr& geometry) const;
+    int nextLocked() const;
+
+    mutable std::mutex mu_;
+    std::condition_variable wake_, done_;
+    bool stop_ = false, working_ = false;
+    std::vector<GeometryPtr> wanted_;
+    std::deque<std::shared_ptr<const PreparedGeometry>> made_;  ///< the newest last
+    std::thread thread_;
+};
+
 /// Whether a plant has foliage to thin far away (core/Lod.h): faces that
 /// let light through.
 bool hasFoliage(const Geometry& geo);
