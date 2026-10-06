@@ -55,6 +55,7 @@
 #include "pg/core/Pick.h"
 #include "pg/core/Sculpt.h"
 #include "pg/gl/Volume.h"
+#include "pg/sim/Compiler.h"
 #include "pg/sim/Cooker.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
@@ -133,7 +134,13 @@ private:
     bool save(const std::string& path);
     /// Where Ctrl+S saves: a file picked first where there is none yet.
     void saveAsDialog();
-    void recompile();
+    /// What the network simulates, compiled on the compiler's thread: handed
+    /// over when it changed, taken once compiled -- waited for a moment in
+    /// the frame it was asked in (kCompileWait), so that a quick compile
+    /// shows at once; a slow one shows when it is done, what was compiled
+    /// before standing until then. `wait`: until it is done -- for what
+    /// renders, bakes or exports the network as it is now.
+    void recompile(bool wait = false);
     void restore(const std::string& state);
     void undo();
     void redo();
@@ -605,7 +612,8 @@ private:
     mutable uint64_t stateTextKey_ = 0, modifiedKey_ = 0, modifiedGeneration_ = ~0ull;
     mutable bool stateTextValid_ = false, modified_ = false;
     sim::Compiled compiled_;
-    uint64_t compiledRevision_ = ~0ull;
+    uint64_t compiledRevision_ = ~0ull;  ///< the network's revision compiled_ is of
+    uint64_t compiledSerial_ = 0;        ///< bumped whenever compiled_ is another
     History history_;
 
     NodeCanvas canvas_;
@@ -628,6 +636,10 @@ private:
     uint64_t cookSerial_ = 0;      ///< ... its serial number
     uint64_t cookedSerial_ = 0;    ///< the one of the geometry shown: cookSerial_ once it is that
     double cookMs_ = 0.0;          ///< how long the last cook took
+    /// The network compiled on a thread of its own -- after runner_, whose
+    /// frames its graph reads: it goes first.
+    std::unique_ptr<sim::Compiler> compiler_;
+    uint64_t compileAsked_ = ~0ull;  ///< the revision last handed to it; ~0: none, or to be compiled again
     GeometryPtr sheetGeometry_;    ///< the spreadsheet's node's, as last cooked
     int sheetGeometryNode_ = 0;
     bool synchronous_ = false;
@@ -669,7 +681,7 @@ private:
     int viewWidth_ = 0, viewHeight_ = 0;
     bool guides_ = true;
     std::vector<int> guidesSelection_;
-    uint64_t guidesRevision_ = ~0ull;
+    uint64_t guidesCompiled_ = ~0ull;  ///< compiledSerial_ when the guides were drawn; ~0: to draw again
     int guidesFrame_ = 0;
     int posedFrame_ = 0;               ///< the frame the renderer draws the objects and the look at
     uint64_t posedRevision_ = ~0ull;

@@ -42,6 +42,10 @@ using theme::Icon;
 /// A bake saves its state every this many frames.
 constexpr int kCheckpointEvery = 10;
 
+/// How long a frame waits for the compile it asked for: one that takes
+/// less shows in that frame, as if made on the window's thread.
+constexpr double kCompileWait = 0.012;
+
 /// The texels a frame's gas or water may take on the GPU: as many as the
 /// renderer takes; while frames change, some 4 million -- a grid two to eight
 /// times as coarse, sent and drawn 8 to 512 times quicker (View > Proxies).
@@ -393,6 +397,7 @@ SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
     // Liquid Points and the like read the frames the runner keeps.
     geometry_->setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     cooker_ = std::make_unique<sim::Cooker>([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
+    compiler_ = std::make_unique<sim::Compiler>([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     newNetwork();  // an empty scene; File > Examples has finished ones
 }
 
@@ -529,8 +534,8 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
         preview_ = false;
         forcedPreview_ = false;
     }
-    compiledRevision_ = ~0ull;
-    recompile();
+    compileAsked_ = ~0ull;
+    recompile(true);
     current_ = 1;
     playing_ = true;
     throughCamera_ = false;
@@ -600,7 +605,7 @@ void SimWorkspace::restore(const std::string& state) {
     std::string error;
     if (!sim::Network::load(state, net, error)) return;
     net_ = net;
-    compiledRevision_ = ~0ull;
+    compileAsked_ = ~0ull;
 }
 
 void SimWorkspace::undo() {
@@ -619,12 +624,23 @@ void SimWorkspace::redo() {
 
 // --- each frame -----------------------------------------------------------------------------
 
-void SimWorkspace::recompile() {
+void SimWorkspace::recompile(bool wait) {
     // Inside an asset, the scene's simulation stays as it was.
     if (!levels_.empty()) return;
-    if (net_.revision() == compiledRevision_) return;
-    compiledRevision_ = net_.revision();
-    compiled_ = net_.compile(folder(), geometry_.get());
+    bool asked = false;
+    if (net_.revision() != compileAsked_) {
+        compileAsked_ = net_.revision();
+        compiler_->submit(std::make_shared<const sim::Network>(net_), folder());
+        asked = true;
+    }
+    if (wait || synchronous_) compiler_->wait();
+    else if (asked) compiler_->wait(kCompileWait);
+    else compiler_->giveUpIfStale();
+    sim::Compiler::Result done;
+    if (!compiler_->take(done)) return;
+    compiledRevision_ = done.revision;
+    ++compiledSerial_;
+    compiled_ = std::move(done.compiled);
     if (compiled_.ok && preview_) compiled_.world = sim::preview(compiled_.world, compiled_.preview);
     if (compiled_.ok) runner_->set(compiled_.world, compiled_.frames);
     else if (!simulates(net_)) runner_->clear();  // nothing left that simulates: its frames go too
@@ -830,7 +846,7 @@ void SimWorkspace::shortcuts() {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_G, false)) {
         guides_ = !guides_;
-        guidesRevision_ = ~0ull;
+        guidesCompiled_ = ~0ull;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_U, false) && !levels_.empty()) leaveRequest_ = true;  // out of the asset
 }
@@ -1842,8 +1858,8 @@ void SimWorkspace::updateGuides() {
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
     // Animated, the guides follow the frame shown.
     const int frame = compiled_.poses.empty() ? 1 : current_;
-    if (guidesRevision_ == net_.revision() && guidesSelection_ == chosen && guidesFrame_ == frame) return;
-    guidesRevision_ = net_.revision();
+    if (guidesCompiled_ == compiledSerial_ && guidesSelection_ == chosen && guidesFrame_ == frame) return;
+    guidesCompiled_ = compiledSerial_;
     guidesSelection_ = chosen;
     guidesFrame_ = frame;
     gl::Lines lines;
@@ -2056,8 +2072,8 @@ void SimWorkspace::menus() {
             // The frames thrown away, the same runner -- the cooker's thread
             // reads it -- with the cache size and the rest as they were.
             runner_->clear();
-            compiledRevision_ = ~0ull;
-            recompile();
+            compileAsked_ = ~0ull;
+            recompile(true);
             shown_.reset();
         }
         ImGui::SetItemTooltip("Throws the cached frames away and simulates from frame 1.");
@@ -2093,8 +2109,8 @@ void SimWorkspace::menus() {
         if (ImGui::MenuItem("Preview Resolution", nullptr, preview_)) {
             preview_ = !preview_;
             forcedPreview_ = false;  // asked for: kept from network to network
-            compiledRevision_ = ~0ull;  // the world again, at the other grids
-            recompile();
+            compileAsked_ = ~0ull;  // the world again, at the other grids
+            recompile(true);
             shown_.reset();
         }
         ImGui::SetItemTooltip("The gas and the water on coarser grids -- as fine as the Output's Preview says, half "
@@ -2130,7 +2146,7 @@ void SimWorkspace::menus() {
         ImGui::Separator();
         if (ImGui::MenuItem("Guides", "G", guides_)) {
             guides_ = !guides_;
-            guidesRevision_ = ~0ull;
+            guidesCompiled_ = ~0ull;
         }
         if (ImGui::MenuItem("Frame the Domain", "double click")) {
             setThroughCamera(false);
@@ -2393,7 +2409,7 @@ void SimWorkspace::renderShot(int width, int height, int frame) {
     renderer_.orbit = view;
     shownPlate_ = "\x01";  // the viewport sets its own plate again
     // Both back on the next frame.
-    guidesRevision_ = ~0ull;
+    guidesCompiled_ = ~0ull;
     highlightedHover_ = -1;
     viewDirty_ = true;
 }
@@ -2405,6 +2421,7 @@ float SimWorkspace::focusOf(const sim::Camera& camera) const {
 }
 
 bool SimWorkspace::renderImage(const std::string& path) {
+    recompile(true);  // the network as it is now
     int width = 0, height = 0;
     shotSize(width, height);
     std::error_code ec;
@@ -2464,6 +2481,7 @@ bool SimWorkspace::renderImage(const std::string& path) {
 }
 
 void SimWorkspace::startRender(const std::string& target, bool final) {
+    recompile(true);  // the network as it is now
     if (!compiled_.ok) {
         setMessage("Nothing to render: the network does not compile", true);
         return;
@@ -2635,6 +2653,7 @@ std::string SimWorkspace::stem() const {
 }
 
 bool SimWorkspace::saveCache(const std::string& folder) {
+    recompile(true);  // the network as it is now
     const int cached = runner_->cached();
     if (cached == 0) {
         setMessage("No frame to save yet", true);
@@ -2698,6 +2717,7 @@ bool SimWorkspace::saveCache(const std::string& folder) {
 void SimWorkspace::setCacheSize(size_t bytes) { runner_->setBudget(bytes); }
 
 bool SimWorkspace::loadCache(const std::string& chosen) {
+    recompile(true);  // the network as it is now
     // A file in the folder -- its cache.txt -- stands for the folder.
     std::error_code ec;
     const std::string folder = fs::is_directory(chosen, ec) ? chosen : fs::path(chosen).parent_path().string();
@@ -2733,6 +2753,7 @@ bool SimWorkspace::loadCache(const std::string& chosen) {
 }
 
 bool SimWorkspace::startBake(const std::string& target, bool resume) {
+    recompile(true);  // the network as it is now
     if (!compiled_.ok) {
         setMessage("The network does not compile: there is nothing to bake", true);
         return false;
@@ -2924,6 +2945,7 @@ void SimWorkspace::wedgeDialog() {
     const int button = ui::dialogButtons({"Bake the Wedge", "Cancel"});
     if (button == 0) {
         std::string error;
+        recompile(true);  // the network as it is now
         if (wedge_.start(net_, wedgeNode_, wedgeParam_, values, wedgeFolder_, folder(), compiled_.frames, error)) {
             wedgeShown_ = -1;
             setMessage("Baking " + std::to_string(values.size()) + " variants of " + n->name + "." + wedgeParam_ +
@@ -3017,6 +3039,7 @@ void SimWorkspace::chooseExport(int id, bool frames) {
 }
 
 bool SimWorkspace::exportGeometry(int id, const std::string& path) {
+    recompile(true);  // the network as it is now
     const sim::Node* n = net_.node(id);
     const GeometryPtr geo = n ? geometryOf(id) : nullptr;
     if (!geo) {
@@ -3049,6 +3072,7 @@ std::shared_ptr<sim::GeometryGraph> SimWorkspace::graphForJob() {
 }
 
 bool SimWorkspace::exportFrames(int id, const std::string& pattern) {
+    recompile(true);  // the network as it is now
     const sim::Node* n = net_.node(id);
     if (!n || !geometry_->contains(id)) return false;
     const std::shared_ptr<sim::GeometryGraph> graph = graphForJob();
@@ -3089,6 +3113,7 @@ void SimWorkspace::chooseUsd() {
 }
 
 bool SimWorkspace::exportUsd(const std::string& path) {
+    recompile(true);  // the network as it is now
     const int shown = net_.displayed();
     const sim::Node* n = shown ? net_.node(shown) : nullptr;
     const bool withGeometry = n && geometry_->contains(shown);
@@ -3130,6 +3155,7 @@ void SimWorkspace::chooseAlembic() {
 }
 
 bool SimWorkspace::exportAlembic(const std::string& path) {
+    recompile(true);  // the network as it is now
     const int shown = net_.displayed();
     const sim::Node* n = shown ? net_.node(shown) : nullptr;
     const bool withGeometry = n && geometry_->contains(shown);

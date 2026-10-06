@@ -308,6 +308,7 @@ configure_file(${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp.tmp
 add_library(pgsim
   src/pg/sim/Asset.cpp
   src/pg/sim/ForEach.cpp
+  src/pg/sim/Compiler.cpp
   src/pg/sim/Cooker.cpp
   src/pg/sim/Rigid.cpp
   src/pg/sim/Camera.cpp

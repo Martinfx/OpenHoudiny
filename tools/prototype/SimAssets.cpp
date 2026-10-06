@@ -80,7 +80,7 @@ bool SimWorkspace::enterAsset(int id) {
     shown_.reset();
     renderer_.clearFrame();  // the scene's simulation waits; its asset alone shows
     posedRevision_ = ~0ull;
-    guidesRevision_ = ~0ull;
+    guidesCompiled_ = ~0ull;
     viewDirty_ = true;
     const std::string label = labelOf(net_.asset());
     setMessage("Inside " + label + ": what changes here changes every " + label + " -- U goes back up");
@@ -106,10 +106,10 @@ bool SimWorkspace::leaveAsset() {
     editKey_.clear();
     nameEditNode_ = 0;
     // Compiled again: the asset's geometry may be the shape of what is simulated.
-    compiledRevision_ = ~0ull;
+    compileAsked_ = ~0ull;
     shown_.reset();
     posedRevision_ = ~0ull;
-    guidesRevision_ = ~0ull;
+    guidesCompiled_ = ~0ull;
     viewDirty_ = true;
     return true;
 }

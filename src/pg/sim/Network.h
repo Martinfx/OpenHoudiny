@@ -48,6 +48,7 @@
 #include "pg/sim/World.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -446,7 +447,12 @@ public:
     /// Animated parameters are taken frame by frame: what is simulated at
     /// each (world.animation) and what is drawn (Compiled::poses), with the
     /// velocity of what moves. The grids and the frame rate are frame 1's.
-    Compiled compile(const std::string& folder = {}, GeometryGraph* geometry = nullptr) const;
+    ///
+    /// `interrupt`: once it is set, the geometry still to cook is given up
+    /// and so is the rest -- what comes back is then not whole, to be thrown
+    /// away (a network compiled on a thread of its own, sim/Compiler.h).
+    Compiled compile(const std::string& folder = {}, GeometryGraph* geometry = nullptr,
+                     const std::atomic<bool>* interrupt = nullptr) const;
 
     // --- digital assets ----------------------------------------------------------------
     /// What makes this network an asset's definition; its name is empty when

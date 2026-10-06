@@ -423,5 +423,15 @@ link 6.geometry -> 7.geometry
   předchozí a po chvíli napíše „cooking…“. Když se změní parametr během
   vaření, rozpracované vaření se přeruší (wrangle, smyčky, assety se
   vzdají uprostřed) a začne se znovu s novou hodnotou; nic z přerušeného
-  vaření se neuloží do cache. Na vlákně okna se pořád vaří tvary pro
-  simulaci (Shape objektů a zdrojů) a export.
+  vaření se neuloží do cache.
+- Síť se pro simulaci kompiluje také na vlastním vlákně
+  (`pg/sim/Compiler.h`) s vlastním grafem, takže tvary pro simulaci
+  (Shape objektů a zdrojů, kusy pro RBD, látka) se vaří mimo okno a jen
+  tam, kde se něco změnilo. Okno na kompilaci čeká nejvýš 12 ms ve
+  snímku, kdy se síť změnila: rychlá kompilace se tak ukáže hned, pomalá
+  (úprava nad frakturou trvá i přes sekundu) se ukáže, až je hotová,
+  a do té doby platí ta předchozí. Novější změna rozpracovanou kompilaci
+  přeruší, ale až když běží déle než 0,25 s: krátké kompilace doběhnou
+  a objekty ve viewportu jdou s gizmem, dlouhé ustoupí poslední hodnotě.
+  Render, bake, wedge, Save Cache a exporty na hotovou kompilaci
+  počkají. Na vlákně okna se vaří jen jeden snímek pro Export Geometry.

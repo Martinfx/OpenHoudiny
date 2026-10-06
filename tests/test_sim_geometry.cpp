@@ -4,6 +4,7 @@
 // and the simulations brought back as points and volumes.
 //
 #include "pg/core/Graph.h"
+#include "pg/sim/Compiler.h"
 #include "pg/sim/Display.h"
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Mesh.h"
@@ -13,6 +14,7 @@
 
 #include "test_framework.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -20,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 
 using namespace pg;
 using namespace pg::sim;
@@ -402,6 +405,92 @@ TEST(sim_geometry_is_a_shape_for_the_simulations) {
     c = net.compile({}, &g);
     CHECK(mentions(c, rock, "comes from a simulation"));
     CHECK(mentions(c, water, "Nothing comes in"));
+}
+
+TEST(sim_compiler_compiles_on_its_own_thread_and_gives_up_what_is_not_wanted) {
+    // An object whose shape takes seconds to cook: a hundred wrangles, a
+    // moment each (a loop, as long as the language lets it run), before it.
+    Network net;
+    const int box = net.add("box");
+    int end = box;
+    for (int i = 0; i < 100; ++i) {
+        const int w = net.add("detail_wrangle");
+        CHECK(net.connect(end, "geometry", w, "geometry"));
+        net.setText(w, "snippet", "float s = 0; for (int i = 0; i < 100000000; i++) s += sin(i); @sum = s;");
+        end = w;
+    }
+    const int rock = net.add("object");
+    CHECK(net.connect(end, "geometry", rock, "shape"));
+    const int fire = net.add("pyro_source");
+    const int solver = net.add("pyro_solver");
+    const int look = net.add("volume_look");
+    const int out = net.add("output");
+    CHECK(net.connect(fire, "source", solver, "sources"));
+    CHECK(net.connect(rock, "collider", solver, "colliders"));
+    CHECK(net.connect(solver, "gas", look, "gas"));
+    CHECK(net.connect(look, "look", out, "look"));
+
+    Compiler compiler;
+    const auto start = std::chrono::steady_clock::now();
+    compiler.submit(std::make_shared<const Network>(net), "");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));  // under way
+    CHECK(compiler.busy());
+    CHECK(!compiler.wait(0.01));  // not done in a moment: the window goes on
+    // The box itself, now, for the shape.
+    net.disconnect(net.linksInto(rock, "shape")[0]);
+    CHECK(net.connect(box, "geometry", rock, "shape"));
+    const uint64_t wanted = compiler.submit(std::make_shared<const Network>(net), "");
+    // Under way for less than its patience, it is not given up yet ...
+    CHECK(!compiler.wait(0.05));
+    // ... and is, past it, as the window asks once a frame.
+    while (!compiler.wait(0.02)) compiler.giveUpIfStale();
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    CHECK(seconds < 3.0);  // the long one was given up
+    CHECK(seconds >= Compiler::kPatience);
+    CHECK(!compiler.busy());
+    Compiler::Result r;
+    CHECK(compiler.take(r));
+    CHECK_EQ(r.serial, wanted);
+    CHECK_EQ(r.revision, net.revision());
+    CHECK(!compiler.take(r));  // one result, the last
+
+    // What compiling on the window's thread makes.
+    GeometryGraph g;
+    const Compiled direct = net.compile({}, &g);
+    CHECK(r.compiled.ok && direct.ok);
+    CHECK_EQ(r.compiled.problems.size(), direct.problems.size());
+    CHECK_EQ(r.compiled.solids.size(), size_t(1));
+    CHECK_EQ(direct.solids.size(), size_t(1));
+    const Collider& body = r.compiled.solids[0].body;
+    CHECK(body.shape == Shape::Mesh && body.mesh);
+    CHECK(near(body.center, direct.solids[0].body.center));
+    CHECK(r.compiled.world.gas.solver.resolution == direct.world.gas.solver.resolution);
+
+    // Waited for, a compile a newer request waits behind makes way at once.
+    net.disconnect(net.linksInto(rock, "shape")[0]);
+    CHECK(net.connect(end, "geometry", rock, "shape"));
+    const auto again = std::chrono::steady_clock::now();
+    compiler.submit(std::make_shared<const Network>(net), "");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    net.disconnect(net.linksInto(rock, "shape")[0]);
+    CHECK(net.connect(box, "geometry", rock, "shape"));
+    const uint64_t newest = compiler.submit(std::make_shared<const Network>(net), "");
+    CHECK(compiler.wait());
+    CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - again).count() < 2.0);
+    CHECK(compiler.take(r));
+    CHECK_EQ(r.serial, newest);
+
+    // Animated -- a compile at every frame: the newest request is what
+    // comes back last, whole.
+    CHECK(net.setKey(fire, "smoke", 1.0f, sim::ParamValue{1.0f, 0.0f, 0.0f}));
+    CHECK(net.setKey(fire, "smoke", 50.0f, sim::ParamValue{4.0f, 0.0f, 0.0f}));
+    compiler.submit(std::make_shared<const Network>(net), "");
+    const uint64_t last = compiler.submit(std::make_shared<const Network>(net), "");
+    CHECK(compiler.wait());
+    CHECK(compiler.take(r));
+    CHECK_EQ(r.serial, last);
+    CHECK_EQ(r.compiled.poses.size(), static_cast<size_t>(r.compiled.frames));
+    CHECK(!compiler.take(r));
 }
 
 TEST(sim_geometry_overlapping_shapes_fill_their_overlap) {

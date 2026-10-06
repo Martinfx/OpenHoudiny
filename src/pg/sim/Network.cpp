@@ -4083,6 +4083,7 @@ struct Network::CompileMemo {
     std::map<int, std::shared_ptr<const Geometry>> grains;   // a Grain Solver's, by node
     std::unique_ptr<GeometryGraph> own;
     GeometryGraph* cooker = nullptr;
+    const std::atomic<bool>* interrupt = nullptr;  // set: what is left is given up
 };
 
 namespace {
@@ -4138,8 +4139,10 @@ Vec3 spinBetween(const Vec3& fromDegrees, const Vec3& toDegrees, float dt) {
 
 }  // namespace
 
-Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) const {
+Compiled Network::compile(const std::string& folder, GeometryGraph* geometry, const std::atomic<bool>* interrupt) const {
     CompileMemo memo;
+    memo.interrupt = interrupt;
+    auto givenUp = [&] { return interrupt && interrupt->load(std::memory_order_relaxed); };
     Compiled c = compileFrame(folder, geometry, 1.0f, memo, false);
     if (!anyAnimated() && !c.fileAnimation && !c.guideMoves && !c.clothMoves) return c;
 
@@ -4150,6 +4153,7 @@ Compiled Network::compile(const std::string& folder, GeometryGraph* geometry) co
     track->reserve(static_cast<size_t>(count));
     c.poses.reserve(static_cast<size_t>(count));
     for (int f = 1; f <= count; ++f) {
+        if (givenUp()) return c;  // not whole: thrown away
         Compiled at = f == 1 ? c : compileFrame(folder, geometry, static_cast<float>(f), memo, true);
         World w = std::move(at.world);
         // The grids, the frame rate and what is simulated are frame 1's: they
@@ -4336,7 +4340,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         if (const auto it = shapes.find(n.id); it != shapes.end()) return it->second;
         startCooker();
         std::shared_ptr<const MeshShape> mesh;
-        const GeometryPtr geo = cooker->cook(in.front().from, 1, firstStep);
+        const GeometryPtr geo = cooker->cook(in.front().from, 1, firstStep, memo.interrupt);
         const std::string error = cooker->error(in.front().from);
         if (!error.empty()) problem(L::Warning, in.front().from, error);
         if (fromSimulation(in.front().from)) {
@@ -4719,7 +4723,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             r.pieces = it->second;
         } else {
             startCooker();
-            const GeometryPtr geo = cooker->cook(in.front().from, 1, firstStep);
+            const GeometryPtr geo = cooker->cook(in.front().from, 1, firstStep, memo.interrupt);
             const std::string error = cooker->error(in.front().from);
             if (!error.empty()) problem(L::Warning, in.front().from, error);
             if (fromSimulation(in.front().from)) {
@@ -4745,7 +4749,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 r.rebar = it->second;
             } else {
                 startCooker();
-                const GeometryPtr geo = cooker->cook(bars.front().from, 1, firstStep);
+                const GeometryPtr geo = cooker->cook(bars.front().from, 1, firstStep, memo.interrupt);
                 const std::string error = cooker->error(bars.front().from);
                 if (!error.empty()) problem(L::Warning, bars.front().from, error);
                 if (fromSimulation(bars.front().from)) {
@@ -4766,7 +4770,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 r.constraints = it->second;
             } else {
                 startCooker();
-                const GeometryPtr geo = cooker->cook(network.front().from, 1, firstStep);
+                const GeometryPtr geo = cooker->cook(network.front().from, 1, firstStep, memo.interrupt);
                 const std::string error = cooker->error(network.front().from);
                 if (!error.empty()) problem(L::Warning, network.front().from, error);
                 if (fromSimulation(network.front().from)) {
@@ -4798,7 +4802,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
         if (!guides.empty()) {
             startCooker();
             const int from = guides.front().from;
-            const GeometryPtr geo = cooker->cook(from, static_cast<int>(std::lround(frame)), firstStep);
+            const GeometryPtr geo = cooker->cook(from, static_cast<int>(std::lround(frame)), firstStep, memo.interrupt);
             const std::string error = cooker->error(from);
             if (!error.empty()) problem(L::Warning, from, error);
             if (fromSimulation(from)) {
@@ -4877,7 +4881,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             } else {
                 auto rest = memo.cloth.find(solver->id);
                 if (rest == memo.cloth.end()) {
-                    const GeometryPtr geo = cooker->cook(from, 1, firstStep);
+                    const GeometryPtr geo = cooker->cook(from, 1, firstStep, memo.interrupt);
                     const std::string error = cooker->error(from);
                     if (!error.empty()) problem(L::Warning, from, error);
                     if (!geo || (geo->primitiveCount() == 0)) {
@@ -4892,7 +4896,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
                 const pg::Node* core = cooker->coreNode(from);
                 if (cs.geometry && core && cooker->engine().isTimeDependent(*core)) {
                     c.clothMoves = true;
-                    const GeometryPtr now = cooker->cook(from, static_cast<int>(std::lround(frame)), firstStep);
+                    const GeometryPtr now = cooker->cook(from, static_cast<int>(std::lround(frame)), firstStep, memo.interrupt);
                     if (now && now->pointCount() == cs.geometry->pointCount()) cs.target = now;
                 }
             }
@@ -4952,7 +4956,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
             } else {
                 auto rest = memo.grains.find(solver->id);
                 if (rest == memo.grains.end()) {
-                    const GeometryPtr geo = cooker->cook(from, 1, firstStep);
+                    const GeometryPtr geo = cooker->cook(from, 1, firstStep, memo.interrupt);
                     const std::string error = cooker->error(from);
                     if (!error.empty()) problem(L::Warning, from, error);
                     if (!geo || geo->pointCount() == 0) {

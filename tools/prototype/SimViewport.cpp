@@ -603,7 +603,7 @@ void SimWorkspace::setThroughCamera(bool on) {
         renderer_.orbit.roll = 0.0f;
         renderer_.orbit.fovY = gl::VolumeRenderer::kFovY;
     }
-    guidesRevision_ = ~0ull;  // its frustum: hidden while looked through
+    guidesCompiled_ = ~0ull;  // its frustum: hidden while looked through
     viewDirty_ = true;
 }
 
@@ -1020,7 +1020,7 @@ void SimWorkspace::viewMenu() {
     if (ImGui::MenuItem("Snap", nullptr, snap_)) snap_ = !snap_;
     if (ImGui::MenuItem("Guides", "G", guides_)) {
         guides_ = !guides_;
-        guidesRevision_ = ~0ull;
+        guidesCompiled_ = ~0ull;
     }
 }
 
@@ -1182,7 +1182,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     }
     if (ui::headerButton(h, "guides", Icon::Guides, "Guides: the domain, sources, forces (G)", guides_)) {
         guides_ = !guides_;
-        guidesRevision_ = ~0ull;
+        guidesCompiled_ = ~0ull;
         updateGuides();
     }
 
