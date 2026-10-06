@@ -1399,8 +1399,10 @@ std::vector<NodeType> buildTypes() {
               text("frontgroup", "Front Group", "Groups", "extrudeFront", "The faces moved; empty: no group."),
               text("sidegroup", "Side Group", "Groups", "extrudeSide", "The walls; empty: no group.")});
     geometry("subdivide", "Subdivide", "subdivide",
-             "Smoother: each face cut into quads, the points moved to round the surface off (Catmull-Clark). "
-             "Open edges keep their line; the attributes of the points go with them.",
+             "Smoother: each face cut into quads, the points moved to round the surface off (Catmull-Clark, as "
+             "OpenSubdiv has it). Open edges keep their line; edges stay as sharp as their corners' creaseweight "
+             "says -- 1 a step, 10 for good -- and points as their cornerweight; the attributes of the points go "
+             "with them.",
              in,
              {{"iterations", "Depth", "Subdivide", K::Int, {1.0f, 0.0f, 0.0f}, 0.0f, 4.0f, 0.0f, 6.0f, "",
                "How many times: each makes four times the faces."}});

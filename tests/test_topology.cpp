@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 #include <map>
 #include <span>
 #include <utility>
@@ -230,6 +232,179 @@ TEST(topology_subdivide_rounds_a_box_and_keeps_a_grid_flat) {
     CHECK(std::fabs(flo.x - glo.x) < 1e-5f && std::fabs(fhi.z - ghi.z) < 1e-5f);
     CHECK(std::fabs(fhi.y) < 1e-6f && std::fabs(flo.y) < 1e-6f);
     CHECK_EQ(fine->primitiveCount(), 4u * 16u);
+}
+
+namespace {
+
+/// A case of tests/data/subdivision/subdivision.txt: a mesh, and the points
+/// Blender's Subdivision Surface -- OpenSubdiv -- makes of it.
+struct Subdivided {
+    std::string name;
+    int levels = 0;
+    GeometryPtr cage;
+    std::vector<Vec3> points;
+};
+
+/// The cases, the sharpness of the edges on their corners (f@creaseweight:
+/// each the edge to the next corner) and points (f@cornerweight); "edge
+/// only" in i@subd 2.
+std::vector<Subdivided> subdividedByOpenSubdiv() {
+    std::ifstream in(PG_TEST_DATA_DIR "/subdivision/subdivision.txt");
+    std::vector<Subdivided> cases;
+    std::string word, boundary;
+    size_t n = 0;
+    while (in >> word && word == "case") {
+        Subdivided c;
+        in >> c.name >> c.levels >> boundary;
+        auto geo = std::make_shared<Geometry>();
+        in >> word >> n;
+        geo->addPoints(n);
+        for (Vec3& p : geo->positionsForWrite()) in >> p.x >> p.y >> p.z;
+        in >> word >> n;
+        for (size_t f = 0; f < n; ++f) {
+            size_t k = 0;
+            in >> k;
+            std::vector<uint32_t> corners(k);
+            for (uint32_t& i : corners) in >> i;
+            geo->addPrimitive(corners, true);
+        }
+        in >> word >> n;
+        std::map<std::pair<uint32_t, uint32_t>, float> sharp;
+        for (size_t e = 0; e < n; ++e) {
+            uint32_t a = 0, b = 0;
+            float s = 0.0f;
+            in >> a >> b >> s;
+            sharp[std::minmax(a, b)] = s;
+        }
+        auto crease = geo->vertices().create("creaseweight", AttrType::Float).write<float>();
+        for (size_t prim = 0; prim < geo->primitiveCount(); ++prim) {
+            const auto f = geo->primitivePoints(prim);
+            for (size_t i = 0; i < f.size(); ++i) {
+                const auto it = sharp.find(std::minmax(f[i], f[(i + 1) % f.size()]));
+                crease[geo->primitiveVertexStart(prim) + i] = it == sharp.end() ? 0.0f : it->second;
+            }
+        }
+        in >> word >> n;
+        auto corner = geo->points().create("cornerweight", AttrType::Float).write<float>();
+        for (size_t k = 0; k < n; ++k) {
+            uint32_t i = 0;
+            in >> i;
+            in >> corner[i];
+        }
+        auto subd = geo->primitives().create("subd", AttrType::Int).write<int32_t>();
+        std::fill(subd.begin(), subd.end(), boundary == "edgeOnly" ? 2 : 1);
+        in >> word >> n;
+        c.points.resize(n);
+        for (Vec3& p : c.points) in >> p.x >> p.y >> p.z;
+        c.cage = geo;
+        cases.push_back(std::move(c));
+    }
+    return cases;
+}
+
+/// How far the furthest point of `a` is from the nearest of `b`.
+float furthestFrom(std::span<const Vec3> a, std::span<const Vec3> b) {
+    float worst = 0.0f;
+    for (const Vec3& p : a) {
+        float best = 1e30f;
+        for (const Vec3& q : b) best = std::min(best, length(p - q));
+        worst = std::max(worst, best);
+    }
+    return worst;
+}
+
+}  // namespace
+
+TEST(topology_subdivide_is_as_opensubdiv_has_it_with_sharp_edges_and_points) {
+    const std::vector<Subdivided> cases = subdividedByOpenSubdiv();
+    CHECK_EQ(cases.size(), 7u);
+    for (const Subdivided& c : cases) {
+        const GeometryPtr out = subdivideGeometry(*c.cage, c.levels, "subd");
+        const auto P = out->positions();
+        CHECK_EQ(P.size(), c.points.size());
+        const float off = std::max(furthestFrom(c.points, P), furthestFrom(P, c.points));
+        if (off > 2e-5f) std::printf("  %s: %g off\n", c.name.c_str(), off);
+        CHECK(off < 2e-5f);
+    }
+}
+
+TEST(topology_subdivide_carries_the_sharpness_on_and_only_what_it_is_asked) {
+    Graph g;
+    CookEngine engine;
+    const GeometryPtr box = cookBox(engine, g);
+    // Smooth, a corner of the box comes to 5/9 of the way out from the middle.
+    const GeometryPtr round = subdivideGeometry(*box, 1);
+    CHECK(std::fabs(std::fabs(round->positions()[0].x) - 0.5f * 5.0f / 9.0f) < 1e-6f);
+    CHECK(std::fabs(std::fabs(round->positions()[0].y - 0.5f) - 0.5f * 5.0f / 9.0f) < 1e-6f);
+    // Every edge infinitely sharp: a box stays a box, its edges so.
+    Geometry sharp = *box;
+    auto crease = sharp.vertices().create("creaseweight", AttrType::Float).write<float>();
+    std::fill(crease.begin(), crease.end(), 10.0f);
+    const GeometryPtr still = subdivideGeometry(sharp, 2);
+    Vec3 lo, hi;
+    bounds(*still, lo, hi);
+    CHECK(std::fabs(lo.x + 0.5f) < 1e-6f && std::fabs(hi.y - 1.0f) < 1e-6f);
+    CHECK(std::fabs(volumeOf(*still) - volumeOf(*box)) < 1e-5f);
+    // The edges along the box's sharp still, those across its faces smooth.
+    const auto edges = still->vertices().find("creaseweight")->read<float>();
+    const auto P = still->positions();
+    auto alongTheBox = [](const Vec3& p) {
+        const int ends = (std::fabs(std::fabs(p.x) - 0.5f) < 1e-5f ? 1 : 0) +
+                         (std::fabs(std::fabs(p.y - 0.5f) - 0.5f) < 1e-5f ? 1 : 0) +
+                         (std::fabs(std::fabs(p.z) - 0.5f) < 1e-5f ? 1 : 0);
+        return ends >= 2;
+    };
+    size_t along = 0;
+    for (size_t prim = 0; prim < still->primitiveCount(); ++prim) {
+        const auto f = still->primitivePoints(prim);
+        for (size_t i = 0; i < 4; ++i) {
+            const bool sharpEdge = edges[still->primitiveVertexStart(prim) + i] == 10.0f;
+            CHECK_EQ(sharpEdge, alongTheBox(0.5f * (P[f[i]] + P[f[(i + 1) % 4]])));
+            along += sharpEdge ? 1 : 0;
+        }
+    }
+    CHECK_EQ(along, 12u * 4u * 2u);  // each edge of the box in four, from both sides
+    // As sharp as 2.5: 1.5 a step on, 0.5 the next.
+    std::fill(crease.begin(), crease.end(), 2.5f);
+    const GeometryPtr once = subdivideGeometry(sharp, 1), twice = subdivideGeometry(sharp, 2);
+    CHECK(once->vertices().find("creaseweight")->read<float>()[0] == 1.5f);
+    CHECK(twice->vertices().find("creaseweight")->read<float>()[0] == 0.5f);
+    // Only the faces asked for: the others as they were, the box closed.
+    Geometry half = *box;
+    auto subd = half.primitives().create("subd", AttrType::Int).write<int32_t>();
+    std::fill(subd.begin(), subd.end(), 0);
+    subd[0] = subd[1] = 1;
+    const GeometryPtr part = subdivideGeometry(half, 1, "subd");
+    CHECK_EQ(part->primitiveCount(), 4u + 4u + 4u);
+    CHECK_EQ(part->primitiveVertexCount(11), 4u);
+    const GeometryPtr none = subdivideGeometry(half, 1, "none such");
+    CHECK_EQ(none->primitiveCount(), 24u);
+}
+
+TEST(topology_subdivision_normals_are_smooth_but_across_sharp_edges) {
+    Graph g;
+    CookEngine engine;
+    Geometry box = *cookBox(engine, g);
+    // Smooth: the corners at a point face alike, out of the box's middle.
+    subdivisionNormals(box);
+    const auto N = box.vertices().find("N")->read<Vec3>();
+    const auto P = box.positions();
+    for (size_t prim = 0; prim < box.primitiveCount(); ++prim) {
+        for (size_t i = 0; i < 4; ++i) {
+            const size_t v = box.primitiveVertexStart(prim) + i;
+            const Vec3 out = normalize(P[box.primitivePoints(prim)[i]] - Vec3(0.0f, 0.5f, 0.0f));
+            CHECK(dot(N[v], out) > 0.999f);
+        }
+    }
+    // Every edge as sharp as 1: each face its own way.
+    auto crease = box.vertices().create("creaseweight", AttrType::Float).write<float>();
+    std::fill(crease.begin(), crease.end(), 1.0f);
+    subdivisionNormals(box);
+    const auto flat = box.vertices().find("N")->read<Vec3>();
+    for (size_t prim = 0; prim < box.primitiveCount(); ++prim) {
+        const Vec3 face = normalize(polygonNormal(box, box.primitivePoints(prim)));
+        for (size_t i = 0; i < 4; ++i) CHECK(dot(flat[box.primitiveVertexStart(prim) + i], face) > 0.9999f);
+    }
 }
 
 TEST(topology_clip_cuts_and_closes) {

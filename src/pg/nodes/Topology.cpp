@@ -344,39 +344,81 @@ private:
 
 // --- Subdivide ------------------------------------------------------------------------------------
 
-/// One step of Catmull-Clark: each face split into quads at its middle and
-/// the middles of its edges, the points moved to smooth the surface. Edges
-/// with one face -- the boundary -- stay where they were, as curves; open
-/// primitives stay as they are.
-std::shared_ptr<Geometry> catmullClark(const Geometry& src) {
-    const size_t np = src.pointCount(), nprims = src.primitiveCount();
-    auto isFace = [&](size_t p) { return src.primitiveClosed(p) && src.primitiveVertexCount(p) >= 3; };
+/// A sharpness that never runs out: OpenSubdiv's and USD's (10).
+constexpr float kInfinitelySharp = 10.0f;
 
-    // The edges, as the faces meet them; the faces of each.
+/// A sharpness a step of subdivision later: one less, until it is gone; an
+/// infinite one stays.
+float sharpAfter(float s) { return s >= kInfinitelySharp ? s : std::max(0.0f, s - 1.0f); }
+
+/// A float attribute's value, an int's as a float; 0 without one.
+float numberAt(const AttributeArray* a, size_t i) {
+    if (!a || i >= a->size()) return 0.0f;
+    if (a->type() == AttrType::Float) return a->read<float>()[i];
+    if (a->type() == AttrType::Int) return static_cast<float>(a->read<int32_t>()[i]);
+    return 0.0f;
+}
+
+/// One step of Catmull-Clark, as OpenSubdiv takes it: each face split into
+/// quads at its middle and the middles of its edges, the points moved to
+/// smooth the surface. An edge is as sharp as its corners' creaseweight
+/// says (each the edge from that corner to the next), a point as its
+/// cornerweight; edges of one face -- the boundary -- or of more are
+/// infinitely sharp, and so is the corner of one face ("edge and corner";
+/// not where `only` is 2: "edge only"). A sharp edge's middle is its
+/// midpoint; a point on two sharp edges moves along them as a curve, one on
+/// more -- or sharp itself -- stays where it is; where a sharpness below 1
+/// runs out at this step, the point blends the rule it had with the one it
+/// takes after. The sharpnesses go down by one onto the children. Only the
+/// faces whose primitive attribute `only` is not 0 are subdivided (all,
+/// without one); the others, and open primitives, stay as they are, their
+/// normals with them (subdivisionNormals() gives the new faces theirs).
+std::shared_ptr<Geometry> catmullClark(const Geometry& src, const std::string& only = std::string()) {
+    const size_t np = src.pointCount(), nprims = src.primitiveCount();
+    const AttributeArray* mask = only.empty() ? nullptr : src.primitives().find(only);
+    auto chosen = [&](size_t p) { return !mask || numberAt(mask, p) != 0.0f; };
+    auto isFace = [&](size_t p) { return src.primitiveClosed(p) && src.primitiveVertexCount(p) >= 3 && chosen(p); };
+    const AttributeArray* crease = src.vertices().find("creaseweight");
+    const AttributeArray* cornerWeight = src.points().find("cornerweight");
+
+    // The edges, as the faces meet them; the faces of each; how sharp each is.
     std::unordered_map<uint64_t, uint32_t> edgeOf;
     std::vector<std::array<uint32_t, 2>> edgeEnds;
     std::vector<std::vector<uint32_t>> edgeFaces;
+    std::vector<float> edgeSharp;
     std::vector<std::vector<uint32_t>> faceEdges(nprims);
     for (size_t p = 0; p < nprims; ++p) {
         if (!isFace(p)) continue;
         const auto c = src.primitivePoints(p);
+        const size_t v0 = src.primitiveVertexStart(p);
         for (size_t i = 0; i < c.size(); ++i) {
             const uint32_t a = c[i], b = c[(i + 1) % c.size()];
             const auto [it, fresh] = edgeOf.emplace(edgeKey(a, b), static_cast<uint32_t>(edgeEnds.size()));
             if (fresh) {
                 edgeEnds.push_back({std::min(a, b), std::max(a, b)});
                 edgeFaces.emplace_back();
+                edgeSharp.push_back(0.0f);
             }
             edgeFaces[it->second].push_back(static_cast<uint32_t>(p));
+            edgeSharp[it->second] = std::max(edgeSharp[it->second], numberAt(crease, v0 + i));
             faceEdges[p].push_back(it->second);
         }
     }
     const size_t ne = edgeEnds.size();
-    // For each point: its faces, its edges.
+    // How sharp an edge is at this step: the boundary and where more than
+    // two faces meet, infinitely.
+    auto sharpness = [&](uint32_t e) { return edgeFaces[e].size() != 2 ? kInfinitelySharp : edgeSharp[e]; };
+    // For each point: its faces, its edges; whether a face of it keeps the
+    // boundary's corners smooth.
     std::vector<std::vector<uint32_t>> pointFaces(np), pointEdges(np);
+    std::vector<uint8_t> edgeOnly(np, 0);
     for (size_t p = 0; p < nprims; ++p) {
         if (!isFace(p)) continue;
-        for (const uint32_t c : src.primitivePoints(p)) pointFaces[c].push_back(static_cast<uint32_t>(p));
+        const bool smoothCorners = mask && numberAt(mask, p) == 2.0f;
+        for (const uint32_t c : src.primitivePoints(p)) {
+            pointFaces[c].push_back(static_cast<uint32_t>(p));
+            if (smoothCorners) edgeOnly[c] = 1;
+        }
     }
     for (size_t e = 0; e < ne; ++e) {
         pointEdges[edgeEnds[e][0]].push_back(static_cast<uint32_t>(e));
@@ -387,50 +429,98 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src) {
         const float each = w / static_cast<float>(c.size());
         for (const uint32_t q : c) terms.push_back({q, each});
     };
+    auto other = [&](uint32_t e, uint32_t v) { return edgeEnds[e][0] == v ? edgeEnds[e][1] : edgeEnds[e][0]; };
 
     // The points: the old ones moved, then an edge's each, then a face's each.
     Blends points;
     std::vector<std::pair<uint32_t, float>> terms;
+    enum class Rule { Smooth, Crease, Corner };
     for (size_t v = 0; v < np; ++v) {
         terms.clear();
         const auto& faces = pointFaces[v];
         const auto& edges = pointEdges[v];
-        std::vector<uint32_t> hard;  // the other ends of the boundary (or non-manifold) edges
-        for (const uint32_t e : edges) {
-            if (edgeFaces[e].size() != 2) hard.push_back(edgeEnds[e][0] == v ? edgeEnds[e][1] : edgeEnds[e][0]);
-        }
-        if (faces.empty() || hard.size() > 2 || hard.size() == 1 || (hard.size() == 2 && faces.size() == 1)) {
-            // Loose; where the boundary is odd; a corner of one face -- a
-            // grid's -- stays where it is.
+        size_t open = 0;  // the boundary (or non-manifold) edges
+        for (const uint32_t e : edges) open += edgeFaces[e].size() != 2 ? 1 : 0;
+        if (faces.empty() || open == 1) {
+            // Loose; where the boundary is odd.
             points.one(static_cast<uint32_t>(v));
             continue;
         }
-        if (hard.size() == 2) {
-            // On the boundary: a curve through it.
-            terms = {{static_cast<uint32_t>(v), 0.75f}, {hard[0], 0.125f}, {hard[1], 0.125f}};
-            points.add(terms);
-            continue;
-        }
-        // Inside: (F + 2R + (n - 3) v) / n.
-        const float n = static_cast<float>(edges.size());
-        terms.push_back({static_cast<uint32_t>(v), (n - 3.0f) / n});
-        const float perFace = 1.0f / (n * static_cast<float>(faces.size()));
-        for (const uint32_t f : faces) faceTerms(f, perFace, terms);
-        const float perEdge = 1.0f / (n * static_cast<float>(edges.size()));  // 2 R / n: each midpoint 2/(n*n), a half each end
-        for (const uint32_t e : edges) {
-            terms.push_back({edgeEnds[e][0], perEdge});
-            terms.push_back({edgeEnds[e][1], perEdge});
+        // How sharp the point is: its cornerweight, and a corner of one face
+        // on the boundary infinitely.
+        float pointSharp = numberAt(cornerWeight, v);
+        if (open == 2 && faces.size() == 1 && !edgeOnly[v]) pointSharp = kInfinitelySharp;
+        // The rule at the sharpnesses `sharpOf` gives, and the other ends of
+        // its two edges where it is a crease.
+        auto ruleOf = [&](auto&& sharpOf, float corner, std::array<uint32_t, 2>& ends) {
+            size_t n = 0;
+            for (const uint32_t e : edges) {
+                if (sharpOf(e) <= 0.0f) continue;
+                if (n < 2) ends[n] = other(e, static_cast<uint32_t>(v));
+                ++n;
+            }
+            return corner > 0.0f || n > 2 ? Rule::Corner : n == 2 ? Rule::Crease : Rule::Smooth;
+        };
+        auto termsOf = [&](Rule rule, const std::array<uint32_t, 2>& ends, float w) {
+            if (rule == Rule::Corner || (rule == Rule::Smooth && edges.size() == 2)) {
+                // Where it is -- and inside, between two faces alone, too.
+                terms.push_back({static_cast<uint32_t>(v), w});
+            } else if (rule == Rule::Crease) {
+                // Along the crease: a curve through it.
+                terms.push_back({static_cast<uint32_t>(v), 0.75f * w});
+                terms.push_back({ends[0], 0.125f * w});
+                terms.push_back({ends[1], 0.125f * w});
+            } else {
+                // Inside: (F + 2R + (n - 3) v) / n.
+                const float n = static_cast<float>(edges.size());
+                terms.push_back({static_cast<uint32_t>(v), w * (n - 3.0f) / n});
+                const float perFace = w / (n * static_cast<float>(faces.size()));
+                for (const uint32_t f : faces) faceTerms(f, perFace, terms);
+                const float perEdge = w / (n * n);  // 2 R / n: each midpoint 2/(n*n), a half each end
+                for (const uint32_t e : edges) {
+                    terms.push_back({edgeEnds[e][0], perEdge});
+                    terms.push_back({edgeEnds[e][1], perEdge});
+                }
+            }
+        };
+        std::array<uint32_t, 2> was{}, will{};
+        const Rule before = ruleOf(sharpness, pointSharp, was);
+        const Rule after = ruleOf([&](uint32_t e) { return sharpAfter(sharpness(e)); }, sharpAfter(pointSharp), will);
+        if (before == after) {  // (the edges sharp after are some of those before: a crease along the same two)
+            termsOf(before, was, 1.0f);
+        } else {
+            // A sharpness runs out: as much of the rule it had as the mean of
+            // the sharpnesses that run out, up to 1.
+            float sum = 0.0f;
+            int count = 0;
+            if (pointSharp > 0.0f && sharpAfter(pointSharp) <= 0.0f) {
+                sum += pointSharp;
+                ++count;
+            }
+            for (const uint32_t e : edges) {
+                const float s = sharpness(e);
+                if (s > 0.0f && sharpAfter(s) <= 0.0f) {
+                    sum += s;
+                    ++count;
+                }
+            }
+            const float w = count > 0 ? std::min(sum / static_cast<float>(count), 1.0f) : 0.0f;
+            termsOf(before, was, w);
+            termsOf(after, will, 1.0f - w);
         }
         points.add(terms);
     }
     for (size_t e = 0; e < ne; ++e) {
         terms.clear();
-        if (edgeFaces[e].size() == 2) {
-            terms = {{edgeEnds[e][0], 0.25f}, {edgeEnds[e][1], 0.25f}};
-            faceTerms(edgeFaces[e][0], 0.25f, terms);
-            faceTerms(edgeFaces[e][1], 0.25f, terms);
-        } else {
-            terms = {{edgeEnds[e][0], 0.5f}, {edgeEnds[e][1], 0.5f}};
+        const float s = sharpness(static_cast<uint32_t>(e));
+        const float sharp = std::min(s, 1.0f);  // a midpoint as sharp as 1 or more
+        terms = {{edgeEnds[e][0], 0.5f * sharp}, {edgeEnds[e][1], 0.5f * sharp}};
+        if (sharp < 1.0f) {
+            const float smooth = 1.0f - sharp;
+            terms.push_back({edgeEnds[e][0], 0.25f * smooth});
+            terms.push_back({edgeEnds[e][1], 0.25f * smooth});
+            faceTerms(edgeFaces[e][0], 0.25f * smooth, terms);
+            faceTerms(edgeFaces[e][1], 0.25f * smooth, terms);
         }
         points.add(terms);
     }
@@ -443,10 +533,12 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src) {
         points.add(terms);
     }
 
-    // The faces: a quad a corner, in the order the faces were.
+    // The faces: a quad a corner, in the order the faces were; how sharp
+    // the edges of each are, from its corners.
     std::vector<std::vector<uint32_t>> faces;
     std::vector<uint8_t> closed;
     std::vector<uint32_t> sourcePrim;
+    std::vector<float> creases;
     Blends vertices;
     for (size_t p = 0; p < nprims; ++p) {
         const auto c = src.primitivePoints(p);
@@ -455,7 +547,10 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src) {
             faces.emplace_back(c.begin(), c.end());
             closed.push_back(src.primitiveClosed(p) ? 1 : 0);
             sourcePrim.push_back(static_cast<uint32_t>(p));
-            for (size_t i = 0; i < c.size(); ++i) vertices.one(v0 + static_cast<uint32_t>(i));
+            for (size_t i = 0; i < c.size(); ++i) {
+                vertices.one(v0 + static_cast<uint32_t>(i));
+                if (crease) creases.push_back(numberAt(crease, v0 + i));
+            }
             continue;
         }
         const size_t k = c.size();
@@ -473,11 +568,34 @@ std::shared_ptr<Geometry> catmullClark(const Geometry& src) {
             for (size_t j = 0; j < k; ++j) all.push_back({v0 + static_cast<uint32_t>(j), 1.0f / static_cast<float>(k)});
             vertices.add(all);
             vertices.two(v0 + static_cast<uint32_t>(prev), v0 + static_cast<uint32_t>(i), 0.5f);
+            // Half of each edge of the face as sharp, a step on; across the face, smooth.
+            if (crease) {
+                creases.insert(creases.end(), {sharpAfter(edgeSharp[faceEdges[p][i]]), 0.0f, 0.0f,
+                                               sharpAfter(edgeSharp[faceEdges[p][prev]])});
+            }
         }
     }
     auto out = rebuild(src, points, faces, closed, vertices, sourcePrim);
-    out->points().erase("N");
-    out->vertices().erase("N");
+    // The normals as they were are not the smooth surface's -- but those of
+    // the faces left as they are, where only some are subdivided.
+    if (!mask) {
+        out->points().erase("N");
+        out->vertices().erase("N");
+    }
+    // How sharp the children are: not as blended, a step on.
+    if (crease) {
+        AttributeArray& a = out->vertices().create("creaseweight", AttrType::Float);
+        std::copy(creases.begin(), creases.end(), a.write<float>().begin());
+    }
+    if (cornerWeight) {
+        AttributeArray& a = out->points().create("cornerweight", AttrType::Float);
+        auto w = a.write<float>();
+        std::fill(w.begin(), w.end(), 0.0f);
+        for (size_t v = 0; v < np; ++v) {
+            const float s = numberAt(cornerWeight, v);
+            w[v] = pointFaces[v].empty() ? s : sharpAfter(s);
+        }
+    }
     return out;
 }
 
@@ -1083,10 +1201,80 @@ std::shared_ptr<Geometry> clipGeometry(const Geometry& src, const Vec3& origin, 
     return ClipNode::clip(src, origin, normalize(dir), cap, capGroup);
 }
 
-std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations) {
+std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations, const std::string& only) {
     std::shared_ptr<Geometry> geo = std::make_shared<Geometry>(src);
-    for (int s = 0; s < iterations; ++s) geo = catmullClark(*geo);
+    for (int s = 0; s < iterations; ++s) geo = catmullClark(*geo, only);
     return geo;
+}
+
+/// The corners' normals of the faces whose `only` is not 0 (all, without
+/// it) as the surface has them: each the mean of its faces' round its point
+/// -- weighted by their size --, those across an edge as sharp as 1 or more
+/// (creaseweight) or of more than two faces apart. Vertex N; zeros -- none
+/// given -- on the other corners where there was none.
+void subdivisionNormals(Geometry& geo, const std::string& only) {
+    const size_t nprims = geo.primitiveCount();
+    const AttributeArray* mask = only.empty() ? nullptr : geo.primitives().find(only);
+    const AttributeArray* crease = geo.vertices().find("creaseweight");
+    auto isFace = [&](size_t p) {
+        return geo.primitiveClosed(p) && geo.primitiveVertexCount(p) >= 3 && (!mask || numberAt(mask, p) != 0.0f);
+    };
+    // The corners of each edge: who meets whom across it, and how sharp it is.
+    struct Side {
+        uint32_t cornerA, cornerB;  // the corners at the edge's lower point, its higher
+    };
+    std::unordered_map<uint64_t, std::vector<Side>> sides;
+    std::unordered_map<uint64_t, float> sharp;
+    std::vector<Vec3> faceNormal(nprims, Vec3(0.0f));
+    for (size_t p = 0; p < nprims; ++p) {
+        if (!isFace(p)) continue;
+        const auto c = geo.primitivePoints(p);
+        const uint32_t v0 = static_cast<uint32_t>(geo.primitiveVertexStart(p));
+        faceNormal[p] = polygonNormal(geo, c);  // twice its area long
+        for (size_t i = 0; i < c.size(); ++i) {
+            const size_t j = (i + 1) % c.size();
+            const uint32_t ci = v0 + static_cast<uint32_t>(i), cj = v0 + static_cast<uint32_t>(j);
+            const uint64_t key = edgeKey(c[i], c[j]);
+            sides[key].push_back(c[i] < c[j] ? Side{ci, cj} : Side{cj, ci});
+            float& s = sharp[key];
+            s = std::max(s, numberAt(crease, ci));
+        }
+    }
+    // Corners joined across the smooth edges.
+    std::vector<uint32_t> parent(geo.vertexCount());
+    std::iota(parent.begin(), parent.end(), 0u);
+    auto find = [&](uint32_t x) {
+        while (parent[x] != x) x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    auto join = [&](uint32_t a, uint32_t b) { parent[find(a)] = find(b); };
+    for (const auto& [key, s] : sides) {
+        if (s.size() != 2 || sharp[key] >= 1.0f) continue;
+        join(s[0].cornerA, s[1].cornerA);
+        join(s[0].cornerB, s[1].cornerB);
+    }
+    std::vector<Vec3> sum(geo.vertexCount(), Vec3(0.0f));
+    std::vector<uint32_t> faceOfCorner(geo.vertexCount(), UINT32_MAX);
+    for (size_t p = 0; p < nprims; ++p) {
+        if (!isFace(p)) continue;
+        const size_t v0 = geo.primitiveVertexStart(p);
+        for (size_t i = 0; i < geo.primitiveVertexCount(p); ++i) {
+            sum[find(static_cast<uint32_t>(v0 + i))] += faceNormal[p];
+            faceOfCorner[v0 + i] = static_cast<uint32_t>(p);
+        }
+    }
+    AttributeArray* N = geo.vertices().find("N");
+    if (!N || N->type() != AttrType::Vec3) {
+        geo.vertices().erase("N");
+        N = &geo.vertices().create("N", AttrType::Vec3);
+    }
+    auto w = N->write<Vec3>();
+    for (size_t c = 0; c < w.size(); ++c) {
+        if (faceOfCorner[c] == UINT32_MAX) continue;
+        const Vec3 n = sum[find(static_cast<uint32_t>(c))];
+        const float l = length(n);
+        w[c] = l > 0.0f ? n / l : Vec3(0.0f);  // none: not given
+    }
 }
 
 void registerTopologyNodes() {

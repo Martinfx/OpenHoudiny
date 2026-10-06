@@ -351,7 +351,8 @@ sítě.
 
 **Geometrie** žije ve stejné síti jako simulace, jako SOP v Houdini: krychle,
 koule, válec, mřížka, soubor OBJ, scatter, copy to points, transform, merge,
-wrangle, PolyExtrude, Subdivide (Catmull-Clark), Clip s uzavřením řezu,
+wrangle, PolyExtrude, Subdivide (Catmull-Clark s ostrými hranami jako
+OpenSubdiv), Clip s uzavřením řezu,
 Fuse, Connectivity, Attribute Transfer, Convert Volume (objem na
 polygony) a další. **Smyčky For-Each** pustí
 část sítě pro každý kus, primitivum či bod, nebo opakovaně na vlastním

@@ -122,8 +122,20 @@ private:
     std::vector<uint32_t> gridStart_, gridSeeds_;
 };
 
-/// `iterations` steps of Catmull-Clark subdivision.
-std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations);
+/// `iterations` steps of Catmull-Clark subdivision, as OpenSubdiv takes it:
+/// edges as sharp as their corners' f@creaseweight says (each the edge from
+/// that corner to the next; 10 or more infinitely), points as their
+/// f@cornerweight, the boundary sharp; each step the sharpnesses one less.
+/// Only the faces whose primitive attribute `only` is not 0, without one
+/// all; 2 there: the boundary's corners smooth too ("edge only"). N, which
+/// the smooth surface does not have, goes -- but with `only`, which keeps
+/// the other faces' (subdivisionNormals() gives the new ones theirs).
+std::shared_ptr<Geometry> subdivideGeometry(const Geometry& src, int iterations, const std::string& only = {});
+
+/// The surface's normals on the corners of the faces `only` names (all,
+/// without it), as vertex N: smooth round each point, apart across edges
+/// as sharp as 1 or more and where more than two faces meet.
+void subdivisionNormals(Geometry& geo, const std::string& only = {});
 
 /// The surface of `volume` where its values cross `iso`, as a mesh of quads
 /// turned outward: the inside is below iso (a distance, a level set) with
