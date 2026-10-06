@@ -50,6 +50,11 @@ public:
     FrameStore(const FrameStore&) = delete;
     FrameStore& operator=(const FrameStore&) = delete;
 
+    /// The folders frames were spilled to by programs no longer running --
+    /// a crash, a kill, which ~FrameStore never saw -- deleted, those of
+    /// the last `minutes` spared. How many went.
+    static int removeLeftSpills(int minutes = 10);
+
     /// Nothing kept; what was spilled deleted.
     void clear();
     /// In place of what it kept: the frames of the cache in `folder`,

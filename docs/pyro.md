@@ -250,7 +250,8 @@ tažení, **Space**, **Home**, **End**, šipky) pak nic nepočítají znovu.
   je 1,5 GB (menu **Simulation › Cache Size**); když dojde, simulace se
   zastaví a stavový řádek ukáže „full“.
 - **Simulation › Simulate Ahead** vypne počítání dopředu,
-  **Simulate Again** zahodí cache a začne znovu.
+  **Simulate Again** zahodí cache a začne znovu. Velikost cache,
+  odkládání na disk i Simulate Ahead zůstanou, jak byly.
 - **Simulation › Save Cache to Disk** uloží spočítané snímky do složky,
   **Load Cache from Disk** je odtamtud vezme místo simulace (na disku mají
   díky vynechaným nulám zlomek velikosti, [cache.md](cache.md)).

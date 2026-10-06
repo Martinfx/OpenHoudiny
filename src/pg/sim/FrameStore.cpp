@@ -4,13 +4,18 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <climits>
+#include <cstdlib>
 #include <filesystem>
 #include <system_error>
 
 #ifdef _WIN32
 #include <process.h>
 #else
+#include <csignal>
+#include <sys/types.h>
 #include <unistd.h>
 #endif
 
@@ -28,6 +33,17 @@ long processId() {
 #endif
 }
 
+/// Whether the process `pid` runs (one we may not signal does).
+bool running(long pid) {
+#ifdef _WIN32
+    return pid == processId();  // others' cannot be told: spared
+#else
+    return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
+#endif
+}
+
+constexpr const char* kSpillPrefix = "prototype-frames-";
+
 /// A folder of its own for a store's spilled frames, in the system's
 /// temporary folder: the process and a count make it one no other store
 /// uses.
@@ -36,10 +52,32 @@ std::string newSpillFolder() {
     std::error_code ec;
     fs::path root = fs::temp_directory_path(ec);
     if (ec) root = ".";
-    return (root / ("prototype-frames-" + std::to_string(processId()) + "-" + std::to_string(++made))).string();
+    return (root / (kSpillPrefix + std::to_string(processId()) + "-" + std::to_string(++made))).string();
 }
 
 }  // namespace
+
+int FrameStore::removeLeftSpills(int minutes) {
+    std::error_code ec;
+    const fs::path root = fs::temp_directory_path(ec);
+    if (ec) return 0;
+    const auto now = fs::file_time_type::clock::now();
+    const std::string prefix = kSpillPrefix;
+    int removed = 0;
+    for (const auto& e : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
+        const std::string name = e.path().filename().string();
+        std::error_code tec;
+        if (name.compare(0, prefix.size(), prefix) != 0 || !e.is_directory(tec)) continue;
+        const long pid = std::atol(name.c_str() + prefix.size());
+        if (pid <= 0 || pid == processId() || running(pid)) continue;
+        // Spared while it may still be written: a process elsewhere -- in
+        // another container -- shows no pid here.
+        const auto when = fs::last_write_time(e.path(), tec);
+        if (tec || now - when < std::chrono::minutes(minutes)) continue;
+        if (fs::remove_all(e.path(), tec) > 0 && !tec) ++removed;
+    }
+    return removed;
+}
 
 FrameStore::FrameStore() : reader_([this] { readLoop(); }) {}
 

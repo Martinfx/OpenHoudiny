@@ -1995,7 +1995,9 @@ void SimWorkspace::menus() {
         if (ImGui::MenuItem("Simulate Ahead", nullptr, &running)) runner_->setRunning(running);
         ImGui::SetItemTooltip("Simulate the frames before they are played; off, it waits.");
         if (ImGui::MenuItem("Simulate Again")) {
-            runner_ = std::make_unique<SimRunner>(synchronous_);
+            // The frames thrown away, the same runner -- the cooker's thread
+            // reads it -- with the cache size and the rest as they were.
+            runner_->clear();
             compiledRevision_ = ~0ull;
             recompile();
             shown_.reset();

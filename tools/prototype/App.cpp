@@ -38,6 +38,7 @@
 #include "Theme.h"
 
 #include "pg/gl/Png.h"
+#include "pg/sim/FrameStore.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -411,6 +412,8 @@ int runEditor(int argc, char** argv) {
         }
         // Autosaves, and those an editor that did not close left: not for a screenshot.
         editor.setRecovery(recoveryGiven ? recovery : screenshot.empty() ? defaultRecoveryFolder() : std::string());
+        // The frames an editor that crashed spilled to disk.
+        pg::sim::FrameStore::removeLeftSpills();
 
         int frame = 0;
         std::string title;

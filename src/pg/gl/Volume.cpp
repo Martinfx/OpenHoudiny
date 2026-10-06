@@ -2045,10 +2045,11 @@ VolumeRenderer::~VolumeRenderer() {
         if (a) gl_.DeleteVertexArrays(1, &a);
     }
     for (GLuint b : {geoBuffer_, dotBuffer_, curveBuffer_, geoVelocityBuffer_, shownPlaces_, shownColors_, shownVelocities_,
-                     shownIndices_, shownThrough_, shownTextures_, picturesTex_, normalMapsTex_}) {
+                     shownIndices_, shownThrough_, shownTextures_}) {
         if (b) gl_.DeleteBuffers(1, &b);
     }
-    for (GLuint t : {auxTex_[0], auxTex_[1], gAux_, plateTex_}) {
+    // The pictures' arrays are textures, not buffers.
+    for (GLuint t : {auxTex_[0], auxTex_[1], gAux_, plateTex_, picturesTex_, normalMapsTex_}) {
         if (t) gl_.DeleteTextures(1, &t);
     }
     if (rainVao_) gl_.DeleteVertexArrays(1, &rainVao_);

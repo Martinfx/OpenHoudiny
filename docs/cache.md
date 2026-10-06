@@ -280,7 +280,9 @@ na disku.
   přehrávací hlavy se zapíšou do dočasné složky editoru
   (`prototype-frames-<pid>-<n>` v systémovém temp) a z paměti zmizí;
   přehraje se celá. Složka se smaže se snímky (jiná síť, změna parametru,
-  konec editoru). Vypnuté: plná paměť simulaci zastaví („cache … full“),
+  konec editoru). Složky po editoru, který spadl nebo byl zabit, smaže
+  příští spuštěný editor (proces už neběží a složka je starší než
+  10 minut). Vypnuté: plná paměť simulaci zastaví („cache … full“),
   jako dřív. Když disk nestačí (plný disk, nejvýš 64 GB), přehled ukáže
   „nothing more to disk“ a simulace čeká.
 - **Čtení dopředu.** Vlastní vlákno čte snímky před přehrávací hlavou ve

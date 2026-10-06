@@ -12,9 +12,17 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 using namespace pg;
 using namespace pg::sim;
@@ -219,4 +227,33 @@ TEST(frame_store_takes_frames_and_questions_from_several_threads) {
     CHECK(folder.empty() || waitFor([&] { return !fs::exists(folder); }));
     CHECK(!store.add(frameOf(1), g));
     CHECK(store.add(frameOf(1), store.generation()));
+}
+
+TEST(frame_store_deletes_the_spills_of_programs_no_longer_running) {
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path();
+#ifdef _WIN32
+    const long self = static_cast<long>(_getpid());
+#else
+    const long self = static_cast<long>(getpid());
+#endif
+    // A crashed program's, long untouched; one's that runs -- this; one
+    // crashed a moment ago, which may yet be another's elsewhere.
+    const fs::path dead = tmp / "prototype-frames-2147483-1";
+    const fs::path live = tmp / ("prototype-frames-" + std::to_string(self) + "-999");
+    const fs::path fresh = tmp / "prototype-frames-2147483-2";
+    const auto old = fs::file_time_type::clock::now() - std::chrono::minutes(30);
+    for (const fs::path& p : {dead, live, fresh}) {
+        fs::create_directories(p);
+        std::ofstream(p / "frame.0001.pgf") << "frame";
+    }
+    fs::last_write_time(dead, old);
+    fs::last_write_time(live, old);
+    CHECK(FrameStore::removeLeftSpills(10) >= 1);
+    CHECK(!fs::exists(dead));
+    CHECK(fs::exists(live));
+    CHECK(fs::exists(fresh));
+    std::error_code ec;
+    fs::remove_all(live, ec);
+    fs::remove_all(fresh, ec);
 }

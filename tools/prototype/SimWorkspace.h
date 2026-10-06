@@ -603,7 +603,8 @@ private:
     const gl::Api& gl_;
     gl::VolumeRenderer renderer_;
     std::string rendererLog_;
-    std::unique_ptr<SimRunner> runner_;
+    /// Never another: the cooker's thread reads it (Simulate Again clears it).
+    const std::unique_ptr<SimRunner> runner_;
     /// The geometry, cooked on a thread of its own -- after runner_, whose
     /// frames it reads: it goes first.
     std::unique_ptr<sim::Cooker> cooker_;
