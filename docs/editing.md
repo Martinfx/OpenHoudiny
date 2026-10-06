@@ -545,7 +545,16 @@ a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
   (sculpt, tah úchytem) a topologie zůstane, strom si nechá tvar a znovu
   spočítá jen obálky (refit) — na milionu bodů 40 ms místo 1,2 s; co najde
   dotaz, na tvaru stromu nezávisí. Když obálky narostou nad čtyřnásobek
-  plochy, kterou měly, postaví se strom znovu.
+  plochy, kterou měly, postaví se strom znovu. Nový strom se staví na
+  vlastním vlákně (milion ploch zhruba za sekundu) a okno mezitím běží dál.
+  Pod myší se do té doby nic nezvýrazní a drát se značkami rohů se ukáže,
+  až je strom hotový. Na strom malé geometrie se čeká 8 ms, takže nic
+  neblikne. Klik a obdélník na strom počkají, aby se výběr neztratil.
+  Štětec ve sculptu, kterému dyntopo každou kapkou mění plochy, mezitím
+  jede po stromu o chvíli starší geometrie, takže z povrchu nesjede.
+  Přerostlý strom slouží, dokud není hotový nový. Drát bere hrany ze
+  stromu, takže se nepočítají dvakrát (na milionu ploch to dřív stálo
+  v okně 0,24 s navíc).
 - **Značky** — overlay rendereru (`gl::Overlay`): drát, body, výběr,
   zvýraznění pod myší (vlastní vrstva, aby pohyb myši nepřestavoval
   zbytek) a barvy malování, kreslené s testem hloubky proti scéně, kousek

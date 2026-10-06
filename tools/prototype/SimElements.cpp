@@ -34,6 +34,7 @@
 #include "pg/core/Soft.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -54,6 +55,12 @@ const Vec4 kCorner(0.25f, 0.85f, 0.4f, 0.95f);
 
 /// Past so many, the wire and the points are not drawn -- what is picked is.
 constexpr size_t kMostMarks = 400000;
+/// How long a picker begun is waited for before the frame goes on without
+/// it: a small geometry's is made by then -- nothing goes and comes back.
+constexpr std::chrono::milliseconds kPickerWait(8);
+/// How much a picker refitted again and again may swell (ElementPicker::
+/// swell) before a new one is made.
+constexpr float kMostSwell = 4.0f;
 /// How far to the right of the node before it a node put after one goes.
 constexpr float kStep = 230.0f;
 
@@ -103,6 +110,18 @@ size_t countOf(const std::vector<uint8_t>& mask) {
     return n;
 }
 
+/// Whether `picker` picks in `geo` -- made to, when only the points moved.
+bool picks(ElementPicker& picker, const GeometryPtr& geo) {
+    if (picker.geometry() == geo) return true;
+    // Painted, not moved: the same tree still does.
+    if (picker.fits(*geo)) {
+        picker.adopt(geo);
+        return true;
+    }
+    // Moved, not remade -- sculpted, dragged: the tree's boxes made again.
+    return picker.refit(geo);
+}
+
 }  // namespace
 
 // --- what is picked -----------------------------------------------------------------------
@@ -121,21 +140,42 @@ PickView SimWorkspace::pickView(const ViewCamera& cam) {
     return v;
 }
 
-const ElementPicker* SimWorkspace::picker() {
+const ElementPicker* SimWorkspace::picker(bool wait) {
     const GeometryPtr& geo = renderer_.geometry();
     if (!geo) return nullptr;
-    if (picker_ && picker_->geometry() == geo) return picker_.get();
-    // Painted, not moved: the same tree still does.
-    if (picker_ && picker_->fits(*geo)) {
-        picker_->adopt(geo);
+    wait = wait || synchronous_;
+    // A new tree is made on a thread of its own -- a million faces' takes a
+    // second. Once it is done it takes the place of the one there was,
+    // unless that one picks in what is shown and it does not.
+    auto take = [&](std::chrono::milliseconds patience) {
+        if (!pickerMaking_.valid() || pickerMaking_.wait_for(patience) != std::future_status::ready) return;
+        std::unique_ptr<ElementPicker> made = pickerMaking_.get();
+        if (picks(*made, geo) || !picker_ || !picks(*picker_, geo)) picker_ = std::move(made);
+    };
+    auto make = [&] {
+        pickerMaking_ = std::async(std::launch::async, [geo] { return std::make_unique<ElementPicker>(geo); });
+    };
+    take(std::chrono::milliseconds(0));
+    if (picker_ && picks(*picker_, geo)) {
+        // Refitted again and again, its boxes swell: a new tree is made
+        // meanwhile, this one picking till it is done.
+        if (picker_->swell() >= kMostSwell && !pickerMaking_.valid()) make();
         return picker_.get();
     }
-    // Moved, not remade -- sculpted, dragged: the tree's boxes made again,
-    // while they have not swollen much.
-    if (picker_ && picker_->refit(geo) && picker_->swell() < 4.0f) return picker_.get();
-    if (!picker_) picker_ = std::make_unique<ElementPicker>();
-    picker_->build(geo);
-    return picker_.get();
+    // Another topology: nothing is picked till its tree is made -- the old
+    // one let go, unless a stroke goes on over it (paintTool). One being
+    // made -- of another geometry, or of this one -- is let finish first.
+    if (!stroking_) picker_.reset();
+    if (pickerMaking_.valid()) {
+        if (!wait) return nullptr;
+        pickerMaking_.wait();
+        take(std::chrono::milliseconds(0));
+        if (picker_ && picks(*picker_, geo)) return picker_.get();
+    }
+    make();
+    if (wait) pickerMaking_.wait();
+    take(kPickerWait);
+    return picker_ && picker_->geometry() == geo ? picker_.get() : nullptr;
 }
 
 void SimWorkspace::checkElements() {
@@ -315,9 +355,9 @@ void SimWorkspace::setElements(Elements mode) {
     }
 }
 
-int32_t SimWorkspace::elementAt(const ViewCamera& cam, ImVec2 mouse) {
+int32_t SimWorkspace::elementAt(const ViewCamera& cam, ImVec2 mouse, bool wait) {
     if (elements_ == Elements::Objects) return -1;
-    const ElementPicker* p = picker();
+    const ElementPicker* p = picker(wait);
     if (!p) return -1;
     const PickView v = pickView(cam);
     switch (elements_) {
@@ -332,7 +372,7 @@ int32_t SimWorkspace::elementAt(const ViewCamera& cam, ImVec2 mouse) {
 void SimWorkspace::clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, bool remove) {
     const GeometryPtr geo = renderer_.geometry();
     if (!geo || elements_ == Elements::Objects) return;
-    const int32_t e = elementAt(cam, mouse);
+    const int32_t e = elementAt(cam, mouse, true);
     if (picked_.points != geo->pointCount() || picked_.primitives != geo->primitiveCount()) {
         picked_ = Picked{net_.displayed(), geo->pointCount(), geo->primitiveCount(), {}, {}, picked_.revision};
     }
@@ -358,8 +398,8 @@ void SimWorkspace::clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, 
 
 void SimWorkspace::regionElements(const ViewCamera& cam, const ScreenRegion& region, bool add, bool remove) {
     const GeometryPtr geo = renderer_.geometry();
-    const ElementPicker* p = picker();
-    if (!geo || !p || elements_ == Elements::Objects) return;
+    const ElementPicker* p = elements_ == Elements::Objects ? nullptr : picker(true);
+    if (!geo || !p) return;
     if (picked_.points != geo->pointCount() || picked_.primitives != geo->primitiveCount()) {
         picked_ = Picked{net_.displayed(), geo->pointCount(), geo->primitiveCount(), {}, {}, picked_.revision};
     }
@@ -693,8 +733,11 @@ void SimWorkspace::updateOverlay() {
     // again only when it changes. Sculpting, the surface alone: no wire
     // over what is shaped.
     const bool marked = on && !sculpting();
-    std::snprintf(key, sizeof key, "%d %d %p %d %s", marked ? 1 : 0, static_cast<int>(elements_), shown, painted,
-                  attribute.c_str());
+    // The wire and the corners are where the picker has them: drawn once
+    // it is made.
+    const ElementPicker* marker = marked ? picker() : nullptr;
+    std::snprintf(key, sizeof key, "%d %d %p %d %s %d", marked ? 1 : 0, static_cast<int>(elements_), shown, painted,
+                  attribute.c_str(), marker ? 1 : 0);
     if (key != overlayKey_[0]) {
         overlayKey_[0] = key;
         gl::Overlay o;
@@ -702,15 +745,8 @@ void SimWorkspace::updateOverlay() {
             const Geometry& g = *geo;
             const auto P = g.positions();
             // The wire: every edge, where there are not too many.
-            if (edgeGeometry_ != geo) {
-                const bool same = edgeGeometry_ && edgeGeometry_->vertexPoints().data() == g.vertexPoints().data() &&
-                                  edgeGeometry_->pointCount() == g.pointCount() &&
-                                  edgeGeometry_->primitiveCount() == g.primitiveCount();
-                if (!same) edges_ = edgesOf(g);
-                edgeGeometry_ = geo;
-            }
-            if (edges_.size() <= kMostMarks) {
-                for (const Edge& e : edges_) o.line(P[e.first], P[e.second], kWire);
+            if (marker && marker->edges().size() <= kMostMarks) {
+                for (const Edge& e : marker->edges()) o.line(P[e.first], P[e.second], kWire);
             }
             if (painted) {
                 // The paint: each corner in the colour of its point's value.
@@ -743,13 +779,11 @@ void SimWorkspace::updateOverlay() {
                 // The points, each over the surface's normal there.
                 const std::vector<Vec3>& normals = pointNormals(geo);
                 for (size_t i = 0; i < P.size(); ++i) o.dot(P[i], kPoint, theme::px(5.0f), normals[i]);
-            } else if (elements_ == Elements::Vertices && g.vertexCount() <= kMostMarks) {
+            } else if (elements_ == Elements::Vertices && marker && g.vertexCount() <= kMostMarks) {
                 // The corners, each a little inside its polygon, over its face.
-                if (const ElementPicker* p = picker()) {
-                    const std::vector<Vec3>& normals = primitiveNormals(geo);
-                    for (size_t v = 0; v < g.vertexCount(); ++v) {
-                        o.dot(p->vertexMark(v), kCorner, theme::px(6.0f), normals[p->vertexPrimitive(v)]);
-                    }
+                const std::vector<Vec3>& normals = primitiveNormals(geo);
+                for (size_t v = 0; v < g.vertexCount(); ++v) {
+                    o.dot(marker->vertexMark(v), kCorner, theme::px(6.0f), normals[marker->vertexPrimitive(v)]);
                 }
             }
         }
@@ -762,8 +796,9 @@ void SimWorkspace::updateOverlay() {
     // share of a drag the points round take, over the surface.
     const bool marks = on && !painted;
     const std::vector<float>& shares = marks ? softShares() : softShares_;
-    std::snprintf(key, sizeof key, "%d %d %p %llu %s", marks ? 1 : 0, static_cast<int>(elements_), shown,
-                  static_cast<unsigned long long>(picked_.revision), marks ? softKey_.c_str() : "");
+    const ElementPicker* corners = marks && elements_ == Elements::Vertices ? picker() : nullptr;
+    std::snprintf(key, sizeof key, "%d %d %p %llu %s %d", marks ? 1 : 0, static_cast<int>(elements_), shown,
+                  static_cast<unsigned long long>(picked_.revision), marks ? softKey_.c_str() : "", corners ? 1 : 0);
     if (key != overlayKey_[1]) {
         overlayKey_[1] = key;
         gl::Overlay o;
@@ -804,10 +839,12 @@ void SimWorkspace::updateOverlay() {
                     if (e.first < P.size() && e.second < P.size()) o.wideLine(P[e.first], P[e.second], kPicked, theme::px(3.0f));
                 }
             } else if (elements_ == Elements::Vertices) {
-                if (const ElementPicker* p = picker(); p && picked_.mask.size() == g.vertexCount()) {
+                if (corners && picked_.mask.size() == g.vertexCount()) {
                     const std::vector<Vec3>& normals = primitiveNormals(geo);
                     for (size_t v = 0; v < picked_.mask.size(); ++v) {
-                        if (picked_.mask[v]) o.dot(p->vertexMark(v), kPicked, theme::px(8.0f), normals[p->vertexPrimitive(v)]);
+                        if (picked_.mask[v]) {
+                            o.dot(corners->vertexMark(v), kPicked, theme::px(8.0f), normals[corners->vertexPrimitive(v)]);
+                        }
                     }
                 }
             } else if (elements_ == Elements::Primitives) {
@@ -1234,7 +1271,12 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
     const bool inside = io.MousePos.x >= cam.lo.x && io.MousePos.y >= cam.lo.y && io.MousePos.x < cam.lo.x + cam.size.x &&
                         io.MousePos.y < cam.lo.y + cam.size.y;
     if (overView || (stroking_ && inside)) {
-        if (const ElementPicker* p = picker()) {
+        // The press waits for the picker. While a stroke goes on -- its
+        // faces remade by dyntopo -- the one of a moment ago does, not
+        // waited for: the brush stays on the surface.
+        const ElementPicker* p = picker(overView && ImGui::IsMouseClicked(ImGuiMouseButton_Left));
+        if (!p && stroking_) p = picker_.get();
+        if (p) {
             Vec3 o, dir;
             cam.ray(io.MousePos, o, dir);
             float t = 0.0f;
@@ -1527,6 +1569,10 @@ bool SimWorkspace::extrudeGizmo(ImDrawList* d, const ViewCamera& cam, bool overV
 void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
     const GeometryPtr& geo = renderer_.geometry();
     if (!numbers_ || !editingElements() || !geo) return;
+    // The middles, the marks and what is hidden are the picker's: no
+    // numbers till it is made.
+    const ElementPicker* p = picker();
+    if (!p) return;
     // Primitives numbered at their middles, vertices at their marks, else points.
     const int kind = elements_ == Elements::Primitives ? 1 : elements_ == Elements::Vertices ? 2 : 0;
     // Those seen, found again when the view or the geometry changed.
@@ -1539,11 +1585,10 @@ void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
     if (key != numbersKey_) {
         numbersKey_ = key;
         numberAt_.clear();
-        const ElementPicker* p = picker();
         const size_t count = kind == 1 ? geo->primitiveCount() : kind == 2 ? geo->vertexCount() : geo->pointCount();
         const auto P = geo->positions();
         for (size_t i = 0; i < count && numberAt_.size() <= kMost; ++i) {
-            const Vec3 at = kind == 0 ? P[i] : !p ? Vec3() : kind == 1 ? p->middle(i) : p->vertexMark(i);
+            const Vec3 at = kind == 0 ? P[i] : kind == 1 ? p->middle(i) : p->vertexMark(i);
             ImVec2 s;
             if (!cam.toScreen(at, s) || s.x < cam.lo.x || s.y < cam.lo.y || s.x > cam.lo.x + cam.size.x ||
                 s.y > cam.lo.y + cam.size.y) {
@@ -1555,7 +1600,7 @@ void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
         if (numberAt_.size() > kMost) {
             numberAt_.clear();
             numbersKey_ += " many";
-        } else if (p) {
+        } else {
             std::vector<std::pair<Vec3, uint32_t>> seen;
             for (const auto& [at, i] : numberAt_) {
                 if (p->visible(cam.eye, at)) seen.emplace_back(at, i);

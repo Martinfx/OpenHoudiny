@@ -1282,6 +1282,8 @@ void SimWorkspace::viewport(ImVec2 size) {
         hoverForward_ = cam.forward;
         hoverGeometry_ = renderer_.geometry().get();
         hoverElement_ = elementAt(cam, io.MousePos);
+        // Its picker still being made: found again the next frame.
+        if (!picker()) hoverGeometry_ = nullptr;
     }
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
     if (chosen != highlighted_ || hovered_ != highlightedHover_) {

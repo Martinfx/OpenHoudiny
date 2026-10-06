@@ -60,6 +60,7 @@
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Network.h"
 
+#include <future>
 #include <map>
 #include <set>
 #include <memory>
@@ -443,11 +444,14 @@ private:
     /// objects.
     bool editingElements() const { return elements_ != Elements::Objects || paint_; }
     /// The displayed geometry, and what picks in it -- made again only when
-    /// it moved; null when nothing is shown.
-    const ElementPicker* picker();
+    /// it moved, on a thread of its own when anew: null till it is made,
+    /// unless `wait` (a click, a box: what they pick is not lost); null
+    /// when nothing is shown.
+    const ElementPicker* picker(bool wait = false);
     static PickView pickView(const ViewCamera& cam);
-    /// The element under the mouse, of the kind picked; -1 for none.
-    int32_t elementAt(const ViewCamera& cam, ImVec2 mouse);
+    /// The element under the mouse, of the kind picked; -1 for none -- or
+    /// while its picker is being made, unless `wait`.
+    int32_t elementAt(const ViewCamera& cam, ImVec2 mouse, bool wait = false);
     /// A click: that element alone, or added (Shift), or taken away (Ctrl).
     void clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, bool remove);
     /// What a part of the screen takes in -- a box, a lasso, a brush's way
@@ -739,6 +743,7 @@ private:
     mutable uint64_t patternRevision_ = ~0ull;
     mutable Elements patternElements_ = Elements::Objects;
     std::unique_ptr<ElementPicker> picker_;
+    std::future<std::unique_ptr<ElementPicker>> pickerMaking_;  ///< a new one, being made
     int32_t hoverElement_ = -1;             ///< under the mouse, of the kind picked
     ImVec2 hoverMouse_{-1.0f, -1.0f};       ///< where the mouse was when it was found
     Vec3 hoverEye_, hoverForward_;          ///< ... and the camera
@@ -762,8 +767,6 @@ private:
     std::string softKey_;
     bool pressTurns_ = false;               ///< the press was Alt's or Space's: it turns the view
     bool pressCancelled_ = false;           ///< Escape during the press: it picks nothing
-    GeometryPtr edgeGeometry_;              ///< the geometry of the wire drawn
-    std::vector<Edge> edges_;               ///< ... its edges
     bool spaceUsed_ = false;                ///< Space held turned the view: letting go does not play
     std::string overlayKey_[gl::VolumeRenderer::kOverlayLayers];  ///< what the overlay's layers were made of
     GeometryPtr normalsGeometry_;           ///< the geometry of the normals the points are drawn over

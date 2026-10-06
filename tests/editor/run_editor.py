@@ -195,8 +195,29 @@ def saved_and_exported_in_background(ed, folder):
           "the scene ends at frame %s, with %d VDB files beside it" % (end.group(1) if end else "none", len(gas)))
 
 
+def picked_while_its_picker_is_made(ed, folder):
+    # A grid of a million faces: what picks in it takes a second to make, on
+    # a thread of its own. A click and a box, as soon as points are asked
+    # for (2), wait for it -- and pick: Ctrl+G groups what they picked,
+    # Ctrl+S saves the group.
+    path = os.path.join(folder, "net.pgsim")
+    grid = "pgsim 1\nnode 1 grid 1 ground 0 0\n  param rows 1000\n  param cols 1000\n  param sizex 4\n  param sizez 4\n  display\n"
+    picked = []
+    for pick in ("click 420 490\n", "drag 380 470 460 510 4\n"):
+        with open(path, "w") as f:
+            f.write(grid)
+        script = "wait 300\nmove 420 490\nkey 2\nwait 1\n" + pick + "wait 2\nkey ctrl+g\nwait 10\nkey ctrl+s\nwait 10\n"
+        code = ed.run(folder, ["net.pgsim", "--recovery", "rec"], script)
+        check(code == 0, "the editor exited with %d" % code)
+        pattern = re.search(r'param pattern "([^"]*)"', read(path))
+        picked.append(pattern.group(1) if pattern else None)
+    check(picked[0] is not None and re.fullmatch(r"\d+", picked[0]), "the click picked %r, not a point" % picked[0])
+    check(picked[1] is not None and re.search(r"[- ]", picked[1]), "the box picked %r, not many points" % picked[1])
+
+
 CASES = {f.__name__: f for f in (quit_asks_and_saves, quit_lets_go, quit_cancelled, example_saved_as_then_replaced,
-                                   crash_recovered, simulate_again, saved_and_exported_in_background)}
+                                   crash_recovered, simulate_again, saved_and_exported_in_background,
+                                   picked_while_its_picker_is_made)}
 
 
 def main():

@@ -1424,7 +1424,7 @@ instrumentované.
 
 Rozhraní editoru má vlastní testy, které nepotřebují okno ani OpenGL:
 [`tests/test_editor_ui.cpp`](../tests/test_editor_ui.cpp), program
-`pgeditortests` (v `ctest` jako `editor_ui`), 12 testů. Dear ImGui v nich
+`pgeditortests` (v `ctest` jako `editor_ui`), 19 testů. Dear ImGui v nich
 běží jen v paměti: snímky se staví, vstup se do nich vkládá, nic se
 nekreslí. Ověřují:
 
@@ -1439,7 +1439,8 @@ nekreslí. Ověřují:
 - záložka v hlavičce panelu se přepne kliknutím;
 - jména uzlů v oddálené síti nepřekryjí žádný uzel ani jiné jméno: síť
   120 uzlů hustší, než jsou jména široká, a dva uzly nad sebou, kde jméno
-  horního musí jít napravo;
+  horního musí jít napravo; náhledy uzlů si udělají místo, aniž by se síť
+  posunula;
 - neuložené změny: bez změn se akce provede hned. Se změnami přijde otázka:
   Escape nic neudělá, D změny zahodí a Enter uloží a pak pokračuje. U sítě
   bez souboru akce počká, až se soubor vybere a zapíše;
@@ -1447,7 +1448,14 @@ nekreslí. Ověřují:
   přepíše a Escape vezme zpět otázku, ne dialog;
 - autosave se zapíše hned po změně a pak nejvýš po 30 s. Záloha editoru,
   který ještě běží, se nenabízí, záloha spadlého ano (včetně toho, čeho je
-  a jaký má text). Po uložení nebo zahození záloha zmizí.
+  a jaký má text). Po uložení nebo zahození záloha zmizí;
+- historie (undo) zapíše změnu jednou, až se ustálí, a teprve pak uloží
+  stav. Drží nejvýš svůj rozpočet bajtů. Klíč stavu se změní úpravou
+  i posunutím uzlu;
+- práce po snímcích na pozadí (`FrameJob`) udělá snímky popořadě a řekne,
+  jak dopadla. Zastavená skončí po snímku, který dělá, a hotové nechá.
+  Snímek, který selže, ji ukončí a hlášení řekne proč a kam došla. Když
+  zmizí za běhu, zastaví se a počká.
 
 Celý editor pak zkouší `ctest` skripty pod xvfb
 ([`tests/editor/run_editor.py`](../tests/editor/run_editor.py), testy
@@ -1463,6 +1471,13 @@ a snímek obrazovky, který vznikne, jen když editor ještě běží.
   Enter síť obnoví a Ctrl+S ji uloží do původního souboru. Složka záloh
   pak zůstane prázdná.
 - **Simulate Again:** čtyřikrát za sebou, zatímco táborák simuluje.
+- **Cache a export na pozadí:** Save Cache to Disk a Export USD Scene
+  (zastavený Escapem) běží na vlastním vlákně a okno hraje dál. Co zapíšou,
+  drží pohromadě: `cache.txt` uvádí tolik snímků, kolik jich ve složce je,
+  a scéna končí snímkem, ke kterému je poslední VDB.
+- **Výběr, zatímco se staví strom pro výběr:** mřížka o milionu ploch.
+  Klik a obdélník hned po přepnutí na body (2) na strom počkají a vyberou.
+  Ctrl+G z výběru udělá skupinu a Ctrl+S ji uloží.
 
 ## 10. Jak přidat uzel
 
