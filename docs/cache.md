@@ -297,6 +297,13 @@ na disku.
   disk: přehrávání jde na další snímek, až je načtený, scrub ukazuje
   poslední snímek s nápisem „reading frame N…“, dokud nepřijde ten pod
   hlavou. Export, render a video si snímek počkají.
+- **Kusy, látka a zrna** se ke kreslení připravují také na vlastním
+  vlákně (`pg/sim/Prepared.h`): snímek pod hlavou nejdřív, při přehrávání
+  i dva další dopředu. Přehrávání jde na další snímek, až jsou jeho kusy
+  hotové, a scrub do té doby ukazuje předchozí snímek celý, takže plyn
+  a kusy na obrazovce jsou vždy z jednoho snímku. Okno přitom nečeká:
+  rozpadající se dům (`house_collapse`) dřív stál okno 160 ms na každý
+  snímek, teď ho stojí jen poslání kusů do GPU (~18 ms).
 - **Časová osa** ukazuje, co kde je: tmavý pás snímky na disku, světlé pásy
   snímky v paměti. Přehled: „Cache 150 frames · 70 in memory, 63 MB“
   a „On Disk 150 frames, 120 MB“; stavový řádek „cache 150 / 150 (63 MB,

@@ -393,7 +393,7 @@ bool SimWorkspace::renderShotFrame(int frame, std::vector<uint8_t>& rgb, std::st
         renderer_.setFrame(*f);
     }
     pose(frame);
-    updatePieces();
+    updatePieces(true);
     updateGeometry();
     if (cookedSerial_ != cookSerial_) {
         std::snprintf(line, sizeof line, "Frame %d: cooking the geometry\xe2\x80\xa6", frame);

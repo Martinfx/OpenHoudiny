@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 
 namespace pg::sim {
 namespace {
@@ -161,6 +162,113 @@ std::shared_ptr<const PreparedGeometry> GeometryPreparer::prepare(const Geometry
     for (const PreparedGeometry::Prototype& p : out->prototypes) read(*p.mesh);
     last_ = out;
     return out;
+}
+
+std::string bodiesKey(const Look& look) {
+    char key[400];
+    std::snprintf(key, sizeof key, "%d %g %g %g %g %g %g %g %g %g %d %g %g %g %d %g %g %g ", look.pieces ? 1 : 0,
+                  look.piecesColor.x, look.piecesColor.y, look.piecesColor.z, look.piecesInside.x, look.piecesInside.y,
+                  look.piecesInside.z, look.rebarColor.x, look.rebarColor.y, look.rebarColor.z, look.cloth ? 1 : 0,
+                  look.clothColor.x, look.clothColor.y, look.clothColor.z, look.grains ? 1 : 0, look.grainColor.x,
+                  look.grainColor.y, look.grainColor.z);
+    return key + look.insideGroup;
+}
+
+bool drawsBodies(const Frame& frame, const Look& look) {
+    return (look.pieces && !frame.rigid.empty()) || (look.cloth && !frame.cloth.empty()) ||
+           (look.grains && !frame.grains.empty());
+}
+
+std::shared_ptr<const PreparedBodies> prepareBodies(const Frame& frame, const Look& look) {
+    auto out = std::make_shared<PreparedBodies>();
+    if (const std::shared_ptr<const Geometry> bodies = drawsBodies(frame, look) ? drawnBodies(frame, look) : nullptr) {
+        out->display = displayOf(*bodies);
+    }
+    return out;
+}
+
+BodiesPreparer::BodiesPreparer() { thread_ = std::thread([this] { loop(); }); }
+
+BodiesPreparer::~BodiesPreparer() {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        stop_ = true;
+    }
+    wake_.notify_all();
+    thread_.join();
+}
+
+void BodiesPreparer::want(std::vector<Want> wanted) {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        wanted_ = std::move(wanted);
+        wantedKeys_.clear();
+        for (const Want& w : wanted_) wantedKeys_.push_back(bodiesKey(w.look));
+    }
+    wake_.notify_all();
+}
+
+const BodiesPreparer::Made* BodiesPreparer::madeLocked(const std::shared_ptr<const Frame>& frame, const std::string& key) const {
+    for (const Made& m : made_) {
+        if (m.key == key && m.frame.lock() == frame) return &m;
+    }
+    return nullptr;
+}
+
+int BodiesPreparer::nextLocked() const {
+    for (size_t i = 0; i < wanted_.size(); ++i) {
+        if (wanted_[i].frame && !madeLocked(wanted_[i].frame, wantedKeys_[i])) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool BodiesPreparer::wantedLocked(const Made& made) const {
+    const std::shared_ptr<const Frame> frame = made.frame.lock();
+    for (size_t i = 0; i < wanted_.size(); ++i) {
+        if (frame && wanted_[i].frame == frame && wantedKeys_[i] == made.key) return true;
+    }
+    return false;
+}
+
+std::shared_ptr<const PreparedBodies> BodiesPreparer::find(const std::shared_ptr<const Frame>& frame, const Look& look) const {
+    if (!frame) return nullptr;
+    const std::string key = bodiesKey(look);
+    std::lock_guard<std::mutex> lock(mu_);
+    const Made* made = madeLocked(frame, key);
+    return made ? made->bodies : nullptr;
+}
+
+void BodiesPreparer::wait() {
+    std::unique_lock<std::mutex> lock(mu_);
+    done_.wait(lock, [&] { return stop_ || (!working_ && nextLocked() < 0); });
+}
+
+void BodiesPreparer::loop() {
+    for (;;) {
+        Want next;
+        std::string key;
+        {
+            std::unique_lock<std::mutex> lock(mu_);
+            wake_.wait(lock, [&] { return stop_ || nextLocked() >= 0; });
+            if (stop_) return;
+            const auto i = static_cast<size_t>(nextLocked());
+            next = wanted_[i];
+            key = wantedKeys_[i];
+            working_ = true;
+        }
+        std::shared_ptr<const PreparedBodies> bodies = prepareBodies(*next.frame, next.look);
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            made_.push_back({next.frame, std::move(key), std::move(bodies)});
+            // Past kKept, the oldest no longer wanted go -- the wanted stay, or
+            // they would be made again and again.
+            for (auto it = made_.begin(); made_.size() > kKept && it != made_.end();) {
+                it = wantedLocked(*it) ? std::next(it) : made_.erase(it);
+            }
+            working_ = false;
+        }
+        done_.notify_all();
+    }
 }
 
 }  // namespace pg::sim

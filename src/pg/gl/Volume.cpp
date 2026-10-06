@@ -2680,8 +2680,8 @@ void VolumeRenderer::uploadShownMesh(bool all) {
 void VolumeRenderer::updateGeometryBounds() {
     Vec3 lo = shownDisplay().lo, hi = shownDisplay().hi;
     for (int a = 0; a < 3; ++a) {
-        lo[a] = std::min({lo[a], piecesDisplay_.lo[a], instances().lo[a]});
-        hi[a] = std::max({hi[a], piecesDisplay_.hi[a], instances().hi[a]});
+        lo[a] = std::min({lo[a], piecesDisplay().lo[a], instances().lo[a]});
+        hi[a] = std::max({hi[a], piecesDisplay().hi[a], instances().hi[a]});
     }
     hasGeoBounds_ = lo.x <= hi.x;
     geoLo_ = lo;
@@ -3061,21 +3061,33 @@ void VolumeRenderer::throughArray(GLuint buffer, const std::vector<float>& trans
 void VolumeRenderer::setPieces(const GeometryPtr& pieces) {
     if (pieces == pieces_) return;
     pieces_ = pieces;
-    piecesDisplay_ = pieces ? sim::displayOf(*pieces) : sim::DisplayGeometry();
+    auto made = std::make_shared<sim::PreparedBodies>();
+    if (pieces) made->display = sim::displayOf(*pieces);
+    preparedPieces_ = std::move(made);
     uploadGeometry();
 }
 
+void VolumeRenderer::setPreparedPieces(std::shared_ptr<const sim::PreparedBodies> pieces) {
+    if (pieces == preparedPieces_ && !pieces_) return;
+    pieces_ = nullptr;
+    preparedPieces_ = std::move(pieces);
+    uploadGeometry();
+}
+
+const sim::DisplayGeometry& VolumeRenderer::piecesDisplay() const {
+    static const sim::DisplayGeometry none;
+    return preparedPieces_ ? preparedPieces_->display : none;
+}
+
 void VolumeRenderer::uploadGeometry() {
-    // The two one after the other.
-    sim::DisplayGeometry d = shownDisplay();
-    const sim::DisplayGeometry& p = piecesDisplay_;
-    d.triangles.insert(d.triangles.end(), p.triangles.begin(), p.triangles.end());
-    d.dots.insert(d.dots.end(), p.dots.begin(), p.dots.end());
-    d.lines.insert(d.lines.end(), p.lines.begin(), p.lines.end());
-    d.glass.insert(d.glass.end(), p.glass.begin(), p.glass.end());
+    // The displayed geometry's and the pieces', one after the other in each
+    // buffer -- sent as they are, not put together first.
+    const sim::DisplayGeometry& s = shownDisplay();
+    const sim::DisplayGeometry& p = piecesDisplay();
     updateGeometryBounds();
-    // Each array into its buffer, with the layout of its attributes: {location, floats}.
-    auto upload = [&](GLuint& vao, GLuint& buffer, const std::vector<float>& data, std::initializer_list<std::pair<int, int>> layout) {
+    // Each pair of arrays into its buffer, with the layout of its attributes: {location, floats}.
+    auto upload = [&](GLuint& vao, GLuint& buffer, const std::vector<float>& first, const std::vector<float>& second,
+                      std::initializer_list<std::pair<int, int>> layout) {
         if (!vao) {
             gl_.GenVertexArrays(1, &vao);
             gl_.GenBuffers(1, &buffer);
@@ -3084,7 +3096,11 @@ void VolumeRenderer::uploadGeometry() {
         for (const auto& [where, floats] : layout) stride += floats;
         gl_.BindVertexArray(vao);
         gl_.BindBuffer(ARRAY_BUFFER, buffer);
-        gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data(), STATIC_DRAW);
+        const auto a = static_cast<GLsizeiptr>(first.size() * sizeof(float));
+        const auto b = static_cast<GLsizeiptr>(second.size() * sizeof(float));
+        gl_.BufferData(ARRAY_BUFFER, a + b, nullptr, STATIC_DRAW);
+        if (a > 0) gl_.BufferSubData(ARRAY_BUFFER, 0, a, first.data());
+        if (b > 0) gl_.BufferSubData(ARRAY_BUFFER, a, b, second.data());
         int offset = 0;
         for (const auto& [where, floats] : layout) {
             gl_.EnableVertexAttribArray(static_cast<GLuint>(where));
@@ -3095,14 +3111,15 @@ void VolumeRenderer::uploadGeometry() {
         gl_.BindVertexArray(0);
         gl_.BindBuffer(ARRAY_BUFFER, 0);
     };
-    upload(geoVao_, geoBuffer_, d.triangles, {{0, 3}, {1, 3}, {2, 3}});
+    upload(geoVao_, geoBuffer_, s.triangles, p.triangles, {{0, 3}, {1, 3}, {2, 3}});
     // The corners' velocities, on attribute 3 -- 0 for the part that has none.
+    const size_t corners = (s.triangles.size() + p.triangles.size()) / 9;
     std::vector<float> velocities;
-    if (!shownDisplay().velocities.empty() || !p.velocities.empty()) {
-        velocities = shownDisplay().velocities;
-        velocities.resize(shownDisplay().triangles.size() / 3, 0.0f);
+    if (!s.velocities.empty() || !p.velocities.empty()) {
+        velocities = s.velocities;
+        velocities.resize(s.triangles.size() / 3, 0.0f);
         velocities.insert(velocities.end(), p.velocities.begin(), p.velocities.end());
-        velocities.resize(d.triangles.size() / 3, 0.0f);
+        velocities.resize(corners * 3, 0.0f);
     }
     gl_.BindVertexArray(geoVao_);
     if (velocities.empty()) {
@@ -3117,15 +3134,15 @@ void VolumeRenderer::uploadGeometry() {
         gl_.BindBuffer(ARRAY_BUFFER, 0);
     }
     gl_.BindVertexArray(0);
-    upload(dotVao_, dotBuffer_, d.dots, {{0, 3}, {1, 3}, {2, 1}});
-    upload(curveVao_, curveBuffer_, d.lines, {{0, 3}, {1, 4}});
-    upload(glassVao_, glassBuffer_, d.glass, {{0, 3}, {1, 3}, {2, 3}, {3, 1}, {4, 3}});
-    glassVertices_ = static_cast<GLsizei>(d.glassCount() * 3);
-    geoVertices_ = static_cast<GLsizei>(d.triangles.size() / 9);
+    upload(dotVao_, dotBuffer_, s.dots, p.dots, {{0, 3}, {1, 3}, {2, 1}});
+    upload(curveVao_, curveBuffer_, s.lines, p.lines, {{0, 3}, {1, 4}});
+    upload(glassVao_, glassBuffer_, s.glass, p.glass, {{0, 3}, {1, 3}, {2, 3}, {3, 1}, {4, 3}});
+    glassVertices_ = static_cast<GLsizei>((s.glassCount() + p.glassCount()) * 3);
+    geoVertices_ = static_cast<GLsizei>(corners);
     geoShadowDirty_ = true;
-    dots_ = static_cast<GLsizei>(d.dotCount());
+    dots_ = static_cast<GLsizei>(s.dotCount() + p.dotCount());
     gritDots_ = static_cast<GLsizei>(p.dotCount());
-    curveVertices_ = static_cast<GLsizei>(d.lines.size() / 7);
+    curveVertices_ = static_cast<GLsizei>((s.lines.size() + p.lines.size()) / 7);
 }
 
 void VolumeRenderer::updateGeoShadow(const Vec3& light) {
@@ -3227,7 +3244,7 @@ void VolumeRenderer::updateGeoShadow(const Vec3& light) {
 }
 
 bool VolumeRenderer::geometryBounds(Vec3& lo, Vec3& hi) const {
-    if ((!geometry_ && !pieces_) || !hasGeoBounds_) return false;
+    if ((!geometry_ && !preparedPieces_) || !hasGeoBounds_) return false;
     lo = geoLo_;
     hi = geoHi_;
     return true;

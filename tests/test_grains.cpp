@@ -9,6 +9,7 @@
 #include "pg/core/Half.h"
 #include "pg/core/Parallel.h"
 #include "pg/sim/Grains.h"
+#include "pg/sim/Prepared.h"
 #include "pg/sim/State.h"
 
 #include "test_framework.h"
@@ -284,6 +285,50 @@ TEST(grains_as_points) {
     CHECK_EQ(grainPoints(broken, Vec3())->pointCount(), size_t(0));
 }
 
+
+TEST(grains_are_made_ready_to_draw_on_a_thread_of_their_own) {
+    GrainScene scene;
+    scene.geometry = block(3, 2, 3, 0.03f, 0.2f);
+    GrainSolver s(scene);
+    s.step();
+    auto frame = std::make_shared<Frame>();
+    frame->number = 1;
+    frame->grains = s.capture();
+    Look look;
+    look.grains = true;
+    CHECK(drawsBodies(*frame, look));
+    CHECK(!drawsBodies(*frame, Look()));  // a look that draws no grains
+    // What the thread makes is what is made here.
+    const auto here = prepareBodies(*frame, look);
+    CHECK_EQ(here->display.dotCount(), size_t(18));
+    BodiesPreparer preparer;
+    CHECK(!preparer.find(frame, look));
+    preparer.want({{frame, look}});
+    preparer.wait();
+    const auto made = preparer.find(frame, look);
+    CHECK(made && made->display.dots == here->display.dots);
+    // Another colour: made again, the first kept.
+    Look red = look;
+    red.grainColor = Vec3(1.0f, 0.0f, 0.0f);
+    CHECK(bodiesKey(red) != bodiesKey(look));
+    CHECK(!preparer.find(frame, red));
+    preparer.want({{frame, red}});
+    preparer.wait();
+    CHECK(preparer.find(frame, red) && preparer.find(frame, look) == made);
+    // More wanted than are kept: all of them stay, what is no longer wanted goes.
+    std::vector<std::shared_ptr<const Frame>> frames;
+    std::vector<BodiesPreparer::Want> wanted;
+    for (int i = 0; i < static_cast<int>(BodiesPreparer::kKept) + 2; ++i) {
+        auto f = std::make_shared<Frame>(*frame);
+        f->number = 2 + i;
+        frames.push_back(f);
+        wanted.push_back({f, look});
+    }
+    preparer.want(wanted);
+    preparer.wait();
+    for (const auto& f : frames) CHECK(preparer.find(f, look) != nullptr);
+    CHECK(!preparer.find(frame, look) && !preparer.find(frame, red));
+}
 TEST(grains_the_same_on_any_threads_and_from_a_state) {
     GrainScene scene = poured(0.6f);
     scene.solver.cohesion = 0.3f;

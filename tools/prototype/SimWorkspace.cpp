@@ -398,6 +398,7 @@ SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
     geometry_->setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     cooker_ = std::make_unique<sim::Cooker>([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     compiler_ = std::make_unique<sim::Compiler>([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
+    bodies_ = std::make_unique<sim::BodiesPreparer>();
     newNetwork();  // an empty scene; File > Examples has finished ones
 }
 
@@ -665,22 +666,32 @@ void SimWorkspace::pose(int frame) {
     }
 }
 
-void SimWorkspace::updatePieces() {
+void SimWorkspace::updatePieces(bool now) {
     const sim::Look& look = renderer_.look;
     // The pieces, the cloth and the grains, drawn with the displayed geometry.
-    const bool bodies = shown_ && ((look.pieces && !shown_->rigid.empty()) || (look.cloth && !shown_->cloth.empty()) ||
-                                   (look.grains && !shown_->grains.empty()));
-    const std::shared_ptr<const sim::Frame> f = levels_.empty() && bodies ? shown_ : nullptr;
-    char key[320];
-    std::snprintf(key, sizeof key, "%g %g %g %g %g %g %s %d %g %g %g %d %g %g %g", look.piecesColor.x,
-                  look.piecesColor.y, look.piecesColor.z, look.piecesInside.x, look.piecesInside.y, look.piecesInside.z,
-                  look.insideGroup.c_str(), look.cloth ? 1 : 0, look.clothColor.x, look.clothColor.y, look.clothColor.z,
-                  look.grains ? 1 : 0, look.grainColor.x, look.grainColor.y, look.grainColor.z);
+    const std::shared_ptr<const sim::Frame> f = levels_.empty() && shown_ && sim::drawsBodies(*shown_, look) ? shown_ : nullptr;
+    const std::string key = sim::bodiesKey(look);
     if (f == piecesFrame_ && (!f || key == piecesKey_)) return;
+    std::shared_ptr<const sim::PreparedBodies> made = f ? bodies_->find(f, look) : nullptr;
+    if (f && !made) {
+        if (!now && !synchronous_) {
+            bodiesFirst_.push_back({f, look});  // those drawn stay until these are made
+            return;
+        }
+        made = sim::prepareBodies(*f, look);
+    }
     piecesFrame_ = f;
     piecesKey_ = key;
-    renderer_.setPieces(f ? sim::drawnBodies(*f, look) : nullptr);
+    renderer_.setPreparedPieces(std::move(made));
     viewDirty_ = true;
+}
+
+bool SimWorkspace::bodiesReady(const std::shared_ptr<const sim::Frame>& frame, int number, bool first) {
+    if (!frame || synchronous_ || !levels_.empty()) return true;
+    const sim::Look& look = compiled_.lookAt(number);
+    if (!sim::drawsBodies(*frame, look) || bodies_->find(frame, look)) return true;
+    (first ? bodiesFirst_ : bodiesLater_).push_back({frame, look});
+    return false;
 }
 
 std::shared_ptr<const sim::Frame> SimWorkspace::frameToShow() const {
@@ -717,14 +728,17 @@ void SimWorkspace::update(float dt) {
     }
 
     // Playback at the network's frame rate, never past what is simulated --
-    // nor onto a frame still being read from disk: it waits for it.
+    // nor onto a frame still being read from disk, or whose bodies are still
+    // being made ready to draw: it waits for it.
     const int cached = runner_->cached();
     if (playing_ && compiled_.ok) {
         const double frameTime = compiled_.world.timeStep;
         clock_ += synchronous_ ? frameTime : static_cast<double>(dt);
         while (clock_ >= frameTime) {
             clock_ -= frameTime;
-            if (current_ < compiled_.frames && current_ < cached && readyFrame(current_ + 1)) {
+            const std::shared_ptr<const sim::Frame> next =
+                current_ < compiled_.frames && current_ < cached ? readyFrame(current_ + 1) : nullptr;
+            if (next && bodiesReady(next, current_ + 1, false)) {
                 ++current_;
             } else if (current_ >= compiled_.frames && loop_ && cached >= compiled_.frames && !synchronous_) {
                 current_ = 1;
@@ -732,6 +746,10 @@ void SimWorkspace::update(float dt) {
                 clock_ = 0.0;  // waiting for the simulation, or at the end
                 break;
             }
+        }
+        // The bodies of the frames after it, made ahead.
+        for (int ahead = current_ + 2; ahead <= std::min(current_ + 3, std::min(cached, compiled_.frames)); ++ahead) {
+            bodiesReady(readyFrame(ahead), ahead, false);
         }
     } else {
         clock_ = 0.0;
@@ -747,6 +765,9 @@ void SimWorkspace::update(float dt) {
     // frame yet, or the play head's is still being read from disk, the last
     // one stays: dragging a slider, scrubbing a big cache, does not flicker.
     std::shared_ptr<const sim::Frame> f = levels_.empty() ? frameToShow() : nullptr;  // inside an asset: its geometry alone
+    // ... nor one whose bodies are still being made ready to draw: the gas
+    // and the pieces shown are of one frame.
+    if (f && f != shown_ && !bodiesReady(f, current_, true)) f = nullptr;
     if (!f && shown_ && levels_.empty() && (runner_->cached() > 0 || runner_->busy() || gizmo_.dragging())) f = shown_;
     // Big frames: coarser while they change, so that playing and scrubbing
     // keep up; as they are once the frame shown rests -- the play head
@@ -774,6 +795,12 @@ void SimWorkspace::update(float dt) {
     updateGeometry();
     updateGuides();
     updateThumbnails();
+    // What the bodies' thread makes next: what this frame of the window wanted.
+    bodiesFirst_.insert(bodiesFirst_.end(), std::make_move_iterator(bodiesLater_.begin()),
+                        std::make_move_iterator(bodiesLater_.end()));
+    bodiesLater_.clear();
+    bodies_->want(std::move(bodiesFirst_));
+    bodiesFirst_.clear();
 
     // Rendering frames or a video: a few a frame of the window.
     job_.step();
@@ -2555,7 +2582,7 @@ bool SimWorkspace::drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::stri
         renderer_.setFrame(*f);
     }
     pose(frame);
-    updatePieces();
+    updatePieces(true);
     updateGeometry();
     renderShot(jobWidth_, jobHeight_, frame);
     rgb = renderer_.readPixels(2);

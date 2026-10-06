@@ -241,10 +241,16 @@ private:
     /// look, the objects where they are then -- whatever frame of the
     /// simulation is ready to show with them.
     void pose(int frame);
-    /// The pieces of the rigid bodies of the frame on screen, as the
-    /// solver's look draws them, into the renderer -- made again only when
-    /// the frame or the look changed.
-    void updatePieces();
+    /// The pieces of the rigid bodies of the frame on screen -- its cloth,
+    /// its grains -- as the look draws them, into the renderer: made ready
+    /// on the bodies' thread (bodies_), the ones drawn before staying until
+    /// they are; `now`: made here if they are not -- for a render, which
+    /// draws the frame it asked for.
+    void updatePieces(bool now = false);
+    /// Whether `frame`, at play head `number`, can be shown with its bodies:
+    /// made ready to draw -- or none to draw. If not yet, asked for: before
+    /// everything else (`first`), or after.
+    bool bodiesReady(const std::shared_ptr<const sim::Frame>& frame, int number, bool first);
     void updateGuides();
     void drawGnomon(ImDrawList* d, ImVec2 corner) const;
     /// The size of a render: the camera's picture, or the viewport's.
@@ -639,6 +645,10 @@ private:
     /// The network compiled on a thread of its own -- after runner_, whose
     /// frames its graph reads: it goes first.
     std::unique_ptr<sim::Compiler> compiler_;
+    /// The bodies of frames made ready to draw on a thread of their own;
+    /// what this frame of the window wants of it, the most wanted first.
+    std::unique_ptr<sim::BodiesPreparer> bodies_;
+    std::vector<sim::BodiesPreparer::Want> bodiesFirst_, bodiesLater_;
     uint64_t compileAsked_ = ~0ull;  ///< the revision last handed to it; ~0: none, or to be compiled again
     GeometryPtr sheetGeometry_;    ///< the spreadsheet's node's, as last cooked
     int sheetGeometryNode_ = 0;

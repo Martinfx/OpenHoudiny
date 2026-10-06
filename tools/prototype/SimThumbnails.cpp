@@ -68,7 +68,8 @@ sim::Look studio() {
 struct Picture {
     uint64_t key = 1469598103934665603ull;  ///< what the node is
     uint64_t live = 0;                      ///< what it is at the frame on screen
-    GeometryPtr geometry, pieces;
+    GeometryPtr geometry;
+    std::shared_ptr<const sim::PreparedBodies> bodies;  ///< the frame's pieces, cloth, grains: made ready to draw
     /// The whole scene: its geometry as the viewport has it prepared.
     bool scene = false;
     std::shared_ptr<const sim::PreparedGeometry> prepared;
@@ -262,8 +263,18 @@ void SimWorkspace::updateThumbnails() {
         k.grid = false;
         return k;
     };
+    // The bodies of `frame` as `look` draws them, made ready on the bodies'
+    // thread -- those the viewport shows, as a rule; false while they are
+    // still being made: the picture waits for them.
+    auto bodiesOf = [&](Picture& p, const sim::Look& look) {
+        if (!frame || !sim::drawsBodies(*frame, look)) return true;
+        p.bodies = bodies_->find(frame, look);
+        if (!p.bodies) bodiesLater_.push_back({frame, look});
+        return p.bodies != nullptr;
+    };
     // The whole scene, as the Output draws it -- through `camera`, if one.
-    // Made in `full` only for the picture to be drawn: the rest want its keys.
+    // Made in `full` only for the picture to be drawn: the rest want its
+    // keys. False while its bodies are still being made.
     auto wholeScene = [&](Picture& p, const sim::Camera* camera, bool full) {
         p.look = sceneLook();
         p.frame = frame;
@@ -272,7 +283,7 @@ void SimWorkspace::updateThumbnails() {
         p.geometry = renderer_.geometry();
         p.scene = true;
         p.prepared = renderer_.prepared();
-        if (frame && full) p.pieces = sim::drawnBodies(*frame, p.look);
+        const bool ready = !full || bodiesOf(p, p.look);
         p.key = mixKey(revision, p.geometry.get());
         p.live = live;
         if (camera) {
@@ -283,6 +294,7 @@ void SimWorkspace::updateThumbnails() {
             p.hasOrbit = true;
             p.orbit = gl::VolumeRenderer::viewOf(sceneBox());
         }
+        return ready;
     };
     // What node `n`'s thumbnail shows; false while there is nothing. Not
     // `full`: its keys, and what is cheap.
@@ -373,7 +385,7 @@ void SimWorkspace::updateThumbnails() {
                 k.pieces = kind == ThumbKind::Pieces;
                 k.cloth = kind == ThumbKind::Cloth;
                 k.grains = kind == ThumbKind::Grains;
-                if (full) p.pieces = sim::drawnBodies(*frame, k);
+                if (full && !bodiesOf(p, k)) return false;
                 p.look = k;
                 p.key = revision;
                 p.live = live;
@@ -407,14 +419,12 @@ void SimWorkspace::updateThumbnails() {
                 } else {
                     return false;  // a USD Camera's camera is read for the Output's alone
                 }
-                wholeScene(p, &c, full);
-                return true;
+                return wholeScene(p, &c, full);
             }
             case ThumbKind::Output: {
                 if (!scene || !compiled_.ok) return false;
                 const sim::Camera camera = compiled_.cameraAt(current_);
-                wholeScene(p, compiled_.hasCamera ? &camera : nullptr, full);
-                return true;
+                return wholeScene(p, compiled_.hasCamera ? &camera : nullptr, full);
             }
         }
         return false;
@@ -426,7 +436,7 @@ void SimWorkspace::updateThumbnails() {
         r.look = p.look;
         if (p.prepared && p.prepared->geometry == p.geometry) r.setPrepared(p.prepared);
         else r.setGeometry(p.geometry);
-        r.setPieces(p.pieces);
+        r.setPreparedPieces(p.bodies);
         r.setSolids(p.solids);
         if (p.frame) r.setFrame(*p.frame, p.layers);
         else r.clearFrame();

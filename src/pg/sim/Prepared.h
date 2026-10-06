@@ -14,12 +14,23 @@
 // (instancesOf) with each prototype indexed at each level of detail, and
 // the pictures laid on the faces, read and squared.
 //
+// So too the bodies of the simulation's frames -- pieces, cloth, grains --
+// as the look draws them: on a thread of their own (BodiesPreparer), the
+// frame at the play head first, then those it plays next.
+//
 #include "pg/core/Geometry.h"
 #include "pg/sim/Display.h"
+#include "pg/sim/Frame.h"
+#include "pg/sim/Look.h"
 
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -88,5 +99,65 @@ private:
 /// Whether a plant has foliage to thin far away (core/Lod.h): faces that
 /// let light through.
 bool hasFoliage(const Geometry& geo);
+
+/// The pieces, cloth and grains of a frame as a look draws them
+/// (drawnBodies), made ready to draw: the triangles, lines and dots the
+/// viewport sends. Empty when it draws none of them.
+struct PreparedBodies {
+    DisplayGeometry display;
+};
+/// What of a look the bodies drawn of a frame depend on: the same for two
+/// looks that draw them alike.
+std::string bodiesKey(const Look& look);
+/// Whether `look` draws anything of the bodies of `frame`.
+bool drawsBodies(const Frame& frame, const Look& look);
+std::shared_ptr<const PreparedBodies> prepareBodies(const Frame& frame, const Look& look);
+
+/// The bodies of frames made ready to draw on a thread of its own: those
+/// wanted, the most wanted first -- the frame at the play head, those it
+/// plays next, the thumbnails'. What was made is kept, the frames no longer
+/// wanted going first past kKept, as long as their frame is.
+class BodiesPreparer {
+public:
+    struct Want {
+        std::shared_ptr<const Frame> frame;
+        Look look;
+    };
+    static constexpr size_t kKept = 4;
+
+    BodiesPreparer();
+    ~BodiesPreparer();
+    BodiesPreparer(const BodiesPreparer&) = delete;
+    BodiesPreparer& operator=(const BodiesPreparer&) = delete;
+
+    /// What is wanted now, in place of what was: the first not made yet is
+    /// made next.
+    void want(std::vector<Want> wanted);
+    /// `frame` as `look` draws it, if it is made; null if not (yet).
+    std::shared_ptr<const PreparedBodies> find(const std::shared_ptr<const Frame>& frame, const Look& look) const;
+    /// Until everything wanted is made.
+    void wait();
+
+private:
+    struct Made {
+        std::weak_ptr<const Frame> frame;  ///< what it was made of: another frame where it was, no match
+        std::string key;
+        std::shared_ptr<const PreparedBodies> bodies;
+    };
+    void loop();
+    /// mu_ held: what was made of `frame` with `key`; the first wanted not
+    /// made yet, -1 if none; whether a made one is wanted.
+    const Made* madeLocked(const std::shared_ptr<const Frame>& frame, const std::string& key) const;
+    int nextLocked() const;
+    bool wantedLocked(const Made& made) const;
+
+    mutable std::mutex mu_;
+    std::condition_variable wake_, done_;
+    bool stop_ = false, working_ = false;
+    std::vector<Want> wanted_;
+    std::vector<std::string> wantedKeys_;
+    std::deque<Made> made_;  ///< the newest last
+    std::thread thread_;
+};
 
 }  // namespace pg::sim

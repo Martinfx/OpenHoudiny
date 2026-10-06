@@ -206,6 +206,9 @@ public:
     /// chips of stone, or of glass. Null: none.
     void setPieces(const GeometryPtr& pieces);
     const GeometryPtr& pieces() const { return pieces_; }
+    /// The same, made ready to draw ahead (sim::BodiesPreparer): what is
+    /// left is sending them to the GPU. Null: none.
+    void setPreparedPieces(std::shared_ptr<const sim::PreparedBodies> pieces);
     /// The box round the geometry drawn -- the displayed node's and the
     /// pieces; false when there is none.
     bool geometryBounds(Vec3& lo, Vec3& hi) const;
@@ -378,7 +381,8 @@ private:
     /// prepared_'s rest, and what stands on its points; none without it.
     const sim::DisplayGeometry& shownDisplay() const;
     const sim::DisplayInstances& instances() const;
-    sim::DisplayGeometry piecesDisplay_;  // what the pieces are drawn as
+    std::shared_ptr<const sim::PreparedBodies> preparedPieces_;  // what the pieces are drawn as
+    const sim::DisplayGeometry& piecesDisplay() const;
     GLuint geoProgram_ = 0, dotProgram_ = 0;
     // The overlay: faces and thin lines, dots, wide lines -- each its own
     // program, vertex array and buffer.
