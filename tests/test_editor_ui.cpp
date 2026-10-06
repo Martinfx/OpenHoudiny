@@ -625,3 +625,76 @@ TEST(work_not_saved_is_kept_and_found_after_a_crash) {
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
+
+TEST(history_commits_a_change_once_it_settles_and_writes_the_state_only_then) {
+    History h;
+    int written = 0;
+    std::string state = "a";
+    auto text = [&] {
+        ++written;
+        return state;
+    };
+    h.reset("a", 1);
+    // Unchanged: nothing written, nothing to undo.
+    for (int f = 0; f < 10; ++f) h.track(1, true, 0.1 * f, text);
+    CHECK_EQ(written, 0);
+    CHECK(!h.canUndo());
+    // A run of quick changes -- a brush resized notch by notch: one step,
+    // written once, kQuiet after the last.
+    state = "b";
+    h.track(2, true, 1.0, text);
+    state = "c";
+    h.track(3, true, 1.2, text);
+    state = "d";
+    h.track(4, true, 1.3, text);
+    h.track(4, true, 1.3 + History::kQuiet * 0.5, text);
+    CHECK_EQ(written, 0);
+    CHECK(h.canUndo());  // what waits can be undone already
+    h.track(4, true, 1.3 + History::kQuiet + 0.01, text);
+    CHECK_EQ(written, 1);
+    CHECK_EQ(h.undo(text), std::string("a"));
+    h.adopt(5);
+    CHECK(!h.canUndo() && h.canRedo());
+    CHECK_EQ(h.redo(text), std::string("d"));
+    h.adopt(6);
+    // Not while a drag goes on: not settled, not committed.
+    state = "e";
+    h.track(7, false, 10.0, text);
+    h.track(7, false, 20.0, text);
+    CHECK_EQ(written, 1);
+    h.track(7, true, 20.0, text);
+    CHECK_EQ(written, 2);
+    // Undo at once after a change: the change committed first, then undone.
+    state = "f";
+    h.track(8, true, 30.0, text);
+    CHECK_EQ(h.undo(text), std::string("e"));
+    CHECK_EQ(written, 3);
+}
+
+TEST(history_keeps_at_most_its_budget_of_bytes) {
+    History h;
+    h.reset(std::string(1, 'x'), 0);
+    const std::string big(History::kMaxBytes / 10, 'y');
+    for (uint64_t k = 1; k <= 40; ++k) {
+        std::string s = big;
+        s[0] = static_cast<char>('a' + k % 26);
+        s[1] = static_cast<char>('a' + k / 26);
+        h.track(k, true, 10.0 * static_cast<double>(k), [&] { return s; });
+        h.track(k, true, 10.0 * static_cast<double>(k) + 1.0, [&] { return s; });  // settled: committed
+    }
+    CHECK(h.bytes() <= History::kMaxBytes);
+    CHECK(h.states() >= 9 && h.states() <= 11);
+    CHECK(h.canUndo());
+}
+
+TEST(state_keys_change_with_an_edit_and_with_a_node_moved) {
+    struct N {
+        float x, y;
+    };
+    std::vector<N> nodes{{0.0f, 0.0f}, {100.0f, 50.0f}};
+    const uint64_t a = stateKey(7, nodes);
+    CHECK_EQ(stateKey(7, nodes), a);
+    CHECK(stateKey(8, nodes) != a);
+    nodes[1].x += 1.0f;
+    CHECK(stateKey(7, nodes) != a);
+}

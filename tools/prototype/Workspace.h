@@ -18,6 +18,9 @@
 
 #include "imgui.h"
 
+#include <cstdint>
+#include <cstring>
+#include <deque>
 #include <functional>
 #include <string>
 #include <vector>
@@ -113,44 +116,113 @@ private:
     double autosavedAt_ = -1e30, checkedAt_ = -1e30;
 };
 
-/// Undo and redo as whole states -- a network saved as text. A state is
-/// committed once things settle (no mouse button down, no widget active), so a
-/// drag or a slider becomes one step, not a hundred.
+/// Undo and redo as whole states -- a network saved as text. A change is
+/// committed once things settle (no mouse button down, no widget active)
+/// and stay so for kQuiet seconds: a drag or a slider is one step, not a
+/// hundred, and so is a run of quick changes -- a brush resized notch by
+/// notch. The state is written out only to be committed: what tells a
+/// change is a key, new whenever the state is (stateKey). Kept: at most
+/// kMaxStates states and kMaxBytes of them, the oldest going first.
 class History {
 public:
-    void reset(const std::string& state) {
+    static constexpr size_t kMaxStates = 300;
+    static constexpr size_t kMaxBytes = size_t(256) << 20;
+    static constexpr double kQuiet = 0.4;
+
+    void reset(std::string state, uint64_t key) {
         undo_.clear();
         redo_.clear();
-        committed_ = state;
+        bytes_ = 0;
+        committed_ = std::move(state);
+        key_ = key;
+        pending_ = false;
     }
-    /// Call each frame with the current state.
-    void track(const std::string& state, bool settled) {
-        if (!settled || state == committed_) return;
-        undo_.push_back(committed_);
-        if (undo_.size() > 300) undo_.erase(undo_.begin());
-        redo_.clear();
-        committed_ = state;
+    /// Each frame, `now` in seconds: `text()` writes the state out, called
+    /// only when a change is committed.
+    template <class Text>
+    void track(uint64_t key, bool settled, double now, const Text& text) {
+        if (key != key_) {
+            key_ = key;
+            changedAt_ = now;
+            pending_ = true;
+        }
+        if (pending_ && settled && now - changedAt_ >= kQuiet) commit(text());
     }
-    bool canUndo() const { return !undo_.empty(); }
-    bool canRedo() const { return !redo_.empty(); }
-    /// The state to go back to; the current one goes onto redo.
-    std::string undo() {
-        redo_.push_back(committed_);
-        committed_ = undo_.back();
+    bool canUndo() const { return pending_ || !undo_.empty(); }
+    bool canRedo() const { return !pending_ && !redo_.empty(); }
+    /// The state to go back to -- a change still waiting committed first;
+    /// the current one goes onto redo. adopt() the key of what it restores.
+    template <class Text>
+    std::string undo(const Text& text) {
+        if (pending_) commit(text());
+        if (undo_.empty()) return committed_;
+        bytes_ += committed_.size();
+        redo_.push_back(std::move(committed_));
+        committed_ = std::move(undo_.back());
         undo_.pop_back();
+        bytes_ -= committed_.size();
         return committed_;
     }
-    std::string redo() {
-        undo_.push_back(committed_);
-        committed_ = redo_.back();
+    template <class Text>
+    std::string redo(const Text& text) {
+        if (pending_) commit(text());
+        if (redo_.empty()) return committed_;
+        bytes_ += committed_.size();
+        undo_.push_back(std::move(committed_));
+        committed_ = std::move(redo_.back());
         redo_.pop_back();
+        bytes_ -= committed_.size();
         return committed_;
     }
+    /// The state now is the one committed -- restored by undo or redo -- of
+    /// this key: nothing waits.
+    void adopt(uint64_t key) {
+        key_ = key;
+        pending_ = false;
+    }
+    size_t states() const { return undo_.size() + redo_.size(); }
+    size_t bytes() const { return bytes_; }
 
 private:
-    std::vector<std::string> undo_, redo_;
+    void commit(std::string state) {
+        pending_ = false;
+        if (state == committed_) return;
+        bytes_ += committed_.size();
+        undo_.push_back(std::move(committed_));
+        committed_ = std::move(state);
+        for (const std::string& r : redo_) bytes_ -= r.size();
+        redo_.clear();
+        while (!undo_.empty() && (undo_.size() > kMaxStates || bytes_ > kMaxBytes)) {
+            bytes_ -= undo_.front().size();
+            undo_.pop_front();
+        }
+    }
+
+    std::deque<std::string> undo_, redo_;
     std::string committed_;
+    size_t bytes_ = 0;  ///< of undo_ and redo_
+    uint64_t key_ = 0;
+    double changedAt_ = 0.0;
+    bool pending_ = false;  ///< changed since committed_
 };
+
+/// A key that changes whenever a graph's saved text would: its revision --
+/// every edit -- and where its nodes are, which moving them changes and
+/// the revision does not.
+template <class Nodes>
+uint64_t stateKey(uint64_t revision, const Nodes& nodes) {
+    uint64_t h = 1469598103934665603ull ^ revision;
+    auto mix = [&h](float v) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &v, sizeof bits);
+        h = (h ^ bits) * 1099511628211ull;
+    };
+    for (const auto& n : nodes) {
+        mix(n.x);
+        mix(n.y);
+    }
+    return h;
+}
 
 /// True when nothing is being dragged or typed: a moment to commit to History.
 inline bool settled() {

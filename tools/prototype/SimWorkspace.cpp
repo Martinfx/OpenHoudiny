@@ -383,14 +383,37 @@ std::string SimWorkspace::title() const {
     return name + (modified() ? " *" : "");
 }
 
-bool SimWorkspace::modified() const { return net_.save() != savedText_; }
+const std::string& SimWorkspace::stateText() const {
+    const uint64_t key = networkKey();
+    if (!stateTextValid_ || key != stateTextKey_) {
+        stateText_ = net_.save();
+        stateTextKey_ = key;
+        stateTextValid_ = true;
+    }
+    return stateText_;
+}
+
+void SimWorkspace::markSaved(std::string text) {
+    savedText_ = std::move(text);
+    ++savedGeneration_;
+}
+
+bool SimWorkspace::modified() const {
+    const uint64_t key = networkKey();
+    if (key != modifiedKey_ || savedGeneration_ != modifiedGeneration_) {
+        modified_ = stateText() != savedText_;
+        modifiedKey_ = key;
+        modifiedGeneration_ = savedGeneration_;
+    }
+    return modified_;
+}
 
 bool SimWorkspace::unsaved() const {
     return modified() ||
            std::any_of(levels_.begin(), levels_.end(), [](const Level& l) { return l.net.save() != l.savedText; });
 }
 
-std::string SimWorkspace::documentText() const { return levels_.empty() ? net_.save() : levels_.front().net.save(); }
+std::string SimWorkspace::documentText() const { return levels_.empty() ? stateText() : levels_.front().net.save(); }
 std::string SimWorkspace::documentPath() const { return levels_.empty() ? path_ : levels_.front().path; }
 std::string SimWorkspace::documentExample() const { return levels_.empty() ? example_ : levels_.front().example; }
 
@@ -406,9 +429,9 @@ bool SimWorkspace::recover(const std::string& text, const std::string& of, const
     // Not saved: unchanged is what its file -- or its example -- holds.
     std::string file;
     sim::Network saved;
-    if (!of.empty() && readFile(of, file) && sim::Network::load(file, saved, error)) savedText_ = saved.save();
-    else if (of.empty() && !example.empty() && sim::Network::example(example, saved)) savedText_ = saved.save();
-    else savedText_.clear();
+    if (!of.empty() && readFile(of, file) && sim::Network::load(file, saved, error)) markSaved(saved.save());
+    else if (of.empty() && !example.empty() && sim::Network::example(example, saved)) markSaved(saved.save());
+    else markSaved({});
     const std::string name = !of.empty() ? fs::path(of).filename().string()
                              : !example.empty() ? "the example " + example
                                                 : std::string("a network not saved");
@@ -456,8 +479,8 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     net_ = net;
     path_ = path;
     example_ = example;
-    savedText_ = net_.save();
-    history_.reset(savedText_);
+    markSaved(net_.save());
+    history_.reset(savedText_, networkKey());
     canvas_.setView({});  // no selection, no room made for the last network's thumbnails
     canvas_.frame();
     // The frames of what was open before are not this network's; nor are
@@ -527,7 +550,7 @@ void SimWorkspace::newNetwork() {
 bool SimWorkspace::save(const std::string& path) {
     // Written whole beside it, then put in its place: a crash or a full disk
     // halfway leaves the file as it was.
-    const std::string text = net_.save();
+    const std::string text = stateText();
     std::string error;
     if (!sim::writeWhole(path, text, error)) {
         setMessage(error, true);
@@ -535,7 +558,7 @@ bool SimWorkspace::save(const std::string& path) {
     }
     path_ = path;
     example_.clear();
-    savedText_ = text;
+    markSaved(text);
     setMessage("Saved " + path);
     return true;
 }
@@ -555,13 +578,15 @@ void SimWorkspace::restore(const std::string& state) {
 
 void SimWorkspace::undo() {
     if (!history_.canUndo()) return;
-    restore(history_.undo());
+    restore(history_.undo([this] { return stateText(); }));
+    history_.adopt(networkKey());
     setMessage("Undone");
 }
 
 void SimWorkspace::redo() {
     if (!history_.canRedo()) return;
-    restore(history_.redo());
+    restore(history_.redo([this] { return stateText(); }));
+    history_.adopt(networkKey());
     setMessage("Redone");
 }
 
@@ -635,7 +660,7 @@ void SimWorkspace::update(float dt) {
         leaveRequest_ = false;
     }
     recompile();
-    history_.track(net_.save(), settled());
+    history_.track(networkKey(), settled(), ImGui::GetTime(), [this] { return stateText(); });
     if (synchronous_) runner_->step();
     // A bake, and frames landing on disk: twice a second.
     if (ImGui::GetTime() - bakePolled_ >= 0.5) {

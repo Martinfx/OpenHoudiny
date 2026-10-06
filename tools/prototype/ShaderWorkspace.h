@@ -55,7 +55,7 @@ public:
 
     bool open(const std::string& path) override;
     bool canOpen(const std::string& path) const override;
-    std::string documentText() const override { return graph_.save(); }
+    std::string documentText() const override { return stateText(); }
     std::string documentPath() const override { return path_; }
     const char* documentExtension() const override { return ".pgsg"; }
     bool recover(const std::string& text, const std::string& of, const std::string& example) override;
@@ -81,6 +81,8 @@ private:
     void pollValidation();
     void setMessage(std::string message, bool error = false);
     void restore(const std::string& state);
+    void undo();
+    void redo();
     void examplesMenu(const std::string& dir);
 
     std::vector<CanvasNode> canvasNodes() const;
@@ -112,8 +114,17 @@ private:
     std::string examplesDir_;
     shader::ShaderGraph graph_;
     std::string path_;
-    std::string savedText_;
+    std::string savedText_;  ///< as on disk: set through markSaved()
+    uint64_t savedGeneration_ = 0;
     History history_;
+    /// The graph as its file would hold it, written out once a change; and
+    /// whether it differs from what was saved, likewise.
+    const std::string& stateText() const;
+    uint64_t graphKey() const { return stateKey(graph_.revision(), graph_.nodes()); }
+    void markSaved(std::string text);
+    mutable std::string stateText_;
+    mutable uint64_t stateTextKey_ = 0, modifiedKey_ = 0, modifiedGeneration_ = ~0ull;
+    mutable bool stateTextValid_ = false, modified_ = false;
 
     gl::PreviewRenderer preview_;
     uint64_t compiledRevision_ = ~0ull;

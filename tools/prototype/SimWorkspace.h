@@ -588,7 +588,17 @@ private:
     std::string editKey_, editText_;       ///< a text parameter being typed: "id.name", and its text
     std::string path_;       ///< empty: never saved
     std::string example_;    ///< the example it came from, if any
-    std::string savedText_;  ///< as on disk, or as the example came
+    std::string savedText_;  ///< as on disk, or as the example came: set through markSaved()
+    uint64_t savedGeneration_ = 0;
+    /// The network as its file would hold it: written out once a change
+    /// (its stateKey), not each time it is asked for -- several times a
+    /// frame. And whether it differs from what was saved, likewise.
+    const std::string& stateText() const;
+    uint64_t networkKey() const { return stateKey(net_.revision(), net_.nodes()); }
+    void markSaved(std::string text);
+    mutable std::string stateText_;
+    mutable uint64_t stateTextKey_ = 0, modifiedKey_ = 0, modifiedGeneration_ = ~0ull;
+    mutable bool stateTextValid_ = false, modified_ = false;
     sim::Compiled compiled_;
     uint64_t compiledRevision_ = ~0ull;
     History history_;

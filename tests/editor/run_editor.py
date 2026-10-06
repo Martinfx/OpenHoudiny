@@ -86,6 +86,11 @@ def read(path):
         return f.read()
 
 
+def kept(folder):
+    """The autosaves in a recovery folder -- none if it was never made."""
+    return os.listdir(folder) if os.path.isdir(folder) else []
+
+
 def check(condition, what):
     if not condition:
         raise AssertionError(what)
@@ -108,7 +113,7 @@ def quit_lets_go(ed, folder):
     check(code == 0, "the editor exited with %d" % code)
     check(read(path) == before, "Don't Save changed the file")
     check(not os.path.exists(os.path.join(folder, "still.png")), "the editor did not quit")
-    check(not os.listdir(os.path.join(folder, "rec")), "an autosave was left after letting the changes go")
+    check(not kept(os.path.join(folder, "rec")), "an autosave was left after letting the changes go")
 
 
 def quit_cancelled(ed, folder):
@@ -141,8 +146,8 @@ def crash_recovered(ed, folder):
     path, before = network(folder)
     rec = os.path.join(folder, "rec")
     os.makedirs(rec)
-    kept = lambda: any(f.endswith(".pgsim") for f in os.listdir(rec))
-    check(ed.crash(folder, ["net.pgsim", "--recovery", rec], ADD_NODE + "wait 3000\n", kept),
+    autosaved = lambda: any(f.endswith(".pgsim") for f in os.listdir(rec))
+    check(ed.crash(folder, ["net.pgsim", "--recovery", rec], ADD_NODE + "wait 3000\n", autosaved),
           "nothing was kept to recover before the crash")
     check(read(path) == before, "the crash changed the file")
     # Started again elsewhere: offered back; Enter recovers it, Ctrl+S saves it to its file.
@@ -151,7 +156,7 @@ def crash_recovered(ed, folder):
     code = ed.run(elsewhere, ["--recovery", rec], "wait 30\nkey enter\nwait 10\nkey ctrl+s\nwait 5\n")
     check(code == 0, "the editor exited with %d" % code)
     check("null1" in read(path), "the network recovered was not saved to its file")
-    check(not os.listdir(rec), "autosaves were left: %s" % os.listdir(rec))
+    check(not kept(rec), "autosaves were left: %s" % kept(rec))
 
 
 def simulate_again(ed, folder):

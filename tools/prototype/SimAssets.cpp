@@ -67,9 +67,9 @@ bool SimWorkspace::enterAsset(int id) {
     net_ = *def->net;
     path_ = def->file;
     example_.clear();
-    savedText_ = net_.save();
+    markSaved(net_.save());
     history_ = History();
-    history_.reset(savedText_);
+    history_.reset(savedText_, networkKey());
     geometry_ = std::make_unique<sim::GeometryGraph>();
     geometry_->setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
     canvas_.setView({});
@@ -96,7 +96,7 @@ bool SimWorkspace::leaveAsset() {
     net_ = std::move(up.net);
     path_ = std::move(up.path);
     example_ = std::move(up.example);
-    savedText_ = std::move(up.savedText);
+    markSaved(std::move(up.savedText));
     history_ = std::move(up.history);
     geometry_ = std::move(up.geometry);
     canvas_.setView(up.view);
@@ -133,7 +133,7 @@ bool SimWorkspace::commitAsset(const std::string& chosen) {
     }
     net_.setAsset(info);
     path_ = file;
-    savedText_ = net_.save();
+    markSaved(net_.save());
     setMessage(labelOf(info) + " version " + std::to_string(info.version) + " saved to " + file +
                ": every instance follows");
     return true;

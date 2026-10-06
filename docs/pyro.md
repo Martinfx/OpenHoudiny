@@ -299,7 +299,11 @@ nebo všechny ([cache.md](cache.md)). Dialog souborů ukazuje složky a soubory
 dané přípony a cestu jde napsat; kde se vybírá složka, vezme i tu otevřenou.
 
 **Ctrl+Z / Ctrl+Shift+Z** vrací celé stavy sítě. Tah posuvníkem nebo uzlem
-je jeden krok, ne sto.
+je jeden krok, ne sto. Stejně tak rychlá řada změn, třeba štětec
+zmenšovaný po zářezech: krok se zapíše, až je 0,4 s klid. Historie drží
+nejvýš 300 stavů a 256 MB, nejstarší jdou první. Síť se do textu přepíše
+jen při změně, ne několikrát za snímek, takže ani velký sculpt editor
+nezpomalí.
 
 ## 3. Síť simulace
 

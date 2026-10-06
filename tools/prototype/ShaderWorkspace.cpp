@@ -165,8 +165,8 @@ void ShaderWorkspace::newGraph() {
     graph_.connect(color, "color", lit, "color", library_);
     graph_.connect(lit, "result", out, "color", library_);
     path_.clear();
-    savedText_ = graph_.save();
-    history_.reset(savedText_);
+    markSaved(graph_.save());
+    history_.reset(savedText_, graphKey());
     canvas_.setView({});  // no selection, no room made for the last graph's thumbnails
     canvas_.frame();
     clearSwatches();
@@ -197,8 +197,8 @@ bool ShaderWorkspace::open(const std::string& path) {
 void ShaderWorkspace::show(ShaderGraph g, const std::string& path) {
     graph_ = std::move(g);
     path_ = path;
-    savedText_ = graph_.save();
-    history_.reset(savedText_);
+    markSaved(graph_.save());
+    history_.reset(savedText_, graphKey());
     canvas_.setView({});
     canvas_.frame();
     clearSwatches();
@@ -220,7 +220,7 @@ bool ShaderWorkspace::recover(const std::string& text, const std::string& of, co
     // Not saved: unchanged is what its file holds, if it is there.
     std::string file;
     ShaderGraph saved;
-    savedText_ = !of.empty() && readFile(of, file) && ShaderGraph::load(file, saved, error) ? saved.save() : std::string();
+    markSaved(!of.empty() && readFile(of, file) && ShaderGraph::load(file, saved, error) ? saved.save() : std::string());
     setMessage("Recovered " + (of.empty() ? std::string("a graph not saved") : fs::path(of).filename().string()) +
                " as it was autosaved: Ctrl+S keeps it");
     return true;
@@ -229,13 +229,13 @@ bool ShaderWorkspace::recover(const std::string& text, const std::string& of, co
 bool ShaderWorkspace::save(const std::string& path) {
     // Written whole beside it, then put in its place: a crash or a full disk
     // halfway leaves the file as it was.
-    const std::string text = graph_.save();
+    const std::string text = stateText();
     std::string error;
     if (!sim::writeWhole(path, text, error)) {
         setMessage(error, true);
         return false;
     }
-    savedText_ = text;
+    markSaved(text);
     path_ = path;
     setMessage("Saved " + path);
     return true;
@@ -253,6 +253,18 @@ void ShaderWorkspace::saveThen(std::function<void()> then) {
 void ShaderWorkspace::saveAsDialog() {
     files_.open("Save shader graph", {".pgsg"}, true, path_.empty() ? "untitled.pgsg" : path_);
     fileAction_ = FileAction::SaveAs;
+}
+
+void ShaderWorkspace::undo() {
+    if (!history_.canUndo()) return;
+    restore(history_.undo([this] { return stateText(); }));
+    history_.adopt(graphKey());
+}
+
+void ShaderWorkspace::redo() {
+    if (!history_.canRedo()) return;
+    restore(history_.redo([this] { return stateText(); }));
+    history_.adopt(graphKey());
 }
 
 void ShaderWorkspace::restore(const std::string& state) {
@@ -360,13 +372,36 @@ std::string ShaderWorkspace::title() const {
     return (path_.empty() ? std::string("untitled.pgsg") : fs::path(path_).filename().string()) + (modified() ? " *" : "");
 }
 
-bool ShaderWorkspace::modified() const { return graph_.save() != savedText_; }
+const std::string& ShaderWorkspace::stateText() const {
+    const uint64_t key = graphKey();
+    if (!stateTextValid_ || key != stateTextKey_) {
+        stateText_ = graph_.save();
+        stateTextKey_ = key;
+        stateTextValid_ = true;
+    }
+    return stateText_;
+}
+
+void ShaderWorkspace::markSaved(std::string text) {
+    savedText_ = std::move(text);
+    ++savedGeneration_;
+}
+
+bool ShaderWorkspace::modified() const {
+    const uint64_t key = graphKey();
+    if (key != modifiedKey_ || savedGeneration_ != modifiedGeneration_) {
+        modified_ = stateText() != savedText_;
+        modifiedKey_ = key;
+        modifiedGeneration_ = savedGeneration_;
+    }
+    return modified_;
+}
 
 void ShaderWorkspace::update(float dt) {
     if (animate_) time_ += dt;
     recompile();
     pollValidation();
-    history_.track(graph_.save(), settled());
+    history_.track(graphKey(), settled(), ImGui::GetTime(), [this] { return stateText(); });
     updateSwatches();
     job_.step();
     std::string result, where;
@@ -394,11 +429,10 @@ void ShaderWorkspace::savePreviewVideo(const std::string& path) {
 
 void ShaderWorkspace::shortcuts() {
     if (ImGui::GetIO().WantTextInput) return;
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z) && history_.canUndo()) restore(history_.undo());
-    if ((ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z) ||
-         ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)) &&
-        history_.canRedo()) {
-        restore(history_.redo());
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) undo();
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z) ||
+        ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)) {
+        redo();
     }
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
         if (path_.empty()) saveAsDialog();
@@ -998,8 +1032,8 @@ void ShaderWorkspace::fileMenu() {
 }
 
 void ShaderWorkspace::editMenu() {
-    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history_.canUndo())) restore(history_.undo());
-    if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z", false, history_.canRedo())) restore(history_.redo());
+    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history_.canUndo())) undo();
+    if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z", false, history_.canRedo())) redo();
     ImGui::Separator();
     const std::vector<int> chosen(canvas_.selection().begin(), canvas_.selection().end());
     if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, !chosen.empty())) duplicate(chosen);
