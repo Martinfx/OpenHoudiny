@@ -198,11 +198,14 @@ public:
     /// Whether the geometry last made has more to draw than these polygons
     /// -- glass, lines, loose points, volumes: what displayOf draws.
     bool hasRest() const { return rest_; }
+    /// Whether `geo` is made as the geometry last made was -- the same
+    /// topology, colours, glass and the rest: make() then only moves the
+    /// vertices of the mesh it is given, unless a fold parts them.
+    bool sameMaking(const Geometry& geo) const;
 
 private:
     void build(const Geometry& geo, DisplayMesh& mesh);
     bool move(const Geometry& geo, DisplayMesh& mesh);
-    bool sameMaking(const Geometry& geo) const;
 
     GeometryPtr made_;  ///< the geometry last made -- held, so no buffer of it is taken for a new one
     bool pointNormals_ = false, cornerNormals_ = false, moving_ = false, rest_ = false;

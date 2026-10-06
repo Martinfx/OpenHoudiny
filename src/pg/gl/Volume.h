@@ -51,6 +51,7 @@
 #include "pg/sim/Display.h"
 #include "pg/sim/Frame.h"
 #include "pg/sim/Look.h"
+#include "pg/sim/Prepared.h"
 #include "pg/sim/Scene.h"
 #include "pg/sim/World.h"
 
@@ -194,6 +195,12 @@ public:
     /// faces, the more the flatter it is seen; it casts no shadow.
     void setGeometry(const GeometryPtr& geometry);
     const GeometryPtr& geometry() const { return geometry_; }
+    /// The same, prepared ahead -- on the thread that cooked it
+    /// (sim::GeometryPreparer): what is left is sending it to the GPU. Null:
+    /// none. The same again costs nothing.
+    void setPrepared(std::shared_ptr<const sim::PreparedGeometry> prepared);
+    /// The displayed geometry as prepared, by whom it was handed or here.
+    const std::shared_ptr<const sim::PreparedGeometry>& prepared() const { return prepared_; }
     /// The pieces of an RBD Solver, as its look draws them (sim::drawnPieces),
     /// drawn with the displayed geometry -- their loose points, the grit, as
     /// chips of stone, or of glass. Null: none.
@@ -362,9 +369,16 @@ private:
     float geoShadowBias_ = 0.0f;
     float geoShadowLift_ = 0.0f;
     GeometryPtr geometry_, pieces_;
-    sim::DisplayGeometry shownDisplay_, piecesDisplay_;  // what each is drawn as -- the displayed node's polygons apart:
-    sim::DisplayMesher shownMesher_;                     // ... indexed, made again quickly when only the points move
-    sim::DisplayMesh shownMesh_;
+    // The displayed node's geometry as it is drawn -- its polygons indexed,
+    // the rest, what stands on its points -- prepared here (preparer_) when
+    // it comes as it was cooked; the topology of the mesh in the buffers.
+    std::shared_ptr<const sim::PreparedGeometry> prepared_;
+    sim::GeometryPreparer preparer_;
+    uint64_t sentTopology_ = 0;
+    /// prepared_'s rest, and what stands on its points; none without it.
+    const sim::DisplayGeometry& shownDisplay() const;
+    const sim::DisplayInstances& instances() const;
+    sim::DisplayGeometry piecesDisplay_;  // what the pieces are drawn as
     GLuint geoProgram_ = 0, dotProgram_ = 0;
     // The overlay: faces and thin lines, dots, wide lines -- each its own
     // program, vertex array and buffer.
@@ -384,12 +398,13 @@ private:
     // The pictures laid on the geometry (sim::DisplayPicture): a layer each
     // of two arrays -- colour and alpha, normal map -- no more than
     // kPictureLayers, kPictureSize square; their pixels kept to grow them.
-    static constexpr int kPictureLayers = 16, kPictureSize = 512;
+    static constexpr int kPictureLayers = 16, kPictureSize = sim::kDisplayPictureSize;
     std::vector<sim::DisplayPicture> layers_;
-    std::vector<std::vector<uint8_t>> layerColors_, layerNormals_;
+    std::vector<std::shared_ptr<const sim::PictureBytes>> layerBytes_;
     GLuint picturesTex_ = 0, normalMapsTex_ = 0;
     int picturesMade_ = 0;  // layers in the arrays as they are on the GPU
-    /// The layer of `picture`, read and added if it is new; -1 past the last.
+    /// The layer of `picture`, added if it is new -- as prepared_ has it
+    /// read, or read now; -1 past the last.
     int layerOf(const sim::DisplayPicture& picture);
     /// The bound vertex array's attributes 8 and 9 -- where on its pictures
     /// each vertex is, and which layer -- from `mesh` into `buffer`; none
@@ -400,24 +415,21 @@ private:
     void bindPictures(GLuint program);
     GLsizei shownElements_ = 0;
     // What stands on the displayed geometry's points (Instances.h): each
-    // prototype's polygons once -- made when it is new -- and where each of
+    // prototype's polygons once -- sent when it is new -- and where each of
     // its points puts it (attributes 4 to 7, one set an instance), sent
     // again on every change.
     struct InstancedGpu {
         GeometryPtr prototype;  // held: its pointer names it
-        sim::DisplayMesher mesher;
-        sim::DisplayMesh mesh;
         GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0, through = 0, textures = 0;
         GLsizei elements = 0, instances = 0;
         size_t capacity = 0;  // floats the placements' buffer holds
         GLuint atlas = 0, impostorVao = 0;  // the last level's: its billboard's pictures, its cards
         bool pictureTried = false;          // ... taken, or tried
-        size_t which = 0;     // its prototype's place in instances_
+        size_t which = 0;     // its prototype's place in instances()
         int level = 0;        // its level of detail (sim::kDetailKeep)
         int levels = 1;       // how many its prototype has: a plant's 3
     };
     std::vector<InstancedGpu> instanced_;
-    sim::DisplayInstances instances_;
     void uploadInstances();
     /// Each prototype's copies to its levels of detail, by how big each
     /// looks from detailEye_ (sim::placementsByDetail) -- all in full

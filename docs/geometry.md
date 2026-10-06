@@ -423,7 +423,14 @@ link 6.geometry -> 7.geometry
   předchozí a po chvíli napíše „cooking…“. Když se změní parametr během
   vaření, rozpracované vaření se přeruší (wrangle, smyčky, assety se
   vzdají uprostřed) a začne se znovu s novou hodnotou; nic z přerušeného
-  vaření se neuloží do cache.
+  vaření se neuloží do cache. Na stejném vlákně se zobrazená geometrie
+  i připraví ke kreslení (`pg/sim/Prepared.h`): polygony jako indexovaná
+  síť, zbytek (body, čáry, sklo, objemy), instance a každý prototyp na
+  všech úrovních detailu, obrázky na plochách přečtené a zmenšené. Okno ji
+  pak jen pošle do GPU, takže se les, jehož příprava trvala přes sekundu,
+  ukáže bez zaseknutí. Náhledy celé scény (Output, kamery) kreslí vlastní
+  renderer ze stejné přípravy jako viewport a mezi náhledy jiných uzlů ji
+  nedělají znovu.
 - Síť se pro simulaci kompiluje také na vlastním vlákně
   (`pg/sim/Compiler.h`) s vlastním grafem, takže tvary pro simulaci
   (Shape objektů a zdrojů, kusy pro RBD, látka) se vaří mimo okno a jen

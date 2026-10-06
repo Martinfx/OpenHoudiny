@@ -112,6 +112,7 @@ void SimWorkspace::updateGeometry() {
         r.frame = shownFrame();
         r.timeStep = compiled_.world.timeStep;
         if (display) r.nodes.push_back(display);
+        r.prepare = display;
         if (sheet_ && sheet) r.nodes.push_back(sheet);
         if (base) r.nodes.push_back(base);
         return r;
@@ -133,7 +134,9 @@ void SimWorkspace::updateGeometry() {
         const auto shown = done.geometry.find(display);
         const GeometryPtr geo = shown != done.geometry.end() ? shown->second : nullptr;
         if (geo != renderer_.geometry()) {
-            renderer_.setGeometry(geo);
+            // Prepared on the cooker's thread: only sent to the GPU here.
+            if (done.prepared && done.prepared->geometry == geo) renderer_.setPrepared(done.prepared);
+            else renderer_.setGeometry(geo);
             viewDirty_ = true;
         }
         const auto sheetGeo = done.geometry.find(sheet);

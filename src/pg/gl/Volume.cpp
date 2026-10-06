@@ -2591,29 +2591,43 @@ void VolumeRenderer::renderGlass(int width, int height, const Vec3& eye) {
 
 void VolumeRenderer::setGeometry(const GeometryPtr& geometry) {
     if (geometry == geometry_) return;
-    geometry_ = geometry;
-    // What stands on its points: where, sent again; what, made only when new.
-    instances_ = geometry ? sim::instancesOf(*geometry) : sim::DisplayInstances();
+    setPrepared(preparer_.prepare(geometry));
+}
+
+void VolumeRenderer::setPrepared(std::shared_ptr<const sim::PreparedGeometry> prepared) {
+    if (prepared == prepared_) return;
+    prepared_ = std::move(prepared);
+    geometry_ = prepared_ ? prepared_->geometry : nullptr;
+    // What stands on its points: where, sent again; what, sent only when new.
     uploadInstances();
-    // Its polygons indexed. When only the points moved, the vertices' places
-    // alone go to the GPU again -- and with nothing else to draw, that is all.
-    const bool moved = shownMesher_.make(geometry, shownMesh_) == sim::DisplayMesher::Made::Moved;
-    if (moved && !shownMesher_.hasRest()) {
-        shownDisplay_ = sim::DisplayGeometry();
-        shownDisplay_.lo = shownMesh_.lo;
-        shownDisplay_.hi = shownMesh_.hi;
+    // Its polygons indexed. Of the topology in the buffers, the vertices'
+    // places alone go to the GPU again -- and with nothing else to draw,
+    // that is all.
+    const bool moved = prepared_ && shownVao_ && prepared_->topology == sentTopology_;
+    sentTopology_ = prepared_ ? prepared_->topology : 0;
+    if (moved && !prepared_->rest) {
         uploadShownMesh(false);
         updateGeometryBounds();
         geoShadowDirty_ = true;
         return;
     }
-    shownDisplay_ = geometry ? sim::displayOf(*geometry, 400000, false) : sim::DisplayGeometry();
     uploadShownMesh(!moved);
     uploadGeometry();
 }
 
+const sim::DisplayGeometry& VolumeRenderer::shownDisplay() const {
+    static const sim::DisplayGeometry none;
+    return prepared_ ? prepared_->display : none;
+}
+
+const sim::DisplayInstances& VolumeRenderer::instances() const {
+    static const sim::DisplayInstances none;
+    return prepared_ ? prepared_->instances : none;
+}
+
 void VolumeRenderer::uploadShownMesh(bool all) {
-    const sim::DisplayMesh& m = shownMesh_;
+    static const sim::DisplayMesh none;
+    const sim::DisplayMesh& m = prepared_ && prepared_->mesh ? *prepared_->mesh : none;
     if (!shownVao_) {
         gl_.GenVertexArrays(1, &shownVao_);
         GLuint buffers[6] = {};
@@ -2664,10 +2678,10 @@ void VolumeRenderer::uploadShownMesh(bool all) {
 }
 
 void VolumeRenderer::updateGeometryBounds() {
-    Vec3 lo = shownDisplay_.lo, hi = shownDisplay_.hi;
+    Vec3 lo = shownDisplay().lo, hi = shownDisplay().hi;
     for (int a = 0; a < 3; ++a) {
-        lo[a] = std::min({lo[a], piecesDisplay_.lo[a], instances_.lo[a]});
-        hi[a] = std::max({hi[a], piecesDisplay_.hi[a], instances_.hi[a]});
+        lo[a] = std::min({lo[a], piecesDisplay_.lo[a], instances().lo[a]});
+        hi[a] = std::max({hi[a], piecesDisplay_.hi[a], instances().hi[a]});
     }
     hasGeoBounds_ = lo.x <= hi.x;
     geoLo_ = lo;
@@ -2691,85 +2705,69 @@ void VolumeRenderer::releaseInstanced(InstancedGpu& gpu) {
     gpu = InstancedGpu();
 }
 
-namespace {
-
-/// Whether a plant has foliage to thin far away (core/Lod.h).
-bool hasFoliage(const Geometry& geo) {
-    const AttributeArray* through = geo.primitives().find("translucency");
-    if (!through || through->type() != AttrType::Float) return false;
-    const auto lets = through->read<float>();
-    return std::any_of(lets.begin(), lets.end(), [](float t) { return t > 0.0f; });
-}
-
-}  // namespace
-
 void VolumeRenderer::uploadInstances() {
     auto bytes = [](const auto& v) { return static_cast<GLsizeiptr>(v.size() * sizeof(v[0])); };
+    static const std::vector<sim::PreparedGeometry::Prototype> none;
+    const std::vector<sim::PreparedGeometry::Prototype>& prototypes = prepared_ ? prepared_->prototypes : none;
     std::vector<InstancedGpu> kept;
-    kept.reserve(instances_.prototypes.size());
-    for (size_t k = 0; k < instances_.prototypes.size(); ++k) {
-        const GeometryPtr& prototype = instances_.prototypes[k];
-        // A plant at each level of detail, anything else as it is.
-        const int levels = hasFoliage(*prototype) ? static_cast<int>(sim::kDetailKeep.size()) : 1;
-        for (int level = 0; level < levels; ++level) {
-            InstancedGpu gpu;
-            const auto was = std::find_if(instanced_.begin(), instanced_.end(), [&](const InstancedGpu& g) {
-                return g.prototype == prototype && g.level == level && g.vao;
-            });
-            if (was != instanced_.end()) {
-                gpu = std::move(*was);
-                *was = InstancedGpu();
-            } else {
-                // Its polygons, as the displayed geometry's are made -- what
-                // stands on its own points made copies of first; thinned
-                // for far away.
-                gpu.prototype = prototype;
-                gpu.level = level;
-                GeometryPtr made = prototype->prototypeCount() > 0 ? GeometryPtr(unpackInstances(*prototype)) : prototype;
-                if (level > 0) made = std::make_shared<Geometry>(plantDetail(*made, sim::kDetailKeep[static_cast<size_t>(level)]));
-                gpu.mesher.make(made, gpu.mesh);
-                const sim::DisplayMesh& m = gpu.mesh;
-                gl_.GenVertexArrays(1, &gpu.vao);
-                GLuint buffers[6] = {};
-                gl_.GenBuffers(6, buffers);
-                gpu.places = buffers[0];
-                gpu.colors = buffers[1];
-                gpu.indices = buffers[2];
-                gpu.placements = buffers[3];
-                gpu.through = buffers[4];
-                gpu.textures = buffers[5];
-                const GLsizei six = 6 * static_cast<GLsizei>(sizeof(float)), three = 3 * static_cast<GLsizei>(sizeof(float));
-                gl_.BindVertexArray(gpu.vao);
-                gl_.BindBuffer(ARRAY_BUFFER, gpu.places);
-                gl_.BufferData(ARRAY_BUFFER, bytes(m.places), m.places.data(), STATIC_DRAW);
-                gl_.EnableVertexAttribArray(0);
-                gl_.VertexAttribPointer(0, 3, FLOAT, 0, six, nullptr);
-                gl_.EnableVertexAttribArray(1);
-                gl_.VertexAttribPointer(1, 3, FLOAT, 0, six, reinterpret_cast<const void*>(3 * sizeof(float)));
-                gl_.BindBuffer(ARRAY_BUFFER, gpu.colors);
-                gl_.BufferData(ARRAY_BUFFER, bytes(m.colors), m.colors.data(), STATIC_DRAW);
-                gl_.EnableVertexAttribArray(2);
-                gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
-                gl_.DisableVertexAttribArray(3);  // not moving: the velocity everything without its own reads
-                throughArray(gpu.through, m.translucency);
-                textureArray(gpu.textures, m);
-                gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, gpu.indices);
-                gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
-                // Where each instance goes: three vectors of it, one set an instance.
-                gl_.BindBuffer(ARRAY_BUFFER, gpu.placements);
-                const GLsizei stride = static_cast<GLsizei>(sim::DisplayInstances::kFloats * sizeof(float));
-                for (GLuint a = 0; a < 3; ++a) {
-                    gl_.EnableVertexAttribArray(4 + a);
-                    gl_.VertexAttribPointer(4 + a, 4, FLOAT, 0, stride, reinterpret_cast<const void*>(size_t{a} * 4 * sizeof(float)));
-                    gl_.VertexAttribDivisor(4 + a, 1);
-                }
-                gl_.BindVertexArray(0);
-                gpu.elements = static_cast<GLsizei>(m.indices.size());
+    kept.reserve(prototypes.size());
+    // A plant at each level of detail, anything else as it is.
+    for (const sim::PreparedGeometry::Prototype& p : prototypes) {
+        const GeometryPtr& prototype = instances().prototypes[p.which];
+        const int level = p.level;
+        InstancedGpu gpu;
+        const auto was = std::find_if(instanced_.begin(), instanced_.end(), [&](const InstancedGpu& g) {
+            return g.prototype == prototype && g.level == level && g.vao;
+        });
+        if (was != instanced_.end()) {
+            gpu = std::move(*was);
+            *was = InstancedGpu();
+        } else {
+            // Its polygons, as prepared -- what stands on its own points
+            // made copies of first; thinned for far away.
+            gpu.prototype = prototype;
+            gpu.level = level;
+            const sim::DisplayMesh& m = *p.mesh;
+            gl_.GenVertexArrays(1, &gpu.vao);
+            GLuint buffers[6] = {};
+            gl_.GenBuffers(6, buffers);
+            gpu.places = buffers[0];
+            gpu.colors = buffers[1];
+            gpu.indices = buffers[2];
+            gpu.placements = buffers[3];
+            gpu.through = buffers[4];
+            gpu.textures = buffers[5];
+            const GLsizei six = 6 * static_cast<GLsizei>(sizeof(float)), three = 3 * static_cast<GLsizei>(sizeof(float));
+            gl_.BindVertexArray(gpu.vao);
+            gl_.BindBuffer(ARRAY_BUFFER, gpu.places);
+            gl_.BufferData(ARRAY_BUFFER, bytes(m.places), m.places.data(), STATIC_DRAW);
+            gl_.EnableVertexAttribArray(0);
+            gl_.VertexAttribPointer(0, 3, FLOAT, 0, six, nullptr);
+            gl_.EnableVertexAttribArray(1);
+            gl_.VertexAttribPointer(1, 3, FLOAT, 0, six, reinterpret_cast<const void*>(3 * sizeof(float)));
+            gl_.BindBuffer(ARRAY_BUFFER, gpu.colors);
+            gl_.BufferData(ARRAY_BUFFER, bytes(m.colors), m.colors.data(), STATIC_DRAW);
+            gl_.EnableVertexAttribArray(2);
+            gl_.VertexAttribPointer(2, 3, FLOAT, 0, three, nullptr);
+            gl_.DisableVertexAttribArray(3);  // not moving: the velocity everything without its own reads
+            throughArray(gpu.through, m.translucency);
+            textureArray(gpu.textures, m);
+            gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, gpu.indices);
+            gl_.BufferData(ELEMENT_ARRAY_BUFFER, bytes(m.indices), m.indices.data(), STATIC_DRAW);
+            // Where each instance goes: three vectors of it, one set an instance.
+            gl_.BindBuffer(ARRAY_BUFFER, gpu.placements);
+            const GLsizei stride = static_cast<GLsizei>(sim::DisplayInstances::kFloats * sizeof(float));
+            for (GLuint a = 0; a < 3; ++a) {
+                gl_.EnableVertexAttribArray(4 + a);
+                gl_.VertexAttribPointer(4 + a, 4, FLOAT, 0, stride, reinterpret_cast<const void*>(size_t{a} * 4 * sizeof(float)));
+                gl_.VertexAttribDivisor(4 + a, 1);
             }
-            gpu.which = k;
-            gpu.levels = levels;
-            kept.push_back(std::move(gpu));
+            gl_.BindVertexArray(0);
+            gpu.elements = static_cast<GLsizei>(m.indices.size());
         }
+        gpu.which = p.which;
+        gpu.levels = p.levels;
+        kept.push_back(std::move(gpu));
     }
     // What no point stands for any more goes.
     for (InstancedGpu& gpu : instanced_) releaseInstanced(gpu);
@@ -2782,12 +2780,12 @@ void VolumeRenderer::placeByDetail() {
     std::array<std::vector<float>, sim::kDetailLevels> parts;
     size_t parted = static_cast<size_t>(-1);
     for (InstancedGpu& gpu : instanced_) {
-        const std::vector<float>& all = instances_.placements[gpu.which];
+        const std::vector<float>& all = instances().placements[gpu.which];
         const std::vector<float>* placements = &all;
         if (gpu.levels > 1 && detailEyeSet_) {
             // Each copy at the level of detail it looks big enough for.
             if (parted != gpu.which) {
-                parts = sim::placementsByDetail(all, instances_.centers[gpu.which], instances_.radii[gpu.which], detailEye_);
+                parts = sim::placementsByDetail(all, instances().centers[gpu.which], instances().radii[gpu.which], detailEye_);
                 parted = gpu.which;
             }
             placements = &parts[static_cast<size_t>(gpu.level)];
@@ -2829,8 +2827,8 @@ void VolumeRenderer::drawInstances(bool shadow) {
 
 void VolumeRenderer::captureImpostor(InstancedGpu& gpu, const InstancedGpu& full, size_t which) {
     const int texels = kImpostorTexels, views = kImpostorViews;
-    const Vec3 center = instances_.centers[which];
-    const float radius = std::max(instances_.radii[which], 1e-4f);
+    const Vec3 center = instances().centers[which];
+    const float radius = std::max(instances().radii[which], 1e-4f);
     gl_.GenTextures(1, &gpu.atlas);
     gl_.BindTexture(TEXTURE_2D, gpu.atlas);
     gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), texels * views, texels, 0, RGBA, FLOAT, nullptr);
@@ -2947,9 +2945,9 @@ void VolumeRenderer::drawImpostors(const Vec3& eye) {
     gl_.ActiveTexture(TEXTURE0 + 13);
     for (const InstancedGpu& gpu : instanced_) {
         if (!gpu.atlas || gpu.instances == 0) continue;
-        const Vec3& c = instances_.centers[gpu.which];
+        const Vec3& c = instances().centers[gpu.which];
         gl_.Uniform3f(location(impostorProgram_, "u_center"), c.x, c.y, c.z);
-        gl_.Uniform1f(location(impostorProgram_, "u_radius"), instances_.radii[gpu.which]);
+        gl_.Uniform1f(location(impostorProgram_, "u_radius"), instances().radii[gpu.which]);
         gl_.BindTexture(TEXTURE_2D, gpu.atlas);
         gl_.BindVertexArray(gpu.impostorVao);
         gl_.DrawArraysInstanced(TRIANGLES, 0, 6, gpu.instances);
@@ -2991,76 +2989,15 @@ void VolumeRenderer::textureArray(GLuint buffer, const sim::DisplayMesh& mesh) {
     gl_.VertexAttribPointer(9, 1, FLOAT, 0, five, reinterpret_cast<const void*>(4 * sizeof(float)));
 }
 
-namespace {
-
-/// A picture file's pixels, kPictureSize square -- each the average of the
-/// file's under it, read between them -- as bytes: as shown (sRGB) or as
-/// they are. Empty when it cannot be read.
-std::vector<float> squarePicture(const std::string& file, int size) {
-    io::Picture picture;
-    std::string error;
-    if (file.empty() || !io::readPicture(file, picture, error) || picture.empty()) return {};
-    std::vector<float> out(static_cast<size_t>(size) * size * 4);
-    // A few samples a pixel: enough for a picture no more than 4 times as large.
-    const int taps = std::clamp((std::max(picture.width, picture.height) + size - 1) / size, 1, 4);
-    for (int y = 0; y < size; ++y) {
-        for (int x = 0; x < size; ++x) {
-            float sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            for (int j = 0; j < taps; ++j) {
-                for (int i = 0; i < taps; ++i) {
-                    const int px = std::min(static_cast<int>((x + (i + 0.5f) / taps) * picture.width / size), picture.width - 1);
-                    const int py = std::min(static_cast<int>((y + (j + 0.5f) / taps) * picture.height / size), picture.height - 1);
-                    const float* p = picture.pixel(px, py);
-                    for (int c = 0; c < 4; ++c) sum[c] += c < 3 && picture.linear ? io::linearToSrgb(p[c]) : p[c];
-                }
-            }
-            float* o = &out[(static_cast<size_t>(y) * size + x) * 4];
-            for (int c = 0; c < 4; ++c) o[c] = sum[c] / static_cast<float>(taps * taps);
-        }
-    }
-    return out;
-}
-
-uint8_t byteOf(float v) { return static_cast<uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); }
-
-}  // namespace
-
 int VolumeRenderer::layerOf(const sim::DisplayPicture& picture) {
     const auto known = std::find(layers_.begin(), layers_.end(), picture);
     if (known != layers_.end()) return static_cast<int>(known - layers_.begin());
     if (static_cast<int>(layers_.size()) >= kPictureLayers) return -1;
-    const int size = kPictureSize;
-    const size_t pixels = static_cast<size_t>(size) * size;
-    // Its colour, the alpha its own or its grey's; its normal map, the
-    // green as OpenGL has it -- or flat.
-    const std::vector<float> color = squarePicture(picture.color, size);
-    if (color.empty()) return -1;
-    std::vector<float> alpha;
-    if (!picture.alpha.empty() && !(picture.alphaChannel && picture.alpha == picture.color)) {
-        alpha = squarePicture(picture.alpha, size);
-    }
-    const std::vector<float> normal = squarePicture(picture.normal, size);
-    std::vector<uint8_t> rgba(pixels * 4), nrm(pixels * 4);
-    for (size_t i = 0; i < pixels; ++i) {
-        for (int c = 0; c < 3; ++c) rgba[i * 4 + c] = byteOf(color[i * 4 + c]);
-        float a = 1.0f;
-        if (!picture.alpha.empty()) {
-            a = alpha.empty() ? color[i * 4 + 3] : (alpha[i * 4] + alpha[i * 4 + 1] + alpha[i * 4 + 2]) / 3.0f;
-        }
-        rgba[i * 4 + 3] = byteOf(a);
-        if (normal.empty()) {
-            nrm[i * 4] = nrm[i * 4 + 1] = 128;
-            nrm[i * 4 + 2] = 255;
-        } else {
-            nrm[i * 4] = byteOf(normal[i * 4]);
-            nrm[i * 4 + 1] = byteOf(picture.normalDirectX ? 1.0f - normal[i * 4 + 1] : normal[i * 4 + 1]);
-            nrm[i * 4 + 2] = byteOf(normal[i * 4 + 2]);
-        }
-        nrm[i * 4 + 3] = 255;
-    }
+    std::shared_ptr<const sim::PictureBytes> bytes = prepared_ ? prepared_->bytesOf(picture) : nullptr;
+    if (!bytes) bytes = sim::pictureBytes(picture, kPictureSize);
+    if (!bytes) return -1;
     layers_.push_back(picture);
-    layerColors_.push_back(std::move(rgba));
-    layerNormals_.push_back(std::move(nrm));
+    layerBytes_.push_back(std::move(bytes));
     return static_cast<int>(layers_.size()) - 1;
 }
 
@@ -3077,7 +3014,8 @@ void VolumeRenderer::bindPictures(GLuint program) {
             gl_.TexImage3D(TEXTURE_2D_ARRAY, 0, static_cast<GLint>(which == 0 ? SRGB8_ALPHA8 : RGBA8), size, size, count, 0,
                            RGBA, UNSIGNED_BYTE, nullptr);
             for (int l = 0; l < count; ++l) {
-                const auto& bytes = which == 0 ? layerColors_[static_cast<size_t>(l)] : layerNormals_[static_cast<size_t>(l)];
+                const sim::PictureBytes& made = *layerBytes_[static_cast<size_t>(l)];
+                const std::vector<uint8_t>& bytes = which == 0 ? made.color : made.normal;
                 gl_.TexSubImage3D(TEXTURE_2D_ARRAY, 0, 0, 0, l, size, size, 1, RGBA, UNSIGNED_BYTE, bytes.data());
             }
             gl_.GenerateMipmap(TEXTURE_2D_ARRAY);
@@ -3129,7 +3067,7 @@ void VolumeRenderer::setPieces(const GeometryPtr& pieces) {
 
 void VolumeRenderer::uploadGeometry() {
     // The two one after the other.
-    sim::DisplayGeometry d = shownDisplay_;
+    sim::DisplayGeometry d = shownDisplay();
     const sim::DisplayGeometry& p = piecesDisplay_;
     d.triangles.insert(d.triangles.end(), p.triangles.begin(), p.triangles.end());
     d.dots.insert(d.dots.end(), p.dots.begin(), p.dots.end());
@@ -3160,9 +3098,9 @@ void VolumeRenderer::uploadGeometry() {
     upload(geoVao_, geoBuffer_, d.triangles, {{0, 3}, {1, 3}, {2, 3}});
     // The corners' velocities, on attribute 3 -- 0 for the part that has none.
     std::vector<float> velocities;
-    if (!shownDisplay_.velocities.empty() || !p.velocities.empty()) {
-        velocities = shownDisplay_.velocities;
-        velocities.resize(shownDisplay_.triangles.size() / 3, 0.0f);
+    if (!shownDisplay().velocities.empty() || !p.velocities.empty()) {
+        velocities = shownDisplay().velocities;
+        velocities.resize(shownDisplay().triangles.size() / 3, 0.0f);
         velocities.insert(velocities.end(), p.velocities.begin(), p.velocities.end());
         velocities.resize(d.triangles.size() / 3, 0.0f);
     }

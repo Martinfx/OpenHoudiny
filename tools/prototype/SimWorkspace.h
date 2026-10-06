@@ -648,6 +648,10 @@ private:
     bool thumbnails_ = true;              ///< View > Node Thumbnails
     std::set<int> thumbnailsHidden_;      ///< nodes whose own was hidden (their menu)
     std::unique_ptr<gl::VolumeRenderer> thumbRenderer_;  ///< draws them; made when one is first wanted
+    /// ... those of the whole scene -- the Output's, the cameras' -- apart:
+    /// the scene's geometry, as the viewport has it prepared, sent to it
+    /// once, not again for each picture of another node between.
+    std::unique_ptr<gl::VolumeRenderer> sceneThumbRenderer_;
     std::string thumbRendererLog_;        ///< why it could not be made
     std::unique_ptr<Thumbnails> thumbs_;
     /// The geometry nodes' geometry as cooks last made it: a stamp that

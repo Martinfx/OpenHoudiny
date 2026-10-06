@@ -320,6 +320,7 @@ add_library(pgsim
   src/pg/sim/Cloth.cpp
   src/pg/sim/Grains.cpp
   src/pg/sim/Display.cpp
+  src/pg/sim/Prepared.cpp
   src/pg/sim/GeometryGraph.cpp
   src/pg/sim/Grid.cpp
   src/pg/sim/SparseGrid.cpp

@@ -69,6 +69,9 @@ struct Picture {
     uint64_t key = 1469598103934665603ull;  ///< what the node is
     uint64_t live = 0;                      ///< what it is at the frame on screen
     GeometryPtr geometry, pieces;
+    /// The whole scene: its geometry as the viewport has it prepared.
+    bool scene = false;
+    std::shared_ptr<const sim::PreparedGeometry> prepared;
     std::vector<sim::Solid> solids;
     std::shared_ptr<const sim::Frame> frame;
     unsigned layers = 0;
@@ -233,13 +236,20 @@ void SimWorkspace::updateThumbnails() {
     if (!thumbnails_ || shown.empty() || !rendererLog_.empty()) return;
     if (!thumbRenderer_) {
         if (!thumbRendererLog_.empty()) return;  // tried, and it would not
-        auto r = std::make_unique<gl::VolumeRenderer>(gl_);
-        if (!r->init(thumbRendererLog_)) {
-            if (thumbRendererLog_.empty()) thumbRendererLog_ = "the thumbnails' renderer did not start";
-            return;
-        }
-        r->texelBudget = kThumbTexels;
+        auto made = [&]() -> std::unique_ptr<gl::VolumeRenderer> {
+            auto r = std::make_unique<gl::VolumeRenderer>(gl_);
+            if (!r->init(thumbRendererLog_)) {
+                if (thumbRendererLog_.empty()) thumbRendererLog_ = "the thumbnails' renderer did not start";
+                return nullptr;
+            }
+            r->texelBudget = kThumbTexels;
+            return r;
+        };
+        auto r = made();
+        auto scene = r ? made() : nullptr;
+        if (!scene) return;
         thumbRenderer_ = std::move(r);
+        sceneThumbRenderer_ = std::move(scene);
         thumbs_ = std::make_unique<Thumbnails>(gl_);
     }
 
@@ -260,6 +270,8 @@ void SimWorkspace::updateThumbnails() {
         p.layers = gl::VolumeRenderer::kAllLayers;
         p.solids = compiled_.solidsAt(current_);
         p.geometry = renderer_.geometry();
+        p.scene = true;
+        p.prepared = renderer_.prepared();
         if (frame && full) p.pieces = sim::drawnBodies(*frame, p.look);
         p.key = mixKey(revision, p.geometry.get());
         p.live = live;
@@ -407,11 +419,13 @@ void SimWorkspace::updateThumbnails() {
         }
         return false;
     };
-    // Draws `p` into the thumbnails' renderer at twice the picture's size.
-    auto draw = [&](const Picture& p) {
-        gl::VolumeRenderer& r = *thumbRenderer_;
+    // Draws `p` into the thumbnails' renderer -- the whole scene into its
+    // own -- at twice the picture's size; the renderer it drew in.
+    auto draw = [&](const Picture& p) -> gl::VolumeRenderer& {
+        gl::VolumeRenderer& r = p.scene ? *sceneThumbRenderer_ : *thumbRenderer_;
         r.look = p.look;
-        r.setGeometry(p.geometry);
+        if (p.prepared && p.prepared->geometry == p.geometry) r.setPrepared(p.prepared);
+        else r.setGeometry(p.geometry);
         r.setPieces(p.pieces);
         r.setSolids(p.solids);
         if (p.frame) r.setFrame(*p.frame, p.layers);
@@ -429,6 +443,7 @@ void SimWorkspace::updateThumbnails() {
             r.orbit = framed.hasBox ? framing(framed.lo, framed.hi) : gl::Orbit();
         }
         r.render(2 * Thumbnails::kWidth, 2 * Thumbnails::kHeight);
+        return r;
     };
 
     // The pictures due, the most wanted first: those with none, those an
@@ -463,8 +478,8 @@ void SimWorkspace::updateThumbnails() {
         Picture p;
         if (!pictureOf(*net_.node(d.node), p, true)) continue;
         const auto t0 = Clock::now();
-        draw(p);
-        thumbs_->take(d.node, thumbRenderer_->colorTexture(), p.key, p.live, now, msSince(t0));
+        const gl::VolumeRenderer& r = draw(p);
+        thumbs_->take(d.node, r.colorTexture(), p.key, p.live, now, msSince(t0));
         ++drawn;
     }
 }

@@ -115,6 +115,12 @@ Cooker::Result Cooker::cook(const Request& r) {
         if (interrupt_.load(std::memory_order_relaxed)) return out;
         out.geometry[id] = std::move(g);
     }
+    // What is shown, made ready to draw: not given up halfway -- thrown
+    // away with the rest if a newer request came meanwhile.
+    if (r.prepare) {
+        const auto shown = out.geometry.find(r.prepare);
+        if (shown != out.geometry.end() && shown->second) out.prepared = preparer_.prepare(shown->second);
+    }
     for (const Node& n : r.levels.back().net->nodes()) {
         if (!last.contains(n.id)) continue;
         std::string e = last.error(n.id);

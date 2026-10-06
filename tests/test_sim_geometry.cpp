@@ -9,6 +9,7 @@
 #include "pg/sim/GeometryGraph.h"
 #include "pg/sim/Mesh.h"
 #include "pg/sim/Network.h"
+#include "pg/sim/Prepared.h"
 #include "pg/sim/WaterMesh.h"
 #include "pg/sim/World.h"
 
@@ -1062,6 +1063,97 @@ TEST(display_mesh_is_made_again_quickly_when_only_the_points_move) {
     CHECK(mesher.make(again, mesh) == DisplayMesher::Made::Moved);
     CHECK(drawsAsDisplayOf(mesh, *again));
     CHECK(near(mesh.lo, displayOf(*again).lo) && near(mesh.hi, displayOf(*again).hi));
+}
+
+TEST(prepared_geometry_is_what_the_viewport_makes_of_it_and_moves_as_its_mesh) {
+    Network net;
+    const int grid = net.add("grid");
+    CHECK(net.setParam(grid, "rows", "31"));
+    CHECK(net.setParam(grid, "cols", "31"));
+    GeometryGraph g;
+    g.sync(net);
+    const GeometryPtr flat = g.cook(grid, 1);
+    GeometryPreparer preparer;
+    CHECK(preparer.prepare(nullptr) == nullptr);
+    const auto a = preparer.prepare(flat);
+    CHECK(a && a->geometry == flat && a->mesh);
+    CHECK(preparer.prepare(flat) == a);  // the same again: nothing made
+    CHECK(drawsAsDisplayOf(*a->mesh, *flat));
+    CHECK(!a->rest && a->instances.prototypes.empty() && a->prototypes.empty());
+    const std::vector<float> flatPlaces = a->mesh->places;
+    // Only the points moved: the mesh of the same topology, moved; nothing
+    // else to draw, nothing else made. What was prepared stays as it was.
+    auto hills = std::make_shared<Geometry>(*flat);
+    for (Vec3& q : hills->positionsForWrite()) q.y = 0.1f * std::sin(6.0f * q.x) * std::cos(4.0f * q.z);
+    const auto b = preparer.prepare(hills);
+    CHECK_EQ(b->topology, a->topology);
+    CHECK(b->mesh->indices == a->mesh->indices);
+    CHECK(drawsAsDisplayOf(*b->mesh, *hills));
+    CHECK(b->display.dots.empty() && b->display.lines.empty() && b->display.triangles.empty());
+    CHECK(near(b->display.lo, b->mesh->lo) && near(b->display.hi, b->mesh->hi));
+    CHECK(a->mesh->places == flatPlaces);
+    // New colours: another topology -- as another preparer's always is.
+    auto painted = std::make_shared<Geometry>(*hills);
+    auto Cd = painted->points().create("Cd", AttrType::Vec3).write<Vec3>();
+    for (size_t i = 0; i < Cd.size(); ++i) Cd[i] = Vec3(static_cast<float>(i % 7) / 7.0f, 0.5f, 0.2f);
+    const auto c = preparer.prepare(painted);
+    CHECK(c->topology != b->topology);
+    CHECK(drawsAsDisplayOf(*c->mesh, *painted));
+    GeometryPreparer other;
+    const uint64_t elsewhere = other.prepare(flat)->topology;
+    CHECK(elsewhere != a->topology && elsewhere != c->topology);
+    // Loose points beside the polygons: the rest, as displayOf has it.
+    auto dotted = std::make_shared<Geometry>(*painted);
+    dotted->addPoints(3);
+    const auto d = preparer.prepare(dotted);
+    CHECK(d->rest);
+    CHECK(d->display.dots == displayOf(*dotted, 400000, false).dots);
+}
+
+TEST(prepared_geometry_makes_each_prototype_once_at_each_level_of_detail) {
+    Network net;
+    const int box = net.add("box");
+    const int grid = net.add("grid");
+    GeometryGraph g;
+    g.sync(net);
+    const GeometryPtr block = g.cook(box, 1);
+    // A plant: faces that let light through, thinned far away.
+    auto leaf = std::make_shared<Geometry>(*g.cook(grid, 1));
+    auto through = leaf->primitives().create("translucency", AttrType::Float).write<float>();
+    for (float& t : through) t = 0.5f;
+    CHECK(hasFoliage(*leaf) && !hasFoliage(*block));
+    auto scene = [&](float shift) {
+        auto geo = std::make_shared<Geometry>();
+        geo->addPrototype(block);
+        geo->addPrototype(leaf);
+        geo->addPoints(4);
+        auto P = geo->positionsForWrite();
+        auto k = geo->points().create("instance", AttrType::Int).write<int32_t>();
+        for (int i = 0; i < 4; ++i) {
+            P[static_cast<size_t>(i)] = Vec3(static_cast<float>(i) * 2.0f + shift, 0.0f, 0.0f);
+            k[static_cast<size_t>(i)] = i % 2;
+        }
+        return geo;
+    };
+    GeometryPreparer preparer;
+    const auto a = preparer.prepare(scene(0.0f));
+    CHECK_EQ(a->instances.prototypes.size(), size_t(2));
+    // The box at one level, the plant at all of them, in order.
+    CHECK_EQ(a->prototypes.size(), size_t(1) + kDetailLevels);
+    CHECK(a->prototypes[0].which == 0 && a->prototypes[0].levels == 1);
+    for (size_t level = 0; level < kDetailLevels; ++level) {
+        const PreparedGeometry::Prototype& p = a->prototypes[1 + level];
+        CHECK(p.which == 1 && p.level == static_cast<int>(level) && p.levels == static_cast<int>(kDetailLevels));
+    }
+    DisplayMesh whole;
+    DisplayMesher().make(block, whole);
+    CHECK(a->prototypes[0].mesh->indices == whole.indices && a->prototypes[0].mesh->places == whole.places);
+    CHECK(a->prototypes[2].mesh->triangleCount() < a->prototypes[1].mesh->triangleCount());  // thinned
+    // Placed elsewhere: the prototypes' meshes as they were made.
+    const auto b = preparer.prepare(scene(1.0f));
+    CHECK_EQ(b->prototypes.size(), a->prototypes.size());
+    for (size_t i = 0; i < b->prototypes.size(); ++i) CHECK(b->prototypes[i].mesh == a->prototypes[i].mesh);
+    CHECK(b->instances.placements != a->instances.placements);
 }
 
 TEST(sim_geometry_examples_of_geometry_alone_cook) {

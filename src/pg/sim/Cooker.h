@@ -16,7 +16,11 @@
 // level keeps its graph, and so what it cooked, while the ones below come
 // and go.
 //
+// What is shown is prepared there too, for the viewport to draw
+// (Prepared.h): the window has only to send it to the GPU.
+//
 #include "pg/sim/GeometryGraph.h"
+#include "pg/sim/Prepared.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -41,12 +45,15 @@ public:
         int frame = 1;
         float timeStep = 1.0f / 30.0f;
         std::vector<int> nodes;     ///< the nodes of the last level wanted
+        int prepare = 0;            ///< the one of them whose geometry is prepared to be drawn; 0 none
     };
     struct Result {
         uint64_t serial = 0;                                ///< the request's
         std::map<int, GeometryPtr> geometry;                ///< each node wanted that is a geometry node
         std::map<int, std::string> errors, warnings, logs;  ///< the last level's geometry nodes
-        double ms = 0.0;                                    ///< how long it took
+        /// The geometry of the node to prepare, prepared; null if it has none.
+        std::shared_ptr<const PreparedGeometry> prepared;
+        double ms = 0.0;  ///< how long it took
     };
 
     /// `frames`: where the nodes that bring a simulation back get its frames.
@@ -83,6 +90,7 @@ private:
     // The worker's own.
     std::vector<std::unique_ptr<GeometryGraph>> graphs_;
     std::vector<Level> held_;  ///< the networks the graphs last synced with: kept alive
+    GeometryPreparer preparer_;
     std::thread thread_;
 };
 
