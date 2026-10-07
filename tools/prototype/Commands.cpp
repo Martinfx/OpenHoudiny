@@ -18,6 +18,7 @@
 //   prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|OUT.usda|OUT.mtlx|- [--node NODE]
 //                    [--set NODE.PARAM=VALUE]...
 //                    [--frame N] [--frames N [--start N]] [--threads N] [--hash]
+//   prototype gpu    [--device N|NAME] [--quick] [--threads N]
 //
 // `check` is the proof that the generated code is valid: it compiles every
 // graph -- and with --nodes every output of every node in the library, in the
@@ -67,6 +68,11 @@
 // --hash, the geometry's content hash -- the same on any number of threads
 // (--threads N), which is how the determinism of a network is checked.
 //
+// `gpu` lists the Vulkan devices and measures the one PG_GPU or --device
+// names (else the best GPU) against the CPU's threads: how fast it moves
+// memory, a sum and sweeps of the pressure's equation -- each checked to be
+// the same to the bit as on the CPU (pg/gpu/SelfTest.h, docs/gpu.md).
+//
 #include "Commands.h"
 
 #include "pg/lang/Lang.h"
@@ -79,6 +85,10 @@
 #endif
 #include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
+#ifdef PG_HAVE_VULKAN
+#include "pg/gpu/Gpu.h"
+#include "pg/gpu/SelfTest.h"
+#endif
 #include "pg/io/Exr.h"
 #include "pg/io/Export.h"
 #include "pg/io/Picture.h"
@@ -164,6 +174,9 @@ struct Options {
     /// --folder: where the network's relative paths (meshes) are read from,
     /// rather than beside its file -- for a network saved elsewhere (Python).
     std::string folder;
+    // gpu
+    std::string device;  ///< --device: its index or a part of its name; empty: PG_GPU's, else the best GPU
+    bool quick = false;  ///< --quick: a smaller test
 };
 
 int usage() {
@@ -236,6 +249,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--threads") { if (!nextInt(o.threads)) return false; }
         else if (a == "--hash") o.hash = true;
         else if (a == "--folder") { if (!next(o.folder)) return false; }
+        else if (a == "--device") { if (!next(o.device)) return false; }
+        else if (a == "--quick") o.quick = true;
         else if (a.size() > 1 && a[0] == '-') return false;  // "-" alone: sim with no pictures
         else o.positional.push_back(a);
     }
@@ -1681,11 +1696,83 @@ int pyro(const Options& o) {
     return simulate(o, example, o.positional[0]);
 }
 
+// --- gpu ---------------------------------------------------------------------------
+
+/// The Vulkan devices there are, and what the chosen one does against the
+/// CPU's threads: memory moved, a sum, sweeps of the pressure's equation.
+int gpuCommand(const Options& o) {
+    if (!o.positional.empty() || o.threads < 0) return usage();
+#ifndef PG_HAVE_VULKAN
+    std::fprintf(stderr, "GPU compute is not in this build: it needs the Vulkan headers and glslangValidator "
+                         "when it is built (docs/gpu.md)\n");
+    return 1;
+#else
+    if (o.threads > 0) pg::TaskPool::instance().setThreadCount(static_cast<unsigned>(o.threads));
+    std::string why;
+    const std::vector<gpu::DeviceInfo> all = gpu::devices(&why);
+    if (all.empty()) {
+        std::fprintf(stderr, "no Vulkan device: %s\n", why.c_str());
+        return 1;
+    }
+    std::printf("Vulkan devices:\n");
+    for (const gpu::DeviceInfo& d : all) {
+        std::printf("  %d  %s -- %s, %llu MB, %s, Vulkan %s%s%s\n", d.index, d.name.c_str(), d.kind.c_str(),
+                    static_cast<unsigned long long>(d.memory >> 20), d.driver.c_str(), d.api.c_str(),
+                    d.usable ? "" : "; lacks ", d.usable ? "" : d.missing.c_str());
+    }
+    std::fflush(stdout);
+    const auto device = gpu::Device::open(o.device, why);
+    if (!device) {
+        std::fprintf(stderr, "%s\n", why.c_str());
+        if (o.device.empty()) std::fprintf(stderr, "--device N or NAME uses one of them all the same\n");
+        return 1;
+    }
+    // A CPU pretending to be a GPU, or --quick: a test it is done with soon.
+    const gpu::DeviceInfo& d = device->info();
+    const bool small = o.quick || d.cpu;
+    const size_t floats = small ? size_t{4} << 20 : size_t{32} << 20;
+    const int side = small ? 128 : 256;
+    const std::string threads = "CPU, " + std::to_string(pg::TaskPool::instance().threadCount()) + " threads";
+    std::printf("on %d, %s:\n  %-9s %-15s %s\n", d.index, d.name.c_str(), "", "GPU", threads.c_str());
+    std::fflush(stdout);
+    const gpu::SelfTest t = gpu::selfTest(*device, floats, side);
+    if (!t.error.empty()) {
+        std::fprintf(stderr, "the device failed: %s\n", t.error.c_str());
+        return 1;
+    }
+    const auto number = [](double v, int digits, const char* unit) {
+        char text[64];
+        std::snprintf(text, sizeof text, "%.*f%s", digits, v, unit);
+        return std::string(text);
+    };
+    const auto row = [](const char* what, const std::string& onGpu, const std::string& onCpu, const std::string& times,
+                        const std::string& note) {
+        std::printf("  %-9s %-15s %-15s %-7s %s\n", what, onGpu.c_str(), onCpu.c_str(), times.c_str(), note.c_str());
+    };
+    const std::string millions = std::to_string(floats >> 20) + "M numbers";
+    const bool sumSame = t.gpuSum == t.cpuSum;
+    const char* same = "the same to the bit as on the CPU";
+    const char* differs = "NOT the same as on the CPU";
+    row("memory", number(t.gpuGBs, 1, " GB/s"), number(t.cpuGBs, 1, " GB/s"), number(t.gpuGBs / t.cpuGBs, 1, "x"),
+        "y = 2x + y over " + millions + (t.saxpyRight ? ": right" : ": WRONG"));
+    row("sum", number(t.reduceMs, 2, " ms"), "", "", "of the " + millions + ": " + (sumSame ? same : differs));
+    row("pressure", number(t.gpuCellsPerS / 1e9, 2, " Gcells/s"), number(t.cpuCellsPerS / 1e9, 2, " Gcells/s"),
+        number(t.gpuCellsPerS / t.cpuCellsPerS, 1, "x"),
+        "Jacobi sweeps over " + std::to_string(side) + "^3 cells: " + (t.jacobiSame ? same : differs));
+    std::fflush(stdout);
+    if (!t.saxpyRight || !sumSame || !t.jacobiSame) {
+        if (!sumSame) std::fprintf(stderr, "sum: %.9g on the GPU, %.9g on the CPU\n", t.gpuSum, t.cpuSum);
+        return 1;
+    }
+    return 0;
+#endif
+}
+
 }  // namespace
 
 bool isCommand(const std::string& word) {
     return word == "list" || word == "gen" || word == "check" || word == "render" || word == "sim" ||
-           word == "pyro" || word == "cook" || word == "usd";
+           word == "pyro" || word == "cook" || word == "usd" || word == "gpu";
 }
 
 void printUsage(std::FILE* out) {
@@ -1758,6 +1845,10 @@ void printUsage(std::FILE* out) {
                  "                   what a USD file composes to, read by the program's own reader: units, up\n"
                  "                   axis, time codes, layers, the prims as a tree, cameras, and what USD Import\n"
                  "                   makes of it at frame N (1: the stage's first time code)\n"
+                 "  prototype gpu    [--device N|NAME] [--quick] [--threads N]\n"
+                 "                   the Vulkan devices, and what the one PG_GPU or --device names (else the\n"
+                 "                   best GPU) does against the CPU: memory moved, a sum, sweeps of a gas\n"
+                 "                   solver's pressure -- each the same to the bit as on the CPU\n"
                  "  prototype help\n");
 }
 
@@ -1848,6 +1939,7 @@ int runCommand(int argc, char** argv) {
     if (o.command == "cook") return cook(o);
     if (o.command == "pyro") return pyro(o);
     if (o.command == "usd") return usdInfo(o);
+    if (o.command == "gpu") return gpuCommand(o);
     return render(o, lib);
 }
 

@@ -515,6 +515,12 @@ src/pg/render/   Embree     rays via Intel Embree 4: mesh as an Embree scene, pl
                             (Principled Volume), sun, sky, camera; scene rotated to
                             Z up; image during rendering via a display driver, at the end
                             passes via an output driver
+src/pg/gpu/      Gpu        compute through Vulkan, loaded at run time (Vulkan): devices,
+                            memory on the device, kernels in order (Batch), GPU time
+                 shaders    GLSL compute kernels, compiled to SPIR-V at build time and
+                            carried in the program
+                 SelfTest   memory, a sum and Jacobi sweeps against the CPU, the same to
+                            the bit (prototype gpu, docs/gpu.md)
 src/pg/gl/       Gl, Camera, Png, HeadlessContext — OpenGL without dependencies
                  Preview    shader preview on a body
                  Volume     volume rendering of the simulation: floor, objects, water, rain,

@@ -157,6 +157,11 @@ a command, `prototype` opens the editor; with a command (`sim`, `render`,
   through the shot camera: PNG, JPEG and EXR sequences read without
   libraries, holdout and shadow catcher, CG with alpha and a `catcher` pass
   to EXR; in the viewport, in Cycles and in the path tracer
+- **[docs/gpu.md](docs/gpu.md)** — compute on the GPU through Vulkan, the
+  foundation for moving the solvers to NVIDIA, AMD and Intel cards: the
+  devices, memory on the device, kernels compiled with the program, and
+  `prototype gpu`, which measures a card against the CPU with results the
+  same to the bit
 
 > **Name.** The project is called **Prototype**; the working name was too
 > similar to a SideFX trademark. The namespace in the code remains the
@@ -230,6 +235,14 @@ libopenimageio-dev libpugixml-dev libtbb-dev` on Debian and Ubuntu. Without
 them (or with `-DPG_CYCLES=OFF`) the custom path tracer renders
 ([docs/cycles.md](docs/cycles.md)).
 
+Compute on the GPU goes through **Vulkan** ([docs/gpu.md](docs/gpu.md)).
+Building it takes the Vulkan headers and glslangValidator: `pkg install
+vulkan-headers glslang` on FreeBSD, `sudo apt install libvulkan-dev
+glslang-tools` on Debian and Ubuntu. Nothing is linked against Vulkan: the
+loader is opened when a device is first asked for, so a machine without it
+computes on the CPU. Without them (or with `-DPG_WITH_VULKAN=OFF`) it is
+left out.
+
 The default build includes the editor: at configure time it downloads Dear
 ImGui and GLFW if they are not on the system (`sudo apt install libglfw3-dev`).
 When it finds the Python development files (`python3-dev`), it downloads
@@ -253,10 +266,11 @@ cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --b
 ## Running
 
 ```bash
-./build/pgtests            # 690 tests: 105 core, geometry and viewport editing, 42 wrangle language and expressions, 7 digital assets, 88 rigid bodies and destruction (concrete, rebar, glass, bricks, constraint network, debris, runtime fracture, guided simulation, debris in water and gas), 55 gas (sparse grid, upres, quenching, motion blur), 27 water and rain, 31 cloth, soft bodies and grains, 19 particles, animation and determinism, 39 simulation network and geometry in it, 42 shader graph, materials, UV and normal maps, 56 render, ACES colours and OpenColorIO configs, motion blur, EXR, images and video, 57 cache, export and checkpoints, 39 USD (writing and reading, materials, instances, volumes), 11 Alembic, 24 VDB (reading, writing with compression), 8 MaterialX, 40 trees and vegetation
+./build/pgtests            # 708 tests: 105 core, geometry and viewport editing, 42 wrangle language and expressions, 7 digital assets, 88 rigid bodies and destruction (concrete, rebar, glass, bricks, constraint network, debris, runtime fracture, guided simulation, debris in water and gas), 55 gas (sparse grid, upres, quenching, motion blur), 27 water and rain, 31 cloth, soft bodies and grains, 19 particles, animation and determinism, 39 simulation network and geometry in it, 42 shader graph, materials, UV and normal maps, 56 render, ACES colours and OpenColorIO configs, motion blur, EXR, images and video, 57 cache, export and checkpoints, 39 USD (writing and reading, materials, instances, volumes), 11 Alembic, 24 VDB (reading, writing with compression), 8 MaterialX, 40 trees and vegetation, 3 GPU compute (skipped without a Vulkan device)
 ctest --test-dir build -R python                   # 57 tests of the pg module (Python); against the USD, Pillow and OpenEXR libraries, if present
 ./build/pgeditortests      # editor UI without a window and without OpenGL: font, Escape and menus, node menu, rows, tabs, node names in the network, room for thumbnails, unsaved changes, file overwrite, autosave
 ctest --test-dir build -R editor_                  # the editor itself, scripts under xvfb: Quit with changes, Save As, crash and recovery, Simulate Again
+./build/prototype gpu      # the Vulkan devices; the best GPU measured against the CPU (docs/gpu.md)
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/pgbench            # measurements of the claims above
 ./build/pgbench_rigid      # rigid bodies: the demolition tower and ten times more pieces, 1 and all threads

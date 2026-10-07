@@ -1,0 +1,30 @@
+#version 450
+// One Jacobi sweep of the Poisson equation on a grid of nx x ny x nz cells,
+// zero past its faces: out = (the six neighbours of in - rhs) / 6. What the
+// pressure of a gas solver does most -- cells a second (prototype gpu).
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+layout(std430, binding = 0) readonly buffer In { float v[]; };
+layout(std430, binding = 1) readonly buffer Rhs { float rhs[]; };
+layout(std430, binding = 2) writeonly buffer Out { float outv[]; };
+layout(push_constant) uniform Push {
+    uint nx, ny, nz;
+} p;
+
+float at(int x, int y, int z) {
+    if (x < 0 || y < 0 || z < 0 || x >= int(p.nx) || y >= int(p.ny) || z >= int(p.nz)) return 0.0;
+    return v[uint(x) + p.nx * (uint(y) + p.ny * uint(z))];
+}
+
+void main() {
+    const ivec3 c = ivec3(gl_GlobalInvocationID);
+    if (c.x >= int(p.nx) || c.y >= int(p.ny) || c.z >= int(p.nz)) return;
+    const uint i = uint(c.x) + p.nx * (uint(c.y) + p.ny * uint(c.z));
+    // In this order, and no fused multiply-add: the same as the CPU's to the bit.
+    precise float sum = at(c.x - 1, c.y, c.z) + at(c.x + 1, c.y, c.z);
+    sum = sum + at(c.x, c.y - 1, c.z);
+    sum = sum + at(c.x, c.y + 1, c.z);
+    sum = sum + at(c.x, c.y, c.z - 1);
+    sum = sum + at(c.x, c.y, c.z + 1);
+    precise float r = (sum - rhs[i]) * (1.0 / 6.0);
+    outv[i] = r;
+}

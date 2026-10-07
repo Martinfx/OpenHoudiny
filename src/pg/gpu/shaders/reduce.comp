@@ -1,0 +1,32 @@
+#version 450
+// The sum of each block of 256 floats, into one float: added in pairs, the
+// halves one onto the other, always in the same order -- so the sum is the
+// same to the bit on every device, and on the CPU doing the same
+// (SelfTest.h, sumLikeTheGpu). Run again over the sums until one is left.
+// The blocks are the work groups, x fastest: as many as the device takes
+// along x, then along y.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer In { float v[]; };
+layout(std430, binding = 1) writeonly buffer Out { float sums[]; };
+layout(push_constant) uniform Push {
+    uint n;
+} p;
+
+shared float part[256];
+
+void main() {
+    const uint block = gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.y;
+    const uint blocks = (p.n + 255u) / 256u;
+    const uint t = gl_LocalInvocationID.x;
+    const uint i = block * 256u + t;
+    part[t] = block < blocks && i < p.n ? v[i] : 0.0;
+    barrier();
+    for (uint half_ = 128u; half_ > 0u; half_ >>= 1u) {
+        if (t < half_) {
+            precise float s = part[t] + part[t + half_];
+            part[t] = s;
+        }
+        barrier();
+    }
+    if (t == 0u && block < blocks) sums[block] = part[0];
+}
