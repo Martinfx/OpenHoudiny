@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace pg::sim {
@@ -173,6 +174,9 @@ struct Frame {
         float upresStages[6] = {};  ///< tiles, solids, emit, swirl, advect, combust (UpresSolver::Times)
         /// solids, sort, emit, to grid, extrapolate, forces, project, to particles, advect
         float waterStages[9] = {};
+        /// With the Pyro Solver's GPU on: what the graphics card does, or why
+        /// the CPU does it all (PyroSolver::gpuNote).
+        std::string gpu;
         float total() const { return rigid + scenes + gas + upres + water + rain + cloth + grains; }
     } profile;
 

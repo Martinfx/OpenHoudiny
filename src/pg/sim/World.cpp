@@ -181,6 +181,7 @@ void WorldSolver::step() {
                                   now.combust - before.combust, now.forces - before.forces,
                                   now.project - before.project, now.dissipate - before.dissipate};
         for (int s = 0; s < 8; ++s) profile_.gasStages[s] = static_cast<float>(stages[s]);
+        profile_.gpu = gas_->gpuNote();
         const float solidsInScenes = std::min(profile_.scenes, static_cast<float>(stages[0]));
         profile_.scenes -= solidsInScenes;
         profile_.gas += solidsInScenes;

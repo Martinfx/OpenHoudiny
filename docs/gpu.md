@@ -180,6 +180,13 @@ now.
 ./build/pgbench_pyro 160 --example campfire --set gpu=1          # where the time goes; on the GPU and back
 ```
 
+In the editor: select the **Pyro Solver**, tick **GPU** in its Domain
+section, and simulate. The **Profile** section under the timeline's frame
+says, below the gas's time, what the card does — `GPU: on the GPU, NVIDIA
+GeForce GTX 1060 6GB: advection and pressure` — or why the CPU does it all.
+From Python: `solver["gpu"] = 1`. `PG_GPU=nvidia` picks the card when there
+are several.
+
 **The same to the bit.** Each kernel does what the CPU does for its cell,
 operation for operation: the same lookups in the sparse tiles, the same
 trilinear weights, `std::min` and `std::clamp` as the CPU takes them, the

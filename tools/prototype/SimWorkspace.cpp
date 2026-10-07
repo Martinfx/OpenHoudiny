@@ -2918,6 +2918,8 @@ void SimWorkspace::profilePanel(const sim::Frame& f) {
         bar("Gas", p.gas, total, false);
         static const char* stages[8] = {"solids", "tiles", "emit", "advect", "combust", "forces", "project", "dissipate"};
         for (int s = 0; s < 8; ++s) bar(stages[s], p.gasStages[s], total, true);
+        // The Pyro Solver's GPU switch: whether the card does its share.
+        if (!p.gpu.empty()) ImGui::TextWrapped("   GPU: %s", p.gpu.c_str());
     }
     if (compiled_.world.hasGas && compiled_.world.hasUpres) {
         bar("Upres", p.upres, total, false);
