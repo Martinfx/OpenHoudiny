@@ -5,10 +5,12 @@ gas of the Pyro Solver first — are to move to the graphics card, through
 **Vulkan compute**: it runs on NVIDIA, AMD and Intel cards, on Linux,
 FreeBSD and Windows, with the drivers the card already has.
 
-What is there now is the foundation (`pg::gpu`): the devices, memory on the
-device, kernels compiled when the program is built and carried in it, and
-`prototype gpu`, which measures a device against the CPU. **The solvers do
-not use it yet** — that is the next step (§7).
+What is there now: the foundation (`pg::gpu`) — the devices, memory on the
+device, kernels compiled when the program is built and carried in it,
+`prototype gpu`, which measures a device against the CPU — and the first
+of the gas solver's work on it: **the Pyro Solver's GPU switch advects the
+gas on the graphics card**, with the same result to the bit as on the CPU
+(§7). The rest of the step follows (§8).
 
 ## 1. Quick start
 
@@ -152,12 +154,42 @@ if (ms < 0.0) report(device->error());
 The tests (`./build/pgtests gpu_`) run on any device there is, lavapipe
 included, and are skipped without one.
 
-## 7. What comes next
+## 7. The gas on the GPU
 
-1. **Advection on the GPU** — the gas solver's sparse tiles on the device,
-   the fields carried by the velocity: 44 % of a pyro step on the CPU.
-2. **Pressure on the GPU** — multigrid over the tiles: 25 %.
-3. **The whole step on the device** — sources, combustion, forces; the
-   fields stay there between steps and come back only for the frame. A
-   switch on the Pyro Solver: CPU or GPU, and the same scene measured on
-   both.
+The Pyro Solver's **GPU** (Domain) does the advection on the graphics card:
+the paths of the gas through the velocity, the velocity carrying itself,
+and MacCormack for smoke, heat, fuel, flame and steam — the biggest part of
+a step on the CPU (about half). The rest of the step stays on the CPU for
+now.
+
+```bash
+./build/prototype sim campfire out/fire.png --set gpu=1          # the campfire, advected on the GPU
+./build/pgbench_pyro 160 --example campfire --set gpu=1          # where the time goes; on the GPU and back
+```
+
+**The same to the bit.** Each kernel (`src/pg/gpu/shaders/pyro_*.comp`)
+does what the CPU does for its cell, operation for operation: the same
+lookups in the sparse tiles, the same trilinear weights, `std::min` and
+`std::clamp` as the CPU takes them, no fused multiply-add. A scene comes out
+the same with the switch on or off; `pgbench_pyro` prints the same
+fingerprint either way, and `pgtests gpu_advection` steps a fire and smoke
+round a ball side by side, comparing every field after every step.
+
+**What it costs.** Each step the velocity and the fields go to the device
+and come back: on a card in a PCIe slot that is a few milliseconds a step
+for a campfire. `pgbench_pyro` says how long the kernels took and how long
+with the copies. Once the whole step is on the device (§8) only the frame
+comes back.
+
+Without a GPU, or when the device fails, the CPU advects — the solver says
+why (`pgbench_pyro`: "the CPU advects: …") and the simulation goes on the
+same. A CPU pretending to be a GPU (lavapipe) is used only when `PG_GPU`
+names it: it computes the same, slower than the program's own threads.
+
+## 8. What comes next
+
+1. **Pressure on the GPU** — multigrid over the tiles: a quarter of a step.
+2. **The whole step on the device** — sources, combustion, forces; the
+   fields stay there between steps and come back only for the frame.
+3. **Measured on a real card** — the same scenes on the CPU and on a GTX
+   1060, here.

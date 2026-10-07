@@ -1499,6 +1499,10 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         add("grains", spent.grains, world.hasGrains);
         std::printf("%s\n", line.c_str());
     }
+    // The gas's GPU switch: whether the card did its share, or why not.
+    if (solver && solver->gas() && !solver->gas()->gpuNote().empty()) {
+        std::printf("gas: %s\n", solver->gas()->gpuNote().c_str());
+    }
     if (cachedFrames > 0) std::printf("cached %d frames in %s\n", cachedFrames, o.cacheDir.c_str());
     if (exports > 0) std::printf("exported %d frames of geometry, the last %s\n", exports, lastExport.c_str());
     if (usd) {

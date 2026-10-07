@@ -1,0 +1,38 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// MacCormack's correction: carry the prediction forward again, correct by half
+// the error the round trip shows, keep within what the first step read --
+// PyroSolver::advectScalar's second loop. In: S (the field at p.field), P
+// (forward), W (predicted, lows, highs); out: O, laid out as S.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+layout(std430, binding = 1) readonly buffer Fields { float S[]; };
+layout(std430, binding = 2) readonly buffer Paths { float P[]; };
+layout(std430, binding = 3) readonly buffer Work { float W[]; };
+layout(std430, binding = 4) writeonly buffer Out { float O[]; };
+
+void main() {
+    for (uint half_ = 0u; half_ < 2u; ++half_) {
+        uint slot;
+        ivec3 c;
+        if (!cellOf(0, half_, slot, c)) continue;
+        const uint at = indexOf(slot, c);
+        const float predicted = W[at];
+        const float fx = P[3u * p.plane + at], fy = P[4u * p.plane + at], fz = P[5u * p.plane + at];
+        // Where the gas leaves the domain: plain semi-Lagrangian.
+        if (fx < 0.0 || fy < 0.0 || fz < 0.0 || fx > float(p.nx) || fy > float(p.ny) || fz > float(p.nz)) {
+            O[p.field + at] = predicted;
+            continue;
+        }
+        int corner[8];
+        vec3 t;
+        cornersAt(0, fx, fy, fz, corner, t);
+        float v[8];
+        for (int q = 0; q < 8; ++q) v[q] = corner[q] < 0 ? 0.0 : W[uint(corner[q])];
+        const float roundTrip = trilinear(v, t);
+        precise float corrected = predicted + 0.5 * (S[p.field + at] - roundTrip);
+        const float lo = W[p.plane + at], hi = W[2u * p.plane + at];
+        // std::clamp
+        O[p.field + at] = corrected < lo ? lo : (hi < corrected ? hi : corrected);
+    }
+}

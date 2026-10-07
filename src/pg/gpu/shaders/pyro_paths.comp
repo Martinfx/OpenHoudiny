@@ -1,0 +1,54 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Where the gas of each cell was a step ago and where it will be, RK2 through
+// the velocity -- PyroSolver::advect's first loop. Out: P, the six planes
+// back x, y, z and forward x, y, z.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+layout(std430, binding = 1) readonly buffer Velocity { float V[]; };
+layout(std430, binding = 2) writeonly buffer Paths { float P[]; };
+
+float velAt(int a, int i, int j, int k) {
+    const int at = find(a + 1, sizeOf(a + 1), i, j, k);
+    return at < 0 ? 0.0 : V[p.vel[a] + uint(at)];
+}
+
+float velSample(int a, float x, float y, float z) {
+    int at[8];
+    vec3 t;
+    cornersAt(a + 1, x, y, z, at, t);
+    float c[8];
+    for (int q = 0; q < 8; ++q) c[q] = at[q] < 0 ? 0.0 : V[p.vel[a] + uint(at[q])];
+    return trilinear(c, t);
+}
+
+// PyroSolver::velocityAt
+vec3 velocityAt(float x, float y, float z) {
+    precise float xh = x + 0.5, yh = y + 0.5, zh = z + 0.5;
+    return vec3(velSample(0, xh, y, z), velSample(1, x, yh, z), velSample(2, x, y, zh));
+}
+
+void main() {
+    for (uint half_ = 0u; half_ < 2u; ++half_) {
+        uint slot;
+        ivec3 c;
+        if (!cellOf(0, half_, slot, c)) continue;
+        const uint at = indexOf(slot, c);
+        precise float x = float(c.x) + 0.5, y = float(c.y) + 0.5, z = float(c.z) + 0.5;
+        precise float u = 0.5 * (velAt(0, c.x, c.y, c.z) + velAt(0, c.x + 1, c.y, c.z));
+        precise float v = 0.5 * (velAt(1, c.x, c.y, c.z) + velAt(1, c.x, c.y + 1, c.z));
+        precise float w = 0.5 * (velAt(2, c.x, c.y, c.z) + velAt(2, c.x, c.y, c.z + 1));
+        for (int s = 0; s < 2; ++s) {
+            const float sign = s == 0 ? -1.0 : 1.0;
+            precise float hs = sign * 0.5 * p.cells;
+            precise float mx_ = x + hs * u, my = y + hs * v, mz = z + hs * w;
+            const vec3 mid = velocityAt(mx_, my, mz);
+            precise float step_ = sign * p.cells;
+            precise float ox = x + step_ * mid.x, oy = y + step_ * mid.y, oz = z + step_ * mid.z;
+            const uint plane = uint(s * 3) * p.plane;
+            P[plane + at] = ox;
+            P[plane + p.plane + at] = oy;
+            P[plane + 2u * p.plane + at] = oz;
+        }
+    }
+}

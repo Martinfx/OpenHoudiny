@@ -401,6 +401,7 @@ add_library(pgsim
   src/pg/sim/Network.cpp
   src/pg/sim/Poisson.cpp
   src/pg/sim/Pyro.cpp
+  src/pg/sim/PyroGpu.cpp
   src/pg/sim/Rain.cpp
   src/pg/sim/Scene.cpp
   src/pg/sim/Shape.cpp
@@ -426,6 +427,10 @@ add_library(pgsim
   ${CMAKE_CURRENT_BINARY_DIR}/generated/SimAssets.cpp
 )
 target_link_libraries(pgsim PUBLIC pgcore)
+if(PG_WITH_VULKAN)
+  # The gas solver's share of the GPU (PyroGpu.cpp).
+  target_link_libraries(pgsim PRIVATE pggpu)
+endif()
 # The photographs of the materials that come with the program (render/Textures.h).
 target_compile_definitions(pgsim PRIVATE PG_TEXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/textures")
 if(MSVC)

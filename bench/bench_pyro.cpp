@@ -12,10 +12,12 @@
 // --example steps another example's gas instead: its first Pyro Solver.
 // --set changes a parameter of that Pyro Solver. --upres puts a Pyro Upres
 // of that scale after it: how long its frames take, where their time goes
-// and how much of the fine grid it works on.
+// and how much of the fine grid it works on. --set gpu=1 advects on the GPU
+// (docs/gpu.md): the fingerprint stays the same, the advect time changes.
 //
 #include "pg/core/Parallel.h"
 #include "pg/sim/Network.h"
+#include "pg/sim/PyroGpu.h"
 #include "pg/sim/World.h"
 
 #include <sys/resource.h>
@@ -193,6 +195,15 @@ bool bench(const std::string& example, int resolution, int frames, bool sparse, 
                 100.0 * t.solids / t.total(), 100.0 * t.emit / t.total(), 100.0 * t.advect / t.total(),
                 100.0 * t.combust / t.total(), 100.0 * t.forces / t.total(), 100.0 * t.project / t.total(),
                 100.0 * t.dissipate / t.total());
+    std::printf("  advect: %.1f ms a frame\n", t.advect / frames);
+    if (!gas.gpuNote().empty()) {
+        std::printf("  %s", gas.gpuNote().c_str());
+        if (const sim::PyroGpu* g = gas.gpu()) {
+            std::printf(": the last step's kernels %.2f ms, with the copies there and back %.1f ms", g->kernelMs(),
+                        g->totalMs());
+        }
+        std::printf("\n");
+    }
     // What the run came to, as one number: a change meant to be only faster
     // must leave it as it is.
     uint64_t print = 1469598103934665603ull;

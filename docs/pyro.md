@@ -426,7 +426,7 @@ fuel), or only where there is smoke.
 
 | section | parameters |
 |---|---|
-| Domain | `size` (width, height, depth in meters; stands on the floor), `resolution` (cells along the longest side, 16–1024), `closed_floor`, `sparse` (compute only tiles with gas, on by default), `cutoff` (below this value of smoke, heat, fuel and flame the solver releases a tile) |
+| Domain | `size` (width, height, depth in meters; stands on the floor), `resolution` (cells along the longest side, 16–1024), `closed_floor`, `sparse` (compute only tiles with gas, on by default), `cutoff` (below this value of smoke, heat, fuel and flame the solver releases a tile), `gpu` (advect on the graphics card through Vulkan, the same result to the bit; [gpu.md](gpu.md#7-the-gas-on-the-gpu)) |
 | Time | `substeps`, `pressure_cycles`, `seed` (the frame rate is shared, in the Output node) |
 | Motion | `buoyancy`, `weight` (weight of the smoke), `vorticity` (vortices that a coarse grid smears out) |
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |
@@ -618,6 +618,10 @@ of it. So that the correction does not create new extrema, it is clamped to the 
 values it was interpolated from. On open boundaries the correction is
 turned off: the path there leads out of the domain, from which zero comes back, and the "correction"
 would add smoke near the boundary.
+
+With the Pyro Solver's **GPU** on, all of this runs on the graphics card,
+each cell computed as here, operation for operation: the same gas to the
+bit ([gpu.md](gpu.md#7-the-gas-on-the-gpu)).
 
 ### The MAC grid
 

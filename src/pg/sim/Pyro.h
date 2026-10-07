@@ -64,6 +64,8 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -76,9 +78,14 @@ class StateWriter;
 /// (SolverSettings::evaporate): warm smoke leaves it be, the flames take it.
 inline constexpr float kBoil = 0.5f;
 
+class PyroGpu;
+
 class PyroSolver {
 public:
     explicit PyroSolver(const Scene& scene = Scene::fire());
+    ~PyroSolver();
+    PyroSolver(PyroSolver&&) noexcept;
+    PyroSolver& operator=(PyroSolver&&) noexcept;
 
     /// Empty domain, time 0.
     void reset();
@@ -168,6 +175,11 @@ public:
         double total() const { return solids + tiles + emit + advect + combust + forces + project + dissipate; }
     };
     const Times& times() const { return times_; }
+    /// With the solver's gpu setting: what does the GPU's share, or why
+    /// nothing does -- empty before the first step that asked.
+    const std::string& gpuNote() const { return gpuNote_; }
+    /// The GPU at work; null when the CPU does everything.
+    const PyroGpu* gpu() const { return gpu_.get(); }
 
     /// Sparse: lets go of the tiles the gas has left and takes on those it
     /// may reach in a step of dt -- step() does, before each step.
@@ -182,8 +194,14 @@ public:
     bool loadState(StateReader& in);
 
 private:
+    friend class PyroGpu;
     /// Every field onto the tiles `cells` (and their faces).
     void retile(std::shared_ptr<const Tiles> cells);
+    /// advect's share on the GPU, if the settings ask for it and there is
+    /// one: false, the CPU to do it.
+    bool advectOnGpu(float dt);
+    /// What advect does after the fields are carried: solids empty, walls.
+    void finishAdvect();
     void updateSolids();
     /// Zero velocity on every face the gas cannot flow through: at solids,
     /// and at the floor when it is closed.
@@ -225,6 +243,9 @@ private:
     int frame_ = 0;
     float time_ = 0.0f;
     Times times_;
+    std::unique_ptr<PyroGpu> gpu_;
+    bool gpuTried_ = false;  // a device was looked for; gpuNote_ says how it went
+    std::string gpuNote_;
 };
 
 /// Transmittance from each cell towards a light: exp(-optical depth) through

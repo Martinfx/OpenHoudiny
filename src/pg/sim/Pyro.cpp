@@ -1,6 +1,7 @@
 #include "pg/sim/Pyro.h"
 
 #include "pg/core/Parallel.h"
+#include "pg/sim/PyroGpu.h"
 #include "pg/sim/Shared.h"
 #include "pg/sim/State.h"
 
@@ -40,6 +41,9 @@ using detail::noise3;
 // --- set-up ----------------------------------------------------------------------
 
 PyroSolver::PyroSolver(const Scene& scene) : scene_(scene.sanitized()) { reset(); }
+PyroSolver::~PyroSolver() = default;
+PyroSolver::PyroSolver(PyroSolver&&) noexcept = default;
+PyroSolver& PyroSolver::operator=(PyroSolver&&) noexcept = default;
 
 void PyroSolver::setScene(const Scene& scene) {
     const Scene safe = scene.sanitized();
@@ -592,6 +596,11 @@ void PyroSolver::emit(float dt) {
 // --- advect ----------------------------------------------------------------------
 
 void PyroSolver::advect(float dt) {
+    if (advectOnGpu(dt)) {
+        for (int a = 0; a < 3; ++a) std::swap(vel_[a], velNext_[a]);
+        finishAdvect();
+        return;
+    }
     const float cells = dt / domain_.voxel;  // velocity x dt, in cells
     // Where the gas of each cell was a step ago, and where it will be (RK2).
     forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
@@ -619,10 +628,40 @@ void PyroSolver::advect(float dt) {
     advectScalar(fuel_);
     advectScalar(flame_);
     if (steamy_) advectScalar(steam_);
+    finishAdvect();
+}
+
+void PyroSolver::finishAdvect() {
     for (const size_t c : solidCells_) {
         density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = steam_.data()[c] = 0.0f;
     }
     enforceWalls();
+}
+
+bool PyroSolver::advectOnGpu(float dt) {
+    if (!scene_.solver.gpu || cells_->stored().empty()) return false;
+    if (!gpu_) {
+        if (gpuTried_) return false;
+        gpuTried_ = true;
+        std::string why;
+        gpu_ = PyroGpu::open(why);
+        if (!gpu_) {
+            gpuNote_ = "the CPU advects: " + why;
+            return false;
+        }
+        gpuNote_ = "advecting on " + gpu_->device();
+    }
+    // Grids of whole tiles, nothing but zero where nothing is stored: as the
+    // kernels take them.
+    bool fits = nx_ % Tiles::kSide == 0 && ny_ % Tiles::kSide == 0 && nz_ % Tiles::kSide == 0;
+    for (const SparseGrid* g : {&vel_[0], &vel_[1], &vel_[2], &density_, &temperature_, &fuel_, &flame_, &steam_}) {
+        fits = fits && g->background() == 0.0f;
+    }
+    if (fits && gpu_->advect(*this, dt)) return true;
+    // Once it has failed the CPU does it from then on.
+    gpuNote_ = "the CPU advects: " + (fits ? gpu_->error() : std::string("grids the GPU does not take"));
+    gpu_.reset();
+    return false;
 }
 
 void PyroSolver::faceVelocity(int axis, int i, int j, int k, float out[3]) const {

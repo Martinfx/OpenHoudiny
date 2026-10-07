@@ -1,0 +1,74 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The velocity carries itself, plain semi-Lagrangian: one component (axis)
+// over the faces that count -- PyroSolver::advectVelocity. In: V, the
+// velocity; out: N, laid out as V.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+layout(std430, binding = 1) readonly buffer Velocity { float V[]; };
+layout(std430, binding = 2) buffer Next { float N[]; };
+
+float velAt(int a, int i, int j, int k) {
+    const int at = find(a + 1, sizeOf(a + 1), i, j, k);
+    return at < 0 ? 0.0 : V[p.vel[a] + uint(at)];
+}
+
+float velSample(int a, float x, float y, float z) {
+    int at[8];
+    vec3 t;
+    cornersAt(a + 1, x, y, z, at, t);
+    float c[8];
+    for (int q = 0; q < 8; ++q) c[q] = at[q] < 0 ? 0.0 : V[p.vel[a] + uint(at[q])];
+    return trilinear(c, t);
+}
+
+vec3 velocityAt(float x, float y, float z) {
+    precise float xh = x + 0.5, yh = y + 0.5, zh = z + 0.5;
+    return vec3(velSample(0, xh, y, z), velSample(1, x, yh, z), velSample(2, x, y, zh));
+}
+
+// PyroSolver::faceVelocity
+vec3 faceVelocity(int axis, ivec3 f) {
+    vec3 out_;
+    out_[axis] = velAt(axis, f.x, f.y, f.z);
+    const int n = axis == 0 ? p.nx : axis == 1 ? p.ny : p.nz;
+    ivec3 below = f, above = f;
+    below[axis] = max(below[axis] - 1, 0);
+    above[axis] = min(above[axis], n - 1);
+    for (int b = 0; b < 3; ++b) {
+        if (b == axis) continue;
+        ivec3 e = ivec3(0);
+        e[b] = 1;
+        const ivec3 be = below + e, ae = above + e;
+        precise float sum = velAt(b, below.x, below.y, below.z) + velAt(b, be.x, be.y, be.z);
+        sum = sum + velAt(b, above.x, above.y, above.z);
+        sum = sum + velAt(b, ae.x, ae.y, ae.z);
+        precise float r = 0.25 * sum;
+        out_[b] = r;
+    }
+    return out_;
+}
+
+void main() {
+    const int axis = p.axis;
+    const float ox = axis == 0 ? 0.0 : 0.5, oy = axis == 1 ? 0.0 : 0.5, oz = axis == 2 ? 0.0 : 0.5;
+    for (uint half_ = 0u; half_ < 2u; ++half_) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(axis + 1, half_, slot, f)) continue;
+        const uint at = p.vel[axis] + indexOf(slot, f);
+        precise float x = float(f.x) + ox, y = float(f.y) + oy, z = float(f.z) + oz;
+        const vec3 v0 = faceVelocity(axis, f);
+        precise float h = 0.5 * p.cells;
+        precise float hx = x - h * v0.x, hy = y - h * v0.y, hz = z - h * v0.z;
+        const vec3 v1 = velocityAt(hx, hy, hz);
+        precise float px = x - p.cells * v1.x, py = y - p.cells * v1.y, pz = z - p.cells * v1.z;
+        if (px < 0.0 || px > float(p.nx) || pz < 0.0 || pz > float(p.nz) || py > float(p.ny) ||
+            (py < 0.0 && p.floorClosed == 0)) {
+            N[at] = 0.0;
+            continue;
+        }
+        precise float sx = px + (0.5 - ox), sy = py + (0.5 - oy), sz = pz + (0.5 - oz);
+        N[at] = velSample(axis, sx, sy, sz);
+    }
+}

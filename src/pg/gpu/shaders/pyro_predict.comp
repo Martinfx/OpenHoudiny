@@ -1,0 +1,41 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// MacCormack's first step for one field: the field where each cell's gas came
+// from, and the least and the most of the eight cells it was read from --
+// PyroSolver::advectScalar's first loop. In: S (the field at p.field), P
+// (back); out: W, the planes predicted, lows, highs.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+layout(std430, binding = 1) readonly buffer Fields { float S[]; };
+layout(std430, binding = 2) readonly buffer Paths { float P[]; };
+layout(std430, binding = 3) writeonly buffer Work { float W[]; };
+
+void main() {
+    for (uint half_ = 0u; half_ < 2u; ++half_) {
+        uint slot;
+        ivec3 c;
+        if (!cellOf(0, half_, slot, c)) continue;
+        const uint at = indexOf(slot, c);
+        const float x = P[at], y = P[p.plane + at], z = P[2u * p.plane + at];
+        if (outside(x, y, z, p.nx, p.ny, p.nz)) {
+            W[at] = 0.0;
+            W[p.plane + at] = 0.0;
+            W[2u * p.plane + at] = 0.0;
+            continue;
+        }
+        int corner[8];
+        vec3 t;
+        cornersAt(0, x, y, z, corner, t);
+        float v[8];
+        for (int q = 0; q < 8; ++q) v[q] = corner[q] < 0 ? 0.0 : S[p.field + uint(corner[q])];
+        // As std::min and std::max of a list: the first of the least, of the most.
+        float lo = v[0], hi = v[0];
+        for (int q = 1; q < 8; ++q) {
+            if (v[q] < lo) lo = v[q];
+            if (hi < v[q]) hi = v[q];
+        }
+        W[at] = trilinear(v, t);
+        W[p.plane + at] = lo;
+        W[2u * p.plane + at] = hi;
+    }
+}

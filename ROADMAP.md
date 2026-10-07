@@ -430,8 +430,9 @@ nothing to simplify. Ten times as many in the same time needs a GPU solver
 - **GPU** for the solvers — begun ([docs/gpu.md](docs/gpu.md)): compute
   through Vulkan, on NVIDIA, AMD and Intel cards; devices, memory on the
   device, kernels compiled with the program, `prototype gpu` measuring a
-  card against the CPU, with results the same to the bit. Next the gas
-  solver's step: advection, pressure, then all of it on the device.
+  card against the CPU, with results the same to the bit. The Pyro
+  Solver's GPU switch advects the gas on the card, the same to the bit as
+  on the CPU. Next the pressure, then all of the step on the device.
 - **Packed primitives, instances and out-of-core** — millions of pieces and
   data larger than memory.
 

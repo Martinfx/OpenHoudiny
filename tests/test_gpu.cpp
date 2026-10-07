@@ -7,9 +7,13 @@
 
 #include "pg/gpu/Gpu.h"
 #include "pg/gpu/SelfTest.h"
+#include "pg/sim/Pyro.h"
+#include "pg/sim/PyroGpu.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -94,6 +98,88 @@ TEST(gpu_device_is_chosen_by_name_or_not_at_all) {
     CHECK(device->error().find("no_such_kernel") != std::string::npos);
     std::vector<std::string> kernels = gpu::kernels();
     CHECK(std::find(kernels.begin(), kernels.end(), "jacobi") != kernels.end());
+}
+
+namespace {
+
+/// PG_GPU set to the first device for as long as it lives -- a CPU one too,
+/// which the solvers would not take on their own -- unless it is set
+/// already. False without a device.
+struct AnyDeviceForSolvers {
+    bool ok = false;
+    bool set = false;
+    AnyDeviceForSolvers() {
+        if (const char* v = std::getenv("PG_GPU"); v && *v) {
+            ok = std::strcmp(v, "none") != 0;
+            return;
+        }
+        std::string why;
+        const std::vector<gpu::DeviceInfo> list = gpu::devices(&why);
+        for (const gpu::DeviceInfo& d : list) {
+            if (!d.usable) continue;
+            setenv("PG_GPU", std::to_string(d.index).c_str(), 1);
+            ok = set = true;
+            return;
+        }
+        std::printf("    (no Vulkan device: %s -- skipped)\n", why.c_str());
+    }
+    ~AnyDeviceForSolvers() {
+        if (set) unsetenv("PG_GPU");
+    }
+};
+
+bool sameBits(const sim::SparseGrid& a, const sim::SparseGrid& b) {
+    return a.tiles() == b.tiles() && a.size() == b.size() &&
+           std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+}
+
+/// Steps `scene` on the CPU and with the GPU advecting, side by side: every
+/// field the same to the bit after every step.
+void checkGasOnBoth(sim::Scene scene, int steps) {
+    scene.solver.gpu = false;
+    sim::PyroSolver cpu(scene);
+    scene.solver.gpu = true;
+    sim::PyroSolver gpu(scene);
+    for (int s = 0; s < steps; ++s) {
+        cpu.step();
+        gpu.step();
+        CHECK(gpu.gpu() != nullptr);
+        if (!gpu.gpu()) {
+            std::printf("    %s\n", gpu.gpuNote().c_str());
+            return;
+        }
+        bool same = sameBits(cpu.density(), gpu.density()) && sameBits(cpu.temperature(), gpu.temperature()) &&
+                    sameBits(cpu.fuel(), gpu.fuel()) && sameBits(cpu.flame(), gpu.flame()) &&
+                    sameBits(cpu.steam(), gpu.steam());
+        for (int a = 0; a < 3; ++a) same = same && sameBits(cpu.velocity(a), gpu.velocity(a));
+        CHECK(same);
+        if (!same) {
+            std::printf("    step %d differs\n", s + 1);
+            return;
+        }
+    }
+    std::printf("    %d steps, %zu cells at the end, the same to the bit; %s\n", steps, gpu.activeCells(),
+                gpu.gpuNote().c_str());
+}
+
+}  // namespace
+
+TEST(gpu_advection_of_the_gas_is_the_cpus_to_the_bit) {
+    AnyDeviceForSolvers device;
+    if (!device.ok) return;
+    // Fire: fuel, flame, a closed floor; tiles come and go as it rises.
+    sim::Scene fire = sim::Scene::fire();
+    fire.solver.resolution = 40;
+    checkGasOnBoth(fire, 24);
+    // Smoke round a ball, the floor open: solids, gas leaving at every side.
+    sim::Scene smoke = sim::Scene::smoke();
+    smoke.solver.resolution = 32;
+    smoke.solver.closedFloor = false;
+    sim::Collider ball;
+    ball.center = Vec3(0.0f, 0.5f, 0.0f);
+    ball.size = Vec3(0.25f);
+    smoke.colliders.push_back(ball);
+    checkGasOnBoth(smoke, 20);
 }
 
 #endif  // PG_HAVE_VULKAN
