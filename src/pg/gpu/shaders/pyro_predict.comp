@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // MacCormack's first step for one field: the field where each cell's gas came
 // from, and the least and the most of the eight cells it was read from --
 // PyroSolver::advectScalar's first loop. In: S (the field at p.field), P

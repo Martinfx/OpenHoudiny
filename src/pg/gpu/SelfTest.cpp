@@ -4,6 +4,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstring>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -48,7 +51,91 @@ void jacobiCpu(const std::vector<float>& in, const std::vector<float>& rhs, std:
     });
 }
 
+uint32_t bitsOf(float v) {
+    uint32_t b = 0;
+    std::memcpy(&b, &v, sizeof b);
+    return b;
+}
+
+float floatOf(uint32_t b) {
+    float v = 0.0f;
+    std::memcpy(&v, &b, sizeof v);
+    return v;
+}
+
+bool tiny(float v) { return v != 0.0f && std::fpclassify(v) == FP_SUBNORMAL; }
+
+/// The same bits, or a NaN for a NaN: which NaN is no matter.
+bool same(float gpu, float cpu) { return bitsOf(gpu) == bitsOf(cpu) || (std::isnan(gpu) && std::isnan(cpu)); }
+
 }  // namespace
+
+ArithmeticCheck checkArithmetic(Device& device, size_t numbers, uint32_t seed) {
+    // Of every kind, a quarter each: any bits at all; subnormal numbers by
+    // ordinary ones; numbers whose products and quotients come out near
+    // 2^-126; and numbers between 1 and 2, where most of the rounding is.
+    std::mt19937 random(seed);
+    std::vector<float> x(numbers), y(numbers);
+    auto between = [&](int lo, int hi) {  // a positive or negative number of 2^lo .. 2^hi
+        const uint32_t e = static_cast<uint32_t>(lo + 127 + static_cast<int>(random() % static_cast<uint32_t>(hi - lo + 1)));
+        return floatOf((random() & 0x807fffffu) | (e << 23));
+    };
+    for (size_t i = 0; i < numbers; ++i) {
+        switch (i % 4) {
+            case 0: x[i] = floatOf(random()); y[i] = floatOf(random()); break;
+            case 1: x[i] = floatOf(random() & 0x807fffffu); y[i] = between(-4, 4); break;
+            case 2: x[i] = between(-80, -40); y[i] = i % 8 == 2 ? between(-80, -40) : between(40, 80); break;
+            default: x[i] = between(0, 0); y[i] = between(0, 0); break;
+        }
+    }
+    return checkArithmetic(device, x, y);
+}
+
+ArithmeticCheck checkArithmetic(Device& device, const std::vector<float>& x, const std::vector<float>& y) {
+    ArithmeticCheck r;
+    const size_t numbers = std::min(x.size(), y.size());
+    r.checked = numbers;
+    const size_t bytes = numbers * sizeof(float);
+    auto bx = device.buffer(bytes), by = device.buffer(bytes), bo = device.buffer(3 * bytes);
+    if (!bx || !by || !bo || !device.upload(*bx, x.data(), bytes) || !device.upload(*by, y.data(), bytes)) {
+        r.error = device.error();
+        return r;
+    }
+    const uint32_t n = static_cast<uint32_t>(numbers);
+    const uint32_t groups = static_cast<uint32_t>(std::clamp<size_t>((numbers + 255) / 256, 1, 65535));
+    Batch batch(device);
+    batch.dispatch("arith_check", {bx.get(), by.get(), bo.get()}, n, groups);
+    std::vector<uint32_t> out(3 * numbers);
+    if (batch.run() < 0.0 || !device.download(*bo, out.data(), 3 * bytes)) {
+        r.error = device.error();
+        return r;
+    }
+    for (size_t i = 0; i < numbers; ++i) {
+        bool wrong = false;
+        if (!same(floatOf(out[3 * i]), x[i] / y[i])) {
+            ++r.divisionWrong;
+            wrong = true;
+        }
+        if (!same(floatOf(out[3 * i + 1]), std::sqrt(x[i]))) {
+            ++r.sqrtWrong;
+            wrong = true;
+        }
+        const float product = x[i] * y[i];
+        if (!same(floatOf(out[3 * i + 2]), product)) {
+            if (tiny(x[i]) || tiny(y[i]) || tiny(product)) {
+                ++r.subnormalsLost;
+            } else {
+                ++r.productWrong;
+                wrong = true;
+            }
+        }
+        if (wrong && r.divisionWrong + r.sqrtWrong + r.productWrong == 1) {
+            r.x = x[i];
+            r.y = y[i];
+        }
+    }
+    return r;
+}
 
 float sumLikeTheGpu(const float* v, size_t n) {
     std::vector<float> now(v, v + n), next;
@@ -169,6 +256,8 @@ SelfTest selfTest(Device& device, size_t floats, int side) {
     }
     r.cpuCellsPerS = static_cast<double>(cells) * 2 * kRounds / (msSince(t) * 1e-3);
     r.jacobiSame = gpuP == p;
+    r.arithmetic = checkArithmetic(device, std::min<size_t>(floats / 8, size_t{1} << 20));
+    if (!r.arithmetic.error.empty()) r.error = r.arithmetic.error;
     return r;
 }
 

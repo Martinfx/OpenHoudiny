@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // y = a x + y over n floats: the device's memory read twice and written once
 // for every number -- how fast it moves data (prototype gpu).
 layout(local_size_x = 256) in;

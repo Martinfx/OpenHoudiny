@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // Where the gas of each cell was a step ago and where it will be, RK2 through
 // the velocity -- PyroSolver::advect's first loop. Out: P, the six planes
 // back x, y, z and forward x, y, z.

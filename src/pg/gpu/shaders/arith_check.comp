@@ -1,0 +1,24 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// The device's arithmetic against the CPU's (SelfTest.cpp): exactDiv and
+// exactSqrt, and the device's own product -- the same as the CPU's, unless it
+// flushes subnormal numbers to 0. Out: three bit patterns a number.
+layout(local_size_x = 256) in;
+#include "exact.glsl"
+layout(std430, binding = 0) readonly buffer X { float x[]; };
+layout(std430, binding = 1) readonly buffer Y { float y[]; };
+layout(std430, binding = 2) writeonly buffer Out { uint o[]; };
+layout(push_constant) uniform Push {
+    uint n;
+} p;
+
+void main() {
+    const uint step = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    for (uint i = gl_GlobalInvocationID.x; i < p.n; i += step) {
+        o[3u * i] = floatBitsToUint(exactDiv(x[i], y[i]));
+        o[3u * i + 1u] = floatBitsToUint(exactSqrt(x[i]));
+        precise float product = x[i] * y[i];
+        o[3u * i + 2u] = floatBitsToUint(product);
+    }
+}

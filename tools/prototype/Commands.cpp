@@ -1763,9 +1763,26 @@ int gpuCommand(const Options& o) {
     row("pressure", number(t.gpuCellsPerS / 1e9, 2, " Gcells/s"), number(t.cpuCellsPerS / 1e9, 2, " Gcells/s"),
         number(t.gpuCellsPerS / t.cpuCellsPerS, 1, "x"),
         "Jacobi sweeps over " + std::to_string(side) + "^3 cells: " + (t.jacobiSame ? same : differs));
+    const gpu::ArithmeticCheck& a = t.arithmetic;
+    const std::string checked = std::to_string(a.checked) + " numbers of every kind";
+    const std::string wrong = "NOT the same as on the CPU -- " + std::to_string(a.divisionWrong) + " quotients, " +
+                              std::to_string(a.sqrtWrong) + " roots";
+    row("divide", "", "", "",
+        "division and square root over " + checked + ": " + (a.divisionWrong + a.sqrtWrong == 0 ? same : wrong));
+    row("tiny", "", "", "",
+        std::string("numbers below 2^-126: ") +
+            (a.subnormalsLost == 0 ? "kept, as on the CPU"
+                                   : "flushed to 0 by the device in " + std::to_string(a.subnormalsLost) +
+                                         " products -- results may differ in the last bits near 0") +
+            (d.keepsSubnormals ? "" : " (it cannot be asked to keep them)"));
     std::fflush(stdout);
-    if (!t.saxpyRight || !sumSame || !t.jacobiSame) {
+    if (!t.saxpyRight || !sumSame || !t.jacobiSame || !a.exact()) {
         if (!sumSame) std::fprintf(stderr, "sum: %.9g on the GPU, %.9g on the CPU\n", t.gpuSum, t.cpuSum);
+        if (!a.exact()) {
+            std::fprintf(stderr, "arithmetic: %zu quotients, %zu roots, %zu products wrong; the first of %.9g and %.9g\n",
+                         a.divisionWrong, a.sqrtWrong, a.productWrong, static_cast<double>(a.x),
+                         static_cast<double>(a.y));
+        }
         return 1;
     }
     return 0;

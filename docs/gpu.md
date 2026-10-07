@@ -91,6 +91,8 @@ there are, or `--threads N`), and the results are compared.
 | memory | `y = 2x + y` over 32 million numbers, five times; bytes read and written a second | the solvers are bound by memory, not by arithmetic |
 | sum | the 32 million numbers added up, in blocks of 256, the halves of each block one onto the other, then the same over the sums | the sums of a solver (how far the pressure is from solved) stay the same to the bit |
 | pressure | Jacobi sweeps of the Poisson equation over 256³ cells, ten of them; cells a second | what the pressure of the gas solver does most |
+| divide | division and the square root, done in integers (§5), over a million numbers of every kind — normal, subnormal, infinite, NaN — against the CPU's `/` and `std::sqrt` | the solvers divide and take roots, and must get the CPU's bits |
+| tiny | the device's own products of numbers near 0: whether it keeps numbers below 2^-126, as the CPU does, or flushes them to 0 | gas thinning out comes near 0 |
 
 On a CPU device, or with `--quick`: 4 million numbers and 128³ cells.
 
@@ -116,12 +118,24 @@ additions, subtractions and multiplications give the CPU's result to the
 bit, as `prototype gpu` shows on every device: every GPU rounds those as
 IEEE 754 says, as the CPU does. A division it need not — Vulkan allows it
 2.5 units in the last place, and NVIDIA's is a reciprocal and a product —
-so the kernels never divide by what they compute: they multiply by a
-reciprocal the CPU worked out, and the CPU multiplies by the same one.
+nor a square root. So the kernels divide and take roots with
+`exactDiv` and `exactSqrt` (`src/pg/gpu/shaders/exact.glsl`): long division
+and the root digit by digit, on the integers of the numbers' bits, rounded
+as IEEE 754 rounds — the CPU's bits on every device, subnormal numbers,
+infinities and NaN included. (The multigrid's sweeps do better still:
+they multiply by a reciprocal the CPU worked out once.)
+
+Numbers below 2^-126 — subnormal — a GPU may flush to 0 unless asked to
+keep them. Every kernel is built twice: as it is, and asking for them to be
+kept (`keep.glsl`); a device that can be asked (NVIDIA, AMD and Intel with
+current drivers) runs the second. `prototype gpu` measures what the device
+does with them either way.
+
 Functions like `exp` and `sin` are computed differently by each vendor's
 hardware and by the CPU's library: a solver that uses them will be the
 same on one device every time, and close to the CPU's, but not the same to
-the bit.
+the bit. The gas solver works them out on the CPU, once a step, and gives
+the kernels the numbers.
 
 ## 6. For programmers: `pg::gpu`
 
@@ -143,10 +157,13 @@ if (ms < 0.0) report(device->error());
 ```
 
 - **Kernels** are GLSL compute shaders in `src/pg/gpu/shaders/NAME.comp`
-  (`#version 450`): storage buffers at bindings 0 to 7 in the order
-  `dispatch` gets them, push constants of up to 128 bytes. CMake compiles
-  each to SPIR-V (Vulkan 1.1) into the program; the kernel is then known by
-  its file's name. A new `.comp` is picked up by the next build.
+  (`#version 450`, then the include directive and `#include "keep.glsl"`):
+  storage buffers at bindings 0 to 7 in the order `dispatch` gets them,
+  push constants of up to 128 bytes. CMake compiles each to SPIR-V (Vulkan
+  1.1) twice — as it is, and keeping subnormal numbers — into the program;
+  the kernel is then known by its file's name. A new `.comp` is picked up
+  by the next build. A kernel that divides or takes a root includes
+  `exact.glsl`.
 - **Buffer** is memory on the device. `upload` and `download` go through
   64 MB of memory both the CPU and the device see, and wait.
 - **Batch** records kernels, copies and fills, each seeing what those

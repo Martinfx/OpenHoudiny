@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // Fine to coarse: each coarse cell that counts gets the mean of its eight
 // children's residuals -- restrictTo(). The level is the coarse one; the
 // other, the finer, with its r.

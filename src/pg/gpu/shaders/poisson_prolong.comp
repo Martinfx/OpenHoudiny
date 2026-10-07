@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // Coarse to fine, added: trilinear, each fine cell between its coarse cell
 // (3/4 a side) and the next towards it (1/4); past a side of the box the
 // ghost mirrors the cell, negated at an open side -- prolongAdd(). The level

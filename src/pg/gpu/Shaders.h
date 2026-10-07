@@ -13,6 +13,10 @@ struct Spirv {
     const char* name;  ///< the .comp's name, without the extension
     const uint32_t* words;
     size_t count;
+    /// Built with PG_KEEP_SUBNORMALS: for a device that keeps numbers below
+    /// 2^-126 when asked to (shaders/keep.glsl).
+    const uint32_t* keepWords;
+    size_t keepCount;
 };
 
 extern const Spirv kSpirv[];

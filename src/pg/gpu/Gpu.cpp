@@ -174,12 +174,23 @@ DeviceInfo describe(const vk::Api& api, VkPhysicalDevice pd, int index, uint32_t
     driver.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
     VkPhysicalDeviceProperties2 props2{};
     props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    // ... and whether it keeps subnormal numbers when asked (1.2, or 1.1
+    // with VK_KHR_shader_float_controls).
+    VkPhysicalDeviceFloatControlsProperties floats{};
+    floats.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;
+    uint32_t count = 0;
+    api.vkEnumerateDeviceExtensionProperties(pd, nullptr, &count, nullptr);
+    std::vector<VkExtensionProperties> extensions(count);
+    api.vkEnumerateDeviceExtensionProperties(pd, nullptr, &count, extensions.data());
     const bool v11 = props.apiVersion >= VK_API_VERSION_1_1, v12 = props.apiVersion >= VK_API_VERSION_1_2;
+    const bool floatControls = v12 || hasExtension(extensions, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
     if (v11) {
         props2.pNext = &subgroup;
         if (v12) subgroup.pNext = &driver;
+        if (floatControls) (v12 ? driver.pNext : subgroup.pNext) = &floats;
         api.vkGetPhysicalDeviceProperties2(pd, &props2);
         d.subgroup = subgroup.subgroupSize;
+        d.keepsSubnormals = floatControls && floats.shaderDenormPreserveFloat32 == VK_TRUE;
     }
     if (v12 && driver.driverName[0]) {
         d.driver = std::string(driver.driverName) + " " + driver.driverInfo;
@@ -198,7 +209,6 @@ DeviceInfo describe(const vk::Api& api, VkPhysicalDevice pd, int index, uint32_t
     // bound as they are dispatched (push descriptors), and room for them.
     std::string missing;
     if (!v11) missing = "Vulkan 1.1";
-    uint32_t count = 0;
     api.vkGetPhysicalDeviceQueueFamilyProperties(pd, &count, nullptr);
     std::vector<VkQueueFamilyProperties> families(count);
     api.vkGetPhysicalDeviceQueueFamilyProperties(pd, &count, families.data());
@@ -207,9 +217,6 @@ DeviceInfo describe(const vk::Api& api, VkPhysicalDevice pd, int index, uint32_t
         if ((families[f].queueFlags & VK_QUEUE_COMPUTE_BIT) && family == UINT32_MAX) family = f;
     }
     if (family == UINT32_MAX) missing = "a queue that computes";
-    api.vkEnumerateDeviceExtensionProperties(pd, nullptr, &count, nullptr);
-    std::vector<VkExtensionProperties> extensions(count);
-    api.vkEnumerateDeviceExtensionProperties(pd, nullptr, &count, extensions.data());
     if (!hasExtension(extensions, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) missing = "VK_KHR_push_descriptor";
     const VkPhysicalDeviceLimits& l = props.limits;
     if (l.maxPerStageDescriptorStorageBuffers < static_cast<uint32_t>(Device::kMaxBuffers) ||
@@ -259,6 +266,7 @@ struct Device::Impl {
     VkQueue queue = VK_NULL_HANDLE;
     uint32_t family = 0;
     VkPhysicalDeviceMemoryProperties memory{};
+    bool keep = false;  ///< the kernels built to keep subnormal numbers (Shaders.h)
     VkCommandPool pool = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
     VkQueryPool timestamps = VK_NULL_HANDLE;  ///< two: when a batch began and ended; none if it cannot tell
@@ -379,13 +387,21 @@ std::unique_ptr<Device> Device::open(const std::string& choice, std::string& why
     queue.queueFamilyIndex = m.family;
     queue.queueCount = 1;
     queue.pQueuePriorities = &priority;
-    const char* extensions[] = {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
+    // Subnormal numbers kept where the device can, as the CPU keeps them: the
+    // kernels built so, and before Vulkan 1.2 the extension that lets them.
+    m.keep = d->info_.keepsSubnormals;
+    std::vector<const char*> extensions = {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
+    VkPhysicalDeviceProperties chosenProps{};
+    api.vkGetPhysicalDeviceProperties(m.physical, &chosenProps);
+    if (m.keep && chosenProps.apiVersion < VK_API_VERSION_1_2) {
+        extensions.push_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+    }
     VkDeviceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue;
-    info.enabledExtensionCount = 1;
-    info.ppEnabledExtensionNames = extensions;
+    info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    info.ppEnabledExtensionNames = extensions.data();
     if (const VkResult r = api.vkCreateDevice(m.physical, &info, nullptr, &m.device); r != VK_SUCCESS) {
         m.device = VK_NULL_HANDLE;
         why = d->info_.name + " would not open: " + vk::resultName(r);
@@ -467,8 +483,8 @@ VkPipeline Device::Impl::pipeline(const std::string& name, std::string& why) {
     vk::Api& a = api();
     VkShaderModuleCreateInfo module{};
     module.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    module.codeSize = code->count * sizeof(uint32_t);
-    module.pCode = code->words;
+    module.codeSize = (keep ? code->keepCount : code->count) * sizeof(uint32_t);
+    module.pCode = keep ? code->keepWords : code->words;
     VkShaderModule shader = VK_NULL_HANDLE;
     if (const VkResult r = a.vkCreateShaderModule(device, &module, nullptr, &shader); r != VK_SUCCESS) {
         why = "kernel " + name + " would not load: " + vk::resultName(r);

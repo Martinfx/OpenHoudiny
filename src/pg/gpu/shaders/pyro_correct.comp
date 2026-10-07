@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // MacCormack's correction: carry the prediction forward again, correct by half
 // the error the round trip shows, keep within what the first step read --
 // PyroSolver::advectScalar's second loop. In: S (the field at p.field), P

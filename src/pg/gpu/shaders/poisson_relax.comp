@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // Half a red-black Gauss-Seidel sweep on one level: the cells of one colour,
 // each from its neighbours of the other -- PoissonSolver::relax. A work group
 // is a tile; its 256 threads are the tile's 256 cells of the colour.

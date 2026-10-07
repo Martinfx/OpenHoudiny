@@ -36,6 +36,9 @@ struct DeviceInfo {
     uint64_t memory = 0;     ///< bytes of its own memory
     uint32_t subgroup = 0;   ///< threads that run in step
     bool cpu = false;        ///< a CPU pretending to be one: llvmpipe, SwiftShader
+    /// It keeps numbers below 2^-126 when the kernels ask it to, as the CPU
+    /// does (shaderDenormPreserveFloat32); else they may come out 0.
+    bool keepsSubnormals = false;
     bool usable = false;     ///< it has what the kernels need -- if not, why in `missing`
     std::string missing;
 };

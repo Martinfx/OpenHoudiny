@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // The velocity carries itself, plain semi-Lagrangian: one component (axis)
 // over the faces that count -- PyroSolver::advectVelocity. In: V, the
 // velocity; out: N, laid out as V.

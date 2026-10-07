@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // One Jacobi sweep of the Poisson equation on a grid of nx x ny x nz cells,
 // zero past its faces: out = (the six neighbours of in - rhs) / 6. What the
 // pressure of a gas solver does most -- cells a second (prototype gpu).

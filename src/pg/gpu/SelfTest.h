@@ -9,8 +9,26 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace pg::gpu {
+
+/// The device's arithmetic against the CPU's over numbers of every kind --
+/// normal, subnormal, infinite, NaN: exact.glsl's division and square root,
+/// and the device's own product.
+struct ArithmeticCheck {
+    size_t checked = 0;
+    size_t divisionWrong = 0, sqrtWrong = 0;  ///< not the CPU's to the bit (a NaN for a NaN will do)
+    size_t productWrong = 0;                  ///< products not the CPU's, of numbers far from 0
+    size_t subnormalsLost = 0;                ///< ... where a number, or the product, is below 2^-126
+    float x = 0.0f, y = 0.0f;                 ///< the first numbers it got wrong
+    std::string error;
+    bool exact() const { return error.empty() && divisionWrong == 0 && sqrtWrong == 0 && productWrong == 0; }
+};
+
+ArithmeticCheck checkArithmetic(Device& device, size_t numbers, uint32_t seed = 1);
+/// ... over x[i] / y[i], sqrt(x[i]), x[i] y[i].
+ArithmeticCheck checkArithmetic(Device& device, const std::vector<float>& x, const std::vector<float>& y);
 
 struct SelfTest {
     // y = a x + y over `floats` numbers: memory read twice and written once.
@@ -24,6 +42,7 @@ struct SelfTest {
     int side = 0;
     double gpuCellsPerS = 0.0, cpuCellsPerS = 0.0;
     bool jacobiSame = false;
+    ArithmeticCheck arithmetic;
     std::string error;  ///< what went wrong on the device; empty if nothing
 };
 

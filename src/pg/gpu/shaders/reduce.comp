@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
 // The sum of each block of 256 floats, into one float: added in pairs, the
 // halves one onto the other, always in the same order -- so the sum is the
 // same to the bit on every device, and on the CPU doing the same

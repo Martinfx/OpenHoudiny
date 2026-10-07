@@ -11,9 +11,11 @@
 #include "pg/sim/PyroGpu.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -98,6 +100,44 @@ TEST(gpu_device_is_chosen_by_name_or_not_at_all) {
     CHECK(device->error().find("no_such_kernel") != std::string::npos);
     std::vector<std::string> kernels = gpu::kernels();
     CHECK(std::find(kernels.begin(), kernels.end(), "jacobi") != kernels.end());
+}
+
+TEST(gpu_division_and_square_root_are_the_cpus_to_the_bit) {
+    auto device = anyDevice();
+    if (!device) return;
+    // Every pair of the numbers at the edges: zeros, infinities, NaN, the
+    // least and the greatest, subnormal and normal, ones and twos and thirds.
+    const float inf = std::numeric_limits<float>::infinity();
+    const float edges[] = {0.0f, -0.0f, inf, -inf, std::numeric_limits<float>::quiet_NaN(),
+                           std::numeric_limits<float>::max(), std::numeric_limits<float>::min(),
+                           std::numeric_limits<float>::denorm_min(), 3.0f * std::numeric_limits<float>::denorm_min(),
+                           std::numeric_limits<float>::min() * 0.75f, std::numeric_limits<float>::min() * 1.25f,
+                           1.0f, -1.0f, 2.0f, 3.0f, 1.0f / 3.0f, 0.1f, 1e-30f, 1e30f, 7e-39f, 1.5e-45f,
+                           16777215.0f, 16777217.0f, std::nextafter(1.0f, 2.0f), std::nextafter(1.0f, 0.0f),
+                           std::nextafter(2.0f, 0.0f)};
+    std::vector<float> x, y;
+    for (const float a : edges) {
+        for (const float b : edges) {
+            x.push_back(a);
+            y.push_back(b);
+        }
+    }
+    gpu::ArithmeticCheck r = gpu::checkArithmetic(*device, x, y);
+    CHECK_EQ(r.error, std::string());
+    CHECK_EQ(r.divisionWrong, size_t{0});
+    CHECK_EQ(r.sqrtWrong, size_t{0});
+    CHECK_EQ(r.productWrong, size_t{0});
+    // And millions of numbers of every kind.
+    for (uint32_t seed = 1; seed <= 3; ++seed) {
+        r = gpu::checkArithmetic(*device, size_t{1} << 21, seed);
+        CHECK_EQ(r.error, std::string());
+        CHECK_EQ(r.divisionWrong, size_t{0});
+        CHECK_EQ(r.sqrtWrong, size_t{0});
+        CHECK_EQ(r.productWrong, size_t{0});
+        if (!r.exact()) std::printf("    first wrong: %.9g and %.9g\n", static_cast<double>(r.x), static_cast<double>(r.y));
+    }
+    std::printf("    subnormal products the device flushed: %zu (%s)\n", r.subnormalsLost,
+                device->info().keepsSubnormals ? "it keeps them when asked" : "it cannot be asked to keep them");
 }
 
 namespace {
