@@ -1,0 +1,26 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Fine to coarse: each coarse cell that counts gets the mean of its eight
+// children's residuals -- restrictTo(). The level is the coarse one; the
+// other, the finer, with its r.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "poisson.glsl"
+
+void main() {
+    uint slot;
+    ivec3 corner;
+    if (!tileOf(slot, corner)) return;
+    const ivec3 n = level(), fine = ivec3(p.onx, p.ony, p.onz);
+    for (int half_ = 0; half_ < 2; ++half_) {
+        const ivec3 c = corner + ivec3(gl_LocalInvocationID.xy, int(gl_LocalInvocationID.z) + 4 * half_);
+        if (any(greaterThanEqual(c, n))) continue;
+        const uint index = indexOf(slot, c);
+        if (!counts(index)) continue;
+        precise float sum = 0.0;
+        for (int q = 0; q < 8; ++q) {
+            sum = sum + at(p.oslots, fine, p.other, 2 * c.x + (q & 1), 2 * c.y + ((q >> 1) & 1), 2 * c.z + (q >> 2));
+        }
+        precise float mean = sum * 0.125;
+        F[p.b + index] = mean;
+    }
+}

@@ -431,8 +431,9 @@ nothing to simplify. Ten times as many in the same time needs a GPU solver
   through Vulkan, on NVIDIA, AMD and Intel cards; devices, memory on the
   device, kernels compiled with the program, `prototype gpu` measuring a
   card against the CPU, with results the same to the bit. The Pyro
-  Solver's GPU switch advects the gas on the card, the same to the bit as
-  on the CPU. Next the pressure, then all of the step on the device.
+  Solver's GPU switch advects the gas and solves its pressure on the card
+  -- three quarters of a step -- the same to the bit as on the CPU. Next all
+  of the step on the device.
 - **Packed primitives, instances and out-of-core** — millions of pieces and
   data larger than memory.
 

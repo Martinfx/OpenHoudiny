@@ -27,7 +27,10 @@
 // solve is the dense one, to the bit.
 //
 // Deterministic: red-black ordering, each half-sweep reading only cells of the
-// other colour, and no sums across cells.
+// other colour, and no sums across cells. A sweep multiplies by 1 / the
+// diagonal, worked out once, rather than dividing: a GPU's division is not
+// rounded as the CPU's is, its products are -- the GPU's solve (PyroGpu)
+// gives this one's to the bit.
 //
 #include "pg/sim/SparseGrid.h"
 
@@ -67,7 +70,19 @@ public:
     /// lies between cells i-1 and i along x (and so on). For tests.
     float faceOpen(int axis, int i, int j, int k) const;
 
+    /// 1 / d for the diagonal d of a box without solids: a whole number, 6,
+    /// one more for each open side the cell touches, one less for each wall.
+    static float inverseOf(int diagonal);
+
+    /// Sweeps before and after the coarser level's correction.
+    static constexpr int kPreSmooth = 2, kPostSmooth = 2;
+    /// The coarsest level, solved by over-relaxed sweeps: how many, and by
+    /// how much -- the optimum for Jacobi's rate on that box.
+    static int coarsestSweeps(int nx, int ny, int nz);
+    static float coarsestOmega(int nx, int ny, int nz);
+
 private:
+    friend class PyroGpu;
     /// Face coefficients and the diagonal of one level -- only with solids.
     /// The finest level's faces are open or not: a bit each, the six of a
     /// cell in a byte (open), not grids of faces (a).
@@ -75,6 +90,7 @@ private:
         SparseGrid a[3];  // (nx+1) x ny x nz faces along x, and so on
         std::vector<uint8_t> open;  // bit 2a: the face below along a, 2a + 1: above
         SparseGrid diagonal;
+        SparseGrid inverse;  // 1 / diagonal; 0 where it is 0: walled in
     };
     /// Which stored cells of a level count, one byte each, as data() has them.
     using Counts = std::vector<uint8_t>;
@@ -108,6 +124,7 @@ private:
     std::shared_ptr<const Tiles> tiles_;  // the fine level's, as last built
     int dims_[3] = {0, 0, 0};
     float h_ = 0.0f;
+    uint64_t generation_ = 0;  // one more each time the hierarchy is built
 };
 
 }  // namespace pg::sim

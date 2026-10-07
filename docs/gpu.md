@@ -9,8 +9,8 @@ What is there now: the foundation (`pg::gpu`) — the devices, memory on the
 device, kernels compiled when the program is built and carried in it,
 `prototype gpu`, which measures a device against the CPU — and the first
 of the gas solver's work on it: **the Pyro Solver's GPU switch advects the
-gas on the graphics card**, with the same result to the bit as on the CPU
-(§7). The rest of the step follows (§8).
+gas and solves its pressure on the graphics card**, with the same result to
+the bit as on the CPU (§7). The rest of the step follows (§8).
 
 ## 1. Quick start
 
@@ -112,11 +112,16 @@ are written so that this order does not matter:
   change the order of operations.
 
 So a device gives the same result every time. Kernels made only of
-additions, multiplications and divisions give the CPU's result to the bit,
-as `prototype gpu` shows on every device. Functions like `exp` and `sin`
-are computed differently by each vendor's hardware and by the CPU's
-library: a solver that uses them will be the same on one device every time,
-and close to the CPU's, but not the same to the bit.
+additions, subtractions and multiplications give the CPU's result to the
+bit, as `prototype gpu` shows on every device: every GPU rounds those as
+IEEE 754 says, as the CPU does. A division it need not — Vulkan allows it
+2.5 units in the last place, and NVIDIA's is a reciprocal and a product —
+so the kernels never divide by what they compute: they multiply by a
+reciprocal the CPU worked out, and the CPU multiplies by the same one.
+Functions like `exp` and `sin` are computed differently by each vendor's
+hardware and by the CPU's library: a solver that uses them will be the
+same on one device every time, and close to the CPU's, but not the same to
+the bit.
 
 ## 6. For programmers: `pg::gpu`
 
@@ -156,40 +161,55 @@ included, and are skipped without one.
 
 ## 7. The gas on the GPU
 
-The Pyro Solver's **GPU** (Domain) does the advection on the graphics card:
-the paths of the gas through the velocity, the velocity carrying itself,
-and MacCormack for smoke, heat, fuel, flame and steam — the biggest part of
-a step on the CPU (about half). The rest of the step stays on the CPU for
+The Pyro Solver's **GPU** (Domain) does the two biggest parts of a step on
+the graphics card — about three quarters of it on the CPU:
+
+- **the advection**: the paths of the gas through the velocity, the
+  velocity carrying itself, and MacCormack for smoke, heat, fuel, flame and
+  steam (`src/pg/gpu/shaders/pyro_*.comp`);
+- **the pressure**: the multigrid's V-cycles over the sparse tiles, every
+  level of them — red-black sweeps, the residual, down to the coarser level
+  and the correction back up — with solids too, whose faces and diagonals
+  the CPU works out when it builds the levels (`poisson_*.comp`).
+
+The rest of the step — sources, combustion, forces — stays on the CPU for
 now.
 
 ```bash
-./build/prototype sim campfire out/fire.png --set gpu=1          # the campfire, advected on the GPU
+./build/prototype sim campfire out/fire.png --set gpu=1          # the campfire, on the GPU
 ./build/pgbench_pyro 160 --example campfire --set gpu=1          # where the time goes; on the GPU and back
 ```
 
-**The same to the bit.** Each kernel (`src/pg/gpu/shaders/pyro_*.comp`)
-does what the CPU does for its cell, operation for operation: the same
-lookups in the sparse tiles, the same trilinear weights, `std::min` and
-`std::clamp` as the CPU takes them, no fused multiply-add. A scene comes out
-the same with the switch on or off; `pgbench_pyro` prints the same
-fingerprint either way, and `pgtests gpu_advection` steps a fire and smoke
-round a ball side by side, comparing every field after every step.
+**The same to the bit.** Each kernel does what the CPU does for its cell,
+operation for operation: the same lookups in the sparse tiles, the same
+trilinear weights, `std::min` and `std::clamp` as the CPU takes them, the
+same order of the sums, no fused multiply-add. Where the CPU divided — by
+the diagonal of the pressure's equation — both now multiply by 1 / the
+diagonal, which the CPU works out once: a GPU's division is not rounded as
+the CPU's is (Vulkan allows it 2.5 units in the last place), its products
+are. And the build tells the compiler not to fuse a multiply with an add
+(`-ffp-contract=off`), whatever `-march` it is given.
+
+A scene comes out the same with the switch on or off: `pgbench_pyro`
+prints the same fingerprint either way, and `pgtests gpu_gas` steps a fire,
+and smoke round a ball, side by side, comparing every field after every
+step.
 
 **What it costs.** Each step the velocity and the fields go to the device
-and come back: on a card in a PCIe slot that is a few milliseconds a step
-for a campfire. `pgbench_pyro` says how long the kernels took and how long
-with the copies. Once the whole step is on the device (§8) only the frame
-comes back.
+and come back, and the pressure and its right-hand side: on a card in a
+PCIe slot that is a few milliseconds a step for a campfire. `pgbench_pyro`
+says how long the kernels took and how long with the copies. Once the whole
+step is on the device (§8) only the frame comes back.
 
-Without a GPU, or when the device fails, the CPU advects — the solver says
-why (`pgbench_pyro`: "the CPU advects: …") and the simulation goes on the
-same. A CPU pretending to be a GPU (lavapipe) is used only when `PG_GPU`
-names it: it computes the same, slower than the program's own threads.
+Without a GPU, or when the device fails, the CPU does it all — the solver
+says why (`pgbench_pyro`, `prototype sim`: "the CPU does it all: …") and the
+simulation goes on the same. A CPU pretending to be a GPU (lavapipe) is used
+only when `PG_GPU` names it: it computes the same, slower than the
+program's own threads.
 
 ## 8. What comes next
 
-1. **Pressure on the GPU** — multigrid over the tiles: a quarter of a step.
-2. **The whole step on the device** — sources, combustion, forces; the
+1. **The whole step on the device** — sources, combustion, forces; the
    fields stay there between steps and come back only for the frame.
-3. **Measured on a real card** — the same scenes on the CPU and on a GTX
+2. **Measured on a real card** — the same scenes on the CPU and on a GTX
    1060, here.

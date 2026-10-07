@@ -646,10 +646,10 @@ bool PyroSolver::advectOnGpu(float dt) {
         std::string why;
         gpu_ = PyroGpu::open(why);
         if (!gpu_) {
-            gpuNote_ = "the CPU advects: " + why;
+            gpuNote_ = "the CPU does it all: " + why;
             return false;
         }
-        gpuNote_ = "advecting on " + gpu_->device();
+        gpuNote_ = "on the GPU, " + gpu_->device() + ": advection and pressure";
     }
     // Grids of whole tiles, nothing but zero where nothing is stored: as the
     // kernels take them.
@@ -659,7 +659,16 @@ bool PyroSolver::advectOnGpu(float dt) {
     }
     if (fits && gpu_->advect(*this, dt)) return true;
     // Once it has failed the CPU does it from then on.
-    gpuNote_ = "the CPU advects: " + (fits ? gpu_->error() : std::string("grids the GPU does not take"));
+    gpuNote_ = "the CPU does it all: " + (fits ? gpu_->error() : std::string("grids the GPU does not take"));
+    gpu_.reset();
+    return false;
+}
+
+bool PyroSolver::solvePressureOnGpu(float h) {
+    // advect() made it, if there is one that will do.
+    if (!scene_.solver.gpu || !gpu_) return false;
+    if (gpu_->solvePressure(*this, h, scene_.solver.pressureCycles)) return true;
+    gpuNote_ = "the CPU does it all: " + gpu_->error();
     gpu_.reset();
     return false;
 }
@@ -1006,7 +1015,7 @@ void PyroSolver::project() {
             anySolid_ && solid_.data()[c] > 0.5f ? 0.0f : divergence(i, j, k) - expansion_.data()[c];
     });
     // The pressure of the previous step is the first guess.
-    poisson_.solve(pressure_, divergence_, h, scene_.solver.pressureCycles);
+    if (!solvePressureOnGpu(h)) poisson_.solve(pressure_, divergence_, h, scene_.solver.pressureCycles);
     // Subtract its gradient. The open sides hold p = 0 on the face -- a ghost
     // cell outside holds minus the cell inside; past the tiles worked on, the
     // still air holds p = 0. What this does to the faces of walls and solids

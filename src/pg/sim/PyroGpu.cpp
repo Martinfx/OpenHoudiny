@@ -1,5 +1,6 @@
 #include "pg/sim/PyroGpu.h"
 
+#include "pg/sim/Poisson.h"
 #include "pg/sim/Pyro.h"
 
 #ifdef PG_HAVE_VULKAN
@@ -33,6 +34,27 @@ struct Push {
 };
 static_assert(sizeof(Push) == 68, "Push must match sparse.glsl");
 
+/// The push constants of src/pg/gpu/shaders/poisson.glsl.
+struct PoissonPush {
+    int32_t nx = 0, ny = 0, nz = 0;
+    uint32_t slots = 0, stored = 0, count = 0;
+    uint32_t faceSlots[3] = {0, 0, 0};
+    uint32_t p = 0, b = 0, r = 0;
+    uint32_t diag = 0, inv = 0;
+    uint32_t faces[3] = {0, 0, 0};
+    uint32_t on = 0, open = 0;
+    int32_t mode = 0, colour = 0;
+    float omega = 1.0f, h2 = 0.0f, invH2 = 0.0f;
+    uint32_t closed = 0;
+    int32_t onx = 0, ony = 0, onz = 0;
+    uint32_t oslots = 0, other = 0;
+};
+static_assert(sizeof(PoissonPush) == 120, "PoissonPush must match poisson.glsl");
+
+/// Where the values start in F: the inverses of the whole-number diagonals
+/// come first.
+constexpr uint32_t kFirstValue = 16;
+
 /// The work groups of `tiles` tiles, one a tile, as x by y: no more along x
 /// than any device takes.
 void groupsOf(size_t tiles, uint32_t& x, uint32_t& y) {
@@ -55,8 +77,16 @@ struct PyroGpu::Impl {
     std::unique_ptr<gpu::Buffer> velocity, next, fields, carried, paths, work;
     std::shared_ptr<const Tiles> tiled;  ///< the cells the tables are of
     uint32_t slots[4] = {0, 0, 0, 0}, stored[4] = {0, 0, 0, 0}, storedCount[4] = {0, 0, 0, 0};
+    // The pressure's multigrid, as the PoissonSolver last built it: each
+    // level's push constants (all but what a kernel sets), its tiles, and
+    // the buffers T, F and B of poisson.glsl.
+    std::vector<PoissonPush> levels;
+    std::vector<uint32_t> levelTiles;  ///< stored tiles of each level, for the work groups
+    std::unique_ptr<gpu::Buffer> poissonTables, poissonValues, poissonBits;
+    const PoissonSolver* built = nullptr;
+    uint64_t generation = 0;
     std::string error;
-    double kernelMs = 0.0, totalMs = 0.0;
+    Times times;
 
     /// `b` of at least `bytes`: made again, with room to grow, when it is
     /// smaller.
@@ -76,7 +106,7 @@ struct PyroGpu::Impl {
 
 struct PyroGpu::Impl {
     std::string error;
-    double kernelMs = 0.0, totalMs = 0.0;
+    Times times;
 };
 
 #endif
@@ -106,8 +136,7 @@ const std::string& PyroGpu::device() const {
 }
 
 const std::string& PyroGpu::error() const { return impl_->error; }
-double PyroGpu::kernelMs() const { return impl_->kernelMs; }
-double PyroGpu::totalMs() const { return impl_->totalMs; }
+const PyroGpu::Times& PyroGpu::times() const { return impl_->times; }
 
 bool PyroGpu::advect(PyroSolver& s, float dt) {
 #ifndef PG_HAVE_VULKAN
@@ -198,8 +227,8 @@ bool PyroGpu::advect(PyroSolver& s, float dt) {
         batch.dispatch("pyro_correct",
                        {m.tables.get(), m.fields.get(), m.paths.get(), m.work.get(), m.carried.get()}, field, gx, gy);
     }
-    m.kernelMs = batch.run();
-    if (m.kernelMs < 0.0) return m.failed();
+    m.times.advectKernels = batch.run();
+    if (m.times.advectKernels < 0.0) return m.failed();
 
     // Back: all of it read first, so a failure leaves the solver as it was.
     std::vector<float> velocity(velFloats), fields(carried.size() * plane);
@@ -211,7 +240,179 @@ bool PyroGpu::advect(PyroSolver& s, float dt) {
         std::copy_n(velocity.data() + push.vel[a], s.velNext_[a].size(), s.velNext_[a].data());
     }
     for (size_t i = 0; i < carried.size(); ++i) std::copy_n(fields.data() + i * plane, plane, carried[i]->data());
-    m.totalMs = msSince(start);
+    m.times.advect = msSince(start);
+    return true;
+#endif
+}
+
+bool PyroGpu::solvePressure(PyroSolver& s, float h, int cycles) {
+#ifndef PG_HAVE_VULKAN
+    (void)s;
+    (void)h;
+    (void)cycles;
+    return false;
+#else
+    Impl& m = *impl_;
+    gpu::Device& d = *m.device;
+    if (!d.ok()) return m.failed();
+    SparseGrid& pressure = s.pressure_;
+    const SparseGrid& divergence = s.divergence_;
+    if (!pressure.shared() || pressure.size() == 0) return true;  // as solve(): nothing to do
+    const auto start = std::chrono::steady_clock::now();
+    PoissonSolver& poisson = s.poisson_;
+    poisson.build(pressure, h);
+
+    // The hierarchy, each time the solver builds it again: its tables, the
+    // cells that count, and with solids the faces and diagonals.
+    if (m.built != &poisson || m.generation != poisson.generation_) {
+        std::vector<int32_t> tables;
+        std::vector<float> values(kFirstValue, 0.0f);
+        std::vector<uint32_t> bits;
+        for (int dgn = 0; dgn < 13; ++dgn) values[static_cast<size_t>(dgn)] = PoissonSolver::inverseOf(dgn);
+        auto table = [&](const Tiles& t) {
+            const uint32_t at = static_cast<uint32_t>(tables.size());
+            for (size_t i = 0; i < t.tileCount(); ++i) tables.push_back(t.slot(i));
+            return at;
+        };
+        auto place = [&](const float* from, size_t n) {
+            const uint32_t at = static_cast<uint32_t>(values.size());
+            if (from) values.insert(values.end(), from, from + n);
+            else values.resize(values.size() + n, 0.0f);
+            return at;
+        };
+        m.levels.clear();
+        m.levelTiles.clear();
+        const size_t count = poisson.coarse_.size() + 1;
+        for (size_t l = 0; l < count; ++l) {
+            const bool fine = l == 0;
+            const SparseGrid& grid = fine ? pressure : poisson.coarse_[l - 1].p;
+            const PoissonSolver::Counts& on = fine ? poisson.fineOn_ : poisson.coarse_[l - 1].on;
+            const PoissonSolver::Operator& op = fine ? poisson.fineOp_ : poisson.coarse_[l - 1].op;
+            const float levelH = fine ? h : poisson.coarse_[l - 1].h;
+            const Tiles& tiles = grid.tiles();
+            PoissonPush q;
+            q.nx = grid.nx();
+            q.ny = grid.ny();
+            q.nz = grid.nz();
+            q.slots = table(tiles);
+            q.stored = static_cast<uint32_t>(tables.size());
+            for (const uint32_t t : tiles.stored()) tables.push_back(static_cast<int32_t>(t));
+            q.count = static_cast<uint32_t>(tiles.stored().size());
+            m.levelTiles.push_back(q.count);
+            const size_t size = grid.size();
+            q.p = place(nullptr, size);
+            q.b = place(nullptr, size);
+            q.r = place(nullptr, size);
+            if (op.diagonal.shared()) {
+                q.diag = place(op.diagonal.data(), op.diagonal.size());
+                q.inv = place(op.inverse.data(), op.inverse.size());
+                if (!op.open.empty()) {
+                    q.mode = 1;
+                    q.open = static_cast<uint32_t>(bits.size());
+                    bits.resize(bits.size() + (op.open.size() + 3) / 4, 0u);
+                    for (size_t c = 0; c < op.open.size(); ++c) {
+                        bits[q.open + c / 4] |= static_cast<uint32_t>(op.open[c]) << (8 * (c % 4));
+                    }
+                } else {
+                    q.mode = 2;
+                    for (int a = 0; a < 3; ++a) {
+                        q.faceSlots[a] = table(op.a[a].tiles());
+                        q.faces[a] = place(op.a[a].data(), op.a[a].size());
+                    }
+                }
+            }
+            q.on = static_cast<uint32_t>(bits.size());
+            bits.resize(bits.size() + (on.size() + 31) / 32, 0u);
+            for (size_t c = 0; c < on.size(); ++c) {
+                if (on[c]) bits[q.on + c / 32] |= 1u << (c % 32);
+            }
+            q.h2 = levelH * levelH;
+            q.invH2 = 1.0f / (levelH * levelH);
+            for (int side = 0; side < 6; ++side) q.closed |= (poisson.closed_[side] ? 1u : 0u) << side;
+            m.levels.push_back(q);
+        }
+        if (bits.empty()) bits.push_back(0u);
+        const size_t tb = tables.size() * sizeof(int32_t), vb = values.size() * sizeof(float),
+                     bb = bits.size() * sizeof(uint32_t);
+        if (!m.fit(m.poissonTables, tb) || !m.fit(m.poissonValues, vb) || !m.fit(m.poissonBits, bb) ||
+            !d.upload(*m.poissonTables, tables.data(), tb) || !d.upload(*m.poissonValues, values.data(), vb) ||
+            !d.upload(*m.poissonBits, bits.data(), bb)) {
+            m.built = nullptr;
+            return m.failed();
+        }
+        m.built = &poisson;
+        m.generation = poisson.generation_;
+    }
+
+    // The first guess and the right-hand side.
+    const size_t f = sizeof(float);
+    const PoissonPush& top = m.levels[0];
+    if (!d.upload(*m.poissonValues, pressure.data(), pressure.size() * f, top.p * f) ||
+        !d.upload(*m.poissonValues, divergence.data(), divergence.size() * f, top.b * f)) {
+        return m.failed();
+    }
+
+    // The V-cycles, as PoissonSolver::vcycle runs them.
+    gpu::Batch batch(d);
+    const std::initializer_list<const gpu::Buffer*> buffers = {m.poissonTables.get(), m.poissonValues.get(),
+                                                               m.poissonBits.get()};
+    auto groups = [&](size_t l, uint32_t& x, uint32_t& y) { groupsOf(m.levelTiles[l], x, y); };
+    auto relax = [&](size_t l, int sweeps, float omega) {
+        uint32_t x = 0, y = 0;
+        groups(l, x, y);
+        for (int sweep = 0; sweep < sweeps; ++sweep) {
+            for (int colour = 0; colour < 2; ++colour) {
+                PoissonPush q = m.levels[l];
+                q.colour = colour;
+                q.omega = omega;
+                batch.dispatch("poisson_relax", buffers, q, x, y);
+            }
+        }
+    };
+    const size_t last = m.levels.size() - 1;
+    auto cycle = [&](auto& self, size_t l) -> void {
+        const PoissonPush& level = m.levels[l];
+        if (l == last) {
+            relax(l, PoissonSolver::coarsestSweeps(level.nx, level.ny, level.nz),
+                  PoissonSolver::coarsestOmega(level.nx, level.ny, level.nz));
+            return;
+        }
+        relax(l, PoissonSolver::kPreSmooth, 1.0f);
+        uint32_t x = 0, y = 0;
+        groups(l, x, y);
+        batch.dispatch("poisson_residual", buffers, level, x, y);
+        // The residual to the coarser level's right-hand side.
+        const PoissonPush& coarse = m.levels[l + 1];
+        PoissonPush down = coarse;
+        down.onx = level.nx;
+        down.ony = level.ny;
+        down.onz = level.nz;
+        down.oslots = level.slots;
+        down.other = level.r;
+        uint32_t cx = 0, cy = 0;
+        groups(l + 1, cx, cy);
+        batch.dispatch("poisson_restrict", buffers, down, cx, cy);
+        batch.fill(*m.poissonValues, 0u, static_cast<size_t>(m.levelTiles[l + 1]) * Tiles::kCells * f,
+                   static_cast<size_t>(coarse.p) * f);
+        self(self, l + 1);
+        // Its correction back up.
+        PoissonPush up = level;
+        up.onx = coarse.nx;
+        up.ony = coarse.ny;
+        up.onz = coarse.nz;
+        up.oslots = coarse.slots;
+        up.other = coarse.p;
+        batch.dispatch("poisson_prolong", buffers, up, x, y);
+        relax(l, PoissonSolver::kPostSmooth, 1.0f);
+    };
+    for (int c = 0; c < cycles; ++c) cycle(cycle, 0);
+    m.times.pressureKernels = batch.run();
+    if (m.times.pressureKernels < 0.0) return m.failed();
+
+    std::vector<float> solved(pressure.size());
+    if (!d.download(*m.poissonValues, solved.data(), solved.size() * f, top.p * f)) return m.failed();
+    std::copy(solved.begin(), solved.end(), pressure.data());
+    m.times.pressure = msSince(start);
     return true;
 #endif
 }

@@ -175,8 +175,9 @@ public:
         double total() const { return solids + tiles + emit + advect + combust + forces + project + dissipate; }
     };
     const Times& times() const { return times_; }
-    /// With the solver's gpu setting: what does the GPU's share, or why
-    /// nothing does -- empty before the first step that asked.
+    /// With the solver's gpu setting: what the GPU does -- the advection and
+    /// the pressure -- or why it does nothing; empty before the first step
+    /// that asked.
     const std::string& gpuNote() const { return gpuNote_; }
     /// The GPU at work; null when the CPU does everything.
     const PyroGpu* gpu() const { return gpu_.get(); }
@@ -200,6 +201,9 @@ private:
     /// advect's share on the GPU, if the settings ask for it and there is
     /// one: false, the CPU to do it.
     bool advectOnGpu(float dt);
+    /// project()'s pressure on the GPU advect() found: false, the CPU to
+    /// solve it.
+    bool solvePressureOnGpu(float h);
     /// What advect does after the fields are carried: solids empty, walls.
     void finishAdvect();
     void updateSolids();

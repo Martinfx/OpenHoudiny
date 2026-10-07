@@ -9,8 +9,6 @@
 namespace pg::sim {
 namespace {
 
-constexpr int kPreSmooth = 2;
-constexpr int kPostSmooth = 2;
 constexpr int kLast = Tiles::kSide - 1;
 constexpr size_t kRow = Tiles::kSide, kSlab = Tiles::kSide * Tiles::kSide;
 
@@ -81,6 +79,22 @@ std::vector<uint8_t> counted(const Tiles& tiles) {
     return on;
 }
 
+/// 1 / d, worked out once: what the sweeps multiply by. 0 for 0.
+float inverse(float d) { return d > 0.0f ? 1.0f / d : 0.0f; }
+
+/// ... for the whole-number diagonals of a box without solids, 3 to 9 (one
+/// side of a cell or the other touches the box, never both).
+constexpr float kInverse[13] = {0.0f,        1.0f,        1.0f / 2.0f, 1.0f / 3.0f,  1.0f / 4.0f,
+                                1.0f / 5.0f, 1.0f / 6.0f, 1.0f / 7.0f, 1.0f / 8.0f,  1.0f / 9.0f,
+                                1.0f / 10.0f, 1.0f / 11.0f, 1.0f / 12.0f};
+
+/// 1 / d for every cell of a diagonal.
+SparseGrid inverses(const SparseGrid& diagonal) {
+    SparseGrid inv(diagonal.shared());
+    for (size_t c = 0; c < diagonal.size(); ++c) inv.data()[c] = inverse(diagonal.data()[c]);
+    return inv;
+}
+
 /// The diagonal from the face coefficients: each face once, a face on a side
 /// of the box twice (the ghost holds -p, twice the drop to the face).
 SparseGrid diagonals(const SparseGrid* a, const std::shared_ptr<const Tiles>& tiles, const std::vector<uint8_t>& on) {
@@ -127,6 +141,18 @@ std::shared_ptr<const Tiles> coarser(const Tiles& fine) {
 
 }  // namespace
 
+int PoissonSolver::coarsestSweeps(int nx, int ny, int nz) { return 2 * std::max({nx, ny, nz}); }
+
+float PoissonSolver::coarsestOmega(int nx, int ny, int nz) {
+    const double pi = 3.14159265358979323846;
+    const double rate = (std::cos(pi / nx) + std::cos(pi / ny) + std::cos(pi / nz)) / 3.0;
+    return static_cast<float>(2.0 / (1.0 + std::sqrt(1.0 - rate * rate)));
+}
+
+float PoissonSolver::inverseOf(int diagonal) {
+    return diagonal >= 0 && diagonal < 13 ? kInverse[diagonal] : inverse(static_cast<float>(diagonal));
+}
+
 void PoissonSolver::setBoundary(const PoissonBoundary& boundary) {
     std::copy(boundary.closed, boundary.closed + 6, closed_);
     solid_ = SparseGrid();
@@ -143,6 +169,7 @@ void PoissonSolver::setBoundary(const PoissonBoundary& boundary) {
 void PoissonSolver::build(const SparseGrid& fine, float h) {
     if (!dirty_ && tiles_ == fine.shared() && h_ == h) return;
     dirty_ = false;
+    ++generation_;
     tiles_ = fine.shared();
     dims_[0] = fine.nx();
     dims_[1] = fine.ny();
@@ -186,6 +213,7 @@ void PoissonSolver::build(const SparseGrid& fine, float h) {
             s += a[4] * (k == 0 ? 2.0f : 1.0f) + a[5] * (k == n[2] - 1 ? 2.0f : 1.0f);
             fineOp_.diagonal.data()[c] = s;
         });
+        fineOp_.inverse = inverses(fineOp_.diagonal);
     }
 
     coarse_.clear();
@@ -236,6 +264,7 @@ void PoissonSolver::build(const SparseGrid& fine, float h) {
                 });
             }
             level.op.diagonal = diagonals(level.op.a, tiles, level.on);
+            level.op.inverse = inverses(level.op.diagonal);
         }
         coarse_.push_back(std::move(level));
         g = &coarse_.back().p;
@@ -259,11 +288,11 @@ void PoissonSolver::relax(SparseGrid& p, const SparseGrid& b, const Counts& on, 
                 return;
             }
             const float sum = bits ? openSum(p, op.open[c], i, j, k, c) : weightedSum(p, op.a, i, j, k, c);
-            v[c] += omega * ((sum - h2 * rhs[c]) / d - v[c]);
+            v[c] += omega * ((sum - h2 * rhs[c]) * op.inverse.data()[c] - v[c]);
         } else {
             float sum, diagonal;
             neighbours(p, i, j, k, c, closed_, sum, diagonal);
-            v[c] += omega * ((sum - h2 * rhs[c]) / diagonal - v[c]);
+            v[c] += omega * ((sum - h2 * rhs[c]) * kInverse[static_cast<int>(diagonal)] - v[c]);
         }
     };
     const Tiles& tiles = p.tiles();
@@ -362,11 +391,7 @@ void PoissonSolver::vcycle(SparseGrid& p, const SparseGrid& b, SparseGrid& r, co
                            float h, size_t next) {
     if (next == coarse_.size()) {
         // The coarsest grid: a few cells a side, solved by over-relaxed sweeps.
-        // The factor is the optimum for Jacobi's rate on this box.
-        const double pi = 3.14159265358979323846;
-        const double rate = (std::cos(pi / p.nx()) + std::cos(pi / p.ny()) + std::cos(pi / p.nz())) / 3.0;
-        const float omega = static_cast<float>(2.0 / (1.0 + std::sqrt(1.0 - rate * rate)));
-        relax(p, b, on, op, h, 2 * std::max({p.nx(), p.ny(), p.nz()}), omega);
+        relax(p, b, on, op, h, coarsestSweeps(p.nx(), p.ny(), p.nz()), coarsestOmega(p.nx(), p.ny(), p.nz()));
         return;
     }
     relax(p, b, on, op, h, kPreSmooth, 1.0f);

@@ -16,6 +16,12 @@ project(prototype LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# The same results on any machine (ARCHITECTURE.md: determinism) and on the
+# GPU (docs/gpu.md): no multiply and add fused into one behind the code's
+# back, whatever -march the build is given.
+if(NOT MSVC)
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=off>)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)

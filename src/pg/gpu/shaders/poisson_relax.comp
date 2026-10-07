@@ -1,0 +1,38 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Half a red-black Gauss-Seidel sweep on one level: the cells of one colour,
+// each from its neighbours of the other -- PoissonSolver::relax. A work group
+// is a tile; its 256 threads are the tile's 256 cells of the colour.
+layout(local_size_x = 4, local_size_y = 8, local_size_z = 8) in;
+#include "poisson.glsl"
+
+void main() {
+    uint slot;
+    ivec3 corner;
+    if (!tileOf(slot, corner)) return;
+    const ivec3 n = level();
+    const int y = int(gl_LocalInvocationID.y), z = int(gl_LocalInvocationID.z);
+    const int j = corner.y + y, k = corner.z + z;
+    const int x = 2 * int(gl_LocalInvocationID.x) + ((p.colour + j + k) & 1);
+    const ivec3 c = ivec3(corner.x + x, j, k);
+    if (any(greaterThanEqual(c, n))) return;
+    const uint index = indexOf(slot, c);
+    if (!counts(index)) return;
+    const float rhs = F[p.b + index];
+    const float v = F[p.p + index];
+    if (p.mode == 0) {
+        float diagonal;
+        const float sum = neighbours(c, diagonal);
+        precise float next = v + p.omega * ((sum - p.h2 * rhs) * F[int(diagonal)] - v);
+        F[p.p + index] = next;
+        return;
+    }
+    const float d = F[p.diag + index];
+    if (d <= 0.0) {  // walled in on every side: nothing flows, nothing to solve
+        F[p.p + index] = 0.0;
+        return;
+    }
+    const float sum = p.mode == 1 ? openSum(c, index) : weightedSum(c);
+    precise float next = v + p.omega * ((sum - p.h2 * rhs) * F[p.inv + index] - v);
+    F[p.p + index] = next;
+}

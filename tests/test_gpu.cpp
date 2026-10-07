@@ -133,9 +133,9 @@ bool sameBits(const sim::SparseGrid& a, const sim::SparseGrid& b) {
            std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
 }
 
-/// Steps `scene` on the CPU and with the GPU advecting, side by side: every
-/// field the same to the bit after every step.
-void checkGasOnBoth(sim::Scene scene, int steps) {
+/// Steps `scene` on the CPU and with the GPU advecting and solving the
+/// pressure, side by side: every field the same to the bit after every step.
+void checkGasOnBoth(sim::Scene scene, int steps, bool solids) {
     scene.solver.gpu = false;
     sim::PyroSolver cpu(scene);
     scene.solver.gpu = true;
@@ -152,25 +152,32 @@ void checkGasOnBoth(sim::Scene scene, int steps) {
                     sameBits(cpu.fuel(), gpu.fuel()) && sameBits(cpu.flame(), gpu.flame()) &&
                     sameBits(cpu.steam(), gpu.steam());
         for (int a = 0; a < 3; ++a) same = same && sameBits(cpu.velocity(a), gpu.velocity(a));
+        same = same && sameBits(cpu.solid(), gpu.solid());
         CHECK(same);
         if (!same) {
             std::printf("    step %d differs\n", s + 1);
             return;
         }
+        // Both on the device: the advection, and the pressure's V-cycles.
+        CHECK(gpu.gpu()->times().advectKernels > 0.0);
+        CHECK(gpu.gpu()->times().pressureKernels > 0.0);
     }
+    // With solids in the gas: the multigrid's faces and diagonals too.
+    const std::vector<float>& solid = gpu.solid().values();
+    CHECK_EQ(std::any_of(solid.begin(), solid.end(), [](float v) { return v > 0.5f; }), solids);
     std::printf("    %d steps, %zu cells at the end, the same to the bit; %s\n", steps, gpu.activeCells(),
                 gpu.gpuNote().c_str());
 }
 
 }  // namespace
 
-TEST(gpu_advection_of_the_gas_is_the_cpus_to_the_bit) {
+TEST(gpu_gas_steps_are_the_cpus_to_the_bit) {
     AnyDeviceForSolvers device;
     if (!device.ok) return;
     // Fire: fuel, flame, a closed floor; tiles come and go as it rises.
     sim::Scene fire = sim::Scene::fire();
     fire.solver.resolution = 40;
-    checkGasOnBoth(fire, 24);
+    checkGasOnBoth(fire, 24, false);
     // Smoke round a ball, the floor open: solids, gas leaving at every side.
     sim::Scene smoke = sim::Scene::smoke();
     smoke.solver.resolution = 32;
@@ -179,7 +186,7 @@ TEST(gpu_advection_of_the_gas_is_the_cpus_to_the_bit) {
     ball.center = Vec3(0.0f, 0.5f, 0.0f);
     ball.size = Vec3(0.25f);
     smoke.colliders.push_back(ball);
-    checkGasOnBoth(smoke, 20);
+    checkGasOnBoth(smoke, 20, true);
 }
 
 #endif  // PG_HAVE_VULKAN

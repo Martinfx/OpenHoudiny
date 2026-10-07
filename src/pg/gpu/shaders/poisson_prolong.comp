@@ -1,0 +1,52 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Coarse to fine, added: trilinear, each fine cell between its coarse cell
+// (3/4 a side) and the next towards it (1/4); past a side of the box the
+// ghost mirrors the cell, negated at an open side -- prolongAdd(). The level
+// is the fine one; the other, the coarser, with its p.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "poisson.glsl"
+
+float coarseAt(int i, int j, int k) { return at(p.oslots, ivec3(p.onx, p.ony, p.onz), p.other, i, j, k); }
+
+void main() {
+    uint slot;
+    ivec3 corner;
+    if (!tileOf(slot, corner)) return;
+    const ivec3 n = level();
+    for (int half_ = 0; half_ < 2; ++half_) {
+        const ivec3 c = corner + ivec3(gl_LocalInvocationID.xy, int(gl_LocalInvocationID.z) + 4 * half_);
+        if (any(greaterThanEqual(c, n))) continue;
+        const uint index = indexOf(slot, c);
+        if (!counts(index)) continue;
+        const int cj = c.y >> 1, ck = c.z >> 1;
+        int oj = (c.y & 1) != 0 ? cj + 1 : cj - 1, ok = (c.z & 1) != 0 ? ck + 1 : ck - 1;
+        float sy = 1.0, sz = 1.0;
+        if (oj < 0 || oj >= p.ony) {
+            sy = closedSide(oj < 0 ? 2 : 3) ? 1.0 : -1.0;
+            oj = cj;
+        }
+        if (ok < 0 || ok >= p.onz) {
+            sz = closedSide(ok < 0 ? 4 : 5) ? 1.0 : -1.0;
+            ok = ck;
+        }
+        precise float w00 = 0.5625, w10 = 0.1875 * sy, w01 = 0.1875 * sz;
+        precise float w11 = 0.0625 * sy * sz;
+        const int ci = c.x >> 1;
+        int oi = (c.x & 1) != 0 ? ci + 1 : ci - 1;
+        float sx = 1.0;
+        if (oi < 0 || oi >= p.onx) {
+            sx = closedSide(oi < 0 ? 0 : 1) ? 1.0 : -1.0;
+            oi = ci;
+        }
+        precise float lineC = w00 * coarseAt(ci, cj, ck) + w10 * coarseAt(ci, oj, ck);
+        lineC = lineC + w01 * coarseAt(ci, cj, ok);
+        lineC = lineC + w11 * coarseAt(ci, oj, ok);
+        precise float lineO = w00 * coarseAt(oi, cj, ck) + w10 * coarseAt(oi, oj, ck);
+        lineO = lineO + w01 * coarseAt(oi, cj, ok);
+        lineO = lineO + w11 * coarseAt(oi, oj, ok);
+        precise float added = 0.75 * lineC + 0.25 * sx * lineO;
+        precise float v = F[p.p + index] + added;
+        F[p.p + index] = v;
+    }
+}

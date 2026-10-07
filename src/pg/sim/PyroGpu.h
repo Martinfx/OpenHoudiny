@@ -1,10 +1,10 @@
 #pragma once
 //
-// The gas solver's work on the GPU (docs/gpu.md): for now advect -- the
-// paths of the gas, the velocity carrying itself, MacCormack for smoke,
-// heat, fuel, flame and steam -- with the kernels of src/pg/gpu/shaders/
-// pyro_*.comp, each the CPU's arithmetic operation for operation: the same
-// fields to the bit.
+// The gas solver's work on the GPU (docs/gpu.md): advect -- the paths of the
+// gas, the velocity carrying itself, MacCormack for smoke, heat, fuel, flame
+// and steam (src/pg/gpu/shaders/pyro_*.comp) -- and the pressure's multigrid
+// (poisson_*.comp), each kernel the CPU's arithmetic operation for
+// operation: the same fields to the bit.
 //
 // A PyroSolver whose settings ask for the GPU makes one when it first
 // advects; without a device (or a build without Vulkan) it says why and the
@@ -32,11 +32,18 @@ public:
     /// on the device and back. False, with error(), if the device failed --
     /// nothing of the solver changed then.
     bool advect(PyroSolver& solver, float dt);
+    /// `solver`'s pressure solve, as its PoissonSolver::solve(pressure,
+    /// divergence, h, cycles) would make it. False, with error(), if the
+    /// device failed -- the pressure as it was then.
+    bool solvePressure(PyroSolver& solver, float h, int cycles);
     const std::string& error() const;
-    /// Milliseconds the device spent on the last advect's kernels, and on
-    /// it all, with the copies there and back.
-    double kernelMs() const;
-    double totalMs() const;
+
+    /// Milliseconds of the last step: the device's on the kernels, and the
+    /// whole of it with the copies there and back.
+    struct Times {
+        double advectKernels = 0.0, advect = 0.0, pressureKernels = 0.0, pressure = 0.0;
+    };
+    const Times& times() const;
 
 private:
     PyroGpu();

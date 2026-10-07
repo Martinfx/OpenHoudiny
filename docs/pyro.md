@@ -426,7 +426,7 @@ fuel), or only where there is smoke.
 
 | section | parameters |
 |---|---|
-| Domain | `size` (width, height, depth in meters; stands on the floor), `resolution` (cells along the longest side, 16–1024), `closed_floor`, `sparse` (compute only tiles with gas, on by default), `cutoff` (below this value of smoke, heat, fuel and flame the solver releases a tile), `gpu` (advect on the graphics card through Vulkan, the same result to the bit; [gpu.md](gpu.md#7-the-gas-on-the-gpu)) |
+| Domain | `size` (width, height, depth in meters; stands on the floor), `resolution` (cells along the longest side, 16–1024), `closed_floor`, `sparse` (compute only tiles with gas, on by default), `cutoff` (below this value of smoke, heat, fuel and flame the solver releases a tile), `gpu` (advect and solve the pressure on the graphics card through Vulkan, the same result to the bit; [gpu.md](gpu.md#7-the-gas-on-the-gpu)) |
 | Time | `substeps`, `pressure_cycles`, `seed` (the frame rate is shared, in the Output node) |
 | Motion | `buoyancy`, `weight` (weight of the smoke), `vorticity` (vortices that a coarse grid smears out) |
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |
@@ -665,7 +665,8 @@ to a few cells. Then it adds the corrections on the way back up. Such a V-cycle 
 (`pressure_cycles`), because it starts from the pressure of the previous step. Smoothing is done
 with red-black Gauss-Seidel: the cells are colored like a checkerboard and each
 half reads only cells of the other color. Each half therefore runs in parallel, and the result
-still does not depend on the number of threads.
+still does not depend on the number of threads — nor on whether it runs on the CPU or, with the
+Pyro Solver's **GPU** on, on the graphics card ([gpu.md](gpu.md#7-the-gas-on-the-gpu)).
 
 Boundaries and obstacles are built directly into the operator:
 
@@ -727,7 +728,9 @@ and compute only the cells near the gas; this solver does the same when
 - **Identical bits.** With all tiles active (`sparse` off) the
   solver is dense and gives bit-identical fields to the previous dense version. This is verified
   by the fingerprint of the last frame in `pgbench_pyro --dense`: `3adea3c11ea39814`
-  before the rewrite and after it.
+  before the rewrite and after it. (The sweeps have since multiplied by 1 / the diagonal
+  instead of dividing by it, as the GPU's do — [gpu.md](gpu.md#7-the-gas-on-the-gpu) —
+  and the bits changed with that.)
 - **Cost.** Air outside the tiles is still. A pressure wave does not propagate through the whole
   domain, only through the tiles around the gas. For dust and smoke this is not visible
   in the image (measurements in chapter 8). For a very fast explosion more Substeps help:
