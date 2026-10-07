@@ -1,76 +1,76 @@
-# Animace: klíčové snímky a pohyblivé překážky
+# Animation: keyframes and moving obstacles
 
-Každý číselný parametr každého uzlu sítě (poloha objektu, palivo zdroje,
-síla větru, hustota kouře ve vzhledu, ohnisko kamery, velikost krychle
-v geometrii…) může mít **klíčové snímky**: hodnotu v daném snímku a způsob,
-jak se dostane k dalšímu klíči. Síť se pak překládá snímek po snímku a
-simulace berou každý krok svět toho snímku. Objekty, které se hýbou, jsou
-**pohyblivé překážky**: plyn i voda převezmou jejich pohyb — koule, která
-projíždí bazénem, před sebou zvedá vlnu a za sebou nechává brázdu; lopatka,
-která se točí v kouři, ho víří.
+Every numeric parameter of every node in a network (an object's position, a source's fuel,
+wind strength, smoke density in the look, camera focal length, box size
+in geometry…) can have **keyframes**: a value at a given frame and a way
+of getting to the next key. The network is then compiled frame by frame, and
+simulations take the world of that frame at each step. Objects that move are
+**moving obstacles**: both gas and water take on their motion — a sphere
+traveling through a pool raises a wave in front of it and leaves a wake behind; a paddle
+spinning in smoke stirs it up.
 
-![Editor: animovaná poloha koule (zelené pole, kosočtverec klíče), klíče na časové ose a brázda ve vodě](img/editor-animation.png)
+![Editor: animated sphere position (green field, key diamond), keys on the timeline and the wake in the water](img/editor-animation.png)
 
-![Příklad wake: koule projíždí bazénem, snímky 20, 40 a 60](img/wake.png)
+![The wake example: a sphere travels through a pool, frames 20, 40 and 60](img/wake.png)
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
-./build/prototype --example wake          # koule tlačí vodu: vlna a brázda
-./build/prototype --example fire_trail    # pochodeň letí smyčkou, lopatka se točí v kouři
+./build/prototype --example wake          # a sphere pushes water: wave and wake
+./build/prototype --example fire_trail    # a torch flies in a loop, a paddle spins in smoke
 ./build/prototype sim wake out/w.png --every 10
 ```
 
-V editoru:
+In the editor:
 
-1. vyber objekt (třeba kouli z Add → Objects),
-2. na snímku 1 stiskni **K** nad viewportem — klíč polohy, rotace a velikosti,
-3. přesuň přehrávací hlavu (klik do časové osy),
-4. posuň objekt gizmem — protože je animovaný, zapíše se klíč tam, kde je
-   hlava,
-5. simulace se spustí znovu a objekt se hýbe; přehrávání ukáže, co udělal
-   s vodou či kouřem.
+1. select an object (e.g. a sphere from Add → Objects),
+2. at frame 1, press **K** over the viewport — a key for position, rotation and size,
+3. move the playhead (click in the timeline),
+4. move the object with the gizmo — because it is animated, a key is written where the
+   playhead is,
+5. the simulation restarts and the object moves; playback shows what it did
+   to the water or smoke.
 
-## 2. Klíče v editoru
+## 2. Keys in the editor
 
-- **Kosočtverec** na začátku řádku parametru: prázdný šedý (jen při najetí
-  myší) — parametr není animovaný; obrys oranžový — animovaný, v tomto
-  snímku klíč nemá; plný oranžový — klíč v tomto snímku. Klik přidá klíč
-  (hodnota, kterou parametr v tu chvíli má) nebo ho smaže; pravé tlačítko
-  otevře nabídku: interpolace k dalšímu klíči (Smooth, Linear, Step),
-  smazat klíč, smazat všechny klíče.
-- **Pole animovaného parametru** je podbarvené: jantarově na klíči, zeleně
-  mezi klíči. Hodnota je ta v aktuálním snímku; úprava hodnoty animovaného
-  parametru zapíše klíč v aktuálním snímku (auto-key). Parametr bez klíčů
-  se upravuje jako dřív — v celé simulaci stejně.
-- **Časová osa** ukazuje klíče: vybraných uzlů výrazně, ostatních uzlů
-  sítě tlumeně.
-- **K** (nad viewportem; nebo Edit → Key Selection) zapíše klíče polohy,
-  rotace a velikosti vybraných objektů, zdrojů a sil v aktuálním snímku.
-- **Gizmo** u animovaného uzlu zapisuje klíče (posun, rotace i velikost).
-- Reset parametru (šipka vpravo) smaže i jeho klíče; smazání posledního
-  klíče nechá parametr na jeho hodnotě.
-- Duplikovaný uzel má stejné klíče. Undo/redo vrací i klíče.
+- **Diamond** at the start of a parameter row: empty gray (only on mouse
+  hover) — the parameter is not animated; orange outline — animated, no key
+  at this frame; solid orange — a key at this frame. Clicking adds a key
+  (the value the parameter has at that moment) or deletes it; the right button
+  opens a menu: interpolation to the next key (Smooth, Linear, Step),
+  delete key, delete all keys.
+- **The field of an animated parameter** is tinted: amber on a key, green
+  between keys. The value is the one at the current frame; editing the value of an animated
+  parameter writes a key at the current frame (auto-key). A parameter without keys
+  is edited as before — the same throughout the simulation.
+- **The timeline** shows keys: those of selected nodes prominently, those of other nodes in the
+  network dimmed.
+- **K** (over the viewport; or Edit → Key Selection) writes position,
+  rotation and size keys for the selected objects, sources and forces at the current frame.
+- **The gizmo** on an animated node writes keys (translation, rotation and size).
+- Resetting a parameter (arrow on the right) also deletes its keys; deleting the last
+  key leaves the parameter at its value.
+- A duplicated node has the same keys. Undo/redo also reverts keys.
 
-Objekty a vodítka se kreslí ve snímku **přehrávací hlavy** — hned, bez
-čekání na simulaci; plyn a voda v posledním spočítaném snímku do ní.
+Objects and guides are drawn at the **playhead** frame — immediately, without
+waiting for the simulation; gas and water at the last frame computed up to it.
 
-## 3. Interpolace
+## 3. Interpolation
 
 | | |
 |---|---|
-| **Smooth** (výchozí) | kubická křivka přes klíče: na prvním a posledním klíči a tam, kde se hodnota obrací, s nulovým sklonem (náběh a doběh); jinde sklon Catmull-Rom, omezený tak, aby křivka mezi klíči nepřestřelila (Fritsch–Carlson) |
-| **Linear** | přímka k dalšímu klíči |
-| **Step** | drží hodnotu klíče až do dalšího |
+| **Smooth** (default) | a cubic curve through the keys: at the first and last key and where the value reverses, with zero slope (ease in and ease out); elsewhere a Catmull-Rom slope, limited so that the curve does not overshoot between keys (Fritsch–Carlson) |
+| **Linear** | a straight line to the next key |
+| **Step** | holds the key's value until the next one |
 
-Interpolace patří klíči a platí od něj k dalšímu. Před prvním klíčem má
-parametr hodnotu prvního, po posledním posledního. Celočíselné parametry
-se zaokrouhlují, přepínače a volby skáčou (jako Step).
+Interpolation belongs to a key and applies from it to the next one. Before the first key the
+parameter has the first key's value, after the last the last key's. Integer parameters
+are rounded; toggles and menus jump (like Step).
 
-## 4. Soubor .pgsim
+## 4. The .pgsim file
 
-Klíče jsou řádky `key JMÉNO SNÍMEK INTERPOLACE HODNOTA` pod uzlem, po jeho
-parametrech; hodnota je zapsaná stejně jako u `param`:
+Keys are lines `key NAME FRAME INTERPOLATION VALUE` under the node, after its
+parameters; the value is written the same way as for `param`:
 
 ```
 node 2 object 1 ball 0 110
@@ -79,58 +79,58 @@ node 2 object 1 ball 0 110
   key center 60 smooth 0.85 0.19 0
 ```
 
-Řádek `param` animovaného parametru zůstává: je to hodnota pro chvíli, kdy
-se klíče smažou.
+The `param` line of an animated parameter stays: it is the value for when
+the keys are deleted.
 
-## 5. Co se animuje
+## 5. What can be animated
 
-- **Simulace**: zdroje (poloha, rotace, velikost, palivo, kouř, teplo,
-  rychlost…), síly, objekty, nastavení řešičů, která nejsou mřížka
-  (vztlak, chladnutí, víření…), déšť (mrak, intenzita…).
-- **Vzhled**: Volume Look, Water Look, světlo a obloha v Output — mění se
-  v obraze; když je animovaný jen vzhled (nebo kamera), simuluje se jednou
-  a svět žádnou animaci nenese.
-- **Kamera**: poloha, rotace, ohnisko — `prototype sim` i render sekvence
-  z editoru jdou animovanou kamerou.
-- **Geometrie**: parametry geometrických uzlů (krychle, transformace,
-  scatter…) — viewport a tabulka atributů je ukazují v aktuálním snímku.
+- **Simulation**: sources (position, rotation, size, fuel, smoke, heat,
+  velocity…), forces, objects, solver settings that are not the grid
+  (buoyancy, cooling, vorticity…), rain (cloud, intensity…).
+- **Look**: Volume Look, Water Look, light and sky in the Output — they change
+  in the image; when only the look (or the camera) is animated, the simulation runs once
+  and the world carries no animation.
+- **Camera**: position, rotation, focal length — `prototype sim` as well as sequence renders
+  from the editor go through the animated camera.
+- **Geometry**: parameters of geometry nodes (box, transform,
+  scatter…) — the viewport and the attribute spreadsheet show them at the current frame.
 
-**Nejde animovat** (hodnota ve snímku 1 platí celou dobu, kompilace to
-řekne varováním): velikost a rozlišení mřížky Pyro Solveru a Liquid
-Solveru, uzavřené stěny nádrže, počet snímků a snímková frekvence v Output.
-Tvar z geometrie (vstup Shape) je statický — geometrie se bere ve snímku 1;
-pohyblivou překážku udělej z objektu s vlastním tvarem nebo modelem OBJ.
+**Cannot be animated** (the value at frame 1 applies throughout; compilation
+says so with a warning): size and resolution of the Pyro Solver and Liquid
+Solver grid, closed tank walls, frame count and frame rate in the Output.
+A shape from geometry (the Shape input) is static — the geometry is taken at frame 1;
+make a moving obstacle from an object with its own shape or an OBJ model.
 
-## 6. Výrazy
+## 6. Expressions
 
-Místo klíčů může parametr řídit **výraz** — stejný jazyk jako wrangle
-([wrangle.md](wrangle.md)), jen jeden výraz: `$F * 0.1`, `sin($T * 6) *
+Instead of keys, a parameter can be driven by an **expression** — the same language as wrangle
+([wrangle.md](wrangle.md)), just a single expression: `$F * 0.1`, `sin($T * 6) *
 0.3`, `ch("../base/sizex") * 2`, `fit($F, 1, 100, 0, 5)`, `rand($F)`.
-Výraz má každá složka vektoru zvlášť (`center.y`), anebo všechny stejný
-vektorový výraz: `{0, $F * 0.01, 0}`.
+Each vector component has its own expression (`center.y`), or all share the same
+vector expression: `{0, $F * 0.01, 0}`.
 
-- **V editoru:** tlačítko **fx** vedle kosočtverce klíče přepne parametr na
-  textová pole (u vektoru tři). Co se do nich napíše, je výraz; obyčejné
-  číslo je hodnota. Pod poli je, co výraz dává v aktuálním snímku, nebo
-  červeně, co je na něm špatně. Další klik na **fx** výrazy smaže a
-  parametr si nechá hodnotu, kterou měl.
-- **Proměnné:** `$F` snímek (celé číslo), `$FF` snímek jako desetinné
-  číslo, `$T` čas v sekundách (`$F / $FPS`), `$FPS` snímková frekvence
-  z Output.
-- **Jiné parametry:** `ch("sizex")` parametr téhož uzlu, `ch("../box1/sizex")`
-  parametr uzlu *box1*; složka vektoru jako `size.y` nebo `sizey`;
-  `chv("../box1/size")` celý vektor, `chs()` text. Čtou se ve stejném
-  snímku, takže výraz nad animovaným parametrem se mění s ním.
-- **Kdy se přepočítá:** výraz, který nečte čas ani nic, co se v čase mění,
-  je obyčejná hodnota — přepočítá se, jen když se změní, co čte. Výraz s
-  `$F` nebo nad animovaným parametrem dělá z uzlu časově závislý: simulace
-  ho bere snímek po snímku jako klíče, geometrie se vaří pro každý snímek.
-- **Chyby:** výraz, který se nedá přečíst nebo spočítat, parametr nemění
-  (platí jeho hodnota) a editor řekne proč. Výrazy, které čtou jeden
-  druhý dokola, jsou chyba („round in a loop“), ne zamrznutí.
-- **Výraz vítězí** nad klíči i hodnotou; hodnotu parametr drží pro chvíli,
-  kdy se výraz smaže.
-- **V souboru** je řádek `expr KANÁL "TEXT"` pod klíči uzlu:
+- **In the editor:** the **fx** button next to the key diamond switches the parameter to
+  text fields (three for a vector). Whatever is typed into them is an expression; a plain
+  number is a value. Below the fields is what the expression gives at the current frame, or
+  in red, what is wrong with it. Another click on **fx** deletes the expressions and the
+  parameter keeps the value it had.
+- **Variables:** `$F` frame (integer), `$FF` frame as a floating-point
+  number, `$T` time in seconds (`$F / $FPS`), `$FPS` frame rate
+  from the Output.
+- **Other parameters:** `ch("sizex")` a parameter of the same node, `ch("../box1/sizex")`
+  a parameter of node *box1*; a vector component as `size.y` or `sizey`;
+  `chv("../box1/size")` the whole vector, `chs()` a string. They are read at the same
+  frame, so an expression over an animated parameter changes with it.
+- **When it is recomputed:** an expression that reads neither time nor anything that changes over time
+  is an ordinary value — it is recomputed only when what it reads changes. An expression with
+  `$F` or over an animated parameter makes the node time-dependent: the simulation
+  takes it frame by frame like keys, geometry is cooked for each frame.
+- **Errors:** an expression that cannot be parsed or evaluated does not change the parameter
+  (its value applies) and the editor says why. Expressions that read one
+  another in a circle are an error ("round in a loop"), not a freeze.
+- **The expression wins** over keys and the value; the parameter keeps the value for when
+  the expression is deleted.
+- **In the file** it is a line `expr CHANNEL "TEXT"` under the node's keys:
 
 ```
 node 1 pyro_source 2 fire 0 0
@@ -138,62 +138,62 @@ node 1 pyro_source 2 fire 0 0
   expr center.x "sin($T * 6) * 0.3"
 ```
 
-- **Z příkazové řádky:** `--set` bere i výraz:
+- **From the command line:** `--set` also takes an expression:
   `prototype sim campfire fire.mp4 --set 'fire.center.x=sin($T*6)*0.3'`,
   `--set 'fire.center={0, $F*0.01, 0}'`.
 
-## 7. Jak to funguje
+## 7. How it works
 
-### Síť snímek po snímku
+### The network frame by frame
 
-`Network::compile()` přeloží síť ve snímku 1 (s kontrolou chyb). Když je
-něco animované, přeloží ji znovu pro každý snímek (tiše: problémy řekl
-první snímek) — soubory modelů a geometrie se přitom čtou a vaří jen
-jednou. Výsledek:
+`Network::compile()` compiles the network at frame 1 (with error checking). When
+something is animated, it compiles it again for every frame (silently: problems were reported by
+the first frame) — model files and geometry are read and cooked only
+once in the process. The result:
 
-- `World::animation` — svět v každém snímku (sdílený, porovnávaný podle
-  obsahu: editor spustí simulaci znovu právě tehdy, když se klíče nebo
-  hodnoty změní);
-- `Compiled::poses` — co se kreslí v každém snímku: vzhled, objekty, kamera.
+- `World::animation` — the world at each frame (shared, compared by
+  content: the editor restarts the simulation exactly when the keys or
+  values change);
+- `Compiled::poses` — what is drawn at each frame: look, objects, camera.
 
-Krok, který vyrábí snímek *n*, vezme svět snímku *n* (`WorldSolver::step`):
-řešiče si převezmou zdroje, síly a překážky (`setScene`) a mřížka zůstane.
+The step that produces frame *n* takes the world of frame *n* (`WorldSolver::step`):
+the solvers take over the sources, forces and obstacles (`setScene`) and the grid stays.
 
-### Pohyb překážek
+### Obstacle motion
 
-Z polohy a rotace objektu v sousedních snímcích se spočítá jeho
-**rychlost** a **úhlová rychlost** (osa × radiány za sekundu, z rozdílu
-rotací `R₂ R₁ᵀ`). Rychlost bodu tělesa je `v + ω × (p − střed)`.
+The object's **velocity** and **angular velocity** (axis × radians per second, from the difference
+of rotations `R₂ R₁ᵀ`) are computed from its position and rotation in adjacent frames. The velocity of a point of the
+body is `v + ω × (p − centre)`.
 
-- **Plyn**: stěny buněk u pevných buněk (blokované stěny) nemají rychlost
-  0, ale rychlost tělesa v tom místě. Divergence vedle tělesa ji započítá,
-  tlak pak tlačí plyn z cesty; stejně tak pohyb tělesa do strany strhává
-  plyn podél sebe. Pevné buňky se přepočítají v každém kroku, kdy se
-  těleso hýbe.
-- **Voda**: část stěny buňky zakrytá tělesem nese jeho rychlost — do tlaku
-  vstupuje tok `o·u + (1 − o)·u_tělesa` (Batty, Bertails, Bridson 2007),
-  úplně zakryté stěny mají rychlost tělesa. Částice vytlačené z tělesa
-  ztratí jen rychlost *do* tělesa **vůči němu**, takže je těleso nese
-  s sebou.
-- **Zdroje**, které se hýbou, dávají plynu (a proud vody) i svou rychlost:
-  pochodeň nechává stopu.
-- **Déšť** dopadá na objekty tam, kde v tom snímku jsou.
+- **Gas**: cell faces next to solid cells (blocked faces) do not have velocity
+  0 but the body's velocity at that location. The divergence next to the body takes it into account,
+  and pressure then pushes the gas out of the way; likewise, sideways motion of the body drags
+  gas along with it. Solid cells are recomputed at every step in which the
+  body moves.
+- **Water**: the part of a cell face covered by the body carries its velocity — the pressure
+  solve receives the flux `o·u + (1 − o)·u_body` (Batty, Bertails, Bridson 2007);
+  fully covered faces have the body's velocity. Particles pushed out of the body
+  lose only their velocity *into* the body **relative to it**, so the body carries them
+  along.
+- **Sources** that move also give the gas (and the water jet) their velocity:
+  a torch leaves a trail.
+- **Rain** lands on objects where they are at that frame.
 
-### Geometrie
+### Geometry
 
-Animovaný parametr geometrického uzlu se v `GeometryGraph` naváže jako
-výraz jádra (klíče vyhodnocené ve snímku vaření). Uzel je tím časově
-závislý a cache jádra drží jeho geometrii pro každý snímek zvlášť — návrat
-na už uvařený snímek nic nepočítá.
+An animated parameter of a geometry node is bound in `GeometryGraph` as a
+core expression (keys evaluated at the cook frame). This makes the node
+time-dependent, and the core cache holds its geometry for each frame separately — returning
+to an already cooked frame computes nothing.
 
-## 8. Omezení
+## 8. Limitations
 
-- Změna klíče spustí celou simulaci znovu (jako každá změna scény).
-- Překážka, která se hýbe rychleji než o buňku za krok, může „proskočit“
-  tenkou vrstvou vody či plynu; plyn uvnitř buněk, do kterých těleso vjede,
-  zmizí.
-- Tvar z geometrie a změna tvaru (koule → krychle) se neanimuje plynule.
-- Nejsou křivkové editory (graf křivek) ani klíče na jednotlivých složkách
-  vektoru — klíč nese celou hodnotu (výraz ale složku zvlášť mít může).
-- Výraz nevidí geometrii jiného uzlu (Houdini má `npoints()`, `bbox()`
-  v cestě): čte parametry, čas a vlastní čísla.
+- Changing a key restarts the whole simulation (like any scene change).
+- An obstacle that moves faster than one cell per step can "skip through"
+  a thin layer of water or gas; gas inside cells that the body enters
+  disappears.
+- A shape from geometry and a change of shape (sphere → box) are not animated smoothly.
+- There are no curve editors (curve graph) and no keys on individual vector
+  components — a key carries the whole value (an expression, however, can be per component).
+- An expression cannot see another node's geometry (Houdini has `npoints()`, `bbox()`
+  with a path): it reads parameters, time and its own numbers.

@@ -1,272 +1,285 @@
-# Obraz záběru (plate)
+# Shot footage (plate)
 
-Efekt se ve studiu kreslí do natočeného záběru. **Plate** je sekvence
-snímků z kamery na place, matchmove z ní spočítá pohyb kamery (uzel USD
-Camera, [usd-import.md](usd-import.md)) a CG se kreslí touž kamerou přes
-plate. Prototype to umí celé:
+In a studio, an effect is rendered into live-action footage. A **plate** is
+an image sequence from the camera on set; matchmove computes the camera
+motion from it (the USD Camera node, [usd-import.md](usd-import.md)) and the
+CG is rendered through the same camera over the plate. Prototype handles the
+whole thing:
 
-- čte sekvence **PNG, JPEG a OpenEXR** vlastními čtečkami, bez knihoven;
-- kreslí plate **za CG**, když se díváte kamerou záběru, v editoru i v renderu;
-- objekty a podlaha mohou být skutečné věci ze záběru:
-  - **holdout** schová CG, které je za ním, a ukáže tam plate;
-  - **shadow catcher** udělá totéž a navíc na sebe vezme stíny CG a světlo ohně;
-- do **EXR** zapíše CG zvlášť s alfou a vedle ní průchod catcheru, pro compositing;
-- totéž umí finální render, **Cycles** i path tracer ([§4](#ve-finálním-renderu-cycles-a-path-tracer)).
+- it reads **PNG, JPEG and OpenEXR** sequences with its own readers, without libraries;
+- it draws the plate **behind the CG** when you look through the shot camera, both in the editor and in the render;
+- objects and the floor can be real things from the shot:
+  - a **holdout** hides the CG behind it and shows the plate there;
+  - a **shadow catcher** does the same and also receives the CG's shadows and the firelight;
+- it writes the CG separately with alpha to **EXR**, with the catcher pass next to it, for compositing;
+- the final render, **Cycles** and the path tracer, can do the same ([§4](#in-the-final-render-cycles-and-the-path-tracer)).
 
-Kde CG nic nemění, vyjde plate z renderu pixel po pixelu, jak do něj
-vešel.
+Where the CG changes nothing, the plate comes out of the render pixel for
+pixel as it went in.
 
-![Vlevo plate (courtyard.1072.jpg), vpravo tentýž snímek s ohněm a kouřem ze simulace: stěny, trám a bedny jsou shadow catchery](img/plate.jpg)
+![Left: the plate (courtyard.1072.jpg); right: the same frame with fire and smoke from the simulation: the walls, beam and crates are shadow catchers](img/plate.jpg)
 
-## 1. Rychlý start
-
-```bash
-PYTHONPATH=build/python python3 examples/usd/make_plate.py   # „natočí“ plate příkladu (numpy)
-./build/prototype sim matchmove mm.mp4                       # oheň v natočeném dvoře, celý záběr
-./build/prototype sim matchmove mm.exr --every 24            # CG s alfou a průchod catcheru pro compositing
-./build/prototype examples/sim/matchmove.pgsim               # editor: klávesa 0 = pohled kamerou, s plate
-```
-
-Ukázkový záběr nemá skutečnou kameru ani dvůr, a tak si plate program
-natočí sám. `examples/usd/make_plate.py` vykreslí kulisu ze `shot.usda`
-kamerou z matchmove, snímek po snímku. Pak jí dodá, co by jí dala kamera
-a sken:
-
-- objektiv trochu měkký a do rohů tmavší;
-- světla, která se teple rozlévají (halace);
-- barevné ladění;
-- zrno, které je v každém snímku jiné.
-
-Vznikne 72 JPEGů `examples/usd/plate/courtyard.1001.jpg` až `.1072.jpg`,
-1280 × 720, asi 16 MB. Git je vynechává: dají se kdykoli vyrobit znovu.
-
-V síti `matchmove` pak:
-- USD Camera má `plate` = `../usd/plate/courtyard.####.jpg`;
-- objekt `walls` (stěny, trám, sloup a bedny z USD) je shadow catcher;
-- podlaha je výchozí shadow catcher.
-
-Bez plate se síť kreslí jako dřív: bez obrazu vzadu a se vším jako CG
-(kompilace varuje `no plate at frame 1`).
-
-## 2. Plate na kameře
-
-Uzly **Camera** i **USD Camera** mají sekci **Plate**:
-
-| parametr | co dělá |
-|---|---|
-| **Plate** (`plate`) | soubor, nebo sekvence s číslem snímku ve jméně: `plate.####.exr` (tolik číslic, kolik `#`), `plate.$F4.exr` (`$F` bez doplnění nulami), `plate.%04d.exr` (`%d` bez doplnění). Relativní cesta se čte ze složky sítě. Jméno bez čísla je tentýž obrázek ve všech snímcích |
-| **Plate Frame** (`plate_frame`) | číslo snímku plate ve snímku 1. U Camera je výchozí 1 (plate pro 1001… potřebuje 1001). U USD Camera je výchozí 0: plate jde podle time codes záběru, snímek s time code 1001 čte `….1001.…`. Posun kamery (Frame Offset) posune i plate |
-
-- **Formáty:** PNG, JPEG a OpenEXR, poznané podle obsahu souboru (ne podle přípony).
-- **Velikost:** plate stejně velký jako obraz kamery (Width × Height) se kreslí
-  pixel po pixelu. Jinak se roztáhne na celý rámeček kamery a filtruje se.
-- **Barvy:** PNG a JPEG jsou obrázky, jak je vidět na obrazovce. Proto
-  jdou do světla rendereru zpátky přes jeho view transform (inverze ACES
-  a gamy 2,2), a kde je jen plate, vyjdou znovu stejné. EXR je lineární
-  světlo a bere se, jak je.
-- **Kdy se kreslí:** jen pohledem kamery. V editoru přepne pohled klávesa **0**
-  (nebo oko v záhlaví viewportu), render kamerou jde vždy, když ji síť má.
-- **Čtení:** snímek se čte, když se změní. Chybějící nebo vadný soubor
-  napíše editor do viewportu a `prototype sim` do terminálu, s důvodem.
-  Obraz se pak kreslí bez plate.
-
-## 3. Co je nad plate: holdout a shadow catcher
-
-Uzel **Object** má v sekci Look parametr **Over the Plate** (`matte`).
-Output má pro podlahu **Floor over the Plate** (`floor_matte`).
-
-| volba | objekt nad plate | výchozí |
-|---|---|---|
-| **Solid** | CG: kreslí se sám sebou a zakryje plate | objekty |
-| **Holdout** | skutečná věc ze záběru: CG za ní zmizí a ukáže se tam plate, jak je | |
-| **Shadow Catcher** | holdout, který CG přesvětlí: stíny CG (objektů, zobrazené geometrie, kouře) plate ztmaví, oheň ho rozsvítí | podlaha |
-
-Simulace se tím nemění. Holdout i catcher jsou dál kolize, kouř je obtéká
-a voda o ně naráží. Bez plate se všechno kreslí jako Solid.
-
-Jak catcher počítá. Pro bod na catcheru se spočítá světlo:
-- **s CG:** slunce za vším (i za kouřem a CG objekty), obloha a světlo ohně;
-- **bez CG:** slunce jen za skutečnými věcmi (holdouty a catchery) a obloha.
-
-Plate se vynásobí jejich poměrem. Kde CG nic nemění, je poměr přesně 1 a
-plate zůstane, jak je. Stín kouře ho ztmaví, světlo ohně rozsvítí, a to
-víc tam, kde bylo ve skutečnosti jen světlo oblohy (ve stínu zdí).
-Skutečné stíny, které plate už má, se nepřidají podruhé.
-
-## 4. EXR pro compositing nad plate
-
-Nad plate zapíše `prototype sim … OUT.exr` jen CG, aby šlo do compositingu:
-
-| kanál | co v něm je |
-|---|---|
-| `R`, `G`, `B` | CG v lineárním světle: kouř, oheň, CG objekty; plate v nich není |
-| `A` | kolik z pixelu CG zakrývá: 1 na CG objektu, neprůhlednost kouře, 0 tam, kde je jen plate (i na holdoutech a catcherech) |
-| `catcher.R`, `catcher.G`, `catcher.B` | čím plate vynásobit: 1, kde CG nic nemění; méně ve stínech CG; víc, kde svítí oheň |
-
-Záběr je pak `plate × catcher × (1 − A) + RGB`. V Nuke: plate (lineární)
-vynásobit kanály `catcher` (Merge multiply nebo Shuffle a Multiply) a přes
-to dát render operací `over`. Plate z PNG nebo JPEG musí jít do lineárního
-světla stejnou inverzí view transformu (§2). Ostatní průchody (`Z`,
-`forward.u/v`, masky) jsou jako bez plate ([render.md](render.md#4-exr-pro-compositing)).
-
-Ověřeno na příkladu `matchmove`: složení podle vzorce, protažené tónovou
-křivkou, dá PNG z rendereru. U 99,7 % pixelů na úroveň z 255, rozdíly
-zbývají jen na hranách, kde se vyhlazení 2 × 2 průměruje jinde.
-
-### Ve finálním renderu: Cycles a path tracer
-
-![Snímek 72 příkladu matchmove: vlevo plate, uprostřed Cycles (64 vzorků na pixel), vpravo path tracer (128 vzorků). Oheň svítí na podlahu a na bok bedny, kouř stíní zeď, stěny, trám a bedny zůstaly skutečné](img/plate-render.jpg)
-
-Plate jde i do finálního renderu, když se renderuje kamerou záběru:
-v `prototype sim … --renderer cycles` nebo `--renderer path` a v záložce
-**Render** editoru (pohled kamerou, klávesa **0**).
+## 1. Quick start
 
 ```bash
-./build/prototype sim matchmove mm.png --renderer cycles             # snímek 72 nad plate
-./build/prototype sim matchmove mm.exr --renderer cycles --every 24  # CG, A a catcher pro compositing
-./build/prototype sim matchmove mm.png --renderer path --samples 128 # totéž přes path tracer
+PYTHONPATH=build/python python3 examples/usd/make_plate.py   # "shoots" the example plate (numpy)
+./build/prototype sim matchmove mm.mp4                       # fire in the filmed courtyard, whole shot
+./build/prototype sim matchmove mm.exr --every 24            # CG with alpha and catcher pass for compositing
+./build/prototype examples/sim/matchmove.pgsim               # editor: key 0 = view through the camera, with plate
 ```
 
-Renderer dá jen CG, kolik z pixelu zakrývá (alfa) a čím plate vynásobit
-(catcher). PNG a záložka Render ukážou `plate × catcher × (1 − A) + CG`
-v lineárním světle. EXR má kanály jako v tabulce výše (a k tomu `Z`,
-`albedo.*` a `N.*`, [cycles.md](cycles.md)). PNG a JPEG jdou do světla
-rendereru zpátky inverzí jeho view transformu (AgX, AgX Punchy nebo ACES,
-`unshown`), a tak kde CG nic nemění, vyjde plate pixel po pixelu stejný.
-Jedinou výjimkou je čistá bílá: AgX Punchy ukáže nejvýš 254,5 z 255,
-takže 255 vyjde jako 254.
+The example shot has no real camera or courtyard, so the program shoots the
+plate itself. `examples/usd/make_plate.py` renders the set from `shot.usda`
+through the matchmove camera, frame by frame. Then it adds what a camera and
+a scan would give it:
 
-- **Cycles** renderuje na průhledný film, i přes sklo (Transparent Glass
-  jako v Blenderu). Holdouty a catchery, objekty i podlaha, jsou jeho
-  vlastní holdouty a shadow catchery. Slunce a obloha jsou skutečná
-  světla, která plate osvětlila (v Blenderu „shadow catcher“ u světla),
-  a proto svítí i ve světle bez CG. Násobitel plate je průchod Shadow
-  Catcher: světlo na catcheru s CG lomeno světlem bez CG, obojí sledováním
-  cest. Stíny CG, kouře i oheň v něm jsou celé a odšumí se spolu s obrazem.
-- **Path tracer:** kamerový paprsek, který skončí na plate, holdoutu nebo
-  catcheru, nechá pixel plate. Na catcheru spočítá světlo bílé matné
-  plochy s CG a bez něj ze stejných paprsků. S CG je to slunce za vším
-  (i za kouřem) a jeden směr oblohy, na kterém je obloha, nebo co pošle
-  CG: jeho světlo, světlo ohně. Bez CG je to slunce jen za skutečnými
-  věcmi a obloha mezi nimi. Kde CG nic nemění, jsou obě stejná a poměr
-  je přesně 1. Násobitel odšumí Open Image Denoise spolu s obrazem. Sklem
-  a vodou vidí kamera plate po lomeném paprsku. Ten je pak už v CG
-  a alfa skla je 1, kdežto v Cycles je sklo průhledné.
-- **Bez plate**, pohledem mimo kameru záběru nebo s kamerou bez plate, se
-  holdouty i catchery kreslí jako obyčejné objekty.
+- a lens that is slightly soft and darker towards the corners;
+- highlights that bleed warmly (halation);
+- a color grade;
+- grain that is different in every frame.
 
-Cycles a path tracer dávají nad plate podobný obraz. Stíny jsou v obou
-sledované paprsky, takže světlo ohně zastaví i zeď, kterou ve viewportu
-projde. Snímek 1280 × 720 na čtyřech jádrech trvá v Cycles se 64 vzorky
-7,6 min, v path traceru se 128 vzorky 2,2 min. EXR z Cycles složené
-podle vzorce a protažené tónovou křivkou dá PNG z rendereru: 98 % pixelů
-přesně, zbytek o 1 úroveň z 255, protože EXR drží hodnoty jako half
-float.
+The result is 72 JPEGs, `examples/usd/plate/courtyard.1001.jpg` to `.1072.jpg`,
+1280 × 720, about 16 MB. Git ignores them: they can be regenerated at any time.
 
-## 5. Obrázky bez knihoven
+In the `matchmove` network:
+- USD Camera has `plate` = `../usd/plate/courtyard.####.jpg`;
+- the `walls` object (walls, beam, pillar and crates from USD) is a shadow catcher;
+- the floor is a shadow catcher by default.
 
-Plate čtou vlastní čtečky v `src/pg/io`. Tytéž čtečky i zapisovače jsou
-v Pythonu jako `pg.read_picture` a `pg.write_picture`
-([python.md](python.md#obrázky)).
+Without the plate the network renders as before: with no image behind it and
+everything as CG (the compile warns `no plate at frame 1`).
 
-| formát | čte | ověřeno |
+## 2. Plate on the camera
+
+Both the **Camera** and **USD Camera** nodes have a **Plate** section:
+
+| parameter | what it does |
+|---|---|
+| **Plate** (`plate`) | a file, or a sequence with the frame number in its name: `plate.####.exr` (as many digits as there are `#`), `plate.$F4.exr` (`$F` without zero padding), `plate.%04d.exr` (`%d` without padding). A relative path is resolved from the network's folder. A name without a number is the same image in all frames |
+| **Plate Frame** (`plate_frame`) | the plate frame number at frame 1. On Camera the default is 1 (a plate for 1001… needs 1001). On USD Camera the default is 0: the plate follows the shot's time codes, and the frame with time code 1001 reads `….1001.…`. The camera offset (Frame Offset) shifts the plate too |
+
+- **Formats:** PNG, JPEG and OpenEXR, recognized by file content (not by extension).
+- **Size:** a plate the same size as the camera image (Width × Height) is drawn
+  pixel for pixel. Otherwise it is stretched over the whole camera frame and filtered.
+- **Colors:** PNG and JPEG are pictures as they appear on screen. They are
+  therefore brought back into the renderer's light through its view transform
+  (inverse ACES and gamma 2.2), and where there is only plate, they come out
+  the same again. EXR is linear light and is taken as is.
+- **When it is drawn:** only in the camera view. In the editor the view is switched by the **0** key
+  (or the eye in the viewport header); a camera render always uses it when the network has one.
+- **Reading:** a frame is read when it changes. A missing or broken file
+  is reported, with the reason, by the editor in the viewport and by `prototype sim` in the terminal.
+  The image is then drawn without the plate.
+
+## 3. What is over the plate: holdout and shadow catcher
+
+The **Object** node has an **Over the Plate** (`matte`) parameter in its Look section.
+Output has **Floor over the Plate** (`floor_matte`) for the floor.
+
+| option | object over the plate | default |
 |---|---|---|
-| PNG | 1, 2, 4, 8 a 16 bitů; šedá, šedá s alfou, RGB, RGBA a paleta (i s průhledností `tRNS`); všech pět filtrů; prokládání Adam7 | na hodnotu proti Pillow: fixtures a 40 náhodných souborů |
-| JPEG | baseline i progresivní, šedý i YCbCr, libovolné podvzorkování (4:2:0, 4:2:2, 4:4:0, 4:4:4), restart markery | bit po bitu jako libjpeg: 8 fixtures a 60 náhodných souborů různé kvality. Stejná celočíselná IDCT (`islow`), „fancy“ převzorkování barev a převod YCbCr |
-| OpenEXR | řádky pixelů; bez komprese, RLE, ZIPS, ZIP, PIZ, PXR24, B44 a B44A; kanály half, float i uint | hodnota po hodnotě proti knihovně OpenEXR: soubor každé komprese a 48 náhodných. Včetně PIZ s 16bitovou vlnkou a datového okna menšího než obraz |
+| **Solid** | CG: drawn as itself and covers the plate | objects |
+| **Holdout** | a real thing from the shot: CG behind it disappears and the plate shows there as is | |
+| **Shadow Catcher** | a holdout that the CG relights: CG shadows (from objects, displayed geometry, smoke) darken the plate, fire brightens it | floor |
 
-Z EXR se berou `R`, `G`, `B` (`A`). Když chybí, bere se první vrstva, která
-je má (`beauty.R`…), jinak `Y` jako šedá, jinak první kanál. Deflate (pro
-PNG a ZIP) je vlastní: bloky stored, pevné i dynamické Huffmanovy kódy,
-tabulky na 10 bitů. Snímek 2K se přečte za 50–190 ms.
+This does not change the simulation. Holdouts and catchers are still
+colliders: smoke flows around them and water hits them. Without a plate
+everything is drawn as Solid.
 
-Zapisují se PNG (8 bitů, RGB nebo RGBA, deflate bez komprese), JPEG
-(baseline 4:2:0, [render.md](render.md)) a EXR (half, RLE).
+How the catcher works. For a point on the catcher, the light is computed:
+- **with CG:** sun behind everything (including smoke and CG objects), sky and firelight;
+- **without CG:** sun behind real things only (holdouts and catchers) and sky.
 
-## 6. Render jen z geometrie
+The plate is multiplied by their ratio. Where the CG changes nothing, the
+ratio is exactly 1 and the plate stays as is. Smoke shadow darkens it,
+firelight brightens it, and more so where there was in reality only skylight
+(in the shadow of walls). Real shadows the plate already has are not added a
+second time.
 
-Síť bez simulace, jen se zobrazenou geometrií, se dřív kreslila jako jeden
-obrázek z pohledu na geometrii. Když má Output kameru, kreslí se teď touž
-kamerou po všech snímcích Outputu (`--every 1`, video), s animovanou
-kamerou i geometrií. Tak `make_plate.py` natočí plate z kulisy: layout nebo
-previz bez simulace.
+## 4. EXR for compositing over the plate
 
-## 7. Ověřeno
+Over a plate, `prototype sim … OUT.exr` writes only the CG, so it can go into compositing:
 
-- **Plate beze změny:** v testu `ThroughAPlate` jde JPEG přes renderer se
-  vším možným nad sebou, ale bez CG. Vyjde pixel po pixelu stejný:
-  - samotný;
-  - s podlahou jako catcher i jako holdout;
-  - s objektem jako holdout;
-  - s objektem jako catcher.
-- **CG objekt** nad plate zakryje, co zakrývá, a jeho stín na podlaze
-  (catcheru) plate ztmaví. V EXR je jeho `A` 1, jinde 0 a RGB tam je 0.
-  `catcher` je pod 1 ve stínu a jinde přesně 1.
-- **Příklad `matchmove`:** nebe je v každém snímku přesně plate. Stěny
-  a zem se mění jen tam, kam dopadne světlo ohně nebo stín kouře. Světlo
-  dopadá na strany obrácené k ohni, spodní plocha trámu svítí, přední
-  strany beden ne.
-- **Stínová mapa geometrie:** stěny, na které slunce svítí pod ostrým
-  úhlem, měly ve stínech zobrazené geometrie pruhy. Stín se teď hledá kousek
-  od povrchu po normále (půl druhého texelu mapy) a pruhy zmizely.
+| channel | what it contains |
+|---|---|
+| `R`, `G`, `B` | CG in linear light: smoke, fire, CG objects; the plate is not in them |
+| `A` | how much of the pixel the CG covers: 1 on a CG object, smoke opacity, 0 where there is only plate (including on holdouts and catchers) |
+| `catcher.R`, `catcher.G`, `catcher.B` | what to multiply the plate by: 1 where the CG changes nothing; less in CG shadows; more where fire shines |
 
-- **Finální render nad plate** (`tests/test_render.cpp`): záběr s CG
-  kvádrem, jeho stínem na podlaze (catcher), holdoutem před druhým
-  kvádrem a sklem. Path tracer i Cycles:
-  - nad horizontem dají plate pixel po pixelu (320 z 320 pixelů);
-  - kvádr zakryje svůj pixel (alfa 1,00), holdout ho odkryje (0,00) a za
-    ním je plate na úroveň;
-  - stín kvádru vynásobí plate 0,17 (path tracer) a 0,22 (Cycles);
-  - přes sklo je plate o 7 až 8 % tmavší, o odraz na skle;
-  - EXR (z path traceru) má `A` a `catcher.R/G/B`;
-  - bez plate jsou holdout a catcher obyčejné objekty: pixel holdoutu má
-    v path traceru jeho světlo (0,13), nad plate z CG nic.
-- **Inverze view transformu** (`render_unshown_gives_back_the_light_a_picture_shows`):
-  všech 256 šedých se vrátí na úroveň v AgX, AgX Punchy (bílá na 254)
-  i ACES; barvy fotografie v AgX a ACES všechny, v AgX Punchy 3998 ze
-  4000, zbylé o jednu úroveň.
-- **Příklad `matchmove` bez ohně** v Cycles: násobitel 0,997 až 1,003
-  (1. a 99. percentil), obraz se od plate liší v průměru o 0,9 úrovně
-  z 255 (plate zmenšený na 640 × 360).
+The shot is then `plate × catcher × (1 − A) + RGB`. In Nuke: multiply the
+plate (linear) by the `catcher` channels (Merge multiply, or Shuffle and
+Multiply) and put the render over it with the `over` operation. A plate from
+PNG or JPEG must go into linear light through the same inverse view transform
+(§2). The other passes (`Z`, `forward.u/v`, masks) are the same as without a
+plate ([render.md](render.md#4-exr-for-compositing)).
 
-## 8. V kódu
+Verified on the `matchmove` example: compositing by the formula, passed
+through the tone curve, gives the PNG from the renderer. For 99.7% of pixels
+it matches to the level (out of 255); differences remain only on edges where
+the 2 × 2 antialiasing is averaged differently.
 
-| soubor | co dělá |
+### In the final render: Cycles and the path tracer
+
+![Frame 72 of the matchmove example: left the plate, middle Cycles (64 samples per pixel), right the path tracer (128 samples). The fire lights the floor and the side of a crate, smoke shadows the wall, and the walls, beam and crates stayed real](img/plate-render.jpg)
+
+The plate also goes into the final render when rendering through the shot
+camera: in `prototype sim … --renderer cycles` or `--renderer path`, and in
+the editor's **Render** tab (camera view, key **0**).
+
+```bash
+./build/prototype sim matchmove mm.png --renderer cycles             # frame 72 over the plate
+./build/prototype sim matchmove mm.exr --renderer cycles --every 24  # CG, A and catcher for compositing
+./build/prototype sim matchmove mm.png --renderer path --samples 128 # the same through the path tracer
+```
+
+The renderer gives only the CG, how much of the pixel it covers (alpha) and
+what to multiply the plate by (catcher). The PNG and the Render tab show
+`plate × catcher × (1 − A) + CG` in linear light. The EXR has channels as in
+the table above (plus `Z`, `albedo.*` and `N.*`, [cycles.md](cycles.md)). PNG
+and JPEG go back into the renderer's light through the inverse of its view
+transform (AgX, AgX Punchy or ACES, `unshown`), so where the CG changes
+nothing, the plate comes out the same pixel for pixel. The only exception is
+pure white: AgX Punchy shows at most 254.5 out of 255, so 255 comes out as
+254.
+
+- **Cycles** renders to a transparent film, including through glass
+  (Transparent Glass as in Blender). Holdouts and catchers, both objects and
+  the floor, are its own holdouts and shadow catchers. Sun and sky are real
+  lights that lit the plate (in Blender, "shadow catcher" on a light), and
+  therefore also shine in the light without CG. The plate multiplier is the
+  Shadow Catcher pass: light on the catcher with CG divided by light without
+  CG, both path traced. CG shadows, smoke and fire are fully in it and are
+  denoised together with the image.
+- **Path tracer:** a camera ray that ends on the plate, a holdout or a
+  catcher leaves the pixel to the plate. On a catcher it computes the light
+  of a white matte surface with and without the CG from the same rays. With
+  CG this is the sun behind everything (including smoke) and one sky
+  direction, which sees either the sky or whatever the CG sends: its light,
+  the firelight. Without CG it is the sun behind real things only and the sky
+  between them. Where the CG changes nothing, both are equal and the ratio is
+  exactly 1. The multiplier is denoised by Open Image Denoise together with
+  the image. Through glass and water the camera sees the plate along the
+  refracted ray. That ray is then already in the CG and the glass alpha is 1,
+  whereas in Cycles glass is transparent.
+- **Without a plate**, when viewing other than through the shot camera or with
+  a camera without a plate, holdouts and catchers are drawn as ordinary objects.
+
+Cycles and the path tracer give a similar image over the plate. Shadows in
+both are traced rays, so firelight is stopped even by a wall that it passes
+through in the viewport. A 1280 × 720 frame on four cores takes 7.6 min in
+Cycles with 64 samples, 2.2 min in the path tracer with 128 samples. The EXR
+from Cycles, composited by the formula and passed through the tone curve,
+gives the PNG from the renderer: 98% of pixels exactly, the rest off by 1
+level out of 255, because EXR stores values as half float.
+
+## 5. Images without libraries
+
+Plates are read by the program's own readers in `src/pg/io`. The same readers and writers are
+available in Python as `pg.read_picture` and `pg.write_picture`
+([python.md](python.md#images)).
+
+| format | reads | verified |
+|---|---|---|
+| PNG | 1, 2, 4, 8 and 16 bits; gray, gray with alpha, RGB, RGBA and palette (including `tRNS` transparency); all five filters; Adam7 interlacing | value for value against Pillow: fixtures and 40 random files |
+| JPEG | baseline and progressive, gray and YCbCr, any subsampling (4:2:0, 4:2:2, 4:4:0, 4:4:4), restart markers | bit for bit like libjpeg: 8 fixtures and 60 random files of varying quality. The same integer IDCT (`islow`), "fancy" chroma upsampling and YCbCr conversion |
+| OpenEXR | scanlines; uncompressed, RLE, ZIPS, ZIP, PIZ, PXR24, B44 and B44A; half, float and uint channels | value for value against the OpenEXR library: one file per compression and 48 random ones. Including PIZ with the 16-bit wavelet and a data window smaller than the image |
+
+From EXR, `R`, `G`, `B` (`A`) are taken. If they are missing, the first layer
+that has them is used (`beauty.R`…), otherwise `Y` as gray, otherwise the first
+channel. Deflate (for PNG and ZIP) is the program's own: stored blocks, fixed
+and dynamic Huffman codes, 10-bit tables. A 2K frame is read in 50–190 ms.
+
+Written formats are PNG (8 bits, RGB or RGBA, deflate without compression), JPEG
+(baseline 4:2:0, [render.md](render.md)) and EXR (half, RLE).
+
+## 6. Rendering geometry only
+
+A network without a simulation, with only displayed geometry, used to be
+drawn as a single image from the geometry view. When Output has a camera, it
+is now drawn through that camera over all of Output's frames (`--every 1`,
+video), with animated camera and geometry. This is how `make_plate.py` shoots
+the plate from the set: layout or previz without a simulation.
+
+## 7. Verified
+
+- **Plate unchanged:** in the `ThroughAPlate` test a JPEG goes through the
+  renderer with everything possible over it, but no CG. It comes out
+  identical pixel for pixel:
+  - on its own;
+  - with the floor as a catcher and as a holdout;
+  - with an object as a holdout;
+  - with an object as a catcher.
+- **A CG object** over the plate covers what it covers, and its shadow on the
+  floor (a catcher) darkens the plate. In the EXR its `A` is 1, elsewhere 0,
+  and RGB there is 0. `catcher` is below 1 in the shadow and exactly 1 elsewhere.
+- **The `matchmove` example:** the sky is exactly the plate in every frame.
+  The walls and ground change only where firelight or smoke shadow falls.
+  Light falls on the sides facing the fire, the underside of the beam is lit,
+  the front sides of the crates are not.
+- **Geometry shadow map:** walls lit by the sun at a grazing angle had stripes
+  in the shadows of displayed geometry. The shadow is now looked up slightly
+  off the surface along the normal (one and a half texels of the map) and the
+  stripes are gone.
+
+- **Final render over the plate** (`tests/test_render.cpp`): a shot with a CG
+  box, its shadow on the floor (catcher), a holdout in front of a second box,
+  and glass. Path tracer and Cycles:
+  - above the horizon they give the plate pixel for pixel (320 of 320 pixels);
+  - the box covers its pixel (alpha 1.00), the holdout uncovers it (0.00) and
+    behind it is the plate, to the level;
+  - the box's shadow multiplies the plate by 0.17 (path tracer) and 0.22 (Cycles);
+  - through glass the plate is 7 to 8% darker, by the reflection on the glass;
+  - the EXR (from the path tracer) has `A` and `catcher.R/G/B`;
+  - without a plate the holdout and catcher are ordinary objects: the holdout
+    pixel has its light in the path tracer (0.13), over the plate nothing from CG.
+- **Inverse view transform** (`render_unshown_gives_back_the_light_a_picture_shows`):
+  all 256 grays return to the level in AgX, AgX Punchy (white at 254) and
+  ACES; photo colors in AgX and ACES all of them, in AgX Punchy 3,998 out of
+  4,000, the rest off by one level.
+- **The `matchmove` example without fire** in Cycles: multiplier 0.997 to
+  1.003 (1st and 99th percentile), the image differs from the plate by 0.9
+  levels out of 255 on average (plate downscaled to 640 × 360).
+
+## 8. In the code
+
+| file | what it does |
 |---|---|
 | `src/pg/io/Picture.h` | `Picture`, `readPicture`, `decodePicture`, `decodePng`, `decodeJpeg`, `encodePng`, `writePicture`, `sequenceFile`, `isSequence` |
-| `src/pg/io/Inflate.h` | `inflate`, `zlibInflate`: deflate a zlib |
-| `src/pg/io/Png.cpp`, `JpegDecode.cpp`, `ExrRead.cpp` | čtečky (a zápis PNG) |
+| `src/pg/io/Inflate.h` | `inflate`, `zlibInflate`: deflate and zlib |
+| `src/pg/io/Png.cpp`, `JpegDecode.cpp`, `ExrRead.cpp` | readers (and PNG writing) |
 | `src/pg/sim/Camera.h` | `Camera::plate`, `plateFrame`, `plateFile(frame)` |
 | `src/pg/sim/Look.h`, `Scene.h` | `Matte` (None, Holdout, Catcher), `Solid::matte`, `Look::floorMatte` |
-| `src/pg/gl/Volume.h` | `setPlate`, `clearPlate`: plate jako textura RGBA16F; v shaderu `plateAt`, `realSun`, `catcher`; průchod `catcher.*` v `writePassesExr` |
-| `src/pg/render/Plate.h` | finální render: `Plate`, `loadPlate`, `plateLight` (plate ve světle rendereru), `plateSeen` (v pixelech obrazu), `overPlate` (složení) |
-| `src/pg/render/PathTracer.h`, `Scene.h` | `unshown` (inverze view transformu); `PathTracer::alpha`, `catcher`; `Scene::plate`, `matteOf`, `realBlocks` |
-| `src/pg/render/Cycles.cpp` | průhledný film, holdouty a shadow catchery Cyclesu, slunce a obloha jako skutečná světla, průchod `catcher` |
-| `tools/prototype/SimViewport.cpp`, `Commands.cpp` | plate v editoru a v `prototype sim` |
-| `examples/usd/make_plate.py` | plate příkladu: kulisa kamerou z matchmove a „film“ |
-| `tests/test_picture.cpp` | 7 testů: PNG, JPEG a EXR proti knihovnám, jména sekvencí, vadné soubory, zápis a čtení zpět, plate a matte v síti |
-| `tests/python/test_picture.py` | 12 testů: proti Pillow a OpenEXR (čtení i zápis), zápis a chyby, plate přes renderer |
+| `src/pg/gl/Volume.h` | `setPlate`, `clearPlate`: plate as an RGBA16F texture; in the shader `plateAt`, `realSun`, `catcher`; the `catcher.*` pass in `writePassesExr` |
+| `src/pg/render/Plate.h` | final render: `Plate`, `loadPlate`, `plateLight` (plate in the renderer's light), `plateSeen` (in image pixels), `overPlate` (compositing) |
+| `src/pg/render/PathTracer.h`, `Scene.h` | `unshown` (inverse view transform); `PathTracer::alpha`, `catcher`; `Scene::plate`, `matteOf`, `realBlocks` |
+| `src/pg/render/Cycles.cpp` | transparent film, Cycles holdouts and shadow catchers, sun and sky as real lights, the `catcher` pass |
+| `tools/prototype/SimViewport.cpp`, `Commands.cpp` | the plate in the editor and in `prototype sim` |
+| `examples/usd/make_plate.py` | the example plate: the set through the matchmove camera, plus "film" |
+| `tests/test_picture.cpp` | 7 tests: PNG, JPEG and EXR against libraries, sequence names, broken files, write and read back, plate and matte in a network |
+| `tests/python/test_picture.py` | 12 tests: against Pillow and OpenEXR (reading and writing), writing and errors, plate through the renderer |
 
-## 9. Omezení
+## 9. Limitations
 
-- **Zkreslení objektivu:** plate musí být bez zkreslení (undistorted),
-  jak ho dodá matchmove. STMap ani overscan program nečte.
-- **Posun filmu** (`horizontalApertureOffset`) kamera nekreslí, takže ho
-  plate nesmí potřebovat.
-- **Skutečné stíny catcheru** počítá program z těles objektů. U tvarů
-  (koule, kvádr…) přesně, u objektů z geometrie z pole vzdáleností o 64
-  buňkách podél nejdelší strany. To je hrubší než stíny, které má plate. Na
-  hraně skutečného stínu, kam svítí oheň, proto může zůstat šev široký pixel
-  nebo dva.
-- **Světlo ohně** prochází ve viewportu zdmi: viewport ho nestíní. Cycles
-  a path tracer ano.
-- **Zrno:** CG zrno plate nemá. Doladit ho je práce compositingu z EXR.
-- **Odrazy a osvětlení z plate:** CG nevidí plate jinak než jako pozadí.
-  Voda v něm plate neodráží a HDRI z něj nesvítí.
-- **Formáty:**
-  - JPEG bez aritmetického kódování, 12 bitů a bezztrátového režimu;
-  - PNG bez ohledu na `gAMA` a `iCCP`, bez APNG;
-  - EXR bez dlaždic, deep dat, více částí, DWAA/DWAB a podvzorkovaných kanálů;
-  - hodnoty nad 65504 se na GPU (half float) oříznou.
-- **Průchod `catcher`** se průměruje z vyhlazení 2 × 2 zvlášť od alfy, a tak
-  složení podle vzorce se na hranách CG od renderu liší (§4).
+- **Lens distortion:** the plate must be undistorted,
+  as delivered by matchmove. The program reads neither STMaps nor overscan.
+- **Film offset** (`horizontalApertureOffset`) is not rendered by the camera,
+  so the plate must not need it.
+- **Real catcher shadows** are computed by the program from the objects'
+  bodies. For shapes (sphere, box…) exactly; for objects from geometry, from a
+  distance field with 64 cells along the longest side. That is coarser than
+  the shadows the plate has. On the edge of a real shadow, where the fire
+  shines, a seam a pixel or two wide may therefore remain.
+- **Firelight** passes through walls in the viewport: the viewport does not
+  shadow it. Cycles and the path tracer do.
+- **Grain:** the CG does not have the plate's grain. Matching it is a
+  compositing job using the EXR.
+- **Reflections and lighting from the plate:** the CG sees the plate only as
+  a background. Water in it does not reflect the plate and no HDRI light comes from it.
+- **Formats:**
+  - JPEG without arithmetic coding, 12-bit and lossless modes;
+  - PNG ignoring `gAMA` and `iCCP`, no APNG;
+  - EXR without tiles, deep data, multipart, DWAA/DWAB and subsampled channels;
+  - values above 65504 are clipped on the GPU (half float).
+- **The `catcher` pass** is averaged from the 2 × 2 antialiasing separately
+  from alpha, so compositing by the formula differs from the render on CG
+  edges (§4).

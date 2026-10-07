@@ -1,405 +1,437 @@
-# Geometrie v síti: uzly jako SOP v Houdini
+# Geometry in the network: nodes like SOPs in Houdini
 
-Síť simulace (editor `prototype`, soubory `.pgsim`) má kategorii
-**Geometry**: uzly, které geometrii vyrábějí a upravují — krychle, koule,
-mřížka, rozházené body, transformace, kopie na body, wrangle… Počítá je
-geometrické jádro (`src/pg/core`, viz [ARCHITECTURE.md](../ARCHITECTURE.md)),
-stejné, na kterém stojí `pgdemo`. Geometrie se:
+The simulation network (the `prototype` editor, `.pgsim` files) has a
+**Geometry** category: nodes that create and modify geometry — box, sphere,
+grid, scattered points, transform, copy to points, wrangle… They are
+computed by the geometry core (`src/pg/core`, see [ARCHITECTURE.md](../ARCHITECTURE.md)),
+the same one that `pgdemo` is built on. Geometry is:
 
-- **ukazuje ve viewportu** — uzel s *display flagem* (modrý praporek na
-  pravém konci uzlu) — a v **tabulce atributů** (Geometry Spreadsheet);
-- **stává tvarem simulací** — vstup *Shape* objektu (překážky), zdroje
-  kouře a zdroje vody;
-- **vrací ze simulací** — částice vody, kapky deště a mřížky plynu jako body
-  a objemy, které jdou dál upravovat dalšími uzly;
-- **exportuje** — do PLY, OBJ a OpenVDB, snímek po snímku
+- **shown in the viewport** — the node with the *display flag* (the blue flag
+  at the right end of the node) — and in the **attribute spreadsheet**
+  (Geometry Spreadsheet);
+- **used as the shape of simulations** — the *Shape* input of an object
+  (colliders), smoke sources and water sources;
+- **returned from simulations** — water particles, raindrops and gas grids as
+  points and volumes, which can be further modified by other nodes;
+- **exported** — to PLY, OBJ and OpenVDB, frame by frame
   ([cache.md](cache.md));
-- **čte** — z OBJ, USD, Alembicu a OpenVDB ([usd-import.md](usd-import.md),
+- **read** — from OBJ, USD, Alembic and OpenVDB ([usd-import.md](usd-import.md),
   [alembic.md](alembic.md), [vdb.md](vdb.md)).
 
-![Editor: částice vody jako body obarvené wranglem podle rychlosti, tabulka jejich atributů a síť s display flagem na uzlu speed_color](img/editor-geometry.png)
+![Editor: water particles as points colored by velocity with a wrangle, their attribute spreadsheet, and the network with the display flag on the speed_color node](img/editor-geometry.png)
 
-![Oheň z rozházených bodů (scatter_fire), částice vody obarvené podle rychlosti (liquid_points) a déšť na kamenech z kopií koule (rock_garden)](img/geometry.png)
+![Fire from scattered points (scatter_fire), water particles colored by velocity (liquid_points) and rain on rocks made from sphere copies (rock_garden)](img/geometry.png)
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
-./build/prototype --example liquid_points      # částice vody jako body, wrangle je barví
-./build/prototype --example scatter_fire       # oheň z bodů rozházených po mřížce
-./build/prototype --example rock_garden        # kameny z kopií koule, déšť na nich
-./build/prototype --example foreach_city       # městský blok: smyčka For-Each přes 25 věží
-./build/prototype --example tree_shapes        # sedm druhů stromů z uzlu Tree (trees.md)
-./build/prototype --example uv_props           # UV Project: bedna, sloup a koule s fotkami podle UV
-./build/prototype --example forest             # les na kopci ve větru
-./build/prototype --example meadow             # louka u lesa: tráva, keře a stromy jako instance (vegetation.md)
-./build/prototype sim rock_garden rocks.png    # bez okna: poslední snímek do PNG
+./build/prototype --example liquid_points      # water particles as points, colored by a wrangle
+./build/prototype --example scatter_fire       # fire from points scattered over a grid
+./build/prototype --example rock_garden        # rocks from sphere copies, rain on them
+./build/prototype --example foreach_city       # city block: a For-Each loop over 25 towers
+./build/prototype --example tree_shapes        # seven tree species from the Tree node (trees.md)
+./build/prototype --example uv_props           # UV Project: a crate, a pillar and a sphere with photos applied by UV
+./build/prototype --example forest             # a forest on a hill in the wind
+./build/prototype --example meadow             # a meadow by a forest: grass, shrubs and trees as instances (vegetation.md)
+./build/prototype sim rock_garden rocks.png    # without a window: the last frame to PNG
 ./build/prototype sim liquid_points out/p.png --every 5 --set look.surface=on
 ```
 
-`prototype sim` kreslí i zobrazenou geometrii. Síť, která nic nesimuluje
-(jen geometrie, bez uzlu Output), vykreslí zobrazenou geometrii s pohledem
-nastaveným na ni.
+`prototype sim` also draws the displayed geometry. A network that simulates
+nothing (geometry only, without an Output node) renders the displayed
+geometry with the view framed on it.
 
-## 2. Uzly
+## 2. Nodes
 
-| Uzel | Co dělá |
+| Node | What it does |
 |---|---|
-| **Box**, **Sphere**, **Tube** | Uzavřené tělo z polygonů, stěny otočené ven (normála podle Newella); krychle s dělením stěn, koule z pásů, válec s víky |
-| **Grid** | Mřížka čtyřúhelníků v rovině xz, stěny nahoru (+y) |
-| **Line** | Otevřená lomená čára bodů |
-| **Point Cloud** | Volné body v krychli, stejné pro stejné seed |
-| **Tree** | Strom, jak roste rostlina: kmen (i rozdělený do vůdčích větví), až tři úrovně větví kolem rodiče o zlatý úhel, ohnuté gravitací a ke světlu, listy na větvičkách; sedm tvarů koruny (smrk, dub, bříza, topol, akácie, vrba, lípa); na každém bodě vstupu jeden strom (les, každý jiný podle `id`); síť (kůra, listy, `flex` pro vítr), kostra (osy a body listů s `orient`), nebo instance: Variants stromů a bod pro každý strom lesa. Viz [trees.md](trees.md) |
-| **Plant Wind** | Vítr v rostlinách: každou rostlinu ohne od paty podle `flex` (otočením, nic se nenatáhne), poryvy běží krajinou po větru, rostliny se kývají každá po svém, listy se třepetají; přidá `v` pro rozmazání pohybem. Body s instancemi dostanou rostlinu předohnutou do nejbližšího z několika tvarů a zbytek dorovnají natočením. Viz [trees.md](trees.md#5-vítr) |
-| **Plant Trample** | Šlapání: rostliny kolem stop (body s `pscale` a `time`) se ohnou pryč od stopy a během Recovery se zase narovnají. Viz [vegetation.md](vegetation.md) |
-| **Ecosystem** | Rostlinné společenstvo za roky: tři druhy rostou, stíní se, chřadnou na nevhodné půdě, umírají a vysévají; výstup jsou body živých rostlin se `species`, skupinami a `pscale`. Viz [vegetation.md](vegetation.md#7b-ekosystém) |
-| **Grass** | Tráva: trsy stébel z jednoho kořene, stébla se zužují, naklánějí a ohýbají, od kořene tmavá, ke špičce světlá, některá suchá; po povrchu Density trsů na m² jako instance (Variants trsů jednou, bod pro každý trs s `orient`, `pscale`, `tint`), podle atributu hustoty a sklonu; bez vstupu jeden trs. Viz [vegetation.md](vegetation.md) |
-| **File** | Body, polygony a čáry ze souboru OBJ, s texturovými souřadnicemi `vt` jako `uv` rohů; relativní cesta od složky sítě; soubor, který se změní, se načte znovu |
-| **Transform** | Posun, rotace, měřítko po osách a celkové; rotace a měřítko kolem bodu **Pivot** (třeba hrany, přes kterou se věc převrací) |
-| **Merge** | Spojí geometrie ve vstupu, který bere libovolně spojů — v pořadí spojů |
-| **Switch** | Pustí dál jeden ze vstupů podle indexu |
-| **Attribute Create** | Atribut jedné hodnoty (číslo nebo vektor) na bodech, rozích, primitivech nebo celé geometrii |
-| **Color** | Barva `Cd` bodů nebo primitiv |
-| **Material** | Z čeho jsou plochy skupiny (beton, omítka, cihlová zeď, okno, ocel, dřevo, dlažba, tašky, trávník…): atribut `material`, podle kterého Cycles a path tracer kreslí fotografie nebo vzory; s Texture vlastní texturu (Poly Haven, ambientCG) kladenou ze tří stran nebo podle UV (Projection), s normálovou mapou (Normal Strength). Viz [materials.md](materials.md) |
-| **UV Project** | Texturové souřadnice `uv` na rozích ploch skupiny: z roviny podél osy, šest stran krabice (Box), jednou dokola válce nebo koule; podle nich renderery kladou fotky a ohýbají světlo normálovou mapou ([materials.md](materials.md#podle-uv-a-normálové-mapy)) |
-| **Group Box** | Skupina bodů uvnitř krabice |
-| **Group** | Skupina bodů nebo primitiv podle vzoru — čísla a rozsahy `0-9 12`, hrany `p3-4`, jiné skupiny, `*`, `^` ubírá; **Ctrl+G** ve viewportu ji udělá z vybraného ([editing.md](editing.md)) |
-| **Blast** | Smaže body vzoru (skupina, čísla, hrany) i s primitivy, které ztratí bod — nebo primitivy i s body, které používaly jen ony; nebo naopak nechá jen je (Keep). **Delete** ve viewportu ho udělá z vybraného |
-| **Edit** | Posune, otočí a zvětší body vzoru — nebo body jeho primitiv — kolem Pivot; Soft Radius vezme s sebou i body kolem, tím méně, čím dál jsou — vzdálenost přímo, nebo po povrchu (Distance), tvar útlumu Falloff. Co udělá úchyt (W E R) na vybraném ve viewportu, s měkkým výběrem (O) |
-| **Attribute Paint** | Číslo namalované na body štětcem ve viewportu (**P**): kapky jako místa (x y z poloměr hodnota síla), v pořadí; `pin`, `tear`, `mass` pro látku |
-| **Sculpt** | Tvar ze štětce ve viewportu (**U**): vytlačit a zatlačit (Push / Pull), uhladit (Smooth, okraje drží čáru), chytit a táhnout (Grab), zarovnat do roviny (Flatten); kapky jako místa, každá na povrchu, jak ho nechaly kapky před ní; tah se počítá přírůstkově, jen z nových kapek |
-| **Point / Primitive / Detail Wrangle** | Kód nad každým bodem, primitivem, nebo jednou nad celou geometrií: posouvá, barví, vyrábí atributy, čte sousedy a další vstupy, staví a maže geometrii ([wrangle.md](wrangle.md)) |
-| **Normal** | Normály bodů `N`, průměr stěn kolem bodu vážený plochou |
-| **Scatter** | Body rozházené po polygonech úměrně ploše — počet (Count), nebo na m² (Density) —, deterministicky podle seed; barvy a další atributy se interpolují z rohů, `N` ze stěny; pravidla: atribut 0–1, jaký podíl bodů kde zůstane, žádné na plochách strmějších než Max Slope, žádný blíž než Min Distance k jinému ([vegetation.md](vegetation.md)) |
-| **Copy to Points** | Kopie geometrie na každý bod druhého vstupu: velikost `pscale` × Scale, natočená podle `orient` bodu (kvaternion x, y, z, w — třeba drti z RBD Pieces), jinak +y do `N` (Align), s atributy bodu (kromě P, N, pscale, orient, `tint` násobí barvy); Piece Attribute rozdělí geometrii na kusy a bod dostane svůj; **Instance**: body, z nichž každý kopii zastupuje, geometrie jednou ([vegetation.md](vegetation.md)) |
-| **Unpack** | Z instancí (bodů, které zastupují prototypy — Grass, Tree s Output Instances, Copy to Points s Instance) udělá kopie: geometrii, kterou mohou měnit všechny uzly |
-| **Null** | Nic nemění: jméno, na které se dá ukázat, konec řetězce |
-| **Connectivity** | Očísluje souvislé kusy (primitivy, které sdílejí body, jsou jeden kus): celočíselný atribut `class` na primitivech nebo bodech, kusy od 0 v pořadí prvních primitiv |
-| **Fuse** | Body blíž než Distance spojí v jeden (uprostřed nich), primitivy je následují; co se zhroutí (trojúhelník ze dvou bodů), zmizí |
-| **Dissolve** | Vybrané hrany (`p3-4 p5-9`) vyjme a dva polygony, jejichž byla stranou, spojí v jeden; s třídou Primitives spojí vybrané plochy (vyjme strany, které dvě z nich sdílejí). Kde by z toho nebyl jeden obvod (prstenec kolem díry, obvod, který se sám dotkne, opačně otočené plochy), polygony zůstanou. Body, které zbudou v přímce na straně a žádný jiný polygon je nemá, zmizí (Remove Inline Points, odchylka do Inline Angle); body, které měly jen vyjmuté strany, také. Ve viewportu **Ctrl+X** ([editing.md](editing.md#5-skupina-mazání-a-dissolve)) |
-| **PolyExtrude** | Každou stěnu (nebo stěny skupiny či vzoru `0-9 12` — Tab ve viewportu ho vyplní vybranými plochami; šipka ve viewportu mění Distance) vytáhne podél normály, s bočními stěnami podél hran: dovnitř okno, ven římsa; Inset ji předtím zmenší o pevnou vzdálenost od hran; Output Back nechá i původní stěnu (uzavřené těleso); skupiny `extrudeFront` a `extrudeSide` |
-| **Subdivide** | Catmull-Clark, jak ho počítá OpenSubdiv (Blender, USD): každá stěna na čtyřúhelníky, body posunuté do hladkého tvaru; volné hrany drží svou čáru a rohy mřížky zůstávají. Ostré hrany podle atributu rohů `creaseweight` (ostrost hrany od rohu k dalšímu; 1 vydrží jeden krok, 10 navždy, mezi tím se hrana zaoblí jen trochu), ostré body podle `cornerweight` bodů; každým krokem ostrost klesne o 1 a výsledek ji nese dál. Atributy bodů jdou s nimi, rohů lineárně |
-| **Clip** | Nechá to, co je na jedné straně roviny: stěny rozřízne podél ní a s Cap uzavřené těleso zase uzavře stěnou v rovině (skupina `cut`); nekonvexní řez rozloží na trojúhelníky — z obou stran roviny na tytéž, takže víčka dvou polovin lícují |
-| **Attribute Transfer** | Atributy bodů z druhého vstupu (Source) na body blízko nich: do Distance vážený průměr bodů, dál slábnoucí přes Blend Width; celá čísla a řetězce od nejbližšího |
-| **For-Each Begin / End** | Smyčka: uzly mezi nimi běží pro každý kus, primitivum nebo bod — nebo Count krát, nebo Feedback (každý běh na výsledku předchozího); viz níže |
-| **Convert Volume** | Povrch objemu jako polygony: tam, kde hodnoty překročí Iso, uzavřená síť čtyřúhelníků otočených ven, s normálami `N`; uzavřená i tam, kde objem končí. Uvnitř jsou hodnoty nad Iso (hustota, kouř) nebo pod ním (vzdálenost, záporná uvnitř). Viz níže |
-| **Liquid Points** | Částice vody z Liquid Solveru: `P`, rychlost `v`, pěna `foam`, číslo `id` (stejné ze snímku na snímek) |
-| **Liquid Surface** | Voda z Liquid Solveru jako povrch, ze kterého ji renderer renderuje: uzavřená síť kolem ní s normálami `N`, rychlostí `v` a pěnou `foam`; s Ripples i vlnky od deště. Viz níže |
-| **Rain Points** | Kapky deště a kapičky odstřiků: `P`, `v`, `droplet` (1 u kapičky), `id` (kapičky od 2³⁰) |
-| **Gas Volume** | Plyn z Pyro Solveru (nebo z VDB Gas) jako objemy: `density` (kouř), `temperature`, `flame`, pára `steam`, je-li, a rychlost `vel.x`, `vel.y`, `vel.z` na blocích 2 × 2 × 2 buněk |
-| **USD Import** | Geometrie scény USD (`.usda`, `.usdc`, `.usdz`) v daném snímku, složené jako v USD, v metrech s Y nahoru; dělené plochy vyhlazené jako v OpenSubdivu ([usd-import.md](usd-import.md)) |
-| **Alembic Import** | Geometrie souboru Alembic (`.abc`) v daném snímku, kam ji dají transformace: polygony, body, křivky, atributy, FaceSety jako skupiny ([alembic.md](alembic.md)) |
-| **VDB Import** | Mřížky souboru OpenVDB jako objemy, číslovaná sekvence soubor na snímek; se Surface polygony jejich povrchu — level set kolem nuly, hustota kolem Iso ([vdb.md](vdb.md)) |
-| **Voronoi Fracture** | Uzavřené těleso rozřezané na kusy — buňky bodů z druhého vstupu, nebo Count náhodných uvnitř — každý uzavřený, s číslem `piece` a řeznými plochami ve skupině `inside`; viz [destruction.md](destruction.md) |
-| **RBD Pieces** | Kusy z RBD Solveru tam, kam ve snímku dopadly: body posunuté a otočené, rychlost `v`; s `grit` i drť jako body (`pscale`, `v`, `id`) |
+| **Box**, **Sphere**, **Tube** | A closed body made of polygons, faces pointing outwards (Newell normal); a box with subdivided faces, a sphere made of bands, a cylinder with caps |
+| **Grid** | A grid of quads in the xz plane, faces pointing up (+y) |
+| **Line** | An open polyline of points |
+| **Point Cloud** | Loose points in a cube, the same for the same seed |
+| **Tree** | A tree grown the way a plant grows: a trunk (optionally split into leaders), up to three branch levels placed around the parent by the golden angle, bent by gravity and towards the light, leaves on twigs; seven crown shapes (spruce, oak, birch, poplar, acacia, willow, linden); one tree on each input point (a forest, each tree different according to `id`); a mesh (bark, leaves, `flex` for wind), a skeleton (axes and leaf points with `orient`), or instances: Variants trees and a point for each tree in the forest. See [trees.md](trees.md) |
+| **Plant Wind** | Wind in plants: bends each plant from its base according to `flex` (by rotation, nothing stretches), gusts travel across the landscape downwind, each plant sways in its own way, leaves flutter; adds `v` for motion blur. Points with instances get the plant pre-bent into the nearest of several shapes and make up the rest by rotation. See [trees.md](trees.md#5-wind) |
+| **Plant Trample** | Trampling: plants around footprints (points with `pscale` and `time`) bend away from the footprint and straighten up again over Recovery. See [vegetation.md](vegetation.md) |
+| **Ecosystem** | A plant community over years: three species grow, shade each other, wither on unsuitable soil, die and seed; the output is points of living plants with `species`, groups and `pscale`. See [vegetation.md](vegetation.md#7b-ecosystem) |
+| **Grass** | Grass: clumps of blades from a single root; blades taper, lean and bend, dark at the root and light towards the tip, some dry; over a surface, Density clumps per m² as instances (Variants clumps once, a point for each clump with `orient`, `pscale`, `tint`), according to a density attribute and slope; without an input, a single clump. See [vegetation.md](vegetation.md) |
+| **File** | Points, polygons and lines from an OBJ file, with `vt` texture coordinates as vertex `uv`; relative path from the network's folder; a file that changes is reloaded |
+| **Transform** | Translate, rotate, per-axis and uniform scale; rotation and scale around the **Pivot** point (for example the edge over which something tips over) |
+| **Merge** | Merges the geometries in its input, which accepts any number of connections — in connection order |
+| **Switch** | Passes on one of its inputs by index |
+| **Attribute Create** | A single-value attribute (number or vector) on points, vertices, primitives or the whole geometry |
+| **Color** | Color `Cd` of points or primitives |
+| **Material** | What the primitives of a group are made of (concrete, plaster, brick wall, window, steel, wood, paving, roof tiles, lawn…): the `material` attribute, by which Cycles and the path tracer draw photographs or patterns; with Texture, a custom texture (Poly Haven, ambientCG) applied from three sides or by UV (Projection), with a normal map (Normal Strength). See [materials.md](materials.md) |
+| **UV Project** | `uv` texture coordinates on the vertices of the group's primitives: planar along an axis, the six sides of a box (Box), once around a cylinder or a sphere; the renderers use them to apply photos and bend light with a normal map ([materials.md](materials.md#by-uv-and-normal-map)) |
+| **Group Box** | A group of points inside a box |
+| **Group** | A group of points or primitives by pattern — numbers and ranges `0-9 12`, edges `p3-4`, other groups, `*`, `^` removes; **Ctrl+G** in the viewport creates it from the selection ([editing.md](editing.md)) |
+| **Blast** | Deletes the points of a pattern (group, numbers, edges) together with the primitives that lose a point — or primitives together with the points that only they used; or, conversely, keeps only those (Keep). **Delete** in the viewport creates it from the selection |
+| **Edit** | Moves, rotates and scales the points of a pattern — or the points of its primitives — around Pivot; Soft Radius also takes the surrounding points along, the less the farther away they are — distance measured directly or along the surface (Distance), falloff shape Falloff. What a handle (W E R) does to the selection in the viewport, with soft selection (O) |
+| **Attribute Paint** | A number painted onto points with a brush in the viewport (**P**): dabs as locations (x y z radius value strength), in order; `pin`, `tear`, `mass` for cloth |
+| **Sculpt** | Shape from a brush in the viewport (**U**): push out and push in (Push / Pull), smooth (Smooth, borders keep their line), grab and drag (Grab), flatten to a plane (Flatten); dabs as locations, each on the surface as the dabs before it left it; a stroke is computed incrementally, only from new dabs |
+| **Point / Primitive / Detail Wrangle** | Code over every point, every primitive, or once over the whole geometry: moves, colors, creates attributes, reads neighbors and other inputs, builds and deletes geometry ([wrangle.md](wrangle.md)) |
+| **Normal** | Point normals `N`, the area-weighted average of the faces around a point |
+| **Scatter** | Points scattered over polygons in proportion to area — a count (Count), or per m² (Density) —, deterministically by seed; colors and other attributes are interpolated from the vertices, `N` from the face; rules: a 0–1 attribute giving what fraction of points stays where, none on faces steeper than Max Slope, none closer than Min Distance to another ([vegetation.md](vegetation.md)) |
+| **Copy to Points** | A copy of the geometry on every point of the second input: size `pscale` × Scale, oriented by the point's `orient` (quaternion x, y, z, w — for example debris from RBD Pieces), otherwise +y to `N` (Align), with the point's attributes (except P, N, pscale, orient; `tint` multiplies colors); Piece Attribute splits the geometry into pieces and each point gets its own; **Instance**: points, each representing a copy, geometry once ([vegetation.md](vegetation.md)) |
+| **Unpack** | Turns instances (points that represent prototypes — Grass, Tree with Output Instances, Copy to Points with Instance) into copies: geometry that any node can modify |
+| **Null** | Changes nothing: a name to point at, the end of a chain |
+| **Connectivity** | Numbers the connected pieces (primitives that share points are one piece): an integer `class` attribute on primitives or points, pieces from 0 in the order of their first primitives |
+| **Fuse** | Merges points closer than Distance into one (in the middle of them); primitives follow them; whatever collapses (a triangle from two points) disappears |
+| **Dissolve** | Removes the selected edges (`p3-4 p5-9`) and merges the two polygons they were a side of into one; with the Primitives class, merges the selected faces (removes the sides shared by two of them). Where this would not yield a single boundary (a ring around a hole, a boundary that touches itself, oppositely oriented faces), the polygons stay. Points left in a straight line on a side and used by no other polygon disappear (Remove Inline Points, deviation up to Inline Angle); so do points that had only removed sides. In the viewport, **Ctrl+X** ([editing.md](editing.md#5-group-deletion-and-dissolve)) |
+| **PolyExtrude** | Extrudes each face (or the faces of a group or pattern `0-9 12` — Tab in the viewport fills it with the selected faces; an arrow in the viewport changes Distance) along the normal, with side faces along the edges: inwards a window, outwards a cornice; Inset first shrinks it by a fixed distance from the edges; Output Back also keeps the original face (closed body); groups `extrudeFront` and `extrudeSide` |
+| **Subdivide** | Catmull-Clark, as computed by OpenSubdiv (Blender, USD): every face into quads, points moved into a smooth shape; boundary edges keep their line and grid corners stay. Sharp edges according to the vertex attribute `creaseweight` (sharpness of the edge from the vertex to the next one; 1 lasts one step, 10 forever, in between the edge is rounded only slightly), sharp points according to the point attribute `cornerweight`; with each step the sharpness drops by 1 and the result carries it on. Point attributes go with the points, vertex attributes linearly |
+| **Clip** | Keeps what is on one side of a plane: cuts faces along it and, with Cap, closes a closed body again with a face in the plane (group `cut`); a non-convex cut is triangulated — into the same triangles from both sides of the plane, so the caps of the two halves match |
+| **Attribute Transfer** | Point attributes from the second input (Source) onto points near them: within Distance a weighted average of points, beyond that fading over Blend Width; integers and strings from the nearest |
+| **For-Each Begin / End** | A loop: the nodes between them run for each piece, primitive or point — or Count times, or Feedback (each run on the result of the previous one); see below |
+| **Convert Volume** | The surface of a volume as polygons: where the values cross Iso, a closed mesh of outward-facing quads with normals `N`; closed even where the volume ends. Inside, the values are above Iso (density, smoke) or below it (distance, negative inside). See below |
+| **Liquid Points** | Water particles from the Liquid Solver: `P`, velocity `v`, foam `foam`, number `id` (the same from frame to frame) |
+| **Liquid Surface** | Water from the Liquid Solver as the surface from which the renderer renders it: a closed mesh around it with normals `N`, velocity `v` and foam `foam`; with Ripples, also ripples from rain. See below |
+| **Rain Points** | Raindrops and splash droplets: `P`, `v`, `droplet` (1 for a droplet), `id` (droplets from 2³⁰) |
+| **Gas Volume** | Gas from the Pyro Solver (or from VDB Gas) as volumes: `density` (smoke), `temperature`, `flame`, vapor `steam` if present, and velocity `vel.x`, `vel.y`, `vel.z` on blocks of 2 × 2 × 2 cells |
+| **USD Import** | The geometry of a USD scene (`.usda`, `.usdc`, `.usdz`) at a given frame, composed as in USD, in meters with Y up; subdivision surfaces smoothed as in OpenSubdiv ([usd-import.md](usd-import.md)) |
+| **Alembic Import** | The geometry of an Alembic file (`.abc`) at a given frame, where its transforms put it: polygons, points, curves, attributes, FaceSets as groups ([alembic.md](alembic.md)) |
+| **VDB Import** | The grids of an OpenVDB file as volumes, a numbered sequence with one file per frame; with Surface, polygons of their surface — a level set around zero, density around Iso ([vdb.md](vdb.md)) |
+| **Voronoi Fracture** | A closed body cut into pieces — cells of the points from the second input, or Count random ones inside — each closed, with a `piece` number and the cut faces in the `inside` group; see [destruction.md](destruction.md) |
+| **RBD Pieces** | Pieces from the RBD Solver where they ended up at the frame: points moved and rotated, velocity `v`; with `grit`, also debris as points (`pscale`, `v`, `id`) |
 
-Geometrické uzly se dají **obejít** (bypass, B): obejitý uzel pustí dál,
-co do něj vstupuje. Síť odmítne spoj, který by udělal smyčku.
+Geometry nodes can be **bypassed** (bypass, B): a bypassed node passes on
+whatever goes into it. The network rejects a connection that would create a
+cycle.
 
 ### Wrangle
 
-Snippet wranglu je **kód** — víceřádkové pole s neproporcionálním písmem;
-použije se, když se klikne jinam. Chyba v kódu je u uzlu vidět (červený
-odznak, text v parametrech i v tabulce), varování žlutě.
+A wrangle's snippet is **code** — a multi-line field with a monospaced font;
+it is applied when you click elsewhere. An error in the code is shown on the
+node (a red badge, text in the parameters and in the spreadsheet), warnings
+in yellow.
 
 ```c
 @Cd = vec3(0.05, 0.2, 0.6) + vec3(0.9, 0.75, 0.4) * clamp(length(@v) / 2.5, 0, 1);
 @pscale = 0.6 + 0.9 * abs(noise(@P * 2.5));
 ```
 
-Jazyk má proměnné, podmínky, cykly, vlastní funkce, pole a řetězce; čte
-libovolné prvky a další vstupy (`point(1, "P", @ptnum)`, `nearpoints()`),
-staví a maže geometrii (`addpoint()`, `removeprim()`) a `ch("jméno")` z něj
-udělá posuvník uzlu. Celý popis je v [wrangle.md](wrangle.md).
+The language has variables, conditions, loops, user functions, arrays and
+strings; it reads arbitrary elements and other inputs (`point(1, "P", @ptnum)`,
+`nearpoints()`), builds and deletes geometry (`addpoint()`, `removeprim()`),
+and `ch("name")` turns a value into a node slider. The full description is in
+[wrangle.md](wrangle.md).
 
-### Smyčky For-Each
+### For-Each loops
 
-![Městský blok z jedné krabice: 25 věží, každá s vlastní výškou, odstínem a terasou na střeše](img/foreach-city.png)
+![A city block from a single box: 25 towers, each with its own height, hue and rooftop terrace](img/foreach-city.png)
 
-Uzly mezi **For-Each Begin** a **For-Each End** běží jednou pro každý kus
-toho, co do Begin vstupuje. End výsledky spojí, jako Merge, v pořadí kusů:
+The nodes between **For-Each Begin** and **For-Each End** run once for each
+piece of whatever goes into Begin. End merges the results, like Merge, in
+piece order:
 
 ```
 [Grid] ─┐
 [Box] ──┴→ [Copy to Points] → [Connectivity] → [For-Each Begin] → [height] → [top] → [terrace] → [For-Each End]
-                                                     └──────── jednou pro každou krabici ────────┘
+                                                     └─────────── once for each box ─────────────┘
 ```
 
-**Method** v Begin určuje, co každý běh dostane:
+**Method** in Begin determines what each run receives:
 
-| Method | Každý běh dostane |
+| Method | Each run receives |
 |---|---|
-| **Pieces** | primitivy (nebo body) jedné hodnoty atributu **Piece Attribute** — výchozí `class`, který dá Connectivity; kusy v pořadí hodnot |
-| **Primitives** | jedno primitivum |
-| **Points** | jeden bod |
-| **Count** | celý vstup, Count krát |
-| **Feedback** | Count krát, pokaždé výsledek předchozího běhu; End vydá poslední |
+| **Pieces** | the primitives (or points) with one value of the **Piece Attribute** attribute — by default `class`, which Connectivity provides; pieces in order of value |
+| **Primitives** | one primitive |
+| **Points** | one point |
+| **Count** | the whole input, Count times |
+| **Feedback** | Count times, each time the result of the previous run; End outputs the last one |
 
-Každý kus nese atributy detailu `iteration` (od 0), `numiterations`
-a `value` (hodnota atributu kusu, nebo číslo prvku). Wrangle v těle smyčky
-je čte funkcí `detail()`:
+Each piece carries the detail attributes `iteration` (from 0),
+`numiterations` and `value` (the piece's attribute value, or the element
+number). A wrangle in the loop body reads them with the `detail()` function:
 
 ```c
 int i = detail(0, "iteration");
-float h = 0.5 + 2.5 * pow(rand(i * 7.31 + 0.5), 3);   // každá věž jiná, pořád stejně
+float h = 0.5 + 2.5 * pow(rand(i * 7.31 + 0.5), 3);   // each tower different, always the same
 @P.y *= h;
 ```
 
-- **Begin samotný** vydá první kus. Uzly těla tak při editaci ukazují jeden
-  kus a smyčka běží jen v End, jako „single pass“ v Houdini.
-- End najde svůj Begin sám (nejbližší proti proudu), nebo podle jména
-  v parametru **Begin**. Když chybí, End napíše proč.
-- **Tělo** smyčky jsou všechny uzly proti proudu od End až po Begin. End si
-  je zkopíruje do vlastní sítě (místo Begin do ní vstupuje kus) a vaří je
-  ve vlastním grafu, kus po kusu. Změna uzlu v těle nebo vstupu smyčku
-  přepočítá, beze změny se nevaří nic.
-- Výsledek je stejný na 1 i 4 vláknech. Kusy běží po sobě; uvnitř každého
-  kusu pracují uzly paralelně jako jinde.
-- Smyčky jde vnořovat: tělo může obsahovat další dvojici Begin/End.
-- Výrazy v parametrech uzlů těla nevidí číslo běhu. Pro hodnoty, které se
-  liší kus od kusu, slouží wrangle a `detail()`.
+- **Begin on its own** outputs the first piece. The body nodes thus show one
+  piece while editing, and the loop runs only in End, like "single pass" in
+  Houdini.
+- End finds its Begin on its own (the nearest one upstream), or by name in
+  the **Begin** parameter. If it is missing, End says why.
+- The loop **body** is all nodes upstream of End up to Begin. End copies
+  them into its own network (in place of Begin, the piece goes in) and cooks
+  them in its own graph, piece by piece. A change of a body node or of the
+  input recomputes the loop; without a change nothing is cooked.
+- The result is the same on 1 and 4 threads. Pieces run one after another;
+  within each piece the nodes work in parallel as elsewhere.
+- Loops can be nested: the body can contain another Begin/End pair.
+- Expressions in the parameters of body nodes do not see the iteration
+  number. For values that differ from piece to piece, use a wrangle and
+  `detail()`.
 
-## 3. Display flag a viewport
+## 3. Display flag and viewport
 
-Každý geometrický uzel má na pravém konci praporek. Klik na něj (nebo **R**
-nad sítí) z uzlu udělá **zobrazený**: jeho geometrie je ve viewportu,
-v renderech a v `prototype sim`. Klik na praporek zobrazeného uzlu zobrazení
-vypne. Zobrazený je vždy nanejvýš jeden uzel; nově přidaný geometrický uzel
-dostane praporek, když není zobrazené nic — nebo když navazuje na ten
-zobrazený (přidaný tažením spoje z jeho výstupu), jako další krok řetězce.
-Praporek se ukládá do souboru.
+Every geometry node has a flag at its right end. Clicking it (or **R** over
+the network) makes the node **displayed**: its geometry is in the viewport,
+in renders and in `prototype sim`. Clicking the flag of the displayed node
+turns the display off. At most one node is displayed at any time; a newly
+added geometry node gets the flag when nothing is displayed — or when it
+follows on from the displayed one (added by dragging a wire from its
+output), as the next step in the chain. The flag is saved to the file.
 
-Jak se geometrie kreslí:
+How geometry is drawn:
 
-- **polygony** — trojúhelníky (vějíř přes každý uzavřený polygon), osvětlené
-  sluncem a oblohou jako objekty scény, se stínem kouře a objektů; barva
-  z `Cd` rohu, jinak bodu, primitiva, celé geometrie, jinak světle šedá;
-  normály z `N` rohu (ostrá hrana tak, jak ji zapsal Blender nebo Houdini),
-  jinak z `N` bodu, jinak z plošek kolem rohu, které se od něj ohýbají
-  méně než o 60° (koule vypadá kulatě, krychle má hrany). Stejně je berou
-  Cycles i path tracer;
-- **otevřené čáry** — úsečky v barvě `Cd`;
-- **body, které nepoužívá žádný polygon** — kulaté tečky stínované jako
-  kuličky; s `pscale` mají poloměr `pscale`, jinak pár pixelů;
-- **objemy** — rámeček kolem a tečka v každém neprázdném voxelu, od modré
-  přes purpurovou k žluté podle hodnoty; u velkých objemů jen každý druhý,
-  třetí… voxel (tečky jsou pak větší), z objemů nejvýš 400 tisíc teček.
+- **polygons** — triangles (a fan across each closed polygon), lit by the
+  sun and the sky like scene objects, with shadows from smoke and objects;
+  color from the vertex `Cd`, otherwise the point's, the primitive's, the
+  whole geometry's, otherwise light gray; normals from the vertex `N` (a
+  sharp edge as Blender or Houdini wrote it), otherwise from the point `N`,
+  otherwise from the facets around the vertex that bend away from it by
+  less than 60° (a sphere looks round, a box has edges). Cycles and the path
+  tracer use them in the same way;
+- **open lines** — line segments in the `Cd` color;
+- **points not used by any polygon** — round dots shaded like small spheres;
+  with `pscale` their radius is `pscale`, otherwise a few pixels;
+- **volumes** — a frame around them and a dot in each non-empty voxel, from
+  blue through purple to yellow by value; for large volumes only every
+  second, third… voxel (the dots are then larger), at most 400 thousand
+  dots from volumes.
 
-Klávesa **F** bez výběru zarámuje i zobrazenou geometrii; když síť nic
-nesimuluje, kamera ji zarámuje sama.
+The **F** key with no selection also frames the displayed geometry; when the
+network simulates nothing, the camera frames it on its own.
 
-Zobrazenou geometrii jde upravovat přímo ve viewportu — vybrat myší body
-(**2**), hrany (**3**) nebo plochy (**4**), posunout je úchytem, udělat
-z nich skupinu, smazat je, namalovat atribut štětcem (**P**), tvarovat ji
-štětcem (**U**). Každá úprava je uzel za zobrazeným (Edit, Group, Blast,
-Attribute Paint, Sculpt): viz [editing.md](editing.md).
+The displayed geometry can be edited directly in the viewport — select points
+(**2**), edges (**3**) or faces (**4**) with the mouse, move them with a
+handle, make a group of them, delete them, paint an attribute with a brush
+(**P**), shape it with a brush (**U**). Each edit is a node after the
+displayed one (Edit, Group, Blast, Attribute Paint, Sculpt): see
+[editing.md](editing.md).
 
-Water Look má přepínač **Surface**: vypnutý hladinu nekreslí — voda se
-simuluje dál a je vidět jen to, co z ní ukazuje síť (částice přes Liquid
-Points).
+Water Look has a **Surface** toggle: switched off, it does not draw the water
+surface — the water is still simulated and only what the network shows of
+it is visible (particles via Liquid Points).
 
-## 3a. Náhledy v uzlech
+## 3a. Node thumbnails
 
-Každý uzel sítě má pod piny obrázek toho, co dělá (16 : 10) — jako
-miniatury uzlů v Substance Designeru nebo náhledy v Blenderu:
+Every node in the network has an image of what it does below its pins
+(16 : 10) — like the node thumbnails in Substance Designer or the previews in
+Blender:
 
-| uzel | obrázek |
+| node | image |
 |---|---|
-| geometrický (Box, Wrangle, Merge, Fracture…, asset) | jeho geometrie ve snímku na obrazovce, osvětlená, v tmavém studiu, zarámovaná, shora ze tří čtvrtin |
-| Object | jeho tvar v jeho barvě |
-| Pyro Source, Water Source | tvar zdroje: oheň oranžově, kouř šedě, voda modře |
-| Pyro Solver, Volume Look | plyn snímku na obrazovce, zarámovaný na místo, kde plyn je, ve světle scény |
-| Liquid Solver, Water Look | voda snímku |
-| RBD Solver, Cloth Solver | kusy, látka |
-| Rain | kapky |
-| Camera | scéna jejím pohledem (USD Camera, jen když se jí dívá Output) |
-| Output | záběr: scéna kamerou výstupu, bez kamery tak, jak ji zarámuje viewport |
+| geometry (Box, Wrangle, Merge, Fracture…, asset) | its geometry at the on-screen frame, lit, in a dark studio, framed, from a three-quarter view above |
+| Object | its shape in its color |
+| Pyro Source, Water Source | the source shape: fire in orange, smoke in gray, water in blue |
+| Pyro Solver, Volume Look | the gas at the on-screen frame, framed on where the gas is, in the scene lighting |
+| Liquid Solver, Water Look | the water at the frame |
+| RBD Solver, Cloth Solver | pieces, cloth |
+| Rain | drops |
+| Camera | the scene through its view (USD Camera, only when Output looks through it) |
+| Output | the shot: the scene through the output camera; without a camera, as the viewport frames it |
 
-Síly obrázek nemají. **View → Node Thumbnails** náhledy vypne a zapne pro
-celou síť, **Thumbnail** v menu uzlu (pravé tlačítko) pro vybrané uzly.
+Forces have no image. **View → Node Thumbnails** turns thumbnails off and on
+for the whole network, **Thumbnail** in the node menu (right button) for the
+selected nodes.
 
-Obrázek se kreslí znovu, jen když se změní, co ukazuje: po úpravě uzlu nebo
-toho, co do něj vede, hned; snímek, který se při přehrávání mění, nejvýš
-čtyřikrát za sekundu — a když kreslení trvá dlouho, tím řidčeji, aby
-nezabralo víc než dvacetinu času. Kreslí se jen obrázky uzlů na obrazovce,
-nejvýš tři za snímek okna, nejdřív ty, které ještě žádný nemají. Geometrii
-pro ně uvaří vařič ve vlastním požadavku, až když je uvařené, co ukazuje
-viewport: změna sítě vždy uvaří nejdřív zobrazený uzel. Plyn a voda jdou do
-náhledů na hrubší mřížce (nejvýš 2 miliony buněk), takže velká scéna
-(`flood_crates_hd`) nedrží v grafické kartě druhou plnou kopii.
+An image is redrawn only when what it shows changes: after an edit of the
+node or of what leads into it, immediately; for a frame that changes during
+playback, at most four times per second — and if drawing takes long, less
+often, so that it does not take more than a twentieth of the time. Only
+images of nodes on screen are drawn, at most three per window frame, those
+that do not have one yet first. Their geometry is cooked by the cooker in a
+separate request, only once what the viewport shows has been cooked: a
+change to the network always cooks the displayed node first. Gas and water
+go into thumbnails on a coarser grid (at most 2 million cells), so a large
+scene (`flood_crates_hd`) does not keep a second full copy in the graphics
+card.
 
-Síť rozložená bez náhledů — všechny příklady — by se s nimi překrývala.
-Uzel pod uzlem s obrázkem se proto kreslí níž, o kolik obrázek nad ním
-vyrostl; pozice v síti zůstanou, soubor se nezmění. Uzel přetažený myší
-nebo rozložený (**L**) stojí tam, kde je nakreslený.
+A network laid out without thumbnails — all the examples — would overlap
+with them. A node below a node with an image is therefore drawn lower by as
+much as the image above it grew; the positions in the network stay the
+same and the file does not change. A node dragged with the mouse or laid out
+(**L**) stays where it is drawn.
 
-![Síť flood_crates s náhledy: bedny, betonové bloky, kusy RBD, voda, zdroj, výstup a kamera](img/node-thumbnails.jpg)
+![The flood_crates network with thumbnails: crates, concrete blocks, RBD pieces, water, source, output and camera](img/node-thumbnails.jpg)
 
-## 4. Tabulka atributů
+## 4. Attribute spreadsheet
 
-Tlačítko s tabulkou v záhlaví panelu parametrů přepne na **Geometry
-Spreadsheet** — geometrii vybraného geometrického uzlu, jinak zobrazeného.
-Nahoře počty (body, rohy, primitiva, objemy); pod nimi třídy:
+The spreadsheet button in the header of the parameter panel switches to the
+**Geometry Spreadsheet** — the geometry of the selected geometry node,
+otherwise of the displayed one. At the top are the counts (points, vertices,
+primitives, volumes); below them the classes:
 
-- **Points** — `P` první, pak atributy podle jména, vektory po složkách
-  (`P[x]`, `P[y]`, `P[z]`), a skupiny bodů jako sloupce 0/1;
-- **Vertices** — bod každého rohu a atributy rohů;
-- **Primitives** — uzavřené/otevřené, body primitiva, atributy;
-- **Detail** — atributy celé geometrie;
-- **Volumes** — jméno, rozlišení, velikost voxelu, počátek, minimum,
-  maximum a průměr hodnot.
+- **Points** — `P` first, then attributes by name, vectors by component
+  (`P[x]`, `P[y]`, `P[z]`), and point groups as 0/1 columns;
+- **Vertices** — the point of each vertex and the vertex attributes;
+- **Primitives** — closed/open, the primitive's points, attributes;
+- **Detail** — attributes of the whole geometry;
+- **Volumes** — name, resolution, voxel size, origin, minimum, maximum and
+  average of the values.
 
-Řádky se kreslí jen viditelné (virtualizace), takže tabulka zvládne i
-stovky tisíc bodů: částice vody se dají procházet za běhu simulace.
+Only visible rows are drawn (virtualization), so the spreadsheet handles even
+hundreds of thousands of points: water particles can be browsed while the
+simulation is running.
 
-## 5. Geometrie jako tvar simulací
+## 5. Geometry as the shape of simulations
 
-Objekt (Object), zdroj kouře (Pyro Source) a zdroj vody (Water Source) mají
-vstup **Shape**. Když je v něm geometrie, je jejich tvarem místo vlastního:
+An object (Object), a smoke source (Pyro Source) and a water source (Water
+Source) have a **Shape** input. When it holds geometry, that geometry is
+their shape instead of their own:
 
-- geometrie se vezme **ve snímku 1** (stejně jako tvary ze souborů: tvar
-  během simulace nemění — pohyb přijde s animací);
-- z uzavřených polygonů se udělá trojúhelníková síť a z ní pole
-  vzdáleností (SDF, 64 buněk na nejdelší straně) — stejné jako u modelu
-  z OBJ, takže objekt vrhá stín, kreslí se a srážejí se s ním plyn, voda
-  i déšť;
-- geometrie **bez polygonů** (jen body) dá kuličku kolem každého bodu:
-  dvacetistěn o poloměru `pscale`, jinak 5 cm; nejvýš 20 000 bodů;
-- vnitřek se určuje paprsky podél os a parita průsečíků se počítá **pro
-  každou slupku zvlášť** (trojúhelníky spojené rohy na stejném místě);
-  bod je uvnitř, je-li uvnitř kterékoli slupky. Překrývající se tvary —
-  kuličky kolem bodů, kopie, sloučená tělesa — tak vyplní i svůj průnik.
-  Slupka vnořená do jiné (dutina) se tím vyplní;
-- stejná geometrie (podle obsahu, `hash`) dává stejnou síť — upéct se
-  jednou, dokud ji někdo drží;
-- prázdná geometrie → varování a místo ní vlastní tvar uzlu; geometrie ze
-  simulace (Liquid Points…) tvarem být nemůže — simulace v té chvíli ještě
-  neproběhla — a řekne to varování.
+- the geometry is taken **at frame 1** (just like shapes from files: the
+  shape does not change during the simulation — motion will come with
+  animation);
+- closed polygons are turned into a triangle mesh and that into a distance
+  field (SDF, 64 cells along the longest side) — the same as for a model from
+  OBJ, so the object casts shadows, is drawn, and gas, water and rain collide
+  with it;
+- geometry **without polygons** (points only) gives a small sphere around each
+  point: an icosahedron of radius `pscale`, otherwise 5 cm; at most 20,000
+  points;
+- the inside is determined by rays along the axes, and the parity of the
+  intersections is counted **for each shell separately** (triangles joined
+  by vertices at the same position); a point is inside if it is inside any
+  shell. Overlapping shapes — spheres around points, copies, merged bodies —
+  thus also fill their intersection. A shell nested inside another (a
+  cavity) is filled as a result;
+- the same geometry (by content, `hash`) gives the same mesh — baked once,
+  as long as someone holds it;
+- empty geometry → a warning and the node's own shape in its place; geometry
+  from a simulation (Liquid Points…) cannot be a shape — the simulation has
+  not run yet at that point — and a warning says so.
 
-Parametry vlastního tvaru (tvar, poloha, rotace, velikost) pak platí jen
-jako náhrada; gizmo ve viewportu takový uzel nehýbe — hýbe se uzly
-geometrie (třeba Transform, nebo střed krychle). Souhrn uzlu ukáže „shape of
-*jméno*“.
+The parameters of the node's own shape (shape, position, rotation, size)
+then only apply as a fallback; the gizmo in the viewport does not move such a
+node — you move the geometry nodes instead (for example Transform, or the
+center of a box). The node summary shows "shape of *name*".
 
-## 6. Simulace zpátky jako geometrie
+## 6. Simulations back as geometry
 
-**Liquid Points**, **Liquid Surface**, **Rain Points**, **Gas Volume** a **RBD Pieces** mají
-vstup ze simulace (Liquid, Rain, Gas, Rigid) a na výstupu geometrii snímku,
-který je právě vidět: v editoru z cache snímků, v `prototype sim` ze snímku právě
-spočítaného. Za nimi jdou libovolné geometrické uzly — wrangle, color,
-blast… — a výsledek se zobrazí nebo prohlíží v tabulce.
+**Liquid Points**, **Liquid Surface**, **Rain Points**, **Gas Volume** and **RBD Pieces** have
+an input from a simulation (Liquid, Rain, Gas, Rigid) and output the geometry
+of the frame currently visible: in the editor from the frame cache, in
+`prototype sim` from the frame just computed. Any geometry nodes can follow
+them — wrangle, color, blast… — and the result is displayed or inspected in
+the spreadsheet.
 
-- Snímky simulace drží částice vody jen tehdy, když je nějaký Liquid
-  Points napojený na simulovaný Liquid Solver (jinak by se jejich pozice
-  a rychlosti ukládaly zbytečně: 19 bajtů na částici a snímek).
-- Uzel napojený na řešič, který nevede do Output (a tedy se nesimuluje),
-  dostane varování a je prázdný.
-- Ze snímku, který ještě není spočítaný, je geometrie prázdná.
+- Simulation frames hold water particles only when some Liquid Points is
+  connected to a simulated Liquid Solver (otherwise their positions and
+  velocities would be stored needlessly: 19 bytes per particle per frame).
+- A node connected to a solver that does not lead into Output (and is thus
+  not simulated) gets a warning and is empty.
+- For a frame that has not been computed yet, the geometry is empty.
 
-### Povrch vody (Liquid Surface) a Convert Volume
+### Water surface (Liquid Surface) and Convert Volume
 
-Houdini dělá z FLIP simulace povrch uzlem Particle Fluid Surface; tady je
-to **Liquid Surface**. Snímek vody nese vzdálenost k hladině na mřížce
-dvakrát jemnější než řešič (z ní kreslí vodu i viewport) a z ní vznikne
-síť algoritmem *surface nets* (Gibson 1998):
+Houdini makes a surface from a FLIP simulation with the Particle Fluid
+Surface node; here it is **Liquid Surface**. A water frame carries the
+distance to the water surface on a grid twice as fine as the solver's (the
+viewport also draws water from it), and the mesh is created from it with
+the *surface nets* algorithm (Gibson 1998):
 
-- v každé krychli osmi buněk, kterou povrch protíná, je jeden bod — průměr
-  míst, kde povrch protíná její hrany;
-- přes každou hranu mezi buňkami, kterou povrch protíná, vede čtyřúhelník
-  přes body čtyř krychlí kolem ní, otočený ven.
+- in every cube of eight cells that the surface crosses there is one point —
+  the average of the locations where the surface crosses its edges;
+- across every edge between cells that the surface crosses runs a quad
+  through the points of the four cubes around it, facing outwards.
 
-Vyjde uzavřená síť čtyřúhelníků s hladkými normálami (z ploch kolem bodu).
-Je uzavřená i u podlahy a stěn nádrže: renderer potřebuje uzavřené těleso
-vody, aby jím lámal světlo. Ostré hrany a rohy se zaoblí asi o čtvrt buňky.
-Snímek z řídkého řešiče nese jen dlaždice 8 × 8 × 8 buněk blízko vody
-a síť se staví jen kolem nich (`TiledVolume` v
-[`Nodes.h`](../src/pg/nodes/Nodes.h)); vyjde stejná jako přes všechny buňky.
+The result is a closed mesh of quads with smooth normals (from the faces
+around a point). It is closed even at the floor and the walls of the tank:
+the renderer needs a closed body of water to refract light through it.
+Sharp edges and corners are rounded by about a quarter of a cell. A frame
+from the sparse solver carries only the 8 × 8 × 8 cell tiles near the water,
+and the mesh is built only around them (`TiledVolume` in
+[`Nodes.h`](../src/pg/nodes/Nodes.h)); the result is the same as over all
+cells.
 
-- **`v`** je rychlost vody v místě bodu, z rychlosti, kterou snímek nese na
-  mřížce řešiče (formát cache 5): podle ní renderer rozmaže pohyb. Snímek
-  z cache starší než formát 5 ji nemá a síť je bez `v`.
-- **`foam`** je pěna z téže jemné mřížky, 0 až 1.
-- **Ripples:** vlnky, které dělá déšť, zvednou horní plochu (celou tam, kde
-  hledí nahoru, stěny vůbec) a nakloní její normály.
-  Vlnky užší než buňka jemné mřížky se ztratí.
+- **`v`** is the water velocity at the point, from the velocity that the frame
+  carries on the solver grid (cache format 5): the renderer uses it for
+  motion blur. A frame from a cache older than format 5 does not have it, and
+  the mesh has no `v`.
+- **`foam`** is foam from the same fine grid, 0 to 1.
+- **Ripples:** the ripples that rain makes raise the top surface (fully where
+  it faces up, not at all on walls) and tilt its normals.
+  Ripples narrower than a cell of the fine grid are lost.
 
-Síť drží tolik vody, kolik je v poli vzdáleností pod nulou (test: do 5 %),
-tedy trochu víc než samotná voda, protože koule kolem částic sahají kousek
-za ni. V `rain_pond` s rozlišením 64 má povrch asi 35 tisíc bodů; snímek
-i se sítí vody jde do USD za 0,06 s.
+The mesh holds as much water as there is below zero in the distance field
+(test: within 5%), i.e. a little more than the water itself, because the
+spheres around the particles reach slightly beyond it. In `rain_pond` at
+resolution 64 the surface has about 35 thousand points; a frame including
+the water mesh goes to USD in 0.06 s.
 
-**Convert Volume** dělá totéž s libovolným objemem geometrie, třeba s kouřem
-z Gas Volume (`density` nad 0,1). Oba uzly dávají stejné body na libovolném
-počtu vláken.
+**Convert Volume** does the same with any geometry volume, for example with
+smoke from Gas Volume (`density` above 0.1). Both nodes give the same points
+on any number of threads.
 
-## 7. Jak to funguje
+## 7. How it works
 
-Síť editoru a graf jádra jsou dvě různé věci: síť (`sim::Network`) je
-model pro editor a soubory, jádro (`pg::Graph` + `CookEngine`) počítá.
-Most mezi nimi je **`sim::GeometryGraph`** (`src/pg/sim/GeometryGraph.h`):
+The editor network and the core graph are two different things: the network
+(`sim::Network`) is the model for the editor and files, the core
+(`pg::Graph` + `CookEngine`) computes. The bridge between them is
+**`sim::GeometryGraph`** (`src/pg/sim/GeometryGraph.h`):
 
 ```
-[Box] -> [Transform] -> [Scatter] ...      síť (Network.h)
-  n3 ------> n4 -------> n7                 graf jádra, uzly "n<id>"
+[Box] -> [Transform] -> [Scatter] ...      network (Network.h)
+  n3 ------> n4 -------> n7                 core graph, nodes "n<id>"
 ```
 
-- `sync(net)` graf přizpůsobí síti: uzly, které zmizely nebo změnily typ,
-  smaže (`Graph::remove`), nové vyrobí (`NodeType::core` říká typ jádra),
-  nastaví parametry a propojí vstupy. **Parametr se nastaví jen tehdy,
-  když se změnil** — nezměněný nic neznehodnotí, takže tah posuvníkem na
-  konci řetězce padesáti uzlů přepočítá jeden uzel. Beze změny sítě je
-  `sync` levný (porovná revizi), jen znovu zkontroluje velikost a čas změny
-  souborů, které čtou File uzly.
-- Obejitý uzel se ve spojích vynechá: co ho krmí, krmí to, co krmil on.
-- Přepojování jde ve dvou krocích (nejdřív odpojit, pak zapojit), aby otočení
-  A → B na B → A nevypadalo cestou jako smyčka.
-- `cook(id, frame)` vyhodnotí uzel líně (pull): přepočítá se jen to, co je
-  zastaralé. Cache jádra je klíčovaná (uzel, verze, snímek). **Verze jsou
-  globální čítač**, takže uzel smazaný a vyrobený znovu na stejné adrese
-  nemůže trefit starou položku cache.
-- Uzly, které čtou simulaci (`FrameNode`), dostanou před vařením snímek
-  pro dané číslo snímku. Co z kterého snímku udělaly, zůstává v cache
-  jádra, dokud je snímek tentýž — přehrávání tam a zpátky se nepočítá
-  znovu. Snímek simulovaný znovu (jiný objekt se stejným číslem) uzel
-  znehodnotí.
-- Chyby vaření (`Node::cookError()`) — soubor, který nejde přečíst, chyba
-  ve wrangle — se ukazují u uzlů.
+- `sync(net)` adapts the graph to the network: it deletes nodes that have
+  disappeared or changed type (`Graph::remove`), creates new ones
+  (`NodeType::core` gives the core type), sets parameters and connects
+  inputs. **A parameter is set only when it has changed** — an unchanged one
+  invalidates nothing, so dragging a slider at the end of a chain of fifty
+  nodes recomputes one node. Without a change to the network, `sync` is cheap
+  (it compares the revision); it only rechecks the size and modification time
+  of the files read by File nodes.
+- A bypassed node is skipped in the connections: whatever feeds it feeds what
+  it fed.
+- Rewiring happens in two steps (first disconnect, then connect), so that
+  reversing A → B to B → A does not look like a cycle along the way.
+- `cook(id, frame)` evaluates a node lazily (pull): only what is out of date
+  is recomputed. The core cache is keyed by (node, version, frame).
+  **Versions are a global counter**, so a node deleted and recreated at the
+  same address cannot hit a stale cache entry.
+- Nodes that read a simulation (`FrameNode`) receive the frame for the given
+  frame number before cooking. What they made from which frame stays in the
+  core cache as long as the frame is the same — scrubbing back and forth is
+  not recomputed. A frame simulated again (a different object with the same
+  number) invalidates the node.
+- Cook errors (`Node::cookError()`) — a file that cannot be read, an error in
+  a wrangle — are shown on the nodes.
 
-Editor drží jeden `GeometryGraph` po celou dobu: `compile()` z něj bere
-tvary (a nevaří znovu, co je hotové) a viewport z něj každý snímek bere
-zobrazenou geometrii. Pro GPU ji `sim::displayOf()` (`src/pg/sim/Display.h`)
-převede na ploché pole trojúhelníků, teček a čar — na CPU a testovaně.
-Polygony zobrazeného uzlu (ne sklo) jdou jinak: `sim::DisplayMesher` z nich
-udělá **indexovanou síť** — rohy, které sdílejí bod, normálu a barvu, jsou
-jeden vrchol, trojúhelníky jsou indexy vrcholů. Hladký povrch má zhruba
-tolik vrcholů jako bodů, šestinu rohů; krychle 24 (tři na roh, kvůli
-hranám). Když má nová geometrie stejnou topologii, barvy a sklo a posunuly
-se jen body — tah sculptu, úchyt, animovaná vlna —, spočítají se znovu
-jen polohy a normály vrcholů (paralelně) a na GPU jde jen tohle
-(`glBufferSubData`). Kdyby ostrý přehyb nebo nové normály rohů rozdělily
-rohy, které byly jeden vrchol, síť se udělá znovu celá. Rohy s vlastní
-normálou (`N` rohů) jsou vrchol každý zvlášť, kde se normály liší: ostrá
-hrana. Obraz je týž, pixel po pixelu, jako
-z trojúhelníků displayOf (porovnáno na devatenácti renderech: sculpt, město,
-sklo, zeď s kusy, plachta, déšť, vlna po snímcích).
+The editor keeps one `GeometryGraph` for its whole lifetime: `compile()`
+takes shapes from it (and does not re-cook what is done) and the viewport
+takes the displayed geometry from it every frame. For the GPU,
+`sim::displayOf()` (`src/pg/sim/Display.h`) converts it into a flat array of
+triangles, dots and lines — on the CPU and tested. The polygons of the
+displayed node (not glass) take a different route: `sim::DisplayMesher`
+turns them into an **indexed mesh** — vertices that share a point, normal and
+color become one GPU vertex, and triangles are vertex indices. A smooth
+surface has roughly as many GPU vertices as points, a sixth of the vertices;
+a box has 24 (three per corner, because of the edges). When the new geometry
+has the same topology, colors and glass and only the points have moved — a
+sculpt stroke, a handle, an animated wave —, only the vertex positions and
+normals are recomputed (in parallel) and only those go to the GPU
+(`glBufferSubData`). If a sharp crease or new vertex normals were to split
+vertices that used to be one GPU vertex, the mesh is rebuilt from scratch.
+Vertices with their own normal (vertex `N`) become separate GPU vertices
+wherever the normals differ: a sharp edge. The image is identical, pixel for
+pixel, to the one from displayOf triangles (compared on nineteen renders:
+sculpt, city, glass, wall with pieces, sheet, rain, wave over frames).
 
-| Geometrie | displayOf (dřív) | síť poprvé | posun bodů | s normálami `N` |
+| Geometry | displayOf (before) | mesh, first time | points moved | with normals `N` |
 |---|---|---|---|---|
-| 90 000 bodů | 40 ms, 19 MB | 20 ms, 5 MB | 6 ms, na GPU 2 MB | 0,7 ms |
-| milion bodů | 0,4–2 s, 215 MB | 0,25 s, 59 MB | 62 ms, na GPU 24 MB | 7 ms |
+| 90,000 points | 40 ms, 19 MB | 20 ms, 5 MB | 6 ms, 2 MB to the GPU | 0.7 ms |
+| a million points | 0.4–2 s, 215 MB | 0.25 s, 59 MB | 62 ms, 24 MB to the GPU | 7 ms |
 
-Trojúhelníky jdou do stejného G-bufferu jako modely z OBJ: normála, index
-tělesa a vzdálenost na pixel; zobrazená geometrie má místo indexu barvu
-zakódovanou jako záporné číslo (8 bitů na kanál), takže ji hlavní shader
-nasvítí stejně jako objekty. Tečky jsou `GL_POINTS` s velikostí podle
-`pscale`, stínované jako kulička, a čáry jdou stejným programem jako
-vodítka.
+The triangles go into the same G-buffer as models from OBJ: normal, body
+index and distance per pixel; instead of an index, the displayed geometry
+has its color encoded as a negative number (8 bits per channel), so the main
+shader lights it the same way as objects. Dots are `GL_POINTS` sized by
+`pscale`, shaded like a small sphere, and lines go through the same program
+as the guides.
 
-## 8. Soubor .pgsim
+## 8. The .pgsim file
 
-Text parametru (Text, Code i cesta k souboru) se zapisuje v uvozovkách;
-nové řádky, tabulátory, uvozovky a zpětná lomítka escapované (`\n`, `\t`,
-`\"`, `\\`), takže `#` v kódu není komentář. Zobrazený uzel má řádek
-`display`:
+Parameter text (Text, Code and file paths) is written in double quotes;
+newlines, tabs, quotes and backslashes are escaped (`\n`, `\t`,
+`\"`, `\\`), so `#` in code is not a comment. The displayed node has a
+`display` line:
 
 ```
 node 7 point_wrangle 1 speed_color 720 170
@@ -408,38 +440,43 @@ node 7 point_wrangle 1 speed_color 720 170
 link 6.geometry -> 7.geometry
 ```
 
-## 9. Omezení
+## 9. Limitations
 
-- Tvar z geometrie je statický (snímek 1); pohyblivé tvary přinese animace.
-- Vnořené slupky (dutina uvnitř tělesa) se vyplní; otevřená plocha (grid)
-  nemá vnitřek — jako překážka je tenká.
-- Kulička kolem bodu je dvacetistěn a pole vzdáleností má 64 buněk na
-  nejdelší stranu: malé body ve velkém mračnu jsou hrubé.
-- Zobrazená geometrie nevrhá stín, neodráží se ve vodě a nedá se kliknutím
-  vybrat ve viewportu.
-- Objemy se kreslí jako tečky, ne jako kouř.
-- Zobrazená geometrie se vaří na vlastním vlákně (`pg/sim/Cooker.h`)
-  a okno na ni nečeká: dokud nová není hotová, viewport ukazuje
-  předchozí a po chvíli napíše „cooking…“. Když se změní parametr během
-  vaření, rozpracované vaření se přeruší (wrangle, smyčky, assety se
-  vzdají uprostřed) a začne se znovu s novou hodnotou; nic z přerušeného
-  vaření se neuloží do cache. Na stejném vlákně se zobrazená geometrie
-  i připraví ke kreslení (`pg/sim/Prepared.h`): polygony jako indexovaná
-  síť, zbytek (body, čáry, sklo, objemy), instance a každý prototyp na
-  všech úrovních detailu, obrázky na plochách přečtené a zmenšené. Okno ji
-  pak jen pošle do GPU, takže se les, jehož příprava trvala přes sekundu,
-  ukáže bez zaseknutí. Náhledy celé scény (Output, kamery) kreslí vlastní
-  renderer ze stejné přípravy jako viewport a mezi náhledy jiných uzlů ji
-  nedělají znovu. Vlastní geometrii uzlů pro jejich náhledy připravuje
-  další vlákno: náhled se nakreslí, až je jeho geometrie hotová.
-- Síť se pro simulaci kompiluje také na vlastním vlákně
-  (`pg/sim/Compiler.h`) s vlastním grafem, takže tvary pro simulaci
-  (Shape objektů a zdrojů, kusy pro RBD, látka) se vaří mimo okno a jen
-  tam, kde se něco změnilo. Okno na kompilaci čeká nejvýš 12 ms ve
-  snímku, kdy se síť změnila: rychlá kompilace se tak ukáže hned, pomalá
-  (úprava nad frakturou trvá i přes sekundu) se ukáže, až je hotová,
-  a do té doby platí ta předchozí. Novější změna rozpracovanou kompilaci
-  přeruší, ale až když běží déle než 0,25 s: krátké kompilace doběhnou
-  a objekty ve viewportu jdou s gizmem, dlouhé ustoupí poslední hodnotě.
-  Render, bake, wedge, Save Cache a exporty na hotovou kompilaci
-  počkají. Na vlákně okna se vaří jen jeden snímek pro Export Geometry.
+- A shape from geometry is static (frame 1); moving shapes will come with
+  animation.
+- Nested shells (a cavity inside a body) are filled; an open surface (grid)
+  has no inside — as a collider it is thin.
+- The sphere around a point is an icosahedron, and the distance field has 64
+  cells along the longest side: small points in a large cloud are coarse.
+- Displayed geometry casts no shadow, is not reflected in water and cannot be
+  selected by clicking in the viewport.
+- Volumes are drawn as dots, not as smoke.
+- Displayed geometry is cooked on its own thread (`pg/sim/Cooker.h`) and the
+  window does not wait for it: until the new one is ready, the viewport shows
+  the previous one and after a while displays "cooking…". When a parameter
+  changes during a cook, the cook in progress is interrupted (wrangles,
+  loops and assets give up midway) and starts again with the new value;
+  nothing from the interrupted cook is stored in the cache. On the same
+  thread the displayed geometry is also prepared for drawing
+  (`pg/sim/Prepared.h`): polygons as an indexed mesh, the rest (points,
+  lines, glass, volumes), instances and every prototype at all levels of
+  detail, images on surfaces read and downsized. The window then only uploads
+  it to the GPU, so a forest whose preparation took over a second appears
+  without a hitch. Thumbnails of the whole scene (Output, cameras) are drawn
+  by a separate renderer from the same preparation as the viewport, and are
+  not redone between the thumbnails of other nodes. The nodes' own geometry
+  for their thumbnails is prepared by yet another thread: a thumbnail is
+  drawn once its geometry is ready.
+- The network is also compiled for simulation on its own thread
+  (`pg/sim/Compiler.h`) with its own graph, so the shapes for the simulation
+  (Shape of objects and sources, pieces for RBD, cloth) are cooked outside
+  the window and only where something has changed. The window waits for the
+  compilation at most 12 ms in the frame in which the network changed: a fast
+  compilation thus shows up immediately, a slow one (an edit above a
+  fracture takes over a second) shows up when it is done, and until then the
+  previous one applies. A newer change interrupts a compilation in progress,
+  but only once it has run longer than 0.25 s: short compilations finish and
+  objects in the viewport follow the gizmo, long ones give way to the latest
+  value. Render, bake, wedge, Save Cache and exports wait for a finished
+  compilation. Only a single frame for Export Geometry is cooked on the
+  window thread.

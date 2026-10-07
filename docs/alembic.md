@@ -1,181 +1,181 @@
 # Alembic
 
-Alembic (`.abc`) je formát, ve kterém si studia předávají cache: geometrii,
-která se hýbe, snímek po snímku. Píše a čte ho Houdini, Maya, Blender,
-Nuke, Katana i renderery. Prototype ho **zapisuje** (celý záběr jako jeden
-archiv) a **čte** (geometrii a kameru jako uzly sítě), obojí bez knihovny
-Alembic: kontejner Ogawa, vrstvu vlastností a schémata AbcGeom má vlastní.
+Alembic (`.abc`) is the format studios use to exchange caches: geometry
+that moves, frame by frame. Houdini, Maya, Blender,
+Nuke, Katana and renderers write and read it. Prototype **writes** it (a whole shot as one
+archive) and **reads** it (geometry and camera as network nodes), both without the
+Alembic library: it has its own Ogawa container, property layer and AbcGeom schemas.
 
-Soubory, které zapíše, čte Blender 4.5 (Alembic 1.8.3) a soubory Blenderu
-čte prototype (§6).
+Files it writes are read by Blender 4.5 (Alembic 1.8.3), and Blender's files
+are read by prototype (§6).
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
-# demolice jako jeden archiv: město, 710 kusů v pohybu, drť, kamera; plyn jako VDB vedle
+# demolition as a single archive: city, 710 moving pieces, debris, camera; gas as VDB alongside
 ./build/prototype sim demolition - --frames 120 --export demolition.abc
-# kulisa a kamera z Blenderu (examples/abc/shot.abc), v ní oheň
+# a set and camera from Blender (examples/abc/shot.abc), with fire in it
 ./build/prototype sim alembic_shot out/shot.png --every 24
 ```
 
-V editoru:
-- **File › Export Alembic…** zapíše záběr ze snímků v cache — na pozadí,
-  s oknem průběhu; **Stop** nechá platný archiv ze snímků zapsaných do té doby.
-- **Shift+A › Geometry › Alembic Import:** geometrie ze souboru.
-- **Shift+A › Render › Alembic Camera:** kamera ze souboru do vstupu Camera
-  uzlu Output.
+In the editor:
+- **File › Export Alembic…** writes the shot from the cached frames — in the background,
+  with a progress window; **Stop** leaves a valid archive of the frames written up to that point.
+- **Shift+A › Geometry › Alembic Import:** geometry from a file.
+- **Shift+A › Render › Alembic Camera:** a camera from a file, for the Camera input
+  of the Output node.
 
-Z Pythonu:
+From Python:
 
 ```python
 import pg
 sim = pg.Network.example("demolition").simulate()
-sim.export_alembic("demolition.abc", frames=120)   # nebo pg.AbcExport po snímcích
+sim.export_alembic("demolition.abc", frames=120)   # or pg.AbcExport frame by frame
 ```
 
-![Příklad alembic_shot ve snímcích 24 a 48: kulisa (dvě zdi, sloup, dvě bedny) a kamera, která najíždí, jsou z Alembicu, který zapsal Blender; oheň mezi bednami simuluje prototype, jeho kouř stoupá podél zadní zdi (Cycles)](img/alembic-shot.jpg)
+![The alembic_shot example at frames 24 and 48: the set (two walls, a pillar, two crates) and the camera pushing in come from an Alembic written by Blender; the fire between the crates is simulated by prototype, its smoke rises along the back wall (Cycles)](img/alembic-shot.jpg)
 
-## 2. Export záběru
+## 2. Exporting a shot
 
-`--export záběr.abc` (nebo File › Export Alembic…) zapíše jeden archiv:
+`--export shot.abc` (or File › Export Alembic…) writes a single archive:
 
-| Objekt | Co v něm je |
+| Object | What it contains |
 |---|---|
-| `/<uzel>` | zobrazená geometrie pod Xformem: polygony jako PolyMesh (`N`, `uv`, `Cd`, `v`), otevřené čáry jako Curves, volné body jako Points (`id`, `v`, šířky z `pscale`, `Cd`) |
-| `/pieces` | každé těleso RBD Solveru jako Xform nad PolyMeshem svého tvaru kolem svého středu. Tvar se zapíše jednou, Xform ho každý snímek posune a otočí. Těleso rozdrcené na prach, nebo úlomek, který se ještě neodlomil, je v tu chvíli neviditelné. Plochy, které vyřízl lom, jsou FaceSet `inside`, aby mohly mít vlastní materiál. |
-| `/grit` | drť: Points s šířkou podle velikosti, očíslované, v pohybu |
-| `/grains` | zrna Grain Solveru: Points v jejich barvách |
-| `/rebar` | výztuž tam, kam ji kusy odnesly: Curves |
-| `/cloth` | látka tam, kde jsou její body: PolyMesh |
-| `/water` | povrch vody: PolyMesh pro každý snímek s normálami, rychlostí a pěnou |
-| `/rain` | kapky a kapičky: Points |
-| `/camera` | Xform nad Camera: objektiv 24 mm vysoký jako v prototypu (film 2,4 cm na výšku × poměr stran obrazu) |
-| plyn | soubory OpenVDB vedle archivu, jeden na snímek (`záběr_gas/záběr_gas.0001.vdb`), jako u exportu do USD |
+| `/<node>` | the displayed geometry under a Xform: polygons as PolyMesh (`N`, `uv`, `Cd`, `v`), open lines as Curves, free points as Points (`id`, `v`, widths from `pscale`, `Cd`) |
+| `/pieces` | each RBD Solver body as a Xform over a PolyMesh of its shape around its center. The shape is written once; the Xform moves and rotates it every frame. A body crushed to dust, or a fragment that has not broken off yet, is invisible at that moment. Faces cut by fracturing are the FaceSet `inside`, so that they can have their own material. |
+| `/grit` | debris: Points with width by size, numbered, in motion |
+| `/grains` | Grain Solver grains: Points in their colors |
+| `/rebar` | rebar where the pieces carried it: Curves |
+| `/cloth` | cloth where its points are: PolyMesh |
+| `/water` | the water surface: a PolyMesh for each frame with normals, velocity and foam |
+| `/rain` | drops and droplets: Points |
+| `/camera` | a Xform over a Camera: a 24 mm lens of the same height as in prototype (film 2.4 cm high × image aspect ratio) |
+| gas | OpenVDB files next to the archive, one per frame (`shot_gas/shot_gas.0001.vdb`), as with the USD export |
 
-Čas: snímek f je v čase f / fps sekund, jak snímek f píše Houdini, Maya
-i Blender. Y je nahoře, jednotka je metr.
+Time: frame f is at time f / fps seconds, the way Houdini, Maya
+and Blender write frame f. Y is up, the unit is the meter.
 
-Co je velké a v každém snímku jiné (zobrazená geometrie, voda, body), se
-zapisuje hned, jak snímek přijde, takže se záběr libovolné délky nemusí
-vejít do paměti. Co je malé a musí existovat od prvního snímku (polohy
-těles, kamera, viditelnost), se drží a zapíše na konci. Vzorek, který je
-stejný jako předchozí, se nezapisuje znovu: tvar kusu, který stojí,
-a kamera, která se nehýbe, mají jeden vzorek.
+Whatever is large and different in every frame (displayed geometry, water, points) is
+written as soon as the frame arrives, so a shot of any length does not have to
+fit in memory. Whatever is small and must exist from the first frame (body
+positions, camera, visibility) is held and written at the end. A sample that is
+the same as the previous one is not written again: the shape of a piece that is standing still
+and a camera that does not move have a single sample.
 
-Demolice ze 120 snímků s 710 tělesy dá archiv o 14 MB a 120 souborů VDB
-s plynem; Blender ho načte za 0,3 s.
+A 120-frame demolition with 710 bodies gives a 14 MB archive and 120 VDB files
+with gas; Blender loads it in 0.3 s.
 
 ## 3. Alembic Import
 
-Geometrie archivu v daném snímku, ve světě, kam ji dají transformace:
+The archive's geometry at a given frame, in world space, where its transforms put it:
 
-| Z Alembicu | Do geometrie |
+| From Alembic | To geometry |
 |---|---|
-| **PolyMesh**, **SubD** | polygony (SubD jako řídicí síť, bez vyhlazení a bez hran a rohů zostření); pořadí rohů se otočí (Alembic je má po směru hodinových ručiček), a zpátky, když transformace zrcadlí |
-| `N` | `N`: podle scope na rozích (face-varying) nebo bodech, transformované |
-| `uv` | `uv` (vektor, z = 0) |
-| `.velocities` | `v`, transformované |
-| `.arbGeomParams` | atribut stejného jména; scope `con` na geometrii, `uni` na primitivech, `vtx`/`var` na bodech, `fvr` na rozích; `Cs` jako `Cd` |
-| **FaceSet** | skupina primitiv pojmenovaná po FaceSetu (`inside`) |
-| **Points** | volné body: `id`, `v`, `pscale` z šířky (polovina) |
-| **Curves** | otevřené lomené čáry (kubické po řídicích bodech), `pscale` z šířky |
-| cesta objektu | textový atribut primitiv `path` (`/pieces/body_0012`) |
+| **PolyMesh**, **SubD** | polygons (SubD as the control mesh, without smoothing and without crease edges and corners); the vertex order is reversed (Alembic has it clockwise), and back again when the transform mirrors |
+| `N` | `N`: depending on scope on vertices (face-varying) or points, transformed |
+| `uv` | `uv` (vector, z = 0) |
+| `.velocities` | `v`, transformed |
+| `.arbGeomParams` | an attribute of the same name; scope `con` on the detail, `uni` on primitives, `vtx`/`var` on points, `fvr` on vertices; `Cs` as `Cd` |
+| **FaceSet** | a primitive group named after the FaceSet (`inside`) |
+| **Points** | free points: `id`, `v`, `pscale` from width (half) |
+| **Curves** | open polylines (cubic ones through their control points), `pscale` from width |
+| object path | the primitive string attribute `path` (`/pieces/body_0012`) |
 
-Mezi dvěma vzorky se polohy prolnou, pokud mají oba stejně bodů; jinak platí
-dřívější vzorek. Když se geometrie v souboru hýbe, uzel se vaří v každém
-snímku znovu, jinak jen jednou.
+Between two samples the positions are blended if both have the same number of points; otherwise
+the earlier sample applies. When the geometry in the file moves, the node is cooked again at every
+frame, otherwise only once.
 
-Parametry:
-- **File:** `.abc`. Relativní cesta se čte ze složky sítě. Soubor, který se
-  změní, se načte znovu.
-- **Objects:** které objekty číst, s tím, co je pod nimi. Cesty oddělené
-  mezerou (`/pieces /city`). Prázdné pole znamená celý archiv.
-- **Frame Offset:** posune čtení o tolik snímků. Snímek f se čte v čase
-  (f + posun) / fps; Output s jiným fps přehrává soubor svou rychlostí.
-- **Hidden:** číst i objekty, které v daném snímku nejsou vidět.
-- **Face Sets as Groups**, **Path Attribute:** skupiny z FaceSetů a atribut
-  `path`.
+Parameters:
+- **File:** `.abc`. A relative path is resolved from the network's folder. A file that
+  changes is reloaded.
+- **Objects:** which objects to read, together with what is below them. Paths separated
+  by spaces (`/pieces /city`). An empty field means the whole archive.
+- **Frame Offset:** shifts reading by that many frames. Frame f is read at time
+  (f + offset) / fps; an Output with a different fps plays the file at its own rate.
+- **Hidden:** also read objects that are not visible at the given frame.
+- **Face Sets as Groups**, **Path Attribute:** groups from FaceSets and the
+  `path` attribute.
 
 ## 4. Alembic Camera
 
-Kamera ze souboru. Zapojená do vstupu Camera uzlu Output je to kamera, přes
-kterou se renderuje.
-- **Poloha a otočení:** ze světové matice kamery v každém snímku. Úhly se
-  volí nejblíž předchozímu snímku, takže otočení nepřeskočí ze 180° na −180°.
-- **Objektiv:** zorný úhel zleva doprava odpovídá horizontální cloně filmu
-  a ohnisku (`horizontalAperture`, `focalLength`), jako u USD Camera
+A camera from a file. Connected to the Camera input of the Output node, it is the camera
+used for rendering.
+- **Position and rotation:** from the camera's world matrix at each frame. The angles are
+  chosen closest to the previous frame, so the rotation does not jump from 180° to −180°.
+- **Lens:** the left-to-right field of view corresponds to the film's horizontal aperture
+  and the focal length (`horizontalAperture`, `focalLength`), as with USD Camera
   ([usd-import.md](usd-import.md)).
-- **Object:** cesta ke kameře; prázdné pole znamená první kameru v archivu.
-- **Width**, **Height**, **Plate**, **Plate Frame:** jako u USD Camera
+- **Object:** the path to the camera; an empty field means the first camera in the archive.
+- **Width**, **Height**, **Plate**, **Plate Frame:** as with USD Camera
   ([plate.md](plate.md)).
 
-Posun filmu (`horizontalFilmOffset`) prototype nekreslí; uzel to nahlásí
-jako varování.
+Film offset (`horizontalFilmOffset`) is not drawn by prototype; the node reports it
+as a warning.
 
-## 5. Příklad
+## 5. Example
 
-`alembic_shot` je kulisa z Blenderu (`examples/abc/shot.abc`, zapsaná
-skriptem `examples/abc/make_shot.py`): roh zříceniny — dvě zdi, sloup, dvě
-bedny — a kamera, která na ni dvě sekundy najíždí, 24 snímků za sekundu.
-Alembic Import načte kulisu, Object z ní udělá překážku pro plyn a Alembic
-Camera je kamera záběru. Mezi bednami hoří oheň a jeho kouř stoupá podél
-zadní zdi.
+`alembic_shot` is a set from Blender (`examples/abc/shot.abc`, written by the
+script `examples/abc/make_shot.py`): the corner of a ruin — two walls, a pillar, two
+crates — and a camera that pushes in on it for two seconds, 24 frames per second.
+Alembic Import loads the set, Object turns it into an obstacle for the gas, and Alembic
+Camera is the shot camera. A fire burns between the crates and its smoke rises along the
+back wall.
 
-## 6. Ověření
+## 6. Verification
 
-Zápis i čtení se porovnávaly s Blenderem 4.5.3, který má knihovnu Alembic
-1.8.3 (`pip install bpy`). Prototype ho nepotřebuje.
+Writing and reading were compared with Blender 4.5.3, which has the Alembic library
+1.8.3 (`pip install bpy`). Prototype does not need it.
 
-- **Zápis → Blender:**
-  - Blender načte archivy příkladů demolition, shatter_grit, flag, tarp,
-    sand_pour a rain_pond bez chyby, s objekty, počty bodů a ploch, jaké
-    prototype zapsal;
-  - plochy míří ven (pořadí rohů), `Cd` po rozích sedí, body s proměnným
-    počtem (drť, zrna, kapky) i čáry výztuže přečte;
-  - kusy demolice stojí v Blenderu tam, kde v prototypu: těžiště všech
-    710 kusů ve snímcích 1 a 90 se liší nejvýš o 6e-5 m, což je přesnost
-    floatu u souřadnic do 25 m; čtečka prototypu dává polohy těles ze
-    simulace na 1e-4 m (test). Rozdrcené kusy jsou skryté od snímku, kdy se
-    rozpadly;
-  - kamera stojí, dívá se a má objektiv jako v prototypu.
-- **Blender → čtení:** soubory `tests/data/abc` zapsal Blender
-  (`make_blender_abc.py`): krabice, kostka, která se otočí a posune,
-  kamera s ohniskem 35 mm v pohybu, Bézierova křivka, vlněná mřížka (body se
-  hýbou), mřížka, která roste (plochy přibývají), částice. Plochy míří ven,
-  pohyb, kamera, ohnisko i časový rozsah sedí s tím, co Blender zapsal.
-- **Poškozené soubory:** 300 náhodně poškozených archivů je odmítnuto bez
-  pádu.
+- **Writing → Blender:**
+  - Blender loads the archives of the demolition, shatter_grit, flag, tarp,
+    sand_pour and rain_pond examples without errors, with the objects and point and face counts
+    that prototype wrote;
+  - faces point outwards (vertex order), per-vertex `Cd` matches, points with a varying
+    count (debris, grains, drops) as well as rebar curves are read;
+  - the demolition pieces stand in Blender where they do in prototype: the centroids of all
+    710 pieces at frames 1 and 90 differ by at most 6e-5 m, which is float
+    precision for coordinates up to 25 m; prototype's reader gives the body positions from the
+    simulation to 1e-4 m (test). Crushed pieces are hidden from the frame in which they
+    fell apart;
+  - the camera stands, looks and has a lens as in prototype.
+- **Blender → reading:** the files in `tests/data/abc` were written by Blender
+  (`make_blender_abc.py`): a box, a cube that rotates and moves,
+  a moving camera with a 35 mm focal length, a Bézier curve, a wavy grid (points
+  move), a grid that grows (faces are added), particles. Faces point outwards;
+  motion, camera, focal length and time range match what Blender wrote.
+- **Corrupted files:** 300 randomly corrupted archives are rejected without
+  crashing.
 
-Testy — `tests/test_alembic.cpp` (11):
-- Ogawa skupiny a data, vzorky vlastností, časové vzorkování;
-- čtení souborů, které zapsala knihovna (Blender), a odmítnutí poškozených;
-- geometrie zapsaná a přečtená zpátky ve světě;
-- export demolice: kusy se posouvají a otáčejí jako v simulaci, rozdrcený
-  kus zmizí;
-- uzly Alembic Import a Alembic Camera.
+Tests — `tests/test_alembic.cpp` (11):
+- Ogawa groups and data, property samples, time sampling;
+- reading files written by the library (Blender), and rejecting corrupted ones;
+- geometry written and read back in world space;
+- demolition export: pieces move and rotate as in the simulation, a crushed
+  piece disappears;
+- the Alembic Import and Alembic Camera nodes.
 
-## 7. V kódu
+## 7. In the code
 
-| Soubor | Co dělá |
+| File | What it does |
 |---|---|
-| `src/pg/io/Ogawa.h` | Kontejner Ogawa: skupiny a bloky dat, zápis i čtení |
-| `src/pg/abc/Archive.h` | Archiv: objekty, vlastnosti (skalární, pole, složené), vzorky a jejich klíče (MurmurHash3), časové vzorkování, metadata |
-| `src/pg/abc/Geom.h` | Schémata AbcGeom: Xform, PolyMesh, SubD, Points, Curves, Camera, FaceSet; zápis a čtení do geometrie (`importGeometry`), kamera (`cameraAt`) |
-| `src/pg/sim/AbcExport.h` | Záběr do archivu, snímek po snímku |
-| `src/pg/nodes/Abc.cpp` | Uzel Alembic Import (`abcimport`) |
-| `src/pg/sim/Camera.cpp` | `cameraFromAlembic`: kamera z Alembicu jako kamera záběru |
-| `src/pg/sim/Network.cpp` | Uzly `alembic_import` a `alembic_camera` |
-| `tools/prototype/Commands.cpp` | `--export záběr.abc` |
-| `examples/abc/make_shot.py` | Jak vznikl ukázkový záběr (Blender) |
+| `src/pg/io/Ogawa.h` | Ogawa container: groups and data blocks, writing and reading |
+| `src/pg/abc/Archive.h` | Archive: objects, properties (scalar, array, compound), samples and their keys (MurmurHash3), time sampling, metadata |
+| `src/pg/abc/Geom.h` | AbcGeom schemas: Xform, PolyMesh, SubD, Points, Curves, Camera, FaceSet; writing, and reading into geometry (`importGeometry`), camera (`cameraAt`) |
+| `src/pg/sim/AbcExport.h` | A shot into an archive, frame by frame |
+| `src/pg/nodes/Abc.cpp` | The Alembic Import node (`abcimport`) |
+| `src/pg/sim/Camera.cpp` | `cameraFromAlembic`: a camera from Alembic as the shot camera |
+| `src/pg/sim/Network.cpp` | The `alembic_import` and `alembic_camera` nodes |
+| `tools/prototype/Commands.cpp` | `--export shot.abc` |
+| `examples/abc/make_shot.py` | How the sample shot was made (Blender) |
 
-## 8. Omezení
+## 8. Limitations
 
-- **HDF5:** čtou se jen archivy Ogawa (Alembic 1.5 a novější, výchozí všude).
-  Staré archivy HDF5 se odmítnou.
-- **NuPatch** (NURBS) se nečte; uzel ho vypíše jako přeskočený. Světla
-  a jiná schémata se přeskočí bez hlášení.
-- **Materiály** se nezapisují ani nečtou; barva je `Cd`.
-- **Plyn** jde do souborů OpenVDB vedle archivu: Alembic objemy nemá.
-- **Kolize z geometrie:** Object s tvarem z Alembic Import bere tvar ze
-  snímku 1, ani když se geometrie v souboru hýbe. Kamera se hýbe po snímcích.
-- **Kamera:** posun filmu se nekreslí.
+- **HDF5:** only Ogawa archives are read (Alembic 1.5 and newer, the default everywhere).
+  Old HDF5 archives are rejected.
+- **NuPatch** (NURBS) is not read; the node lists it as skipped. Lights
+  and other schemas are skipped without a report.
+- **Materials** are neither written nor read; color is `Cd`.
+- **Gas** goes to OpenVDB files next to the archive: Alembic has no volumes.
+- **Collisions from geometry:** an Object with a shape from Alembic Import takes the shape from
+  frame 1, even when the geometry in the file moves. The camera moves frame by frame.
+- **Camera:** film offset is not drawn.

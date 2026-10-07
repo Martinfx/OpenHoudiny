@@ -1,253 +1,253 @@
-# Obrázky a video
+# Images and video
 
-Záběr jde ven jako obrázek PNG, jako očíslovaná sekvence PNG, nebo rovnou
-jako **video**: `.avi` (Motion JPEG) zapíše program sám, bez čehokoli
-dalšího; `.mp4`, `.mov`, `.mkv` (H.264), `.webm` (VP9) a `.gif` zapíše přes
-**ffmpeg**, když je nainstalovaný. Totéž umí editor i příkazová řádka,
-pro simulace i pro náhled shaderu. Pro compositing jde snímek do **EXR**:
-v lineárním světle a s průchody — hloubkou, vektory pohybu a maskami
-([§4](#4-exr-pro-compositing)). Pořádný render se sledováním světla
-je v záložce **Render**: Cycles z Blenderu (`--renderer cycles`, viz
-[cycles.md](cycles.md)) nebo vlastní path tracer (`--renderer path`, viz
+A shot goes out as a PNG image, as a numbered PNG sequence, or straight
+to **video**: the program writes `.avi` (Motion JPEG) on its own, with
+nothing else required; it writes `.mp4`, `.mov`, `.mkv` (H.264), `.webm` (VP9) and `.gif` through
+**ffmpeg** when it is installed. The editor and the command line can both do this,
+for simulations as well as for shader previews. For compositing, a frame goes to **EXR**:
+in linear light and with passes — depth, motion vectors and masks
+([§4](#4-exr-for-compositing)). Proper ray-traced rendering
+lives in the **Render** tab: Cycles from Blender (`--renderer cycles`, see
+[cycles.md](cycles.md)) or the built-in path tracer (`--renderer path`, see
 [pathtracer.md](pathtracer.md)).
 
-![Editor: render videa běží -- okno s průběhem, odhadem času a tlačítkem Stop](img/editor-render.png)
+![Editor: a video render in progress -- window with progress, time estimate and a Stop button](img/editor-render.png)
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
-./build/prototype sim campfire fire.mp4             # celý záběr do videa (H.264 přes ffmpeg)
-./build/prototype sim campfire fire.avi             # totéž bez ffmpeg: Motion JPEG
-./build/prototype sim lakeside shot.mp4 --every 2   # každý druhý snímek, 15 fps
-./build/prototype sim campfire fire.png             # poslední snímek jako PNG
-./build/prototype sim wall_collapse zed.exr --every 1   # každý snímek jako EXR s průchody
-./build/prototype render examples/shaders/fire.pgsg fire.mp4 --frames 90   # animovaný shader
+./build/prototype sim campfire fire.mp4             # whole shot to video (H.264 via ffmpeg)
+./build/prototype sim campfire fire.avi             # the same without ffmpeg: Motion JPEG
+./build/prototype sim lakeside shot.mp4 --every 2   # every second frame, 15 fps
+./build/prototype sim campfire fire.png             # last frame as PNG
+./build/prototype sim wall_collapse zed.exr --every 1   # every frame as EXR with passes
+./build/prototype render examples/shaders/fire.pgsg fire.mp4 --frames 90   # animated shader
 ```
 
-V editoru:
+In the editor:
 
-| akce | kde |
+| action | where |
 |---|---|
-| snímek na obrazovce jako PNG | **File › Render Image…**, nebo ikona fotoaparátu v záhlaví viewportu |
-| snímek na obrazovce jako EXR s průchody | **File › Render Image…**, přípona `.exr` |
-| všechny snímky jako PNG | **File › Render Frames…** (složka) |
-| celý záběr jako video | **File › Render Video…**, nebo ikona filmu v záhlaví viewportu |
-| celý záběr z Cycles (path traceru) jako video | **File › Render Video with Cycles…**, nebo ikona filmu v záložce **Render** › **Video…** |
-| všechny snímky z Cycles jako PNG | **File › Render Frames with Cycles…**, nebo ikona filmu v záložce **Render** › **Frames (PNG)…** |
-| animovaný náhled shaderu | v síti Shaders **File › Save Preview Video…** (5 s, 720 × 720) |
+| on-screen frame as PNG | **File › Render Image…**, or the camera icon in the viewport header |
+| on-screen frame as EXR with passes | **File › Render Image…**, extension `.exr` |
+| all frames as PNG | **File › Render Frames…** (folder) |
+| whole shot as video | **File › Render Video…**, or the film icon in the viewport header |
+| whole shot from Cycles (path tracer) as video | **File › Render Video with Cycles…**, or the film icon in the **Render** tab › **Video…** |
+| all frames from Cycles as PNG | **File › Render Frames with Cycles…**, or the film icon in the **Render** tab › **Frames (PNG)…** |
+| animated shader preview | in the Shaders network, **File › Save Preview Video…** (5 s, 720 × 720) |
 
-Render jde kamerou, pokud ji síť má připojenou do Outputu, v rozlišení jejího
-obrazu; jinak pohledem viewportu v jeho velikosti. Obrázek je vždy
-vyhlazený: kreslí se ve dvojnásobném rozlišení a zmenší se.
+The render goes through the camera if the network has one connected to the Output, at the resolution of its
+image; otherwise through the viewport view at the viewport's size. The image is always
+anti-aliased: it is drawn at twice the resolution and scaled down.
 
-Render Frames a Render Video kreslí snímky tak, jak je ukazuje viewport
-(OpenGL, rychle). Položky **with Cycles** je místo toho renderují
-sledováním světla rendererem záložky Render, Cycles nebo path tracerem
-([níž](#render-videa-přes-cycles)).
+Render Frames and Render Video draw the frames as the viewport shows them
+(OpenGL, fast). The **with Cycles** items instead render them
+with ray tracing using the Render tab's renderer, Cycles or the path tracer
+([below](#rendering-video-through-cycles)).
 
-## 2. Render sekvence a videa v editoru
+## 2. Rendering sequences and video in the editor
 
-Render Frames a Render Video kreslí snímek po snímku **na pozadí okna**:
-editor nezamrzne, okno ukazuje, kolik je hotovo, kolik trvá snímek a kolik
-zbývá, a **Stop** (nebo Esc) render ukončí. Co se stihlo, zůstane: video se
-dopíše a jde přehrát, snímky PNG zůstanou ve složce.
+Render Frames and Render Video draw frame by frame **in the background of the window**:
+the editor does not freeze, the window shows how much is done, how long a frame takes and how much
+remains, and **Stop** (or Esc) ends the render. Whatever finished stays: the video is
+finalised and can be played, the PNG frames remain in the folder.
 
-- Záběr se renderuje celý, od snímku 1 do posledního podle Outputu.
-  Snímky, které simulace ještě nespočítala, render počká („Waiting for the
-  simulation to reach frame 41…“) — video jde spustit hned po otevření
-  scény.
-- Každý snímek se vykreslí tak, jak by ho ukázal viewport na tom snímku:
-  objekty a vzhled animované klíči, zobrazená geometrie (třeba body
-  z Liquid Points) toho snímku, pohled kamery toho snímku. Bez vodítek,
-  gizma a zvýraznění výběru.
-- Když se simulace zastaví dřív (plná cache, snímky načtené z disku
-  končí), render skončí tam a řekne proč.
-- Po skončení ukáže viewport **oznámení**: co se zapsalo a kam, s tlačítky
-  **Open** (otevře soubor v programu, který na to systém má) a **Show**
-  (otevře složku). U dlouhého renderu oznámení zůstane, dokud se nezavře.
-  Totéž stojí ve stavovém řádku a v terminálu (`prototype: Rendered 150
+- The whole shot is rendered, from frame 1 to the last one according to the Output.
+  The render waits for frames the simulation has not computed yet ("Waiting for the
+  simulation to reach frame 41…") — a video can be started right after opening the
+  scene.
+- Each frame is drawn as the viewport would show it at that frame:
+  objects and looks animated by keys, the displayed geometry (for example points
+  from Liquid Points) of that frame, the camera view of that frame. Without guides,
+  gizmos and selection highlighting.
+- When the simulation stops earlier (full cache, frames loaded from disk
+  run out), the render ends there and says why.
+- When finished, the viewport shows a **notification**: what was written and where, with
+  **Open** (opens the file in the program the system has for it) and **Show**
+  (opens the folder) buttons. For a long render, the notification stays until it is closed.
+  The same appears in the status bar and in the terminal (`prototype: Rendered 150
   frames into fire.mp4 …`).
-- Dialog nabízí složku, kam šel poslední render; jinak složku sítě, jinak
-  aktuální složku — a když do ní nejde zapisovat (program spuštěný
-  z nabídky prostředí bývá v `/`), domovskou.
+- The dialog offers the folder the last render went to; otherwise the network's folder, otherwise
+  the current folder — and when that is not writable (a program launched
+  from the desktop environment's menu usually runs in `/`), the home folder.
 
-### Render videa přes Cycles
+### Rendering video through Cycles
 
-**File › Render Video with Cycles…** (a **Render Frames with Cycles…**)
-vyrenderuje každý snímek záběru tak, jak ho renderuje záložka Render,
-jen do konce:
+**File › Render Video with Cycles…** (and **Render Frames with Cycles…**)
+renders each frame of the shot the way the Render tab renders it,
+only all the way to the end:
 
-- **Renderer** je ten, který má záložka Render zvolený: Cycles, nebo path
-  tracer (položky se podle toho jmenují „with the Path Tracer“).
-- **Vzorky, odšumění a vzhled** jsou z uzlu Output, sekce Render, stejně
-  jako `prototype sim … --renderer cycles`. Každý snímek má vlastní
-  session Cycles až do konce, takže obraz je stejný jako z příkazové
-  řádky.
-- **Velikost** je obraz kamery (bez kamery viewportu) krát měřítko
-  záložky Render (25 / 50 / 100 %). Rychlé video na zkoušku je tedy
-  50 % a pár vzorků, finální 100 %.
-- **Kamera:** záběr jde kamerou Outputu, pokud ji síť má, včetně
-  rozmazání pohybem kamery.
-- Render běží na **vlastním vlákně**. Okno s průběhem ukazuje poslední
-  hotový snímek, co se právě děje („Frame 41: 12 / 32 samples · 18 s“,
-  „Cycles gets the scene ready…“), kolik trvá snímek a kolik zbývá.
-  **Stop** (nebo Esc) zastaví i snímek, který se právě renderuje. Co se
-  stihlo, zůstane: video se dopíše, snímky PNG zůstanou ve složce.
-- Mezitím **záložka Render** ukazuje hotové snímky renderu a vlastní
-  render pozastaví (procesor patří renderu). Po skončení pokračuje.
-- Snímky, které simulace ještě nespočítala, render počká, stejně jako
-  u videa z viewportu. Na zobrazenou geometrii snímku (stromy, domy,
-  body z Liquid Points…) počká, až se uvaří.
+- The **renderer** is the one selected in the Render tab: Cycles or the path
+  tracer (the menu items are named "with the Path Tracer" accordingly).
+- **Samples, denoising and look** come from the Output node, Render section, the same
+  as `prototype sim … --renderer cycles`. Each frame has its own
+  Cycles session through to the end, so the image is the same as from the command
+  line.
+- The **size** is the camera image (without a camera, the viewport's) times the scale of the
+  Render tab (25 / 50 / 100 %). A quick test video is therefore
+  50 % and a few samples, the final one 100 %.
+- **Camera:** the shot goes through the Output camera if the network has one, including
+  camera motion blur.
+- The render runs on **its own thread**. The progress window shows the last
+  finished frame, what is happening right now ("Frame 41: 12 / 32 samples · 18 s",
+  "Cycles gets the scene ready…"), how long a frame takes and how much remains.
+  **Stop** (or Esc) also stops the frame currently being rendered. Whatever
+  finished stays: the video is finalised, the PNG frames remain in the folder.
+- Meanwhile the **Render tab** shows the finished frames of the render and pauses its own
+  render (the processor belongs to the render). It resumes when the render is done.
+- The render waits for frames the simulation has not computed yet, just as
+  with video from the viewport. For the displayed geometry of a frame (trees, houses,
+  points from Liquid Points…) it waits until it has cooked.
 
-Totéž z příkazové řádky:
+The same from the command line:
 
 ```bash
-./build/prototype sim muj.pgsim zaber.mp4 --renderer cycles                # vzorky z Outputu
-./build/prototype sim muj.pgsim snimky/f.png --every 1 --renderer cycles   # očíslované PNG
+./build/prototype sim muj.pgsim zaber.mp4 --renderer cycles                # samples from the Output
+./build/prototype sim muj.pgsim snimky/f.png --every 1 --renderer cycles   # numbered PNGs
 ```
 
-Na čtyřech jádrech trvá snímek 1280 × 720 se 16 vzorky, plynem a stromy
-asi minutu: dvě sekundy videa jsou zhruba hodina.
+On four cores a 1280 × 720 frame with 16 samples, gas and trees takes
+about a minute: two seconds of video are roughly an hour.
 
-![Render videa přes Cycles: okno s posledním hotovým snímkem, vzorky snímku a odhadem času](img/editor-render-cycles.jpg)
+![Rendering video through Cycles: window with the last finished frame, the frame's samples and a time estimate](img/editor-render-cycles.jpg)
 
-## 3. Formáty videa
+## 3. Video formats
 
-| přípona | kodek | co je potřeba |
+| extension | codec | what is needed |
 |---|---|---|
-| `.avi` | Motion JPEG, kvalita 90, každý snímek klíčový | nic — kodér JPEG i kontejner AVI jsou v programu |
-| `.mp4` `.mov` `.mkv` | H.264 (libx264, CRF 18, yuv420p); bez libx264 OpenH264 nebo MPEG-4 part 2 | ffmpeg |
-| `.webm` | VP9 (CRF 28), bez něj VP8 | ffmpeg s libvpx |
-| `.gif` | paleta spočítaná ze záběru, rozptyl sierra2_4a, opakuje se | ffmpeg |
+| `.avi` | Motion JPEG, quality 90, every frame a keyframe | nothing — the JPEG encoder and the AVI container are built into the program |
+| `.mp4` `.mov` `.mkv` | H.264 (libx264, CRF 18, yuv420p); without libx264, OpenH264 or MPEG-4 part 2 | ffmpeg |
+| `.webm` | VP9 (CRF 28), without it VP8 | ffmpeg with libvpx |
+| `.gif` | palette computed from the shot, sierra2_4a dithering, loops | ffmpeg |
 
-- ffmpeg se hledá na `PATH`; proměnná **`PG_FFMPEG`** může ukázat jinam
-  (`PG_FFMPEG=/opt/ffmpeg/bin/ffmpeg`). Bez ffmpeg nabízí dialog jen `.avi`
-  a příkazová řádka u `.mp4` řekne, že ho potřebuje.
-- H.264 a VP9 chtějí sudé rozměry: lichý řádek či sloupec se doplní
-  opakováním posledního. AVI si rozměr nechá.
-- Snímková frekvence je ta z Outputu (30 fps); `--every K` ji dělí K, aby
-  video běželo ve skutečném čase. Necelé frekvence se zapíší jako zlomek
-  (29,97 → 2997/100).
-- AVI má limit 2 GB (32bitová RIFF); pro delší videa je `.mp4`.
+- ffmpeg is looked up on `PATH`; the **`PG_FFMPEG`** variable can point elsewhere
+  (`PG_FFMPEG=/opt/ffmpeg/bin/ffmpeg`). Without ffmpeg the dialog offers only `.avi`,
+  and the command line says for `.mp4` that it needs it.
+- H.264 and VP9 require even dimensions: an odd row or column is padded by
+  repeating the last one. AVI keeps the size as is.
+- The frame rate is the one from the Output (30 fps); `--every K` divides it by K so that
+  the video plays in real time. Non-integer rates are written as a fraction
+  (29.97 → 2997/100).
+- AVI has a 2 GB limit (32-bit RIFF); for longer videos use `.mp4`.
 
-Ověřeno: AVI i MP4/WebM dekóduje ffmpeg 6.1, snímky se vrací na svá místa
-a blízko originálu (test `videos_decode_to_what_went_in_where_ffmpeg_is`);
-JPEG má na skutečném renderu PSNR 44,6 dB a stejné číslo jako kodér JPEG
-v ffmpeg na umělém obrázku s ostrými hranami (26,0 dB).
+Verified: ffmpeg 6.1 decodes AVI as well as MP4/WebM, the frames come back in their places
+and close to the original (test `videos_decode_to_what_went_in_where_ffmpeg_is`);
+the JPEG has a PSNR of 44.6 dB on a real render and the same figure as the JPEG encoder
+in ffmpeg on a synthetic image with sharp edges (26.0 dB).
 
-## 4. EXR pro compositing
+## 4. EXR for compositing
 
-`prototype sim záběr OUT.exr` zapíše snímky do OpenEXR (s `--every K` každý
-K-tý jako `OUT_0001.exr`…, s `--start` a `--end` jen díl záběru). Zapisovač
-je vlastní, bez knihovny; soubory čte knihovna OpenEXR 3.5 kanál po kanálu
-stejně, 32bitové bit po bitu.
+`prototype sim SHOT OUT.exr` writes frames to OpenEXR (with `--every K` every
+K-th one as `OUT_0001.exr`…, with `--start` and `--end` only part of the shot). The writer
+is our own, with no library; the OpenEXR 3.5 library reads the files channel by channel
+identically, 32-bit ones bit for bit.
 
-| kanál | co v něm je |
+| channel | what it contains |
 |---|---|
-| `R`, `G`, `B`, `A` | obraz v **lineárním světle** (half float): expozice ano, tónová křivka a gama ne, takže světlé nebe a prach proti slunci jdou nad 1. `A` je 1 — obraz je celý, s pozadím |
-| `Z` | hloubka nejbližšího povrchu podél osy pohledu, v metrech (float); kde povrch není (nebe), nekonečno |
-| `forward.u`, `forward.v` | **vektory pohybu**: o kolik pixelů se bod posune do dalšího snímku, doprava a nahoru (jako v Nuke). Kusy a zobrazená geometrie podle rychlosti svých bodů `v`, všechno podle pohybu kamery |
-| `mask.floor`, `mask.geometry`, `mask.pieces`, `mask.objects`, `mask.water` | kolik z pixelu je podlaha, zobrazená geometrie, kusy RBD, objekty, voda: pokrytí z vyhlazení 2 × 2 |
-| `mask.smoke` | kolik z toho, co je za kouřem, kouř zakrývá: jeho neprůhlednost |
+| `R`, `G`, `B`, `A` | the image in **linear light** (half float): exposure yes, tone curve and gamma no, so a bright sky and dust against the sun go above 1. `A` is 1 — the image is complete, with the background |
+| `Z` | depth of the nearest surface along the view axis, in meters (float); where there is no surface (sky), infinity |
+| `forward.u`, `forward.v` | **motion vectors**: how many pixels a point moves by the next frame, right and up (as in Nuke). Pieces and displayed geometry according to the velocity `v` of their points, everything according to camera motion |
+| `mask.floor`, `mask.geometry`, `mask.pieces`, `mask.objects`, `mask.water` | how much of the pixel is floor, displayed geometry, RBD pieces, objects, water: coverage from 2 × 2 anti-aliasing |
+| `mask.smoke` | how much of what lies behind the smoke the smoke covers: its opacity |
 
-Když má kamera **plate** (obraz záběru), je v `R`, `G`, `B` jen CG a `A`
-říká, kolik z pixelu zakrývá. Kanály `catcher.R/G/B` pak říkají, čím
-plate vynásobit tam, kde na něj CG vrhá stín nebo svítí oheň. Záběr je
-`plate × catcher × (1 − A) + RGB` ([plate.md](plate.md#4-exr-pro-compositing-nad-plate)).
-Stejné kanály dá i EXR z Cycles a z path traceru
-([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)).
+When the camera has a **plate** (the shot's footage), `R`, `G`, `B` hold only the CG, and `A`
+says how much of the pixel it covers. The `catcher.R/G/B` channels then say what to
+multiply the plate by where the CG casts a shadow on it or fire lights it. The shot is
+`plate × catcher × (1 − A) + RGB` ([plate.md](plate.md#4-exr-for-compositing-over-the-plate)).
+EXR from Cycles and from the path tracer provides the same channels
+([plate.md](plate.md#in-the-final-render-cycles-and-the-path-tracer)).
 
-Jak se to počítá: renderer kreslí v režimu průchodů do 16bitových floatů
-a vedle obrazu do dvou dalších cílů (MRT). Povrchy se nejdřív rasterizují
-do G-bufferu a každý roh trojúhelníku dostane polohu teď a v příštím
-snímku (bod posunutý o `v` × délka snímku, promítnutý kamerou příštího
-snímku). Rozdíl po pixelech je vektor pohybu. Hlavní průchod pak k obrazu
-zapíše hloubku, neprůhlednost kouře a to, co je v pixelu za povrch.
-Podlahu, objekty, vodu a nebe posouvá jen kamera. Drť a déšť jsou
-v obraze, ale ne v hloubce, maskách a pohybu.
+How it is computed: in pass mode the renderer draws into 16-bit floats
+and, beside the image, into two more targets (MRT). Surfaces are first rasterized
+into a G-buffer, and each triangle corner gets its position now and in the next
+frame (the point moved by `v` × frame duration, projected by the next
+frame's camera). The per-pixel difference is the motion vector. The main pass then writes,
+alongside the image, the depth, the smoke opacity and what surface is in the pixel.
+The floor, objects, water and sky are moved only by the camera. Debris and rain are
+in the image, but not in the depth, masks and motion.
 
-Ověřeno: kamera jedoucí doprava posune nehybnou scénu doleva
-(`forward.u` −0,64 px), kamera jedoucí nahoru dolů (`forward.v` −0,59 px, blízká
-podlaha −3 px); obraz bez průchodů je pixel po pixelu stejný jako předtím.
+Verified: a camera moving right shifts a static scene to the left
+(`forward.u` −0.64 px), a camera moving up shifts it down (`forward.v` −0.59 px, nearby
+floor −3 px); the image without passes is pixel for pixel the same as before.
 
-## 5. Příkazová řádka
+## 5. Command line
 
 ```
 prototype sim    NETWORK|EXAMPLE OUT.png|OUT.mp4|- [--frames N] [--every K] ...
 prototype render GRAPH.pgsg OUT.png|OUT.mp4 [--frames N] [--time S] [--size N] ...
 ```
 
-- `sim` do videa dá každý snímek záběru (s `--every K` každý K-tý), do PNG
-  jen poslední (s `--every K` očíslovanou sekvenci). Video se otevře dřív,
-  než se začne simulovat: chybějící ffmpeg se ozve hned, ne po minutách.
-- `render` do videa: `--frames` snímků náhledu (výchozí 90) po 1/30 s od
-  `--time`, třeba smyčka ohně nebo kouře.
-- Síť bez simulace, jen se zobrazenou geometrií, se kreslí kamerou
-  Outputu po všech jeho snímcích, když ji Output má: layout, previz nebo
-  plate natočený z kulisy ([plate.md](plate.md#6-render-jen-z-geometrie)).
-  Bez kamery je to jeden obrázek z pohledu na geometrii.
-- Výpis řekne, kolik snímků a jakým kodekem se zapsalo a čím se kreslilo:
+- `sim` to video gives every frame of the shot (with `--every K` every K-th), to PNG
+  only the last one (with `--every K` a numbered sequence). The video is opened before
+  the simulation starts: a missing ffmpeg is reported immediately, not after minutes.
+- `render` to video: `--frames` preview frames (default 90) at 1/30 s from
+  `--time`, for example a fire or smoke loop.
+- A network without a simulation, with only displayed geometry, is drawn through the
+  Output camera over all of its frames when the Output has one: layout, previz, or a
+  plate shot from a set ([plate.md](plate.md#6-rendering-geometry-only)).
+  Without a camera it is a single image from a view of the geometry.
+- The output says how many frames were written and with which codec, and what was used to draw:
 
 ```
 $ prototype sim campfire fire.mp4 --frames 60
 wrote fire.mp4 (60 frames at 30 fps, H.264 (ffmpeg)): campfire, gas 64 x 96 x 64 cells, 60 frames (2.0 s); simulation 67.1 ms/frame, rendering 395 ms/image through EGL
 ```
 
-### Čím se kreslí bez okna
+### What draws without a window
 
-Příkazy nepotřebují okno. OpenGL kontext hledají v tomto pořadí:
+The commands do not need a window. They look for an OpenGL context in this order:
 
-1. **EGL bez displeje** — Mesa surfaceless (i bez GPU, llvmpipe), pak
-   každé GPU zařízení zvlášť (cesta ovladače NVIDIA bez X), pak výchozí
-   displej;
-2. **skryté okno GLFW** — v buildu s editorem, když EGL nedá nic a displej
-   je k dispozici.
+1. **EGL without a display** — Mesa surfaceless (even without a GPU, llvmpipe), then
+   each GPU device separately (the NVIDIA driver path without X), then the default
+   display;
+2. **hidden GLFW window** — in a build with the editor, when EGL gives nothing and a display
+   is available.
 
-Když nevyjde nic, chyba vypíše, co který způsob řekl, například:
+When nothing works, the error lists what each method said, for example:
 
 ```
 sim: no OpenGL context to draw with -- EGL: no EGL context without a window
 (surfaceless: does not start (EGL error 0x3001); device 0: ...); a hidden window: X11: Failed to open display
 ```
 
-`-` místo jména obrázku kreslení vynechá úplně (jen cache a export,
-viz [cache.md](cache.md)).
+`-` instead of an image name skips drawing entirely (only cache and export,
+see [cache.md](cache.md)).
 
-## 6. Když se obrázek „neuloží“
+## 6. When the image "does not save"
 
-- Podívejte se na oznámení ve viewportu nebo na terminál: úspěch vypíše
-  celou cestu (`prototype: rendered /home/…/campfire.png (875 x 828)`),
-  neúspěch důvod — nejde zapsat, a proč (např. `Permission denied`). Když
-  ovladač při kreslení nahlásí chybu OpenGL, obrázek se uloží stejně a
-  zpráva chybu připíše (`OpenGL reported error 0x…`).
-- **Show** v oznámení otevře složku, kam soubor šel.
-- Chybějící složky v cestě se vytvoří; do dialogu jde napsat i `~/…`.
-- Render Frames do existující složky: otevřít ji (dvojklik) a **Choose**
-  bez jména, nebo na ni jednou kliknout a Choose.
+- Look at the notification in the viewport or at the terminal: success prints
+  the full path (`prototype: rendered /home/…/campfire.png (875 x 828)`),
+  failure prints the reason — it cannot be written, and why (e.g. `Permission denied`). When
+  the driver reports an OpenGL error while drawing, the image is saved anyway and the
+  message appends the error (`OpenGL reported error 0x…`).
+- **Show** in the notification opens the folder the file went to.
+- Missing folders in the path are created; you can also type `~/…` in the dialog.
+- Render Frames into an existing folder: open it (double-click) and **Choose**
+  without a name, or click it once and Choose.
 
-## 7. V kódu
+## 7. In the code
 
-| soubor | co dělá |
+| file | what it does |
 |---|---|
-| `src/pg/io/Jpeg.h` | `encodeJpeg`, `writeJpeg`: baseline JPEG, 4:2:0, tabulky normy |
-| `src/pg/io/Video.h` | `openVideo` → `VideoWriter` (`add`, `finish`): AVI sám, ostatní rourou do ffmpeg; `videoExtensions`, `ffmpegAvailable`, `frameRate` |
-| `tools/prototype/Offscreen.h` | kontext bez okna pro `render` a `sim`: EGL, nebo skryté okno GLFW |
-| `tools/prototype/RenderJob.h` | render po snímcích na pozadí editoru, okno s průběhem, posledním snímkem a Stop |
-| `tools/prototype/FrameRender.h` | snímek záběru do konce přes Cycles nebo path tracer na vlastním vlákně (Render Video with Cycles) |
-| `tests/test_video.cpp` | 5 testů: segmenty JPEG, struktura AVI a index, zlomky frekvence, chyby, dekódování přes ffmpeg |
-| `src/pg/io/Exr.h` | `formatExr`, `writeExr`: OpenEXR 2, řádky, half i float, RLE jako OpenEXR, textové a maticové atributy |
-| `src/pg/gl/Volume.h` | `VolumeRenderer::passes`, `readPasses`, `writePassesExr`: průchody a jejich zápis |
-| `tests/test_exr.cpp` | 3 testy: hlavička a řádky podle rozvržení OpenEXR a hodnoty zpět vlastním čtením RLE, běhy se zmenší a šum zůstane, chyby |
+| `src/pg/io/Jpeg.h` | `encodeJpeg`, `writeJpeg`: baseline JPEG, 4:2:0, standard tables |
+| `src/pg/io/Video.h` | `openVideo` → `VideoWriter` (`add`, `finish`): AVI on its own, everything else piped to ffmpeg; `videoExtensions`, `ffmpegAvailable`, `frameRate` |
+| `tools/prototype/Offscreen.h` | windowless context for `render` and `sim`: EGL, or a hidden GLFW window |
+| `tools/prototype/RenderJob.h` | frame-by-frame render in the editor's background, window with progress, last frame and Stop |
+| `tools/prototype/FrameRender.h` | a shot frame rendered to the end through Cycles or the path tracer on its own thread (Render Video with Cycles) |
+| `tests/test_video.cpp` | 5 tests: JPEG segments, AVI structure and index, frame-rate fractions, errors, decoding through ffmpeg |
+| `src/pg/io/Exr.h` | `formatExr`, `writeExr`: OpenEXR 2, scanlines, half and float, RLE as in OpenEXR, string and matrix attributes |
+| `src/pg/gl/Volume.h` | `VolumeRenderer::passes`, `readPasses`, `writePassesExr`: passes and writing them |
+| `tests/test_exr.cpp` | 3 tests: header and scanlines per the OpenEXR layout and values back via our own RLE reader, runs shrink and noise stays, errors |
 
-## 8. Omezení
+## 8. Limitations
 
-- EXR je komprimované jen RLE: masky a nebe se zmenší hodně, obraz,
-  hloubka a pohyb málo — 1280 × 720 má asi 15 MB. ZIP (deflate) zatím ne.
-- Sekvence do EXR jen z příkazové řádky; editor zapíše do EXR jeden snímek
+- EXR is compressed only with RLE: masks and sky shrink a lot, image,
+  depth and motion little — 1280 × 720 is about 15 MB. No ZIP (deflate) yet.
+- EXR sequences only from the command line; the editor writes a single frame to EXR
   (Render Image).
-- Kouř nemá vektory pohybu ani hloubku: průchody počítají jen povrchy.
-- Kryptomatte ne: masky jsou po druzích povrchu, ne po objektech.
+- Smoke has no motion vectors or depth: the passes cover only surfaces.
+- No Cryptomatte: masks are per surface kind, not per object.
 
-- Motion JPEG je velký (každý snímek celý): zhruba desetkrát víc než H.264.
-- Zvuk žádný.
-- Průhlednost (alfa) se do videa nezapisuje.
+- Motion JPEG is large (every frame complete): roughly ten times more than H.264.
+- No audio.
+- Transparency (alpha) is not written to video.

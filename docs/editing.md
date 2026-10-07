@@ -1,666 +1,666 @@
-# Úpravy geometrie ve viewportu: body, hrany, plochy, štětec a sculpt
+# Editing geometry in the viewport: points, edges, faces, brush and sculpt
 
-Zobrazenou geometrii (uzel s display flagem, [geometry.md](geometry.md))
-jde upravovat přímo ve viewportu, jako v Houdini: myší vybrat body, hrany
-nebo plochy — kliknutím, obdélníkem, lasem nebo štětcem, jen viditelné,
-nebo i ty za povrchem —, posunout je, otočit a zvětšit úchytem, udělat
-z nich skupinu, smazat je, štětcem namalovat atribut — třeba `pin` nebo
-`tear` látce ([cloth.md](cloth.md)) — a štětcem geometrii tvarovat jako
-hlínu: vytlačit, zatlačit, uhladit, chytit a táhnout, zarovnat (§6c).
+The displayed geometry (the node with the display flag, [geometry.md](geometry.md))
+can be edited directly in the viewport, as in Houdini: select points, edges
+or faces with the mouse — by clicking, with a rectangle, a lasso or a brush, visible ones only,
+or also those behind the surface —, move them, rotate and scale them with a handle, make
+a group of them, delete them, paint an attribute with a brush — say `pin` or
+`tear` for cloth ([cloth.md](cloth.md)) — and shape the geometry with a brush like
+clay: push out, push in, smooth, grab and drag, flatten (§6c).
 
-Nic z toho není skryté kouzlo. Každá úprava je **obyčejný uzel sítě**,
-který editor vloží za zobrazený uzel: **Edit**, **Group**, **Blast**,
-**Attribute Paint**, **Sculpt**. V jeho parametrech je to, co udělala
-myš — vybrané prvky jako vzor (`339 363-364 387-390`), tahy štětce jako
-seznam kapek.
-Síť zůstává procedurální: undo funguje jako u každé jiné změny, uzel jde
-vypnout (bypass), přesunout, upravit v parametrech, uložit se sítí, a co
-je před ním, jde dál měnit.
+None of this is hidden magic. Every edit is **an ordinary network node**
+that the editor inserts after the displayed node: **Edit**, **Group**, **Blast**,
+**Attribute Paint**, **Sculpt**. Its parameters hold what the
+mouse did — the selected elements as a pattern (`339 363-364 387-390`), brush strokes as a
+list of dabs.
+The network stays procedural: undo works as for any other change, the node can be
+turned off (bypass), moved, edited in its parameters, saved with the network, and whatever
+is upstream of it can still be changed.
 
-![Body vybrané obdélníkem, zvednuté úchytem: uzel Edit s měkkým poloměrem 0,7 m udělal z mřížky kopec](img/edit-points.jpg)
+![Points selected with a rectangle, raised with the handle: an Edit node with a 0.7 m soft radius turned the grid into a hill](img/edit-points.jpg)
 
-![Štětec maluje atribut pin podél dvou okrajů látky; s Ctrl kus zase smazal](img/edit-paint.jpg)
+![The brush paints the pin attribute along two edges of the cloth; with Ctrl it erased part of it again](img/edit-paint.jpg)
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
-./build/prototype --example shade_sail    # plachta: rohy zvednuté Editem, piny namalované štětcem
+./build/prototype --example shade_sail    # shade sail: corners raised by Edit, pins painted with the brush
 ```
 
-1. Zobrazte uzel s geometrií (praporek na pravém konci uzlu, nebo **R**
-   nad ním v síti) — třeba Grid.
-2. Myš nad viewport, **2**: body. Klik vybere bod, tažení levým tlačítkem
-   obdélník.
-3. **W** a tažení šipkou úchytu: body se posunou a za zobrazeným uzlem
-   přibude uzel **Edit**. V jeho parametrech nastavte **Soft Radius**
-   a body kolem půjdou s nimi — z mřížky je kopec.
-4. **Ctrl+G** udělá z vybraného skupinu (uzel **Group**), **Delete** ho
-   smaže (uzel **Blast**).
-5. **P** a tažení po geometrii maluje atribut `pin` (uzel **Attribute
-   Paint**); s **Ctrl** maže. **P** znovu malování ukončí.
-6. **U** a tažení po geometrii ji vytlačuje ven (uzel **Sculpt**);
-   s **Ctrl** dovnitř, se **Shift** uhlazuje. **U** znovu sculpt ukončí.
+1. Display a node with geometry (the flag on the right end of the node, or **R**
+   over it in the network) — say Grid.
+2. Mouse over the viewport, **2**: points. A click selects a point, dragging with the left button
+   draws a rectangle.
+3. **W** and drag a handle arrow: the points move, and an **Edit** node
+   appears after the displayed node. In its parameters set **Soft Radius**
+   and the points around will move with them — the grid becomes a hill.
+4. **Ctrl+G** makes a group from the selection (a **Group** node), **Delete**
+   deletes it (a **Blast** node).
+5. **P** and dragging over the geometry paints the `pin` attribute (an **Attribute
+   Paint** node); with **Ctrl** it erases. **P** again ends painting.
+6. **U** and dragging over the geometry pushes it outward (a **Sculpt** node);
+   with **Ctrl** inward, with **Shift** it smooths. **U** again ends sculpting.
 
-## 2. Co se vybírá
+## 2. What gets selected
 
-| Klávesa | Tlačítko v liště | Co klik vybírá |
+| Key | Toolbar button | What a click selects |
 |---|---|---|
-| **1** | krychle | objekty scény — uzly (jako dosud) |
-| **2** | čtyřúhelník s tečkami v rozích | body zobrazené geometrie |
-| **3** | čtyřúhelník se zvýrazněnou stranou | hrany |
-| **4** | vyplněný čtyřúhelník | primitivy: polygony a křivky |
-| **5** | čtyřúhelník s tečkami kousek uvnitř rohů | vrcholy: rohy primitiv (§2b) |
-| **P** | štětec | nic — maluje |
-| **U** | kopeček pod štětcem | nic — tvaruje (sculpt) |
+| **1** | cube | scene objects — nodes (as before) |
+| **2** | quad with dots at the corners | points of the displayed geometry |
+| **3** | quad with a highlighted side | edges |
+| **4** | filled quad | primitives: polygons and curves |
+| **5** | quad with dots slightly inside the corners | vertices: corners of primitives (§2b) |
+| **P** | brush | nothing — paints |
+| **U** | small hill under a brush | nothing — shapes (sculpt) |
 
-V režimech 2–5 viewport ukáže drátěný model geometrie, v režimu bodů
-i všechny body, v režimu vrcholů všechny rohy. Prvek pod myší svítí
-**tyrkysově**, vybrané jsou **žluté**. Vpravo dole je napsáno, co je pod
-myší (`point 446`, `edge 6-7`, `primitive 17`, `vertex 18 (4v2, point
-10)`) a kolik je vybráno.
+In modes 2–5 the viewport shows a wireframe of the geometry, in point mode
+also all points, in vertex mode all corners. The element under the mouse is lit
+**turquoise**, selected ones are **yellow**. The bottom right shows what is under
+the mouse (`point 446`, `edge 6-7`, `primitive 17`, `vertex 18 (4v2, point
+10)`) and how many are selected.
 
-Přepnutí režimu výběr **převede**: z bodů na primitivy (ty, jejichž
-všechny body byly vybrané), z primitiv na body (jejich rohy), z primitiv
-na hrany (jejich strany), z bodů na hrany (hrany mezi vybranými body),
-z bodů na vrcholy (rohy na nich), z primitiv na vrcholy (jejich rohy),
-z vrcholů na body (jejich body) a na primitivy (ty, jejichž všechny rohy
-byly vybrané).
+Switching modes **converts** the selection: from points to primitives (those whose
+points were all selected), from primitives to points (their corners), from primitives
+to edges (their sides), from points to edges (edges between selected points),
+from points to vertices (the corners on them), from primitives to vertices (their corners),
+from vertices to points (their points) and to primitives (those whose corners
+were all selected).
 
-Vybírá se jen to, co je **vidět**: bod, hranu či plochu, kterou zakrývá
-vlastní povrch geometrie, klik ani obdélník nevezme a značky za povrchem
-nejsou vidět — dokud nezapnete **H** (§2a). Výběr drží čísla bodů
-a primitiv zobrazené geometrie; zůstane i po undo a po vložení dalšího
-uzlu, dokud má geometrie stejně bodů a primitiv.
+Only what is **visible** gets selected: a point, edge or face hidden by
+the geometry's own surface is not taken by a click or a rectangle, and markers behind the surface
+are not shown — until you turn on **H** (§2a). The selection holds the point
+and primitive numbers of the displayed geometry; it survives undo and inserting another
+node, as long as the geometry has the same number of points and primitives.
 
-## 2a. Obdélník, laso, štětec; i skryté
+## 2a. Rectangle, lasso, brush; hidden too
 
-Tažení levým tlačítkem vybírá jedním ze tří způsobů. **S** je střídá
-(obdélník → laso → štětec), stejně tlačítko pod čtyřmi režimy v liště
-(ukazuje ten, který platí) a pravý klik › *Pick With*:
+Dragging with the left button selects in one of three ways. **S** cycles them
+(rectangle → lasso → brush), as does the button under the four modes in the toolbar
+(it shows the active one) and right-click › *Pick With*:
 
-| Způsob | Co vybere |
+| Method | What it selects |
 |---|---|
-| **obdélník** | body, které v něm leží; hrany, jejichž oba konce v něm leží; primitivy, jejichž střed v něm leží |
-| **laso** | totéž, jen místo obdélníku to, co obkrouží čára tažená myší (uzavřená z konce zpátky na začátek). Smyčka, kterou čára udělá kolem sebe, je zase venku (pravidlo sudý–lichý: uvnitř je, co paprsek ven protne lichým počtem čar) |
-| **štětec** | kroužek, který vybírá, čeho se dotkne, jak jím táhnete: body pod ním, hrany, kterých se dotkne, primitivy, přes jejichž střed přejede, plochy pod jeho středem (i ty větší než kroužek) a křivky, kterých se dotkne |
+| **rectangle** | points that lie inside it; edges with both ends inside it; primitives whose center lies inside it |
+| **lasso** | the same, except that instead of a rectangle it is whatever the line dragged with the mouse encircles (closed from the end back to the start). A loop the line makes around itself is outside again (the even–odd rule: a point is inside if a ray from it going outward crosses the line an odd number of times) |
+| **brush** | a ring that selects whatever it touches as you drag it: points under it, edges it touches, primitives whose center it passes over, faces under its center (even those larger than the ring) and curves it touches |
 
-Se **Shift** výběr přidává, s **Ctrl** ubírá, jinak ho nahradí — u štětce
-rozhoduje, co bylo drženo při stisku: stisk sám je jedna kapka, pak
-štětec bere, přes co jde. Kroužek je oranžový, při ubírání modrý;
-velikost mění **[** **]** a **Shift**+kolečko. **Esc** během tahu vrátí
-výběr, jaký byl před ním. Klik bez tažení u obdélníku a lasa vybere prvek
-pod myší jako dosud.
+With **Shift** the selection adds, with **Ctrl** it subtracts, otherwise it replaces — for the brush,
+what was held at the press decides: the press itself is one dab, then
+the brush takes whatever it passes over. The ring is orange, blue when subtracting;
+its size is changed with **[** **]** and **Shift**+wheel. **Esc** during a drag restores
+the selection as it was before it. A click without dragging with the rectangle and lasso selects the element
+under the mouse as before.
 
-![Laso ve tvaru C vybralo srpek 109 bodů; se Shift se kreslí druhé laso](img/edit-lasso.jpg)
+![A C-shaped lasso selected a crescent of 109 points; a second lasso is drawn with Shift](img/edit-lasso.jpg)
 
-![Štětec v režimu primitiv: plochy, přes které šel, ve vlnitém pásu](img/edit-brush-pick.jpg)
+![The brush in primitive mode: the faces it passed over, in a wavy band](img/edit-brush-pick.jpg)
 
-**H** (tlačítko s průhlednou krychlí, pravý klik › *Pick Hidden Too*)
-vybírá **i skryté**: klik, obdélník, laso i štětec berou i body a hrany za
-povrchem a zadní stranu, a značky, které povrch zakrývá — drát, body,
-výběr — jsou vidět slabě, jako rentgen. Vpravo dole je pak napsáno
-*Hidden too*. Klik na plochu vybere tu první pod myší i tak (co je za
-ní, vezme obdélník, laso nebo štětec).
+**H** (the button with a transparent cube, right-click › *Pick Hidden Too*)
+selects **hidden ones too**: click, rectangle, lasso and brush also take points and edges behind
+the surface and the back side, and markers hidden by the surface — wireframe, points,
+selection — are shown faintly, like an X-ray. The bottom right then reads
+*Hidden too*. A click on a face still selects the first one under the mouse (whatever is behind
+it is taken by the rectangle, lasso or brush).
 
-![H zapnuté: laso přes kouli vybralo pás bodů vpředu i vzadu (zadní slabě)](img/edit-hidden.jpg)
+![H on: a lasso over a sphere selected a band of points at the front and back (the back ones faint)](img/edit-hidden.jpg)
 
-## 2b. Vrcholy (5)
+## 2b. Vertices (5)
 
-**Vrchol** je roh primitivu, jako v Houdini: bod, kde se potkají čtyři
-čtyřúhelníky, má čtyři vrcholy, v každém čtyřúhelníku jeden. Vrcholy nesou
-vlastní atributy (`uv` rohu, ostrá hrana normál) a pořadí rohů polygonu.
-Viewport kreslí každý vrchol jako zelenou tečku o pětinu cesty od bodu ke
-středu jeho polygonu, takže rohy kolem jednoho bodu jdou vybrat zvlášť;
-roh čáry leží na bodě. Pod myší se ukáže i čára od bodu k rohu.
+A **vertex** is a corner of a primitive, as in Houdini: a point where four
+quads meet has four vertices, one in each quad. Vertices carry
+their own attributes (a corner's `uv`, a hard edge in normals) and the order of a polygon's corners.
+The viewport draws each vertex as a green dot one fifth of the way from the point to the
+center of its polygon, so the corners around one point can be selected separately;
+a line's corner lies on the point. Under the mouse, a line from the point to the corner is shown as well.
 
-![Režim vrcholů: mřížka 3 × 3 čtyřúhelníků, u každého bodu tečky rohů okolních polygonů s čísly (N); vybraný roh vlevo a čtyři rohy kolem jednoho bodu vpravo (žlutě), pod myší vertex 18, roh 2 primitivu 4](img/edit-vertices.jpg)
+![Vertex mode: a grid of 3 × 3 quads, at each point the corner dots of the surrounding polygons with numbers (N); a selected corner on the left and four corners around one point on the right (yellow), vertex 18 under the mouse, corner 2 of primitive 4](img/edit-vertices.jpg)
 
-S vybranými vrcholy:
+With vertices selected:
 
-- **Ctrl+G** udělá skupinu vrcholů (Group s třídou *Vertices*).
-- **W**, **E**, **R** posunou, otočí a zvětší jejich body (Edit s třídou
-  *Vertices*); měkký výběr i symetrie fungují jako u bodů.
-- **Delete** vyjme rohy z jejich polygonů (Blast s třídou *Vertices*):
-  čtyřúhelník bez jednoho rohu je trojúhelník. Polygon, kterému zbudou
-  méně než tři rohy (čáře méně než dva), zmizí celý. Bod, který používaly
-  jen vyjmuté rohy, zmizí s nimi.
-- **N** ukáže čísla vrcholů.
+- **Ctrl+G** makes a vertex group (Group with class *Vertices*).
+- **W**, **E**, **R** move, rotate and scale their points (Edit with class
+  *Vertices*); soft selection and symmetry work as for points.
+- **Delete** removes the corners from their polygons (Blast with class *Vertices*):
+  a quad without one corner is a triangle. A polygon left with
+  fewer than three corners (a line with fewer than two) disappears entirely. A point used
+  only by the removed corners disappears with them.
+- **N** shows vertex numbers.
 
-Ve vzoru jsou vrcholy očíslované za sebou přes primitivy, jak je
-geometrie drží (`0-3 9`), nebo podle Houdini primitivem a rohem: `5v2` je
-roh 2 primitivu 5 (§7).
+In a pattern, vertices are numbered consecutively across primitives, the way the
+geometry stores them (`0-3 9`), or Houdini-style by primitive and corner: `5v2` is
+corner 2 of primitive 5 (§7).
 
-## 3. Myš a klávesy
+## 3. Mouse and keys
 
-| Vstup | Co udělá |
+| Input | What it does |
 |---|---|
-| klik | vybere prvek pod myší (a nic jiného); klik do prázdna výběr zruší |
-| **Shift**+klik, **Ctrl**+klik | přidá, ubere |
-| tažení levým | obdélník, laso nebo štětec (§2a); se Shift přidá, s Ctrl ubere |
-| **S** | obdélník → laso → štětec |
-| **H** | vybírat i skryté (a ukázat je slabě) |
-| **Alt** nebo **mezerník** + tažení levým | otáčí pohledem — levé tlačítko v těchto režimech vybírá |
-| prostřední tažení, pravé tažení, kolečko | posun pohledu, přiblížení (jako vždy) |
-| **Ctrl+A**, **Ctrl+I**, **Esc** | vybere vše, obrátí výběr, zruší výběr |
-| **F** | zarámuje vybrané |
-| **W**, **E**, **R** | posun, otočení, měřítko vybraného úchytem; **Q** úchyt skryje |
-| **O** | měkký výběr zapnout / vypnout (§4a) |
-| **M** | symetrie: zrcadlit úpravy a štětce podle x, y, z, vypnout (§4b) |
-| **[** , **]**, kolečko během tahu | menší / větší poloměr měkkého výběru |
-| **Ctrl+G** | skupina z vybraného (Group) |
-| **Delete**, **X** | smaže vybrané (Blast) |
-| **Ctrl+X** | rozpustí vybrané hrany či plochy (Dissolve, §5) |
-| **P** | malovací štětec zapnout / vypnout (§6) |
-| **U** | sculpt zapnout / vypnout (§6c) |
-| **Tab** | uzel na vybrané: PolyExtrude, wrangle, Edit… (§6a) |
-| **N** | čísla bodů (v režimu primitiv čísla primitiv), jen viditelných |
-| **[** , **]**, **Shift**+kolečko | menší / větší štětec (malovací či sculpt; výběrový, když není zapnutý měkký výběr) |
-| **Ctrl** při malování | maluje hodnotou Erase Value (maže) |
-| **Ctrl**, **Shift** při sculptu | Ctrl: Push zatlačuje dovnitř; Shift: uhlazuje, s kterýmkoli nástrojem |
-| **Ctrl+D** při sculptu | dyntopo zapnout / vypnout: síť se pod štětcem zjemňuje (§6c) |
-| **Esc** při tažení | vrátí, co tažení udělalo (úchyt, štětec výběru, Grab) |
+| click | selects the element under the mouse (and nothing else); a click into empty space clears the selection |
+| **Shift**+click, **Ctrl**+click | adds, subtracts |
+| left drag | rectangle, lasso or brush (§2a); with Shift adds, with Ctrl subtracts |
+| **S** | rectangle → lasso → brush |
+| **H** | select hidden elements too (and show them faintly) |
+| **Alt** or **Space** + left drag | orbits the view — in these modes the left button selects |
+| middle drag, right drag, wheel | pan, zoom (as always) |
+| **Ctrl+A**, **Ctrl+I**, **Esc** | selects all, inverts the selection, clears the selection |
+| **F** | frames the selection |
+| **W**, **E**, **R** | translate, rotate, scale the selection with a handle; **Q** hides the handle |
+| **O** | soft selection on / off (§4a) |
+| **M** | symmetry: mirror edits and brushes across x, y, z, off (§4b) |
+| **[** , **]**, wheel during a drag | smaller / larger soft selection radius |
+| **Ctrl+G** | group from the selection (Group) |
+| **Delete**, **X** | deletes the selection (Blast) |
+| **Ctrl+X** | dissolves the selected edges or faces (Dissolve, §5) |
+| **P** | paint brush on / off (§6) |
+| **U** | sculpt on / off (§6c) |
+| **Tab** | node on the selection: PolyExtrude, wrangle, Edit… (§6a) |
+| **N** | point numbers (primitive numbers in primitive mode), visible ones only |
+| **[** , **]**, **Shift**+wheel | smaller / larger brush (paint or sculpt; the selection brush when soft selection is off) |
+| **Ctrl** while painting | paints with the Erase Value (erases) |
+| **Ctrl**, **Shift** while sculpting | Ctrl: Push pushes inward; Shift: smooths, with any tool |
+| **Ctrl+D** while sculpting | dyntopo on / off: the mesh is refined under the brush (§6c) |
+| **Esc** while dragging | undoes what the drag did (handle, selection brush, Grab) |
 
-Stejné položky jsou v pravém kliku do viewportu a v nabídce Help.
-Mezerník přehrává a zastavuje, až když ho pustíte, a jen pokud jste
-s ním netočili pohledem.
+The same items are in the viewport's right-click menu and in the Help menu.
+Space starts and stops playback only when you release it, and only if you
+did not orbit the view with it.
 
-## 4. Posun, otočení, měřítko: uzel Edit
+## 4. Translate, rotate, scale: the Edit node
 
-První tah úchytem na vybraném vloží za zobrazený uzel uzel **Edit** —
-dostane vstup zobrazeného uzlu, jeho výstup vede tam, kam vedl výstup
-zobrazeného, a převezme display flag — a nastaví mu:
+The first handle drag on a selection inserts an **Edit** node after the displayed node —
+it receives the displayed node's input, its output goes where the displayed node's output
+went, and it takes over the display flag — and sets on it:
 
-| Parametr | Co v něm je |
+| Parameter | What it holds |
 |---|---|
-| Elements | vybrané prvky jako vzor (§7) |
-| Class | Points, nebo Primitives (pak se hýbou body vybraných primitiv) |
-| Translate, Rotate, Scale | co udělal úchyt; rotace ve stupních kolem x, pak y, pak z |
-| Pivot | střed vybraného při prvním tahu: kolem něj se otáčí a zvětšuje |
-| Soft Radius | jak daleko kolem vybraného body jdou s ním: úplně u něj, vůbec ve vzdálenosti Soft Radius (§4a) |
-| Distance | jak se ta vzdálenost měří: přímo prostorem, nebo po povrchu (§4a) |
-| Falloff | jak podíl pohybu slábne: Smooth, Linear, Sharp, Sphere, Constant (§4a) |
-| Symmetry | Off, X, Y, Z: pohne i zrcadlovými obrazy vybraných bodů (§4b) |
+| Elements | the selected elements as a pattern (§7) |
+| Class | Points, or Primitives (then the points of the selected primitives move) |
+| Translate, Rotate, Scale | what the handle did; rotation in degrees about x, then y, then z |
+| Pivot | the center of the selection at the first drag: rotation and scaling happen around it |
+| Soft Radius | how far around the selection points move with it: fully right next to it, not at all at a distance of Soft Radius (§4a) |
+| Distance | how that distance is measured: straight through space, or along the surface (§4a) |
+| Falloff | how the share of motion fades: Smooth, Linear, Sharp, Sphere, Constant (§4a) |
+| Symmetry | Off, X, Y, Z: also moves the mirror images of the selected points (§4b) |
 
-Další tahy se **stejným výběrem** nastavují tentýž Edit: otočení
-a měřítko se skládají přesně (otočení kolem středu úchytu, měřítko podél
-os Editu — úchyt pak má jeho osy; jinak by se tvar zkosil). Jiný výběr
-dostane nový Edit za tím prvním. Klik na úchyt bez pohnutí žádný uzel
-neudělá; **Esc** během tahu vrátí hodnoty, a pokud tah Edit teprve
-vytvořil, vrátí síť, jak byla. **Ctrl** během tahu přichytává po krocích
-(5 cm, 15°, ×0,1), jako u objektů.
+Further drags with **the same selection** set the same Edit: rotation
+and scale compose exactly (rotation about the handle center, scale along
+the Edit's axes — the handle then has its axes; otherwise the shape would shear). A different selection
+gets a new Edit after the first one. Clicking the handle without moving it creates no
+node; **Esc** during a drag restores the values, and if the drag has only just created the Edit,
+it restores the network as it was. **Ctrl** during a drag snaps in steps
+(5 cm, 15°, ×0.1), as for objects.
 
-Hrany se posouvají svými body: Edit dostane vzor hran (`p3-4`)
-a třídu Points.
+Edges are moved through their points: the Edit gets an edge pattern (`p3-4`)
+and class Points.
 
-Když je zobrazený Edit a nic není vybráno, **2** (u Editu primitiv **4**)
-vybere, co ten Edit hýbe — úchyt pak pokračuje v něm, jako když v Houdini
-vyberete uzel Edit a vrátíte se do jeho nástroje.
+When an Edit is displayed and nothing is selected, **2** (**4** for a primitive Edit)
+selects what that Edit moves — the handle then continues in it, just as when in Houdini
+you select an Edit node and return to its tool.
 
-## 4a. Měkký výběr (O)
+## 4a. Soft selection (O)
 
-**O** zapne měkký výběr: tah úchytu vezme s sebou i body kolem vybraného,
-tím méně, čím dál jsou — z bodu je kopec, ne jehla. Kolik z pohybu který
-bod dostane, je vidět ještě před tahem: plochy kolem vybraného jsou
-tónované do oranžova (plný pohyb) přes červenou do ztracena (žádný),
-body na cestě mají barvu svého podílu a kolem úchytu je kruh o poloměru
-měkkého výběru s popiskem (`soft 0.51 m`). Výchozí poloměr je 15 %
-velikosti geometrie; mění ho **[** **]** a **kolečko myši během tahu**
-(kopec se mění živě), stejně jako parametr **Soft Radius** Editu.
+**O** turns on soft selection: a handle drag also takes the points around the selection along,
+the less the farther away they are — a point becomes a hill, not a spike. How much of the motion each
+point gets is visible even before the drag: the faces around the selection are
+tinted orange (full motion) through red to nothing (no motion),
+points along the way have the color of their share, and around the handle is a circle with the
+soft selection radius and a label (`soft 0.51 m`). The default radius is 15%
+of the geometry size; it is changed with **[** **]** and the **mouse wheel during a drag**
+(the hill changes live), as well as by the Edit's **Soft Radius** parameter.
 
-![Jeden bod mřížky zvednutý s měkkým výběrem 0,8 m: tónování ukazuje, kolik z pohybu který bod dostal](img/edit-soft.jpg)
+![One grid point raised with a 0.8 m soft selection: the tinting shows how much of the motion each point received](img/edit-soft.jpg)
 
-Nastavení měkkého výběru jsou parametry Editu: nový Edit je dostane
-z viewportu a u zobrazeného Editu téhož výběru viewport ukazuje a mění
-jeho vlastní. Pravý klik › *Soft Selection*, *Soft Distance*, *Soft
-Falloff*; tlačítko s kopečkem v liště pod nástroji.
+The soft selection settings are parameters of the Edit: a new Edit gets them
+from the viewport, and for a displayed Edit of the same selection the viewport shows and changes
+the Edit's own. Right-click › *Soft Selection*, *Soft Distance*, *Soft
+Falloff*; the button with a small hill in the toolbar below the tools.
 
-**Distance** — jak daleko bod je:
+**Distance** — how far away a point is:
 
-| Volba | Vzdálenost |
+| Option | Distance |
 |---|---|
-| Space | přímo prostorem k nejbližšímu vybranému bodu |
-| Along the Surface | po povrchu, přes hrany: list ležící nad jiným, vedlejší kus, který se nedotýká, nebo druhá strana ohnutého pásu zůstanou, kde jsou |
+| Space | straight through space to the nearest selected point |
+| Along the Surface | along the surface, across edges: a sheet lying above another, a neighboring piece that does not touch, or the other side of a bent strip stay where they are |
 
-![Bod spodního listu zvednutý s poloměrem 0,7 m: přímou vzdáleností (vlevo) se vyboulí i modrý list nad ním, po povrchu (vpravo) zůstane rovný](img/edit-soft-surface.jpg)
+![A point of the lower sheet raised with a 0.7 m radius: with straight distance (left) the blue sheet above it bulges too, along the surface (right) it stays flat](img/edit-soft-surface.jpg)
 
-**Falloff** — tvar útlumu, `x` je vzdálenost dělená poloměrem:
+**Falloff** — the shape of the falloff; `x` is the distance divided by the radius:
 
-| Volba | Podíl pohybu | Tvar |
+| Option | Share of motion | Shape |
 |---|---|---|
-| Smooth | `(1 − x²)²` | kopec, plochý nahoře i u paty (výchozí) |
-| Linear | `1 − x` | kužel |
-| Sharp | `(1 − x)²` | špička |
-| Sphere | `√(1 − x²)` | kupole, strmá u okraje |
-| Constant | `1` | celý pohyb až do poloměru |
+| Smooth | `(1 − x²)²` | hill, flat at the top and at the base (default) |
+| Linear | `1 − x` | cone |
+| Sharp | `(1 − x)²` | spike |
+| Sphere | `√(1 − x²)` | dome, steep at the edge |
+| Constant | `1` | full motion all the way to the radius |
 
-## 4b. Symetrie (M)
+## 4b. Symmetry (M)
 
-**M** přepíná symetrii: vypnutá → X → Y → Z → vypnutá (i pravý klik ›
-*Symmetry*). Rovina zrcadla jde počátkem kolmo na zvolenou osu, viewport
-ji ukáže fialovým obdélníkem přes geometrii a vpravo dole stojí `Mirror X`.
+**M** cycles symmetry: off → X → Y → Z → off (also right-click ›
+*Symmetry*). The mirror plane passes through the origin perpendicular to the chosen axis; the viewport
+shows it as a purple rectangle across the geometry, and the bottom right reads `Mirror X`.
 
-- **Úchyt (Edit).** Nový Edit dostane parametr **Symmetry**. S ním se
-  pohnou i zrcadlové obrazy vybraných bodů. Strana roviny, na které je
-  pivot, se pohne, jak říká Edit, druhá strana jako jeho zrcadlový obraz.
-  Bod na rovině dostane průměr obojího, takže na ní zůstane: posun napříč
-  rovinou se odečte, posun podél ní zůstane. Měkký výběr bere vybrané
-  body i s jejich obrazy a tónování to ukazuje. Výběr sám se nezrcadlí,
-  vybrané zůstane, co jste vybrali.
-- **Sculpt.** Štětec píše každou kapku i s jejím zrcadlovým obrazem
-  a obraz je k ní **připojený** (v textu `+` před písmenem nástroje:
-  `p … ; +p …`). Připojené kapky se nanesou najednou: každý bod se posune
-  o součet obou, oba počítané z tvaru před nimi. Symetrický povrch tak
-  zůstane symetrický, i když se kapky u roviny překrývají. Kde se kapka
-  a její obraz překrývají, je každá slabší: síla krát vzdálenost středů
-  děleno dvojnásobkem poloměru, nejméně polovina, jako *feathering*
-  v Blenderu. Kapka přímo na rovině je pak jako jedna kapka bez
-  symetrie. Grab táhne obraz zrcadlově.
-- **Attribute Paint.** Štětec maluje i zrcadlový obraz kapky, stejně
-  zeslabený, kde se překrývají.
+- **Handle (Edit).** A new Edit gets the **Symmetry** parameter. With it, the
+  mirror images of the selected points move too. The side of the plane the
+  pivot is on moves as the Edit says, the other side as its mirror image.
+  A point on the plane gets the average of both, so it stays on it: motion across
+  the plane cancels out, motion along it remains. Soft selection takes the selected
+  points together with their images, and the tinting shows this. The selection itself is not mirrored;
+  what you selected stays selected.
+- **Sculpt.** The brush writes each dab together with its mirror image,
+  and the image is **attached** to it (in the text, a `+` before the tool letter:
+  `p … ; +p …`). Attached dabs are applied together: each point moves
+  by the sum of both, both computed from the shape before them. A symmetric surface thus
+  stays symmetric, even where the dabs overlap near the plane. Where a dab
+  and its image overlap, each one is weaker: strength times the distance between the centers
+  divided by twice the radius, at least half, like *feathering*
+  in Blender. A dab right on the plane then acts as a single dab without
+  symmetry. Grab drags the image mirrored.
+- **Attribute Paint.** The brush also paints the dab's mirror image, weakened
+  the same way where they overlap.
 
-Zrcadlový obraz bodu je bod geometrie nejblíž místu, kam se odrazí, do
-10⁻⁴ velikosti geometrie. Symetrická síť tak najde všechny páry,
-nesymetrická jen ty, které symetrické jsou. Symetrie brushů platí pro
-nové tahy: vypnutí nezmění, co už je namalované nebo vytvarované.
+A point's mirror image is the geometry point nearest to the place it reflects to, within
+10⁻⁴ of the geometry size. A symmetric mesh thus finds all pairs,
+an asymmetric one only those that are symmetric. Brush symmetry applies to
+new strokes: turning it off does not change what has already been painted or shaped.
 
-## 5. Skupina, mazání a Dissolve
+## 5. Group, deletion and Dissolve
 
-**Ctrl+G** vloží uzel **Group** se jménem `group1` (první, které
-geometrie ještě nemá), třídou a vzorem vybraného. Jméno přepište
-v parametrech. Skupina hran je skupinou jejich bodů — geometrie jádra
-skupiny hran nemá.
+**Ctrl+G** inserts a **Group** node with the name `group1` (the first one the
+geometry does not yet have), and the class and pattern of the selection. Rename it
+in the parameters. A group of edges is a group of their points — the core geometry
+has no edge groups.
 
-**Delete** vloží uzel **Blast**:
+**Delete** inserts a **Blast** node:
 
-| Vybráno | Co zmizí |
+| Selected | What disappears |
 |---|---|
-| body | body a primitivy, které o bod přijdou |
-| primitivy | primitivy a body, které používaly jen ony |
-| hrany | primitivy, jejichž jsou stranou (jako *Delete Edges* v Blenderu) |
+| points | the points, and the primitives that lose a point |
+| primitives | the primitives, and the points used only by them |
+| edges | the primitives they are a side of (like *Delete Edges* in Blender) |
 
-Blast umí i obráceně (Keep): nechat jen vybrané.
+Blast can also do the reverse (Keep): keep only the selection.
 
-**Ctrl+X** vloží uzel **Dissolve**: vybrané hrany zmizí a dva polygony,
-jejichž byly stranou, se spojí v jeden, jako *Dissolve Edges* v Blenderu
-nebo Dissolve v Houdini. Plochy, které vybrané hrany spojují, jsou jeden
-polygon obejitý jedním obvodem; strany, které dvě z nich sdílejí, zmizí
-i nevybrané. V režimu primitiv se spojí vybrané plochy. Kde by z toho
-nebyl jeden obvod (prstenec ploch kolem díry, obvod, který se dotkne sám
-sebe, plochy otočené opačně), polygony zůstanou, jak byly. Hrana na okraji
-(strana jediné plochy) se nerozpustí. Nový polygon má atributy plochy
-s nejnižším číslem a každý roh atributy rohu, kterým byl (třeba `uv`).
-Bod, který po spojení zůstane v přímce na straně a žádný jiný polygon ho
-nemá, zmizí (*Remove Inline Points*, odchylka do *Inline Angle*, 1°), stejně
-jako bod, který měly jen rozpuštěné strany. Spojené polygony jsou ve
-výstupu za ostatními.
+**Ctrl+X** inserts a **Dissolve** node: the selected edges disappear and the two polygons
+they were a side of merge into one, like *Dissolve Edges* in Blender
+or Dissolve in Houdini. Faces connected by the selected edges become one
+polygon bounded by a single outline; sides shared by two of them disappear
+even if unselected. In primitive mode the selected faces merge. Where this would not
+produce a single outline (a ring of faces around a hole, an outline that touches
+itself, faces with opposite orientation), the polygons stay as they were. An edge on the boundary
+(a side of a single face) is not dissolved. The new polygon gets the attributes of the face
+with the lowest number, and each corner the attributes of the corner it was (e.g. `uv`).
+A point that ends up collinear on a side after merging and that no other polygon
+uses disappears (*Remove Inline Points*, deviation up to *Inline Angle*, 1°), as does
+a point used only by the dissolved sides. Merged polygons come after the others in the
+output.
 
-## 6. Štětec: Attribute Paint
+## 6. Brush: Attribute Paint
 
-**P** nad viewportem maluje do zobrazeného uzlu **Attribute Paint**;
-pokud zobrazený uzel žádný Attribute Paint není, vloží se za něj nový
-a vybere se, takže jeho parametry jsou hned po ruce:
+**P** over the viewport paints into the displayed **Attribute Paint** node;
+if the displayed node is not an Attribute Paint, a new one is inserted after it
+and selected, so its parameters are right at hand:
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
-| Attribute | co se maluje — `pin`, `tear`, `mass`… (`@pin` ve wranglu) |
-| Value | co štětec nanáší |
-| Erase Value | co nanáší s **Ctrl** |
-| Radius | velikost štětce (**[** **]**, **Shift**+kolečko) |
-| Strength | kolik z hodnoty kapka nanese uprostřed |
-| Default | kde body začínají, když atribut ještě nemají |
-| Strokes | namalované kapky: kolik jich je, a **Clear** |
+| Attribute | what is painted — `pin`, `tear`, `mass`… (`@pin` in a wrangle) |
+| Value | what the brush applies |
+| Erase Value | what it applies with **Ctrl** |
+| Radius | brush size (**[** **]**, **Shift**+wheel) |
+| Strength | how much of the value a dab applies at its center |
+| Default | where points start when they do not have the attribute yet |
+| Strokes | the painted dabs: how many there are, and **Clear** |
 
-Tah klade **kapky** po čtvrtině poloměru. Každá kapka je koule: bod
-uvnitř se posune k hodnotě kapky o `Strength × (1 − d²/r²)²`, uprostřed
-nejvíc, na okraji vůbec; kapky se nanášejí v pořadí, v jakém byly
-namalované. Tah smí začít mimo geometrii — maluje, kde štětec leží na
-povrchu, a když z něj sjede a vrátí se, nezačne malovat přes díru.
+A stroke lays **dabs** a quarter of the radius apart. Each dab is a sphere: a point
+inside it moves toward the dab's value by `Strength × (1 − d²/r²)²`, most at the center,
+not at all at the edge; dabs are applied in the order in which they were
+painted. A stroke may start off the geometry — it paints where the brush lies on the
+surface, and when it slides off and comes back, it does not start painting across a hole.
 
-Kapky jsou **místa, ne čísla bodů**: zjemněte mřížku před Attribute
-Paint a barva zůstane, kde byla. Celočíselný atribut zůstane celočíselný
-(zaokrouhlený).
+Dabs are **locations, not point numbers**: refine the grid before the Attribute
+Paint and the paint stays where it was. An integer attribute stays an integer
+(rounded).
 
-Během malování je geometrie obarvená podle malovaného atributu: modrá
-0, přes tyrkysovou a žlutou do červené 1 (větší hodnoty než 1 se
-zmenšují podle největší). Kroužek štětce leží na povrchu pod myší.
-**P** znovu (nebo Q, W, E, R, 1–5) malování ukončí; uzel, který P
-vložilo a do kterého se nic nenamalovalo, zase zmizí.
+While painting, the geometry is colored by the painted attribute: blue
+0, through turquoise and yellow to red 1 (values larger than 1 are
+scaled down by the largest). The brush ring lies on the surface under the mouse.
+**P** again (or Q, W, E, R, 1–5) ends painting; a node that P
+inserted and into which nothing was painted disappears again.
 
-Pro látku ([cloth.md](cloth.md)): bod s `pin` nad 0,5 je přišpendlený,
-`tear` násobí mez trhání (0,5 se trhá dvakrát dřív — perforace), `mass`
-je hmotnost bodu v kg. Příklad **shade_sail**: plachta napnutá mezi čtyři
-sloupy, dva rohy zvednuté Editem s měkkým poloměrem, rohy přišpendlené
-čtyřmi kapkami `pin`; vítr ji nafukuje.
+For cloth ([cloth.md](cloth.md)): a point with `pin` above 0.5 is pinned,
+`tear` multiplies the tearing threshold (0.5 tears twice as early — perforation), `mass`
+is the point's mass in kg. Example **shade_sail**: a sail stretched between four
+posts, two corners raised by an Edit with a soft radius, corners pinned with
+four `pin` dabs; the wind inflates it.
 
-![Příklad shade_sail: plachta mezi čtyřmi sloupy ve větru](img/shade-sail.jpg)
+![The shade_sail example: a sail between four posts in the wind](img/shade-sail.jpg)
 
-## 6a. Jakýkoli uzel na vybraném: Tab
+## 6a. Any node on the selection: Tab
 
-**Tab** nad viewportem otevře nabídku geometrických uzlů s hledáním (jako
-Tab v síti). Vybraný uzel se vloží za zobrazený a — pokud má parametr
-Group — dostane do něj vybrané prvky jako vzor; kde má třídu (Points /
-Primitives), dostane naši. Uzly, které pracují na své třídě, si výběr
-převedou: **PolyExtrude** a **Primitive Wrangle** berou plochy (z bodů
-plochy, jejichž všechny body jsou vybrané), **Point Wrangle** body (z ploch
-jejich rohy). Hrany zůstávají hranami (`p3-4`). Uzly bez Group jsou
-v nabídce níž a vloží se jen za zobrazený. Nabídka je i v pravém kliku
+**Tab** over the viewport opens a menu of geometry nodes with search (like
+Tab in the network). The chosen node is inserted after the displayed one and — if it has a
+Group parameter — gets the selected elements in it as a pattern; where it has a class (Points /
+Primitives), it gets ours. Nodes that work on their own class convert
+the selection: **PolyExtrude** and **Primitive Wrangle** take faces (from points, the
+faces whose points are all selected), **Point Wrangle** takes points (from faces,
+their corners). Edges stay edges (`p3-4`). Nodes without Group are
+lower in the menu and are only inserted after the displayed one. The menu is also in the right-click menu
 (*Node on Picked*, *Extrude Picked*).
 
-![Plochy vybrané obdélníkem, Tab › PolyExtrude, šipka úchytu vytáhla Distance na 0,44 m](img/edit-extrude.jpg)
+![Faces selected with a rectangle, Tab › PolyExtrude, the handle arrow pulled Distance to 0.44 m](img/edit-extrude.jpg)
 
-**PolyExtrude** zobrazený ve viewportu má vlastní úchyt: šipka
-z vytažených ploch (skupina Front Group) podél jejich normály. Tažení
-mění **Distance** (Ctrl přichytává, Esc vrací). Vytažením se mění
-topologie, takže výběr ploch zmizí a zůstane úchyt uzlu.
+A displayed **PolyExtrude** has its own handle in the viewport: an arrow
+from the extruded faces (the Front Group) along their normal. Dragging
+changes **Distance** (Ctrl snaps, Esc restores). Extruding changes the
+topology, so the face selection disappears and the node's handle remains.
 
-**N** vypíše čísla bodů, v režimu primitiv čísla primitiv (u středu
-plochy). Jen ta, která jsou vidět, nejvýš 3000 na obrazovce — při víc
-ukáže výzvu přiblížit se.
+**N** shows point numbers, or primitive numbers in primitive mode (at the center
+of the face). Only those that are visible, at most 3000 on screen — with more it
+shows a prompt to zoom in.
 
-## 6b. Úchyty geometrických uzlů
+## 6b. Geometry node handles
 
-V režimu objektů (**1**) má úchyt i vybraný geometrický uzel — klikněte
-na něj v síti, **W**, **E**, **R** a táhněte; hodnoty se píšou do jeho
-parametrů (na aktuálním snímku, s klíči jako u objektů):
+In object mode (**1**) a selected geometry node has a handle too — click
+it in the network, **W**, **E**, **R** and drag; the values are written into its
+parameters (at the current frame, with keys as for objects):
 
-| Uzel | Posun | Otočení | Měřítko |
+| Node | Translate | Rotate | Scale |
 |---|---|---|---|
 | Box | Center | — | Size |
 | Sphere | Center | — | Radius |
 | Tube | Center | — | Radius, Height |
-| Tree | Center | — | Radius (kmene), Height |
-| Grass | Center | — | Height (stébla) |
+| Tree | Center | — | Radius (of the trunk), Height |
+| Grass | Center | — | Height (of the blades) |
 | Grid, Point Cloud | Center | — | — |
 | Line | Origin | Direction | — |
-| **Clip** | Origin (bod roviny) | Direction (normála roviny) | — |
+| **Clip** | Origin (a point on the plane) | Direction (the plane normal) | — |
 | **Transform** | Translate | Rotate | Scale |
 | **Edit** | Translate | Rotate | Scale |
 
-Transform a Edit mají úchyt **v pivotu** (Pivot + Translate): tam, kolem
-čeho se geometrie otáčí a zvětšuje — u Transformu třeba pata věže, která
-má padnout. Otočení úchytem tak otáčí kolem něj a měřítko jde podél os
-uzlu. Pivot samotný úchyt nemění; nastavte ho v parametrech. Kopie
-geometrického uzlu (**Ctrl+D**) zůstane, kde byl originál — posune se jen
-kopie objektu nebo zdroje, aby neležela v originálu.
+Transform and Edit have their handle **at the pivot** (Pivot + Translate): the point
+the geometry rotates and scales around — for a Transform, say, the base of a tower that
+is to fall. Rotating with the handle thus rotates around it, and scaling goes along the node's
+axes. The handle does not change the Pivot itself; set it in the parameters. A copy
+of a geometry node (**Ctrl+D**) stays where the original was — only a copy
+of an object or source is offset, so that it does not lie inside the original.
 
-## 6c. Sculpt: tvarování štětcem (U)
+## 6c. Sculpt: shaping with a brush (U)
 
-**U** nad viewportem tvaruje zobrazenou geometrii štětcem, jako hlínu —
-podobně jako sculpt v Blenderu nebo ZBrushi, jen výsledkem je zase
-obyčejný uzel **Sculpt** za zobrazeným uzlem (když zobrazený uzel žádný
-Sculpt není; jinak tvaruje do něj). Tah po geometrii ji pod kroužkem
-vytlačuje ven a s **Ctrl** zatlačuje dovnitř; se **Shift** uhlazuje, ať
-je vybraný kterýkoli nástroj. Nástroj se vybírá v parametrech uzlu nebo
-v pravém kliku › *Sculpt Tool*:
+**U** over the viewport shapes the displayed geometry with a brush, like clay —
+similar to sculpting in Blender or ZBrush, except that the result is again
+an ordinary **Sculpt** node after the displayed node (when the displayed node is not a
+Sculpt; otherwise it sculpts into it). Dragging over the geometry pushes it outward under the ring,
+and with **Ctrl** pushes it inward; with **Shift** it smooths, whichever
+tool is selected. The tool is chosen in the node's parameters or
+via right-click › *Sculpt Tool*:
 
-| Nástroj | Co kapka udělá s bodem ve vzdálenosti *d* od svého středu (poloměr *r*, útlum *f* = Falloff(*d*/*r*)) |
+| Tool | What a dab does to a point at distance *d* from its center (radius *r*, falloff *f* = Falloff(*d*/*r*)) |
 |---|---|
-| **Push / Pull** | posune ho podél normály povrchu pod středem kapky o `Strength × 0,2 × r × f`; s Ctrl dovnitř |
-| **Smooth** | posune ho k průměru jeho sousedů po hranách o podíl `Strength × f` |
-| **Grab** | vezme ho s sebou: o to, kam se myš od začátku tahu posunula, krát `f` |
-| **Flatten** | srovná ho k rovině středem kapky kolmé na normálu o podíl `Strength × f` |
+| **Push / Pull** | moves it along the surface normal under the dab's center by `Strength × 0.2 × r × f`; with Ctrl inward |
+| **Smooth** | moves it toward the average of its neighbors across edges by the fraction `Strength × f` |
+| **Grab** | takes it along: by how far the mouse has moved since the start of the stroke, times `f` |
+| **Flatten** | moves it toward the plane through the dab's center perpendicular to the normal by the fraction `Strength × f` |
 
-![Terén 4 × 4 m (81 × 81 bodů) z 193 kapek: hřbet a kulatý kopec (Push), údolí (Ctrl), uhlazené svahy (Shift), zarovnaná plošina (Flatten); štětec právě táhne další kopec](img/edit-sculpt.jpg)
+![A 4 × 4 m terrain (81 × 81 points) from 193 dabs: a ridge and a round hill (Push), a valley (Ctrl), smoothed slopes (Shift), a flattened plateau (Flatten); the brush is dragging another hill](img/edit-sculpt.jpg)
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
 | Tool | Push / Pull, Smooth, Grab, Flatten |
-| Radius | velikost štětce (**[** **]**, **Shift**+kolečko); nový uzel dostane dvanáctinu velikosti geometrie |
-| Strength | Push: při 1 vytlačí střed kapky o pětinu poloměru (0 až 4); Smooth a Flatten: jaký podíl cesty bod ujde (0 až 1) |
-| Falloff | tvar útlumu k okraji kroužku, jako u měkkého výběru (§4a): Smooth, Linear, Sharp, Sphere, Constant |
-| Strokes | kapky: kolik jich je, a **Clear** |
+| Radius | brush size (**[** **]**, **Shift**+wheel); a new node gets one twelfth of the geometry size |
+| Strength | Push: at 1 pushes the dab's center out by a fifth of the radius (0 to 4); Smooth and Flatten: what fraction of the way a point travels (0 to 1) |
+| Falloff | the shape of the falloff toward the edge of the ring, as with soft selection (§4a): Smooth, Linear, Sharp, Sphere, Constant |
+| Strokes | dabs: how many there are, and **Clear** |
 
-Tah klade kapky po čtvrtině poloměru a každá pracuje s povrchem, jak ho
-nechaly kapky před ní — tah přes vlastní kopec ho zvedá dál, normála se
-bere z povrchu pod středem kapky. Kapky jsou **místa, ne čísla bodů**:
-zjemněte síť před Sculptem a tvar zůstane, jen jemnější. Kroužek má
-barvu a popisek podle nástroje (`Push 0.47 m`, `Pull`, `Smooth`…).
+A stroke lays dabs a quarter of the radius apart, and each one works with the surface as
+the dabs before it left it — a stroke over its own hill raises it further, and the normal is
+taken from the surface under the dab's center. Dabs are **locations, not point numbers**:
+refine the mesh before the Sculpt and the shape stays, only finer. The ring has
+a color and a label according to the tool (`Push 0.47 m`, `Pull`, `Smooth`…).
 
-**Grab** je na celý tah jedna kapka: místo, kde tah začal, a posun myši
-v rovině kolmé k pohledu. Kopec jde za myší, čára ukazuje odkud; **Esc**
-během tahu Grab vrátí.
+**Grab** is a single dab for the whole stroke: the place where the stroke started, and the mouse movement
+in the plane perpendicular to the view. The hill follows the mouse, a line shows where from; **Esc**
+during the stroke undoes the Grab.
 
-![Grab: vrchol vytažený z terénu tahem myši nahoru; čára vede od místa, kde tah začal](img/edit-sculpt-grab.jpg)
+![Grab: a peak pulled out of the terrain by dragging the mouse upward; the line leads from where the stroke started](img/edit-sculpt-grab.jpg)
 
-Uhlazování drží **okraje**. Bod na otevřeném okraji plochy (strana jediné
-plochy) se hýbe jen podél okraje, k průměru svých dvou sousedů na okraji;
-roh okraje — kde okraj uhne o víc než 30° —, bod, kde se okraje potkávají,
-a konce čar zůstanou, kde jsou. Co je roh, se rozhoduje podle tvaru, jak
-do Sculptu přišel, takže ho tah neuhladí pryč. Okraj mřížky se tak
-neroztřepí a rohy se nezakulatí.
+Smoothing preserves **boundaries**. A point on an open boundary of a surface (a side of a single
+face) moves only along the boundary, toward the average of its two boundary neighbors;
+a boundary corner — where the boundary turns by more than 30° —, a point where boundaries meet,
+and the ends of lines stay where they are. What counts as a corner is decided from the shape as it
+came into the Sculpt, so a stroke does not smooth it away. The border of a grid thus
+does not fray and corners do not get rounded.
 
-Kde geometrie má normály `N`, Sculpt je dopočítá z ploch. Během sculptu
-viewport nekreslí drát, aby byl tvar vidět. **U** znovu (nebo Q, W, E, R,
-1–5) sculpt ukončí; uzel, který U vložilo a do kterého se nic
-nevytvarovalo, zase zmizí.
+Where the geometry has `N` normals, Sculpt recomputes them from the faces. While sculpting,
+the viewport does not draw the wireframe, so that the shape is visible. **U** again (or Q, W, E, R,
+1–5) ends sculpting; a node that U inserted and into which nothing
+was sculpted disappears again.
 
-### Dyntopo: síť se pod štětcem zjemňuje (Ctrl+D)
+### Dyntopo: the mesh is refined under the brush (Ctrl+D)
 
-S **Dyntopo** si štětec dělá body sám, jako dynamická topologie
-v Blenderu. Zapíná se v sekci *Dyntopo* v parametrech Sculptu, **Ctrl+D**
-během sculptu nebo pravým klikem › *Sculpt Tool* › *Dyntopo*. Polygony se
-hned rozřežou na trojúhelníky (vějíře, jak je kreslí viewport), i když
-ještě žádná kapka není. Před každou kapkou se trojúhelníky v jejím dosahu
-upraví dvěma způsoby:
+With **Dyntopo** the brush creates points by itself, like dynamic topology
+in Blender. It is turned on in the *Dyntopo* section of the Sculpt parameters, with **Ctrl+D**
+while sculpting, or via right-click › *Sculpt Tool* › *Dyntopo*. Polygons are
+immediately cut into triangles (fans, the way the viewport draws them), even when
+there are no dabs yet. Before each dab, the triangles within its reach
+are adjusted in two ways:
 
-- **Slučování** stáhne hranu kratší než 0,4 detailu do bodu uprostřed,
-  nejkratší první.
-- **Dělení** rozpůlí hranu delší než *detail*, nejdelší první, a pak
-  znovu, dokud pod kapkou žádná delší hrana nezbude. S dlouhou hranou se
-  rozpůlí i výrazně delší hrany vedle ní. Čím dál od kapky, tím delší
-  smějí být (×1,6 na krok), takže trojúhelníky od štětce plynule rostou
-  a nevznikají dlouhé tenké.
+- **Collapsing** contracts an edge shorter than 0.4 of the detail into a point at its middle,
+  shortest first.
+- **Subdivision** halves an edge longer than the *detail*, longest first, and then
+  again, until no longer edge remains under the dab. Along with a long edge,
+  significantly longer edges next to it are halved too. The farther from the dab, the longer
+  they may be (×1.6 per step), so triangles grow smoothly away from the brush
+  and no long thin ones appear.
 
-Pak kapka posune body jako bez dyntopa. Grab síť nemění (jako
-v Blenderu) a bere ji, jaká je.
+Then the dab moves points as without dyntopo. Grab does not change the mesh (as
+in Blender) and takes it as it is.
 
-![Hrubá koule (8 × 16 polygonů) s dvěma sty kapkami s dyntopem: široký hřbet nahoře velkým štětcem (větší trojúhelníky), jemná spirála vlevo dole malým (drobné), vtlačená rýha vpravo; dál od tahů zůstaly velké trojúhelníky koule](img/edit-sculpt-dyntopo.jpg)
+![A coarse sphere (8 × 16 polygons) with two hundred dabs with dyntopo: a wide ridge at the top made with a large brush (larger triangles), a fine spiral at the bottom left with a small one (tiny ones), a pressed-in groove on the right; farther from the strokes the sphere's large triangles remain](img/edit-sculpt-dyntopo.jpg)
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
-| Dyntopo | zapne dynamickou topologii (**Ctrl+D**) |
-| Refine | Subdivide jen dělí; Collapse jen slučuje; Subdivide Collapse (výchozí) dělá obojí, takže trojúhelníky pod štětcem zůstanou vyrovnané |
-| Detailing | Brush: detail je podíl poloměru kapky, malý štětec dělá jemné trojúhelníky a velký hrubé; Constant: délka v metrech, ať je štětec jakýkoli |
-| Detail | při Brush: nejdelší hrana pod kapkou jako podíl jejího poloměru (výchozí 0,25) |
-| Detail Size | při Constant: nejdelší hrana pod kapkou v metrech (výchozí 5 cm) |
+| Dyntopo | turns on dynamic topology (**Ctrl+D**) |
+| Refine | Subdivide only subdivides; Collapse only collapses; Subdivide Collapse (default) does both, so the triangles under the brush stay even |
+| Detailing | Brush: the detail is a fraction of the dab radius, so a small brush makes fine triangles and a large one coarse ones; Constant: a length in meters, whatever the brush |
+| Detail | with Brush: the longest edge under a dab as a fraction of its radius (default 0.25) |
+| Detail Size | with Constant: the longest edge under a dab in meters (default 5 cm) |
 
-Délku hran, které štětec udělá, ukazuje kroužek (`Push 0.2 m, edges
-0.05 m`) i stavový řádek.
+The length of the edges the brush makes is shown by the ring (`Push 0.2 m, edges
+0.05 m`) and in the status bar.
 
-Hrana se stáhne, jen když síť zůstane plochou bez děr a přehybů:
+An edge is collapsed only if the mesh stays a surface without holes or folds:
 
-- konce hrany nemají jiné společné sousedy než dva protější rohy (*link
-  condition*), takže se nespojí dvě vrstvy;
-- žádný trojúhelník se neotočí rubem nahoru;
-- nezmizí poslední trojúhelník kousku ani uzavřený čtyřstěn.
+- the edge's ends have no common neighbors other than the two opposite corners (*link
+  condition*), so two layers do not merge;
+- no triangle flips upside down;
+- the last triangle of a fragment, or a closed tetrahedron, does not disappear.
 
-Okraj zůstane, kde byl. Z bodu na okraji a vnitřního bodu zůstane bod na
-okraji na svém místě. Dva body okraje se spojí jen podél okraje a roh
-okraje (kde okraj uhne o víc než 30°) zůstane na místě. Body otevřených
-čar se posouvají, ale nemizí.
+The boundary stays where it was. Of a boundary point and an interior point, the
+boundary point remains in its place. Two boundary points merge only along the boundary, and a boundary
+corner (where the boundary turns by more than 30°) stays in place. Points of open
+lines move but do not disappear.
 
-**Atributy** jdou s body. Nový bod uprostřed hrany má průměr čísel obou
-konců (`Cd`, `N`, `uv` rohů…); celá čísla a řetězce dostane od konce
-s nižším číslem. Bod, do kterého se hrana stáhla, má průměr obou. Do
-skupiny bodů patří nový bod, když do ní patřily oba konce. Trojúhelník má
-atributy a skupiny polygonu, ze kterého vznikl, a normály `N` se na konci
-spočítají z trojúhelníků. Body, které geometrie měla, zůstanou na začátku
-(bez stažených), nové jdou za nimi; každý polygon nahradí na jeho místě
-trojúhelníky, které z něj vznikly.
+**Attributes** go with the points. A new point at the middle of an edge gets the average of the numbers of both
+ends (`Cd`, `N`, corner `uv`s…); integers and strings it gets from the end
+with the lower number. A point an edge collapsed into has the average of both. A new point
+belongs to a point group when both ends belonged to it. A triangle has
+the attributes and groups of the polygon it came from, and `N` normals are
+computed from the triangles at the end. Points the geometry had stay at the beginning
+(minus the collapsed ones), new ones follow them; each polygon is replaced in its place by
+the triangles created from it.
 
-Síť i tvar jsou pokaždé stejné do bitu: hrany se berou podle délky
-a stejně dlouhé podle čísel bodů. Se symetrií (§4b) se síť pod kapkou
-a pod jejím obrazem zjemňuje každá zvlášť, takže tvar je symetrický, ale
-trojúhelníky ne přesně. Kapky jsou dál místa: změna před Sculptem nebo
-parametru dyntopa spočítá všechny kapky znovu, na nové síti.
+The mesh and the shape are bit-identical every time: edges are taken by length,
+and equally long ones by point numbers. With symmetry (§4b), the mesh under a dab
+and under its image is refined separately, so the shape is symmetric but the
+triangles not exactly. Dabs are still locations: a change upstream of the Sculpt or to a
+dyntopo parameter recomputes all dabs again, on the new mesh.
 
-## 7. Vzory prvků
+## 7. Element patterns
 
-Parametry Group, Edit, Blast, PolyExtrude a wranglů berou prvky jako **vzor**, jako skupinová
-pole uzlů v Houdini. Viewport je tak píše a dají se psát i ručně:
+The parameters of Group, Edit, Blast, PolyExtrude and the wrangles take elements as a **pattern**, like the group
+fields of Houdini nodes. The viewport writes them this way, and they can be written by hand too:
 
-| Vzor | Co vybere |
+| Pattern | What it selects |
 |---|---|
-| `0-9 12 20-30` | čísla a rozsahy (rozsah i obráceně: `9-0`) |
-| `*` | vše |
-| `pin_group` | skupinu podle jména; skupina jiné třídy se převede (body primitiv, primitivy se všemi body ve skupině, vrcholy na bodech či primitivech skupiny, body vrcholů, primitivy se všemi vrcholy ve skupině) |
-| `p3-4` | hranu mezi body 3 a 4; pro body oba body, pro primitivy ta, jejichž je stranou, pro vrcholy jejich rohy na obou koncích hrany |
-| `5v2`, `5v0-2` | roh 2 primitivu 5, první tři rohy primitivu 5; pro body jejich body, pro primitivy primitiv 5 |
-| `p0-1-2-3` | cestu tří hran |
-| `^…` | ubere: `* ^0-9` je vše kromě prvních deseti |
+| `0-9 12 20-30` | numbers and ranges (a range can also be reversed: `9-0`) |
+| `*` | everything |
+| `pin_group` | a group by name; a group of another class is converted (points of primitives, primitives with all their points in the group, vertices on the group's points or primitives, points of vertices, primitives with all their vertices in the group) |
+| `p3-4` | the edge between points 3 and 4; for points both points, for primitives those it is a side of, for vertices their corners at both ends of the edge |
+| `5v2`, `5v0-2` | corner 2 of primitive 5, the first three corners of primitive 5; for points their points, for primitives primitive 5 |
+| `p0-1-2-3` | a path of three edges |
+| `^…` | subtracts: `* ^0-9` is everything except the first ten |
 
-Položky se oddělují mezerami nebo čárkami a platí popořadě. Co nic
-nepojmenuje (číslo za posledním, skupina, která není, hrana, kterou
-geometrie nemá), nevybere nic. Viewport píše nejkratší vzor: rozsahy čísel
-a hrany spojené do cest (`p0-1-2-3-4 p9-10`).
+Entries are separated by spaces or commas and apply in order. Whatever names
+nothing (a number past the last one, a group that does not exist, an edge the
+geometry does not have) selects nothing. The viewport writes the shortest pattern: number ranges
+and edges joined into paths (`p0-1-2-3-4 p9-10`).
 
-## 8. Jak to funguje
+## 8. How it works
 
-- **Vzory** — `src/pg/core/Selection.h`: `selectElements` (vzor → maska
-  bodů, primitiv nebo vrcholů), `patternOf`, `edgesOf`, `selectEdges`,
-  `edgePatternOf`; převody `verticesOfPoints`, `verticesOfPrimitives`,
+- **Patterns** — `src/pg/core/Selection.h`: `selectElements` (pattern → mask
+  of points, primitives or vertices), `patternOf`, `edgesOf`, `selectEdges`,
+  `edgePatternOf`; conversions `verticesOfPoints`, `verticesOfPrimitives`,
   `pointsOfVertices`, `primitivesOfVertices`.
-- **Vrcholy** — značka vrcholu je `ElementPicker::vertexMark` (bod
-  posunutý o `kVertexInset` = 0,2 ke středu polygonu). Značka leží na
-  ploše, takže je vidět, když paprsek k ní potká nejdřív svůj polygon,
-  nebo nic. Blast vrcholů je `Geometry::deleteVertices`: každý primitiv
-  pokračuje přes rohy, které mu zbyly, atributy rohů a primitiv
-  i skupiny se přenesou.
-- **Co je pod myší** — `src/pg/core/Pick.h`, `ElementPicker`: polygony
-  rozložené na trojúhelníky (vějíř), strom obálek (BVH, dělení mediánem,
-  listy po čtyřech). Paprsek najde nejbližší plochu; stejně daleké plochy
-  rozhoduje pořadí trojúhelníků, takže výsledek nezávisí na tom, jak se
-  strom rozdělil. Prvek je vidět, když paprsek od oka k němu nepotká
-  plochu blíž než 0,1 % vzdálenosti před ním. Obdélník, laso i tah štětce
-  jsou `ScreenRegion` (část obrazovky) a vyhodnocují se na více vláknech,
-  prvek po prvku. Laso je mnohoúhelník s pravidlem sudý–lichý; jeho
-  strany jsou roztříděné do vodorovných pásů, takže bod se ptá jen stran
-  svého pásu (laso o stovkách bodů nad statisíci bodů geometrie je
-  rychlé). Tah štětce za jeden snímek je kapsle: úsečka od minulé polohy
-  myši k nynější s poloměrem kroužku; hrana se jí dotkne, když se úsečky
-  přiblíží na poloměr, a viditelnost se ptá v místě dotyku. Plochy pod
-  středem štětce najdou paprsky po půl poloměru podél tahu. Strom se staví
-  jen pro nové body nebo topologii: malováním se geometrie mění, ale
-  sdílí body (copy-on-write), a strom zůstává. Když se body jen posunou
-  (sculpt, tah úchytem) a topologie zůstane, strom si nechá tvar a znovu
-  spočítá jen obálky (refit) — na milionu bodů 40 ms místo 1,2 s; co najde
-  dotaz, na tvaru stromu nezávisí. Když obálky narostou nad čtyřnásobek
-  plochy, kterou měly, postaví se strom znovu. Nový strom se staví na
-  vlastním vlákně (milion ploch zhruba za sekundu) a okno mezitím běží dál.
-  Pod myší se do té doby nic nezvýrazní a drát se značkami rohů se ukáže,
-  až je strom hotový. Na strom malé geometrie se čeká 8 ms, takže nic
-  neblikne. Klik a obdélník na strom počkají, aby se výběr neztratil.
-  Štětec ve sculptu, kterému dyntopo každou kapkou mění plochy, mezitím
-  jede po stromu o chvíli starší geometrie, takže z povrchu nesjede.
-  Přerostlý strom slouží, dokud není hotový nový. Drát bere hrany ze
-  stromu, takže se nepočítají dvakrát (na milionu ploch to dřív stálo
-  v okně 0,24 s navíc).
-- **Značky** — overlay rendereru (`gl::Overlay`): drát, body, výběr,
-  zvýraznění pod myší (vlastní vrstva, aby pohyb myši nepřestavoval
-  zbytek) a barvy malování, kreslené s testem hloubky proti scéně, kousek
-  blíž k oku než povrch. Tečka se přitáhne o tolik, kolik z povrchu kolem
-  sebe pokrývá — víc, když je povrch vidět šikmo — takže ji povrch
-  neusekne. Široké čáry jsou dva trojúhelníky (core profil OpenGL širší
-  čáry než pixel nemá). S **H** se značky kreslí dvakrát: nejdřív
-  s obráceným testem hloubky (jen to, co povrch zakrývá) a průhlednosti
-  0,3, pak normálně. Rendery záběru značky nemají.
-- **Měkký výběr** — `src/pg/core/Soft.h`, `softWeights`: podíl pohybu
-  každého bodu, stejný pro uzel Edit i pro tónování ve viewportu. Přímá
-  vzdálenost hledá nejbližší vybraný bod stromem bodů. Po povrchu jde
-  fronta od všech vybraných bodů naráz přes hrany (Dijkstra, stejně
-  vzdálené body popořadě podle čísel — výsledek je pokaždé stejný); bod si
-  pamatuje vybraný bod, od kterého k němu cesta vedla, a vzdálenost je
-  přímá čára k němu, dokud cesta vede od něj dál — na rovném listu je tak
-  útlum kulatý, ne kosočtverec kroků po hranách — a délka hran tam, kde se
-  povrch ohne zpátky k němu. Viewport tónuje podle geometrie, kterou
-  zobrazený Edit dostává na vstupu (kooker ji vrací spolu se zobrazenou),
-  takže náhled odpovídá tomu, co Edit spočítá, i během tahu.
+- **Vertices** — the vertex marker is `ElementPicker::vertexMark` (the point
+  offset by `kVertexInset` = 0.2 toward the polygon center). The marker lies on the
+  face, so it is visible when the ray toward it first meets its own polygon,
+  or nothing. A vertex Blast is `Geometry::deleteVertices`: each primitive
+  continues through the corners it has left, and corner and primitive attributes
+  as well as groups are carried over.
+- **What is under the mouse** — `src/pg/core/Pick.h`, `ElementPicker`: polygons
+  split into triangles (fan), a bounding volume tree (BVH, median split,
+  leaves of four). A ray finds the nearest face; equally distant faces
+  are decided by triangle order, so the result does not depend on how the
+  tree was split. An element is visible when the ray from the eye to it does not meet
+  a face closer than 0.1% of the distance in front of it. Rectangle, lasso and brush stroke
+  are all a `ScreenRegion` (a part of the screen) and are evaluated on multiple threads,
+  element by element. The lasso is a polygon with the even–odd rule; its
+  sides are sorted into horizontal bands, so a point queries only the sides
+  of its own band (a lasso of hundreds of points over hundreds of thousands of geometry points is
+  fast). The brush stroke for one frame is a capsule: the segment from the previous mouse
+  position to the current one, with the ring's radius; an edge touches it when the segments
+  come within the radius of each other, and visibility is queried at the point of contact. Faces under
+  the brush center are found by rays every half radius along the stroke. The tree is built
+  only for new points or topology: painting changes the geometry but
+  shares the points (copy-on-write), and the tree stays. When points only move
+  (sculpt, handle drag) and the topology stays, the tree keeps its shape and
+  recomputes only the bounds (refit) — on a million points 40 ms instead of 1.2 s; what
+  a query finds does not depend on the tree's shape. When the bounds grow beyond four times
+  the area they had, the tree is rebuilt. A new tree is built on its
+  own thread (a million faces in roughly a second) and the window keeps running meanwhile.
+  Until then nothing is highlighted under the mouse, and the wireframe with corner markers appears
+  once the tree is done. For the tree of small geometry the editor waits 8 ms, so nothing
+  flickers. Click and rectangle wait for the tree, so that the selection is not lost.
+  A sculpt brush whose faces dyntopo changes with every dab meanwhile
+  runs on the tree of slightly older geometry, so it does not slide off the surface.
+  The overgrown tree serves until the new one is ready. The wireframe takes edges from the
+  tree, so they are not computed twice (on a million faces this used to cost
+  0.24 s extra in the window).
+- **Markers** — the renderer overlay (`gl::Overlay`): wireframe, points, selection,
+  the highlight under the mouse (its own layer, so that mouse movement does not rebuild
+  the rest) and paint colors, drawn with a depth test against the scene, slightly
+  closer to the eye than the surface. A dot is pulled forward by as much as it covers of the surface around
+  it — more when the surface is seen at a grazing angle — so that the surface
+  does not clip it. Wide lines are two triangles (the OpenGL core profile has no lines wider
+  than a pixel). With **H** the markers are drawn twice: first
+  with an inverted depth test (only what the surface hides) and opacity
+  0.3, then normally. Shot renders have no markers.
+- **Soft selection** — `src/pg/core/Soft.h`, `softWeights`: the share of motion
+  of each point, the same for the Edit node and for the tinting in the viewport. Straight
+  distance finds the nearest selected point using a point tree. Along the surface, a
+  front propagates from all selected points at once across edges (Dijkstra, equally
+  distant points in order of their numbers — the result is the same every time); a point
+  remembers the selected point its path came from, and the distance is a
+  straight line to it as long as the path keeps leading away from it — so on a flat sheet the
+  falloff is round, not a diamond of edge steps — and the length of the edges where the
+  surface bends back toward it. The viewport tints according to the geometry that the
+  displayed Edit receives as input (the cooker returns it together with the displayed one),
+  so the preview matches what the Edit computes, even during a drag.
 - **Sculpt** — `src/pg/core/Sculpt.h`: `SculptDab`, `parseSculpt`,
-  `sculpt`, `Sculptor`. Body v dosahu kapky najde mřížka buněk velkých
-  jako typický poloměr kapek, ve které se bod přestěhuje, když se
-  posune do jiné buňky; při pár kapkách je rychlejší zeptat se rovnou
-  všech bodů (na více vláknech). Body jedné kapky se posunou najednou,
-  každý podle toho, kde byly body před kapkou — na pořadí nezáleží a velká
-  kapka se počítá na více vláknech. Uhlazování zná sousedy z `Adjacency`
-  a okraje (strany jediné plochy) z geometrie, jak do uzlu přišla.
-  **Přírůstkově**: uzel si pamatuje vstup, kapky, geometrii po všech
-  kapkách a před poslední. Tah, který přidá kapku nebo dvě, spočítá jen
-  je; Grab, který mění jen poslední kapku, jen ji. Undo celého tahu
-  spočítá kapky znovu od začátku. Výsledek je do bitu týž jako ze všech
-  kapek od začátku (testy to ověřují). Na mřížce o milionu bodů: 2 000 kapek od
-  začátku 0,17 s, pohyb myši v tahu 12 ms (s normálami `N` 33 ms), Grab
-  3 ms. V editoru pak při každém pohybu přibude refit stromu pro výběr
-  a nová geometrie ve viewportu: ten kreslí polygony indexovaně a při
-  posunu bodů na GPU pošle jen polohy a normály vrcholů — na 90 000 bodech
-  6 ms, na milionu 62 ms (s normálami `N` 7 ms); viz
-  [geometry.md](geometry.md#3-display-flag-a-viewport).
-- **Dyntopo** — `src/pg/core/Dyntopo.h`: `SculptMesh` drží trojúhelníky
-  a ke každému bodu seřazený seznam trojúhelníků kolem; seznamy leží
-  v jednom společném poli, takže se síť kopíruje po blocích. Atributy bodů
-  a rohů jsou čísla, nebo odkaz na prvek geometrie, ze kterého pocházejí
-  (celá čísla, řetězce). Hrany čekají ve frontě podle délky. Trojúhelníky
-  v dosahu kapky najde mřížka krabic po úrovních: každý trojúhelník je
-  v jediné buňce nejjemnější úrovně, do které se vejde, takže velký
-  trojúhelník nezabere tisíce buněk. Body najde pohyblivá mřížka; při pár
-  kapkách se rovnou zeptá všech (na více vláknech). Odebrané body
-  a trojúhelníky si nechají čísla až do převodu na geometrii. Sculptor si
-  drží síť po kapkách a pokračuje v ní; síť před poslední kapkou si
-  zkopíruje jen pod Grabem, protože kopie sítě není sdílená jako
-  geometrie (vrácená kapka, která není Grab, se tak počítá od začátku).
-  Koule o 360 000 trojúhelníků: kapka během tahu 7 ms (nejvýš 13 ms),
-  400 kapek od začátku 0,12 s; při 60 000 trojúhelníků 1,4 ms na kapku.
-- **Symetrie** — `src/pg/core/Mirror.h`: `mirrorPoints` najde obraz
-  každého bodu stromem bodů (nejbližší k odraženému místu v toleranci),
-  `withMirror` přidá k výběru obrazy. Edit rozdělí body podle strany
-  roviny vůči pivotu; obraz se počítá jako `R T R x` (`R` odraz, `T`
-  úprava). Sculpt nanáší skupinu připojených kapek najednou: posuny od
-  všech kapek skupiny z tvaru před nimi, seřazené podle čísla bodu
-  a sečtené v pořadí kapek, takže výsledek je pokaždé stejný. Sculptor
-  pokračuje po skupinách: Grab s obrazem mění poslední skupinu (dvě
-  kapky) a počítá jen ji.
-- **Skládání úprav** — `sim::EditTransform` (`src/pg/sim/Shape.h`):
-  Edit dělá `x → R S (x − p) + p + t`; tah úchytu kolem středu `c`
-  složený za něj je znovu Edit: otočení předřazené `R`, měřítko násobí
-  `S`, `t` vezme `p + t` tam, kam ho vezme tah. Testy ověřují, že to
-  platí bod po bodu a že Edit v uzlu počítá totéž.
-- **Uzly** — `src/pg/nodes/Edit.cpp`: `groupcreate`, `edit`,
-  `attribpaint`, `sculpt`; Blast v `Modifiers.cpp`; Dissolve
-  v `Topology.cpp` nad `src/pg/core/Dissolve.h`: hrany spojí plochy
-  (union-find), skupina se obejde po vnějších stranách od rohu s nejnižším
-  číslem; bod, ze kterého vedou dvě vnější strany, nebo strany, které
-  zbudou po obchůzce, znamenají víc obvodů a skupina zůstane. Attribute Paint
-  nanáší kapku po kapce jen na body v jejím dosahu (strom bodů), takže
-  tisíce kapek na jemné síti jsou rychlé.
-- **Editor** — `tools/prototype/SimElements.cpp`; úchyty uzlů
-  (`sim::Handles` v `src/pg/sim/Network.h`, s polem `pivot` pro úchyt
-  v pivotu) v `SimViewport.cpp`.
+  `sculpt`, `Sculptor`. Points within a dab's reach are found by a grid of cells about the size
+  of a typical dab radius, in which a point is moved when it
+  moves into another cell; with only a few dabs it is faster to query
+  all points directly (on multiple threads). The points of one dab move together,
+  each according to where the points were before the dab — order does not matter, and a large
+  dab is computed on multiple threads. Smoothing knows the neighbors from `Adjacency`
+  and the boundaries (sides of a single face) from the geometry as it came into the node.
+  **Incrementally**: the node remembers the input, the dabs, the geometry after all
+  dabs and before the last one. A stroke that adds a dab or two computes only
+  those; a Grab that changes only the last dab computes only that one. Undoing a whole stroke
+  recomputes the dabs from the beginning. The result is bit-identical to computing all
+  dabs from the beginning (tests verify this). On a grid of a million points: 2,000 dabs from
+  scratch 0.17 s, a mouse move during a stroke 12 ms (with `N` normals 33 ms), Grab
+  3 ms. In the editor, every move then also adds a refit of the selection tree
+  and new geometry in the viewport: the viewport draws polygons indexed and, when
+  points move, sends only vertex positions and normals to the GPU — on 90,000 points
+  6 ms, on a million 62 ms (with `N` normals 7 ms); see
+  [geometry.md](geometry.md#3-display-flag-and-viewport).
+- **Dyntopo** — `src/pg/core/Dyntopo.h`: `SculptMesh` holds the triangles
+  and, for each point, a sorted list of the triangles around it; the lists live
+  in one shared array, so the mesh is copied in blocks. Point
+  and corner attributes are numbers, or a reference to the geometry element they come from
+  (integers, strings). Edges wait in a queue ordered by length. Triangles
+  within a dab's reach are found by a multi-level grid of boxes: each triangle is
+  in a single cell of the finest level it fits into, so a large
+  triangle does not occupy thousands of cells. Points are found by a moving grid; with only a few
+  dabs it queries all of them directly (on multiple threads). Removed points
+  and triangles keep their numbers until conversion to geometry. Sculptor
+  keeps the mesh after the dabs and continues in it; it copies the mesh before the last dab
+  only under Grab, because a copy of the mesh is not shared like
+  geometry (an undone dab that is not a Grab is therefore computed from the beginning).
+  A sphere of 360,000 triangles: a dab during a stroke 7 ms (at most 13 ms),
+  400 dabs from scratch 0.12 s; at 60,000 triangles 1.4 ms per dab.
+- **Symmetry** — `src/pg/core/Mirror.h`: `mirrorPoints` finds the image
+  of each point using a point tree (the nearest to the reflected location within tolerance),
+  `withMirror` adds the images to the selection. Edit splits points by the side of the
+  plane relative to the pivot; the image is computed as `R T R x` (`R` reflection, `T`
+  the edit). Sculpt applies a group of attached dabs together: displacements from
+  all dabs of the group, from the shape before them, sorted by point number
+  and summed in dab order, so the result is the same every time. Sculptor
+  continues group by group: a Grab with an image changes the last group (two
+  dabs) and computes only that.
+- **Composing edits** — `sim::EditTransform` (`src/pg/sim/Shape.h`):
+  Edit does `x → R S (x − p) + p + t`; a handle drag around a center `c`
+  composed after it is again an Edit: the rotation is prepended to `R`, the scale multiplies
+  `S`, and `t` takes `p + t` to where the drag takes it. Tests verify that this
+  holds point by point and that the Edit in the node computes the same.
+- **Nodes** — `src/pg/nodes/Edit.cpp`: `groupcreate`, `edit`,
+  `attribpaint`, `sculpt`; Blast in `Modifiers.cpp`; Dissolve
+  in `Topology.cpp` on top of `src/pg/core/Dissolve.h`: edges merge faces
+  (union-find), the group is walked along its outer sides from the corner with the lowest
+  number; a point from which two outer sides lead, or sides left
+  over after the walk, mean multiple outlines, and the group stays. Attribute Paint
+  applies dab by dab only to the points within its reach (point tree), so
+  thousands of dabs on a fine mesh are fast.
+- **Editor** — `tools/prototype/SimElements.cpp`; node handles
+  (`sim::Handles` in `src/pg/sim/Network.h`, with a `pivot` field for the handle
+  at the pivot) in `SimViewport.cpp`.
 
-Geometrie ležící na podlaze (mřížka v y = 0) se s podlahou už nebije:
-plocha geometrie vyhrává, když je stejně daleko jako podlaha.
+Geometry lying on the floor (the grid at y = 0) no longer z-fights with the floor:
+the geometry's face wins when it is as far away as the floor.
 
-## 9. Omezení
+## 9. Limitations
 
-- Upravuje se **zobrazená geometrie**, ne výsledek simulace: piny se malují
-  na vstup Cloth Solveru, ne na spočítanou látku.
-- Výběr, Edit, Group a Blast drží **čísla** bodů a primitiv. Změna před
-  nimi, která body přečísluje (jiný počet řad mřížky), posune, co
-  pojmenovávají. Malování to nepostihne — kapky jsou místa.
-- Zakrývání bere v úvahu jen vlastní povrch zobrazené geometrie, ne
-  objekty ani kusy před ní.
-- Vrcholy nejdou malovat štětcem ani rozpouštět (Dissolve bere hrany
-  a plochy). Tab na vrcholech dá uzlu, který vrcholy nezná (PolyExtrude,
-  wrangle), jejich body či primitivy. Rovina symetrie jde vždy počátkem
-  a zrcadlí se jen úprava, ne výběr. Měkký výběr má jen úchyty (posun,
-  otočení, měřítko).
-  Úchyt nemají uzly bez polohy v prostoru (Subdivide, Fuse…) ani Group by
-  Box (dva rohy).
-- Bez dyntopa Sculpt body jen posouvá a nepřidává je. Jemný detail pak
-  chce jemnou síť (Subdivide před Sculptem), nebo Dyntopo (§6c).
-- Dyntopo dělá jen trojúhelníky, hrany neotáčí (*edge flip*) a body
-  nevyrovnává. U stažených hran se atributy rohů (`uv`) jen přibližují,
-  takže švy UV se mohou rozmazat. Jedna kapka rozpůlí nejvýš 250 000 hran.
-- Změna čehokoli před Sculptem, jeho Falloff nebo parametrů dyntopa
-  spočítá všechny kapky znovu od začátku.
-- Drát a všechny body se kreslí do 400 000 hran či bodů; ve větší geometrii
-  jen výběr. První výběr v síti milionů trojúhelníků postaví strom obálek
-  (řádově sekunda).
+- What is edited is the **displayed geometry**, not the simulation result: pins are painted
+  on the Cloth Solver's input, not on the computed cloth.
+- Selection, Edit, Group and Blast hold point and primitive **numbers**. A change upstream of
+  them that renumbers the points (a different number of grid rows) shifts what
+  they refer to. Painting is not affected — dabs are locations.
+- Occlusion takes into account only the displayed geometry's own surface, not
+  objects or pieces in front of it.
+- Vertices cannot be painted with a brush or dissolved (Dissolve takes edges
+  and faces). Tab on vertices gives a node that does not know vertices (PolyExtrude,
+  wrangle) their points or primitives. The symmetry plane always passes through the origin,
+  and only the edit is mirrored, not the selection. Soft selection is available only with handles (translate,
+  rotate, scale).
+  Nodes without a position in space (Subdivide, Fuse…) have no handle, and neither does Group by
+  Box (two corners).
+- Without dyntopo, Sculpt only moves points and does not add them. Fine detail then
+  needs a fine mesh (Subdivide before the Sculpt), or Dyntopo (§6c).
+- Dyntopo makes only triangles, does not flip edges (*edge flip*) and does not
+  relax points. For collapsed edges, corner attributes (`uv`) are only approximated,
+  so UV seams may blur. A single dab halves at most 250,000 edges.
+- A change to anything upstream of the Sculpt, to its Falloff or to the dyntopo parameters
+  recomputes all dabs from the beginning.
+- The wireframe and all points are drawn up to 400,000 edges or points; in larger geometry
+  only the selection. The first selection in a mesh of millions of triangles builds the bounding volume tree
+  (on the order of a second).

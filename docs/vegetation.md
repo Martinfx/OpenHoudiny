@@ -1,390 +1,412 @@
-# Vegetace: tráva, keře a stromy jako instance
+# Vegetation: grass, shrubs and trees as instances
 
-Louka má miliony stébel a les tisíce stromů. Kdyby každé stéblo bylo
-vlastní geometrií, nevešla by se do paměti a viewport by se nehnul. Proto
-každá rostlina vyroste jen jednou a v krajině ji zastupuje bod. Takovému
-bodu se říká **instance**. Bod říká, která rostlina na něm stojí, jak je
-otočená, jak velká a jak odstíněná. Rostlině, kterou zastupuje, se říká
-**prototyp**. Viewport kreslí instance přes GPU instancing: prototyp je na
-grafické kartě jednou a nakreslí se tolikrát, kolik bodů ho zastupuje.
-Do USD jde celek jako PointInstancer, do OBJ a PLY jako kopie.
+A meadow has millions of blades and a forest thousands of trees. If every blade
+were its own geometry, it would not fit in memory and the viewport would not
+budge. That is why each plant is grown only once and is represented in the
+landscape by a point. Such a point is called an **instance**. The point says
+which plant stands on it, how it is rotated, how large it is and how it is
+tinted. The plant it represents is called the **prototype**. The viewport
+draws instances with GPU instancing: the prototype is on the graphics card
+once and is drawn as many times as there are points representing it.
+The whole goes to USD as a PointInstancer, and to OBJ and PLY as copies.
 
-Příklad **meadow** je louka u okraje lesa ve větru: 122 577 trsů trávy
-(přes 1,9 milionu stébel), 84 stromů a 65 keřů. Všechno to drží 21
-prototypů a 160 tisíc bodů.
+The **meadow** example is a meadow at the edge of a forest in the wind:
+122,577 grass clumps (over 1.9 million blades), 84 trees and 65 shrubs. All of
+it is held by 21 prototypes and 160 thousand points.
 
-![Louka u lesa: tráva z instancí, cesta, keře na okraji lesa, listnáče a smrky](img/vegetation-meadow.jpg)
+![Meadow by the forest: grass from instances, a path, shrubs at the forest edge, broadleaf trees and spruces](img/vegetation-meadow.jpg)
 
 ```bash
-./build/prototype --example meadow                  # louka u lesa ve větru: Play
-./build/prototype cook meadow - --start 1 --end 3   # kolik bodů a jak dlouho
-./build/prototype cook meadow louka.usda            # do USD jako PointInstancer
-./build/prototype sim meadow - --frames 48 --export shot.usda   # záběr ve větru do USD
+./build/prototype --example meadow                  # meadow by the forest in the wind: Play
+./build/prototype cook meadow - --start 1 --end 3   # how many points and how long
+./build/prototype cook meadow louka.usda            # to USD as a PointInstancer
+./build/prototype sim meadow - --frames 48 --export shot.usda   # shot in the wind to USD
 ```
 
-## 1. Instance
+## 1. Instances
 
-Bod s celočíselným atributem `instance` = k (0 a víc) zastupuje prototyp
-číslo k své geometrie. Prototypy jsou geometrie, které geometrie drží
-jednou. Kopie geometrie je sdílí a nekopíruje. Kde prototyp stojí, určují
-atributy bodu stejně jako u **Copy to Points**:
+A point with the integer attribute `instance` = k (0 or more) represents
+prototype number k of its geometry. Prototypes are geometries that the geometry
+holds once. Copies of the geometry share them and do not copy them. Where a
+prototype stands is determined by the point's attributes, just as with
+**Copy to Points**:
 
-| Atribut | Co dělá |
+| Attribute | What it does |
 |---|---|
-| `P` | kam jde počátek prototypu |
-| `orient` | jak je prototyp otočený: kvaternion x, y, z, w. Bez něj se +y prototypu otočí do `N`, bez `N` se neotáčí |
-| `pscale` | jak je velký; bez něj 1 |
-| `tint` | čím se násobí barvy prototypu: jeden trs trávy o kousek žlutší než druhý |
+| `P` | where the prototype's origin goes |
+| `orient` | how the prototype is rotated: quaternion x, y, z, w. Without it, the prototype's +y is rotated to `N`; without `N`, it is not rotated |
+| `pscale` | how large it is; 1 without it |
+| `tint` | what the prototype's colors are multiplied by: one grass clump slightly yellower than another |
 
-Barva `Cd` bodu instanci nebarví. Body rozházené po barevném terénu totiž
-nesou barvu terénu, a tráva na nich má zůstat zelená. Bod s `instance`
-−1 nebo bez tohoto atributu je obyčejný bod.
+The point color `Cd` does not color the instance. Points scattered over a
+colored terrain carry the terrain's color, and the grass on them should stay
+green. A point with `instance` −1, or without this attribute, is an ordinary
+point.
 
-Instance procházejí sítí jako ostatní geometrie:
+Instances pass through the network like any other geometry:
 
-- **Merge** spojí prototypy za sebe. Prototypy druhé geometrie jdou za
-  prototypy první a čísla `instance` jejích bodů se posunou o jejich počet.
-  Geometrie, která atribut `instance` nemá, dostane −1. Instance, kterým
-  chybí `pscale` nebo `tint`, dostanou 1, ne nulu, takže nezmizí ani
-  nezčernají.
-- **Transform** instance posune, otočí a zvětší jako jejich kopie:
-  `orient` otočí a `pscale` vynásobí měřítkem. Při nerovnoměrném měřítku
-  použije nejbližší otočení a průměrné zvětšení, protože instance se
-  nedeformují. Bod natočený jen podle `N` dostane `orient`, který ho tak
-  natáčel. Kdyby se prototyp jen znovu natočil do otočeného `N`, pootočil
-  by se kolem něj.
-- **Unpack** udělá z instancí kopie, tedy geometrii, kterou mohou měnit
-  všechny uzly. Nejdřív nechá, co instancí není, pak přidá kopie prototypů
-  jednoho po druhém, každý na jeho body v jejich pořadí. Tint vynásobí
-  barvy kopií.
-- Wrangle vidí instance jako body. Změní `p@orient`, `@pscale` nebo
-  `v@tint` a prototypy zůstanou sdílené (vítr, níže).
+- **Merge** concatenates prototypes. The prototypes of the second geometry go
+  after those of the first, and the `instance` numbers of its points are offset
+  by their count. Geometry that does not have the `instance` attribute gets −1.
+  Instances that lack `pscale` or `tint` get 1, not zero, so they neither
+  disappear nor turn black.
+- **Transform** moves, rotates and scales instances like their copies:
+  it rotates `orient` and multiplies `pscale` by the scale. With non-uniform
+  scale it uses the closest rotation and the average scale, because instances
+  do not deform. A point oriented only by `N` gets an `orient` that rotated it
+  that way. If the prototype were simply re-oriented to the rotated `N`, it
+  would turn about it.
+- **Unpack** turns instances into copies, i.e. geometry that all nodes can
+  modify. It first keeps whatever is not an instance, then adds copies of the
+  prototypes one after another, each on its points in their order. Tint
+  multiplies the colors of the copies.
+- A Wrangle sees instances as points. It changes `p@orient`, `@pscale` or
+  `v@tint`, and the prototypes stay shared (wind, below).
 
-Viewport instance nekreslí jako tečky. Každý prototyp nahraje jednou
-a nakreslí ho jedním voláním tolikrát, kolik bodů ho zastupuje, včetně
-stínové mapy. Na instanci připadá 48 bajtů (poloha, velikost, otočení,
-tint). Když se hýbou jen body, jako ve větru, posílá se na GPU jen tohle.
-Rámeček pro stíny a zarámování počítá z rohů rámečku prototypu
-umístěných na každý bod.
+The viewport does not draw instances as dots. It uploads each prototype once
+and draws it in a single call as many times as there are points representing
+it, including in the shadow map. Each instance takes 48 bytes (position, scale,
+rotation, tint). When only the points move, as in the wind, only this is sent
+to the GPU. The bounding box for shadows and framing is computed from the
+corners of the prototype's bounding box placed on each point.
 
-## 2. Tráva: uzel Grass
+## 2. Grass: the Grass node
 
-Uzel **Grass** pěstuje trsy trávy. Trs je skupina stébel z jednoho
-kořene. Každé stéblo je pásek, který se zužuje do špičky. Od středu trsu
-se naklání a pod svou vahou se ohýbá, tím víc, čím výš. Kolem sebe se
-trochu stáčí. U kořene je tmavě zelené, ke špičce světlejší a sem tam je
-nějaké suché.
+The **Grass** node grows grass clumps. A clump is a group of blades from one
+root. Each blade is a strip that tapers to a tip. It leans away from the center
+of the clump and bends under its own weight, the more so the higher up. It
+twists slightly around itself. It is dark green at the root, lighter towards
+the tip, and here and there one is dry.
 
-![Tráva zblízka: stébla z trsů, suchá stébla, v pozadí les](img/vegetation-grass.jpg)
+![Grass up close: blades from clumps, dry blades, forest in the background](img/vegetation-grass.jpg)
 
-**Se vstupem povrchu** uzel rozhází trsy po jeho polygonech, **Density**
-na metr čtvereční, podle pravidel uzlu Scatter (Density Attribute, Max
-Slope, oddíl 3). Každý trs je instance jedné z **Variants** variant, které
-uzel vypěstuje jednou. Kterou variantu bod dostane, určuje jeho `id`,
-jinak jeho pořadí, a Seed. Bod dostane také:
+**With a surface input**, the node scatters clumps over its polygons,
+**Density** per square meter, following the rules of the Scatter node
+(Density Attribute, Max Slope, section 3). Each clump is an instance of one of
+**Variants** variants, which the node grows once. Which variant a point gets
+is determined by its `id`, otherwise by its index, and by Seed. The point also
+gets:
 
-- `orient`, tedy náhodné otočení kolem +y, protože tráva roste svisle
-  i na svahu. S **Along Normal** roste ven z povrchu podél `N`, třeba
-  mech na zdi.
-- `pscale`: Size Variation víc či míň, krát vlastní `pscale` povrchu.
-- `tint`: Variation, tedy trs o kousek světlejší, tmavší nebo žlutší.
+- `orient`, i.e. a random rotation about +y, because grass grows vertically
+  even on a slope. With **Along Normal** it grows out of the surface along `N`,
+  for example moss on a wall.
+- `pscale`: Size Variation more or less, times the surface's own `pscale`.
+- `tint`: Variation, i.e. a clump slightly lighter, darker or yellower.
 
-**Jen s body na vstupu** (bez polygonů) vyroste trs na každém bodě. **Bez
-vstupu** je výstupem jeden trs v **Center**, jako geometrie. S vypnutým
-**Instances** jsou výstupem kopie. Ty může měnit každý uzel, ale jsou tak
-těžké jako všechna jejich stébla.
+**With only points on the input** (no polygons), a clump grows on every point.
+**Without an input**, the output is a single clump at **Center**, as geometry.
+With **Instances** turned off, the output is copies. Any node can modify them,
+but they are as heavy as all their blades.
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
-| **Density** | trsů na m² povrchu (výchozí 50) |
-| **Seed** | jiné číslo, jiná místa a jiné trsy |
-| **Size Variation** | jak moc se trsy liší velikostí |
-| **Along Normal** | růst podél normály povrchu místo svisle |
-| **Density Attribute** | atribut bodů povrchu 0 až 1: jaký podíl trsů na místě roste. 0 znamená cestu, 1 plnou louku |
-| **Max Slope** | na plochách strmějších než tento úhel od vodorovné tráva neroste (výchozí 45°) |
-| **Blades** | stébel v trsu (16) |
-| **Height**, **Height Variation** | délka stébla (0,4 m; trávník 0,08, vysoká tráva 1) a jak se liší |
-| **Width** | šířka stébla u kořene (6 mm) |
-| **Bend** | jak moc se stébla ohýbají: 0 rovně, 1 špička vodorovně |
-| **Lean** | největší náklon od středu trsu (30°) |
-| **Spread** | jak daleko od středu trsu jsou kořeny (8 cm) |
-| **Segments** | kousků podél stébla: víc je hladší oblouk, míň je lehčí pole v dálce |
-| **Root Color**, **Tip Color** | barva u kořene a na špičce |
-| **Dry**, **Dry Color** | podíl suchých stébel (jaro 0, pozdní léto 0,5) a jejich barva |
-| **Variation** | jak moc se stébla i trsy liší odstínem |
-| **Variants** | kolik různých trsů se vypěstuje |
-| **Instances** | body s prototypy (zapnuto), nebo kopie |
+| **Density** | clumps per m² of surface (default 50) |
+| **Seed** | a different number, different locations and different clumps |
+| **Size Variation** | how much the clumps differ in size |
+| **Along Normal** | grow along the surface normal instead of vertically |
+| **Density Attribute** | a surface point attribute from 0 to 1: what fraction of the clumps at a location grows. 0 means a path, 1 a full meadow |
+| **Max Slope** | grass does not grow on faces steeper than this angle from horizontal (default 45°) |
+| **Blades** | blades per clump (16) |
+| **Height**, **Height Variation** | blade length (0.4 m; lawn 0.08, tall grass 1) and how much it varies |
+| **Width** | blade width at the root (6 mm) |
+| **Bend** | how much the blades bend: 0 straight, 1 tip horizontal |
+| **Lean** | the greatest lean away from the clump center (30°) |
+| **Spread** | how far from the clump center the roots are (8 cm) |
+| **Segments** | segments along the blade: more is a smoother curve, fewer is a lighter field in the distance |
+| **Root Color**, **Tip Color** | color at the root and at the tip |
+| **Dry**, **Dry Color** | fraction of dry blades (spring 0, late summer 0.5) and their color |
+| **Variation** | how much the blades and clumps differ in shade |
+| **Variants** | how many different clumps are grown |
+| **Instances** | points with prototypes (on), or copies |
 
-Prototyp trsu má bodové `Cd` a `flex`, tedy jak daleko po stéble bod je
-(0 u kořene, 1 na špičce), vrcholové `uv` (u jednou přes šířku stébla, v od
-kořene 0 po špičku 1) a primitivní `blade`. Podle `uv` na stéblo jde
-obrázek trávy z knihovny (`examples/textures/grass`: střední žilka
-a proužky podél), v Cycles i v path traceru. Kořeny sedí kousek pod
-zemí (0,6 Spread, nejvýš pětina výšky). Trs na svahu totiž stojí svisle
-a jeho kořeny do kopce nesmí viset ve vzduchu.
+The clump prototype has point `Cd` and `flex`, i.e. how far along the blade the
+point is (0 at the root, 1 at the tip), vertex `uv` (u once across the width of
+the blade, v from 0 at the root to 1 at the tip) and primitive `blade`. By `uv`,
+a grass image from the library (`examples/textures/grass`: a central vein
+and stripes along it) goes onto the blade, in Cycles and in the path tracer.
+The roots sit slightly below the ground (0.6 Spread, at most a fifth of the
+height). A clump on a slope stands vertically, and its uphill roots must not
+hang in the air.
 
-## 3. Scatter: pravidla
+## 3. Scatter: rules
 
-**Scatter** rozhazuje body úměrně ploše, deterministicky podle Seed
-a stejně na jakémkoli počtu vláken. Nová pravidla:
+**Scatter** scatters points in proportion to area, deterministically by Seed
+and identically on any number of threads. New rules:
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
-| **Mode** | Count: Count bodů po celé ploše. Density: Density bodů na m², takže víc plochy dá víc bodů |
-| **Density Attribute** | atribut bodů vstupu 0 až 1, namalovaný (Attribute Paint) nebo z wranglu: jaký podíl bodů na místě zůstane |
-| **Max Slope** | žádné body na plochách skloněných víc než tento úhel od vodorovné (180 = kdekoli) |
-| **Min Distance** | žádný bod blíž než tato vzdálenost k bodu, který zůstal před ním: stromy, které si drží odstup |
+| **Mode** | Count: Count points over the whole surface. Density: Density points per m², so more area gives more points |
+| **Density Attribute** | an input point attribute from 0 to 1, painted (Attribute Paint) or from a wrangle: what fraction of the points at a location remains |
+| **Max Slope** | no points on faces inclined more than this angle from horizontal (180 = anywhere) |
+| **Min Distance** | no point closer than this distance to a point that remained before it: trees that keep their distance |
 
-Min Distance se počítá bod po bodu v pořadí, s mřížkou buněk velkých
-jako vzdálenost. Proto je deterministická. Uzel Grass používá Scatter se
-stejnými pravidly.
+Min Distance is computed point by point in order, with a grid of cells as large
+as the distance. That is why it is deterministic. The Grass node uses Scatter
+with the same rules.
 
-## 4. Copy to Points: instance a varianty
+## 4. Copy to Points: instances and variants
 
-**Copy to Points** má dva nové parametry:
+**Copy to Points** has two new parameters:
 
-- **Instance**: výstupem nejsou kopie, ale body, z nichž každý zastupuje
-  to, co by se na něj zkopírovalo. Unpack z nich udělá přesně ty kopie.
-- **Piece Attribute**: primitivní atribut geometrie (celé číslo nebo
-  text) ji rozdělí na kusy, každá hodnota jeden kus. Bod dostane kus
-  podle svého atributu stejného jména. Bod bez něj dostane kus podle
-  svého pořadí. Tak jde na body osm různých kamenů nebo trsů.
+- **Instance**: the output is not copies but points, each of which represents
+  what would have been copied onto it. Unpack turns them into exactly those
+  copies.
+- **Piece Attribute**: a primitive attribute of the geometry (integer or
+  string) splits it into pieces, one piece per value. A point gets a piece
+  according to its attribute of the same name. A point without it gets a piece
+  according to its index. That is how eight different stones or clumps go onto
+  points.
 
-`tint` bodu násobí barvy kopie. `Cd` bodu jako dřív nahrazuje barvy kopie
-(jen v kopiích; instanci nebarví).
+A point's `tint` multiplies the copy's colors. A point's `Cd` replaces the
+copy's colors as before (only in copies; it does not color instances).
 
-## 5. Stromy a keře jako instance
+## 5. Trees and shrubs as instances
 
-Tree má výstup **Instances**. Vypěstuje **Variants** stromů (výchozí 8),
-a to stromy, které by vyrostly na prvních bodech. Každý bod pak jeden
-z nich zastupuje: vybraný podle `id`, jinak podle pořadí, otočený kolem +y,
-velký podle `pscale` a Size Variation a s vlastním odstínem (`tint` podle
-Variation). Les tisíců stromů tak stojí tolik, kolik stojí osm stromů
-a tisíc bodů. Bez bodů je výstupem jedna instance v Center, stejný strom
-jako výstup Mesh.
+Tree has an **Instances** output. It grows **Variants** trees (default 8),
+namely the trees that would have grown on the first points. Each point then
+represents one of them: chosen by `id`, otherwise by index, rotated about +y,
+sized by `pscale` and Size Variation, and with its own shade (`tint` by
+Variation). A forest of thousands of trees thus costs as much as eight trees
+and a thousand points. Without points, the output is a single instance at
+Center, the same tree as the Mesh output.
 
-Keř je Tree, který se rozvětví hned u země: Forks 5, Fork Height 0,03,
-Fork Angle 38°, Crown 0,02, dvě úrovně větví a malé listy (příklad
-meadow, uzel `shrubs`).
+A shrub is a Tree that branches right at the ground: Forks 5, Fork Height 0.03,
+Fork Angle 38°, Crown 0.02, two levels of branches and small leaves (the
+meadow example, node `shrubs`).
 
-## 6. Vítr na instancích
+## 6. Wind on instances
 
-Vítr dělá uzel **Plant Wind** ([trees.md](trees.md#5-vítr)). Na
-instancích předohne každou rostlinu do několika tvarů (8 směrů × 4 kroky)
-a každý bod přesměruje na nejbližší tvar ve vlastním natočení rostliny.
-Zbytek ohybu dorovná naklopením `orient`. Stébla se tak ohýbají podél
-délky, ne jen jako celý trs, a stejně ve viewportu, v obou rendererech
-i v USD. Mění se jen `instance` a `orient` bodů. Polohy a ostatní atributy
-zůstávají sdílené se vstupem a předohnuté tvary jsou stejné objekty
-snímek co snímek, takže je viewport má na GPU jednou. S **Dynamics**
-je každá rostlina na bodě pružina, která se za poryvem opozdí a dokmitá
-([trees.md](trees.md#dynamika-větve-jako-pružiny)).
+Wind is produced by the **Plant Wind** node ([trees.md](trees.md#5-wind)). On
+instances, it pre-bends each plant into several shapes (8 directions × 4 steps)
+and redirects each point to the nearest shape in the plant's own orientation.
+It makes up the rest of the bend by tilting `orient`. The blades thus bend
+along their length, not just as a whole clump, and the same way in the
+viewport, in both renderers and in USD. Only the points' `instance` and
+`orient` change. Positions and the other attributes stay shared with the
+input, and the pre-bent shapes are the same objects frame after frame, so the
+viewport has them on the GPU once. With **Dynamics**, each plant on a point is
+a spring that lags behind a gust and oscillates out
+([trees.md](trees.md#dynamics-branches-as-springs)).
 
-### Šlapání: Plant Trample
+### Trampling: Plant Trample
 
-Uzel **Plant Trample** ohne trávu a keře tam, kde něco šlápne: nohy, kola,
-těleso, které spadlo. Druhý vstup jsou body šlápnutí: `pscale` krát
-**Radius** je šířka stopy, `time` je kdy (stopy postavy v čase). Rostliny
-v okruhu se ohnou od paty pryč od středu stopy, uprostřed o **Flatten**
-(70°), na okraji vůbec. Po šlápnutí se během **Recovery** sekund zase
-narovnávají (za tu dobu na třetinu ohybu, 0 = zůstanou ležet). Stopy
-s časem v budoucnu ještě nepůsobí. Na instancích to funguje jako u větru:
-předohnuté tvary (Directions × Steps) a dorovnání naklopením, takže se
-mění jen body. Test: trsy u stopy se odkloní v průměru o 6,7 cm, vzdálené
-vůbec, před šlápnutím nic, po 40 s jsou zase rovné.
+The **Plant Trample** node bends grass and shrubs where something steps: feet,
+wheels, a body that has fallen. The second input is the step points: `pscale`
+times **Radius** is the width of the footprint, `time` is when (a character's
+footprints over time). Plants within the radius bend from the base away from
+the center of the footprint, by **Flatten** (70°) in the middle and not at all
+at the edge. After being stepped on they straighten up again over **Recovery**
+seconds (to a third of the bend in that time; 0 = they stay flattened).
+Footprints with a time in the future have no effect yet. On instances it works
+as with wind: pre-bent shapes (Directions × Steps) and making up the rest by
+tilting, so only the points change. Test: clumps near a footprint bend away by
+6.7 cm on average, distant ones not at all, nothing before the step, and after
+40 s they are straight again.
 
-## 7. Příklad meadow
+## 7. The meadow example
 
 [examples/sim/meadow.pgsim](../examples/sim/meadow.pgsim):
 
-- **Grid** `land` 80 × 60 m (220 × 170 bodů) zvedne Point Wrangle
-  `terrain` šumem do mírných vln, které stoupají k lesu vzadu. Wrangle
-  terén i obarví a namaluje mu tři atributy 0 až 1: `grass` (0 na cestě
-  vinoucí se přes louku, tráva řídne k jejím okrajům i v lese), `trees`
-  (les za 7 až 13 m od louky a sem tam strom v louce) a `shrubs` (pás
-  podél okraje lesa).
-- **Grass** `grass` rozhází po terénu 40 trsů na m² podle `grass`, ne na
-  svazích přes 40°. Vznikne 122 577 trsů v osmi variantách, přes
-  1,9 milionu stébel. Wrangle `wind` je ohýbá ve větru.
-- **Scatter** `tree_spots` (Density 0,08 na m² podle `trees`, Min Distance
-  3,5 m) dá místa stromům. Point Wrangle `kinds` a dva **Blasty** je
-  rozdělí na listnáče a smrky: **Tree** `broadleaves` (5 variant)
-  a `spruces` (4 varianty), oba s Output Instances. Vznikne 45 listnáčů
-  a 39 smrků.
-- **Scatter** `shrub_spots` podle `shrubs` a **Tree** `shrubs` (keře,
-  4 varianty): 65 keřů.
-- **Merge** `trees` spojí stromy s keři a Point Wrangle `sway` je kývá.
-  **Merge** `meadow` spojí terén, trávu a stromy. Výsledek má 21
-  prototypů a zobrazuje se.
+- The **Grid** `land` of 80 × 60 m (220 × 170 points) is raised by the Point
+  Wrangle `terrain` with noise into gentle waves that rise towards the forest
+  at the back. The wrangle also colors the terrain and paints three attributes
+  from 0 to 1 onto it: `grass` (0 on a path winding across the meadow; the grass
+  thins out towards its edges and in the forest), `trees` (forest 7 to 13 m
+  beyond the meadow and the occasional tree in the meadow) and `shrubs` (a band
+  along the forest edge).
+- **Grass** `grass` scatters 40 clumps per m² over the terrain according to
+  `grass`, not on slopes over 40°. This produces 122,577 clumps in eight
+  variants, over 1.9 million blades. The wrangle `wind` bends them in the wind.
+- **Scatter** `tree_spots` (Density 0.08 per m² according to `trees`, Min
+  Distance 3.5 m) gives the locations for trees. The Point Wrangle `kinds` and
+  two **Blasts** split them into broadleaf trees and spruces: **Tree**
+  `broadleaves` (5 variants) and `spruces` (4 variants), both with Output
+  Instances. This produces 45 broadleaf trees and 39 spruces.
+- **Scatter** `shrub_spots` according to `shrubs` and **Tree** `shrubs`
+  (shrubs, 4 variants): 65 shrubs.
+- **Merge** `trees` combines the trees with the shrubs, and the Point Wrangle
+  `sway` sways them. **Merge** `meadow` combines the terrain, grass and trees.
+  The result has 21 prototypes and is displayed.
 
-Příklad je model bez kamery a uzlu Output. Obrázky nahoře jsou z jeho
-kopie s přidanou kamerou a výstupem se sluncem a oblohou (Sky Behind).
+The example is a model without a camera or Output node. The images above are
+from a copy of it with an added camera and an output with sun and sky (Sky
+Behind).
 
-![Editor s příkladem meadow: krajina ve viewportu, parametry uzlu Grass, síť](img/vegetation-editor.jpg)
+![The editor with the meadow example: the landscape in the viewport, the Grass node's parameters, the network](img/vegetation-editor.jpg)
 
-## 7b. Ekosystém
+## 7b. Ecosystem
 
-Uzel **Ecosystem** nechá rostlinné společenstvo vyrůst za roky, podle
-modelu Deussena a kol. (1998). Až čtyři druhy, každý se svými parametry:
+The **Ecosystem** node lets a plant community grow over years, following the
+model of Deussen et al. (1998). Up to four species, each with its own
+parameters:
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
-| **Share** | kolik jich je na začátku proti ostatním |
-| **Crown** | poloměr koruny vzrostlé rostliny (kolik stíní) |
-| **Growth**, **Life** | za kolik let doroste, kolik let žije (±20 %) |
-| **Shade Tolerance** | jak snáší stín jiných: 0 pod korunou uschne, 1 roste dál |
-| **Moisture**, **Moisture Range** | jak vlhkou půdu má rád a jak daleko od ní ještě prospívá |
-| **Seed Distance**, **Seedlings** | jak daleko padají semena a kolik semenáčků vzejde za rok |
-| **Height**, **Crown Depth**, **Leaf Density** | jen By Height: jak vysoká je vzrostlá rostlina, jak hluboko sahá koruna (podíl výšky) a kolik m² listí má nad každým m² půdy pod korunou |
+| **Share** | how many there are at the start relative to the others |
+| **Crown** | crown radius of a mature plant (how much it shades) |
+| **Growth**, **Life** | how many years to maturity, how many years it lives (±20 %) |
+| **Shade Tolerance** | how it tolerates the shade of others: 0 withers under a crown, 1 keeps growing |
+| **Moisture**, **Moisture Range** | how moist a soil it prefers and how far from that it still thrives |
+| **Seed Distance**, **Seedlings** | how far seeds fall and how many seedlings emerge per year |
+| **Height**, **Crown Depth**, **Leaf Density** | By Height only: how tall the mature plant is, how deep the crown reaches (fraction of the height) and how many m² of leaves it has above each m² of ground under the crown |
 
-Rok po roku rostliny stárnou a rostou, chřadnou tam, kde jim půda nesedí,
-umírají stářím a vzrostlé kolem sebe vysévají. Semenáček vzejde na
-nejbližším volném místě, ne tam, kde se mu nedaří. Jak se rostliny
-stíní, říká **Light**:
+Year after year, plants age and grow, decline where the soil does not suit
+them, die of old age, and mature plants seed around themselves. A seedling
+emerges at the nearest free location, not where it would not thrive. How
+plants shade each other is set by **Light**:
 
-- **In Plan** (výchozí, jako u Deussena). Kde se koruny potkají
-  v půdorysu, menší strádá podle toho, jak moc se překrývají a jak málo
-  snáší stín (i stínomilné o čtvrtinu méně, ale strádají). Rostlina roste
-  podle věku. Pod cizí korunou semenáček vzejde jen podle své snášenlivosti
-  stínu.
-- **By Height** (jako modely lesních mezer JABOWA a SORTIE). Koruna každé
-  rostliny je elipsoid listí, vysoký a široký podle toho, jak rostlina
-  vyrostla. Sahá od (1 − Crown Depth) její výšky k vrcholu a má Leaf
-  Density krát plochu půdy pod sebou listí. Světlo zatažené oblohy (jas
-  1 + 2 cos úhlu od zenitu) přichází ze zenitu a ze dvou prstenců po osmi
-  směrech, 40° a 70° od zenitu, s vahami 0,22, 0,53 a 0,25 podle toho, kolik
-  daná část oblohy osvětlí rovnou zem. Listí ho ztlumí jako e^(−0,5 L), kde
-  L je plocha listí, kterou paprsek potká na m² svého průřezu. Listí leží
-  v buňkách mřížky (polovina nejužší koruny, 0,5 až 2 m) a paprsky jimi
-  kráčejí. Rostlina roste tak rychle, kolik má světla nad korunou, plnou
-  rychlostí od světla, které potřebuje: 0,65 oblohy bez snášenlivosti
-  stínu, 0,05 s plnou. S menším světlem chřadne, stínomilná pomaleji.
-  Semenáček vzejde s pravděpodobností podle světla 0,5 m nad zemí. Vysoká
-  koruna tedy stíní nízké pod sebou, ať je větší, nebo menší. Stínomilné
-  semenáčky čekají pod korunami a vyrostou, kde strom padne. Keře žijí pod
-  stromy jako podrost.
+- **In Plan** (default, as in Deussen). Where crowns meet in plan view, the
+  smaller one suffers according to how much they overlap and how poorly it
+  tolerates shade (shade-tolerant ones a quarter less, but they still suffer).
+  A plant grows according to its age. Under another plant's crown, a seedling
+  emerges only according to its shade tolerance.
+- **By Height** (like the forest gap models JABOWA and SORTIE). The crown of
+  each plant is an ellipsoid of foliage, as tall and wide as the plant has
+  grown. It reaches from (1 − Crown Depth) of its height to the top and has
+  Leaf Density times the ground area beneath it in leaves. The light of an
+  overcast sky (luminance 1 + 2 cos of the angle from the zenith) comes from
+  the zenith and from two rings of eight directions, 40° and 70° from the
+  zenith, with weights 0.22, 0.53 and 0.25 according to how much the given part
+  of the sky illuminates flat ground. Foliage attenuates it as e^(−0.5 L),
+  where L is the leaf area a ray meets per m² of its cross-section. Foliage
+  lies in the cells of a grid (half the narrowest crown, 0.5 to 2 m) and rays
+  march through them. A plant grows as fast as the light above its crown
+  allows, at full speed from the light it needs: 0.65 of the sky without shade
+  tolerance, 0.05 with full tolerance. With less light it declines, a
+  shade-tolerant one more slowly. A seedling emerges with a probability given
+  by the light 0.5 m above the ground. A tall crown therefore shades the low
+  ones beneath it, whether it is larger or smaller. Shade-tolerant seedlings
+  wait under the crowns and grow up where a tree falls. Shrubs live under the
+  trees as understory.
 
-Místa jsou body vstupu (Scatter po terénu tak hustě, jak by rostliny
-mohly stát) a vlhkost bere z jejich atributu **Moisture Attribute**.
-Výstup je bod na každé živé rostlině se `species` (0 až 3), skupinou druhu
-(`species1` až `species4`), `age`, `pscale` (0,15 semenáček, 1 vzrostlý),
-`orient` a `id` (číslo místa). By Height dává navíc `light`, podíl oblohy
-nad korunou v posledním roce. Na skupiny se pak pěstují stromy uzlem
-Tree. Jeho Height má odpovídat Height druhu, protože obojí `pscale`
-zmenší stejně. Stejné nastavení a seed dají stejné společenstvo na
-libovolném počtu vláken.
+The locations are the input points (Scatter over the terrain as densely as
+plants could stand), and moisture is taken from their **Moisture Attribute**.
+The output is a point on every living plant with `species` (0 to 3), a species
+group (`species1` to `species4`), `age`, `pscale` (0.15 seedling, 1 mature),
+`orient` and `id` (location number). By Height also gives `light`, the fraction
+of the sky above the crown in the last year. Trees are then grown on the groups
+with the Tree node. Its Height should match the species' Height, because both
+are scaled down by `pscale` in the same way. The same settings and seed give
+the same community on any number of threads.
 
-Výchozí druhy: **průkopník** (bříza: roste rychle, žije krátce, stín
-nesnáší, sucho, světlá koruna), **velikán** (dub: pomalý, dlouhověký,
-sucho), **stínomilný** (smrk, buk: snese stín, vlhko, hustá koruna až
-k zemi) a vypnutý **keř** (líska: 3 m, snese stín, žije 40 let).
+Default species: **pioneer** (birch: grows fast, lives briefly, does not
+tolerate shade, dry soil, light crown), **giant** (oak: slow, long-lived,
+dry soil), **shade-tolerant** (spruce, beech: tolerates shade, moist soil,
+dense crown down to the ground) and the disabled **shrub** (hazel: 3 m,
+tolerates shade, lives 40 years).
 
-Příklad **ecosystem**: kopcovitá půda s potokem, 2588 míst, čtyři druhy,
-By Height. Po 120 letech roste 2304 rostlin: 421 bříz (půda v průměru
-0,30 vlhká, 17 let, světlo 0,81), 116 dubů (0,18; 76 let; 0,79), 420
-smrků (0,82; 55 let; 0,82) a 1347 lísek (0,26; 14 let; 0,31). Smrky lemují
-potok, duby stojí na suchých hřbetech, břízy zarůstají mezery po padlých
-stromech a lísky rostou pod nimi ve stínu. In Plan dá na stejném místě
-2376 rostlin, ale jen 157 bříz, 34 dubů a 181 smrků mezi 2004 lískami.
-Menší koruna v půdorysu vždy prohraje, i keř, který stín snáší, takže
-stromy keřům mezi sebou nestačí. Vaří se 2,0 s, In Plan 0,7 s.
+The **ecosystem** example: hilly ground with a stream, 2588 locations, four
+species, By Height. After 120 years 2304 plants are growing: 421 birches (soil
+moisture 0.30 on average, 17 years, light 0.81), 116 oaks (0.18; 76 years;
+0.79), 420 spruces (0.82; 55 years; 0.82) and 1347 hazels (0.26; 14 years;
+0.31). Spruces line the stream, oaks stand on the dry ridges, birches fill in
+the gaps left by fallen trees and hazels grow beneath them in the shade. In
+Plan gives 2376 plants in the same location, but only 157 birches, 34 oaks and
+181 spruces among 2004 hazels. The smaller crown in plan view always loses,
+even a shrub that tolerates shade, so the trees do not leave room for shrubs
+between them. It cooks in 2.0 s, In Plan in 0.7 s.
 
-![Příklad ecosystem po 120 letech: vlevo In Plan, řídký les s mezerami, vpravo By Height, zapojený les, pod jehož korunami rostou lísky](img/ecosystem.jpg)
+![The ecosystem example after 120 years: In Plan on the left, a sparse forest with gaps; By Height on the right, a closed forest with hazels growing under its crowns](img/ecosystem.jpg)
 
-![Světlo nad korunou podle výšky rostliny v příkladu ecosystem: stromy nad 8 m mají skoro celou oblohu, lísky a semenáčky pod nimi desetinu až třetinu](img/ecosystem-light.jpg)
+![Light above the crown by plant height in the ecosystem example: trees over 8 m have almost the whole sky, hazels and seedlings beneath them a tenth to a third](img/ecosystem-light.jpg)
 
-Testy (`tests/test_plants.cpp`): osamělý dub (11 m) pustí pod korunu
-k semenáčku 0,27 oblohy, k okraji koruny 0,83, do volna 1. Na zemi
-s potokem (2601 míst, 100 let) stojí lísky z 86 % pod vyšší korunou se
-světlem 0,24, stromy mají 0,74 až 0,80. V hlubokém stínu (pod 0,1) čeká
-18 % smrků, v průměru 4,7 roku starých, ale jen 7 % bříz, 1,9 roku
-starých. Výsledek je stejný na jednom i čtyřech vláknech.
+Tests (`tests/test_plants.cpp`): a solitary oak (11 m) lets 0.27 of the sky
+through under its crown to a seedling, 0.83 to the edge of the crown, and 1 in
+the open. On ground with a stream (2601 locations, 100 years), 86 % of the
+hazels stand under a taller crown with light 0.24, while the trees have 0.74
+to 0.80. In deep shade (below 0.1), 18 % of the spruces wait, 4.7 years old on
+average, but only 7 % of the birches, 1.9 years old. The result is the same on
+one and on four threads.
 
 ## 8. Export
 
-- **OBJ a PLY** (`prototype cook`, `geo.save`, Export Geometry
-  v editoru) dostanou instance jako kopie, stejně jako z Unpacku. Pozor
-  na velikost: tráva z příkladu meadow je rozbalená 17,7 milionu bodů
-  a 7,8 milionu polygonů, zatímco jako instance jen 122 577 bodů.
-- **USD** (`.usda`) dostane **PointInstancer** `instances` vedle meshe
-  zbytku geometrie. Pod ním je scope `Prototypes`, v něm každý prototyp
-  (`proto_0`, `proto_1`…) jako geometrie, včetně vnořených instancí. Na
-  instancer jde vztah `prototypes` a pole `protoIndices`, `positions`,
-  `orientations` (quath), `scales`, `primvars:tint` a `ids` (z `id`)
-  a `extent` přes umístěné prototypy. V záběru (`prototype sim
-  --export shot.usda`) jsou prototypy ve stage jednou. Co se mění, tedy
-  natočení ve větru, jde do vrstvy za každý snímek (value clips, jako
-  ostatní geometrie). Knihovna USD (pxr) umístí instance tam, kde jsou
-  kopie z Unpacku, s odchylkou do 0,23 mm, protože `orientations` jsou
-  v poloviční přesnosti (test `tests/python/test_instances.py`).
-- Nulové normály, `orient`, `pscale` a `tint`, které Merge doplnil
-  terénu od bodů instancí, se nezapisují. Renderer by podle nich terén
-  začernil.
-- **Python**: `geo.prototypes` (seznam `pg.Geometry`), `geo.instance_count`,
-  `geo.add_prototype(g)` (vrací číslo pro `instance`),
-  `geo.clear_prototypes()` a `geo.unpack()` ([python.md](python.md)).
+- **OBJ and PLY** (`prototype cook`, `geo.save`, Export Geometry
+  in the editor) receive instances as copies, the same as from Unpack. Watch
+  the size: the grass from the meadow example unpacked is 17.7 million points
+  and 7.8 million polygons, whereas as instances it is only 122,577 points.
+- **USD** (`.usda`) receives a **PointInstancer** `instances` next to the mesh
+  of the rest of the geometry. Under it is a scope `Prototypes`, containing each
+  prototype (`proto_0`, `proto_1`…) as geometry, including nested instances.
+  The instancer gets the `prototypes` relationship and the arrays
+  `protoIndices`, `positions`, `orientations` (quath), `scales`,
+  `primvars:tint` and `ids` (from `id`), and an `extent` over the placed
+  prototypes. In a shot (`prototype sim
+  --export shot.usda`) the prototypes are in the stage once. What changes,
+  i.e. the orientation in the wind, goes into a layer per frame (value clips,
+  like other geometry). The USD library (pxr) places instances where the
+  copies from Unpack are, with a deviation of up to 0.23 mm, because
+  `orientations` are in half precision (test `tests/python/test_instances.py`).
+- Zero normals, `orient`, `pscale` and `tint` that Merge added to the terrain
+  from the instance points are not written. The renderer would turn the
+  terrain black because of them.
+- **Python**: `geo.prototypes` (a list of `pg.Geometry`), `geo.instance_count`,
+  `geo.add_prototype(g)` (returns the number for `instance`),
+  `geo.clear_prototypes()` and `geo.unpack()` ([python.md](python.md)).
 
-## 9. Výkon
+## 9. Performance
 
-Na tomto stroji (release, všechna vlákna):
+On this machine (release, all threads):
 
-| Co | Čas |
+| What | Time |
 |---|---|
-| celá louka, první snímek (terén, 122 577 trsů, 13 variant stromů a keřů, předohnutí 312 tvarů pro vítr) | 453 ms |
-| další snímek ve větru (jen Plant Wind `wind`, `sway` a Merge) | 57 ms |
-| Grass: rozházet 192 000 kandidátů, prořídit, 8 trsů | 35 ms |
-| Unpack trávy na 17,7 milionu bodů | 2,6 s |
+| the whole meadow, first frame (terrain, 122,577 clumps, 13 tree and shrub variants, pre-bending 312 shapes for wind) | 453 ms |
+| next frame in the wind (only Plant Wind `wind`, `sway` and Merge) | 57 ms |
+| Grass: scatter 192,000 candidates, thin out, 8 clumps | 35 ms |
+| Unpack the grass to 17.7 million points | 2.6 s |
 
-Render snímku 1600 × 900 přes softwarový OpenGL (llvmpipe, bez grafické
-karty) trvá i s vařením sítě 11 s. Viewport musí poprvé nahrát 333
-rostlin (21 vypěstovaných a jejich tvary ohnuté větrem), každou ve čtyřech
-úrovních detailu, s obrázky listů a trávy (alfa výřez a mipmapy na
-procesoru). Další snímky posílají jen nová umístění. Na grafické kartě je
-to zlomek.
+Rendering a 1600 × 900 frame through software OpenGL (llvmpipe, without a
+graphics card) takes 11 s including cooking the network. The viewport must
+first upload 333 plants (21 grown ones and their wind-bent shapes), each in
+four levels of detail, with leaf and grass images (alpha cutout and mipmaps on
+the CPU). Subsequent frames send only the new placements. On a graphics card
+it is a fraction of that.
 
-**Úrovně detailu (LOD).** Viewport kreslí každou kopii rostliny podle
-toho, jak velká se jeví: poloměr krabice prototypu krát `pscale` děleno
-vzdáleností od oka.
+**Levels of detail (LOD).** The viewport draws each copy of a plant according
+to how large it appears: the radius of the prototype's box times `pscale`
+divided by the distance from the eye.
 
-| Jeví se | Kreslí se |
+| Appears | Drawn as |
 |---|---|
-| nad 0,04 | celá |
-| 0,012–0,04 | třetina listů a stébel (0,35) |
-| 0,005–0,012 | osmina (0,12), bez větviček |
-| 0,0015–0,005 | billboard |
-| pod 0,0015 | vůbec |
+| above 0.04 | complete |
+| 0.012–0.04 | a third of the leaves and blades (0.35) |
+| 0.005–0.012 | an eighth (0.12), without twigs |
+| 0.0015–0.005 | billboard |
+| below 0.0015 | not at all |
 
-Kolem každé hranice (±20 %) je kopie v obou úrovních najednou. Každá
-nakreslí jen část pixelů podle ditheringu v obraze, dohromady všechny.
-Rostlina tak z jedné úrovně do druhé přechází plynule, nepřeskočí.
-V dálce stejně tak mizí.
+Around each boundary (±20 %) a copy is in both levels at once. Each draws only
+part of the pixels according to screen-space dithering, together all of them.
+A plant thus transitions smoothly from one level to the next, without popping.
+It fades out in the distance the same way.
 
-Řidší rostlinu dělá `plantDetail` (`src/pg/core/Lod.h`), jak to dělá
-SpeedTree. Rovnoměrně vybere listy a stébla (plochy s `translucency` nad
-0; stéblo jsou všechny plochy jednoho `blade`). Každý ponechaný list
-zvětší 1/√podíl kolem jeho paty a každé stéblo rozšíří 1/podíl, takže
-listí pokryje stejnou plochu jako předtím (strom: 2133 listů 11,98 m²,
-746 listů 12,02 m²). Pod polovinou zmizí větvičky (`level` 2 a víc).
+A sparser plant is made by `plantDetail` (`src/pg/core/Lod.h`), the way
+SpeedTree does it. It evenly selects leaves and blades (faces with
+`translucency` above 0; a blade is all the faces of one `blade`). Each kept
+leaf is enlarged by 1/√fraction about its base and each blade widened by
+1/fraction, so the foliage covers the same area as before (tree: 2133 leaves
+11.98 m², 746 leaves 12.02 m²). Below one half, the twigs (`level` 2 and up)
+disappear.
 
-**Billboardy.** Poslední úroveň je karta otočená k oku kolem svislé osy.
-Ukazuje obrázek rostliny z té strany, ze které ji oko vidí: osm pohledů
-kolem dokola, 128 × 128 texelů každý. Viewport si je vyfotí sám, když
-prototyp poprvé dostane. Obrázek není barva, ale G-buffer viewportu:
-normála, barva, průsvitnost. Billboard se tedy osvětlí jako geometrie,
-normály se otočí s kopií a barva se tónuje jejím `tint`. Stín vrhá osmina
-rostliny, ne karta.
+**Billboards.** The last level is a card turned towards the eye about the
+vertical axis. It shows an image of the plant from the side the eye sees it
+from: eight views all around, 128 × 128 texels each. The viewport captures them
+itself when it first receives the prototype. The image is not a color but the
+viewport's G-buffer: normal, color, translucency. The billboard is therefore lit
+like geometry, the normals rotate with the copy and the color is tinted by its
+`tint`. The shadow is cast by the eighth-detail plant, not the card.
 
-Kopie se mezi úrovně rozdělí znovu, když se oko posune o 10 cm. Louka
-z 50 m od okraje: 22,1 milionu trojúhelníků v plné podobě, nakreslí se
-11,1 milionu (50 %); 86 kopií celých, 63 790 třetinových, 111 933
-osminových a 6 762 billboardů (prolínající se počítány dvakrát).
+The copies are redistributed among the levels when the eye moves by 10 cm. The
+meadow viewed from 50 m from its edge: 22.1 million triangles at full detail,
+11.1 million drawn (50 %); 86 complete copies, 63,790 third-detail, 111,933
+eighth-detail and 6,762 billboards (blending copies counted twice).
 
-![Louka ve viewportu: nahoře úrovně detailu, jak jsou; dole pro srovnání všechny rostliny jako billboardy](img/viewport-billboards.jpg)
+![The meadow in the viewport: top, levels of detail as they are; bottom, for comparison, all plants as billboards](img/viewport-billboards.jpg)
 
-Cycles a path tracer kreslí vše v plné podobě, instance je nestojí paměť.
+Cycles and the path tracer draw everything at full detail; instances cost them
+no memory.
 
-## 10. Co zatím chybí
+## 10. What is still missing
 
-- Interakce s tělesy simulace přímo (teď stopy jako body s časem).
-- Ekosystém: byliny jako další patro, slunce z určitého směru (By Height
-  počítá se zataženou oblohou), sukcese po požáru nebo vichřici.
+- Interaction with simulation bodies directly (currently footprints as points
+  with a time).
+- Ecosystem: herbs as another layer, sun from a specific direction (By Height
+  computes with an overcast sky), succession after fire or windthrow.

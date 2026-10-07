@@ -1,251 +1,251 @@
-# Barvy: AgX, ACES a konfigurace OpenColorIO
+# Color: AgX, ACES and OpenColorIO configs
 
-Renderery počítají světlo, ne obraz: lineární hodnoty v primárních barvách
-Rec. 709 (sRGB), kde 1 je bílá a slunce i plamen jdou daleko nad ni. Na
-obrazovku je převádí **pohled** (View) uzlu Output. Kromě AgX z Blenderu
-umí prototype oba výstupní převody **ACES** tak, jak je ukazuje OpenColorIO
-v konfiguracích ACES, a EXR zapisuje i čte v barevných prostorech ACES.
-Pohled může dát i **konfigurace OpenColorIO** (`config.ocio`) studia,
-ACES nebo Blenderu (§3). Vše bez knihovny OpenColorIO, ověřeno proti ní
-hodnotu po hodnotě (§5).
+Renderers compute light, not a picture: linear values in Rec. 709 (sRGB)
+primaries, where 1 is white and the sun and flames go far above it. The
+Output node's **view** (View) converts them for the screen. Besides AgX from Blender,
+prototype supports both **ACES** output transforms as OpenColorIO shows them
+in the ACES configs, and it writes and reads EXR in ACES color spaces.
+The view can also come from a studio's **OpenColorIO config** (`config.ocio`),
+an ACES one or Blender's (§3). All of this without the OpenColorIO library, verified against it
+value by value (§5).
 
-![Syté barvy a bílá, každý řádek doprava jasnější, od 5 clon pod bílou po 7 nad ní, ve čtyřech pohledech. AgX jde do bílé plynule, ACES 1.0 stáčí modrou do fialové a oranžovou do žluté, ACES 2.0 odstín drží, Standard ořízne vše nad bílou](img/color-ramps.jpg)
+![Saturated colors and white, each row brighter to the right, from 5 stops below white to 7 above it, in four views. AgX goes to white smoothly, ACES 1.0 skews blue towards purple and orange towards yellow, ACES 2.0 holds the hue, Standard clips everything above white](img/color-ramps.jpg)
 
-![Stejný snímek táboráku (Cycles, světlo z jednoho EXR) v pohledech AgX Punchy, ACES 1.0, ACES 2.0 a Standard](img/color-views.jpg)
+![The same campfire frame (Cycles, lighting from a single EXR) in the AgX Punchy, ACES 1.0, ACES 2.0 and Standard views](img/color-views.jpg)
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
 ./build/prototype sim campfire out/fire.png --renderer cycles --set output.render_view=aces2
 ./build/prototype sim campfire out/fire.exr --renderer cycles --set output.render_exr_space=acescg
 ```
 
-V editoru: uzel **Output**, sekce **Render**, **View** a **EXR Color Space**.
+In the editor: the **Output** node, **Render** section, **View** and **EXR Color Space**.
 
-## 2. Pohledy
+## 2. Views
 
-| View | Co dělá |
+| View | What it does |
 |---|---|
-| `agx_punchy` (výchozí) | AgX jako v Blenderu s lookem Punchy: víc kontrastu a barev |
-| `agx` | AgX jako v Blenderu: jasné barvy přecházejí do bílé jako na filmu |
-| `aces` (ACES Fit) | křivka viewportu (Narkowiczova aproximace ACES), každý kanál zvlášť |
-| `aces1` (ACES 1.0) | „ACES 1.0 - SDR Video“ z konfigurací OpenColorIO pro ACES 1.3 |
-| `aces2` (ACES 2.0) | „ACES 2.0 - SDR 100 nits (Rec.709)“ z konfigurací pro ACES 2.0 a 2.1 |
-| `standard` | světlo, jak je, v sRGB; co je nad bílou, se ořízne |
-| `ocio` (OpenColorIO) | pohled z konfigurace OpenColorIO podle parametrů OCIO (§3) |
+| `agx_punchy` (default) | AgX as in Blender with the Punchy look: more contrast and color |
+| `agx` | AgX as in Blender: bright colors desaturate to white as on film |
+| `aces` (ACES Fit) | the viewport curve (Narkowicz's ACES approximation), each channel separately |
+| `aces1` (ACES 1.0) | "ACES 1.0 - SDR Video" from the OpenColorIO configs for ACES 1.3 |
+| `aces2` (ACES 2.0) | "ACES 2.0 - SDR 100 nits (Rec.709)" from the configs for ACES 2.0 and 2.1 |
+| `standard` | light as it is, in sRGB; anything above white is clipped |
+| `ocio` (OpenColorIO) | a view from an OpenColorIO config according to the OCIO parameters (§3) |
 
-Všechny jdou na obrazovku sRGB a platí pro oba renderery: path tracer
-i Cycles, záložku Render, obrázky, sekvence i videa. Expozice (Output ›
-Image › Exposure) se použije před pohledem.
+All of them go to an sRGB screen and apply to both renderers: the path tracer
+and Cycles, the Render tab, images, sequences and videos. Exposure (Output ›
+Image › Exposure) is applied before the view.
 
-- **ACES 1.0** je Reference Rendering Transform a výstup pro video, jak je
-  má CTL Akademie: v RRT záře ve stínech sytých barev, modifikátor
-  červené (jasně červená nezrůžoví), filmová křivka v AP1. Pak výstup:
-  křivka pro kino (48 nitů) roztažená na 100 nitů, gama pro šero
-  obývacího pokoje a o něco méně sytosti. Jasné syté barvy se stáčejí
-  (oranžový plamen do žluté), to je známá vlastnost ACES 1.
-- **ACES 2.0** tónuje světlost modelu vnímání barev (Hellwig 2022, jak ho
-  ACES ladí), stlačí s ní sytost a barvy mimo Rec. 709 přivede dovnitř po
-  přímkách k ohnisku. Odstín drží: plamen zůstane oranžový, jen jasnější
-  a bělejší.
+- **ACES 1.0** is the Reference Rendering Transform and the video output as the
+  Academy's CTL defines them: in the RRT, the glow in the shadows of saturated colors, the red
+  modifier (bright red does not turn pink), a filmic curve in AP1. Then the output:
+  the cinema curve (48 nits) stretched to 100 nits, a gamma for a dim
+  living room and slightly less saturation. Bright saturated colors skew
+  (orange flame towards yellow); that is a known property of ACES 1.
+- **ACES 2.0** tone-maps the lightness of a color appearance model (Hellwig 2022, as
+  ACES tunes it), compresses saturation along with it, and brings colors outside Rec. 709 inside along
+  lines towards a focal point. It holds the hue: the flame stays orange, only brighter
+  and whiter.
 
-**Plate** (záznam kamery pod CG) se do světla vrací týmž pohledem
-pozpátku ([plate.md](plate.md)). U ACES jsou zpětné převody ty, které má
-OpenColorIO. ACES 1.0 navíc dopočítá světlo Newtonovou metodou: zpětný
-modifikátor červené je jen přibližný, a sytá červená by se jinak vrátila
-o dva stupně z 255 jinak (i v OpenColorIO).
+A **plate** (camera footage under the CG) is returned to light by the same view
+in reverse ([plate.md](plate.md)). For ACES, the inverse transforms are those of
+OpenColorIO. ACES 1.0 additionally refines the light with Newton's method: the inverse
+red modifier is only approximate, and saturated red would otherwise come back
+two steps out of 255 off (in OpenColorIO too).
 
-## 3. Konfigurace OpenColorIO
+## 3. OpenColorIO configs
 
-Pohled **OpenColorIO** ukáže světlo pohledem z libovolné konfigurace
-`config.ocio`: studiové, některé z konfigurací ACES
+The **OpenColorIO** view shows light through a view from any
+`config.ocio`: a studio one, one of the ACES configs
 ([OpenColorIO-Config-ACES](https://github.com/AcademySoftwareFoundation/OpenColorIO-Config-ACES))
-nebo z Blenderu (`datafiles/colormanagement/config.ocio`, pohledy AgX,
-Filmic, Khronos PBR Neutral). Knihovnu OpenColorIO to nepotřebuje:
-prototype konfiguraci přečte sám (je v YAML), najde v ní displej, pohled,
-looky a barevné prostory a převody spočítá tak, jak je počítá OpenColorIO
-na procesoru.
+or Blender's (`datafiles/colormanagement/config.ocio`, the AgX,
+Filmic, Khronos PBR Neutral views). It does not need the OpenColorIO library:
+prototype reads the config itself (it is YAML), finds the display, view,
+looks and color spaces in it, and computes the transforms the way OpenColorIO computes them
+on the CPU.
 
 ```bash
 ./build/prototype sim campfire out/fire.png --renderer cycles \
     --set output.render_view=ocio \
-    --set output.render_ocio_config=/cesta/ke/config.ocio \
+    --set output.render_ocio_config=/path/to/config.ocio \
     --set "output.render_ocio_view=ACES 2.0 - SDR 100 nits (Rec.709)"
 ```
 
-V editoru: uzel **Output**, sekce **Render**, View **OpenColorIO**
-a parametry OCIO pod ním:
+In the editor: the **Output** node, **Render** section, View **OpenColorIO**
+and the OCIO parameters below it:
 
-| Parametr | Co říká |
+| Parameter | What it says |
 |---|---|
-| `render_ocio_config` (OCIO Config) | soubor konfigurace; relativní cesta se čte od složky sítě |
-| `render_ocio_display` (OCIO Display) | displej, třeba `sRGB - Display`; prázdný = první z konfigurace (výchozí) |
-| `render_ocio_view` (OCIO View) | pohled displeje, třeba `AgX`; prázdný = první pohled displeje |
-| `render_ocio_looks` (OCIO Looks) | looky místo vlastních looků pohledu, jak je dává Blender a viewing pipeline OpenColorIO: `A, B`, `-B` pozpátku |
-| `render_ocio_space` (OCIO Light Space) | ve kterém barevném prostoru konfigurace je světlo renderu; prázdný = lineární Rec. 709 konfigurace (`Linear Rec.709 (sRGB)`, `lin_rec709`…), jinak přes ACES2065-1 (role `aces_interchange`), jinak role `scene_linear` |
+| `render_ocio_config` (OCIO Config) | the config file; a relative path is resolved from the network's folder |
+| `render_ocio_display` (OCIO Display) | the display, e.g. `sRGB - Display`; empty = the first one in the config (default) |
+| `render_ocio_view` (OCIO View) | the display's view, e.g. `AgX`; empty = the display's first view |
+| `render_ocio_looks` (OCIO Looks) | looks used instead of the view's own looks, as Blender and the OpenColorIO viewing pipeline provide them: `A, B`, `-B` in reverse |
+| `render_ocio_space` (OCIO Light Space) | which of the config's color spaces the render's light is in; empty = the config's linear Rec. 709 (`Linear Rec.709 (sRGB)`, `lin_rec709`…), otherwise via ACES2065-1 (the `aces_interchange` role), otherwise the `scene_linear` role |
 
-Názvy displejů, pohledů a prostorů nezáleží na velikosti písmen, prostor
-lze zadat i aliasem nebo rolí. Co v konfiguraci není nebo se přečíst
-nedá, Output ohlásí varováním (třeba `OpenColorIO: no view Nope of sRGB -
-Display (…)`) a render ukáže pohled AgX Punchy. Konfigurace se čte jednou
-pro každý soubor, jak právě je: změna souboru se projeví při dalším
-cooku. Tabulky LUT hledá podle `search_path` od složky konfigurace,
-proměnné v cestách (`${LUT_DIR}`) bere z jejího oddílu `environment`.
+Display, view and space names are case-insensitive; a space
+can also be given by an alias or a role. Anything missing from the config or that cannot be
+read is reported by the Output as a warning (e.g. `OpenColorIO: no view Nope of sRGB -
+Display (…)`) and the render shows the AgX Punchy view. The config is read once
+per file, as it currently is: a change to the file takes effect at the next
+cook. LUTs are looked up along `search_path` from the config's folder;
+variables in paths (`${LUT_DIR}`) are taken from its `environment` section.
 
-**Co přečte.** Konfigurace verze 1 i 2. Barevné prostory scény
-i displejů, role, aliasy, `isdata`. Displeje a pohledy, také sdílené
+**What it reads.** Version 1 and 2 configs. Scene and display
+color spaces, roles, aliases, `isdata`. Displays and views, including shared ones
 (`shared_views`, `<USE_DISPLAY_NAME>`), `active_displays`, `active_views`
-a `inactive_colorspaces`. View transformy ze scény na displej i z displeje
-na displej, výchozí view transform jako most mezi nimi. Looky s process
-space. Transformace:
+and `inactive_colorspaces`. View transforms from scene to display and from display
+to display, with the default view transform as the bridge between them. Looks with a process
+space. Transforms:
 
-- matice, exponenty (všechny styly), exponent s lineární částí (sRGB),
-  logaritmy včetně `LogAffineTransform` a `LogCameraTransform` (ARRI,
-  Sony, RED, Panasonic, DJI, Blackmagic…), CDL (ASC i bez ořezu), Range,
+- matrices, exponents (all styles), exponent with a linear segment (sRGB),
+  logarithms including `LogAffineTransform` and `LogCameraTransform` (ARRI,
+  Sony, RED, Panasonic, DJI, Blackmagic…), CDL (ASC and without clamping), Range,
   Allocation (`uniform`, `lg2`);
-- tabulky v souborech `.spi1d`, `.spi3d`, `.spimtx` a `.cube` (1D i 3D,
-  Iridas i Resolve) s lineární nebo tetraedrickou interpolací;
+- LUTs in `.spi1d`, `.spi3d`, `.spimtx` and `.cube` files (1D and 3D,
+  Iridas and Resolve) with linear or tetrahedral interpolation;
 - `ColorSpaceTransform`, `LookTransform`, `DisplayViewTransform`,
   `GroupTransform`;
-- vestavěné transformace konfigurací ACES: výstupy pro SDR obrazovky
-  (ACES 1.0 a 1.1 pro video i kino, s omezením gamutu i se simulovanou
-  bílou D60 a D65; ACES 2.0 při 100 nitech včetně variant D60), displeje
-  sRGB, Rec. 1886, Gamma 2.2 a 2.6, Display P3, P3-DCI, P3-D60, P3-D65
-  a Rec. 2020 (i „MIRROR NEGS“), ACEScc, ACEScct, ACEScg, matice AP0 a AP1
-  do XYZ a referenční kompresi gamutu ACES 1.3.
+- the built-in transforms of the ACES configs: outputs for SDR displays
+  (ACES 1.0 and 1.1 for video and cinema, with gamut limiting and with simulated
+  D60 and D65 white; ACES 2.0 at 100 nits including the D60 variants), the
+  sRGB, Rec. 1886, Gamma 2.2 and 2.6, Display P3, P3-DCI, P3-D60, P3-D65
+  and Rec. 2020 displays (including "MIRROR NEGS"), ACEScc, ACEScct, ACEScg, the AP0 and AP1
+  to XYZ matrices and the ACES 1.3 reference gamut compression.
 
-**Zpátky** (plate, [plate.md](plate.md)) jde každý krok tím, co pro ten
-směr konfigurace má: `to_scene_reference` prostoru (Blender tak má AgX:
-jinou tabulkou tam a jinou zpátky), `inverse_transform` looku, jinak
-inverzí kroku. 1D tabulky se obracejí jako v OpenColorIO (obraty se
-zarovnají, ploché konce vynechají). 3D tabulky jako výchozí procesory
-OpenColorIO: přesná inverze (čtyřstěn buňky, který barvu obsahuje)
-spočítaná v 48 × 48 × 48 bodech a mezi nimi lineárně. Plate se nakonec
-dopočítá Newtonovou metodou proti pohledu, takže se ukáže zase sám sebou:
-u ACES a u AgX a Filmic z Blenderu do 0,1 stupně z 255.
+**Inverse** (plate, [plate.md](plate.md)): each step goes through whatever the config has for that
+direction: the space's `to_scene_reference` (this is how Blender has AgX:
+one LUT forward and a different one back), the look's `inverse_transform`, otherwise
+the inverse of the step. 1D LUTs are inverted as in OpenColorIO (reversals are
+flattened, flat ends skipped). 3D LUTs as in OpenColorIO's default processors:
+an exact inverse (the cell tetrahedron that contains the color)
+computed at 48 × 48 × 48 points and linear in between. Finally the plate is
+refined with Newton's method against the view, so it displays as itself again:
+for ACES and for Blender's AgX and Filmic within 0.1 step out of 255.
 
-## 4. EXR v prostorech ACES
+## 4. EXR in ACES spaces
 
-**EXR Color Space** (Output › Render) říká, v jakém prostoru je světlo
-v EXR, ať je z Cycles, z path traceru nebo z viewportu:
+**EXR Color Space** (Output › Render) says which space the light
+in the EXR is in, whether it comes from Cycles, the path tracer or the viewport:
 
-| `render_exr_space` | Prostor | Kdy |
+| `render_exr_space` | Space | When |
 |---|---|---|
-| `rec709` (výchozí) | lineární Rec. 709 (sRGB), D65 | jak renderery počítají, Nuke a Blender ve výchozím nastavení |
-| `acescg` | ACEScg: primárky AP1, bílá ACES (asi D60) | kompozice v pipeline ACES |
-| `aces2065_1` | ACES2065-1: primárky AP0, obsáhnou každou barvu | předávání materiálu v ACES |
+| `rec709` (default) | linear Rec. 709 (sRGB), D65 | how the renderers compute, Nuke and Blender by default |
+| `acescg` | ACEScg: AP1 primaries, ACES white (about D60) | compositing in an ACES pipeline |
+| `aces2065_1` | ACES2065-1: AP0 primaries, encompass every color | delivering material in ACES |
 
-Převádí se Bradfordovou adaptací bílé, stejnými maticemi jako
-v OpenColorIO. Do jiného prostoru jde světlo (`R`, `G`, `B`) a barva
-povrchů (`albedo.*`). Hloubka, normály, vektory pohybu a masky zůstávají,
-jak jsou, a `catcher.*` je dál násobitel plate po kanálech. Soubor má
-vždy atribut **chromaticities** (primárky a bílá), takže ho Nuke, Resolve
-nebo OpenImageIO poznají.
+The conversion uses Bradford white adaptation, with the same matrices as
+OpenColorIO. Light (`R`, `G`, `B`) and surface color
+(`albedo.*`) go to the other space. Depth, normals, motion vectors and masks stay
+as they are, and `catcher.*` remains a per-channel plate multiplier. The file
+always has the **chromaticities** attribute (primaries and white), so Nuke, Resolve
+or OpenImageIO recognize it.
 
-**Čtení.** EXR s chromaticities jiného prostoru než Rec. 709 (třeba
-ACEScg z jiného programu) prototype převede do Rec. 709: plate ve viewportu
-i v obou rendererech, obraz načtený z Pythonu (`pg.read_picture`)
-a oblohu z obrázku v Cycles (tu načítá Cycles sám, převod je v jejím
-shaderu). Soubor bez atributu je Rec. 709, jak to má OpenEXR.
+**Reading.** prototype converts an EXR with chromaticities of a space other than Rec. 709 (e.g.
+ACEScg from another program) to Rec. 709: the plate in the viewport
+and in both renderers, a picture loaded from Python (`pg.read_picture`)
+and a sky from an image in Cycles (Cycles loads that itself; the conversion is in its
+shader). A file without the attribute is Rec. 709, as OpenEXR defines it.
 
-## 5. Ověření
+## 5. Verification
 
-Referenci dalo **OpenColorIO 2.6** (`pip install opencolorio`) s vlastními
-vestavěnými konfiguracemi `cg-config-v2.2.0_aces-v1.3_ocio-v2.4` (ACES 1.0)
-a `cg-config-v5.0.0_aces-v2.1_ocio-v2.6` (ACES 2.0), převod z „Linear
-Rec.709 (sRGB)“ na „sRGB - Display“. Skript `tests/data/aces/make_aces.py`
-zapsal `aces.txt`: šedé od hlubokého stínu po tisícinásobek bílé, primárky
-a barvy mezi nimi, pleť, obloha, listí, oheň, každé v 20 jasech, a 400
-náhodných barev. Navíc 1531 barev obrazu zpátky a převody do ACEScg
-a ACES2065-1.
+The reference came from **OpenColorIO 2.6** (`pip install opencolorio`) with its own
+built-in configs `cg-config-v2.2.0_aces-v1.3_ocio-v2.4` (ACES 1.0)
+and `cg-config-v5.0.0_aces-v2.1_ocio-v2.6` (ACES 2.0), converting from "Linear
+Rec.709 (sRGB)" to "sRGB - Display". The script `tests/data/aces/make_aces.py`
+wrote `aces.txt`: grays from deep shadow up to a thousand times white, primaries
+and colors between them, skin, sky, foliage, fire, each at 20 brightness levels, and 400
+random colors. In addition, 1531 picture colors back, and conversions to ACEScg
+and ACES2065-1.
 
-| | odchylka od OpenColorIO |
+| | deviation from OpenColorIO |
 |---|---|
-| ACES 1.0, světlo → obraz (780 hodnot) | nejvýš 2,1 · 10⁻⁵ na škále 0–1 (setina stupně z 255) |
-| ACES 2.0, světlo → obraz (780 hodnot) | nejvýš 8,8 · 10⁻⁶ |
-| ACES 2.0, obraz → světlo | nejvýš 5 · 10⁻⁴ poměrně |
-| ACEScg, ACES2065-1 | nejvýš 2 · 10⁻⁶ poměrně |
-| obraz → světlo → obraz, oba ACES | nejvýš 1,8 · 10⁻⁴ (OpenColorIO u ACES 1.0: 8,6 · 10⁻³) |
+| ACES 1.0, light → picture (780 values) | at most 2.1 · 10⁻⁵ on a 0–1 scale (a hundredth of a step out of 255) |
+| ACES 2.0, light → picture (780 values) | at most 8.8 · 10⁻⁶ |
+| ACES 2.0, picture → light | at most 5 · 10⁻⁴ relative |
+| ACEScg, ACES2065-1 | at most 2 · 10⁻⁶ relative |
+| picture → light → picture, both ACES | at most 1.8 · 10⁻⁴ (OpenColorIO for ACES 1.0: 8.6 · 10⁻³) |
 
-Jeden pixel stojí asi 0,4 µs (ACES 1.0) a 0,5 µs (ACES 2.0). Snímek
-1280 × 720 je na čtyřech jádrech hotový za 0,13 s. Tabulky ACES 2.0
-(hranice gamutu po stupních odstínu) se spočítají při prvním použití
-za 7 ms.
+One pixel costs about 0.4 µs (ACES 1.0) and 0.5 µs (ACES 2.0). A
+1280 × 720 frame is done in 0.13 s on four cores. The ACES 2.0 tables
+(gamut boundaries per degree of hue) are computed on first use
+in 7 ms.
 
-Testy — `tests/test_aces.cpp` (5):
-- oba pohledy a převody prostorů proti hodnotám OpenColorIO;
-- obraz zpátky na světlo, které ho ukáže, do čtvrt stupně z 255;
-- pohledy Outputu jsou tytéž převody, expozice se použije předem;
-- EXR v ACEScg má chromaticities AP1 a přečte se zpátky v Rec. 709.
+Tests — `tests/test_aces.cpp` (5):
+- both views and the space conversions against OpenColorIO values;
+- a picture back to the light that displays it, within a quarter step out of 255;
+- the Output's views are the same transforms, exposure is applied beforehand;
+- an EXR in ACEScg has AP1 chromaticities and reads back in Rec. 709.
 
-Obloha z obrázku v ACEScg osvětlí podlahu v Cycles stejně jako táž obloha
-v Rec. 709, do 2 % v každém kanálu
+A sky from an image in ACEScg lights the floor in Cycles the same as the same sky
+in Rec. 709, within 2 % in each channel
 (`render_cycles_lights_the_scene_with_a_sky_picture`).
 
-Test `render_unshown_gives_back_the_light_a_picture_shows` vrací všech
-256 šedí a 4000 barev fotografie na svůj stupeň v každém ze šesti pohledů.
+The test `render_unshown_gives_back_the_light_a_picture_shows` returns all
+256 grays and 4000 colors of a photograph to their own step in each of the six views.
 
-**Konfigurace OpenColorIO.** Skript `tests/data/ocio/make_ocio.py` zapíše
-dvě testovací konfigurace (`config.ocio` verze 2 ve tvaru konfigurací ACES
-a Blenderu, `config_v1.ocio` verze 1) s tabulkami ve všech čtyřech
-formátech a hodnoty, které z nich dává OpenColorIO 2.6: pohledy tam
-i zpět s looky přes jeho viewing pipeline a převody mezi všemi prostory.
+**OpenColorIO configs.** The script `tests/data/ocio/make_ocio.py` writes
+two test configs (a version 2 `config.ocio` shaped like the ACES and
+Blender configs, and a version 1 `config_v1.ocio`) with LUTs in all four
+formats, and the values OpenColorIO 2.6 gives from them: views forward
+and back with looks through its viewing pipeline, and conversions between all spaces.
 
-| | hodnot | odchylka od OpenColorIO |
+| | values | deviation from OpenColorIO |
 |---|---|---|
-| pohledy, světlo → obraz | 322 | nejvýš 8,8 · 10⁻⁶ |
-| pohledy, obraz → světlo | 161 | nejvýš 5,9 · 10⁻⁶ |
-| barevné prostory tam i zpět | 532 | nejvýš 4,6 · 10⁻⁷ |
-| zpátky přes 3D tabulku (proti výchozímu procesoru) | 14 | nejvýš 4,8 · 10⁻⁷ |
+| views, light → picture | 322 | at most 8.8 · 10⁻⁶ |
+| views, picture → light | 161 | at most 5.9 · 10⁻⁶ |
+| color spaces forward and back | 532 | at most 4.6 · 10⁻⁷ |
+| back through a 3D LUT (against the default processor) | 14 | at most 4.8 · 10⁻⁷ |
 
-Proti pěti vestavěným konfiguracím ACES z OpenColorIO 2.6 (CG i Studio,
-ACES 1.3 i 2.1) a konfiguraci Blenderu 4.5 (mimo repozitář): 5300 hodnot
-pohledů, převodů zpět a prostorů. Všechny pohledy pro SDR obrazovky a
-všechny prostory, které umí, sedí do 10⁻⁴. Liší se jen zpětný převod 3D
-tabulky Khronos PBR Neutral od přesné inverze OpenColorIO (až 2,7 %). Tam
-se ale přesná inverze OpenColorIO liší i od jeho vlastního výchozího
-procesoru. HDR displeje a výstupy a vestavěné převody kamer Canon, Apple
-a ADX se ohlásí jménem.
+Against the five built-in ACES configs of OpenColorIO 2.6 (CG and Studio,
+ACES 1.3 and 2.1) and the Blender 4.5 config (outside the repository): 5300 values
+of views, inverse transforms and spaces. All views for SDR displays and
+all spaces it supports match within 10⁻⁴. The only difference is the inverse of the Khronos PBR Neutral 3D
+LUT versus OpenColorIO's exact inverse (up to 2.7 %). There, however,
+OpenColorIO's exact inverse also differs from its own default
+processor. HDR displays and outputs and the built-in Canon, Apple
+and ADX camera transforms are reported by name.
 
-Pohled AgX z Blenderu se načte za 0,11 s (přečtení tabulek), Khronos PBR
-Neutral za 0,53 s (inverze 3D tabulky). Snímek 1920 × 1080 jde AgX na
-čtyřech jádrech za 0,07 s, pixel plate zpátky stojí 2 až 3,5 µs.
+Blender's AgX view loads in 0.11 s (reading the LUTs), Khronos PBR
+Neutral in 0.53 s (inverting the 3D LUT). A 1920 × 1080 frame goes through AgX on
+four cores in 0.07 s; a plate pixel back costs 2 to 3.5 µs.
 
-Testy — `tests/test_ocio.cpp` (10): YAML, jak ho konfigurace píšou; co
-konfigurace jmenuje; pohledy, převody zpět a prostory proti OpenColorIO;
-pohled pro render (výchozí displej a pohled, plate tam a zpátky do půl
-stupně z 255); světlo přes ACES2065-1, když konfigurace nemá lineární Rec.
-709; co neumí, řekne jménem; renderery a uzel Output s konfigurací.
+Tests — `tests/test_ocio.cpp` (10): YAML as configs write it; what
+a config names; views, inverse transforms and spaces against OpenColorIO;
+the view for rendering (default display and view, plate forward and back within half
+a step out of 255); light via ACES2065-1 when the config has no linear Rec.
+709; what it does not support, it reports by name; the renderers and the Output node with a config.
 
-## 6. V kódu
+## 6. In the code
 
-| Soubor | Co dělá |
+| File | What it does |
 |---|---|
-| `src/pg/render/Aces.h` | ACES 1.0 a 2.0 tam i zpět, vestavěné výstupy ACES z OpenColorIO, kódování sRGB |
-| `src/pg/render/Ocio.h` | konfigurace OpenColorIO: prostory, displeje, pohledy, looky, transformace, tabulky |
-| `src/pg/io/Yaml.h` | YAML, jak ho konfigurace OpenColorIO píšou |
+| `src/pg/render/Aces.h` | ACES 1.0 and 2.0 forward and back, built-in ACES outputs from OpenColorIO, sRGB encoding |
+| `src/pg/render/Ocio.h` | OpenColorIO configs: spaces, displays, views, looks, transforms, LUTs |
+| `src/pg/io/Yaml.h` | YAML as OpenColorIO configs write it |
 | `src/pg/core/ColorSpace.h` | ACEScg, ACES2065-1, chromaticities, Bradford |
-| `src/pg/render/PathTracer.cpp` | `shown`, `unshown`: pohled pro oba renderery |
-| `src/pg/render/Save.cpp`, `src/pg/gl/Volume.cpp` | EXR v prostoru z Outputu |
-| `src/pg/io/Exr.cpp`, `ExrRead.cpp`, `Picture.cpp` | atribut chromaticities, převod při čtení |
+| `src/pg/render/PathTracer.cpp` | `shown`, `unshown`: the view for both renderers |
+| `src/pg/render/Save.cpp`, `src/pg/gl/Volume.cpp` | EXR in the space from the Output |
+| `src/pg/io/Exr.cpp`, `ExrRead.cpp`, `Picture.cpp` | the chromaticities attribute, conversion on read |
 
-## 7. Omezení
+## 7. Limitations
 
-- **Konfigurace OpenColorIO** se zadává na Outputu, proměnná prostředí
-  `OCIO` se nečte, stejně jako jiné proměnné prostředí (cesty berou jen
-  hodnoty z oddílu `environment` konfigurace). Nejsou transformace
-  Grading (GradingPrimary, GradingTone, GradingRGBCurve), ExposureContrast
-  ani NamedTransform. Nejsou soubory `.clf`, `.ctf`, `.3dl`, `.csp`
-  a vestavěné převody kamer Canon, Apple a ADX. Pravidla souborů
-  a pohledů (`file_rules`, `viewing_rules`) se nepoužívají. Looky Blenderu
-  s grading transformacemi (AgX - Punchy…) proto ohlásí chybu, samotné
-  pohledy fungují.
-- **Obrazovka** je SDR. Pohledy ACES 1.0 a 2.0 jdou na sRGB. Přes
-  konfiguraci OpenColorIO i na Rec. 1886, Display P3 a další SDR displeje.
-  HDR (PQ, HLG) není.
-- **Pracovní prostor** je lineární Rec. 709. Renderery nepočítají v ACEScg,
-  barvy a textury se do něj nepřevádějí.
-- **Viewport** ukazuje křivku ACES Fit, ne pohled zvolený na Outputu.
-  Pohled Outputu je vidět v záložce Render a v obrázcích.
-- **Looky** (LMT, třeba Reference Gamut Compression z ACES 1.3) a LUT
-  (`.cube`) jdou jen přes konfiguraci OpenColorIO.
+- The **OpenColorIO config** is set on the Output; the `OCIO` environment variable
+  is not read, nor are other environment variables (paths take only
+  values from the config's `environment` section). There are no Grading
+  transforms (GradingPrimary, GradingTone, GradingRGBCurve), ExposureContrast
+  or NamedTransform. There are no `.clf`, `.ctf`, `.3dl`, `.csp` files
+  and no built-in Canon, Apple and ADX camera transforms. File and view
+  rules (`file_rules`, `viewing_rules`) are not used. Blender looks
+  with grading transforms (AgX - Punchy…) therefore report an error; the views
+  themselves work.
+- The **screen** is SDR. The ACES 1.0 and 2.0 views go to sRGB. Through
+  an OpenColorIO config also to Rec. 1886, Display P3 and other SDR displays.
+  No HDR (PQ, HLG).
+- The **working space** is linear Rec. 709. The renderers do not compute in ACEScg;
+  colors and textures are not converted to it.
+- The **viewport** shows the ACES Fit curve, not the view chosen on the Output.
+  The Output's view is visible in the Render tab and in images.
+- **Looks** (LMTs, e.g. Reference Gamut Compression from ACES 1.3) and LUTs
+  (`.cube`) work only through an OpenColorIO config.

@@ -1,111 +1,111 @@
 # Digital assets
 
-Asset je síť geometrických uzlů zabalená do jednoho uzlu. Má vlastní jméno,
-vlastní parametry a verzi a dá se použít v kterékoli síti jako kterýkoli
-jiný uzel. Odpovídá digital assetům (HDA) v Houdini.
+An asset is a network of geometry nodes packaged into a single node. It has its own name,
+its own parameters and a version, and it can be used in any network like any
+other node. It corresponds to digital assets (HDAs) in Houdini.
 
-Příklad: plot. Uvnitř je krabička jako sloupek, Copy to Points ji rozmístí
-na body cesty a Detail Wrangle natáhne mezi body břevna. Zvenku je to jeden
-uzel **Fence** se vstupem pro cestu a posuvníky Height, Post Width, Rails,
-Rail Size a Color. Když se změní definice plotu, změní se každý plot ve
-všech scénách.
+Example: a fence. Inside, a box serves as a post, Copy to Points distributes it
+onto the points of a path, and a Detail Wrangle stretches rails between the points. From the outside it is a single
+**Fence** node with an input for the path and Height, Post Width, Rails,
+Rail Size and Color sliders. When the fence definition changes, every fence in
+all scenes changes.
 
-![Scéna se dvěma assety: Fence podél čáry a Spiral Stairs, v dešti](img/assets-garden.png)
+![A scene with two assets: Fence along a line and Spiral Stairs, in the rain](img/assets-garden.png)
 
-Příklad **garden_assets** (File › Examples) ukazuje schodiště a plot
-v dešti. Oba uzly jsou assety, které program nosí s sebou.
+The **garden_assets** example (File › Examples) shows a staircase and a fence
+in the rain. Both nodes are assets that ship with the program.
 
-## 1. Jak asset vznikne
+## 1. How an asset is created
 
-1. Vyberte v síti geometrické uzly, ze kterých má být asset.
-2. Zvolte **Edit › Make Asset…**, nebo klikněte pravým tlačítkem na uzel
-   a zvolte **Make Asset…**.
-3. Zadejte popisek (*Label*, např. „Blue Lift“). Jméno typu (*Name*,
-   `blue_lift`) se z něj odvodí samo a dá se přepsat.
-4. Potvrďte **Make**.
+1. Select the geometry nodes in the network that should make up the asset.
+2. Choose **Edit › Make Asset…**, or right-click a node
+   and choose **Make Asset…**.
+3. Enter a label (*Label*, e.g. "Blue Lift"). The type name (*Name*,
+   `blue_lift`) is derived from it automatically and can be overwritten.
+4. Confirm with **Make**.
 
-Co se stane:
+What happens:
 
-- Vybrané uzly se přesunou do definice assetu. Na jejich místo přijde jeden
-  uzel nového typu a zůstanou na něm všechna propojení.
-- Každá geometrie, která do výběru vedla zvenku, se uvnitř stane uzlem
-  **Asset Input** (index 0, 1, …). Asset tak dostane odpovídající vstupy.
-- Asset vydává geometrii uzlu, ze kterého vede výstup ven. Když ven nevede
-  nic, vydává geometrii uzlu s display flagem, případně jediného uzlu,
-  který nekrmí žádný jiný. Tento uzel dostane uvnitř display flag.
-- Definice se uloží do `~/.local/share/prototype/assets/JMÉNO.pgasset`
-  (nebo do `$XDG_DATA_HOME/prototype/assets`) a přidá se do knihovny. Tab
-  menu ji hned nabízí v kategorii **Assets**.
+- The selected nodes are moved into the asset definition. A single
+  node of the new type takes their place and keeps all the connections.
+- Each geometry that led into the selection from outside becomes an
+  **Asset Input** node inside (index 0, 1, …). The asset thus gets the corresponding inputs.
+- The asset outputs the geometry of the node whose output leads outside. When nothing
+  leads outside, it outputs the geometry of the node with the display flag, or else of the only node
+  that feeds no other. That node gets the display flag inside.
+- The definition is saved to `~/.local/share/prototype/assets/NAME.pgasset`
+  (or to `$XDG_DATA_HOME/prototype/assets`) and added to the library. The Tab
+  menu immediately offers it in the **Assets** category.
 
-Asset nelze udělat ze simulačních uzlů (zdroje, řešiče, Output…). Dovnitř
-patří jen geometrie. Asset má nejvýš čtyři vstupy a vydává geometrii jen
-jednoho uzlu. Když výběr tyto podmínky nesplní, dialog napíše proč.
+An asset cannot be made from simulation nodes (sources, solvers, Output…). Only
+geometry belongs inside. An asset has at most four inputs and outputs the geometry of only
+one node. When the selection does not meet these conditions, the dialog says why.
 
-## 2. Uvnitř assetu
+## 2. Inside an asset
 
-Do assetu se vstoupí dvojklikem na jeho uzel, klávesou **I** nad sítí,
-položkou **Edit Contents** v menu uzlu nebo tlačítkem **Edit Contents**
-v parametrech instance. Zpátky se vrací klávesa **U**, šipka nahoru
-v hlavičce sítě nebo File › Back Up.
+You enter an asset by double-clicking its node, with the **I** key over the network,
+with the **Edit Contents** item in the node menu, or with the **Edit Contents** button
+in the instance's parameters. You go back with the **U** key, the up arrow
+in the network header, or File › Back Up.
 
-![Uvnitř assetu Fence: vstup path, sloupek, Copy to Points, wrangle s břevny](img/assets-inside.png)
+![Inside the Fence asset: path input, post, Copy to Points, wrangle with rails](img/assets-inside.png)
 
-Uvnitř se edituje síť definice stejně jako každá jiná. Hlavička sítě ukazuje,
-kde jste (`scene › fence`), a stavový řádek připomíná, že U vede zpátky.
+Inside, the definition's network is edited just like any other. The network header shows
+where you are (`scene › fence`), and the status bar reminds you that U leads back.
 
-- **Vstupy.** Do uzlů Asset Input teče to, co je zapojené do instance, ze
-  které jste vstoupili, a to ve snímku na časové ose. Plot uvnitř tedy stojí
-  na stejné čáře jako ve scéně.
-- **Hodnoty.** Parametry uvnitř mají hodnoty definice, tedy výchozí hodnoty
-  každé nové instance. Instance, ze které jste přišli, může mít vlastní
-  hodnoty (plot ve scéně je nižší než uvnitř).
-- **Scéna čeká.** Simulace scény se nepřepočítává a viewport ukazuje jen
-  geometrii assetu. Po návratu je scéna zase celá, včetně nasimulovaných
-  snímků, pokud se asset nepodílí na tom, co se simuluje.
-- **Nová verze.** Při návratu nahoru (nebo Ctrl+S, File › Save Asset) se
-  změny uloží jako nová verze. Číslo verze se zvýší, soubor `.pgasset` se
-  zapíše a všechny instance ve všech otevřených sítích se přepočítají podle
-  nové definice. Když se nic nezměnilo, verze zůstává.
-- Když nebyl zatržený display flag nebo definice jinak neprojde, návrat se
-  nepovede. Chyba je ve stavovém řádku a zůstanete uvnitř, abyste ji mohli
-  opravit.
+- **Inputs.** The Asset Input nodes receive whatever is connected to the instance
+  you entered from, at the frame on the timeline. So the fence inside stands
+  on the same line as in the scene.
+- **Values.** Parameters inside have the definition's values, i.e. the default values
+  of each new instance. The instance you came from may have its own
+  values (the fence in the scene is lower than inside).
+- **The scene waits.** The scene's simulation is not recomputed and the viewport shows only
+  the asset's geometry. After returning, the scene is whole again, including simulated
+  frames, unless the asset takes part in what is being simulated.
+- **New version.** When returning up (or Ctrl+S, File › Save Asset) the
+  changes are saved as a new version. The version number increases, the `.pgasset` file is
+  written, and all instances in all open networks are recomputed according to the
+  new definition. When nothing has changed, the version stays the same.
+- When no display flag was set or the definition fails otherwise, returning
+  does not succeed. The error is in the status bar and you stay inside so that you can
+  fix it.
 
-Když není vybraný žádný uzel, panel parametrů ukazuje vlastnosti assetu:
-**Label**, **Help** (text do tooltipu a do parametrů instance), seznam
-promotovaných parametrů s tlačítkem × pro zrušení a seznam vstupů.
+When no node is selected, the parameter panel shows the asset's properties:
+**Label**, **Help** (text for the tooltip and the instance's parameters), the list of
+promoted parameters with a × button to remove them, and the list of inputs.
 
-Assety se dají vnořovat: uvnitř assetu lze použít jiný asset a vstoupit
-i do něj. Hlavička pak ukazuje celou cestu, např. `scene › house1 ›
+Assets can be nested: another asset can be used inside an asset, and you can enter
+it too. The header then shows the full path, e.g. `scene › house1 ›
 window2`.
 
-## 3. Parametry assetu (promote)
+## 3. Asset parameters (promote)
 
-Parametr uzlu uvnitř se stane parametrem assetu takto: klikněte pravým
-tlačítkem na jméno parametru a zvolte **Promote to the Asset**. Promotovaný
-parametr má u řádku oranžovou značku. Po návratu nahoru ho má každá instance
-v sekci pojmenované podle assetu, s posuvníkem, fx a klíči jako kterýkoli
-jiný parametr:
+A parameter of a node inside becomes an asset parameter like this: right-click
+the parameter name and choose **Promote to the Asset**. A promoted
+parameter has an orange marker by its row. After returning up, every instance has it
+in a section named after the asset, with a slider, fx and keys like any
+other parameter:
 
-- hodnota uvnitř je výchozí hodnota,
-- každá instance nastavuje vlastní hodnotu,
-- instance může mít na parametru klíče i výraz (`$F`, `ch()`), protože se
-  vyhodnocují v síti instance.
+- the value inside is the default value,
+- each instance sets its own value,
+- an instance can have keys and even an expression (`$F`, `ch()`) on the parameter, because they
+  are evaluated in the instance's network.
 
-Promotovat jde i parametr ze snippetu wranglu (`ch("height")` → posuvník
-Height). V assetu Fence řídí výrazy krabičky sloupku
-(`ch("../rails/height")`) posuvníky wranglu, takže jeden promotovaný
-parametr pohne sloupky i břevny.
+A parameter from a wrangle snippet can also be promoted (`ch("height")` → the Height
+slider). In the Fence asset, the post box's expressions
+(`ch("../rails/height")`) are driven by the wrangle's sliders, so a single promoted
+parameter moves both the posts and the rails.
 
-**Unpromote** ve stejném menu nebo křížek v přehledu assetu parametr vrátí
-jen uzlu uvnitř. Instance o něj přijdou při příští verzi. Hodnoty, které
-instance ve scéně měly, se při načtení zahodí s varováním.
+**Unpromote** in the same menu, or the cross in the asset overview, returns the parameter
+to the node inside only. Instances lose it with the next version. Values that the
+instances in the scene had are discarded on load with a warning.
 
-Položka **Copy Reference** ve stejném menu zkopíruje
-`ch("../uzel/parametr")` pro výraz jiného parametru.
+The **Copy Reference** item in the same menu copies
+`ch("../node/parameter")` for another parameter's expression.
 
-## 4. Soubory
+## 4. Files
 
-Asset je obyčejná síť `.pgsim`, jen má na začátku řádky navíc:
+An asset is an ordinary `.pgsim` network, only with extra lines at the beginning:
 
 ```
 pgsim 1
@@ -119,26 +119,26 @@ node 2 box 1 post 0 0
 ...
 ```
 
-- `asset JMÉNO VERZE "POPISEK"` — jméno typu, verze a popisek.
-- `help "…"` — nápověda (nepovinná).
-- `promote UZEL PARAMETR JMÉNO "POPISEK"` — parametr uzlu uvnitř se stane
-  parametrem assetu. Prázdný popisek znamená popisek parametru.
+- `asset NAME VERSION "LABEL"` — type name, version and label.
+- `help "…"` — help text (optional).
+- `promote NODE PARAMETER NAME "LABEL"` — a parameter of a node inside becomes
+  a parameter of the asset. An empty label means the parameter's own label.
 
-Soubor `.pgasset` jde otevřít i přímo (File › Open Asset… nebo
-`prototype cesta/k/fence.pgasset`) a editovat bez scény. Ctrl+S pak uloží
-novou verzi.
+A `.pgasset` file can also be opened directly (File › Open Asset… or
+`prototype path/to/fence.pgasset`) and edited without a scene. Ctrl+S then saves
+a new version.
 
-**Kde program assety hledá**, v tomto pořadí (pozdější přepíše dřívější
-stejného jména):
+**Where the program looks for assets**, in this order (a later one overrides an earlier one
+of the same name):
 
-1. assety, které program nosí s sebou (`examples/assets`, zakompilované):
-   **Fence** a **Spiral Stairs**,
-2. složky v proměnné `PROTOTYPE_ASSETS` (oddělené dvojtečkou),
-3. uživatelská složka `$XDG_DATA_HOME/prototype/assets`, jinak
-   `~/.local/share/prototype/assets` — sem ukládá editor.
+1. assets that ship with the program (`examples/assets`, compiled in):
+   **Fence** and **Spiral Stairs**,
+2. folders in the `PROTOTYPE_ASSETS` variable (colon-separated),
+3. the user folder `$XDG_DATA_HOME/prototype/assets`, otherwise
+   `~/.local/share/prototype/assets` — this is where the editor saves.
 
-**Síť nese své assety s sebou.** Když se ukládá síť, která asset používá,
-zapíše se na její konec i jeho definice:
+**A network carries its assets with it.** When a network that uses an asset is saved,
+the asset's definition is also written at its end:
 
 ```
 definition fence
@@ -148,93 +148,93 @@ definition fence
 end
 ```
 
-Soubor se tak otevře i na jiném počítači, kde asset v knihovně není.
-Novější verze vyhrává: definice ze souboru nahradí knihovní jen tehdy, když
-je knihovní starší. Novější plot z vaší složky tedy nepřepíše starší kopie
-v souborech a starší scéna dostane nový plot.
+The file thus opens even on another computer where the asset is not in the library.
+The newer version wins: a definition from the file replaces the library one only when
+the library one is older. So a newer fence from your folder does not get overwritten by older copies
+in files, and an older scene gets the new fence.
 
-`prototype sim` a ostatní příkazy načítají knihovnu stejně jako editor.
-`--set fence.height=0.8` nastaví promotovaný parametr instance.
+`prototype sim` and the other commands load the library the same way as the editor.
+`--set fence.height=0.8` sets an instance's promoted parameter.
 
-## 5. Příklad: budova z posuvníků
+## 5. Example: a building from sliders
 
-![Ulice ze tří budov, každá je uzel assetu Building s jinými posuvníky](img/street.png)
+![A street of three buildings, each one a Building asset node with different sliders](img/street.png)
 
-Asset **Building** (program ho nosí s sebou) postaví budovu z deseti
-posuvníků: Floors, Floor Height, Width, Depth, Bay (šířka pole), Window
-Frame, Window Depth, Balconies, Every a Wall Color. Uvnitř je síť čtrnácti
-uzlů:
+The **Building** asset (it ships with the program) builds a building from ten
+sliders: Floors, Floor Height, Width, Depth, Bay (bay width), Window
+Frame, Window Depth, Balconies, Every and Wall Color. Inside is a network of fourteen
+nodes:
 
-| Uzel | Co dělá |
+| Node | What it does |
 |---|---|
-| `shell` (Detail Wrangle) | stěny jako mřížky polí — patro vysoké, bay široké; každé pole má atributy `floor`, `column`, `wall`; střecha a základ ve skupinách `roof` a `base` |
-| `weld` (Fuse) | svaří body sousedních polí: obal je uzavřený |
-| `choose` (Primitive Wrangle) | dveře uprostřed přední stěny v přízemí, jinde okna (skupiny `door`, `window`) |
-| `frames`, `windows` (PolyExtrude) | okno: nejdřív inset (rám v rovině stěny), pak zapuštění dovnitř (sklo `glass`, ostění `reveal`) |
-| `door` (PolyExtrude) | dveře zapuštěné hlouběji |
-| `parapet`, `roof` (PolyExtrude) | střecha za atikou: inset, pak dolů |
-| `paint` (Primitive Wrangle) | barvy podle skupin; `chv("wall")` je posuvník Wall Color |
-| `balcony_points` (Detail Wrangle) | bod u paty každého Every-tého okna vpředu a vzadu, s normálou ze stěny |
-| `slab`, `balconies`, `slab_paint` | deska balkonu zkopírovaná na ty body (Copy to Points, Align to N); šířka desky je výraz `ch("../shell/bay") * 0.8` |
-| `building` (Merge) | budova a balkony |
+| `shell` (Detail Wrangle) | walls as grids of bays — a floor high, a bay wide; each bay has `floor`, `column`, `wall` attributes; roof and base in the `roof` and `base` groups |
+| `weld` (Fuse) | welds the points of neighboring bays: the shell is closed |
+| `choose` (Primitive Wrangle) | a door in the middle of the front wall on the ground floor, windows elsewhere (groups `door`, `window`) |
+| `frames`, `windows` (PolyExtrude) | window: first an inset (frame in the wall plane), then a recess inwards (glass `glass`, reveal `reveal`) |
+| `door` (PolyExtrude) | the door recessed deeper |
+| `parapet`, `roof` (PolyExtrude) | roof behind a parapet: inset, then down |
+| `paint` (Primitive Wrangle) | colors by group; `chv("wall")` is the Wall Color slider |
+| `balcony_points` (Detail Wrangle) | a point at the foot of every Every-th window at the front and back, with the normal from the wall |
+| `slab`, `balconies`, `slab_paint` | balcony slab copied onto those points (Copy to Points, Align to N); the slab width is the expression `ch("../shell/bay") * 0.8` |
+| `building` (Merge) | building and balconies |
 
-Příklad **street** staví ze stejného assetu tři různé domy. Z příkazové
-řádky jde budova (nebo celá ulice) uvařit a uložit bez okna:
+The **street** example builds three different houses from the same asset. From the command
+line, a building (or the whole street) can be cooked and saved without a window:
 
 ```bash
-./build/prototype cook street street.obj                          # celá ulice do OBJ
+./build/prototype cook street street.obj                          # whole street to OBJ
 ./build/prototype cook street tower.obj --node tower --set tower.floors=14
-./build/prototype cook street - --hash --threads 1                # hash geometrie
-./build/prototype cook street - --hash --threads 4                # týž hash
+./build/prototype cook street - --hash --threads 1                # geometry hash
+./build/prototype cook street - --hash --threads 4                # the same hash
 ```
 
-Hash geometrie je stejný na 1 i 4 vláknech, takže stejné posuvníky dají
-bitově stejnou geometrii. Hlídá to test `asset_building_is_the_same_on_any_number_of_threads`.
+The geometry hash is the same on 1 and 4 threads, so the same sliders give
+bit-identical geometry. This is guarded by the test `asset_building_is_the_same_on_any_number_of_threads`.
 
-## 6. Co asset odmítne
+## 6. What an asset rejects
 
-| Situace | Co se stane |
+| Situation | What happens |
 |---|---|
-| asset uvnitř sebe, i přes jiný asset (A v B, B v A) | nová verze se odmítne: „it has itself inside (through B)“ |
-| žádný uzel s display flagem | nová verze se odmítne |
-| jméno, které má vestavěný uzel (`box`) | odmítne se |
-| promotovaný parametr, který uvnitř není | definice se odmítne (v souboru se řádek zahodí s varováním) |
-| hodnota nebo klíč parametru, který instance už nemá | při načtení se zahodí s varováním |
-| instance assetu, který knihovna nezná (soubor bez definice) | síť se načte, uzel hlásí chybu, dokud se asset neobjeví |
+| an asset inside itself, even through another asset (A in B, B in A) | the new version is rejected: "it has itself inside (through B)" |
+| no node with the display flag | the new version is rejected |
+| a name that a built-in node has (`box`) | rejected |
+| a promoted parameter that is not inside | the definition is rejected (in a file the line is discarded with a warning) |
+| a value or key of a parameter the instance no longer has | discarded on load with a warning |
+| an instance of an asset the library does not know (file without a definition) | the network loads, the node reports an error until the asset appears |
 
-## 7. Jak to funguje
+## 7. How it works
 
-- **Knihovna** (`pg/sim/Asset.h`, `AssetLibrary`) drží definice podle
-  jména. Každá změna zvýší číslo revize knihovny. `GeometryGraph` ho
-  sleduje, takže si instance novou definici všimnou při příští
-  synchronizaci. Nahrazené definice knihovna nemaže, protože na typ jejich
-  uzlu se ještě může dívat editor.
-- **Typ instance** se skládá z definice: vstupy podle uzlů Asset Input,
-  jeden výstup, parametry podle `promote` s výchozími hodnotami z definice.
-  `findNodeType` hledá nejdřív vestavěné typy, potom knihovnu.
-- **Vaření.** Uzel instance v jádře (`AssetNode`) drží kopii sítě definice
-  a vlastní `GeometryGraph`. Před každým vařením zapíše do kopie hodnoty
-  promotovaných parametrů v čase snímku (klíče a výrazy instance už jsou
-  vyhodnocené) a předá vstupy uzlům Asset Input. Přepočítá se jen to, co se
-  uvnitř změnilo, jako v každé jiné síti. Chyby uzlů uvnitř hlásí instance
-  jako `fence/rails: …`.
-- **Časová závislost.** Asset je časově závislý, když jeho výstupní uzel
-  závisí na čase, např. wrangle čte `$F` nebo parametr má klíče. Odpověď se
-  pamatuje pro revizi knihovny, protože asset uvnitř se mohl změnit.
-- **Cykly.** Při přidání definice se pod zámkem knihovny kontroluje, jestli
-  síť neobsahuje sama sebe, přímo ani přes jiné assety. Z definic, které by
-  tvořily cyklus, by tu poslední kontrola odmítla, takže v knihovně cyklus
-  nikdy není a vaření nemůže běžet donekonečna.
+- The **library** (`pg/sim/Asset.h`, `AssetLibrary`) holds definitions by
+  name. Every change increments the library's revision number. `GeometryGraph`
+  watches it, so instances notice a new definition at the next
+  synchronisation. The library does not delete replaced definitions, because the editor
+  may still be looking at their node type.
+- The **instance type** is assembled from the definition: inputs per the Asset Input nodes,
+  one output, parameters per `promote` with default values from the definition.
+  `findNodeType` looks up built-in types first, then the library.
+- **Cooking.** The instance node in the core (`AssetNode`) holds a copy of the definition's network
+  and its own `GeometryGraph`. Before each cook it writes the values of the
+  promoted parameters at the frame's time into the copy (the instance's keys and expressions are already
+  evaluated) and passes the inputs to the Asset Input nodes. Only what changed
+  inside is recomputed, as in any other network. Errors from nodes inside are reported by the instance
+  as `fence/rails: …`.
+- **Time dependency.** An asset is time-dependent when its output node
+  depends on time, e.g. a wrangle reads `$F` or a parameter has keys. The answer is
+  remembered per library revision, because the asset inside may have changed.
+- **Cycles.** When a definition is added, the library checks under its lock whether
+  the network contains itself, directly or through other assets. Of the definitions that would
+  form a cycle, this check would reject the last one, so there is never a cycle in the library
+  and cooking cannot run forever.
 
-## 8. Omezení (zatím)
+## 8. Limitations (for now)
 
-- Uvnitř jsou jen geometrické uzly. Simulace se do assetu nezabalí.
-- Asset má nejvýš čtyři vstupy a jeden výstup.
-- Uvnitř se ukazují výchozí hodnoty, ne hodnoty instance, ze které jste
-  vstoupili.
-- Asset nejde zamknout (Houdini má lock/unlock). Každá změna uvnitř je
-  změnou definice pro všechny instance.
-- Undo uvnitř vrací jen změny uvnitř. Verze uložené při návratu undo ve
-  scéně nevrátí.
-- Parametry assetu nemají vlastní rozvržení (složky, podmínky
-  viditelnosti). Jsou v jedné sekci v pořadí promotování.
+- Only geometry nodes go inside. A simulation cannot be packaged into an asset.
+- An asset has at most four inputs and one output.
+- Inside, the default values are shown, not the values of the instance you
+  entered from.
+- An asset cannot be locked (Houdini has lock/unlock). Every change inside is
+  a change of the definition for all instances.
+- Undo inside reverts only changes made inside. Undo in the scene does not revert versions
+  saved when returning.
+- Asset parameters have no layout of their own (folders, visibility
+  conditions). They are in a single section in the order they were promoted.

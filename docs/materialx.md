@@ -1,263 +1,269 @@
 # MaterialX
 
-MaterialX (Academy Software Foundation) je společný jazyk materiálů:
-materiál jako graf uzlů (obrázek, násobení, `standard_surface`…), který
-stejně pochopí Houdini, Maya, Blender i renderery nad USD (Karma, Arnold,
-RenderMan, Storm v usdview). Prototype v něm materiály **zapisuje i čte**:
+MaterialX (Academy Software Foundation) is a common material language: a
+material as a graph of nodes (image, multiply, `standard_surface`…) that
+Houdini, Maya, Blender and USD-based renderers (Karma, Arnold, RenderMan,
+Storm in usdview) all understand the same way. Prototype both **writes and
+reads** materials in it:
 
-- **export do USD**: každý materiál je `Material` ze shaderů MaterialX
-  (`outputs:mtlx:surface`) a k tomu `UsdPreviewSurface` pro programy,
-  které MaterialX nečtou. Plochy jsou k materiálům přiřazené přes
-  `GeomSubset`, jeden na materiál, a fotky se zkopírují vedle scény;
-- **`.mtlx` samotný**: materiály geometrie jako dokument MaterialX;
-- **čtení**: dokument `.mtlx` (i z Poly Haven nebo ambientCG) jde použít
-  jako sada textur: na uzlu Material, ve wrangle i v knihovně.
+- **export to USD**: every material is a `Material` built from MaterialX
+  shaders (`outputs:mtlx:surface`), plus a `UsdPreviewSurface` for programs
+  that do not read MaterialX. Faces are assigned to materials via
+  `GeomSubset`, one per material, and photos are copied next to the scene;
+- **standalone `.mtlx`**: the geometry's materials as a MaterialX document;
+- **reading**: a `.mtlx` document (including from Poly Haven or ambientCG)
+  can be used as a texture set: on the Material node, in a wrangle and in the library.
 
-Zapisovač i čtečka vznikly podle veřejné specifikace, bez knihovny MaterialX.
+Both the writer and the reader were built from the public specification,
+without the MaterialX library.
 
-![Příklad foliage exportovaný do USD, otevřený v Blenderu 4.5 a vyrenderovaný v Cycles: lípa s listy vyříznutými podle alfy, smrk s jehličím, kůra s fotkou a normálovou mapou, tráva jako instance](img/materialx-blender.jpg)
+![The foliage example exported to USD, opened in Blender 4.5 and rendered in Cycles: a linden with leaves cut out by alpha, a spruce with needles, bark with a photo and a normal map, grass as instances](img/materialx-blender.jpg)
 
-*Příklad `foliage` zapsaný `prototype cook foliage foliage.usda` a otevřený
-v Blenderu 4.5.3 (File › Import › USD), Cycles. Materiály, fotky, alfa
-listů, normálové mapy i UV přišly z exportu; kamera a světlo jsou
-Blenderu.*
+*The `foliage` example written with `prototype cook foliage foliage.usda` and
+opened in Blender 4.5.3 (File › Import › USD), Cycles. The materials, photos,
+leaf alpha, normal maps and UVs all came from the export; the camera and
+light are Blender's.*
 
-![Materiály půda, kůra, list a tráva z exportovaného dokumentu .mtlx, vyrenderované rendererem knihovny MaterialX](img/materialx-spheres.jpg)
+![Soil, bark, leaf and grass materials from the exported .mtlx document, rendered by the MaterialX library renderer](img/materialx-spheres.jpg)
 
-*Dokument `foliage.mtlx` vyrenderovaný GLSL rendererem knihovny MaterialX
-1.39.5 na kouli s UV: půda (ze tří stran), kůra (podle UV, s normálovou
-mapou), list (alfa výřez, čtvrtiny obrázku listů) a tráva.*
+*The `foliage.mtlx` document rendered by the GLSL renderer of the MaterialX
+1.39.5 library on a sphere with UVs: soil (triplanar), bark (by UV, with a
+normal map), leaf (alpha cutout, quarters of the leaf image) and grass.*
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
-./build/prototype cook foliage out/foliage.usda        # geometrie s materiály + out/foliage_textures/
-./build/prototype cook foliage out/foliage.mtlx        # jen materiály jako MaterialX
-./build/prototype sim forest - --frames 24 --export out/forest.usda   # záběr: /World/Materials, out/forest.mtlx
+./build/prototype cook foliage out/foliage.usda        # geometry with materials + out/foliage_textures/
+./build/prototype cook foliage out/foliage.mtlx        # materials only, as MaterialX
+./build/prototype sim forest - --frames 24 --export out/forest.usda   # shot: /World/Materials, out/forest.mtlx
 ```
 
-- **Editor:** File › Export Geometry… s příponou `.usda` nebo `.mtlx`.
+- **Editor:** File › Export Geometry… with the `.usda` or `.mtlx` extension.
 - **Python:** `geo.save("strom.usda")`, `geo.save("strom.mtlx")`.
-- **Čtení:** na uzlu Material dejte do Texture `cesta/materialy.mtlx`
-  (první materiál dokumentu) nebo `cesta/materialy.mtlx#bark` (materiál
-  podle jména). Stačí i složka, ve které `.mtlx` je, jak ji dává Poly Haven.
+- **Reading:** on the Material node, put `cesta/materialy.mtlx` in Texture
+  (the document's first material) or `cesta/materialy.mtlx#bark` (material
+  by name). The folder containing the `.mtlx` is enough too, as Poly Haven delivers it.
 
-## 2. Co se zapíše
+## 2. What gets written
 
-Materiál je to, co renderery rozliší ([materials.md](materials.md)):
-`material`, drsnost, kovovost, průsvitnost, vlastní textura, její velikost
-a tónování, kladení (UV nebo ze tří stran) a síla normálové mapy. K tomu
-se rozliší, jestli geometrie má barvu `Cd`. Každý takový materiál se
-zapíše jednou a dostane jméno podle toho, z čeho je: `bark`, `leaf`,
-`concrete`, `glass`, jméno vlastní textury (`bricks_02`), bez materiálu
-`plain`. Druhý materiál téhož jména (třeba kůra s jinou drsností) je
-`bark_2`.
+A material is whatever the renderers distinguish ([materials.md](materials.md)):
+`material`, roughness, metalness, translucency, custom texture, its size
+and tint, mapping (UV or triplanar) and normal map strength. On top of that,
+whether the geometry has a `Cd` color is distinguished. Each such material is
+written once and gets a name based on what it is made of: `bark`, `leaf`,
+`concrete`, `glass`, the name of the custom texture (`bricks_02`), and
+`plain` without a material. A second material of the same name (say, bark
+with a different roughness) is `bark_2`.
 
-Každý materiál je graf `standard_surface` nad stejnými fotkami, jaké
-kladou renderery:
+Each material is a `standard_surface` graph over the same photos the
+renderers map:
 
-| U nás | V MaterialX |
+| Ours | In MaterialX |
 |---|---|
-| barva | `geompropvalue` `displayColor` (to je `Cd` v USD), bez `Cd` barva materiálu |
-| fotka podle UV | `image` (`colorspace="srgb_texture"`), jedna fotka na jednotku uv (`primvars:st`) |
-| fotka ze tří stran | `triplanarprojection` podle `position` (object), nebo primvaru `rest`, má-li ho geometrie; souřadnice krát 1/velikost fotky v metrech |
-| tónování podle `Cd` | fotka × 1/průměr sady × barva (dva `multiply`); netónovaná sada fotka, jak je |
-| normálová mapa (podle UV) | `normalmap` se `scale` = Normal Strength; mapa DirectX má zelenou otočenou (`multiply` (1, −1, 1), `add` (0, 1, 0)) |
-| alfa výřez | `opacity` ← `convert` ← `extract` 3 ← `image` color4; šedá maska `image` float |
-| výška | `displacementshader` materiálu: `displacement` se `scale` = hloubka sady v metrech ← `subtract` 0,5 ← `image` float (podle UV) nebo `triplanarprojection` float (ze tří stran, stejně jako barva) |
-| průsvitnost listů a stébel | `thin_walled` a `subsurface` = translucency, `subsurface_color` = barva |
-| drsnost, kov | `specular_roughness`, `metalness`; `base` 1 (barva je albedo) |
-| sklo | `transmission` 1, `specular_IOR` 1,5, `transmission_color` 0,65 + 0,35 × barva (jako renderery) |
-| voda | `transmission` 1, `specular_IOR` 1,33 |
+| color | `geompropvalue` `displayColor` (that is `Cd` in USD); without `Cd`, the material color |
+| photo by UV | `image` (`colorspace="srgb_texture"`), one photo per uv unit (`primvars:st`) |
+| triplanar photo | `triplanarprojection` by `position` (object), or by the `rest` primvar if the geometry has one; coordinates times 1/photo size in meters |
+| tint by `Cd` | photo × 1/set average × color (two `multiply` nodes); an untinted set is the photo as is |
+| normal map (by UV) | `normalmap` with `scale` = Normal Strength; a DirectX map has green flipped (`multiply` (1, −1, 1), `add` (0, 1, 0)) |
+| alpha cutout | `opacity` ← `convert` ← `extract` 3 ← `image` color4; a gray mask is `image` float |
+| height | the material's `displacementshader`: `displacement` with `scale` = set depth in meters ← `subtract` 0.5 ← `image` float (by UV) or `triplanarprojection` float (triplanar, the same as the color) |
+| translucency of leaves and blades | `thin_walled` and `subsurface` = translucency, `subsurface_color` = color |
+| roughness, metal | `specular_roughness`, `metalness`; `base` 1 (the color is albedo) |
+| glass | `transmission` 1, `specular_IOR` 1.5, `transmission_color` 0.65 + 0.35 × color (like the renderers) |
+| water | `transmission` 1, `specular_IOR` 1.33 |
 
-**Výška** je posunutí plochy podél normály. Střed obrázku (0,5) zůstane
-na ploše, světlejší místa jdou ven, tmavší dovnitř, celkem o hloubku sady
-(`depth` v `texture.txt`, u cihel 13 mm). Renderer, který geometrii
-posouvá (třeba Karma v Houdini), tak spáry mezi cihlami opravdu
-prohloubí. Blender z výšky při importu USD udělá uzel Displacement.
-Ostatní renderery výšku přeskočí nebo z ní udělají reliéf. Naše Cycles
-z ní dělá reliéf, s **Displacement** na uzlu Output povrch posune stejně
-([cycles.md](cycles.md#posunutí-podle-výšky)).
+**Height** is displacement of the surface along the normal. The middle of the
+image (0.5) stays on the surface, lighter areas go out, darker ones in, by
+the set's depth in total (`depth` in `texture.txt`, 13 mm for bricks). A
+renderer that displaces geometry (such as Karma in Houdini) thus really
+deepens the joints between bricks. Blender turns the height into a
+Displacement node when importing USD. Other renderers skip the height or
+turn it into bump. Our Cycles turns it into bump; with **Displacement** on
+the Output node it displaces the surface the same way
+([cycles.md](cycles.md#displacement-by-height)).
 
-Uzly se jmenují podle materiálu (`bark_picture`, `bark_surface`…) a graf
-končí uzlem `surfacematerial` se jménem materiálu. Dokument má verzi
-1.38 a pracovní prostor `lin_rec709`; MaterialX 1.39 ho při čtení sám
-převede.
+Nodes are named after the material (`bark_picture`, `bark_surface`…) and the
+graph ends with a `surfacematerial` node named after the material. The
+document has version 1.38 and the `lin_rec709` working space; MaterialX 1.39
+upgrades it automatically on read.
 
-**UsdPreviewSurface** je v USD vedle MaterialX pro programy, které MaterialX
-nečtou (třeba import USD v Blenderu): `diffuseColor` z `UsdUVTexture` podle
-`st` nebo z `displayColor`, `roughness`, `metallic`, normálová mapa
-(`sourceColorSpace` raw, `scale` a `bias`), alfa jako `opacity`
-s `opacityThreshold` 0,5, výška jako `displacement` (`UsdUVTexture`
-se `scale` = hloubka a `bias` = −polovina hloubky), sklo a voda s `ior`
-a průhledností.
-UsdPreviewSurface neumí násobit primvarem, takže fotka tónovaná podle `Cd`
-v něm je fotka, jak je.
+**UsdPreviewSurface** sits in USD next to MaterialX for programs that do not
+read MaterialX (such as Blender's USD import): `diffuseColor` from a
+`UsdUVTexture` by `st` or from `displayColor`, `roughness`, `metallic`, a
+normal map (`sourceColorSpace` raw, `scale` and `bias`), alpha as `opacity`
+with `opacityThreshold` 0.5, height as `displacement` (`UsdUVTexture` with
+`scale` = depth and `bias` = −half the depth), glass and water with `ior`
+and transparency.
+UsdPreviewSurface cannot multiply by a primvar, so a photo tinted by `Cd` is
+the photo as is in it.
 
-## 3. V USD
+## 3. In USD
 
 ```
-/World/Materials/bark          Material                         (záběr; jedna geometrie: /<jméno>/Materials)
+/World/Materials/bark          Material                         (shot; single geometry: /<name>/Materials)
     outputs:mtlx:surface       →  bark_surface        ND_standard_surface_surfaceshader
-    outputs:mtlx:displacement  →  bark_displacement   ND_displacement_float (má-li sada výšku)
+    outputs:mtlx:displacement  →  bark_displacement   ND_displacement_float (if the set has height)
     outputs:surface            →  bark_preview        UsdPreviewSurface
-    outputs:displacement       →  bark_preview        jeho displacement z UsdUVTexture
-    bark_picture, bark_evened, bark_tinted, bark_cd, bark_normal…   shadery MaterialX
+    outputs:displacement       →  bark_preview        its displacement from UsdUVTexture
+    bark_picture, bark_evened, bark_tinted, bark_cd, bark_normal…   MaterialX shaders
     bark_preview_picture, bark_preview_st…                           UsdUVTexture, UsdPrimvarReader
-/World/<uzel>/mesh             Mesh s primvars:st
-    /bark, /leaf, /plain       GeomSubset: elementType face, familyName materialBind, vazba na materiál
+/World/<node>/mesh             Mesh with primvars:st
+    /bark, /leaf, /plain       GeomSubset: elementType face, familyName materialBind, material binding
 ```
 
-- **Shadery** jsou uzly grafu, `info:id` je jméno definice uzlu v knihovně
-  MaterialX (`ND_image_color3`, `ND_multiply_vector3FA`…). Vstupy
-  s obrázkem jsou `asset` s metadaty `colorSpace`.
-- **Normálová mapa je v USD rozepsaná** na základní uzly (dekódování 0..1
-  na −1..1, škálování x a y, tečna, binormála N × T a normála ve světě,
-  normalizace). MaterialX 1.39 totiž přejmenoval definici `normalmap`
-  (`ND_normalmap` → `ND_normalmap_float`) a shader s jedním z těch id by
-  druhá verze nenašla. Rozepsané uzly mají obě verze se stejnými id.
-  V dokumentu `.mtlx` zůstává `normalmap` (tam se definice hledá podle
-  typů, ne podle jména).
-- **Přiřazení:** síť dostane `GeomSubset` pro každý materiál (rodina
-  `materialBind`, `nonOverlapping`), každá plocha je v právě jednom. Síť
-  celá z jednoho materiálu je k němu přiřazená celá, bez subsetů.
-  Prototypy instancí (stromy a tráva jako instance) mají své materiály
-  také.
-- **Měnící se geometrie** (vítr, simulace) má indexy subsetů ve vrstvách
-  snímků jako ostatní hodnoty ([usd.md](usd.md#3-soubory-po-snímcích-value-clips)).
-  Materiál, který snímek nemá, má v tom snímku prázdný subset.
-- **UV** jsou `texCoord2f[] primvars:st`: z `uv` rohů faceVarying, z `uv`
-  bodů vertex.
-- **Fotky** se zkopírují do `<jméno>_textures/` vedle scény
-  (`bark_color.jpg`: jméno sady a souboru) a cesty jsou relativní, takže
-  složku stačí přesunout se scénou. Snímky sekvence (`pole.0007.usda`)
-  sdílejí jednu složku `pole_textures/`.
-- Záběr zapíše vedle scény i `<jméno>.mtlx` se všemi materiály.
+- **Shaders** are the graph's nodes; `info:id` is the name of the node
+  definition in the MaterialX library (`ND_image_color3`,
+  `ND_multiply_vector3FA`…). Inputs with an image are `asset` with
+  `colorSpace` metadata.
+- **The normal map is expanded in USD** into basic nodes (decoding 0..1 to
+  −1..1, scaling x and y, tangent, bitangent N × T and world-space normal,
+  normalization). MaterialX 1.39 renamed the `normalmap` definition
+  (`ND_normalmap` → `ND_normalmap_float`), and a shader with one of those ids
+  would not be found by the other version. The expanded nodes have the same
+  ids in both versions. The `.mtlx` document keeps `normalmap` (there the
+  definition is looked up by types, not by name).
+- **Assignment:** a mesh gets a `GeomSubset` for each material (family
+  `materialBind`, `nonOverlapping`); each face is in exactly one. A mesh made
+  entirely of one material is bound to it as a whole, without subsets.
+  Instance prototypes (trees and grass as instances) have their materials
+  too.
+- **Changing geometry** (wind, simulation) has the subset indices in the frame
+  layers like other values ([usd.md](usd.md#3-per-frame-files-value-clips)).
+  A material that a frame does not have gets an empty subset in that frame.
+- **UVs** are `texCoord2f[] primvars:st`: faceVarying from vertex `uv`,
+  vertex from point `uv`.
+- **Photos** are copied to `<name>_textures/` next to the scene
+  (`bark_color.jpg`: set name and file name), and the paths are relative, so
+  it is enough to move the folder with the scene. Frames of a sequence
+  (`pole.0007.usda`) share a single `pole_textures/` folder.
+- A shot also writes `<name>.mtlx` with all materials next to the scene.
 
-Kusy z RBD Solveru (`/World/pieces`) mají dál své materiály `surface`
-a `glass` z `/World/Looks` ([usd.md](usd.md)).
+Pieces from the RBD Solver (`/World/pieces`) keep their `surface` and
+`glass` materials from `/World/Looks` ([usd.md](usd.md)).
 
-**Zpátky:** uzel USD Import přečte materiály ze scény USD, vlastní
-i cizí, MaterialX i UsdPreviewSurface, do `s@material` a `s@texture`
-(`scena.usda#/World/Materials/bark`), včetně drsnosti, kovovosti, barvy
-a skla ([usd-import.md](usd-import.md#materiály)).
+**Back:** the USD Import node reads materials from a USD scene, the
+program's own or foreign, MaterialX or UsdPreviewSurface, into `s@material`
+and `s@texture` (`scena.usda#/World/Materials/bark`), including roughness,
+metalness, color and glass ([usd-import.md](usd-import.md#materials)).
 
-## 4. Čtení `.mtlx`
+## 4. Reading `.mtlx`
 
-`textureSet()` přečte dokument MaterialX jako sadu textur
-([materials.md](materials.md#vlastní-textura-na-objekt)):
+`textureSet()` reads a MaterialX document as a texture set
+([materials.md](materials.md#custom-texture-per-object)):
 
-- `materialy.mtlx`: první `surfacematerial` dokumentu;
-  `materialy.mtlx#bark` materiál podle jména;
-  složka bez `texture.txt` a bez fotek, ve které je `.mtlx`: první z nich.
-- Od `standard_surface` (nebo `UsdPreviewSurface`, `open_pbr_surface`,
-  `gltf_pbr`) jde zpátky po každém vstupu každého uzlu až k obrázku: `image`,
-  `tiledimage`, `triplanarprojection`, `UsdUVTexture`. Projde i grafy
-  (`nodegraph` a jejich `output`) a vstupy grafu, na které uzly ukazují
-  přes `interfacename`. Z `base_color` je barva, z `normal` normálová
-  mapa, z `opacity` alfa (alfa kanál, pokud cesta vede přes `extract` 3
-  nebo výstup `a`), ze `specular_roughness` drsnost a z `displacement`
-  materiálu výška. Hloubka je jeho `scale` (u UsdPreviewSurface `scale`
-  obrázku výšky); bez ní 1 % velikosti obrázku. Ze scény USD jsou
-  hloubka i velikost v jednotkách scény a převedou se na metry.
-- Cesty k souborům se čtou od složky dokumentu.
-- Barva násobená `geompropvalue` znamená tónování podle `Cd` a průměr sady
-  je to, čím dokument fotku vydělí (jak to zapisuje export). Bez toho je
-  fotka, jak je, jako cizí sady.
-- Velikost v metrech dá `triplanarprojection` (1 / násobek polohy), jinak
-  2 m. Otočená zelená normálové mapy znamená DirectX.
+- `materialy.mtlx`: the document's first `surfacematerial`;
+  `materialy.mtlx#bark`: a material by name;
+  a folder with no `texture.txt` and no photos that contains `.mtlx` files: the first of them.
+- From `standard_surface` (or `UsdPreviewSurface`, `open_pbr_surface`,
+  `gltf_pbr`) it walks back along every input of every node to an image:
+  `image`, `tiledimage`, `triplanarprojection`, `UsdUVTexture`. It also goes
+  through graphs (`nodegraph` and their `output`s) and graph inputs that nodes
+  point to via `interfacename`. `base_color` gives the color, `normal` the
+  normal map, `opacity` the alpha (the alpha channel if the path goes through
+  `extract` 3 or the `a` output), `specular_roughness` the roughness and the
+  material's `displacement` the height. The depth is its `scale` (for
+  UsdPreviewSurface, the `scale` of the height image); without it, 1% of the
+  image size. From a USD scene, depth and size are in scene units and are
+  converted to meters.
+- File paths are resolved from the document's folder.
+- A color multiplied by `geompropvalue` means tinting by `Cd`, and the set
+  average is what the document divides the photo by (as the export writes
+  it). Without that, the photo is used as is, like foreign sets.
+- The size in meters comes from `triplanarprojection` (1 / position
+  multiplier), otherwise 2 m. A flipped green channel in the normal map means DirectX.
 
-Vlastní export se tak přečte zpátky jako stejná sada: tytéž soubory
-(zkopírované), stejný průměr, tónování, alfa, velikost i výška
-s hloubkou.
+The program's own export is thus read back as the same set: the same files
+(copied), the same average, tint, alpha, size, and height with depth.
 
-## 5. Ověření
+## 5. Verification
 
-Ověřeno knihovnami, které prototype nepotřebuje. Byly jen v prostředí,
-kde se ověřovalo: MaterialX 1.38.10 a 1.39.5 (Python), `usd-core` 26.08,
-Blender 4.5.3 LTS.
+Verified with libraries that prototype does not need. They existed only in
+the verification environment: MaterialX 1.38.10 and 1.39.5 (Python),
+`usd-core` 26.08, Blender 4.5.3 LTS.
 
-- **Dokument** `foliage.mtlx` (půda, kůra, list, tráva) je podle
-  `validate()` platný v MaterialX 1.38.10 i 1.39.5. Každý uzel má definici
-  a GLSL generátor z obou verzí vyrobí shader pro všechny čtyři materiály.
-  Renderer knihovny je vykreslí (obrázek nahoře).
-- **Id shaderů v USD:** všech 23 id (`ND_…`) z exportů `foliage`,
-  `demolition` a `uv_props` je v knihovně 1.38.10 i 1.39.5. Síť
-  poskládaná zpátky z USD shaderů, jen podle jejich id a spojení (tak,
-  jak to dělá Hydra), je v obou verzích platný dokument a GLSL generátor
-  z ní vyrobí shadery povrchu i posunutí.
-- **Výška:** dokumenty `.mtlx` těch příkladů (výška podle UV i ze tří
-  stran) jsou platné v obou verzích. Ke každému `displacement` vznikne
-  GLSL shader. USD najde posunutí materiálu MaterialX
+- **The document** `foliage.mtlx` (soil, bark, leaf, grass) is valid
+  according to `validate()` in both MaterialX 1.38.10 and 1.39.5. Every node
+  has a definition, and the GLSL generator from both versions produces a
+  shader for all four materials. The library renderer renders them (image
+  above).
+- **Shader ids in USD:** all 23 ids (`ND_…`) from the `foliage`,
+  `demolition` and `uv_props` exports exist in the 1.38.10 and 1.39.5
+  libraries. A network reassembled from the USD shaders, using only their ids
+  and connections (as Hydra does), is a valid document in both versions, and
+  the GLSL generator produces both surface and displacement shaders from it.
+- **Height:** the `.mtlx` documents of those examples (height by UV and
+  triplanar) are valid in both versions. A GLSL shader is generated for every
+  `displacement`. USD finds both the MaterialX material displacement
   (`ComputeDisplacementSource("mtlx")` → `ND_displacement_float`)
-  i univerzální (`UsdPreviewSurface`). Blender 4.5.3 z něj při importu
-  udělá uzel Displacement s Midlevel 0,5 a Scale = hloubka sady.
+  and the universal one (`UsdPreviewSurface`). Blender 4.5.3 turns it into a
+  Displacement node on import, with Midlevel 0.5 and Scale = set depth.
 - **USD** (`usd-core` 26.08):
-  - knihovna najde u každého materiálu povrch MaterialX
+  - for every material the library finds the MaterialX surface
     (`ComputeSurfaceSource("mtlx")` → `ND_standard_surface_surfaceshader`)
-    i univerzální `UsdPreviewSurface`;
-  - subsety každé sítě jsou platná rodina (`ValidateFamily`) a každý vede
-    na svůj materiál (`ComputeBoundMaterial`);
-  - z 28 validátorů jich 27 hlásí 0 nálezů. Validátor shaderů hlásí každé
-    `ND_…` jako neznámé, protože `usd-core` je sestavené bez MaterialX
-    (Sdr má jen `glslfx` a `USD`). Proto se id ověřila proti knihovnám
-    MaterialX přímo, viz výše.
-- **Záběr** `forest`, 3 snímky s větrem, 827 295 ploch: v každém snímku
-  je každá plocha v právě jednom subsetu (kůra 479 054, list 336 360,
-  podloží 11 881), indexy jdou z vrstev snímků. `ValidateSubsets`
-  z `usd-core` 26.08 na subsetech s indexy jen v časových vzorcích spadne
-  (segfault, i na scéně, kterou vytvoří samo USD), proto se pokrytí
-  ověřilo přímo.
-- **Blender 4.5.3** importuje `foliage.usda`:
-  - `bark`: Principled BSDF s fotkou a uzlem Normal Map;
-  - `leaf`: s alfou (Math, Blend);
+    and the universal `UsdPreviewSurface`;
+  - the subsets of every mesh form a valid family (`ValidateFamily`) and each
+    one leads to its material (`ComputeBoundMaterial`);
+  - of the 28 validators, 27 report 0 findings. The shader validator reports
+    every `ND_…` as unknown, because `usd-core` is built without MaterialX
+    (Sdr only has `glslfx` and `USD`). That is why the ids were verified
+    directly against the MaterialX libraries, see above.
+- **The shot** `forest`, 3 frames with wind, 827,295 faces: in every frame
+  each face is in exactly one subset (bark 479,054, leaf 336,360, ground
+  11,881), the indices come from the frame layers. `ValidateSubsets` from
+  `usd-core` 26.08 crashes on subsets whose indices are only in time samples
+  (segfault, even on a scene created by USD itself), so the coverage was
+  verified directly.
+- **Blender 4.5.3** imports `foliage.usda`:
+  - `bark`: Principled BSDF with the photo and a Normal Map node;
+  - `leaf`: with alpha (Math, Blend);
   - `grass`;
-  - `soil`: barva z atributu `displayColor`.
-  - Síť má UV `st` a sloty materiálů podle subsetů, prototypy trávy svůj
-    materiál.
+  - `soil`: color from the `displayColor` attribute.
+  - The mesh has the `st` UVs and material slots according to the subsets;
+    the grass prototypes have their own material.
 
-Testy jsou v `tests/test_materialx.cpp` (8):
-- dokument přečtený zpátky tak, jak se zapsal (i znaky `&` a `"`); co
-  MaterialX není, se odmítne;
-- graf jako z Poly Haven (`nodegraph`, výstupy, `interfacename`,
-  `tiledimage`, posun) dovede k fotkám, i jako sada textur ze souboru,
-  z `#jména` a ze složky;
-- id definic uzlů a rozepsaná normálová mapa bez `normalmap`;
-- naše materiály jako grafy: kůra s tónováním, normálovou mapou, výškou
-  a náhradním UsdPreviewSurface, list s alfou a průsvitností, beton ze tří
-  stran (podle polohy i `rest`, výška stejně), sklo, bez materiálu,
-  normálová mapa DirectX;
-- zapsaný materiál se přečte jako stejná sada textur, i s výškou
-  a hloubkou;
-- scéna USD s plochami přiřazenými subsety, fotkami vedle, `primvars:st`,
-  posunutím MaterialX i UsdPreviewSurface, zpětným importem (skupiny
-  a `uv`) a celou sítí z jednoho materiálu;
-- záběr, jehož geometrie mění materiály snímek po snímku;
-- `.mtlx` samotný, složka fotek sekvence a geometrie bez ploch.
+The tests are in `tests/test_materialx.cpp` (8):
+- a document read back exactly as it was written (including the `&` and `"`
+  characters); anything that is not MaterialX is rejected;
+- a graph like one from Poly Haven (`nodegraph`, outputs, `interfacename`,
+  `tiledimage`, offset) leads to the photos, also as a texture set from a
+  file, from `#name` and from a folder;
+- node definition ids and the expanded normal map without `normalmap`;
+- our materials as graphs: bark with tint, normal map, height and a fallback
+  UsdPreviewSurface, leaf with alpha and translucency, triplanar concrete (by
+  position and by `rest`, height likewise), glass, no material, DirectX
+  normal map;
+- a written material is read back as the same texture set, including height
+  and depth;
+- a USD scene with faces assigned by subsets, photos alongside,
+  `primvars:st`, MaterialX and UsdPreviewSurface displacement, re-import
+  (groups and `uv`) and a whole mesh of one material;
+- a shot whose geometry changes materials from frame to frame;
+- standalone `.mtlx`, the photo folder of a sequence and geometry without faces.
 
-## 6. V kódu
+## 6. In the code
 
-| Soubor | Co dělá |
+| File | What it does |
 |---|---|
-| `src/pg/io/MaterialX.h` | Dokument MaterialX bez knihovny: uzly a vstupy, zápis (`document`), čtení XML s grafy a jejich vstupy (`parse`), cesta od povrchu k fotkám (`surfaceOf`), id definic uzlů (`nodeDef`), rozepsaná normálová mapa (`portable`), typy USD (`usdType`) |
-| `src/pg/render/MaterialGraph.h` | Náš materiál jako graf `standard_surface` a UsdPreviewSurface (`materialGraph`), jména (`lookName`) a `MaterialLooks`: materiály geometrie tak, jak je scéna přiřadí, jejich Materials, dokument a fotky |
-| `src/pg/render/Scene.cpp` | `primitiveMaterials`: materiál každého primitiva, jak ho vidí renderery (sdílí `meshOf` i export) |
-| `src/pg/io/Usda.h` | `primvars:st`, `FaceMaterials` a `MaterialBinder`, GeomSubsety (`facesOf`, `bindMesh`, `bindSubset`), Material ze shaderů (`materialPrim`) |
-| `src/pg/sim/UsdExport.h` | `/World/Materials` záběru, subsety ve vrstvách snímků, `<jméno>.mtlx` a fotky vedle; `exportGeometry`: `.usda` s materiály a `.mtlx` |
-| `src/pg/render/Textures.cpp` | `.mtlx` jako sada textur (`readMaterialX`) |
+| `src/pg/io/MaterialX.h` | A MaterialX document without the library: nodes and inputs, writing (`document`), reading XML with graphs and their inputs (`parse`), the path from the surface to the photos (`surfaceOf`), node definition ids (`nodeDef`), the expanded normal map (`portable`), USD types (`usdType`) |
+| `src/pg/render/MaterialGraph.h` | Our material as a `standard_surface` graph and UsdPreviewSurface (`materialGraph`), names (`lookName`) and `MaterialLooks`: the geometry's materials as the scene assigns them, their Materials, the document and the photos |
+| `src/pg/render/Scene.cpp` | `primitiveMaterials`: the material of every primitive as the renderers see it (shared by `meshOf` and the export) |
+| `src/pg/io/Usda.h` | `primvars:st`, `FaceMaterials` and `MaterialBinder`, GeomSubsets (`facesOf`, `bindMesh`, `bindSubset`), Material from shaders (`materialPrim`) |
+| `src/pg/sim/UsdExport.h` | The shot's `/World/Materials`, subsets in the frame layers, `<name>.mtlx` and the photos alongside; `exportGeometry`: `.usda` with materials and `.mtlx` |
+| `src/pg/render/Textures.cpp` | `.mtlx` as a texture set (`readMaterialX`) |
 
-## 7. Omezení
+## 7. Limitations
 
-- **Výšku naše renderery neposouvají**, dělají z ní jen reliéf (bump
-  v Cycles, a to jen tam, kde není normálová mapa). V exportu je
-  posunutím, takže jinde může plocha vypadat hlubší než u nás.
-- **Procedurální vzory a skvrny Cycles** (beton bez fotky, šmouhy na
-  fasádách) v MaterialX nejsou. Graf má fotky a barvy.
-- **Kladení ze tří stran** se liší v detailu: naše renderery míchají
-  projekce podle čtvrté mocniny a každou trochu posouvají,
-  `triplanarprojection` míchá po svém. Tašky kladené podél střechy jdou
-  ze tří stran.
-- **Čtení** bere z dokumentu fotky povrchu. Procedurální uzly (šum,
-  gradienty) a hodnoty drsnosti a kovovosti sada textur nenese. Ze scény
-  USD je přenese USD Import jako atributy `roughness` a `metallic`.
-- **Kusy z RBD Solveru** mají v USD dál materiály `/World/Looks`.
+- **Our renderers do not displace by height**; they only turn it into bump
+  (in Cycles, and only where there is no normal map). In the export it is
+  displacement, so elsewhere the surface may look deeper than in our renderers.
+- **Cycles procedural patterns and stains** (concrete without a photo, smudges
+  on facades) are not in MaterialX. The graph has photos and colors.
+- **Triplanar mapping** differs in detail: our renderers blend the
+  projections by the fourth power and offset each one slightly, while
+  `triplanarprojection` blends in its own way. Roof tiles laid along the roof
+  go out as triplanar.
+- **Reading** takes the surface photos from the document. Procedural nodes
+  (noise, gradients) and roughness and metalness values are not carried by
+  the texture set. From a USD scene, USD Import carries them over as the
+  `roughness` and `metallic` attributes.
+- **Pieces from the RBD Solver** keep their `/World/Looks` materials in USD.

@@ -1,162 +1,162 @@
-# Node editor shaderů
+# Shader node editor
 
-Graf uzlů, ze kterého vzniká zdrojový kód shaderu pro **OpenGL 3.3**, **OpenGL ES
-3.0 / WebGL 2**, **Vulkan** (GLSL 450 → SPIR-V) a **Direct3D 11/12** (HLSL).
-Je to síť vlastního typu vedle geometrie, podobně jako VOPy v Houdini, Shader
-Editor v Blenderu nebo Shader Graph v Unity.
+A node graph that generates shader source code for **OpenGL 3.3**, **OpenGL ES
+3.0 / WebGL 2**, **Vulkan** (GLSL 450 → SPIR-V) and **Direct3D 11/12** (HLSL).
+It is a network of its own type alongside the geometry network, similar to VOPs in Houdini, the Shader
+Editor in Blender or Shader Graph in Unity.
 
-![Editor: síť Shaders, náhled, parametry vybraného uzlu Checker a vygenerovaný kód](img/editor.png)
+![Editor: the Shaders network, the preview, the parameters of the selected Checker node and the generated code](img/editor.png)
 
-Všechno je jeden program, `prototype`. Bez příkazu otevře editor, s příkazem
-(`list`, `gen`, `check`, `render`) pracuje v příkazové řádce, bez okna.
-Editor má dvě sítě ve stejném rozložení, mezi kterými se přepíná uprostřed
-horní lišty: **Simulation**, kouř a oheň z uzlů ([pyro.md](pyro.md)), a
-**Shaders**, o které je tenhle dokument.
+Everything is a single program, `prototype`. Without a command it opens the editor; with a command
+(`list`, `gen`, `check`, `render`) it works on the command line, without a window.
+The editor has two networks in the same layout, switched in the middle of the
+top bar: **Simulation**, smoke and fire built from nodes ([pyro.md](pyro.md)), and
+**Shaders**, which is what this document is about.
 
-Hlavní požadavek byl, aby šel systém **rozšiřovat bez zásahu do C++**:
+The main requirement was that the system can be **extended without touching C++**:
 
-- **uzly jsou text**, ne kód: vestavěné i vlastní se píší ve stejném formátu `.pgnodes`;
-- **jazyky jsou třídy**: nový cíl je jedna třída zaregistrovaná v `TargetRegistry`;
-- **knihovny se načítají za běhu**: `--library`, menu Library, Ctrl+R;
-- **editor se staví z definic**: menu, piny i widgety vznikají z knihovny, žádný uzel není v editoru napsaný natvrdo.
+- **nodes are text**, not code: built-in and custom nodes are written in the same `.pgnodes` format;
+- **languages are classes**: a new target is one class registered in `TargetRegistry`;
+- **libraries load at run time**: `--library`, the Library menu, Ctrl+R;
+- **the editor is built from definitions**: menus, pins and widgets all come from the library; no node is hard-coded in the editor.
 
-Z běžných uzlů se dají poskládat i animované efekty, třeba oheň a kouř (§6).
+Ordinary nodes can also be combined into animated effects, such as fire and smoke (§6).
 
-Obsah:
-[1. Rychlý start](#1-rychlý-start) ·
-[2. Ovládání](#2-ovládání-editoru) ·
-[3. Jak to funguje](#3-jak-to-funguje) ·
-[4. Typy](#4-typy) ·
-[5. Cíle](#5-cíle-a-čím-se-liší) ·
-[6. Oheň a kouř](#6-efekty-oheň-a-kouř) ·
-[7. Rozšiřitelnost](#7-rozšiřitelnost) ·
-[8. Ověřování](#8-ověřování) ·
-[9. Co je potřeba znát](#9-co-je-potřeba-znát) ·
-[10. Cvičení](#10-cvičení) ·
-[11. Omezení](#11-omezení) ·
-[12. Odkazy](#12-odkazy)
+Contents:
+[1. Quick start](#1-quick-start) ·
+[2. Controls](#2-editor-controls) ·
+[3. How it works](#3-how-it-works) ·
+[4. Types](#4-types) ·
+[5. Targets](#5-targets-and-how-they-differ) ·
+[6. Fire and smoke](#6-effects-fire-and-smoke) ·
+[7. Extensibility](#7-extensibility) ·
+[8. Verification](#8-verification) ·
+[9. What you need to know](#9-what-you-need-to-know) ·
+[10. Exercises](#10-exercises) ·
+[11. Limitations](#11-limitations) ·
+[12. References](#12-references)
 
 ---
 
-## 1. Rychlý start
+## 1. Quick start
 
 ```bash
-sudo apt install libglfw3-dev          # volitelné, jinak se GLFW postaví ze zdrojů
+sudo apt install libglfw3-dev          # optional, otherwise GLFW is built from source
 cmake -S . -B build && cmake --build build
-./build/prototype --shaders                                 # editor na síti Shaders
-./build/prototype examples/shaders/marble.pgsg              # editor s grafem
-./build/prototype list                                      # uzly a cíle
+./build/prototype --shaders                                 # editor on the Shaders network
+./build/prototype examples/shaders/marble.pgsg              # editor with a graph
+./build/prototype list                                      # nodes and targets
 ./build/prototype gen examples/shaders/marble.pgsg --target all -o out/
-./build/prototype check examples/shaders/*.pgsg --nodes     # překlad glslangValidatorem
-./build/prototype render examples/shaders/marble.pgsg marble.png   # bez okna, přes EGL
-./build/prototype help                                      # všechny volby
+./build/prototype check examples/shaders/*.pgsg --nodes     # compile with glslangValidator
+./build/prototype render examples/shaders/marble.pgsg marble.png   # no window, via EGL
+./build/prototype help                                      # all options
 ```
 
-Výchozí build obsahuje editor. Při konfiguraci si stáhne Dear ImGui a GLFW,
-pokud v systému není GLFW 3.3+. Build bez editoru nemá žádné
-závislosti, stejně jako zbytek projektu; `prototype` pak umí jen příkazy:
+The default build includes the editor. During configuration it downloads Dear ImGui, and GLFW
+if the system does not have GLFW 3.3+. A build without the editor has no
+dependencies, like the rest of the project; `prototype` then supports only the commands:
 
 ```bash
-cmake -S . -B build -DPG_BUILD_GUI=OFF     # servery, CI
+cmake -S . -B build -DPG_BUILD_GUI=OFF     # servers, CI
 ```
 
-- Editor potřebuje OpenGL 3.3. Bez displeje řekne, že okno otevřít nejde, a
-  nabídne příkazy.
-- Bez sítě nasměrujte `FETCHCONTENT_SOURCE_DIR_IMGUI` a `…_GLFW` na lokální
-  kopie.
-- GLFW ze zdrojů chce na Linuxu vývojové balíčky X11 (`libxrandr-dev
-  libxinerama-dev libxcursor-dev libxi-dev`). Wayland se přidá, jen když je
-  k dispozici `wayland-scanner`.
+- The editor needs OpenGL 3.3. Without a display it says the window cannot be opened and
+  offers the commands instead.
+- Without network access, point `FETCHCONTENT_SOURCE_DIR_IMGUI` and `…_GLFW` at local
+  copies.
+- Building GLFW from source on Linux requires the X11 development packages (`libxrandr-dev
+  libxinerama-dev libxcursor-dev libxi-dev`). Wayland support is added only when
+  `wayland-scanner` is available.
 
-Příklady jsou v [`examples/shaders/`](../examples/shaders/). Podsložka
-[`extra/`](../examples/shaders/extra/) obsahuje ukázkovou uživatelskou knihovnu
-a graf, který ji používá.
+The examples are in [`examples/shaders/`](../examples/shaders/). The
+[`extra/`](../examples/shaders/extra/) subfolder contains a sample user library
+and a graph that uses it.
 
-![Příklady: unlit, checker_lit, textured, rim_light, marble, wobble, fire, smoke, toon (uživatelská knihovna), textured na toru](img/prototype-examples.png)
+![Examples: unlit, checker_lit, textured, rim_light, marble, wobble, fire, smoke, toon (user library), textured on a torus](img/prototype-examples.png)
 
-## 2. Ovládání editoru
+## 2. Editor controls
 
-Rozložení je stejné jako u simulace: vlevo nahoře **náhled** (Preview),
-pod ním **kód** a **problémy**, vpravo nahoře **parametry** vybraného uzlu,
-vpravo dole **síť**. Rozhraní mezi panely jdou táhnout.
+The layout is the same as for the simulation: top left is the **preview** (Preview),
+below it the **code** and **problems**, top right the **parameters** of the selected node,
+bottom right the **network**. The borders between panels can be dragged.
 
-| Co | Jak |
+| What | How |
 |---|---|
-| Přidat uzel | **Tab** nebo pravé tlačítko do prázdna → psát (hledá v názvu i kategorii, Enter vezme první) nebo vybrat z kategorií |
-| Přidat uzel rovnou zapojený | táhnout z pinu do prázdna; nový uzel se napojí prvním vhodným portem |
-| Spojit | táhnout z výstupu na vstup; vstup má nejvýš jeden spoj, nový nahradí starý. Nad pinem, který nepasuje, tooltip řekne proč |
-| Přesunout nebo zrušit spoj | táhnout za připojený vstup, puštěný do prázdna zanikne; Ctrl+klik na spoj ho zruší |
-| Výběr | klik, rámeček, Shift přidává, Ctrl přepíná, Ctrl+A vše |
-| Smazat / duplikovat | Delete nebo X / Ctrl+D |
-| Posun, zoom | prostřední tlačítko nebo Alt + levé; kolečko zvětšuje kolem myši |
-| Zarámovat / uspořádat | F (výběr, jinak vše) / L: automatické rozložení do sloupců podle toku |
+| Add a node | **Tab** or right-click on empty space → type (searches names and categories, Enter takes the first match) or pick from the categories |
+| Add a node already connected | drag from a pin into empty space; the new node connects through its first suitable port |
+| Connect | drag from an output to an input; an input has at most one connection, and a new one replaces the old one. Over a pin that does not fit, a tooltip says why |
+| Move or remove a connection | drag the connected input; dropped into empty space, the connection is removed; Ctrl+click on a connection removes it |
+| Selection | click, box, Shift adds, Ctrl toggles, Ctrl+A selects all |
+| Delete / duplicate | Delete or X / Ctrl+D |
+| Pan, zoom | middle button or Alt + left; the wheel zooms around the mouse |
+| Frame / arrange | F (the selection, otherwise everything) / L: automatic layout into columns following the flow |
 | Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
-| Náhled | levé tažení otáčí, pravé a kolečko přibližují; v hlavičce těleso (billboard pro efekty), animace, výchozí kamera, PNG |
-| Vzorky v uzlech | každý uzel ukazuje svůj první výstup na tělese náhledu; View → Node Thumbnails, Thumbnail v menu uzlu |
-| Kód | výběr cíle, záložky vertex/fragment, Copy |
-| Chyby | tlačítko Problems v hlavičce kódu; klik na chybu vybere uzel a posune na něj plátno |
-| Soubor | Ctrl+S, Ctrl+Shift+S, Ctrl+O (dialog se složkami a soubory `.pgsg`), File → Export Shaders… (všechny cíle naráz). New, Open, příklad i Quit se u neuložených změn zeptají: Save, Don't Save, Cancel ([pyro.md](pyro.md#soubory-undo)) |
-| Ověřit | Tools → Validate (F5): totéž co `prototype check`, na pozadí; výsledek v Problems |
-| Knihovny | Library → Add Library File…, Ctrl+R je znovu načte |
+| Preview | left drag rotates, right drag and the wheel zoom; in the header: body (billboard for effects), animation, default camera, PNG |
+| Swatches in nodes | each node shows its first output on the preview body; View → Node Thumbnails, Thumbnail in the node menu |
+| Code | target selection, vertex/fragment tabs, Copy |
+| Errors | the Problems button in the code header; clicking an error selects the node and pans the canvas to it |
+| File | Ctrl+S, Ctrl+Shift+S, Ctrl+O (a dialog with folders and `.pgsg` files), File → Export Shaders… (all targets at once). New, Open, an example and Quit ask about unsaved changes: Save, Don't Save, Cancel ([pyro.md](pyro.md#files-undo)) |
+| Validate | Tools → Validate (F5): the same as `prototype check`, in the background; the result goes to Problems |
+| Libraries | Library → Add Library File…, Ctrl+R reloads them |
 
-- Uzel na plátně ukazuje jen piny; hodnoty se upravují v panelu parametrů.
-  Nezapojený vstup má widget podle typu: číslo, vektor (osy barevně) nebo
-  barvu. Ikona ↺ vrátí výchozí hodnotu.
-- Zapojený vstup ukazuje, odkud vede (`← Checker.color`); klik přeskočí na
-  ten uzel.
-- Vstup, který bez spoje čte globální hodnotu, ukazuje `$normal`, `$uv` atd.
-  a tlačítko, kterým se mu dá nastavit vlastní hodnota.
-- Bez výběru ukazuje panel parametrů přehled grafu a **uniformy**: mění
-  hodnotu v běžícím shaderu, bez rekompilace.
-- Uzel s chybou má červený odznak; tooltip nad ním chybu vypíše.
-- **Vzorek v uzlu**: pod piny je první výstup uzlu (který se dá převést na
-  barvu) jako barva na tělese náhledu, neprůhledně — jako náhledy uzlů
-  v Blenderu. Je to kopie grafu, ve které výstup napájí ten uzel: generátor
-  z ní přeloží jen to, co do uzlu vede. Surface Output ukazuje celý shader.
-  Kreslí se jen uzly na obrazovce, po každé změně grafu znovu (nejvýš tři za
-  snímek okna); posuvníky uniform je mění nejvýš čtyřikrát za sekundu. Billboard
-  je vidět zpředu, rovina shora.
+- A node on the canvas shows only its pins; values are edited in the parameters panel.
+  An unconnected input has a widget according to its type: a number, a vector (axes in color) or
+  a color. The ↺ icon restores the default value.
+- A connected input shows where it comes from (`← Checker.color`); clicking it jumps to
+  that node.
+- An input that reads a global value when unconnected shows `$normal`, `$uv` etc.
+  and a button for giving it a value of its own.
+- With nothing selected, the parameters panel shows an overview of the graph and the **uniforms**: they change
+  the value in the running shader, without recompiling.
+- A node with an error has a red badge; the tooltip over it shows the error.
+- **Swatch in a node**: below the pins, the node's first output (one that can be converted to a
+  color) is shown as a color on the preview body, opaque, like the node previews
+  in Blender. It is a copy of the graph in which that node feeds the output: the generator
+  compiles from it only what leads into the node. Surface Output shows the whole shader.
+  Only nodes on screen are drawn, again after every graph change (at most three per
+  window frame); uniform sliders update them at most four times per second. The billboard
+  is seen from the front, the plane from above.
 
-![Síť mramoru se vzorky v uzlech: Position, šum, sinus, žilky, barvy, Lambert, odlesk a výsledný mramor v Surface Output](img/shader-swatches.jpg)
-- Titulek okna ukazuje jméno souboru, hvězdička značí neuložené změny.
+![The marble network with swatches in the nodes: Position, noise, sine, veins, colors, Lambert, highlight and the resulting marble in Surface Output](img/shader-swatches.jpg)
+- The window title shows the file name; an asterisk marks unsaved changes.
 
-## 3. Jak to funguje
+## 3. How it works
 
-Systém má tři části a každá ví jen to svoje:
+The system has three parts, and each knows only its own job:
 
 ```
  builtin.pgnodes ─┐
- moje.pgnodes ────┴─► NodeLibrary ──┐   co uzly znamenají
-                                    ├─► generate() ──► Target ──► soubory
- graf.pgsg ─────────► ShaderGraph ──┘   co uživatel postavil      jak se to píše
+ my.pgnodes ──────┴─► NodeLibrary ──┐   what the nodes mean
+                                    ├─► generate() ──► Target ──► files
+ graph.pgsg ────────► ShaderGraph ──┘   what the user built     how it is written
 ```
 
-- **NodeLibrary** ([NodeLibrary.h](../src/pg/shader/NodeLibrary.h)) drží
-  definice uzlů, načtené z textu. C++ zná typy, šablony a fáze, ale co znamená
-  `mix` nebo `lambert`, stojí v souboru `.pgnodes`.
-- **ShaderGraph** ([ShaderGraph.h](../src/pg/shader/ShaderGraph.h)) drží
-  instance uzlů, hodnoty a spoje. Neví, co uzly znamenají, takže se načte i bez
-  knihovny; neznámý typ uzlu nahlásí až generátor.
-- **Generator** ([Generator.h](../src/pg/shader/Generator.h)) zjistí, *co*
-  shader počítá, v pěti krocích:
-  1. Najde výstupní uzel. Jeho vstupy jsou kořeny fází: `color` se počítá pro
-     každý pixel (fragment), `offset` pro každý vrchol (vertex).
-  2. Projde graf proti směru spojů (DFS). Kompiluje se jen to, co do výstupu
-     vede; ostatní uzly nestojí nic.
-  3. Vyřeší typy v pořadí závislostí: port `any` dostane nejširší připojený
-     typ a každý spoj se převede na typ vstupu.
-  4. Rozvine šablony uzlů na příkazy, jednu proměnnou na výstup
-     (`vec3 n4_color = …`). Jména vznikají z id uzlů, takže stejný graf dá
-     vždy stejný text.
-  5. Předá výsledek (`Assembly`) cíli.
-- **Target** ([Target.h](../src/pg/shader/Target.h)) rozhodne, *jak* se to
-  napíše: jména typů a funkcí, deklarace uniforem, vstupy a výstupy fází,
-  vstupní body.
+- **NodeLibrary** ([NodeLibrary.h](../src/pg/shader/NodeLibrary.h)) holds the
+  node definitions, loaded from text. C++ knows the types, templates and stages, but what
+  `mix` or `lambert` means is stated in a `.pgnodes` file.
+- **ShaderGraph** ([ShaderGraph.h](../src/pg/shader/ShaderGraph.h)) holds the
+  node instances, values and connections. It does not know what the nodes mean, so it loads even without
+  a library; an unknown node type is reported only by the generator.
+- **Generator** ([Generator.h](../src/pg/shader/Generator.h)) works out *what* the
+  shader computes, in five steps:
+  1. It finds the output node. Its inputs are the roots of the stages: `color` is computed for
+     each pixel (fragment), `offset` for each vertex (vertex).
+  2. It walks the graph against the direction of the connections (DFS). Only what leads into the output
+     is compiled; other nodes cost nothing.
+  3. It resolves types in dependency order: an `any` port gets the widest connected
+     type, and each connection is converted to the type of its input.
+  4. It expands the node templates into statements, one variable per output
+     (`vec3 n4_color = …`). Names are derived from node ids, so the same graph always produces
+     the same text.
+  5. It passes the result (`Assembly`) to the target.
+- **Target** ([Target.h](../src/pg/shader/Target.h)) decides *how* it is
+  written: type and function names, uniform declarations, stage inputs and outputs,
+  entry points.
 
-Takhle vypadá příklad `rim_light`: tmavý podklad s Lambertovým osvětlením
-a fresnelovský okraj v barvě, kterou může aplikace měnit. Soubor grafu
-(`.pgsg`) je prostý text s jedním faktem na řádek a stabilním pořadím, takže
-se dobře diffuje v gitu:
+This is the `rim_light` example: a dark base with Lambert lighting
+and a Fresnel rim in a color the application can change. The graph file
+(`.pgsg`) is plain text with one fact per line and a stable order, so
+it diffs well in git:
 
 ```
 pgshadergraph 1
@@ -179,8 +179,8 @@ link 5.result -> 6.b
 link 6.result -> 7.color
 ```
 
-Tělo fragment shaderu (GLSL 330), které z něj vznikne. Každý řádek odpovídá
-jednomu výstupu jednoho uzlu:
+The fragment shader body (GLSL 330) generated from it. Each line corresponds to
+one output of one node:
 
 ```glsl
 void main()
@@ -198,38 +198,38 @@ void main()
 }
 ```
 
-Všimněte si tří věcí:
+Note three things:
 
-- `n5_result`: `multiply` s `any` vstupy dostal float a vec3, takže se typ
-  vyřešil na vec3 a float se rozkopíroval (`vec3(n3_result)`).
-- `g_normal` a `g_view` jsou globály, které uzly čtou jako `$normal` a `$view`.
-  Generátor je spočítá jen tehdy, když je někdo čte, a pošle z vertex fáze jen
-  ty varyingy, které fragment potřebuje.
-- `u_rim` je uniforma z uzlu Color Parameter, kterou může aplikace měnit bez
-  rekompilace; v editoru ji mění panel Uniforms.
+- `n5_result`: `multiply` with `any` inputs received a float and a vec3, so the type
+  resolved to vec3 and the float was splatted (`vec3(n3_result)`).
+- `g_normal` and `g_view` are globals that nodes read as `$normal` and `$view`.
+  The generator computes them only when something reads them, and passes from the vertex stage only
+  the varyings the fragment stage needs.
+- `u_rim` is a uniform from the Color Parameter node, which the application can change without
+  recompiling; in the editor it is changed from the Uniforms panel.
 
-## 4. Typy
+## 4. Types
 
-| Typ | Složek | Pin | Poznámka |
+| Type | Components | Pin | Note |
 |---|---|---|---|
-| `float` | 1 | šedý | |
-| `vec2` | 2 | zelený | UV |
-| `vec3` | 3 | žlutý | pozice, normály, barvy |
-| `vec4` | 4 | fialový | barva s alfou, výstup |
-| `sampler2D` | – | modrý | textura; deklaruje ji uzel přes `uniform` |
-| `any` | podle zapojení | bílý | nejširší připojený typ |
+| `float` | 1 | gray | |
+| `vec2` | 2 | green | UV |
+| `vec3` | 3 | yellow | positions, normals, colors |
+| `vec4` | 4 | purple | color with alpha, output |
+| `sampler2D` | – | blue | texture; the node declares it via `uniform` |
+| `any` | depends on connections | white | the widest connected type |
 
-Převody na spoji:
+Conversions on a connection:
 
-- skalár → vektor se rozkopíruje (`vec3(x)`);
-- delší vektor → kratší se ořízne swizzlem (`.xy`);
-- kratší vektor → delší se doplní nulami, jen složka `w` dostane 1, takže barva
-  vec3 zapojená do vec4 je neprůhledná.
+- scalar → vector is splatted (`vec3(x)`);
+- a longer vector → a shorter one is truncated with a swizzle (`.xy`);
+- a shorter vector → a longer one is padded with zeros, except that the `w` component gets 1, so a vec3
+  color connected to a vec4 is opaque.
 
-Převody se řeší jednou pro všechny cíle ve třídě `Target` (`convert`,
-`splat`, `construct`); uzly se o ně nestarají.
+Conversions are handled once for all targets in the `Target` class (`convert`,
+`splat`, `construct`); nodes do not deal with them.
 
-## 5. Cíle a čím se liší
+## 5. Targets and how they differ
 
 ```
 $ prototype list
@@ -242,21 +242,21 @@ targets
 
 | | `glsl330` | `gles300` | `vulkan` | `hlsl` |
 |---|---|---|---|---|
-| Hlavička | `#version 330 core` | `#version 300 es` + `precision highp float;` | `#version 450` | – |
-| Uniformy | volné `uniform` | volné `uniform` | jeden blok `std140` `Globals` (set 0, binding 0) s offsety | `cbuffer Globals : register(b0)` |
-| Textury | `uniform sampler2D` | `uniform sampler2D` | `layout(set = 0, binding = 1+i) uniform sampler2D` | `Texture2D` + `SamplerState` na `register(t<i>)`, `register(s<i>)` |
-| Mezi fázemi | `in`/`out` podle jména | `in`/`out` podle jména | `layout(location = N)` na obou stranách | struktury se sémantikami `TEXCOORDn` |
-| Vstupní body | `main`, `main` | `main`, `main` | `main`, `main` | `vs_main`, `ps_main` |
-| Soubory | `.vert` `.frag` | `.vert` `.frag` | `.vert` `.frag` → SPIR-V | jeden `.hlsl` |
+| Header | `#version 330 core` | `#version 300 es` + `precision highp float;` | `#version 450` | – |
+| Uniforms | loose `uniform`s | loose `uniform`s | one `std140` block `Globals` (set 0, binding 0) with offsets | `cbuffer Globals : register(b0)` |
+| Textures | `uniform sampler2D` | `uniform sampler2D` | `layout(set = 0, binding = 1+i) uniform sampler2D` | `Texture2D` + `SamplerState` on `register(t<i>)`, `register(s<i>)` |
+| Between stages | `in`/`out` matched by name | `in`/`out` matched by name | `layout(location = N)` on both sides | structs with `TEXCOORDn` semantics |
+| Entry points | `main`, `main` | `main`, `main` | `main`, `main` | `vs_main`, `ps_main` |
+| Files | `.vert` `.frag` | `.vert` `.frag` | `.vert` `.frag` → SPIR-V | a single `.hlsl` |
 
-Proč se liší:
+Why they differ:
 
-- **GLSL ES** nemá ve fragment shaderu výchozí přesnost pro `float`, takže ji
-  musí deklarovat. Jinak je to GLSL 330.
-- **Vulkan** nezná volné číselné uniformy. Všechno, co není textura, musí být
-  v bloku s pevným rozložením paměti, a aplikace ten blok plní jako buffer.
-  Pravidla std140 zarovnávají `vec3` na 16 bajtů, proto generátor píše offsety
-  do komentářů:
+- **GLSL ES** has no default precision for `float` in the fragment shader, so it
+  must be declared. Otherwise it is GLSL 330.
+- **Vulkan** has no loose numeric uniforms. Everything that is not a texture must be
+  in a block with a fixed memory layout, and the application fills that block as a buffer.
+  The std140 rules align `vec3` to 16 bytes, which is why the generator writes the offsets
+  into comments:
 
   ```glsl
   layout(set = 0, binding = 0, std140) uniform Globals
@@ -270,96 +270,96 @@ Proč se liší:
   };  // 172 bytes
   ```
 
-  Rozhraní mezi fázemi se ve Vulkanu páruje podle `location`, ne podle jména.
-  Každý varying má pevné číslo (pozice 0, normála 1, UV 2), takže obě fáze
-  souhlasí, i když některý varying chybí.
-- **HLSL** je jiný jazyk:
-  - typy a funkce mají jiná jména (`float3`, `lerp`, `frac`, `fmod`, `rsqrt`,
+  In Vulkan the interface between stages is matched by `location`, not by name.
+  Each varying has a fixed number (position 0, normal 1, UV 2), so both stages
+  agree even when some varying is missing.
+- **HLSL** is a different language:
+  - types and functions have different names (`float3`, `lerp`, `frac`, `fmod`, `rsqrt`,
     `ddx`/`ddy`);
-  - matice se násobí přes `mul()`;
-  - textura a sampler jsou dva objekty, takže `texture(u_albedo, uv)` se píše
-    jako `u_albedo.Sample(u_albedo_sampler, uv)`;
-  - vstupy a výstupy fází jsou struktury se sémantikami (`POSITION`,
+  - matrices are multiplied with `mul()`;
+  - a texture and a sampler are two objects, so `texture(u_albedo, uv)` is written
+    as `u_albedo.Sample(u_albedo_sampler, uv)`;
+  - stage inputs and outputs are structs with semantics (`POSITION`,
     `SV_Position`, `TEXCOORD0`…).
 
-  Přejmenování dělá `translate()` po celých identifikátorech. Čísla,
-  komentáře ani členy za tečkou (`v.mix`) nemění.
+  The renaming is done by `translate()` on whole identifiers. It does not change numbers,
+  comments or members after a dot (`v.mix`).
 
-Kde nestačí přejmenovat, dostane uzel pro konkrétní cíl vlastní šablonu (§7.1).
-Vestavěný uzel `texture` to dělá právě kvůli HLSL.
+Where renaming is not enough, a node gets its own template for a specific target (§7.1).
+The built-in `texture` node does exactly that, because of HLSL.
 
-## 6. Efekty: oheň a kouř
+## 6. Effects: fire and smoke
 
-![Oheň (additive) a kouř (alpha) v náhledu](img/fire-smoke.gif)
+![Fire (additive) and smoke (alpha) in the preview](img/fire-smoke.gif)
 
-Oheň i kouř jsou obyčejné grafy z vestavěných uzlů, žádný zvláštní kód. Jsou to
-procedurální efekty: tvar i pohyb počítá shader na jedné ploše ze šumu a času.
-Nejde o simulaci proudění, jakou dělá Pyro v Houdini. Tu má jádro zvlášť:
-viz [pyro.md](pyro.md) a síť Simulation v editoru.
+Fire and smoke are ordinary graphs of built-in nodes, with no special code. They are
+procedural effects: the shader computes both shape and motion on a single primitive from noise and time.
+This is not a fluid simulation like Pyro in Houdini. The core has that separately:
+see [pyro.md](pyro.md) and the Simulation network in the editor.
 
-![Graf ohně v editoru; náhled sám přepnul na billboard](img/editor-fire.png)
+![The fire graph in the editor; the preview switched to the billboard by itself](img/editor-fire.png)
 
-Recept má tři části
+The recipe has three parts
 ([`examples/shaders/fire.pgsg`](../examples/shaders/fire.pgsg)):
 
-1. **Pohyb.** Do vstupu `offset` uzlu Fractal Noise vede čas vynásobený
-   vektorem (0, −1.8, 0.5): šum stoupá vzhůru a zároveň se přelévá. UV jsou
-   předtím natažené svisle (× 3.5, 1.5), takže vznikají protáhlé jazyky.
-2. **Tvar.** Kopule nad spodní hranou, `1 − délka((UV − (0.5, 0)) × (2.9, 1.1))`.
-   Než se délka spočítá, šum posune UV do stran; posun se násobí výškou `v`,
-   takže základna je klidná a nahoře jazyky kmitají. Smoothstep dole změkčí
-   hranu.
-3. **Barva.** Color Ramp převede výsledek na barvu: černá → červená →
-   oranžová → světle žlutá. Černá se při aditivním prolínání neprojeví.
+1. **Motion.** The `offset` input of the Fractal Noise node is fed time multiplied by the
+   vector (0, −1.8, 0.5): the noise rises upwards and churns at the same time. The UVs are
+   stretched vertically beforehand (× 3.5, 1.5), which produces elongated tongues.
+2. **Shape.** A dome above the bottom edge, `1 − length((UV − (0.5, 0)) × (2.9, 1.1))`.
+   Before the length is computed, the noise shifts the UVs sideways; the shift is multiplied by the height `v`,
+   so the base is calm and the tongues flicker at the top. A smoothstep at the bottom softens the
+   edge.
+3. **Color.** A Color Ramp turns the result into a color: black → red →
+   orange → light yellow. Black has no effect under additive blending.
 
-Kouř ([`examples/shaders/smoke.pgsg`](../examples/shaders/smoke.pgsg)) je
-stejný recept: pomalejší, s širším vlněním, šedou barvou a hustotou v alfě.
-Zkuste v editoru změnit barvy v Color Ramp ohně na modré: vznikne plamen
-plynového hořáku.
+Smoke ([`examples/shaders/smoke.pgsg`](../examples/shaders/smoke.pgsg)) is
+the same recipe: slower, with wider undulation, a gray color and density in the alpha.
+Try changing the colors in the fire's Color Ramp to blue in the editor: you get the flame of a
+gas burner.
 
-### Prolínání
+### Blending
 
-Výstupní uzel má výběrový parametr `blend`:
+The output node has a choice parameter, `blend`:
 
-| Režim | Co dělá | Na co |
+| Mode | What it does | Used for |
 |---|---|---|
-| `opaque` | nahradí pixel a zapíše hloubku | pevné materiály (výchozí) |
-| `alpha` | barva × alfa + pozadí × (1 − alfa), bez zápisu hloubky | kouř, sklo, mlha |
-| `additive` | barva × alfa + pozadí; černá nepřidá nic | oheň, záře, jiskry |
+| `opaque` | replaces the pixel and writes depth | solid materials (default) |
+| `alpha` | color × alpha + background × (1 − alpha), no depth write | smoke, glass, fog |
+| `additive` | color × alpha + background; black adds nothing | fire, glow, sparks |
 
-Prolínání není kód shaderu, ale stav renderu. Generátor ho vrací
-v `GeneratedShader::blend` a píše ho do hlavičky každého souboru
-(`// Blending: additive -- …`), aby ho aplikace mohla nastavit. Náhled ho
-nastaví sám.
+Blending is not shader code but render state. The generator returns it
+in `GeneratedShader::blend` and writes it into the header of every file
+(`// Blending: additive -- …`) so the application can set it. The preview
+sets it by itself.
 
 ### Billboard
 
-Efekty se kreslí na **billboard**: svislý čtverec, který se natáčí ke kameře
-jen kolem svislé osy, aby plamen mířil vzhůru. UV jdou zleva doprava a zdola
-nahoru. Editor ho vybere sám, když otevřete graf, který prolíná; totéž dělá
-`prototype render`.
+Effects are drawn on a **billboard**: a vertical square that turns towards the camera
+only around the vertical axis, so the flame points upwards. The UVs run from left to right and from bottom
+to top. The editor picks it by itself when you open a graph that blends; `prototype render`
+does the same.
 
-### Uzly pro efekty
+### Nodes for effects
 
-| Uzel | K čemu |
+| Node | Purpose |
 |---|---|
-| Fractal Noise | 3D šum v několika oktávách, 0 až 1; animuje se přes `offset` |
-| Color Ramp | hodnota 0–1 na čtyři barvy; polohy prostředních dvou jsou vstupy |
-| Remap | přemapuje interval, třeba šum 0..1 na −0.5..0.5 |
-| Color + Alpha | spojí barvu a průhlednost do vec4 pro výstup |
+| Fractal Noise | 3D noise over several octaves, 0 to 1; animated through `offset` |
+| Color Ramp | a value 0–1 mapped onto four colors; the positions of the middle two are inputs |
+| Remap | remaps an interval, e.g. noise 0..1 to −0.5..0.5 |
+| Color + Alpha | combines color and opacity into a vec4 for the output |
 
-Výběrový parametr jako `blend` může mít i uzel ve vlastní knihovně. Editor
-z něj udělá rozbalovací seznam:
+A node in a custom library can also have a choice parameter like `blend`. The editor
+turns it into a drop-down list:
 
 ```
 param blend enum opaque alpha additive = opaque
 ```
 
-## 7. Rozšiřitelnost
+## 7. Extensibility
 
-### 7.1 Nový uzel = pár řádků textu
+### 7.1 A new node = a few lines of text
 
-Celá definice uzlu Toon z ukázkové knihovny
+The complete definition of the Toon node from the sample library
 [`examples/shaders/extra/stylized.pgnodes`](../examples/shaders/extra/stylized.pgnodes):
 
 ```
@@ -376,36 +376,36 @@ node toon
     out result vec3 = mix({shade}, {color}, {band})
 ```
 
-Po načtení knihovny se objeví v menu editoru pod kategorií *Stylized*
-a funguje ve všech čtyřech jazycích:
+Once the library is loaded, it appears in the editor menu under the *Stylized* category
+and works in all four languages:
 
-![Uživatelská knihovna v editoru: uzly Stripes a Toon, hledání „sty“, kód pro Vulkan](img/editor-library.png)
+![A user library in the editor: the Stripes and Toon nodes, a search for "sty", code for Vulkan](img/editor-library.png)
 
-Řádky definice:
+Definition lines:
 
-| Řádek | Význam |
+| Line | Meaning |
 |---|---|
-| `node <jméno>` | začátek definice; jméno se píše do souborů grafu |
-| `label`, `category`, `description` | co ukáže editor: titulek, menu, tooltip |
-| `version <n>` | verze typu uzlu; ukládá se do grafu kvůli budoucím migracím |
-| `in <jméno> <typ> [= čísla \| = $global] [color] [stage vertex\|fragment]` | vstup, tedy pin; výchozí hodnota; `color` = barevný widget; `stage` jen u výstupního uzlu |
-| `param <jméno> <typ\|string> [= hodnota] [color]` | parametr, který nejde zapojit, jen nastavit (třeba jméno uniformy) |
-| `param <jméno> enum <volba> <volba>… [= volba]` | výběr z několika jmen; v editoru rozbalovací seznam |
-| `uniform <šablona jména> <typ> [= šablona hodnoty]` | uniforma, kterou uzel deklaruje, např. `uniform u_{name} vec3 = {default}` |
-| `uses <funkce>…` | pomocné funkce, které šablony volají |
-| `out <jméno> <typ> = <šablona>` | výstup; šablona smí číst i dřívější výstupy téhož uzlu |
-| `impl <cíl> <výstup> = <šablona>` | jiná šablona pro jeden cíl |
-| `kind output` | výstupní uzel grafu; jeho vstupy jsou výstupy fází |
+| `node <name>` | start of the definition; the name is what gets written into graph files |
+| `label`, `category`, `description` | what the editor shows: title, menu, tooltip |
+| `version <n>` | node type version; saved into the graph for future migrations |
+| `in <name> <type> [= numbers \| = $global] [color] [stage vertex\|fragment]` | an input, i.e. a pin; default value; `color` = color widget; `stage` only on the output node |
+| `param <name> <type\|string> [= value] [color]` | a parameter that cannot be connected, only set (e.g. a uniform name) |
+| `param <name> enum <choice> <choice>… [= choice]` | a choice among several names; a drop-down list in the editor |
+| `uniform <name template> <type> [= value template]` | a uniform the node declares, e.g. `uniform u_{name} vec3 = {default}` |
+| `uses <function>…` | helper functions the templates call |
+| `out <name> <type> = <template>` | an output; the template may also read earlier outputs of the same node |
+| `impl <target> <output> = <template>` | a different template for one target |
+| `kind output` | the graph's output node; its inputs are the stage outputs |
 
-V šablonách se píše kód v neutrálním dialektu, tedy v syntaxi GLSL:
+Templates contain code in a neutral dialect, i.e. GLSL syntax:
 
-- `{vstup}`, `{param}` a `{dřívější-výstup}` se nahradí výrazem;
-- `$position`, `$normal`, `$uv`, `$view`, `$light` a `$time` jsou globály,
-  které dodá generátor.
+- `{input}`, `{param}` and `{earlier-output}` are replaced with an expression;
+- `$position`, `$normal`, `$uv`, `$view`, `$light` and `$time` are globals
+  supplied by the generator.
 
-**Pomocné funkce** se píšou jako blok a do shaderu se vloží jednou, jen když je
-některý použitý uzel potřebuje. Funkce volané jinou funkcí přijdou dřív než ta,
-která je volá:
+**Helper functions** are written as a block and inserted into the shader once, only when
+some node in use needs them. Functions called by another function come before the one
+that calls them:
 
 ```
 function pg_stripe
@@ -416,12 +416,12 @@ float pg_stripe(float x, float width) {
 end
 ```
 
-Řádek `uses <jiná funkce>` hned za hlavičkou funkce říká, že volá jinou funkci.
-`function <jméno> <cíl>` je varianta funkce pro jeden cíl.
+A `uses <other function>` line right after the function header says that it calls another function.
+`function <name> <target>` is a variant of a function for one target.
 
-**Šablona pro konkrétní cíl** je potřeba tam, kde se jazyky liší víc než jménem.
-GLSL `mod` a HLSL `fmod` se liší u záporných čísel, a automatické přejmenování
-by tak změnilo výsledek:
+**A target-specific template** is needed where the languages differ by more than a name.
+GLSL `mod` and HLSL `fmod` differ for negative numbers, so automatic renaming
+would change the result:
 
 ```
 node wrap
@@ -434,28 +434,28 @@ node wrap
     impl hlsl result = ({x} - {y} * floor({x} / {y}))
 ```
 
-**Kontrola nové knihovny:** každý výstup každého uzlu se přeloží ve fragment
-i vertex fázi a pro každý cíl; u uzlů s `any` navíc i s vektorovými hodnotami:
+**Checking a new library:** every output of every node is compiled in the fragment
+and vertex stages and for every target; nodes with `any` are also compiled with vector values:
 
 ```bash
-./build/prototype check --library moje.pgnodes --nodes-from moje.pgnodes
+./build/prototype check --library my.pgnodes --nodes-from my.pgnodes
 ```
 
-### 7.2 Knihovny za běhu
+### 7.2 Libraries at run time
 
-- `--library FILE` (lze opakovat) funguje v editoru i u všech příkazů.
-- V editoru: Library → Add library file…; po úpravě souboru stačí Ctrl+R.
-- Pozdější definice se stejným jménem nahradí dřívější. Vlastní knihovna tak
-  může **přepsat i vestavěný uzel**, třeba lepším `noise`.
-- Načtení je atomické: chyba kdekoli v souboru znamená, že se nepřidá nic,
-  a hláška má tvar `soubor:řádek: co je špatně`.
-- Složka s příklady může nést vlastní knihovny. Otevřete-li z menu Examples
-  graf ze složky `extra/`, editor načte i `.pgnodes` ze stejné složky.
+- `--library FILE` (can be repeated) works in the editor and with all commands.
+- In the editor: Library → Add library file…; after editing the file, Ctrl+R is enough.
+- A later definition with the same name replaces an earlier one. A custom library can therefore
+  **override even a built-in node**, for example with a better `noise`.
+- Loading is atomic: an error anywhere in the file means nothing is added,
+  and the message has the form `file:line: what is wrong`.
+- An examples folder can carry its own libraries. If you open a graph from the `extra/` folder
+  via the Examples menu, the editor also loads the `.pgnodes` files from the same folder.
 
-### 7.3 Nový jazyk = jedna třída
+### 7.3 A new language = one class
 
-Cíl je potomek `Target`. Přepíše to, čím se jeho jazyk liší, a zaregistruje
-se. Kostra pro Metal:
+A target is a subclass of `Target`. It overrides whatever differs in its language and registers
+itself. A skeleton for Metal:
 
 ```cpp
 #include "pg/shader/Target.h"
@@ -472,179 +472,178 @@ public:
                                         {"vec4", "float4"}, {"mod", "fmod"}});
     }
     std::vector<ShaderFile> assemble(const Assembly& a) const override {
-        // a.uniforms              uniformy grafu (jméno, typ, výchozí hodnota, binding)
-        // a.vertex, a.fragment    použité globály, pomocné funkce, příkazy, výsledek
-        // a.varyings              co fragment fáze potřebuje z vertex fáze
-        std::string text = /* deklarace + vstupní body kolem a.fragment.statements */;
+        // a.uniforms              graph uniforms (name, type, default value, binding)
+        // a.vertex, a.fragment    globals used, helper functions, statements, result
+        // a.varyings              what the fragment stage needs from the vertex stage
+        std::string text = /* declarations + entry points around a.fragment.statements */;
         return {ShaderFile{".metal", text, {{Stage::Vertex, "vs_main"}, {Stage::Fragment, "fs_main"}}}};
     }
 };
 
-// jednou při startu:
+// once at startup:
 TargetRegistry::instance().add(std::make_unique<MetalTarget>());
 ```
 
-Od té chvíle cíl funguje všude:
+From then on the target works everywhere:
 
 - `prototype gen --target metal`;
-- výběr cíle v editoru a File → Export shaders;
-- každý uzel každé knihovny, pokud `translate()` pokryje jména; kde ne,
-  pomůže `impl metal …` v definici uzlu.
+- target selection in the editor and File → Export shaders;
+- every node of every library, as long as `translate()` covers the names; where it does not,
+  an `impl metal …` in the node definition helps.
 
-Funkční minimální příklad je test `a_new_target_plugs_in_as_one_class`
-v [tests/test_shader_graph.cpp](../tests/test_shader_graph.cpp). Jeho třída
-`ListingTarget` má čtrnáct řádků.
+A working minimal example is the test `a_new_target_plugs_in_as_one_class`
+in [tests/test_shader_graph.cpp](../tests/test_shader_graph.cpp). Its
+`ListingTarget` class is fourteen lines long.
 
-### 7.4 Editor se staví z definic
+### 7.4 The editor is built from definitions
 
-Síť Shaders v editoru ([tools/prototype/ShaderWorkspace.cpp](../tools/prototype/ShaderWorkspace.cpp))
-nezná žádný konkrétní uzel. Všechno bere z `NodeDef`:
+The Shaders network in the editor ([tools/prototype/ShaderWorkspace.cpp](../tools/prototype/ShaderWorkspace.cpp))
+knows no specific node. It takes everything from `NodeDef`:
 
-- menu tvoří kategorie a popisky, ikona a barva hlavičky podle kategorie;
-- barva pinu odpovídá typu;
-- widget v panelu parametrů závisí na typu a nápovědě `color`;
-- parametr typu `string` je textové pole a ověřuje se jako identifikátor,
-  výběrový parametr jsou tlačítka nebo rozbalovací seznam;
-- výchozí globál se ukáže jako `$normal`;
-- tooltip je `description`;
-- neznámá kategorie dostane neutrální barvu.
+- the menu is made of categories and labels; the icon and header color follow the category;
+- the pin color corresponds to the type;
+- the widget in the parameters panel depends on the type and the `color` hint;
+- a `string` parameter is a text field and is validated as an identifier;
+  a choice parameter is a set of buttons or a drop-down list;
+- a default global is shown as `$normal`;
+- the tooltip is the `description`;
+- an unknown category gets a neutral color.
 
-Plátno uzlů ([NodeCanvas.h](../tools/prototype/NodeCanvas.h)) je společné
-pro obě sítě: nezná ani shadery, ani simulaci. Každý snímek dostane uzly a
-spoje jako data (titulek, barvy, piny) a co uživatel udělá, vrátí přes
-rozhraní `CanvasModel` (spojit, přesunout, smazat, nabídka uzlů). Obě sítě
-tak mají stejné ovládání, zoom, výběr i rozložení (L).
+The node canvas ([NodeCanvas.h](../tools/prototype/NodeCanvas.h)) is shared
+by both networks: it knows neither shaders nor simulation. Every frame it receives the nodes and
+connections as data (title, colors, pins), and it returns what the user did through
+the `CanvasModel` interface (connect, move, delete, node menu). Both networks
+therefore have the same controls, zoom, selection and layout (L).
 
-Je to možné díky Dear ImGui: immediate-mode GUI kreslí každý snímek celé UI
-znovu z dat, takže editor nemá žádný vlastní stav uzlů, který by musel držet
-v souladu s knihovnou. Po Ctrl+R je nový uzel v menu hned v příštím snímku.
-Undo a redo drží celé stavy grafu jako text (`ShaderGraph::save`).
+This is possible thanks to Dear ImGui: an immediate-mode GUI redraws the entire UI every frame
+from data, so the editor has no node state of its own that it would have to keep
+in sync with the library. After Ctrl+R a new node is in the menu in the very next frame.
+Undo and redo keep entire graph states as text (`ShaderGraph::save`).
 
-## 8. Ověřování
+## 8. Verification
 
-`ctest --test-dir build` spouští:
+`ctest --test-dir build` runs:
 
-- **pgtests**: 133 testů, z toho 25 pro shader graf;
-- **prototype_list**: příkazy fungují v každém buildu, s editorem i bez něj;
-- **shaders_compile**: každý příklad a každý výstup každého vestavěného uzlu
-  v obou fázích (uzly s `any` i s vec3), pro 4 cíle. To je 116 grafů
-  a 928 běhů `glslangValidator`. SPIR-V navíc projde `spirv-val` a HLSL se
-  překládá HLSL frontendem glslangu (`-D`);
-- **shaders_compile_user_library**: totéž pro ukázkovou uživatelskou knihovnu
+- **pgtests**: 133 tests, 25 of them for the shader graph;
+- **prototype_list**: the commands work in every build, with and without the editor;
+- **shaders_compile**: every example and every output of every built-in node
+  in both stages (nodes with `any` also with vec3), for 4 targets. That is 116 graphs
+  and 928 runs of `glslangValidator`. In addition, SPIR-V goes through `spirv-val`, and HLSL is
+  compiled with glslang's HLSL front end (`-D`);
+- **shaders_compile_user_library**: the same for the sample user library
   (`--nodes-from`).
 
-Kromě testů:
+Besides the tests:
 
-- `prototype render` vykreslí náhled bez okna přes EGL; obrázky příkladů výše
-  jsou z něj.
-- Editor umí `--screenshot OUT.png --frames N` a `--script SOUBOR`, který do
-  okna přehraje myš, klávesy a snímky obrazovky ze souboru (příkazy `click`,
-  `drag`, `key ctrl+z`, `type`, `wheel`, `shot`, `wait`). Pod `xvfb-run` se
-  tak dá vyzkoušet celé ovládání i na stroji bez displeje; obrázky editoru
-  v dokumentaci vznikly takhle.
+- `prototype render` renders the preview without a window via EGL; the example images above
+  come from it.
+- The editor supports `--screenshot OUT.png --frames N` and `--script FILE`, which replays
+  mouse input, keys and screenshots from a file into the window (commands `click`,
+  `drag`, `key ctrl+z`, `type`, `wheel`, `shot`, `wait`). Under `xvfb-run`
+  the full set of controls can thus be tested even on a machine without a display; the editor images
+  in the documentation were made this way.
 
-## 9. Co je potřeba znát
+## 9. What you need to know
 
-Pro práci na tomhle kódu, ale i pro psaní vlastních uzlů:
+For working on this code, and also for writing your own nodes:
 
-- **Grafické API**:
-  - co dělá vertex a co fragment shader;
-  - rozdíl mezi atributem (per vrchol), varyingem (interpolovaný mezi fázemi)
-    a uniformou (konstanta za draw call);
-  - souřadné prostory: objekt → svět → clip.
-- **Osvětlení** stojí hlavně na skalárních součinech jednotkových vektorů:
+- **Graphics API**:
+  - what a vertex shader does and what a fragment shader does;
+  - the difference between an attribute (per vertex), a varying (interpolated between stages)
+    and a uniform (constant per draw call);
+  - coordinate spaces: object → world → clip.
+- **Lighting** relies mainly on dot products of unit vectors:
   - Lambert: `N·L`;
-  - Blinn-Phong: `(N·H)^s`, kde `H` je půlvektor mezi `L` a `V`;
-  - Fresnel (Schlickova aproximace): `(1 − N·V)^p`.
-- **Kompilátor v malém**:
-  - graf je jeden velký výraz a generátor ho převádí na řádky;
-  - DFS v post-orderu dává topologické pořadí;
-  - co z výstupu není dosažitelné, je mrtvý kód;
-  - `any` je nejjednodušší typová inference;
-  - jedna proměnná na výstup se chová jako SSA.
-- **Rozdíly API**: rozložení std140, deskriptorové sady (set/binding) ve
-  Vulkanu, sémantiky a `register()` v HLSL, přesnost v GLSL ES. Nic z toho
-  není těžké, jen se to musí vědět.
-- **Immediate-mode GUI**: UI není strom objektů, ale funkce, která každý
-  snímek kreslí stav. Proto je editor krátký.
+  - Blinn-Phong: `(N·H)^s`, where `H` is the half vector between `L` and `V`;
+  - Fresnel (Schlick's approximation): `(1 − N·V)^p`.
+- **A compiler in miniature**:
+  - the graph is one big expression, and the generator turns it into lines;
+  - a post-order DFS gives a topological order;
+  - whatever is not reachable from the output is dead code;
+  - `any` is the simplest form of type inference;
+  - one variable per output behaves like SSA.
+- **API differences**: the std140 layout, descriptor sets (set/binding) in
+  Vulkan, semantics and `register()` in HLSL, precision in GLSL ES. None of it
+  is hard; you just have to know it.
+- **Immediate-mode GUI**: the UI is not a tree of objects but a function that draws the state
+  every frame. That is why the editor is short.
 
-Jak o tom přemýšlet: **uzel je šablona výrazu, spoj je dosazení a graf je
-výraz**. Generátor dělá totéž, co byste dělali ručně při přepisu grafu do
-kódu: odspodu nahoru, každý mezivýsledek do proměnné, a pak ho obalí tím, co
-chce konkrétní API.
+How to think about it: **a node is an expression template, a connection is a substitution, and the graph is
+an expression**. The generator does the same thing you would do by hand when rewriting a graph as
+code: bottom up, every intermediate result into a variable, and then it wraps it in whatever
+the particular API requires.
 
-## 10. Cvičení
+## 10. Exercises
 
-Od nejlehčího:
+From easiest:
 
-1. Do vlastní knihovny přidejte uzel `posterize` (hodnota zaokrouhlená na
-   několik úrovní, `floor(x * n) / n`) a ověřte ho přes
+1. Add a `posterize` node to your own library (a value rounded to
+   a few levels, `floor(x * n) / n`) and verify it with
    `prototype check --nodes-from`.
-2. Jiskry k ohni: malé světlé body, které stoupají a hasnou. Náhodné číslo
-   pro každou buňku mřížky (jako `pg_hash`), `fract` z času posunutého o
-   to číslo a výsledek přičtený k ohni v režimu `additive`.
-3. Uzel `triplanar`: textura promítnutá podél tří os a smíchaná podle
-   `abs($normal)`. Jsou to tři volání `texture()` a váhy.
-4. Uzel s `atan(y, x)`: HLSL tu funkci jmenuje `atan2`, takže je potřeba
+2. Sparks for the fire: small bright points that rise and fade out. A random number
+   for each grid cell (like `pg_hash`), `fract` of the time offset by
+   that number, and the result added to the fire in `additive` mode.
+3. A `triplanar` node: a texture projected along three axes and blended by
+   `abs($normal)`. It is three `texture()` calls plus weights.
+4. A node with `atan(y, x)`: HLSL calls that function `atan2`, so it needs
    `impl hlsl`.
-5. Cíl WGSL pro WebGPU (`vec3<f32>`, `@vertex` a `@fragment`,
-   `@group(0) @binding(0)`), jako třída podle §7.3.
-6. Kopírovat a vložit uzly (Ctrl+C, Ctrl+V), i mezi dvěma okny. Graf se
-   umí uložit do textu, takže schránka může být text vybraných uzlů a spojů
-   mezi nimi.
-7. Náhled mezivýsledku: položka „preview this output“, která dočasně zapojí
-   vybraný výstup do výstupního uzlu.
+5. A WGSL target for WebGPU (`vec3<f32>`, `@vertex` and `@fragment`,
+   `@group(0) @binding(0)`), as a class following §7.3.
+6. Copy and paste nodes (Ctrl+C, Ctrl+V), including between two windows. The graph
+   can be saved to text, so the clipboard can be the text of the selected nodes and the connections
+   between them.
+7. Preview of an intermediate result: a "preview this output" item that temporarily connects
+   the selected output to the output node.
 
-## 11. Omezení
+## 11. Limitations
 
-Všechna jsou vědomá:
+All of them are deliberate:
 
-- Jeden výstupní uzel (barva + posun vrcholů), jedno směrové světlo, bez stínů.
-- Graf je DAG: bez větvení, cyklů a podgrafů.
-- Náhled běží jen přes GLSL 330. Ostatní cíle ověřuje překladač, ne vykreslení.
-- Textury v náhledu jsou testovací UV mřížka, načítání obrázků chybí.
-- Editor se při zavření neptá na neuložené změny.
-- Metal ani WGSL zatím nejsou (viz cvičení).
-- Průhledné plochy se neřadí podle vzdálenosti. Na kouli s alfou se přední a
-  zadní strana mohou překrýt v nesprávném pořadí; billboard je jedna plocha,
-  tam to nevadí.
-- Oheň a kouř jsou procedurální efekty, ne simulace proudění.
+- One output node (color + vertex offset), one directional light, no shadows.
+- The graph is a DAG: no branching, cycles or subgraphs.
+- The preview runs only through GLSL 330. The other targets are verified by the compiler, not by rendering.
+- Textures in the preview are a test UV grid; image loading is missing.
+- There is no Metal or WGSL yet (see the exercises).
+- Transparent primitives are not sorted by distance. On a sphere with alpha, the front and
+  back sides may overlap in the wrong order; the billboard is a single primitive,
+  so it does not matter there.
+- Fire and smoke are procedural effects, not fluid simulations.
 
-## 12. Odkazy
+## 12. References
 
-**Příbuzné systémy**
+**Related systems**
 
 - [MaterialX ShaderGen](https://github.com/AcademySoftwareFoundation/MaterialX):
-  stejná myšlenka (uzly jako data, generátor pro každý jazyk) v produkční podobě.
+  the same idea (nodes as data, a generator for each language) in production form.
 - Houdini VOPs, Blender Shader Editor, Unity Shader Graph, Unreal Material
-  Editor: vzory pro UI.
-- [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross): opačný přístup,
-  jeden zdroj → SPIR-V → převod do ostatních jazyků. Přímé generování, jak ho
-  dělá tenhle projekt, dává čitelnější výstup a dovolí uzlu přepsat šablonu
-  pro konkrétní jazyk.
+  Editor: models for the UI.
+- [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross): the opposite approach,
+  one source → SPIR-V → conversion into the other languages. Direct generation, as
+  this project does it, gives more readable output and lets a node override its template
+  for a specific language.
 
-**Použité nástroje a knihovny**
+**Tools and libraries used**
 
-- [glslang](https://github.com/KhronosGroup/glslang) (`glslangValidator`) a
+- [glslang](https://github.com/KhronosGroup/glslang) (`glslangValidator`) and
   [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools) (`spirv-val`):
-  ověřování.
-- [Dear ImGui](https://github.com/ocornut/imgui) a [GLFW](https://www.glfw.org):
-  editor. Plátno uzlů je vlastní (`NodeCanvas`), kreslené přes draw listy
-  Dear ImGui; písmo se při zoomu rasterizuje v potřebné velikosti (dynamické
-  fonty Dear ImGui 1.92), takže zůstává ostré.
-- Rozložení std140: specifikace OpenGL 4.6, oddíl 7.6.2.2 *Standard Uniform
+  validation.
+- [Dear ImGui](https://github.com/ocornut/imgui) and [GLFW](https://www.glfw.org):
+  the editor. The node canvas is custom (`NodeCanvas`), drawn with Dear ImGui
+  draw lists; when zooming, the font is rasterized at the required size (Dear ImGui 1.92
+  dynamic fonts), so it stays sharp.
+- The std140 layout: the OpenGL 4.6 specification, section 7.6.2.2 *Standard Uniform
   Block Layout*.
 
-**Soubory**
+**Files**
 
 ```
 src/pg/shader/   Types, NodeLibrary + builtin.pgnodes, ShaderGraph, Target, Generator
-src/pg/gl/       Gl (vlastní loader), Preview (náhled), Png, HeadlessContext (EGL)
-tools/prototype/              prototype: main (bez příkazu editor, jinak příkaz),
+src/pg/gl/       Gl (custom loader), Preview (preview), Png, HeadlessContext (EGL)
+tools/prototype/              prototype: main (editor without a command, otherwise the command),
                              Commands (list, gen, check, render, sim), App + Editor
-                             (okno a rozložení), ShaderWorkspace a SimWorkspace (sítě),
-                             NodeCanvas (plátno uzlů), Theme + Widgets (vzhled)
-examples/shaders/            příklady, i fire a smoke; extra/ = uživatelská knihovna a graf
-tests/test_shader_graph.cpp  testy
-docs/shader-nodes.md         referenční přehled vestavěných uzlů (generovaný)
+                             (window and layout), ShaderWorkspace and SimWorkspace (networks),
+                             NodeCanvas (node canvas), Theme + Widgets (appearance)
+examples/shaders/            examples, including fire and smoke; extra/ = user library and graph
+tests/test_shader_graph.cpp  tests
+docs/shader-nodes.md         reference overview of the built-in nodes (generated)
 ```

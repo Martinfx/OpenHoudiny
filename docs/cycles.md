@@ -1,196 +1,200 @@
-# Cycles: render z Blenderu
+# Cycles: rendering with Blender's renderer
 
-Záložka **Render** v editoru a příkazová řádka renderují přes **Cycles**,
-renderer Blenderu (Apache 2.0). Cycles je ve stejném programu jako
-knihovna, ne jako Blender: scéna snímku se převede do scény Cycles a ten ji
-spočítá na všech jádrech procesoru. Šum vezme Intel Open Image Denoise jako
-v Blenderu. Vlastní path tracer ([pathtracer.md](pathtracer.md)) zůstává
-jako druhá volba a jako záloha v buildu bez Cycles.
+The **Render** tab in the editor and the command line render through
+**Cycles**, Blender's renderer (Apache 2.0). Cycles is linked into the same
+program as a library, not as Blender: the frame's scene is converted into a
+Cycles scene, which Cycles computes on all CPU cores. Noise is removed by Intel
+Open Image Denoise, as in Blender. Our own path tracer
+([pathtracer.md](pathtracer.md)) remains as a second option and as a fallback
+in a build without Cycles.
 
-Cycles navíc svítí fyzikální oblohou jako v Blenderu, převádí světlo na
-obraz přes AgX a hladkým povrchům přidává detail ([§3](#3-obloha-barvy-a-povrchy)):
+On top of that, Cycles lights the scene with a physical sky as in Blender,
+converts light to an image through AgX, and adds detail to smooth surfaces ([§3](#3-sky-colors-and-surfaces)):
 
-![Demolice: vlevo dosud, vpravo fyzikální obloha, AgX Punchy a detail povrchů](img/cycles-look.jpg)
+![Demolition: left as before, right with physical sky, AgX Punchy and surface detail](img/cycles-look.jpg)
 
-![Ulice se stejným nastavením jako path tracer: vlevo náš path tracer, vpravo Cycles, 128 vzorků na pixel](img/cycles-street.jpg)
+![A street with the same settings as the path tracer: left our path tracer, right Cycles, 128 samples per pixel](img/cycles-street.jpg)
 
-![Louka zblízka přes Cycles, 1280 × 720, 128 vzorků na pixel](img/cycles-meadow.jpg)
+![Meadow close-up through Cycles, 1280 × 720, 128 samples per pixel](img/cycles-meadow.jpg)
 
-## 1. Rychlý start
+## 1. Quick start
 
-V editoru:
+In the editor:
 
-1. Nad viewportem klikni na záložku **Render**. Renderuje Cycles (vlevo
-   v liště záložky je volba **Cycles** / **Path tracer**).
-2. První obraz přijde hned, z menších a větších pixelů, a s každým
-   vzorkem se zaostří. Šum se bere průběžně.
-3. Při přehrávání simulace ukáže záložka snímek po snímku, jak rychle se
-   stihnou spočítat. Nově otevřená scéna se nejdřív ukáže, teprve potom
-   se začne další snímek.
-4. Nastavení (vzorky, odrazy, odšumění, clona, ostrost, clamp, rozmazání
-   pohybem, velikost slunce, obloha, převod barev, detail povrchů) je
-   v uzlu **Output** v sekci **Render**, stejné pro oba renderery.
-5. Celý záběr do videa: ikona filmu v liště záložky (**Video…** nebo
-   **Frames (PNG)…**), nebo **File › Render Video with Cycles…**. Každý
-   snímek se vyrenderuje do konce s počtem vzorků z Outputu, ve velikosti
-   záložky (25 / 50 / 100 %) a kamerou záběru. Okno s průběhem ukazuje
-   poslední hotový snímek, vzorky snímku, který se právě renderuje, čas na
-   snímek a kolik zbývá. Viz [render.md](render.md#render-videa-přes-cycles).
+1. Above the viewport, click the **Render** tab. Cycles renders (on the left
+   of the tab's toolbar is the **Cycles** / **Path tracer** choice).
+2. The first image arrives immediately, from smaller and larger pixels, and
+   sharpens with every sample. Denoising runs progressively.
+3. During simulation playback the tab shows frame after frame, as fast as
+   they can be computed. A newly opened scene is shown first, and only then
+   does the next frame start.
+4. The settings (samples, bounces, denoising, aperture, focus, clamp, motion
+   blur, sun size, sky, color transform, surface detail) are in the
+   **Output** node in the **Render** section, the same for both renderers.
+5. A whole shot to video: the film icon in the tab's toolbar (**Video…** or
+   **Frames (PNG)…**), or **File › Render Video with Cycles…**. Each frame is
+   rendered to completion with the sample count from Output, at the tab's size
+   (25 / 50 / 100 %) and with the shot camera. The progress window shows the
+   last finished frame, the samples of the frame currently rendering, the time
+   per frame and how much is left. See [render.md](render.md#rendering-video-through-cycles).
 
-![Záložka Render: louka přes Cycles, 54 ze 128 vzorků na pixel](img/cycles-tab.jpg)
+![The Render tab: meadow through Cycles, 54 of 128 samples per pixel](img/cycles-tab.jpg)
 
-Z příkazové řádky:
+From the command line:
 
 ```bash
-./build/prototype sim street ulice.png --renderer cycles                 # poslední snímek, nastavení z Output
+./build/prototype sim street ulice.png --renderer cycles                 # last frame, settings from Output
 ./build/prototype sim meadow louka.png --renderer cycles --samples 256 --size 1920x1080
 ./build/prototype sim campfire ohen.exr --renderer cycles                # EXR: R G B A, Z, albedo.*, N.*
-./build/prototype sim campfire ohen.mp4 --renderer cycles --samples 32   # každý snímek do videa
+./build/prototype sim campfire ohen.mp4 --renderer cycles --samples 32   # every frame into the video
 ```
 
-Z Pythonu:
+From Python:
 
 ```python
 net.render("ulice.png", renderer="cycles", samples=128)
 ```
 
-Shrnutí na konci řekne, čím se renderovalo: `rendering 8720 ms/image
+The summary at the end says what was used to render: `rendering 8720 ms/image
 through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 
-## 2. Co se do Cycles převede
+## 2. What is converted to Cycles
 
-| ve scéně | v Cycles |
+| in the scene | in Cycles |
 |---|---|
-| polygony zobrazené geometrie | síť trojúhelníků s normálami a barvou `Cd` (atribut `Col`) |
-| instance (tráva, stromy z Copy to Points) | jedna síť na variantu a objekty, které ji rozmístí: louka se 122 577 trsy trávy, 84 stromy a 65 keři je 22 sítí |
-| koule, kvádry, válce, kužely, toroidy | rozdělené na trojúhelníky tak jemně, aby to nebylo vidět; holdout a shadow catcher jako v Blenderu |
-| `roughness`, `metallic`, `Cd` | Principled BSDF s odleskem jako v Blenderu (Specular IOR Level 0,5) |
-| `translucency` (stébla, listí) | k Principled BSDF přimíchaný Translucent BSDF |
-| sklo (`glass` 1) | Glass BSDF s indexem 1,5 a nádechem barvy; hladké podle normál `N` rohů nebo bodů, kde je síť má (láhev, čočka, sklo z USD), jinak ploché plocha po ploše |
-| povrch vody | Glass BSDF s indexem 1,33, uvnitř pohlcuje světlo podle Clarity a nabírá barvu Water Looku |
-| drť kusů (volné body s `pscale`) | hranaté úlomky kamene a střepy skla jako objekty jedné z 18 sítí, natočené podle `orient`, každý v odstínu své barvy ([pathtracer.md §4](pathtracer.md#drť-déšť-a-mokrý-povrch)) |
-| kapky deště | vřetena tak dlouhá, kolik kapka proletí za Streak snímku: Glass BSDF s indexem 1,33 smíchaný s Transparent BSDF podle Opacity, zezadu jen průhledná; objekt nevrhá stín |
-| mokro pod deštěm | povrchy obrácené nahoru tmavší o polovinu s vrstvou (Coat) vody: Coat Weight podle Wet Floor, drsnost 0,03, index 1,33 |
-| kouř, oheň, prach | objem: mřížky útlumu a záře v kvádru kolem plynu, Principled Volume |
-| podlaha | čtverec s barvou podlahy, ke kraji mizí jako ve viewportu; pod fyzikální oblohou se Sky Behind zem až k obzoru ([§3](#3-obloha-barvy-a-povrchy)) |
-| slunce | Sky `look`: vzdálené světlo (Sun) s úhlem Sun Size a stejnou silou jako náš; Sky `physical`: slunce oblohy Nishita |
-| obloha | Sky `physical`: obloha Nishita; Sky `look`: s **Sky Behind** obloha Looku jako obrázek všude kolem; bez Sky Behind vždy pozadí studia pro kameru |
-| kamera | záběr z kamery nebo pohled viewportu, objektiv, clona a ostrost z Output |
-| pohyb (rychlost `v` bodů, rychlost plynu, animované objekty, kamera v pohybu) | rozmazání po dráze, dokud je otevřená závěrka ([níže](#rozmazání-pohybem)) |
-| plate kamery záběru | průhledný film, i přes sklo; holdouty a catchery (objekty i podlaha) jako holdouty a shadow catchery Cyclesu; slunce a obloha jako skutečná světla; průchod Shadow Catcher jako násobitel plate ([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)) |
+| polygons of the displayed geometry | a triangle mesh with normals and `Cd` color (attribute `Col`) |
+| instances (grass, trees from Copy to Points) | one mesh per variant and objects that place it: a meadow with 122,577 grass tufts, 84 trees and 65 shrubs is 22 meshes |
+| spheres, boxes, cylinders, cones, tori | tessellated into triangles finely enough not to be visible; holdout and shadow catcher as in Blender |
+| `roughness`, `metallic`, `Cd` | Principled BSDF with a specular as in Blender (Specular IOR Level 0.5) |
+| `translucency` (grass blades, leaves) | Translucent BSDF mixed into the Principled BSDF |
+| glass (`glass` 1) | Glass BSDF with an index of 1.5 and a tint of color; smooth according to the `N` normals of vertices or points where the mesh has them (bottle, lens, glass from USD), otherwise flat face by face |
+| water surface | Glass BSDF with an index of 1.33, absorbing light inside according to Clarity and taking on the color of the Water Look |
+| piece grit (free points with `pscale`) | angular stone fragments and glass shards as objects of one of 18 meshes, oriented by `orient`, each in a shade of its color ([pathtracer.md §4](pathtracer.md#grit-rain-and-wet-surfaces)) |
+| raindrops | spindles as long as the distance a drop travels during Streak of a frame: Glass BSDF with an index of 1.33 mixed with Transparent BSDF according to Opacity, only transparent from behind; the object casts no shadow |
+| wetness under rain | upward-facing surfaces darkened by half with a layer (Coat) of water: Coat Weight according to Wet Floor, roughness 0.03, index 1.33 |
+| smoke, fire, dust | a volume: extinction and emission grids in a box around the gas, Principled Volume |
+| floor | a square with the floor color, fading towards the edge as in the viewport; under the physical sky with Sky Behind, the ground extends to the horizon ([§3](#3-sky-colors-and-surfaces)) |
+| sun | Sky `look`: a distant light (Sun) with the Sun Size angle and the same strength as ours; Sky `physical`: the sun of the Nishita sky |
+| sky | Sky `physical`: the Nishita sky; Sky `look`: with **Sky Behind**, the Look's sky as an image all around; without Sky Behind, always the studio background for the camera |
+| camera | the shot from the camera or the viewport view, lens, aperture and focus from Output |
+| motion (point velocity `v`, gas velocity, animated objects, moving camera) | blur along the path while the shutter is open ([below](#motion-blur)) |
+| shot camera plate | transparent film, also through glass; holdouts and catchers (objects and the floor) as Cycles holdouts and shadow catchers; sun and sky as real lights; the Shadow Catcher pass as a multiplier of the plate ([plate.md](plate.md#in-the-final-render-cycles-and-the-path-tracer)) |
 
-Scéna je v Cycles otočená, protože Cycles má osu Z nahoru a my Y.
-Expozice zůstává stejná jako v path traceru i ve viewportu.
+The scene is rotated in Cycles, because Cycles has the Z axis up and we have Y.
+Exposure stays the same as in the path tracer and in the viewport.
 
-**Sklo a voda propouštějí slunce do stínů.** Cycles by světlo za sklem
-a pod vodou našel jen po lomených cestách (kaustikách), a místnost za oknem
-nebo dno bazénu by zůstaly tmavé. Stínové paprsky proto sklem a vodou
-projdou, jen trochu ztlumené, stejně jako v našem path traceru.
+**Glass and water let sunlight through into shadows.** Cycles would find the
+light behind glass and under water only along refracted paths (caustics), and
+a room behind a window or the bottom of a pool would stay dark. Shadow rays
+therefore pass through glass and water, only slightly attenuated, just as in
+our path tracer.
 
-### Rozmazání pohybem
+### Motion blur
 
-![Snímek 72 zřícení domu v Cycles, vlevo ostrý okamžik, vpravo závěrka otevřená půl snímku; dole výřez zvětšený 3,2krát: trám se při pádu otáčí a jeho volný konec, který letí nejrychleji, je rozmazaný nejvíc, drť je protažená do čárek a plot, který stojí, zůstal ostrý](img/cycles-motion-blur.jpg)
+![Frame 72 of the house collapse in Cycles, left a sharp instant, right the shutter open for half a frame; below a crop magnified 3.2 times: the beam rotates as it falls and its free end, which moves fastest, is blurred the most, the grit is stretched into streaks and the fence, which stands still, stays sharp](img/cycles-motion-blur.jpg)
 
-Kamera nezachytí okamžik, ale čas, kdy je otevřená závěrka. Co se
-mezitím pohne, se rozmaže po své dráze. Cycles to umí stejně jako
-v Blenderu: každý paprsek dostane svůj okamžik mezi otevřením a zavřením
-závěrky a scénu vidí tak, jak v tu chvíli byla.
+A camera does not capture an instant but the time during which the shutter is
+open. Whatever moves in the meantime is blurred along its path. Cycles does
+this just as in Blender: each ray gets its own instant between the opening and
+closing of the shutter and sees the scene as it was at that moment.
 
-Jak dlouho je závěrka otevřená, říká **Motion Blur** v uzlu **Output**
-v sekci **Render**: kolik snímku, kolem snímku. Výchozí je 0,5 snímku,
-jako u filmové kamery se závěrkou 180° (Shutter 0,5 v Blenderu). Při 24
-snímcích za sekundu je to 1/48 s. Hodnota 0 dává ostrý okamžik.
+How long the shutter is open is set by **Motion Blur** in the **Output** node
+in the **Render** section: what fraction of a frame, centered on the frame. The
+default is 0.5 of a frame, as with a film camera with a 180° shutter (Shutter
+0.5 in Blender). At 24 frames per second that is 1/48 s. A value of 0 gives a
+sharp instant.
 
-| co se hýbe | odkud to Cycles ví | jak se to rozmaže |
+| what moves | where Cycles knows it from | how it is blurred |
 |---|---|---|
-| kusy RBD, pruty výztuže, látka, povrch vody, zobrazená geometrie | rychlost `v` bodů (m/s) | síť má tři kroky: rohy trojúhelníků na začátku, uprostřed a na konci závěrky, posunuté o `v` × čas |
-| drť (volné body s `pscale`) | rychlost `v` bodu | úlomek je objekt se třemi polohami, letí jako bod |
-| instance (Copy to Points) | rychlost `v` bodu instance | jako drť |
-| objekty scény (koule, kvádry, sítě, animované klíči) | rychlost a otáčení objektu, z jeho polohy a natočení o snímek dřív ([animation.md](animation.md#pohyb-překážek)) | objekt má tři polohy: na začátku, uprostřed a na konci závěrky, posunutý o rychlost × čas a otočený kolem své osy otáčení |
-| kouř, oheň, prach a pára (Pyro Solver, VDB Gas) | rychlost plynu ve snímku, m/s | Cycles čte mřížky tam, odkud sem plyn v ten okamžik doletí: bod posune proti rychlosti o rychlost × čas, dvakrát po sobě, jako v Blenderu |
-| kamera záběru | kamera o snímek dřív a o snímek později | na začátku závěrky je o čtvrt cesty ke kameře předchozího snímku, na konci o čtvrt cesty k té dalšímu (při 0,5), otáčí se kratší cestou; mění-li se ohnisko, mění se i úhel záběru |
+| RBD pieces, rebar bars, cloth, water surface, displayed geometry | point velocity `v` (m/s) | the mesh has three steps: triangle vertices at the start, middle and end of the shutter, offset by `v` × time |
+| grit (free points with `pscale`) | point velocity `v` | a fragment is an object with three positions, it moves like the point |
+| instances (Copy to Points) | velocity `v` of the instance point | like grit |
+| scene objects (spheres, boxes, meshes, keyframe-animated) | velocity and rotation of the object, from its position and orientation one frame earlier ([animation.md](animation.md#obstacle-motion)) | the object has three positions: at the start, middle and end of the shutter, offset by velocity × time and rotated about its axis of rotation |
+| smoke, fire, dust and steam (Pyro Solver, VDB Gas) | the gas velocity in the frame, m/s | Cycles reads the grids where the gas arrives from at that instant: it moves the point against the velocity by velocity × time, twice in succession, as in Blender |
+| shot camera | the camera one frame earlier and one frame later | at the start of the shutter it is a quarter of the way to the previous frame's camera, at the end a quarter of the way to the next one's (at 0.5), it rotates along the shorter path; if the focal length changes, the field of view changes too |
 
-Normály zůstávají ve všech krocích jako uprostřed. Cycles by si je
-spočítal z ploch a hladká voda by byla během závěrky hranatá. Kusy se
-během tak krátké doby otočí jen nepatrně, proto stačí posun po přímce.
-Objekt scény se během závěrky doopravdy otáčí, ne jen posouvá: konce
-lopatky v příkladu `fire_trail` opíšou za půl snímku oblouk 3°.
+Normals stay as in the middle in all steps. Cycles would compute them from the
+faces, and smooth water would be faceted during the shutter. Pieces rotate only
+negligibly in such a short time, so a straight-line offset is enough. A scene
+object really rotates during the shutter, not just translates: the ends of the
+paddle in the `fire_trail` example sweep a 3° arc in half a frame.
 
-**Plyn.** Každý snímek simulace nese rychlost plynu: jednu na blok
-2 × 2 × 2 buněk, v polovičních floatech, jen tam, kde plyn je
-([cache.md](cache.md)). VDB Gas ji čte z vektorové mřížky `vel`
-([vdb.md](vdb.md)). Cycles dostane rychlost jako třetí mřížku vedle
-útlumu a záře a kvádr plynu je o dráhu nejrychlejšího plynu větší, aby
-rozmazaný okraj nebyl useknutý. Rozmazání stojí v plynu dvě čtení
-rychlosti navíc v každém kroku: táborák (400 × 600, 64 vzorků, snímek
-60) trvá se závěrkou 0,5 99,6 s proti 62,6 s bez ní, v path traceru
-14,1 s proti 8,1 s. Plyn, který je ve všech blocích v klidu, rychlost
-nemá a renderuje se jako dřív.
+**Gas.** Every simulation frame carries the gas velocity: one per block of
+2 × 2 × 2 cells, in half floats, only where there is gas
+([cache.md](cache.md)). VDB Gas reads it from the vector grid `vel`
+([vdb.md](vdb.md)). Cycles gets the velocity as a third grid next to
+extinction and emission, and the gas box is larger by the path of the fastest
+gas, so that the blurred edge is not cut off. In the gas, blur costs two extra
+velocity reads at every step: the campfire (400 × 600, 64 samples, frame 60)
+takes 99.6 s with a 0.5 shutter versus 62.6 s without it, in the path tracer
+14.1 s versus 8.1 s. Gas that is at rest in all blocks has no velocity and
+renders as before.
 
-Rozmazání se zapne jen tehdy, když se něco hýbe. Scéna bez pohybu se
-renderuje stejně rychle jako dřív a obraz je bit po bitu stejný jako
-s nulovou závěrkou. Se závěrkou trvá render asi o 10 % déle (snímek 66
-zřícení domu, 1280 × 720, 32 vzorků: 124 s proti 112 s).
+Blur is turned on only when something moves. A scene without motion renders as
+fast as before, and the image is bit for bit identical to one with a zero
+shutter. With the shutter, the render takes about 10 % longer (frame 66 of the
+house collapse, 1280 × 720, 32 samples: 124 s versus 112 s).
 
-Z příkazové řádky:
+From the command line:
 
 ```bash
 ./build/prototype sim house_collapse dum.png --renderer cycles --frames 66 --start 66 \
-    --set output.render_motion_blur=0.5      # výchozí: půl snímku
+    --set output.render_motion_blur=0.5      # default: half a frame
 ./build/prototype sim house_collapse dum.png --renderer cycles --frames 66 --start 66 \
-    --set output.render_motion_blur=0        # ostrý okamžik
+    --set output.render_motion_blur=0        # sharp instant
 ```
 
-Nerozmazávají se jen kapky deště. Ty to nepotřebují, protože jsou už
-vykreslené jako čárky tak dlouhé, kolik kapka proletí za Streak snímku.
-Path tracer rozmazává totéž a stejně daleko
-([pathtracer.md](pathtracer.md#rozmazání-pohybem)).
+Only raindrops are not blurred. They do not need it, because they are already
+drawn as streaks as long as the distance a drop travels during Streak of a
+frame. The path tracer blurs the same things by the same amount
+([pathtracer.md](pathtracer.md#motion-blur)).
 
-## 3. Obloha, barvy a povrchy
+## 3. Sky, colors and surfaces
 
-Tři volby v sekci **Render** uzlu Output dělají z Cycles víc než náš path
-tracer:
+Three options in the **Render** section of the Output node make Cycles more
+than our path tracer:
 
-| volba | co dělá |
+| option | what it does |
 |---|---|
-| **Sky** `physical` (výchozí) | obloha a slunce jako Sky Texture v Blenderu (model Nishita): modrá obloha, opar u obzoru, mraky podle **Clouds**. Slunce je tam, kde ho má Look, s jeho barvou (Light Color) a silou. Obloha k němu přidá modré světlo, které ve stínech chybělo. Se **Sky Behind** kamera vidí oblohu a zem až k obzoru, vzdálená zem mizí v oparu. Bez Sky Behind zůstane tmavé pozadí studia. |
-| **Sky** `image` | obloha z obrázku všude kolem (HDRI, **Sky Image**): osvětlí scénu a se Sky Behind je vidět za ní |
-| **Sky** `look` | slunce a obloha Looku jako ve viewportu a v path traceru |
-| **Sky Image** | obrázek oblohy, equirectangular (2 : 1): `.hdr` nebo `.exr` se světlem, jaké je (třeba HDRI z [Poly Haven](https://polyhaven.com/hdris), CC0), i `.png` a `.jpg`. Relativní cesta se čte ze složky sítě. |
-| **Sky Rotation**, **Sky Strength** | obrázek otočený kolem svislé osy (slunce z obrázku tam, kde ho záběr chce), jeho světlo krát síla |
-| **Sky Sun** | k obrázku i slunce Looku: ostré stíny pod oblohou bez vlastního slunce |
-| **Clouds** 0–1 (0) | kolik oblohy pokrývají mraky: 0 jasno, 0,3 pár mraků, 0,6 polojasno, 1 zataženo (slunce skoro schované, stíny měkké) |
-| **Cloud Size**, **Cloud Wind**, **Cloud Direction** | jak velké jsou mraky (km, 1,5), jak rychle je nese vítr (m/s, 5) a kam (stupně od osy +x): snímek po snímku se posouvají |
-| **View** `agx_punchy` (výchozí), `agx`, `aces`, `aces1`, `aces2`, `standard` | jak se světlo převede na obraz: AgX jako v Blenderu, jasné barvy přecházejí do bílé jako na filmu. `agx_punchy` přidá look Punchy z Blenderu (víc kontrastu a barev, střední tóny tmavší), `aces` je křivka viewportu, `aces1` a `aces2` jsou ACES 1.0 a 2.0 jako v OpenColorIO, `standard` sRGB bez křivky ([color.md](color.md)). Platí pro Cycles i path tracer. |
-| **EXR Color Space** `rec709` (výchozí), `acescg`, `aces2065_1` | v jakém prostoru je světlo v EXR; atribut chromaticities to říká ([color.md §3](color.md#3-exr-v-prostorech-aces)) |
-| **Surface Detail** 0–1 (1) | povrchy, které jsou ve scéně hladké, dostanou barvu a drsnost proměnlivou ve skvrnách metr až dva velkých a velkých jako dlaň, a drobné nerovnosti. Zem k tomu skvrny několika metrů. 0: hladké jako ve viewportu. Plocha s atributem `f@surface_detail` jich dostane jen tolik krát (0 žádné): tak USD Import nechá materiály z jiných programů, jak je jejich autor udělal ([usd-import.md](usd-import.md#materiály)). |
-| **Displacement** (vypnuto) | povrch, jehož materiál má obrázek výšky (cihly, kůra a tašky z knihovny, textura uzlu Material, posunutí z USD), Cycles opravdu posune, ne jen vystínuje: obrys jde nahoru a dolů, cihly vystoupí z malty a stíní ji. Střed obrázku zůstane na ploše, světlé jde ven a tmavé dovnitř, celkem o hloubku sady. Takový povrch Cycles rozdělí na trojúhelníky velké jako **Dicing Rate**, takže render trvá déle a zabere víc paměti. Vypnuté: jen reliéf, jako v path traceru a ve viewportu |
-| **Dicing Rate** 0,1–64 (1 px) | jak malé trojúhelníky (v pixelech, jak je vidí kamera) z posouvaného povrchu Cycles nadělá: 1 jako v Blenderu, 2 nebo 4 rychleji a s menší pamětí. Co je jemnější, zůstane na hladkém povrchu reliéfem. Mimo záběr je dělení čtyřikrát hrubší |
-| **Textures**, **Texture Folder** | fotografie materiálů (beton a jeho lom, omítka, cihlová zeď, malta, kov, asfalt, dřevo, střechy a tašky, dlažba, kůra, půda, trávník, písek) a textury z uzlů Material; vypnuté: jen vzory a barvy. Viz [materials.md](materials.md) |
+| **Sky** `physical` (default) | sky and sun like Sky Texture in Blender (the Nishita model): blue sky, haze at the horizon, clouds according to **Clouds**. The sun is where the Look has it, with its color (Light Color) and strength. The sky adds the blue light to it that was missing in the shadows. With **Sky Behind** the camera sees the sky and the ground up to the horizon, distant ground fades into the haze. Without Sky Behind the dark studio background remains. |
+| **Sky** `image` | sky from an image all around (HDRI, **Sky Image**): it lights the scene and with Sky Behind it is visible behind it |
+| **Sky** `look` | sun and sky of the Look as in the viewport and in the path tracer |
+| **Sky Image** | the sky image, equirectangular (2 : 1): `.hdr` or `.exr` with the light as it is (for example an HDRI from [Poly Haven](https://polyhaven.com/hdris), CC0), also `.png` and `.jpg`. A relative path is read from the network's folder. |
+| **Sky Rotation**, **Sky Strength** | the image rotated about the vertical axis (the sun from the image where the shot wants it), its light times the strength |
+| **Sky Sun** | adds the Look's sun to the image as well: sharp shadows under a sky without its own sun |
+| **Clouds** 0–1 (0) | how much of the sky is covered by clouds: 0 clear, 0.3 a few clouds, 0.6 partly cloudy, 1 overcast (sun almost hidden, soft shadows) |
+| **Cloud Size**, **Cloud Wind**, **Cloud Direction** | how big the clouds are (km, 1.5), how fast the wind carries them (m/s, 5) and where to (degrees from the +x axis): they move frame by frame |
+| **View** `agx_punchy` (default), `agx`, `aces`, `aces1`, `aces2`, `standard` | how light is converted to an image: AgX as in Blender, bright colors go to white as on film. `agx_punchy` adds the Punchy look from Blender (more contrast and color, darker midtones), `aces` is the viewport curve, `aces1` and `aces2` are ACES 1.0 and 2.0 as in OpenColorIO, `standard` is sRGB without a curve ([color.md](color.md)). Applies to both Cycles and the path tracer. |
+| **EXR Color Space** `rec709` (default), `acescg`, `aces2065_1` | which space the light in the EXR is in; the chromaticities attribute says so ([color.md §4](color.md#4-exr-in-aces-spaces)) |
+| **Surface Detail** 0–1 (1) | surfaces that are smooth in the scene get color and roughness varying in patches one to two meters across and palm-sized, plus tiny bumps. The ground additionally gets patches several meters across. 0: smooth as in the viewport. A primitive with the `f@surface_detail` attribute gets only that many times as much (0 none): that is how USD Import leaves materials from other programs as their author made them ([usd-import.md](usd-import.md#materials)). |
+| **Displacement** (off) | a surface whose material has a height image (bricks, bark and tiles from the library, the Material node's texture, displacement from USD) is really displaced by Cycles, not just shaded: the silhouette goes up and down, bricks stand out from the mortar and shadow it. The middle of the image stays on the surface, light goes out and dark goes in, by the depth of the set in total. Cycles dices such a surface into triangles the size of the **Dicing Rate**, so the render takes longer and uses more memory. Off: only bump, as in the path tracer and in the viewport |
+| **Dicing Rate** 0.1–64 (1 px) | how small the triangles (in pixels, as the camera sees them) are that Cycles makes from a displaced surface: 1 as in Blender, 2 or 4 faster and with less memory. Anything finer stays as bump on the smooth surface. Outside the shot the dicing is four times coarser |
+| **Textures**, **Texture Folder** | photographs of materials (concrete and its fracture, plaster, brick wall, mortar, metal, asphalt, wood, roofs and tiles, paving, bark, soil, lawn, sand) and textures from Material nodes; off: only patterns and colors. See [materials.md](materials.md) |
 
-Plochy, které říkají, z čeho jsou (`s@material`), kreslí Cycles jako ten
-materiál: fotografií z knihovny programu, nebo vzorem (lom betonu
-s kamínky, okna s místnostmi, rezavá ocel), vždy kolem jejich barvy `Cd`.
-Generátory si materiál nastaví samy (Brick Wall, Concrete Fracture, Wood Fracture, Tree,
-Grass…) a ostatním plochám ho dá uzel **Material**. Podrobnosti jsou
-v [materials.md](materials.md).
+Primitives that say what they are made of (`s@material`) are drawn by Cycles as
+that material: with a photograph from the program's library, or with a pattern
+(concrete fracture with pebbles, windows with rooms, rusty steel), always
+around their `Cd` color. Generators set the material themselves (Brick Wall,
+Concrete Fracture, Wood Fracture, Tree, Grass…), and the **Material** node
+gives it to other primitives. Details are in [materials.md](materials.md).
 
-Síla oblohy je nastavená tak, že slunce dává stejné světlo jako slunce
-Looku. Test `render_cycles_lights_a_day_under_a_physical_sky` to ověřuje:
-podlaha pod sluncem ve výšce 45° má jas matné podlahy pod sluncem Looku
-a obloha přidá asi 10 %. Při nízkém slunci je podíl modrého světla oblohy
-větší.
+The sky strength is set so that the sun gives the same light as the Look's
+sun. The test `render_cycles_lights_a_day_under_a_physical_sky` verifies this:
+a floor under the sun at 45° elevation has the brightness of a matte floor
+under the Look's sun, and the sky adds about 10 %. With a low sun the share of
+blue light from the sky is larger.
 
-![Demolice pod mraky 0,4 a 0,85 a pod HDRI](img/cycles-skies.jpg)
+![Demolition under clouds 0.4 and 0.85 and under an HDRI](img/cycles-skies.jpg)
 
-Mraky jsou vrstva dva kilometry nad zemí. Kde jsou a kde ne, určuje
-Perlinův šum velký jako Cloud Size. Slunce je víc rozsvítí na tenkých
-okrajích a kolem sebe, husté a zatažené jsou šedší. U obzoru mizí
-v oparu. Slunce Looku je samostatné světlo, takže mrak, který přejde
-přes slunce, scénu nezhasne. Zatažená obloha slunce tlumí sama: při
-Clouds 1 zbude 15 % jeho světla.
+The clouds are a layer two kilometers above the ground. Where they are and
+where they are not is decided by Perlin noise the size of Cloud Size. The sun
+lights them more at their thin edges and around itself; dense and overcast
+clouds are greyer. Near the horizon they fade into the haze. The Look's sun is
+a separate light, so a cloud passing over the sun does not turn the scene off.
+An overcast sky dims the sun by itself: at Clouds 1, 15 % of its light
+remains.
 
-Z příkazové řádky jdou volby nastavit přes `--set`:
+The options can be set from the command line with `--set`:
 
 ```bash
 ./build/prototype sim demolition odstrel.png --renderer cycles --set output.render_clouds=0.5
@@ -198,298 +202,300 @@ Z příkazové řádky jdou volby nastavit přes `--set`:
     --set output.render_sky=image --set output.render_sky_image=obloha.hdr --set output.render_sky_rotation=90
 ```
 
-Obloha je v Cycles i světlo, které se vzorkuje podle jasu (jako
-v Blenderu): jasné části oblohy z obrázku i mraky najde každý paprsek,
-nejen ten, který na ně náhodou narazí.
+In Cycles the sky is also a light that is sampled according to brightness (as
+in Blender): the bright parts of an image sky and the clouds are found by every
+ray, not just the one that happens to hit them.
 
-Path tracer svítí vždy oblohou Looku a detail povrchů nepřidává.
-Převod barev (View) má stejný. Viewport kreslí oblohu Looku, mraky
-a obrázek oblohy jsou jen v renderu.
+The path tracer always lights with the Look's sky and adds no surface detail.
+It has the same color transform (View). The viewport draws the Look's sky;
+clouds and the sky image exist only in the render.
 
-### Posunutí podle výšky
+### Displacement by height
 
-![Příklad displacement v Cycles pod nízkým sluncem: nahoře jen reliéf, dole s Displacement. Cihly na kouli vystoupí z malty a obrys koule je zubatý, obrys kmene jde nahoru a dolů s kůrou a kameny dlažby stíní spáry](img/cycles-displacement.jpg)
+![The displacement example in Cycles under a low sun: top bump only, bottom with Displacement. The bricks on the sphere stand out from the mortar and the sphere's silhouette is jagged, the trunk's silhouette goes up and down with the bark, and the paving stones shadow the joints](img/cycles-displacement.jpg)
 
-S **Displacement** posune Cycles povrchy, jejichž sada má obrázek výšky,
-opravdu o tuto výšku. Bez něj z ní dělá jen reliéf (Bump), který mění
-stínování, ale ne tvar: obrys zůstane hladký a nic nevrhá stín. Hloubka
-je hloubka sady (`depth` v `texture.txt`), u cihel 13 mm a u kůry 22 mm.
-U materiálu z USD je to `scale` jeho výstupu `displacement`
-([usd-import.md](usd-import.md#materiály)).
+With **Displacement**, Cycles really displaces surfaces whose set has a height
+image by that height. Without it, the height becomes only bump, which changes
+the shading but not the shape: the silhouette stays smooth and nothing casts a
+shadow. The depth is the depth of the set (`depth` in `texture.txt`), 13 mm for
+bricks and 22 mm for bark. For a material from USD it is the `scale` of its
+`displacement` output ([usd-import.md](usd-import.md#materials)).
 
 ```bash
 ./build/prototype sim displacement posunuti.png --renderer cycles
 ./build/prototype sim displacement relief.png --renderer cycles --set output.render_displacement=0
 ```
 
-Příklad `displacement` má **Dicing Rate** 2: trojúhelníky dva pixely
-velké. Render 960 × 540 trvá na čtyřech jádrech s posunutím 2 min 15 s,
-bez něj 1 min 31 s.
+The `displacement` example has a **Dicing Rate** of 2: triangles two pixels
+across. A 960 × 540 render on four cores takes 2 min 15 s with displacement,
+1 min 31 s without.
 
-Plocha se nerozestoupí ani na ostré hraně, protože rohy jednoho bodu
-jsou pro Cycles jeden vrchol. Strana kvádru se proto na hraně trochu
-zkosí směrem k sousední straně.
+A surface does not split apart even at a sharp edge, because the vertices of
+one point are a single vertex for Cycles. A side of a box is therefore
+slightly bevelled at the edge towards the adjacent side.
 
-## 4. Kouř, oheň a prach
+## 4. Smoke, fire and dust
 
-![Táborák a kouř: vždy vlevo path tracer, vpravo Cycles, 64 vzorků na pixel](img/cycles-gas.jpg)
+![Campfire and smoke: always path tracer on the left, Cycles on the right, 64 samples per pixel](img/cycles-gas.jpg)
 
-Plyn ze simulace se do Cycles převede jako dvě mřížky (`Gas::dense`). Jedna
-říká, kolik světla buňka zastaví na metr, druhá, kolik ho vydá plamen.
-Obě se počítají stejně jako v path traceru: z kouře, teploty, plamene
-a páry každé buňky podle Volume Looku, se stejným zeslabením u otevřených
-stěn a nahoře. S párou přibude třetí mřížka, barva rozptylu každé buňky
-(`pg_albedo`): průměr barvy kouře a páry vážený tím, kolik světla které
-zastaví ([quench.md](quench.md#pára)). Cycles čte mřížky mezi středy buněk lineárně, stejně jako
-viewport a path tracer.
+Gas from the simulation is converted to Cycles as two grids (`Gas::dense`). One
+says how much light a cell stops per meter, the other how much the flame emits.
+Both are computed the same way as in the path tracer: from the smoke,
+temperature, flame and steam of each cell according to the Volume Look, with
+the same falloff at open walls and at the top. With steam a third grid is
+added, the scattering color of each cell (`pg_albedo`): the average of the
+smoke and steam colors weighted by how much light each of them stops ([quench.md](quench.md#steam)). Cycles reads the grids linearly between
+cell centers, just like the viewport and the path tracer.
 
-V Cycles je to kvádr kolem dlaždic, ve kterých plyn je, s materiálem
-**Principled Volume**:
+In Cycles it is a box around the tiles that contain gas, with a
+**Principled Volume** material:
 
-- **Density** je útlum z mřížky.
-- **Color** je podíl světla, který si kouř při rozptylu nechá. Spočítá se
-  ze Smoke Color stejně jako v path traceru; s párou je to mřížka
-  `pg_albedo`.
-- **Anisotropy** je 0,31, průměr našich dvou laloků (0,7 × 0,55 dopředu
-  a 0,3 × 0,25 dozadu).
-- **Emission** je záře plamene z mřížky: černé těleso od 1000 K do 3000 K.
+- **Density** is the extinction from the grid.
+- **Color** is the fraction of light the smoke keeps when scattering. It is
+  computed from Smoke Color just as in the path tracer; with steam it is the
+  `pg_albedo` grid.
+- **Anisotropy** is 0.31, the average of our two lobes (0.7 × 0.55 forward
+  and 0.3 × 0.25 backward).
+- **Emission** is the flame glow from the grid: a black body from 1000 K to 3000 K.
 
-Cycles kvádrem prochází po krocích velkých jako buňka. Mřížky mají
-nejvýš 32 milionů buněk. Větší plyn (prach odstřelu) se čte po
-blocích 2 × 2 × 2 nebo větších. Bez NanoVDB (`-DPG_NANOVDB=OFF`)
-plyn nevykreslí ani Cycles, ani path tracer.
+Cycles marches through the box in steps the size of a cell. The grids have at
+most 32 million cells. Larger gas (blast dust) is read in blocks of
+2 × 2 × 2 or larger. Without NanoVDB (`-DPG_NANOVDB=OFF`) neither Cycles nor
+the path tracer renders gas.
 
-## 5. Rozdíly proti path traceru
+## 5. Differences from the path tracer
 
-Rozdíly níže platí se stejným nastavením (Sky `look`, Surface Detail 0),
-se kterým testy Cycles s path tracerem porovnávají.
+The differences below apply with the same settings (Sky `look`, Surface Detail 0)
+that the tests use to compare Cycles with the path tracer.
 
-- **Hrubé povrchy jsou v Cycles asi o 15 % světlejší.** Principled BSDF
-  počítá i světlo, které se mezi mikroploškami odrazí víckrát. Náš odlesk
-  GGX ho ztrácí. Matná podlaha pod sluncem je v obou stejná, test
-  `render_cycles_lights_a_floor_as_the_sun_and_the_sky_do` to ověřuje
-  na 2,5 %.
-- **Kouř je v Cycles asi o 20 % světlejší** a plamen o 15 %. Cycles má
-  místo našich dvou laloků jeden.
-- **Průchody do EXR:** normála v Cycles míří vždy ke kameře, naše zůstává
-  na straně, kam trojúhelník míří. Hloubka v Cycles je z prvního vzorku
-  pixelu, naše je průměr.
-- **Plyn je v Cycles pomalejší** ([§7](#7-výkon)): Cycles jím prochází
-  po krocích, náš path tracer delta trackingem s maximy dlaždic.
-- **Mokro:** Cycles dává mokrému povrchu vrstvu vody (Coat), náš path
-  tracer mu jen sníží drsnost. Oba ho ztmaví o polovinu.
-- **Déšť pod fyzikální oblohou je slabší**, protože kapky lámou skutečnou
-  oblohu. Se Sky `look` mají čárky stejný kontrast jako v path traceru.
-- **Rozmazání pohybem** je v obou stejně dlouhé ([§2](#rozmazání-pohybem)),
-  path tracer ale sítě mezi začátkem a koncem závěrky posouvá po přímce
-  přes dva kroky, Cycles přes tři.
-- **Výška** posouvá povrch jen v Cycles a jen s **Displacement**
-  ([§3](#posunutí-podle-výšky)). Path tracer z ní dělá vždy reliéf.
+- **Rough surfaces are about 15 % brighter in Cycles.** Principled BSDF also
+  accounts for light that bounces between microfacets several times. Our GGX
+  specular loses it. A matte floor under the sun is the same in both; the test
+  `render_cycles_lights_a_floor_as_the_sun_and_the_sky_do` verifies it to
+  within 2.5 %.
+- **Smoke is about 20 % brighter in Cycles** and flame 15 %. Cycles has one
+  lobe instead of our two.
+- **EXR passes:** the normal in Cycles always faces the camera, ours stays on
+  the side the triangle faces. Depth in Cycles is from the pixel's first
+  sample, ours is the average.
+- **Gas is slower in Cycles** ([§7](#7-performance)): Cycles marches through it in
+  steps, our path tracer uses delta tracking with tile maxima.
+- **Wetness:** Cycles gives a wet surface a layer of water (Coat), our path
+  tracer only lowers its roughness. Both darken it by half.
+- **Rain under the physical sky is fainter**, because the drops refract the
+  real sky. With Sky `look` the streaks have the same contrast as in the path
+  tracer.
+- **Motion blur** is equally long in both ([§2](#motion-blur)), but the
+  path tracer moves meshes between the start and end of the shutter along a
+  straight line over two steps, Cycles over three.
+- **Height** displaces the surface only in Cycles and only with **Displacement**
+  ([§3](#displacement-by-height)). The path tracer always turns it into bump.
 
 ## 6. Build
 
-Cycles se stáhne z GitHubu (`blender/cycles`, značka **v4.5.0**, mělký
-klon asi 24 MB) a postaví jednou se zbytkem programu. K tomu potřebuje
-**OpenImageIO** a **TBB** (vývojové soubory; OpenEXR přijde
-s OpenImageIO):
+Cycles is downloaded from GitHub (`blender/cycles`, tag **v4.5.0**, a shallow
+clone of about 24 MB) and built once along with the rest of the program. For
+that it needs **OpenImageIO** and **TBB** (development files; OpenEXR comes
+with OpenImageIO):
 
 ```bash
 sudo apt install libopenimageio-dev libpugixml-dev libtbb-dev   # Debian, Ubuntu
 pkg install openimageio pugixml onetbb                          # FreeBSD
 ```
 
-Cycles se postaví jen pro procesor: bez GPU (CUDA, OptiX, HIP, Metal,
-oneAPI), bez OSL, OpenVDB, NanoVDB, OpenSubdiv, Alembic, USD
-a OpenColorIO. Paprsky
-v něm hledá stejný Embree jako v path traceru, pokud je v systému.
-Odšumuje stejná Open Image Denoise jako náš path tracer. Na čtyřech
-jádrech trvá první build Cycles asi 2 minuty (celý program od nuly
-i s Open Image Denoise asi 11 minut), další buildy ho jen přilinkují.
+Cycles is built for the CPU only: without GPU (CUDA, OptiX, HIP, Metal,
+oneAPI), without OSL, OpenVDB, NanoVDB, OpenSubdiv, Alembic, USD
+and OpenColorIO. Rays
+in it are traced by the same Embree as in the path tracer, if it is on the system.
+Denoising is done by the same Open Image Denoise as in our path tracer. On four
+cores the first build of Cycles takes about 2 minutes (the whole program from
+scratch, including Open Image Denoise, about 11 minutes); later builds only link it.
 
-Build do zdrojů Cycles přidá pět řádků (`src/scene/object.cpp`). Síť
-s mřížkou rychlosti (náš plyn) dostane příznak
-`SD_OBJECT_HAS_VOLUME_MOTION`, který Cycles jinak dává jen objektům
-Volume z OpenVDB, a bez něj by se plyn nerozmazal. CMake řádky vloží sám
-po stažení. Kdyby v jiné verzi Cycles místo pro ně nenašel, napíše
-varování a plyn v Cycles zůstane ostrý.
+The build adds five lines to the Cycles sources (`src/scene/object.cpp`). A mesh
+with a velocity grid (our gas) gets the flag
+`SD_OBJECT_HAS_VOLUME_MOTION`, which Cycles otherwise gives only to Volume
+objects from OpenVDB, and without it the gas would not be blurred. CMake inserts
+the lines itself after the download. If it cannot find the place for them in
+another version of Cycles, it prints a warning and the gas stays sharp in Cycles.
 
-Druhá záplata je jeden řádek v `src/subd/interpolation.cpp`. Když Cycles
-dělí n-úhelník (i trojúhelník) na menší trojúhelníky, dává jeho středu
-součet hodnot rohů místo jejich průměru. U hodnot vrcholů průměr počítá.
-UV, barva a `pg_rest` posouvaných povrchů (**Displacement**) by tak
-uprostřed každé plochy ujely. Když CMake místo pro tento řádek nenajde,
-napíše varování a řádek nevloží.
+The second patch is one line in `src/subd/interpolation.cpp`. When Cycles
+subdivides an n-gon (including a triangle) into smaller triangles, it gives its
+center the sum of the corner values instead of their average. For vertex values
+it does compute the average. The UVs, color and `pg_rest` of displaced surfaces
+(**Displacement**) would therefore drift in the middle of every face. When CMake
+cannot find the place for this line, it prints a warning and does not insert it.
 
-Kdy se Cycles nepostaví a renderuje path tracer:
+When Cycles is not built and the path tracer renders:
 
-- bez OpenImageIO nebo TBB (CMake to napíše);
-- když OpenImageIO v systému používá jinou standardní knihovnu C++ než
-  build (clang s libc++ proti OpenImageIO s libstdc++ z Ubuntu);
-- s `-DPG_SANITIZE_THREAD=ON` (jeho TBB není přeložené s thread
-  sanitizerem) a ve Visual Studiu;
-- s `-DPG_CYCLES=OFF`.
+- without OpenImageIO or TBB (CMake says so);
+- when the system's OpenImageIO uses a different C++ standard library than the
+  build (clang with libc++ against Ubuntu's OpenImageIO with libstdc++);
+- with `-DPG_SANITIZE_THREAD=ON` (its TBB is not compiled with the thread
+  sanitizer) and in Visual Studio;
+- with `-DPG_CYCLES=OFF`.
 
-`prototype sim … --renderer cycles` v takovém buildu skončí chybou
-a záložka Render nabídne jen path tracer.
+`prototype sim … --renderer cycles` exits with an error in such a build,
+and the Render tab offers only the path tracer.
 
-## 7. Výkon
+## 7. Performance
 
-Čtyři jádra (Xeon s AVX-512), Release, stejné nastavení pro oba
-renderery:
+Four cores (Xeon with AVX-512), Release, the same settings for both
+renderers:
 
-| scéna | rozlišení | vzorků | path tracer | Cycles |
+| scene | resolution | samples | path tracer | Cycles |
 |---|---|---|---|---|
-| ulice | 720 × 540 | 128 | 8,5 s | 17,7 s |
-| louka zblízka (obrázek nahoře) | 1280 × 720 | 128 | 301 s | 473 s |
-| táborák (plyn 64 × 96 × 64) | 400 × 600 | 64 | 6,8 s | 48,7 s |
-| kouř | 400 × 600 | 64 | 4,5 s | 18,3 s |
+| street | 720 × 540 | 128 | 8.5 s | 17.7 s |
+| meadow close-up (image above) | 1280 × 720 | 128 | 301 s | 473 s |
+| campfire (gas 64 × 96 × 64) | 400 × 600 | 64 | 6.8 s | 48.7 s |
+| smoke | 400 × 600 | 64 | 4.5 s | 18.3 s |
 
-Táborák a kouř jsou bez rozmazání plynu (Motion Blur 0). Se závěrkou 0,5
-je táborák v Cycles asi o 60 % a v path traceru o 70 % pomalejší
-([§2](#rozmazání-pohybem)).
+The campfire and the smoke are without gas blur (Motion Blur 0). With a 0.5
+shutter the campfire is about 60 % slower in Cycles and 70 % slower in the path
+tracer ([§2](#motion-blur)).
 
-Cycles je na stejný počet vzorků pomalejší. Na plochách asi dvakrát: je
-obecnější a počítá víc, třeba odlesk s vícenásobným rozptylem mezi
-mikroploškami. Plynem prochází po krocích velkých jako buňka a v každém
-kroku čte mřížky. Náš path tracer prázdná místa přeskakuje (delta tracking
-s maximy dlaždic), proto je Cycles na kouři a ohni čtyřikrát až sedmkrát
-pomalejší. Pro rychlý náhled je tu path tracer, finální obraz dá Cycles
-stejně jako v Blenderu.
+Cycles is slower for the same number of samples. On surfaces about twice as
+slow: it is more general and computes more, for example specular with multiple
+scattering between microfacets. It marches through gas in steps the size of a
+cell and reads the grids at every step. Our path tracer skips empty space
+(delta tracking with tile maxima), which is why Cycles is four to seven times
+slower on smoke and fire. The path tracer is there for a quick preview; Cycles
+gives the final image, just as in Blender.
 
-V záložce Render je první obraz z větších pixelů hotový za zlomek
-sekundy. Při přehrávání ukazuje záložka snímky v nižším rozlišení, plné
-dostane snímek, na kterém se zastaví.
+In the Render tab the first image from larger pixels is ready in a fraction of
+a second. During playback the tab shows frames at a lower resolution; the frame
+it stops on gets full resolution.
 
-## 8. Jak to funguje
+## 8. How it works
 
-- `src/pg/render/Cycles.h`, `Cycles.cpp`: `CyclesRender` drží session
-  Cycles. Pro příkazovou řádku má každý snímek vlastní session až do
-  konce. Pro záložku Render jedna session běží dál. Sítě, které nová scéna
-  má taky, se znovu nestaví. Obrazy během renderu dostává záložka přes
-  display driver Cycles (`DisplayDriver`, poloviční floaty RGBA). Na konci
-  dostane přes output driver (`OutputDriver`) obraz, albedo, normály
-  a hloubku pro EXR. Fyzikální obloha je uzel Sky Texture (Nishita) se
-  světlem pozadí (`LIGHT_BACKGROUND`), detail povrchů jsou uzly Noise
-  Texture a Bump v shaderu každého materiálu.
-- Posunutí podle výšky (`Cycles.cpp`, `dice`): shader materiálu, jehož
-  sada má obrázek výšky, dostane uzel Displacement (Midlevel 0,5, Scale
-  hloubka sady). Síť s takovým materiálem je pro Cycles dělená plocha
-  (`SUBDIVISION_LINEAR`): každý trojúhelník plocha a rohy jednoho bodu
-  jeden vrchol, takže se posune jednou a žádná plocha se od sousední
-  neodtrhne, ani na ostré hraně. Hladké plochy (normály rohů se od
-  normály plochy liší) mají shader s `DISPLACE_BOTH`: stínují se podle
-  normál, které měly, a reliéfu z výšky. Ploché plochy (strana kvádru)
-  mají jeho dvojče s `DISPLACE_TRUE` a stínují se podle trojúhelníků,
-  kam je Cycles posunul. Vrchol se posune podél normály hladkých ploch,
-  které ho mají, jinak podél průměru všech. Normály jsou na vrcholech,
-  barva, uv a `pg_rest` na rozích (`subd_attributes`); Cycles je přenese
-  na trojúhelníky, které nadělá podle kamery pro dělení (`dicing_camera`,
-  tatáž jako kamera záběru). Taková síť se staví pro každou scénu znovu,
-  protože kamera se mohla pohnout.
-- Rozmazání pohybem (`Cycles.cpp`): síť s rychlostmi (`Mesh::velocity`)
-  dostane `set_motion_steps(3)` a atributy
-  `ATTR_STD_MOTION_VERTEX_POSITION` (rohy na začátku a na konci závěrky)
-  a `ATTR_STD_MOTION_VERTEX_NORMAL`. Úlomek drti je objekt s `set_motion`
-  (tři polohy), kamera má `set_motion` se třemi maticemi a
-  `MOTION_POSITION_CENTER`. Objekt scény má `set_motion` se třemi
-  maticemi: posun o rychlost × čas a otočení `Collider::turnAt` kolem
-  středu. Plyn má atribut voxelů `velocity` se standardem
-  `ATTR_STD_VOLUME_VELOCITY`: rychlost × doba otevřené závěrky, takže
-  `velocity_scale` objektu je 1 (nastaví ho záplata z [§6](#6-build)).
-  Kernel (`volume_shader_motion_blur`) pak posune bod, kde čte mřížky,
-  o (čas − půl) × rychlost, a s rychlostí v novém místě ještě jednou.
-  Integrátor má `set_motion_blur`, jen když se něco hýbe. Síť, která se
-  hýbe, se po změně Motion Blur postaví znovu, ostatní zůstanou.
-- Plate (`Cycles.cpp`, `Plate.h`): nad plate je film průhledný
-  (`Background::transparent`, `transparent_glass`). Objekty a podlaha mají
-  `set_use_holdout` nebo `set_is_shadow_catcher` a slunce i obloha mají
-  `set_is_shadow_catcher`, protože jsou to skutečná světla. Průchod
-  `PASS_SHADOW_CATCHER` se jmenuje „catcher“. Při čtení „combined“ dá
-  Cycles CG bez catcherů i s alfou a z toho `overPlate` složí obraz.
-- `src/pg/render/PathTracer.cpp`: `shown()` převádí lineární světlo na obraz
-  (AgX, AgX Punchy, ACES Fit, a přes `Aces.h` ACES 1.0 a 2.0) pro oba
-  renderery.
-- `src/pg/render/Gas.h`: `Gas::dense` dává mřížky plynu pro renderer, který
-  čte husté mřížky.
-- `tools/prototype/RenderView.cpp`: vlákno záložky Render s oběma renderery.
-  Novější scéna (další snímek při přehrávání) se vezme, až ta stávající
-  ukáže obraz, nebo po 3 sekundách.
-- `tools/prototype/FrameRender.cpp`: snímek záběru do konce pro Render
-  Video a Render Frames s Cycles nebo path tracerem, na vlastním vlákně.
-  Každý snímek má vlastní session Cycles, stejně jako příkazová řádka.
-  Stop ji zruší (`Session::cancel`), takže render skončí hned, ne až po
-  snímku.
-- `CMakeLists.txt`: Cycles se konfiguruje jako samostatný projekt
-  v `build/cycles-build` a jeho knihovny se postaví jako cíl `cycles_build`.
-  Přepínače, cesty a knihovny se přečtou z jeho vlastního buildu.
+- `src/pg/render/Cycles.h`, `Cycles.cpp`: `CyclesRender` holds a Cycles
+  session. For the command line each frame has its own session until it
+  finishes. For the Render tab one session keeps running. Meshes that the new
+  scene also has are not rebuilt. The tab receives images during the render
+  through the Cycles display driver (`DisplayDriver`, half-float RGBA). At the
+  end it receives, through the output driver (`OutputDriver`), the image,
+  albedo, normals and depth for EXR. The physical sky is a Sky Texture node
+  (Nishita) with a background light (`LIGHT_BACKGROUND`); surface detail is
+  Noise Texture and Bump nodes in the shader of each material.
+- Displacement by height (`Cycles.cpp`, `dice`): the shader of a material whose
+  set has a height image gets a Displacement node (Midlevel 0.5, Scale the
+  depth of the set). A mesh with such a material is a subdivision surface for
+  Cycles (`SUBDIVISION_LINEAR`): each triangle a face and the vertices of one
+  point a single vertex, so it is displaced once and no face tears away from its
+  neighbor, not even at a sharp edge. Smooth faces (vertex normals differ from
+  the face normal) have a shader with `DISPLACE_BOTH`: they are shaded by the
+  normals they had and by the bump from the height. Flat faces (a side of a box)
+  have its twin with `DISPLACE_TRUE` and are shaded by the triangles where
+  Cycles displaced them. A vertex is displaced along the normal of the smooth
+  faces that have it, otherwise along the average of all of them. Normals are on
+  the vertices, color, uv and `pg_rest` on the corners (`subd_attributes`);
+  Cycles transfers them to the triangles it makes according to the dicing
+  camera (`dicing_camera`, the same as the shot camera). Such a mesh is rebuilt
+  for every scene, because the camera may have moved.
+- Motion blur (`Cycles.cpp`): a mesh with velocities (`Mesh::velocity`) gets
+  `set_motion_steps(3)` and the attributes
+  `ATTR_STD_MOTION_VERTEX_POSITION` (vertices at the start and end of the shutter)
+  and `ATTR_STD_MOTION_VERTEX_NORMAL`. A grit fragment is an object with `set_motion`
+  (three positions), the camera has `set_motion` with three matrices and
+  `MOTION_POSITION_CENTER`. A scene object has `set_motion` with three
+  matrices: an offset by velocity × time and the rotation `Collider::turnAt` about
+  its center. Gas has a voxel attribute `velocity` with the standard
+  `ATTR_STD_VOLUME_VELOCITY`: velocity × the time the shutter is open, so the
+  object's `velocity_scale` is 1 (set by the patch from [§6](#6-build)).
+  The kernel (`volume_shader_motion_blur`) then moves the point where it reads
+  the grids by (time − half) × velocity, and once more with the velocity at the
+  new location. The integrator gets `set_motion_blur` only when something moves.
+  A mesh that moves is rebuilt after a change of Motion Blur; the others stay.
+- Plate (`Cycles.cpp`, `Plate.h`): over a plate the film is transparent
+  (`Background::transparent`, `transparent_glass`). Objects and the floor have
+  `set_use_holdout` or `set_is_shadow_catcher`, and the sun and the sky have
+  `set_is_shadow_catcher`, because they are real lights. The
+  `PASS_SHADOW_CATCHER` pass is named "catcher". When reading "combined",
+  Cycles gives the CG without catchers, with alpha, and from that `overPlate`
+  composes the image.
+- `src/pg/render/PathTracer.cpp`: `shown()` converts linear light to an image
+  (AgX, AgX Punchy, ACES Fit, and through `Aces.h` ACES 1.0 and 2.0) for both
+  renderers.
+- `src/pg/render/Gas.h`: `Gas::dense` provides the gas grids for a renderer that
+  reads dense grids.
+- `tools/prototype/RenderView.cpp`: the Render tab thread with both renderers.
+  A newer scene (the next frame during playback) is taken once the current one
+  has shown an image, or after 3 seconds.
+- `tools/prototype/FrameRender.cpp`: a shot frame rendered to completion for
+  Render Video and Render Frames with Cycles or the path tracer, on a dedicated
+  thread. Each frame has its own Cycles session, just like the command line.
+  Stop cancels it (`Session::cancel`), so the render ends immediately, not
+  after the frame.
+- `CMakeLists.txt`: Cycles is configured as a separate project in
+  `build/cycles-build` and its libraries are built as the `cycles_build` target.
+  Options, paths and libraries are read from its own build.
 
-Testy (`tests/test_render.cpp`, `tests/test_gas.cpp`):
+Tests (`tests/test_render.cpp`, `tests/test_gas.cpp`):
 
-- `render_cycles_lights_a_floor_as_the_sun_and_the_sky_do`: podlaha pod
-  sluncem i pod oblohou má jas matné podlahy (na 2,5 %).
-- `render_cycles_shows_what_the_path_tracer_does`: stejné tvary na stejných
-  místech jako v path traceru, jas do 25 %.
-- `render_cycles_is_the_same_twice_and_its_passes_are_ours`: dva rendery
-  jsou stejné a průchody sedí s path tracerem.
-- `render_cycles_renders_the_gas_as_the_path_tracer_does`: stín kouře,
-  světlo plamene a jas do 30 % jako v path traceru.
-- `gas_dense_grids_are_the_gas_at_the_cells_middles`: mřížky odpovídají
-  plynu ve středech buněk, velký plyn jde po blocích.
-- `render_cycles_lights_a_day_under_a_physical_sky`: slunce fyzikální oblohy
-  svítí jako slunce Looku a má jeho barvu, obloha je modrá.
-- `render_cycles_surface_detail_makes_a_flat_surface_uneven`: detail mění
-  jas povrchu z místa na místo, v průměru ho nechá stejný.
-- `render_cycles_lights_the_scene_with_a_sky_picture`: obloha z obrázku
-  osvětlí podlahu jako stejnoměrná obloha té barvy, Sky Strength ji
-  zjasní, Sky Rotation otočí.
-- `render_cycles_clouds_cover_the_sky_and_drift_on_the_wind`: mraky oblohu
-  zbělí a vítr je posune.
+- `render_cycles_lights_a_floor_as_the_sun_and_the_sky_do`: a floor under the
+  sun and under the sky has the brightness of a matte floor (within 2.5 %).
+- `render_cycles_shows_what_the_path_tracer_does`: the same shapes in the same
+  places as in the path tracer, brightness within 25 %.
+- `render_cycles_is_the_same_twice_and_its_passes_are_ours`: two renders
+  are identical and the passes match the path tracer.
+- `render_cycles_renders_the_gas_as_the_path_tracer_does`: smoke shadow,
+  flame light and brightness within 30 % as in the path tracer.
+- `gas_dense_grids_are_the_gas_at_the_cells_middles`: the grids match the
+  gas at cell centers, large gas goes in blocks.
+- `render_cycles_lights_a_day_under_a_physical_sky`: the sun of the physical sky
+  shines like the Look's sun and has its color, the sky is blue.
+- `render_cycles_surface_detail_makes_a_flat_surface_uneven`: detail varies the
+  surface brightness from place to place, leaving it the same on average.
+- `render_cycles_lights_the_scene_with_a_sky_picture`: a sky from an image
+  lights the floor like a uniform sky of that color, Sky Strength
+  brightens it, Sky Rotation rotates it.
+- `render_cycles_clouds_cover_the_sky_and_drift_on_the_wind`: clouds whiten
+  the sky and the wind moves them.
 - `render_agx_shows_middle_grey_as_blender_does_and_bright_colours_going_white`:
-  střední šedá je v AgX v polovině, jasná červená přechází do bílé, Punchy
-  má víc kontrastu a barev.
+  middle gray is halfway in AgX, bright red goes to white, Punchy
+  has more contrast and color.
 - `render_cycles_draws_the_grit_and_the_wet` (`tests/test_particles.cpp`):
-  úlomek je vidět a podlaha pod ním je ve stínu, mokrá podlaha je tmavší
-  než suchá.
-- `render_scene_carries_how_fast_what_moves_goes`: každý roh trojúhelníku
-  i každý úlomek drti nese rychlost svého bodu. Kamera mezi dvěma snímky
-  je v půli cesty a otáčí se kratší cestou.
-- `render_cycles_draws_the_cg_over_a_plate`: nad plate je plate tam, kde
-  CG nic nemění, pixel po pixelu, CG kvádr ho zakryje, holdout odkryje,
-  stín na catcheru ho ztmaví a sklem prosvítá
-  ([plate.md](plate.md#ve-finálním-renderu-cycles-a-path-tracer)).
-- `render_cycles_blurs_what_moves_while_the_shutter_is_open`: čtverec
-  letící 24 m/s, úlomek drti, koule (objekt scény) letící 24 m/s
-  a kamera, která jede kolem stojícího čtverce, jsou rozmazané. Stopa je
-  o víc než 8 pixelů širší, nejvyšší jas je o víc než pětinu nižší
-  a světla je stejně (do 15 %). S nulovou závěrkou je obraz bit po bitu
-  stejný jako bez pohybu. Tentýž test pro path tracer
-  (`render_path_tracer_blurs_what_moves_while_the_shutter_is_open`) dává
-  stejně široké stopy.
+  a fragment is visible and the floor under it is in shadow, a wet floor is darker
+  than a dry one.
+- `render_scene_carries_how_fast_what_moves_goes`: every triangle vertex
+  and every grit fragment carries the velocity of its point. The camera between two frames
+  is halfway and rotates along the shorter path.
+- `render_cycles_draws_the_cg_over_a_plate`: over a plate the plate shows where
+  the CG changes nothing, pixel by pixel, a CG box covers it, a holdout reveals it,
+  a shadow on a catcher darkens it and it shows through glass
+  ([plate.md](plate.md#in-the-final-render-cycles-and-the-path-tracer)).
+- `render_cycles_blurs_what_moves_while_the_shutter_is_open`: a square
+  flying at 24 m/s, a grit fragment, a sphere (a scene object) flying at 24 m/s
+  and a camera moving past a stationary square are blurred. The trail is
+  more than 8 pixels wider, the peak brightness is more than a fifth lower
+  and the total light is the same (within 15 %). With a zero shutter the image is bit for bit
+  identical to one without motion. The same test for the path tracer
+  (`render_path_tracer_blurs_what_moves_while_the_shutter_is_open`) gives
+  equally wide trails.
 - `render_blurs_the_gas_along_its_velocity_while_the_shutter_is_open`
-  (`tests/test_gas.cpp`): koule ohně letící 12 m/s se za půl snímku
-  protáhne o 25 cm. Rozptyl světla po sloupcích obrazu naroste o tolik,
-  kolik dává rovnoměrná stopa té délky (L²/12): v Cycles o 3,33 px²,
-  v path traceru o 3,41 px², podle výpočtu o 3,34 px². Světla je stejně
-  (do 5 %).
+  (`tests/test_gas.cpp`): a ball of fire flying at 12 m/s stretches by 25 cm
+  in half a frame. The variance of light across image columns grows by as much
+  as a uniform trail of that length gives (L²/12): in Cycles by 3.33 px²,
+  in the path tracer by 3.41 px², by calculation 3.34 px². The total light is the same
+  (within 5 %).
 - `uv_the_renderers_lay_a_picture_on_by_uv_and_bend_the_light_by_its_normal_map`
-  (`tests/test_uv.cpp`): fotka podle UV a normálová mapa v obou
-  rendererech stejně, i na kouli (do 5 %,
-  [materials.md](materials.md#podle-uv-a-normálové-mapy)).
+  (`tests/test_uv.cpp`): a photo by UV and a normal map the same in both
+  renderers, also on a sphere (within 5 %,
+  [materials.md](materials.md#by-uv-and-normal-map)).
 - `foliage_leaves_are_cut_out_by_their_pictures_alpha`
-  (`tests/test_foliage.cpp`): alfa výřez listů. Vyříznutou půlkou desky
-  je vidět zem osvětlená jako bez desky, v Cycles i path traceru (do 2 %).
+  (`tests/test_foliage.cpp`): alpha cutout of leaves. Through the cut-out half of a board
+  the ground is visible, lit as if there were no board, in both Cycles and the path tracer (within 2 %).
 
-## 9. Co zatím chybí
+## 9. What is still missing
 
-- GPU (CUDA, OptiX, HIP, Metal): Cycles je postavený jen pro procesor.
-- OSL shadery. Normálové mapy jen s UV, ze tří stran dělá reliéf výška
-  ([materials.md](materials.md#podle-uv-a-normálové-mapy)).
-- Mraky jako objem (stíny mraků na zemi, mraky, do kterých se dá vletět)
-  a obloha z obrázku ve viewportu.
-- Plyn přímo jako NanoVDB v Cycles (bez husté mřížky): Cycles ho umí jen
-  s OpenVDB.
-- Dělení ploch Catmull-Clark: Cycles je postavený bez OpenSubdiv,
-  a posouvané povrchy (**Displacement**) proto dělí jen lineárně. Hrubá
-  síť tak zůstane hranatá, jen se posune. Dělené plochy z USD vyhladí
-  už USD Import ([usd-import.md](usd-import.md#dělené-plochy)), před
-  Cycles se dá dát i uzel Subdivide.
+- GPU (CUDA, OptiX, HIP, Metal): Cycles is built for the CPU only.
+- OSL shaders. Normal maps only with UV; from three sides the height makes bump
+  ([materials.md](materials.md#by-uv-and-normal-map)).
+- Clouds as a volume (cloud shadows on the ground, clouds you can fly into)
+  and the image sky in the viewport.
+- Gas directly as NanoVDB in Cycles (without a dense grid): Cycles can do that
+  only with OpenVDB.
+- Catmull-Clark subdivision: Cycles is built without OpenSubdiv,
+  and so it subdivides displaced surfaces (**Displacement**) only linearly. A coarse
+  mesh therefore stays faceted, it is just displaced. Subdivision surfaces from USD are
+  already smoothed by USD Import ([usd-import.md](usd-import.md#subdivision-surfaces)), and a
+  Subdivide node can also be placed before Cycles.

@@ -1,173 +1,187 @@
 # Prototype
 
-Prototyp profesionálního node-based softwaru pro procedurální geometrii
-a vizuální efekty, po vzoru Houdini: geometrie z uzlů s atributy
-a wranglem, simulace kouře, ohně, vody a deště, animace, render záběru do
-obrázků a videa a export do dalších nástrojů. Program `prototype` bez
-příkazu otevře editor, s příkazem (`sim`, `render`, `gen`, …) pracuje bez
-okna.
+A prototype of professional node-based software for procedural geometry
+and visual effects, modeled on Houdini: geometry built from nodes with
+attributes and wrangles, smoke, fire, water and rain simulations, animation,
+shot rendering to images and video, and export to other tools. Run without
+a command, `prototype` opens the editor; with a command (`sim`, `render`,
+`gen`, …) it works without a window.
 
-- **[ROADMAP.md](ROADMAP.md)** — cíl, co je hotové, další kroky, rizika
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — datový model, cook engine, invarianty
-- **[docs/shader-graph.md](docs/shader-graph.md)** — node editor shaderů pro
-  OpenGL, OpenGL ES, Vulkan a Direct3D: jak funguje a jak ho rozšiřovat
-- **[docs/pyro.md](docs/pyro.md)** — simulace kouře, ohně, vody a deště
-  z uzlů (jako Pyro a FLIP v Houdini): editor se sítí uzlů, objekty a gizmo
-  ve viewportu, proudění na 3D mřížce, multigrid, voda z částic, déšť ve
-  větru, objemové vykreslování, hladina s odrazy a lomem a kamera záběru
-- **[docs/geometry.md](docs/geometry.md)** — geometrie v téže síti (uzly
-  jako SOP v Houdini): display flag, viewport, náhled v každém uzlu, tabulka
-  atributů, geometrie jako tvar překážek a zdrojů, simulace zpátky jako body
-  a objemy
-- **[docs/editing.md](docs/editing.md)** — úpravy geometrie ve viewportu
-  jako v Houdini: body, hrany, plochy i vrcholy (rohy) vybrané myší (klik,
-  obdélník, laso, štětec; jen viditelné, nebo i skryté), úchyt je posune,
-  otočí a zvětší (uzel Edit; měkký výběr s náhledem, vzdálenost i po povrchu),
-  skupina, mazání a rozpouštění hran z vybraného (Group, Blast,
-  Dissolve), symetrie úprav i štětců (M), štětec maluje atribut —
-  piny a trhání látky (Attribute Paint) — a tvaruje geometrii jako hlínu:
-  vytlačit, zatlačit, uhladit, chytit, zarovnat (Sculpt, přírůstkově
-  i na milionu bodů; s dyntopem se síť pod štětcem sama zjemňuje)
-- **[docs/trees.md](docs/trees.md)** — stromy, jak rostou rostliny (uzel
-  Tree po vzoru Webera a Penna): kmen i s vidlicí do vůdčích větví, tři
-  úrovně větví kolem rodiče o zlatý úhel, sedm tvarů koruny (smrk, dub,
-  bříza, topol, akácie, vrba, lípa), listy i jehličí; les na bodech, každý
-  strom jiný; větve, které obrostou zeď nebo střechu; vítr uzlem Plant
-  Wind podle `flex`, i jako pružné větve se setrvačností (Dynamics); kostra
-  pro vlastní listy
-- **[docs/vegetation.md](docs/vegetation.md)** — vegetace jako instance:
-  tráva z trsů stébel (uzel Grass) po terénu podle namalované hustoty
-  a sklonu, keře a stromy jako varianty, které zastupují body; viewport je
-  kreslí přes GPU instancing, USD dostane PointInstancer, OBJ kopie; vítr
-  otáčí `orient`; louka u lesa s 1,9 milionu stébel za 148 ms
-- **[docs/cycles.md](docs/cycles.md)** — render přes Cycles z Blenderu:
-  záložka Render vedle Viewportu (první obraz hned, při přehrávání snímek
-  po snímku) i příkazová řádka `--renderer cycles`; scéna převedená do
-  Cycles i s kouřem a ohněm, Principled BSDF, sklo a voda, fyzikální
-  obloha a slunce jako v Blenderu s nastavitelnými mraky nebo obloha
-  z obrázku (HDRI), převod barev AgX, detail povrchů, posunutí povrchů
-  podle výšky textury (Displacement), odšumění Open Image Denoise; drť
-  jako hranaté úlomky kamene a skla, kapky deště jako čárky vody a mokrá
-  zem, kam prší; rozmazání pohybem, dokud je otevřená závěrka (kusy, drť,
-  látka, voda, objekty, kouř a oheň, kamera), stejně i v path traceru
-- **[docs/materials.md](docs/materials.md)** — materiály a textury: plochy
-  říkají, z čeho jsou (`s@material`: beton, lom betonu, omítka, cihla,
-  okno, ocel, dřevo, kůra, dlažba, tašky, trávník…), generátory si je
-  nastaví samy, uzel Material komukoli; Cycles kreslí fotografie z knihovny
-  (Bistro a Babylon.js, CC-BY 4.0) nebo procedurální vzory, path tracer
-  fotografie s reliéfem z normálových map; tašky podél střechy, řady
-  vodorovně; geometrie bez `Cd` v barvách svých materiálů; vlastní textury
-  z Poly Haven a ambientCG; ze tří stran, nebo podle UV (uzel UV Project,
-  importy) s normálovými mapami; textura jde s kusem, který letí
-- **[docs/pathtracer.md](docs/pathtracer.md)** — vlastní path tracer na
-  procesoru, druhá volba záložky Render a `--renderer path`; odražené
-  světlo, měkké slunce, prosvítající tráva a listí, sklo a voda, drť,
-  déšť a mokrý povrch, hloubka ostrosti, odšumění neuronovou sítí (Intel
-  Open Image Denoise); nastavení v uzlu Output, PNG i EXR
-- **[docs/wrangle.md](docs/wrangle.md)** — wrangle, jazyk pro výpočty nad
-  geometrií jako VEX: proměnné, cykly, funkce, pole; běh nad body,
-  primitivy i celou geometrií; sousedé, další vstupy, stavba a mazání
-  geometrie; posuvníky z `ch()`
-- **[docs/assets.md](docs/assets.md)** — digital assets: vybrané uzly
-  jako jeden uzel s vlastními parametry a verzí, knihovna `.pgasset`,
-  vstup dovnitř a zpět, síť nese své assety s sebou
-- **[docs/animation.md](docs/animation.md)** — klíčové snímky na libovolném
-  parametru, výrazy v parametrech (`$F`, `ch("../box1/sizex")`), pohyblivé
-  překážky, jejichž pohyb převezme plyn i voda
-- **[docs/cache.md](docs/cache.md)** — cache simulace na disku a export:
-  body do PLY, objemy do OpenVDB, polygony do OBJ, snímek po snímku pro
-  Houdini, Blender a renderery; bake na pozadí s průběhem, zrušením
-  a pokračováním z checkpointu, náhled na hrubších mřížkách (jak jemných,
-  řekne uzel Output), wedge (varianty parametru), profil kroku a velké
-  cache ve viewportu (odložené na disk, čtené dopředu, zástupné mřížky)
-- **[docs/destruction.md](docs/destruction.md)** — destrukce: Voronoi,
-  Concrete, Wood a Glass Fracture (beton, dřevo na třísky podél vláken,
-  sklo), tuhá tělesa nad Jolt Physics, slepené kusy jako jedno těleso,
-  které nárazy lámou, kusy, které se za běhu rozlomí tam, kam přišla
-  rána, nálože, drcení na prach, drť jako částice, které
-  narážejí do kusů a zůstávají na nich ležet, prach za letícími kusy,
-  vzduch vytlačený zřícením, který žene prach do ulic, pád řízený
-  animací (Guide), trosky ve vodě a v plynu (dřevo plave a proud ho
-  unáší, drť nese tlaková vlna); odstřel věžáku ve městě a zřícení zdi
-  z pohledu od země jako videa, povodeň na dvoře s plovoucími bednami
-- **[docs/cloth.md](docs/cloth.md)** — látky, lana a měkká tělesa (XPBD,
-  obdoba Vellum): ubrus přes stůl, vlajka ve větru, míč držící objem,
-  přišpendlené body nesené animací, kolize bodů, hran i ploch s objekty,
-  kusy RBD i sebou samou, vítr a proud plynu; trhání a obousměrná vazba
-  s tuhými tělesy (plachta chytá bedny, betonový blok ji prorazí); měkká
-  tělesa držící tvar, hlína zůstane promáčklá
-- **[docs/grains.md](docs/grains.md)** — písek, štěrk a zemina (obdoba
-  Vellum Grains): zrna s třením a kohezí, hromady tak strmé, jak tření
-  drží, mokrý písek stojí; sypání proudem, kolize s objekty, obousměrná
-  vazba s kusy RBD, vítr a proud plynu; drť z lomů RBD Solveru jako zrna,
-  která se hromadí na troskách i kolem nich
-- **[docs/quench.md](docs/quench.md)** — voda a oheň: voda Liquid Solveru
-  a kapky deště hasí oheň, do kterého se dostanou (chladí, promáčí palivo
-  a zdroje), z tepla, které vezmou, je bílá pára — vlastní pole plynu,
-  které stoupá a řídne; plameny vodu odpařují; táborák v lijáku uhasne,
-  kbelík vody ho uhasí během pár snímků, hadice postupně; liják plní
-  bazén, do kterého padá
-- **[docs/python.md](docs/python.md)** — Python API (`import pg`): sítě,
-  parametry, geometrie jako pole numpy bez kopie, simulace po snímcích,
-  cache, USD a render ze skriptu; síť jako Python kód (`as_code()`)
-- **[docs/usd.md](docs/usd.md)** — celý záběr do USD pro Houdini, Blender
-  a renderery: geometrie, kusy jako tělesa v pohybu, drť, povrch vody,
-  déšť, prach jako VDB, kamera, slunce a obloha; co se mění každý snímek,
-  v souboru pro každý snímek (value clips)
-- **[docs/usd-import.md](docs/usd-import.md)** — čtení USD bez knihovny
-  (`.usda`, `.usdc`, `.usdz`): scéna složená jako v USD (sublayers,
-  reference, payloady, varianty, třídy, value clips), kamera z matchmove
-  jako kamera záběru, kulisa a modely jako geometrie v síti i s materiály
-  (MaterialX, UsdPreviewSurface), dělené plochy vyhlazené; ověřené proti
-  knihovně USD
-- **[docs/alembic.md](docs/alembic.md)** — Alembic bez knihovny: celý
-  záběr jako jeden archiv `.abc` (geometrie, kusy jako tělesa v pohybu,
-  drť, zrna, voda, déšť, látka, kamera; plyn jako VDB vedle) a čtení
-  geometrie a kamery z Blenderu, Mayi nebo Houdini jako uzly sítě;
-  ověřené Blenderem
-- **[docs/materialx.md](docs/materialx.md)** — materiály jako MaterialX
-  bez knihovny: v exportu USD (shadery MaterialX a UsdPreviewSurface,
-  výška jako posunutí, plochy přiřazené GeomSubsety, fotky vedle scény),
-  jako `.mtlx`, a čtení `.mtlx` (i z Poly Haven) jako sady textur;
-  ověřené knihovnou MaterialX 1.38 a 1.39, `usd-core` a Blenderem
-- **[docs/vdb.md](docs/vdb.md)** — čtení OpenVDB bez knihovny: kouř
-  a oheň z Houdini, Blenderu nebo EmberGenu přehraný jako plyn záběru
-  (VDB Gas), level set jako překážka nebo tvar zdroje (VDB Import); zip,
-  Blosc, half, dlaždice, ověřené na souborech z OpenVDB 10 a 13
-- **[docs/color.md](docs/color.md)** — barvy: pohledy AgX, ACES 1.0
-  a ACES 2.0 jako v konfiguracích OpenColorIO, pohledy z konfigurací
-  OpenColorIO (`config.ocio`) studia, ACES či Blenderu, EXR v ACEScg
-  a ACES2065-1; ověřené proti OpenColorIO 2.6
-- **[docs/render.md](docs/render.md)** — obrázky a video: PNG, sekvence,
-  video `.avi` bez závislostí a `.mp4`/`.webm`/`.gif` přes ffmpeg, render na
-  pozadí editoru s průběhem; EXR v lineárním světle s hloubkou, vektory
-  pohybu a maskami pro compositing
-- **[docs/plate.md](docs/plate.md)** — obraz záběru (plate) za CG kamerou
-  záběru: sekvence PNG, JPEG a EXR čtené bez knihoven, holdout a shadow
-  catcher, do EXR CG s alfou a průchodem `catcher`; ve viewportu, v Cycles
-  i v path traceru
+- **[ROADMAP.md](ROADMAP.md)** — goal, what is done, next steps, risks
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — data model, cook engine, invariants
+- **[docs/shader-graph.md](docs/shader-graph.md)** — shader node editor for
+  OpenGL, OpenGL ES, Vulkan and Direct3D: how it works and how to extend it
+- **[docs/pyro.md](docs/pyro.md)** — smoke, fire, water and rain simulations
+  built from nodes (like Pyro and FLIP in Houdini): an editor with a node
+  network, objects and a gizmo in the viewport, flow on a 3D grid, multigrid,
+  particle-based water, rain in the wind, volume rendering, a water surface
+  with reflections and refraction, and a shot camera
+- **[docs/geometry.md](docs/geometry.md)** — geometry in the same network
+  (nodes like SOPs in Houdini): display flag, viewport, a thumbnail in every
+  node, attribute spreadsheet, geometry as the shape of colliders and
+  sources, simulations back as points and volumes
+- **[docs/editing.md](docs/editing.md)** — editing geometry in the viewport
+  as in Houdini: points, edges, primitives and vertices (corners) selected
+  with the mouse (click, box, lasso, brush; visible only, or hidden too); a
+  handle moves, rotates and scales them (Edit node; soft selection with a
+  preview, distance also measured along the surface), group, delete and
+  dissolve edges from the selection (Group, Blast, Dissolve), symmetry for
+  edits and brushes (M), a brush paints an attribute — cloth pins and
+  tearing (Attribute Paint) — and shapes geometry like clay: inflate,
+  push in, smooth, grab, flatten (Sculpt, incrementally even on a million
+  points; with dyntopo the mesh refines itself under the brush)
+- **[docs/trees.md](docs/trees.md)** — trees that grow the way plants do
+  (Tree node modeled on Weber and Penn): a trunk that can fork into leader
+  branches, three levels of branches placed around the parent at the golden
+  angle, seven crown shapes (spruce, oak, birch, poplar, acacia, willow,
+  linden), leaves and needles; a forest on points, every tree different;
+  branches that grow over a wall or a roof; wind via the Plant Wind node
+  driven by `flex`, also as springy branches with inertia (Dynamics); a
+  skeleton for custom leaves
+- **[docs/vegetation.md](docs/vegetation.md)** — vegetation as instances:
+  grass from clumps of blades (Grass node) across terrain following painted
+  density and slope, shrubs and trees as variants that points stand in for;
+  the viewport draws them with GPU instancing, USD gets a PointInstancer, OBJ
+  gets copies; wind rotates `orient`; a meadow by a forest with 1.9 million
+  blades in 148 ms
+- **[docs/cycles.md](docs/cycles.md)** — rendering with Blender's Cycles:
+  a Render tab next to the Viewport (first image immediately, frame by
+  frame during playback) and the command line `--renderer cycles`; the
+  scene converted to Cycles including smoke and fire, Principled BSDF, glass
+  and water, a physical sky and sun as in Blender with adjustable clouds, or
+  a sky from an image (HDRI), AgX color transform, surface detail, surfaces
+  displaced by texture height (Displacement), Open Image Denoise denoising;
+  debris as angular fragments of stone and glass, raindrops as streaks of
+  water and wet ground where it rains; motion blur while the shutter is open
+  (pieces, debris, cloth, water, objects, smoke and fire, camera), the same
+  in the path tracer
+- **[docs/materials.md](docs/materials.md)** — materials and textures:
+  primitives say what they are made of (`s@material`: concrete, concrete
+  fracture, plaster, brick, window, steel, wood, bark, paving, roof tiles,
+  lawn…), generators set them themselves, the Material node sets them on
+  anything; Cycles draws photographs from a library (Bistro and Babylon.js,
+  CC-BY 4.0) or procedural patterns, the path tracer draws photographs with
+  relief from normal maps; roof tiles along the roof, courses horizontal;
+  geometry without `Cd` in the colors of its materials; custom textures
+  from Poly Haven and ambientCG; projected from three sides, or by UV
+  (UV Project node, imports) with normal maps; the texture travels with a
+  piece in flight
+- **[docs/pathtracer.md](docs/pathtracer.md)** — a custom CPU path tracer,
+  the second option of the Render tab and `--renderer path`; bounced
+  light, soft sun, translucent grass and leaves, glass and water, debris,
+  rain and wet surfaces, depth of field, neural-network denoising (Intel
+  Open Image Denoise); settings in the Output node, PNG and EXR
+- **[docs/wrangle.md](docs/wrangle.md)** — wrangle, a language for
+  computations over geometry like VEX: variables, loops, functions, arrays;
+  runs over points, primitives or the whole geometry; neighbors, additional
+  inputs, creating and deleting geometry; sliders from `ch()`
+- **[docs/assets.md](docs/assets.md)** — digital assets: selected nodes
+  as a single node with its own parameters and version, a `.pgasset`
+  library, diving in and back out, the network carries its assets with it
+- **[docs/animation.md](docs/animation.md)** — keyframes on any
+  parameter, expressions in parameters (`$F`, `ch("../box1/sizex")`), moving
+  colliders whose motion both gas and water pick up
+- **[docs/cache.md](docs/cache.md)** — simulation cache on disk and export:
+  points to PLY, volumes to OpenVDB, polygons to OBJ, frame by frame for
+  Houdini, Blender and renderers; background bake with progress, cancel
+  and resume from a checkpoint, preview on coarser grids (how fine is set
+  by the Output node), wedge (parameter variants), step profile and large
+  caches in the viewport (spilled to disk, read ahead, proxy grids)
+- **[docs/destruction.md](docs/destruction.md)** — destruction: Voronoi,
+  Concrete, Wood and Glass Fracture (concrete, wood into splinters along the
+  grain, glass), rigid bodies on top of Jolt Physics, glued pieces as a
+  single body that impacts break apart, pieces that break at runtime where
+  the blow landed, charges, crushing into dust, debris as particles that
+  hit pieces and stay lying on them, dust trailing flying pieces, air
+  pushed out by the collapse driving dust into the streets, a fall directed
+  by animation (Guide), debris in water and in gas (wood floats and the
+  current carries it, debris is carried by the blast wave); a high-rise
+  demolition in a city and a wall collapse seen from ground level as
+  videos, a flooded courtyard with floating crates
+- **[docs/cloth.md](docs/cloth.md)** — cloth, ropes and soft bodies (XPBD,
+  similar to Vellum): a tablecloth over a table, a flag in the wind, a ball
+  holding its volume, pinned points carried by animation, point, edge and
+  primitive collisions with objects, RBD pieces and itself, wind and gas
+  flow; tearing and two-way coupling with rigid bodies (a tarp catches
+  crates, a concrete block punches through it); soft bodies that hold their
+  shape, clay that stays dented
+- **[docs/grains.md](docs/grains.md)** — sand, gravel and soil (similar to
+  Vellum Grains): grains with friction and cohesion, piles as steep as
+  friction holds, wet sand stands; pouring as a stream, collisions with
+  objects, two-way coupling with RBD pieces, wind and gas flow; debris from
+  RBD Solver fractures as grains that pile up on and around the wreckage
+- **[docs/quench.md](docs/quench.md)** — water and fire: Liquid Solver water
+  and raindrops put out the fire they reach (they cool it, soak the fuel
+  and the sources), and the heat they take turns into white steam — its own
+  gas field that rises and thins out; flames evaporate water; a campfire in
+  a downpour goes out, a bucket of water puts it out within a few frames, a
+  hose gradually; a downpour fills the pool it falls into
+- **[docs/python.md](docs/python.md)** — Python API (`import pg`): networks,
+  parameters, geometry as numpy arrays without copying, frame-by-frame
+  simulation, cache, USD and rendering from a script; a network as Python
+  code (`as_code()`)
+- **[docs/usd.md](docs/usd.md)** — the whole shot to USD for Houdini, Blender
+  and renderers: geometry, pieces as moving bodies, debris, water surface,
+  rain, dust as VDB, camera, sun and sky; whatever changes every frame goes
+  into a file per frame (value clips)
+- **[docs/usd-import.md](docs/usd-import.md)** — reading USD without the
+  library (`.usda`, `.usdc`, `.usdz`): the scene composed as in USD
+  (sublayers, references, payloads, variants, classes, value clips), a
+  matchmove camera as the shot camera, set and models as geometry in the
+  network including materials (MaterialX, UsdPreviewSurface), subdivision
+  surfaces smoothed; verified against the USD library
+- **[docs/alembic.md](docs/alembic.md)** — Alembic without the library: the
+  whole shot as a single `.abc` archive (geometry, pieces as moving bodies,
+  debris, grains, water, rain, cloth, camera; gas as VDB alongside) and
+  reading geometry and cameras from Blender, Maya or Houdini as network
+  nodes; verified with Blender
+- **[docs/materialx.md](docs/materialx.md)** — materials as MaterialX
+  without the library: in USD export (MaterialX and UsdPreviewSurface
+  shaders, height as displacement, primitives assigned via GeomSubsets,
+  photos alongside the scene), as `.mtlx`, and reading `.mtlx` (including
+  from Poly Haven) as texture sets; verified with the MaterialX 1.38 and
+  1.39 libraries, `usd-core` and Blender
+- **[docs/vdb.md](docs/vdb.md)** — reading OpenVDB without the library:
+  smoke and fire from Houdini, Blender or EmberGen played back as the shot's
+  gas (VDB Gas), a level set as a collider or source shape (VDB Import);
+  zip, Blosc, half, tiles, verified on files from OpenVDB 10 and 13
+- **[docs/color.md](docs/color.md)** — color: AgX, ACES 1.0 and ACES 2.0
+  views as in OpenColorIO configs, views from a studio's, ACES or Blender
+  OpenColorIO configs (`config.ocio`), EXR in ACEScg and ACES2065-1;
+  verified against OpenColorIO 2.6
+- **[docs/render.md](docs/render.md)** — images and video: PNG, sequences,
+  `.avi` video with no dependencies and `.mp4`/`.webm`/`.gif` via ffmpeg,
+  rendering in the background of the editor with progress; EXR in linear
+  light with depth, motion vectors and masks for compositing
+- **[docs/plate.md](docs/plate.md)** — the shot's image (plate) behind CG
+  through the shot camera: PNG, JPEG and EXR sequences read without
+  libraries, holdout and shadow catcher, CG with alpha and a `catcher` pass
+  to EXR; in the viewport, in Cycles and in the path tracer
 
-> **Jméno.** Projekt se jmenuje **Prototype**; pracovní název byl příliš
-> podobný ochranné známce SideFX. Jmenný prostor v kódu zůstává neutrální
-> `pg` a formáty souborů (`.pgsim`, `.pgsg`, `.pgnodes`) se nemění.
+> **Name.** The project is called **Prototype**; the working name was too
+> similar to a SideFX trademark. The namespace in the code remains the
+> neutral `pg`, and the file formats (`.pgsim`, `.pgsg`, `.pgnodes`) do not
+> change.
 
-## Co to je
+## What it is
 
-Prototype **není produkt**. Ukazuje celou cestu, kterou jde profesionální
-procedurální software — od geometrie přes simulace po obrázek a export —
-a měří, kolik stojí. Jádro stojí na čtyřech tvrzeních, která prototyp
-ověřuje měřením, dokud je ještě levné je vyvrátit:
+Prototype **is not a product**. It demonstrates the whole path that
+professional procedural software takes — from geometry through
+simulations to the image and export — and measures what it costs. The core
+rests on four claims that the prototype verifies by measurement while they
+are still cheap to disprove:
 
-1. **Copy-on-write na atributových polích** udrží paměť v mezích u dlouhých
-   řetězců uzlů.
-2. **Líná pull evaluace s verzováním** dělá interaktivní editaci možnou.
-3. **Deterministické chunkování** dá bitově stejný výsledek nezávisle na
-   počtu vláken.
-4. **Per-element jazyk** vázaný na sloty je použitelný a měřitelný baseline
-   pro budoucí JIT.
+1. **Copy-on-write on attribute arrays** keeps memory in check across long
+   node chains.
+2. **Lazy pull evaluation with versioning** makes interactive editing
+   possible.
+3. **Deterministic chunking** gives a bit-identical result regardless of
+   the number of threads.
+4. **A per-element language** bound to slots is a usable and measurable
+   baseline for a future JIT.
 
-Jedno z kritérií původní roadmapy prototyp rovnou vyvrátil — viz
-[ROADMAP.md §3](ROADMAP.md#3-co-je-hotové), poznámka u M5.
+The prototype outright disproved one of the criteria of the original
+roadmap — see [ROADMAP.md §3](ROADMAP.md#3-what-is-done), the note on M5.
 
 ## Build
 
@@ -177,117 +191,119 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Vektory, matice a kvaterniony počítá celý program knihovnou **GLM**
-(OpenGL Mathematics, MIT, jen hlavičky). Použije se systémová verze 1.0
-nebo novější (`pkg install glm` na FreeBSD, `sudo apt install libglm-dev`
-na Debianu 13 a Ubuntu 25.04), jinak ji CMake stáhne. Starší balíčky
-(Ubuntu 24.04 má 0.9.9) se přeskočí.
+The whole program computes vectors, matrices and quaternions with the
+**GLM** library (OpenGL Mathematics, MIT, header-only). A system version
+1.0 or newer is used (`pkg install glm` on FreeBSD,
+`sudo apt install libglm-dev` on Debian 13 and Ubuntu 25.04); otherwise
+CMake downloads it.
+Older packages (Ubuntu 24.04 has 0.9.9) are skipped.
 
-Paprsky path traceru hledá knihovna **Intel Embree 4** (Apache 2.0):
-`pkg install embree` na FreeBSD, `sudo apt install libembree-dev` na
-Debianu 13 a Ubuntu 24.04. Když v systému není, CMake ji stáhne a jednou
-postaví jen s tím, co path tracer potřebuje (na čtyřech jádrech asi
-11 minut). Bez ní
-(`-DPG_EMBREE=OFF`) path tracer použije vlastní BVH: stejný obraz, ale
-pomaleji ([docs/pathtracer.md](docs/pathtracer.md)).
+The path tracer's rays are traced by the **Intel Embree 4** library
+(Apache 2.0): `pkg install embree` on FreeBSD,
+`sudo apt install libembree-dev` on Debian 13 and Ubuntu 24.04. When it is not on the system,
+CMake downloads it and builds it once with only what the path tracer needs
+(about 11 minutes on four cores). Without it
+(`-DPG_EMBREE=OFF`) the path tracer uses its own BVH: the same image, but
+slower ([docs/pathtracer.md](docs/pathtracer.md)).
 
-Kouř, oheň a prach renderuje path tracer přes **NanoVDB** (součást
-OpenVDB, Apache 2.0, jen hlavičky, nic se nekompiluje). Použije se
-systémová, pokud ji jde tímto překladačem přeložit. Jinak ji CMake
-stáhne s OpenVDB 13.0 (35 MB za pár sekund). Ubuntu 24.04 má starou
-verzi 10.0.1 s jiným rozhraním, ta se přeskočí. Přeskočí se i NanoVDB
-z OpenVDB 13.1 s libc++ 18 (clang 18 na FreeBSD 14), protože potřebuje
-`std::atomic_ref`, které tahle libc++ nemá. Bez NanoVDB
-(`-DPG_NANOVDB=OFF`) path tracer plyn nevykreslí, viewport ano.
+The path tracer renders smoke, fire and dust via **NanoVDB** (part of
+OpenVDB, Apache 2.0, header-only, nothing is compiled). The system version
+is used if this compiler can compile it. Otherwise CMake downloads it with
+OpenVDB 13.0 (35 MB in a few seconds). Ubuntu 24.04 has the old version
+10.0.1 with a different interface, which is skipped. NanoVDB from OpenVDB
+13.1 with libc++ 18 (clang 18 on FreeBSD 14) is skipped too, because it
+needs `std::atomic_ref`, which that libc++ lacks. Without NanoVDB
+(`-DPG_NANOVDB=OFF`) the path tracer does not render gas; the viewport does.
 
-Šum, který render nechá, odstraní **Intel Open Image Denoise 2**
-(Apache 2.0): `pkg install oidn` na FreeBSD. Když v systému není, CMake
-ji stáhne a jednou postaví ze zdrojů: verzi 2.3.3, staticky, jen pro
-procesor, asi za minutu. K tomu potřebuje ISPC 1.21 nebo novější a TBB
-(`sudo apt install ispc libtbb-dev` na Debianu a Ubuntu). Bez ní
-(`-DPG_OIDN=OFF`) odšumuje vlastní filtr.
+The noise a render leaves behind is removed by **Intel Open Image Denoise 2**
+(Apache 2.0): `pkg install oidn` on FreeBSD. When it is not on the system,
+CMake downloads it and builds it once from source: version 2.3.3, static,
+CPU only, in about a minute. For that it needs ISPC 1.21 or newer and TBB
+(`sudo apt install ispc libtbb-dev` on Debian and Ubuntu). Without it
+(`-DPG_OIDN=OFF`) a custom filter does the denoising.
 
-Finální obraz renderuje **Cycles** z Blenderu (Apache 2.0). CMake ho
-stáhne z GitHubu (značka v4.5.0) a jednou postaví jen pro procesor
-(na čtyřech jádrech asi 2 minuty). Potřebuje **OpenImageIO** a TBB: `pkg
-install openimageio pugixml onetbb` na FreeBSD, `sudo apt install
-libopenimageio-dev libpugixml-dev libtbb-dev` na Debianu a Ubuntu. Bez
-nich (nebo s `-DPG_CYCLES=OFF`) renderuje vlastní path tracer
+The final image is rendered by Blender's **Cycles** (Apache 2.0). CMake
+downloads it from GitHub (tag v4.5.0) and builds it once, CPU only
+(about 2 minutes on four cores). It needs **OpenImageIO** and TBB: `pkg
+install openimageio pugixml onetbb` on FreeBSD, `sudo apt install
+libopenimageio-dev libpugixml-dev libtbb-dev` on Debian and Ubuntu. Without
+them (or with `-DPG_CYCLES=OFF`) the custom path tracer renders
 ([docs/cycles.md](docs/cycles.md)).
 
-Výchozí build obsahuje editor: při konfiguraci stáhne Dear ImGui a GLFW,
-pokud v systému není (`sudo apt install libglfw3-dev`). Když najde vývojové
-soubory Pythonu (`python3-dev`), stáhne pybind11 a postaví i modul `pg` do
-`build/python` ([docs/python.md](docs/python.md)); jiný Python vybere
-`-DPython3_EXECUTABLE=…`. Bez editoru a bez Pythonu nemá build žádné
-externí závislosti kromě Jolt, GLM, Embree, NanoVDB, Open Image Denoise a Cycles (s OpenImageIO), stačí C++20 a standardní
-knihovna:
+The default build includes the editor: at configure time it downloads Dear
+ImGui and GLFW if they are not on the system (`sudo apt install libglfw3-dev`).
+When it finds the Python development files (`python3-dev`), it downloads
+pybind11 and also builds the `pg` module into `build/python`
+([docs/python.md](docs/python.md)); a different Python is selected with
+`-DPython3_EXECUTABLE=…`. Without the editor and without Python the build has
+no external dependencies apart from Jolt, GLM, Embree, NanoVDB, Open Image Denoise and Cycles (with OpenImageIO); C++20 and the standard
+library are enough:
 
 ```bash
 cmake -S . -B build -DPG_BUILD_GUI=OFF -DPG_BUILD_PYTHON=OFF
 ```
 
-Se sanitizery:
+With sanitizers:
 
 ```bash
 cmake -S . -B build-asan -DPG_SANITIZE=ON -DPG_BUILD_GUI=OFF        && cmake --build build-asan && ./build-asan/pgtests
 cmake -S . -B build-tsan -DPG_SANITIZE_THREAD=ON -DPG_BUILD_GUI=OFF && cmake --build build-tsan && ./build-tsan/pgtests
 ```
 
-## Spuštění
+## Running
 
 ```bash
-./build/pgtests            # 690 testů: 105 jádro, geometrie a úpravy ve viewportu, 42 jazyk wrangle a výrazy, 7 digital assets, 88 tuhá tělesa a destrukce (beton, výztuž, sklo, cihly, síť vazeb, trosky, lom za běhu, usměrněná simulace, trosky ve vodě a v plynu), 55 plyn (řídká mřížka, upres, hašení, rozmazání pohybem), 27 voda a déšť, 31 látky, měkká tělesa a zrna, 19 částice, animace a determinismus, 39 síť simulace a geometrie v ní, 42 shader graf, materiály, UV a normálové mapy, 56 render, barvy ACES a konfigurace OpenColorIO, rozmazání pohybem, EXR, obrázky a video, 57 cache, export a checkpointy, 39 USD (zápis i čtení, materiály, instance, objemy), 11 Alembic, 24 VDB (čtení, zápis s kompresí), 8 MaterialX, 40 stromy a vegetace
-ctest --test-dir build -R python                   # 57 testů modulu pg (Python); proti knihovnám USD, Pillow a OpenEXR, jsou-li
-./build/pgeditortests      # rozhraní editoru bez okna a bez OpenGL: písmo, Escape a menu, nabídka uzlů, řádky, záložky, jména uzlů v síti, místo pro náhledy, neuložené změny, přepsání souboru, autosave
-ctest --test-dir build -R editor_                  # editor sám, skripty pod xvfb: Quit se změnami, Save As, pád a obnova, Simulate Again
+./build/pgtests            # 690 tests: 105 core, geometry and viewport editing, 42 wrangle language and expressions, 7 digital assets, 88 rigid bodies and destruction (concrete, rebar, glass, bricks, constraint network, debris, runtime fracture, guided simulation, debris in water and gas), 55 gas (sparse grid, upres, quenching, motion blur), 27 water and rain, 31 cloth, soft bodies and grains, 19 particles, animation and determinism, 39 simulation network and geometry in it, 42 shader graph, materials, UV and normal maps, 56 render, ACES colours and OpenColorIO configs, motion blur, EXR, images and video, 57 cache, export and checkpoints, 39 USD (writing and reading, materials, instances, volumes), 11 Alembic, 24 VDB (reading, writing with compression), 8 MaterialX, 40 trees and vegetation
+ctest --test-dir build -R python                   # 57 tests of the pg module (Python); against the USD, Pillow and OpenEXR libraries, if present
+./build/pgeditortests      # editor UI without a window and without OpenGL: font, Escape and menus, node menu, rows, tabs, node names in the network, room for thumbnails, unsaved changes, file overwrite, autosave
+ctest --test-dir build -R editor_                  # the editor itself, scripts under xvfb: Quit with changes, Save As, crash and recovery, Simulate Again
 PYTHONPATH=build/python python3 examples/python/fracture_stats.py
-./build/pgbench            # měření tvrzení výše
-./build/pgbench_rigid      # tuhá tělesa: věž odstřelu a desetkrát víc kusů, 1 a všechna vlákna
-./build/pgbench_pyro 96 576 # prach odstřelu v rozlišeních: čas fází, paměť, kolik domény prach zabírá (--dense: hustě)
-./build/pgbench_pyro 64 --example campfire --upres 3 # táborák s upresem: čas a paměť jemné mřížky
+./build/pgbench            # measurements of the claims above
+./build/pgbench_rigid      # rigid bodies: the demolition tower and ten times more pieces, 1 and all threads
+./build/pgbench_pyro 96 576 # demolition dust at several resolutions: phase timings, memory, how much of the domain the dust occupies (--dense: dense)
+./build/pgbench_pyro 64 --example campfire --upres 3 # campfire with upres: time and memory of the fine grid
 ./build/pgdemo out.obj --frames 24
-./build/prototype                                  # editor: prázdná scéna, Shift+A přidá oheň, vodu, déšť
-./build/prototype --example campfire               # příklad simulace: táborák
-./build/prototype sim campfire fire.mp4            # celý záběr do videa (.avi i bez ffmpeg)
-./build/prototype examples/shaders/fire.pgsg       # editor na síti shaderů, s grafem
+./build/prototype                                  # editor: empty scene, Shift+A adds fire, water, rain
+./build/prototype --example campfire               # simulation example: campfire
+./build/prototype sim campfire fire.mp4            # the whole shot to video (.avi even without ffmpeg)
+./build/prototype examples/shaders/fire.pgsg       # editor on a shader network, with the graph
 ./build/prototype gen examples/shaders/marble.pgsg --target all -o out/
-./build/prototype sim campfire fire.png            # simulace bez okna, do PNG
+./build/prototype sim campfire fire.png            # simulation without a window, to PNG
 ./build/prototype sim explosion out/boom.png --every 2 --set charge.fuel=80
-./build/prototype sim lakeside shot.png            # záběr kamerou: oheň, voda, déšť, vítr
-./build/prototype --example rock_garden            # geometrie v síti: kameny z kopií koule, déšť
-./build/prototype --example spiral_stairs          # Detail Wrangle postaví schodiště, voda po něm stéká
-./build/prototype sim liquid_points points.png     # částice vody jako body obarvené wranglem
-./build/prototype --example wake                   # animace: koule projíždí bazénem, vlna a brázda
-./build/prototype sim campfire_vdb - --cache cache/fire                          # simulace jednou, na disk
-./build/prototype sim campfire_vdb fire.png --from-cache cache/fire --every 10   # render z cache
+./build/prototype sim lakeside shot.png            # shot through the camera: fire, water, rain, wind
+./build/prototype --example rock_garden            # geometry in the network: rocks from copies of a sphere, rain
+./build/prototype --example spiral_stairs          # Detail Wrangle builds a staircase, water runs down it
+./build/prototype sim liquid_points points.png     # water particles as points coloured by a wrangle
+./build/prototype --example wake                   # animation: a sphere moves through a pool, wave and wake
+./build/prototype sim campfire_vdb - --cache cache/fire                          # simulate once, to disk
+./build/prototype sim campfire_vdb fire.png --from-cache cache/fire --every 10   # render from cache
 ./build/prototype sim campfire_vdb - --from-cache cache/fire --export-node volumes --export 'out/fire.$F4.vdb'
-./build/prototype sim vdb_fireball fireball.png     # ohnivá koule ze souboru VDB: přehraná, ne simulovaná
-./build/prototype sim vdb_rock rock.png --every 15  # proud vody narazí na balvan z level setu VDB
-./build/prototype sim demolition - --export demolition.abc   # celý odstřel jako jeden archiv Alembic
-./build/prototype sim alembic_shot shot.png --every 24       # oheň v kulise z Blenderu, přes kameru z Alembicu
-./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # částice do PLY
-./build/prototype --example street                 # ulice ze tří digital assetů Building
-./build/prototype --example meadow                 # louka u lesa: tráva, keře a stromy jako instance
-./build/prototype sim foliage f.png --renderer cycles   # lípa a smrk v trávě: listy s alfa výřezem, kůra podle UV
-./build/prototype sim ecosystem e.png              # les, který vyrostl sám: břízy, duby a smrky za 120 let, lísky ve stínu pod nimi
-./build/prototype sim tree_obstacles t.png         # stromy u zdi a pod pergolou: větve se překážkám vyhnou
-./build/prototype cook street street.obj --set tower.floors=12   # geometrie bez okna, do OBJ
-./build/prototype cook street - --hash --threads 1 # hash geometrie: stejný na 1 i 4 vláknech
-./build/prototype sim matchmove mm.png --every 24  # oheň v kulise z USD, přes kameru z matchmove (USD)
-./build/prototype sim usd_looks l.png --renderer cycles   # rekvizity s materiály z USD: MaterialX, UsdPreviewSurface, OpenPBR
-./build/prototype sim usd_subdivision s.png --renderer cycles   # dělené plochy z USD vyhlazené jako v OpenSubdivu, s ostrými hranami
-./build/prototype sim displacement d.png --renderer cycles   # cihly, kůra a dlažba opravdu posunuté podle výšky (Displacement)
-PYTHONPATH=build/python python3 examples/usd/make_plate.py   # plate záběru: pak hoří v natočeném dvoře
-./build/prototype usd examples/usd/shot.usda       # co USD soubor obsahuje: vrstvy, strom, kamery, geometrie
-./build/prototype help                             # příkazy: list, gen, check, render, sim, cook, usd
+./build/prototype sim vdb_fireball fireball.png     # fireball from a VDB file: played back, not simulated
+./build/prototype sim vdb_rock rock.png --every 15  # a stream of water hits a boulder from a VDB level set
+./build/prototype sim demolition - --export demolition.abc   # the whole demolition as a single Alembic archive
+./build/prototype sim alembic_shot shot.png --every 24       # fire in a set from Blender, through a camera from Alembic
+./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # particles to PLY
+./build/prototype --example street                 # a street from three Building digital assets
+./build/prototype --example meadow                 # a meadow by a forest: grass, shrubs and trees as instances
+./build/prototype sim foliage f.png --renderer cycles   # linden and spruce in grass: leaves with alpha cutout, bark by UV
+./build/prototype sim ecosystem e.png              # a forest that grew by itself: birches, oaks and spruces over 120 years, hazels in the shade beneath them
+./build/prototype sim tree_obstacles t.png         # trees by a wall and under a pergola: branches avoid the obstacles
+./build/prototype cook street street.obj --set tower.floors=12   # geometry without a window, to OBJ
+./build/prototype cook street - --hash --threads 1 # geometry hash: the same on 1 and 4 threads
+./build/prototype sim matchmove mm.png --every 24  # fire in a set from USD, through a matchmove camera (USD)
+./build/prototype sim usd_looks l.png --renderer cycles   # props with materials from USD: MaterialX, UsdPreviewSurface, OpenPBR
+./build/prototype sim usd_subdivision s.png --renderer cycles   # subdivision surfaces from USD smoothed as in OpenSubdiv, with creased edges
+./build/prototype sim displacement d.png --renderer cycles   # bricks, bark and paving actually displaced by height (Displacement)
+PYTHONPATH=build/python python3 examples/usd/make_plate.py   # shot plate: then it burns in a filmed courtyard
+./build/prototype usd examples/usd/shot.usda       # what a USD file contains: layers, tree, cameras, geometry
+./build/prototype help                             # commands: list, gen, check, render, sim, cook, usd
 ```
 
-`pgdemo` postaví graf `grid → pointwrangle → groupbox → blast → transform`,
-cookne ho, vypíše tabulku atributů ve stylu geometry spreadsheetu a zapíše OBJ,
-který jde otevřít v Blenderu nebo kdekoliv jinde.
+`pgdemo` builds the graph `grid → pointwrangle → groupbox → blast → transform`,
+cooks it, prints an attribute table in the style of the geometry spreadsheet
+and writes an OBJ that can be opened in Blender or anywhere else.
 
-## Příklad snippetu jazyka
+## Language snippet example
 
 ```c
 @P.y = noise(@P * 0.45 + vec3(@Time, 0.0, 0.0)) * 2.0 - 1.0;
@@ -295,258 +311,283 @@ který jde otevřít v Blenderu nebo kdekoliv jinde.
 @Cd = vec3(fit(@P.y, -1.0, 1.0, 0.1, 1.0), 0.4, 0.8);
 int near[] = nearpoints(0, @P, ch("radius"));
 foreach (int pt; near) {
-    if (pt > @ptnum) addprim(0, "polyline", @ptnum, pt);  // čáry k blízkým bodům
+    if (pt > @ptnum) addprim(0, "polyline", @ptnum, pt);  // lines to nearby points
 }
 ```
 
-Typ vytvářeného atributu se odvodí z pravé strany: `@height` vznikne jako
-`float`, `@Cd` jako `vector`. Uzel se sám označí za časově závislý, protože
-snippet čte `@Time`, a `ch("radius")` mu přidá posuvník. Jazyk popisuje
+The type of a created attribute is inferred from the right-hand side:
+`@height` is created as a `float`, `@Cd` as a `vector`. The node marks itself
+as time-dependent because the snippet reads `@Time`, and `ch("radius")`
+adds a slider to it. The language is described in
 [docs/wrangle.md](docs/wrangle.md).
 
-## Stav
+## Status
 
-Hotovo a otestováno: COW geometrie s objemy, cook engine, časová závislost,
-LRU cache, deterministický paralelismus, 28 typů uzlů (generátory,
-primitiva, scatter, copy to points, OBJ, extrude, subdivide, clip, objem
-na polygony…), 65 testů jádra (čisté pod ASan,
-UBSan i ThreadSanitizerem). **Wrangle** je jazyk jako VEX: typy, proměnné,
-cykly, funkce, pole, řetězce, matice; běží nad body, primitivy, rohy nebo
-jednou nad celou geometrií, čte sousedy a další vstupy, staví a maže
-geometrii a výsledek nezávisí na počtu vláken.
+Done and tested: COW geometry with volumes, cook engine, time dependency,
+LRU cache, deterministic parallelism, 28 node types (generators,
+primitives, scatter, copy to points, OBJ, extrude, subdivide, clip, volume
+to polygons…), 65 core tests (clean under ASan,
+UBSan and ThreadSanitizer). **Wrangle** is a language like VEX: types,
+variables, loops, functions, arrays, strings, matrices; it runs over points,
+primitives, vertices or once over the whole geometry, reads neighbors and
+additional inputs, creates and deletes geometry, and the result does not
+depend on the number of threads.
 
-Vedle geometrie je síť druhého typu: **shader graf** s knihovnou uzlů
-v textových souborech, generátorem pro čtyři jazyky (GLSL 330, GLSL ES 300,
-Vulkan GLSL 450 → SPIR-V, HLSL) a editorem s živým náhledem, včetně
-animovaných efektů (oheň, kouř). Každý vestavěný uzel se v CTestu překládá pro
-všechny cíle přes glslangValidator a spirv-val.
+Alongside geometry there is a second kind of network: a **shader graph**
+with a node library in text files, a generator for four languages (GLSL 330,
+GLSL ES 300, Vulkan GLSL 450 → SPIR-V, HLSL) and an editor with a live
+preview, including animated effects (fire, smoke). In CTest every built-in
+node is compiled for all targets via glslangValidator and spirv-val.
 
-**Simulace kouře, ohně, vody a deště** (`src/pg/sim`) se skládá z uzlů jako Pyro
-a FLIP v Houdini: objekty scény (koule, kvádr, válec, kužel, prstenec a modely
-ze souborů OBJ, každý posunutý, pootočený a protažený), zdroje stejných
-tvarů (palivo, kouř, teplo, blikotání, pohyb, časové okno), síly (turbulence, vítr, vír,
-atraktor, odpor), řešič, vzhled a výstup. Řešič počítá proudění plynu na 3D mřížce: posunutá
-mřížka MAC, advekce MacCormack, hoření s rozpínáním, vorticity confinement
-a tlak přes multigrid, který zná podlahu i překážky. Mřížka je řídká jako
-v Sparse Pyro: počítají se jen dlaždice 8 × 8 × 8 buněk, kde je plyn, takže
-prach odstřelu ve 103,5 milionu voxelů trvá 19 minut. Uzel Pyro Upres nese
-plyn hrubé simulace na dvakrát až čtyřikrát jemnější mřížce a přidá víry,
-které hrubá mřížka neudrží (curl noise unášený s prouděním): táborák
-spočítaný v rozlišení 64 má kresbu simulace ve 192 za polovinu času. Vodu nesou částice
-(FLIP) a mřížka jí drží objem: tlak s volnou hladinou (ghost fluid, stěny
-částečně zakryté tělesy) řeší metoda sdružených gradientů s multigridem.
-Voda padá, tříští se, obtéká tělesa a plní nádrže; v obraze odráží oblohu
-a objekty, láme světlo a v hloubce bere svou barvu. Déšť padá z mraku,
-vítr ho v nárazech (frontách, které putují s větrem) šikmí, od objektů
-odstřikuje a na vodě dělá kroužky; podlaha je mokrá. Všechno je
-deterministické na libovolném počtu vláken. Uzel kamery určuje záběr:
-editor se jí dívá (s rámečkem obrazu) a render i `prototype sim` jdou
-jejím pohledem v jejím rozlišení. Editor má pro simulaci i shadery stejné rozložení:
-vlastní plátno uzlů se zoomem a v každém uzlu náhledem toho, co dělá
-(geometrie, tvar objektu, snímek řešiče, záběr kamery; u shaderů vzorek
-výstupu uzlu), panel parametrů, viewport (plyn na podlaze
-se stíny, záře ohně, objekty, vodítka) a časovou osu nad cache snímků,
-se simulací ve vlastním vlákně, undo/redo a dvaceti šesti příklady. Ve viewportu se
-pracuje jako ve 3D programu: klik vybírá, gizmo posouvá, otáčí a mění
-velikost (W, E, R, přichytávání, lokální i světové osy) a Shift+A přidá
-objekt, zdroj kouře nebo vody, déšť, sílu či kameru rovnou propojené do
-sítě.
+**Smoke, fire, water and rain simulation** (`src/pg/sim`) is assembled from
+nodes like Pyro and FLIP in Houdini: scene objects (sphere, box, cylinder,
+cone, torus and models from OBJ files, each translated, rotated and
+stretched), sources of the same shapes (fuel, smoke, heat, flicker,
+motion, time window), forces (turbulence, wind, vortex, attractor, drag), a
+solver, look and output. The solver computes gas flow on a 3D grid: a
+staggered MAC grid, MacCormack advection, combustion with expansion,
+vorticity confinement and pressure via a multigrid that knows about the floor
+and the colliders. The grid is sparse as in Sparse Pyro: only tiles of
+8 × 8 × 8 cells that contain gas are computed, so the demolition dust at
+103.5 million voxels takes 19 minutes. The Pyro Upres node carries the gas of
+a coarse simulation on a grid two to four times finer and adds vortices that
+the coarse grid cannot hold (curl noise advected with the flow): a campfire
+computed at resolution 64 has the detail of a simulation at 192 in half the
+time. Water is carried by particles (FLIP) and the grid preserves its volume:
+pressure with a free surface (ghost fluid, walls partially covered by
+bodies) is solved by a conjugate gradient method with multigrid. Water falls,
+splashes, flows around bodies and fills tanks; in the image it reflects the
+sky and objects, refracts light and takes on its color with depth. Rain
+falls from a cloud, the wind slants it in gusts (fronts that travel with the
+wind), it splashes off objects and makes rings on water; the floor is wet.
+Everything is deterministic on any number of threads. The camera node
+defines the shot: the editor looks through it (with a frame guide) and both
+rendering and `prototype sim` use its view at its resolution. The editor has
+the same layout for simulation and for shaders: its own node canvas with
+zoom and, in every node, a thumbnail of what it does (geometry, object
+shape, solver frame, camera shot; for shaders a sample of the node's
+output), a parameter panel, a viewport (gas on the floor
+with shadows, fire glow, objects, guides) and a timeline over the frame
+cache, with simulation on its own thread, undo/redo and twenty-six
+examples. The viewport works like a 3D application: click selects, the
+gizmo translates, rotates and scales (W, E, R, snapping, local and world
+axes) and Shift+A adds an object, a smoke or water source, rain, a force or
+a camera, wired straight into the network.
 
-**Geometrie** žije ve stejné síti jako simulace, jako SOP v Houdini: krychle,
-koule, válec, mřížka, soubor OBJ, scatter, copy to points, transform, merge,
-wrangle, PolyExtrude, Subdivide (Catmull-Clark s ostrými hranami jako
-OpenSubdiv), Clip s uzavřením řezu,
-Fuse, Connectivity, Attribute Transfer, Convert Volume (objem na
-polygony) a další. **Smyčky For-Each** pustí
-část sítě pro každý kus, primitivum či bod, nebo opakovaně na vlastním
-výsledku. Počítá ji geometrické jádro inkrementálně — tah posuvníkem
-přepočítá jen uzly za ním. Uzel s *display flagem* je ve viewportu (polygony
-v barvách `Cd`, body, čáry, objemy) a tabulka atributů ukáže body, rohy,
-primitiva, detail i objemy. Geometrie může být tvarem překážky, zdroje kouře
-nebo vody, a simulace se vracejí jako geometrie: částice vody, kapky deště
-a mřížky plynu jako body a objemy pro další uzly, a voda i jako uzavřený
-povrch s rychlostí a pěnou (Liquid Surface), ze kterého ji renderer renderuje.
+**Geometry** lives in the same network as simulation, like SOPs in Houdini:
+box, sphere, cylinder, grid, OBJ file, scatter, copy to points, transform,
+merge, wrangle, PolyExtrude, Subdivide (Catmull-Clark with creased edges like
+OpenSubdiv), Clip with cap on the cut,
+Fuse, Connectivity, Attribute Transfer, Convert Volume (volume to
+polygons) and more. **For-Each loops** run
+part of the network for each piece, primitive or point, or repeatedly on its
+own result. The geometry core computes it incrementally — dragging a slider
+recooks only the nodes downstream of it. The node with the *display flag* is
+shown in the viewport (polygons in `Cd` colors, points, lines, volumes) and
+the attribute spreadsheet shows points, vertices, primitives, detail and
+volumes. Geometry can be the shape of a collider or of a smoke or water
+source, and simulations come back as geometry: water particles, raindrops
+and gas grids as points and volumes for further nodes, and water also as a
+closed surface with velocity and foam (Liquid Surface), from which the
+renderer renders it.
 
-**Digital assets**: vybrané geometrické uzly se stanou jedním uzlem
-(Edit › Make Asset) s parametry, které si asset vybere (pravým na jméno
-parametru › Promote). Dvojklik (I) vede dovnitř, U zpátky; každá změna
-uvnitř je nová verze, kterou hned sledují všechny instance. Knihovna čte
-soubory `.pgasset` z programu, z `$PROTOTYPE_ASSETS` a z uživatelské
-složky; síť ukládá definice použitých assetů na svůj konec, takže se
-otevře kdekoli. Asset **Building** postaví budovu z deseti posuvníků
-(patra, rozměry, okna, balkony, barva) a příklad **street** z něj staví
-ulici; `prototype cook` uvaří geometrii bez okna do OBJ, PLY nebo VDB
-a vypíše její hash — stejný na 1 i 4 vláknech.
+**Digital assets**: selected geometry nodes become a single node
+(Edit › Make Asset) with the parameters the asset chooses (right-click a
+parameter name › Promote). Double-click (I) dives inside, U goes back; every
+change inside is a new version, which all instances follow immediately. The
+library reads `.pgasset` files from the program, from `$PROTOTYPE_ASSETS`
+and from the user folder; a network saves the definitions of the assets it
+uses at its end, so it opens anywhere. The **Building** asset builds a
+building from ten sliders (floors, dimensions, windows, balconies, color)
+and the **street** example builds a street from it; `prototype cook` cooks
+geometry without a window to OBJ, PLY or VDB
+and prints its hash — the same on 1 and 4 threads.
 
-**Destrukce**: **Voronoi Fracture** rozřeže uzavřené těleso na kusy
-(řezy rovinami s víčky, kusy dohromady jsou přesně původní těleso),
-**Concrete Fracture** ho rozláme jako beton — nestejné kusy, nejmenší
-kolem místa nárazu, odprýsklé rohy, hrubé lomy, které do sebe dál
-přesně zapadají, a pod nimi rovný řez (`proxy`) pro simulaci —
-**Wood Fracture** ho rozštípe jako dřevo na dlouhé třísky a latě podél
-vláken, s lomy napříč vlákny roztřepenými na třísky,
-**RBD Cluster** seskupí kusy do ker s pevnějším lepidlem uvnitř, které se
-rozpadnou až při tvrdém dopadu (sekundární lámání), **Rebar** položí do
-zdi síť a do trámu armokoš ocelových prutů, na kterých kusy visí i po
-prasknutí lepidla — pruty se ohýbají, vytahují a trhají —, **Glass
-Fracture** rozláme tabuli skla paprsky a kruhy kolem místa úderu (celá
-zůstane, dokud nepraskne, a renderer ji kreslí průhlednou s odrazy),
-**Brick Wall** vyzdí zeď z cihel ve vazbě s maltou, omítkou a otvory
-(rozpadá se ve spárách, některé cihly se rozlomí vedví), **RBD
-Constraints** udělá z lepidla geometrii — síť vazeb, bod na kus a čáru
-na spoj — kterou jde zeslabit, smazat nebo dokreslit a zapojit zpátky do
-solveru, a
-**RBD Solver** nad [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
-z nich udělá tuhá tělesa: konvexní obaly s hmotou; kusy slepené tam, kde
-se dotýkají plochou, jsou jedno těleso, dokud je náraz silnější než
-lepidlo (`glue` v kPa) nerozlomí; kus, do kterého něco narazí silněji,
-než unese jeho průřez (`fracture`), se za běhu rozlomí tam, kam rána
-přišla, a co do něj narazilo, jde dál. Nálože (`release`, `kick`, `vanish`)
-lepidlo v daný čas přetrhnou, kusy s `crush` se pod padajícími patry
-rozdrtí na prach, nárazy sypou drť a vytlačený vzduch žene prach do ulic.
-Drť jsou částice: vylétá z okraje plochy, kde praskl spoj, vzduch ji
-brzdí a točí se, naráží do kusů i překážek, zůstane ležet na schodu nebo
-na kusu a jede s ním; za utrženými kusy se táhne prach (`trail`) a RBD
-Pieces dá drť jako body s `orient` pro Copy to Points. Zapojená do Grain
-Solveru je drť zrny, která se hromadí, a do USD jde jako PointInstancer
-s kamínky. Pád jde režírovat:
-animace kusů (klíčovaný Transform kolem Pivotu) zapojená do **Guide**
-RBD Solveru vede kusy, kam je chce záběr, a pustí je, když praskne
-lepidlo, když uplyne čas nebo když je něco zastaví dál než `guide_reach`.
-Klíčované objekty jsou kinematické překážky, kusy jdou jako pohyblivé
-překážky do vody, plynu i deště, prach do Pyro Solveru, a uzel RBD Pieces
-je vrací jako geometrii s rychlostí `v`. Jolt běží na všech vláknech
-a deterministicky: stejné snímky při každém běhu a na libovolném počtu
-vláken, snímky do cache. Věž odstřelu (593 kusů) se krokuje za 3 ms na
-snímek, desetkrát víc kusů za 31 ms (4 vlákna); Voronoi Fracture řeže
-každou buňku jen z blízkých částí tělesa, věž z 5 628 buněk za 1 s.
-Příklad **demolition**: odstřel čtrnáctipatrového věžáku v bloku domů
-za zlatého světla; příklad **wall_collapse**: průčelí cihlového domu
-vyletí do ulice a kusy se kutálejí ke kameře těsně nad asfaltem, v prachu
-proti slunci; příklad **concrete_wall**: demoliční koule prorazí
-betonovou zeď na soklu (`rings` drží škodu kolem koule, zbytek zdi
-stojí) a z díry se sypou kry s hrubými lomy, úlomky a prach; příklad
-**concrete_drop**: betonový trám se zlomí přes kvádr a jeho poloviny se
-rozpadnou na kry, až dopadnou; příklad **brick_wall**: demoliční koule
-prorazí cihlovou zeď domu vedle okna, díra je stupňovitá po vrstvách a
-okno zůstane celé; příklad **concrete_column**: nálož v půlce
-železobetonového sloupu obnaží armokoš a kusy betonu na něm visí;
-příklad **constraint_network**: síť vazeb zeslabená podél čáry — koule
-vylomí roh zdi a zeď praskne přesně po ní; příklad **debris_stairs**:
-podetnutý betonový sloup se skácí ze schodů a drť zůstane ležet na
-stupních; příklad **guided_fall**: odstřelený komín padne podle Guide
-přesně do ulice mezi dva domy a na silnici se rozlomí; příklad
-**house_collapse**: rodinný dům postavený jako skutečný (zdi z tvárnic
-v cyklu For-Each, stropy, střecha s taškami, okna se skly, okapy, plot) se
-zřítí do zahrady a oblak prachu se plazí ulicí se stromy a sousedními
-domy, fotorealisticky v Cycles ([destruction.md](docs/destruction.md#dvanáctý-příklad-zřícení-rodinného-domu));
-příklad **wood_beam**: ocelová koule prorazí dřevěný trám, který se
-rozštípe na dlouhé třísky; příklad **shatter_blocks**: koule projede
-třemi celými betonovými kvádry a každý se rozlomí tam, kam ho udeřila.
+**Destruction**: **Voronoi Fracture** cuts a closed body into pieces
+(plane cuts with caps; the pieces together are exactly the original body),
+**Concrete Fracture** breaks it like concrete — unequal pieces, smallest
+around the impact point, chipped corners, rough fracture surfaces that still
+fit together exactly, and beneath them a flat cut (`proxy`) for simulation —
+**Wood Fracture** splits it like wood into long splinters and slats along
+the grain, with cross-grain fractures frayed into splinters,
+**RBD Cluster** groups pieces into chunks with stronger glue inside, which
+break apart only on a hard landing (secondary fracturing), **Rebar** lays a
+mesh into a wall and a reinforcement cage of steel bars into a beam, from
+which pieces hang even after the glue cracks — the bars bend, pull out and
+snap —, **Glass Fracture** breaks a pane of glass with radial cracks and
+rings around the point of impact (it stays whole until it cracks, and the
+renderer draws it transparent with reflections),
+**Brick Wall** lays a wall of bricks in a bond with mortar, plaster and
+openings (it breaks apart at the joints, some bricks split in half), **RBD
+Constraints** turns the glue into geometry — a constraint network, one point
+per piece and one line per joint — which can be weakened, deleted or drawn
+in and wired back into the solver, and
+**RBD Solver** on top of [Jolt Physics](https://github.com/jrouwe/JoltPhysics)
+turns them into rigid bodies: convex hulls with mass; pieces glued where
+they touch along a face are a single body until an impact stronger than the
+glue (`glue` in kPa) breaks it; a piece hit harder than its cross-section
+can withstand (`fracture`) breaks at runtime where the blow landed, and
+whatever hit it carries on. Charges (`release`, `kick`, `vanish`) break the
+glue at a given time, pieces with `crush` are crushed into dust under
+falling floors, impacts shed debris and displaced air drives dust into the
+streets. Debris are particles: they fly out from the edge of the face where
+a joint cracked, the air slows and spins them, they hit pieces and
+colliders, come to rest on a step or on a piece and ride along with it;
+dust trails behind pieces that break off (`trail`), and RBD
+Pieces outputs debris as points with `orient` for Copy to Points. Wired into
+the Grain Solver, debris become grains that pile up, and they go to USD as a
+PointInstancer with pebbles. The fall can be directed:
+animation of the pieces (a keyed Transform around a Pivot) wired into the
+**Guide** input of the RBD Solver leads the pieces where the shot wants them
+and lets them go when the glue cracks, when time runs out, or when something
+stops them further than `guide_reach`.
+Keyed objects are kinematic colliders, pieces go as moving colliders into
+water, gas and rain, dust into the Pyro Solver, and the RBD Pieces node
+returns them as geometry with velocity `v`. Jolt runs on all threads
+and deterministically: the same frames on every run and on any number of
+threads, frames to cache. The demolition tower (593 pieces) steps in 3 ms
+per frame, ten times more pieces in 31 ms (4 threads); Voronoi Fracture cuts
+each cell only from nearby parts of the body, a tower of 5,628 cells in 1 s.
+The **demolition** example: the demolition of a fourteen-storey high-rise in
+a city block in golden light; the **wall_collapse** example: the facade of
+a brick house blows out into the street and the pieces tumble towards the
+camera just above the asphalt, in dust against the sun; the
+**concrete_wall** example: a wrecking ball punches through a concrete wall
+on a plinth (`rings` keeps the damage around the ball, the rest of the wall
+stands) and chunks with rough fractures, fragments and dust pour out of the
+hole; the **concrete_drop** example: a concrete beam breaks over a block and
+its halves fall apart into chunks when they land; the **brick_wall** example:
+a wrecking ball punches through the brick wall of a house next to a window,
+the hole is stepped along the courses and the window stays intact; the
+**concrete_column** example: a charge halfway up a reinforced concrete
+column exposes the reinforcement cage and pieces of concrete hang on it; the
+**constraint_network** example: a constraint network weakened along a line —
+a ball breaks off a corner of the wall and the wall cracks exactly along it;
+the **debris_stairs** example: an undercut concrete column topples down the
+stairs and the debris stays lying on the steps; the **guided_fall** example:
+a demolished chimney falls via Guide exactly into the street between two
+houses and breaks apart on the road; the
+**house_collapse** example: a family house built like a real one (walls of
+blocks in a For-Each loop, ceilings, a roof with tiles, windows with glass,
+gutters, a fence) collapses into the garden and a dust cloud creeps down a
+street with trees and neighboring houses, photorealistically in Cycles ([destruction.md](docs/destruction.md#twelfth-example-the-collapse-of-a-family-house));
+the **wood_beam** example: a steel ball punches through a wooden beam, which
+splits into long splinters; the **shatter_blocks** example: a ball passes
+through three intact concrete blocks and each breaks where it was struck.
 
-**Animace**: každý číselný parametr může mít klíčové snímky (Smooth, Linear,
-Step) — kosočtverec u parametru, klíče na časové ose, K ve viewportu, gizmo
-zapisuje klíče. Síť se překládá snímek po snímku a řešiče si každý krok
-převezmou zdroje, síly a překážky toho snímku. Pohyblivé překážky předají
-plynu i vodě svou rychlost i rotaci: koule v bazénu dělá vlnu a brázdu,
-lopatka víří kouř, letící pochodeň nechává stopu.
+**Animation**: every numeric parameter can have keyframes (Smooth, Linear,
+Step) — a diamond next to the parameter, keys on the timeline, K in the
+viewport, the gizmo writes keys. The network is evaluated frame by frame and
+at every step the solvers pick up that frame's sources, forces and
+colliders. Moving colliders pass their velocity and rotation to both gas and
+water: a sphere in a pool makes a wave and a wake, a paddle swirls smoke, a
+flying torch leaves a trail.
 
-**Cache a export**: snímky simulace jdou na disk a zpátky (editor:
-Simulation › Save/Load Cache, `prototype sim --cache` a `--from-cache`) —
-přehrají se, vykreslí a vyexportují bez nového počítání; nuly se
-nezapisují, 150 snímků táboráku má 63 MB. **Bake to Disk** spočítá záběr
-v plném rozlišení v samostatném procesu; editor zůstane volný, přehrává
-snímky z disku, jak přibývají, a ukazuje průběh a odhad do konce. Každých
-10 snímků se uloží celý stav simulace (checkpoint), takže přerušený bake
-pokračuje, kde skončil, bitově stejně jako nepřerušený. **Preview
-Resolution** mezitím počítá plyn a vodu v polovičním rozlišení na ladění.
-**Wedge** spočítá parametr ve více hodnotách, každou do vlastní složky,
-a **Profile** ukáže, kam jde čas kroku. Geometrie kteréhokoli uzlu jde
-ven snímek po snímku: body s atributy do PLY, objemy do OpenVDB (vlastní
-zapisovač bez knihovny, soubory ověřené čtením v OpenVDB 10), polygony do
-OBJ. Celý záběr jde do **USD** jako jedna scéna `.usda` (`--export
-shot.usda`, v editoru File › Export USD Scene…): geometrie, kusy jako
-tělesa, která se pohybují (tvar jednou, pak jen poloha a otočení), drť,
-povrch vody, déšť, prach jako VDB vedle, kamera, slunce a obloha,
-materiály jako MaterialX s fotkami vedle. Co je
-velké a v každém snímku jiné, jde do souboru pro každý snímek, zapsaného
-hned, jak snímek přijde, a scéna ho skládá (USD value clips) — záběr
-libovolné délky se nemusí vejít do paměti. Ověřeno Pixarovou knihovnou,
-všechny validátory bez nálezu ([docs/usd.md](docs/usd.md)).
+**Cache and export**: simulation frames go to disk and back (editor:
+Simulation › Save/Load Cache, `prototype sim --cache` and `--from-cache`) —
+they are played back, rendered and exported without recomputing; zeros
+are not written, 150 frames of the campfire take 63 MB. **Bake to Disk**
+computes the shot at full resolution in a separate process; the editor stays
+free, plays frames from disk as they arrive and shows progress and an
+estimate of the time remaining. Every 10 frames the whole simulation state is
+saved (checkpoint), so an interrupted bake resumes where it left off,
+bit-identical to an uninterrupted one. **Preview
+Resolution** meanwhile computes gas and water at half resolution for tuning.
+**Wedge** computes a parameter at several values, each into its own folder,
+and **Profile** shows where the step time goes. The geometry of any node can
+be exported frame by frame: points with attributes to PLY, volumes to
+OpenVDB (a custom writer without the library, files verified by reading in
+OpenVDB 10), polygons to OBJ. The whole shot goes to **USD** as a single
+`.usda` scene (`--export
+shot.usda`, in the editor File › Export USD Scene…): geometry, pieces as
+moving bodies (shape once, then only position and rotation), debris, water
+surface, rain, dust as VDB alongside, camera, sun and sky,
+materials as MaterialX with photos alongside. Whatever is
+large and different in every frame goes into a file per frame, written as
+soon as the frame arrives, and the scene composes it (USD value clips) — a
+shot of any length does not have to fit in memory. Verified with Pixar's
+library, all validators without findings ([docs/usd.md](docs/usd.md)).
 
-**Čtení USD**: záběr od ostatních oddělení jde do sítě bez knihovny USD,
-z textu `.usda`, binárního `.usdc` (všechny verze od 0.4.0) i balíčku
-`.usdz`, složený jako v USD: sublayers s posunem času, reference
-a payloady, varianty (výběr záběru přebije výchozí volbu assetu), třídy,
-value clips. Uzel **USD Camera** dá Outputu kameru z matchmove, snímek po
-snímku, s objektivem napasovaným na film. **USD Import** přinese kulisu,
-modely nebo cache jako geometrii (normály, uv, barvy, primvars, subsety
-jako skupiny, PointInstancery jako instance, objemy z VDB) v metrech s Y nahoru, i když
-soubor přišel z Mayi v centimetrech se Z nahoru. Dělené plochy
-(`subdivisionScheme = catmullClark`) vyhladí jako OpenSubdiv, s ostrými
-hranami a body ze souboru. Materiály přečte taky: sítě MaterialX
-i UsdPreviewSurface navázané jako v USD, s obrázky, drsností, kovovostí,
-barvou a sklem, i z exportu Blenderu. Transformace, skládání, geometrie i value
-clips sedí s knihovnou USD ([docs/usd-import.md](docs/usd-import.md)).
+**Reading USD**: a shot from other departments comes into the network
+without the USD library, from text `.usda`, binary `.usdc` (all versions from
+0.4.0) and `.usdz` packages, composed as in USD: sublayers with time offset,
+references and payloads, variants (the shot's selection overrides the
+asset's default), classes, value clips. The **USD Camera** node gives Output
+a matchmove camera, frame by frame, with the lens fitted to the film
+back. **USD Import** brings in a set, models or caches as geometry
+(normals, uv, colors, primvars, subsets as groups, PointInstancers as
+instances, volumes from VDB) in meters with Y up, even when the file came
+from Maya in centimeters with Z up. Subdivision surfaces
+(`subdivisionScheme = catmullClark`) are smoothed as in OpenSubdiv, with
+creased edges and corners from the file. It reads materials too: MaterialX
+and UsdPreviewSurface networks bound as in USD, with images, roughness,
+metalness, color and glass, including from Blender's export. Transforms,
+composition, geometry and value clips match the USD library
+([docs/usd-import.md](docs/usd-import.md)).
 
-**Alembic**: celý záběr jde do jednoho archivu `.abc` (`--export
-shot.abc`, v editoru File › Export Alembic…): zobrazená geometrie, kusy
-jako tělesa v pohybu, drť, zrna, výztuž, látka, povrch vody, déšť a kamera;
-plyn jako VDB vedle. Uzly **Alembic Import** a **Alembic Camera** čtou
-geometrii a kameru z Blenderu, Mayi nebo Houdini. Kontejner Ogawa
-i schémata jsou vlastní, bez knihovny; Blender archivy prototypu čte
-a kusy odstřelu v něm stojí tam, kde v simulaci ([docs/alembic.md](docs/alembic.md)).
+**Alembic**: the whole shot goes into a single `.abc` archive (`--export
+shot.abc`, in the editor File › Export Alembic…): displayed geometry, pieces
+as moving bodies, debris, grains, rebar, cloth, water surface, rain and
+camera; gas as VDB alongside. The **Alembic Import** and **Alembic Camera**
+nodes read geometry and cameras from Blender, Maya or Houdini. The Ogawa
+container and the schemas are custom, without the library; Blender reads
+the prototype's archives and the demolition pieces stand in them where they
+stood in the simulation ([docs/alembic.md](docs/alembic.md)).
 
-**Čtení OpenVDB**: **VDB Gas** přehraje kouř a oheň z Houdini, Blenderu
-nebo EmberGenu jako plyn záběru, soubor na snímek: Volume Look ho kreslí
-a renderuje jako plyn Pyro Solveru. **VDB Import** dá mřížky jako objemy,
-nebo polygony level setu jako překážku či tvar zdroje. Čtečka zvládne zip,
-Blosc, half floaty, dlaždice, instance i otočené mřížky a čte voxel po
-voxelu, co zapsalo OpenVDB 10 i 13 ([docs/vdb.md](docs/vdb.md)).
+**Reading OpenVDB**: **VDB Gas** plays back smoke and fire from Houdini,
+Blender or EmberGen as the shot's gas, one file per frame: Volume Look draws
+and renders it like Pyro Solver gas. **VDB Import** outputs grids as volumes,
+or level-set polygons as a collider or source shape. The reader handles zip,
+Blosc, half floats, tiles, instances and rotated grids, and reads, voxel by
+voxel, what OpenVDB 10 and 13 wrote ([docs/vdb.md](docs/vdb.md)).
 
-**ACES**: pohled (View) uzlu Output převádí světlo na obraz jako AgX
-z Blenderu, nebo jako ACES 1.0 či ACES 2.0 tak, jak je ukazují konfigurace
-OpenColorIO pro ACES; od OpenColorIO 2.6 se liší nejvýš o setinu stupně
-z 255. Pohled dá i konfigurace OpenColorIO (`config.ocio`) studia, ACES
-nebo Blenderu: prototype ji přečte sám, bez knihovny, s jejími
-displeji, pohledy, looky a tabulkami LUT, a obraz sedí s OpenColorIO
-do 10⁻⁵. EXR jde ven v lineárním Rec. 709, ACEScg nebo ACES2065-1
-s atributem chromaticities a EXR v ACES se při čtení převede
-([docs/color.md](docs/color.md)).
+**ACES**: the View of the Output node converts light to an image like
+Blender's AgX, or like ACES 1.0 or ACES 2.0 as the OpenColorIO configs for
+ACES show them; it differs from OpenColorIO 2.6 by at most a hundredth of a
+step out of 255. The view can also come from a studio's, ACES or Blender
+OpenColorIO config (`config.ocio`): prototype reads it itself, without the
+library, with its displays, views, looks and LUTs, and the image matches
+OpenColorIO to within 10⁻⁵. EXR is written in linear Rec. 709, ACEScg or
+ACES2065-1 with the chromaticities attribute, and EXR in ACES is converted on
+read ([docs/color.md](docs/color.md)).
 
-**Plate**: obraz záběru, sekvence PNG, JPEG nebo EXR, jde za CG, když se
-díváte kamerou záběru, v editoru i v renderu. Čtečky jsou vlastní, bez
-knihoven: JPEG bit po bitu jako libjpeg, PNG a EXR všech kompresí kromě DWA
-hodnota po hodnotě jako Pillow a OpenEXR. Objekty i podlaha mohou být
-skutečné věci ze záběru. **Holdout** schová CG za sebou. **Shadow
-catcher** navíc na sebe vezme stíny kouře a světlo ohně. Kde CG nic
-nemění, vyjde plate z renderu pixel po pixelu, jak do něj vešel. Do EXR jde
-CG s alfou a průchod `catcher` pro compositing ([docs/plate.md](docs/plate.md)).
+**Plate**: the shot's image, a PNG, JPEG or EXR sequence, goes behind CG
+when you look through the shot camera, in the editor and in the render. The
+readers are custom, without libraries: JPEG bit for bit like libjpeg, PNG and
+EXR with all compressions except DWA value for value like Pillow and
+OpenEXR. Objects and the floor can be real things from the shot. **Holdout**
+hides the CG behind it. **Shadow
+catcher** additionally takes on the shadows of smoke and the light of fire.
+Where CG changes nothing, the plate comes out of the render pixel for pixel
+as it went in. CG with alpha and a `catcher` pass go to EXR for compositing
+([docs/plate.md](docs/plate.md)).
 
-**Obrázky a video**: záběr jde do PNG, do očíslované sekvence nebo do videa
-— `.avi` (Motion JPEG, vlastní kodér JPEG i kontejner) bez jakékoli
-závislosti, `.mp4`, `.mov`, `.mkv`, `.webm` a `.gif` přes ffmpeg. Editor
-renderuje po snímcích na pozadí s oknem průběhu, počká na simulaci a nakonec
-nabídne soubor otevřít; příkazy `sim` a `render` kreslí bez okna přes EGL,
-a když EGL nejde, přes skryté okno. Pro compositing jde snímek do **EXR**
-(vlastní zapisovač, RLE): obraz v lineárním světle nad bílou, hloubka `Z`,
-vektory pohybu `forward.u/v` (kusy podle své rychlosti, vše podle kamery)
-a masky podlahy, geometrie, kusů, objektů, vody a kouře
-([docs/render.md](docs/render.md#4-exr-pro-compositing)).
+**Images and video**: the shot goes to PNG, to a numbered sequence or to
+video — `.avi` (Motion JPEG, a custom JPEG encoder and container) with no
+dependencies at all, `.mp4`, `.mov`, `.mkv`, `.webm` and `.gif` via ffmpeg.
+The editor renders frame by frame in the background with a progress window,
+waits for the simulation and finally offers to open the file; the `sim` and
+`render` commands draw without a window via EGL, and when EGL is not
+available, via a hidden window. For compositing a frame goes to **EXR**
+(a custom writer, RLE): the image in linear light over white, depth `Z`,
+motion vectors `forward.u/v` (pieces by their velocity, everything by the
+camera) and masks for the floor, geometry, pieces, objects, water and smoke
+([docs/render.md](docs/render.md#4-exr-for-compositing)).
 
-**Python**: modul `pg` postaví síť, nastaví parametry, uvaří geometrii
-a simuluje ze skriptu; atributy, topologie, objemy i částice a tělesa
-snímků jsou pole numpy nad pamětí jádra, bez kopie. Záběr jde ze skriptu
-do cache, do USD i do obrazu, a `net.as_code()` vypíše síť jako Python,
-který ji postaví znovu — tak vznikla scéna z kroku 2 postavená čistě
-z Pythonu ([docs/python.md](docs/python.md)).
+**Python**: the `pg` module builds a network, sets parameters, cooks
+geometry and simulates from a script; attributes, topology, volumes, and the
+particles and bodies of frames are numpy arrays over the core's memory,
+without copying. A shot goes from a script to cache, to USD and to an image,
+and `net.as_code()` prints the network as Python that builds it again —
+that is how the scene from step 2 was built purely
+from Python ([docs/python.md](docs/python.md)).
 
-Vědomě chybí (zatím): materiály a instance z USD, Alembic, čtení VDB, JIT, packed primitives,
-Python uvnitř sítě (Python SOP), simulace látek — pořadí v
-[ROADMAP.md §4](ROADMAP.md#4-další-kroky). Podrobně v
-[ARCHITECTURE.md §9](ARCHITECTURE.md#9-co-prototyp-skutečně-umí).
+Deliberately missing (for now): materials and instances from USD, Alembic, VDB reading, JIT, packed primitives,
+Python inside the network (Python SOP), cloth simulation — the order is in
+[ROADMAP.md §4](ROADMAP.md#4-next-steps). Details in
+[ARCHITECTURE.md §9](ARCHITECTURE.md#9-what-the-prototype-can-actually-do).
 
-## Licence
+## License
 
-Plánovaná licence je Apache 2.0 (viz [ROADMAP.md §7](ROADMAP.md#7-jméno-licence-clean-room)).
-Implementace je clean room — žádný HDK, žádný reverse engineering.
+The planned license is Apache 2.0 (see [ROADMAP.md §7](ROADMAP.md#7-name-license-clean-room)).
+The implementation is clean room — no HDK, no reverse engineering.

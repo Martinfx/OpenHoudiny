@@ -1,84 +1,84 @@
-# Textury materiálů
+# Material textures
 
-Fotografie povrchů, které renderery kladou na materiály (`s@material`,
-viz [docs/materials.md](../../docs/materials.md)). Každá složka je jedna sada
-a jmenuje se jako materiál:
+Photographs of surfaces that the renderers apply to materials (`s@material`,
+see [docs/materials.md](../../docs/materials.md)). Each folder is one set
+and is named after its material:
 
-| Složka | Co to je | Velikost dlaždice |
+| Folder | What it is | Tile size |
 |---|---|---|
-| `concrete` | beton se skvrnami a póry | 3 m |
-| `broken_concrete` | lom: kamínky kameniva v cementu | 0,8 m |
-| `plaster` | světlá omítka, skvrnitá | 3 m |
-| `brick_wall` | cihlová zeď s maltou (vlastní barvy, `tint 0`) | 2,4 m |
-| `mortar` | fotky ze `sand`, jemnější zrno | 0,4 m |
-| `metal` | kartáčovaný plech se škrábanci | 1 m |
-| `asphalt` | drobné kamínky v dehtu | 2 m |
-| `wood` | dřevo s kresbou | 1,2 m |
-| `roof` | fotky z `concrete`, šestimetrová dlaždice (ploché střechy) | 6 m |
-| `roof_tiles` | břidlicové tašky v řadách, kladené podél střechy (`projection face`) | 1,8 m |
-| `paving` | dlažba z kostek asi 18 × 14 cm | 1,3 m |
-| `bark` | kůra lípy (s normálovou mapou) | 1 m |
-| `leaf` | listy po čtvrtinách: dva široké, úzký, jehličí; alfa výřez a normálová mapa (`alpha 1`), kladené podle UV | — |
-| `grass` | stéblo trávy podle UV | — |
-| `soil` | vlhká hlína | 2,5 m |
-| `lawn` | trávník | 1,5 m |
-| `sand` | písek | 1,2 m |
+| `concrete` | concrete with stains and pores | 3 m |
+| `broken_concrete` | fracture surface: aggregate pebbles in cement | 0.8 m |
+| `plaster` | light, mottled plaster | 3 m |
+| `brick_wall` | brick wall with mortar (own colors, `tint 0`) | 2.4 m |
+| `mortar` | photos from `sand`, finer grain | 0.4 m |
+| `metal` | brushed sheet metal with scratches | 1 m |
+| `asphalt` | small pebbles in tar | 2 m |
+| `wood` | wood with visible grain | 1.2 m |
+| `roof` | photos from `concrete`, six-meter tile (flat roofs) | 6 m |
+| `roof_tiles` | slate roof tiles in rows, laid along the roof (`projection face`) | 1.8 m |
+| `paving` | paving of setts about 18 × 14 cm | 1.3 m |
+| `bark` | linden bark (with a normal map) | 1 m |
+| `leaf` | leaves in quarters: two broad, a narrow one, needles; alpha cut-out and normal map (`alpha 1`), applied by UV | — |
+| `grass` | grass blade, applied by UV | — |
+| `soil` | moist soil | 2.5 m |
+| `lawn` | lawn | 1.5 m |
+| `sand` | sand | 1.2 m |
 
-V každé složce je:
+Each folder contains:
 
-- `color.jpg` — barva (sRGB), nejvýš 1024 × 1024 (`color.png` s alfou
-  u listů),
-- `height.jpg` — výška 0–1; Cycles z ní dělá reliéf,
-- `normal.jpg` (`brick_wall`, `wood`, `bark`; `normal.png` u `leaf`) — normálová mapa ze sklonů
-  výšky pro kladení podle UV,
-- `texture.txt` — `size` (kolik metrů jedna dlaždice pokryje), `depth`
-  (kolik metrů je mezi nejnižším a nejvyšším místem výšky), `mean`
-  (průměrná barva, lineární), `tint` (1: barva `Cd` povrchu nahradí barvu
-  fotky a fotka kolem ní jen světlá a tmavne; 0: fotka jak je),
-  `projection face` (klade se podél šikmé plochy, aby řady zůstaly
-  vodorovné; jinak ze tří stran), `alpha 1` (alfa kanál barvy vyřízne
-  povrch), `pictures` (fotky jiné složky), `source` a `license`.
+- `color.jpg` — color (sRGB), at most 1024 × 1024 (`color.png` with alpha
+  for leaves),
+- `height.jpg` — height 0–1; Cycles uses it for displacement,
+- `normal.jpg` (`brick_wall`, `wood`, `bark`; `normal.png` for `leaf`) — a normal map derived from the height slopes,
+  for UV-based mapping,
+- `texture.txt` — `size` (how many meters one tile covers), `depth`
+  (how many meters lie between the lowest and highest point of the height), `mean`
+  (average color, linear), `tint` (1: the surface's `Cd` color replaces the
+  photo's color and the photo only lightens and darkens around it; 0: the photo as is),
+  `projection face` (applied along a sloped face so that rows stay
+  horizontal; otherwise from three sides), `alpha 1` (the color's alpha channel cuts
+  out the surface), `pictures` (photos from another folder), `source` and `license`.
 
-Sady vyrábí skript [tools/textures/prepare.py](../../tools/textures/prepare.py)
-z fotografií v repozitářích [pbrt-v4-scenes](https://github.com/mmp/pbrt-v4-scenes)
-a [BabylonJS/Assets](https://github.com/BabylonJS/Assets). Zmenší je na
-nejvýš 1024 px a výšku dopočítá z normálové mapy integrací ve Fourierově
-prostoru. Kam míří zelená osa mapy, pozná podle toho, který směr dá
-skutečný povrch. Kde normálová mapa chybí, vezme výšku ze světlosti fotky.
-Nakonec zapíše `texture.txt`.
+The sets are produced by the script [tools/textures/prepare.py](../../tools/textures/prepare.py)
+from photographs in the [pbrt-v4-scenes](https://github.com/mmp/pbrt-v4-scenes)
+and [BabylonJS/Assets](https://github.com/BabylonJS/Assets) repositories. It downsizes them to
+at most 1024 px and reconstructs the height from the normal map by integration in Fourier
+space. It determines which way the map's green axis points by checking which direction gives
+a plausible surface. Where there is no normal map, it takes the height from the photo's lightness.
+Finally it writes `texture.txt`.
 
-## Licence a autoři
+## License and authors
 
-Fotografie jsou upravené (zmenšené, výška dopočítaná z normál nebo ze
-světlosti; barva kovu složená z rýh jeho reliéfu a skvrn jeho fotky) a šíří
-se pod licencí **[CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)**:
+The photographs are modified (downsized, height reconstructed from normals or from
+lightness; the metal color composed from the grooves of its relief and the stains of its photo) and are
+distributed under the **[CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)** license:
 
 - `concrete`, `plaster`, `brick_wall`, `wood`, `bark`, `soil`, `paving`,
-  `roof_tiles`, `metal` (a `roof`): **Amazon Lumberyard Bistro**, © Amazon,
+  `roof_tiles`, `metal` (and `roof`): **Amazon Lumberyard Bistro**, © Amazon,
   CC-BY 4.0, <https://developer.nvidia.com/orca/amazon-lumberyard-bistro>;
-  převzato z [pbrt-v4-scenes](https://github.com/mmp/pbrt-v4-scenes)
-  (adresář `bistro/textures`: `MASTER_Concrete_Plaster`, `Concrete2`,
+  taken from [pbrt-v4-scenes](https://github.com/mmp/pbrt-v4-scenes)
+  (directory `bistro/textures`: `MASTER_Concrete_Plaster`, `Concrete2`,
   `MASTER_Brick_Small_Red`, `MASTER_Wood_Brown`,
   `Foliage_Linde_Tree_Large_Trunk`, `Pavement_Ground_Wet`,
   `Pavement_Cobblestone_Big_BLENDSHADER`, `MASTER_Roofing_Shingle_Grey`,
   `Banner_Metal`).
-- `asphalt`, `broken_concrete`, `lawn`, `sand` (a `mortar`):
+- `asphalt`, `broken_concrete`, `lawn`, `sand` (and `mortar`):
   **Babylon.js Assets**, © Babylon.js, CC-BY 4.0,
   <https://github.com/BabylonJS/Assets> (`meshes/PowerPlant/gravel_a.png`,
-  `textures/rockyGround_basecolor.png` a `rockyGround_normal.png`,
+  `textures/rockyGround_basecolor.png` and `rockyGround_normal.png`,
   `textures/grass.png`, `textures/sand.jpg`).
 
-Zbytek programu má svou vlastní licenci; tyto soubory pod ni nespadají.
-Výjimkou jsou `leaf` a `grass`: ty nakreslil skript
-[tools/textures/foliage.py](../../tools/textures/foliage.py) bez
-fotografií a patří pod licenci programu.
+The rest of the program has its own license; these files are not covered by it.
+The exceptions are `leaf` and `grass`: they were drawn by the script
+[tools/textures/foliage.py](../../tools/textures/foliage.py) without
+photographs and fall under the program's license.
 
-## Vlastní textury
+## Custom textures
 
-- **Jinou knihovnu** nastavíte na uzlu Output parametrem **Texture Folder**
-  (nebo proměnnou prostředí `PG_TEXTURES`): složka se složkami pojmenovanými
-  jako materiály.
-- **Jednomu objektu** dáte texturu uzlem **Material** (parametr Texture):
-  vyberte obrázek barvy ze sady z Poly Haven nebo ambientCG. Ostatní mapy se
-  najdou vedle něj podle jmen (`_diff_`, `_rough_`, `_disp_`; `_Color`,
+- **A different library** is set on the Output node with the **Texture Folder** parameter
+  (or the `PG_TEXTURES` environment variable): a folder of folders named
+  after materials.
+- **A single object** gets a texture from the **Material** node (Texture parameter):
+  pick the color image of a set from Poly Haven or ambientCG. The other maps are
+  found next to it by name (`_diff_`, `_rough_`, `_disp_`; `_Color`,
   `_Roughness`, `_Displacement`).

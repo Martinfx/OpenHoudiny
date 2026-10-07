@@ -1,473 +1,509 @@
-# Stromy: uzel Tree
+# Trees: the Tree node
 
-Uzel **Tree** pěstuje strom tak, jak roste rostlina. Kmen je silný u paty
-a ke špičce se zužuje. Z kmene rostou větve, z nich další větve a na
-konečcích listy. Každá větev se otáčí ke světlu, prohýbá se pod svou vahou
-a trochu bloudí. Předlohou je model Webera a Penna (*Creation and Rendering
-of Realistic Trees*, 1995), ze kterého vychází třeba generátor Sapling
-v Blenderu. Obrys koruny určuje, jak dlouhé jsou první větve podél
-kmene. Ostatní rostou úroveň po úrovni, každá o zlatý úhel (137,5°) dál
-kolem svého rodiče než ta předchozí, stejně jako se kolem stonku kladou
-listy a pupeny.
+The **Tree** node grows a tree the way a plant grows. The trunk is thick at
+the base and tapers towards the tip. Branches grow from the trunk, further
+branches grow from those, and leaves grow at the tips. Every branch turns
+towards the light, bends under its own weight and wanders a little. The
+model is that of Weber and Penn (*Creation and Rendering of Realistic
+Trees*, 1995), which is also the basis of, for example, the Sapling
+generator in Blender. The crown outline determines how long the first
+branches along the trunk are. The others grow level by level, each one a
+golden angle (137.5°) further around its parent than the previous one, just
+as leaves and buds are arranged around a stem.
 
-Se vstupem bodů vyroste na každém bodě jeden strom. Tak vznikne les, ve
-kterém je každý strom jiný.
+With an input of points, one tree grows on each point. This produces a
+forest in which every tree is different.
 
-![Sedm tvarů koruny jednoho uzlu: smrk, dub, bříza, topol, akácie, vrba a lípa](img/trees-shapes.jpg)
+![Seven crown shapes from one node: spruce, oak, birch, poplar, acacia, willow and linden](img/trees-shapes.jpg)
 
 ```bash
-./build/prototype --example tree_shapes            # sedm druhů stromů vedle sebe
-./build/prototype --example forest                 # les na kopci ve větru: Play
-./build/prototype sim tree_shapes stromy.png       # bez okna do obrázku
-./build/prototype cook tree_shapes stromy.obj      # stromy do OBJ (Blender, Houdini)
-./build/prototype cook forest - --start 1 --end 3  # kolik bodů a jak dlouho
+./build/prototype --example tree_shapes            # seven tree species side by side
+./build/prototype --example forest                 # a forest on a hill in the wind: Play
+./build/prototype sim tree_shapes stromy.png       # without a window, to an image
+./build/prototype cook tree_shapes stromy.obj      # trees to OBJ (Blender, Houdini)
+./build/prototype cook forest - --start 1 --end 3  # how many points and how long
 ```
 
-![Les na kopci: listnáče s kmenem rozvětveným do tří vůdčích větví, výš na kopci smrky](img/trees-forest.jpg)
+![A forest on a hill: broadleaf trees with the trunk split into three leaders, spruces higher up the hill](img/trees-forest.jpg)
 
-## 1. Jak strom roste
+## 1. How a tree grows
 
-### Kmen
+### Trunk
 
-Kmen je dlouhý **Height** a nad patou má poloměr **Radius**. Ke špičce se
-zužuje na **Tip** (podíl Radius). U země se rozšiřuje o **Flare**, jak do
-něj vbíhají kořeny. **Lean** ho nakloní na jednu stranu a ohne zpátky.
-Roste po kouscích dlouhých **Segment** a trochu bloudí (čtvrtina Wobble).
+The trunk is **Height** long and has radius **Radius** just above the base.
+Towards the tip it tapers to **Tip** (a fraction of Radius). Near the ground
+it widens by **Flare**, where the roots run into it. **Lean** tilts it to
+one side and bends it back. It grows in pieces **Segment** long and wanders
+a little (a quarter of Wobble).
 
-**Vidlice.** S **Forks** větším než 1 se kmen ve výšce **Fork Height**
-(podíl jeho délky) rozdělí na Forks vůdčích větví. Tak roste koruna dubu,
-javoru nebo akácie. Vůdčí větve se rozbíhají o **Fork Angle** a podle
-**Up** se stáčejí zpátky vzhůru: s malým Up se rozevřou do deštníku,
-s velkým rostou vedle sebe nahoru. Jejich průřezy dají dohromady průřez
-kmene v místě vidlice (poloměr r/√n, o 10 % víc, aby spoj nebyl vidět).
-Patří k úrovni kmene, takže z nich rostou první větve stejně jako z něj.
+**Forks.** With **Forks** greater than 1, the trunk splits at **Fork Height**
+(a fraction of its length) into Forks leaders. This is how the crown of an
+oak, maple or acacia grows. The leaders diverge by **Fork Angle** and,
+depending on **Up**, curve back upwards: with a small Up they open out into
+an umbrella, with a large one they grow upwards side by side. Their
+cross-sections add up to the cross-section of the trunk at the fork (radius
+r/√n, 10% more so that the joint is not visible). They belong to the trunk
+level, so the first branches grow from them just as from the trunk.
 
-### Větve
+### Branches
 
-**Levels** říká, kolik úrovní větví strom má (0 až 3; 0 je holý kmen).
+**Levels** sets how many levels of branches the tree has (0 to 3; 0 is a
+bare trunk).
 
-- **První úroveň** roste z kmene a z vůdčích větví od **Crown** (podíl
-  výšky, kde začíná koruna; pod ní je kmen holý) nahoru. Počet
-  **Branches** se rozdělí mezi kmen a vůdčí větve podle toho, jak velká
-  část každého z nich je v koruně. Délka je Height × **Length** × tvar
-  koruny v tom místě (viz níže).
-- **Další úrovně** rostou z každé větve úrovně před nimi, od 12 % do 97 %
-  její délky. Jsou dlouhé jako rodič × Length. Ke špičce rodiče se
-  zkracují, až o 60 %; u převislého tvaru (Weeping) jen o 20 %, takže
-  větvičky visí dlouhé po celé délce.
+- **The first level** grows from the trunk and from the leaders, from
+  **Crown** (the fraction of the height where the crown begins; below it
+  the trunk is bare) upwards. The **Branches** count is divided between the
+  trunk and the leaders according to how large a part of each of them lies
+  in the crown. The length is Height × **Length** × the crown shape at that
+  point (see below).
+- **Further levels** grow from every branch of the level before them, from
+  12% to 97% of its length. They are as long as the parent × Length. Towards
+  the parent's tip they get shorter, by up to 60%; with the weeping shape
+  (Weeping) only by 20%, so the twigs hang long along the whole length.
 
-Každá větev roste o zlatý úhel dál kolem rodiče než ta před ní a od rodiče
-se odklání o **Angle** (±15 %). U báze je tlustá **Thickness** × poloměr
-rodiče v místě, kde z něj roste, a ke špičce se zužuje na 15 %. Báze je
-uvnitř rodiče, takže spoj není vidět. Délky se náhodně liší o ±15 %.
-Větev kratší než polovina listu nebo než 2 cm nevyroste.
+Each branch grows a golden angle further around the parent than the one
+before it, and diverges from the parent by **Angle** (±15%). At its base it
+is **Thickness** × the parent's radius at the point where it grows from it,
+and it tapers to 15% towards the tip. The base is inside the parent, so the
+joint is not visible. Lengths vary randomly by ±15%. A branch shorter than
+half a leaf or than 2 cm does not grow.
 
-Při růstu se větev otáčí. **Gravity** ji prohýbá vlastní vahou, víc ke
-špičce a víc u tenčích úrovní; u tvaru Weeping je to u druhé a třetí úrovně
-čtyřikrát víc, takže větvičky visí. **Up** ji otáčí ke světlu. **Wobble**
-jí dává náhodné bloudění, stejně velké při jakémkoli dělení na kousky
-(náhodná procházka se škáluje s odmocninou délky kousku).
+While growing, a branch turns. **Gravity** bends it under its own weight,
+more towards the tip and more on thinner levels; with the Weeping shape this
+is four times stronger on the second and third levels, so the twigs hang.
+**Up** turns it towards the light. **Wobble** gives it a random wander that
+is equally large however finely it is divided into pieces (the random walk
+scales with the square root of the piece length).
 
-### Tvar koruny
+### Crown shape
 
-Tvar koruny (Shape) určuje, jak dlouhé jsou první větve od paty koruny
-k vrcholu, jako podíl nejdelší z nich. Vzorce jsou od Webera a Penna,
-nejkratší větev má aspoň 10 %.
+The crown shape (Shape) determines how long the first branches are from the
+base of the crown to the top, as a fraction of the longest of them. The
+formulas are from Weber and Penn; the shortest branch is at least 10%.
 
-| Shape | Nejdelší větve | Strom |
+| Shape | Longest branches | Tree |
 |---|---|---|
-| **Conical** | u paty koruny, k vrcholu kratší | smrk, jedle |
-| **Spherical** | uprostřed | dub, lípa, javor |
-| **Hemispherical** | u paty, nahoře zaoblená | lípa, kaštan |
-| **Cylindrical** | všechny stejně | topol vlašský |
-| **Flame** | ve dvou třetinách odshora | bříza, hrušeň |
-| **Umbrella** | nahoře | akácie, pinie |
-| **Weeping** | uprostřed a větvičky visí | vrba, bříza smuteční |
+| **Conical** | at the base of the crown, shorter towards the top | spruce, fir |
+| **Spherical** | in the middle | oak, linden, maple |
+| **Hemispherical** | at the base, rounded at the top | linden, chestnut |
+| **Cylindrical** | all equal | Lombardy poplar |
+| **Flame** | two thirds of the way down from the top | birch, pear |
+| **Umbrella** | at the top | acacia, stone pine |
+| **Weeping** | in the middle, and the twigs hang | willow, weeping birch |
 
-### Listy
+### Leaves
 
-Na každé **větvičce** (větvi, ze které už nic neroste) vyroste **Leaves**
-listů, od čtvrtiny její délky ke špičce. Každá větev, která nese další,
-má na konci chomáč třetiny Leaves listů, protože i tam je mladé dřevo.
-Kmen pod korunou a místo vidlice listy nemají. Listy leží kolem větvičky
-o zlatý úhel jeden od druhého. Každý míří ven od větvičky, trochu dopředu
-a nahoru a čepelí se obrací k nebi (natočený o ±35°). Podél středního
-žebra je lehce přeložený. Je dlouhý **Leaf Size** ±20 %. Barva vychází
-z **Leaf Color**, podle **Variation** je světlejší, tmavší a do žluta.
+On every **twig** (a branch from which nothing else grows) **Leaves**
+leaves grow, from a quarter of its length to the tip. Every branch that
+carries others has a tuft of a third of Leaves leaves at its end, because
+there is young wood there too. The trunk below the crown and the fork have
+no leaves. The leaves are placed around the twig a golden angle apart. Each
+one points outwards from the twig, slightly forwards and upwards, and turns
+its blade towards the sky (rotated by ±35°). It is slightly folded along the
+midrib. It is **Leaf Size** ±20% long. The color is based on **Leaf Color**
+and, depending on **Variation**, is lighter, darker and more yellow.
 
-| Leaf Shape | Tvar |
+| Leaf Shape | Shape |
 |---|---|
-| **Broad** | oválná čepel (dub, lípa), 8 bodů |
-| **Narrow** | dlouhý úzký list (vrba), 6 bodů |
-| **Needles** | zubatá větvička jehličí (smrk, jedle), 10 bodů; hodí se jich na větvičku víc |
+| **Broad** | oval blade (oak, linden), 8 points |
+| **Narrow** | long narrow leaf (willow), 6 points |
+| **Needles** | serrated sprig of needles (spruce, fir), 10 points; use more of them per twig |
 
-Všechny tvary jsou z pohledu paty listu hvězdicové, takže je vějíř
-trojúhelníků z paty pokryje přesně, i ten zubatý.
+All shapes are star-shaped as seen from the base of the leaf, so a fan of
+triangles from the base covers them exactly, including the serrated one.
 
-### Překážky
+### Obstacles
 
-Druhý vstup **Obstacles** jsou překážky: jakékoli uzavřené polygony (zeď,
-střecha, skála, sousední dům). Každý stonek drží povrchem odstup
-**Clearance** od nich. Kde by přišel blíž nebo jimi prošel, stočí se
-podél překážky a trochu od ní. Pokud do ní míří čelně, pokračuje podél ní
-směrem, kam se sám naklání, jinak nahoru ke světlu, jinak stranou. Kmen se
-pak zase narovnává vzhůru, takže kmen pod střechou vyklouzne zpod okraje
-a roste dál nad ní. **Avoid** říká, o kolik se stonek smí stočit, jako
-podíl pravého úhlu. Když by se musel stočit víc, nebo ani tudy cesta
-nevede, skončí. Pak se vypěstuje znovu, tak dlouhý, kam dorostl, aby se
-dál zužoval ke špičce. Avoid 0 stonky jen zastavuje jako prořezávání
-podle překážky. List, který by se překážky dotkl, nevyroste. Náhodná čísla
-se berou stejně, takže strom, na jehož dosah žádná překážka není, je
-přesně stejný jako bez nich.
+The second input, **Obstacles**, holds obstacles: any closed polygons (a
+wall, a roof, a rock, a neighboring house). Every stem keeps its surface
+**Clearance** away from them. Where it would come closer or pass through
+them, it turns along the obstacle and slightly away from it. If it heads
+straight into it, it continues along it in the direction it is itself
+leaning, otherwise upwards towards the light, otherwise sideways. The trunk
+then straightens upwards again, so a trunk under a roof slips out from
+under the edge and keeps growing above it. **Avoid** sets how far a stem
+may turn, as a fraction of a right angle. If it would have to turn further,
+or if there is no way through even so, it stops. It is then regrown,
+as long as it got, so that it still tapers towards the tip. Avoid 0 only
+stops stems, like pruning against the obstacle. A leaf that would touch an
+obstacle does not grow. Random numbers are drawn the same way, so a tree
+with no obstacle within its reach is exactly the same as without obstacles.
 
-Překážky hledá strom trojúhelníků (`TriangleTree` v
-`src/pg/core/Spatial.h`): nejbližší bod povrchu a průchod úsečky,
-z libovolného počtu vláken. U výstupu Instances dostane strom, na jehož
-dosah překážka je (do 1,6 výšky od středu kmene), vlastní prototyp
-vypěstovaný na svém místě. Ostatní body zastupují Variants jako dřív.
+Obstacles are looked up with a triangle tree (`TriangleTree` in
+`src/pg/core/Spatial.h`): closest surface point and segment intersection,
+from any number of threads. With the Instances output, a tree that has an
+obstacle within its reach (up to 1.6 heights from the trunk center) gets
+its own prototype grown at its own location. The other points are
+represented by Variants as before.
 
-Příklad **tree_obstacles**: strom metr a půl od zdi a strom pod pergolou
-(střecha na čtyřech sloupcích ve 4,35 m).
+The **tree_obstacles** example: a tree a meter and a half from a wall and a
+tree under a pergola (a roof on four posts at 4.35 m).
 
-![Příklad tree_obstacles: vlevo stromy bez překážek prorůstají zdí a střechou pergoly, vpravo se zdi vyhnou a kmen pod pergolou vyklouzne ven a roste nad ní](img/tree-obstacles.jpg)
+![The tree_obstacles example: on the left, trees without obstacles grow through the wall and the pergola roof; on the right, they avoid the wall and the trunk under the pergola slips out and grows above it](img/tree-obstacles.jpg)
 
-Testy (`tests/test_plants.cpp`): nejbližší body se shodují s hledáním
-rukou na 0,0014 m. Strom (dvě úrovně větví) u zdi bez ní prorůstá zdí
-61 úsečkami a 348 bodů má za ní. S ní zdí neprojde ani jedna úsečka ani
-list, žádný bod není blíž než Clearance a 32 m větví leží podél zdi, při
-stejné délce dřeva 203 m. S Avoid 0 také nic neprojde, ale dřeva zbude
-155 m a podél zdi jen 11 m. Strom mimo dosah překážky je bod po bodu
-stejný jako bez ní. Ze šesti bodů Instances dostanou vlastní strom dva
-u zdi a žádná z 58 573 hran jejich kůry zdí neprochází.
+Tests (`tests/test_plants.cpp`): the closest points match a brute-force
+search to 0.0014 m. A tree (two branch levels) next to a wall grows through
+the wall with 61 segments without it, and has 348 points behind it. With it,
+not a single segment or leaf passes through the wall, no point is closer
+than Clearance, and 32 m of branches lie along the wall, with the same
+total wood length of 203 m. With Avoid 0 nothing passes through either, but
+only 155 m of wood remains and only 11 m along the wall. A tree out of the
+obstacle's reach is identical, point by point, to one without it. Of six
+Instances points, the two by the wall get their own tree, and none of the
+58,573 edges of their bark passes through the wall.
 
-## 2. Parametry
+## 2. Parameters
 
-| Sekce | Parametr | Výchozí | Co dělá |
+| Section | Parameter | Default | What it does |
 |---|---|---|---|
-| Tree | Shape | Spherical | tvar koruny (tabulka výše) |
-| | Height | 6 m | délka kmene; koruna sahá o kus výš |
-| | Radius | 0,16 m | poloměr kmene nad patou |
-| | Seed | 1 | jiné číslo, jiný strom téhož druhu |
-| | Center | 0 0 0 | kde strom stojí (bez vstupu bodů) |
-| | Size Variation | 0,2 | o kolik se liší velikost stromů na bodech |
-| Trunk | Tip | 0,08 | poloměr na vrcholu jako podíl Radius |
-| | Flare | 0,35 | rozšíření u země |
-| | Lean | 0,1 | naklonění a oblouk zpátky |
-| | Crown | 0,35 | kde začínají větve (podíl výšky) |
-| | Forks | 1 | na kolik vůdčích větví se kmen rozdělí (1 = nerozdělí) |
-| | Fork Height | 0,5 | kde se rozdělí (podíl délky) |
-| | Fork Angle | 25° | o kolik se vůdčí větve rozbíhají |
-| Branches | Levels | 3 | úrovně větví, 0 až 3 |
-| | Thickness | 0,55 | tloušťka báze větve jako podíl rodiče |
-| | Gravity | 0,25 | jak moc větve visí |
-| | Up | 0,25 | jak moc se stáčejí ke světlu |
-| | Wobble | 0,3 | jak moc bloudí |
-| Level 1 / 2 / 3 | Branches | 28 / 7 / 5 | kolik větví na rodiče |
-| | Angle | 55° / 45° / 40° | odklon od rodiče |
-| | Length | 0,5 / 0,45 / 0,4 | délka jako podíl rodiče (první úroveň: kmene) |
-| Prune | Prune | 0 | jak moc se větve, které by vyrostly z obálky, zkrátí k ní (Weber a Penn): 0 vůbec, 1 přesně k ní |
-| | Prune Width | 0,5 | šířka obálky v nejširším místě, kolem kmene, jako podíl výšky |
-| | Prune Peak | 0,5 | kde je obálka nejširší, nahoru od paty koruny |
-| | Power Low / High | 0,5 / 0,5 | jak se obálka zužuje pod nejširším místem a nad ním: 1 kužel, pod 1 plnější, nad 1 štíhlejší |
-| Roots | Roots | 0 | kořeny z paty kmene: nad zemí, pak dolů do ní (náběhy starého stromu); ve větru se nehýbou |
-| | Root Length | 0,15 | délka kořenů jako podíl délky kmene |
-| Obstacles | Clearance | 0,15 m | odstup povrchu stonků od překážek (druhý vstup) |
-| | Avoid | 1 | o kolik se stonek smí stočit podél překážky, podíl pravého úhlu; 0 jen skončí |
-| Leaves | Leaves | 10 | listů na větvičku |
-| | Leaf Size | 0,12 m | délka listu |
+| Tree | Shape | Spherical | crown shape (table above) |
+| | Height | 6 m | trunk length; the crown reaches a bit higher |
+| | Radius | 0.16 m | trunk radius just above the base |
+| | Seed | 1 | a different number gives a different tree of the same species |
+| | Center | 0 0 0 | where the tree stands (without an input of points) |
+| | Size Variation | 0.2 | how much the size of trees on points varies |
+| Trunk | Tip | 0.08 | radius at the top as a fraction of Radius |
+| | Flare | 0.35 | widening near the ground |
+| | Lean | 0.1 | tilt and the arc back |
+| | Crown | 0.35 | where branches begin (fraction of the height) |
+| | Forks | 1 | how many leaders the trunk splits into (1 = no split) |
+| | Fork Height | 0.5 | where it splits (fraction of the length) |
+| | Fork Angle | 25° | how far the leaders diverge |
+| Branches | Levels | 3 | branch levels, 0 to 3 |
+| | Thickness | 0.55 | branch base thickness as a fraction of the parent |
+| | Gravity | 0.25 | how much the branches hang |
+| | Up | 0.25 | how much they turn towards the light |
+| | Wobble | 0.3 | how much they wander |
+| Level 1 / 2 / 3 | Branches | 28 / 7 / 5 | how many branches per parent |
+| | Angle | 55° / 45° / 40° | divergence from the parent |
+| | Length | 0.5 / 0.45 / 0.4 | length as a fraction of the parent (first level: of the trunk) |
+| Prune | Prune | 0 | how much branches that would grow out of the envelope are shortened to it (Weber and Penn): 0 not at all, 1 exactly to it |
+| | Prune Width | 0.5 | envelope width at its widest point, around the trunk, as a fraction of the height |
+| | Prune Peak | 0.5 | where the envelope is widest, upwards from the base of the crown |
+| | Power Low / High | 0.5 / 0.5 | how the envelope narrows below and above its widest point: 1 cone, below 1 fuller, above 1 slimmer |
+| Roots | Roots | 0 | roots from the base of the trunk: above ground, then down into it (the buttresses of an old tree); they do not move in the wind |
+| | Root Length | 0.15 | root length as a fraction of the trunk length |
+| Obstacles | Clearance | 0.15 m | distance of the stem surface from obstacles (second input) |
+| | Avoid | 1 | how far a stem may turn along an obstacle, as a fraction of a right angle; 0 just stops |
+| Leaves | Leaves | 10 | leaves per twig |
+| | Leaf Size | 0.12 m | leaf length |
 | | Leaf Shape | Broad | Broad, Narrow, Needles |
-| Look | Bark Color | hnědá | barva kůry (`Cd`); mladší dřevo o kus světlejší |
-| | Leaf Color | zelená | barva listů (`Cd`) |
-| | Variation | 0,3 | jak moc se liší odstín listů a kůra stromů |
-| Detail | Sides | 10 | stěn kolem kmene; každá úroveň větví o 2 méně, nejméně 3, nikdy 6 (pak 7; viz Vítr) |
-| | Segment | 0,25 m | délka kousku kmene; větve o čtvrtinu jemněji na úroveň |
-| | Output | Mesh | Mesh (síť), Skeleton (kostra), nebo Instances: Variants stromů a bod pro každý strom ([vegetation.md](vegetation.md)) |
-| | Variants | 8 | u Instances: kolik různých stromů se vypěstuje — ty, které by vyrostly na prvních bodech |
+| Look | Bark Color | brown | bark color (`Cd`); younger wood somewhat lighter |
+| | Leaf Color | green | leaf color (`Cd`) |
+| | Variation | 0.3 | how much the leaf hue and the bark of trees vary |
+| Detail | Sides | 10 | sides around the trunk; each branch level 2 fewer, at least 3, never 6 (then 7; see Wind) |
+| | Segment | 0.25 m | trunk piece length; branches a quarter finer per level |
+| | Output | Mesh | Mesh, Skeleton, or Instances: Variants trees and a point for each tree ([vegetation.md](vegetation.md)) |
+| | Variants | 8 | for Instances: how many different trees are grown — those that would grow on the first points |
 
-**Prořezávání a kořeny.** Větev, která by vyrostla z obálky, se znovu
-vypěstuje kratší, se stejným bloudivým tvarem: Prune 1 ji zkrátí k místu,
-kde obálku opouští, 0,5 napůl. Z obálky pak nevyčnívá nic (test: 100 %
-bodů větví uvnitř, bez prořezávání 63 %). Hodí se na živý plot, tvarovaný
-strom, nebo korunu držící se svého obrysu. Kořeny vyrůstají z paty kmene
-kousek nad zemí do stran a dolů do ní. Nemají listy ani větve a jejich
-`flex` je 0, takže je vítr neohýbá.
+**Pruning and roots.** A branch that would grow out of the envelope is
+regrown shorter, with the same wandering shape: Prune 1 shortens it to the
+point where it leaves the envelope, 0.5 halfway. Nothing then sticks out of
+the envelope (test: 100% of branch points inside, 63% without pruning).
+Useful for a hedge, a topiary tree, or a crown that keeps to its outline.
+Roots grow from the base of the trunk, a little above the ground, sideways
+and down into it. They have no leaves or branches, and their `flex` is 0,
+so the wind does not bend them.
 
-![Vlevo strom s kořeny, vpravo stejný strom s korunou prořezanou obálkou](img/trees-prune-roots.jpg)
+![Left: a tree with roots; right: the same tree with its crown pruned by the envelope](img/trees-prune-roots.jpg)
 
-Ve viewportu má vybraný uzel v režimu objektů (**1**) úchyt jako Tube:
-**W** posouvá Center, **R** mění Height (nahoru) a Radius kmene (do stran)
-([editing.md](editing.md#6b-úchyty-geometrických-uzlů)).
+In the viewport, a selected node in object mode (**1**) has a handle like
+Tube: **W** moves Center, **R** changes Height (upwards) and the trunk
+Radius (sideways)
+([editing.md](editing.md#6b-geometry-node-handles)).
 
-![Editor: uzel Tree vybraný v síti, jeho parametry a strom s úchytem ve viewportu](img/trees-editor.jpg)
+![Editor: the Tree node selected in the network, its parameters, and the tree with its handle in the viewport](img/trees-editor.jpg)
 
-## 3. Výstup
+## 3. Output
 
-**Mesh.** Kmen a každá větev jsou trubky: kolem každého bodu osy je
-prstenec stěn a na špičce kužel. Kmen je uzavřený i u paty, takže je to
-uzavřené těleso (podstava má vlastní body na místech bodů prstence, aby
-mohla hledět dolů). Báze větve je uvnitř rodiče. Stěny jsou otočené ven,
-listy jsou polygony otočené lícem tam, kam hledí.
+**Mesh.** The trunk and every branch are tubes: around each point of the
+axis there is a ring of faces, and a cone at the tip. The trunk is closed at
+the base too, so it is a closed body (the base cap has its own points at the
+positions of the ring points so that it can face downwards). The branch base
+is inside the parent. Faces point outwards; leaves are polygons with their
+front side facing the way they look.
 
-| Atribut | Třída | Co je v něm |
+| Attribute | Class | What it holds |
 |---|---|---|
-| `Cd` | bod | barva kůry a listů |
-| `N` | bod | kam bod hledí: hladce dokola větví, list tam, kam hledí jeho čepel; podstava kmene má vlastní body otočené dolů. Vítr (Plant Wind) je otáčí s body |
-| `flex` | bod | vzdálenost po dřevě od paty stromu jako podíl výšky: 0 u země, 1 na vrcholu kmene, na konečcích větví víc — o kolik vítr strom ohne (níže) |
-| `uv` | vrchol | souřadnice textury: na kůře u dokola a v nahoru po větvi, list ve své čtvrtině obrázku listů (níže) |
-| `level` | primitivum | −1 list, 0 kmen (a vůdčí větve), 1–3 úrovně větví |
-| `stem` | primitivum | číslo větve ve stromu (list: větvička, na které roste) |
-| `parent` | primitivum | z které větve větev roste (kmen −1, list: větvička, na které roste) — podle něj Plant Wind s Dynamics ví, co kterou větev nese |
-| `tree` | primitivum | číslo stromu = číslo bodu vstupu |
-| `bark`, `leaves` | skupiny primitiv | kůra a listy, třeba pro Blast nebo Color |
+| `Cd` | point | bark and leaf color |
+| `N` | point | the direction the point faces: smoothly around branches; for a leaf, the way its blade faces; the trunk base cap has its own points facing down. Wind (Plant Wind) rotates them with the points |
+| `flex` | point | distance along the wood from the base of the tree as a fraction of the height: 0 at the ground, 1 at the top of the trunk, more at the branch tips — how much the wind bends the tree (below) |
+| `uv` | vertex | texture coordinates: on bark, u around and v up the branch; a leaf in its quarter of the leaf image (below) |
+| `level` | primitive | −1 leaf, 0 trunk (and leaders), 1–3 branch levels |
+| `stem` | primitive | branch number within the tree (leaf: the twig it grows on) |
+| `parent` | primitive | which branch the branch grows from (trunk −1; leaf: the twig it grows on) — this is how Plant Wind with Dynamics knows what carries which branch |
+| `tree` | primitive | tree number = input point number |
+| `bark`, `leaves` | primitive groups | bark and leaves, e.g. for Blast or Color |
 
-**UV.** Kůra má kolem větve tolik celých obrázků kůry (metr na obrázek,
-jako `examples/textures/bark`), kolik metrů měří obvod u její paty,
-nejméně jeden. Nahoru po větvi se počítá ve stejném měřítku, takže
-u paty je obrázek čtvercový a s tenčící se větví se zužuje, jak to dělá
-SpeedTree. Šev je na jedné straně větve a žádná plocha přes něj nejde.
-Každý list má svou čtvrtinu obrázku listů: široký list vlevo nahoře
-nebo vpravo nahoře (náhodně), úzký vlevo dole, jehličí vpravo dole. Pata
-listu je uprostřed spodní hrany čtvrtiny, špička uprostřed horní. Nic
-není zrcadlově. Materiály `bark` a `leaf` se podle UV kladou samy
-(Projection Auto, [materials.md](materials.md)), kůra i s normálovou
-mapou. Obrázek listu leží uvnitř polygonu listu a jeho okraj (zoubky,
-zaoblení, mezery mezi jehlicemi) vyřízne alfa, v Cycles, v path traceru
-i ve viewportu. Barva `Cd` list tónuje, takže odstíny listů zůstávají.
+**UV.** Around a branch, the bark has as many whole bark images (one meter
+per image, as in `examples/textures/bark`) as its circumference at the base
+measures in meters, at least one. Up the branch it is measured at the same
+scale, so at the base the image is square and it narrows as the branch
+thins, as SpeedTree does. The seam is on one side of the branch and no
+primitive crosses it. Each leaf has its own quarter of the leaf image: a
+broad leaf top left or top right (at random), a narrow one bottom left,
+needles bottom right. The base of the leaf is at the middle of the bottom
+edge of the quarter, the tip at the middle of the top edge. Nothing is
+mirrored. The `bark` and `leaf` materials are applied by UV automatically
+(Projection Auto, [materials.md](materials.md)), the bark with a normal map
+too. The leaf image lies inside the leaf polygon and its outline (serrations,
+rounding, gaps between needles) is cut out by alpha, in Cycles, in the path
+tracer and in the viewport. The `Cd` color tints the leaf, so the leaf hues
+are preserved.
 
-![Příklad foliage: lípa a mladý smrk v trávě, nahoře Cycles, dole path tracer; listy, jehličí a stébla z obrázků knihovny podle UV, okraje listů vyřízne alfa](img/foliage.jpg)
+![The foliage example: a linden and a young spruce in grass, Cycles at the top, path tracer at the bottom; leaves, needles and grass blades from library images by UV, leaf outlines cut out by alpha](img/foliage.jpg)
 
-Příklad `foliage` (`./build/prototype sim foliage f.png --renderer cycles`):
-lípa a mladý smrk v trávě, nahoře Cycles, dole path tracer.
+The `foliage` example (`./build/prototype sim foliage f.png --renderer cycles`):
+a linden and a young spruce in grass, Cycles at the top, path tracer at the
+bottom.
 
-**Skeleton.** Každá větev je otevřená lomená čára bodů své osy, s poloměrem
-v `pscale` a směrem v `N`; primitiva nesou `level`, `stem`, `parent` (číslo
-rodičovské větve, u kmene −1) a `tree`. Listy jsou volné body ve skupině
-bodů `leaves`: `N` je směr, kam čepel hledí, `pscale` délka listu, `Cd`,
-`flex` a `orient` (níže). Kostra se hodí pro vlastní listy nebo květy
-(Copy to Points) a pro export do nástroje, který si trubky postaví sám.
+**Skeleton.** Each branch is an open polyline of its axis points, with the
+radius in `pscale` and the direction in `N`; primitives carry `level`,
+`stem`, `parent` (the number of the parent branch, −1 for the trunk) and
+`tree`. Leaves are loose points in the `leaves` point group: `N` is the
+direction the blade faces, `pscale` the leaf length, plus `Cd`, `flex` and
+`orient` (below). The skeleton is useful for custom leaves or flowers (Copy
+to Points) and for export to a tool that builds the tubes itself.
 
-**Instances.** Stromy jako instance ([vegetation.md](vegetation.md)):
-uzel vypěstuje Variants stromů a každý bod vstupu jeden z nich zastupuje —
-otočený kolem +y, velký podle `pscale` a Size Variation, s vlastním
-odstínem (`tint`). Les tisíců stromů tak stojí tolik, kolik stojí osm
-stromů a tisíc bodů; viewport je kreslí přes GPU instancing, USD dostane
-PointInstancer. Ve větru se strom jako instance kývá celý od paty
-(`orient`), neohýbá se podle `flex`.
+**Instances.** Trees as instances ([vegetation.md](vegetation.md)): the
+node grows Variants trees and each input point represents one of them —
+rotated around +y, sized by `pscale` and Size Variation, with its own hue
+(`tint`). A forest of thousands of trees thus costs as much as eight trees
+and a thousand points; the viewport draws them with GPU instancing, and USD
+gets a PointInstancer. In the wind, a tree as an instance sways as a whole
+from the base (`orient`); it does not bend according to `flex`.
 
-## 4. Les: strom na každém bodě
+## 4. Forest: a tree on every point
 
-Když je do vstupu **Points** spojená geometrie s body, vyroste na každém
-bodě strom. Jeho pata je v bodě a je velký `pscale` × (1 ± Size
-Variation). Tvar stromu určuje Seed spolu s atributem `id` bodu (celé
-číslo), a pokud ho bod nemá, jeho pořadí. Bod se stejným `id` tak nese
-stejný strom, ať je v seznamu kdekoli. Stromy rostou paralelně, každý
-sám, a spojí se v pořadí bodů. Výsledek je proto stejný na jakémkoli
-počtu vláken.
+When geometry with points is connected to the **Points** input, a tree
+grows on each point. Its base is at the point and its size is `pscale` ×
+(1 ± Size Variation). The tree's shape is determined by Seed together with
+the point's `id` attribute (an integer), or by its index if the point has
+none. A point with the same `id` thus carries the same tree, wherever it is
+in the list. The trees grow in parallel, each on its own, and are merged in
+point order. The result is therefore the same on any number of threads.
 
-Příklad **forest** ([examples/sim/forest.pgsim](../examples/sim/forest.pgsim)):
+The **forest** example ([examples/sim/forest.pgsim](../examples/sim/forest.pgsim)):
 
-- **Grid** 160 × 160 m, který Point Wrangle `terrain` zvedne šumem do
-  kopce a obarví jako trávu.
-- Primitive Wrangle `wood_edge` a **Blast** `wood` nechají jen plochy do
-  27 m od středu, **Scatter** na ně rozhází 34 bodů.
-- Point Wrangle `kinds` dá bodům výš na kopci s větší
-  pravděpodobností skupinu `conifer`.
-- Dva **Blasty** rozdělí body. Na jehličnaté roste **Tree** `spruces`
-  (Conical, jeden kmen až k vrcholu, dvě úrovně větví, jehličí). Na
-  ostatní roste **Tree** `broadleaves` (Spherical, kmen se ve 45 % výšky
-  rozdělí na tři vůdčí větve).
-- **Merge** `forest` spojí kopec se stromy a Point Wrangle `wind` (vítr,
-  níže), který se zobrazuje, je ohýbá. Kopec nemá `flex`, Merge mu ho
-  doplní nulou, takže se nehne.
+- A 160 × 160 m **Grid**, which the Point Wrangle `terrain` raises into a
+  hill with noise and colors like grass.
+- The Primitive Wrangle `wood_edge` and the **Blast** `wood` keep only the
+  primitives within 27 m of the center; **Scatter** distributes 34 points
+  over them.
+- The Point Wrangle `kinds` gives points higher up the hill a greater
+  probability of being in the `conifer` group.
+- Two **Blasts** split the points. On the conifer points grows the **Tree**
+  `spruces` (Conical, a single trunk up to the top, two branch levels,
+  needles). On the others grows the **Tree** `broadleaves` (Spherical, the
+  trunk splits into three leaders at 45% of the height).
+- **Merge** `forest` combines the hill with the trees, and the Point
+  Wrangle `wind` (wind, below), which is displayed, bends them. The hill
+  has no `flex`; Merge fills it in with zero, so it does not move.
 
-## 5. Vítr
+## 5. Wind
 
-Atribut `flex` říká, jak daleko po dřevě od paty stromu bod je (jako podíl
-výšky stromu). U země je 0, na vrcholu kmene 1, na konečcích větví víc.
-Každý prstenec trubky i každý bod listu má `flex` svého místa na ose.
+The `flex` attribute says how far along the wood from the base of the tree
+a point is (as a fraction of the tree height). It is 0 at the ground, 1 at
+the top of the trunk, and more at the branch tips. Every tube ring and every
+leaf point has the `flex` of its location on the axis.
 
-Uzel **Plant Wind** (`src/pg/core/Wind.h`) ohýbá rostliny ve větru, snímek
-po snímku:
+The **Plant Wind** node (`src/pg/core/Wind.h`) bends plants in the wind,
+frame by frame:
 
-- **Ohyb od paty.** Každý bod se otočí kolem paty své rostliny o úhel
-  ohybu krát `flex²`. Kmen u země stojí, koruna se ohne, konečky větví
-  nejvíc. Bod se otáčí, neposouvá, takže se nic nenatáhne (test: nejvýš
-  1e-6 m na stromu 7 m). Rostlina je jedno stéblo (`blade`), jinak jeden
-  strom (`tree`), jinak celá geometrie. Rostlinu tvoří primitiva stejného
-  čísla, která jdou za sebou, jak je dají Tree, Grass i Merge. Dva uzly
-  Tree spojené Mergem číslují své stromy oba od 0, a přesto se každý strom
-  ohne kolem své paty. Pata je bod s nejmenším `flex`. Plochy bez `flex`
-  (kopec, ke kterému Merge doplnil nulu) zůstanou.
-- **Poryvy.** Vlny podél větru, **Gust Size** metrů od sebe, běží
-  krajinou rychlostí **Gust Speed**. Rostlina o tolik metrů dál má
-  o sekundu později stejný ohyb. **Gusts** je podíl větru, který přichází
-  v poryvech: 0 stálý vítr, 1 jen poryvy a utišení.
-- **Turbulence.** Každá rostlina se kývá po svém, po větru i napříč,
-  jinou rychlostí a fází.
-- **Třepetání (Flutter).** Listy (`level` −1) se kmitají kolem stopky,
-  napříč listem. Špičky stébel (`flex` nad 0,4) poskakují, každé stéblo
-  ve svém čase. **Flutter Speed** je počet kmitů za sekundu.
-- **Rychlost `v`.** Kolik se bod pohne za 1/240 s. Cycles a path tracer
-  podle ní rozmažou pohyb, viewport ji posílá do průchodu pohybu.
+- **Bend from the base.** Each point rotates around the base of its plant
+  by the bend angle times `flex²`. The trunk stays still at the ground, the
+  crown bends, the branch tips most. A point is rotated, not translated, so
+  nothing stretches (test: at most 1e-6 m on a 7 m tree). A plant is one
+  blade (`blade`), otherwise one tree (`tree`), otherwise the whole
+  geometry. A plant is made of consecutive primitives with the same number,
+  as Tree, Grass and Merge produce them. Two Tree nodes joined by a Merge
+  both number their trees from 0, and yet each tree bends around its own
+  base. The base is the point with the smallest `flex`. Primitives without
+  `flex` (a hill for which Merge filled in zero) stay put.
+- **Gusts.** Waves along the wind, **Gust Size** meters apart, travel across
+  the landscape at **Gust Speed**. A plant that many meters further on gets
+  the same bend one second later. **Gusts** is the fraction of the wind that
+  arrives in gusts: 0 steady wind, 1 only gusts and lulls.
+- **Turbulence.** Each plant sways in its own way, along the wind and
+  across it, at a different speed and phase.
+- **Flutter.** Leaves (`level` −1) oscillate around the petiole, across the
+  leaf. Blade tips (`flex` above 0.4) bob, each blade at its own time.
+  **Flutter Speed** is the number of oscillations per second.
+- **Velocity `v`.** How far a point moves in 1/240 s. Cycles and the path
+  tracer use it for motion blur; the viewport sends it to the motion pass.
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
-| **Direction** | odkud kam fouká, stupně od +x k −z |
-| **Strength** | o kolik stupňů se vršky rostlin ohnou v průměrném poryvu (výchozí 14°) |
-| **Gusts**, **Gust Speed**, **Gust Size** | poryvy: podíl, rychlost, vzdálenost |
-| **Turbulence** | kývání každé rostliny po svém |
-| **Flutter**, **Flutter Speed** | třepetání listů a špiček stébel |
-| **Seed** | jiné kývání a třepetání |
-| **Directions**, **Steps** | u instancí: kolika směry a kolika kroky se rostliny předohnou |
+| **Direction** | where the wind blows from and to, degrees from +x towards −z |
+| **Strength** | how many degrees the plant tops bend in an average gust (default 14°) |
+| **Gusts**, **Gust Speed**, **Gust Size** | gusts: fraction, speed, spacing |
+| **Turbulence** | each plant swaying in its own way |
+| **Flutter**, **Flutter Speed** | fluttering of leaves and blade tips |
+| **Seed** | different swaying and fluttering |
+| **Directions**, **Steps** | for instances: in how many directions and in how many steps the plants are pre-bent |
 
-**Na instancích** se rostlina neohýbá bod po bodu, protože ji drží
-prototyp sdílený tisíci bodů. Plant Wind proto pro každý bod spočítá ohyb
-ve vlastním natočení rostliny. Prototyp předohne do nejbližšího
-z Directions × Steps tvarů (výchozí 8 směrů × 4 kroky do největšího ohybu)
-a bod přesměruje na ten tvar. Zbytek ohybu dorovná naklopením `orient` od
-paty (o polovinu zbývajícího úhlu, zhruba tolik, kolik ohyb posune
-vršek). Předohnuté tvary si uzel pamatuje mezi snímky. Jsou to tytéž
-prototypy, takže viewport je má na GPU jednou a v dalších snímcích posílá
-jen nová umístění. Louka 5000 trsů: 71 tvarů, ve všech snímcích stejných.
-Stejně to vidí viewport, Cycles, path tracer i export do USD. Každý tvar
-je ovšem rostlina navíc v paměti. Pro velké stromy proto stačí méně tvarů
-(příklad meadow: stromy 4 směry × 2 kroky, tráva 8 × 4).
+**On instances**, a plant is not bent point by point, because it is held by
+a prototype shared by thousands of points. Plant Wind therefore computes the
+bend for each point in the plant's own orientation. It pre-bends the
+prototype into the nearest of Directions × Steps shapes (by default 8
+directions × 4 steps up to the maximum bend) and redirects the point to that
+shape. It makes up the rest of the bend by tilting `orient` from the base
+(by half of the remaining angle, roughly as much as the bend moves the top).
+The node remembers the pre-bent shapes between frames. They are the same
+prototypes, so the viewport keeps them on the GPU once and in later frames
+sends only the new placements. A meadow of 5000 clumps: 71 shapes, the same
+in every frame. The viewport, Cycles, the path tracer and the USD export all
+see it the same way. Each shape is, however, one more plant in memory. For
+large trees fewer shapes are therefore enough (the meadow example: trees 4
+directions × 2 steps, grass 8 × 4).
 
-### Dynamika: větve jako pružiny
+### Dynamics: branches as springs
 
-Se zapnutým **Dynamics** je každý stonek tlumená pružina: kmen, každá
-větev, každé stéblo (jiná geometrie s `flex` jako celá rostlina). Ohýbá se
-od své báze tam, kam by ho vítr ohnul bez Dynamics, ale se setrvačností.
-Za poryvem se opozdí, přežene ho, zhoupne se zpátky proti větru
-a dokmitá vlastní frekvencí. Větev nese stonek, ze kterého roste: otáčí
-se s ním, a když se rozhoupe nebo zabrzdí, švihne s ní. Báze větve se pod
-ní pohne a pootočí, větev zůstane pozadu.
+With **Dynamics** enabled, every stem is a damped spring: the trunk, every
+branch, every blade (other geometry with `flex` as a whole plant). It bends
+from its base to where the wind would bend it without Dynamics, but with
+inertia. It lags behind a gust, overshoots it, swings back against the wind
+and settles at its own frequency. A branch is carried by the stem it grows
+from: it rotates with it, and when that stem starts swinging or brakes, it
+whips the branch along. The branch base moves and rotates under it, and the
+branch lags behind.
 
-| Parametr | Co dělá |
+| Parameter | What it does |
 |---|---|
-| **Dynamics** | zapne pružiny |
-| **Frequency** | kolikrát za sekundu se kývá stonek 10 m dlouhý (výchozí 0,5 Hz); kratší rychleji, jako (10 m / délka)^0,6, nejvýš 12 Hz: kmen 6 m 0,68 Hz, větev 2 m 1,3 Hz, větvička 30 cm 4 Hz |
-| **Damping** | jak rychle kývání utichá, podíl kritického tlumení (výchozí 0,12; stromy mívají 0,05–0,2) |
-| **Branches** | jak daleko se větev ve stálém větru ohne sama: 1 o tolik, o kolik ji ohyb od paty pootočí mezi bází a koncem, 0 vůbec (jen ji nese a švihá s ní kmen) |
-| **Start** | od kdy se kývá; předtím rostliny stojí ohnuté, jak vítr fouká ve Start |
+| **Dynamics** | enables the springs |
+| **Frequency** | how many times per second a 10 m long stem sways (default 0.5 Hz); shorter ones faster, as (10 m / length)^0.6, at most 12 Hz: a 6 m trunk 0.68 Hz, a 2 m branch 1.3 Hz, a 30 cm twig 4 Hz |
+| **Damping** | how fast the swaying dies down, as a fraction of critical damping (default 0.12; trees typically have 0.05–0.2) |
+| **Branches** | how far a branch bends on its own in steady wind: 1 as much as the bend from the base rotates it between its base and its end, 0 not at all (the trunk only carries it and whips it along) |
+| **Start** | when the swaying starts; before that the plants stand bent as the wind blows at Start |
 
-Stonek se ohýbá jako vetknutý nosník: bod ve vzdálenosti s jeho délky
-o s² ohybu. Strukturu bere z atributů: větve podle primitiv `stem`
-a `parent` (Tree je dává síti i kostře), list ke stonku, na kterém roste,
-volné body listů kostry k nejbližšímu stonku. Stéblo (`blade`) je jeden
-stonek, jiná rostlina s `flex` také jeden, stojící svisle.
+A stem bends like a cantilever beam: a point at a fraction s of its length
+by s² of the bend. The structure is taken from attributes: branches by the
+`stem` and `parent` primitive attributes (Tree provides them for both the
+mesh and the skeleton), a leaf to the stem it grows on, the loose leaf
+points of the skeleton to the nearest stem. A blade (`blade`) is one stem,
+any other plant with `flex` also one, standing vertically.
 
-Krok trvá 1/120 s a každý stonek se v něm řeší přesně: tlumený
-oscilátor, který táhne k místu, kam ho drží vítr, a kterého báze se
-pohybuje se stonkem pod ním. Ani rychlé větvičky proto nebouchnou.
-Stavy si uzel pamatuje. Na další snímek kráčí od posledního, na dřívější
-od nejbližšího uloženého (každou sekundu simulace, při dlouhé řidčeji).
-Snímek je proto stejný, ať se snímky vaří popořadě, napřeskáčku nebo
-pozpátku, na jednom i více vláknech. Změna parametru nebo vstupu začne
-znovu od Start. Parametry větru s výrazem (vítr sílí) se čtou v každém
-kroku. Parametry Dynamics se čtou na snímku, který se vaří.
+A step takes 1/120 s, and every stem is solved exactly within it: a damped
+oscillator pulled towards where the wind holds it, whose base moves with
+the stem below it. Even fast twigs therefore do not blow up. The node
+remembers the states. To a later frame it steps from the last one, to an
+earlier one from the nearest stored state (every second of simulation, less
+often for long ones). A frame is therefore the same whether frames are
+cooked in order, out of order or backwards, on one thread or several. A
+change of a parameter or an input starts again from Start. Wind parameters
+with an expression (the wind picking up) are read at every step. Dynamics
+parameters are read at the frame being cooked.
 
-Ve stálém větru stojí strom od začátku v klidu a vrchol kmene je tam,
-kam ho ohne ohyb od paty. Konce větví se ohnou méně, protože se každá
-větev ohýbá kolem své báze, ne kolem paty stromu.
+In steady wind the tree stands still from the start, and the top of the
+trunk is where the bend from the base puts it. Branch tips bend less,
+because each branch bends around its own base, not around the base of the
+tree.
 
-![Vrchol kmene a konec větve u vrcholu ve výchozích poryvech: šedě ohyb od paty, zeleně Dynamics. Pružina se za poryvem opozdí, přežene ho, zhoupne se proti větru a dokmitá](img/wind-dynamics.jpg)
+![Top of the trunk and the end of a branch near the top in the default gusts: gray is the bend from the base, green is Dynamics. The spring lags behind the gust, overshoots it, swings against the wind and settles](img/wind-dynamics.jpg)
 
-**Na instancích** se kývá celá rostlina jako jeden stonek, dlouhý jako
-výška prototypu krát `pscale`. Ohyb pak jde do předohnutých tvarů stejně
-jako bez Dynamics. Trs trávy vysoký 0,4 m kmitá 3,4 Hz. Poryvy po 12 m
-při 6 m/s přijdou jednou za dvě sekundy (0,5 Hz), sedmkrát pomaleji, takže
-je trs sleduje skoro jako bez Dynamics. Pružiny jsou znát hlavně na
-stromech.
+**On instances**, the whole plant sways as one stem, as long as the
+prototype height times `pscale`. The bend then goes into the pre-bent
+shapes just as without Dynamics. A clump of grass 0.4 m tall oscillates at
+3.4 Hz. Gusts every 12 m at 6 m/s arrive once every two seconds (0.5 Hz),
+seven times slower, so the clump follows them almost as without Dynamics.
+The springs are noticeable mainly on trees.
 
-Testy (`tests/test_plants.cpp`):
+Tests (`tests/test_plants.cpp`):
 
-- Stéblo 2 m (1,313 Hz) v poryvech o 0,3, 1 a 3násobku své frekvence se
-  rozkmitá 1,138, 4,166 a 0,124krát tolik co ohyb od paty. Tlumený
-  oscilátor dává 1,138, 4,167 a 0,125.
-- Strom (225 stonků, 0,68–6,4 Hz) ve stálém větru se za 3,5 s nepohne
-  o víc než 5e-7 m a vrchol kmene je 1,486 m po větru (ohyb od paty
-  1,487 m).
-- S Branches 0 rozhoupe kmen v poryvech větve až o 0,49 rad, ve stálém
-  větru vůbec.
-- Les se kývá bod po bodu stejně, když se snímky 1–36 vaří popořadě,
-  rovnou 36, nebo 36, 20 a 36, na jednom i na čtyřech vláknech.
-- Trsy jako instance ve stálém větru mají stejné tvary i naklopení jako
-  bez Dynamics.
+- A 2 m blade (1.313 Hz) in gusts at 0.3, 1 and 3 times its frequency
+  swings 1.138, 4.166 and 0.124 times as much as the bend from the base. A
+  damped oscillator gives 1.138, 4.167 and 0.125.
+- A tree (225 stems, 0.68–6.4 Hz) in steady wind does not move by more
+  than 5e-7 m over 3.5 s, and the top of the trunk is 1.486 m downwind (bend
+  from the base 1.487 m).
+- With Branches 0, the trunk swings the branches by up to 0.49 rad in
+  gusts, and not at all in steady wind.
+- The forest sways identically point by point whether frames 1–36 are
+  cooked in order, 36 directly, or 36, 20 and 36, on one or on four
+  threads.
+- Clumps as instances in steady wind have the same shapes and tilts as
+  without Dynamics.
 
-Příklad forest má Plant Wind se zapnutým Dynamics za Merge kopce se
-stromy. Příklad meadow má jeden Plant Wind na trávě (Strength 22°,
-poryvy po 12 m) a druhý na stromech a keřích (4°), oba bez Dynamics.
+The forest example has Plant Wind with Dynamics enabled after the Merge of
+the hill and the trees. The meadow example has one Plant Wind on the grass
+(Strength 22°, gusts every 12 m) and a second one on the trees and shrubs
+(4°), both without Dynamics.
 
-## 6. Vlastní listy
+## 6. Custom leaves
 
-Výstup **Skeleton** dává listům `orient`, kvaternion x, y, z, w, který
-otočí list modelovaný naplocho na místo každého listu. Model listu leží
-v rovině xz, lícem nahoru (+y), stopkou v počátku a špičkou ve směru +z,
-dlouhý 1 m (velikost dá `pscale`). **Copy to Points** ho pak rozmístí:
+The **Skeleton** output gives the leaves `orient`, a quaternion x, y, z, w
+that rotates a leaf modeled flat into the place of each leaf. The leaf
+model lies in the xz plane, front side up (+y), with the petiole at the
+origin and the tip in the +z direction, 1 m long (the size comes from
+`pscale`). **Copy to Points** then distributes it:
 
 ```
 [File list.obj] ------------------> [Copy to Points] -> ...
 [Tree (Output: Skeleton)] -> [Blast: leaves, Keep] --^ (Points)
 ```
 
-Kůru postaví druhý Tree se stejným nastavením, Output Mesh a Leaves 0.
-Listy rostou až po větvích a z vlastních náhodných čísel, takže větve
-jsou v obou stromech stejné.
+The bark is built by a second Tree with the same settings, Output Mesh and
+Leaves 0. Leaves grow only after the branches and from their own random
+numbers, so the branches are the same in both trees.
 
-## 7. Druhy
+## 7. Species
 
-Příklad **tree_shapes** ([examples/sim/tree_shapes.pgsim](../examples/sim/tree_shapes.pgsim))
-má sedm stromů jednoho uzlu, každý nastavený jako jiný druh. Hlavní rozdíly:
+The **tree_shapes** example ([examples/sim/tree_shapes.pgsim](../examples/sim/tree_shapes.pgsim))
+has seven trees from one node, each set up as a different species. The main
+differences:
 
-| Druh | Shape | Kmen | Větve | Listy |
+| Species | Shape | Trunk | Branches | Leaves |
 |---|---|---|---|---|
-| **Smrk** | Conical | 11 m, Crown 0,06, jeden kmen | Levels 2; 64 větví pod úhlem 80°, Length 0,3; Gravity 0,35, Up 0,05 | Needles 0,22 m, 16 na větvičku, tmavé |
-| **Dub** | Spherical | 7 m, Forks 3 ve 45 %, 28° | výchozí, Length 0,6 | Broad 0,18 m, 16 |
-| **Bříza** | Flame | 10 m, poloměr 0,13 m, bílá kůra | 34 větví pod úhlem 40°, Gravity 0,5 | Broad 0,08 m |
-| **Topol** | Cylindrical | 13 m, Crown 0,1 | 64 větví pod úhlem 22°, Length 0,2, Up 0,6 | Broad 0,09 m |
-| **Akácie** | Umbrella | 6 m, Crown 0,45, Forks 3 ve 35 %, 40° | 36 větví pod úhlem 70°, Up 0,03 | Broad 0,09 m, 24 |
-| **Vrba** | Weeping | 6 m, Forks 3 ve 35 % | 16 větví; druhá úroveň 10 pod úhlem 25°, Length 1; Gravity 0,5 | Narrow 0,14 m, 20 |
-| **Lípa** | Hemispherical | 7 m, Forks 2 v polovině | Length 0,55 | Broad 0,15 m, 16 |
+| **Spruce** | Conical | 11 m, Crown 0.06, single trunk | Levels 2; 64 branches at 80°, Length 0.3; Gravity 0.35, Up 0.05 | Needles 0.22 m, 16 per twig, dark |
+| **Oak** | Spherical | 7 m, Forks 3 at 45%, 28° | default, Length 0.6 | Broad 0.18 m, 16 |
+| **Birch** | Flame | 10 m, radius 0.13 m, white bark | 34 branches at 40°, Gravity 0.5 | Broad 0.08 m |
+| **Poplar** | Cylindrical | 13 m, Crown 0.1 | 64 branches at 22°, Length 0.2, Up 0.6 | Broad 0.09 m |
+| **Acacia** | Umbrella | 6 m, Crown 0.45, Forks 3 at 35%, 40° | 36 branches at 70°, Up 0.03 | Broad 0.09 m, 24 |
+| **Willow** | Weeping | 6 m, Forks 3 at 35% | 16 branches; second level 10 at 25°, Length 1; Gravity 0.5 | Narrow 0.14 m, 20 |
+| **Linden** | Hemispherical | 7 m, Forks 2 at half height | Length 0.55 | Broad 0.15 m, 16 |
 
-## 8. Výkon a determinismus
+## 8. Performance and determinism
 
-Na čtyřech jádrech:
+On four cores:
 
-| Co | Body | Primitiva | Čas |
+| What | Points | Primitives | Time |
 |---|---|---|---|
-| jeden strom s výchozím nastavením | 103 tisíc | 32 tisíc | 12 ms |
-| sedm druhů (tree_shapes) | 1,34 milionu | 366 tisíc | 117 ms |
-| les 34 stromů na kopci (forest), první snímek | 3,5 milionu | 827 tisíc | 1,1 s |
-| les, každý další snímek (Plant Wind s Dynamics, 29 432 stonků) | | | 0,29 s |
-| totéž bez Dynamics (ohyb od paty) | | | 0,47 s |
-| les, skok ze snímku 24 rovnou na 240 (Dynamics) | | | 1,4 s |
+| one tree with default settings | 103 thousand | 32 thousand | 12 ms |
+| seven species (tree_shapes) | 1.34 million | 366 thousand | 117 ms |
+| forest of 34 trees on a hill (forest), first frame | 3.5 million | 827 thousand | 1.1 s |
+| forest, each subsequent frame (Plant Wind with Dynamics, 29,432 stems) | | | 0.29 s |
+| the same without Dynamics (bend from the base) | | | 0.47 s |
+| forest, jump from frame 24 straight to 240 (Dynamics) | | | 1.4 s |
 
-Jeden strom roste v jednom vlákně, stromy lesa paralelně. Ve větru se
-přepočítává jen Plant Wind nad 3,5 milionu bodů, paralelně; stromy znovu
-nerostou a Merge s kopcem se nevaří znovu. S Dynamics se navíc kráčí od
-posledního snímku po krocích 1/120 s (pět kroků na snímek, asi 1 ms na
-krok všech stonků lesa).
+One tree grows in one thread, the trees of a forest in parallel. In the
+wind, only Plant Wind over 3.5 million points is recomputed, in parallel;
+the trees do not grow again and the Merge with the hill is not cooked
+again. With Dynamics, it additionally steps from the last frame in steps of
+1/120 s (five steps per frame, about 1 ms per step for all stems in the
+forest).
 
-Každá část stromu (kmen, vidlice, rozmístění větví na rodiči, růst každé
-větve, listy každé větvičky) má svá náhodná čísla, odvozená jen ze Seed
-a z čísla té části. Strom je proto stejný bez ohledu na pořadí, ve kterém
-se části staví.
+Every part of the tree (trunk, fork, placement of branches on the parent,
+growth of each branch, leaves of each twig) has its own random numbers,
+derived only from Seed and the number of that part. The tree is therefore
+the same regardless of the order in which the parts are built.
 
-Jeden strom má nanejvýš 200 000 větví a milion listů, ať nastavení říká
-cokoli (200 větví na každé z 200 na každé z 200 by bylo osm milionů);
-dál už neroste. Testy (`tests/test_trees.cpp`) ověřují stejný hash
-geometrie na jednom a čtyřech vláknech, stejné stromy na bodech se
-stejným `id` v jiném pořadí, bázi každé větve na ose rodiče, uzavřené
-trubky s plochami otočenými ven a tvar koruny podle Shape.
+A single tree has at most 200,000 branches and a million leaves, whatever
+the settings say (200 branches on each of 200 on each of 200 would be eight
+million); beyond that it stops growing. Tests (`tests/test_trees.cpp`)
+verify the same geometry hash on one and four threads, the same trees on
+points with the same `id` in a different order, the base of every branch on
+the parent's axis, closed tubes with outward-facing primitives, and the
+crown shape according to Shape.
 
-## 9. Co zatím chybí
+## 9. What is still missing
 
-- **Vyhýbání se větví navzájem** a sousedních stromů (překážkám se větve
-  vyhýbají, oddíl 1; prořezávání obálkou, oddíl 2).
-- **Kořeny** v zemi do hloubky a kořeny, které se přizpůsobí terénu
-  (teď vycházejí z paty stejně na rovině i na svahu).
-- **Vítr s Dynamics** zná u každého stonku jen první vlastní kmit,
-  s frekvencí podle délky. Větev nevrací sílu stonku, ze kterého roste,
-  listy se nenatáčejí po větru a stonek se nekroutí. Mění-li se vstup
-  v čase, simulace začne v každém snímku znovu od Start.
+- **Branches avoiding each other** and neighboring trees (branches avoid
+  obstacles, section 1; pruning by envelope, section 2).
+- **Roots** going deep into the ground and roots that adapt to the terrain
+  (they currently come out of the base the same way on flat ground and on
+  a slope).
+- **Wind with Dynamics** knows only the first natural mode of each stem,
+  with a frequency based on its length. A branch does not return force to
+  the stem it grows from, leaves do not turn with the wind and stems do not
+  twist. If the input changes over time, the simulation starts again from
+  Start in every frame.
