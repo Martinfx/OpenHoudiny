@@ -213,6 +213,25 @@ CPU does it all.
 From Python: `solver["gpu"] = 1`. `PG_GPU=nvidia` picks the card when there
 are several.
 
+**Several cards.** A simulation steps on one card. With two or more, the
+editor's **Simulation > GPU Card** chooses which (Automatic: a discrete GPU
+first, or the one `PG_GPU` names); the solvers open it again and the frames
+are simulated anew, and **Bake to Disk** bakes on it too. A **wedge** of a
+network whose gas is on the GPU bakes a variant on each card at once —
+**Wedge on Every Card**, on by default: with two cards, eight variants take
+the time of four. Each bake is a process of its own with `PG_GPU` set to its
+card; the wedge panel says, over a variant, which card it baked on. From
+the command line the same is a `PG_GPU` per process:
+
+```bash
+PG_GPU=0 ./build/prototype sim scene.pgsim - --cache a --set gpu=1 &
+PG_GPU=1 ./build/prototype sim scene.pgsim - --cache b --set gpu=1 &
+```
+
+One simulation split over several cards — the box cut in slabs, their
+borders swapped each step — is not done: the gas of one solver lives on one
+card.
+
 **The same to the bit.** Each kernel does what the CPU does for its cell,
 operation for operation: the same lookups in the sparse tiles, the same
 trilinear weights, `std::min` and `std::clamp` as the CPU takes them, the

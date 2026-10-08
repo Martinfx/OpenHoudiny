@@ -34,7 +34,8 @@ std::vector<float> Wedge::values(float from, float to, int count, bool whole) {
 }
 
 bool Wedge::start(const sim::Network& net, int node, const std::string& param, const std::vector<float>& values,
-                  const std::string& root, const std::string& networkFolder, int frames, std::string& error) {
+                  const std::string& root, const std::string& networkFolder, int frames, std::string& error,
+                  const std::vector<std::string>& cards) {
     if (running()) {
         error = "A wedge is baking already";
         return false;
@@ -84,9 +85,13 @@ bool Wedge::start(const sim::Network& net, int node, const std::string& param, c
     networkFolder_ = networkFolder;
     frames_ = frames;
     cancelled_ = false;
-    baking_ = -1;
+    lanes_.clear();
+    for (const std::string& card : cards.empty() ? std::vector<std::string>{std::string()} : cards) {
+        lanes_.emplace_back();
+        lanes_.back().card = card;
+    }
     next();
-    if (baking_ < 0) {
+    if (!running()) {
         error = variants_.empty() || variants_.front().why.empty() ? "The wedge did not start" : variants_.front().why;
         return false;
     }
@@ -94,46 +99,73 @@ bool Wedge::start(const sim::Network& net, int node, const std::string& param, c
 }
 
 void Wedge::next() {
-    baking_ = -1;
     if (cancelled_) return;
-    for (size_t i = 0; i < variants_.size(); ++i) {
-        Variant& v = variants_[i];
-        if (v.state != Variant::State::Waiting) continue;
-        std::string error;
-        if (bake_.start(texts_[i], networkFolder_, v.folder, frames_, 10, false, error)) {
-            v.state = Variant::State::Baking;
-            baking_ = static_cast<int>(i);
-            return;
+    for (Lane& lane : lanes_) {
+        if (lane.variant >= 0) continue;
+        for (size_t i = 0; i < variants_.size(); ++i) {
+            Variant& v = variants_[i];
+            if (v.state != Variant::State::Waiting) continue;
+            std::string error;
+            if (lane.bake->start(texts_[i], networkFolder_, v.folder, frames_, 10, false, error, lane.card)) {
+                v.state = Variant::State::Baking;
+                v.card = lane.card;
+                lane.variant = static_cast<int>(i);
+                break;
+            }
+            v.state = Variant::State::Failed;
+            v.why = error;
         }
-        v.state = Variant::State::Failed;
-        v.why = error;
     }
 }
 
 void Wedge::cancel() {
     cancelled_ = true;
-    bake_.cancel();
+    for (Lane& lane : lanes_) {
+        if (lane.variant >= 0) lane.bake->cancel();
+    }
     for (Variant& v : variants_) {
         if (v.state == Variant::State::Waiting) v.state = Variant::State::Cancelled;
     }
 }
 
 bool Wedge::poll() {
-    if (baking_ < 0) return false;
-    bake_.poll();
-    if (bake_.running()) return false;
-    Variant& v = variants_[static_cast<size_t>(baking_)];
-    v.seconds = bake_.seconds();
-    if (!bake_.failed()) v.state = Variant::State::Done;
-    else if (bake_.cancelled()) v.state = Variant::State::Cancelled;
-    else {
-        v.state = Variant::State::Failed;
-        v.why = bake_.why();
+    bool ended = false;
+    for (Lane& lane : lanes_) {
+        if (lane.variant < 0) continue;
+        lane.bake->poll();
+        if (lane.bake->running()) continue;
+        Variant& v = variants_[static_cast<size_t>(lane.variant)];
+        v.seconds = lane.bake->seconds();
+        if (!lane.bake->failed()) v.state = Variant::State::Done;
+        else if (lane.bake->cancelled()) v.state = Variant::State::Cancelled;
+        else {
+            v.state = Variant::State::Failed;
+            v.why = lane.bake->why();
+        }
+        lane.variant = -1;
+        ended = true;
     }
-    next();
-    return true;
+    if (ended) next();
+    return ended;
 }
 
-bool Wedge::running() const { return baking_ >= 0; }
+bool Wedge::running() const { return baking() > 0; }
+
+int Wedge::baking() const {
+    return static_cast<int>(std::count_if(lanes_.begin(), lanes_.end(), [](const Lane& l) { return l.variant >= 0; }));
+}
+
+int Wedge::ended() const {
+    return static_cast<int>(std::count_if(variants_.begin(), variants_.end(), [](const Variant& v) {
+        return v.state != Variant::State::Waiting && v.state != Variant::State::Baking;
+    }));
+}
+
+const Bake* Wedge::bakeOf(size_t i) const {
+    for (const Lane& lane : lanes_) {
+        if (lane.variant == static_cast<int>(i)) return lane.bake.get();
+    }
+    return nullptr;
+}
 
 }  // namespace pg::editor

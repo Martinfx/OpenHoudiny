@@ -27,9 +27,11 @@ public:
     /// Bakes network `text` into `folder` -- its relative paths read from
     /// `networkFolder` -- `frames` frames, the state saved every `checkpoint`
     /// frames. `resume`: on from the folder's checkpoint; else the folder's
-    /// cache is thrown away first. False, with why, if it cannot start.
+    /// cache is thrown away first. `card`: the GPU its gas steps on, as
+    /// PG_GPU names one; empty: the editor's own environment. False, with
+    /// why, if it cannot start.
     bool start(const std::string& text, const std::string& networkFolder, const std::string& folder, int frames,
-               int checkpoint, bool resume, std::string& error);
+               int checkpoint, bool resume, std::string& error, const std::string& card = "");
     /// Stops it: the frames written so far stay, and the last checkpoint.
     void cancel();
 

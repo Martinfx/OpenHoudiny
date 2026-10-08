@@ -13,6 +13,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <string>
 #include <vector>
 
 namespace pg::sim {
@@ -178,9 +180,32 @@ struct PyroGpu::Impl {
 PyroGpu::PyroGpu() : impl_(std::make_unique<Impl>()) {}
 PyroGpu::~PyroGpu() = default;
 
+namespace {
+
+std::mutex& choiceMutex() {
+    static std::mutex m;
+    return m;
+}
+std::string& choice() {
+    static std::string c;
+    return c;
+}
+
+}  // namespace
+
+void PyroGpu::choose(const std::string& card) {
+    std::lock_guard<std::mutex> lock(choiceMutex());
+    choice() = card;
+}
+
+std::string PyroGpu::chosen() {
+    std::lock_guard<std::mutex> lock(choiceMutex());
+    return choice();
+}
+
 std::unique_ptr<PyroGpu> PyroGpu::open(std::string& why) {
 #ifdef PG_HAVE_VULKAN
-    auto device = gpu::Device::open("", why);
+    auto device = gpu::Device::open(chosen(), why);
     if (!device) return nullptr;
     std::unique_ptr<PyroGpu> g(new PyroGpu());
     g->impl_->device = std::move(device);

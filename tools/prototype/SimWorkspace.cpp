@@ -9,6 +9,7 @@
 #include "pg/io/Video.h"
 #include "pg/sim/Asset.h"
 #include "pg/sim/Cache.h"
+#include "pg/sim/PyroGpu.h"
 #include "pg/sim/SparseGrid.h"
 #ifdef PG_HAVE_VULKAN
 #include "pg/gpu/Gpu.h"
@@ -41,31 +42,48 @@ namespace fs = std::filesystem;
 namespace pg::editor {
 namespace {
 
-/// The card the gas would step on -- the one a Pyro Solver with GPU on
-/// opens -- or why there is none: asked once, on a thread of its own, as
-/// opening Vulkan can take a moment.
-struct GpuChoice {
-    bool found = false;
-    std::string text;  ///< its name, or why there is none
+/// The cards of this machine, as the Pyro Solvers may open them: asked
+/// once, on a thread of its own, as opening Vulkan can take a moment.
+struct Cards {
+    struct Card {
+        std::string index;  ///< as PG_GPU names it
+        std::string name;
+    };
+    std::vector<Card> gpus;  ///< the GPUs that will do (no CPU pretending to be one)
+    std::string automatic;   ///< the one a solver opens unless told: its name, or why there is none
+    bool found = false;      ///< ... whether there is one
 };
-const GpuChoice* gpuChoice() {
-    static std::shared_future<GpuChoice> choice = std::async(std::launch::async, [] {
-        GpuChoice c;
+const Cards* cards() {
+    static std::shared_future<Cards> found = std::async(std::launch::async, [] {
+        Cards c;
 #ifdef PG_HAVE_VULKAN
+        for (const pg::gpu::DeviceInfo& d : pg::gpu::devices()) {
+            if (d.usable && !d.cpu) c.gpus.push_back({std::to_string(d.index), d.name});
+        }
         std::string why;
         if (const auto device = pg::gpu::Device::open("", why)) {
             c.found = true;
-            c.text = device->info().name;
+            c.automatic = device->info().name;
         } else {
-            c.text = why;
+            c.automatic = why;
         }
 #else
-        c.text = "this build has no Vulkan (PG_WITH_VULKAN=OFF)";
+        c.automatic = "this build has no Vulkan (PG_WITH_VULKAN=OFF)";
 #endif
         return c;
     }).share();
-    if (choice.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return nullptr;
-    return &choice.get();
+    if (found.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return nullptr;
+    return &found.get();
+}
+
+/// The name of the card PG_GPU-style `index` names, else `index` itself.
+std::string cardName(const std::string& index) {
+    if (const Cards* c = cards()) {
+        for (const Cards::Card& g : c->gpus) {
+            if (g.index == index) return g.name;
+        }
+    }
+    return index;
 }
 
 using theme::Icon;
@@ -2197,34 +2215,7 @@ void SimWorkspace::menus() {
         }
         ImGui::SetItemTooltip("Frames saved before, in place of simulating them -- until what is simulated changes.");
         ImGui::Separator();
-        {
-            // The Pyro Solvers' GPU switch, all of them at once.
-            std::vector<int> solvers;
-            bool allOn = true;
-            for (const sim::Node& n : net_.nodes()) {
-                if (n.type != "pyro_solver") continue;
-                solvers.push_back(n.id);
-                allOn = allOn && net_.value(n.id, "gpu") != 0.0f;
-            }
-            allOn = allOn && !solvers.empty();
-            const GpuChoice* card = gpuChoice();
-            const std::string label = card && card->found ? "Gas on the GPU (" + card->text + ")" : "Gas on the GPU";
-            if (ImGui::MenuItem(label.c_str(), nullptr, allOn, !solvers.empty())) {
-                for (const int id : solvers) net_.setParam(id, "gpu", {allOn ? 0.0f : 1.0f, 0.0f, 0.0f});
-                setMessage(allOn ? "The gas on the CPU" : "The gas on the GPU");
-            }
-            if (solvers.empty()) {
-                ImGui::SetItemTooltip("The network has no Pyro Solver: no gas to step.");
-            } else if (!card) {
-                ImGui::SetItemTooltip("Looking for the card...");
-            } else if (card->found) {
-                ImGui::SetItemTooltip("Every Pyro Solver steps its gas on the card, the same to the bit as on the CPU.\n"
-                                      "What it does and how long it takes: Profile, its GPU line.\n"
-                                      "One solver alone: its Domain > GPU.");
-            } else {
-                ImGui::SetItemTooltip("No card will do: %s. On, the CPU steps the gas all the same.", card->text.c_str());
-            }
-        }
+        gpuMenu();
         if (ImGui::MenuItem("Preview Resolution", nullptr, preview_)) {
             preview_ = !preview_;
             forcedPreview_ = false;  // asked for: kept from network to network
@@ -2486,7 +2477,9 @@ std::string SimWorkspace::status() const {
     std::string line = text;
     if (preview_) line += "  \xc2\xb7  preview";
     if (wedge_.running()) {
-        line += "  \xc2\xb7  wedge " + std::to_string(wedge_.baking() + 1) + " / " + std::to_string(wedge_.variants().size());
+        const int first = wedge_.ended() + 1, last = wedge_.ended() + wedge_.baking();
+        line += "  \xc2\xb7  wedge " + std::to_string(first) + (last > first ? "-" + std::to_string(last) : std::string()) +
+                " / " + std::to_string(wedge_.variants().size());
     }
     if (bake_.running()) {
         line += "  \xc2\xb7  baking " + std::to_string(bake_.progress().frames) + " / " + std::to_string(bake_.frames());
@@ -2878,7 +2871,8 @@ bool SimWorkspace::startBake(const std::string& target, bool resume) {
         return false;
     }
     std::string error;
-    if (!bake_.start(net_.save(), folder(), target, compiled_.frames, kCheckpointEvery, resume, error)) {
+    if (!bake_.start(net_.save(), folder(), target, compiled_.frames, kCheckpointEvery, resume, error,
+                     sim::PyroGpu::chosen())) {
         setMessage(error, true);
         return false;
     }
@@ -3021,7 +3015,12 @@ void SimWorkspace::wedgeDialog() {
     }
     const bool whole = def->kind == sim::ParamKind::Int;
     ImGui::Text("%s \xc2\xb7 %s", n->name.c_str(), def->label);
-    ImGui::TextDisabled("A bake a value, one after another, at the full resolution: %d frames each.", compiled_.frames);
+    if (const size_t at = wedgeCards().size(); at > 1) {
+        ImGui::TextDisabled("A bake a value, %zu at once -- one on each card -- at the full resolution: %d frames each.",
+                            at, compiled_.frames);
+    } else {
+        ImGui::TextDisabled("A bake a value, one after another, at the full resolution: %d frames each.", compiled_.frames);
+    }
     ImGui::Spacing();
     const char* format = whole ? "%.0f" : "%.3g";
     // The names before the fields.
@@ -3067,10 +3066,15 @@ void SimWorkspace::wedgeDialog() {
     if (button == 0) {
         std::string error;
         recompile(true);  // the network as it is now
-        if (wedge_.start(net_, wedgeNode_, wedgeParam_, values, wedgeFolder_, folder(), compiled_.frames, error)) {
+        std::vector<std::string> cardsUsed = wedgeCards();
+        if (cardsUsed.empty() && !sim::PyroGpu::chosen().empty()) cardsUsed = {sim::PyroGpu::chosen()};
+        if (wedge_.start(net_, wedgeNode_, wedgeParam_, values, wedgeFolder_, folder(), compiled_.frames, error,
+                         cardsUsed)) {
             wedgeShown_ = -1;
             setMessage("Baking " + std::to_string(values.size()) + " variants of " + n->name + "." + wedgeParam_ +
-                       " into " + shownPath(wedgeFolder_) + ", one after another");
+                       " into " + shownPath(wedgeFolder_) +
+                       (cardsUsed.size() > 1 ? ", " + std::to_string(cardsUsed.size()) + " at once, one on each card"
+                                             : ", one after another"));
             ImGui::CloseCurrentPopup();
         } else {
             wedgeError_ = error;
@@ -3094,16 +3098,19 @@ void SimWorkspace::wedgePanel() {
         ui::rowStart(value);
         using S = Wedge::Variant::State;
         const bool baking = v.state == S::Baking;
-        if (baking) {
-            const sim::CacheInfo& p = wedge_.bake().progress();
+        const Bake* bake = wedge_.bakeOf(i);
+        if (baking && bake) {
+            const sim::CacheInfo& p = bake->progress();
             char line[64];
-            std::string left = wedge_.bake().secondsLeft() > 0.0 ? ", " + Bake::duration(wedge_.bake().secondsLeft()) + " left"
-                                                                   : std::string();
+            std::string left = bake->secondsLeft() > 0.0 ? ", " + Bake::duration(bake->secondsLeft()) + " left"
+                                                         : std::string();
             std::snprintf(line, sizeof line, "%d / %d%s", p.frames, wedge_.frames(), left.c_str());
             ImGui::ProgressBar(static_cast<float>(p.frames) / static_cast<float>(std::max(1, wedge_.frames())),
                                ImVec2(theme::px(200.0f), 0.0f), line);
+            if (!v.card.empty()) ImGui::SetItemTooltip("On %s", cardName(v.card).c_str());
         } else if (v.state == S::Done) {
             ImGui::TextDisabled("baked in %s", Bake::duration(v.seconds).c_str());
+            if (!v.card.empty()) ImGui::SetItemTooltip("On %s", cardName(v.card).c_str());
         } else if (v.state == S::Failed) {
             ImGui::TextColored(theme::vec(theme::kRed), "failed");
             ImGui::SetItemTooltip("%s", v.why.c_str());
@@ -3121,6 +3128,78 @@ void SimWorkspace::wedgePanel() {
         ui::rowStart("");
         if (ImGui::SmallButton("Cancel Wedge")) wedge_.cancel();
         ImGui::SetItemTooltip("Stops the variant baking and those waiting; what is baked stays");
+    }
+}
+
+std::vector<int> SimWorkspace::pyroSolvers(bool* allOnGpu) const {
+    std::vector<int> solvers;
+    bool allOn = true;
+    for (const sim::Node& n : net_.nodes()) {
+        if (n.type != "pyro_solver") continue;
+        solvers.push_back(n.id);
+        allOn = allOn && net_.value(n.id, "gpu") != 0.0f;
+    }
+    if (allOnGpu) *allOnGpu = allOn && !solvers.empty();
+    return solvers;
+}
+
+std::vector<std::string> SimWorkspace::wedgeCards() const {
+    // On every GPU at once when the gas is on the GPU and there are two.
+    bool onGpu = false;
+    pyroSolvers(&onGpu);
+    const Cards* c = cards();
+    if (!wedgeOnCards_ || !onGpu || !c || c->gpus.size() < 2) return {};
+    std::vector<std::string> out;
+    for (const Cards::Card& g : c->gpus) out.push_back(g.index);
+    return out;
+}
+
+void SimWorkspace::gpuMenu() {
+    bool allOn = false;
+    const std::vector<int> solvers = pyroSolvers(&allOn);
+    const Cards* c = cards();
+    const std::string chosen = sim::PyroGpu::chosen();
+    const std::string name = chosen.empty() ? (c && c->found ? c->automatic : std::string()) : cardName(chosen);
+    const std::string label = name.empty() ? "Gas on the GPU" : "Gas on the GPU (" + name + ")";
+    if (ImGui::MenuItem(label.c_str(), nullptr, allOn, !solvers.empty())) {
+        for (const int id : solvers) net_.setParam(id, "gpu", {allOn ? 0.0f : 1.0f, 0.0f, 0.0f});
+        setMessage(allOn ? "The gas on the CPU" : "The gas on the GPU");
+    }
+    if (solvers.empty()) {
+        ImGui::SetItemTooltip("The network has no Pyro Solver: no gas to step.");
+    } else if (!c) {
+        ImGui::SetItemTooltip("Looking for the cards...");
+    } else if (c->found || !chosen.empty()) {
+        ImGui::SetItemTooltip("Every Pyro Solver steps its gas on the card, the same to the bit as on the CPU.\n"
+                              "What it does and how long it takes: Profile, its GPU line.\n"
+                              "One solver alone: its Domain > GPU.");
+    } else {
+        ImGui::SetItemTooltip("No card will do: %s. On, the CPU steps the gas all the same.", c->automatic.c_str());
+    }
+    // Which card, when there are several: the solvers here, Bake to Disk
+    // and a wedge on one card each step on it.
+    if (c && c->gpus.size() >= 2 && ImGui::BeginMenu("GPU Card")) {
+        auto pick = [&](const std::string& index) {
+            sim::PyroGpu::choose(index);
+            // The solvers made open their card again: the frames thrown
+            // away, as Simulate Again.
+            runner_->clear();
+            compileAsked_ = ~0ull;
+            recompile(true);
+            shown_.reset();
+            setMessage("The gas on " + (index.empty() ? "the best card" : cardName(index)));
+        };
+        if (ImGui::MenuItem("Automatic", nullptr, chosen.empty())) pick("");
+        ImGui::SetItemTooltip("The best: a discrete GPU first -- or the one PG_GPU names. Now: %s", c->automatic.c_str());
+        for (const Cards::Card& g : c->gpus) {
+            const std::string item = g.index + "  " + g.name;
+            if (ImGui::MenuItem(item.c_str(), nullptr, chosen == g.index)) pick(g.index);
+        }
+        ImGui::Separator();
+        ImGui::MenuItem("Wedge on Every Card", nullptr, &wedgeOnCards_);
+        ImGui::SetItemTooltip("A wedge of a network whose gas is on the GPU bakes a variant on each card at once: "
+                              "%zu at a time.", c->gpus.size());
+        ImGui::EndMenu();
     }
 }
 

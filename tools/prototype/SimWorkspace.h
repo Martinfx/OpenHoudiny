@@ -354,6 +354,12 @@ private:
     /// Plays variant `i` of the wedge: its value into the parameter, its
     /// frames from its folder.
     void showVariant(size_t i);
+    /// The Pyro Solvers of the network; `allOnGpu`: whether each has GPU on.
+    std::vector<int> pyroSolvers(bool* allOnGpu = nullptr) const;
+    /// Simulation > Gas on the GPU, and the card when there are several.
+    void gpuMenu();
+    /// The cards a wedge bakes on at once; none: one variant at a time.
+    std::vector<std::string> wedgeCards() const;
     /// The dialog that exports geometry node `id`'s geometry: at the frame
     /// on screen, or at every frame cached (`frames`).
     void chooseExport(int id, bool frames);
@@ -832,6 +838,7 @@ private:
     std::string cacheFolder_;  ///< the folder the cache was last saved to or loaded from
 
     // Preview and bakes.
+    bool wedgeOnCards_ = true;  ///< a wedge on the GPU bakes a variant on each card at once (Simulation > GPU Card)
     bool preview_ = false;     ///< the gas and the water simulated on coarser grids (sim::preview)
     bool forcedPreview_ = false;  ///< preview_ set by the network opened (its Output's Open in Preview)
     Bake bake_;

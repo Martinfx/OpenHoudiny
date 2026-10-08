@@ -41,6 +41,11 @@ public:
     /// On the device PG_GPU names, else the best GPU; null, with `why`,
     /// without one.
     static std::unique_ptr<PyroGpu> open(std::string& why);
+    /// The card the solvers open from now on, as PG_GPU names one (its index
+    /// in gpu::devices(), a part of its name); empty: PG_GPU's, else the
+    /// best. The editor's Simulation > GPU menu sets it.
+    static void choose(const std::string& card);
+    static std::string chosen();
     ~PyroGpu();
     PyroGpu(const PyroGpu&) = delete;
     PyroGpu& operator=(const PyroGpu&) = delete;

@@ -51,7 +51,7 @@ Bake::~Bake() {
 }
 
 bool Bake::start(const std::string& text, const std::string& networkFolder, const std::string& folder, int frames,
-                 int checkpoint, bool resume, std::string& error) {
+                 int checkpoint, bool resume, std::string& error, const std::string& card) {
     if (running()) {
         error = "A bake is running already";
         return false;
@@ -98,7 +98,16 @@ bool Bake::start(const std::string& text, const std::string& networkFolder, cons
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
     posix_spawnattr_setpgroup(&attr, 0);
     pid_t pid = 0;
-    const int failed = posix_spawn(&pid, exe.c_str(), &files, &attr, argv.data(), environ);
+    // The environment as the editor's, PG_GPU naming the card if one was.
+    std::vector<std::string> env;
+    for (char** e = environ; *e; ++e) {
+        if (card.empty() || std::strncmp(*e, "PG_GPU=", 7) != 0) env.emplace_back(*e);
+    }
+    if (!card.empty()) env.push_back("PG_GPU=" + card);
+    std::vector<char*> envp;
+    for (std::string& e : env) envp.push_back(e.data());
+    envp.push_back(nullptr);
+    const int failed = posix_spawn(&pid, exe.c_str(), &files, &attr, argv.data(), envp.data());
     posix_spawn_file_actions_destroy(&files);
     posix_spawnattr_destroy(&attr);
     if (failed != 0) {
