@@ -66,7 +66,7 @@ net.render("out/column.mp4")                # video via prototype
 
 | What | How |
 |---|---|
-| new, from a file, an example | `pg.Network()`, `pg.Network.load("scene.pgsim")`, `pg.Network.example("demolition")`, `pg.examples()` |
+| new, from a file, an example | `pg.Network()`, `pg.Network.load("scene.pgsim")`, `pg.Network.example("demolition")`, `pg.examples()`, `pg.examples("Water")`, `pg.example_categories()`, `pg.example_category(name)` |
 | save | `net.save("scene.pgsim")`, `net.text()` |
 | node | `net.add("box", "name", size=(1, 2, 1))` returns a `pg.Node`; `net["box1"]`, `net.nodes("box")`, `"box1" in net`, `net.remove(node)` |
 | node types | `pg.node_types()`, `pg.node_type("box")`: parameters, inputs, outputs and help; `pg.assets()` for digital assets, `pg.load_assets(folder)` |

@@ -475,6 +475,13 @@ public:
     /// The examples the program carries with it -- the same networks as the
     /// files in examples/sim, so that `prototype pyro fire` needs no file.
     static const std::vector<std::string>& exampleNames();
+    /// What they are for, in the order the menus list them: "Fire and
+    /// smoke", "Wind", "Water", "Rain"...
+    static const std::vector<std::string>& exampleCategories();
+    /// The one an example is in; "Other" for one not given any.
+    static const std::string& exampleCategory(std::string_view name);
+    /// The examples of a category, by name.
+    static std::vector<std::string> examplesIn(std::string_view category);
     static bool example(std::string_view name, Network& out);
     static const char* exampleText(std::string_view name);
 

@@ -2013,10 +2013,15 @@ void SimWorkspace::fileMenu() {
     }
     ImGui::SetItemTooltip("An asset's network (.pgasset) to edit: saved, it is its new version, every instance following");
     if (ImGui::BeginMenu("Examples")) {
-        for (const std::string& name : sim::Network::exampleNames()) {
-            if (ImGui::MenuItem(name.c_str())) {
-                unlessUnsaved("opening the example " + name, [this, name] { openExample(name); });
+        // By what they are for: fire, wind, water, rain...
+        for (const std::string& category : sim::Network::exampleCategories()) {
+            if (!ImGui::BeginMenu(category.c_str())) continue;
+            for (const std::string& name : sim::Network::examplesIn(category)) {
+                if (ImGui::MenuItem(name.c_str())) {
+                    unlessUnsaved("opening the example " + name, [this, name] { openExample(name); });
+                }
             }
+            ImGui::EndMenu();
         }
         ImGui::EndMenu();
     }

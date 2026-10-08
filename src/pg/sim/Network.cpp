@@ -5420,6 +5420,73 @@ const std::vector<std::string>& Network::exampleNames() {
     return names;
 }
 
+namespace {
+
+/// The examples by what they are for: each category, and the names of its
+/// examples. An example is in one; a new one goes in here as well
+/// (pgtests checks).
+const std::vector<std::pair<std::string, std::vector<std::string>>>& exampleTable() {
+    static const std::vector<std::pair<std::string, std::vector<std::string>>> table = {
+        {"Fire and smoke",
+         {"campfire", "campfire_upres", "explosion", "torch", "fire_trail", "scatter_fire", "smoke", "smoke_sphere",
+          "obstacles"}},
+        {"Wind", {"windy_fire", "storm", "tornado", "arch"}},
+        {"Water", {"dam_break", "splash", "waterfall", "wake", "flood_crates", "flood_crates_hd", "liquid_points",
+                   "spiral_stairs", "vdb_rock"}},
+        {"Rain", {"rain_pond", "rain_fill", "rock_garden", "garden_assets", "campfire_rain", "lakeside"}},
+        {"Water against fire", {"fire_douse", "fire_hose"}},
+        {"Destruction",
+         {"demolition", "house_collapse", "wall_collapse", "brick_wall", "concrete_wall", "concrete_column",
+          "concrete_drop", "constraint_network", "guided_fall", "glass_window", "shatter_blocks", "wood_beam",
+          "debris_stairs"}},
+        {"Sand and gravel", {"sand_pour", "gravel_slide", "shatter_grit"}},
+        {"Cloth and soft bodies", {"flag", "tablecloth", "tarp", "shade_sail", "soft_bodies"}},
+        {"Plants", {"forest", "meadow", "foliage", "ecosystem", "tree_shapes", "tree_obstacles"}},
+        {"Geometry and looks", {"foreach_city", "street", "uv_props", "displacement"}},
+        {"Exchange: USD, Alembic, OpenVDB",
+         {"matchmove", "alembic_shot", "usd_looks", "usd_subdivision", "vdb_fireball", "campfire_vdb"}},
+    };
+    return table;
+}
+
+}  // namespace
+
+const std::vector<std::string>& Network::exampleCategories() {
+    static const std::vector<std::string> categories = [] {
+        std::vector<std::string> c;
+        for (const auto& [category, names] : exampleTable()) c.push_back(category);
+        bool other = false;
+        for (const std::string& name : exampleNames()) other = other || exampleCategory(name) == "Other";
+        if (other) c.emplace_back("Other");
+        return c;
+    }();
+    return categories;
+}
+
+const std::string& Network::exampleCategory(std::string_view name) {
+    static const std::string other = "Other";
+    for (const auto& [category, names] : exampleTable()) {
+        if (std::find(names.begin(), names.end(), name) != names.end()) return category;
+    }
+    return other;
+}
+
+std::vector<std::string> Network::examplesIn(std::string_view category) {
+    std::vector<std::string> out;
+    for (const auto& [c, names] : exampleTable()) {
+        if (c != category) continue;
+        for (const std::string& name : names) {
+            if (exampleText(name)) out.push_back(name);  // carried by this build
+        }
+    }
+    if (category == "Other") {
+        for (const std::string& name : exampleNames()) {
+            if (exampleCategory(name) == "Other") out.push_back(name);
+        }
+    }
+    return out;
+}
+
 const char* Network::exampleText(std::string_view name) {
     for (const EmbeddedExample& e : embeddedExamples()) {
         if (name == e.name) return e.text;

@@ -722,6 +722,30 @@ TEST(sim_network_examples_match_the_presets) {
     CHECK(withoutNodes(smoke.compile().world.gas) == Scene::smoke());
 }
 
+TEST(sim_network_examples_each_have_a_category) {
+    // Each example is in one of the categories -- none left in "Other" --
+    // and the categories list each once, together all of them.
+    std::vector<std::string> listed;
+    for (const std::string& category : Network::exampleCategories()) {
+        CHECK(category != "Other");
+        for (const std::string& name : Network::examplesIn(category)) {
+            CHECK(Network::exampleCategory(name) == category);
+            listed.push_back(name);
+        }
+    }
+    for (const std::string& name : Network::exampleNames()) {
+        if (Network::exampleCategory(name) == "Other") ::testing::fail(__FILE__, __LINE__, name + ": no category");
+    }
+    std::vector<std::string> names = Network::exampleNames();
+    std::sort(names.begin(), names.end());
+    std::sort(listed.begin(), listed.end());
+    CHECK(listed == names);
+    CHECK(Network::exampleCategory("campfire") == "Fire and smoke");
+    CHECK(Network::exampleCategory("dam_break") == "Water");
+    CHECK(Network::exampleCategory("tornado") == "Wind");
+    CHECK(Network::exampleCategory("no_such_example") == "Other");
+}
+
 TEST(sim_network_examples_all_run) {
     CHECK(Network::exampleNames().size() >= 2);
     for (const std::string& name : Network::exampleNames()) {

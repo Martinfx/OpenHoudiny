@@ -75,9 +75,20 @@ def node_type(name):
     raise Error(f"no node type '{name}'")
 
 
-def examples():
-    """The example networks the program carries: Network.example(name) opens one."""
-    return list(_pg.examples())
+def examples(category=None):
+    """The example networks the program carries: Network.example(name) opens one.
+    With a category -- one of example_categories() -- only its examples."""
+    return list(_pg.examples() if category is None else _pg.examples_in(category))
+
+
+def example_categories():
+    """What the examples are for, in the order the editor lists them: "Fire and smoke", "Wind", "Water"..."""
+    return list(_pg.example_categories())
+
+
+def example_category(name):
+    """The category of an example; "Other" for one not given any."""
+    return _pg.example_category(name)
 
 
 def assets():

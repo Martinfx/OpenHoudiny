@@ -167,6 +167,9 @@ void bindNetwork(py::module_& m) {
         return out;
     });
     m.def("examples", [] { return sim::Network::exampleNames(); });
+    m.def("example_categories", [] { return sim::Network::exampleCategories(); });
+    m.def("example_category", [](const std::string& name) { return sim::Network::exampleCategory(name); });
+    m.def("examples_in", [](const std::string& category) { return sim::Network::examplesIn(category); });
     m.def("examples_folder", [] { return std::string(PG_SIM_EXAMPLES_DIR); });
 
     py::class_<PyNetwork>(m, "Network", "The nodes of a network: what the editor and the .pgsim files hold.")

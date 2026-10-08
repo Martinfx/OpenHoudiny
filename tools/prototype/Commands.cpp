@@ -1524,7 +1524,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
 
 int simCommand(const Options& o) {
     if (o.listExamples) {
-        for (const std::string& name : pg::sim::Network::exampleNames()) std::printf("%s\n", name.c_str());
+        // By what they are for.
+        for (const std::string& category : pg::sim::Network::exampleCategories()) {
+            std::printf("%s:\n", category.c_str());
+            for (const std::string& name : pg::sim::Network::examplesIn(category)) std::printf("  %s\n", name.c_str());
+        }
         return 0;
     }
     if (o.positional.size() != 2 || o.threads < 0) return usage();
@@ -1854,7 +1858,8 @@ void printUsage(std::FILE* out) {
                  "                   --folder DIR: the network's relative paths (meshes) are read from DIR.\n"
                  "                   --set takes an expression too: 'fire.center.x=sin($T*6)*0.3',\n"
                  "                   'box1.sizex=ch(\"../base/sizex\")*2', 'fire.center={0, $F*0.01, 0}'\n"
-                 "  prototype sim --list    the examples it carries: campfire, smoke, ...\n"
+                 "  prototype sim --list    the examples it carries, by what they are for: fire and smoke, wind,\n"
+                 "                   water, rain, destruction...\n"
                  "  prototype pyro   OUT.png [--preset EXAMPLE] [...]   sim with an example (fire: campfire)\n"
                  "  prototype cook   NETWORK.pgsim|EXAMPLE OUT.obj|OUT.ply|OUT.vdb|OUT.usda|OUT.mtlx|- [--node NODE]\n"
                  "                   [--set NODE.PARAM=VALUE]... [--frame N] [--frames N [--start N]] [--threads N] [--hash]\n"

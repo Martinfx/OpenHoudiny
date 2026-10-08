@@ -31,6 +31,10 @@ class Networks(unittest.TestCase):
         self.assertEqual(box["category"], "Geometry")
         self.assertIn("size", [p["name"] for p in box["params"]])
         self.assertIn("demolition", pg.examples())
+        self.assertEqual(pg.example_category("dam_break"), "Water")
+        self.assertIn("Wind", pg.example_categories())
+        self.assertIn("tornado", pg.examples("Wind"))
+        self.assertEqual(sorted(sum((pg.examples(c) for c in pg.example_categories()), [])), sorted(pg.examples()))
         with self.assertRaises(pg.Error):
             pg.node_type("no_such_node")
 

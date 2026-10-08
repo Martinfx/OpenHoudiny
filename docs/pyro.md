@@ -56,7 +56,7 @@ Contents:
 ./build/prototype sim lakeside shot.png    # shot through the network's camera, 1280 × 720
 ./build/prototype sim lakeside out/shot.png --every 1   # the whole shot, frame by frame
 ./build/prototype sim tornado t.png --set vortex.speed=3 --set solver.resolution=128
-./build/prototype sim --list               # built-in examples
+./build/prototype sim --list               # built-in examples, by purpose (fire, wind, water, rain...)
 
 # straight to video: the whole shot, frame by frame (.avi with nothing extra, .mp4 via ffmpeg)
 ./build/prototype sim campfire fire.mp4
