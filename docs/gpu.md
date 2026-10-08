@@ -203,8 +203,10 @@ and fetches them once, at the end of the frame. With substeps, once a frame.
 ./build/pgbench_pyro 160 --example campfire --set gpu=1          # where the time goes; on the GPU and back
 ```
 
-In the editor: select the **Pyro Solver**, tick **GPU** in its Domain
-section, and simulate. The **Profile** section under the timeline's frame
+In the editor: **Simulation > Gas on the GPU** — the menu names the card
+it found, or says in its tooltip why there is none — turns the GPU on for
+every Pyro Solver of the network (one alone: select it, tick **GPU** in its
+Domain section), and the gas is simulated again. The **Profile** section under the timeline's frame
 says, below the gas's time, what the card does — `GPU: on the GPU, NVIDIA
 GeForce GTX 1060 6GB`, and which forces the CPU does, if any — or why the
 CPU does it all.

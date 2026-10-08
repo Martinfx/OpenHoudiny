@@ -10,6 +10,9 @@
 #include "pg/sim/Asset.h"
 #include "pg/sim/Cache.h"
 #include "pg/sim/SparseGrid.h"
+#ifdef PG_HAVE_VULKAN
+#include "pg/gpu/Gpu.h"
+#endif
 
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -26,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -36,6 +40,33 @@ namespace fs = std::filesystem;
 
 namespace pg::editor {
 namespace {
+
+/// The card the gas would step on -- the one a Pyro Solver with GPU on
+/// opens -- or why there is none: asked once, on a thread of its own, as
+/// opening Vulkan can take a moment.
+struct GpuChoice {
+    bool found = false;
+    std::string text;  ///< its name, or why there is none
+};
+const GpuChoice* gpuChoice() {
+    static std::shared_future<GpuChoice> choice = std::async(std::launch::async, [] {
+        GpuChoice c;
+#ifdef PG_HAVE_VULKAN
+        std::string why;
+        if (const auto device = pg::gpu::Device::open("", why)) {
+            c.found = true;
+            c.text = device->info().name;
+        } else {
+            c.text = why;
+        }
+#else
+        c.text = "this build has no Vulkan (PG_WITH_VULKAN=OFF)";
+#endif
+        return c;
+    }).share();
+    if (choice.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return nullptr;
+    return &choice.get();
+}
 
 using theme::Icon;
 
@@ -2166,6 +2197,34 @@ void SimWorkspace::menus() {
         }
         ImGui::SetItemTooltip("Frames saved before, in place of simulating them -- until what is simulated changes.");
         ImGui::Separator();
+        {
+            // The Pyro Solvers' GPU switch, all of them at once.
+            std::vector<int> solvers;
+            bool allOn = true;
+            for (const sim::Node& n : net_.nodes()) {
+                if (n.type != "pyro_solver") continue;
+                solvers.push_back(n.id);
+                allOn = allOn && net_.value(n.id, "gpu") != 0.0f;
+            }
+            allOn = allOn && !solvers.empty();
+            const GpuChoice* card = gpuChoice();
+            const std::string label = card && card->found ? "Gas on the GPU (" + card->text + ")" : "Gas on the GPU";
+            if (ImGui::MenuItem(label.c_str(), nullptr, allOn, !solvers.empty())) {
+                for (const int id : solvers) net_.setParam(id, "gpu", {allOn ? 0.0f : 1.0f, 0.0f, 0.0f});
+                setMessage(allOn ? "The gas on the CPU" : "The gas on the GPU");
+            }
+            if (solvers.empty()) {
+                ImGui::SetItemTooltip("The network has no Pyro Solver: no gas to step.");
+            } else if (!card) {
+                ImGui::SetItemTooltip("Looking for the card...");
+            } else if (card->found) {
+                ImGui::SetItemTooltip("Every Pyro Solver steps its gas on the card, the same to the bit as on the CPU.\n"
+                                      "What it does and how long it takes: Profile, its GPU line.\n"
+                                      "One solver alone: its Domain > GPU.");
+            } else {
+                ImGui::SetItemTooltip("No card will do: %s. On, the CPU steps the gas all the same.", card->text.c_str());
+            }
+        }
         if (ImGui::MenuItem("Preview Resolution", nullptr, preview_)) {
             preview_ = !preview_;
             forcedPreview_ = false;  // asked for: kept from network to network
