@@ -1,47 +1,50 @@
 pgsim 1
 # A ground smoke plume rolling at the camera, as a stock element of one
-# shows it: a burst of dense, heavy smoke at ground level -- three jets of
-# it for less than half a second, thrown at the camera and to either side,
-# cold -- billows up, spreads along the ground and rolls on until it fills
-# the frame. The jets' shear and two turbulences (one coarse, one fine) make
-# the billows; a Pyro Upres twice as fine adds the curls. The smoke weighs
-# more than the air and barely lifts: it hugs the ground as it comes, a
-# breeze along the ground carrying it on. The camera stands low in the
+# shows it: a burst of dense, heavy smoke at ground level -- a wide, flat
+# source and two jets beside it, for less than half a second, thrown at the
+# camera, cold -- swells into one low dome of billows, wider than it is
+# high, spreads along the ground and rolls on until it fills the frame. The
+# jets' shear, a little swelling and two turbulences (one coarse, one fine)
+# make the billows; a Pyro Upres twice as fine adds the curls. The smoke
+# weighs more than the air and barely lifts: it hugs the ground as it
+# comes, a breeze along the ground carrying it on. The sun from behind the
+# camera, a dark ground without its grid. The camera stands low in the
 # gas's box, so the plume swallows it at the end: 2.7 s.
 #   prototype --example smoke_plume                     the viewport: Play
 #   prototype sim smoke_plume out/plume.mp4             a video of it
 node 1 pyro_source 2 burst 0 0
-  param center 0 0.35 -2.4
-  param size 1 0.5 1
-  param smoke 14
-  param heat 0.6
-  param velocity 0 3 9
+  param center 0 0.25 -2.4
+  param size 2.4 0.35 1.2
+  param smoke 16
+  param heat 0.3
+  param velocity 0 2.6 6.5
+  param expansion 3
   param flicker 1
   param flicker_size 0.3
   param end 0.45
 node 8 pyro_source 2 burst_left 0 96
-  param center -0.6 0.3 -2.2
-  param size 0.7 0.4 0.7
+  param center -0.8 0.2 -2.2
+  param size 0.9 0.3 0.9
   param smoke 14
-  param heat 0.4
-  param velocity -3 2 7
+  param heat 0.2
+  param velocity -2.2 1.4 5
   param flicker 1
   param flicker_size 0.25
-  param start 0.06
+  param start 0.03
   param end 0.4
 node 9 pyro_source 2 burst_right 0 192
-  param center 0.6 0.3 -2.3
-  param size 0.7 0.4 0.7
+  param center 0.8 0.2 -2.3
+  param size 0.9 0.3 0.9
   param smoke 14
-  param heat 0.4
-  param velocity 3 2.5 6.5
+  param heat 0.2
+  param velocity 2.2 1.6 4.8
   param flicker 1
   param flicker_size 0.25
-  param start 0.1
+  param start 0.05
   param end 0.42
 node 2 turbulence 1 billows 0 300
-  param strength 12
-  param scale 0.45
+  param strength 14
+  param scale 0.32
   param speed 1.5
 node 10 turbulence 1 detail 0 396
   param strength 9
@@ -52,29 +55,32 @@ node 7 wind 1 rolling 0 492
   param speed 2.2
   param strength 0.8
 node 3 pyro_solver 2 solver 250 200
-  param size 6 3 8
+  param size 8 3 8
   param resolution 144
   param substeps 2
-  param buoyancy 0.25
-  param weight 0.35
-  param vorticity 3
+  param buoyancy 0.1
+  param weight 0.6
+  param vorticity 4
   param cooling 1.5
   param smoke_decay 0.015
 node 11 pyro_upres 1 upres 490 200
   param turbulence 2.5
+  param swirl_size 3
 node 4 volume_look 2 look 730 200
-  param smoke_color 0.55 0.54 0.53
-  param smoke_density 28
+  param smoke_color 0.62 0.61 0.6
 node 5 camera 1 camera 970 330
   param center 0 0.6 3.6
   param rotation 3 0 0
   param focal 24
 node 6 output 2 output 970 200
   param frames 81
-  param light_azimuth 200
-  param light_elevation 35
-  param sky_color 0.35 0.38 0.42
-  param sky_intensity 0.7
+  param light_azimuth 20
+  param light_elevation 28
+  param light_intensity 1.3
+  param sky_color 0.3 0.33 0.38
+  param sky_intensity 0.45
+  param ground_color 0.06 0.06 0.065
+  param grid off
   param render_motion_blur 0.25
 link 1.source -> 3.sources
 link 8.source -> 3.sources
