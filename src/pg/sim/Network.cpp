@@ -5428,7 +5428,7 @@ namespace {
 const std::vector<std::pair<std::string, std::vector<std::string>>>& exampleTable() {
     static const std::vector<std::pair<std::string, std::vector<std::string>>> table = {
         {"Fire and smoke",
-         {"campfire", "campfire_upres", "explosion", "torch", "fire_trail", "scatter_fire", "smoke", "smoke_sphere",
+         {"campfire", "campfire_upres", "explosion", "torch", "fire_trail", "scatter_fire", "smoke", "smoke_sphere", "smoke_plume",
           "obstacles"}},
         {"Wind", {"windy_fire", "storm", "tornado", "arch"}},
         {"Water", {"dam_break", "splash", "waterfall", "wake", "flood_crates", "flood_crates_hd", "liquid_points",
