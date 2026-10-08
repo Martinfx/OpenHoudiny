@@ -5441,7 +5441,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& exampleTabl
           "debris_stairs"}},
         {"Sand and gravel", {"sand_pour", "gravel_slide", "shatter_grit"}},
         {"Cloth and soft bodies", {"flag", "tablecloth", "tarp", "shade_sail", "soft_bodies"}},
-        {"Plants", {"forest", "meadow", "foliage", "ecosystem", "tree_shapes", "tree_obstacles"}},
+        {"Plants", {"forest", "meadow", "river_flight", "foliage", "ecosystem", "tree_shapes", "tree_obstacles"}},
         {"Geometry and looks", {"foreach_city", "street", "uv_props", "displacement"}},
         {"Exchange: USD, Alembic, OpenVDB",
          {"matchmove", "alembic_shot", "usd_looks", "usd_subdivision", "vdb_fireball", "campfire_vdb"}},

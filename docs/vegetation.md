@@ -23,6 +23,23 @@ it is held by 21 prototypes and 160 thousand points.
 ./build/prototype sim meadow - --frames 48 --export shot.usda   # shot in the wind to USD
 ```
 
+The **river_flight** example flies over a meadow along a river up to the
+mountains: a valley 900 m by 1.5 km from one Grid and one wrangle — the river
+in its own bed, rolling meadow, hills at the sides, ridged mountains with rock
+and snow, the far end hazier — 126,941 grass clumps along the river, 118
+broadleaves on its banks and 941 spruces in a wood at the mountains' foot. The
+river is a strip at one level along the same line as its bed, ending where the
+bed rises out of it. A keyed camera follows the river's bends low over the
+water and climbs as the mountains come up, 240 frames; the viewport plays it,
+drawing only the copies the camera sees (section 9).
+
+![The flight: frames 1, 100, 170 and 240 in the viewport](img/river-flight.jpg)
+
+```bash
+./build/prototype --example river_flight            # the flight: Play
+./build/prototype sim river_flight out/flight.mp4 --renderer gl   # as a video
+```
+
 ## 1. Instances
 
 A point with the integer attribute `instance` = k (0 or more) represents

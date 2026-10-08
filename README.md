@@ -299,6 +299,7 @@ PYTHONPATH=build/python python3 examples/python/fracture_stats.py
 ./build/prototype sim liquid_points - --export 'out/water.$F4.ply'                # particles to PLY
 ./build/prototype --example street                 # a street from three Building digital assets
 ./build/prototype --example meadow                 # a meadow by a forest: grass, shrubs and trees as instances
+./build/prototype --example river_flight           # a flight over a meadow along a river up to the mountains
 ./build/prototype sim foliage f.png --renderer cycles   # linden and spruce in grass: leaves with alpha cutout, bark by UV
 ./build/prototype sim ecosystem e.png              # a forest that grew by itself: birches, oaks and spruces over 120 years, hazels in the shade beneath them
 ./build/prototype sim tree_obstacles t.png         # trees by a wall and under a pergola: branches avoid the obstacles

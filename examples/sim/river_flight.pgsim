@@ -1,0 +1,134 @@
+pgsim 1
+# A flight over a meadow along a river, up to the mountains -- a landscape
+# of a few hundred thousand plants the viewport draws as it flies: a Grid
+# 900 m by 1.5 km raised by a wrangle into a valley -- a river winding down
+# it in its own bed, a meadow on both banks, hills at the sides and the
+# mountains at its head, rock and snow on their peaks. The water is a strip
+# along the river's line at one level: where the bed is lower, the river,
+# up to where the mountains rise out of it. Grass covers
+# the meadow along the river, the way the camera flies; broadleaves grow on
+# the banks, spruces in a belt at the foot of the mountains. The camera
+# starts low over the water, follows the river's bends and climbs as the
+# mountains come up: 8 s.
+#   prototype --example river_flight                    the viewport: play it
+#   prototype sim river_flight out/flight.mp4 --renderer gl   a video of it
+node 1 grid 1 land 0 0
+  param sizex 900
+  param sizez 1500
+  param rows 600
+  param cols 360
+  param center 0 0 -450
+node 2 point_wrangle 1 valley 0 110
+  param snippet "// The river's line down the valley, and how far each point is from it.\nfloat rx = 18.0 * sin(@P.z * 0.012) + 8.0 * sin(@P.z * 0.031 + 1.0);\nfloat d = abs(@P.x - rx);\n// The valley floor, rolling away from the river, the hills at its sides.\nfloat roll = 1.4 * (noise(@P * 0.02) - 0.5) + 0.35 * (noise(@P * 0.11) - 0.5);\nfloat h = 2.0 + roll * smoothstep(6.0, 30.0, d);\nh += 55.0 * smoothstep(110.0, 430.0, abs(@P.x)) * (0.6 + 0.8 * noise(@P * 0.008));\n// The mountains at the head of the valley: ridges, and their foothills.\nfloat m = smoothstep(-500.0, -960.0, @P.z);\nfloat ridge = 1.0 - abs(2.0 * noise(@P * 0.0045 + set(3.1, 0.0, 1.7)) - 1.0);\nh += m * (60.0 + 260.0 * ridge * ridge + 40.0 * (noise(@P * 0.025) - 0.5));\n// The river's bed: below the water, which stands at 1 m -- from its\n// source in the wood at the mountains' foot.\nfloat river = 1.0 - smoothstep(-480.0, -530.0, @P.z);\nh -= 1.7 * (1.0 - smoothstep(5.0, 9.0, d)) * river;\n@P.y = h;\n// Its colours: grass, the banks' earth, rock above the trees, snow on the peaks.\nfloat n = noise(@P * 0.3);\nfloat nr = noise(@P * 0.05);\nfloat strata = noise(@P * set(0.03, 0.45, 0.03));\nvector grass = set(0.075, 0.11, 0.035) * (0.8 + 0.4 * n);\nvector earth = set(0.19, 0.15, 0.1);\nvector rock = set(0.11, 0.105, 0.1) * (0.55 + 0.5 * nr + 0.5 * strata);\nvector snow = set(0.85, 0.87, 0.9);\n@Cd = lerp(grass, earth, (1.0 - smoothstep(7.0, 11.0, d)) * river);\n@Cd = lerp(@Cd, rock, smoothstep(45.0, 90.0, h));\nfloat ns = noise(@P * 0.03);\n@Cd = lerp(@Cd, snow, smoothstep(250.0, 290.0, h + 50.0 * (ns - 0.5)));\n// The air between: the farther up the valley, the more of the sky in it.\n@Cd = lerp(@Cd, set(0.42, 0.5, 0.62), 0.3 * smoothstep(-450.0, -1150.0, @P.z));\n// Where the plants grow: grass on the meadow along the river, the way the\n// camera flies; trees on the banks and in a belt at the mountains' foot.\nf@grass = smoothstep(9.0, 12.0, d) * (1.0 - smoothstep(40.0, 55.0, d)) * smoothstep(-380.0, -330.0, @P.z) * (1.0 - smoothstep(60.0, 90.0, @P.z));\nf@trees = 0.12 * smoothstep(12.0, 16.0, d) * (1.0 - smoothstep(30.0, 60.0, d)) * (1.0 - m) + smoothstep(-380.0, -430.0, @P.z) * (1.0 - smoothstep(-600.0, -680.0, @P.z)) * smoothstep(12.0, 20.0, d);\nf@trees *= 1.0 - smoothstep(25.0, 50.0, h);"
+node 3 grass 1 grass -250 230
+  param density 4
+  param densityattribute "grass"
+  param maxslope 30
+  param blades 24
+  param height 0.5
+  param rootcolor 0.04 0.08 0.016
+  param tipcolor 0.2 0.3 0.07
+  param variation 0.35
+node 4 plant_wind 1 wind -250 340
+  param strength 18
+  param gustsize 14
+node 5 scatter 1 tree_spots 0 230
+  param mode density
+  param density 0.012
+  param seed 5
+  param densityattribute "trees"
+  param mindistance 6
+node 16 point_wrangle 1 kinds 0 290
+  param snippet "// Spruces in the wood at the mountains' foot, a few among the broadleaves\n// before it; broadleaves along the river.\n@group_conifer = rand(@ptnum * 1.37 + 0.2) < 0.15 + 0.8 * smoothstep(-330.0, -420.0, @P.z);"
+node 6 blast 1 broadleaf_spots -80 340
+  param group "conifer"
+node 7 blast 1 conifer_spots 80 340
+  param group "conifer"
+  param invert on
+node 8 tree 1 broadleaves -80 450
+  param height 9
+  param radius 0.28
+  param sizevariation 0.3
+  param crown 0.3
+  param forks 3
+  param forkheight 0.45
+  param forkangle 28
+  param length1 0.55
+  param branches3 4
+  param leaves 12
+  param leafsize 0.25
+  param leafcolor 0.07 0.15 0.035
+  param sides 8
+  param segment 0.4
+  param output instances
+  param variants 4
+node 9 tree 1 spruces 80 450
+  param shape conical
+  param height 16
+  param radius 0.28
+  param seed 2
+  param sizevariation 0.3
+  param crown 0.08
+  param levels 2
+  param gravity 0.35
+  param up 0.05
+  param branches1 60
+  param angle1 80
+  param length1 0.3
+  param branches2 12
+  param angle2 55
+  param leaves 14
+  param leafsize 0.3
+  param leafshape needles
+  param barkcolor 0.1 0.08 0.065
+  param leafcolor 0.035 0.08 0.035
+  param sides 8
+  param segment 0.5
+  param output instances
+  param variants 4
+node 10 grid 1 river 250 0
+  param sizex 24
+  param sizez 680
+  param rows 340
+  param cols 2
+  param center 0 1 -190
+node 11 point_wrangle 1 water 250 110
+  param snippet "// Along the river's line, as the valley's wrangle has it; the colour of\n// deep water under the sky.\n@P.x += 18.0 * sin(@P.z * 0.012) + 8.0 * sin(@P.z * 0.031 + 1.0);\n@Cd = set(0.06, 0.13, 0.15);"
+node 13 merge 1 landscape 0 600
+  display
+node 14 camera 1 camera 500 450
+  param focal 24
+  key center 1 smooth 14 4 50
+  key center 80 smooth -14 7 -110
+  key center 160 smooth 0 22 -260
+  key center 240 smooth 2 70 -400
+  key rotation 1 smooth -8 0 0
+  key rotation 80 smooth -6 12 0
+  key rotation 160 smooth -2 -4 0
+  key rotation 240 smooth 5 0 0
+node 15 output 2 output 500 300
+  param frames 240
+  param light_azimuth 150
+  param light_elevation 24
+  param light_color 1 0.93 0.82
+  param sky_color 0.55 0.66 0.82
+  param sky_intensity 0.8
+  param floor off
+  param grid off
+  param sky_behind on
+link 1.geometry -> 2.geometry
+link 2.geometry -> 3.surface
+link 3.geometry -> 4.geometry
+link 2.geometry -> 5.geometry
+link 5.geometry -> 16.geometry
+link 16.geometry -> 6.geometry
+link 16.geometry -> 7.geometry
+link 6.geometry -> 8.points
+link 7.geometry -> 9.points
+link 10.geometry -> 11.geometry
+link 2.geometry -> 13.geometry
+link 4.geometry -> 13.geometry
+link 8.geometry -> 13.geometry
+link 9.geometry -> 13.geometry
+link 11.geometry -> 13.geometry
+link 14.camera -> 15.camera
