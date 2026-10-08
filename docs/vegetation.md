@@ -409,7 +409,7 @@ a tree outside the view still casts its shadow into it. The picture is the
 same to the pixel. Standing on the meadow's path, 36 % of its 122,726 copies
 are in view; in the viewport (llvmpipe, 2560 × 1440) a frame close up took
 0.59 s instead of 1.2 s. Sorting the copies again takes about 5 ms on four
-threads -- shared out among the prototypes, a plant bent by the wind being
+threads — shared out among the prototypes, a plant bent by the wind being
 several — and sending them about as long.
 
 Cycles and the path tracer draw everything at full detail; instances cost them
