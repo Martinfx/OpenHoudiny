@@ -5,7 +5,7 @@ pgsim 1
 # camera, cold -- swells into one low dome of billows, wider than it is
 # high, spreads along the ground and rolls on until it fills the frame. The
 # jets' shear, a little swelling and two turbulences (one coarse, one fine)
-# make the billows; a Pyro Upres twice as fine adds the curls. The smoke
+# make the billows; a Pyro Upres three times as fine adds the curls. The smoke
 # weighs more than the air and barely lifts: it hugs the ground as it
 # comes, a breeze along the ground carrying it on. The sun from behind the
 # camera, a dark ground without its grid. The camera stands low in the
@@ -20,7 +20,7 @@ node 1 pyro_source 2 burst 0 0
   param velocity 0 2.6 6.5
   param expansion 3
   param flicker 1
-  param flicker_size 0.3
+  param flicker_size 0.55
   param end 0.45
 node 8 pyro_source 2 burst_left 0 96
   param center -0.8 0.2 -2.2
@@ -29,7 +29,7 @@ node 8 pyro_source 2 burst_left 0 96
   param heat 0.2
   param velocity -2.2 1.4 5
   param flicker 1
-  param flicker_size 0.25
+  param flicker_size 0.45
   param start 0.03
   param end 0.4
 node 9 pyro_source 2 burst_right 0 192
@@ -39,7 +39,7 @@ node 9 pyro_source 2 burst_right 0 192
   param heat 0.2
   param velocity 2.2 1.6 4.8
   param flicker 1
-  param flicker_size 0.25
+  param flicker_size 0.45
   param start 0.05
   param end 0.42
 node 2 turbulence 1 billows 0 300
@@ -47,7 +47,7 @@ node 2 turbulence 1 billows 0 300
   param scale 0.32
   param speed 1.5
 node 10 turbulence 1 detail 0 396
-  param strength 9
+  param strength 6
   param scale 0.12
   param speed 3
 node 7 wind 1 rolling 0 492
@@ -64,10 +64,12 @@ node 3 pyro_solver 2 solver 250 200
   param cooling 1.5
   param smoke_decay 0.015
 node 11 pyro_upres 1 upres 490 200
+  param scale 3
   param turbulence 2.5
   param swirl_size 3
 node 4 volume_look 2 look 730 200
   param smoke_color 0.62 0.61 0.6
+  param smoke_density 50
 node 5 camera 1 camera 970 330
   param center 0 0.6 3.6
   param rotation 3 0 0
@@ -81,7 +83,7 @@ node 6 output 2 output 970 200
   param sky_intensity 0.45
   param ground_color 0.06 0.06 0.065
   param grid off
-  param render_motion_blur 0.25
+  param render_motion_blur 0.1
 link 1.source -> 3.sources
 link 8.source -> 3.sources
 link 9.source -> 3.sources

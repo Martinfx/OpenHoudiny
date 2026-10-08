@@ -526,7 +526,7 @@ checks that the examples are in exactly the form in which the program saves them
 | `explosion` | 0.2 s of fuel with large expansion: a fireball, then a mushroom of soot |
 | `smoke` | warm smoke in the sun |
 | `smoke_sphere` | smoke hits a sphere, spreads over it and flows around it |
-| `smoke_plume` | a ground smoke plume rolling at the camera, after a stock element: a wide, flat burst of heavy, cold smoke and two jets beside it swell into one low dome of billows; two turbulences and a breeze along the ground, a Pyro Upres twice as fine for the curls; lit from behind the camera; the camera low in the box, swallowed at the end |
+| `smoke_plume` | a ground smoke plume rolling at the camera, after a stock element: a wide, flat burst of heavy, cold smoke and two jets beside it swell into one low dome of billows; two turbulences and a breeze along the ground, a Pyro Upres three times as fine for the curls; lit from behind the camera; the camera low in the box, swallowed at the end |
 | `tornado` | a vortex with suction and lift picks up smoke from the floor |
 | `obstacles` | smoke between objects: it hits a slanted plate, flows up along it and rises to a torus; the sphere on the floor is a backdrop without collisions |
 | `arch` | models from OBJ: wind drives smoke through a stone arch and around a rock ([`examples/models`](../examples/models)) |
