@@ -1118,6 +1118,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     double simulating = 0.0, rendering = 0.0;
     int images = 0, cachedFrames = 0, exports = 0, passed = 0;  // passed: frames from --start on
     int plateErrors = 0;
+    bool toldClear = false;  // that a transparent video is over black
     std::string last, lastExport;
     int simulated = 0;  // frames stepped here -- after the checkpoint, when resumed
     sim::Frame::Profile spent;  // where the time of the steps went, summed
@@ -1303,8 +1304,16 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
                 volume->passes.next = gl::orbitThrough(next, 1.0f);
             }
         }
-        // The plate behind it all, through the shot's camera.
-        if (throughCamera && !c.cameraAt(f).plate.empty()) {
+        // Transparent: over an empty plate, the CG alone -- read with its
+        // alpha from the passes; a video, which has none, over black.
+        const bool clear = volume->look.transparent;
+        if (clear) {
+            volume->setBlankPlate();
+            if (!movie) volume->passes.on = true;
+            if (movie && !toldClear) std::fprintf(stderr, "%s: a video has no alpha: the transparent render is over black\n", cmd);
+            toldClear = true;
+        } else if (throughCamera && !c.cameraAt(f).plate.empty()) {
+            // The plate behind it all, through the shot's camera.
             const sim::Camera& cam = c.cameraAt(f);
             std::string why;
             if (!volume->setPlate(cam.plateFile(f), cam, why) && plateErrors++ < 3) {
@@ -1323,7 +1332,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             ++images;
             continue;
         }
-        const std::vector<uint8_t> pixels = volume->readPixels(2);
+        const std::vector<uint8_t> pixels = clear && !movie ? volume->readTransparent(2) : volume->readPixels(2);
         if (movie) {
             if (!movie->add(pixels.data(), error)) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
@@ -1332,7 +1341,7 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             last = outPath;
         } else {
             last = o.every > 0 ? numbered(outPath, f) : outPath;
-            if (!gl::writePng(last, width, height, 3, pixels)) {
+            if (!gl::writePng(last, width, height, clear ? 4 : 3, pixels)) {
                 std::fprintf(stderr, "%s: cannot write %s\n", cmd, last.c_str());
                 return 1;
             }

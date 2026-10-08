@@ -172,6 +172,22 @@ from Cycles, composited by the formula and passed through the tone curve,
 gives the PNG from the renderer: 98% of pixels exactly, the rest off by 1
 level out of 255, because EXR stores values as half float.
 
+## 4b. Transparent: an element without a plate
+
+Output > **Transparent** (`transparent`) renders as if over an empty plate:
+the smoke, the fire and the rest alone, as a stock element, to lay over a
+picture of your own. A PNG gets an alpha channel — the colour not
+premultiplied, as PNG has it — and an EXR its `A`; in both the alpha holds
+the shadows the floor catches too (Floor over the Plate, Shadow Catcher by
+default): where there is no CG, a shadow is black, as covering as it is
+dark. The viewport's renderer, the path tracer and Cycles all do it. A video
+has no alpha: it comes out over black.
+
+```bash
+./build/prototype sim smoke_plume out/plume.png --every 1 --set output.transparent=1   # PNG frames with alpha
+./build/prototype sim smoke_plume out/plume.exr --every 1 --set output.transparent=1   # EXR: R G B A, premultiplied
+```
+
 ## 5. Images without libraries
 
 Plates are read by the program's own readers in `src/pg/io`. The same readers and writers are

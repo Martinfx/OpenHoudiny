@@ -3,6 +3,7 @@
 #include "pg/core/Instances.h"
 #include "pg/core/Parallel.h"
 #include "pg/render/Particles.h"
+#include "pg/render/Plate.h"
 #include "pg/render/Textures.h"
 #include "pg/sim/Display.h"
 #include "pg/sim/Frame.h"
@@ -856,7 +857,8 @@ std::shared_ptr<const Scene> SceneBuilder::build(const SceneInput& in) {
     // What moves is met where it is up to half a frame either way: the
     // longest a shutter is open.
     s.sweep = 0.5f * std::max(in.frameTime, 0.0f);
-    s.plate = in.plate;
+    // Transparent: over nothing, as over an empty plate -- the CG alone.
+    s.plate = in.look.transparent ? blankPlate(in.camera) : in.plate;
     s.sunDirection = normalize(in.look.lightDirection());
     s.sunLight = in.look.lightColor * in.look.lightIntensity;
     s.skyLight = in.look.skyColor * in.look.skyIntensity;

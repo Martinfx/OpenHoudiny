@@ -3891,7 +3891,14 @@ void VolumeRenderer::render(int width, int height) {
     gl_.Uniform2f(location(program_, "u_wetMin"), wetMin_[0], wetMin_[1]);
     gl_.Uniform2f(location(program_, "u_wetMax"), wetMax_[0], wetMax_[1]);
 
-    // The plate, on unit 12, and the camera that filmed it.
+    // The plate, on unit 12, and the camera that filmed it -- an empty one
+    // seen wherever the camera looks.
+    if (blankPlate_) {
+        plateForward_ = forward;
+        plateRight_ = right;
+        plateUp_ = up;
+        plateTan_[0] = plateTan_[1] = 1e6f;
+    }
     const bool plate = hasPlate();
     gl_.ActiveTexture(TEXTURE0 + 12);
     gl_.BindTexture(TEXTURE_2D, plate ? plateTex_ : 0);
@@ -3984,6 +3991,7 @@ bool VolumeRenderer::setPlate(const std::string& file, const sim::Camera& camera
         clearPlate();
         return true;
     }
+    blankPlate_ = false;
     const sim::Camera c = camera.sanitized();
     plateForward_ = c.forward();
     plateRight_ = c.right();
@@ -4040,7 +4048,51 @@ bool VolumeRenderer::setPlate(const std::string& file, const sim::Camera& camera
     return true;
 }
 
-void VolumeRenderer::clearPlate() { plateOn_ = false; }
+void VolumeRenderer::clearPlate() {
+    plateOn_ = false;
+    blankPlate_ = false;
+}
+
+void VolumeRenderer::setBlankPlate() {
+    if (!blankPlate_ || !plateTex_) {
+        const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        if (!plateTex_) gl_.GenTextures(1, &plateTex_);
+        gl_.ActiveTexture(TEXTURE0);
+        gl_.BindTexture(TEXTURE_2D, plateTex_);
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), 1, 1, 0, RGBA, FLOAT, black);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+        gl_.BindTexture(TEXTURE_2D, 0);
+        plateFile_.clear();  // a file set next is read again
+    }
+    blankPlate_ = true;
+    plateOn_ = true;
+}
+
+std::vector<uint8_t> VolumeRenderer::readTransparent(int factor) const {
+    const PassImage p = readPasses(factor);
+    const size_t n = static_cast<size_t>(p.width) * static_cast<size_t>(p.height);
+    std::vector<uint8_t> out(4 * n, 0);
+    if (p.rgba.size() < 4 * n) return out;
+    auto shown = [](float v) {  // the shaders' toneMap, then 1 / 2.2
+        v = std::max(v, 0.0f);
+        const float t = std::clamp(v * (2.51f * v + 0.03f) / (v * (2.43f * v + 0.59f) + 0.14f), 0.0f, 1.0f);
+        return static_cast<uint8_t>(std::lround(std::pow(t, 1.0f / 2.2f) * 255.0f));
+    };
+    for (size_t i = 0; i < n; ++i) {
+        // Covered by the CG, and by the shadows a catcher takes from what
+        // would be behind it -- nothing, here.
+        const float cover = std::clamp(p.rgba[4 * i + 3], 0.0f, 1.0f);
+        float shadow = 0.0f;
+        if (p.relit.size() >= 3 * n) {
+            shadow = std::clamp(1.0f - (p.relit[3 * i] + p.relit[3 * i + 1] + p.relit[3 * i + 2]) / 3.0f, 0.0f, 1.0f);
+        }
+        const float a = cover + (1.0f - cover) * shadow;
+        for (int c = 0; c < 3; ++c) out[4 * i + static_cast<size_t>(c)] = a > 1e-4f ? shown(p.rgba[4 * i + static_cast<size_t>(c)] / a) : 0;
+        out[4 * i + 3] = static_cast<uint8_t>(std::lround(a * 255.0f));
+    }
+    return out;
+}
 
 std::vector<uint8_t> VolumeRenderer::readPixels(int factor) const {
     return readRgb(gl_, fbo_, width_, height_, factor);
@@ -4126,6 +4178,16 @@ bool writePassesExr(const VolumeRenderer& renderer, const std::string& path, con
             c[0] = to.x;
             c[1] = to.y;
             c[2] = to.z;
+        }
+    }
+    // Transparent: the alpha the shadows on the catchers too -- there is no
+    // plate for them to darken.
+    if (renderer.look.transparent && p.relit.size() >= 3 * n) {
+        for (size_t i = 0; i < n; ++i) {
+            const float cover = std::clamp(p.rgba[4 * i + 3], 0.0f, 1.0f);
+            const float shadow =
+                std::clamp(1.0f - (p.relit[3 * i] + p.relit[3 * i + 1] + p.relit[3 * i + 2]) / 3.0f, 0.0f, 1.0f);
+            p.rgba[4 * i + 3] = cover + (1.0f - cover) * shadow;
         }
     }
     const char* rgba[4] = {"R", "G", "B", "A"};

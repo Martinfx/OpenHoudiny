@@ -1525,6 +1525,64 @@ TEST(render_the_path_tracer_draws_the_cg_over_a_plate) {
     CHECK(lightAt(plain.beauty) > 0.05f);
 }
 
+TEST(render_a_transparent_render_is_the_cg_alone_with_its_shadow_in_the_alpha) {
+    // The plate's shot without its plate, transparent: over nothing.
+    const int w = 80, h = 48;
+    PlateShot shot = plateShot(w, h);
+    shot.in.plate = nullptr;
+    shot.in.look.transparent = true;
+    Settings s;
+    s.width = w;
+    s.height = h;
+    s.samples = 64;
+    s.denoise = false;
+    PathTracer t;
+    t.setSettings(s);
+    SceneBuilder builder;
+    t.setScene(builder.build(shot.in));
+    CHECK(t.scene()->plate != nullptr);  // an empty one
+    while (!t.done()) t.pass();
+    const Rendered r = renderedOf(t, false);
+    CHECK(r.transparent);
+    const Image alpha = transparentAlpha(r);
+    CHECK_EQ(alpha.pixels.size(), static_cast<size_t>(w * h));
+    const auto [bx, by] = pixelOf(shot.in.camera, w, h, shot.boxTop);
+    const size_t box = static_cast<size_t>(by) * w + bx;
+    CHECK(alpha.pixels[0] < 0.01f);    // the sky: nothing
+    CHECK(alpha.pixels[box] > 0.95f);  // the box
+    // The shadows on the floor: in the alpha, though the CG is not there.
+    size_t shadowed = 0;
+    for (size_t p = 0; p < alpha.pixels.size(); ++p) {
+        if (r.alpha.pixels[p * static_cast<size_t>(r.alpha.channels)] < 0.02f && alpha.pixels[p] > 0.2f) ++shadowed;
+    }
+    std::printf("  transparent: %zu pixels of shadow alone\n", shadowed);
+    CHECK(shadowed > 0);
+    // A PNG with alpha: as the alpha says; the colour as shown, not premultiplied.
+    const std::vector<uint8_t> rgba = displayRgba(r);
+    CHECK_EQ(rgba.size(), static_cast<size_t>(4 * w * h));
+    CHECK_EQ(rgba[3], 0);
+    CHECK(rgba[4 * box + 3] > 240);
+    const fs::path dir = fs::temp_directory_path() / "pg_test_transparent";
+    fs::create_directories(dir);
+    std::string error;
+    CHECK(savePicture(r, (dir / "clear.png").string(), "", error));
+    io::Picture png;
+    CHECK(io::readPicture((dir / "clear.png").string(), png, error));
+    CHECK(png.width == w && png.height == h);
+    if (png.width == w) {
+        CHECK(png.rgba[3] < 0.01f);
+        CHECK(png.rgba[4 * box + 3] > 0.95f);
+    }
+    // An EXR: A the same, the shadows too.
+    CHECK(savePicture(r, (dir / "clear.exr").string(), "", error));
+    io::ExrImage exr;
+    CHECK(io::readExr((dir / "clear.exr").string(), exr, error));
+    for (const auto& c : exr.channels) {
+        if (c.name == "A") CHECK(std::fabs(c.values[box] - alpha.pixels[box]) < 2e-3f);
+    }
+    fs::remove_all(dir);
+}
+
 TEST(render_cycles_draws_the_cg_over_a_plate) {
     if (!cyclesAvailable()) return;
     const int w = 80, h = 48;

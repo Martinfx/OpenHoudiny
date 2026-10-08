@@ -36,6 +36,9 @@ struct Plate {
 /// The plate of `file`, filmed by `camera`; null, with why, when the file
 /// cannot be read.
 std::shared_ptr<const Plate> loadPlate(const std::string& file, const sim::Camera& camera, std::string& error);
+/// An empty plate -- black, in linear light -- seen by `camera`: what a
+/// transparent render (sim::Look::transparent) is drawn over, the CG alone.
+std::shared_ptr<const Plate> blankPlate(const sim::Camera& camera);
 
 /// The plate in the renderer's light, a picture the size of the plate's: a
 /// shown one back through `view` at `exposure` (shown(light x exposure)

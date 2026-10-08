@@ -84,6 +84,11 @@ struct Look {
     /// catches the shadows and the glow of the CG -- or a holdout, or the
     /// floor drawn as itself.
     Matte floorMatte = Matte::Catcher;
+    /// The background left out: the picture the CG alone, with how much of
+    /// each pixel it covers -- a PNG with alpha, an EXR with A -- the floor
+    /// a shadow catcher on nothing (floorMatte), its shadow in the alpha. As
+    /// if over an empty plate.
+    bool transparent = false;
 
     /// Unit vector towards the light.
     Vec3 lightDirection() const {

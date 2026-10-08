@@ -20,6 +20,15 @@ std::shared_ptr<const Plate> loadPlate(const std::string& file, const sim::Camer
     return plate;
 }
 
+std::shared_ptr<const Plate> blankPlate(const sim::Camera& camera) {
+    auto plate = std::make_shared<Plate>();
+    plate->picture.width = plate->picture.height = 1;
+    plate->picture.rgba = {0.0f, 0.0f, 0.0f, 1.0f};
+    plate->picture.linear = true;
+    plate->camera = camera.sanitized();
+    return plate;
+}
+
 Image plateLight(const Plate& plate, Settings::View view, float exposure, const OcioView* ocio) {
     const io::Picture& p = plate.picture;
     Image out;

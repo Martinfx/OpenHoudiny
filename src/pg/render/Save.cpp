@@ -4,7 +4,9 @@
 #include "pg/io/Picture.h"
 #include "pg/render/Plate.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
@@ -21,6 +23,7 @@ Rendered renderedOf(const PathTracer& tracer, bool denoise) {
     r.view = tracer.settings().view;
     r.ocio = tracer.settings().ocio;
     r.space = tracer.settings().exrSpace;
+    r.transparent = tracer.scene()->look.transparent;
     if (const auto& plate = tracer.scene()->plate) {
         r.alpha = tracer.alpha();
         r.catcher = tracer.catcher(denoise);
@@ -45,6 +48,57 @@ std::vector<uint8_t> displayRgb(const Rendered& rendered) {
     return rgb;
 }
 
+Image transparentAlpha(const Rendered& rendered) {
+    const Image& cg = rendered.beauty;
+    Image out;
+    out.width = cg.width;
+    out.height = cg.height;
+    out.channels = 1;
+    const size_t n = static_cast<size_t>(std::max(cg.width, 0)) * static_cast<size_t>(std::max(cg.height, 0));
+    out.pixels.assign(n, 1.0f);
+    const bool alpha = rendered.alpha.width == cg.width && rendered.alpha.height == cg.height &&
+                       rendered.alpha.pixels.size() >= n * static_cast<size_t>(rendered.alpha.channels);
+    const bool catcher = rendered.catcher.width == cg.width && rendered.catcher.height == cg.height &&
+                         rendered.catcher.channels >= 3 && rendered.catcher.pixels.size() >= 3 * n;
+    if (!alpha) return out;
+    const size_t ka = static_cast<size_t>(rendered.alpha.channels), kc = static_cast<size_t>(rendered.catcher.channels);
+    for (size_t p = 0; p < n; ++p) {
+        const float a = std::clamp(rendered.alpha.pixels[p * ka], 0.0f, 1.0f);
+        float shadow = 0.0f;
+        if (catcher) {
+            const float* c = &rendered.catcher.pixels[p * kc];
+            shadow = std::clamp(1.0f - (c[0] + c[1] + c[2]) / 3.0f, 0.0f, 1.0f);
+        }
+        out.pixels[p] = a + (1.0f - a) * shadow;
+    }
+    return out;
+}
+
+std::vector<uint8_t> displayRgba(const Rendered& rendered) {
+    if (!rendered.transparent) {
+        std::vector<uint8_t> rgba = toDisplay(composited(rendered), rendered.exposure, rendered.view, rendered.ocio.get());
+        for (size_t p = 3; p < rgba.size(); p += 4) rgba[p] = 255;
+        return rgba;
+    }
+    // The CG's light, premultiplied, divided by how much it covers: the
+    // colour a picture with alpha keeps -- shown as the rest is.
+    const Image alpha = transparentAlpha(rendered);
+    Image straight = rendered.beauty;
+    const size_t k = static_cast<size_t>(straight.channels);
+    for (size_t p = 0; p < alpha.pixels.size(); ++p) {
+        const float a = alpha.pixels[p];
+        for (size_t c = 0; c < std::min<size_t>(k, 3); ++c) {
+            float& v = straight.pixels[p * k + c];
+            v = a > 1e-4f ? v / a : 0.0f;
+        }
+    }
+    std::vector<uint8_t> rgba = toDisplay(straight, rendered.exposure, rendered.view, rendered.ocio.get());
+    for (size_t p = 0; p < alpha.pixels.size() && 4 * p + 3 < rgba.size(); ++p) {
+        rgba[4 * p + 3] = static_cast<uint8_t>(std::lround(std::clamp(alpha.pixels[p], 0.0f, 1.0f) * 255.0f));
+    }
+    return rgba;
+}
+
 std::vector<uint8_t> displayRgb(const PathTracer& tracer, bool denoise) {
     return displayRgb(renderedOf(tracer, denoise));
 }
@@ -59,8 +113,9 @@ bool savePicture(const Rendered& rendered, const std::string& path, const std::s
     std::string ext = std::filesystem::path(path).extension().string();
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (ext != ".exr") {
-        const std::vector<uint8_t> rgb = displayRgb(rendered);
-        const std::string png = io::encodePng(rgb.data(), image.width, image.height, 3);
+        // Transparent: with its alpha; else as a screen shows it.
+        const std::vector<uint8_t> pixels = rendered.transparent ? displayRgba(rendered) : displayRgb(rendered);
+        const std::string png = io::encodePng(pixels.data(), image.width, image.height, rendered.transparent ? 4 : 3);
         std::ofstream file(path, std::ios::binary);
         if (!file || !file.write(png.data(), static_cast<std::streamsize>(png.size()))) {
             error = "cannot write " + path;
@@ -107,7 +162,9 @@ bool savePicture(const Rendered& rendered, const std::string& path, const std::s
     // Over a plate, the CG alone: how much of each pixel it covers, and
     // what the plate is multiplied by there.
     const bool over = !rendered.plate.pixels.empty();
-    if (over && rendered.alpha.width == image.width && rendered.alpha.height == image.height) {
+    if (rendered.transparent) {
+        channel("A", transparentAlpha(rendered), 0, true);  // the shadows too: there is no plate to darken
+    } else if (over && rendered.alpha.width == image.width && rendered.alpha.height == image.height) {
         channel("A", rendered.alpha, 0, true);
     } else {
         io::ExrChannel alpha;

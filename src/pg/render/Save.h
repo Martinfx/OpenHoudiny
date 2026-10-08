@@ -29,7 +29,18 @@ struct Rendered {
     Settings::View view = Settings::View::AgXPunchy;  ///< how a PNG shows its light
     std::shared_ptr<const OcioView> ocio;              ///< with View Ocio: the config's view
     LinearSpace space = LinearSpace::Rec709;           ///< what an EXR's light and colours are in
+    /// Rendered transparent (sim::Look::transparent): over an empty plate,
+    /// the picture the CG alone with its alpha (transparentAlpha).
+    bool transparent = false;
 };
+
+/// Of a transparent render: how much of each pixel is covered -- by the CG
+/// (alpha), and by the shadows the catchers take: where the catcher
+/// darkens nothing behind by its mean, that much more. One channel.
+Image transparentAlpha(const Rendered& rendered);
+/// As a screen shows it with its alpha: RGBA, 8 bits, the top row first --
+/// the colour not premultiplied. Of a render that is not transparent, alpha 1.
+std::vector<uint8_t> displayRgba(const Rendered& rendered);
 
 /// The path tracer's: `denoise`, the picture with the noise taken out.
 Rendered renderedOf(const PathTracer& tracer, bool denoise);

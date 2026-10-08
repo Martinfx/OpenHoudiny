@@ -233,6 +233,14 @@ public:
     bool setPlate(const std::string& file, const sim::Camera& camera, std::string& error);
     void clearPlate();
     bool hasPlate() const { return plateOn_ && plateTex_ != 0; }
+    /// An empty plate, black, in every direction the camera looks: what a
+    /// transparent render (sim::Look::transparent) is drawn over -- with
+    /// passes.on, readPasses' rgba the CG alone (readTransparent).
+    void setBlankPlate();
+    /// The last render, transparent: as readPixels, four channels, the
+    /// colour not premultiplied, alpha how much the CG covers and the
+    /// shadows it casts on a catcher. Over an empty plate, with passes.
+    std::vector<uint8_t> readTransparent(int factor = 1) const;
 
     /// Draws into the offscreen framebuffer at `width` x `height` pixels.
     void render(int width, int height);
@@ -519,6 +527,7 @@ private:
     Mat4 viewProjection_{};
     // The plate: its picture on the GPU, and the camera it fills.
     GLuint plateTex_ = 0;
+    bool blankPlate_ = false;  // setBlankPlate: the plate follows the camera, everywhere
     bool plateOn_ = false;
     std::string plateFile_;
     Vec3 plateForward_{0.0f, 0.0f, -1.0f}, plateRight_{1.0f, 0.0f, 0.0f}, plateUp_{0.0f, 1.0f, 0.0f};

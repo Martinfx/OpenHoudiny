@@ -524,6 +524,11 @@ std::vector<ParamDef> outputParams() {
     p.push_back({"sky_behind", "Sky Behind", "Image", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
                  "The sky behind everything, where the floor ends: hazy towards the horizon, glowing round the "
                  "sun -- outdoors, and smoke against the light. Off, the dark backdrop of a studio."});
+    p.push_back({"transparent", "Transparent", "Image", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+                 "The background left out: the smoke, the fire and the rest alone, with how much of each pixel they "
+                 "cover -- a PNG with alpha, an EXR with A -- to lay over a picture of your own, as a stock element. "
+                 "The floor catches their shadows on nothing: the shadow is in the alpha (Floor over the Plate). A "
+                 "video has no alpha: it is over black."});
     p.push_back({"floor_matte", "Floor over the Plate", "Image", K::Choice, {2.0f, 0.0f, 0.0f}, 0.0f, 2.0f, 0.0f, 2.0f,
                  "",
                  "What the floor is when the camera has a plate. Shadow Catcher: the ground the plate was filmed "
@@ -4464,6 +4469,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     k.grid = f(*output, "grid") != 0.0f;
     k.skyBehind = f(*output, "sky_behind") != 0.0f;
     k.floorMatte = static_cast<Matte>(std::clamp(whole(*output, "floor_matte"), 0, 2));
+    k.transparent = f(*output, "transparent") != 0.0f;
     // How the path tracer renders it.
     render::Settings& r = c.render;
     r.samples = std::max(1, whole(*output, "render_samples"));
