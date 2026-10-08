@@ -141,6 +141,21 @@ inline constexpr float kDetailFade = 0.2f;
 std::array<std::vector<float>, kDetailLevels> placementsByDetail(std::span<const float> placements, const Vec3& center,
                                                                  float radius, const Vec3& eye);
 
+/// The six planes of what a camera sees -- left, right, bottom, top, near,
+/// far -- from its view-projection matrix (OpenGL's clip space): each a
+/// normal pointing in, and its distance, (n, d) with |n| = 1.
+using ViewPlanes = std::array<Vec4, 6>;
+ViewPlanes viewPlanesOf(const Mat4& viewProjection);
+/// Whether the ball of `radius` round `center` is at least partly within
+/// the planes.
+bool ballSeen(const ViewPlanes& planes, const Vec3& center, float radius);
+/// The placements of a prototype's copies (DisplayInstances::kFloats each)
+/// into `out` reordered, the copies the camera sees first -- by the ball
+/// round each, its prototype's `center` and `radius` placed as it is --
+/// each part in the order it had: how many it sees.
+size_t seenFirst(std::span<const float> placements, std::vector<float>& out, const Vec3& center, float radius,
+                 const ViewPlanes& planes);
+
 /// The normal of each corner of `triangles` (three point indices each), in
 /// order: the faces round its point that bend less than `crease` degrees
 /// from its own, averaged by area.

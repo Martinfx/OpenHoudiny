@@ -869,34 +869,105 @@ DisplayInstances instancesOf(const Geometry& geo) {
 
 std::array<std::vector<float>, kDetailLevels> placementsByDetail(std::span<const float> placements, const Vec3& center,
                                                                  float radius, const Vec3& eye) {
-    std::array<std::vector<float>, kDetailLevels> out;
     constexpr size_t n = DisplayInstances::kFloats;
+    const size_t count = placements.size() / n;
+    // Each copy's levels, in parallel: the level it is at (-1: none), its
+    // fade, and whether it is at the next too, fading in.
+    struct Where {
+        int8_t level = -1;
+        bool both = false;
+        float fade = 1.0f;
+    };
+    std::vector<Where> where(count);
+    pg::parallelFor(count, 4096, [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            const float* o = &placements[i * n];
+            const float scale = o[3];
+            const Vec3 middle = Vec3(o[0], o[1], o[2]) + quatRotate(Vec4(o[4], o[5], o[6], o[7]), center * scale);
+            // How big it looks: its radius over how far it is.
+            const float looks = radius * std::fabs(scale) / std::max(length(middle - eye), 1e-6f);
+            for (size_t level = 0; level < kDetailLevels; ++level) {
+                const float size = kDetailSize[level];
+                if (looks >= size * (1.0f + kDetailFade)) {
+                    where[i] = {static_cast<int8_t>(level), false, 1.0f};
+                    break;
+                }
+                if (looks > size * (1.0f - kDetailFade)) {
+                    // Between this level and the next: some pixels each.
+                    const float f = (looks - size * (1.0f - kDetailFade)) / (2.0f * kDetailFade * size);
+                    where[i] = {static_cast<int8_t>(level), level + 1 < kDetailLevels, f};
+                    break;
+                }
+            }
+        }
+    });
+    // Then each level's copies, in their order.
+    std::array<size_t, kDetailLevels> sizes{};
+    for (const Where& w : where) {
+        if (w.level < 0) continue;
+        ++sizes[static_cast<size_t>(w.level)];
+        if (w.both) ++sizes[static_cast<size_t>(w.level) + 1];
+    }
+    std::array<std::vector<float>, kDetailLevels> out;
+    for (size_t level = 0; level < kDetailLevels; ++level) out[level].reserve(sizes[level] * n);
     auto add = [&](size_t level, const float* o, float fade) {
         out[level].insert(out[level].end(), o, o + n);
         out[level].back() = fade;
     };
-    for (size_t i = 0; i + n <= placements.size(); i += n) {
-        const float* o = &placements[i];
-        const float scale = o[3];
-        const Vec3 middle = Vec3(o[0], o[1], o[2]) + quatRotate(Vec4(o[4], o[5], o[6], o[7]), center * scale);
-        // How big it looks: its radius over how far it is.
-        const float looks = radius * std::fabs(scale) / std::max(length(middle - eye), 1e-6f);
-        for (size_t level = 0; level < kDetailLevels; ++level) {
-            const float size = kDetailSize[level];
-            if (looks >= size * (1.0f + kDetailFade)) {
-                add(level, o, 1.0f);
-                break;
-            }
-            if (looks > size * (1.0f - kDetailFade)) {
-                // Between this level and the next: some pixels each.
-                const float f = (looks - size * (1.0f - kDetailFade)) / (2.0f * kDetailFade * size);
-                add(level, o, f);
-                if (level + 1 < kDetailLevels) add(level + 1, o, 1.0f + f);
-                break;
-            }
-        }
+    for (size_t i = 0; i < count; ++i) {
+        const Where& w = where[i];
+        if (w.level < 0) continue;
+        const float* o = &placements[i * n];
+        add(static_cast<size_t>(w.level), o, w.fade);
+        if (w.both) add(static_cast<size_t>(w.level) + 1, o, 1.0f + w.fade);
     }
     return out;
+}
+
+ViewPlanes viewPlanesOf(const Mat4& m) {
+    // Gribb and Hartmann: the fourth row of the matrix plus or minus each of
+    // the others (glm keeps it by columns: m[column][row]).
+    auto row = [&](int r) { return Vec4(m[0][r], m[1][r], m[2][r], m[3][r]); };
+    const Vec4 w = row(3);
+    ViewPlanes planes = {w + row(0), w - row(0), w + row(1), w - row(1), w + row(2), w - row(2)};
+    for (Vec4& p : planes) {
+        const float n = length(Vec3(p));
+        if (n > 0.0f) p /= n;
+    }
+    return planes;
+}
+
+bool ballSeen(const ViewPlanes& planes, const Vec3& center, float radius) {
+    for (const Vec4& p : planes) {
+        if (dot(Vec3(p), center) + p.w < -radius) return false;
+    }
+    return true;
+}
+
+size_t seenFirst(std::span<const float> placements, std::vector<float>& out, const Vec3& center, float radius,
+                 const ViewPlanes& planes) {
+    constexpr size_t n = DisplayInstances::kFloats;
+    const size_t count = placements.size() / n;
+    auto seen = [&](size_t i) {
+        const float* o = &placements[i * n];
+        const float scale = o[3];
+        const Vec3 middle = Vec3(o[0], o[1], o[2]) + quatRotate(Vec4(o[4], o[5], o[6], o[7]), center * scale);
+        return ballSeen(planes, middle, radius * std::fabs(scale));
+    };
+    std::vector<uint8_t> flags(count);
+    if (count < 4096) {
+        for (size_t i = 0; i < count; ++i) flags[i] = seen(i) ? 1 : 0;
+    } else {
+        pg::parallelFor(count, 4096, [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) flags[i] = seen(i) ? 1 : 0;
+        });
+    }
+    out.resize(count * n);
+    size_t front = 0;
+    for (const uint8_t f : flags) front += f;
+    size_t a = 0, b = front;
+    for (size_t i = 0; i < count; ++i) std::copy_n(&placements[i * n], n, &out[(flags[i] ? a++ : b++) * n]);
+    return front;
 }
 
 }  // namespace pg::sim

@@ -2,6 +2,7 @@
 
 #include "pg/core/Instances.h"
 #include "pg/core/Lod.h"
+#include "pg/core/Parallel.h"
 #include "pg/io/Exr.h"
 #include "pg/io/Picture.h"
 #include "pg/sim/Display.h"
@@ -2720,43 +2721,84 @@ void VolumeRenderer::uploadInstances() {
     placeByDetail();
 }
 
-void VolumeRenderer::placeByDetail() {
+void VolumeRenderer::placeByDetail(bool moved) {
     auto bytes = [](const auto& v) { return static_cast<GLsizeiptr>(v.size() * sizeof(v[0])); };
-    std::array<std::vector<float>, sim::kDetailLevels> parts;
-    size_t parted = static_cast<size_t>(-1);
-    for (InstancedGpu& gpu : instanced_) {
-        const std::vector<float>& all = instances().placements[gpu.which];
-        const std::vector<float>* placements = &all;
-        if (gpu.levels > 1 && detailEyeSet_) {
-            // Each copy at the level of detail it looks big enough for.
-            if (parted != gpu.which) {
-                parts = sim::placementsByDetail(all, instances().centers[gpu.which], instances().radii[gpu.which], detailEye_);
-                parted = gpu.which;
+    const bool sorting = seenView_ != Mat4(0.0f);
+    const sim::ViewPlanes planes = sim::viewPlanesOf(seenView_);
+    // What each copy is drawn as, worked out for each prototype at once --
+    // in parallel, the prototypes being many and their copies few, as a
+    // plant's in the wind bent into several shapes -- then sent, in order.
+    struct Placed {
+        std::vector<float> placements;
+        size_t seen = 0;
+    };
+    std::vector<Placed> placed(instanced_.size());
+    // A task a prototype: its levels one after another, sharing them out once.
+    std::vector<size_t> groups;
+    for (size_t g = 0; g < instanced_.size(); ++g) {
+        if (g == 0 || instanced_[g].which != instanced_[g - 1].which) groups.push_back(g);
+    }
+    groups.push_back(instanced_.size());
+    pg::parallelFor(groups.size() - 1, 1, [&](size_t first, size_t last) {
+        std::array<std::vector<float>, sim::kDetailLevels> parts;
+        size_t parted = static_cast<size_t>(-1);
+        for (size_t g = groups[first]; g < groups[last]; ++g) {
+            const InstancedGpu& gpu = instanced_[g];
+            const std::vector<float>& all = instances().placements[gpu.which];
+            const std::vector<float>* placements = &all;
+            if (gpu.levels > 1 && detailEyeSet_) {
+                // Each copy at the level of detail it looks big enough for.
+                if (parted != gpu.which) {
+                    parts = sim::placementsByDetail(all, instances().centers[gpu.which], instances().radii[gpu.which],
+                                                    detailEye_);
+                    parted = gpu.which;
+                }
+                placements = &parts[static_cast<size_t>(gpu.level)];
+            } else if (gpu.level > 0) {
+                continue;  // the eye not known yet: all of them in full
             }
-            placements = &parts[static_cast<size_t>(gpu.level)];
-        } else if (gpu.level > 0) {
-            static const std::vector<float> none;
-            placements = &none;  // the eye not known yet: all of them in full
+            // Those the camera sees first: drawn for it, the rest for the shadows.
+            Placed& p = placed[g];
+            if (sorting && !placements->empty()) {
+                p.seen = sim::seenFirst(*placements, p.placements, instances().centers[gpu.which],
+                                        instances().radii[gpu.which], planes);
+            } else {
+                p.placements = *placements;
+                p.seen = p.placements.size() / sim::DisplayInstances::kFloats;
+            }
         }
+    });
+    for (size_t g = 0; g < instanced_.size(); ++g) {
+        InstancedGpu& gpu = instanced_[g];
+        const std::vector<float>& placements = placed[g].placements;
         gl_.BindBuffer(ARRAY_BUFFER, gpu.placements);
-        if (placements->size() > gpu.capacity) {
-            gl_.BufferData(ARRAY_BUFFER, bytes(*placements), placements->data(), DYNAMIC_DRAW);
-            gpu.capacity = placements->size();
-        } else if (!placements->empty()) {
-            gl_.BufferSubData(ARRAY_BUFFER, 0, bytes(*placements), placements->data());
+        if (placements.size() > gpu.capacity) {
+            gl_.BufferData(ARRAY_BUFFER, bytes(placements), placements.data(), DYNAMIC_DRAW);
+            gpu.capacity = placements.size();
+        } else if (!placements.empty()) {
+            gl_.BufferSubData(ARRAY_BUFFER, 0, bytes(placements), placements.data());
         }
-        gpu.instances = static_cast<GLsizei>(placements->size() / sim::DisplayInstances::kFloats);
+        gpu.instances = static_cast<GLsizei>(placements.size() / sim::DisplayInstances::kFloats);
+        gpu.seen = static_cast<GLsizei>(placed[g].seen);
     }
     gl_.BindBuffer(ARRAY_BUFFER, 0);
-    geoShadowDirty_ = true;
+    if (moved) geoShadowDirty_ = true;
 }
 
 void VolumeRenderer::seeFrom(const Vec3& eye) {
     // Again where the eye has moved a little: what it sees close changes.
-    if (detailEyeSet_ && length(eye - detailEye_) < 0.1f) return;
-    detailEye_ = eye;
-    detailEyeSet_ = true;
-    if (std::any_of(instanced_.begin(), instanced_.end(), [](const InstancedGpu& g) { return g.levels > 1; })) placeByDetail();
+    const bool moved = !detailEyeSet_ || length(eye - detailEye_) >= 0.1f;
+    // ... and where it looks elsewhere: what it sees at all.
+    const bool turned = viewProjection_ != seenView_;
+    if (!moved && !turned) return;
+    if (moved) {
+        detailEye_ = eye;
+        detailEyeSet_ = true;
+    }
+    seenView_ = viewProjection_;
+    if (instanced_.empty()) return;
+    const bool detail = std::any_of(instanced_.begin(), instanced_.end(), [](const InstancedGpu& g) { return g.levels > 1; });
+    placeByDetail(moved && detail);
 }
 
 void VolumeRenderer::drawInstances(bool shadow) {
@@ -2764,8 +2806,12 @@ void VolumeRenderer::drawInstances(bool shadow) {
     for (const InstancedGpu& gpu : instanced_) {
         if (gpu.instances == 0 || gpu.elements == 0) continue;
         if (!shadow && gpu.atlas && impostorProgram_) continue;  // a billboard: drawImpostors
+        // The camera's: those it sees; the sun's: every one, for the shadows
+        // cast into the view from outside it.
+        const GLsizei count = shadow ? gpu.instances : gpu.seen;
+        if (count == 0) continue;
         gl_.BindVertexArray(gpu.vao);
-        gl_.DrawElementsInstanced(TRIANGLES, gpu.elements, UNSIGNED_INT, nullptr, gpu.instances);
+        gl_.DrawElementsInstanced(TRIANGLES, gpu.elements, UNSIGNED_INT, nullptr, count);
     }
     gl_.BindVertexArray(0);
 }
@@ -2878,7 +2924,7 @@ void VolumeRenderer::prepareImpostors() {
 void VolumeRenderer::drawImpostors(const Vec3& eye) {
     if (!impostorProgram_) return;
     bool any = false;
-    for (const InstancedGpu& gpu : instanced_) any = any || (gpu.atlas && gpu.instances > 0);
+    for (const InstancedGpu& gpu : instanced_) any = any || (gpu.atlas && gpu.seen > 0);
     if (!any) return;
     gl_.UseProgram(impostorProgram_);
     gl_.UniformMatrix4fv(location(impostorProgram_, "u_viewProj"), 1, 0, glm::value_ptr(viewProjection_));
@@ -2889,13 +2935,13 @@ void VolumeRenderer::drawImpostors(const Vec3& eye) {
     gl_.Uniform1i(location(impostorProgram_, "u_atlas"), 13);
     gl_.ActiveTexture(TEXTURE0 + 13);
     for (const InstancedGpu& gpu : instanced_) {
-        if (!gpu.atlas || gpu.instances == 0) continue;
+        if (!gpu.atlas || gpu.seen == 0) continue;
         const Vec3& c = instances().centers[gpu.which];
         gl_.Uniform3f(location(impostorProgram_, "u_center"), c.x, c.y, c.z);
         gl_.Uniform1f(location(impostorProgram_, "u_radius"), instances().radii[gpu.which]);
         gl_.BindTexture(TEXTURE_2D, gpu.atlas);
         gl_.BindVertexArray(gpu.impostorVao);
-        gl_.DrawArraysInstanced(TRIANGLES, 0, 6, gpu.instances);
+        gl_.DrawArraysInstanced(TRIANGLES, 0, 6, gpu.seen);
     }
     gl_.BindVertexArray(0);
     gl_.BindTexture(TEXTURE_2D, 0);

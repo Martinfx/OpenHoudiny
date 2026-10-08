@@ -445,6 +445,7 @@ private:
         GeometryPtr prototype;  // held: its pointer names it
         GLuint vao = 0, places = 0, colors = 0, indices = 0, placements = 0, through = 0, textures = 0;
         GLsizei elements = 0, instances = 0;
+        GLsizei seen = 0;     // of the instances, those the camera sees: first in the buffer (sim::seenFirst)
         size_t capacity = 0;  // floats the placements' buffer holds
         GLuint atlas = 0, impostorVao = 0;  // the last level's: its billboard's pictures, its cards
         bool pictureTried = false;          // ... taken, or tried
@@ -456,12 +457,15 @@ private:
     void uploadInstances();
     /// Each prototype's copies to its levels of detail, by how big each
     /// looks from detailEye_ (sim::placementsByDetail) -- all in full
-    /// before it is known.
-    void placeByDetail();
-    /// The eye the copies are drawn for: shared out again where it has moved.
+    /// before it is known -- those the camera sees first (seenView_).
+    /// `moved`: the levels changed, and the shadows with them.
+    void placeByDetail(bool moved = true);
+    /// The eye the copies are drawn for and what it sees: shared out again
+    /// where it has moved, sorted again where it looks elsewhere.
     void seeFrom(const Vec3& eye);
     Vec3 detailEye_{0.0f};
     bool detailEyeSet_ = false;
+    Mat4 seenView_{0.0f};  // the view-projection the copies were sorted for; 0 before any
     void releaseInstanced(InstancedGpu& gpu);
     /// The bound vertex array's attribute 7 -- how much light each vertex's
     /// face lets through -- from `translucency` into `buffer`; none there

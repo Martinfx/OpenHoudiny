@@ -401,6 +401,17 @@ eighth-detail and 6,762 billboards (blending copies counted twice).
 
 ![The meadow in the viewport: top, levels of detail as they are; bottom, for comparison, all plants as billboards](img/viewport-billboards.jpg)
 
+**What the camera does not see is not drawn.** Each time the view changes,
+the copies of every level are sorted, those whose ball (the prototype's
+radius round its middle, scaled with the copy) reaches into the camera's
+frustum first; the camera draws those, the sun's shadow map all of them, so
+a tree outside the view still casts its shadow into it. The picture is the
+same to the pixel. Standing on the meadow's path, 36 % of its 122,726 copies
+are in view; in the viewport (llvmpipe, 2560 × 1440) a frame close up took
+0.59 s instead of 1.2 s. Sorting the copies again takes about 5 ms on four
+threads -- shared out among the prototypes, a plant bent by the wind being
+several — and sending them about as long.
+
 Cycles and the path tracer draw everything at full detail; instances cost them
 no memory.
 

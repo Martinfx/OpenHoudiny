@@ -33,6 +33,8 @@
 
 #include "test_framework.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -499,6 +501,60 @@ TEST(foliage_far_plants_are_thinned_and_drawn_by_how_big_they_look) {
                 "a third %zu, an eighth %zu, billboards %zu (fading ones twice)\n",
                 full * 1e-6, drawn * 1e-6, 100.0 * drawn / full, copies[0], copies[1], copies[2], copies[3]);
     CHECK(drawn < 0.6 * full);
+}
+
+TEST(foliage_the_viewport_draws_the_copies_the_camera_sees) {
+    // A camera at the origin looking down -z, 60 degrees high, 1.5 wide.
+    const Mat4 viewProjection = glm::perspective(glm::radians(60.0f), 1.5f, 0.1f, 100.0f) *
+                                glm::lookAt(Vec3(0.0f), Vec3(0.0f, 0.0f, -1.0f), Vec3(0.0f, 1.0f, 0.0f));
+    const sim::ViewPlanes planes = sim::viewPlanesOf(viewProjection);
+    CHECK(sim::ballSeen(planes, Vec3(0.0f, 0.0f, -10.0f), 0.1f));       // ahead
+    CHECK(!sim::ballSeen(planes, Vec3(0.0f, 0.0f, 10.0f), 1.0f));       // behind
+    CHECK(!sim::ballSeen(planes, Vec3(20.0f, 0.0f, -10.0f), 1.0f));     // well off to the right
+    CHECK(sim::ballSeen(planes, Vec3(9.0f, 0.0f, -10.0f), 1.0f));       // its edge just in: x/z = tan(30) * 1.5 = 0.87
+    CHECK(!sim::ballSeen(planes, Vec3(0.0f, 0.0f, -150.0f), 10.0f));    // past the far plane
+    CHECK(sim::ballSeen(planes, Vec3(0.0f, 0.0f, -105.0f), 10.0f));     // ... reaching back over it
+
+    // Copies of a prototype a metre round its middle half a metre up: those
+    // seen first, each part in its order.
+    constexpr size_t n = sim::DisplayInstances::kFloats;
+    std::vector<float> placements;
+    const float xs[] = {30.0f, 0.0f, -40.0f, 2.0f, 0.0f};
+    const float zs[] = {-10.0f, -5.0f, -10.0f, -20.0f, 5.0f};
+    for (size_t i = 0; i < 5; ++i) {
+        placements.insert(placements.end(), {xs[i], 0.0f, zs[i], 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
+    }
+    std::vector<float> sorted;
+    const size_t seen = sim::seenFirst(placements, sorted, Vec3(0.0f, 0.5f, 0.0f), 0.5f, planes);
+    CHECK_EQ(seen, 2u);
+    CHECK_EQ(sorted.size(), placements.size());
+    const float order[] = {-5.0f, -20.0f, -10.0f, -10.0f, 5.0f};  // seen: 2 and 4; then 1, 3, 5
+    for (size_t i = 0; i < 5; ++i) CHECK_EQ(sorted[i * n + 2], order[i]);
+    CHECK_EQ(sorted[2 * n], 30.0f);
+    CHECK_EQ(sorted[3 * n], -40.0f);
+
+    // The meadow as one standing in it sees it, at eye height, looking along
+    // the path: most of its 120 000 clumps and its trees out of the view.
+    sim::Network meadow;
+    CHECK(sim::Network::example("meadow", meadow));
+    sim::GeometryGraph g;
+    g.sync(meadow);
+    const GeometryPtr all = g.cook(meadow.displayed(), 1);
+    CHECK(all != nullptr);
+    const sim::DisplayInstances inst = sim::instancesOf(*all);
+    const Vec3 eye(-10.0f, 3.4f, 4.0f);
+    const sim::ViewPlanes view = sim::viewPlanesOf(glm::perspective(glm::radians(45.0f), 1.6f, 0.05f, 500.0f) *
+                                                   glm::lookAt(eye, eye + Vec3(1.0f, -0.25f, 0.2f), Vec3(0.0f, 1.0f, 0.0f)));
+    size_t total = 0, inView = 0;
+    for (size_t k = 0; k < inst.prototypes.size(); ++k) {
+        std::vector<float> out;
+        inView += sim::seenFirst(inst.placements[k], out, inst.centers[k], inst.radii[k], view);
+        total += inst.placements[k].size() / n;
+    }
+    std::printf("  the meadow from the path: %zu copies of %zu in view (%.0f %%)\n", inView, total,
+                100.0 * static_cast<double>(inView) / static_cast<double>(total));
+    CHECK(total > 100000);
+    CHECK(inView > 0 && inView < total / 2);
 }
 
 TEST(foliage_the_viewport_lays_pictures_on_as_the_renderers_do) {
