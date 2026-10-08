@@ -1,0 +1,24 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// A drag force on one component (p.axis) -- detail::addForce. f: 1 - what
+// the velocity keeps this step, the mask (an integer).
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+layout(std430, binding = 1) buffer Velocity { float V[]; };
+layout(std430, binding = 2) readonly buffer Fields { float S[]; };
+#include "mask.glsl"
+
+void main() {
+    const int a = p.axis;
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(a + 1, part, slot, f)) continue;
+        const float m = maskAt(intOf(1u), a, f);
+        const uint at = p.vel[a] + indexOf(slot, f);
+        precise float keep = 1.0 - p.f[0] * m;
+        precise float v = V[at] * keep;
+        V[at] = v;
+    }
+}

@@ -24,7 +24,19 @@ layout(push_constant) uniform Push {
     int axis;           // the velocity's component carried
     int floorClosed;    // the floor at y = 0 lets nothing through
     float cells;        // the step, in cells: dt / the cell's size
+    uint flags;         // the other stages: what is on (kSteam, kSolids)
+    float f[13];        // ... and their numbers, as each says
 } p;
+
+// The fields of the cells, in their buffer (S) one after another, a plane
+// each: where each starts is its number times p.plane.
+const uint kDensity = 0u, kTemperature = 1u, kFuel = 2u, kFlame = 3u, kSteam = 4u, kExpansion = 5u, kSolid = 6u;
+const uint kFieldPlanes = 7u;
+// p.flags
+const uint kHasSteam = 1u, kHasSolids = 2u;
+
+/// The values the stage was given in p.f, an integer.
+int intOf(uint i) { return floatBitsToInt(p.f[i]); }
 
 const int kSide = 8;
 

@@ -175,9 +175,8 @@ public:
         double total() const { return solids + tiles + emit + advect + combust + forces + project + dissipate; }
     };
     const Times& times() const { return times_; }
-    /// With the solver's gpu setting: what the GPU does -- the advection and
-    /// the pressure -- or why it does nothing; empty before the first step
-    /// that asked.
+    /// With the solver's gpu setting: what the GPU does, or why it does
+    /// nothing; empty before the first step that asked.
     const std::string& gpuNote() const { return gpuNote_; }
     /// The GPU at work; null when the CPU does everything.
     const PyroGpu* gpu() const { return gpu_.get(); }
@@ -198,12 +197,26 @@ private:
     friend class PyroGpu;
     /// Every field onto the tiles `cells` (and their faces).
     void retile(std::shared_ptr<const Tiles> cells);
-    /// advect's share on the GPU, if the settings ask for it and there is
-    /// one: false, the CPU to do it.
-    bool advectOnGpu(float dt);
-    /// project()'s pressure on the GPU advect() found: false, the CPU to
-    /// solve it.
-    bool solvePressureOnGpu(float h);
+
+    // With the GPU on (PyroGpu.h) a field may be newer on the device than
+    // here, or here than there: which is current where, in bits of these.
+    enum : uint16_t {
+        kVel = 1, kVelNext = 2, kDensity = 4, kTemperature = 8, kFuel = 16, kFlame = 32, kSteam = 64,
+        kExpansion = 128, kPressure = 256
+    };
+    static constexpr uint16_t kCarried = kDensity | kTemperature | kFuel | kFlame | kSteam;
+    static constexpr uint16_t kAllFields = 511;
+    /// The device the settings ask for, at the start of a step: made the
+    /// first time, let go when they no longer ask.
+    void startGpu();
+    /// Whether this stage goes to the device: one there, and gas to work on.
+    bool onGpu() const;
+    /// The device failed: what it had newer is lost, the CPU does it all.
+    void gpuFailed();
+    /// The CPU about to read `fields`: what the device has newer, fetched.
+    void host(uint16_t fields);
+    /// The CPU wrote `fields`: the device's are old.
+    void wrote(uint16_t fields);
     /// What advect does after the fields are carried: solids empty, walls.
     void finishAdvect();
     void updateSolids();
@@ -250,6 +263,8 @@ private:
     std::unique_ptr<PyroGpu> gpu_;
     bool gpuTried_ = false;  // a device was looked for; gpuNote_ says how it went
     std::string gpuNote_;
+    uint16_t onHost_ = kAllFields, onDevice_ = 0;  // where each field is current
+    uint64_t solidsVersion_ = 0;                  // one more each time the solids are found again
 };
 
 /// Transmittance from each cell towards a light: exp(-optical depth) through

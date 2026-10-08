@@ -12,8 +12,8 @@
 // --example steps another example's gas instead: its first Pyro Solver.
 // --set changes a parameter of that Pyro Solver. --upres puts a Pyro Upres
 // of that scale after it: how long its frames take, where their time goes
-// and how much of the fine grid it works on. --set gpu=1 advects and solves
-// the pressure on the GPU (docs/gpu.md): the fingerprint stays the same.
+// and how much of the fine grid it works on. --set gpu=1 steps the gas on the
+// GPU (docs/gpu.md): the fingerprint stays the same.
 //
 #include "pg/core/Parallel.h"
 #include "pg/sim/Network.h"
@@ -200,9 +200,9 @@ bool bench(const std::string& example, int resolution, int frames, bool sparse, 
         std::printf("  %s\n", gas.gpuNote().c_str());
         if (const sim::PyroGpu* g = gas.gpu()) {
             const sim::PyroGpu::Times& gt = g->times();
-            std::printf("  the last step on the GPU: advect %.2f ms of kernels, %.1f ms with the copies there and "
-                        "back; pressure %.2f ms of kernels, %.1f ms with the copies\n",
-                        gt.advectKernels, gt.advect, gt.pressureKernels, gt.pressure);
+            std::printf("  the last frame on the GPU: %.2f ms of kernels, %.1f ms copying there and back, %.1f ms in "
+                        "all\n",
+                        gt.kernels, gt.copies, gt.total);
         }
     }
     // What the run came to, as one number: a change meant to be only faster

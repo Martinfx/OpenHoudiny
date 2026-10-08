@@ -1,0 +1,37 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// The pressure's right-hand side: how much flows out of each cell, less what
+// the burning asks for; 0 in a solid -- PyroSolver::project. Into the
+// multigrid's values (Q) at p.field. f: the cell's size; kHasSolids.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+layout(std430, binding = 1) readonly buffer Velocity { float V[]; };
+layout(std430, binding = 2) readonly buffer Fields { float S[]; };
+layout(std430, binding = 3) buffer Pressure { float Q[]; };
+
+float velAt(int a, int i, int j, int k) {
+    const int at = find(a + 1, sizeOf(a + 1), i, j, k);
+    return at < 0 ? 0.0 : V[p.vel[a] + uint(at)];
+}
+
+void main() {
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 c;
+        if (!cellOf(0, part, slot, c)) continue;
+        const uint at = indexOf(slot, c);
+        if ((p.flags & kHasSolids) != 0u && S[kSolid * p.plane + at] > 0.5) {
+            Q[p.field + at] = 0.0;
+            continue;
+        }
+        precise float flow = velAt(0, c.x + 1, c.y, c.z) - velAt(0, c.x, c.y, c.z);
+        flow = flow + velAt(1, c.x, c.y + 1, c.z);
+        flow = flow - velAt(1, c.x, c.y, c.z);
+        flow = flow + velAt(2, c.x, c.y, c.z + 1);
+        flow = flow - velAt(2, c.x, c.y, c.z);
+        precise float rhs = exactDiv(flow, p.f[0]) - S[kExpansion * p.plane + at];
+        Q[p.field + at] = rhs;
+    }
+}

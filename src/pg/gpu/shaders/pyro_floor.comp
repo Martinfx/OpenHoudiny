@@ -1,0 +1,17 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// A closed floor: nothing through the faces at y = 0 -- PyroSolver::
+// enforceWalls.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+layout(std430, binding = 1) buffer Velocity { float V[]; };
+
+void main() {
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(2, part, slot, f) || f.y != 0) continue;
+        V[p.vel[1] + indexOf(slot, f)] = 0.0;
+    }
+}

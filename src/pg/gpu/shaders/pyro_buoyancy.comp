@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// Heat and steam lift the vertical faces, smoke weighs them down, from the
+// cells below and above -- PyroSolver::addForces. f: dt, buoyancy, smoke's
+// weight, steam's lift; kHasSteam whether there is steam to lift.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+layout(std430, binding = 1) buffer Velocity { float V[]; };
+layout(std430, binding = 2) readonly buffer Fields { float S[]; };
+
+float cellAt(uint field, int i, int j, int k) {
+    const int at = find(0, sizeOf(0), i, j, k);
+    return at < 0 ? 0.0 : S[field * p.plane + uint(at)];
+}
+
+void main() {
+    const bool steam = (p.flags & kHasSteam) != 0u;
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(2, part, slot, f)) continue;
+        precise float heat = 0.0, smoke = 0.0, vapour = 0.0, n = 0.0;
+        if (f.y > 0) {
+            heat = heat + cellAt(kTemperature, f.x, f.y - 1, f.z);
+            smoke = smoke + cellAt(kDensity, f.x, f.y - 1, f.z);
+            if (steam) vapour = vapour + cellAt(kSteam, f.x, f.y - 1, f.z);
+            n = n + 1.0;
+        }
+        if (f.y < p.ny) {
+            heat = heat + cellAt(kTemperature, f.x, f.y, f.z);
+            smoke = smoke + cellAt(kDensity, f.x, f.y, f.z);
+            if (steam) vapour = vapour + cellAt(kSteam, f.x, f.y, f.z);
+            n = n + 1.0;
+        }
+        const uint at = p.vel[1] + indexOf(slot, f);
+        precise float lift = p.f[0] * (p.f[1] * heat - p.f[2] * smoke + p.f[3] * vapour);
+        precise float v = V[at] + exactDiv(lift, n);
+        V[at] = v;
+    }
+}

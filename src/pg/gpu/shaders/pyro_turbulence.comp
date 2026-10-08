@@ -1,0 +1,53 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// A turbulence force on one component (p.axis): its coarse lattice of knots,
+// worked out on the CPU, interpolated to the faces -- detail::addForce.
+// f: dt x strength, cells a knot, the lattice's size (3 integers), where its
+// knots start in K (an integer), the mask (an integer).
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+layout(std430, binding = 1) buffer Velocity { float V[]; };
+layout(std430, binding = 2) readonly buffer Fields { float S[]; };
+layout(std430, binding = 3) readonly buffer Knots { float K[]; };
+#include "mask.glsl"
+
+/// Grid::sample: trilinear over the knots, cell centres at i + 0.5.
+float knotsAt(float x, float y, float z) {
+    const ivec3 n = ivec3(intOf(2u), intOf(3u), intOf(4u));
+    const uint base = uint(intOf(5u));
+    const float fx = mx(0.0, mn(x - 0.5, float(n.x - 1)));
+    const float fy = mx(0.0, mn(y - 0.5, float(n.y - 1)));
+    const float fz = mx(0.0, mn(z - 0.5, float(n.z - 1)));
+    const int i = int(fx), j = int(fy), k = int(fz);
+    const uint sy = uint(n.x), sz = sy * uint(n.y);
+    const uint c = base + uint(i) + sy * uint(j) + sz * uint(k);
+    const uint dx = i + 1 < n.x ? 1u : 0u, dy = j + 1 < n.y ? sy : 0u, dz = k + 1 < n.z ? sz : 0u;
+    precise float tx = fx - float(i), ty = fy - float(j), tz = fz - float(k);
+    precise float x00 = K[c] + (K[c + dx] - K[c]) * tx;
+    precise float x10 = K[c + dy] + (K[c + dy + dx] - K[c + dy]) * tx;
+    precise float x01 = K[c + dz] + (K[c + dz + dx] - K[c + dz]) * tx;
+    precise float x11 = K[c + dz + dy] + (K[c + dz + dy + dx] - K[c + dz + dy]) * tx;
+    precise float y0 = x00 + (x10 - x00) * ty, y1 = x01 + (x11 - x01) * ty;
+    precise float r = y0 + (y1 - y0) * tz;
+    return r;
+}
+
+void main() {
+    const int a = p.axis;
+    const float ox = a == 0 ? 0.0 : 0.5, oy = a == 1 ? 0.0 : 0.5, oz = a == 2 ? 0.0 : 0.5;
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(a + 1, part, slot, f)) continue;
+        const float m = maskAt(intOf(6u), a, f);
+        if (m <= 0.0) continue;
+        precise float px = float(f.x) + ox, py = float(f.y) + oy, pz = float(f.z) + oz;
+        precise float kx = exactDiv(px, p.f[1]) + 0.5, ky = exactDiv(py, p.f[1]) + 0.5, kz = exactDiv(pz, p.f[1]) + 0.5;
+        const float push = knotsAt(kx, ky, kz);
+        const uint at = p.vel[a] + indexOf(slot, f);
+        precise float v = V[at] + p.f[0] * m * push;
+        V[at] = v;
+    }
+}

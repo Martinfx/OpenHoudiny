@@ -281,8 +281,8 @@ std::vector<ParamDef> pyroSolverParams(bool withFrameRate) {
           {"cutoff", "Cutoff", "Domain", K::Float, {0.001f, 0.0f, 0.0f}, 0.0f, 0.05f, 0.0f, 1.0f, "",
            "Sparse: a tile whose smoke, heat, fuel and flame all stay below this is let go."},
           {"gpu", "GPU", "Domain", K::Toggle, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
-           "Carry the gas along on the graphics card, through Vulkan -- the same result to the bit as on the "
-           "processor. For now the advection, the biggest part of a step. Without a GPU the processor does it."},
+           "Step the gas on the graphics card, through Vulkan -- the same result to the bit as on the processor, "
+           "faster on a big domain. Without a GPU the processor does it."},
           {"fps", "Frame Rate", "Time", K::Float, {30.0f, 0.0f, 0.0f}, 10.0f, 120.0f, 1.0f, 10000.0f, "fps",
            "Frames a second. Each frame moves the gas on by 1/fps seconds."},
           {"substeps", "Substeps", "Time", K::Int, {1.0f, 0.0f, 0.0f}, 1.0f, 8.0f, 1.0f, 16.0f, "",

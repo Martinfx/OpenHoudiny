@@ -1,0 +1,41 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// Vorticity confinement, last: the push spread from the centres to the faces
+// of one component (p.axis), over dt (f[3]).
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+layout(std430, binding = 1) buffer Velocity { float V[]; };
+layout(std430, binding = 2) readonly buffer Scratch { float P[]; };
+
+float centreAt(int a, int i, int j, int k) {
+    const int at = find(0, sizeOf(0), i, j, k);
+    return at < 0 ? 0.0 : P[uint(a) * p.plane + uint(at)];
+}
+
+void main() {
+    const int a = p.axis;
+    const int n = a == 0 ? p.nx : a == 1 ? p.ny : p.nz;
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(a + 1, part, slot, f)) continue;
+        const int along = f[a];
+        precise float force = 0.0, count = 0.0;
+        if (along > 0) {
+            ivec3 b = f;
+            b[a] -= 1;
+            force = force + centreAt(a, b.x, b.y, b.z);
+            count = count + 1.0;
+        }
+        if (along < n) {
+            force = force + centreAt(a, f.x, f.y, f.z);
+            count = count + 1.0;
+        }
+        const uint at = p.vel[a] + indexOf(slot, f);
+        precise float push = p.f[3] * force;
+        precise float v = V[at] + exactDiv(push, count);
+        V[at] = v;
+    }
+}

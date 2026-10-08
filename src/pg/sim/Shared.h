@@ -151,6 +151,37 @@ inline Vec3 windAt(const Force& force, float t, uint32_t seed, const Vec3& p) {
     return d * (force.speed * gust);
 }
 
+/// A turbulence force's lattice at `time`: a knot every `scale`, a random
+/// push at each that changes smoothly `speed` times a second -- one Grid a
+/// component, in `knots`. How many cells apart the knots are.
+inline float turbulenceKnots(const Force& force, uint32_t seed, const Domain& domain, float time,
+                             std::array<Grid, 3>& knots) {
+    const float h = domain.voxel;
+    const int nx = domain.cells[0], ny = domain.cells[1], nz = domain.cells[2];
+    const float cellsPerKnot = std::max(force.scale / h, 2.0f);
+    const int kx = static_cast<int>(std::ceil(static_cast<float>(nx) / cellsPerKnot)) + 2;
+    const int ky = static_cast<int>(std::ceil(static_cast<float>(ny) / cellsPerKnot)) + 2;
+    const int kz = static_cast<int>(std::ceil(static_cast<float>(nz) / cellsPerKnot)) + 2;
+    const float clock = time * force.speed;
+    const int slice = static_cast<int>(std::floor(clock));
+    const float blend = smoothstep(0.0f, 1.0f, clock - static_cast<float>(slice));
+    for (int a = 0; a < 3; ++a) {
+        Grid& g = knots[static_cast<size_t>(a)];
+        if (g.nx() != kx || g.ny() != ky || g.nz() != kz) g = Grid(kx, ky, kz);
+        const uint32_t s = seed + 104729u * static_cast<uint32_t>(a + 1);
+        for (int k = 0; k < kz; ++k) {
+            for (int j = 0; j < ky; ++j) {
+                for (int i = 0; i < kx; ++i) {
+                    const float now = lattice(i, j, k, s + static_cast<uint32_t>(slice) * 31u);
+                    const float next = lattice(i, j, k, s + static_cast<uint32_t>(slice + 1) * 31u);
+                    g.at(i, j, k) = 2.0f * (now + (next - now) * blend) - 1.0f;
+                }
+            }
+        }
+    }
+    return cellsPerKnot;
+}
+
 /// Adds `force` over dt at time t to the velocity `vel` (the three
 /// components, each on its faces; Grid or SparseGrid) of a MAC grid over
 /// `domain`. `seed` makes the force's noise; `knots` keeps a turbulence
@@ -161,7 +192,6 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
               std::array<Grid, 3>& knots, const Mask& mask) {
     const Vec3 o = domain.origin();
     const float h = domain.voxel;
-    const int nx = domain.cells[0], ny = domain.cells[1], nz = domain.cells[2];
     // World position of face (i, j, k) of component a.
     auto facePosition = [&](int a, int i, int j, int k) {
         const float x = static_cast<float>(i) + faceOffset(a, 0), y = static_cast<float>(j) + faceOffset(a, 1),
@@ -175,27 +205,7 @@ void addForce(const Force& force, uint32_t seed, const Domain& domain, float tim
             // changes smoothly `speed` times a second and is interpolated to
             // the faces. Random, so it pushes together here and apart there;
             // the projection that follows keeps only its swirling part.
-            const float cellsPerKnot = std::max(force.scale / h, 2.0f);
-            const int kx = static_cast<int>(std::ceil(static_cast<float>(nx) / cellsPerKnot)) + 2;
-            const int ky = static_cast<int>(std::ceil(static_cast<float>(ny) / cellsPerKnot)) + 2;
-            const int kz = static_cast<int>(std::ceil(static_cast<float>(nz) / cellsPerKnot)) + 2;
-            const float clock = time * force.speed;
-            const int slice = static_cast<int>(std::floor(clock));
-            const float blend = smoothstep(0.0f, 1.0f, clock - static_cast<float>(slice));
-            for (int a = 0; a < 3; ++a) {
-                Grid& g = knots[static_cast<size_t>(a)];
-                if (g.nx() != kx || g.ny() != ky || g.nz() != kz) g = Grid(kx, ky, kz);
-                const uint32_t s = seed + 104729u * static_cast<uint32_t>(a + 1);
-                for (int k = 0; k < kz; ++k) {
-                    for (int j = 0; j < ky; ++j) {
-                        for (int i = 0; i < kx; ++i) {
-                            const float now = lattice(i, j, k, s + static_cast<uint32_t>(slice) * 31u);
-                            const float next = lattice(i, j, k, s + static_cast<uint32_t>(slice + 1) * 31u);
-                            g.at(i, j, k) = 2.0f * (now + (next - now) * blend) - 1.0f;
-                        }
-                    }
-                }
-            }
+            const float cellsPerKnot = turbulenceKnots(force, seed, domain, time, knots);
             for (int a = 0; a < 3; ++a) {
                 const float ox = faceOffset(a, 0), oy = faceOffset(a, 1), oz = faceOffset(a, 2);
                 const Grid& g = knots[static_cast<size_t>(a)];

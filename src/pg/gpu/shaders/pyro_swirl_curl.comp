@@ -1,0 +1,40 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// Vorticity confinement, second: the curl of the velocity at the centres,
+// into planes 3 to 5 of the scratch, and its length into the work's plane 0.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+#include "swirl.glsl"
+layout(std430, binding = 1) buffer Scratch { float P[]; };
+layout(std430, binding = 2) writeonly buffer Work { float W[]; };
+
+float centreAt(int a, ivec3 c) {
+    const int at = find(0, sizeOf(0), c.x, c.y, c.z);
+    return at < 0 ? 0.0 : P[uint(a) * p.plane + uint(at)];
+}
+
+// d(component a) / d(axis b)
+float d(Around n, int a, int b) {
+    precise float r = (centreAt(a, n.plus[b]) - centreAt(a, n.minus[b])) * n.scale[b];
+    return r;
+}
+
+void main() {
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 c;
+        if (!cellOf(0, part, slot, c)) continue;
+        const uint at = indexOf(slot, c);
+        const Around n = around(c);
+        precise float wx = d(n, 2, 1) - d(n, 1, 2);
+        precise float wy = d(n, 0, 2) - d(n, 2, 0);
+        precise float wz = d(n, 1, 0) - d(n, 0, 1);
+        precise float squared = wx * wx + wy * wy + wz * wz;
+        P[3u * p.plane + at] = wx;
+        P[4u * p.plane + at] = wy;
+        P[5u * p.plane + at] = wz;
+        W[at] = exactSqrt(squared);
+    }
+}

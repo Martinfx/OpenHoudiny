@@ -218,9 +218,8 @@ struct SolverSettings {
     /// Evaporate times how much hotter than kBoil the gas round it is. 0:
     /// the water stays, however hot.
     float evaporate = 1.0f;
-    /// Do part of each step on the GPU, through Vulkan (docs/gpu.md) -- for
-    /// now the advection -- with the same result to the bit. Without a GPU
-    /// the CPU does it all, as off.
+    /// Step the gas on the GPU, through Vulkan (docs/gpu.md), with the same
+    /// result to the bit. Without a GPU the CPU does it all, as off.
     bool gpu = false;
 
     Domain domain() const;

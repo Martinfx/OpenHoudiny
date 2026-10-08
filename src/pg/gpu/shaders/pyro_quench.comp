@@ -1,0 +1,28 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// Water puts the gas out where it is: a list of the wet cells -- where each is
+// in the fields, and the share of its gas the water takes this step, both
+// worked out on the CPU (PyroSolver::quench). f: 1 - the warmth left in the
+// steam, steam a unit of heat. p.slotCount: how many.
+layout(local_size_x = 256) in;
+#include "sparse.glsl"
+layout(std430, binding = 1) buffer Fields { float S[]; };
+layout(std430, binding = 2) readonly buffer Wet { uint wet[]; };
+
+void main() {
+    const uint step = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    for (uint w = gl_GlobalInvocationID.x; w < p.slotCount; w += step) {
+        const uint at = wet[2u * w];
+        const float share = uintBitsToFloat(wet[2u * w + 1u]);
+        precise float taken = S[kTemperature * p.plane + at] * share;
+        precise float heat = S[kTemperature * p.plane + at] - taken * p.f[0];
+        precise float steam = S[kSteam * p.plane + at] + taken * p.f[1];
+        precise float fuel = S[kFuel * p.plane + at] - S[kFuel * p.plane + at] * share;
+        precise float flame = S[kFlame * p.plane + at] - S[kFlame * p.plane + at] * share;
+        S[kTemperature * p.plane + at] = heat;
+        S[kSteam * p.plane + at] = steam;
+        S[kFuel * p.plane + at] = fuel;
+        S[kFlame * p.plane + at] = flame;
+    }
+}

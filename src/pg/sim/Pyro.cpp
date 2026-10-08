@@ -62,6 +62,9 @@ void PyroSolver::setScene(const Scene& scene) {
 }
 
 void PyroSolver::reset() {
+    // Everything made anew, here.
+    onHost_ = kAllFields;
+    onDevice_ = 0;
     domain_ = scene_.solver.domain();
     nx_ = domain_.cells[0];
     ny_ = domain_.cells[1];
@@ -84,6 +87,7 @@ void PyroSolver::reset() {
 }
 
 void PyroSolver::retile(std::shared_ptr<const Tiles> cells) {
+    host(kVel | kCarried | kPressure);  // what goes on where the tiles do
     cells_ = std::move(cells);
     for (int a = 0; a < 3; ++a) {
         faces_[a] = Tiles::faces(*cells_, a);
@@ -104,6 +108,10 @@ void PyroSolver::retile(std::shared_ptr<const Tiles> cells) {
         blockedVel_[a].clear();
     }
     anySolid_ = false;
+    // All of it laid out anew, here.
+    onHost_ = kAllFields;
+    onDevice_ = 0;
+    ++solidsVersion_;
 }
 
 void PyroSolver::saveState(StateWriter& out) const {
@@ -184,6 +192,9 @@ bool PyroSolver::loadState(StateReader& in) {
     boundary.closed[2] = scene_.solver.closedFloor;
     boundary.solid = anySolid_ ? &solid_ : nullptr;
     poisson_.setBoundary(boundary);
+    onHost_ = kAllFields;
+    onDevice_ = 0;
+    ++solidsVersion_;
     return true;
 }
 
@@ -195,6 +206,7 @@ Vec3 PyroSolver::worldAt(float x, float y, float z) const {
 
 void PyroSolver::updateTiles(float dt) {
     if (!scene_.solver.sparse) return;
+    host(kVel | kCarried);
     const Tiles& now = *cells_;
     const int tn[3] = {now.tilesX(), now.tilesY(), now.tilesZ()};
     auto number = [&](int a, int b, int c) {
@@ -285,6 +297,7 @@ void PyroSolver::updateTiles(float dt) {
 
 void PyroSolver::updateSolids() {
     Clock::time_point t0 = Clock::now();
+    host(kVel | kDensity | kTemperature | kFuel | kFlame);
     // Only the cells the colliders took last time need clearing, and only the
     // cells in a collider's box testing: the pieces of a demolition are small
     // against the domain, and there are hundreds of them.
@@ -395,6 +408,8 @@ void PyroSolver::updateSolids() {
         density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = 0.0f;
     }
     enforceWalls();
+    wrote(kVel | kDensity | kTemperature | kFuel | kFlame);
+    ++solidsVersion_;
     lap(t0, times_.solids);
 }
 
@@ -446,6 +461,8 @@ void PyroSolver::velocityAt(float x, float y, float z, float out[3]) const {
 void PyroSolver::step() {
     const int n = scene_.solver.substeps;
     const float dt = scene_.solver.timeStep / static_cast<float>(n);
+    startGpu();
+    if (gpu_) gpu_->beginStep();
     for (int s = 0; s < n; ++s) {
         Clock::time_point t0 = Clock::now();
         // New tiles find their solids again: that time is the solids', not
@@ -469,7 +486,67 @@ void PyroSolver::step() {
         lap(t0, times_.dissipate);
         time_ += dt;
     }
+    // The frame's fields here: what reads the gas between steps -- the
+    // frames, the other solvers -- reads them here.
+    Clock::time_point t0 = Clock::now();
+    host(kVel | kCarried | kPressure);
+    lap(t0, times_.dissipate);
     ++frame_;
+}
+
+// --- the GPU's share -----------------------------------------------------------------
+
+void PyroSolver::startGpu() {
+    if (!scene_.solver.gpu) {
+        if (gpu_) {
+            host(kAllFields);
+            gpu_.reset();
+            onDevice_ = 0;
+        }
+        return;
+    }
+    if (gpu_ || gpuTried_) return;
+    gpuTried_ = true;
+    // Grids of whole tiles, nothing but zero where nothing is stored: as the
+    // kernels take them.
+    bool fits = nx_ % Tiles::kSide == 0 && ny_ % Tiles::kSide == 0 && nz_ % Tiles::kSide == 0;
+    for (const SparseGrid* g : {&vel_[0], &vel_[1], &vel_[2], &density_, &temperature_, &fuel_, &flame_, &steam_}) {
+        fits = fits && g->background() == 0.0f;
+    }
+    if (!fits) {
+        gpuNote_ = "the CPU does it all: grids the GPU does not take";
+        return;
+    }
+    std::string why;
+    gpu_ = PyroGpu::open(why);
+    if (!gpu_) {
+        gpuNote_ = "the CPU does it all: " + why;
+        return;
+    }
+    gpuNote_ = "on the GPU, " + gpu_->device();
+    onDevice_ = 0;
+}
+
+bool PyroSolver::onGpu() const { return gpu_ && !cells_->stored().empty(); }
+
+void PyroSolver::gpuFailed() {
+    gpuNote_ = "the CPU does it all: " + (gpu_ && !gpu_->error().empty() ? gpu_->error() : std::string("the GPU failed"));
+    gpu_.reset();
+    // What the device had newer is gone: the CPU goes on from what it has.
+    onHost_ = kAllFields;
+    onDevice_ = 0;
+}
+
+void PyroSolver::host(uint16_t fields) {
+    const uint16_t need = static_cast<uint16_t>(fields & ~onHost_);
+    if (!need) return;
+    if (gpu_ && !gpu_->fetch(*this, need)) gpuFailed();
+    onHost_ |= fields;
+}
+
+void PyroSolver::wrote(uint16_t fields) {
+    onHost_ |= fields;
+    onDevice_ &= static_cast<uint16_t>(~fields);
 }
 
 // --- emit ------------------------------------------------------------------------
@@ -546,6 +623,7 @@ void detail::emitScalars(const Scene& scene, float time, float dt, const Domain&
 }
 
 void PyroSolver::emit(float dt) {
+    host(kVel | kDensity | kTemperature | kFuel);
     // What swells this step: the sources ask for it here, the burning adds
     // its own (combust).
     expansion_.fill(0.0f);
@@ -591,16 +669,17 @@ void PyroSolver::emit(float dt) {
         }
     }
     enforceWalls();
+    wrote(kVel | kDensity | kTemperature | kFuel | kExpansion);
 }
 
 // --- advect ----------------------------------------------------------------------
 
 void PyroSolver::advect(float dt) {
-    if (advectOnGpu(dt)) {
-        for (int a = 0; a < 3; ++a) std::swap(vel_[a], velNext_[a]);
-        finishAdvect();
-        return;
+    if (onGpu()) {
+        if (gpu_->advect(*this, dt)) return;  // finishAdvect's too
+        gpuFailed();
     }
+    host(kVel | kVelNext | kCarried);
     const float cells = dt / domain_.voxel;  // velocity x dt, in cells
     // Where the gas of each cell was a step ago, and where it will be (RK2).
     forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
@@ -629,6 +708,7 @@ void PyroSolver::advect(float dt) {
     advectScalar(flame_);
     if (steamy_) advectScalar(steam_);
     finishAdvect();
+    wrote(kVel | kVelNext | kCarried);
 }
 
 void PyroSolver::finishAdvect() {
@@ -636,41 +716,6 @@ void PyroSolver::finishAdvect() {
         density_.data()[c] = temperature_.data()[c] = fuel_.data()[c] = flame_.data()[c] = steam_.data()[c] = 0.0f;
     }
     enforceWalls();
-}
-
-bool PyroSolver::advectOnGpu(float dt) {
-    if (!scene_.solver.gpu || cells_->stored().empty()) return false;
-    if (!gpu_) {
-        if (gpuTried_) return false;
-        gpuTried_ = true;
-        std::string why;
-        gpu_ = PyroGpu::open(why);
-        if (!gpu_) {
-            gpuNote_ = "the CPU does it all: " + why;
-            return false;
-        }
-        gpuNote_ = "on the GPU, " + gpu_->device() + ": advection and pressure";
-    }
-    // Grids of whole tiles, nothing but zero where nothing is stored: as the
-    // kernels take them.
-    bool fits = nx_ % Tiles::kSide == 0 && ny_ % Tiles::kSide == 0 && nz_ % Tiles::kSide == 0;
-    for (const SparseGrid* g : {&vel_[0], &vel_[1], &vel_[2], &density_, &temperature_, &fuel_, &flame_, &steam_}) {
-        fits = fits && g->background() == 0.0f;
-    }
-    if (fits && gpu_->advect(*this, dt)) return true;
-    // Once it has failed the CPU does it from then on.
-    gpuNote_ = "the CPU does it all: " + (fits ? gpu_->error() : std::string("grids the GPU does not take"));
-    gpu_.reset();
-    return false;
-}
-
-bool PyroSolver::solvePressureOnGpu(float h) {
-    // advect() made it, if there is one that will do.
-    if (!scene_.solver.gpu || !gpu_) return false;
-    if (gpu_->solvePressure(*this, h, scene_.solver.pressureCycles)) return true;
-    gpuNote_ = "the CPU does it all: " + gpu_->error();
-    gpu_.reset();
-    return false;
 }
 
 void PyroSolver::faceVelocity(int axis, int i, int j, int k, float out[3]) const {
@@ -745,6 +790,11 @@ void PyroSolver::advectScalar(SparseGrid& field) {
 // --- combust -----------------------------------------------------------------------
 
 void PyroSolver::combust(float dt) {
+    if (onGpu()) {
+        if (gpu_->combust(*this, dt)) return;
+        gpuFailed();
+    }
+    host(kFuel | kTemperature | kDensity | kFlame | kExpansion);
     const SolverSettings& s = scene_.solver;
     const float share = 1.0f - std::exp(-s.burnRate * dt);
     forEachCounted(*cells_, [&](int, int, int, size_t c) {
@@ -755,6 +805,7 @@ void PyroSolver::combust(float dt) {
         flame_.data()[c] += burnt;
         expansion_.data()[c] += burnt * s.expansion / dt;
     });
+    wrote(kFuel | kTemperature | kDensity | kFlame | kExpansion);
 }
 
 // --- water ---------------------------------------------------------------------------
@@ -828,7 +879,23 @@ void PyroSolver::quench(float dt) {
     };
     // The gas where the water is: each cell its own, nothing summed across.
     if (s.steam > 0.0f) steamy_ = true;
-    pg::parallelFor(wet_.size(), 4096, [&](size_t begin, size_t end) {
+    bool done = false;
+    if (onGpu()) {
+        // Where each wet cell is and the share of its gas the water takes,
+        // worked out here; the rest on the device.
+        std::vector<std::pair<uint32_t, float>> wet;
+        wet.reserve(wet_.size());
+        for (const auto& [number, rate] : wet_) {
+            int i, j, k;
+            cellOf(number, i, j, k);
+            if (!density_.has(i, j, k)) continue;
+            wet.emplace_back(static_cast<uint32_t>(density_.index(i, j, k)), 1.0f - std::exp(-s.quench * rate * dt));
+        }
+        done = gpu_->quench(*this, wet, 1.0f - kSteamWarmth, s.steam);
+        if (!done) gpuFailed();
+    }
+    if (!done) host(kTemperature | kSteam | kFuel | kFlame);
+    if (!done) pg::parallelFor(wet_.size(), 4096, [&](size_t begin, size_t end) {
         for (size_t w = begin; w < end; ++w) {
             int i, j, k;
             cellOf(wet_[w].first, i, j, k);
@@ -842,6 +909,7 @@ void PyroSolver::quench(float dt) {
             flame_.data()[c] -= flame_.data()[c] * share;
         }
     });
+    if (!done) wrote(kTemperature | kSteam | kFuel | kFlame);
     // The sources of fire it falls on soak: by how much water the cells of
     // each get, on the average over the source.
     soaked_.resize(scene_.emitters.size(), 0.0f);
@@ -879,6 +947,30 @@ void PyroSolver::quench(float dt) {
 
 void PyroSolver::addForces(float dt) {
     const SolverSettings& s = scene_.solver;
+    if (onGpu()) {
+        // Buoyancy, the swirls and the forces the device does there; the
+        // others here, each in its turn.
+        bool ok = gpu_->buoyancy(*this, dt) && (s.vorticity <= 0.0f || gpu_->vorticity(*this, dt));
+        std::string here;
+        for (size_t f = 0; f < scene_.forces.size() && ok; ++f) {
+            bool done = false;
+            ok = gpu_->force(*this, scene_.forces[f], f, dt, done);
+            if (ok && !done) {
+                host(kVel | kDensity | kTemperature | kFuel);
+                addForce(scene_.forces[f], f, dt);
+                wrote(kVel);
+                static const char* kinds[] = {"turbulence", "wind", "vortex", "attractor", "drag"};
+                const char* kind = kinds[static_cast<int>(scene_.forces[f].kind)];
+                if (here.find(kind) == std::string::npos) here += std::string(here.empty() ? "" : ", ") + kind;
+            }
+        }
+        if (ok && gpu_->walls(*this)) {
+            gpuNote_ = "on the GPU, " + gpu_->device() + (here.empty() ? "" : "; on the CPU: " + here);
+            return;
+        }
+        gpuFailed();
+    }
+    host(kVel | kDensity | kTemperature | kFuel | kSteam);
     // Buoyancy on the vertical faces, from the cells below and above them:
     // heat and steam lift, smoke weighs down.
     SparseGrid& vy = vel_[1];
@@ -902,6 +994,7 @@ void PyroSolver::addForces(float dt) {
     if (s.vorticity > 0.0f) addVorticity(dt);
     for (size_t f = 0; f < scene_.forces.size(); ++f) addForce(scene_.forces[f], f, dt);
     enforceWalls();
+    wrote(kVel);
 }
 
 void PyroSolver::addVorticity(float dt) {
@@ -1009,13 +1102,18 @@ float PyroSolver::divergence(int i, int j, int k) const {
 
 void PyroSolver::project() {
     const float h = domain_.voxel;
+    if (onGpu()) {
+        if (gpu_->project(*this, h, scene_.solver.pressureCycles)) return;
+        gpuFailed();
+    }
+    host(kVel | kExpansion | kPressure);
     enforceWalls();  // what flows through walls is 0 before anything is measured
     forEachCounted(*cells_, [&](int i, int j, int k, size_t c) {
         divergence_.data()[c] =
             anySolid_ && solid_.data()[c] > 0.5f ? 0.0f : divergence(i, j, k) - expansion_.data()[c];
     });
     // The pressure of the previous step is the first guess.
-    if (!solvePressureOnGpu(h)) poisson_.solve(pressure_, divergence_, h, scene_.solver.pressureCycles);
+    poisson_.solve(pressure_, divergence_, h, scene_.solver.pressureCycles);
     // Subtract its gradient. The open sides hold p = 0 on the face -- a ghost
     // cell outside holds minus the cell inside; past the tiles worked on, the
     // still air holds p = 0. What this does to the faces of walls and solids
@@ -1032,11 +1130,17 @@ void PyroSolver::project() {
         });
     }
     enforceWalls();
+    wrote(kVel | kPressure);
 }
 
 // --- dissipate ---------------------------------------------------------------------
 
 void PyroSolver::dissipate(float dt) {
+    if (onGpu()) {
+        if (gpu_->dissipate(*this, dt)) return;
+        gpuFailed();
+    }
+    host(kCarried | kExpansion);
     const SolverSettings& s = scene_.solver;
     const float smoke = std::exp(-s.smokeDecay * dt), heat = std::exp(-s.cooling * dt);
     const float flame = s.flameLife > 0.0f ? std::exp(-dt / s.flameLife) : 0.0f;
@@ -1055,6 +1159,7 @@ void PyroSolver::dissipate(float dt) {
         flame_.data()[c] = std::max(0.0f, flame_.data()[c]) * flame * thinner;
         if (steamy_) steam_.data()[c] = std::max(0.0f, steam_.data()[c]) * steam * thinner;
     });
+    wrote(kCarried);
 }
 
 double PyroSolver::meanDivergence() const {

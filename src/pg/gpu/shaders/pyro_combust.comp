@@ -1,0 +1,31 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// Fuel burns into heat, soot and flame, and the gas swells where it does --
+// PyroSolver::combust. f: share burnt this step, heat release, soot
+// release, expansion, dt.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+layout(std430, binding = 1) buffer Fields { float S[]; };
+
+void main() {
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 c;
+        if (!cellOf(0, part, slot, c)) continue;
+        const uint at = indexOf(slot, c);
+        precise float burnt = S[kFuel * p.plane + at] * p.f[0];
+        precise float fuel = S[kFuel * p.plane + at] - burnt;
+        precise float heat = S[kTemperature * p.plane + at] + burnt * p.f[1];
+        precise float soot = S[kDensity * p.plane + at] + burnt * p.f[2];
+        precise float flame = S[kFlame * p.plane + at] + burnt;
+        precise float swelling = burnt * p.f[3];
+        precise float expansion = S[kExpansion * p.plane + at] + exactDiv(swelling, p.f[4]);
+        S[kFuel * p.plane + at] = fuel;
+        S[kTemperature * p.plane + at] = heat;
+        S[kDensity * p.plane + at] = soot;
+        S[kFlame * p.plane + at] = flame;
+        S[kExpansion * p.plane + at] = expansion;
+    }
+}

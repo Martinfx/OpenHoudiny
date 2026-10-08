@@ -173,14 +173,18 @@ bool sameBits(const sim::SparseGrid& a, const sim::SparseGrid& b) {
            std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
 }
 
-/// Steps `scene` on the CPU and with the GPU advecting and solving the
-/// pressure, side by side: every field the same to the bit after every step.
-void checkGasOnBoth(sim::Scene scene, int steps, bool solids) {
+/// Steps `scene` on the CPU and with the GPU, side by side -- with `water`
+/// in the gas, if any: every field the same to the bit after every step.
+void checkGasOnBoth(sim::Scene scene, int steps, bool solids, const sim::PyroSolver::Water& water = {}) {
     scene.solver.gpu = false;
     sim::PyroSolver cpu(scene);
     scene.solver.gpu = true;
     sim::PyroSolver gpu(scene);
     for (int s = 0; s < steps; ++s) {
+        if (!water.empty()) {
+            cpu.setWater(water);
+            gpu.setWater(water);
+        }
         cpu.step();
         gpu.step();
         CHECK(gpu.gpu() != nullptr);
@@ -198,10 +202,11 @@ void checkGasOnBoth(sim::Scene scene, int steps, bool solids) {
             std::printf("    step %d differs\n", s + 1);
             return;
         }
-        // Both on the device: the advection, and the pressure's V-cycles.
-        CHECK(gpu.gpu()->times().advectKernels > 0.0);
-        CHECK(gpu.gpu()->times().pressureKernels > 0.0);
+        // The step on the device.
+        CHECK(gpu.gpu()->times().kernels > 0.0);
     }
+    // Water in the gas makes steam.
+    if (!water.empty()) CHECK(gpu.steamy() && gpu.steam().sum() > 0.0);
     // With solids in the gas: the multigrid's faces and diagonals too.
     const std::vector<float>& solid = gpu.solid().values();
     CHECK_EQ(std::any_of(solid.begin(), solid.end(), [](float v) { return v > 0.5f; }), solids);
@@ -227,6 +232,58 @@ TEST(gpu_gas_steps_are_the_cpus_to_the_bit) {
     ball.size = Vec3(0.25f);
     smoke.colliders.push_back(ball);
     checkGasOnBoth(smoke, 20, true);
+}
+
+TEST(gpu_gas_with_every_force_water_and_substeps_is_the_cpus_to_the_bit) {
+    AnyDeviceForSolvers device;
+    if (!device.ok) return;
+    // Every kind of force, each with another mask: drag and turbulence on the
+    // device, wind, a vortex and an attractor on the CPU between them -- the
+    // fields going there and back mid-step. Two substeps a frame.
+    sim::Scene fire = sim::Scene::fire();
+    fire.solver.resolution = 32;
+    fire.solver.substeps = 2;
+    sim::Force wind;
+    wind.kind = sim::ForceKind::Wind;
+    wind.strength = 2.0f;
+    wind.speed = 0.6f;
+    wind.gusts = 0.5f;
+    wind.mask = sim::Mask::Smoke;
+    sim::Force drag;
+    drag.kind = sim::ForceKind::Drag;
+    drag.strength = 0.5f;
+    drag.mask = sim::Mask::Heat;
+    sim::Force vortex;
+    vortex.kind = sim::ForceKind::Vortex;
+    vortex.direction = Vec3(0.0f, 1.0f, 0.0f);
+    vortex.speed = 1.5f;
+    vortex.lift = 0.2f;
+    vortex.suction = 0.3f;
+    vortex.radius = 0.4f;
+    vortex.height = 1.0f;
+    sim::Force pull;
+    pull.kind = sim::ForceKind::Attractor;
+    pull.center = Vec3(0.2f, 0.8f, 0.0f);
+    pull.strength = 3.0f;
+    fire.forces.push_back(wind);
+    fire.forces.push_back(drag);
+    fire.forces.push_back(vortex);
+    fire.forces.push_back(pull);
+    checkGasOnBoth(fire, 12, false);
+    // Water falling through a fire: quenched, steam made, lifted and faded;
+    // the floor open.
+    sim::Scene wet = sim::Scene::fire();
+    wet.solver.resolution = 32;
+    wet.solver.closedFloor = false;
+    sim::PyroSolver::Water water;
+    water.particleVolume = 2e-6f;
+    for (int i = 0; i < 400; ++i) {
+        const float t = static_cast<float>(i) / 400.0f;
+        water.particles.push_back(Vec3(0.12f * std::sin(40.0f * t), 0.1f + 0.5f * t, 0.12f * std::cos(37.0f * t)));
+    }
+    water.dropFrom.push_back(Vec3(0.05f, 0.9f, 0.0f));
+    water.dropTo.push_back(Vec3(0.05f, 0.2f, 0.0f));
+    checkGasOnBoth(wet, 16, false, water);
 }
 
 #endif  // PG_HAVE_VULKAN

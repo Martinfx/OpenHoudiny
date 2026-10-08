@@ -1,0 +1,36 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// The pressure's gradient off one component of the velocity (p.axis): an open
+// side holds p = 0 on the face, a ghost cell minus the one inside --
+// PyroSolver::project. The pressure in the multigrid's values (Q) at
+// p.field; f: the cell's size.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+layout(std430, binding = 1) buffer Velocity { float V[]; };
+layout(std430, binding = 2) readonly buffer Pressure { float Q[]; };
+
+float pressureAt(ivec3 c) {
+    const int at = find(0, sizeOf(0), c.x, c.y, c.z);
+    return at < 0 ? 0.0 : Q[p.field + uint(at)];
+}
+
+void main() {
+    const int a = p.axis;
+    const int n = a == 0 ? p.nx : a == 1 ? p.ny : p.nz;
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(a + 1, part, slot, f)) continue;
+        const int along = f[a];
+        ivec3 b = f;
+        b[a] -= 1;
+        const float ahead = along < n ? pressureAt(f) : -pressureAt(b);
+        const float behind = along > 0 ? pressureAt(b) : -pressureAt(f);
+        const uint at = p.vel[a] + indexOf(slot, f);
+        precise float drop = ahead - behind;
+        precise float v = V[at] - exactDiv(drop, p.f[0]);
+        V[at] = v;
+    }
+}

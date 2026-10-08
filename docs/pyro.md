@@ -426,7 +426,7 @@ fuel), or only where there is smoke.
 
 | section | parameters |
 |---|---|
-| Domain | `size` (width, height, depth in meters; stands on the floor), `resolution` (cells along the longest side, 16–1024), `closed_floor`, `sparse` (compute only tiles with gas, on by default), `cutoff` (below this value of smoke, heat, fuel and flame the solver releases a tile), `gpu` (advect and solve the pressure on the graphics card through Vulkan, the same result to the bit; [gpu.md](gpu.md#7-the-gas-on-the-gpu)) |
+| Domain | `size` (width, height, depth in meters; stands on the floor), `resolution` (cells along the longest side, 16–1024), `closed_floor`, `sparse` (compute only tiles with gas, on by default), `cutoff` (below this value of smoke, heat, fuel and flame the solver releases a tile), `gpu` (step the gas on the graphics card through Vulkan, the same result to the bit; [gpu.md](gpu.md#7-the-gas-on-the-gpu)) |
 | Time | `substeps`, `pressure_cycles`, `seed` (the frame rate is shared, in the Output node) |
 | Motion | `buoyancy`, `weight` (weight of the smoke), `vorticity` (vortices that a coarse grid smears out) |
 | Combustion | `burn_rate`, `heat_release`, `soot_release`, `expansion`, `flame_life` |

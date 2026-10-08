@@ -8,9 +8,9 @@ FreeBSD and Windows, with the drivers the card already has.
 What is there now: the foundation (`pg::gpu`) — the devices, memory on the
 device, kernels compiled when the program is built and carried in it,
 `prototype gpu`, which measures a device against the CPU — and the first
-of the gas solver's work on it: **the Pyro Solver's GPU switch advects the
-gas and solves its pressure on the graphics card**, with the same result to
-the bit as on the CPU (§7). The rest of the step follows (§8).
+of the gas solver's work on it: **the Pyro Solver's GPU switch steps the gas
+on the graphics card** — advection, combustion, forces, pressure — with the
+same result to the bit as on the CPU (§7).
 
 ## 1. Quick start
 
@@ -178,19 +178,25 @@ included, and are skipped without one.
 
 ## 7. The gas on the GPU
 
-The Pyro Solver's **GPU** (Domain) does the two biggest parts of a step on
-the graphics card — about three quarters of it on the CPU:
+The Pyro Solver's **GPU** (Domain) steps the gas on the graphics card. The
+fields live there through the step; every stage of it is a few kernels
+(`src/pg/gpu/shaders/pyro_*.comp`, `poisson_*.comp`):
 
-- **the advection**: the paths of the gas through the velocity, the
-  velocity carrying itself, and MacCormack for smoke, heat, fuel, flame and
-  steam (`src/pg/gpu/shaders/pyro_*.comp`);
-- **the pressure**: the multigrid's V-cycles over the sparse tiles, every
-  level of them — red-black sweeps, the residual, down to the coarser level
-  and the correction back up — with solids too, whose faces and diagonals
-  the CPU works out when it builds the levels (`poisson_*.comp`).
+| Stage | On the device |
+|---|---|
+| advect | the paths of the gas through the velocity (RK2), the velocity carrying itself, MacCormack for smoke, heat, fuel, flame and steam; solids emptied, walls |
+| quench | the water's share of the gas in each wet cell — which cells, and how much, the CPU works out from the water |
+| combust | fuel into heat, soot, flame and swelling |
+| forces | buoyancy (heat and steam lift, smoke weighs), vorticity confinement, turbulence, drag; walls |
+| project | the right-hand side, the multigrid's V-cycles over the sparse tiles — with solids too, whose faces and diagonals the CPU works out when it builds the levels — the gradient, walls |
+| dissipate | smoke thins, heat cools, flame and steam fade, the swelling spreads what the gas carries |
 
-The rest of the step — sources, combustion, forces — stays on the CPU for
-now.
+What stays on the CPU: the sources (their shapes, meshes among them), which
+tiles to keep, where the solids are, and the wind, vortex and attractor
+forces. The solver keeps track of which copy of each field is current —
+the CPU's or the device's — and a stage fetches only what the other side
+has newer: a step without those forces sends the fields after the sources
+and fetches them once, at the end of the frame. With substeps, once a frame.
 
 ```bash
 ./build/prototype sim campfire out/fire.png --set gpu=1          # the campfire, on the GPU
@@ -200,7 +206,8 @@ now.
 In the editor: select the **Pyro Solver**, tick **GPU** in its Domain
 section, and simulate. The **Profile** section under the timeline's frame
 says, below the gas's time, what the card does — `GPU: on the GPU, NVIDIA
-GeForce GTX 1060 6GB: advection and pressure` — or why the CPU does it all.
+GeForce GTX 1060 6GB`, and which forces the CPU does, if any — or why the
+CPU does it all.
 From Python: `solver["gpu"] = 1`. `PG_GPU=nvidia` picks the card when there
 are several.
 
@@ -215,15 +222,16 @@ are. And the build tells the compiler not to fuse a multiply with an add
 (`-ffp-contract=off`), whatever `-march` it is given.
 
 A scene comes out the same with the switch on or off: `pgbench_pyro`
-prints the same fingerprint either way, and `pgtests gpu_gas` steps a fire,
-and smoke round a ball, side by side, comparing every field after every
+prints the same fingerprint either way — the campfire, the demolition's dust
+with its moving pieces — and `pgtests gpu_gas` steps, side by side, a fire,
+smoke round a ball, a fire with every kind of force in two substeps a
+frame, and water falling through a fire, comparing every field after every
 step.
 
-**What it costs.** Each step the velocity and the fields go to the device
-and come back, and the pressure and its right-hand side: on a card in a
-PCIe slot that is a few milliseconds a step for a campfire. `pgbench_pyro`
-says how long the kernels took and how long with the copies. Once the whole
-step is on the device (§8) only the frame comes back.
+**What it costs.** Each frame the fields the sources touched go to the
+device, and all of them come back for the frame: on a card in a PCIe slot a
+few milliseconds for a campfire. `pgbench_pyro` says how long the kernels
+took, how long the copies, and all of it.
 
 Without a GPU, or when the device fails, the CPU does it all — the solver
 says why (`pgbench_pyro`, `prototype sim`: "the CPU does it all: …") and the
@@ -233,7 +241,8 @@ program's own threads.
 
 ## 8. What comes next
 
-1. **The whole step on the device** — sources, combustion, forces; the
-   fields stay there between steps and come back only for the frame.
-2. **Measured on a real card** — the same scenes on the CPU and on a GTX
+1. **Measured on a real card** — the same scenes on the CPU and on a GTX
    1060, here.
+2. **The rest on the device** — which tiles to keep, worked out there; the
+   sources' shapes; the wind, the vortex and the attractor — so that only
+   the frame comes back.
