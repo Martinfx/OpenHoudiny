@@ -5,7 +5,30 @@
 //
 #include "pg/core/Types.h"
 
+#include <algorithm>
+
 namespace pg::gl {
+
+/// How near and how far the previews' cameras clip, as a rule.
+inline constexpr float kNearClip = 0.02f, kFarClip = 500.0f;
+
+/// The planes a camera clips at, when what it draws reaches as far as
+/// `farthest` from it: kNearClip and kFarClip -- both farther in the same
+/// ratio past kFarClip, so that a big scene is not cut off and its depth is
+/// as fine as a small one's.
+inline void clipPlanes(float farthest, float& zNear, float& zFar) {
+    zFar = std::max(kFarClip, 1.05f * farthest);
+    zNear = kNearClip * (zFar / kFarClip);
+}
+
+/// The corner of the box lo..hi farthest from `eye`, how far it is; 0 for
+/// no box (lo above hi).
+inline float farthestCorner(const Vec3& eye, const Vec3& lo, const Vec3& hi) {
+    if (!(lo.x <= hi.x && lo.y <= hi.y && lo.z <= hi.z)) return 0.0f;
+    const Vec3 far(std::max(eye.x - lo.x, hi.x - eye.x), std::max(eye.y - lo.y, hi.y - eye.y),
+                   std::max(eye.z - lo.z, hi.z - eye.z));
+    return length(far);
+}
 
 /// Camera orbiting a point: the origin, unless the target says otherwise.
 struct Orbit {

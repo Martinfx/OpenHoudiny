@@ -16,6 +16,7 @@
 #include "pg/core/Grass.h"
 #include "pg/core/Instances.h"
 #include "pg/core/Tree.h"
+#include "pg/gl/Camera.h"
 #include "pg/io/Exr.h"
 #include "pg/render/Cycles.h"
 #include "pg/render/Denoise.h"
@@ -127,6 +128,25 @@ std::shared_ptr<const Scene> smallScene(int width, int height, bool overcast = f
 }
 
 }  // namespace
+
+TEST(preview_cameras_clip_far_enough_for_big_scenes) {
+    // What is drawn within kFarClip of the eye: the planes as they were.
+    float zNear = 0.0f, zFar = 0.0f;
+    gl::clipPlanes(gl::farthestCorner(Vec3(0.0f, 2.0f, 5.0f), Vec3(-1.0f), Vec3(1.0f)), zNear, zFar);
+    CHECK_EQ(zNear, gl::kNearClip);
+    CHECK_EQ(zFar, gl::kFarClip);
+    // A grid 4 km across, seen from its edge: its far side drawn, the depth
+    // as fine as a small scene's.
+    const float farthest = gl::farthestCorner(Vec3(-2000.0f, 50.0f, 0.0f), Vec3(-2000.0f, 0.0f, -2000.0f),
+                                              Vec3(2000.0f, 0.0f, 2000.0f));
+    CHECK_NEAR(farthest, std::sqrt(4000.0f * 4000.0f + 2000.0f * 2000.0f + 50.0f * 50.0f), 0.5f);
+    gl::clipPlanes(farthest, zNear, zFar);
+    CHECK(zFar > farthest);
+    CHECK_NEAR(zFar / zNear, gl::kFarClip / gl::kNearClip, 1.0f);
+    // The eye inside a box: its farthest corner; no box, nothing.
+    CHECK_NEAR(gl::farthestCorner(Vec3(0.0f), Vec3(-3.0f, 0.0f, -4.0f), Vec3(1.0f, 0.0f, 1.0f)), 5.0f, 1e-5f);
+    CHECK_EQ(gl::farthestCorner(Vec3(0.0f), Vec3(1.0f), Vec3(-1.0f)), 0.0f);
+}
 
 TEST(render_bvh_meets_what_every_triangle_meets) {
     const auto geo = strewn(400, 11);

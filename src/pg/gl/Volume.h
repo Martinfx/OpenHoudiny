@@ -297,6 +297,9 @@ public:
 
 private:
     void ensureTarget(int width, int height);
+    /// Where the camera at `eye` clips (gl::clipPlanes): far enough for all
+    /// that is drawn.
+    void clipPlanes(const Vec3& eye, float& zNear, float& zFar) const;
     /// The water of a frame to the GPU, as `prepared` holds it; none when
     /// it has none.
     void setWater(const sim::WaterFrame& water, const sim::PreparedVolumes& prepared);
@@ -398,6 +401,13 @@ private:
     GLuint overlayProgram_ = 0, overlayDotProgram_ = 0, overlayWideProgram_ = 0;
     GLuint overlayVao_[kOverlayLayers][4] = {}, overlayBuffer_[kOverlayLayers][4] = {};
     GLsizei overlayCount_[kOverlayLayers][4] = {};  // of each layer: faces' corners, lines' ends, dots, wide lines' corners
+    // The boxes round what is drawn beside the geometry and the gas -- each
+    // layer of the overlay, the guide lines, the rain: how far the camera
+    // must see (clipPlanes). Low above high: nothing.
+    struct Box {
+        Vec3 lo{1.0f}, hi{-1.0f};
+    };
+    Box overlayBox_[kOverlayLayers], linesBox_, rainBox_;
     float overlayHidden_ = 0.0f;
     GLuint geoVao_ = 0, geoBuffer_ = 0, dotVao_ = 0, dotBuffer_ = 0, curveVao_ = 0, curveBuffer_ = 0;
     GLsizei geoVertices_ = 0, dots_ = 0, curveVertices_ = 0;

@@ -18,7 +18,17 @@ namespace pg::gl {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
-constexpr float kNear = 0.02f, kFar = 500.0f;
+
+/// The box lo..hi grown to hold `p` -- made of it alone when `first`.
+void grow(Vec3& lo, Vec3& hi, const Vec3& p, bool first) {
+    lo = first ? p : glm::min(lo, p);
+    hi = first ? p : glm::max(hi, p);
+}
+/// ... to hold the points of `data`, `stride` floats each, where they are
+/// first; `first`: made of them alone.
+void grow(Vec3& lo, Vec3& hi, const std::vector<float>& data, size_t stride, bool first) {
+    for (size_t i = 0; i + 2 < data.size(); i += stride, first = false) grow(lo, hi, Vec3(data[i], data[i + 1], data[i + 2]), first);
+}
 
 const char* kFullScreen = R"(#version 330 core
 out vec2 v_ndc;
@@ -2227,6 +2237,7 @@ void VolumeRenderer::setRain(const sim::RainFrame& rain, const sim::PreparedVolu
             wetMax_[a] = prepared.wetMax[a];
         }
         const std::vector<float>& v = prepared.rain;
+        grow(rainBox_.lo, rainBox_.hi, v, 9, true);
         if (!rainVao_) {
             gl_.GenVertexArrays(1, &rainVao_);
             gl_.GenBuffers(1, &rainBuffer_);
@@ -3266,6 +3277,11 @@ void VolumeRenderer::setLines(const Lines& lines) {
                    lines.vertices.data(), STATIC_DRAW);
     gl_.BindBuffer(ARRAY_BUFFER, 0);
     lineCount_ = lines.vertices.size();
+    linesBox_ = Box();
+    for (size_t i = 0; i < lines.vertices.size(); ++i) {
+        const float* p = lines.vertices[i].position;
+        grow(linesBox_.lo, linesBox_.hi, Vec3(p[0], p[1], p[2]), i == 0);
+    }
 }
 
 void Overlay::dot(const Vec3& p, const Vec4& color, float pixels, const Vec3& normal) {
@@ -3290,6 +3306,14 @@ void Overlay::face(const Vec3& a, const Vec3& b, const Vec3& c, const Vec4& ca, 
 
 void VolumeRenderer::setOverlay(const Overlay& overlay, int layer) {
     if (layer < 0 || layer >= kOverlayLayers) return;
+    Box& box = overlayBox_[layer];
+    box = Box();
+    bool first = true;
+    for (const auto& [data, stride] : {std::pair{&overlay.faces, size_t(7)}, std::pair{&overlay.lines, size_t(7)},
+                                       std::pair{&overlay.dots, size_t(11)}, std::pair{&overlay.wide, size_t(8)}}) {
+        grow(box.lo, box.hi, *data, stride, first);
+        first = first && data->empty();
+    }
     GLuint* vaos = overlayVao_[layer];
     GLuint* buffers = overlayBuffer_[layer];
     GLsizei* counts = overlayCount_[layer];
@@ -3654,6 +3678,26 @@ Orbit VolumeRenderer::viewOf(const sim::Domain& domain) {
     return o;
 }
 
+void VolumeRenderer::clipPlanes(const Vec3& eye, float& zNear, float& zFar) const {
+    // The farthest of what is drawn: the corners of the boxes round it --
+    // the geometry, the pieces and what stands on the points; the gas and
+    // the water; the solids; the guides, the overlay, the rain.
+    float farthest = 0.0f;
+    auto reach = [&](const Vec3& lo, const Vec3& hi) { farthest = std::max(farthest, farthestCorner(eye, lo, hi)); };
+    if (hasGeoBounds_) reach(geoLo_, geoHi_);
+    reach(domain_.origin(), domain_.origin() + domain_.size());
+    if (hasWater_) reach(waterDomain_.origin(), waterDomain_.origin() + waterDomain_.size());
+    for (const sim::Solid& s : solids_) {
+        // A sphere round it, however it is turned: its size along its axes.
+        const float r = length(s.body.size);
+        reach(s.body.center - Vec3(r), s.body.center + Vec3(r));
+    }
+    if (lineCount_ > 0) reach(linesBox_.lo, linesBox_.hi);
+    for (const Box& box : overlayBox_) reach(box.lo, box.hi);
+    if (hasRain_) reach(rainBox_.lo, rainBox_.hi);
+    gl::clipPlanes(farthest, zNear, zFar);
+}
+
 void VolumeRenderer::render(int width, int height) {
     ensureTarget(width, height);
     updateLighting();
@@ -3662,11 +3706,13 @@ void VolumeRenderer::render(int width, int height) {
     Vec3 forward, right, up;
     orbit.axes(forward, right, up);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    viewProjection_ = orbit.viewProjection(aspect, kNear, kFar);
+    float zNear = kNearClip, zFar = kFarClip;
+    clipPlanes(e, zNear, zFar);
+    viewProjection_ = orbit.viewProjection(aspect, zNear, zFar);
     // The view of the next frame, for the passes' motion; the same when the
     // camera stands still.
     nextViewProjection_ = viewProjection_;
-    if (passes.on && passes.moving) nextViewProjection_ = passes.next.viewProjection(aspect, kNear, kFar);
+    if (passes.on && passes.moving) nextViewProjection_ = passes.next.viewProjection(aspect, zNear, zFar);
     // The shadows of the geometry: its map from the sun, when it or the sun moved.
     updateGeoShadow(normalize(look.lightDirection()));
     // The meshes first, into their own buffer, seen by the same camera.
