@@ -440,8 +440,8 @@ struct Shot {
 }  // namespace
 
 SimWorkspace::SimWorkspace(const gl::Api& gl, bool synchronous)
-    : gl_(gl), renderer_(gl), runner_(std::make_unique<SimRunner>(synchronous)), synchronous_(synchronous) {
-    if (!renderer_.init(rendererLog_)) rendererLog_ = "The driver rejected the volume shader:\n" + rendererLog_;
+    : gl_(gl), view_(gl), runner_(std::make_unique<SimRunner>(synchronous)), synchronous_(synchronous) {
+    if (!view_.init(rendererLog_)) rendererLog_ = "The driver rejected the volume shader:\n" + rendererLog_;
     else rendererLog_.clear();
     // Liquid Points and the like read the frames the runner keeps.
     geometry_->setFrames([this](int frame) { return runner_ ? runner_->frame(frame) : nullptr; });
@@ -593,7 +593,7 @@ void SimWorkspace::load(const sim::Network& net, const std::string& path, const 
     framed_ = false;
     // What was shown of the network before is not this one's: nothing,
     // until this one cooks -- and then the view frames it.
-    renderer_.setGeometry(nullptr);
+    view_.setGeometry(nullptr);
     geometryFramed_ = false;
     viewDirty_ = true;
 }
@@ -706,18 +706,18 @@ void SimWorkspace::pose(int frame) {
     posedFrame_ = frame;
     posedRevision_ = compiledRevision_;
     const sim::Look& look = compiled_.lookAt(frame);
-    if (!(renderer_.look == look)) {
-        renderer_.look = look;
+    if (!(view_.look() == look)) {
+        view_.setLook(look);
         viewDirty_ = true;
     }
     if (again || !compiled_.poses.empty()) {
-        renderer_.setSolids(levels_.empty() ? compiled_.solidsAt(frame) : std::vector<sim::Solid>());
+        view_.setSolids(levels_.empty() ? compiled_.solidsAt(frame) : std::vector<sim::Solid>());
         viewDirty_ = true;
     }
 }
 
 void SimWorkspace::updatePieces(bool now) {
-    const sim::Look& look = renderer_.look;
+    const sim::Look& look = view_.look();
     // The pieces, the cloth and the grains, drawn with the displayed geometry.
     const std::shared_ptr<const sim::Frame> f = levels_.empty() && shown_ && sim::drawsBodies(*shown_, look) ? shown_ : nullptr;
     const std::string key = sim::bodiesKey(look);
@@ -732,7 +732,7 @@ void SimWorkspace::updatePieces(bool now) {
     }
     piecesFrame_ = f;
     piecesKey_ = key;
-    renderer_.setPreparedPieces(std::move(made));
+    view_.setPreparedPieces(std::move(made));
     viewDirty_ = true;
 }
 
@@ -847,20 +847,20 @@ void SimWorkspace::update(float dt) {
     auto upload = [&](const std::shared_ptr<const sim::Frame>& frame, size_t fit) {
         std::shared_ptr<const sim::PreparedVolumes> made = volumes_->find(frame, fit);
         if (!made) made = sim::prepareVolumes(*frame, fit);
-        renderer_.setFrame(*frame, *made);
+        view_.setFrame(frame, std::move(made));
         shownProxy_ = fit < kFullTexels && (frame->domain.cellCount() > fit || frame->water.domain.cellCount() > fit);
     };
     if (f != shown_) {
         shown_ = f;
         shownAt_ = now;
         if (f) upload(f, texels);
-        else renderer_.clearFrame();
+        else view_.clearFrame();
         viewDirty_ = true;
     } else if (shown_ && shownProxy_ && now - shownAt_ >= kRestSeconds && volumesReady(shown_, kFullTexels, true)) {
         upload(shown_, kFullTexels);
         viewDirty_ = true;
     }
-    if (!shown_) renderer_.setDomain(runner_->domain());
+    if (!shown_) view_.setDomain(runner_->domain());
     pose(current_);
     updatePieces();
     updateGeometry();
@@ -1005,7 +1005,7 @@ std::vector<CanvasNode> SimWorkspace::canvasNodes() const {
             c.summary = "asset, version " + std::to_string(def ? def->version : 0);
         }
         if (n.display) {
-            if (const GeometryPtr& g = renderer_.geometry()) {
+            if (const GeometryPtr& g = view_.geometry()) {
                 const std::string dot = " \xc2\xb7 ";
                 c.summary = std::to_string(g->pointCount()) + " points" +
                             (g->primitiveCount() ? dot + std::to_string(g->primitiveCount()) + " prims" : std::string()) +
@@ -1973,14 +1973,14 @@ void SimWorkspace::updateGuides() {
         lines = gl::sceneGuides(compiled_.ok ? &compiled_.worldAt(frame) : nullptr, compiled_.solidsAt(frame), chosen,
                                 compiled_.solver, compiled_.liquidSolver, compiled_.rain, camera);
     }
-    renderer_.setLines(lines);
+    view_.setLines(lines);
     guideLines_ = std::move(lines);
     viewDirty_ = true;
 }
 
 void SimWorkspace::drawGnomon(ImDrawList* d, ImVec2 corner) const {
     Vec3 forward, right, up;
-    renderer_.orbit.axes(forward, right, up);
+    view_.orbit.axes(forward, right, up);
     const float len = theme::px(22.0f);
     const ImVec2 c(corner.x + theme::px(34.0f), corner.y - theme::px(34.0f));
     struct Axis {
@@ -2394,7 +2394,7 @@ std::string SimWorkspace::gridsText() const {
     const std::string times = " \xc3\x97 ", dot = "  \xc2\xb7  ";
     if (geometryOnly()) {
         // A model: what it shows, not what it would simulate.
-        const GeometryPtr& g = renderer_.geometry();
+        const GeometryPtr& g = view_.geometry();
         if (!g) return "no geometry shown";
         auto thousands = [](size_t n) {
             char buf[32];
@@ -2499,26 +2499,33 @@ void SimWorkspace::shotSize(int& width, int& height) const {
     height = compiled_.hasCamera ? compiled_.camera.height : std::max(viewHeight_, 64);
 }
 
-void SimWorkspace::renderShot(int width, int height, int frame) {
+void SimWorkspace::renderShot(int width, int height, int frame, const std::function<void(gl::VolumeRenderer&)>& read) {
     // Through the camera, as it sees -- or as the viewport does -- without
     // the guides and the selection's highlight; twice the size, to be
     // averaged down.
-    const gl::Orbit view = renderer_.orbit;
+    gl::Orbit view = view_.orbit;
     if (compiled_.hasCamera) {
         const sim::Camera& camera = compiled_.cameraAt(frame);
-        renderer_.orbit = gl::orbitThrough(camera, focusOf(camera));
+        view = gl::orbitThrough(camera, focusOf(camera));
         // The plate of that frame behind it.
         std::string why;
-        if (!renderer_.setPlate(camera.plateFile(frame), camera, why)) setMessage(why, true);
+        if (!view_.setPlate(camera.plateFile(frame), camera, why)) setMessage(why, true);
     }
-    renderer_.setLines({});
-    renderer_.setHighlight({}, 0);
+    view_.setLines({});
+    view_.setHighlight({}, 0);
     for (int layer = 0; layer < gl::VolumeRenderer::kOverlayLayers; ++layer) {
-        renderer_.setOverlay({}, layer);
+        view_.setOverlay({}, layer);
         overlayKey_[layer].clear();  // back on the next frame
     }
-    renderer_.render(width * 2, height * 2);
-    renderer_.orbit = view;
+    // Drawn and read on the view's thread, the viewport's picture left as
+    // it was.
+    view_.run([&](gl::VolumeRenderer& r) {
+        const gl::Orbit was = r.orbit;
+        r.orbit = view;
+        r.render(width * 2, height * 2);
+        read(r);
+        r.orbit = was;
+    });
     shownPlate_ = "\x01";  // the viewport sets its own plate again
     // Both back on the next frame.
     guidesCompiled_ = ~0ull;
@@ -2539,22 +2546,29 @@ bool SimWorkspace::renderImage(const std::string& path) {
     std::error_code ec;
     const fs::path parent = fs::path(path).parent_path();
     if (!parent.empty()) fs::create_directories(parent, ec);
-    // Whatever went wrong before is not this render's.
-    for (int i = 0; i < 16 && gl_.GetError() != 0;) ++i;
+    // Whatever went wrong before is not this render's -- in the view's
+    // context, where it is drawn.
+    view_.run([&](gl::VolumeRenderer&) {
+        for (int i = 0; i < 16 && gl_.GetError() != 0;) ++i;
+    });
     // An EXR: the picture in linear light and its passes -- the motion to
     // the next frame's camera, when the camera moves.
     std::string ext = fs::path(path).extension().string();
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (ext == ".exr") {
-        renderer_.passes.on = true;
-        renderer_.passes.frameTime = compiled_.world.timeStep;
-        renderer_.passes.moving = compiled_.hasCamera && !compiled_.poses.empty();
-        if (renderer_.passes.moving) renderer_.passes.next = gl::orbitThrough(compiled_.cameraAt(current_ + 1), 1.0f);
-        renderShot(width, height, current_);
+        gl::VolumeRenderer::Passes passes;
+        passes.on = true;
+        passes.frameTime = compiled_.world.timeStep;
+        passes.moving = compiled_.hasCamera && !compiled_.poses.empty();
+        if (passes.moving) passes.next = gl::orbitThrough(compiled_.cameraAt(current_ + 1), 1.0f);
+        view_.run([&](gl::VolumeRenderer& r) { r.passes = passes; });
         std::string error;
-        const bool written = gl::writePassesExr(renderer_, path, "prototype " + stem() + ", frame " + std::to_string(current_),
-                                                error, compiled_.render.exrSpace);
-        renderer_.passes.on = false;
+        bool written = false;
+        renderShot(width, height, current_, [&](gl::VolumeRenderer& r) {
+            written = gl::writePassesExr(r, path, "prototype " + stem() + ", frame " + std::to_string(current_), error,
+                                         compiled_.render.exrSpace);
+            r.passes.on = false;
+        });
         if (!written) {
             setMessage(error, true);
             notify(error, "", true);
@@ -2567,11 +2581,15 @@ bool SimWorkspace::renderImage(const std::string& path) {
         notify(done, path, false);
         return true;
     }
-    renderShot(width, height, current_);
-    const std::vector<uint8_t> pixels = renderer_.readPixels(2);
+    std::vector<uint8_t> pixels;
+    unsigned code = 0;
+    renderShot(width, height, current_, [&](gl::VolumeRenderer& r) {
+        pixels = r.readPixels(2);
+        code = gl_.GetError();
+    });
     // What the driver says went wrong drawing it: written all the same, and said.
     std::string glError;
-    if (const unsigned code = gl_.GetError()) {
+    if (code) {
         char hex[16];
         std::snprintf(hex, sizeof hex, "0x%04x", code);
         glError = std::string(" -- OpenGL reported error ") + hex + " while drawing it";
@@ -2664,13 +2682,12 @@ bool SimWorkspace::drawShotFrame(int frame, std::vector<uint8_t>& rgb, std::stri
     current_ = frame;
     if (f != shown_) {
         shown_ = f;
-        renderer_.setFrame(*f);
+        view_.setFrame(f);
     }
     pose(frame);
     updatePieces(true);
     updateGeometry();
-    renderShot(jobWidth_, jobHeight_, frame);
-    rgb = renderer_.readPixels(2);
+    renderShot(jobWidth_, jobHeight_, frame, [&](gl::VolumeRenderer& r) { rgb = r.readPixels(2); });
     return true;
 }
 

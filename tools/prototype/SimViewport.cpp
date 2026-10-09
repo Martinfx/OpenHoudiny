@@ -287,7 +287,7 @@ Vec3 SimWorkspace::floorPoint(const ViewCamera& cam, ImVec2 screen) const {
             return Vec3(p.x, 0.0f, p.z);
         }
     }
-    const gl::Orbit& orbit = renderer_.orbit;
+    const gl::Orbit& orbit = view_.orbit;
     return Vec3(orbit.target[0], 0.0f, orbit.target[2]);
 }
 
@@ -600,8 +600,8 @@ void SimWorkspace::setThroughCamera(bool on) {
     throughCamera_ = on;
     if (!on) {
         // The viewport's own lens again, the horizon level.
-        renderer_.orbit.roll = 0.0f;
-        renderer_.orbit.fovY = gl::VolumeRenderer::kFovY;
+        view_.orbit.roll = 0.0f;
+        view_.orbit.fovY = gl::VolumeRenderer::kFovY;
     }
     guidesCompiled_ = ~0ull;  // its frustum: hidden while looked through
     viewDirty_ = true;
@@ -618,7 +618,7 @@ int SimWorkspace::addCamera() {
     const int id = net_.add("camera", at.x, at.y);
     if (!output) output = net_.add("output", 720.0f, 40.0f);
     net_.connect(id, "camera", output, "camera");
-    const sim::Camera c = gl::cameraFrom(renderer_.orbit, sim::Camera());
+    const sim::Camera c = gl::cameraFrom(view_.orbit, sim::Camera());
     net_.setParam(id, "center", pv(c.position));
     net_.setParam(id, "rotation", pv(c.rotation));
     canvas_.select(id);
@@ -636,7 +636,7 @@ void SimWorkspace::cameraFromView() {
         return;
     }
     const int id = compiled_.camera.node;
-    const sim::Camera c = gl::cameraFrom(renderer_.orbit, compiled_.cameraAt(current_));
+    const sim::Camera c = gl::cameraFrom(view_.orbit, compiled_.cameraAt(current_));
     net_.setParamAt(id, "center", static_cast<float>(current_), pv(c.position));
     net_.setParamAt(id, "rotation", static_cast<float>(current_), pv(c.rotation));
     recompile();
@@ -658,7 +658,7 @@ void SimWorkspace::frameSelection() {
     };
     // Elements picked: their points.
     if (editingElements() && elementCount() > 0) {
-        if (const GeometryPtr geo = renderer_.geometry()) {
+        if (const GeometryPtr geo = view_.geometry()) {
             const std::vector<uint8_t> points = elementPoints(*geo);
             const auto P = geo->positions();
             for (size_t i = 0; i < points.size() && i < P.size(); ++i) {
@@ -700,7 +700,7 @@ void SimWorkspace::frameSelection() {
         if (n && n->display) {
             // The geometry shown.
             Vec3 a, b;
-            if (renderer_.geometryBounds(a, b)) grow(a, b);
+            if (view_.geometryBounds(a, b)) grow(a, b);
             continue;
         }
         if (!n || n->type == "object" || n->type == "pyro_source" || n->type == "water_source") continue;
@@ -724,7 +724,7 @@ void SimWorkspace::frameSelection() {
             grow(a, b);
         }
         Vec3 a, b;
-        if (renderer_.geometryBounds(a, b)) grow(a, b);
+        if (view_.geometryBounds(a, b)) grow(a, b);
         if (!any) {
             const sim::Domain dm = sceneBox();
             grow(dm.origin(), dm.origin() + dm.size());
@@ -732,7 +732,7 @@ void SimWorkspace::frameSelection() {
     }
     const Vec3 middle = (lo + hi) * 0.5f;
     const float radius = std::max(0.5f * length(hi - lo), 0.05f);
-    gl::Orbit& o = renderer_.orbit;
+    gl::Orbit& o = view_.orbit;
     for (int k = 0; k < 3; ++k) o.target[k] = middle[k];
     o.distance = std::clamp(1.15f * radius / std::sin(o.fovY * 3.14159265f / 360.0f), 0.2f, 200.0f);
     framed_ = true;
@@ -1195,12 +1195,12 @@ void SimWorkspace::viewport(ImVec2 size) {
                              std::fabs(box.z - framedSize_.z) > 1e-4f;
     const bool simulated = compiled_.ok && compiled_.world.any();
     Vec3 glo, ghi;
-    const bool geometry = !simulated && renderer_.geometryBounds(glo, ghi);
+    const bool geometry = !simulated && view_.geometryBounds(glo, ghi);
     if (!framed_ || resized || (geometry && !geometryFramed_)) {
-        renderer_.orbit = gl::VolumeRenderer::viewOf(dm);
+        view_.orbit = gl::VolumeRenderer::viewOf(dm);
         if (geometry) {
             const Vec3 middle = (glo + ghi) * 0.5f;
-            gl::Orbit& o = renderer_.orbit;
+            gl::Orbit& o = view_.orbit;
             for (int k = 0; k < 3; ++k) o.target[k] = middle[k];
             o.distance = std::clamp(1.15f * std::max(0.5f * length(ghi - glo), 0.05f) / std::sin(o.fovY * 3.14159265f / 360.0f),
                                     0.2f, 200.0f);
@@ -1234,11 +1234,11 @@ void SimWorkspace::viewport(ImVec2 size) {
         else gh = fw / c.aspect();
         gl::Orbit through = gl::orbitThrough(c, focusOf(c));
         through.fovY = 2.0f * std::atan(std::tan(c.fovY() * 3.14159265f / 360.0f) * fh / gh) * 180.0f / 3.14159265f;
-        const gl::Orbit& now = renderer_.orbit;
+        const gl::Orbit& now = view_.orbit;
         if (through.yaw != now.yaw || through.pitch != now.pitch || through.distance != now.distance ||
             through.roll != now.roll || through.fovY != now.fovY || through.target[0] != now.target[0] ||
             through.target[1] != now.target[1] || through.target[2] != now.target[2]) {
-            renderer_.orbit = through;
+            view_.orbit = through;
             viewDirty_ = true;
         }
         gateLo_ = ImVec2(lo.x + 0.5f * (fw - gw), lo.y + 0.5f * (fh - gh));
@@ -1247,17 +1247,17 @@ void SimWorkspace::viewport(ImVec2 size) {
         const std::string plate = c.plateFile(current_);
         if (plate != shownPlate_ || !(c == plateCamera_)) {
             std::string why;
-            if (!renderer_.setPlate(plate, c, why)) setMessage(why, true);
+            if (!view_.setPlate(plate, c, why)) setMessage(why, true);
             shownPlate_ = plate;
             plateCamera_ = c;
             viewDirty_ = true;
         }
-    } else if (renderer_.hasPlate()) {
-        renderer_.clearPlate();
+    } else if (view_.hasPlate()) {
+        view_.clearPlate();
         shownPlate_.clear();
         viewDirty_ = true;
     }
-    ViewCamera cam = ViewCamera::of(renderer_.orbit, lo, ImVec2(static_cast<float>(w), static_cast<float>(hh)));
+    ViewCamera cam = ViewCamera::of(view_.orbit, lo, ImVec2(static_cast<float>(w), static_cast<float>(hh)));
     camera_ = cam;
     auto within = [](ImVec2 p, ImVec2 a, ImVec2 b) { return p.x >= a.x && p.y >= a.y && p.x < b.x && p.y < b.y; };
     const bool onTools = within(io.MousePos, toolsLo_, toolsHi_) || within(io.MousePos, noticeLo_, noticeHi_);
@@ -1276,11 +1276,11 @@ void SimWorkspace::viewport(ImVec2 size) {
         hoverElement_ = -1;
         hoverGeometry_ = nullptr;
     } else if (io.MousePos.x != hoverMouse_.x || io.MousePos.y != hoverMouse_.y || cam.eye != hoverEye_ ||
-               cam.forward != hoverForward_ || renderer_.geometry().get() != hoverGeometry_) {
+               cam.forward != hoverForward_ || view_.geometry().get() != hoverGeometry_) {
         hoverMouse_ = io.MousePos;
         hoverEye_ = cam.eye;
         hoverForward_ = cam.forward;
-        hoverGeometry_ = renderer_.geometry().get();
+        hoverGeometry_ = view_.geometry().get();
         hoverElement_ = elementAt(cam, io.MousePos);
         // Its picker still being made: found again the next frame.
         if (!picker()) hoverGeometry_ = nullptr;
@@ -1289,19 +1289,19 @@ void SimWorkspace::viewport(ImVec2 size) {
     if (chosen != highlighted_ || hovered_ != highlightedHover_) {
         highlighted_ = chosen;
         highlightedHover_ = hovered_;
-        renderer_.setHighlight(chosen, hovered_);
+        view_.setHighlight(chosen, hovered_);
         viewDirty_ = true;
     }
     updateOverlay();
 
     if (w != viewWidth_ || hh != viewHeight_) viewDirty_ = true;
     if (viewDirty_ && rendererLog_.empty()) {
-        renderer_.render(w, hh);
+        view_.draw(w, hh);
         viewWidth_ = w;
         viewHeight_ = hh;
         viewDirty_ = false;
     }
-    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(renderer_.colorTexture())),
+    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(view_.picture())),
                  ImVec2(static_cast<float>(w), static_cast<float>(hh)), ImVec2(0, 1), ImVec2(1, 0));
     ImGui::SetCursorScreenPos(lo);
     ImGui::SetNextItemAllowOverlap();
@@ -1379,7 +1379,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     runner_->hold(gizmo_.dragging() || stroking_);
 
     // The camera -- unless the press was the gizmo's, the box's, the brush's.
-    gl::Orbit& o = renderer_.orbit;
+    gl::Orbit& o = view_.orbit;
     const bool leftTurns = !editingElements() || pressTurns_;
     if (viewActive && !gizmoOwnsMouse_ && !boxing_ && !stroking_) {
         const ImVec2 dlt = io.MouseDelta;

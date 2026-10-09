@@ -78,7 +78,7 @@ bool SimWorkspace::enterAsset(int id) {
     editKey_.clear();
     nameEditNode_ = 0;
     shown_.reset();
-    renderer_.clearFrame();  // the scene's simulation waits; its asset alone shows
+    view_.clearFrame();  // the scene's simulation waits; its asset alone shows
     posedRevision_ = ~0ull;
     guidesCompiled_ = ~0ull;
     viewDirty_ = true;

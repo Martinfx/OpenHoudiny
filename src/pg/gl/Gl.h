@@ -31,6 +31,8 @@ using GLbitfield = unsigned int;
 using GLubyte = unsigned char;
 using GLsizeiptr = std::ptrdiff_t;
 using GLintptr = std::ptrdiff_t;
+using GLuint64 = std::uint64_t;
+using GLsync = struct GLsyncObject*;  // opaque, as the driver hands it
 
 inline constexpr GLbitfield COLOR_BUFFER_BIT = 0x4000, DEPTH_BUFFER_BIT = 0x0100;
 inline constexpr GLenum DEPTH_TEST = 0x0B71, CULL_FACE = 0x0B44, LESS = 0x0201;
@@ -61,6 +63,9 @@ inline constexpr GLenum RG8 = 0x822B, TEXTURE8 = 0x84C8, TEXTURE9 = 0x84C9, TEXT
 inline constexpr GLenum RGBA16F = 0x881A, COLOR_ATTACHMENT1 = 0x8CE1, COLOR_ATTACHMENT2 = 0x8CE2;
 inline constexpr GLenum READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9;
 inline constexpr GLenum TEXTURE_2D_ARRAY = 0x8C1A, SRGB8_ALPHA8 = 0x8C43;
+inline constexpr GLenum SYNC_GPU_COMMANDS_COMPLETE = 0x9117, ALREADY_SIGNALED = 0x911A, CONDITION_SATISFIED = 0x911C;
+inline constexpr GLbitfield SYNC_FLUSH_COMMANDS_BIT = 0x1;
+inline constexpr GLuint64 TIMEOUT_IGNORED = ~GLuint64(0);
 
 // name, return type, parameters -- one list drives the struct and the loader.
 #define PG_GL_FUNCTIONS(X)                                                                         \
@@ -142,7 +147,13 @@ inline constexpr GLenum TEXTURE_2D_ARRAY = 0x8C1A, SRGB8_ALPHA8 = 0x8C43;
     X(DeleteRenderbuffers, void, (GLsizei, const GLuint*))                                         \
     X(RenderbufferStorage, void, (GLenum, GLenum, GLsizei, GLsizei))                               \
     X(FramebufferRenderbuffer, void, (GLenum, GLenum, GLenum, GLuint))                             \
-    X(BlitFramebuffer, void, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum))
+    X(BlitFramebuffer, void, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
+    X(Flush, void, ())                                                                             \
+    X(Finish, void, ())                                                                            \
+    X(FenceSync, GLsync, (GLenum, GLbitfield))                                                     \
+    X(ClientWaitSync, GLenum, (GLsync, GLbitfield, GLuint64))                                      \
+    X(WaitSync, void, (GLsync, GLbitfield, GLuint64))                                              \
+    X(DeleteSync, void, (GLsync))
 
 using Proc = void (*)();
 using GetProc = Proc (*)(const char* name);

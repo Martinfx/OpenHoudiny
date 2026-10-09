@@ -141,7 +141,7 @@ PickView SimWorkspace::pickView(const ViewCamera& cam) {
 }
 
 const ElementPicker* SimWorkspace::picker(bool wait) {
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     if (!geo) return nullptr;
     wait = wait || synchronous_;
     // A new tree is made on a thread of its own -- a million faces' takes a
@@ -182,7 +182,7 @@ void SimWorkspace::checkElements() {
     // What is picked is of the geometry shown as it was: of other size --
     // points deleted, another grid -- and it is gone. The same, it stays:
     // the node after it, an Edit undone, show the same points.
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     const bool any = !picked_.mask.empty() || !picked_.edges.empty();
     const bool gone = geo && (geo->pointCount() != picked_.points || geo->primitiveCount() != picked_.primitives ||
                               (elements_ == Elements::Vertices && !picked_.mask.empty() &&
@@ -248,7 +248,7 @@ std::vector<uint8_t> SimWorkspace::elementPoints(const Geometry& geo) const {
 }
 
 bool SimWorkspace::elementCenter(Vec3& center) const {
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     if (!geo || elementCount() == 0) return false;
     const std::vector<uint8_t> points = elementPoints(*geo);
     const auto P = geo->positions();
@@ -271,7 +271,7 @@ bool SimWorkspace::elementCenter(Vec3& center) const {
 void SimWorkspace::setElements(Elements mode) {
     if (mode == elements_) return;
     if (gizmo_.dragging()) return;
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     // What was picked, as the points it is -- and as the primitives, for
     // edges and vertices; the vertices, for primitives.
     std::vector<uint8_t> points, prims, corners;
@@ -370,7 +370,7 @@ int32_t SimWorkspace::elementAt(const ViewCamera& cam, ImVec2 mouse, bool wait) 
 }
 
 void SimWorkspace::clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, bool remove) {
-    const GeometryPtr geo = renderer_.geometry();
+    const GeometryPtr geo = view_.geometry();
     if (!geo || elements_ == Elements::Objects) return;
     const int32_t e = elementAt(cam, mouse, true);
     if (picked_.points != geo->pointCount() || picked_.primitives != geo->primitiveCount()) {
@@ -397,7 +397,7 @@ void SimWorkspace::clickElements(const ViewCamera& cam, ImVec2 mouse, bool add, 
 }
 
 void SimWorkspace::regionElements(const ViewCamera& cam, const ScreenRegion& region, bool add, bool remove) {
-    const GeometryPtr geo = renderer_.geometry();
+    const GeometryPtr geo = view_.geometry();
     const ElementPicker* p = elements_ == Elements::Objects ? nullptr : picker(true);
     if (!geo || !p) return;
     if (picked_.points != geo->pointCount() || picked_.primitives != geo->primitiveCount()) {
@@ -500,7 +500,7 @@ SimWorkspace::Soft SimWorkspace::softNow() const {
     if (s.radius <= 0.0f) {
         // Not set yet: a share of the geometry's size, said shortly.
         Vec3 lo, hi;
-        const float size = renderer_.geometryBounds(lo, hi) ? length(hi - lo) : 3.0f;
+        const float size = view_.geometryBounds(lo, hi) ? length(hi - lo) : 3.0f;
         const float r = std::max(0.15f * size, 1e-3f);
         const float step = std::pow(10.0f, std::floor(std::log10(r)) - 1.0f);
         s.radius = std::round(r / step) * step;
@@ -555,7 +555,7 @@ int SimWorkspace::softBaseNode() const {
 }
 
 const std::vector<float>& SimWorkspace::softShares() {
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     const Soft s = softNow();
     if (!geo || !s.on || !editingElements() || paint_ || elementCount() == 0 || picked_.points != geo->pointCount() ||
         picked_.primitives != geo->primitiveCount()) {
@@ -605,7 +605,7 @@ void SimWorkspace::drawMirrorPlane(ImDrawList* d, const ViewCamera& cam) {
     const Mirror m = symmetryNow();
     const int axis = mirrorAxis(m);
     Vec3 lo, hi;
-    if (axis < 0 || !renderer_.geometryBounds(lo, hi)) return;
+    if (axis < 0 || !view_.geometryBounds(lo, hi)) return;
     // Across the box round the geometry, a little past it, through the origin.
     const Vec3 pad = (hi - lo) * 0.08f + Vec3(0.05f);
     lo -= pad;
@@ -647,7 +647,7 @@ void SimWorkspace::drawSoftRing(ImDrawList* d, const ViewCamera& cam, const Vec3
 }
 
 void SimWorkspace::selectAllElements(bool invert) {
-    const GeometryPtr geo = renderer_.geometry();
+    const GeometryPtr geo = view_.geometry();
     if (!geo || elements_ == Elements::Objects) return;
     if (picked_.points != geo->pointCount() || picked_.primitives != geo->primitiveCount()) {
         picked_ = Picked{net_.displayed(), geo->pointCount(), geo->primitiveCount(), {}, {}, picked_.revision};
@@ -715,13 +715,13 @@ const std::vector<Vec3>& SimWorkspace::primitiveNormals(const GeometryPtr& geo) 
 }
 
 void SimWorkspace::updateOverlay() {
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     const bool on = editingElements() && geo != nullptr;
     // Picking what is hidden too, the marks it hides are drawn faint.
     const float faint = on && pickHidden_ && !paint_ ? 0.3f : 0.0f;
     if (faint != overlayHidden_) {
         overlayHidden_ = faint;
-        renderer_.setOverlayHidden(faint);
+        view_.setOverlayHidden(faint);
         viewDirty_ = true;
     }
     const int painted = paint_ ? paintNode() : 0;
@@ -787,7 +787,7 @@ void SimWorkspace::updateOverlay() {
                 }
             }
         }
-        renderer_.setOverlay(o, 0);
+        view_.setOverlay(o, 0);
         viewDirty_ = true;
     }
 
@@ -862,7 +862,7 @@ void SimWorkspace::updateOverlay() {
                 }
             }
         }
-        renderer_.setOverlay(o, 1);
+        view_.setOverlay(o, 1);
         viewDirty_ = true;
     }
 
@@ -897,7 +897,7 @@ void SimWorkspace::updateOverlay() {
                 for (size_t k = 0; k < sides; ++k) o.wideLine(P[pts[k]], P[pts[(k + 1) % pts.size()]], kHover, theme::px(2.0f));
             }
         }
-        renderer_.setOverlay(o, 2);
+        view_.setOverlay(o, 2);
         viewDirty_ = true;
     }
 }
@@ -970,7 +970,7 @@ void SimWorkspace::groupElements() {
         setMessage("Pick points, edges or primitives to make a group of (2, 3, 4)", true);
         return;
     }
-    const GeometryPtr geo = renderer_.geometry();
+    const GeometryPtr geo = view_.geometry();
     // A name no group of the geometry has yet.
     std::string name;
     for (int k = 1;; ++k) {
@@ -1196,7 +1196,7 @@ void SimWorkspace::setBrush(bool on, const char* type) {
     if (on == paint_) return;
     const bool sculpt = std::string(type) == "sculpt";
     if (on) {
-        if (!renderer_.geometry() || !net_.node(net_.displayed())) {
+        if (!view_.geometry() || !net_.node(net_.displayed())) {
             setMessage(std::string("Nothing to ") + (sculpt ? "sculpt" : "paint on") +
                            ": display a geometry node first (the flag at its right end, or R on it)",
                        true);
@@ -1211,7 +1211,7 @@ void SimWorkspace::setBrush(bool on, const char* type) {
             paintMade_ = paintNode_ != 0;
             // A brush as big as a twelfth of what is sculpted, said shortly.
             Vec3 lo, hi;
-            if (paintNode_ && sculpt && renderer_.geometryBounds(lo, hi) && length(hi - lo) > 1e-6f) {
+            if (paintNode_ && sculpt && view_.geometryBounds(lo, hi) && length(hi - lo) > 1e-6f) {
                 const float r = length(hi - lo) / 12.0f;
                 const float step = std::pow(10.0f, std::floor(std::log10(r)) - 1.0f);
                 net_.setParam(paintNode_, "radius", {std::round(r / step) * step, 0.0f, 0.0f});
@@ -1445,7 +1445,7 @@ void SimWorkspace::paintTool(ImDrawList* d, const ViewCamera& cam, bool overView
 // --- nodes on what is picked ----------------------------------------------------------------
 
 std::string SimWorkspace::patternFor(AttrClass cls) const {
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     if (!geo || elementCount() == 0) return {};
     // Edges name their points, or the primitives they are sides of, alike.
     if (elements_ == Elements::Edges) return edgePatternOf(picked_.edges);
@@ -1502,7 +1502,7 @@ void SimWorkspace::applyToPicked(const std::string& type) {
 bool SimWorkspace::extrudeGizmo(ImDrawList* d, const ViewCamera& cam, bool overView) {
     const int shown = net_.displayed();
     const sim::Node* n = net_.node(shown);
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     if (!n || n->type != "polyextrude" || n->bypass || !geo || paint_ || tool_ == GizmoMode::Select) return false;
     const float frame = static_cast<float>(current_);
     // Its faces moved: their middle, and which way they went.
@@ -1567,7 +1567,7 @@ bool SimWorkspace::extrudeGizmo(ImDrawList* d, const ViewCamera& cam, bool overV
 // --- the numbers of the elements -------------------------------------------------------------
 
 void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     if (!numbers_ || !editingElements() || !geo) return;
     // The middles, the marks and what is hidden are the picker's: no
     // numbers till it is made.
@@ -1631,7 +1631,7 @@ void SimWorkspace::drawNumbers(ImDrawList* d, const ViewCamera& cam) {
 
 std::string SimWorkspace::elementStatus() const {
     if (!editingElements()) return {};
-    const GeometryPtr& geo = renderer_.geometry();
+    const GeometryPtr& geo = view_.geometry();
     if (!geo) return "Nothing shown to pick in: display a geometry node (its flag, or R on it)";
     const float frame = static_cast<float>(current_);
     if (paint_ && sculptNode()) {
@@ -1665,9 +1665,9 @@ std::string SimWorkspace::elementStatus() const {
         if (elements_ == Elements::Edges && picker_ && h < picker_->edges().size()) {
             const Edge& e = picker_->edges()[h];
             text = "edge " + std::to_string(e.first) + "-" + std::to_string(e.second);
-        } else if (elements_ == Elements::Vertices && picker_ && renderer_.geometry() && h < renderer_.geometry()->vertexCount()) {
+        } else if (elements_ == Elements::Vertices && picker_ && view_.geometry() && h < view_.geometry()->vertexCount()) {
             // As Houdini names it too: the primitive and which of its corners.
-            const Geometry& g = *renderer_.geometry();
+            const Geometry& g = *view_.geometry();
             const uint32_t prim = picker_->vertexPrimitive(h);
             text = "vertex " + std::to_string(h) + " (" + std::to_string(prim) + "v" +
                    std::to_string(h - g.primitiveVertexStart(prim)) + ", point " + std::to_string(g.vertexPoint(h)) + ")";

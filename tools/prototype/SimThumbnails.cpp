@@ -303,9 +303,9 @@ void SimWorkspace::updateThumbnails() {
         p.frame = frame;
         p.layers = gl::VolumeRenderer::kAllLayers;
         p.solids = compiled_.solidsAt(current_);
-        p.geometry = renderer_.geometry();
+        p.geometry = view_.geometry();
         p.scene = true;
-        p.prepared = renderer_.prepared();
+        p.prepared = view_.prepared();
         p.bodied = true;
         p.key = mixKey(revision, p.geometry.get());
         p.live = live;
@@ -537,7 +537,7 @@ void SimWorkspace::updateThumbnails() {
         // A node's own geometry, prepared on the preparer's thread -- or as
         // the viewport has it, if it is the same: drawn once it is.
         if (!p.scene && p.geometry) {
-            p.prepared = p.geometry == renderer_.geometry() ? renderer_.prepared() : thumbPreparer_->find(p.geometry);
+            p.prepared = p.geometry == view_.geometry() ? view_.prepared() : thumbPreparer_->find(p.geometry);
             if (!p.prepared || p.prepared->geometry != p.geometry) {
                 if (preparing.size() < static_cast<size_t>(kPerFrame)) preparing.push_back(p.geometry);
                 continue;

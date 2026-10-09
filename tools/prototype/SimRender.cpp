@@ -41,10 +41,10 @@ sim::Camera SimWorkspace::renderCamera(int width, int height, bool camera) const
     }
     // The view's: its lens as wide as the viewport's.
     sim::Camera c;
-    c.focal = 12.0f / std::tan(renderer_.orbit.fovY * 3.14159265f / 360.0f);
+    c.focal = 12.0f / std::tan(view_.orbit.fovY * 3.14159265f / 360.0f);
     c.width = width;
     c.height = height;
-    return gl::cameraFrom(renderer_.orbit, c);
+    return gl::cameraFrom(view_.orbit, c);
 }
 
 RenderView& SimWorkspace::renderView() {
@@ -59,8 +59,8 @@ RenderView& SimWorkspace::renderView() {
 
 RenderView::Request SimWorkspace::renderRequest(int width, int height, bool camera) {
     RenderView::Request r;
-    r.input.geometry = renderer_.geometry();
-    r.input.look = renderer_.look;
+    r.input.geometry = view_.geometry();
+    r.input.look = view_.look();
     if (levels_.empty()) {
         r.frame = shown_;
         r.input.solids = compiled_.solidsAt(current_);
@@ -259,7 +259,7 @@ void SimWorkspace::renderTab(int width, int height) {
     uint64_t key = mixed(0xcbf29ce484222325ull, static_cast<uint64_t>(compiledRevision_));
     key = mixed(key, static_cast<uint64_t>(current_));
     key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(shown_.get())));
-    key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(renderer_.geometry().get())));
+    key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(view_.geometry().get())));
     key = mixed(key, static_cast<uint64_t>(levels_.size()));
     for (const float v : {cam.position.x, cam.position.y, cam.position.z, cam.rotation.x, cam.rotation.y, cam.rotation.z,
                           cam.focal}) {
@@ -313,12 +313,12 @@ void SimWorkspace::renderTab(int width, int height) {
     auto leaveCamera = [&] {
         if (throughCamera_ && compiled_.hasCamera) {
             const sim::Camera& c = compiled_.cameraAt(current_);
-            renderer_.orbit = gl::orbitThrough(c, focusOf(c));
+            view_.orbit = gl::orbitThrough(c, focusOf(c));
         }
         setThroughCamera(false);
     };
     const bool hovered = ImGui::IsItemHovered();
-    gl::Orbit& o = renderer_.orbit;
+    gl::Orbit& o = view_.orbit;
     if (ImGui::IsItemActive()) {
         const ImVec2 dlt = io.MouseDelta;
         if (dlt.x != 0.0f || dlt.y != 0.0f) {
@@ -390,7 +390,7 @@ bool SimWorkspace::renderShotFrame(int frame, std::vector<uint8_t>& rgb, std::st
     current_ = frame;
     if (f != shown_) {
         shown_ = f;
-        renderer_.setFrame(*f);
+        view_.setFrame(f);
     }
     pose(frame);
     updatePieces(true);

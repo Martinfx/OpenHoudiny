@@ -467,6 +467,21 @@ link 6.geometry -> 7.geometry
   not redone between the thumbnails of other nodes. The nodes' own geometry
   for their thumbnails is prepared by yet another thread: a thumbnail is
   drawn once its geometry is ready.
+- The viewport is drawn on a thread of its own
+  (`tools/prototype/ViewThread.h`), in an OpenGL context that shares the
+  window's. The window's thread only says what changed (geometry, frame,
+  look, selection -- run on the view's thread in the order they came) and
+  asks for a picture from the current orbit; the view's thread draws it into
+  one of three textures and the window shows the latest one finished. The
+  window waits for the picture asked for at most 12 ms: a scene that draws
+  fast shows up in the same frame, one that takes 100 ms no longer holds the
+  node editor, the sliders and the orbit itself to 10 frames a second -- the
+  viewport follows a frame or a few behind. Screenshots and scripts wait for
+  each picture, so they save exactly the one asked for. `PG_VIEW_THREAD=0`
+  draws on the window's thread as before (as does a build or a machine
+  where the second context cannot be made). The thumbnails in the network
+  are still drawn on the window's thread: those of a whole forest can take
+  a moment on a slow GPU.
 - The network is also compiled for simulation on its own thread
   (`pg/sim/Compiler.h`) with its own graph, so the shapes for the simulation
   (Shape of objects and sources, pieces for RBD, cloth) are cooked outside

@@ -36,6 +36,7 @@
 #include "Commands.h"
 #include "Editor.h"
 #include "Theme.h"
+#include "ViewThread.h"
 
 #include "pg/gl/Png.h"
 #include "pg/sim/FrameStore.h"
@@ -357,6 +358,17 @@ int runEditor(int argc, char** argv) {
         std::fprintf(stderr, "prototype: OpenGL 3.3 functions missing: %s\n", missing.c_str());
         return 1;
     }
+    // The viewport's own context, sharing the window's: it draws on a thread
+    // of its own (ViewThread.h). PG_VIEW_THREAD=0: on the window's thread.
+    GLFWwindow* viewContext = nullptr;
+    const char* viewThread = std::getenv("PG_VIEW_THREAD");
+    if (!(viewThread && std::string(viewThread) == "0")) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        viewContext = glfwCreateWindow(16, 16, "Prototype view", nullptr, window);
+        glfwDefaultWindowHints();
+        if (!viewContext) std::fprintf(stderr, "prototype: no context for the viewport's thread -- it draws on the window's\n");
+    }
+    ViewThread::setSharedContext(viewContext);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -382,6 +394,9 @@ int runEditor(int argc, char** argv) {
     {
         // A screenshot of frame N wants N steps: the simulation in step with
         // the window. A script runs it as a person would see it, on its thread.
+        // ... and the pictures the viewport is asked for, waited for: the
+        // ones a script or a screenshot saves are those it asked for.
+        ViewThread::setPatient(scripted || !screenshot.empty());
         Editor editor(gl, libraries, PG_EXAMPLES_DIR, !screenshot.empty());
         ShaderWorkspace& sh = editor.shaders();
         if (!target.empty()) sh.setCodeTarget(target);
@@ -467,6 +482,8 @@ int runEditor(int argc, char** argv) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+    ViewThread::setSharedContext(nullptr);
+    if (viewContext) glfwDestroyWindow(viewContext);
     glfwDestroyWindow(window);
     glfwTerminate();
     return status;

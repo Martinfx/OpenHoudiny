@@ -133,10 +133,10 @@ void SimWorkspace::updateGeometry() {
         cookedSerial_ = done.serial;
         const auto shown = done.geometry.find(display);
         const GeometryPtr geo = shown != done.geometry.end() ? shown->second : nullptr;
-        if (geo != renderer_.geometry()) {
+        if (geo != view_.geometry()) {
             // Prepared on the cooker's thread: only sent to the GPU here.
-            if (done.prepared && done.prepared->geometry == geo) renderer_.setPrepared(done.prepared);
-            else renderer_.setGeometry(geo);
+            if (done.prepared && done.prepared->geometry == geo) view_.setPrepared(done.prepared);
+            else view_.setGeometry(geo);
             viewDirty_ = true;
         }
         const auto sheetGeo = done.geometry.find(sheet);

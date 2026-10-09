@@ -49,6 +49,7 @@
 #include "RenderView.h"
 #include "SimRunner.h"
 #include "Thumbnails.h"
+#include "ViewThread.h"
 #include "Wedge.h"
 #include "Workspace.h"
 
@@ -262,7 +263,8 @@ private:
     void shotSize(int& width, int& height) const;
     /// Draws what a render shows at `frame` -- through the camera, if there
     /// is one -- at twice `width` x `height`, the viewport's view kept.
-    void renderShot(int width, int height, int frame);
+    /// `read` what it drew, on the view's thread, before it draws again.
+    void renderShot(int width, int height, int frame, const std::function<void(gl::VolumeRenderer&)>& read);
     /// How far in front of `camera` the middle of the scene is: where an
     /// orbit through it turns round.
     float focusOf(const sim::Camera& camera) const;
@@ -644,7 +646,7 @@ private:
     bool nameActive_ = false;  ///< the name is being typed in
 
     const gl::Api& gl_;
-    gl::VolumeRenderer renderer_;
+    ViewThread view_;  ///< draws the viewport, on a thread of its own
     std::string rendererLog_;
     /// Never another: the cooker's thread reads it (Simulate Again clears it).
     const std::unique_ptr<SimRunner> runner_;
