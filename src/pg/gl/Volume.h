@@ -297,7 +297,9 @@ public:
     /// those under them. Taken at the next setFrame.
     size_t texelBudget = size_t(1) << 28;
 
-    static constexpr int kMaxSolids = 16;
+    /// Solids drawn; more are left out. Each ray asks each for a ball round
+    /// it first: hundreds cost the viewport little more than a few.
+    static constexpr int kMaxSolids = 1024;
     /// Meshes that cast shadows; more are drawn, without.
     static constexpr int kMaxMeshShadows = 4;
     /// The vertical field of view, degrees.
@@ -385,6 +387,9 @@ private:
     // (position, colour, radius), lines (as guide lines are).
     // The shadows the geometry casts: its depth seen from the sun.
     static constexpr int kGeoShadowSize = 2048;
+    GLuint solidsTex_ = 0;  ///< the solids, a row each (setSceneUniforms)
+    /// Its texture unit: one the passes that read the solids leave free.
+    static constexpr int kSolidsUnit = 15;
     GLuint geoShadowProgram_ = 0, geoShadowFbo_ = 0, geoShadowTex_ = 0, geoShadowDepth_ = 0;
     bool geoShadowDirty_ = true, hasGeoShadow_ = false;
     Vec3 geoShadowLight_;

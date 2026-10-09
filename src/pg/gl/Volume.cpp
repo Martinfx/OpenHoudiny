@@ -45,16 +45,19 @@ void main() {
 const char* kCommon = R"(
 uniform vec3 u_boxMin, u_boxSize;
 uniform vec3 u_texel;          // one cell, in texture coordinates
-// The solids: each a shape placed in the world (pg/sim/Shape.h), packed in
-// fours -- centre and shape; its own axes, each with half its size along it;
-// colour and highlight; a torus's ring and tube.
+// The solids: each a shape placed in the world (pg/sim/Shape.h), a row of
+// six texels of u_solids each -- centre and shape; its own axes, each with
+// half its size along it; colour and highlight; a torus's ring and tube.
 uniform int u_solidCount;
-uniform vec4 u_solidA[16];     // centre, shape (0 sphere, 1 box, 2 cylinder, 3 cone, 4 torus)
-uniform vec4 u_solidB[16];     // its x axis in the world, half its size along it
-uniform vec4 u_solidC[16];     // y
-uniform vec4 u_solidD[16];     // z
-uniform vec4 u_solidE[16];     // colour, highlight: 0 none, 1 hovered, 2 selected
-uniform vec4 u_solidF[16];     // a torus's ring and tube radius; what it is over a plate (sim::Matte)
+uniform sampler2D u_solids;
+vec4 solidA(int i) { return texelFetch(u_solids, ivec2(0, i), 0); }  // centre, shape (0 sphere, 1 box, 2 cylinder, 3 cone, 4 torus)
+vec4 solidB(int i) { return texelFetch(u_solids, ivec2(1, i), 0); }  // its x axis in the world, half its size along it
+vec4 solidC(int i) { return texelFetch(u_solids, ivec2(2, i), 0); }  // y
+vec4 solidD(int i) { return texelFetch(u_solids, ivec2(3, i), 0); }  // z
+vec4 solidE(int i) { return texelFetch(u_solids, ivec2(4, i), 0); }  // colour, highlight: 0 none, 1 hovered, 2 selected
+// A torus's ring and tube radius; what it is over a plate (sim::Matte); the
+// radius of a ball round it.
+vec4 solidF(int i) { return texelFetch(u_solids, ivec2(5, i), 0); }
 
 vec3 safeDir(vec3 d) { return mix(vec3(1e-6), d, greaterThan(abs(d), vec3(1e-6))); }
 
@@ -81,18 +84,25 @@ float firstRoot(float a, float b, float c, float tMin) {
 // along its own axes -- the shapes are simple, and t stays the same.
 float hitShape(int i, vec3 o, vec3 d, float tMin, out vec3 normal) {
     normal = vec3(0.0, 1.0, 0.0);
-    vec3 ax = u_solidB[i].xyz, ay = u_solidC[i].xyz, az = u_solidD[i].xyz;
-    vec3 h = vec3(u_solidB[i].w, u_solidC[i].w, u_solidD[i].w);
-    vec3 oc = o - u_solidA[i].xyz;
+    vec4 sa = solidA(i), sf = solidF(i);
+    vec3 oc = o - sa.xyz;
+    // Missing the ball round it, as most rays do in a scene of many:
+    // nothing more to ask.
+    float ba = dot(d, d), bb = dot(oc, d), bc = dot(oc, oc) - sf.w * sf.w;
+    float bd = bb * bb - ba * bc;
+    if (bd < 0.0 || -bb + sqrt(bd) < tMin * ba) return 1e30;
+    vec4 sb = solidB(i), sc = solidC(i), sd = solidD(i);
+    vec3 ax = sb.xyz, ay = sc.xyz, az = sd.xyz;
+    vec3 h = vec3(sb.w, sc.w, sd.w);
     vec3 lo = vec3(dot(ax, oc), dot(ay, oc), dot(az, oc));
     vec3 ld = vec3(dot(ax, d), dot(ay, d), dot(az, d));
-    int shape = int(u_solidA[i].w + 0.5);
+    int shape = int(sa.w + 0.5);
     if (shape == 4) {
         // A torus: sphere tracing its exact distance, z squeezed to x's scale.
         float k = h.x / h.z;
         vec3 to = vec3(lo.x, lo.y, lo.z * k), td = vec3(ld.x, ld.y, ld.z * k);
         float speed = length(td);
-        float ring = u_solidF[i].x, tube = u_solidF[i].y;
+        float ring = sf.x, tube = sf.y;
         vec2 span = boxSpan(to, td, -vec3(h.x, tube, h.x), vec3(h.x, tube, h.x));
         if (span.x > span.y || span.y < tMin || speed < 1e-12) return 1e30;
         float t = max(span.x, tMin);
@@ -179,8 +189,8 @@ uniform vec3 u_sdfCount[4];    // its points along each axis
 // World distance to mesh `slot`: on the safe side where the solid is stretched.
 float meshDistance(sampler3D sdf, int slot, vec3 p) {
     int i = u_meshSolid[slot];
-    vec3 oc = p - u_solidA[i].xyz;
-    vec3 local = vec3(dot(u_solidB[i].xyz, oc), dot(u_solidC[i].xyz, oc), dot(u_solidD[i].xyz, oc));
+    vec3 oc = p - solidA(i).xyz;
+    vec3 local = vec3(dot(solidB(i).xyz, oc), dot(solidC(i).xyz, oc), dot(solidD(i).xyz, oc));
     vec3 m = local * u_meshScale[slot].xyz + u_meshCenter[slot];
     vec3 g = (m - u_sdfLo[slot].xyz) / u_sdfLo[slot].w;
     vec3 inside = clamp(g, vec3(0.0), u_sdfCount[slot] - 1.0);
@@ -193,10 +203,11 @@ float meshDistance(sampler3D sdf, int slot, vec3 p) {
 // and a surface must not shadow itself.
 bool meshBlocks(sampler3D sdf, int slot, vec3 o, vec3 d) {
     int i = u_meshSolid[slot];
-    vec3 h = vec3(u_solidB[i].w, u_solidC[i].w, u_solidD[i].w);
-    vec3 oc = o - u_solidA[i].xyz;
-    vec3 lo = vec3(dot(u_solidB[i].xyz, oc), dot(u_solidC[i].xyz, oc), dot(u_solidD[i].xyz, oc)) / h;
-    vec3 ld = vec3(dot(u_solidB[i].xyz, d), dot(u_solidC[i].xyz, d), dot(u_solidD[i].xyz, d)) / h;
+    vec4 sb = solidB(i), sc = solidC(i), sd = solidD(i);
+    vec3 h = vec3(sb.w, sc.w, sd.w);
+    vec3 oc = o - solidA(i).xyz;
+    vec3 lo = vec3(dot(sb.xyz, oc), dot(sc.xyz, oc), dot(sd.xyz, oc)) / h;
+    vec3 ld = vec3(dot(sb.xyz, d), dot(sc.xyz, d), dot(sd.xyz, d)) / h;
     vec2 span = boxSpan(lo, ld, vec3(-1.05), vec3(1.05));
     if (span.x > span.y || span.y < 0.0) return false;
     float cell = u_sdfLo[slot].w * u_meshScale[slot].w;
@@ -643,7 +654,10 @@ vec3 shadeSurface(vec3 p, vec3 n, vec3 view, vec3 albedo, float mark, float thro
     return c;
 }
 
-vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) { return shadeSurface(p, n, view, u_solidE[i].rgb, u_solidE[i].w, 0.0); }
+vec3 shadeSolid(vec3 p, vec3 n, vec3 view, int i) {
+    vec4 e = solidE(i);
+    return shadeSurface(p, n, view, e.rgb, e.w, 0.0);
+}
 
 // --- the plate: what the camera filmed, behind it all ----------------------------
 uniform bool u_hasPlate;
@@ -664,7 +678,7 @@ bool plateAt(vec3 d, out vec3 colour) {
 }
 
 // What solid i is over the plate: 0 itself, 1 a holdout, 2 a catcher.
-int matteOf(int i) { return i >= 0 && i < u_solidCount ? int(u_solidF[i].z + 0.5) : 0; }
+int matteOf(int i) { return i >= 0 && i < u_solidCount ? int(solidF(i).z + 0.5) : 0; }
 uniform int u_floorMatte;      // ... and what the floor is
 
 // The sun at p past the real things alone -- the holdouts and catchers --
@@ -2047,6 +2061,7 @@ VolumeRenderer::~VolumeRenderer() {
     if (glassDepth_) gl_.DeleteRenderbuffers(1, &glassDepth_);
     if (glassVao_) gl_.DeleteVertexArrays(1, &glassVao_);
     if (glassBuffer_) gl_.DeleteBuffers(1, &glassBuffer_);
+    if (solidsTex_) gl_.DeleteTextures(1, &solidsTex_);
     if (geoShadowFbo_) gl_.DeleteFramebuffers(1, &geoShadowFbo_);
     if (geoShadowTex_) gl_.DeleteTextures(1, &geoShadowTex_);
     if (geoShadowDepth_) gl_.DeleteRenderbuffers(1, &geoShadowDepth_);
@@ -3487,28 +3502,37 @@ void VolumeRenderer::drawOverlay(int width, int height, const Vec3& eye) {
 }
 
 void VolumeRenderer::setSceneUniforms(GLuint program) {
-    float a[4 * kMaxSolids] = {}, b[4 * kMaxSolids] = {}, c[4 * kMaxSolids] = {}, d[4 * kMaxSolids] = {},
-          e[4 * kMaxSolids] = {}, f[4 * kMaxSolids] = {};
+    // The solids, a row of six texels each (kCommon).
     const int n = static_cast<int>(solids_.size());
+    std::vector<float> rows(static_cast<size_t>(24 * std::max(n, 1)), 0.0f);
     for (int i = 0; i < n; ++i) {
         const sim::Solid& solid = solids_[static_cast<size_t>(i)];
         const sim::ShapeInstance s = solid.body.instance();
         const Vec3& h = s.half();
-        auto put = [&](float* to, const Vec3& v, float w) {
-            to[4 * i] = v.x;
-            to[4 * i + 1] = v.y;
-            to[4 * i + 2] = v.z;
-            to[4 * i + 3] = w;
+        auto put = [&](int texel, const Vec3& v, float w) {
+            float* to = rows.data() + 24 * i + 4 * texel;
+            to[0] = v.x;
+            to[1] = v.y;
+            to[2] = v.z;
+            to[3] = w;
         };
-        put(a, s.center(), static_cast<float>(s.shape()));
-        put(b, s.turn().x, h.x);
-        put(c, s.turn().y, h.y);
-        put(d, s.turn().z, h.z);
+        put(0, s.center(), static_cast<float>(s.shape()));
+        put(1, s.turn().x, h.x);
+        put(2, s.turn().y, h.y);
+        put(3, s.turn().z, h.z);
         const int node = solid.body.node;
         const bool selected = node != 0 && std::find(selected_.begin(), selected_.end(), node) != selected_.end();
-        put(e, solid.color, selected ? 2.0f : node != 0 && node == hovered_ ? 1.0f : 0.0f);
-        put(f, Vec3(s.ring(), s.tube(), static_cast<float>(solid.matte)), 0.0f);
+        put(4, solid.color, selected ? 2.0f : node != 0 && node == hovered_ ? 1.0f : 0.0f);
+        // The ball round its box holds it, whatever its shape.
+        put(5, Vec3(s.ring(), s.tube(), static_cast<float>(solid.matte)), 1.001f * length(h));
     }
+    if (!solidsTex_) gl_.GenTextures(1, &solidsTex_);
+    gl_.ActiveTexture(TEXTURE0 + kSolidsUnit);
+    gl_.BindTexture(TEXTURE_2D, solidsTex_);
+    gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA32F), 6, std::max(n, 1), 0, RGBA, FLOAT, rows.data());
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, NEAREST);
+    gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, NEAREST);
+    gl_.Uniform1i(location(program, "u_solids"), kSolidsUnit);
     // The meshes' distance fields, on texture units 4 to 7.
     int slots = 0;
     int meshSolid[kMaxMeshShadows] = {};
@@ -3547,12 +3571,6 @@ void VolumeRenderer::setSceneUniforms(GLuint program) {
     for (int k = 0; k < kMaxMeshShadows; ++k) gl_.Uniform1i(location(program, samplers[k]), 4 + k);
 
     gl_.Uniform1i(location(program, "u_solidCount"), n);
-    gl_.Uniform4fv(location(program, "u_solidA"), kMaxSolids, a);
-    gl_.Uniform4fv(location(program, "u_solidB"), kMaxSolids, b);
-    gl_.Uniform4fv(location(program, "u_solidC"), kMaxSolids, c);
-    gl_.Uniform4fv(location(program, "u_solidD"), kMaxSolids, d);
-    gl_.Uniform4fv(location(program, "u_solidE"), kMaxSolids, e);
-    gl_.Uniform4fv(location(program, "u_solidF"), kMaxSolids, f);
     const Vec3 lo = domain_.origin(), size = domain_.size();
     gl_.Uniform3f(location(program, "u_boxMin"), lo.x, lo.y, lo.z);
     gl_.Uniform3f(location(program, "u_boxSize"), size.x, size.y, size.z);
