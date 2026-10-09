@@ -10,8 +10,9 @@ pgsim 1
 # boil in streaks. A Pyro Upres three times as fine adds the curls. The smoke
 # weighs more than the air and barely lifts: it hugs the ground as it comes,
 # a breeze along the ground carrying it on. The sun from behind the camera,
-# a dark ground without its grid. The camera stands low in the gas's box, so
-# the plume swallows it at the end: 2.7 s.
+# a dark ground without its grid. The camera stands right in front of the
+# burst, 4.9 m off and low, looking straight at it: the heap fills the frame
+# by 1.5 s and the plume swallows the camera at the end: 2.7 s.
 # Made to look real (docs/pathtracer.md): a short, fast burst slowed by the
 # air (Drag) rolls over itself; rendered through Cycles with 16 bounces the
 # smoke is lit from within; a little depth of field and film grain take the
@@ -79,8 +80,8 @@ node 4 volume_look 2 look 730 200
   param smoke_color 0.62 0.61 0.6
   param smoke_density 50
 node 5 camera 1 camera 970 330
-  param center 0 0.6 3.6
-  param rotation 3 0 0
+  param center 0 0.55 2.5
+  param rotation 4 0 0
   param focal 24
 node 6 output 2 output 970 200
   param frames 81
@@ -93,7 +94,7 @@ node 6 output 2 output 970 200
   param grid off
   param render_bounces 16
   param render_fstop 5.6
-  param render_focus 6
+  param render_focus 4
   param render_grain 0.1
   param render_motion_blur 0.1
 link 1.source -> 3.sources
