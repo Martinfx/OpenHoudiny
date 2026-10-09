@@ -53,7 +53,9 @@ const Vec4 kHover(0.3f, 0.95f, 1.0f, 1.0f);
 const Vec4 kHoverFace(0.3f, 0.95f, 1.0f, 0.25f);
 const Vec4 kCorner(0.25f, 0.85f, 0.4f, 0.95f);
 
-/// Past so many, the wire and the points are not drawn -- what is picked is.
+/// Past so many, the corners, the paint's dots and the soft selection's are
+/// not drawn -- what is picked is. The wire and the points are drawn
+/// however many (gl::Overlay::Marks).
 constexpr size_t kMostMarks = 400000;
 /// How long a picker begun is waited for before the frame goes on without
 /// it: a small geometry's is made by then -- nothing goes and comes back.
@@ -744,9 +746,15 @@ void SimWorkspace::updateOverlay() {
         if (marked) {
             const Geometry& g = *geo;
             const auto P = g.positions();
-            // The wire: every edge, where there are not too many.
-            if (marker && marker->edges().size() <= kMostMarks) {
-                for (const Edge& e : marker->edges()) o.line(P[e.first], P[e.second], kWire);
+            // The wire, every edge, and the points: drawn from the points as
+            // sent, the edges' ends their indices.
+            gl::Overlay::Marks& m = o.marks;
+            if (marker || (!painted && elements_ == Elements::Points)) {
+                m.points = std::make_shared<const std::vector<Vec3>>(P.begin(), P.end());
+            }
+            if (marker) {
+                m.edges = std::make_shared<const std::vector<Edge>>(marker->edges());
+                m.wireColor = kWire;
             }
             if (painted) {
                 // The paint: each corner in the colour of its point's value.
@@ -775,10 +783,11 @@ void SimWorkspace::updateOverlay() {
                 if (faces == 0 && g.pointCount() <= kMostMarks) {
                     for (size_t i = 0; i < P.size(); ++i) o.dot(P[i], paintColor(value[i]), theme::px(6.0f));
                 }
-            } else if (elements_ == Elements::Points && P.size() <= kMostMarks) {
+            } else if (elements_ == Elements::Points) {
                 // The points, each over the surface's normal there.
-                const std::vector<Vec3>& normals = pointNormals(geo);
-                for (size_t i = 0; i < P.size(); ++i) o.dot(P[i], kPoint, theme::px(5.0f), normals[i]);
+                m.normals = std::make_shared<const std::vector<Vec3>>(pointNormals(geo));
+                m.dotColor = kPoint;
+                m.dotPixels = theme::px(5.0f);
             } else if (elements_ == Elements::Vertices && marker && g.vertexCount() <= kMostMarks) {
                 // The corners, each a little inside its polygon, over its face.
                 const std::vector<Vec3>& normals = primitiveNormals(geo);

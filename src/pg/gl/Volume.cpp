@@ -41,6 +41,38 @@ void main() {
 }
 )";
 
+// The picture shown, its stair-stepped edges smoothed: FXAA (Timothy Lottes'
+// first, simplest form) -- along each edge the luma finds, a blend of the
+// pixels across it. Where the contrast is low, the pixel as it is: flat
+// surfaces and the smoke keep their detail.
+const char* kAntialiasFragment = R"(#version 330 core
+in vec2 v_ndc;
+out vec4 o_color;
+uniform sampler2D u_picture;
+uniform vec2 u_texel;
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+vec3 at(vec2 uv) { return textureLod(u_picture, uv, 0.0).rgb; }
+void main() {
+    vec2 uv = v_ndc * 0.5 + 0.5;
+    vec4 m = textureLod(u_picture, uv, 0.0);
+    float lm = luma(m.rgb);
+    float nw = luma(at(uv + vec2(-1.0, -1.0) * u_texel)), ne = luma(at(uv + vec2(1.0, -1.0) * u_texel));
+    float sw = luma(at(uv + vec2(-1.0, 1.0) * u_texel)), se = luma(at(uv + vec2(1.0, 1.0) * u_texel));
+    float lo = min(lm, min(min(nw, ne), min(sw, se))), hi = max(lm, max(max(nw, ne), max(sw, se)));
+    if (hi - lo < max(0.0312, 0.125 * hi)) {
+        o_color = m;
+        return;
+    }
+    vec2 dir = vec2(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
+    float reduce = max((nw + ne + sw + se) * 0.25 * (1.0 / 8.0), 1.0 / 128.0);
+    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), vec2(-8.0), vec2(8.0)) * u_texel;
+    vec3 a = 0.5 * (at(uv + dir * (1.0 / 3.0 - 0.5)) + at(uv + dir * (2.0 / 3.0 - 0.5)));
+    vec3 b = 0.5 * a + 0.25 * (at(uv - dir * 0.5) + at(uv + dir * 0.5));
+    float lb = luma(b);
+    o_color = vec4(lb < lo || lb > hi ? a : b, m.a);
+}
+)";
+
 // What both passes need: the box, the solids, the fade at the open faces.
 const char* kCommon = R"(
 uniform vec3 u_boxMin, u_boxSize;
@@ -2044,14 +2076,20 @@ VolumeRenderer::VolumeRenderer(const Api& gl) : gl_(gl) {
 VolumeRenderer::~VolumeRenderer() {
     for (GLuint p : {program_, shadowProgram_, glowProgram_, lineProgram_, meshProgram_, rainProgram_, geoProgram_,
                      dotProgram_, geoShadowProgram_, glassProgram_, overlayProgram_, overlayDotProgram_, overlayWideProgram_,
-                     impostorProgram_}) {
+                     impostorProgram_, antialiasProgram_}) {
         if (p) gl_.DeleteProgram(p);
     }
+    if (aaFbo_) gl_.DeleteFramebuffers(1, &aaFbo_);
+    if (aaTex_) gl_.DeleteTextures(1, &aaTex_);
     if (impostorQuad_) gl_.DeleteBuffers(1, &impostorQuad_);
     for (int l = 0; l < kOverlayLayers; ++l) {
         for (int k = 0; k < 4; ++k) {
             if (overlayVao_[l][k]) gl_.DeleteVertexArrays(1, &overlayVao_[l][k]);
             if (overlayBuffer_[l][k]) gl_.DeleteBuffers(1, &overlayBuffer_[l][k]);
+        }
+        if (marksVao_[l]) gl_.DeleteVertexArrays(1, &marksVao_[l]);
+        for (GLuint b : marksBuffer_[l]) {
+            if (b) gl_.DeleteBuffers(1, &b);
         }
     }
     if (glassFbo_) gl_.DeleteFramebuffers(1, &glassFbo_);
@@ -2147,6 +2185,10 @@ bool VolumeRenderer::init(std::string& log) {
     geoShadowProgram_ = geoShadow;
     if (impostorProgram_) gl_.DeleteProgram(impostorProgram_);
     impostorProgram_ = impostor;
+    // So is the smoothing: without it, the picture as drawn.
+    std::string antialiasLog;
+    if (antialiasProgram_) gl_.DeleteProgram(antialiasProgram_);
+    antialiasProgram_ = buildProgram(gl_, kFullScreen, kAntialiasFragment, antialiasLog);
     glassProgram_ = glass;
     lightingDirty_ = true;
     geoShadowDirty_ = true;
@@ -3375,6 +3417,10 @@ void VolumeRenderer::setOverlay(const Overlay& overlay, int layer) {
         grow(box.lo, box.hi, *data, stride, first);
         first = first && data->empty();
     }
+    const Overlay::Marks& marks = overlay.marks;
+    const size_t markPoints = marks.points ? marks.points->size() : 0;
+    for (size_t i = 0; i < markPoints; ++i, first = false) grow(box.lo, box.hi, (*marks.points)[i], first);
+    setMarks(marks, layer);
     GLuint* vaos = overlayVao_[layer];
     GLuint* buffers = overlayBuffer_[layer];
     GLsizei* counts = overlayCount_[layer];
@@ -3436,10 +3482,60 @@ void VolumeRenderer::setOverlay(const Overlay& overlay, int layer) {
     gl_.BindBuffer(ARRAY_BUFFER, 0);
 }
 
+void VolumeRenderer::setMarks(const Overlay::Marks& marks, int layer) {
+    const size_t n = marks.points ? marks.points->size() : 0;
+    const bool normals = marks.normals && marks.normals->size() == n;
+    const size_t edges = marks.edges ? marks.edges->size() : 0;
+    marksEnds_[layer] = 0;
+    marksDots_[layer] = 0;
+    if (n == 0) return;
+    GLuint* buffers = marksBuffer_[layer];
+    if (!marksVao_[layer]) {
+        gl_.GenVertexArrays(1, &marksVao_[layer]);
+        gl_.GenBuffers(3, buffers);
+    }
+    // The points shared by the wire and the dots; the colour and the size
+    // the same for all, given as constant attributes when drawn.
+    gl_.BindVertexArray(marksVao_[layer]);
+    gl_.BindBuffer(ARRAY_BUFFER, buffers[0]);
+    gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(n * sizeof(Vec3)), marks.points->data(), STATIC_DRAW);
+    gl_.EnableVertexAttribArray(0);
+    gl_.VertexAttribPointer(0, 3, FLOAT, 0, sizeof(Vec3), nullptr);
+    gl_.DisableVertexAttribArray(1);
+    gl_.DisableVertexAttribArray(2);
+    if (normals) {
+        gl_.BindBuffer(ARRAY_BUFFER, buffers[1]);
+        gl_.BufferData(ARRAY_BUFFER, static_cast<GLsizeiptr>(n * sizeof(Vec3)), marks.normals->data(), STATIC_DRAW);
+        gl_.EnableVertexAttribArray(3);
+        gl_.VertexAttribPointer(3, 3, FLOAT, 0, sizeof(Vec3), nullptr);
+    } else {
+        gl_.DisableVertexAttribArray(3);
+    }
+    // The edges' ends, two indices each.
+    std::vector<uint32_t> ends;
+    ends.reserve(2 * edges);
+    for (size_t e = 0; e < edges; ++e) {
+        const auto& [a, b] = (*marks.edges)[e];
+        if (a >= n || b >= n) continue;
+        ends.push_back(a);
+        ends.push_back(b);
+    }
+    gl_.BindBuffer(ELEMENT_ARRAY_BUFFER, buffers[2]);
+    gl_.BufferData(ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(ends.size() * sizeof(uint32_t)), ends.data(), STATIC_DRAW);
+    gl_.BindVertexArray(0);
+    gl_.BindBuffer(ARRAY_BUFFER, 0);
+    marksEnds_[layer] = static_cast<GLsizei>(ends.size());
+    marksDots_[layer] = marks.dotPixels > 0.0f ? static_cast<GLsizei>(n) : 0;
+    marksWire_[layer] = marks.wireColor;
+    marksDot_[layer] = marks.dotColor;
+    marksPixels_[layer] = marks.dotPixels;
+}
+
 void VolumeRenderer::drawOverlay(int width, int height, const Vec3& eye) {
     GLsizei any = 0;
     for (int l = 0; l < kOverlayLayers; ++l) {
         for (int k = 0; k < 4; ++k) any += overlayCount_[l][k];
+        any += marksEnds_[l] + marksDots_[l];
     }
     if (!overlayProgram_ || any == 0) return;
     gl_.Enable(DEPTH_TEST);
@@ -3468,6 +3564,13 @@ void VolumeRenderer::drawOverlay(int width, int height, const Vec3& eye) {
                 gl_.BindVertexArray(overlayVao_[l][1]);
                 gl_.DrawArrays(LINES, 0, counts[1]);
             }
+            if (marksEnds_[l] > 0) {
+                use(overlayProgram_, 0.003f);
+                const Vec4& c = marksWire_[l];
+                gl_.BindVertexArray(marksVao_[l]);
+                gl_.VertexAttrib4f(1, c.x, c.y, c.z, c.w);
+                gl_.DrawElements(LINES, marksEnds_[l], UNSIGNED_INT, nullptr);
+            }
             if (counts[3] > 0) {
                 use(overlayWideProgram_, 0.0035f);
                 gl_.Uniform2f(location(overlayWideProgram_, "u_viewport"), static_cast<float>(width),
@@ -3482,6 +3585,19 @@ void VolumeRenderer::drawOverlay(int width, int height, const Vec3& eye) {
                 gl_.Enable(PROGRAM_POINT_SIZE);
                 gl_.BindVertexArray(overlayVao_[l][2]);
                 gl_.DrawArrays(POINTS, 0, counts[2]);
+                gl_.Disable(PROGRAM_POINT_SIZE);
+            }
+            if (marksDots_[l] > 0) {
+                use(overlayDotProgram_, 0.003f);
+                gl_.Uniform1f(location(overlayDotProgram_, "u_pixel"),
+                              2.0f * std::tan(orbit.fovY * kPi / 360.0f) / static_cast<float>(std::max(height, 1)));
+                const Vec4& c = marksDot_[l];
+                gl_.BindVertexArray(marksVao_[l]);
+                gl_.VertexAttrib4f(1, c.x, c.y, c.z, c.w);
+                gl_.VertexAttrib1f(2, marksPixels_[l]);
+                gl_.VertexAttrib3f(3, 0.0f, 0.0f, 0.0f);  // where the points have no normals
+                gl_.Enable(PROGRAM_POINT_SIZE);
+                gl_.DrawArrays(POINTS, 0, marksDots_[l]);
                 gl_.Disable(PROGRAM_POINT_SIZE);
             }
         }
@@ -3990,6 +4106,47 @@ void VolumeRenderer::render(int width, int height) {
     gl_.BindTexture(TEXTURE_3D, 0);
     gl_.UseProgram(0);
     gl_.BindFramebuffer(FRAMEBUFFER, 0);
+    smooth();
+}
+
+void VolumeRenderer::smooth() {
+    // The picture shown, not the passes: those are read as drawn, and a
+    // render is read at twice the size, averaged down (readPixels).
+    smoothed_ = false;
+    if (!antialias || passes.on || !antialiasProgram_ || width_ <= 0 || height_ <= 0) return;
+    if (!aaFbo_) {
+        gl_.GenFramebuffers(1, &aaFbo_);
+        gl_.GenTextures(1, &aaTex_);
+    }
+    if (aaWidth_ != width_ || aaHeight_ != height_) {
+        aaWidth_ = width_;
+        aaHeight_ = height_;
+        gl_.BindTexture(TEXTURE_2D, aaTex_);
+        gl_.TexImage2D(TEXTURE_2D, 0, static_cast<GLint>(RGBA8), width_, height_, 0, RGBA, UNSIGNED_BYTE, nullptr);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
+        gl_.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+        gl_.BindTexture(TEXTURE_2D, 0);
+        gl_.BindFramebuffer(FRAMEBUFFER, aaFbo_);
+        gl_.FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, aaTex_, 0);
+    }
+    gl_.BindFramebuffer(FRAMEBUFFER, aaFbo_);
+    const GLenum one = COLOR_ATTACHMENT0;
+    gl_.DrawBuffers(1, &one);
+    gl_.Viewport(0, 0, width_, height_);
+    gl_.Disable(DEPTH_TEST);
+    gl_.Disable(BLEND);
+    gl_.UseProgram(antialiasProgram_);
+    gl_.ActiveTexture(TEXTURE0);
+    gl_.BindTexture(TEXTURE_2D, colorTex_);
+    gl_.Uniform1i(location(antialiasProgram_, "u_picture"), 0);
+    gl_.Uniform2f(location(antialiasProgram_, "u_texel"), 1.0f / static_cast<float>(width_), 1.0f / static_cast<float>(height_));
+    gl_.BindVertexArray(vao_);
+    gl_.DrawArrays(TRIANGLES, 0, 3);
+    gl_.BindVertexArray(0);
+    gl_.BindTexture(TEXTURE_2D, 0);
+    gl_.UseProgram(0);
+    gl_.BindFramebuffer(FRAMEBUFFER, 0);
+    smoothed_ = true;
 }
 
 namespace {

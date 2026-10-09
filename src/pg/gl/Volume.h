@@ -123,13 +123,24 @@ struct Overlay {
     std::vector<float> wide;
     /// Seven floats a corner, three corners a face: position, colour.
     std::vector<float> faces;
+    /// A geometry's own marks, however many, drawn from its points as they
+    /// are sent: `points`, the wire between the pairs of `edges` in
+    /// `wireColor`; with `dotPixels` above 0, a dot at every point in
+    /// `dotColor`, over the surface's `normals` there (or none).
+    struct Marks {
+        std::shared_ptr<const std::vector<Vec3>> points, normals;
+        std::shared_ptr<const std::vector<std::pair<uint32_t, uint32_t>>> edges;
+        Vec4 wireColor{0.0f}, dotColor{0.0f};
+        float dotPixels = 0.0f;
+    } marks;
 
-    bool empty() const { return dots.empty() && lines.empty() && wide.empty() && faces.empty(); }
+    bool empty() const { return dots.empty() && lines.empty() && wide.empty() && faces.empty() && !marks.points; }
     void clear() {
         dots.clear();
         lines.clear();
         wide.clear();
         faces.clear();
+        marks = Marks();
     }
     void dot(const Vec3& p, const Vec4& color, float pixels, const Vec3& normal = Vec3());
     void line(const Vec3& a, const Vec3& b, const Vec4& color);
@@ -245,7 +256,11 @@ public:
     /// Draws into the offscreen framebuffer at `width` x `height` pixels.
     void render(int width, int height);
 
-    GLuint colorTexture() const { return colorTex_; }
+    /// The last render as shown: smoothed, when `antialias`.
+    GLuint colorTexture() const { return smoothed_ ? aaTex_ : colorTex_; }
+    /// Smooths the stair-stepped edges of the picture shown (FXAA) -- not
+    /// of the passes, nor of what readPixels reads.
+    bool antialias = true;
     int width() const { return width_; }
     int height() const { return height_; }
     /// The last frame as RGB rows, top to bottom, averaged down by `factor`.
@@ -414,6 +429,12 @@ private:
     GLuint overlayProgram_ = 0, overlayDotProgram_ = 0, overlayWideProgram_ = 0;
     GLuint overlayVao_[kOverlayLayers][4] = {}, overlayBuffer_[kOverlayLayers][4] = {};
     GLsizei overlayCount_[kOverlayLayers][4] = {};  // of each layer: faces' corners, lines' ends, dots, wide lines' corners
+    // ... and its marks (Overlay::Marks): the points, their normals, the
+    // edges' ends; how many ends, how many dots.
+    GLuint marksVao_[kOverlayLayers] = {}, marksBuffer_[kOverlayLayers][3] = {};
+    GLsizei marksEnds_[kOverlayLayers] = {}, marksDots_[kOverlayLayers] = {};
+    Vec4 marksWire_[kOverlayLayers] = {}, marksDot_[kOverlayLayers] = {};
+    float marksPixels_[kOverlayLayers] = {};
     // The boxes round what is drawn beside the geometry and the gas -- each
     // layer of the overlay, the guide lines, the rain: how far the camera
     // must see (clipPlanes). Low above high: nothing.
@@ -496,6 +517,11 @@ private:
     /// frame buffer of the render.
     void prepareImpostors();
     GLuint impostorProgram_ = 0, impostorQuad_ = 0;
+    void smooth();
+    void setMarks(const Overlay::Marks& marks, int layer);
+    GLuint antialiasProgram_ = 0, aaFbo_ = 0, aaTex_ = 0;
+    int aaWidth_ = 0, aaHeight_ = 0;
+    bool smoothed_ = false;  ///< colorTexture() is aaTex_
     /// The pictures of `gpu`'s billboard: the plant in full (`full`'s
     /// mesh) from eight sides, as the meshes' buffer has it.
     void captureImpostor(InstancedGpu& gpu, const InstancedGpu& full, size_t which);

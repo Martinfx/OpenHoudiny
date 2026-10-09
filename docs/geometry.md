@@ -492,6 +492,10 @@ link 6.geometry -> 7.geometry
   of a few hundred costs little more than one of a few. (It used to stop at
   16 -- the rest were left out.) Meshes are rasterised; four of them cast
   shadows through their distance fields.
+- The picture the viewport shows is smoothed along its edges (FXAA, a pass
+  after the rest): the stair steps of objects, glass and wire are gone. The
+  passes and what a render reads are left as drawn -- a render is drawn at
+  twice the size and averaged down already.
 - The network is also compiled for simulation on its own thread
   (`pg/sim/Compiler.h`) with its own graph, so the shapes for the simulation
   (Shape of objects and sources, pieces for RBD, cloth) are cooked outside

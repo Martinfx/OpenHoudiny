@@ -661,6 +661,8 @@ the geometry's face wins when it is as far away as the floor.
   so UV seams may blur. A single dab halves at most 250,000 edges.
 - A change to anything upstream of the Sculpt, to its Falloff or to the dyntopo parameters
   recomputes all dabs from the beginning.
-- The wireframe and all points are drawn up to 400,000 edges or points; in larger geometry
-  only the selection. The first selection in a mesh of millions of triangles builds the bounding volume tree
+- The wireframe and the points are drawn however many there are: the overlay sends the
+  points once and the edges as pairs of indices into them (`gl::Overlay::Marks`), about a
+  sixth of what a line per edge took. Corner markers, paint dots and soft-selection dots
+  stop at 400,000; past that only the selection. The first selection in a mesh of millions of triangles builds the bounding volume tree
   (on the order of a second).
