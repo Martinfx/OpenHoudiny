@@ -1,5 +1,6 @@
 #include "pg/render/Cycles.h"
 
+#include "pg/core/Parallel.h"
 #include "pg/io/Exr.h"
 #include "pg/render/Plate.h"
 #include "pg/render/Textures.h"
@@ -32,6 +33,7 @@
 #include "scene/camera.h"
 #include "scene/film.h"
 #include "scene/image.h"
+#include "scene/image_loader.h"
 #include "scene/integrator.h"
 #include "scene/pass.h"
 #include "scene/scene.h"
@@ -42,15 +44,21 @@
 #include "session/display_driver.h"
 #include "session/output_driver.h"
 #include "session/session.h"
+#include "util/image_metadata.h"
 #include "util/version.h"
+#endif
+
+#if defined(PG_HAVE_CYCLES) && defined(PG_HAVE_NANOVDB)
+#include <nanovdb/NanoVDB.h>
+#include <nanovdb/tools/CreateNanoGrid.h>
+#include <nanovdb/tools/GridBuilder.h>
 #endif
 
 #ifdef PG_HAVE_CYCLES
 // Cycles' sky model (its third_party/sky), linked with it: the light of
 // Nishita's sun at the bottom and the top of its disc, CIE XYZ.
-extern "C" void SKY_nishita_skymodel_precompute_sun(float sun_elevation, float angular_diameter, float altitude,
-                                                    float air_density, float dust_density, float* r_pixel_bottom,
-                                                    float* r_pixel_top);
+void SKY_single_scattering_precompute_sun(float sun_elevation, float angular_diameter, float altitude, float air_density,
+                                          float aerosol_density, float r_pixel_bottom[3], float r_pixel_top[3]);
 #endif
 
 namespace pg::render {
@@ -92,18 +100,16 @@ public:
     SkyImage(std::vector<float> rgba, int width, int height, uint64_t id)
         : rgba_(std::move(rgba)), width_(width), height_(height), id_(id) {}
 
-    bool load_metadata(const ccl::ImageDeviceFeatures&, ccl::ImageMetaData& m) override {
-        m.width = static_cast<size_t>(width_);
-        m.height = static_cast<size_t>(height_);
-        m.depth = 1;
+    bool load_metadata(ccl::ImageMetaData& m, const ccl::ImageLoaderParams&, ccl::Progress&) override {
+        m.width = width_;
+        m.height = height_;
         m.channels = 4;
         m.type = ccl::IMAGE_DATA_TYPE_FLOAT4;
-        m.colorspace = ccl::u_colorspace_raw;  // linear light, as it is
         return true;
     }
-    /// `size`: how many floats, not bytes.
-    bool load_pixels(const ccl::ImageMetaData&, void* pixels, const size_t size, const bool) override {
-        std::memcpy(pixels, rgba_.data(), std::min(size, rgba_.size()) * sizeof(float));
+    bool load_pixels(const ccl::ImageMetaData& m, void* pixels) override {
+        std::memcpy(pixels, rgba_.data(), rgba_.size() * sizeof(float));
+        m.conform_pixels(pixels);
         return true;
     }
     std::string name() const override { return "the look's sky"; }
@@ -118,43 +124,107 @@ private:
     uint64_t id_;
 };
 
+#ifdef PG_HAVE_NANOVDB
 /// The gas as Cycles reads a grid: its cells' numbers -- one float a cell,
-/// or four -- as a picture in three dimensions, x fastest.
+/// or four, x fastest -- made a NanoVDB grid of the cells that hold any,
+/// the rest reading 0. Each block of 8 x 8 x 8 a leaf of the tree, made
+/// side by side.
 class VoxelImage : public ccl::ImageLoader {
 public:
     /// `where`: from a point of Cycles' world to the grid's 0 to 1.
     VoxelImage(std::vector<float> values, int channels, const int size[3], const ccl::Transform& where, uint64_t id)
         : values_(std::move(values)), channels_(channels), size_{size[0], size[1], size[2]}, where_(where), id_(id) {}
 
-    bool load_metadata(const ccl::ImageDeviceFeatures&, ccl::ImageMetaData& m) override {
-        m.width = static_cast<size_t>(size_[0]);
-        m.height = static_cast<size_t>(size_[1]);
-        m.depth = static_cast<size_t>(size_[2]);
+    bool load_metadata(ccl::ImageMetaData& m, const ccl::ImageLoaderParams&, ccl::Progress&) override {
+        if (channels_ == 1) {
+            handle_ = grid<float>([&](size_t at) { return values_[at]; }, [](float v) { return v != 0.0f; });
+            m.type = ccl::IMAGE_DATA_TYPE_NANOVDB_FLOAT;
+        } else {
+            handle_ = grid<nanovdb::Vec4f>(
+                [&](size_t at) {
+                    const float* v = &values_[4 * at];
+                    return nanovdb::Vec4f(v[0], v[1], v[2], v[3]);
+                },
+                [](const nanovdb::Vec4f& v) { return v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f || v[3] != 0.0f; });
+            m.type = ccl::IMAGE_DATA_TYPE_NANOVDB_FLOAT4;
+        }
+        if (handle_.bufferSize() == 0) return false;
         m.channels = channels_;
-        m.type = channels_ == 1 ? ccl::IMAGE_DATA_TYPE_FLOAT : ccl::IMAGE_DATA_TYPE_FLOAT4;
-        m.colorspace = ccl::u_colorspace_raw;
-        m.transform_3d = where_;
+        m.nanovdb_byte_size = static_cast<int64_t>(handle_.bufferSize());
+        // From the world to the grid's cells, their middles whole numbers.
+        ccl::Transform index = where_;
+        const float n[3] = {static_cast<float>(size_[0]), static_cast<float>(size_[1]), static_cast<float>(size_[2])};
+        index.x *= n[0];
+        index.y *= n[1];
+        index.z *= n[2];
+        index.x.w -= 0.5f;
+        index.y.w -= 0.5f;
+        index.z.w -= 0.5f;
+        m.transform_3d = index;
         m.use_transform_3d = true;
+        values_ = {};
         return true;
     }
-    /// `size`: how many floats.
-    bool load_pixels(const ccl::ImageMetaData&, void* pixels, const size_t size, const bool) override {
-        std::memcpy(pixels, values_.data(), std::min(size, values_.size()) * sizeof(float));
+    bool load_pixels(const ccl::ImageMetaData& m, void* pixels) override {
+        if (static_cast<int64_t>(handle_.bufferSize()) != m.nanovdb_byte_size) return false;
+        std::memcpy(pixels, handle_.data(), handle_.bufferSize());
         return true;
     }
+    void cleanup() override { handle_ = {}; }
     std::string name() const override { return "the gas"; }
     bool equals(const ccl::ImageLoader& other) const override {
         const auto* voxels = dynamic_cast<const VoxelImage*>(&other);
         return voxels && voxels->id_ == id_;
     }
+    bool is_vdb_loader() const override { return true; }
 
 private:
+    template <typename T, typename Read, typename Keep>
+    nanovdb::GridHandle<nanovdb::HostBuffer> grid(Read read, Keep keep) const {
+        using Build = nanovdb::tools::build::Grid<T>;
+        Build build(T(0.0f), "gas");
+        auto& root = build.tree().root();
+        const int nx = size_[0], ny = size_[1], nz = size_[2];
+        const int bx = (nx + 7) / 8, by = (ny + 7) / 8, bz = (nz + 7) / 8;
+        const size_t blocks = static_cast<size_t>(bx) * static_cast<size_t>(by) * static_cast<size_t>(bz);
+        std::mutex mutex;
+        parallelFor(blocks, 16, [&](size_t begin, size_t end) {
+            for (size_t b = begin; b < end; ++b) {
+                const int ci = static_cast<int>(b % static_cast<size_t>(bx)) * 8;
+                const int cj = static_cast<int>((b / static_cast<size_t>(bx)) % static_cast<size_t>(by)) * 8;
+                const int ck = static_cast<int>(b / (static_cast<size_t>(bx) * static_cast<size_t>(by))) * 8;
+                auto* leaf = new typename Build::Node0(nanovdb::Coord(ci, cj, ck), root.mBackground, false);
+                bool any = false;
+                for (int k = ck; k < std::min(ck + 8, nz); ++k) {
+                    for (int j = cj; j < std::min(cj + 8, ny); ++j) {
+                        for (int i = ci; i < std::min(ci + 8, nx); ++i) {
+                            const T v = read(static_cast<size_t>(i) +
+                                             static_cast<size_t>(nx) * (static_cast<size_t>(j) + static_cast<size_t>(ny) * static_cast<size_t>(k)));
+                            if (!keep(v)) continue;
+                            leaf->setValue(nanovdb::Coord(i, j, k), v);
+                            any = true;
+                        }
+                    }
+                }
+                if (!any) {
+                    delete leaf;
+                    continue;
+                }
+                std::lock_guard<std::mutex> lock(mutex);
+                root.addNode(leaf);
+            }
+        });
+        return nanovdb::tools::createNanoGrid<Build, T>(build, nanovdb::tools::StatsMode::BBox, nanovdb::CheckMode::Disable);
+    }
+
     std::vector<float> values_;
     int channels_;
     int size_[3];
     ccl::Transform where_;
     uint64_t id_;
+    nanovdb::GridHandle<nanovdb::HostBuffer> handle_;
 };
+#endif
 
 /// A picture -- and, at the end, what the pixels see -- out of Cycles'
 /// buffers: bottom row first there, top row first here, the normals turned
@@ -622,6 +692,13 @@ Laid laidOn(ccl::ShaderGraph& graph, ccl::ShaderOutput* at, ccl::ShaderOutput* f
     return laid;
 }
 
+/// A picture's colours in sRGB, as Cycles reads them without OpenColorIO:
+/// its own builtin sRGB it would convert through OpenColorIO alone; this one
+/// -- sRGB's curve over our linear Rec. 709 -- it takes off as it reads them.
+/// Asked for when used: Cycles' names are made as its library starts, maybe
+/// after ours.
+ccl::ustring srgb() { return ccl::u_colorspace_scene_linear_srgb; }
+
 /// The picture `file` laid on so: its colour (sRGB) or its value (as it is).
 ccl::ShaderOutput* sampled(ccl::ShaderGraph& graph, const Laid& laid, const std::string& file, bool color) {
     ccl::ShaderOutput* sum = nullptr;
@@ -629,7 +706,7 @@ ccl::ShaderOutput* sampled(ccl::ShaderGraph& graph, const Laid& laid, const std:
         if (!laid.uv[i]) continue;
         auto* image = graph.create_node<ccl::ImageTextureNode>();
         image->set_filename(ccl::ustring(file));
-        image->set_colorspace(color ? ccl::u_colorspace_srgb : ccl::u_colorspace_raw);
+        image->set_colorspace(color ? srgb() : ccl::u_colorspace_data);
         graph.connect(laid.uv[i], image->input("Vector"));
         ccl::ShaderOutput* part = color ? times(graph, image->output("Color"), laid.weight[i])
                                         : math(graph, ccl::NODE_MATH_MULTIPLY, image->output("Color"), 0.0f, laid.weight[i]);
@@ -654,7 +731,7 @@ ccl::ShaderOutput* sampledByUv(ccl::ShaderGraph& graph, const std::string& file,
     auto* where = graph.create_node<ccl::TextureCoordinateNode>();
     auto* image = graph.create_node<ccl::ImageTextureNode>();
     image->set_filename(ccl::ustring(file));
-    image->set_colorspace(color ? ccl::u_colorspace_srgb : ccl::u_colorspace_raw);
+    image->set_colorspace(color ? srgb() : ccl::u_colorspace_data);
     graph.connect(where->output("UV"), image->input("Vector"));
     return image->output("Color");
 }
@@ -665,7 +742,7 @@ ccl::ShaderOutput* coverageByUv(ccl::ShaderGraph& graph, const std::string& file
     auto* where = graph.create_node<ccl::TextureCoordinateNode>();
     auto* image = graph.create_node<ccl::ImageTextureNode>();
     image->set_filename(ccl::ustring(file));
-    image->set_colorspace(ccl::u_colorspace_raw);
+    image->set_colorspace(ccl::u_colorspace_data);
     // The colour and the alpha each as they are: not one over the other.
     image->set_alpha_type(ccl::IMAGE_ALPHA_CHANNEL_PACKED);
     graph.connect(where->output("UV"), image->input("Vector"));
@@ -1059,7 +1136,7 @@ Pattern patternOf(ccl::ShaderGraph& graph, const Material& m, ccl::ShaderOutput*
 /// quarter of pi of which is the light it sheds.
 float nishitaSun(float elevation, float size) {
     ccl::SkyTextureNode probe;
-    probe.set_sky_type(ccl::NODE_SKY_NISHITA);
+    probe.set_sky_type(ccl::NODE_SKY_SINGLE_SCATTERING);
     probe.set_sun_elevation(elevation);
     probe.set_sun_size(size);
     return probe.get_sun_average_radiance();
@@ -1069,7 +1146,7 @@ float nishitaSun(float elevation, float size) {
 /// Cycles' -- of luminance 1.
 Vec3 nishitaSunColour(float elevation, float size) {
     float bottom[3], top[3];
-    SKY_nishita_skymodel_precompute_sun(elevation, size, 1.0f, 1.0f, 1.0f, bottom, top);
+    SKY_single_scattering_precompute_sun(elevation, size, 1.0f, 1.0f, 1.0f, bottom, top);
     const float x = bottom[0] + top[0], y = bottom[1] + top[1], z = bottom[2] + top[2];
     const Vec3 c(3.2406f * x - 1.5372f * y - 0.4986f * z, -0.9689f * x + 1.8758f * y + 0.0415f * z,
                  0.0557f * x - 0.2040f * y + 1.0570f * z);
@@ -1542,35 +1619,51 @@ struct CyclesRender::Impl {
                 if (smooth[t]) bySmooth[v] += m.normals[3 * t + c];
             }
         }
-        ccl::array<ccl::float3> verts;
-        verts.resize(vertices);
-        for (size_t v = 0; v < vertices; ++v) {
-            const Vec3 p = cornerAt(first[v]);
-            verts[v] = ccl::make_float3(p.x, p.y, p.z);
-        }
         mesh->set_subdivision_type(ccl::Mesh::SUBDIVISION_LINEAR);
-        mesh->set_verts(verts);
-        mesh->reserve_subd_faces(static_cast<int>(n), static_cast<int>(3 * n));
+        mesh->resize_mesh(static_cast<int>(vertices), 0);
+        mesh->resize_subd_faces(static_cast<int>(n), static_cast<int>(3 * n));
+        ccl::AttributeSet& on = mesh->subd_attributes;
+        ccl::Attribute* position = on.add(ccl::ATTR_STD_POSITION);
+        position->resize(vertices);
+        ccl::packed_float3* verts = position->data_for_write<ccl::packed_float3>();
+        for (size_t v = 0; v < vertices; ++v) verts[v] = rgb(cornerAt(first[v]));
+        int* start = mesh->get_subd_start_corner().data();
+        int* count = mesh->get_subd_num_corners().data();
+        int* ptex = mesh->get_subd_ptex_offset().data();
+        int* shaders = mesh->get_subd_shader().data();
+        bool* smooths = mesh->get_subd_smooth().data();
+        std::copy(corners.begin(), corners.end(), mesh->get_subd_face_corners().data());
         for (size_t t = 0; t < n; ++t) {
-            const int shader = (t < m.material.size() ? std::min<int>(m.material[t], kinds - 1) : 0) + (smooth[t] ? 0 : kinds);
-            mesh->add_subd_face(&corners[3 * t], 3, shader, smooth[t] != 0);
+            start[t] = static_cast<int>(3 * t);
+            count[t] = 3;
+            ptex[t] = static_cast<int>(3 * t);  // a triangle: three quads
+            shaders[t] = (t < m.material.size() ? std::min<int>(m.material[t], kinds - 1) : 0) + (smooth[t] ? 0 : kinds);
+            smooths[t] = smooth[t] != 0;
         }
+        mesh->tag_subd_face_corners_modified();
+        mesh->tag_subd_start_corner_modified();
+        mesh->tag_subd_num_corners_modified();
+        mesh->tag_subd_shader_modified();
+        mesh->tag_subd_smooth_modified();
+        mesh->tag_subd_ptex_offset_modified();
         mesh->set_subd_dicing_rate(std::max(settings.dicing, 0.1f));
         mesh->set_subd_max_level(12);
         mesh->set_subd_objecttoworld(placed);
-        ccl::AttributeSet& on = mesh->subd_attributes;
-        ccl::float3* normal = on.add(ccl::ATTR_STD_VERTEX_NORMAL)->data_float3();
+        ccl::packed_normal* normal = on.add(ccl::ATTR_STD_VERTEX_NORMAL)->data_for_write<ccl::packed_normal>();
         for (size_t v = 0; v < vertices; ++v) {
             const Vec3 sum = length(bySmooth[v]) > 0.0f ? bySmooth[v] : byAll[v];
             const float l = length(sum);
-            normal[v] = rgb(l > 0.0f ? sum / l : Vec3(0.0f, 1.0f, 0.0f));
+            normal[v] = ccl::packed_normal(rgb(l > 0.0f ? sum / l : Vec3(0.0f, 1.0f, 0.0f)));
         }
-        ccl::float3* color = on.add(ccl::ustring("Col"), ccl::TypeColor, ccl::ATTR_ELEMENT_CORNER)->data_float3();
+        ccl::packed_float3* color =
+            on.add(ccl::ustring("Col"), ccl::TypeColor, ccl::ATTR_ELEMENT_CORNER)->data_for_write<ccl::packed_float3>();
         for (size_t i = 0; i < 3 * n; ++i) color[i] = rgb(i < m.colors.size() ? m.colors[i] : Vec3(0.8f, 0.8f, 0.8f));
         // What its pictures are laid on by (meshOf): where the corners were
         // before they moved, and the way each face faced there.
-        ccl::float3* rest = on.add(ccl::ustring("pg_rest"), ccl::TypePoint, ccl::ATTR_ELEMENT_CORNER)->data_float3();
-        ccl::float3* faced = on.add(ccl::ustring("pg_rest_normal"), ccl::TypeNormal, ccl::ATTR_ELEMENT_FACE)->data_float3();
+        ccl::packed_float3* rest =
+            on.add(ccl::ustring("pg_rest"), ccl::TypePoint, ccl::ATTR_ELEMENT_CORNER)->data_for_write<ccl::packed_float3>();
+        ccl::packed_float3* faced =
+            on.add(ccl::ustring("pg_rest_normal"), ccl::TypeNormal, ccl::ATTR_ELEMENT_FACE)->data_for_write<ccl::packed_float3>();
         const bool moved = m.rest.size() == 3 * n;
         for (size_t t = 0; t < n; ++t) {
             Vec3 r[3];
@@ -1583,25 +1676,43 @@ struct CyclesRender::Impl {
             faced[t] = rgb(l > 0.0f ? across / l : Vec3(0.0f, 1.0f, 0.0f));
         }
         if (m.uv.size() == 3 * n) {
-            ccl::float2* uv = on.add(ccl::ATTR_STD_UV, ccl::ustring("uv"))->data_float2();
+            ccl::float2* uv = on.add(ccl::ATTR_STD_UV, ccl::ustring("uv"))->data_for_write<ccl::float2>();
             for (size_t i = 0; i < 3 * n; ++i) uv[i] = ccl::make_float2(m.uv[i].x, m.uv[i].y);
         }
         if (m.random.size() == n) {
-            float* random = on.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_float();
+            float* random = on.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_for_write<float>();
             std::copy(m.random.begin(), m.random.end(), random);
         }
         // Moving: where its vertices are as the shutter opens and as it
-        // closes; Cycles makes the normals of the triangles it cuts there.
+        // closes -- the position's steps 1 and 2, now its 0; Cycles makes
+        // the normals of the triangles it cuts there.
         if (reach > 0.0f) {
             mesh->set_motion_steps(3);
             mesh->set_use_motion_blur(true);
-            ccl::float3* steps = on.add(ccl::ATTR_STD_MOTION_VERTEX_POSITION)->data_float3();
+            position->add_motion(mesh);
+            ccl::packed_float3* opens = position->data_for_write<ccl::packed_float3>(1);
+            ccl::packed_float3* closes = position->data_for_write<ccl::packed_float3>(2);
             for (size_t v = 0; v < vertices; ++v) {
                 const Vec3 p = cornerAt(first[v]), by = m.velocity[first[v]] * reach;
-                steps[v] = rgb(p - by);
-                steps[vertices + v] = rgb(p + by);
+                opens[v] = rgb(p - by);
+                closes[v] = rgb(p + by);
             }
         }
+    }
+
+    /// `mesh` made `n` triangles of three corners each, a corner a vertex --
+    /// smooth, of its first shader -- the vertices' positions to fill in.
+    static ccl::packed_float3* triangles(ccl::Mesh* mesh, size_t n) {
+        mesh->resize_mesh(static_cast<int>(3 * n), static_cast<int>(n));
+        int* corners = mesh->get_triangles().data();
+        for (size_t i = 0; i < 3 * n; ++i) corners[i] = static_cast<int>(i);
+        std::fill_n(mesh->get_shader().data(), n, 0);
+        std::fill_n(mesh->get_smooth().data(), n, true);
+        mesh->tag_triangles_modified();
+        mesh->tag_shader_modified();
+        mesh->tag_smooth_modified();
+        mesh->tag_position_modified();
+        return mesh->get_position_for_write();
     }
 
     /// The Cycles mesh of ours: its triangles one by one, the normals and
@@ -1657,32 +1768,26 @@ struct CyclesRender::Impl {
             return mesh;
         }
         const size_t n = m->count();
-        ccl::array<ccl::float3> verts;
-        verts.resize(3 * n);
-        for (size_t t = 0; t < n; ++t) {
-            const Vec3 a = m->v0[t], b = a + m->e1[t], c = a + m->e2[t];
-            verts[3 * t] = ccl::make_float3(a.x, a.y, a.z);
-            verts[3 * t + 1] = ccl::make_float3(b.x, b.y, b.z);
-            verts[3 * t + 2] = ccl::make_float3(c.x, c.y, c.z);
-        }
         ccl::array<ccl::Node*> used = shadersOf();
         // Counted before Cycles takes them: setting a node's array swaps it.
         const int kinds = static_cast<int>(used.size());
         mesh->set_used_shaders(used);
-        mesh->reserve_mesh(3 * n, n);
-        mesh->set_verts(verts);
+        ccl::packed_float3* verts = triangles(mesh, n);
+        int* shader = mesh->get_shader().data();
         for (size_t t = 0; t < n; ++t) {
-            const int i = static_cast<int>(3 * t);
-            const int shader = t < m->material.size() ? std::min<int>(m->material[t], kinds - 1) : 0;
-            mesh->add_triangle(i, i + 1, i + 2, shader, true);
+            const Vec3 a = m->v0[t];
+            verts[3 * t] = rgb(a);
+            verts[3 * t + 1] = rgb(a + m->e1[t]);
+            verts[3 * t + 2] = rgb(a + m->e2[t]);
+            shader[t] = t < m->material.size() ? std::min<int>(m->material[t], kinds - 1) : 0;
         }
-        ccl::float3* normals = mesh->attributes.add(ccl::ATTR_STD_VERTEX_NORMAL)->data_float3();
-        ccl::float3* colors = mesh->attributes.add(ccl::ustring("Col"), ccl::TypeColor, ccl::ATTR_ELEMENT_VERTEX)->data_float3();
+        mesh->tag_shader_modified();
+        ccl::packed_normal* normals = mesh->attributes.add(ccl::ATTR_STD_VERTEX_NORMAL)->data_for_write<ccl::packed_normal>();
+        ccl::packed_float3* colors =
+            mesh->attributes.add(ccl::ustring("Col"), ccl::TypeColor, ccl::ATTR_ELEMENT_VERTEX)->data_for_write<ccl::packed_float3>();
         for (size_t i = 0; i < 3 * n; ++i) {
-            const Vec3 nn = i < m->normals.size() ? m->normals[i] : Vec3(0.0f, 1.0f, 0.0f);
-            const Vec3 cc = i < m->colors.size() ? m->colors[i] : Vec3(0.8f, 0.8f, 0.8f);
-            normals[i] = ccl::make_float3(nn.x, nn.y, nn.z);
-            colors[i] = ccl::make_float3(cc.x, cc.y, cc.z);
+            normals[i] = ccl::packed_normal(rgb(i < m->normals.size() ? m->normals[i] : Vec3(0.0f, 1.0f, 0.0f)));
+            colors[i] = rgb(i < m->colors.size() ? m->colors[i] : Vec3(0.8f, 0.8f, 0.8f));
         }
         // What a material's pattern is drawn by (patternOf): where the
         // corners were before they moved -- where they are, for what never
@@ -1691,33 +1796,35 @@ struct CyclesRender::Impl {
             return mat.preset != MaterialPreset::None || !mat.texture.empty();
         });
         if (patterned) {
-            ccl::float3* rest = mesh->attributes.add(ccl::ustring("pg_rest"), ccl::TypePoint, ccl::ATTR_ELEMENT_VERTEX)->data_float3();
+            ccl::packed_float3* rest = mesh->attributes.add(ccl::ustring("pg_rest"), ccl::TypePoint, ccl::ATTR_ELEMENT_VERTEX)
+                                           ->data_for_write<ccl::packed_float3>();
             // ... and the way each face faced there, which way a picture is
             // laid on it from (laidOn).
-            ccl::float3* faced =
-                mesh->attributes.add(ccl::ustring("pg_rest_normal"), ccl::TypeNormal, ccl::ATTR_ELEMENT_FACE)->data_float3();
+            ccl::packed_float3* faced = mesh->attributes.add(ccl::ustring("pg_rest_normal"), ccl::TypeNormal, ccl::ATTR_ELEMENT_FACE)
+                                            ->data_for_write<ccl::packed_float3>();
             const bool moved = m->rest.size() == 3 * n;
             for (size_t t = 0; t < n; ++t) {
                 const Vec3 corner[3] = {m->v0[t], m->v0[t] + m->e1[t], m->v0[t] + m->e2[t]};
                 Vec3 r[3];
                 for (size_t c = 0; c < 3; ++c) {
                     r[c] = moved ? m->rest[3 * t + c] : corner[c];
-                    rest[3 * t + c] = ccl::make_float3(r[c].x, r[c].y, r[c].z);
+                    rest[3 * t + c] = rgb(r[c]);
                 }
                 const Vec3 across = cross(r[1] - r[0], r[2] - r[0]);
                 const float l = length(across);
                 const Vec3 f = l > 0.0f ? across / l : Vec3(0.0f, 1.0f, 0.0f);
-                faced[t] = ccl::make_float3(f.x, f.y, f.z);
+                faced[t] = rgb(f);
             }
         }
         // The corners' uv, where a material lays its pictures on by it:
         // what Cycles makes the tangents of a normal map of, too.
         if (m->uv.size() == 3 * n) {
-            ccl::float2* uv = mesh->attributes.add(ccl::ATTR_STD_UV, ccl::ustring("uv"))->data_float2();
+            ccl::float2* uv = mesh->attributes.add(ccl::ATTR_STD_UV, ccl::ustring("uv"))->data_for_write<ccl::float2>();
             for (size_t i = 0; i < 3 * n; ++i) uv[i] = ccl::make_float2(m->uv[i].x, m->uv[i].y);
         }
         if (m->random.size() == n) {
-            float* random = mesh->attributes.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_float();
+            float* random =
+                mesh->attributes.add(ccl::ustring("pg_random"), ccl::TypeFloat, ccl::ATTR_ELEMENT_FACE)->data_for_write<float>();
             std::copy(m->random.begin(), m->random.end(), random);
         }
         // Moving: three steps of it, the shutter opening, now and the
@@ -1728,16 +1835,21 @@ struct CyclesRender::Impl {
         if (reach > 0.0f) {
             mesh->set_motion_steps(3);
             mesh->set_use_motion_blur(true);
-            ccl::float3* steps = mesh->attributes.add(ccl::ATTR_STD_MOTION_VERTEX_POSITION)->data_float3();
-            ccl::float3* turned = mesh->attributes.add(ccl::ATTR_STD_MOTION_VERTEX_NORMAL)->data_float3();
-            const ccl::array<ccl::float3>& now = mesh->get_verts();
-            const ccl::float3* normal = mesh->attributes.find(ccl::ATTR_STD_VERTEX_NORMAL)->data_float3();
+            // The position's and the normals' steps 1 and 2, now their 0.
+            ccl::Attribute* position = mesh->attributes.find(ccl::ATTR_STD_POSITION);
+            ccl::Attribute* normal = mesh->attributes.find(ccl::ATTR_STD_VERTEX_NORMAL);
+            position->add_motion(mesh);
+            normal->add_motion(mesh);
+            const ccl::packed_float3* now = position->data<ccl::packed_float3>();
+            ccl::packed_float3* opens = position->data_for_write<ccl::packed_float3>(1);
+            ccl::packed_float3* closes = position->data_for_write<ccl::packed_float3>(2);
+            const ccl::packed_normal* facing = normal->data<ccl::packed_normal>();
+            std::copy_n(facing, 3 * n, normal->data_for_write<ccl::packed_normal>(1));
+            std::copy_n(facing, 3 * n, normal->data_for_write<ccl::packed_normal>(2));
             for (size_t i = 0; i < 3 * n; ++i) {
-                const Vec3 v = m->velocity[i] * reach;
-                const ccl::float3 by = ccl::make_float3(v.x, v.y, v.z);
-                steps[i] = now[i] - by;          // the first step: as the shutter opens
-                steps[3 * n + i] = now[i] + by;  // the last: as it closes
-                turned[i] = turned[3 * n + i] = normal[i];
+                const ccl::float3 by = rgb(m->velocity[i] * reach), at = now[i];
+                opens[i] = at - by;   // as the shutter opens
+                closes[i] = at + by;  // as it closes
             }
         }
         meshes[m.get()] = {m, mesh, reach};
@@ -1750,27 +1862,26 @@ struct CyclesRender::Impl {
                        const Vec3& colour, ccl::Shader* shader) {
         auto* mesh = scene->create_node<ccl::Mesh>();
         const size_t n = points.size() / 3;
-        ccl::array<ccl::float3> verts;
-        verts.resize(points.size());
-        for (size_t i = 0; i < points.size(); ++i) verts[i] = ccl::make_float3(points[i].x, points[i].y, points[i].z);
         ccl::array<ccl::Node*> used;
         used.push_back_slow(shader);
         mesh->set_used_shaders(used);
-        mesh->reserve_mesh(points.size(), n);
-        mesh->set_verts(verts);
+        ccl::packed_float3* verts = triangles(mesh, n);
+        int* corners = mesh->get_triangles().data();
         for (size_t t = 0; t < n; ++t) {
             // Turned the way its normals point: Cycles takes the side it
             // is seen from by the order of the corners, and shades a
             // surface whose normals point the other way black.
-            const int i = static_cast<int>(3 * t);
             const Vec3 face = cross(points[3 * t + 1] - points[3 * t], points[3 * t + 2] - points[3 * t]);
-            const bool turned = dot(face, normals[3 * t] + normals[3 * t + 1] + normals[3 * t + 2]) < 0.0f;
-            mesh->add_triangle(i, turned ? i + 2 : i + 1, turned ? i + 1 : i + 2, 0, true);
+            if (dot(face, normals[3 * t] + normals[3 * t + 1] + normals[3 * t + 2]) < 0.0f) {
+                std::swap(corners[3 * t + 1], corners[3 * t + 2]);
+            }
         }
-        ccl::float3* nn = mesh->attributes.add(ccl::ATTR_STD_VERTEX_NORMAL)->data_float3();
-        ccl::float3* cc = mesh->attributes.add(ccl::ustring("Col"), ccl::TypeColor, ccl::ATTR_ELEMENT_VERTEX)->data_float3();
+        ccl::packed_normal* nn = mesh->attributes.add(ccl::ATTR_STD_VERTEX_NORMAL)->data_for_write<ccl::packed_normal>();
+        ccl::packed_float3* cc =
+            mesh->attributes.add(ccl::ustring("Col"), ccl::TypeColor, ccl::ATTR_ELEMENT_VERTEX)->data_for_write<ccl::packed_float3>();
         for (size_t i = 0; i < points.size(); ++i) {
-            nn[i] = ccl::make_float3(normals[i].x, normals[i].y, normals[i].z);
+            verts[i] = rgb(points[i]);
+            nn[i] = ccl::packed_normal(rgb(normals[i]));
             cc[i] = rgb(colour);
         }
         owned.push_back(mesh);
@@ -1792,7 +1903,7 @@ struct CyclesRender::Impl {
     ccl::ShaderOutput* daySky(ccl::ShaderGraph& graph, const Scene& s, bool disc = true,
                               ccl::ShaderOutput* at = nullptr) const {
         auto* day = graph.create_node<ccl::SkyTextureNode>();
-        day->set_sky_type(ccl::NODE_SKY_NISHITA);
+        day->set_sky_type(ccl::NODE_SKY_SINGLE_SCATTERING);
         const ccl::float3 d = ccl::normalize(toCycles(s.sunDirection));
         day->set_sun_elevation(sunElevation(s));
         day->set_sun_rotation(std::atan2(d.x, d.y));
@@ -2124,6 +2235,7 @@ struct CyclesRender::Impl {
                 }
             }
             auto* env = graph->create_node<ccl::EnvironmentTextureNode>();
+            env->set_colorspace(ccl::u_colorspace_data);  // linear light, as it is
             env->handle = scene->image_manager->add_image(std::make_unique<SkyImage>(std::move(rgba), kW, kH, ++imageId),
                                                           env->image_params());
             graph->connect(env->output("Color"), sky->input("Color"));
@@ -2139,8 +2251,7 @@ struct CyclesRender::Impl {
         scene->background->set_use_shader(true);
         // Sampled as a light, as Blender has it: rays sent towards where
         // the sky is bright -- the sun in a physical sky found.
-        auto* dome = scene->create_node<ccl::Light>();
-        dome->set_light_type(ccl::LIGHT_BACKGROUND);
+        auto* dome = scene->create_node<ccl::BackgroundLight>();
         dome->set_use_mis(true);
         ccl::array<ccl::Node*> used;
         used.push_back_slow(shader);
@@ -2165,8 +2276,7 @@ struct CyclesRender::Impl {
             const float t = std::clamp((settings.clouds - 0.6f) / 0.4f, 0.0f, 1.0f);
             through = 1.0f - 0.85f * t * t * (3.0f - 2.0f * t);
         }
-        auto* light = scene->create_node<ccl::Light>();
-        light->set_light_type(ccl::LIGHT_DISTANT);
+        auto* light = scene->create_node<ccl::SunLight>();
         light->set_strength(rgb(s.sunLight * (kPi * through)));
         light->set_angle(std::clamp(settings.sunAngle, 0.01f, 30.0f) * kPi / 180.0f);
         light->set_use_mis(true);
@@ -2194,7 +2304,7 @@ struct CyclesRender::Impl {
         const ccl::float3 y = ccl::cross(z, x);
         const ccl::Transform tfm = ccl::make_transform(x.x, y.x, z.x, 0.0f, x.y, y.y, z.y, 0.0f, x.z, y.z, z.z, 0.0f);
         ccl::Object* object = place(scene, light, tfm, Vec3(1.0f, 1.0f, 1.0f));
-        object->set_visibility(ccl::PATH_RAY_ALL_VISIBILITY & ~ccl::PATH_RAY_CAMERA);
+        object->set_visibility(ccl::PATH_RAY_VISIBILITY_ALL & ~ccl::PATH_RAY_VISIBILITY_CAMERA);
         // Over a plate, the real sun: the shadow catchers' light without the CG has it too.
         object->set_is_shadow_catcher(s.plate != nullptr);
     }
@@ -2290,13 +2400,20 @@ struct CyclesRender::Impl {
 
     /// The smoke and the fire: a box round the cells that hold any, inside
     /// it what they stop and give off read from grids as ours reads them
-    /// (Gas::dense), the smoke scattering in its colour -- forwards, as our
-    /// two lobes do on the whole -- Cycles stepping through it a cell at a
-    /// time.
+    /// (Gas::dense) as NanoVDB grids, the smoke scattering in its colour --
+    /// forwards, as our two lobes do on the whole. Cycles finds where its
+    /// rays scatter without stepping through it (null scattering), bounded
+    /// by the most of it in each node of an octree it makes of the box.
     /// The smoke and the fire; while the shutter is open -- `reach` seconds
     /// either side of now -- read where they were as they move. Whether
     /// they do.
     bool gas(ccl::Scene* scene, const Scene& s, float reach) {
+#ifndef PG_HAVE_NANOVDB
+        (void)scene;
+        (void)s;
+        (void)reach;
+        return false;  // Cycles reads volumes as NanoVDB grids alone
+#else
         if (!s.gas) return false;
         // How far the gas goes either way: the box Cycles shades in grows as
         // much, the velocity read over it.
@@ -2334,10 +2451,6 @@ struct CyclesRender::Impl {
         }
         graph->connect(volume->output("Volume"), graph->output()->input("Volume"));
         gasShader->set_graph(std::move(graph));
-        gasShader->set_heterogeneous_volume(true);
-        // A step a cell: Cycles takes a tenth of the box, times this.
-        const float step = size.x / static_cast<float>(d.size[0]);
-        gasShader->set_volume_step_rate(step / (0.1f * (size.x + size.y + size.z + 6.0f * step) / 3.0f));
         gasShader->tag_update(scene);
 
         // The box, its faces out, a cell bigger all round than the grids --
@@ -2371,8 +2484,9 @@ struct CyclesRender::Impl {
         ccl::ImageParams params;
         params.interpolation = ccl::INTERPOLATION_LINEAR;
         params.extension = ccl::EXTENSION_CLIP;
+        params.colorspace = ccl::u_colorspace_data;  // numbers, not colours to convert
         ccl::Attribute* stopped = mesh->attributes.add(ccl::ustring("pg_extinction"), ccl::TypeFloat, ccl::ATTR_ELEMENT_VOXEL);
-        stopped->data_voxel() =
+        stopped->data_voxel_for_write() =
             scene->image_manager->add_image(std::make_unique<VoxelImage>(d.extinction, 1, d.size, where, ++imageId), params);
         if (glows) {
             std::vector<float> rgba(4 * n);
@@ -2383,7 +2497,7 @@ struct CyclesRender::Impl {
                 rgba[4 * i + 3] = 1.0f;  // not a share of it to divide by
             }
             ccl::Attribute* given = mesh->attributes.add(ccl::ustring("pg_emission"), ccl::TypeColor, ccl::ATTR_ELEMENT_VOXEL);
-            given->data_voxel() =
+            given->data_voxel_for_write() =
                 scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(rgba), 4, d.size, where, ++imageId), params);
         }
         if (steamy) {
@@ -2395,7 +2509,7 @@ struct CyclesRender::Impl {
                 rgba[4 * i + 3] = 1.0f;
             }
             ccl::Attribute* kept = mesh->attributes.add(ccl::ustring("pg_albedo"), ccl::TypeColor, ccl::ATTR_ELEMENT_VOXEL);
-            kept->data_voxel() =
+            kept->data_voxel_for_write() =
                 scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(rgba), 4, d.size, where, ++imageId), params);
         }
         if (moving) {
@@ -2421,11 +2535,12 @@ struct CyclesRender::Impl {
             // volumes only -- the kernel finds it by what it stands for.
             ccl::Attribute* velocity = mesh->attributes.add(ccl::ustring("velocity"), ccl::TypeVector, ccl::ATTR_ELEMENT_VOXEL);
             velocity->std = ccl::ATTR_STD_VOLUME_VELOCITY;
-            velocity->data_voxel() = scene->image_manager->add_image(
+            velocity->data_voxel_for_write() = scene->image_manager->add_image(
                 std::make_unique<VoxelImage>(std::move(rgba), 4, d.velocitySize, at, ++imageId), params);
         }
         place(scene, mesh, ccl::transform_identity(), Vec3(1.0f, 1.0f, 1.0f));
         return moving;
+#endif
     }
 
     void sync(const Scene& s, const Settings& settings) {
@@ -2472,7 +2587,7 @@ struct CyclesRender::Impl {
                 moves = moves || made[p.mesh]->get_use_motion_blur();
             }
             ccl::Object* object = place(scene, made[p.mesh], tfm, p.tint);
-            if (!s.meshes[p.mesh]->shadows) object->set_visibility(ccl::PATH_RAY_ALL_VISIBILITY & ~ccl::PATH_RAY_SHADOW);
+            if (!s.meshes[p.mesh]->shadows) object->set_visibility(ccl::PATH_RAY_VISIBILITY_ALL & ~ccl::PATH_RAY_VISIBILITY_SHADOW);
             if (reach > 0.0f && p.velocity != Vec3(0.0f)) {
                 ccl::array<ccl::Transform> motion;
                 motion.resize(3);
@@ -2559,8 +2674,7 @@ struct CyclesRender::Impl {
         const bool denoise = settings.denoise && pictures.denoise;
         integrator->set_use_denoise(denoise);
         integrator->set_denoiser_type(ccl::DENOISER_OPENIMAGEDENOISE);
-        integrator->set_use_denoise_pass_albedo(true);
-        integrator->set_use_denoise_pass_normal(true);
+        integrator->set_denoiser_passes(ccl::DENOISER_PASS_ALBEDO | ccl::DENOISER_PASS_NORMAL);
         integrator->set_denoiser_prefilter(interactive ? ccl::DENOISER_PREFILTER_FAST : ccl::DENOISER_PREFILTER_ACCURATE);
         integrator->set_denoise_start_sample(1);
         scene->film->set_exposure(1.0f);

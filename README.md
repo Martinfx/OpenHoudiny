@@ -228,8 +228,8 @@ CPU only, in about a minute. For that it needs ISPC 1.21 or newer and TBB
 (`-DPG_OIDN=OFF`) a custom filter does the denoising.
 
 The final image is rendered by Blender's **Cycles** (Apache 2.0). CMake
-downloads it from GitHub (tag v4.5.0) and builds it once, CPU only
-(about 2 minutes on four cores). It needs **OpenImageIO** and TBB: `pkg
+downloads it from GitHub (tag v5.2.0) and builds it once, CPU only
+(about 4 minutes on four cores). It needs **OpenImageIO** and TBB: `pkg
 install openimageio pugixml onetbb` on FreeBSD, `sudo apt install
 libopenimageio-dev libpugixml-dev libtbb-dev` on Debian and Ubuntu. Without
 them (or with `-DPG_CYCLES=OFF`) the custom path tracer renders

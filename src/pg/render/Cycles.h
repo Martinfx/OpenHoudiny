@@ -19,10 +19,10 @@
 //                taking on the Water Look's colour -- both letting the sun
 //                through to what is behind them, as ours do, not only along
 //                the caustics Cycles finds;
-//   gas          the smoke and the fire as grids of what they stop and give
-//                off in each cell (Gas::dense) in a box round them: a
-//                Principled Volume scattering in the smoke's colour, Cycles
-//                stepping through it a cell at a time;
+//   gas          the smoke and the fire as NanoVDB grids of what they stop
+//                and give off in each cell (Gas::dense) in a box round them:
+//                a Principled Volume scattering in the smoke's colour, where
+//                Cycles' rays scatter found without stepping through it;
 //   floor        the look's floor, fading out far away as the viewport's;
 //   light        the look's sun as a distant light as wide as Sun Angle; its
 //                sky, as the viewport draws it, an environment Cycles samples

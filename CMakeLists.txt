@@ -676,14 +676,16 @@ endif()
 # Rendering with Cycles (src/pg/render/Cycles.cpp): Blender's renderer
 # (Apache 2.0), as a library -- what the Render tab and `--renderer cycles`
 # render with. No system has it packaged on its own: it is built from its
-# sources -- a git checkout of 4.5.0 -- by its own CMake, in a directory of
-# its own (cycles-build), once, in a few minutes: its libraries alone, the
-# processor's device, with the Embree and the Open Image Denoise we have.
-# It needs OpenImageIO and TBB (FreeBSD: pkg install openimageio pugixml
-# onetbb; Debian, Ubuntu: apt install libopenimageio-dev libpugixml-dev
-# libtbb-dev). Our code compiles against it with the definitions and the
-# flags its own code has, and links what its own program links, both read
-# from its build. Without it, the path tracer renders.
+# sources -- a git checkout of 5.2.0 -- by its own CMake, in a directory of
+# its own (cycles-v5.2.0-build), once, in a few minutes: its libraries
+# alone, the processor's device, with the Embree, the Open Image Denoise
+# and the NanoVDB headers we have -- Cycles 5 reads volumes as NanoVDB
+# grids alone. It needs OpenImageIO and TBB (FreeBSD: pkg install
+# openimageio pugixml onetbb; Debian, Ubuntu: apt install
+# libopenimageio-dev libpugixml-dev libtbb-dev). Our code compiles against
+# it with the definitions and the flags its own code has, and links what
+# its own program links, both read from its build. Without it, the path
+# tracer renders.
 option(PG_CYCLES "Render with Cycles, Blender's renderer, built from its sources (needs OpenImageIO and TBB)" ON)
 if(PG_CYCLES AND PG_SANITIZE_THREAD)
   # As Embree: its TBB is not built with the thread sanitizer.
@@ -729,59 +731,96 @@ if(PG_CYCLES)
 endif()
 if(PG_CYCLES)
   include(FetchContent)
+  set(PG_CYCLES_TAG v5.2.0)
+  # Each version in directories of its own: the sources of another, which
+  # the build changed, are not checked out anew, nor built over.
   FetchContent_Declare(cycles
     GIT_REPOSITORY https://github.com/blender/cycles.git
-    GIT_TAG v4.5.0
+    GIT_TAG ${PG_CYCLES_TAG}
     GIT_SHALLOW TRUE
+    SOURCE_DIR ${FETCHCONTENT_BASE_DIR}/cycles-${PG_CYCLES_TAG}-src
     SOURCE_SUBDIR pg-cycles-builds-on-its-own)  # its CMake runs below, not as part of ours
   FetchContent_MakeAvailable(cycles)
+  # A few lines of its sources changed, once each: `mark` in the change, so
+  # that a file that has it is left as it is; the change `after` the text it
+  # follows, `instead` of it with `replace`.
+  function(pg_change_cycles file mark anchor change why)
+    set(path ${cycles_SOURCE_DIR}/${file})
+    file(READ ${path} text)
+    if(text MATCHES "${mark}")
+      return()
+    endif()
+    string(FIND "${text}" "${anchor}" at)
+    if(at EQUAL -1)
+      message(WARNING "Cycles: ${file} is not as expected -- ${why}")
+      return()
+    endif()
+    string(REPLACE "${anchor}" "${change}" text "${text}")
+    file(WRITE ${path} "${text}")
+  endfunction()
   # Our gas goes to Cycles as a mesh round its voxels -- Cycles makes its own
   # volumes' meshes with OpenVDB, which it is built without -- and Cycles
   # blurs only its own volumes along their velocity. Five lines of its
-  # object manager, added to its sources once, let such a mesh's volume move
-  # as its velocity attribute says too (render/Cycles.cpp, gas()).
-  set(PG_CYCLES_OBJECT ${cycles_SOURCE_DIR}/src/scene/object.cpp)
-  file(READ ${PG_CYCLES_OBJECT} PG_CYCLES_OBJECT_TEXT)
-  if(NOT PG_CYCLES_OBJECT_TEXT MATCHES "pg: a mesh round voxels")
-    set(PG_CYCLES_ANCHOR "      flag |= SD_OBJECT_HAS_VERTEX_MOTION;\n    }\n  }\n  else if (geom->is_volume()) {")
-    string(FIND "${PG_CYCLES_OBJECT_TEXT}" "${PG_CYCLES_ANCHOR}" PG_CYCLES_AT)
-    if(PG_CYCLES_AT EQUAL -1)
-      message(WARNING "Cycles: its object manager is not as expected -- the gas renders without motion blur")
-    else()
-      string(REPLACE "${PG_CYCLES_ANCHOR}"
-             "      flag |= SD_OBJECT_HAS_VERTEX_MOTION;\n    }\n    /* pg: a mesh round voxels, its volume moving as their velocity says. */\n    if (mesh->attributes.find(ATTR_STD_VOLUME_VELOCITY)) {\n      flag |= SD_OBJECT_HAS_VOLUME_MOTION;\n      kobject.velocity_scale = 1.0f;\n    }\n  }\n  else if (geom->is_volume()) {"
-             PG_CYCLES_OBJECT_TEXT "${PG_CYCLES_OBJECT_TEXT}")
-      file(WRITE ${PG_CYCLES_OBJECT} "${PG_CYCLES_OBJECT_TEXT}")
-    endif()
-  endif()
-  # Where Cycles cuts a face finer (linear subdivision), it gives the middle
-  # of an n-gon -- a triangle too -- the sum of its corners' attributes, not
-  # their mean, as it does its vertices': the uv, colours and rest of what it
-  # moves by its height (render/Cycles.cpp, dice()) came out wrong. One
-  # line, added to its sources once.
-  set(PG_CYCLES_SUBD ${cycles_SOURCE_DIR}/src/subd/interpolation.cpp)
-  file(READ ${PG_CYCLES_SUBD} PG_CYCLES_SUBD_TEXT)
-  if(NOT PG_CYCLES_SUBD_TEXT MATCHES "pg: the mean of its corners")
-    set(PG_CYCLES_ANCHOR "        value_center += T::read(subd_data[face.start_corner + j]);\n      }\n")
-    string(FIND "${PG_CYCLES_SUBD_TEXT}" "${PG_CYCLES_ANCHOR}" PG_CYCLES_AT)
-    if(PG_CYCLES_AT EQUAL -1)
-      message(WARNING "Cycles: its subdivision is not as expected -- what it moves by its height may take wrong uv")
-    else()
-      string(REPLACE "${PG_CYCLES_ANCHOR}"
-             "${PG_CYCLES_ANCHOR}      value_center /= (float)face.num_corners; /* pg: the mean of its corners */\n"
-             PG_CYCLES_SUBD_TEXT "${PG_CYCLES_SUBD_TEXT}")
-      file(WRITE ${PG_CYCLES_SUBD} "${PG_CYCLES_SUBD_TEXT}")
-    endif()
-  endif()
-  set(PG_CYCLES_DIR ${CMAKE_BINARY_DIR}/cycles-build)
+  # object manager let such a mesh's volume move as its velocity attribute
+  # says too (render/Cycles.cpp, gas()).
+  set(anchor "    else if (mesh->attributes.find(ATTR_STD_CORNER_NORMAL)) {\n      flag |= SD_OBJECT_HAS_CORNER_NORMALS;\n    }\n")
+  pg_change_cycles(src/scene/object.cpp "pg: a mesh round voxels" "${anchor}"
+    "${anchor}    /* pg: a mesh round voxels, its volume moving as their velocity says. */\n    if (mesh->attributes.find(ATTR_STD_VOLUME_VELOCITY)) {\n      flag |= SD_OBJECT_HAS_VOLUME_MOTION;\n      kobject.velocity_scale = 1.0f;\n    }\n"
+    "the gas renders without motion blur")
+  # Cycles 5 bounds how much a volume stops in each node of an octree by its
+  # value at the middle of the shutter alone: where moving gas is blurred
+  # to, it would not look. Read over the whole shutter (render/Cycles.cpp,
+  # gas()).
+  set(anchor "    sd.P = ray.P + rand_p * voxel_size;\n")
+  pg_change_cycles(src/kernel/bake/bake.h "pg: over the whole shutter" "${anchor}"
+    "${anchor}    /* pg: over the whole shutter, where moving gas is blurred to too. */\n    sd.time = (num_samples > 1) ? float(sample) / float(num_samples - 1) : 0.5f;\n"
+    "moving gas is blurred less far than it goes")
+  # Cycles 5 has OpenColorIO always; we manage colour ourselves (Color.h) and
+  # hand it linear light, so it is built without, as before: no package more
+  # to install.
+  pg_change_cycles(src/cmake/external_libs.cmake "pg: without OpenColorIO"
+    "if(NOT USD_OVERRIDE_OPENCOLORIO)\n"
+    "if(FALSE) # pg: without OpenColorIO\n" "it needs OpenColorIO")
+  pg_change_cycles(src/cmake/dependency_targets.cmake "pg: without OpenColorIO"
+    "add_library(bf::dependencies::opencolorio ALIAS OpenColorIO::OpenColorIO)\n"
+    "add_library(bf_deps_opencolorio INTERFACE) # pg: without OpenColorIO\nadd_library(bf::dependencies::opencolorio ALIAS bf_deps_opencolorio)\n"
+    "it needs OpenColorIO")
+  pg_change_cycles(src/CMakeLists.txt "pg: without OpenColorIO"
+    "add_definitions(-DWITH_OCIO)\n" "# pg: without OpenColorIO\n" "it needs OpenColorIO")
+  # Cycles 5 reads volumes as NanoVDB grids alone; its own code that makes
+  # them does so from OpenVDB's, which it is built without -- ours makes
+  # them (render/Cycles.cpp, gas()), with the NanoVDB headers above.
+  foreach(file src/util/nanovdb.h src/util/nanovdb.cpp src/scene/image_vdb.cpp)
+    pg_change_cycles(${file} "pg: NanoVDB without OpenVDB" "#ifdef WITH_NANOVDB\n"
+      "#if defined(WITH_NANOVDB) && defined(WITH_OPENVDB) /* pg: NanoVDB without OpenVDB */\n"
+      "the gas may not render")
+  endforeach()
+  set(PG_CYCLES_DIR ${CMAKE_BINARY_DIR}/cycles-${PG_CYCLES_TAG}-build)
+  # Cycles finds OpenImageIO by its CMake package, whose files on some
+  # systems name programs another package of theirs installs (Debian's
+  # OpenImageIOTargets.cmake: /usr/bin/iconvert): one of ours instead, of
+  # the libraries found above.
+  set(PG_CYCLES_OIIO_DIR ${CMAKE_BINARY_DIR}/cycles-openimageio)
+  file(WRITE ${PG_CYCLES_OIIO_DIR}/OpenImageIOConfig.cmake
+       "if(NOT TARGET OpenImageIO::OpenImageIO)\n"
+       "  add_library(OpenImageIO::OpenImageIO_Util UNKNOWN IMPORTED)\n"
+       "  set_target_properties(OpenImageIO::OpenImageIO_Util PROPERTIES IMPORTED_LOCATION \"${PG_OIIO_UTIL_LIBRARY}\"\n"
+       "                        INTERFACE_INCLUDE_DIRECTORIES \"${PG_OIIO_INCLUDE_DIR}\")\n"
+       "  add_library(OpenImageIO::OpenImageIO UNKNOWN IMPORTED)\n"
+       "  set_target_properties(OpenImageIO::OpenImageIO PROPERTIES IMPORTED_LOCATION \"${PG_OIIO_LIBRARY}\"\n"
+       "                        INTERFACE_INCLUDE_DIRECTORIES \"${PG_OIIO_INCLUDE_DIR}\"\n"
+       "                        INTERFACE_LINK_LIBRARIES OpenImageIO::OpenImageIO_Util)\n"
+       "endif()\n"
+       "set(OPENIMAGEIO_INCLUDE_DIR \"${PG_OIIO_INCLUDE_DIR}\")\n")
   set(PG_CYCLES_ARGS
+    -DOpenImageIO_DIR=${PG_CYCLES_OIIO_DIR}
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
     -DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}
     -DWITH_LIBS_PRECOMPILED=OFF
     -DWITH_CYCLES_ALEMBIC=OFF -DWITH_CYCLES_OPENCOLORIO=OFF -DWITH_CYCLES_OPENSUBDIV=OFF -DWITH_CYCLES_OPENVDB=OFF
-    -DWITH_CYCLES_NANOVDB=OFF -DWITH_CYCLES_OSL=OFF -DWITH_CYCLES_USD=OFF -DWITH_CYCLES_HYDRA_RENDER_DELEGATE=OFF
+    -DWITH_CYCLES_OSL=OFF -DWITH_CYCLES_USD=OFF -DWITH_CYCLES_HYDRA_RENDER_DELEGATE=OFF
     -DWITH_CYCLES_LOGGING=OFF -DWITH_CYCLES_STANDALONE_GUI=OFF
     -DWITH_CYCLES_DEVICE_CUDA=OFF -DWITH_CYCLES_DEVICE_OPTIX=OFF -DWITH_CYCLES_DEVICE_HIP=OFF
     -DWITH_CYCLES_DEVICE_METAL=OFF -DWITH_CYCLES_DEVICE_ONEAPI=OFF)
@@ -795,6 +834,12 @@ if(PG_CYCLES)
     # Embree fetched and built static with only what our rays use: Cycles
     # goes through its own hierarchy.
     list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_EMBREE=OFF)
+  endif()
+  if(PG_NANOVDB)
+    list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_NANOVDB=ON -DNANOVDB_INCLUDE_DIR=${PG_NANOVDB_INCLUDE_DIR})
+  else()
+    message(WARNING "Cycles: without NanoVDB it renders no gas")
+    list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_NANOVDB=OFF)
   endif()
   if(PG_OIDN)
     list(APPEND PG_CYCLES_ARGS -DWITH_CYCLES_OPENIMAGEDENOISE=ON)
@@ -810,7 +855,7 @@ if(PG_CYCLES)
   endif()
   # Configured when what it is configured with changes: makefiles, so that
   # what it compiles and links with can be read.
-  string(SHA1 PG_CYCLES_KEY "${cycles_SOURCE_DIR};${PG_CYCLES_ARGS}")
+  string(SHA1 PG_CYCLES_KEY "${cycles_SOURCE_DIR};${PG_CYCLES_TAG};${PG_CYCLES_ARGS}")
   set(PG_CYCLES_STAMP ${PG_CYCLES_DIR}/pg-configured)
   set(PG_CYCLES_CONFIGURED "")
   if(EXISTS ${PG_CYCLES_STAMP})
@@ -894,6 +939,10 @@ if(PG_CYCLES)
   add_library(pgcycles STATIC src/pg/render/Cycles.cpp)
   target_link_libraries(pgcycles PUBLIC pgsim)
   target_include_directories(pgcycles SYSTEM PRIVATE ${PG_CYCLES_INCLUDES})
+  if(PG_NANOVDB)
+    target_include_directories(pgcycles SYSTEM PRIVATE "${PG_NANOVDB_INCLUDE_DIR}")
+    target_compile_definitions(pgcycles PRIVATE PG_HAVE_NANOVDB)
+  endif()
   target_compile_definitions(pgcycles PRIVATE PG_HAVE_CYCLES "CCL_NAMESPACE_BEGIN=namespace ccl {"
                                               "CCL_NAMESPACE_END=}" ${PG_CYCLES_DEFINES})
   target_compile_options(pgcycles PRIVATE ${PG_CYCLES_OPTIONS})
@@ -922,7 +971,7 @@ if(PG_CYCLES)
   if(PG_OIDN)
     target_link_libraries(pgcycles PRIVATE OpenImageDenoise)
   endif()
-  message(STATUS "Cycles 4.5.0: built from its sources (${PG_CYCLES_DIR})")
+  message(STATUS "Cycles 5.2.0: built from its sources (${PG_CYCLES_DIR})")
 else()
   add_library(pgcycles STATIC src/pg/render/Cycles.cpp)
   target_link_libraries(pgcycles PUBLIC pgsim)

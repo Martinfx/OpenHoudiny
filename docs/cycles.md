@@ -56,7 +56,7 @@ net.render("ulice.png", renderer="cycles", samples=128)
 ```
 
 The summary at the end says what was used to render: `rendering 8720 ms/image
-through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
+through Cycles 5.3.0, 64 samples a pixel, denoised by Open Image Denoise`.
 
 ## 2. What is converted to Cycles
 
@@ -72,10 +72,10 @@ through Cycles 4.5.0, 64 samples a pixel, denoised by Open Image Denoise`.
 | piece grit (free points with `pscale`) | angular stone fragments and glass shards as objects of one of 18 meshes, oriented by `orient`, each in a shade of its color ([pathtracer.md §4](pathtracer.md#grit-rain-and-wet-surfaces)) |
 | raindrops | spindles as long as the distance a drop travels during Streak of a frame: Glass BSDF with an index of 1.33 mixed with Transparent BSDF according to Opacity, only transparent from behind; the object casts no shadow |
 | wetness under rain | upward-facing surfaces darkened by half with a layer (Coat) of water: Coat Weight according to Wet Floor, roughness 0.03, index 1.33 |
-| smoke, fire, dust | a volume: extinction and emission grids in a box around the gas, Principled Volume |
+| smoke, fire, dust | a volume: extinction and emission grids (NanoVDB) in a box around the gas, Principled Volume |
 | floor | a square with the floor color, fading towards the edge as in the viewport; under the physical sky with Sky Behind, the ground extends to the horizon ([§3](#3-sky-colors-and-surfaces)) |
-| sun | Sky `look`: a distant light (Sun) with the Sun Size angle and the same strength as ours; Sky `physical`: the sun of the Nishita sky |
-| sky | Sky `physical`: the Nishita sky; Sky `look`: with **Sky Behind**, the Look's sky as an image all around; without Sky Behind, always the studio background for the camera |
+| sun | Sky `look`: a distant light (Sun) with the Sun Size angle and the same strength as ours; Sky `physical`: the sun of the single scattering (Nishita) sky |
+| sky | Sky `physical`: the single scattering (Nishita) sky; Sky `look`: with **Sky Behind**, the Look's sky as an image all around; without Sky Behind, always the studio background for the camera |
 | camera | the shot from the camera or the viewport view, lens, aperture and focus from Output |
 | motion (point velocity `v`, gas velocity, animated objects, moving camera) | blur along the path while the shutter is open ([below](#motion-blur)) |
 | shot camera plate | transparent film, also through glass; holdouts and catchers (objects and the floor) as Cycles holdouts and shadow catchers; sun and sky as real lights; the Shadow Catcher pass as a multiplier of the plate ([plate.md](plate.md#in-the-final-render-cycles-and-the-path-tracer)) |
@@ -125,9 +125,9 @@ paddle in the `fire_trail` example sweep a 3° arc in half a frame.
 ([vdb.md](vdb.md)). Cycles gets the velocity as a third grid next to
 extinction and emission, and the gas box is larger by the path of the fastest
 gas, so that the blurred edge is not cut off. In the gas, blur costs two extra
-velocity reads at every step: the campfire (400 × 600, 64 samples, frame 60)
-takes 99.6 s with a 0.5 shutter versus 62.6 s without it, in the path tracer
-14.1 s versus 8.1 s. Gas that is at rest in all blocks has no velocity and
+velocity reads wherever a renderer reads it: the campfire (400 × 600, 64
+samples, frame 60) takes 26.9 s with a 0.5 shutter versus 22.3 s without it
+in Cycles, in the path tracer 14.1 s versus 8.1 s. Gas that is at rest in all blocks has no velocity and
 renders as before.
 
 Blur is turned on only when something moves. A scene without motion renders as
@@ -258,8 +258,12 @@ In Cycles it is a box around the tiles that contain gas, with a
   and 0.3 × 0.25 backward).
 - **Emission** is the flame glow from the grid: a black body from 1000 K to 3000 K.
 
-Cycles marches through the box in steps the size of a cell. The grids have at
-most 32 million cells. Larger gas (blast dust) is read in blocks of
+The grids go to Cycles as NanoVDB grids of the cells that hold anything, the
+only volumes Cycles 5 reads. Cycles does not march through the box: it
+divides it into an octree, takes the most each node holds (the majorant) and
+lets its rays stop in the gas at random by that most, keeping only the stops
+where there really is smoke (null scattering). Empty space costs it little.
+The grids have at most 32 million cells. Larger gas (blast dust) is read in blocks of
 2 × 2 × 2 or larger. Without NanoVDB (`-DPG_NANOVDB=OFF`) neither Cycles nor
 the path tracer renders gas.
 
@@ -278,8 +282,9 @@ that the tests use to compare Cycles with the path tracer.
 - **EXR passes:** the normal in Cycles always faces the camera, ours stays on
   the side the triangle faces. Depth in Cycles is from the pixel's first
   sample, ours is the average.
-- **Gas is slower in Cycles** ([§7](#7-performance)): Cycles marches through it in
-  steps, our path tracer uses delta tracking with tile maxima.
+- **Gas is slower in Cycles** ([§7](#7-performance)), though both skip empty
+  space now: Cycles with the majorants of its octree, our path tracer with
+  delta tracking and tile maxima.
 - **Wetness:** Cycles gives a wet surface a layer of water (Coat), our path
   tracer only lowers its roughness. Both darken it by half.
 - **Rain under the physical sky is fainter**, because the drops refract the
@@ -293,10 +298,10 @@ that the tests use to compare Cycles with the path tracer.
 
 ## 6. Build
 
-Cycles is downloaded from GitHub (`blender/cycles`, tag **v4.5.0**, a shallow
-clone of about 24 MB) and built once along with the rest of the program. For
-that it needs **OpenImageIO** and **TBB** (development files; OpenEXR comes
-with OpenImageIO):
+Cycles is downloaded from GitHub (`blender/cycles`, tag **v5.2.0**, a shallow
+clone of about 30 MB; its sources call themselves 5.3.0) and built once along
+with the rest of the program. For that it needs **OpenImageIO** and **TBB**
+(development files; OpenEXR comes with OpenImageIO):
 
 ```bash
 sudo apt install libopenimageio-dev libpugixml-dev libtbb-dev   # Debian, Ubuntu
@@ -304,26 +309,47 @@ pkg install openimageio pugixml onetbb                          # FreeBSD
 ```
 
 Cycles is built for the CPU only: without GPU (CUDA, OptiX, HIP, Metal,
-oneAPI), without OSL, OpenVDB, NanoVDB, OpenSubdiv, Alembic, USD
-and OpenColorIO. Rays
-in it are traced by the same Embree as in the path tracer, if it is on the system.
-Denoising is done by the same Open Image Denoise as in our path tracer. On four
-cores the first build of Cycles takes about 2 minutes (the whole program from
-scratch, including Open Image Denoise, about 11 minutes); later builds only link it.
+oneAPI), without OSL, OpenVDB, OpenSubdiv, Alembic, USD and OpenColorIO, with
+the NanoVDB headers the path tracer uses too. Rays in it are traced by the same
+Embree as in the path tracer, if it is on the system. Denoising is done by the
+same Open Image Denoise as in our path tracer. On four cores the first build
+of Cycles takes about 4 minutes (the whole program from scratch, including
+Open Image Denoise, about 11 minutes more); later builds only link it. Each
+version has its own directories (`build/_deps/cycles-v5.2.0-src`,
+`build/cycles-v5.2.0-build`), so a build of an older version is left as it
+was; it can be deleted.
 
-The build adds five lines to the Cycles sources (`src/scene/object.cpp`). A mesh
-with a velocity grid (our gas) gets the flag
-`SD_OBJECT_HAS_VOLUME_MOTION`, which Cycles otherwise gives only to Volume
-objects from OpenVDB, and without it the gas would not be blurred. CMake inserts
-the lines itself after the download. If it cannot find the place for them in
-another version of Cycles, it prints a warning and the gas stays sharp in Cycles.
+The build changes a few lines of the Cycles sources, each once, after the
+download. When CMake cannot find the place for a change in another version of
+Cycles, it prints a warning:
 
-The second patch is one line in `src/subd/interpolation.cpp`. When Cycles
-subdivides an n-gon (including a triangle) into smaller triangles, it gives its
-center the sum of the corner values instead of their average. For vertex values
-it does compute the average. The UVs, color and `pg_rest` of displaced surfaces
-(**Displacement**) would therefore drift in the middle of every face. When CMake
-cannot find the place for this line, it prints a warning and does not insert it.
+- `src/scene/object.cpp`, five lines: a mesh with a velocity grid (our gas)
+  gets the flag `SD_OBJECT_HAS_VOLUME_MOTION`, which Cycles otherwise gives
+  only to Volume objects from OpenVDB. Without it the gas would not be
+  blurred.
+- `src/kernel/bake/bake.h`, one line: Cycles bounds how much a volume holds
+  in each node of its octree from 16 points at the middle of the shutter.
+  Gas that moves is blurred to where it is before and after that, and Cycles
+  would not look for it there: the blur came out half as wide. The line reads
+  the 16 points across the whole shutter instead.
+- Without OpenColorIO: Cycles 5 always builds with it, but we hand Cycles
+  linear light and do the colors ourselves, so the build turns it off in
+  `src/cmake/external_libs.cmake`, `src/cmake/dependency_targets.cmake` and
+  `src/CMakeLists.txt`. No package more to install.
+- NanoVDB without OpenVDB: Cycles' own code that makes NanoVDB grids makes
+  them from OpenVDB ones. In `src/util/nanovdb.h`, `src/util/nanovdb.cpp` and
+  `src/scene/image_vdb.cpp` it is compiled only with OpenVDB; our code makes
+  the grids itself (`VoxelImage` in `Cycles.cpp`).
+
+Without OpenColorIO Cycles does not convert pictures in its own sRGB. Color
+pictures (photographs of materials, leaves) therefore go to it as
+`scene_linear_srgb`: the sRGB curve over our linear Rec. 709, which Cycles
+takes off as it reads them, as Blender does with 8-bit pictures.
+
+Cycles finds OpenImageIO through its CMake package, whose files on Debian and
+Ubuntu name programs of another package (`/usr/bin/iconvert`). The build
+hands it a package file of its own instead, made of the libraries CMake
+found (`build/cycles-openimageio`).
 
 When Cycles is not built and the path tracer renders:
 
@@ -340,25 +366,27 @@ and the Render tab offers only the path tracer.
 ## 7. Performance
 
 Four cores (Xeon with AVX-512), Release, the same settings for both
-renderers:
+renderers; Cycles 4.5 as it was before the move to 5.2, on the same machine:
 
-| scene | resolution | samples | path tracer | Cycles |
-|---|---|---|---|---|
-| street | 720 × 540 | 128 | 8.5 s | 17.7 s |
-| meadow close-up (image above) | 1280 × 720 | 128 | 301 s | 473 s |
-| campfire (gas 64 × 96 × 64) | 400 × 600 | 64 | 6.8 s | 48.7 s |
-| smoke | 400 × 600 | 64 | 4.5 s | 18.3 s |
+| scene | resolution | samples | path tracer | Cycles 4.5 | Cycles 5.2 |
+|---|---|---|---|---|---|
+| street | 720 × 540 | 128 | 9.0 s | 35.7 s | 39.5 s |
+| campfire (frame 60) | 400 × 600 | 64 | 6.8 s | 57.1 s | 21.5 s |
+| smoke (frame 60) | 400 × 600 | 64 | 4.3 s | 23.1 s | 18.5 s |
+| smoke_plume (frame 50, upres) | 480 × 270 | 32 | 9.1 s | 96.7 s | 31.1 s |
 
 The campfire and the smoke are without gas blur (Motion Blur 0). With a 0.5
-shutter the campfire is about 60 % slower in Cycles and 70 % slower in the path
+shutter the campfire is about 20 % slower in Cycles and 70 % slower in the path
 tracer ([§2](#motion-blur)).
 
-Cycles is slower for the same number of samples. On surfaces about twice as
-slow: it is more general and computes more, for example specular with multiple
-scattering between microfacets. It marches through gas in steps the size of a
-cell and reads the grids at every step. Our path tracer skips empty space
-(delta tracking with tile maxima), which is why Cycles is four to seven times
-slower on smoke and fire. The path tracer is there for a quick preview; Cycles
+Cycles is slower for the same number of samples. On surfaces about four times
+as slow: it is more general and computes more, for example specular with
+multiple scattering between microfacets. Gas in Cycles 5 is up to three times
+faster than in 4.5, which stepped through it a cell at a time: now it skips
+empty space as our path tracer does (null scattering over an octree), the
+pictures the same (the smoke_plume frame differs by 0.6 of 255 on average).
+Our path tracer is still faster on gas: it is simpler and reads one grid where
+Cycles reads three. The path tracer is there for a quick preview; Cycles
 gives the final image, just as in Blender.
 
 In the Render tab the first image from larger pixels is ready in a fraction of
@@ -374,7 +402,7 @@ it stops on gets full resolution.
   through the Cycles display driver (`DisplayDriver`, half-float RGBA). At the
   end it receives, through the output driver (`OutputDriver`), the image,
   albedo, normals and depth for EXR. The physical sky is a Sky Texture node
-  (Nishita) with a background light (`LIGHT_BACKGROUND`); surface detail is
+  (single scattering, Nishita's) with a background light (`BackgroundLight`); surface detail is
   Noise Texture and Bump nodes in the shader of each material.
 - Displacement by height (`Cycles.cpp`, `dice`): the shader of a material whose
   set has a height image gets a Displacement node (Midlevel 0.5, Scale the
@@ -392,9 +420,9 @@ it stops on gets full resolution.
   camera (`dicing_camera`, the same as the shot camera). Such a mesh is rebuilt
   for every scene, because the camera may have moved.
 - Motion blur (`Cycles.cpp`): a mesh with velocities (`Mesh::velocity`) gets
-  `set_motion_steps(3)` and the attributes
-  `ATTR_STD_MOTION_VERTEX_POSITION` (vertices at the start and end of the shutter)
-  and `ATTR_STD_MOTION_VERTEX_NORMAL`. A grit fragment is an object with `set_motion`
+  `set_motion_steps(3)`, and its position and normal attributes
+  (`ATTR_STD_POSITION`, `ATTR_STD_VERTEX_NORMAL`) two steps more besides now
+  (`add_motion`): the vertices at the start and end of the shutter. A grit fragment is an object with `set_motion`
   (three positions), the camera has `set_motion` with three matrices and
   `MOTION_POSITION_CENTER`. A scene object has `set_motion` with three
   matrices: an offset by velocity × time and the rotation `Collider::turnAt` about
@@ -426,7 +454,8 @@ it stops on gets full resolution.
   Stop cancels it (`Session::cancel`), so the render ends immediately, not
   after the frame.
 - `CMakeLists.txt`: Cycles is configured as a separate project in
-  `build/cycles-build` and its libraries are built as the `cycles_build` target.
+  `build/cycles-v5.2.0-build` and its libraries are built as the `cycles_build`
+  target.
   Options, paths and libraries are read from its own build.
 
 Tests (`tests/test_render.cpp`, `tests/test_gas.cpp`):
@@ -492,8 +521,6 @@ Tests (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   ([materials.md](materials.md#by-uv-and-normal-map)).
 - Clouds as a volume (cloud shadows on the ground, clouds you can fly into)
   and the image sky in the viewport.
-- Gas directly as NanoVDB in Cycles (without a dense grid): Cycles can do that
-  only with OpenVDB.
 - Catmull-Clark subdivision: Cycles is built without OpenSubdiv,
   and so it subdivides displaced surfaces (**Displacement**) only linearly. A coarse
   mesh therefore stays faceted, it is just displaced. Subdivision surfaces from USD are
