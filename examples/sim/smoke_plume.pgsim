@@ -10,57 +10,63 @@ pgsim 1
 # comes, a breeze along the ground carrying it on. The sun from behind the
 # camera, a dark ground without its grid. The camera stands low in the
 # gas's box, so the plume swallows it at the end: 2.7 s.
+# Made to look real (docs/pathtracer.md): a short, fast burst slowed by the
+# air (Drag) rolls over itself, with little noise force; rendered through
+# Cycles with 16 bounces the smoke is lit from within; a little depth of
+# field and film grain take the clean look of a render away.
 #   prototype --example smoke_plume                     the viewport: Play
 #   prototype sim smoke_plume out/plume.mp4             a video of it
+#   prototype sim smoke_plume out/plume.mov --renderer cycles   the real look
 node 1 pyro_source 2 burst 0 0
   param center 0 0.25 -2.4
   param size 2.4 0.35 1.2
-  param smoke 16
+  param smoke 22
   param heat 0.3
-  param velocity 0 2.6 6.5
+  param velocity 0 3.6 10
   param expansion 3
   param flicker 1
   param flicker_size 0.55
-  param end 0.45
+  param end 0.3
 node 8 pyro_source 2 burst_left 0 96
   param center -0.8 0.2 -2.2
   param size 0.9 0.3 0.9
-  param smoke 14
+  param smoke 20
   param heat 0.2
-  param velocity -2.2 1.4 5
+  param velocity -3.2 2 7.5
   param flicker 1
   param flicker_size 0.45
   param start 0.03
-  param end 0.4
+  param end 0.27
 node 9 pyro_source 2 burst_right 0 192
   param center 0.8 0.2 -2.3
   param size 0.9 0.3 0.9
-  param smoke 14
+  param smoke 20
   param heat 0.2
-  param velocity 2.2 1.6 4.8
+  param velocity 3.2 2.2 7
   param flicker 1
   param flicker_size 0.45
   param start 0.05
-  param end 0.42
+  param end 0.29
 node 2 turbulence 1 billows 0 300
-  param strength 14
+  param strength 6
   param scale 0.32
   param speed 1.5
 node 10 turbulence 1 detail 0 396
-  param strength 6
+  param strength 2.5
   param scale 0.12
   param speed 3
 node 7 wind 1 rolling 0 492
   param direction 0 0 1
   param speed 2.2
   param strength 0.8
+node 12 drag 1 drag 0 588
 node 3 pyro_solver 2 solver 250 200
   param size 8 3 8
-  param resolution 144
+  param resolution 192
   param substeps 2
   param buoyancy 0.1
   param weight 0.6
-  param vorticity 4
+  param vorticity 5
   param cooling 1.5
   param smoke_decay 0.015
 node 11 pyro_upres 1 upres 490 200
@@ -83,6 +89,10 @@ node 6 output 2 output 970 200
   param sky_intensity 0.45
   param ground_color 0.06 0.06 0.065
   param grid off
+  param render_bounces 16
+  param render_fstop 2.8
+  param render_focus 6
+  param render_grain 0.3
   param render_motion_blur 0.1
 link 1.source -> 3.sources
 link 8.source -> 3.sources
@@ -90,6 +100,7 @@ link 9.source -> 3.sources
 link 2.force -> 3.forces
 link 10.force -> 3.forces
 link 7.force -> 3.forces
+link 12.force -> 3.forces
 link 3.gas -> 11.gas
 link 11.gas -> 4.gas
 link 4.look -> 6.look
