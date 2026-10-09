@@ -1310,6 +1310,11 @@ if(PG_WITH_VULKAN)
 endif()
 target_compile_definitions(pgtests PRIVATE PG_SIM_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/sim"
                                            PG_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(PG_NANOVDB)
+  # To read the grids the gas hands a renderer (Gas::sparse).
+  target_include_directories(pgtests SYSTEM PRIVATE "${PG_NANOVDB_INCLUDE_DIR}")
+  target_compile_definitions(pgtests PRIVATE PG_HAVE_NANOVDB)
+endif()
 add_test(NAME pgtests COMMAND pgtests)
 # The commands work in every build, with or without the editor.
 add_test(NAME prototype_list COMMAND prototype list)

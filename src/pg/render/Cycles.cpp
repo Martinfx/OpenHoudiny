@@ -67,9 +67,6 @@ namespace pg::render {
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
-/// The most cells of the gas Cycles is given: more, and they are read in
-/// blocks (Gas::dense) -- 128 MB of grid.
-constexpr size_t kMostGasCells = size_t(32) << 20;
 
 // Ours is Y up, Cycles' Z up: the scene turned a quarter about x for it,
 // (x, y, z) -> (x, -z, y).
@@ -125,52 +122,29 @@ private:
 };
 
 #ifdef PG_HAVE_NANOVDB
-/// The gas as Cycles reads a grid: its cells' numbers -- one float a cell,
-/// or four, x fastest -- made a NanoVDB grid of the cells that hold any,
-/// the rest reading 0. Each block of 8 x 8 x 8 a leaf of the tree, made
-/// side by side.
+/// The gas as Cycles reads a grid: a NanoVDB grid's buffer (Gas::sparse()),
+/// one float a cell or four; `where`, from a point of Cycles' world to the
+/// grid's cells, their middles whole numbers.
 class VoxelImage : public ccl::ImageLoader {
 public:
-    /// `where`: from a point of Cycles' world to the grid's 0 to 1.
-    VoxelImage(std::vector<float> values, int channels, const int size[3], const ccl::Transform& where, uint64_t id)
-        : values_(std::move(values)), channels_(channels), size_{size[0], size[1], size[2]}, where_(where), id_(id) {}
+    VoxelImage(std::vector<uint8_t> grid, int channels, const ccl::Transform& where, uint64_t id)
+        : grid_(std::move(grid)), channels_(channels), where_(where), id_(id) {}
 
     bool load_metadata(ccl::ImageMetaData& m, const ccl::ImageLoaderParams&, ccl::Progress&) override {
-        if (channels_ == 1) {
-            handle_ = grid<float>([&](size_t at) { return values_[at]; }, [](float v) { return v != 0.0f; });
-            m.type = ccl::IMAGE_DATA_TYPE_NANOVDB_FLOAT;
-        } else {
-            handle_ = grid<nanovdb::Vec4f>(
-                [&](size_t at) {
-                    const float* v = &values_[4 * at];
-                    return nanovdb::Vec4f(v[0], v[1], v[2], v[3]);
-                },
-                [](const nanovdb::Vec4f& v) { return v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f || v[3] != 0.0f; });
-            m.type = ccl::IMAGE_DATA_TYPE_NANOVDB_FLOAT4;
-        }
-        if (handle_.bufferSize() == 0) return false;
+        if (grid_.empty()) return false;
+        m.type = channels_ == 1 ? ccl::IMAGE_DATA_TYPE_NANOVDB_FLOAT : ccl::IMAGE_DATA_TYPE_NANOVDB_FLOAT4;
         m.channels = channels_;
-        m.nanovdb_byte_size = static_cast<int64_t>(handle_.bufferSize());
-        // From the world to the grid's cells, their middles whole numbers.
-        ccl::Transform index = where_;
-        const float n[3] = {static_cast<float>(size_[0]), static_cast<float>(size_[1]), static_cast<float>(size_[2])};
-        index.x *= n[0];
-        index.y *= n[1];
-        index.z *= n[2];
-        index.x.w -= 0.5f;
-        index.y.w -= 0.5f;
-        index.z.w -= 0.5f;
-        m.transform_3d = index;
+        m.nanovdb_byte_size = static_cast<int64_t>(grid_.size());
+        m.transform_3d = where_;
         m.use_transform_3d = true;
-        values_ = {};
         return true;
     }
     bool load_pixels(const ccl::ImageMetaData& m, void* pixels) override {
-        if (static_cast<int64_t>(handle_.bufferSize()) != m.nanovdb_byte_size) return false;
-        std::memcpy(pixels, handle_.data(), handle_.bufferSize());
+        if (static_cast<int64_t>(grid_.size()) != m.nanovdb_byte_size) return false;
+        std::memcpy(pixels, grid_.data(), grid_.size());
         return true;
     }
-    void cleanup() override { handle_ = {}; }
+    void cleanup() override { grid_ = {}; }
     std::string name() const override { return "the gas"; }
     bool equals(const ccl::ImageLoader& other) const override {
         const auto* voxels = dynamic_cast<const VoxelImage*>(&other);
@@ -179,51 +153,67 @@ public:
     bool is_vdb_loader() const override { return true; }
 
 private:
-    template <typename T, typename Read, typename Keep>
-    nanovdb::GridHandle<nanovdb::HostBuffer> grid(Read read, Keep keep) const {
-        using Build = nanovdb::tools::build::Grid<T>;
-        Build build(T(0.0f), "gas");
-        auto& root = build.tree().root();
-        const int nx = size_[0], ny = size_[1], nz = size_[2];
-        const int bx = (nx + 7) / 8, by = (ny + 7) / 8, bz = (nz + 7) / 8;
-        const size_t blocks = static_cast<size_t>(bx) * static_cast<size_t>(by) * static_cast<size_t>(bz);
-        std::mutex mutex;
-        parallelFor(blocks, 16, [&](size_t begin, size_t end) {
-            for (size_t b = begin; b < end; ++b) {
-                const int ci = static_cast<int>(b % static_cast<size_t>(bx)) * 8;
-                const int cj = static_cast<int>((b / static_cast<size_t>(bx)) % static_cast<size_t>(by)) * 8;
-                const int ck = static_cast<int>(b / (static_cast<size_t>(bx) * static_cast<size_t>(by))) * 8;
-                auto* leaf = new typename Build::Node0(nanovdb::Coord(ci, cj, ck), root.mBackground, false);
-                bool any = false;
-                for (int k = ck; k < std::min(ck + 8, nz); ++k) {
-                    for (int j = cj; j < std::min(cj + 8, ny); ++j) {
-                        for (int i = ci; i < std::min(ci + 8, nx); ++i) {
-                            const T v = read(static_cast<size_t>(i) +
-                                             static_cast<size_t>(nx) * (static_cast<size_t>(j) + static_cast<size_t>(ny) * static_cast<size_t>(k)));
-                            if (!keep(v)) continue;
-                            leaf->setValue(nanovdb::Coord(i, j, k), v);
-                            any = true;
-                        }
-                    }
-                }
-                if (!any) {
-                    delete leaf;
-                    continue;
-                }
-                std::lock_guard<std::mutex> lock(mutex);
-                root.addNode(leaf);
-            }
-        });
-        return nanovdb::tools::createNanoGrid<Build, T>(build, nanovdb::tools::StatsMode::BBox, nanovdb::CheckMode::Disable);
-    }
-
-    std::vector<float> values_;
+    std::vector<uint8_t> grid_;
     int channels_;
-    int size_[3];
     ccl::Transform where_;
     uint64_t id_;
-    nanovdb::GridHandle<nanovdb::HostBuffer> handle_;
 };
+
+/// From a point of Cycles' world to the cells of a grid -- of `cell` world
+/// units, cell (i, j, k) of ours with its middle at `origin` + (i, j, k) +
+/// 0.5 cells: our x, y and z, Cycles' x, z and -y.
+ccl::Transform cellsOf(const Vec3& origin, float cell) {
+    const float c = 1.0f / cell;
+    return ccl::make_transform(c, 0.0f, 0.0f, -origin.x * c - 0.5f,  //
+                               0.0f, 0.0f, c, -origin.y * c - 0.5f,  //
+                               0.0f, -c, 0.0f, -origin.z * c - 0.5f);
+}
+
+/// A NanoVDB grid of four floats a cell of `rgba` -- `size` cells, x
+/// fastest -- of the cells not all 0; its buffer. Each block of 8 x 8 x 8 a
+/// leaf of the tree, made side by side.
+std::vector<uint8_t> nanoGrid(const std::vector<float>& rgba, const int size[3]) {
+    using Build = nanovdb::tools::build::Grid<nanovdb::Vec4f>;
+    Build build(nanovdb::Vec4f(0.0f), "velocity");
+    auto& root = build.tree().root();
+    const int nx = size[0], ny = size[1], nz = size[2];
+    const int bx = (nx + 7) / 8, by = (ny + 7) / 8, bz = (nz + 7) / 8;
+    const size_t blocks = static_cast<size_t>(bx) * static_cast<size_t>(by) * static_cast<size_t>(bz);
+    std::mutex mutex;
+    bool any = false;
+    parallelFor(blocks, 16, [&](size_t begin, size_t end) {
+        for (size_t b = begin; b < end; ++b) {
+            const int ci = static_cast<int>(b % static_cast<size_t>(bx)) * 8;
+            const int cj = static_cast<int>((b / static_cast<size_t>(bx)) % static_cast<size_t>(by)) * 8;
+            const int ck = static_cast<int>(b / (static_cast<size_t>(bx) * static_cast<size_t>(by))) * 8;
+            auto* leaf = new Build::Node0(nanovdb::Coord(ci, cj, ck), root.mBackground, false);
+            bool kept = false;
+            for (int k = ck; k < std::min(ck + 8, nz); ++k) {
+                for (int j = cj; j < std::min(cj + 8, ny); ++j) {
+                    for (int i = ci; i < std::min(ci + 8, nx); ++i) {
+                        const float* v = &rgba[4 * (static_cast<size_t>(i) + static_cast<size_t>(nx) *
+                                                                             (static_cast<size_t>(j) + static_cast<size_t>(ny) * static_cast<size_t>(k)))];
+                        if (v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f && v[3] == 0.0f) continue;
+                        leaf->setValue(nanovdb::Coord(i, j, k), nanovdb::Vec4f(v[0], v[1], v[2], v[3]));
+                        kept = true;
+                    }
+                }
+            }
+            if (!kept) {
+                delete leaf;
+                continue;
+            }
+            std::lock_guard<std::mutex> lock(mutex);
+            any = true;
+            root.addNode(leaf);
+        }
+    });
+    if (!any) return {};
+    auto handle = nanovdb::tools::createNanoGrid<Build, nanovdb::Vec4f>(build, nanovdb::tools::StatsMode::BBox,
+                                                                        nanovdb::CheckMode::Disable);
+    const auto* bytes = static_cast<const uint8_t*>(handle.data());
+    return std::vector<uint8_t>(bytes, bytes + handle.bufferSize());
+}
 #endif
 
 /// A picture -- and, at the end, what the pixels see -- out of Cycles'
@@ -2418,16 +2408,19 @@ struct CyclesRender::Impl {
         // How far the gas goes either way: the box Cycles shades in grows as
         // much, the velocity read over it.
         const float moved = reach > 0.0f && s.gas->moves() ? s.gas->fastest() * reach : 0.0f;
-        const Gas::Dense d = s.gas->dense(s.gasLook, kMostGasCells, moved);
-        const size_t n = static_cast<size_t>(d.size[0]) * static_cast<size_t>(d.size[1]) * static_cast<size_t>(d.size[2]);
-        if (n == 0 || d.extinction.size() != n) return false;
-        const Vec3 lo = d.box.lo, hi = d.box.hi, size = hi - lo;
-        if (!(size.x > 0.0f && size.y > 0.0f && size.z > 0.0f)) return false;
+        Gas::Sparse g = s.gas->sparse(s.gasLook);
+        const bool stops = !g.extinction.empty();  // not flame alone
+        if (!stops && g.emission.empty()) return false;
+        const Vec3 lo = g.box.lo, hi = g.box.hi;
+        // How fast it goes, where it may be read as it moves: cells twice as
+        // large as the gas's.
+        Gas::Dense d;
+        if (moved > 0.0f) s.gas->denseVelocity(g.box, 2.0f * g.cell, moved, d);
         const size_t nv = static_cast<size_t>(d.velocitySize[0]) * static_cast<size_t>(d.velocitySize[1]) *
                           static_cast<size_t>(d.velocitySize[2]);
         const bool moving = moved > 0.0f && nv > 0 && d.velocity.size() == nv;
-        const bool glows = d.emission.size() == n;
-        const bool steamy = d.albedo.size() == n;  // white where the steam is
+        const bool glows = !g.emission.empty();
+        const bool steamy = !g.albedo.empty();  // white where the steam is
 
         if (!gasShader) gasShader = scene->create_node<ccl::Shader>();
         auto graph = std::make_unique<ccl::ShaderGraph>();
@@ -2440,9 +2433,13 @@ struct CyclesRender::Impl {
         }
         volume->set_absorption_color(ccl::zero_float3());
         volume->set_anisotropy(0.7f * 0.55f - 0.3f * 0.25f);
-        auto* stops = graph->create_node<ccl::AttributeNode>();
-        stops->set_attribute(ccl::ustring("pg_extinction"));
-        graph->connect(stops->output("Fac"), volume->input("Density"));
+        if (stops) {
+            auto* stopped = graph->create_node<ccl::AttributeNode>();
+            stopped->set_attribute(ccl::ustring("pg_extinction"));
+            graph->connect(stopped->output("Fac"), volume->input("Density"));
+        } else {
+            volume->set_density(0.0f);
+        }
         if (glows) {
             auto* gives = graph->create_node<ccl::AttributeNode>();
             gives->set_attribute(ccl::ustring("pg_emission"));
@@ -2457,7 +2454,7 @@ struct CyclesRender::Impl {
         // the floor in it, not in its bottom face -- where it is in Cycles'
         // world itself, not turned onto its side as the rest: Cycles moves
         // the corners of a mesh one object places to where it places them.
-        const float cell = size.x / static_cast<float>(d.size[0]);
+        const float cell = g.cell;
         Vec3 blo = lo - Vec3(cell, cell, cell), bhi = hi + Vec3(cell, cell, cell);
         if (moving) {
             blo = glm::min(blo, d.velocityBox.lo - Vec3(cell));
@@ -2476,52 +2473,28 @@ struct CyclesRender::Impl {
             }
         }
         ccl::Mesh* mesh = ownMesh(scene, points, normals, Vec3(1.0f, 1.0f, 1.0f), gasShader);
-        // Where in the grids a point of Cycles' world is: 0 to 1 across them
-        // along our x, y and z -- Cycles' x, z and -y; nothing outside.
-        const ccl::Transform where = ccl::make_transform(1.0f / size.x, 0.0f, 0.0f, -lo.x / size.x,  //
-                                                         0.0f, 0.0f, 1.0f / size.y, -lo.y / size.y,  //
-                                                         0.0f, -1.0f / size.z, 0.0f, -lo.z / size.z);
+        // The grids: all the gas's cells, as fine as it is simulated.
+        const ccl::Transform where = cellsOf(g.origin, g.cell);
         ccl::ImageParams params;
         params.interpolation = ccl::INTERPOLATION_LINEAR;
         params.extension = ccl::EXTENSION_CLIP;
         params.colorspace = ccl::u_colorspace_data;  // numbers, not colours to convert
-        ccl::Attribute* stopped = mesh->attributes.add(ccl::ustring("pg_extinction"), ccl::TypeFloat, ccl::ATTR_ELEMENT_VOXEL);
-        stopped->data_voxel_for_write() =
-            scene->image_manager->add_image(std::make_unique<VoxelImage>(d.extinction, 1, d.size, where, ++imageId), params);
-        if (glows) {
-            std::vector<float> rgba(4 * n);
-            for (size_t i = 0; i < n; ++i) {
-                rgba[4 * i] = d.emission[i].x;
-                rgba[4 * i + 1] = d.emission[i].y;
-                rgba[4 * i + 2] = d.emission[i].z;
-                rgba[4 * i + 3] = 1.0f;  // not a share of it to divide by
-            }
-            ccl::Attribute* given = mesh->attributes.add(ccl::ustring("pg_emission"), ccl::TypeColor, ccl::ATTR_ELEMENT_VOXEL);
-            given->data_voxel_for_write() =
-                scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(rgba), 4, d.size, where, ++imageId), params);
-        }
-        if (steamy) {
-            std::vector<float> rgba(4 * n);
-            for (size_t i = 0; i < n; ++i) {
-                rgba[4 * i] = d.albedo[i].x;
-                rgba[4 * i + 1] = d.albedo[i].y;
-                rgba[4 * i + 2] = d.albedo[i].z;
-                rgba[4 * i + 3] = 1.0f;
-            }
-            ccl::Attribute* kept = mesh->attributes.add(ccl::ustring("pg_albedo"), ccl::TypeColor, ccl::ATTR_ELEMENT_VOXEL);
-            kept->data_voxel_for_write() =
-                scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(rgba), 4, d.size, where, ++imageId), params);
-        }
+        auto voxels = [&](const char* name, ccl::TypeDesc type, std::vector<uint8_t> grid, int channels,
+                          const ccl::Transform& at) {
+            ccl::Attribute* a = mesh->attributes.add(ccl::ustring(name), type, ccl::ATTR_ELEMENT_VOXEL);
+            a->data_voxel_for_write() =
+                scene->image_manager->add_image(std::make_unique<VoxelImage>(std::move(grid), channels, at, ++imageId), params);
+            return a;
+        };
+        if (stops) voxels("pg_extinction", ccl::TypeFloat, std::move(g.extinction), 1, where);
+        if (glows) voxels("pg_emission", ccl::TypeColor, std::move(g.emission), 4, where);
+        if (steamy) voxels("pg_albedo", ccl::TypeColor, std::move(g.albedo), 4, where);
         if (moving) {
             // How far it goes while the shutter is open -- its velocity, in
             // Cycles' world, times the time open: Cycles reads the gas back
             // along it as each ray's time has it (Kim and Ko's Eulerian
             // motion blur), on this mesh as on its own volumes (the line
             // CMakeLists.txt adds to its object manager).
-            const Vec3 vlo = d.velocityBox.lo, vsize = d.velocityBox.hi - d.velocityBox.lo;
-            const ccl::Transform at = ccl::make_transform(1.0f / vsize.x, 0.0f, 0.0f, -vlo.x / vsize.x,  //
-                                                          0.0f, 0.0f, 1.0f / vsize.y, -vlo.y / vsize.y,  //
-                                                          0.0f, -1.0f / vsize.z, 0.0f, -vlo.z / vsize.z);
             std::vector<float> rgba(4 * nv);
             const float open = 2.0f * reach;
             for (size_t i = 0; i < nv; ++i) {
@@ -2533,10 +2506,9 @@ struct CyclesRender::Impl {
             }
             // By name: Cycles adds its standard volume attributes to its own
             // volumes only -- the kernel finds it by what it stands for.
-            ccl::Attribute* velocity = mesh->attributes.add(ccl::ustring("velocity"), ccl::TypeVector, ccl::ATTR_ELEMENT_VOXEL);
-            velocity->std = ccl::ATTR_STD_VOLUME_VELOCITY;
-            velocity->data_voxel_for_write() = scene->image_manager->add_image(
-                std::make_unique<VoxelImage>(std::move(rgba), 4, d.velocitySize, at, ++imageId), params);
+            const float edge = (d.velocityBox.hi.x - d.velocityBox.lo.x) / static_cast<float>(d.velocitySize[0]);
+            voxels("velocity", ccl::TypeVector, nanoGrid(rgba, d.velocitySize), 4, cellsOf(d.velocityBox.lo, edge))->std =
+                ccl::ATTR_STD_VOLUME_VELOCITY;
         }
         place(scene, mesh, ccl::transform_identity(), Vec3(1.0f, 1.0f, 1.0f));
         return moving;

@@ -238,7 +238,7 @@ slightly bevelled at the edge towards the adjacent side.
 
 ![Campfire and smoke: always path tracer on the left, Cycles on the right, 64 samples per pixel](img/cycles-gas.jpg)
 
-Gas from the simulation is converted to Cycles as two grids (`Gas::dense`). One
+Gas from the simulation is converted to Cycles as two grids (`Gas::sparse`). One
 says how much light a cell stops per meter, the other how much the flame emits.
 Both are computed the same way as in the path tracer: from the smoke,
 temperature, flame and steam of each cell according to the Volume Look, with
@@ -258,13 +258,18 @@ In Cycles it is a box around the tiles that contain gas, with a
   and 0.3 × 0.25 backward).
 - **Emission** is the flame glow from the grid: a black body from 1000 K to 3000 K.
 
-The grids go to Cycles as NanoVDB grids of the cells that hold anything, the
-only volumes Cycles 5 reads. Cycles does not march through the box: it
+The grids go to Cycles as NanoVDB grids, the only volumes Cycles 5 reads:
+every cell of the gas, as fine as it is simulated, however many there are.
+They are made straight from the gas's own grid, tile by tile, without a dense
+grid in between (before, gas of more than 32 million cells in the box round
+it went in blocks of 2 × 2 × 2: a plume at resolution 256 with a Pyro Upres
+of 3, 30 to 40 million cells at frame 70, takes 905 MB rather than 1110 MB
+now). The velocity for motion blur stays a dense grid of cells twice as
+large. Cycles does not march through the box: it
 divides it into an octree, takes the most each node holds (the majorant) and
 lets its rays stop in the gas at random by that most, keeping only the stops
 where there really is smoke (null scattering). Empty space costs it little.
-The grids have at most 32 million cells. Larger gas (blast dust) is read in blocks of
-2 × 2 × 2 or larger. Without NanoVDB (`-DPG_NANOVDB=OFF`) neither Cycles nor
+Without NanoVDB (`-DPG_NANOVDB=OFF`) neither Cycles nor
 the path tracer renders gas.
 
 ## 5. Differences from the path tracer
@@ -443,8 +448,9 @@ it stops on gets full resolution.
 - `src/pg/render/PathTracer.cpp`: `shown()` converts linear light to an image
   (AgX, AgX Punchy, ACES Fit, and through `Aces.h` ACES 1.0 and 2.0) for both
   renderers.
-- `src/pg/render/Gas.h`: `Gas::dense` provides the gas grids for a renderer that
-  reads dense grids.
+- `src/pg/render/Gas.h`: `Gas::sparse` provides the gas grids for a renderer
+  that reads sparse ones (Cycles), `Gas::dense` for one that reads dense
+  grids, `Gas::denseVelocity` the velocity.
 - `tools/prototype/RenderView.cpp`: the Render tab thread with both renderers.
   A newer scene (the next frame during playback) is taken once the current one
   has shown an image, or after 3 seconds.
@@ -470,6 +476,8 @@ Tests (`tests/test_render.cpp`, `tests/test_gas.cpp`):
   flame light and brightness within 30 % as in the path tracer.
 - `gas_dense_grids_are_the_gas_at_the_cells_middles`: the grids match the
   gas at cell centers, large gas goes in blocks.
+- `gas_sparse_grids_are_every_cell_of_the_gas`: the NanoVDB grids Cycles
+  reads hold what the gas stops and gives off at every cell's center.
 - `render_cycles_lights_a_day_under_a_physical_sky`: the sun of the physical sky
   shines like the Look's sun and has its color, the sky is blue.
 - `render_cycles_surface_detail_makes_a_flat_surface_uneven`: detail varies the

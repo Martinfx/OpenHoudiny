@@ -885,12 +885,23 @@ Gas::Dense Gas::dense(const GasLook& look, size_t most, float reach) const {
         if (lit) glows = true;
     });
     if (glows) out.emission = std::move(emission);
-    // How fast it goes, where it may be read as it moves: over the box grown
-    // by how far it goes, within the domain; cells twice as large.
+    // How fast it goes, where it may be read as it moves; cells twice as
+    // large.
+    if (reach > 0.0f) denseVelocity(out.box, 2.0f * static_cast<float>(k) * g.voxel, reach, out);
+#else
+    (void)look;
+    (void)most;
+    (void)reach;
+#endif
+    return out;
+}
+
+void Gas::denseVelocity(const Box& box, float edge, float reach, Dense& out) const {
+#ifdef PG_HAVE_NANOVDB
+    const Grid& g = *grid_;
     if (!g.velocity.empty() && reach > 0.0f) {
-        const float edge = 2.0f * static_cast<float>(k) * g.voxel;
         for (int a = 0; a < 3; ++a) {
-            const float lo = std::max(out.box.lo[a] - reach, g.box.lo[a]), hi = std::min(out.box.hi[a] + reach, g.box.hi[a]);
+            const float lo = std::max(box.lo[a] - reach, g.box.lo[a]), hi = std::min(box.hi[a] + reach, g.box.hi[a]);
             out.velocitySize[a] = std::max(1, static_cast<int>(std::ceil((hi - lo) / edge)));
             out.velocityBox.lo[a] = lo;
             out.velocityBox.hi[a] = lo + static_cast<float>(out.velocitySize[a]) * edge;
@@ -913,9 +924,88 @@ Gas::Dense Gas::dense(const GasLook& look, size_t most, float reach) const {
                     });
     }
 #else
-    (void)look;
-    (void)most;
+    (void)box;
+    (void)edge;
     (void)reach;
+    (void)out;
+#endif
+}
+
+#ifdef PG_HAVE_NANOVDB
+namespace {
+
+/// A grid of `from`'s leaves -- the gas's tiles -- of what `make` makes of
+/// each of their cells, the cells it makes the background of left out; its
+/// buffer.
+template <typename T, typename Make>
+std::vector<uint8_t> leavesOf(const nanovdb::Vec4fGrid& from, const T& background, Make make) {
+    using Build = nanovdb::tools::build::Grid<T>;
+    Build build(background, "gas");
+    auto& root = build.tree().root();
+    const auto& tree = from.tree();
+    const uint32_t leaves = tree.nodeCount(0);
+    const auto* first = tree.template getFirstNode<0>();
+    std::mutex mutex;
+    std::atomic<bool> any{false};
+    parallelFor(leaves, 16, [&](size_t begin, size_t end) {
+        for (size_t l = begin; l < end; ++l) {
+            const auto& leaf = first[l];
+            const nanovdb::Coord at = leaf.origin();
+            auto* made = new typename Build::Node0(at, background, false);
+            bool kept = false;
+            for (int x = 0; x < 8; ++x) {
+                for (int y = 0; y < 8; ++y) {
+                    for (int z = 0; z < 8; ++z) {
+                        const nanovdb::Coord ijk = at.offsetBy(x, y, z);
+                        const T v = make(leaf.getValue(ijk));
+                        if (v == background) continue;
+                        made->setValue(ijk, v);
+                        kept = true;
+                    }
+                }
+            }
+            if (!kept) {
+                delete made;
+                continue;
+            }
+            any = true;
+            std::lock_guard<std::mutex> lock(mutex);
+            root.addNode(made);
+        }
+    });
+    if (!any) return {};
+    auto handle = nanovdb::tools::createNanoGrid<Build, T>(build, nanovdb::tools::StatsMode::BBox, nanovdb::CheckMode::Disable);
+    const auto* bytes = static_cast<const uint8_t*>(handle.data());
+    return std::vector<uint8_t>(bytes, bytes + handle.bufferSize());
+}
+
+}  // namespace
+#endif
+
+Gas::Sparse Gas::sparse(const GasLook& look) const {
+    Sparse out;
+#ifdef PG_HAVE_NANOVDB
+    const Grid& g = *grid_;
+    if (g.hi[0] < g.lo[0]) return out;
+    out.origin = g.origin;
+    out.cell = g.voxel;
+    for (int a = 0; a < 3; ++a) {
+        out.box.lo[a] = g.origin[a] + static_cast<float>(std::max(g.lo[a] * sim::Tiles::kSide - 1, 0)) * g.voxel;
+        out.box.hi[a] = g.origin[a] + static_cast<float>(std::min((g.hi[a] + 1) * sim::Tiles::kSide + 1, g.cells[a])) * g.voxel;
+    }
+    // Their fourth number 1: not a share of the colour to divide it by.
+    auto four = [](const Vec3& v) { return nanovdb::Vec4f(v.x, v.y, v.z, 1.0f); };
+    auto fields = [](const nanovdb::Vec4f& v) { return Vec4(v[0], v[1], v[2], v[3]); };
+    out.extinction = leavesOf<float>(*g.grid, 0.0f, [&](const nanovdb::Vec4f& v) { return extinction(fields(v), look); });
+    out.emission = leavesOf<nanovdb::Vec4f>(*g.grid, four(Vec3(0.0f)), [&](const nanovdb::Vec4f& v) {
+        return four(emission(Vec3(v[0], v[1], v[2]), look));
+    });
+    if (g.steamy) {
+        out.albedo = leavesOf<nanovdb::Vec4f>(*g.grid, four(look.albedo),
+                                              [&](const nanovdb::Vec4f& v) { return four(albedo(fields(v), look)); });
+    }
+#else
+    (void)look;
 #endif
     return out;
 }

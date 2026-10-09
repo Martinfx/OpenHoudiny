@@ -44,6 +44,7 @@
 #include "pg/render/Bvh.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -170,6 +171,27 @@ public:
         std::vector<Vec3> velocity;
     };
     Dense dense(const GasLook& look, size_t most, float reach = 0.0f) const;
+    /// How fast the gas goes (velocityAt()) over `box` grown by `reach` all
+    /// round, within the domain, at the middles of cells `edge` wide: into
+    /// `out`'s velocityBox, velocitySize and velocity (Dense).
+    void denseVelocity(const Box& box, float edge, float reach, Dense& out) const;
+
+    /// The gas as a renderer that reads sparse grids takes it (Cycles): a
+    /// NanoVDB grid a field, of every cell the gas fills -- as fine as the
+    /// simulation's, however many -- the rest reading the grid's background:
+    /// the light it stops per world unit (extinction(): floats, 0), the
+    /// light it gives off (emission(): x y z of four floats, 0) and the
+    /// share a scattering keeps (albedo(): x y z of four, the smoke's).
+    /// Cell (i, j, k) has its middle at origin + (i, j, k) + 0.5 cells.
+    struct Sparse {
+        Box box;                       ///< the cells it fills and one round them
+        Vec3 origin{0.0f, 0.0f, 0.0f};
+        float cell = 1.0f;             ///< world units
+        std::vector<uint8_t> extinction;  ///< the grid's buffer; empty: no gas
+        std::vector<uint8_t> emission;    ///< empty where nothing glows
+        std::vector<uint8_t> albedo;      ///< empty without steam
+    };
+    Sparse sparse(const GasLook& look) const;
 
     struct Grid;  // NanoVDB's, and the most of each tile
 

@@ -19,7 +19,12 @@
 
 #include "test_framework.h"
 
+#ifdef PG_HAVE_NANOVDB
+#include <nanovdb/NanoVDB.h>
+#endif
+
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <random>
 
@@ -473,6 +478,54 @@ TEST(gas_dense_grids_are_the_gas_at_the_cells_middles) {
     const auto smoke = Gas::build(frameOf(16, 0.1f, [](int i, int, int) { return Vec3(i > 4 ? 0.5f : 0.0f, 0.0f, 0.0f); }, false));
     CHECK(smoke && smoke->dense(look, size_t(1) << 30).emission.empty());
 }
+
+#ifdef PG_HAVE_NANOVDB
+TEST(gas_sparse_grids_are_every_cell_of_the_gas) {
+    // The grids Cycles reads: every cell of the gas, as fine as it is, the
+    // light it stops and gives off at the cell's middle -- none round it.
+    if (!gasAvailable()) return;
+    const int n = 32;
+    const sim::Frame f = frameOf(n, 0.05f, [&](int i, int j, int k) { return blob(i, j, k, n); }, true);
+    const auto gas = Gas::build(f);
+    CHECK(gas != nullptr);
+    if (!gas) return;
+    const GasLook look;
+    const Gas::Sparse sp = gas->sparse(look);
+    CHECK(!sp.extinction.empty() && !sp.emission.empty() && sp.albedo.empty());
+    CHECK_NEAR(sp.cell, 0.05f, 1e-6f);
+    // A grid's buffer as NanoVDB keeps one: on 32 bytes.
+    auto aligned = [](const std::vector<uint8_t>& bytes) {
+        std::vector<uint8_t> copy(bytes.size() + 32);
+        const size_t skip = (32 - reinterpret_cast<uintptr_t>(copy.data()) % 32) % 32;
+        std::copy(bytes.begin(), bytes.end(), copy.begin() + static_cast<std::ptrdiff_t>(skip));
+        return std::make_pair(std::move(copy), skip);
+    };
+    const auto [stopsBytes, stopsAt] = aligned(sp.extinction);
+    const auto [givesBytes, givesAt] = aligned(sp.emission);
+    const auto* stops = reinterpret_cast<const nanovdb::FloatGrid*>(stopsBytes.data() + stopsAt);
+    const auto* gives = reinterpret_cast<const nanovdb::Vec4fGrid*>(givesBytes.data() + givesAt);
+    CHECK(stops->isValid() && gives->isValid());
+    CHECK(stops->activeVoxelCount() > 1000);
+    auto stopsAcc = stops->getAccessor();
+    auto givesAcc = gives->getAccessor();
+    std::mt19937 rng(5);
+    for (int t = 0; t < 3000; ++t) {
+        const int i = static_cast<int>(rng() % n), j = static_cast<int>(rng() % n), k = static_cast<int>(rng() % n);
+        const Vec3 fields = gas->at(sp.origin + Vec3(i + 0.5f, j + 0.5f, k + 0.5f) * sp.cell);
+        const float e = Gas::extinction(fields, look);
+        CHECK_NEAR(stopsAcc.getValue(nanovdb::Coord(i, j, k)), e, 1e-4f * (1.0f + e));
+        const Vec3 glow = Gas::emission(fields, look);
+        const nanovdb::Vec4f g = givesAcc.getValue(nanovdb::Coord(i, j, k));
+        CHECK_NEAR(g[0], glow.x, 1e-4f * (1.0f + glow.x));
+        CHECK_NEAR(g[2], glow.z, 1e-4f * (1.0f + glow.z));
+    }
+    // Its box: the cells it fills, one round them, within the domain.
+    for (int a = 0; a < 3; ++a) CHECK(sp.box.lo[a] >= sp.origin[a] - 1e-5f && sp.box.hi[a] > sp.box.lo[a]);
+    // Smoke without fire: nothing given off, no grid of it.
+    const auto smoke = Gas::build(frameOf(16, 0.1f, [](int i, int, int) { return Vec3(i > 4 ? 0.5f : 0.0f, 0.0f, 0.0f); }, false));
+    CHECK(smoke && !smoke->sparse(look).extinction.empty() && smoke->sparse(look).emission.empty());
+}
+#endif
 
 TEST(gas_steam_stops_light_and_scatters_it_white) {
     // Steam -- of the frame's own field -- stops light as the look's Steam
