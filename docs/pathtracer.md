@@ -118,8 +118,13 @@ The `smoke_plume` example compared with the stock element it was made after
   smoke is (16 bounces: 4 min a frame at 640 × 360 on four threads here, 4
   bounces 3 min).
 - **Motion from the flow, not from noise.** A short, fast burst slowed by
-  the air (a Drag force) rolls over itself; strong noise forces
-  (Turbulence) make smoke boil in place instead.
+  the air (a Drag force) rolls over itself. A noise force (Turbulence)
+  makes smoke boil in streaks that no real plume has; the example has none.
+- **Billows from puffs.** Real smoke comes out in clumps, and each clump
+  swells into its own round billow. One wide, flat source throws the smoke
+  out as a sheet, whose front is a flat wall; a cluster of small sources of
+  different sizes (points with `pscale` as the source's Shape) makes a heap
+  of billows.
 - **Detail at every scale**: the resolution and a Pyro Upres.
 - **The camera**: a little depth of field (F-Stop), motion blur and Film
   Grain take the clean look of a render away.
