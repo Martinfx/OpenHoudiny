@@ -1338,8 +1338,22 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             ++images;
             continue;
         }
-        const std::vector<uint8_t> pixels =
-            clear && (!movie || clearVideo) ? volume->readTransparent(2) : volume->readPixels(2);
+        std::vector<uint8_t> pixels = clear && (!movie || clearVideo) ? volume->readTransparent(2) : volume->readPixels(2);
+        if (c.render.grain > 0.0f) {
+            // Film grain over what is shown, as the other renderers have it.
+            const bool four = clear && (!movie || clearVideo);
+            std::vector<uint8_t> rgba = pixels;
+            if (!four) {
+                rgba.assign(static_cast<size_t>(width) * height * 4, 255);
+                for (size_t p = 0; p < static_cast<size_t>(width) * height; ++p) std::copy_n(&pixels[3 * p], 3, &rgba[4 * p]);
+            }
+            pg::render::addGrain(rgba, width, height, c.render.grain, static_cast<uint32_t>(f));
+            if (four) {
+                pixels = std::move(rgba);
+            } else {
+                for (size_t p = 0; p < static_cast<size_t>(width) * height; ++p) std::copy_n(&rgba[4 * p], 3, &pixels[3 * p]);
+            }
+        }
         if (movie) {
             if (!movie->add(pixels.data(), error)) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());

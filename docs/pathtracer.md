@@ -97,6 +97,7 @@ It is usable after 16–32 samples and clean after 128.
 | F-Stop | 0 | lens aperture; 0 means everything is sharp, 2.8 a shallow depth of field |
 | Focus | 0 m | focus distance; 0 focuses on whatever is in the center of the image |
 | Clamp | 20 | the most a single bounce can add to a pixel; removes bright dots (fireflies) |
+| Film Grain | 0 | grain over the picture shown, as film or a camera's sensor has it: strongest in the middle tones, a pixel or two across, new every frame; 0.3 is a camera's, 1 heavy. In PNGs and videos (also from the viewport's renderer), not in an EXR's linear light |
 | Sun Size | 0.53° | angular diameter of the sun: a larger sun gives softer shadows |
 | Motion Blur | 0.5 frame | how long the shutter is open: whatever moves is smeared along its path, in the path tracer just as in Cycles ([below](#motion-blur)); 0 is a sharp instant |
 
@@ -104,6 +105,24 @@ Light, sky, floor, exposure and water color come from the same **Look**
 as in the viewport, so the brightness of both matches. A test checks that the
 floor in sunlight has the same value in the path tracer as in the viewport
 (0.8035 versus 0.8005).
+
+### What makes smoke look real
+
+The `smoke_plume` example compared with the stock element it was made after
+(frame 50):
+
+- **Light scattered many times.** Dense smoke is lit from within: light
+  bounces inside it many times before it leaves. The viewport's renderer
+  takes one bounce and estimates the rest, so its smoke is darker inside
+  and harder; Cycles with Bounces 16 makes it soft and bright the way real
+  smoke is (16 bounces: 4 min a frame at 640 × 360 on four threads here, 4
+  bounces 3 min).
+- **Motion from the flow, not from noise.** A short, fast burst slowed by
+  the air (a Drag force) rolls over itself; strong noise forces
+  (Turbulence) make smoke boil in place instead.
+- **Detail at every scale**: the resolution and a Pyro Upres.
+- **The camera**: a little depth of field (F-Stop), motion blur and Film
+  Grain take the clean look of a render away.
 
 ### Motion blur
 

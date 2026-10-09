@@ -1175,6 +1175,59 @@ std::vector<uint8_t> toDisplay(const Image& image, float exposure, Settings::Vie
     return out;
 }
 
+void addGrain(std::vector<uint8_t>& rgba, int width, int height, float strength, uint32_t seed) {
+    if (!(strength > 0.0f) || width <= 0 || height <= 0) return;
+    const size_t w = static_cast<size_t>(width), h = static_cast<size_t>(height);
+    if (rgba.size() < 4 * w * h) return;
+    // White noise from the pixel and the seed, about normal (three uniforms),
+    // a pixel apart; then each pixel half its own, half its neighbours': a
+    // clump about two pixels across.
+    auto hash = [](uint32_t x) {
+        x ^= x >> 16;
+        x *= 0x7feb352du;
+        x ^= x >> 15;
+        x *= 0x846ca68bu;
+        x ^= x >> 16;
+        return x;
+    };
+    auto noise = [&](size_t x, size_t y, uint32_t k) {
+        uint32_t s = hash(static_cast<uint32_t>(x) * 0x9e3779b9u ^ hash(static_cast<uint32_t>(y) + 0x632be5abu * k) ^ seed * 0x85ebca6bu);
+        float sum = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            s = hash(s + static_cast<uint32_t>(i));
+            sum += static_cast<float>(s >> 8) * (1.0f / 16777216.0f);
+        }
+        return (sum - 1.5f) * 2.0f;  // mean 0, deviation 1
+    };
+    std::vector<float> white(4 * w * h);
+    parallelFor(h, 16, [&](size_t begin, size_t end) {
+        for (size_t y = begin; y < end; ++y) {
+            for (size_t x = 0; x < w; ++x) {
+                for (uint32_t k = 0; k < 4; ++k) white[4 * (y * w + x) + k] = noise(x, y, k);
+            }
+        }
+    });
+    parallelFor(h, 16, [&](size_t begin, size_t end) {
+        for (size_t y = begin; y < end; ++y) {
+            for (size_t x = 0; x < w; ++x) {
+                const size_t p = y * w + x;
+                auto at = [&](size_t q, uint32_t k) { return white[4 * q + k]; };
+                const size_t l = x > 0 ? p - 1 : p, r = x + 1 < w ? p + 1 : p, u = y > 0 ? p - w : p, d = y + 1 < h ? p + w : p;
+                // One grain for the three colours, and a little of each colour's own.
+                const float shared = 0.5f * at(p, 3) + 0.125f * (at(l, 3) + at(r, 3) + at(u, 3) + at(d, 3));
+                uint8_t* v = &rgba[4 * p];
+                const float luma = (0.2126f * v[0] + 0.7152f * v[1] + 0.0722f * v[2]) / 255.0f;
+                const float amount = strength * 0.09f * (0.25f + 3.0f * luma * (1.0f - luma));
+                for (uint32_t c = 0; c < 3; ++c) {
+                    const float g = 0.8f * shared + 0.2f * at(p, c);
+                    const float out = static_cast<float>(v[c]) / 255.0f + amount * g;
+                    v[c] = static_cast<uint8_t>(std::lround(std::clamp(out, 0.0f, 1.0f) * 255.0f));
+                }
+            }
+        }
+    });
+}
+
 Image denoise(const Image& beauty, const Image& albedo, const Image& normal, const Image& depth,
               const std::vector<float>& variance) {
     const int w = beauty.width, h = beauty.height;

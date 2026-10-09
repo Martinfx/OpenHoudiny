@@ -24,6 +24,8 @@ Rendered renderedOf(const PathTracer& tracer, bool denoise) {
     r.ocio = tracer.settings().ocio;
     r.space = tracer.settings().exrSpace;
     r.transparent = tracer.scene()->look.transparent;
+    r.grain = tracer.settings().grain;
+    r.grainSeed = static_cast<uint32_t>(std::lround(tracer.scene()->time * 1000.0f));
     if (const auto& plate = tracer.scene()->plate) {
         r.alpha = tracer.alpha();
         r.catcher = tracer.catcher(denoise);
@@ -38,7 +40,8 @@ Image composited(const Rendered& rendered) {
 }
 
 std::vector<uint8_t> displayRgb(const Rendered& rendered) {
-    const std::vector<uint8_t> rgba = toDisplay(composited(rendered), rendered.exposure, rendered.view, rendered.ocio.get());
+    std::vector<uint8_t> rgba = toDisplay(composited(rendered), rendered.exposure, rendered.view, rendered.ocio.get());
+    addGrain(rgba, rendered.beauty.width, rendered.beauty.height, rendered.grain, rendered.grainSeed);
     std::vector<uint8_t> rgb(rgba.size() / 4 * 3);
     for (size_t p = 0; p < rgba.size() / 4; ++p) {
         rgb[3 * p] = rgba[4 * p];
@@ -77,6 +80,7 @@ Image transparentAlpha(const Rendered& rendered) {
 std::vector<uint8_t> displayRgba(const Rendered& rendered) {
     if (!rendered.transparent) {
         std::vector<uint8_t> rgba = toDisplay(composited(rendered), rendered.exposure, rendered.view, rendered.ocio.get());
+        addGrain(rgba, rendered.beauty.width, rendered.beauty.height, rendered.grain, rendered.grainSeed);
         for (size_t p = 3; p < rgba.size(); p += 4) rgba[p] = 255;
         return rgba;
     }
@@ -93,6 +97,7 @@ std::vector<uint8_t> displayRgba(const Rendered& rendered) {
         }
     }
     std::vector<uint8_t> rgba = toDisplay(straight, rendered.exposure, rendered.view, rendered.ocio.get());
+    addGrain(rgba, rendered.beauty.width, rendered.beauty.height, rendered.grain, rendered.grainSeed);
     for (size_t p = 0; p < alpha.pixels.size() && 4 * p + 3 < rgba.size(); ++p) {
         rgba[4 * p + 3] = static_cast<uint8_t>(std::lround(std::clamp(alpha.pixels[p], 0.0f, 1.0f) * 255.0f));
     }

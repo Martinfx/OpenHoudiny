@@ -399,6 +399,10 @@ std::vector<ParamDef> renderParams() {
              "everything sharp."},
             {"render_focus", "Focus", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 50.0f, 0.0f, kBig, "m",
              "How far from the camera what is sharp is. 0: what the middle of the picture sees."},
+            {"render_grain", "Film Grain", "Render", K::Float, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f, 0.0f, 1.0f, "",
+             "Grain over the picture, as film or a camera's sensor has it: most in the middle tones, a pixel or "
+             "two across, another each frame -- what takes the clean look of a render away. 0: none; 0.3 a "
+             "camera's, 1 heavy. In the PNGs and videos; an EXR's light is left as it is."},
             {"render_clamp", "Clamp", "Render", K::Float, {20.0f, 0.0f, 0.0f}, 1.0f, 100.0f, 0.1f, kBig, "",
              "The most light a bounce may add to a pixel: no bright specks (fireflies) where light found a rare "
              "way, a little less of what is lit only that way."},
@@ -4478,6 +4482,7 @@ Compiled Network::compileFrame(const std::string& folder, GeometryGraph* geometr
     r.fstop = std::max(f(*output, "render_fstop"), 0.0f);
     r.focus = std::max(f(*output, "render_focus"), 0.0f);
     r.clamp = std::max(f(*output, "render_clamp"), 0.01f);
+    r.grain = std::clamp(f(*output, "render_grain"), 0.0f, 1.0f);
     r.sunAngle = std::clamp(f(*output, "render_sun_angle"), 0.01f, 30.0f);
     r.shutter = std::clamp(f(*output, "render_motion_blur"), 0.0f, 1.0f);
     r.sky = static_cast<render::Settings::Sky>(std::clamp(whole(*output, "render_sky"), 0, 2));

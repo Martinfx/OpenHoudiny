@@ -50,6 +50,7 @@ struct Settings {
     float fstop = 0.0f;              ///< the lens's f-number: 2.8 a shallow focus, 0 everything sharp
     float focus = 0.0f;              ///< m from the camera to what is sharp; 0: what is in the middle of the picture
     float clamp = 20.0f;             ///< the most a bounce adds to a pixel: no fireflies
+    float grain = 0.0f;              ///< film grain in the picture shown (addGrain): 0 none, 1 heavy
     float sunAngle = 0.53f;          ///< degrees across the sun: larger, softer shadows
     /// How much of a frame the camera's shutter is open, about the frame:
     /// what moves -- the points' velocity v, the gas, the scene's objects, a
@@ -211,6 +212,11 @@ private:
 /// alpha 255.
 std::vector<uint8_t> toDisplay(const Image& image, float exposure,
                                Settings::View view = Settings::View::AgXPunchy, const OcioView* ocio = nullptr);
+/// Film grain over a picture as shown (RGBA, 8 bits, the top row first):
+/// `strength` 0 to 1, most in the middle tones, least in black and white,
+/// a little apart in each colour; clumps a pixel or two across, as film's.
+/// The same `seed` (the frame) the same grain; another, another.
+void addGrain(std::vector<uint8_t>& rgba, int width, int height, float strength, uint32_t seed);
 /// One colour so: 0 to 1, as a screen shows it.
 Vec3 shown(const Vec3& linear, Settings::View view, const OcioView* ocio = nullptr);
 /// The light `shown` shows as `display` -- a picture's colour, 0 to 1 --

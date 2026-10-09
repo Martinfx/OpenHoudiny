@@ -32,6 +32,9 @@ struct Rendered {
     /// Rendered transparent (sim::Look::transparent): over an empty plate,
     /// the picture the CG alone with its alpha (transparentAlpha).
     bool transparent = false;
+    /// Film grain over the picture shown (addGrain), and its seed: the frame.
+    float grain = 0.0f;
+    uint32_t grainSeed = 0;
 };
 
 /// Of a transparent render: how much of each pixel is covered -- by the CG

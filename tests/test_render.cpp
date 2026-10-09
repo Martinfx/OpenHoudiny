@@ -1583,6 +1583,52 @@ TEST(render_a_transparent_render_is_the_cg_alone_with_its_shadow_in_the_alpha) {
     fs::remove_all(dir);
 }
 
+TEST(render_film_grain_is_most_in_the_middle_tones_and_new_each_frame) {
+    // Three bands: black, middle grey, white.
+    const int w = 96, h = 64;
+    std::vector<uint8_t> flat(static_cast<size_t>(w) * h * 4, 255);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const uint8_t v = x < w / 3 ? 0 : x < 2 * w / 3 ? 128 : 255;
+            uint8_t* p = &flat[(static_cast<size_t>(y) * w + x) * 4];
+            p[0] = p[1] = p[2] = v;
+        }
+    }
+    std::vector<uint8_t> none = flat;
+    addGrain(none, w, h, 0.0f, 1);
+    CHECK(none == flat);  // no grain: as it was
+    std::vector<uint8_t> a = flat, b = flat, again = flat;
+    addGrain(a, w, h, 0.5f, 1);
+    addGrain(again, w, h, 0.5f, 1);
+    addGrain(b, w, h, 0.5f, 2);
+    CHECK(a == again);  // the same frame, the same grain
+    CHECK(a != b);      // another frame, another
+    // How much each band moves, and its mean: the grey the most, about where it was.
+    auto spread = [&](const std::vector<uint8_t>& img, int x0, int x1, double& mean) {
+        double sum = 0.0, sq = 0.0;
+        int n = 0;
+        for (int y = 0; y < h; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                const double v = img[(static_cast<size_t>(y) * w + x) * 4 + 1];
+                sum += v;
+                sq += v * v;
+                ++n;
+            }
+        }
+        mean = sum / n;
+        return std::sqrt(std::max(sq / n - mean * mean, 0.0));
+    };
+    double black = 0.0, grey = 0.0, white = 0.0;
+    const double sBlack = spread(a, 0, w / 3, black), sGrey = spread(a, w / 3 + 1, 2 * w / 3, grey),
+                 sWhite = spread(a, 2 * w / 3 + 1, w, white);
+    std::printf("  grain 0.5: black %.1f +- %.1f, grey %.1f +- %.1f, white %.1f +- %.1f\n", black, sBlack, grey, sGrey,
+                white, sWhite);
+    CHECK(sGrey > 2.0 && sGrey > sBlack && sGrey > sWhite);
+    CHECK(std::fabs(grey - 128.0) < 1.5);
+    // The alpha is left alone.
+    for (size_t p = 3; p < a.size(); p += 4) CHECK_EQ(a[p], 255);
+}
+
 TEST(render_cycles_draws_the_cg_over_a_plate) {
     if (!cyclesAvailable()) return;
     const int w = 80, h = 48;
