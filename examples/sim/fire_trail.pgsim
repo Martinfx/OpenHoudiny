@@ -3,6 +3,7 @@ pgsim 1
 # the source's place is animated, and the gas it gives off leaves with its
 # velocity -- while a paddle spins above, animated round y: the smoke that
 # rises into it is stirred round.
+# The camera in front of the loop the torch flies, the paddle above it.
 node 1 pyro_source 2 torch 0 0
   param fuel 22
   param smoke 3
@@ -33,8 +34,12 @@ node 5 volume_look 2 look 490 60
   param fire_light 3
 node 6 output 2 output 720 60
   param frames 120
+node 7 camera 1 camera 720 190
+  param center 0.6 0.8 3.7
+  param rotation 1.53 9.21 0
 link 1.source -> 4.sources
 link 2.collider -> 4.colliders
 link 3.force -> 4.forces
 link 4.gas -> 5.gas
 link 5.look -> 6.look
+link 7.camera -> 6.camera

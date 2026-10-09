@@ -4,6 +4,7 @@ pgsim 1
 # flames it cools them and soaks the fuel, the fire under it is soaked
 # through and dies; a burst of white steam rolls up off it through the dark
 # smoke, and the water runs away over the ground.
+# The camera beside the fire at the height of the falling water.
 node 1 pyro_source 2 fire 0 0
   param fuel 14
   param heat 1
@@ -38,6 +39,10 @@ node 9 object 1 logs 0 200
   param center 0 0.05 0
   param size 0.4 0.1 0.4
   param color 0.16 0.1 0.06
+node 10 camera 1 camera 720 158
+  param center 1.4 0.6 2.6
+  param rotation -0.97 28.3 0
+  param focal 35
 link 1.source -> 3.sources
 link 2.force -> 3.forces
 link 3.gas -> 4.gas
@@ -46,3 +51,4 @@ link 6.water -> 7.sources
 link 7.liquid -> 8.liquid
 link 8.look -> 5.look
 link 9.collider -> 7.colliders
+link 10.camera -> 5.camera

@@ -4,6 +4,7 @@ pgsim 1
 # balconies, the colour of the walls. Double click one (I) to see how it is
 # made; the asset's definition travels with the file, at its end. From the
 # command line: prototype cook street street.obj --set tower.floors=12
+# The camera on the far pavement, at the height of a person's eyes.
 node 1 building 1 corner_house 0 0
   param floors 5
 node 2 transform 1 at_left 230 0
@@ -36,6 +37,11 @@ node 10 material 1 road 230 470
   param material asphalt
 node 9 merge 1 all 460 190
   display
+node 11 output 2 output 710 190
+node 12 camera 1 camera 710 320
+  param center 4.5 1.7 9
+  param rotation 12.59 29.05 0
+  param focal 24
 link 1.geometry -> 2.geometry
 link 3.geometry -> 4.geometry
 link 5.geometry -> 6.geometry
@@ -45,6 +51,7 @@ link 4.geometry -> 9.geometry
 link 6.geometry -> 9.geometry
 link 8.geometry -> 10.geometry
 link 10.geometry -> 9.geometry
+link 12.camera -> 11.camera
 definition building
 | pgsim 1
 | asset building 1 "Building"

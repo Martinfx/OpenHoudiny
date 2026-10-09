@@ -1,5 +1,7 @@
 pgsim 1
 # A fire in gusty wind: the flames lean over and the smoke streams away.
+# The camera across the wind, the flames leaning and the smoke streaming over
+# the picture.
 node 1 pyro_source 2 logs 0 0
   param shape box
   param center -0.45 0.06 0
@@ -24,8 +26,13 @@ node 5 volume_look 2 look 490 76
   param smoke_density 16
   param fire_light 3
 node 6 output 2 output 720 76
+node 7 camera 1 camera 720 206
+  param center 0.6 0.55 3.3
+  param rotation 0 7.77 0
+  param focal 35
 link 1.source -> 4.sources
 link 2.force -> 4.forces
 link 3.force -> 4.forces
 link 4.gas -> 5.gas
 link 5.look -> 6.look
+link 7.camera -> 6.camera

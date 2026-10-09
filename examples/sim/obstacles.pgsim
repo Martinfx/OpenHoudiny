@@ -3,6 +3,7 @@ pgsim 1
 # along it and leaves over its high edge, through a ring. A column stands in
 # the way; the ball on the floor is set dressing -- drawn, but not linked
 # into the solver, so the smoke goes through it.
+# The camera seeing the board, the ring and the column at once.
 node 1 pyro_source 2 vent 0 0
   param shape box
   param center 0 0.05 0
@@ -45,6 +46,10 @@ node 8 volume_look 2 look 490 76
   param smoke_density 16
 node 9 output 2 output 720 76
   param frames 180
+node 10 camera 1 camera 720 206
+  param center 1.6 0.8 2.4
+  param rotation -0.99 33.69 0
+  param focal 35
 link 1.source -> 7.sources
 link 2.force -> 7.forces
 link 3.collider -> 7.colliders
@@ -52,3 +57,4 @@ link 4.collider -> 7.colliders
 link 5.collider -> 7.colliders
 link 7.gas -> 8.gas
 link 8.look -> 9.look
+link 10.camera -> 9.camera

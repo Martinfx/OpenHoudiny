@@ -11,6 +11,7 @@ pgsim 1
 # trunks; the leaves flap; the hill, of no flex, stays. Only the points
 # move, so the viewport sends only their places to the GPU; v goes with
 # them, for motion blur.
+# The camera in the clearing, looking at the trees from the ground.
 node 1 grid 1 land 0 0
   param sizex 160
   param sizez 160
@@ -76,6 +77,11 @@ node 12 plant_wind 1 wind 0 990
   param gustsize 40
   param dynamics on
   display
+node 13 output 2 output 250 990
+node 14 camera 1 camera 250 1120
+  param center 28 8 42
+  param rotation 3.4 33.69 0
+  param focal 32
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.geometry
 link 3.geometry -> 4.geometry
@@ -89,3 +95,4 @@ link 2.geometry -> 11.geometry
 link 9.geometry -> 11.geometry
 link 10.geometry -> 11.geometry
 link 11.geometry -> 12.geometry
+link 14.camera -> 13.camera

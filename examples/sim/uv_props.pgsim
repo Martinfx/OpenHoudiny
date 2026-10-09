@@ -4,6 +4,7 @@ pgsim 1
 # ball from pole to pole -- and a photograph of the library laid on by it
 # (Material, Projection UV): wood, a brick wall. Their normal maps bend the
 # light: the joints of the bricks catch the sun, in both renderers.
+# The camera in front of the crate, the column and the ball.
 #   prototype sim uv_props uv.png --renderer cycles
 node 1 box 1 crate 0 0
   param size 0.8 0.8 0.8
@@ -40,6 +41,10 @@ node 9 material 1 ball_bricks 460 260
   param texture_normal 1.5
 node 10 merge 1 props 690 130
   display
+node 11 output 2 output 940 130
+node 12 camera 1 camera 940 260
+  param center 1 1.1 3.6
+  param rotation -8.37 15.52 0
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.geometry
 link 4.geometry -> 5.geometry
@@ -49,3 +54,4 @@ link 8.geometry -> 9.geometry
 link 3.geometry -> 10.geometry
 link 6.geometry -> 10.geometry
 link 9.geometry -> 10.geometry
+link 12.camera -> 11.camera

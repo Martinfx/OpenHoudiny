@@ -3,6 +3,8 @@ pgsim 1
 # arch, and a rock beside it. The wind takes the smoke from a vent on the
 # ground through the arch; what misses it rolls over the top and round the
 # rock.
+# The camera in front of the arch, the wind carrying the smoke across the
+# picture through it.
 node 1 pyro_source 2 vent 0 0
   param shape box
   param center -0.75 0.05 0
@@ -43,6 +45,10 @@ node 7 volume_look 2 look 490 76
   param smoke_density 14
 node 8 output 2 output 720 76
   param frames 180
+node 9 camera 1 camera 720 206
+  param center -0.9 0.55 2.4
+  param rotation -2.2 -22.62 0
+  param focal 30
 link 1.source -> 6.sources
 link 2.force -> 6.forces
 link 3.force -> 6.forces
@@ -50,3 +56,4 @@ link 4.collider -> 6.colliders
 link 5.collider -> 6.colliders
 link 6.gas -> 7.gas
 link 7.look -> 8.look
+link 9.camera -> 8.camera

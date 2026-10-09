@@ -211,6 +211,11 @@ The camera (the **Camera** node) is the shot: where it looks at the scene from, 
 lens and how large the image is. Connected to the **Camera** input of the
 Output node, it determines what `prototype sim`, **File › Render Image** and
 **Render Frames** render. Without a camera, the viewport view is rendered.
+Every example has one: a shot made for what it shows (low beside a fire,
+looking up a plume, above the water of a tank, at a person's height in a
+meadow), so that `prototype sim EXAMPLE out.mp4` and Render Frames give that
+shot; **0** in the viewport looks through it. Examples of geometry alone have
+an Output node for it.
 
 | action | how |
 |---|---|

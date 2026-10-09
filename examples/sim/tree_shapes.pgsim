@@ -5,6 +5,7 @@ pgsim 1
 # bark, twigs hanging), a poplar (cylindrical, its branches up along the
 # trunk), an acacia (umbrella, forking wide, flat on top), a willow
 # (weeping, long twigs hanging to the ground) and a lime (hemispherical).
+# The camera in front of the row, every tree whole in the picture.
 node 1 tree 1 spruce 0 0
   param shape conical
   param height 11
@@ -116,6 +117,11 @@ node 7 tree 1 lime 0 660
   param leafcolor 0.08 0.17 0.035
 node 8 merge 1 trees 250 330
   display
+node 9 output 2 output 500 330
+node 10 camera 1 camera 500 460
+  param center 0 5 58
+  param rotation 1.97 -0 0
+  param focal 40
 link 1.geometry -> 8.geometry
 link 2.geometry -> 8.geometry
 link 3.geometry -> 8.geometry
@@ -123,3 +129,4 @@ link 4.geometry -> 8.geometry
 link 5.geometry -> 8.geometry
 link 6.geometry -> 8.geometry
 link 7.geometry -> 8.geometry
+link 10.camera -> 9.camera

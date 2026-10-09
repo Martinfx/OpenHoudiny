@@ -1,6 +1,7 @@
 pgsim 1
 # A tornado of smoke: a vortex draws the smoke from the floor in towards its
 # axis and lifts it, turning.
+# The camera low, looking up the whole height of the vortex.
 node 1 pyro_source 2 ground 0 0
   param shape box
   param center 0 0.04 0
@@ -30,8 +31,13 @@ node 5 volume_look 2 look 490 76
   param smoke_density 14
 node 6 output 2 output 720 76
   param frames 180
+node 7 camera 1 camera 720 206
+  param center 1 0.5 3
+  param rotation 8.1 18.43 0
+  param focal 32
 link 1.source -> 4.sources
 link 2.force -> 4.forces
 link 3.force -> 4.forces
 link 4.gas -> 5.gas
 link 5.look -> 6.look
+link 7.camera -> 6.camera

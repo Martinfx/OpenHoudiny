@@ -4,6 +4,7 @@ pgsim 1
 # colours them by how fast they go: deep blue at rest, white in the spray.
 # The display flag shows them. The Water Look's Surface is off, so that the
 # points are seen; turn it on and the water is drawn over them.
+# The camera above the pool, looking down onto the points.
 node 1 water_source 1 drop 0 0
   param shape sphere
   param center 0 0.75 0
@@ -21,9 +22,14 @@ node 6 liquid_points 1 particles 490 170
 node 7 point_wrangle 1 speed_color 720 170
   param snippet "@Cd = vec3(0.05, 0.2, 0.6) + vec3(0.9, 0.75, 0.4) * clamp(length(@v) / 2.5, 0, 1)"
   display
+node 8 camera 1 camera 720 158
+  param center 1.2 1 1.9
+  param rotation -18.46 32.28 0
+  param focal 32
 link 1.water -> 3.sources
 link 2.water -> 3.sources
 link 3.liquid -> 4.liquid
 link 3.liquid -> 6.liquid
 link 4.look -> 5.look
 link 6.geometry -> 7.geometry
+link 8.camera -> 5.camera

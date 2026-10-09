@@ -4,6 +4,7 @@ pgsim 1
 # between its Begin and End once a box -- each gets a height and a shade
 # of its own (rand of its iteration) and a roof terrace cut into its top
 # (PolyExtrude of the group top: inset, then in).
+# The camera above a corner of the blocks, a model city seen from above.
 node 1 grid 1 lots 0 0
   param sizex 5
   param sizez 5
@@ -25,6 +26,11 @@ node 8 polyextrude 1 terrace 1380 60
   param group "top"
 node 9 foreach_end 1 city 1610 60
   display
+node 10 output 2 output 1860 60
+node 11 camera 1 camera 1860 190
+  param center 4.5 2.6 6.5
+  param rotation -12.14 34.7 0
+  param focal 30
 link 1.geometry -> 3.points
 link 2.geometry -> 3.geometry
 link 3.geometry -> 4.geometry
@@ -33,3 +39,4 @@ link 5.geometry -> 6.geometry
 link 6.geometry -> 7.geometry
 link 7.geometry -> 8.geometry
 link 8.geometry -> 9.geometry
+link 11.camera -> 10.camera

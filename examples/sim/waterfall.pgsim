@@ -1,6 +1,7 @@
 pgsim 1
 # Water springs from a ledge, pours onto a tilted board, runs down it and
 # fills the pool below.
+# The camera in front, the ledge, the board and the pool in one picture.
 node 1 water_source 1 spring 0 0
   param center -0.78 0.95 0
   param size 0.14 0.1 0.34
@@ -24,9 +25,14 @@ node 5 liquid_solver 1 solver 250 124
 node 6 water_look 1 look 490 124
 node 7 output 2 output 720 124
   param frames 120
+node 8 camera 1 camera 720 254
+  param center 0.6 1 2.6
+  param rotation -11.54 15.07 0
+  param focal 32
 link 1.water -> 5.sources
 link 4.water -> 5.sources
 link 2.collider -> 5.colliders
 link 3.collider -> 5.colliders
 link 5.liquid -> 6.liquid
 link 6.look -> 7.look
+link 8.camera -> 7.camera

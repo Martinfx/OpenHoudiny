@@ -1,6 +1,7 @@
 pgsim 1
 # A ball of water drops into a pool: a crown of spray, then the cavity it
 # made closes and throws up a jet (Worthington's).
+# The camera low at the pool's edge, where the crown and the jet stand up.
 node 1 water_source 1 drop 0 0
   param shape sphere
   param center 0 0.75 0
@@ -13,7 +14,12 @@ node 3 liquid_solver 1 solver 250 28
 node 4 water_look 1 look 490 28
 node 5 output 2 output 720 28
   param frames 90
+node 6 camera 1 camera 720 158
+  param center 1.5 0.7 2.5
+  param rotation -4.9 30.96 0
+  param focal 35
 link 1.water -> 3.sources
 link 2.water -> 3.sources
 link 3.liquid -> 4.liquid
 link 4.look -> 5.look
+link 6.camera -> 5.camera

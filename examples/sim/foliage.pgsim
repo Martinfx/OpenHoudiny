@@ -4,6 +4,7 @@ pgsim 1
 # Tree and Grass nodes give them -- each leaf cut out of its quarter of the
 # leaf picture by its alpha, the bark round and up the stems with its normal
 # map -- the same in Cycles and the path tracer.
+# The camera in front of the patch, at about the height of a person.
 #   prototype sim foliage foliage.png --renderer cycles
 node 1 grid 1 patch 0 0
   param sizex 7
@@ -49,6 +50,11 @@ node 4 tree 1 spruce 460 0
   param leafcolor 0.035 0.08 0.035
 node 5 merge 1 foliage 230 330
   display
+node 8 output 2 output 480 330
+node 9 camera 1 camera 480 460
+  param center 2.5 1.4 8.5
+  param rotation 6.72 15.52 0
+  param focal 30
 link 1.geometry -> 6.geometry
 link 6.geometry -> 7.geometry
 link 7.geometry -> 2.surface
@@ -56,3 +62,4 @@ link 7.geometry -> 5.geometry
 link 2.geometry -> 5.geometry
 link 3.geometry -> 5.geometry
 link 4.geometry -> 5.geometry
+link 9.camera -> 8.camera

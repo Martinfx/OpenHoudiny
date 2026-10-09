@@ -5,6 +5,8 @@ pgsim 1
 # with. VDB Import's Surface makes polygons of it, where the distances
 # cross 0; an Object of them stands in the water's way, and the stream
 # heaps up against it and runs round it.
+# The camera downstream of the boulder and above it, the water heaping up
+# against it.
 node 1 vdb_import 1 rock 0 0
   param file "../vdb/rock.vdb"
   param surface on
@@ -21,8 +23,13 @@ node 4 liquid_solver 1 solver 500 60
 node 5 water_look 1 look 750 60
 node 6 output 2 output 1000 60
   param frames 60
+node 7 camera 1 camera 1000 190
+  param center 2.2 1.5 3.4
+  param rotation -17.15 32.91 0
+  param focal 30
 link 1.geometry -> 2.shape
 link 2.collider -> 4.colliders
 link 3.water -> 4.sources
 link 4.liquid -> 5.liquid
 link 5.look -> 6.look
+link 7.camera -> 6.camera

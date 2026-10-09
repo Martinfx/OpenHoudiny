@@ -13,6 +13,7 @@ pgsim 1
 # each point standing for its plant bent ahead into the nearest of a few
 # shapes, tilted the rest of the way: only the points change, the plants
 # are held once.
+# The camera standing in the grass, the trees beyond it.
 node 1 grid 1 land 0 0
   param sizex 80
   param sizez 60
@@ -122,6 +123,11 @@ node 14 plant_wind 1 sway 0 780
   param steps 2
 node 15 merge 1 meadow 0 890
   display
+node 16 output 2 output 250 890
+node 17 camera 1 camera 250 1020
+  param center 6 3 18
+  param rotation 1.71 10.3 0
+  param focal 28
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.surface
 link 3.geometry -> 4.geometry
@@ -140,3 +146,4 @@ link 13.geometry -> 14.geometry
 link 2.geometry -> 15.geometry
 link 4.geometry -> 15.geometry
 link 14.geometry -> 15.geometry
+link 17.camera -> 16.camera

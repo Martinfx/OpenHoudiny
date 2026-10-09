@@ -1,5 +1,6 @@
 pgsim 1
 # Smoke rising into a ball: it spreads over it and rolls off round its sides.
+# The camera at the height of the ball the smoke rolls round.
 node 1 pyro_source 2 vent 0 0
   param smoke 6
   param heat 3
@@ -17,8 +18,13 @@ node 4 pyro_solver 2 solver 250 76
   param smoke_decay 0.03
 node 5 volume_look 2 look 490 76
 node 6 output 2 output 720 76
+node 7 camera 1 camera 720 206
+  param center 1.2 0.45 2.5
+  param rotation 3.1 25.64 0
+  param focal 40
 link 1.source -> 4.sources
 link 3.force -> 4.forces
 link 2.collider -> 4.colliders
 link 4.gas -> 5.gas
 link 5.look -> 6.look
+link 7.camera -> 6.camera

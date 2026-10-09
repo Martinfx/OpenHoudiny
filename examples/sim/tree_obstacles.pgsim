@@ -6,6 +6,8 @@ pgsim 1
 # slides along under it, out past its edge and up again; its branches under
 # the roof spread along it. The obstacles are the Trees' second input: any
 # closed polygons.
+# The camera seeing the tree by the wall and the trees under the roof
+# together.
 node 1 grid 1 ground 0 0
   param sizex 26
   param sizez 18
@@ -45,6 +47,11 @@ node 13 tree 1 under_the_roof -230 660
   param center -5 0 0
 node 14 merge 1 scene 0 770
   display
+node 15 output 2 output 250 770
+node 16 camera 1 camera 250 900
+  param center 0 2.5 13
+  param rotation 2.19 6.58 0
+  param focal 26
 link 1.geometry -> 2.geometry
 link 3.geometry -> 4.geometry
 link 4.geometry -> 5.obstacles
@@ -60,3 +67,4 @@ link 4.geometry -> 14.geometry
 link 5.geometry -> 14.geometry
 link 12.geometry -> 14.geometry
 link 13.geometry -> 14.geometry
+link 16.camera -> 15.camera

@@ -11,6 +11,7 @@ pgsim 1
 # the stream, oaks on the dry rises, birches in the gaps the old ones left,
 # hazels under them all -- each kind grown by a Tree on its group, young
 # ones smaller (pscale).
+# The camera at the edge of the wood, at about the height of a person.
 node 1 grid 1 ground 0 0
   param sizex 120
   param sizez 120
@@ -108,6 +109,11 @@ node 13 tree 1 hazels 460 550
   param segment 0.12
   param output instances
   param variants 4
+node 14 output 2 output 250 660
+node 15 camera 1 camera 250 790
+  param center 20 5.5 50
+  param rotation 3.2 26.57 0
+  param focal 28
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.geometry
 link 3.geometry -> 4.places
@@ -124,3 +130,4 @@ link 10.geometry -> 11.geometry
 link 4.geometry -> 12.geometry
 link 12.geometry -> 13.points
 link 13.geometry -> 11.geometry
+link 15.camera -> 14.camera

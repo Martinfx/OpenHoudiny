@@ -1,6 +1,7 @@
 pgsim 1
 # A campfire: a flickering ball of fuel just above the floor. Turbulence where
 # the gas is hot breaks the flames up; the soot above them is dark.
+# The camera low beside the fire, looking up at the flames and the soot.
 node 1 pyro_source 2 fire 0 0
   param fuel 14
   param heat 1
@@ -18,7 +19,12 @@ node 4 volume_look 2 look 490 28
   param smoke_density 24
   param fire_light 3
 node 5 output 2 output 720 28
+node 6 camera 1 camera 720 158
+  param center 1.1 0.5 2.6
+  param rotation 3.04 22.93 0
+  param focal 40
 link 1.source -> 3.sources
 link 2.force -> 3.forces
 link 3.gas -> 4.gas
 link 4.look -> 5.look
+link 6.camera -> 5.camera

@@ -3,6 +3,7 @@ pgsim 1
 # (pscale) by a wrangle -- bigger near the middle -- and the points are the
 # shape of the fire: a flame on each, like embers. They are displayed, dark
 # red; a ball of rock made by a Sphere node hangs in the smoke.
+# The camera low over the embers, the rock in the smoke above them.
 node 1 grid 1 ground 0 0
   param sizex 1.2
   param sizez 1.2
@@ -34,6 +35,10 @@ node 9 volume_look 2 look 740 200
   param fire_light 3
 node 10 output 2 output 960 200
   param frames 90
+node 11 camera 1 camera 960 330
+  param center 1.7 0.55 2.9
+  param rotation 4.25 30.38 0
+  param focal 35
 link 1.geometry -> 2.geometry
 link 2.geometry -> 3.geometry
 link 3.geometry -> 4.shape
@@ -43,3 +48,4 @@ link 6.collider -> 8.colliders
 link 7.force -> 8.forces
 link 8.gas -> 9.gas
 link 9.look -> 10.look
+link 11.camera -> 10.camera

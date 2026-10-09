@@ -2,6 +2,7 @@ pgsim 1
 # An explosion: a ball of fuel that burns for a fifth of a second. Burning gas
 # swells -- the push of the blast -- then the fireball rises and rolls into a
 # cloud of soot.
+# The camera low and back, looking up as the fireball rises into its cloud.
 node 1 pyro_source 2 charge 0 0
   param center 0 0.3 0
   param size 0.36 0.36 0.36
@@ -32,7 +33,12 @@ node 4 volume_look 2 look 490 28
   param fire_light 3
 node 5 output 2 output 720 28
   param frames 60
+node 6 camera 1 camera 720 158
+  param center 2.6 0.4 4.2
+  param rotation 10.33 31.76 0
+  param focal 30
 link 1.source -> 3.sources
 link 2.force -> 3.forces
 link 3.gas -> 4.gas
 link 4.look -> 5.look
+link 6.camera -> 5.camera

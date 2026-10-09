@@ -3,6 +3,7 @@ pgsim 1
 # the solver's gas on a grid three times as fine, with the small whirls the
 # coarse grid cannot hold -- the flames lick and tear, the soot curls in thin
 # wisps -- in half the time and memory a simulation at 192 takes.
+# The camera close to the flames, to show the fine whirls.
 node 1 pyro_source 2 fire 0 0
   param fuel 14
   param heat 1
@@ -23,8 +24,13 @@ node 4 volume_look 2 look 730 28
   param smoke_density 24
   param fire_light 3
 node 5 output 2 output 960 28
+node 7 camera 1 camera 960 158
+  param center 1 0.5 2.7
+  param rotation 5.95 20.32 0
+  param focal 40
 link 1.source -> 3.sources
 link 2.force -> 3.forces
 link 3.gas -> 6.gas
 link 6.gas -> 4.gas
 link 4.look -> 5.look
+link 7.camera -> 5.camera
