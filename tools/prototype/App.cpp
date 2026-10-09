@@ -36,6 +36,7 @@
 #include "Commands.h"
 #include "Editor.h"
 #include "Theme.h"
+#include "ThumbThread.h"
 #include "ViewThread.h"
 
 #include "pg/gl/Png.h"
@@ -358,17 +359,21 @@ int runEditor(int argc, char** argv) {
         std::fprintf(stderr, "prototype: OpenGL 3.3 functions missing: %s\n", missing.c_str());
         return 1;
     }
-    // The viewport's own context, sharing the window's: it draws on a thread
-    // of its own (ViewThread.h). PG_VIEW_THREAD=0: on the window's thread.
+    // The viewport's own context, and the thumbnails', sharing the window's:
+    // they draw on threads of their own (ViewThread.h, ThumbThread.h).
+    // PG_VIEW_THREAD=0: on the window's thread.
     GLFWwindow* viewContext = nullptr;
+    GLFWwindow* thumbContext = nullptr;
     const char* viewThread = std::getenv("PG_VIEW_THREAD");
     if (!(viewThread && std::string(viewThread) == "0")) {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
         viewContext = glfwCreateWindow(16, 16, "Prototype view", nullptr, window);
+        thumbContext = viewContext ? glfwCreateWindow(16, 16, "Prototype thumbnails", nullptr, window) : nullptr;
         glfwDefaultWindowHints();
         if (!viewContext) std::fprintf(stderr, "prototype: no context for the viewport's thread -- it draws on the window's\n");
     }
     ViewThread::setSharedContext(viewContext);
+    ThumbThread::setSharedContext(thumbContext);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -483,7 +488,9 @@ int runEditor(int argc, char** argv) {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
     ViewThread::setSharedContext(nullptr);
+    ThumbThread::setSharedContext(nullptr);
     if (viewContext) glfwDestroyWindow(viewContext);
+    if (thumbContext) glfwDestroyWindow(thumbContext);
     glfwDestroyWindow(window);
     glfwTerminate();
     return status;

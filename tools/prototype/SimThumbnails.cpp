@@ -19,23 +19,16 @@
 #include "SimWorkspace.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 
 namespace pg::editor {
 namespace {
 
-using Clock = std::chrono::steady_clock;
-
-/// At most this many pictures a frame of the window, and none more once
-/// this many milliseconds went on them.
+/// At most this many pictures handed to their thread at once.
 constexpr int kPerFrame = 3;
-constexpr double kFrameMs = 8.0;
 /// The most cells the thumbnails' gas and water each go to the GPU with.
 constexpr size_t kThumbTexels = size_t(1) << 21;
 constexpr float kPi = 3.14159265358979f;
-
-double msSince(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
 
 /// An orbit that frames the box lo..hi: from a little above, three quarters on.
 gl::Orbit framing(const Vec3& lo, const Vec3& hi) {
@@ -225,6 +218,7 @@ void SimWorkspace::noteThumbnailGeometry(int node, const GeometryPtr& geometry) 
 
 void SimWorkspace::clearThumbnails() {
     if (thumbs_) thumbs_->clear();
+    ++thumbGeneration_;  // those being drawn are of the nodes before: dropped
     thumbGeometry_.clear();
     thumbCookKey_.clear();
 }
@@ -236,28 +230,38 @@ void SimWorkspace::updateThumbnails() {
     for (auto it = thumbGeometry_.begin(); it != thumbGeometry_.end();) {
         it = alive.count(it->first) ? std::next(it) : thumbGeometry_.erase(it);
     }
-    if (thumbs_) thumbs_->keep(alive);
+    if (thumbs_) {
+        thumbs_->collect();
+        thumbs_->keep(alive);
+    }
+    // The pictures drawn since, on their thread: the nodes' -- those still
+    // there, and asked for since the last clear.
+    auto takeDone = [&] {
+        for (const ThumbThread::Done& d : thumbThread_->take()) {
+            if (d.tag == thumbGeneration_ && alive.count(d.node)) {
+                thumbs_->put(d.node, d.texture, d.key, d.live, ImGui::GetTime(), d.ms);
+            } else {
+                gl_.DeleteTextures(1, &d.texture);
+            }
+        }
+    };
+    if (thumbThread_) takeDone();
     const std::vector<int> shown = canvas_.thumbnailsShown();
     if (!thumbnails_ || shown.empty() || !rendererLog_.empty()) return;
-    if (!thumbRenderer_) {
+    if (!thumbThread_) {
         if (!thumbRendererLog_.empty()) return;  // tried, and it would not
-        auto made = [&]() -> std::unique_ptr<gl::VolumeRenderer> {
-            auto r = std::make_unique<gl::VolumeRenderer>(gl_);
-            if (!r->init(thumbRendererLog_)) {
-                if (thumbRendererLog_.empty()) thumbRendererLog_ = "the thumbnails' renderer did not start";
-                return nullptr;
-            }
-            r->texelBudget = kThumbTexels;
-            return r;
-        };
-        auto r = made();
-        auto scene = r ? made() : nullptr;
-        if (!scene) return;
-        thumbRenderer_ = std::move(r);
-        sceneThumbRenderer_ = std::move(scene);
+        auto made = std::make_unique<ThumbThread>(gl_, kThumbTexels);
+        if (!made->init(thumbRendererLog_)) {
+            if (thumbRendererLog_.empty()) thumbRendererLog_ = "the thumbnails' renderer did not start";
+            return;
+        }
+        thumbThread_ = std::move(made);
         thumbPreparer_ = std::make_unique<sim::GeometryPreparerThread>();
         thumbs_ = std::make_unique<Thumbnails>(gl_);
     }
+    // One batch at a time: the next is chosen once it is drawn, from what
+    // is due then.
+    if (thumbThread_->pending() > 0) return;
 
     const bool scene = levels_.empty();  // inside an asset: its geometry alone
     const std::shared_ptr<const sim::Frame> frame = scene ? shown_ : nullptr;
@@ -454,30 +458,33 @@ void SimWorkspace::updateThumbnails() {
         return false;
     };
     // Draws `p` into the thumbnails' renderer -- the whole scene into its
-    // own -- at twice the picture's size; the renderer it drew in.
-    auto draw = [&](const Picture& p) -> gl::VolumeRenderer& {
-        gl::VolumeRenderer& r = p.scene ? *sceneThumbRenderer_ : *thumbRenderer_;
-        r.look = p.look;
-        if (p.prepared && p.prepared->geometry == p.geometry) r.setPrepared(p.prepared);
-        else r.setGeometry(p.geometry);
-        r.setPreparedPieces(p.bodies);
-        r.setSolids(p.solids);
-        if (p.frame && p.volumes) r.setFrame(*p.frame, *p.volumes);
-        else r.clearFrame();
-        if (p.hasOrbit) {
-            r.orbit = p.orbit;
-        } else {
-            Picture framed = p;
-            Vec3 lo, hi;
-            if (r.geometryBounds(lo, hi)) framed.box(lo, hi);
-            for (const sim::Solid& s : p.solids) {
-                s.body.instance().bounds(lo, hi);
-                framed.box(lo, hi);
+    // own -- at twice the picture's size, on their thread; the renderer it
+    // drew in.
+    auto drawing = [](Picture p) -> ThumbThread::Draw {
+        return [p = std::move(p)](gl::VolumeRenderer& node, gl::VolumeRenderer& scene) -> gl::VolumeRenderer& {
+            gl::VolumeRenderer& r = p.scene ? scene : node;
+            r.look = p.look;
+            if (p.prepared && p.prepared->geometry == p.geometry) r.setPrepared(p.prepared);
+            else r.setGeometry(p.geometry);
+            r.setPreparedPieces(p.bodies);
+            r.setSolids(p.solids);
+            if (p.frame && p.volumes) r.setFrame(*p.frame, *p.volumes);
+            else r.clearFrame();
+            if (p.hasOrbit) {
+                r.orbit = p.orbit;
+            } else {
+                Picture framed = p;
+                Vec3 lo, hi;
+                if (r.geometryBounds(lo, hi)) framed.box(lo, hi);
+                for (const sim::Solid& s : p.solids) {
+                    s.body.instance().bounds(lo, hi);
+                    framed.box(lo, hi);
+                }
+                r.orbit = framed.hasBox ? framing(framed.lo, framed.hi) : gl::Orbit();
             }
-            r.orbit = framed.hasBox ? framing(framed.lo, framed.hi) : gl::Orbit();
-        }
-        r.render(2 * Thumbnails::kWidth, 2 * Thumbnails::kHeight);
-        return r;
+            r.render(2 * Thumbnails::kWidth, 2 * Thumbnails::kHeight);
+            return r;
+        };
     };
 
     // The pictures due, the most wanted first: those with none, those an
@@ -505,12 +512,11 @@ void SimWorkspace::updateThumbnails() {
         if (a.drawn != b.drawn) return a.drawn < b.drawn;
         return a.order < b.order;
     });
-    const auto start = Clock::now();
     int drawn = 0;
     std::erase_if(thumbAsked_, [](const auto& asked) { return asked.second.expired(); });
     std::vector<GeometryPtr> preparing;  // the geometry of those due next, the first first
     for (const Due& d : due) {
-        if (drawn >= kPerFrame || (drawn > 0 && msSince(start) > kFrameMs)) break;
+        if (drawn >= kPerFrame) break;
         Picture p;
         if (!pictureOf(*net_.node(d.node), p, true)) continue;
         // The frame's bodies, gas, water and rain. While those of the frame
@@ -543,12 +549,16 @@ void SimWorkspace::updateThumbnails() {
                 continue;
             }
         }
-        const auto t0 = Clock::now();
-        const gl::VolumeRenderer& r = draw(p);
-        thumbs_->take(d.node, r.colorTexture(), p.key, p.live, now, msSince(t0));
+        const uint64_t key = p.key, live = p.live;
+        thumbThread_->post(d.node, key, live, thumbGeneration_, drawing(std::move(p)));
         ++drawn;
     }
     thumbPreparer_->want(std::move(preparing));
+    // A screenshot's pictures are those of its frame.
+    if (synchronous_) {
+        thumbThread_->wait();
+        takeDone();
+    }
 }
 
 }  // namespace pg::editor

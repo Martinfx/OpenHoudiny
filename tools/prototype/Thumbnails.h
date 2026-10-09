@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <vector>
 
 namespace pg::editor {
 
@@ -40,6 +41,13 @@ public:
     /// bottom row first, as a renderer drew it -- as `node`'s, showing `key`
     /// and `live`; drawing it took `ms`.
     void take(int node, gl::GLuint source, uint64_t key, uint64_t live, double now, double ms);
+    /// Takes `texture` -- kWidth x kHeight, of the window's share group --
+    /// as `node`'s picture itself (ThumbThread). The one it showed is
+    /// deleted at the next collect(): this frame of the window may show it.
+    void put(int node, gl::GLuint texture, uint64_t key, uint64_t live, double now, double ms);
+    /// Deletes the pictures put() replaced before the last collect -- once
+    /// a frame, before put(): the frame that could show them is drawn.
+    void collect();
     /// Keeps the pictures of `nodes` alone.
     void keep(const std::set<int>& nodes);
     void clear();
@@ -55,6 +63,8 @@ private:
     const gl::Api& gl_;
     gl::GLuint readFbo_ = 0;  ///< the source, attached to be read
     std::map<int, Entry> entries_;
+    /// Replaced by put() since the last collect(); and before it, deleted at the next.
+    std::vector<gl::GLuint> retired_, collecting_;
 };
 
 /// A key made of `value`'s bytes, folded into `key` (FNV-1a).

@@ -480,8 +480,11 @@ link 6.geometry -> 7.geometry
   each picture, so they save exactly the one asked for. `PG_VIEW_THREAD=0`
   draws on the window's thread as before (as does a build or a machine
   where the second context cannot be made). The thumbnails in the network
-  are still drawn on the window's thread: those of a whole forest can take
-  a moment on a slow GPU.
+  are drawn on a thread of their own too (`tools/prototype/ThumbThread.h`),
+  in a third shared context: the window hands over what each picture shows,
+  a few at a time, and takes the finished pictures back as textures -- a
+  picture of a whole forest that takes a second holds that thumbnail, not
+  the window.
 - The network is also compiled for simulation on its own thread
   (`pg/sim/Compiler.h`) with its own graph, so the shapes for the simulation
   (Shape of objects and sources, pieces for RBD, cloth) are cooked outside

@@ -27,6 +27,8 @@ uint64_t mixKey(uint64_t key, const void* value, size_t bytes) {
 
 Thumbnails::~Thumbnails() {
     clear();
+    collect();
+    collect();
     if (readFbo_) gl_.DeleteFramebuffers(1, &readFbo_);
 }
 
@@ -79,6 +81,24 @@ void Thumbnails::take(int node, GLuint source, uint64_t key, uint64_t live, doub
     e.live = live;
     e.drawn = now;
     e.ms = ms;
+}
+
+void Thumbnails::put(int node, GLuint texture, uint64_t key, uint64_t live, double now, double ms) {
+    Entry& e = entries_[node];
+    if (e.fbo) gl_.DeleteFramebuffers(1, &e.fbo);
+    if (e.texture) retired_.push_back(e.texture);
+    e.fbo = 0;
+    e.texture = texture;
+    e.key = key;
+    e.live = live;
+    e.drawn = now;
+    e.ms = ms;
+}
+
+void Thumbnails::collect() {
+    if (!collecting_.empty()) gl_.DeleteTextures(static_cast<GLsizei>(collecting_.size()), collecting_.data());
+    collecting_.swap(retired_);
+    retired_.clear();
 }
 
 void Thumbnails::keep(const std::set<int>& nodes) {

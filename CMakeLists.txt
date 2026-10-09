@@ -1031,6 +1031,7 @@ if(PG_BUILD_GUI)
     tools/prototype/SimWorkspace.cpp
     tools/prototype/Theme.cpp
     tools/prototype/Thumbnails.cpp
+    tools/prototype/ThumbThread.cpp
     tools/prototype/ViewThread.cpp
     tools/prototype/Wedge.cpp
     tools/prototype/Widgets.cpp

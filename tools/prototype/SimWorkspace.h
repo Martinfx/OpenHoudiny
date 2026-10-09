@@ -48,6 +48,7 @@
 #include "RenderJob.h"
 #include "RenderView.h"
 #include "SimRunner.h"
+#include "ThumbThread.h"
 #include "Thumbnails.h"
 #include "ViewThread.h"
 #include "Wedge.h"
@@ -676,11 +677,13 @@ private:
     // Thumbnails: the pictures in the nodes.
     bool thumbnails_ = true;              ///< View > Node Thumbnails
     std::set<int> thumbnailsHidden_;      ///< nodes whose own was hidden (their menu)
-    std::unique_ptr<gl::VolumeRenderer> thumbRenderer_;  ///< draws them; made when one is first wanted
-    /// ... those of the whole scene -- the Output's, the cameras' -- apart:
-    /// the scene's geometry, as the viewport has it prepared, sent to it
-    /// once, not again for each picture of another node between.
-    std::unique_ptr<gl::VolumeRenderer> sceneThumbRenderer_;
+    /// Draws them, on a thread of its own; made when one is first wanted.
+    /// Those of the whole scene -- the Output's, the cameras' -- in a
+    /// renderer apart: the scene's geometry, as the viewport has it
+    /// prepared, sent to it once, not again for each picture of another
+    /// node between.
+    std::unique_ptr<ThumbThread> thumbThread_;
+    uint64_t thumbGeneration_ = 0; ///< pictures asked for before a clear are dropped
     /// The nodes' own geometry prepared to draw, on a thread of its own: a
     /// picture is drawn once its geometry is.
     std::unique_ptr<sim::GeometryPreparerThread> thumbPreparer_;
