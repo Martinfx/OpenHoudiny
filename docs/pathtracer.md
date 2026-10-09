@@ -127,7 +127,9 @@ The `smoke_plume` example compared with the stock element it was made after
   of billows.
 - **Detail at every scale**: the resolution and a Pyro Upres.
 - **The camera**: a little depth of field (F-Stop), motion blur and Film
-  Grain take the clean look of a render away.
+  Grain take the clean look of a render away. A little: Film Grain 0.3
+  buried the smoke's curls in noise, 0.1 leaves them sharp (F-Stop 5.6;
+  2.8 changed less, the plume being where the camera is focused).
 
 ### Motion blur
 

@@ -92,9 +92,9 @@ node 6 output 2 output 970 200
   param ground_color 0.06 0.06 0.065
   param grid off
   param render_bounces 16
-  param render_fstop 2.8
+  param render_fstop 5.6
   param render_focus 6
-  param render_grain 0.3
+  param render_grain 0.1
   param render_motion_blur 0.1
 link 1.source -> 3.sources
 link 8.source -> 3.sources
