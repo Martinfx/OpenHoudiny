@@ -187,16 +187,18 @@ fields live there through the step; every stage of it is a few kernels
 | advect | the paths of the gas through the velocity (RK2), the velocity carrying itself, MacCormack for smoke, heat, fuel, flame and steam; solids emptied, walls |
 | quench | the water's share of the gas in each wet cell — which cells, and how much, the CPU works out from the water |
 | combust | fuel into heat, soot, flame and swelling |
-| forces | buoyancy (heat and steam lift, smoke weighs), vorticity confinement, turbulence, drag; walls |
+| forces | buoyancy (heat and steam lift, smoke weighs), vorticity confinement, turbulence, drag, wind with its gusts, vortex, attractor; walls |
 | project | the right-hand side, the multigrid's V-cycles over the sparse tiles — with solids too, whose faces and diagonals the CPU works out when it builds the levels — the gradient, walls |
 | dissipate | smoke thins, heat cools, flame and steam fade, the swelling spreads what the gas carries |
 
 What stays on the CPU: the sources (their shapes, meshes among them), which
-tiles to keep, where the solids are, and the wind, vortex and attractor
-forces. The solver keeps track of which copy of each field is current —
-the CPU's or the device's — and a stage fetches only what the other side
-has newer: a step without those forces sends the fields after the sources
-and fetches them once, at the end of the frame. With substeps, once a frame.
+tiles to keep, where the solids are, and each force's few numbers (a
+turbulence's lattice of knots, a wind's direction), sent before its kernels.
+Every force is applied on the device. The solver keeps track of which copy
+of each field is current — the CPU's or the device's — and a stage fetches
+only what the other side has newer: a step sends the fields after the
+sources and fetches them once, at the end of the frame. With substeps, once
+a frame.
 
 ```bash
 ./build/prototype sim campfire out/fire.png --set gpu=1          # the campfire, on the GPU
@@ -208,7 +210,7 @@ it found, or says in its tooltip why there is none — turns the GPU on for
 every Pyro Solver of the network (one alone: select it, tick **GPU** in its
 Domain section), and the gas is simulated again. The **Profile** section under the timeline's frame
 says, below the gas's time, what the card does — `GPU: on the GPU, NVIDIA
-GeForce GTX 1060 6GB`, and which forces the CPU does, if any — or why the
+GeForce GTX 1060 6GB` — or why the
 CPU does it all.
 From Python: `solver["gpu"] = 1`. `PG_GPU=nvidia` picks the card when there
 are several.

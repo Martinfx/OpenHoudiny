@@ -1,0 +1,143 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "keep.glsl"
+// A wind, a vortex or an attractor on one component (p.axis) --
+// detail::addForce, operation for operation. f: the kind (an integer: 1
+// wind, 2 vortex, 3 attractor), the mask (an integer), the domain's origin
+// (3) and its cell's size. The force's numbers, worked out on the CPU as
+// addForce works them out, in K:
+//   wind       1 - e^(-strength dt), its direction (3, unit), speed, gusts, time, seed (an integer)
+//   vortex     1 - e^(-strength dt), its axis (3, unit), centre (3), half its height, radius,
+//              speed, lift, suction
+//   attractor  dt x strength, its centre (3), radius
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+#include "sparse.glsl"
+#include "exact.glsl"
+layout(std430, binding = 1) buffer Velocity { float V[]; };
+layout(std430, binding = 2) readonly buffer Fields { float S[]; };
+layout(std430, binding = 3) readonly buffer Numbers { float K[]; };
+#include "mask.glsl"
+
+// detail::hash, lattice, smoothstep, noise1.
+uint hashOf(int x, int y, int z, uint seed) {
+    uint h = seed * 0x9E3779B9u + 0x7F4A7C15u;
+    h ^= uint(x) * 0x85EBCA6Bu;
+    h = (h << 13) | (h >> 19);
+    h ^= uint(y) * 0xC2B2AE35u;
+    h = (h << 13) | (h >> 19);
+    h ^= uint(z) * 0x27D4EB2Fu;
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return h;
+}
+
+float latticeAt(int x, int y, int z, uint seed) {
+    return exactDiv(float(hashOf(x, y, z, seed) & 0xFFFFFFu), 16777215.0);
+}
+
+// std::clamp(t, 0, 1).
+float unit(float t) { return t < 0.0 ? 0.0 : (1.0 < t ? 1.0 : t); }
+
+float smooth01(float x) {
+    precise float t = unit(x);
+    precise float r = t * t * (3.0 - 2.0 * t);
+    return r;
+}
+
+// smoothstep(0.75, 1, x).
+float smoothRim(float x) {
+    precise float t = unit(exactDiv(x - 0.75, 0.25));
+    precise float r = t * t * (3.0 - 2.0 * t);
+    return r;
+}
+
+float noise1(float t, uint seed) {
+    const float f = floor(t);
+    const int i = int(f);
+    const float u = smooth01(t - f);
+    const float a = latticeAt(i, 0, 0, seed), b = latticeAt(i + 1, 0, 0, seed);
+    precise float r = a + (b - a) * u;
+    return r;
+}
+
+// glm's dot and length of 3 components: (x + y) + z.
+float dot3(vec3 u, vec3 v) {
+    precise float x = u.x * v.x, y = u.y * v.y, z = u.z * v.z;
+    precise float r = (x + y) + z;
+    return r;
+}
+
+void main() {
+    const int a = p.axis;
+    const int kind = intOf(0u);
+    const vec3 o = vec3(p.f[2], p.f[3], p.f[4]);
+    const float h = p.f[5];
+    const float ox = a == 0 ? 0.0 : 0.5, oy = a == 1 ? 0.0 : 0.5, oz = a == 2 ? 0.0 : 0.5;
+    for (uint part = 0u; part < 2u; ++part) {
+        uint slot;
+        ivec3 f;
+        if (!cellOf(a + 1, part, slot, f)) continue;
+        // facePosition: o + (i + offset) h.
+        precise float fx = float(f.x) + ox, fy = float(f.y) + oy, fz = float(f.z) + oz;
+        precise vec3 pos = vec3(o.x + fx * h, o.y + fy * h, o.z + fz * h);
+        const uint at = p.vel[a] + indexOf(slot, f);
+        if (kind == 1) {
+            const float m = maskAt(intOf(1u), a, f);
+            const vec3 d = vec3(K[1], K[2], K[3]);
+            const float speed = K[4], gusts = K[5], time = K[6];
+            precise float gust = 1.0;
+            if (gusts > 0.0) {
+                const float late = exactDiv(dot3(pos, d), mx(speed, 0.5));
+                precise float n = noise1((time - late) * 0.8, floatBitsToUint(K[7]));
+                gust = gust + gusts * (2.0 * n - 1.0);
+            }
+            precise float wind = d[a] * (speed * gust);
+            precise float v = V[at];
+            v = v + K[0] * m * (wind - v);
+            V[at] = v;
+        } else if (kind == 2) {
+            const vec3 axis = vec3(K[1], K[2], K[3]), centre = vec3(K[4], K[5], K[6]);
+            const float half_ = K[7], radius = K[8];
+            precise vec3 r = vec3(pos.x - centre.x, pos.y - centre.y, pos.z - centre.z);
+            const float along = dot3(r, axis);
+            if (half_ > 0.0 && abs(along) >= half_) continue;
+            precise vec3 out_ = vec3(r.x - axis.x * along, r.y - axis.y * along, r.z - axis.z * along);
+            const float d = exactSqrt(dot3(out_, out_));
+            if (d >= radius) continue;
+            const float x = exactDiv(d, radius);
+            precise float w = 1.0 - smoothRim(x);
+            if (half_ > 0.0) w = w * (1.0 - smoothRim(exactDiv(abs(along), half_)));
+            vec3 outward = vec3(0.0);
+            if (d > 1e-6) {
+                const float inv = exactDiv(1.0, d);
+                precise vec3 u = vec3(out_.x * inv, out_.y * inv, out_.z * inv);
+                outward = u;
+            }
+            // cross(axis, outward), component a.
+            precise float c = a == 0 ? axis.y * outward.z - outward.y * axis.z
+                            : a == 1 ? axis.z * outward.x - outward.z * axis.x
+                                     : axis.x * outward.y - outward.x * axis.y;
+            precise float round_ = K[9] * 4.0 * x * (1.0 - x);
+            precise float target = (c * round_ + axis[a] * K[10]) - outward[a] * (K[11] * x);
+            const float m = maskAt(intOf(1u), a, f);
+            precise float v = V[at];
+            v = v + K[0] * w * m * (target - v);
+            V[at] = v;
+        } else if (kind == 3) {
+            const vec3 centre = vec3(K[1], K[2], K[3]);
+            const float radius = K[4];
+            precise vec3 r = vec3(centre.x - pos.x, centre.y - pos.y, centre.z - pos.z);
+            const float d = exactSqrt(dot3(r, r));
+            if (d < 1e-6 || d >= radius) continue;
+            precise float g = 1.0 - exactDiv(d, radius);
+            precise float falloff = g * g;
+            const float m = maskAt(intOf(1u), a, f);
+            precise float push = K[0] * falloff * m * r[a];
+            precise float v = V[at] + exactDiv(push, d);
+            V[at] = v;
+        }
+    }
+}

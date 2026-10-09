@@ -754,11 +754,48 @@ bool PyroGpu::vorticity(PyroSolver& s, float dt) {
 bool PyroGpu::force(PyroSolver& s, const Force& force, size_t index, float dt, bool& done) {
     Impl& m = *impl_;
     done = false;
-    if (force.kind != ForceKind::Turbulence && force.kind != ForceKind::Drag) return true;
     Timed timed{m.times.total};
     if (!send(s, PyroSolver::kVel | Impl::maskFields(force.mask))) return false;
     gpu::Batch batch(*m.device);
-    if (force.kind == ForceKind::Turbulence) {
+    if (force.kind == ForceKind::Wind || force.kind == ForceKind::Vortex || force.kind == ForceKind::Attractor) {
+        // The force's numbers, as the CPU's addForce works them out, to the
+        // device; the rest per face there.
+        const uint32_t seed = force.seed * 7919u + s.scene_.solver.seed * 31u;
+        std::vector<float> numbers;
+        int kind = 0;
+        if (force.kind == ForceKind::Wind) {
+            kind = 1;
+            const Vec3 d = normalize(force.direction);
+            numbers = {1.0f - std::exp(-force.strength * dt), d.x, d.y, d.z, force.speed, force.gusts, s.time_,
+                       intAsFloat(static_cast<int32_t>(seed))};
+        } else if (force.kind == ForceKind::Vortex) {
+            kind = 2;
+            const Vec3 axis = normalize(force.direction);
+            numbers = {1.0f - std::exp(-force.strength * dt), axis.x, axis.y, axis.z, force.center.x, force.center.y,
+                       force.center.z, 0.5f * force.height, force.radius, force.speed, force.lift, force.suction};
+        } else {
+            kind = 3;
+            numbers = {dt * force.strength, force.center.x, force.center.y, force.center.z, force.radius};
+        }
+        const size_t bytes = numbers.size() * sizeof(float);
+        {
+            Timed copies{m.times.copies};
+            if (!m.fit(m.knots, bytes) || !m.device->upload(*m.knots, numbers.data(), bytes)) return m.failed();
+        }
+        const Vec3 o = s.domain_.origin();
+        for (int a = 0; a < 3; ++a) {
+            uint32_t x = 0, y = 0;
+            Push p = m.over(s, a + 1, x, y);
+            p.axis = a;
+            p.f[0] = intAsFloat(kind);
+            p.f[1] = intAsFloat(static_cast<int32_t>(force.mask));
+            p.f[2] = o.x;
+            p.f[3] = o.y;
+            p.f[4] = o.z;
+            p.f[5] = s.domain_.voxel;
+            batch.dispatch("pyro_pull", {m.tables.get(), m.velocity.get(), m.fields.get(), m.knots.get()}, p, x, y);
+        }
+    } else if (force.kind == ForceKind::Turbulence) {
         // The lattice, worked out as the CPU's addForce does, to the device.
         const uint32_t seed = force.seed * 7919u + s.scene_.solver.seed * 31u;
         std::array<Grid, 3>& knots = s.noise_[index];

@@ -237,9 +237,9 @@ TEST(gpu_gas_steps_are_the_cpus_to_the_bit) {
 TEST(gpu_gas_with_every_force_water_and_substeps_is_the_cpus_to_the_bit) {
     AnyDeviceForSolvers device;
     if (!device.ok) return;
-    // Every kind of force, each with another mask: drag and turbulence on the
-    // device, wind, a vortex and an attractor on the CPU between them -- the
-    // fields going there and back mid-step. Two substeps a frame.
+    // Every kind of force, each with another mask, all on the device -- the
+    // wind's gusts, the vortex's and the attractor's falloff worked out per
+    // face as the CPU works them out. Two substeps a frame.
     sim::Scene fire = sim::Scene::fire();
     fire.solver.resolution = 32;
     fire.solver.substeps = 2;
