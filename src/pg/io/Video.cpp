@@ -266,8 +266,9 @@ const std::set<std::string>& ffmpegEncoders() {
 /// back when it fails.
 class FfmpegWriter final : public VideoWriter {
 public:
-    FfmpegWriter(std::string path, int width, int height, double fps, std::string args, std::string codec)
-        : path_(std::move(path)), width_(width), height_(height), fps_(fps), args_(std::move(args)), codec_(std::move(codec)) {}
+    FfmpegWriter(std::string path, int width, int height, double fps, std::string args, std::string codec, int channels = 3)
+        : path_(std::move(path)), width_(width), height_(height), fps_(fps), args_(std::move(args)), codec_(std::move(codec)),
+          channels_(channels) {}
 
     ~FfmpegWriter() override {
         if (pipe_) PG_PCLOSE(pipe_);
@@ -287,7 +288,8 @@ public:
         log_ = (fs::temp_directory_path(ec) / ("prototype-ffmpeg-" + std::to_string(pid) + "-" + std::to_string(++count) + ".log")).string();
         uint32_t rate = 0, scale = 0;
         frameRate(fps_, rate, scale);
-        const std::string command = shellWord(ffmpegProgram()) + " -hide_banner -loglevel error -y -f rawvideo -pix_fmt rgb24 -video_size " +
+        const std::string command = shellWord(ffmpegProgram()) + " -hide_banner -loglevel error -y -f rawvideo -pix_fmt " +
+                                    (channels_ == 4 ? "rgba" : "rgb24") + " -video_size " +
                                     std::to_string(width_) + "x" + std::to_string(height_) + " -framerate " + std::to_string(rate) +
                                     "/" + std::to_string(scale) + " -i - " + args_ + " " + shellWord(path_) + " 2>" + shellWord(log_);
 #ifdef SIGPIPE
@@ -308,7 +310,7 @@ public:
     }
 
     bool add(const uint8_t* rgb, std::string& error) override {
-        const size_t bytes = static_cast<size_t>(width_) * static_cast<size_t>(height_) * 3;
+        const size_t bytes = static_cast<size_t>(width_) * static_cast<size_t>(height_) * static_cast<size_t>(channels_);
         if (!pipe_ || std::fwrite(rgb, 1, bytes, pipe_) != bytes) {
             error = failure("stopped taking frames");
             return false;
@@ -361,6 +363,7 @@ private:
     int width_, height_;
     double fps_;
     std::string args_, codec_, log_;
+    int channels_ = 3;  // 4: RGBA, with alpha
     FILE* pipe_ = nullptr;
 #ifdef SIGPIPE
     void (*previous_)(int) = SIG_DFL;
@@ -390,17 +393,27 @@ bool isVideoPath(const std::string& path) {
     return e == ".avi" || e == ".mp4" || e == ".mov" || e == ".mkv" || e == ".webm" || e == ".gif";
 }
 
+bool videoKeepsAlpha(const std::string& path) {
+    const std::string e = extensionOf(path);
+    return e == ".mov" || e == ".webm" || e == ".mkv";
+}
+
 std::vector<std::string> videoExtensions() {
     if (!ffmpegAvailable()) return {".avi"};
     return {".mp4", ".mov", ".mkv", ".webm", ".gif", ".avi"};
 }
 
-std::unique_ptr<VideoWriter> openVideo(const std::string& path, int width, int height, double fps, std::string& error) {
+std::unique_ptr<VideoWriter> openVideo(const std::string& path, int width, int height, double fps, std::string& error,
+                                       bool alpha) {
     if (width <= 0 || height <= 0 || width > 16384 || height > 16384) {
         error = "a video of " + std::to_string(width) + " x " + std::to_string(height) + " pixels is not one to make";
         return nullptr;
     }
     const std::string e = extensionOf(path);
+    if (alpha && !videoKeepsAlpha(path)) {
+        error = path + ": " + e + " keeps no alpha -- .mov, .webm or .mkv do";
+        return nullptr;
+    }
     if (e == ".avi") {
         auto w = std::make_unique<AviWriter>(path, width, height, fps);
         if (!w->open(error)) return nullptr;
@@ -418,6 +431,29 @@ std::unique_ptr<VideoWriter> openVideo(const std::string& path, int width, int h
     // H.264 and VP9 in 4:2:0 want an even size: pad an odd one by a pixel.
     const std::string even = " -vf " + shellWord("pad=ceil(iw/2)*2:ceil(ih/2)*2");
     std::string args, codec;
+    if (alpha) {
+        // With alpha: what keeps it, in the best a container takes.
+        if (e == ".mov" && has.count("prores_ks")) {
+            args = "-c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le -alpha_bits 16";
+            codec = "ProRes 4444";
+        } else if (e == ".mov" && has.count("qtrle")) {
+            args = "-c:v qtrle -pix_fmt argb";
+            codec = "QuickTime Animation";
+        } else if (e == ".webm" && has.count("libvpx-vp9")) {
+            args = "-c:v libvpx-vp9 -crf 24 -b:v 0 -row-mt 1 -pix_fmt yuva420p -auto-alt-ref 0" + even;
+            codec = "VP9 with alpha";
+        } else if (e == ".mkv" && has.count("ffv1")) {
+            args = "-c:v ffv1 -level 3 -pix_fmt bgra";
+            codec = "FFV1";
+        } else {
+            error = e + (videoKeepsAlpha(path) ? ": this ffmpeg has no encoder that keeps alpha for it"
+                                               : " keeps no alpha -- .mov, .webm or .mkv do");
+            return nullptr;
+        }
+        auto w = std::make_unique<FfmpegWriter>(path, width, height, fps, args, codec, 4);
+        if (!w->open(error)) return nullptr;
+        return w;
+    }
     if (e == ".gif") {
         if (!has.count("gif")) {
             error = "this ffmpeg writes no GIF";

@@ -13,6 +13,10 @@
 // read them back. H.264 and VP9 want an even size: an odd row or column is
 // added, repeating the last.
 //
+// With alpha -- a transparent render -- frames are RGBA, four bytes a pixel,
+// the colour not premultiplied: kept by .mov (ProRes 4444, or QuickTime
+// Animation without it), .webm (VP9 with alpha) and .mkv (FFV1, lossless).
+//
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -39,7 +43,13 @@ protected:
 /// A writer for `path`, by its extension, of frames of width x height at
 /// `fps`; null, with why, if the extension is not a video's, ffmpeg is
 /// wanted and not there, or the file cannot be made.
-std::unique_ptr<VideoWriter> openVideo(const std::string& path, int width, int height, double fps, std::string& error);
+/// `alpha`: frames of four channels, into a file that keeps them
+/// (videoKeepsAlpha) -- else null, with why.
+std::unique_ptr<VideoWriter> openVideo(const std::string& path, int width, int height, double fps, std::string& error,
+                                       bool alpha = false);
+/// True for the extension of a video that keeps an alpha channel: .mov,
+/// .webm, .mkv.
+bool videoKeepsAlpha(const std::string& path);
 
 /// True for the extension of a video file (.avi, .mp4, .mov, .mkv, .webm, .gif).
 bool isVideoPath(const std::string& path);

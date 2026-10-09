@@ -249,3 +249,50 @@ TEST(videos_decode_to_what_went_in_where_ffmpeg_is) {
         CHECK(fs::file_size(dir / "odd.mp4") > 0);
     }
 }
+
+TEST(videos_with_alpha_keep_it_where_ffmpeg_is) {
+    TempFolder dir("video_alpha");
+    std::string error;
+    // A container without alpha says so, ffmpeg or not.
+    CHECK(io::openVideo(dir / "a.mp4", 16, 16, 30.0, error, true) == nullptr);
+    CHECK(error.find("alpha") != std::string::npos);
+    CHECK(io::openVideo(dir / "a.avi", 16, 16, 30.0, error, true) == nullptr);
+    CHECK(io::videoKeepsAlpha("x.MOV") && io::videoKeepsAlpha("x.webm") && io::videoKeepsAlpha("x.mkv"));
+    CHECK(!io::videoKeepsAlpha("x.mp4") && !io::videoKeepsAlpha("x.gif"));
+    if (!io::ffmpegAvailable()) return;
+    // RGBA frames: the left half clear, the right half covered.
+    const int w = 64, h = 32;
+    std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            uint8_t* p = &rgba[(static_cast<size_t>(y) * w + x) * 4];
+            p[0] = 200;
+            p[1] = 120;
+            p[2] = 40;
+            p[3] = x < w / 2 ? 0 : 255;
+        }
+    }
+    for (const char* name : {"clip.mov", "clip.webm", "clip.mkv"}) {
+        auto video = io::openVideo(dir / name, w, h, 30.0, error, true);
+        if (!video) {  // this ffmpeg may lack the encoder: it says why
+            CHECK(error.find("alpha") != std::string::npos);
+            continue;
+        }
+        for (int f = 0; f < 3; ++f) CHECK(video->add(rgba.data(), error));
+        CHECK(video->finish(error));
+        // The alpha back: 0 on the left, full on the right.
+        const std::string raw = dir / "alpha.raw";
+        const std::string decoder = std::string(name) == "clip.webm" ? "-c:v libvpx-vp9 " : "";
+        const std::string command = "ffmpeg -v error -y " + decoder + "-i '" + (dir / name) +
+                                    "' -vf alphaextract -vframes 1 -f rawvideo -pix_fmt gray '" + raw + "' 2>/dev/null";
+        CHECK(std::system(command.c_str()) == 0);
+        const std::string a = fileText(raw);
+        CHECK_EQ(a.size(), static_cast<size_t>(w) * h);
+        if (a.size() != static_cast<size_t>(w) * h) continue;
+        const int left = static_cast<unsigned char>(a[static_cast<size_t>(h / 2) * w + 4]);
+        const int right = static_cast<unsigned char>(a[static_cast<size_t>(h / 2) * w + w - 5]);
+        if (!(left < 10 && right > 245)) {
+            ::testing::fail(__FILE__, __LINE__, std::string(name) + ": alpha " + std::to_string(left) + " and " + std::to_string(right));
+        }
+    }
+}

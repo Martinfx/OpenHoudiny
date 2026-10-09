@@ -180,12 +180,24 @@ picture of your own. A PNG gets an alpha channel — the colour not
 premultiplied, as PNG has it — and an EXR its `A`; in both the alpha holds
 the shadows the floor catches too (Floor over the Plate, Shadow Catcher by
 default): where there is no CG, a shadow is black, as covering as it is
-dark. The viewport's renderer, the path tracer and Cycles all do it. A video
-has no alpha: it comes out over black.
+dark. The viewport's renderer, the path tracer and Cycles all do it.
+
+A video keeps the alpha in the containers that can hold it, through ffmpeg:
+
+| file | codec | |
+|---|---|---|
+| `.mov` | ProRes 4444 (QuickTime Animation without `prores_ks`) | what compositing programs take |
+| `.webm` | VP9 with alpha | what browsers play over a page |
+| `.mkv` | FFV1 | lossless |
+
+`.mp4`, `.avi` and `.gif` keep no alpha: there the render comes out over
+black, and `prototype sim` says so.
 
 ```bash
 ./build/prototype sim smoke_plume out/plume.png --every 1 --set output.transparent=1   # PNG frames with alpha
 ./build/prototype sim smoke_plume out/plume.exr --every 1 --set output.transparent=1   # EXR: R G B A, premultiplied
+./build/prototype sim smoke_plume out/plume.mov --set output.transparent=1              # ProRes 4444 with alpha
+./build/prototype sim smoke_plume out/plume.webm --set output.transparent=1             # VP9 with alpha
 ```
 
 ## 5. Images without libraries

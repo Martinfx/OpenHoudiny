@@ -732,7 +732,7 @@ pg::sim::Camera orbitCamera(const Vec3& target, float yaw, float pitch, float di
 /// The path tracer's picture of a frame, `samples` passes, into `path`
 /// (none: into `rgb` alone, for a video).
 bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, std::vector<uint8_t>& rgb,
-                const std::string& comment, std::string& error) {
+                const std::string& comment, std::string& error, bool alpha = false) {
     const pg::render::Settings& s = tracer.settings();
     const int every = std::max(1, s.samples / 8);
     for (int i = tracer.samples(); i < s.samples; ++i) {
@@ -744,7 +744,8 @@ bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, std::ve
     }
     if (s.samples >= 32) std::fprintf(stderr, "\n");
     if (path.empty()) {
-        rgb = pg::render::displayRgb(tracer, s.denoise);
+        // For a video: RGB, or RGBA when it keeps alpha.
+        rgb = alpha ? pg::render::displayRgba(pg::render::renderedOf(tracer, s.denoise)) : pg::render::displayRgb(tracer, s.denoise);
         return true;
     }
     return pg::render::savePicture(tracer, path, s.denoise, comment, error);
@@ -754,7 +755,7 @@ bool pathTraced(pg::render::PathTracer& tracer, const std::string& path, std::ve
 /// tracer's are, while it renders on threads of its own.
 bool cyclesRendered(const std::shared_ptr<const pg::render::Scene>& scene, const pg::render::Settings& s,
                     const std::string& path, std::vector<uint8_t>& rgb, const std::string& comment,
-                    std::string& error) {
+                    std::string& error, bool alpha = false) {
     pg::render::CyclesRender render;
     render.start(scene, s);
     std::atomic<bool> finished{false};
@@ -784,7 +785,7 @@ bool cyclesRendered(const std::shared_ptr<const pg::render::Scene>& scene, const
         return false;
     }
     if (path.empty()) {
-        rgb = pg::render::displayRgb(out);
+        rgb = alpha ? pg::render::displayRgba(out) : pg::render::displayRgb(out);
         return true;
     }
     return pg::render::savePicture(out, path, comment, error);
@@ -956,7 +957,9 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
     const double videoFps = 1.0 / (static_cast<double>(c.world.timeStep) * std::max(o.every, 1));
     // Opened before anything is simulated: a video that cannot be written
     // says so at once.
-    if (video && !(movie = pg::io::openVideo(outPath, width, height, videoFps, error))) {
+    // Transparent, into a video that keeps alpha: RGBA frames.
+    const bool clearVideo = video && c.look.transparent && pg::io::videoKeepsAlpha(outPath);
+    if (video && !(movie = pg::io::openVideo(outPath, width, height, videoFps, error, clearVideo))) {
         std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
         return 1;
     }
@@ -1252,11 +1255,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             std::vector<uint8_t> rgb;
             bool rendered;
             if (cycles) {
-                rendered = cyclesRendered(builder.build(in), settings, file, rgb, comment, error);
+                rendered = cyclesRendered(builder.build(in), settings, file, rgb, comment, error, clearVideo);
             } else {
                 tracer.setSettings(settings);
                 tracer.setScene(builder.build(in));
-                rendered = pathTraced(tracer, file, rgb, comment, error);
+                rendered = pathTraced(tracer, file, rgb, comment, error, clearVideo);
             }
             if (!rendered) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
@@ -1309,8 +1312,11 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
         const bool clear = volume->look.transparent;
         if (clear) {
             volume->setBlankPlate();
-            if (!movie) volume->passes.on = true;
-            if (movie && !toldClear) std::fprintf(stderr, "%s: a video has no alpha: the transparent render is over black\n", cmd);
+            if (!movie || clearVideo) volume->passes.on = true;
+            if (movie && !clearVideo && !toldClear) {
+                std::fprintf(stderr, "%s: %s keeps no alpha: the transparent render is over black -- .mov, .webm or .mkv keep it\n",
+                             cmd, fs::path(outPath).extension().string().c_str());
+            }
             toldClear = true;
         } else if (throughCamera && !c.cameraAt(f).plate.empty()) {
             // The plate behind it all, through the shot's camera.
@@ -1332,7 +1338,8 @@ int simulate(const Options& o, const std::string& network, const std::string& ou
             ++images;
             continue;
         }
-        const std::vector<uint8_t> pixels = clear && !movie ? volume->readTransparent(2) : volume->readPixels(2);
+        const std::vector<uint8_t> pixels =
+            clear && (!movie || clearVideo) ? volume->readTransparent(2) : volume->readPixels(2);
         if (movie) {
             if (!movie->add(pixels.data(), error)) {
                 std::fprintf(stderr, "%s: %s\n", cmd, error.c_str());
