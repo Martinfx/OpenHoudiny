@@ -1170,6 +1170,13 @@ void SimWorkspace::viewport(ImVec2 size) {
         fileAction_ = FileAction::Image;
     }
     if (ui::headerButton(h, "video", Icon::Film, "Render the shot to a video\xe2\x80\xa6", false, compiled_.ok)) chooseVideo();
+    if (ui::headerButton(h, "rendered", Icon::Look,
+                         "Rendered: the view through the Render tab's renderer -- Cycles, getting less noisy -- "
+                         "under the viewport's tools",
+                         viewRendered_)) {
+        viewRendered_ = !viewRendered_;
+        viewDirty_ = true;
+    }
     if (ui::headerButton(h, "home", Icon::Viewport, "Frame the domain")) {
         setThroughCamera(false);
         framed_ = false;
@@ -1216,7 +1223,7 @@ void SimWorkspace::viewport(ImVec2 size) {
         renderTab(static_cast<int>(room.x), static_cast<int>(room.y));
         return;
     }
-    stopRender();
+    if (!viewRendered_) stopRender();
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const int w = std::max(16, static_cast<int>(avail.x)), hh = std::max(16, static_cast<int>(avail.y));
@@ -1295,7 +1302,8 @@ void SimWorkspace::viewport(ImVec2 size) {
     updateOverlay();
 
     if (w != viewWidth_ || hh != viewHeight_) viewDirty_ = true;
-    if (viewDirty_ && rendererLog_.empty()) {
+    // Rendered, the renderer's picture stands for the drawing.
+    if (viewDirty_ && rendererLog_.empty() && !viewRendered_) {
         view_.draw(w, hh);
         viewWidth_ = w;
         viewHeight_ = hh;
@@ -1303,6 +1311,7 @@ void SimWorkspace::viewport(ImVec2 size) {
     }
     ImGui::Image(ImTextureRef(static_cast<ImTextureID>(view_.picture())),
                  ImVec2(static_cast<float>(w), static_cast<float>(hh)), ImVec2(0, 1), ImVec2(1, 0));
+    if (viewRendered_) renderedView(throughCamera_ ? gateLo_ : lo, throughCamera_ ? gateHi_ : hi);
     ImGui::SetCursorScreenPos(lo);
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("view", ImVec2(static_cast<float>(w), static_cast<float>(hh)),

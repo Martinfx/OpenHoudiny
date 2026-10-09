@@ -395,7 +395,12 @@ Cycles reads three. The path tracer is there for a quick preview; Cycles
 gives the final image, just as in Blender.
 
 In the Render tab the first image from larger pixels is ready in a fraction of
-a second. During playback the tab shows frames at a lower resolution; the frame
+a second. The same render can stand in for the viewport's drawing: the
+**Rendered** button in the viewport's header (the sun) shows Cycles -- or the
+path tracer, whichever the Render tab uses -- under the viewport's tools, the
+gizmo, the selection and the camera's gate still working; turning the view or
+editing the network starts it again, as in the tab. Rendered through the
+camera, it fills the gate. During playback the tab shows frames at a lower resolution; the frame
 it stops on gets full resolution.
 
 ## 8. How it works

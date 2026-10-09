@@ -272,6 +272,13 @@ private:
     bool renderImage(const std::string& path);
     // The Render tab (SimRender.cpp): the path tracer on the shown scene.
     void renderTab(int width, int height);
+    /// Asks the renderer for `rw` x `rh` of what is shown -- through the
+    /// camera, `camera` -- whenever that changes (not while a render to the
+    /// end runs, `job`), and takes its newest picture into renderTexture_.
+    void refreshRender(int rw, int rh, bool camera, bool job);
+    /// The viewport rendered (viewRendered_): the renderer's picture over
+    /// `lo`..`hi` -- the gate through the camera -- and how far it got.
+    void renderedView(ImVec2 lo, ImVec2 hi);
     /// The camera a render sees through: the shot's at the frame on screen
     /// (`camera`, when there is one), else the view's -- `width` x `height`.
     sim::Camera renderCamera(int width, int height, bool camera) const;
@@ -879,6 +886,9 @@ private:
     std::string renderFolder_;          ///< where the last render went
     // The Render tab.
     bool renderTabOn_ = false;
+    /// The viewport shows the Render tab's renderer -- Cycles, as it gets
+    /// less noisy -- under its tools, not the OpenGL drawing.
+    bool viewRendered_ = false;
     bool renderAutoPaused_ = false;  ///< paused as the tab was left: goes on when it is back
     std::unique_ptr<RenderView> renderView_;
     gl::GLuint renderTexture_ = 0;

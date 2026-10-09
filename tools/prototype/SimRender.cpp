@@ -110,6 +110,85 @@ std::string SimWorkspace::finalRenderer() {
     return renderView().engine() == RenderView::Engine::Cycles ? "Cycles" : "the Path Tracer";
 }
 
+void SimWorkspace::refreshRender(int rw, int rh, bool camera, bool job) {
+    renderView();
+    // Asked again whenever what it shows changes: the network, the frame,
+    // the geometry, the view, the size -- not while a render to the end
+    // runs: the tab shows its frames.
+    render::Settings settings = compiled_.render;
+    settings.width = rw;
+    settings.height = rh;
+    const sim::Camera cam = renderCamera(rw, rh, camera);
+    uint64_t key = mixed(0xcbf29ce484222325ull, static_cast<uint64_t>(compiledRevision_));
+    key = mixed(key, static_cast<uint64_t>(current_));
+    key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(shown_.get())));
+    key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(view_.geometry().get())));
+    key = mixed(key, static_cast<uint64_t>(levels_.size()));
+    for (const float v : {cam.position.x, cam.position.y, cam.position.z, cam.rotation.x, cam.rotation.y, cam.rotation.z,
+                          cam.focal}) {
+        key = mixed(key, v);
+    }
+    key = mixed(key, static_cast<uint64_t>(rw) << 32 | static_cast<uint64_t>(rh));
+    if (!job && (key != renderKey_ || !(settings == renderSettings_))) {
+        RenderView::Request r = renderRequest(rw, rh, camera);
+        r.scene = key;
+        renderView_->request(std::move(r));
+        renderKey_ = key;
+        renderSettings_ = settings;
+    }
+
+    // The newest picture into the texture.
+    std::vector<uint8_t> rgba;
+    int pw = 0, ph = 0;
+    if (!job && renderView_->takePicture(rgba, pw, ph)) {
+        if (!renderTexture_) gl_.GenTextures(1, &renderTexture_);
+        gl_.BindTexture(gl::TEXTURE_2D, renderTexture_);
+        gl_.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
+        gl_.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+        gl_.PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+        gl_.TexImage2D(gl::TEXTURE_2D, 0, static_cast<gl::GLint>(gl::RGBA8), pw, ph, 0, gl::RGBA, gl::UNSIGNED_BYTE, rgba.data());
+        gl_.BindTexture(gl::TEXTURE_2D, 0);
+        renderTextureW_ = pw;
+        renderTextureH_ = ph;
+    }
+}
+
+void SimWorkspace::renderedView(ImVec2 lo, ImVec2 hi) {
+    renderView();
+    const bool job = job_.running() && jobFinal_;
+    if (renderAutoPaused_ && !job) {
+        renderView_->setPaused(false);
+        renderAutoPaused_ = false;
+    }
+    // The pane's size -- the gate's, through the camera -- at the Render
+    // tab's scale.
+    const float scale = static_cast<float>(kScales[renderScale_]) / 100.0f;
+    const int rw = std::clamp(static_cast<int>(std::lround((hi.x - lo.x) * scale)), 16, 4096);
+    const int rh = std::clamp(static_cast<int>(std::lround((hi.y - lo.y) * scale)), 16, 4096);
+    refreshRender(rw, rh, throughCamera_ && compiled_.hasCamera, job);
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    if (renderTexture_ && renderTextureW_ > 0) {
+        d->AddImage(ImTextureRef(static_cast<ImTextureID>(renderTexture_)), lo, hi);
+    } else {
+        d->AddRectFilled(lo, hi, IM_COL32(24, 24, 27, 255));
+    }
+    // How far it got, at the top in the middle: the corners are the
+    // frame's, the camera's and the hints'.
+    const RenderView::Status st = renderView_->status();
+    char text[160];
+    if (!st.error.empty()) {
+        std::snprintf(text, sizeof text, "%s", st.error.c_str());
+    } else if (st.building) {
+        std::snprintf(text, sizeof text, "%s: building the scene\xe2\x80\xa6", RenderView::engineName(renderView_->engine()));
+    } else {
+        std::snprintf(text, sizeof text, "%s  \xc2\xb7  %d / %d samples%s", RenderView::engineName(renderView_->engine()),
+                      st.samples, st.of, st.samples >= st.of && st.of > 0 ? "  \xc2\xb7  done" : "");
+    }
+    const ImVec2 t = ImGui::CalcTextSize(text);
+    ui::overlayText(d, ImVec2(std::floor(0.5f * (lo.x + hi.x - t.x)), lo.y + theme::px(10.0f)),
+                    st.error.empty() ? theme::kTextDim : IM_COL32(240, 120, 110, 255), text);
+}
+
 void SimWorkspace::renderTab(int width, int height) {
     renderView();
     // While a render to the end runs, the tab shows its frames: its own
@@ -249,45 +328,7 @@ void SimWorkspace::renderTab(int width, int height) {
     rw = std::clamp(static_cast<int>(std::lround(static_cast<float>(rw) * scale)), 16, 4096);
     rh = std::clamp(static_cast<int>(std::lround(static_cast<float>(rh) * scale)), 16, 4096);
 
-    // Asked again whenever what it shows changes: the network, the frame,
-    // the geometry, the view, the size -- not while a render to the end
-    // runs: the tab shows its frames.
-    render::Settings settings = fromOutput;
-    settings.width = rw;
-    settings.height = rh;
-    const sim::Camera cam = renderCamera(rw, rh, throughCamera_);
-    uint64_t key = mixed(0xcbf29ce484222325ull, static_cast<uint64_t>(compiledRevision_));
-    key = mixed(key, static_cast<uint64_t>(current_));
-    key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(shown_.get())));
-    key = mixed(key, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(view_.geometry().get())));
-    key = mixed(key, static_cast<uint64_t>(levels_.size()));
-    for (const float v : {cam.position.x, cam.position.y, cam.position.z, cam.rotation.x, cam.rotation.y, cam.rotation.z,
-                          cam.focal}) {
-        key = mixed(key, v);
-    }
-    key = mixed(key, static_cast<uint64_t>(rw) << 32 | static_cast<uint64_t>(rh));
-    if (!job && (key != renderKey_ || !(settings == renderSettings_))) {
-        RenderView::Request r = renderRequest(rw, rh, throughCamera_);
-        r.scene = key;
-        renderView_->request(std::move(r));
-        renderKey_ = key;
-        renderSettings_ = settings;
-    }
-
-    // The newest picture into the texture.
-    std::vector<uint8_t> rgba;
-    int pw = 0, ph = 0;
-    if (!job && renderView_->takePicture(rgba, pw, ph)) {
-        if (!renderTexture_) gl_.GenTextures(1, &renderTexture_);
-        gl_.BindTexture(gl::TEXTURE_2D, renderTexture_);
-        gl_.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
-        gl_.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
-        gl_.PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-        gl_.TexImage2D(gl::TEXTURE_2D, 0, static_cast<gl::GLint>(gl::RGBA8), pw, ph, 0, gl::RGBA, gl::UNSIGNED_BYTE, rgba.data());
-        gl_.BindTexture(gl::TEXTURE_2D, 0);
-        renderTextureW_ = pw;
-        renderTextureH_ = ph;
-    }
+    refreshRender(rw, rh, throughCamera_, job);
 
     // The picture, as big as the pane allows, on dark grey.
     const ImVec2 lo = ImGui::GetCursorScreenPos();
