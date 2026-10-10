@@ -40,6 +40,8 @@ public:
     void viewport(ImVec2 size) override;
     void bottom(ImVec2 size) override;
     float bottomHeight() const override;
+    bool bottomResizable() const override { return true; }
+    void setBottomHeight(float height) override { bottomHeight_ = height; }
     void parameters(ImVec2 size) override;
     void network(ImVec2 size) override;
 
@@ -69,6 +71,8 @@ protected:
     void saveThen(std::function<void()> then) override;
 
 private:
+    float bottomHeight_ = 0.0f;  ///< the code panel's, as the user dragged it
+
     void reloadLibrary();
     void recompile();
     bool save(const std::string& path);

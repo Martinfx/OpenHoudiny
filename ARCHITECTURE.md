@@ -535,8 +535,9 @@ cli/             headless demo, OBJ export
 tools/prototype/  prototype — an editor with two networks, simulation (default) and shaders,
                  on a shared node canvas; viewport with selection and gizmo
                  (SimViewport, Gizmo), drawn on a thread of its own in a shared
-                 context (ViewThread), as are the nodes' thumbnails (ThumbThread),
-                 displayed geometry and attribute spreadsheet
+                 context (ViewThread), as are the nodes' thumbnails (ThumbThread);
+                 the animated parameters as curves over the frames, their keys
+                 dragged (SimCurves); displayed geometry and attribute spreadsheet
                  (SimGeometry); editing the displayed geometry -- points, edges and faces
                  with the mouse, handle, group, delete, brush as network nodes (SimElements);
                  digital assets: diving in and back out, Make Asset,

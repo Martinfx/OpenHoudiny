@@ -48,6 +48,10 @@ public:
     virtual void bottom(ImVec2 size) = 0;
     /// How tall the bottom panel would like to be.
     virtual float bottomHeight() const = 0;
+    /// Whether the user may drag its top edge; then setBottomHeight() takes
+    /// what they dragged it to and bottomHeight() gives it back.
+    virtual bool bottomResizable() const { return false; }
+    virtual void setBottomHeight(float) {}
     virtual void parameters(ImVec2 size) = 0;
     virtual void network(ImVec2 size) = 0;
 

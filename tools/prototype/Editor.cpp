@@ -284,7 +284,6 @@ void Editor::frame(float dt) {
     const float split = theme::px(5.0f);
     if (rightWidth_ <= 0.0f) rightWidth_ = std::round(avail.x * 0.45f);
     if (paramsHeight_ <= 0.0f) paramsHeight_ = std::round(height * 0.46f);
-    if (bottomHeight_ <= 0.0f) bottomHeight_ = shaders_->bottomHeight();
     rightWidth_ = std::clamp(rightWidth_, theme::px(300.0f), std::max(theme::px(300.0f), avail.x - theme::px(320.0f)));
     paramsHeight_ = std::clamp(paramsHeight_, theme::px(140.0f), std::max(theme::px(140.0f), height - theme::px(160.0f)));
     const float leftWidth = avail.x - rightWidth_ - split;
@@ -292,8 +291,11 @@ void Editor::frame(float dt) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
     ImGui::BeginGroup();
     {
-        const bool resizable = active_ == 1;  // the timeline has its height; the code panel can grow
-        const float bottom = resizable ? std::clamp(bottomHeight_, theme::px(120.0f), std::max(theme::px(120.0f), height - theme::px(160.0f)))
+        // The code panel and the curve editor can be dragged taller; the
+        // timeline alone has the height it wants.
+        const bool resizable = w.bottomResizable();
+        const float bottom = resizable ? std::clamp(w.bottomHeight(), theme::px(120.0f),
+                                                    std::max(theme::px(120.0f), height - theme::px(160.0f)))
                                        : w.bottomHeight();
         const float viewHeight = height - bottom - (resizable ? split : 0.0f);
         ImGui::BeginChild("viewport", ImVec2(leftWidth, viewHeight), ImGuiChildFlags_None,
@@ -305,7 +307,7 @@ void Editor::frame(float dt) {
         if (resizable) {
             float top = viewHeight;
             ui::splitter("split_bottom", false, top, theme::px(160.0f), height - theme::px(120.0f) - split, leftWidth);
-            bottomHeight_ = height - top - split;
+            w.setBottomHeight(height - top - split);
         }
         ImGui::BeginChild("bottom", ImVec2(leftWidth, bottom), ImGuiChildFlags_None,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);

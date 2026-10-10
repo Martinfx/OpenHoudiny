@@ -87,6 +87,8 @@ public:
     void viewport(ImVec2 size) override;
     void bottom(ImVec2 size) override;
     float bottomHeight() const override;
+    bool bottomResizable() const override { return curvesOn_; }
+    void setBottomHeight(float height) override;
     void parameters(ImVec2 size) override;
     void network(ImVec2 size) override;
 
@@ -272,6 +274,36 @@ private:
     bool renderImage(const std::string& path);
     // The Render tab (SimRender.cpp): the path tracer on the shown scene.
     void renderTab(int width, int height);
+    // --- the curve editor (SimCurves.cpp) -----------------------------------------------
+    /// The animated parameters of the selected nodes as curves of their
+    /// value over the frames, between the viewport and the timeline.
+    void curves(ImVec2 size);
+    float timelineHeight() const;
+    /// A channel drawn: one component of an animated parameter of a node --
+    /// a number is its only one.
+    struct Curve {
+        int node = 0;
+        const sim::ParamDef* def = nullptr;
+        int component = 0;
+        std::string label;   ///< "burst  center.y"
+        ImU32 color = 0;
+    };
+    /// Those of the selected nodes, in the order they are shown; a channel
+    /// an expression drives is left out -- its keys say nothing.
+    std::vector<Curve> shownCurves() const;
+    /// The view fitted round `curves`: every key in it, the shot's frames.
+    void frameCurves(const std::vector<Curve>& curves);
+    /// A key as the graph picks it: its component is what dragging up and
+    /// down moves, its frame what dragging sideways does -- a key holds
+    /// every component, so the whole key moves with it.
+    struct CurveKey {
+        int node = 0;
+        std::string param;
+        int component = 0;
+        float frame = 0.0f;
+        bool operator==(const CurveKey&) const = default;
+    };
+    void deleteCurveKeys();
     /// Asks the renderer for `rw` x `rh` of what is shown -- through the
     /// camera, `camera` -- whenever that changes (not while a render to the
     /// end runs, `job`), and takes its newest picture into renderTexture_.
@@ -885,6 +917,20 @@ private:
     bool jobShown_ = false;
     std::string renderFolder_;          ///< where the last render went
     // The Render tab.
+    // The curve editor: open, how tall its graph is, what it spans, the
+    // keys picked and the drag going on.
+    bool curvesOn_ = false;
+    float curvesHeight_ = 0.0f;
+    float curveFrom_ = 1.0f, curveTo_ = 100.0f;  ///< the frames across
+    float curveLo_ = 0.0f, curveHi_ = 1.0f;      ///< the values up
+    bool curveFramed_ = false;
+    uint64_t curveFit_ = 0;  ///< the curves it was fitted to: others fit again
+    std::vector<CurveKey> curvePicked_;
+    /// Those dragged, as they were when it began: the drag works from there.
+    std::vector<std::pair<CurveKey, sim::Key>> curveDragged_;
+    ImVec2 curveDragFrom_{0.0f, 0.0f}, curveBoxFrom_{0.0f, 0.0f};
+    bool curveDragging_ = false, curveBoxing_ = false;
+
     bool renderTabOn_ = false;
     /// The viewport shows the Render tab's renderer -- Cycles, as it gets
     /// less noisy -- under its tools, not the OpenGL drawing.

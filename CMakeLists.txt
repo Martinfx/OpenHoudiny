@@ -1022,6 +1022,7 @@ if(PG_BUILD_GUI)
     tools/prototype/ShaderWorkspace.cpp
     tools/prototype/SimGeometry.cpp
     tools/prototype/SimAssets.cpp
+    tools/prototype/SimCurves.cpp
     tools/prototype/SimElements.cpp
     tools/prototype/SimRunner.cpp
     tools/prototype/SimViewport.cpp

@@ -875,7 +875,7 @@ void ShaderWorkspace::viewport(ImVec2 size) {
     }
 }
 
-float ShaderWorkspace::bottomHeight() const { return theme::px(300.0f); }
+float ShaderWorkspace::bottomHeight() const { return bottomHeight_ > 0.0f ? bottomHeight_ : theme::px(300.0f); }
 
 void ShaderWorkspace::bottom(ImVec2 size) {
     (void)size;

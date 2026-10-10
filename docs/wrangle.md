@@ -129,7 +129,7 @@ Division by zero gives zero, not infinity.
 `ch("name")` (also `chf`), `chi`, `chv`, `chs` read a parameter of the node that the code
 itself created (see above). The same language also computes **parameter expressions**
 of any node — `$F * 0.1`, `ch("../box1/sizex") * 2` — see
-[animation.md §6](animation.md#6-expressions). `$F` is the frame number, `$T` the time in seconds, `$FPS`
+[animation.md §7](animation.md#7-expressions). `$F` is the frame number, `$T` the time in seconds, `$FPS`
 the frame rate. A node that reads `$F`, `@Time` or an animated parameter
 is cooked again on every frame; others only when something changes.
 

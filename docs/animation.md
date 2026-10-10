@@ -55,7 +55,40 @@ In the editor:
 Objects and guides are drawn at the **playhead** frame — immediately, without
 waiting for the simulation; gas and water at the last frame computed up to it.
 
-## 3. Interpolation
+## 3. The curve editor
+
+**View → Curve Editor** (**C**) opens a graph between the viewport and the
+timeline: the animated parameters of the selected nodes drawn as curves of
+their value over the frames. A curve is one **channel** — a number, or one
+component of a vector, named as an expression names it (`center.y`); a
+vector's three are red, green and blue. The curve is sampled through the
+same `evaluate()` the solver reads, so what it draws is what the simulation
+gets: Smooth eases, Linear runs straight, Step holds.
+
+| in the graph | |
+|---|---|
+| **Click** a key | pick it; **Ctrl+click** adds one or takes it away |
+| **Drag** in space | a box of keys |
+| **Drag** a key | move it: whole frames across, the value up and down (**Ctrl**: the value alone, **Shift**: the frame alone) |
+| **Double click** | a key on the nearest curve at that frame, with the value it has there |
+| **Del** | delete the keys picked |
+| **Right click** a key | Smooth, Linear, Step; Delete |
+| **Wheel** | zoom about the mouse (**Ctrl**: the values alone, **Shift**: the frames alone) |
+| **Middle drag**, **Shift+drag** | pan |
+| **F** | fit the view round every key |
+| **Drag the ruler** | move the playhead, as on the timeline |
+
+The frames outside the shot are dimmed, and the playhead runs through the
+graph. Dragging the panel's top edge makes it taller.
+
+A key holds **every component** of its parameter (see
+[§4](#4-the-pgsim-file)), so dragging one up and down moves that component
+alone, while dragging it sideways carries the whole key: the components of a
+vector keep to the same frames, and deleting a key deletes all of them. A
+channel driven by an **expression** is left out of the graph — its keys say
+nothing about what the parameter does.
+
+## 4. Interpolation
 
 | | |
 |---|---|
@@ -67,7 +100,7 @@ Interpolation belongs to a key and applies from it to the next one. Before the f
 parameter has the first key's value, after the last the last key's. Integer parameters
 are rounded; toggles and menus jump (like Step).
 
-## 4. The .pgsim file
+## 5. The .pgsim file
 
 Keys are lines `key NAME FRAME INTERPOLATION VALUE` under the node, after its
 parameters; the value is written the same way as for `param`:
@@ -82,7 +115,7 @@ node 2 object 1 ball 0 110
 The `param` line of an animated parameter stays: it is the value for when
 the keys are deleted.
 
-## 5. What can be animated
+## 6. What can be animated
 
 - **Simulation**: sources (position, rotation, size, fuel, smoke, heat,
   velocity…), forces, objects, solver settings that are not the grid
@@ -101,7 +134,7 @@ Solver grid, closed tank walls, frame count and frame rate in the Output.
 A shape from geometry (the Shape input) is static — the geometry is taken at frame 1;
 make a moving obstacle from an object with its own shape or an OBJ model.
 
-## 6. Expressions
+## 7. Expressions
 
 Instead of keys, a parameter can be driven by an **expression** — the same language as wrangle
 ([wrangle.md](wrangle.md)), just a single expression: `$F * 0.1`, `sin($T * 6) *
@@ -142,7 +175,7 @@ node 1 pyro_source 2 fire 0 0
   `prototype sim campfire fire.mp4 --set 'fire.center.x=sin($T*6)*0.3'`,
   `--set 'fire.center={0, $F*0.01, 0}'`.
 
-## 7. How it works
+## 8. How it works
 
 ### The network frame by frame
 
@@ -186,14 +219,17 @@ core expression (keys evaluated at the cook frame). This makes the node
 time-dependent, and the core cache holds its geometry for each frame separately — returning
 to an already cooked frame computes nothing.
 
-## 8. Limitations
+## 9. Limitations
 
 - Changing a key restarts the whole simulation (like any scene change).
 - An obstacle that moves faster than one cell per step can "skip through"
   a thin layer of water or gas; gas inside cells that the body enters
   disappears.
 - A shape from geometry and a change of shape (sphere → box) are not animated smoothly.
-- There are no curve editors (curve graph) and no keys on individual vector
-  components — a key carries the whole value (an expression, however, can be per component).
+- The curve editor shows and drags keys; there are no tangent handles to pull —
+  interpolation is Smooth, Linear or Step, chosen per key.
+- There are no keys on individual vector components: a key carries the whole
+  value, so the components of a vector share its frames (an expression, however,
+  can be per component).
 - An expression cannot see another node's geometry (Houdini has `npoints()`, `bbox()`
   with a path): it reads parameters, time and its own numbers.

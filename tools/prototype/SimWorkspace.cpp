@@ -952,6 +952,7 @@ void SimWorkspace::shortcuts() {
         guides_ = !guides_;
         guidesCompiled_ = ~0ull;
     }
+    if (ImGui::IsKeyPressed(ImGuiKey_C, false)) curvesOn_ = !curvesOn_;
     if (ImGui::IsKeyPressed(ImGuiKey_U, false) && !levels_.empty()) leaveRequest_ = true;  // out of the asset
 }
 
@@ -2006,10 +2007,16 @@ void SimWorkspace::drawGnomon(ImDrawList* d, ImVec2 corner) const {
 
 // --- the timeline ---------------------------------------------------------------------------------
 
-float SimWorkspace::bottomHeight() const { return ImGui::GetFrameHeight() + theme::px(16.0f); }
+float SimWorkspace::bottomHeight() const {
+    // Before the user has dragged it, the graph is as tall as it reads well at.
+    return timelineHeight() + (curvesOn_ ? (curvesHeight_ > 0.0f ? curvesHeight_ : theme::px(210.0f)) : 0.0f);
+}
+
+void SimWorkspace::setBottomHeight(float height) { curvesHeight_ = height - timelineHeight(); }
 
 void SimWorkspace::bottom(ImVec2 size) {
-    (void)size;
+    // The curve editor over the timeline, when it is open.
+    if (curvesOn_) curves(ImVec2(size.x, std::max(theme::px(60.0f), size.y - timelineHeight())));
     ui::TimelineState s;
     s.frames = std::max(1, compiled_.frames);
     s.current = current_;
@@ -2266,6 +2273,9 @@ void SimWorkspace::menus() {
         if (ImGui::MenuItem("Proxies", nullptr, proxies_)) proxies_ = !proxies_;
         ImGui::SetItemTooltip("Big frames of gas and water drawn on a coarser grid while they change -- "
                               "playing, scrubbing -- and as they are once the play head rests.");
+        if (ImGui::MenuItem("Curve Editor", "C", curvesOn_)) curvesOn_ = !curvesOn_;
+        ImGui::SetItemTooltip("The animated parameters of the selected nodes as curves over the frames, over the "
+                              "timeline: keys dragged, added by a double click, deleted by Del.");
         if (ImGui::MenuItem("Node Thumbnails", nullptr, thumbnails_)) thumbnails_ = !thumbnails_;
         ImGui::SetItemTooltip("A picture in each node of what it makes: a geometry node's geometry, an object's "
                               "shape, a solver's frame, the Output's shot. A node's menu hides its own.");
@@ -2312,6 +2322,12 @@ void SimWorkspace::helpMenu() {
                   {"U", "sculpt: push (Ctrl: pull), Shift: smooth, grab, flatten"},
                   {"Ctrl+D, sculpting", "dyntopo: the mesh made finer under the brush"},
                   {"Tab  N", "a node on what is picked (PolyExtrude\xe2\x80\xa6), numbers"},
+                  {"", "Curve editor (C)"},
+                  {"Drag a key", "move it (Ctrl: the value alone, Shift: the frame)"},
+                  {"Click, Ctrl+click, drag", "pick one, add one, a box of them"},
+                  {"Double click", "a key on the nearest curve there"},
+                  {"Del  right click", "delete the keys picked, their menu"},
+                  {"Wheel, middle drag, F", "zoom (Ctrl, Shift: one way), pan, frame all"},
                   {"", "Timeline"},
                   {"Space", "play, pause"},
                   {"Home  End", "the first frame, the last one ready"},

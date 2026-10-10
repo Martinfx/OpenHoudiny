@@ -74,7 +74,6 @@ private:
     // The layout, in pixels: kept as the window is resized, changed by the splitters.
     float rightWidth_ = 0.0f;
     float paramsHeight_ = 0.0f;
-    float bottomHeight_ = 0.0f;  ///< the shaders' code panel
 
     bool quit_ = false;
     bool about_ = false;
